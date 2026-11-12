@@ -22,18 +22,35 @@ const { recordChildCancelled, recordChildFinished, recordChildLaunch } = proxyAc
   recordChildFinished(workflowId: string): Promise<void>;
   /** Reports the request this child was started with, so a test can see what the epic forwarded. */
   recordChildLaunch(input: {
+    initiatedById?: string;
+    initiatedByServiceId?: string;
     launchedById?: string | null;
     repoId?: string;
+    trigger?: string;
+    triggerRefId?: string;
     workflowId: string;
   }): Promise<void>;
 }>({ startToCloseTimeout: '10s' });
 
 export async function RunnableWorkflow(input: {
-  request?: { launchedById?: string; repoId?: string };
+  request?: {
+    initiatedById?: string;
+    initiatedByServiceId?: string;
+    launchedById?: string;
+    repoId?: string;
+    trigger?: string;
+    triggerRefId?: string;
+  };
   templateId: string;
 }): Promise<{ lessonsGenerated: []; status: string; totalCIRetries: 0; totalReviewRetries: 0 }> {
   await recordChildLaunch({
     ...(input.request?.launchedById ? { launchedById: input.request.launchedById } : {}),
+    ...(input.request?.initiatedById ? { initiatedById: input.request.initiatedById } : {}),
+    ...(input.request?.initiatedByServiceId
+      ? { initiatedByServiceId: input.request.initiatedByServiceId }
+      : {}),
+    ...(input.request?.trigger ? { trigger: input.request.trigger } : {}),
+    ...(input.request?.triggerRefId ? { triggerRefId: input.request.triggerRefId } : {}),
     ...(input.request?.repoId ? { repoId: input.request.repoId } : {}),
     workflowId: workflowInfo().workflowId,
   });

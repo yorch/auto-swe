@@ -358,6 +358,43 @@ describe('submitPrdWorkRequests child launcher propagation', () => {
     expect(childRequest().launchedById).toBe('user-launcher');
   });
 
+  it('records the PRD run and its initiator as the child provenance, apart from the launcher', async () => {
+    await submitPrdWorkRequests(
+      { initiatedById: 'user-initiator', repoId: REPO, workRequestId: 'prd-request-1' } as never,
+      { decomposition: DECOMPOSITION }
+    );
+
+    expect(childRequest()).toMatchObject({
+      initiatedById: 'user-initiator',
+      launchedById: 'user-launcher',
+      trigger: 'prd-child',
+      triggerRefId: 'prd-wf-1',
+    });
+  });
+
+  it('forwards a service principal initiator to the child', async () => {
+    await submitPrdWorkRequests(
+      {
+        initiatedByServiceId: 'svc-initiator',
+        repoId: REPO,
+        workRequestId: 'prd-request-1',
+      } as never,
+      { decomposition: DECOMPOSITION }
+    );
+
+    expect(childRequest()).toMatchObject({ initiatedByServiceId: 'svc-initiator' });
+    expect(childRequest().initiatedById).toBeUndefined();
+  });
+
+  it('leaves the child initiator off when the PRD run names none', async () => {
+    await submitPrdWorkRequests({ repoId: REPO, workRequestId: 'prd-request-1' } as never, {
+      decomposition: DECOMPOSITION,
+    });
+
+    expect(childRequest().initiatedById).toBeUndefined();
+    expect(childRequest().trigger).toBe('prd-child');
+  });
+
   it('gives the child the parent execution launcher with per-user credentials enabled', async () => {
     state.credentialPolicy = { enabled: true };
     await submitPrdWorkRequests({ repoId: REPO, workRequestId: 'prd-request-1' } as never, {

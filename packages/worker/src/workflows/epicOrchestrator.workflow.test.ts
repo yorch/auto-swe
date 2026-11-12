@@ -16,8 +16,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TASK_QUEUE = 'engineering-workflow';
 
 const templateResolutions: string[] = [];
-const childLaunches: Array<{ launchedById?: string | null; repoId: string; workflowId: string }> =
-  [];
+const childLaunches: Array<{
+  initiatedById?: string;
+  initiatedByServiceId?: string;
+  launchedById?: string | null;
+  repoId: string;
+  trigger?: string;
+  triggerRefId?: string;
+  workflowId: string;
+}> = [];
 const cancelledChildren: string[] = [];
 const finishedChildren: string[] = [];
 const domainStates: string[] = [];
@@ -41,13 +48,21 @@ const fakeActivities = {
   // activity, so the launcher now travels on the child's own request (which its
   // createWorkflowRun reads when it derives the child's source).
   async recordChildLaunch(input: {
+    initiatedById?: string;
+    initiatedByServiceId?: string;
     launchedById?: string | null;
     repoId?: string;
+    trigger?: string;
+    triggerRefId?: string;
     workflowId: string;
   }): Promise<void> {
     childLaunches.push({
+      ...(input.initiatedById ? { initiatedById: input.initiatedById } : {}),
+      ...(input.initiatedByServiceId ? { initiatedByServiceId: input.initiatedByServiceId } : {}),
       launchedById: input.launchedById,
       repoId: input.repoId ?? '',
+      ...(input.trigger ? { trigger: input.trigger } : {}),
+      ...(input.triggerRefId ? { triggerRefId: input.triggerRefId } : {}),
       workflowId: input.workflowId,
     });
   },
@@ -124,6 +139,8 @@ describe('EpicOrchestratorWorkflow — epicCancelSignal', () => {
       description: 'epic',
       epicWorkflowId,
       externalTicketId: 'CANCEL-1',
+      // Provenance the epic forwards to each child; never the credential key above.
+      initiatedById: 'user-initiator',
       // The epic has no `WorkflowRun` row of its own, so the child-source activity
       // must receive the epic's recorded launcher on its input.
       launchedById: 'user-launcher',
@@ -173,8 +190,22 @@ describe('EpicOrchestratorWorkflow — epicCancelSignal', () => {
     ]);
     expect(templateResolutions).not.toContain('repo-c');
     expect([...childLaunches].sort((a, b) => a.repoId.localeCompare(b.repoId))).toEqual([
-      { launchedById: 'user-launcher', repoId: 'repo-a', workflowId: `${epicWorkflowId}-repo-a` },
-      { launchedById: 'user-launcher', repoId: 'repo-b', workflowId: `${epicWorkflowId}-repo-b` },
+      {
+        initiatedById: 'user-initiator',
+        launchedById: 'user-launcher',
+        repoId: 'repo-a',
+        trigger: 'epic-child',
+        triggerRefId: epicWorkflowId,
+        workflowId: `${epicWorkflowId}-repo-a`,
+      },
+      {
+        initiatedById: 'user-initiator',
+        launchedById: 'user-launcher',
+        repoId: 'repo-b',
+        trigger: 'epic-child',
+        triggerRefId: epicWorkflowId,
+        workflowId: `${epicWorkflowId}-repo-b`,
+      },
     ]);
     expect(domainStates.at(-1)).toBe('CANCELLED');
     for (const child of children) {

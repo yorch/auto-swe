@@ -13,6 +13,7 @@ import {
 } from '@auto-swe/shared/lib/slackRepoAccess';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { log } from '@temporalio/activity';
+import { platformUserIdForSlackId } from '../lib/platformUserForSlack.js';
 import { isChannelOverBudgetNow } from './channelAssistant.js';
 import { resolveTemplateForRepo } from './templates.js';
 
@@ -201,9 +202,14 @@ async function buildChannelTaskRun(
     // `resolveUserCredential` still requires them to be an active member of
     // its team, or a team it is shared with, at run time.
     ...(repoId && requestedById ? { launchedById: requestedById } : {}),
+    // Provenance: the Slack asker's linked platform user. Absent for an unlinked Slack user and
+    // for the general route, whose input carries no requester.
+    ...(requestedById ? { initiatedById: requestedById } : {}),
     repoId,
     requestPayload: input.description,
     slackChannel: input.threadTs,
+    trigger: 'channel-task',
+    triggerRefId: input.channelId,
     workRequestId: runInput.id,
   };
 
@@ -361,26 +367,6 @@ export interface CreateChannelCodeTaskRunInput {
  * is additive/independent, not a second org increment. We do NOT touch
  * `OrgMonthlyUsage` here; the standard repo-bound finalize path owns that.
  */
-
-/**
- * The platform user behind a Slack id, or null when they have not linked.
- *
- * `isActive` is filtered here for the same reason the access decision filters
- * it: the two queries answer the same question — who is this Slack id — and a
- * disagreement between them is worse than either answer alone. Without it a
- * deactivated user is refused by the gate as if they had never linked, and then
- * recorded as the requester of the run they were refused.
- */
-async function platformUserIdForSlackId(slackId: string | undefined): Promise<string | null> {
-  if (!slackId) {
-    return null;
-  }
-  const user = await prisma.user.findFirst({
-    select: { id: true },
-    where: { isActive: true, slackId },
-  });
-  return user?.id ?? null;
-}
 
 /** A code task the requester may not start, and why, for the thread reply. */
 export interface ChannelTaskRefusal {

@@ -14,6 +14,7 @@ import { logError } from '../lib/activityLog.js';
 import { endWorkflowRun } from '../lib/endRun.js';
 import { assignLessonRecall } from '../lib/lessonRecallAssignment.js';
 import { recordRunFinalized } from '../lib/metrics.js';
+import { platformUserIdForSlackId } from '../lib/platformUserForSlack.js';
 import {
   snapshotAgentRuntimes,
   snapshotAgentVersions,
@@ -271,6 +272,22 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
   });
 
   const runId = randomUUID();
+
+  // Who asked: only a mention has a person behind it, and only a linked Slack account resolves
+  // to a platform user. Ambient and reactive turns have no initiator. Provenance is recorded,
+  // never decided on, so a failed lookup must not stop the turn from starting.
+  let initiatedById: string | null = null;
+  if (input.kind === 'mention') {
+    try {
+      initiatedById = await platformUserIdForSlackId(input.userSlackId);
+    } catch (err) {
+      logError(`[channelRun] could not resolve the initiator of ${input.workflowId}:`, {
+        err: err instanceof Error ? err.message : err,
+        workflowId: input.workflowId,
+      });
+    }
+  }
+
   try {
     await prisma.workflowRun.create({
       data: {
@@ -283,6 +300,7 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
         attributedTeamId: attribution.attributedTeamId,
         channelId: channel?.id ?? null,
         harnessProfileVersions: harnessProfileVersions as Prisma.InputJsonObject,
+        initiatedById,
         // Channel launches have no durable actor-bound source snapshot; fail closed.
         knowledgeSourceKind: 'UNKNOWN',
         knowledgeSourceOrgId: null,
@@ -295,6 +313,8 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
         status: 'RUNNING',
         templateId,
         templateVersion,
+        trigger: 'channel-turn',
+        triggerRefId: input.channelId,
         workflowId: input.workflowId,
         workRequestId: null,
       },

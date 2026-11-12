@@ -136,9 +136,16 @@ export async function EpicOrchestratorWorkflow(request: EpicRequest): Promise<Ep
       // so a child of an epic started before this field existed gets exactly
       // the input it always did.
       ...(request.launchedById ? { launchedById: request.launchedById } : {}),
+      // Provenance: who started the epic, spread only when present for the same reason.
+      ...(request.initiatedById ? { initiatedById: request.initiatedById } : {}),
+      ...(request.initiatedByServiceId
+        ? { initiatedByServiceId: request.initiatedByServiceId }
+        : {}),
       parentWorkflowId: request.epicWorkflowId,
       repoId: repo.repoId,
       requestPayload: request.requestPayload,
+      trigger: 'epic-child',
+      triggerRefId: request.epicWorkflowId,
       workRequestId: request.workRequestId,
     };
 

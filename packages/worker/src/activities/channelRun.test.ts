@@ -10,6 +10,7 @@ vi.mock('@auto-swe/shared/db', () => {
     harnessProfile: { findMany: vi.fn() },
     skill: { findMany: vi.fn() },
     slackChannel: { findUnique: vi.fn() },
+    user: { findFirst: vi.fn() },
     workflowRun: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     workflowTemplate: { findFirst: vi.fn() },
   };
@@ -67,6 +68,8 @@ beforeEach(() => {
   p.agent.findFirst.mockResolvedValue(null);
   p.skill.findMany.mockResolvedValue([]);
   p.harnessProfile.findMany.mockResolvedValue([]);
+  p.user.findFirst.mockReset();
+  p.user.findFirst.mockResolvedValue(null);
 });
 
 describe('startChannelRun', () => {
@@ -107,6 +110,57 @@ describe('startChannelRun', () => {
       orgId: 'org-1',
       teamId: 'team-1',
     });
+  });
+
+  it('records channel-turn provenance with the linked asker of a mention', async () => {
+    p.user.findFirst.mockResolvedValue({ id: 'user-1' });
+
+    await startChannelRun({
+      channelId: 'chan-1',
+      kind: 'mention',
+      label: 'C1',
+      userSlackId: 'U123',
+      workflowId: 'w',
+    });
+
+    expect(p.user.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { isActive: true, slackId: 'U123' } })
+    );
+    expect(p.workflowRun.create.mock.calls[0][0].data).toMatchObject({
+      initiatedById: 'user-1',
+      trigger: 'channel-turn',
+      triggerRefId: 'chan-1',
+    });
+  });
+
+  it('leaves the initiator null for an unlinked Slack user and for an ambient turn', async () => {
+    await startChannelRun({
+      channelId: 'chan-1',
+      kind: 'mention',
+      label: 'C1',
+      userSlackId: 'U404',
+      workflowId: 'w1',
+    });
+    await startChannelRun({ channelId: 'chan-1', kind: 'ambient', label: 'C1', workflowId: 'w2' });
+
+    for (const [call] of p.workflowRun.create.mock.calls) {
+      expect(call.data).toMatchObject({ initiatedById: null, trigger: 'channel-turn' });
+    }
+    expect(p.user.findFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it('still starts the turn when the initiator lookup fails', async () => {
+    p.user.findFirst.mockRejectedValue(new Error('db down'));
+
+    await startChannelRun({
+      channelId: 'chan-1',
+      kind: 'mention',
+      label: 'C1',
+      userSlackId: 'U123',
+      workflowId: 'w',
+    });
+
+    expect(p.workflowRun.create.mock.calls[0][0].data.initiatedById).toBeNull();
   });
 
   it('pins the active agent versions and the visible skill revisions on the run', async () => {
