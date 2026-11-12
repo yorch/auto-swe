@@ -7,8 +7,8 @@ import { hasRole } from '@/lib/roles';
  * the sidebar label, the TopBar title and the page's own H1 — read from the
  * same string.
  *
- * The sidebar has three working groups: Work (daily use), Build (authoring) and
- * Admin. Admin is a single sidebar entry that opens a settings area at `/admin`
+ * Work, Build, Connect and Knowledge lead to pages; Admin is a single sidebar
+ * entry that opens a settings area at `/admin`
  * with its own sub-navigation; its pages are the entry's `children`, grouped by
  * `section`. A group's label is the first segment of its URLs only for Admin:
  * Work and Build pages sit at the top level, so a page keeps its address when it
@@ -174,7 +174,7 @@ const ADMIN_PAGES: NavItem[] = [
   {
     href: '/admin/review-presets',
     icon: 'checkCircle',
-    label: 'Review presets',
+    label: 'Platform review presets',
     minRole: 'ADMIN',
     section: 'Configuration',
   },
@@ -260,21 +260,26 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     items: [
       { href: '/library', icon: 'templates', label: 'Workflow library', minRole: 'ENGINEER' },
-      { href: '/connections', icon: 'connections', label: 'Connections', minRole: 'ENGINEER' },
       // The authoring pages below are ADMIN-only: each route has its own ADMIN layout.
       { href: '/agents', icon: 'agents', label: 'Agents', minRole: 'ADMIN' },
       { href: '/skills', icon: 'skills', label: 'Skills', minRole: 'ADMIN' },
-      { href: '/models', icon: 'sliders', label: 'Model configuration', minRole: 'ADMIN' },
-      { href: '/mcp', icon: 'plug', label: 'MCP connections', minRole: 'ADMIN' },
-      { href: '/bundles', icon: 'package', label: 'Bundles', minRole: 'ADMIN' },
       {
         href: '/review-presets',
         icon: 'checkCircle',
-        label: 'Team review presets',
+        label: 'Review presets',
         minRole: 'LEAD',
       },
     ],
     label: 'Build',
+  },
+  {
+    items: [
+      { href: '/connections', icon: 'connections', label: 'Connections', minRole: 'ENGINEER' },
+      { href: '/models', icon: 'sliders', label: 'Model configuration', minRole: 'ADMIN' },
+      { href: '/mcp', icon: 'plug', label: 'MCP connections', minRole: 'ADMIN' },
+      { href: '/bundles', icon: 'package', label: 'Bundles', minRole: 'ADMIN' },
+    ],
+    label: 'Connect',
   },
   {
     // What the agents carry from one run to the next. Every role reads it, scoped to what
@@ -303,13 +308,11 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
     label: 'Admin',
   },
-  {
-    items: [
-      { href: '/settings', icon: 'settings', label: 'Settings', minRole: 'ENGINEER' },
-      { href: '/docs', icon: 'docs', label: 'Docs', minRole: 'ENGINEER' },
-    ],
-    label: 'Account',
-  },
+];
+
+export const USER_NAV_ITEMS: NavItem[] = [
+  { href: '/settings', icon: 'settings', label: 'Settings', minRole: 'ENGINEER' },
+  { href: '/docs', icon: 'docs', label: 'Docs', minRole: 'ENGINEER' },
 ];
 
 /** `items` and, depth first, every child below them. */
@@ -318,7 +321,10 @@ export function flattenNavItems(items: NavItem[]): NavItem[] {
 }
 
 /** Every page with a navigation entry, sidebar and sub-navigation alike. */
-export const NAV_ITEMS: NavItem[] = flattenNavItems(NAV_GROUPS.flatMap((g) => g.items));
+export const NAV_ITEMS: NavItem[] = flattenNavItems([
+  ...NAV_GROUPS.flatMap((g) => g.items),
+  ...USER_NAV_ITEMS,
+]);
 
 function visibleItems(items: NavItem[], role: string | null | undefined, hasUsageScope: boolean) {
   return items.flatMap((item): NavItem[] => {
@@ -444,6 +450,8 @@ export function navLabel(href: string): string {
 
 /** Sections for the pages that have no navigation entry of their own. */
 const EXTRA_PAGE_SECTIONS: [string, string][] = [
+  ['/docs', 'Help'],
+  ['/settings', 'Account'],
   ['/start', 'Work'],
   ['/epics', 'Work'],
 ];
@@ -454,7 +462,7 @@ const EXTRA_PAGE_SECTIONS: [string, string][] = [
  */
 export function pageSection(pathname: string): string | null {
   const href = activeNavHref(pathname, NAV_ITEMS);
-  // Docs sits in the Account sidebar group but is help, not account management.
+  // Docs is a user-menu destination and belongs to Help, not account management.
   if (href === '/docs') {
     return 'Help';
   }

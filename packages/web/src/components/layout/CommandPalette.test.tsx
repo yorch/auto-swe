@@ -87,6 +87,16 @@ const type = (value: string) =>
   fireEvent.change(screen.getByRole('combobox'), { target: { value } });
 
 describe('CommandPalette', () => {
+  it.each([
+    ['Docs', '/docs'],
+    ['Settings', '/settings'],
+  ])('keeps %s reachable outside the sidebar groups', async (label, href) => {
+    stubApi({});
+    await openPalette();
+    type(label);
+    fireEvent.click(screen.getByRole('option', { name: new RegExp(label) }));
+    expect(push).toHaveBeenCalledWith(href);
+  });
   it('offers “Go to team” for a member team that matches, and opens its space', async () => {
     stubApi({
       teams: () => [

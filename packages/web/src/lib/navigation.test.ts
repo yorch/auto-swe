@@ -16,6 +16,7 @@ import {
   navSections,
   pageSection,
   pageTitle,
+  USER_NAV_ITEMS,
   visibleNavGroups,
 } from './navigation';
 
@@ -48,6 +49,24 @@ function layoutFloor(href: string): Role {
 }
 
 describe('NAV_GROUPS', () => {
+  it('separates authoring from connections and keeps account pages in the user menu', () => {
+    expect(NAV_GROUPS.find((g) => g.label === 'Build')?.items.map((i) => i.href)).toEqual([
+      '/library',
+      '/agents',
+      '/skills',
+      '/review-presets',
+    ]);
+    expect(NAV_GROUPS.find((g) => g.label === 'Connect')?.items.map((i) => i.href)).toEqual([
+      '/connections',
+      '/models',
+      '/mcp',
+      '/bundles',
+    ]);
+    expect(USER_NAV_ITEMS.map((i) => i.href)).toEqual(['/settings', '/docs']);
+    expect(navLabel('/review-presets')).toBe('Review presets');
+    expect(navLabel('/admin/review-presets')).toBe('Platform review presets');
+    expect(pageSection('/connections')).toBe('Connect');
+  });
   it.each(NAV_ITEMS.map((i) => [i.href, i.minRole] as const))(
     '%s is offered to exactly the roles its layout admits',
     (href, minRole) => {
@@ -73,13 +92,13 @@ describe('visibleNavGroups', () => {
   const hrefsFor = (role: string, scoped?: boolean) =>
     visibleNavGroups(role, scoped).flatMap((g) => flattenNavItems(g.items).map((i) => i.href));
 
-  it('groups the sidebar into Work, Build, Knowledge and Admin, plus the account links', () => {
+  it('groups the sidebar into Work, Build, Connect, Knowledge and Admin', () => {
     expect(NAV_GROUPS.map((g) => g.label)).toEqual([
       'Work',
       'Build',
+      'Connect',
       'Knowledge',
       'Admin',
-      'Account',
     ]);
   });
 
@@ -117,7 +136,7 @@ describe('visibleNavGroups', () => {
   });
 
   it('shows an ADMIN everything', () => {
-    expect(hrefsFor('ADMIN').length).toBe(NAV_ITEMS.length);
+    expect(hrefsFor('ADMIN').length).toBe(NAV_ITEMS.length - USER_NAV_ITEMS.length);
   });
 
   it('shows nothing to an unknown role', () => {
