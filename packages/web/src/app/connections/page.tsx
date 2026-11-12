@@ -39,7 +39,6 @@ import {
   useRepoDependencySuggestions,
   useTriggerRepoDependencyScan,
 } from '@/hooks/useRepoDependencies';
-import type { GitHubRepoInfo } from '@/hooks/useRepositories';
 import { useMyCredentials, useRepositories } from '@/hooks/useRepositories';
 import { useRepositoryTeams } from '@/hooks/useRepositoryTeams';
 import { useTeams } from '@/hooks/useTeams';
@@ -117,23 +116,6 @@ export default function ConnectionsPage() {
   const [mode, setMode] = useState<ModalMode>(null);
   // A saved change (deactivated, token saved) closes its dialog, so say it here.
   const [notice, setNotice] = useState<string | null>(null);
-
-  function handleImportSelect(repo: GitHubRepoInfo) {
-    setMode({
-      kind: 'create',
-      prefill: {
-        defaultBranch: repo.defaultBranch,
-        description: repo.description ?? undefined,
-        // No URL overrides: the import list comes from the instance's own
-        // GitHub host, which is what an unset override already means. The
-        // repo-level `htmlUrl`/`apiUrl` are not bases — stored as overrides
-        // they made every clone and API call land on a path that does not exist.
-        language: repo.language ?? undefined,
-        organizationName: repo.org,
-        repoName: repo.name,
-      },
-    });
-  }
 
   const formMode = mode?.kind === 'create' || mode?.kind === 'edit' ? mode : null;
   const credentialsEnabled = myCredentials.data?.enabled ?? false;
@@ -535,15 +517,7 @@ export default function ConnectionsPage() {
         </div>
       </section>
 
-      <ImportFromGitHubModal
-        onClose={() =>
-          // Functional update so that if onSelect already transitioned mode to
-          // 'create', the dialog's programmatic close event doesn't overwrite it.
-          setMode((prev) => (prev?.kind === 'create' ? prev : null))
-        }
-        onSelect={handleImportSelect}
-        open={mode?.kind === 'import'}
-      />
+      {mode?.kind === 'import' && <ImportFromGitHubModal onClose={() => setMode(null)} open />}
 
       {formMode && <ConnectionFormModal mode={formMode} onClose={() => setMode(null)} open />}
 
