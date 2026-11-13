@@ -354,6 +354,70 @@ only by the mid-run guard.
 
 ---
 
+## 6. Team secrets
+
+A team can hold named secrets that its repositories' setup steps and app previews use. They are
+stored once on the team and reach a repository only when a team admin grants them to it. A team
+admin is a team `ADMIN` or a platform `ADMIN`; a team `LEAD` and an organization admin do not manage
+them. The **Team secrets** panel on the team page is the editor, and the routes below are the same
+operations.
+
+### Storing a secret
+
+A team secret (`TeamSecret`) is encrypted with the same AES-256-GCM envelope as repository setup
+secrets and is write-only. Nothing returns a value once it is saved.
+
+- Its name follows the setup-secret rule: an upper-case environment-variable name. These names are
+  refused: `PATH`, `HOME`, `USER`, `SHELL`, `NODE_OPTIONS`, `NODE_EXTRA_CA_CERTS`,
+  `CONTAINER_STEP_INPUT`, `NO_PROXY`, and any name that starts with `LD_`, `GIT_`, `SSL_CERT_` or
+  `ASW_` or ends with `_PROXY`.
+- Its value is at least 8 characters, since a shorter one matches unrelated files by chance in the
+  [secret scan](./repositories.md#workspace-setup).
+- A team holds at most 50.
+
+| Route | Does |
+|---|---|
+| `GET /api/v1/teams/:teamId/secrets` | Lists each secret's name, its last four characters, when it changed, and the ids of the repositories it is granted to. |
+| `PUT /api/v1/teams/:teamId/secrets/:name` | Sets or replaces the value. |
+| `DELETE /api/v1/teams/:teamId/secrets/:name` | Removes the secret and its grants. |
+| `PUT /api/v1/teams/:teamId/secrets/:name/grants` | Takes `connectionIds` and replaces the whole grant set for that secret. |
+
+Saving, deleting and changing grants are written to the audit log under the entity type
+`TeamSecret`, with the secret's name only. The in-app assistant cannot call these routes.
+
+### Granting to repositories
+
+Nothing is inherited. A team secret reaches a repository only when a team admin has granted it to
+that repository. Only repositories the team **owns** are eligible; a repository merely shared to the
+team cannot be granted a secret.
+
+A setup definition or app preview definition names a team secret under `secrets:` exactly as it
+names a repository secret (see [setup secrets](./repositories.md#workspace-setup)). For each name, a
+run resolves it in this order:
+
+1. the repository's own setup secret of that name, which wins;
+2. otherwise a team secret granted to the repository by its current owning team, if that team is
+   active;
+3. otherwise the run fails with the `missing_secret` blocker, whose text reads "not set on the
+   repository or granted from its team".
+
+`GET /api/v1/repositories/:id/setup/secrets` lists the granted team secrets beside the repository's
+own, with `source: 'team'`. A team secret that a repository secret of the same name shadows carries
+`shadowed: true`, so the list shows which value is not in use.
+
+### Where values go
+
+A team secret's value reaches setup steps and app previews, as secret environment, and nowhere else.
+It never reaches the agent, a container step or a shell workflow step. The post-setup leak scan and
+the output redaction that apply to repository secrets apply to team secrets too. Evaluation runs never
+receive team secrets.
+
+### Moves and deactivation
+
+Moving a repository to another team deletes its grants. Any grant that is left over is ignored
+anyway, because resolution only considers the repository's current owning team. Deactivating a team
+stops the secrets it holds from resolving for the repositories it owns.
+
 ## Creating teams and managing membership
 
 On `/admin/teams`, **New team** is available to platform ADMINs and anyone who administers an
@@ -412,6 +476,18 @@ only in an active organization with `trustedInvites` enabled (`team_lead`); othe
 in the approval queue. See [invited users](./oauth-setup.md#invited-users) for the trust policy.
 
 ## Limitations
+
+- **Team secrets are not usable by agents, shell steps or container steps.** They reach only setup
+  steps and app previews, so a credential an agent needs must come from somewhere else.
+- **Rotating a team secret does not warn about shadowing.** When a repository secret of the same
+  name wins, the only signal is the `shadowed` flag on the repository's setup-secrets listing.
+- **Team secrets have no CLI commands.** They are managed through the API and the Team secrets panel
+  only.
+- **A repository whose setup comes from its checkout is open to anyone who can push to it.** Granting
+  a team secret to such a repository lets whoever can push a branch and launch a run name that
+  secret and run steps with it. Grant team secrets only to repositories whose contributors the team
+  trusts, or store the setup definition on the repository so that only shell authors can change it;
+  see [repositories](./repositories.md#limitations).
 
 - Organization admins manage linked GitHub installations from **Admin → Organizations → the
   organization → GitHub**. Connect authorizes a new installation of the instance App, and Retire
