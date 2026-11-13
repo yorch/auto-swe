@@ -116,7 +116,8 @@ role of LEAD does not raise anything for a non-member: only the platform ADMIN i
 | `admin.monthCostUsdCents` | `admin` | This calendar month's spend (UTC) attributed to the team, in cents; `null` when it cannot be computed. Absent for a team ADMIN who is not an ORG_ADMIN when the binding cap is the organization's; present when the team's own cap binds |
 
 `lead` and `admin` are **absent** from the JSON for a lower view, not `null`, and their queries are
-not run. Other members' emails never appear: a launcher is a display name only.
+not run. The `activity` feed names a launcher by display name only. The feed's name is the run's credential launcher (`launchedById`), so it can differ from a run's initiator. Run lists are different: a run's
+initiator is shown with name and email to anyone who can see the run ([run-provenance.md](./run-provenance.md)).
 
 Definitions:
 

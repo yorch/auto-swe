@@ -206,6 +206,9 @@ export async function startReviewFix(
     payload: feedbackPayload,
     repoId: repo.id,
     requestPayload: JSON.stringify(feedbackPayload),
+    // Provenance: the fix of the reviewed run `runId`. No initiator is carried to this activity.
+    trigger: 'review-fix',
+    triggerRefId: runId,
     workRequestId,
     workspaceProvider: 'git_repo',
   };

@@ -19,6 +19,7 @@ vi.mock('@auto-swe/shared/config', async (orig) => ({
 const OLD = new Date(Date.now() - 60 * 60_000);
 const WORK_REQUEST_ID = 'bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb';
 /** The repository row's id. A real one is a UUID, and a `connection` input must be one too. */
+const PREVIOUS_RUN_ID = 'cccccccc-2222-4222-8222-cccccccccccc';
 const REPO_ID = '11111111-1111-4111-8111-111111111111';
 
 type Ledger = {
@@ -58,10 +59,13 @@ describe('POST /work-requests/:id/retry', () => {
   /** What the not-actionable-stop lookup finds. */
   let stops: unknown[];
   let stopLookups: number;
+  /** The `where` of every `workflowRun.findFirst` the retry made. */
+  let runLookups: unknown[];
 
   beforeEach(async () => {
     stops = [];
     stopLookups = 0;
+    runLookups = [];
     clearStopNodeCache();
     started = [];
     startedRequests = [];
@@ -166,6 +170,10 @@ describe('POST /work-requests/:id/retry', () => {
       },
       // The first lookup is the stops; the second, the runs after one.
       workflowRun: {
+        findFirst: async ({ where }: { where: unknown }) => {
+          runLookups.push(where);
+          return { id: PREVIOUS_RUN_ID };
+        },
         findMany: async () => {
           stopLookups += 1;
           return stopLookups % 2 === 1 ? stops : [];
@@ -229,6 +237,26 @@ describe('POST /work-requests/:id/retry', () => {
     expect(data.temporalWorkflowId).toBe(started[0]);
     expect(data.workRequestId).toBe(WORK_REQUEST_ID);
     expect(data.workflowIds).toEqual(['aw-new']);
+  });
+
+  it('stamps who retried and which run it repeats, and leaves the credential key alone', async () => {
+    const res = await app.inject({
+      headers: { authorization: 'Bearer t' },
+      method: 'POST',
+      payload: {},
+      url: `/api/v1/work-requests/${WORK_REQUEST_ID}/retry`,
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(startedRequests[0]).toMatchObject({
+      initiatedById: 'user-1',
+      launchedById: 'user-1',
+      rerunOfRunId: PREVIOUS_RUN_ID,
+      trigger: 'work-request-retry',
+    });
+    expect(startedRequests[0]).not.toHaveProperty('initiatedByServiceId');
+    // The repeated run is looked up on this work request, not another.
+    expect(runLookups).toContainEqual({ workRequestId: WORK_REQUEST_ID });
   });
 
   describe('egress policy', () => {

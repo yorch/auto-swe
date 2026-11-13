@@ -16,6 +16,20 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 vi.mock('../repositoryHost.js', () => ({
   webhookRepositoryWhere: vi.fn(async () => ({ organizationName: 'acme', repoName: 'api' })),
 }));
+// The per-actor access decision, answered here so a test can name an actor: the decision itself is
+// covered where `actorLaunchDecision` is.
+vi.mock('../launchAuthorization.js', () => ({
+  authorizeLaunch: vi.fn(async () => ({ ok: true })),
+}));
+vi.mock('./access.js', () => ({ findLaunchRepo: vi.fn(async () => ({ id: 'conn' })) }));
+vi.mock('@auto-swe/shared/lib/repoAccessGate', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/lib/repoAccessGate')>()),
+  resolveRepoAccessGateOrLastKnown: vi.fn(async () => null),
+}));
+vi.mock('@auto-swe/shared/lib/repoMembership', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/lib/repoMembership')>()),
+  isRepoMember: vi.fn(() => true),
+}));
 vi.mock('../orgAccess.js', () => ({
   isOrgOverBudget: vi.fn(async () => m.overBudget),
   isTeamOverBudget: vi.fn(async (_p: unknown, teamId: string) => m.overTeams.has(teamId)),
@@ -426,6 +440,12 @@ describe('handleOccurrence (github.workflow_run.failed)', () => {
     // A repository run is billed through its connection, never a launch org.
     expect(h.runInputs[0]).toMatchObject({ billingOrgId: null, billingTeamId: null });
     expect(request).not.toHaveProperty('launchedById');
+    // Provenance: the door and the automation, and no person when the source names none.
+    expect(request).toMatchObject({
+      trigger: 'automation',
+      triggerRefId: 'aaaaaaaa-0000-4000-8000-000000000001',
+    });
+    expect(request).not.toHaveProperty('initiatedById');
     expect(h.fires).toHaveLength(1);
     expect(h.fires[0]).toMatchObject({ outcome: 'STARTED' });
   });
@@ -1371,5 +1391,102 @@ describe('handleOccurrence (github.pull_request.feedback, Qodo findings)', () =>
     const h = qodoHarness({ filters: { pullRequests: ['platform'], triggers: ['command'] } });
     expect(await fire(h)).toMatchObject({ ignored: true });
     expect(h.started).toHaveLength(0);
+  });
+});
+
+// ── who initiated the run: provenance, never the credential key ──────
+
+describe('run initiator provenance (decideAndStart)', () => {
+  const OWNER = 'github.com/acme/api';
+  const ACTOR_USER = 'user-actor';
+  const RETRIER = 'user-retrier';
+  const actorSource = {
+    ...workflowRunFailedSource,
+    actor: () => ({ id: '424242', login: 'octo' }),
+  };
+  const withUsers = (h: ReturnType<typeof harness>) =>
+    Object.assign(h.db, {
+      user: { findFirst: vi.fn(async () => ({ id: ACTOR_USER, role: 'ENGINEER' })) },
+    });
+  const decide = async (
+    h: ReturnType<typeof harness>,
+    source: typeof workflowRunFailedSource,
+    retry: Parameters<typeof decideAndStart>[2]['retry']
+  ) => {
+    const connection = (await h.db.connection.findMany({}))[0];
+    return decideAndStart(h.fastify as never, source, {
+      automation: trigger(),
+      connection: connection as never,
+      facts: occurrence(failed).facts,
+      now: new Date(),
+      ownerKey: OWNER,
+      retry,
+      startRetryDelayMs: 0,
+      team: connection?.team as never,
+    });
+  };
+  /** An earlier decision of the same occurrence that started nothing, for a manual retry. */
+  const earlierDecision = (h: ReturnType<typeof harness>) =>
+    h.fires.push({
+      automationId: trigger().id,
+      createdAt: new Date(0),
+      dedupeKey: workflowRunFailedSource.dedupeKey(OWNER, occurrence(failed).facts),
+      id: 'fire-old',
+      outcome: 'FAILED_TO_START',
+      ownerKey: OWNER,
+      scopeKey: 'release/1.4',
+      source: WORKFLOW_RUN_FAILED,
+      subjectKey: failed.headSha,
+    });
+  const startedRequest = (h: ReturnType<typeof harness>) =>
+    h.started[0]?.input.request as Record<string, unknown>;
+
+  it('stamps the person a source resolves as the initiator of a normal fire', async () => {
+    const h = harness();
+    withUsers(h);
+    await expect(decide(h, actorSource, { kind: 'redelivery' })).resolves.toMatchObject({
+      outcome: 'STARTED',
+    });
+    expect(startedRequest(h)).toMatchObject({
+      initiatedById: ACTOR_USER,
+      trigger: 'automation',
+      triggerRefId: trigger().id,
+    });
+    expect(h.runInputs[0]).toMatchObject({ requestedById: ACTOR_USER });
+    expect(startedRequest(h)).not.toHaveProperty('launchedById');
+  });
+
+  it('stamps no initiator for a fire with no actor', async () => {
+    const h = harness();
+    await decide(h, workflowRunFailedSource, { kind: 'redelivery' });
+    expect(startedRequest(h)).toMatchObject({ trigger: 'automation' });
+    expect(startedRequest(h)).not.toHaveProperty('initiatedById');
+  });
+
+  it('stamps the person who retried, not the original actor, on a manual retry', async () => {
+    const h = harness();
+    withUsers(h);
+    earlierDecision(h);
+    await expect(
+      decide(h, actorSource, { by: RETRIER, fireId: 'fire-old', kind: 'manual' })
+    ).resolves.toMatchObject({ outcome: 'STARTED' });
+    expect(startedRequest(h)).toMatchObject({
+      initiatedById: RETRIER,
+      trigger: 'automation',
+      triggerRefId: trigger().id,
+    });
+    // The credential key and the requester are untouched: the requester stays the event's actor.
+    expect(h.runInputs[0]).toMatchObject({ requestedById: ACTOR_USER });
+    expect(startedRequest(h)).not.toHaveProperty('launchedById');
+  });
+
+  it('stamps the person who retried when the original event had no actor', async () => {
+    const h = harness();
+    earlierDecision(h);
+    await expect(
+      decide(h, workflowRunFailedSource, { by: RETRIER, fireId: 'fire-old', kind: 'manual' })
+    ).resolves.toMatchObject({ outcome: 'STARTED' });
+    expect(startedRequest(h)).toMatchObject({ initiatedById: RETRIER, trigger: 'automation' });
+    expect(h.runInputs[0]).toMatchObject({ requestedById: null });
   });
 });

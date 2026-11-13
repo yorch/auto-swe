@@ -126,6 +126,9 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
       dashboardUrl: `${origin}/runs/${data.id}`,
       endedAt: data.endedAt,
       id: data.id,
+      initiatedBy: data.initiatedBy,
+      initiatedByService: data.initiatedByService,
+      rerunOfRunId: data.rerunOfRunId,
       result: projectRunResult(data.result, await githubHosts()),
       startedAt: data.startedAt,
       status: data.status,
@@ -138,6 +141,8 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
       templateName: data.templateName,
       tokensInputTotal: data.tokensInputTotal,
       tokensOutputTotal: data.tokensOutputTotal,
+      trigger: data.trigger,
+      triggerRefId: data.triggerRefId,
       workRequest: data.workRequest,
     };
   };

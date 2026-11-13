@@ -68,6 +68,14 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
         ? { knowledgeBaseOverrides: input.request.knowledgeBaseOverrides }
         : {}),
       launchedById: input.request.launchedById,
+      // Provenance only; absent keys keep a replayed or older start's input unchanged.
+      ...(input.request.trigger ? { trigger: input.request.trigger } : {}),
+      ...(input.request.triggerRefId ? { triggerRefId: input.request.triggerRefId } : {}),
+      ...(input.request.initiatedById ? { initiatedById: input.request.initiatedById } : {}),
+      ...(input.request.initiatedByServiceId
+        ? { initiatedByServiceId: input.request.initiatedByServiceId }
+        : {}),
+      ...(input.request.rerunOfRunId ? { rerunOfRunId: input.request.rerunOfRunId } : {}),
       payload: input.request.payload,
       runConnectionId: input.request.connectionId ?? input.request.repoId ?? null,
       templateId: input.templateId,

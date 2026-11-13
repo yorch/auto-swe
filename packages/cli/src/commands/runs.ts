@@ -7,7 +7,7 @@ import {
 import { apiRequest, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 import { missingValue, parseFlags } from '../lib/flags.js';
-import { pad, parsePositiveInt } from '../lib/format.js';
+import { clean, pad, parsePositiveInt } from '../lib/format.js';
 import { sleep } from '../lib/time.js';
 
 /**
@@ -85,18 +85,37 @@ async function cmdList(args: string[], env: CliEnv): Promise<number> {
     return 0;
   }
   process.stdout.write(
-    `${pad('ID', 38) + pad('TICKET', 18) + pad('STATUS', 12) + pad('TPLv', 6)}STARTED\n`
+    `${pad('ID', 38) + pad('TICKET', 18) + pad('STATUS', 12) + pad('INITIATED BY', 24) + pad('TPLv', 6)}STARTED\n`
   );
   for (const r of rows) {
     process.stdout.write(
       pad(r.id, 38) +
         pad(r.workRequest?.externalTicketId ?? '-', 18) +
         pad(r.status, 12) +
+        padTruncated(initiatorLabel(r), 24) +
         pad(`v${r.templateVersion}`, 6) +
         `${r.startedAt}\n`
     );
   }
   return 0;
+}
+
+/** The INITIATED BY cell: the person or service that started the run, else its trigger. */
+function initiatorLabel(r: WorkflowRunSummary): string {
+  if (r.initiatedBy) {
+    const name = clean(r.initiatedBy.name?.trim() ?? '');
+    return name ? name : clean(r.initiatedBy.email);
+  }
+  if (r.initiatedByService) {
+    return clean(r.initiatedByService.name);
+  }
+  return clean(r.trigger ?? '-');
+}
+
+/** Like pad(), but a value that does not fit ends in an ellipsis so a cut email is not mistaken
+ * for a complete one. */
+function padTruncated(s: string, w: number): string {
+  return s.length >= w ? `${s.slice(0, w - 1)}…` : pad(s, w);
 }
 
 async function cmdShow(args: string[], env: CliEnv): Promise<number> {

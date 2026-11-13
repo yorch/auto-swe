@@ -210,6 +210,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
             description,
             epicWorkflowId,
             externalTicketId,
+            initiatedById: user.sub,
             launchedById: user.sub,
             repoIds,
             repos: [], // Empty — Planner Agent will decompose

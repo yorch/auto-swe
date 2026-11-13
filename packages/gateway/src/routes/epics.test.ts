@@ -198,6 +198,7 @@ describe('epic routes', () => {
   let workRequestFixtures: Array<Record<string, unknown>> = [];
   let epicStartShouldConflict = false;
   const startedEpicIds: string[] = [];
+  const startedEpicRequests: Array<Record<string, unknown>> = [];
   const createdWorkRequests: Array<Record<string, unknown>> = [];
 
   beforeAll(async () => {
@@ -357,13 +358,14 @@ describe('epic routes', () => {
 
     app.decorate('prisma', prismaMock as unknown as never);
     app.decorate('temporal', {
-      startEpicWorkflow: async (id: string) => {
+      startEpicWorkflow: async (id: string, request: Record<string, unknown>) => {
         if (epicStartShouldConflict) {
           const err = new Error('already started');
           err.name = 'WorkflowExecutionAlreadyStartedError';
           throw err;
         }
         startedEpicIds.push(id);
+        startedEpicRequests.push(request);
       },
     } as unknown as never);
 
@@ -383,6 +385,7 @@ describe('epic routes', () => {
     workRequestFixtures = [];
     epicStartShouldConflict = false;
     startedEpicIds.length = 0;
+    startedEpicRequests.length = 0;
     createdWorkRequests.length = 0;
     orgMonthlyUsageFixtures = {};
   });
@@ -438,6 +441,21 @@ describe('epic routes', () => {
         externalTicketId: 'EPIC-1',
         isCrossRepo: true,
         requestedById: currentSub,
+      });
+    });
+
+    it('stamps the acting user as the epic initiator, beside the credential launcher', async () => {
+      currentRole = 'ADMIN';
+      const res = await app.inject({
+        headers: auth,
+        method: 'POST',
+        payload,
+        url: '/api/v1/epics',
+      });
+      expect(res.statusCode).toBe(201);
+      expect(startedEpicRequests[0]).toMatchObject({
+        initiatedById: currentSub,
+        launchedById: currentSub,
       });
     });
 

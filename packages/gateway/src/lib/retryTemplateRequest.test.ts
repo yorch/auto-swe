@@ -165,11 +165,16 @@ describe('generic workflow retry', () => {
     expect(response.statusCode).toBe(201);
     expect(start).toHaveBeenCalledWith(expect.stringMatching(/^wf-/), {
       request: expect.objectContaining({
+        // The credential key and the provenance both name the retrier; the run it repeats is the
+        // work request's latest, as a WorkflowRun id.
+        initiatedById: 'retry-caller',
         launchedById: 'retry-caller',
         payload: {
           description: expect.stringContaining('Include migration notes'),
           pageId: 'page-1',
         },
+        rerunOfRunId: 'old-run',
+        trigger: 'template-retry',
         workRequestId: input.id,
       }),
       templateId: input.templateId,
@@ -180,6 +185,10 @@ describe('generic workflow retry', () => {
       data: expect.objectContaining({ workRequestId: input.id }),
     });
     expect(prisma.workflowRun.findFirst.mock.calls[0][0]).toHaveProperty('where.AND');
+    // The repeated run is looked up on this work request, not another.
+    expect(prisma.workflowRun.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { workRequestId: input.id } })
+    );
     await app.close();
   });
 

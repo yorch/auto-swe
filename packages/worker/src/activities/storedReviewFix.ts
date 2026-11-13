@@ -66,6 +66,8 @@ export async function startStoredReviewFix(
         ...(saved.requestedById ? { launchedById: saved.requestedById } : {}),
         payload: saved.payload,
         requestPayload: saved.requestPayload ?? JSON.stringify(saved.payload),
+        trigger: 'review-fix',
+        triggerRefId: runId,
         workRequestId,
         workspaceProvider: 'git_repo',
       },
@@ -144,6 +146,9 @@ export async function startStoredReviewFix(
     payload: agentPayload,
     repoId: repo.id,
     requestPayload: JSON.stringify(agentPayload),
+    // Provenance: a fix of the review `runId`. No initiator is carried to this activity.
+    trigger: 'review-fix',
+    triggerRefId: runId,
     workRequestId,
     workspaceProvider: 'git_repo',
   };

@@ -1,5 +1,6 @@
 import type { EgressPolicy } from '../lib/egressPolicy.js';
 import type { KnowledgeBaseOverrides } from '../lib/knowledgeBaseResolution.js';
+import type { RunTrigger } from '../lib/runTrigger.js';
 import type { WorkspaceProviderType } from '../lib/workspaceProviders.js';
 
 // ── Workflow Types ──
@@ -54,6 +55,18 @@ export interface RunRequest {
    * direction.
    */
   launchedById?: string;
+  /**
+   * Provenance of this execution, written once onto `WorkflowRun` at create and never used for
+   * credentials or control flow (that is `launchedById`). `trigger` is what started it,
+   * `triggerRefId` the opaque id of the automation, schedule or parent workflow, `initiatedById`
+   * / `initiatedByServiceId` the person or service principal who did, and `rerunOfRunId` the run
+   * this re-runs. All optional, so a workflow started before they existed stays valid.
+   */
+  trigger?: RunTrigger;
+  triggerRefId?: string;
+  initiatedById?: string;
+  initiatedByServiceId?: string;
+  rerunOfRunId?: string;
   /**
    * Target `Connection` id, or null when the run is not scoped to one.
    * Generic runs that only use agent/shell/container/API steps set this to null.
@@ -310,6 +323,13 @@ export interface EpicRequest {
   workRequestId: string;
   /** Who started the epic; each child run is launched on their behalf. See `RunRequest.launchedById`. */
   launchedById?: string;
+  /**
+   * The person or service principal who started the epic, copied onto each child run's
+   * provenance (`RunRequest.initiatedById` / `initiatedByServiceId`). Absent on an epic started
+   * before they existed.
+   */
+  initiatedById?: string;
+  initiatedByServiceId?: string;
   repos: EpicRepoEntry[];
   /** Candidate repo IDs for planner to consider (used when repos[] is empty) */
   repoIds?: string[];

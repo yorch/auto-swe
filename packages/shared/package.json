@@ -19,6 +19,7 @@
     "./lib/reportDigestUnsubscribe": "./dist/lib/reportDigestUnsubscribe.js",
     "./lib/securityTraceTags": "./dist/lib/securityTraceTags.js",
     "./lib/runEffects": "./dist/lib/runEffects.js",
+    "./lib/runTrigger": "./dist/lib/runTrigger.js",
     "./lib/credentialScope": "./dist/lib/credentialScope.js",
     "./lib/agentPrompts": "./dist/lib/agentPrompts.js",
     "./lib/artifactStore": "./dist/lib/artifactStore.js",

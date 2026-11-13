@@ -166,6 +166,16 @@ describe('createChannelTaskRun', () => {
     });
   });
 
+  it('stamps channel-task provenance with the channel row id and no initiator for the general route', async () => {
+    // The general route's input carries no requester (the same reason its RunInput records no
+    // `requestedById`), so there is nobody to name even when a Slack id would link.
+    findUser.mockResolvedValue({ id: 'user-1', role: 'ENGINEER' } as never);
+    const { request } = await createChannelTaskRun(INPUT);
+
+    expect(request).toMatchObject({ trigger: 'channel-task', triggerRefId: 'chan-1' });
+    expect(request.initiatedById).toBeUndefined();
+  });
+
   it('throws when the Channel Task template is not seeded', async () => {
     findTemplate.mockResolvedValue(null);
 
@@ -410,6 +420,17 @@ describe('createChannelCodeTaskRun', () => {
       await createChannelCodeTaskRun(INPUT);
       expect(createRunInput.mock.calls[0]?.[0]?.data).toMatchObject({
         requestedById: 'user-1',
+      });
+    });
+
+    it('stamps the code task request with the asker as initiator and the channel as ref', async () => {
+      const result = await createChannelCodeTaskRun(INPUT);
+      expect(isChannelTaskRefusal(result)).toBe(false);
+      expect((result as { request: unknown }).request).toMatchObject({
+        initiatedById: 'user-1',
+        launchedById: 'user-1',
+        trigger: 'channel-task',
+        triggerRefId: 'chan-1',
       });
     });
 

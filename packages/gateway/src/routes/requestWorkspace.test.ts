@@ -108,6 +108,59 @@ describe('request workspace', () => {
     await app.close();
   });
 
+  it('serializes run provenance, selects the initiator minimally and never sends launchedById', async () => {
+    const { app, prisma } = await build();
+    prisma.workflowRun.findMany.mockResolvedValueOnce([latest[0]]).mockResolvedValueOnce([
+      {
+        ...latest[0],
+        endedAt: null,
+        initiatedBy: {
+          email: 'dev@corp.test',
+          id: '33333333-3333-4333-8333-333333333333',
+          name: 'Dev Person',
+          passwordHash: 'PLANTED-HASH',
+        },
+        initiatedByService: { id: '44444444-4444-4444-8444-444444444444', name: 'ci-bot' },
+        launchedById: 'launcher-credential-key',
+        rerunOfRunId: '55555555-5555-4555-8555-555555555555',
+        startedAt: new Date(),
+        template: { name: 'Update deps', workspaceProvider: 'git_repo' },
+        trigger: 'automation',
+        triggerRefId: 'automation-1',
+        workflowId: 'wf-success',
+        workRequest: {
+          _count: { workflowRuns: 1 },
+          activeWorkflows: [],
+          connection: null,
+          description: 'Update dependencies',
+          externalTicketId: 'DEP-1',
+          id: 'request',
+        },
+      },
+    ]);
+    const response = await app.inject({ headers: auth, url: '/runs/requests' });
+    expect(response.statusCode).toBe(200);
+    const row = response.json().data[0];
+    expect(row).toMatchObject({
+      initiatedBy: {
+        email: 'dev@corp.test',
+        id: '33333333-3333-4333-8333-333333333333',
+        name: 'Dev Person',
+      },
+      initiatedByService: { id: '44444444-4444-4444-8444-444444444444', name: 'ci-bot' },
+      rerunOfRunId: '55555555-5555-4555-8555-555555555555',
+      trigger: 'automation',
+      triggerRefId: 'automation-1',
+    });
+    expect(row).not.toHaveProperty('launchedById');
+    expect(JSON.stringify(response.json())).not.toMatch(/launcher-credential-key|PLANTED-HASH/);
+    const projection = prisma.workflowRun.findMany.mock.calls[1][0];
+    expect(projection.include.initiatedBy).toEqual({
+      select: { email: true, id: true, name: true },
+    });
+    await app.close();
+  });
+
   it('names the owning team of each request, from one extra query over the page’s runs', async () => {
     const { app, prisma } = await build();
     const repo = (id: string, name: string, slug: string) => ({

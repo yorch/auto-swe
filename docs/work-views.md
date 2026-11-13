@@ -116,7 +116,8 @@ metric:
   request and human-step lists also match runs of a template the team owns
   (`runListTeamScope()` in `gateway/src/lib/runTeamScope.ts`); the repository list is
   `repositoryTeamScope()` alone. Agent runs have no list of their own: they list through
-  `GET /workflow-runs`.
+  `GET /workflow-runs`. Each run in those lists carries who or what started it
+  ([run-provenance.md](./run-provenance.md)).
 - **Metrics scope: owner only.** `GET /pull-requests/outcomes` and its export match pull requests
   whose attribution run (`PullRequest.runId`) is attributed to the team (`WorkflowRun.attributedTeamId`,
   `runMetricsTeamScope()`), so a repository shared with another team is counted once, by its owner.

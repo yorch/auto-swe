@@ -216,7 +216,8 @@ describe('automationRoutes (inbound.event)', () => {
     expect(engine.decideAndStart.mock.calls[0]?.[2]).toMatchObject({
       connection: null,
       ownerKey: `@endpoint/${ENDPOINT}`,
-      retry: { fireId: FIRE, kind: 'manual' },
+      // The person who clicked retry, so provenance names them as the initiator.
+      retry: { by: 'user-1', fireId: FIRE, kind: 'manual' },
     });
 
     for (const ownerKey of [

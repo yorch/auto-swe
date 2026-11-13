@@ -103,12 +103,18 @@ async function dispatch(runId: string): Promise<void> {
         select: { launchedById: true },
         where: { id: runId },
       });
-      const prepared = await prepareReviewLaunch(prisma, {
+      const unstamped = await prepareReviewLaunch(prisma, {
         launchedById: source.launchedById,
         nonceHex: intent.id.replace(/-/g, ''),
         presetId: intent.presetId,
         sourceRunId: runId,
       });
+      // An automatic review has no person behind it: provenance names the reviewed run and no
+      // initiator. `launchedById` above is the credential key and is deliberately not copied.
+      const prepared = {
+        ...unstamped,
+        request: { ...unstamped.request, trigger: 'code-review' as const, triggerRefId: runId },
+      };
       const org = await prisma.organization.findUnique({
         select: { monthlyBudgetUsdCents: true },
         where: { id: prepared.repo.team.orgId },

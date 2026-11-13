@@ -58,6 +58,7 @@ import {
   sendCallbackRefusal,
 } from '../lib/runCallbackLaunch.js';
 import { validateRunConnection } from '../lib/runConnection.js';
+import { latestRunIdForWorkRequest, runProvenance } from '../lib/runProvenance.js';
 import {
   idempotencyCallerScope,
   sendServiceLaunchRefusal,
@@ -503,6 +504,15 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       workRequestId,
       workspaceProvider: 'git_repo',
       ...(knowledgeBaseOverrides ? { knowledgeBaseOverrides } : {}),
+      ...runProvenance({
+        actor: user,
+        // A re-run names the work request it repeats; the run it repeats is that request's latest.
+        rerunOfRunId: input.workRequestId
+          ? await latestRunIdForWorkRequest(fastify.prisma, input.workRequestId, fastify.log)
+          : undefined,
+        serviceId: service?.servicePrincipalId,
+        trigger: service ? 'service-token' : 'agent-run',
+      }),
     };
 
     // Ledger rows first, workflow second, rolled back if the start fails. The

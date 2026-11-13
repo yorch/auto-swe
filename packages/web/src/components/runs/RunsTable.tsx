@@ -10,6 +10,7 @@ import { cn, FOCUS_RING } from '@/lib/utils';
 import {
   costColumn,
   durationColumn,
+  initiatedByColumn,
   statusColumn,
   timeColumn,
   titleColumn,
@@ -58,6 +59,7 @@ export function RunsTable({
           ) : null
         ),
         workflowColumn<WorkflowRunSummary>(),
+        initiatedByColumn<WorkflowRunSummary>(),
         durationColumn<WorkflowRunSummary>(),
         costColumn<WorkflowRunSummary>(),
         timeColumn<WorkflowRunSummary>('Started', (run) => run.startedAt),

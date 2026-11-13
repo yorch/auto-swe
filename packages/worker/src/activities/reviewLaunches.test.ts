@@ -184,6 +184,18 @@ describe('review dispatcher and fallback', () => {
       where: { id: intent.id },
     });
   });
+  it('stamps an automatic review with the reviewed run and no initiator', async () => {
+    await dispatchReviewLaunches('source');
+    const recorded = mocks.record.mock.calls[0]?.[1] as { request: Record<string, unknown> };
+    expect(recorded.request).toMatchObject({
+      trigger: 'code-review',
+      triggerRefId: 'source',
+      workRequestId: 'input',
+    });
+    // The source launcher is a credential key, never copied into provenance.
+    expect(recorded.request).not.toHaveProperty('initiatedById');
+    expect(recorded.request).not.toHaveProperty('initiatedByServiceId');
+  });
   it('does not launch when another dispatcher wins the claim', async () => {
     mocks.db.reviewLaunchIntent.updateMany.mockResolvedValue({ count: 0 });
     await dispatchReviewLaunches('source');

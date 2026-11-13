@@ -2722,6 +2722,13 @@ describe('POST /api/v1/auth/slack/interactive — run modal submission', () => {
     });
   });
 
+  it('stamps the Slack door and the linked platform user, beside the credential key', async () => {
+    await submit(runModalPayload());
+    expect(state.runnableStarts[0]?.args).toMatchObject({
+      request: { initiatedById: 'u1', launchedById: 'u1', trigger: 'slack' },
+    });
+  });
+
   it('rejects a ticket id that is not a valid branch component', async () => {
     const res = await submit(runModalPayload({ ticket: 'fix it; rm -rf /' }));
     expect(res.json()).toMatchObject({

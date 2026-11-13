@@ -56,6 +56,7 @@ import {
 import { paginationQuery } from '../lib/pagination.js';
 import { retryTemplateRequest } from '../lib/retryTemplateRequest.js';
 import { authorizePayloadDeclaredConnections } from '../lib/runConnection.js';
+import { latestRunIdForWorkRequest, runProvenance } from '../lib/runProvenance.js';
 import { isSystemTemplate } from '../lib/systemTemplate.js';
 import {
   inputsSatisfySchema,
@@ -798,6 +799,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         repoId: repo.id,
         requestPayload,
         workRequestId,
+        ...runProvenance({ actor: user, trigger: 'work-request' }),
         ...(canaryPin ?? {}),
       };
       const launch = await launchTrackedWorkflow(
@@ -1258,6 +1260,15 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         requestPayload: workRequest.requestPayload,
         workRequestId: workRequest.id,
         workspaceProvider: 'git_repo',
+        ...runProvenance({
+          actor: user,
+          rerunOfRunId: await latestRunIdForWorkRequest(
+            fastify.prisma,
+            workRequest.id,
+            fastify.log
+          ),
+          trigger: 'work-request-retry',
+        }),
         ...(canaryPin ?? {}),
       };
       // Re-run: the RunInput already exists, so only the ActiveWorkflow row is

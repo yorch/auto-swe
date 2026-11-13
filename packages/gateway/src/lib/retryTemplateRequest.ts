@@ -14,6 +14,7 @@ import { storedKnowledgeBases, validateKnowledgeBaseOverrides } from './knowledg
 import { authorizeLaunch, sendLaunchRefusal } from './launchAuthorization.js';
 import { launchBaseBranch } from './launchBaseBranch.js';
 import { validateRunConnection } from './runConnection.js';
+import { latestRunIdForWorkRequest, runProvenance } from './runProvenance.js';
 import { buildWorkflowRunVisibilityFilter } from './runVisibility.js';
 import { isSystemTemplate } from './systemTemplate.js';
 import {
@@ -257,6 +258,11 @@ export async function retryTemplateRequest(
     requestPayload: input.requestPayload,
     workRequestId: input.id,
     workspaceProvider: template.workspaceProvider as WorkspaceProviderType | null,
+    ...runProvenance({
+      actor: user,
+      rerunOfRunId: await latestRunIdForWorkRequest(app.prisma, input.id, app.log),
+      trigger: 'template-retry',
+    }),
   };
   const launched = await launchTrackedWorkflow(
     app.prisma,

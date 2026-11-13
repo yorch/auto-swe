@@ -76,6 +76,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/runEffects.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/runTrigger',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/runTrigger.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/securityTraceTags',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/securityTraceTags.ts'),
       },

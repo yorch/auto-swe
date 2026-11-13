@@ -288,6 +288,8 @@ describe('review fix launches', () => {
     );
     const request = m.start.mock.calls[0]?.[1].args[0].request;
     expect(request.launchedById).toBeUndefined();
+    expect(request).toMatchObject({ trigger: 'review-fix', triggerRefId: RUN });
+    expect(request).not.toHaveProperty('initiatedById');
   });
   it('deduplicates completed launches by review run, even after the host head moves', async () => {
     const first = await startReviewFix(payload, RUN);
@@ -309,6 +311,11 @@ describe('review fix launches', () => {
     m.template.mockResolvedValue({ activeVersion: 2, id: 'new-template' });
     await startReviewFix(payload, RUN);
     expect(m.start.mock.calls[1]?.[1].args[0]).toEqual(firstLaunch);
+    // The resumed request keeps its provenance.
+    expect(m.start.mock.calls[1]?.[1].args[0].request).toMatchObject({
+      trigger: 'review-fix',
+      triggerRefId: RUN,
+    });
     expect(m.runInput).toHaveBeenCalledOnce();
   });
   it('skips when no repository automation explicitly opts in', async () => {

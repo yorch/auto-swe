@@ -110,6 +110,75 @@ describe('workflowRunRoutes GET / (list)', () => {
     expect(where.template).toEqual({ name: { notIn: ['Channel Assistant', 'Channel Task'] } });
   });
 
+  it('returns run provenance and the initiator, selecting only the columns it names', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.workflowRun.count.mockResolvedValue(2);
+    prisma.workflowRun.findMany.mockResolvedValue([
+      {
+        costUsdAccrued: 0,
+        endedAt: null,
+        id: 'r-1',
+        initiatedBy: { email: 'dev@corp.test', id: 'u-1', name: 'Dev', passwordHash: 'x' },
+        initiatedByService: null,
+        launchedById: 'u-1',
+        outcomeDomain: null,
+        outcomeType: null,
+        rerunOfRunId: 'r-0',
+        startedAt: new Date('2026-01-01T00:00:00Z'),
+        status: 'RUNNING',
+        template: { name: 'T', workspaceProvider: null },
+        templateId: 't-1',
+        templateVersion: 1,
+        trigger: 'template-retry',
+        triggerRefId: 'ref-1',
+        workflowId: 'wf-1',
+        workRequest: null,
+      },
+      {
+        costUsdAccrued: 0,
+        endedAt: null,
+        id: 'r-2',
+        initiatedBy: null,
+        initiatedByService: { id: 'sp-1', name: 'ci-bot' },
+        launchedById: null,
+        outcomeDomain: null,
+        outcomeType: null,
+        startedAt: new Date('2026-01-01T00:00:00Z'),
+        status: 'RUNNING',
+        template: { name: 'T', workspaceProvider: null },
+        templateId: 't-1',
+        templateVersion: 1,
+        trigger: 'not-a-trigger',
+        workflowId: 'wf-2',
+        workRequest: null,
+      },
+    ]);
+    const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/workflow-runs' });
+    expect(res.statusCode).toBe(200);
+    const include = prisma.workflowRun.findMany.mock.calls[0][0].include;
+    expect(include.initiatedBy).toEqual({ select: { email: true, id: true, name: true } });
+    expect(include.initiatedByService).toEqual({ select: { id: true, name: true } });
+    const [one, two] = res.json().data;
+    expect(one).toMatchObject({
+      initiatedBy: { email: 'dev@corp.test', id: 'u-1', name: 'Dev' },
+      initiatedByService: null,
+      isMine: true,
+      rerunOfRunId: 'r-0',
+      trigger: 'template-retry',
+      triggerRefId: 'ref-1',
+    });
+    expect(one.initiatedBy).not.toHaveProperty('passwordHash');
+    expect(two).toMatchObject({
+      initiatedBy: null,
+      initiatedByService: { id: 'sp-1', name: 'ci-bot' },
+      isMine: false,
+      rerunOfRunId: null,
+      trigger: null,
+      triggerRefId: null,
+    });
+    expect(JSON.stringify(res.json())).not.toContain('launchedById');
+  });
+
   it('includes channel chatter runs when includeChannel=true', async () => {
     const { app, prisma } = await buildApp();
     const res = await app.inject({
@@ -233,6 +302,39 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
       },
     ]);
   }
+
+  it('returns run provenance and never the launching credential key', async () => {
+    const { app, prisma } = await buildApp();
+    mockRun(prisma);
+    prisma.workflowRun.findFirst.mockResolvedValue({
+      ...(await prisma.workflowRun.findFirst()),
+      initiatedBy: { email: 'dev@corp.test', id: 'u-1', name: null },
+      initiatedByService: null,
+      launchedById: 'u-9',
+      rerunOfRunId: 'r-0',
+      trigger: 'schedule',
+      triggerRefId: 'sched-1',
+    });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}`,
+    });
+    expect(res.statusCode).toBe(200);
+    const include = prisma.workflowRun.findFirst.mock.calls.find(([arg]) => arg?.include)?.[0]
+      .include;
+    expect(include.initiatedBy).toEqual({ select: { email: true, id: true, name: true } });
+    expect(include.initiatedByService).toEqual({ select: { id: true, name: true } });
+    expect(res.json().data).toMatchObject({
+      initiatedBy: { email: 'dev@corp.test', id: 'u-1', name: null },
+      initiatedByService: null,
+      rerunOfRunId: 'r-0',
+      trigger: 'schedule',
+      triggerRefId: 'sched-1',
+    });
+    expect(JSON.stringify(res.json())).not.toContain('launchedById');
+    expect(JSON.stringify(res.json())).not.toContain('u-9');
+  });
 
   it('omits traces and skips the agentTrace query by default', async () => {
     const { app, prisma } = await buildApp();

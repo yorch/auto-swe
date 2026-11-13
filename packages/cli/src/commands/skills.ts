@@ -3,7 +3,7 @@ import type { PreviewSkill, SkillSourceSummary } from '@auto-swe/shared/lib/skil
 import { apiRequest, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 import { FLAG_PRESENT, missingValue, parseFlags } from '../lib/flags.js';
-import { pad } from '../lib/format.js';
+import { clean, pad } from '../lib/format.js';
 
 /**
  * `auto-swe skills sources` — import skills from an external GitHub / GitHub
@@ -103,12 +103,6 @@ export async function runSkillsCommand(
 
 // Everything below that came from the server describes a third-party repository: its
 // names can carry terminal escapes, so control characters never reach the terminal.
-// An emoji renders as one: a variation selector after a pictograph (not (c), (r), TM), a keycap's
-// selector and a joiner between two pictographs are left alone; the rest is replaced or shown.
-const CONTROL =
-  /(?!(?:(?<=[0-9#*])\uFE0F(?=\u20E3)|(?<=[\p{Emoji_Presentation}\p{Extended_Pictographic}])(?<![\u00A9\u00AE\u2122])[\uFE0E\uFE0F]))(?!(?<=\p{Extended_Pictographic}[\u{1F3FB}-\u{1F3FF}]?\uFE0F?)\u200D(?=\p{Extended_Pictographic}))[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
-const clean = (s: string) => s.replace(CONTROL, '?');
-
 const short = (sha: string) => clean(sha).slice(0, 7);
 const where = (s: { host: string; owner: string; repo: string; path: string }) =>
   clean(

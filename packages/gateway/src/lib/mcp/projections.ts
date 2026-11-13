@@ -6,13 +6,17 @@ import { isValidTicketId } from '../ticketId.js';
  * What a tool result may carry, and nothing else.
  *
  * An MCP result goes into a model's context, so anything written by another person (a ticket
- * description, a requester's name, a step's error text, a trace) is a prompt-injection channel.
- * Every projection here is therefore an explicit allowlist, built in two layers: the schema that
- * reads the REST body names only the fields we use (so an added REST field cannot reach a tool by
- * accident), and the schema of the result is the shape clients are told about. Free text never
- * appears: identifiers, enums, numbers, timestamps, one validated URL, and the few short names
- * team members author (a template, a node, a human step's title), clipped and stripped of control
- * characters.
+ * description, a step's error text, a trace) is a prompt-injection channel. Every projection here
+ * is therefore an explicit allowlist, built in two layers: the schema that reads the REST body
+ * names only the fields we use (so an added REST field cannot reach a tool by accident), and the
+ * schema of the result is the shape clients are told about. Free text never appears: identifiers,
+ * enums, numbers, timestamps, one validated URL, and the few short names team members author (a
+ * template, a node, a human step's title), clipped and stripped of control characters.
+ *
+ * One deliberate exception, an explicit product decision: the run tools return a run's initiator
+ * name and email and the initiating service principal's name. These are user- or admin-controlled
+ * text. They are control/bidi-stripped and length-clipped but NOT semantically sanitized, so a
+ * consumer must treat them as untrusted text.
  */
 
 /**
@@ -164,6 +168,60 @@ export const restWorkRequests = z.object({
   meta,
 });
 
+/** A trigger reference id longer than this is dropped, not truncated: a clipped id looks valid. */
+export const TRIGGER_REF_ID_MAX = 200;
+
+/**
+ * Run provenance as the REST routes send it. Each name is team-member or user authored, so it is
+ * cleaned and clipped like every other name here; a body without the field reads as null.
+ */
+const restProvenance = {
+  initiatedBy: z
+    .object({
+      email: shortName(320),
+      id: z.string().uuid(),
+      name: shortName(200).nullable().optional().default(null),
+    })
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null),
+  initiatedByService: z
+    .object({ id: z.string().uuid(), name: shortName(200) })
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null),
+  rerunOfRunId: z
+    .string()
+    .uuid()
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null),
+  trigger: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((v) => (v != null && /^[a-z][a-z-]{0,31}$/.test(v) ? v : null)),
+  triggerRefId: z
+    .string()
+    .transform((s) => {
+      const c = cleaned(s);
+      return [...c].length > TRIGGER_REF_ID_MAX ? null : c;
+    })
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null),
+};
+
+const outputProvenance = {
+  initiatedBy: z
+    .object({ email: z.string(), id: z.string(), name: z.string().nullable() })
+    .nullable(),
+  initiatedByService: z.object({ id: z.string(), name: z.string() }).nullable(),
+  rerunOfRunId: z.string().nullable(),
+  trigger: z.string().nullable(),
+  triggerRefId: z.string().nullable(),
+};
+
 export const restRuns = z.object({
   data: z.array(
     z.object({
@@ -172,6 +230,7 @@ export const restRuns = z.object({
       id: z.string().uuid(),
       /** Read by `cancel_run` to cancel only runs the caller launched; never returned by a tool. */
       isMine: z.boolean().optional(),
+      ...restProvenance,
       startedAt: timestamp,
       status,
       templateName: shortName(200).nullable(),
@@ -186,6 +245,7 @@ export const restRun = z.object({
     costUsdAccrued: money,
     endedAt: nullableTimestamp,
     id: z.string().uuid(),
+    ...restProvenance,
     result: z.unknown().optional(),
     startedAt: timestamp,
     status,
@@ -258,6 +318,7 @@ export const runsOutput = z.object({
       costUsdAccrued: z.number(),
       endedAt: z.string().nullable(),
       id: z.string(),
+      ...outputProvenance,
       startedAt: z.string(),
       status: z.string(),
       templateName: z.string().nullable(),
@@ -301,6 +362,7 @@ export const runOutput = z.object({
     })
     .nullable(),
   id: z.string(),
+  ...outputProvenance,
   result: z.object({ prNumber: z.number().int(), prUrl: z.string() }).nullable(),
   startedAt: z.string(),
   status: z.string(),

@@ -136,6 +136,11 @@ describe('stored review follow-ups', () => {
       request: { payload: { deliver: 'none' } },
       templateId: 'agent-template',
     });
+    expect(m.start.mock.calls[0]?.[1].args[0].request).toMatchObject({
+      trigger: 'review-fix',
+      triggerRefId: 'review',
+    });
+    expect(m.start.mock.calls[0]?.[1].args[0].request).not.toHaveProperty('initiatedById');
   });
   it('deduplicates each review/attempt, and allocates a new identity for retry', async () => {
     const first = await startStoredReviewFix(payload, 'review');

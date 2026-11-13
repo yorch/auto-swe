@@ -74,6 +74,7 @@ import {
   withoutCallback,
 } from '../lib/runCallbackLaunch.js';
 import { validateRunConnection } from '../lib/runConnection.js';
+import { runProvenance } from '../lib/runProvenance.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import {
   idempotencyCallerScope,
@@ -132,7 +133,11 @@ import {
   workflowRunRollupHorizonMs,
 } from '../lib/workflowRunRollupWindows.js';
 import { type JwtPayload, requireAuth, requireCaller, requireUser } from '../plugins/auth.js';
-import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
+import {
+  projectRunSummary,
+  RUN_INITIATOR_INCLUDE,
+  RunListPaginationQuery,
+} from './workflowProjections.js';
 
 /**
  * Stable marker the `generateWorkflowSpec` activity puts in its thrown message
@@ -2629,6 +2634,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         requestPayload,
         workRequestId,
         workspaceProvider: tpl.workspaceProvider as WorkspaceProviderType | null,
+        ...runProvenance({
+          actor: user,
+          serviceId: service?.servicePrincipalId,
+          trigger: service ? 'service-token' : 'template-run',
+        }),
       };
 
       // Ledger rows first, workflow second, rolled back if the start fails —
@@ -2713,6 +2723,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const [rows, total] = await Promise.all([
         fastify.prisma.workflowRun.findMany({
           include: {
+            ...RUN_INITIATOR_INCLUDE,
             workRequest: {
               select: { description: true, externalTicketId: true, id: true },
             },

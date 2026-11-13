@@ -437,7 +437,15 @@ describe('review launch route', () => {
       expect(res.json().data.workRequestId).not.toBe(res.json().data.runId);
       expect(start).toHaveBeenCalledWith(
         res.json().data.workflowId,
-        expect.objectContaining({ request: expect.objectContaining({ launchedById: SOURCE }) })
+        expect.objectContaining({
+          request: expect.objectContaining({
+            initiatedById: SOURCE,
+            launchedById: SOURCE,
+            trigger: 'code-review',
+            // The reviewed run, as the worker-launched reviews record it.
+            triggerRefId: SOURCE,
+          }),
+        })
       );
       expect(guard.validate).toHaveBeenCalledOnce();
       await app.close();

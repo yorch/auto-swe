@@ -27,7 +27,7 @@ import {
   createTrackerStory,
 } from '@auto-swe/shared/lib/trackerWrite';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
-import { heartbeat } from '@temporalio/activity';
+import { activityInfo, heartbeat } from '@temporalio/activity';
 import { WorkflowIdReusePolicy } from '@temporalio/client';
 import { WorkflowNotFoundError } from '@temporalio/common';
 import { z } from 'zod';
@@ -1067,8 +1067,16 @@ export async function submitPrdWorkRequests(
         description,
         externalTicketId,
         ...(launchedById ? { launchedById } : {}),
+        // Provenance, never a credential key. The initiator is the one the gateway stamped on
+        // the PRD run's own input, which this activity received as `request`.
+        ...(request.initiatedById ? { initiatedById: request.initiatedById } : {}),
+        ...(request.initiatedByServiceId
+          ? { initiatedByServiceId: request.initiatedByServiceId }
+          : {}),
         repoId: repo.id,
         requestPayload,
+        trigger: 'prd-child',
+        triggerRefId: activityInfo().workflowExecution?.workflowId,
         workRequestId,
       };
       try {
