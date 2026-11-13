@@ -433,6 +433,7 @@ describe('executeImplementation base branch', () => {
     await executeImplementation(REQUEST);
 
     expect(vi.mocked(createWorkspace).mock.calls[0]?.[6]).toMatchObject({
+      bundleDelivery: true,
       services: [{ image: 'mirror.gcr.io/library/redis:7', name: 'redis' }],
       teamId: 'team-1',
     });

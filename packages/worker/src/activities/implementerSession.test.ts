@@ -566,6 +566,9 @@ describe('runImplementerFixSession', () => {
     expect(
       execMock.mock.calls.some((c) => String(c[0]).includes("'origin/release/1.4^{commit}'"))
     ).toBe(true);
+    expect(vi.mocked(createWorkspace).mock.calls.at(-1)?.[6]).toMatchObject({
+      bundleDelivery: true,
+    });
     expect(out.baseBranch).toBe('release/1.4');
   });
 

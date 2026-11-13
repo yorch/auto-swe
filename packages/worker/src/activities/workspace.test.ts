@@ -53,6 +53,7 @@ vi.mock('../lib/activityContext.js', () => ({
 }));
 
 import { ApplicationFailure } from '@temporalio/activity';
+import * as bundleDelivery from '../lib/bundleDelivery.js';
 
 const policy = vi.hoisted(() => ({
   setup: 'inherit' as 'inherit' | 'open' | 'restricted',
@@ -1236,6 +1237,37 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
       .mocked(execShellAsync)
       .mock.calls.map((call) => call[0] as string)
       .filter((c) => c.includes('git') && c.includes('clone'));
+
+  it('routes delivery git to trusted bundle transfer, never secretEnv in the agent exec', async () => {
+    const base = 'a'.repeat(40);
+    vi.mocked(execShellAsync).mockImplementation(async (cmd) =>
+      cmd.includes('git rev-parse --verify HEAD^{commit}') ? base : okExec(cmd)
+    );
+    const transfer = vi
+      .spyOn(bundleDelivery, 'runBundleDeliveryGit')
+      .mockImplementation(async (agent) => agent.exec('echo local-bundle-only'));
+    const ws = await createWorkspace(AUTHED, 'work', 'main', undefined, undefined, undefined, {
+      bundleDelivery: true,
+    });
+    try {
+      vi.mocked(execShellAsync).mockClear();
+      for (const command of [
+        "fetch origin '+refs/heads/work:refs/remotes/origin/work'",
+        "ls-remote --heads origin 'work'",
+        "push origin 'work'",
+      ]) {
+        await ws.gitAuthed(command);
+        expect(transfer).toHaveBeenLastCalledWith(ws, expect.any(Function), base, command);
+      }
+      for (const [command, options] of vi.mocked(execShellAsync).mock.calls) {
+        expect(command).not.toContain('ASW_GIT_AUTH');
+        expect(options?.env ?? {}).not.toHaveProperty('ASW_GIT_AUTH');
+      }
+    } finally {
+      transfer.mockRestore();
+      await ws.destroy();
+    }
+  });
 
   it('clones with the clean URL, a per-call auth header, and `--` before the URL', async () => {
     const ws = await createWorkspace(AUTHED, 'auto/TICKET-1', 'main');
