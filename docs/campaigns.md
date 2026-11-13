@@ -297,7 +297,8 @@ Cancelling stops what has not finished and leaves what has:
   row, and to the campaign it is a target that ended without a verdict, so the campaign finishes
   `COMPLETED_WITH_FAILURES`.
 - Cancelling the campaign's workflow directly (from Temporal) behaves the same as the cancel
-  route's signal: the finalizer still runs.
+  route's signal: the finalizer still runs, also when the cancel lands before the first child has
+  started (every target then ends `CANCELLED`).
 - Draft pull requests already opened stay open. They are listed in the detail view for people to
   close; a cancel does not touch the host.
 

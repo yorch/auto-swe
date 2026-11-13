@@ -56,6 +56,7 @@ const cancelledChildren: string[] = [];
 let inFlight = 0;
 let peak = 0;
 let failRecordActivities = false;
+let holdFanningOut = false;
 
 const fakeActivities = {
   async childBegan(): Promise<void> {
@@ -121,6 +122,9 @@ const fakeActivities = {
   },
   async updateDomainState(_workflowId: string, status: string): Promise<void> {
     domainStates.push(status);
+    if (holdFanningOut && status === 'FANNING_OUT') {
+      await new Promise((r) => setTimeout(r, 3000));
+    }
   },
 };
 
@@ -162,6 +166,7 @@ beforeEach((ctx: TestContext) => {
   inFlight = 0;
   peak = 0;
   failRecordActivities = false;
+  holdFanningOut = false;
 });
 
 afterAll(async () => {
@@ -414,6 +419,29 @@ describe('CampaignWorkflow — cancel', () => {
     expect(cancelledOne?.skippedReason).toMatch(/cancelled outside the campaign/);
     expect(results.filter((r) => r.cancelled)).toEqual([]);
     expect(domainStates.at(-1)).toBe('FAILED');
+  }, 60_000);
+
+  it('a cancel during the first ledger write still finalizes every target as not started', async () => {
+    if (!env) {
+      return;
+    }
+    holdFanningOut = true;
+    const ids = repoIds(3);
+    const handle = await env.client.workflow.start('CampaignWorkflow', {
+      args: [campaignInput(ids)],
+      taskQueue: TASK_QUEUE,
+      workflowId: CAMPAIGN_WORKFLOW_ID,
+    });
+    await waitFor(() => domainStates.includes('FANNING_OUT'), 'the first ledger write');
+    await handle.cancel();
+    await handle.result().catch(() => undefined);
+
+    await waitFor(() => finalizations.length === 1, 'finalization');
+    expect(launches).toEqual([]);
+    expect(finalizations[0].cancelled).toBe(true);
+    expect(finalizations[0].notStarted).toEqual(ids);
+    expect(finalizations[0].results).toEqual([]);
+    expect(domainStates.at(-1)).toBe('CANCELLED');
   }, 60_000);
 
   it('cancelling the campaign workflow itself behaves the same and still finalizes', async () => {

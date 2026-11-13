@@ -111,7 +111,17 @@ export async function CampaignWorkflow(input: CampaignWorkflowInput): Promise<Ca
   const childResults: Record<string, WorkflowResult> = {};
   const finished: Array<{ connectionId: string; teamId: string; result: WorkflowResult }> = [];
 
-  await stateActivities.updateDomainState(input.campaignWorkflowId, 'FANNING_OUT');
+  // Under the same protection as the fan-out: a cancel of this workflow that lands while these run
+  // must still reach the finalizer below (every target reported as not started), and a ledger write
+  // that keeps failing must not end the workflow with the campaign STARTING and its targets PENDING.
+  // A cancellation here can only be the campaign's own: no child exists yet.
+  try {
+    await stateActivities.updateDomainState(input.campaignWorkflowId, 'FANNING_OUT');
+  } catch (err) {
+    if (isCancellation(err)) {
+      cancelled = true;
+    }
+  }
   await campaignActivities.recordCampaignState(input.campaignId, 'RUNNING').catch(() => undefined);
 
   /** Run one target's child to a terminal verdict. Never rejects. */
