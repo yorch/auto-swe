@@ -95,6 +95,9 @@ async function buildApp() {
         ? Promise.all(fn)
         : fn({
             $queryRaw: vi.fn(),
+            configAuditLog: {
+              create: (...args: unknown[]) => mockPrisma.configAuditLog.create(...args),
+            },
             connection: { update: (...args: unknown[]) => mockPrisma.connection.update(...args) },
             connectionTeamShare: { deleteMany: vi.fn() },
             evalDataset: {
@@ -105,6 +108,10 @@ async function buildApp() {
               count: (...args: unknown[]) => mockPrisma.knowledgeItem.count(...args),
             },
             team: { findUnique: (...args: unknown[]) => mockPrisma.team.findUnique(...args) },
+            teamSecretGrant: {
+              deleteMany: (...args: unknown[]) => mockPrisma.teamSecretGrant.deleteMany(...args),
+              findMany: (...args: unknown[]) => mockPrisma.teamSecretGrant.findMany(...args),
+            },
           })
     ),
     account: { findMany: vi.fn().mockResolvedValue([]) },
@@ -143,6 +150,8 @@ async function buildApp() {
       findMany: vi.fn(),
       findUnique: vi.fn(),
     },
+    teamSecret: { findMany: vi.fn() },
+    teamSecretGrant: { deleteMany: vi.fn(), findMany: vi.fn() },
     user: { findUnique: vi.fn().mockResolvedValue(null) },
   };
 
@@ -208,6 +217,9 @@ describe('repositoryRoutes', () => {
     ctx.mockPrisma.connection.update.mockReset();
     ctx.mockPrisma.team.findUnique.mockReset();
     ctx.mockPrisma.team.findFirst.mockReset();
+    ctx.mockPrisma.teamSecret.findMany.mockReset().mockResolvedValue([]);
+    ctx.mockPrisma.teamSecretGrant.findMany.mockReset().mockResolvedValue([]);
+    ctx.mockPrisma.teamSecretGrant.deleteMany.mockReset();
     ctx.mockPrisma.teamMembership.findUnique.mockReset();
     ctx.mockPrisma.teamMembership.findMany.mockReset().mockResolvedValue([]);
     ctx.mockPrisma.organizationMembership.findUnique.mockReset();
@@ -1934,6 +1946,37 @@ describe('repositoryRoutes', () => {
         const res = await patch({ teamId: DEST });
         expect(res.statusCode, res.payload).toBe(200);
       });
+
+      it('drops the previous team secret grants in the move and audits only names', async () => {
+        memberships('ADMIN');
+        stored(null);
+        ctx.mockPrisma.teamSecretGrant.findMany.mockResolvedValue([
+          { teamSecret: { name: 'NPM_TOKEN' } },
+        ]);
+        const res = await patch({ teamId: DEST });
+        expect(res.statusCode, res.payload).toBe(200);
+        expect(ctx.mockPrisma.teamSecretGrant.deleteMany).toHaveBeenCalledWith({
+          where: { connectionId: REPO_ID },
+        });
+        const audits = ctx.mockPrisma.configAuditLog.create.mock.calls.map(
+          (c) => (c[0] as { data: Record<string, unknown> }).data
+        );
+        expect(audits).toContainEqual(
+          expect.objectContaining({
+            afterJson: { teamSecretGrants: [] },
+            beforeJson: { fromTeamId: TEAM_ID, teamSecretGrants: ['NPM_TOKEN'] },
+            entityId: REPO_ID,
+          })
+        );
+      });
+
+      it('touches no grants when the repository has none', async () => {
+        memberships('ADMIN');
+        stored(null);
+        const res = await patch({ teamId: DEST });
+        expect(res.statusCode, res.payload).toBe(200);
+        expect(ctx.mockPrisma.teamSecretGrant.deleteMany).not.toHaveBeenCalled();
+      });
     });
 
     it('refuses an unknown gate, and gate commands on a connection that is not a repository', async () => {
@@ -2776,12 +2819,62 @@ describe('repositoryRoutes', () => {
       const res = await ctx.app.inject({ headers: AUTH_HEADER, method: 'GET', url: url() });
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({
-        data: [{ lastFour: 'cdef', name: 'NPM_TOKEN', updatedAt: updatedAt.toISOString() }],
+        data: [
+          {
+            lastFour: 'cdef',
+            name: 'NPM_TOKEN',
+            source: 'repository',
+            updatedAt: updatedAt.toISOString(),
+          },
+        ],
       });
       const query = ctx.mockPrisma.repoSetupSecret.findMany.mock.calls[0]?.[0] as {
         select?: Record<string, boolean>;
       };
       expect(Object.keys(query.select ?? {})).not.toContain('valueCiphertext');
+    });
+
+    it('also lists team secrets granted to the repository, flagging one a repo secret shadows', async () => {
+      ctx.mockPrisma.repoSetupSecret.findMany.mockResolvedValue([
+        { name: 'NPM_TOKEN', updatedAt, valueLastFour: 'cdef' },
+      ]);
+      ctx.mockPrisma.teamSecret.findMany.mockResolvedValue([
+        { name: 'NPM_TOKEN', updatedAt, valueLastFour: 'zzzz' },
+        { name: 'REGISTRY_TOKEN', updatedAt, valueLastFour: 'wxyz' },
+      ]);
+      const res = await ctx.app.inject({ headers: AUTH_HEADER, method: 'GET', url: url() });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toEqual([
+        {
+          lastFour: 'cdef',
+          name: 'NPM_TOKEN',
+          source: 'repository',
+          updatedAt: updatedAt.toISOString(),
+        },
+        {
+          lastFour: 'zzzz',
+          name: 'NPM_TOKEN',
+          shadowed: true,
+          source: 'team',
+          updatedAt: updatedAt.toISOString(),
+        },
+        {
+          lastFour: 'wxyz',
+          name: 'REGISTRY_TOKEN',
+          shadowed: false,
+          source: 'team',
+          updatedAt: updatedAt.toISOString(),
+        },
+      ]);
+      expect(ctx.mockPrisma.teamSecret.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            grants: { some: { connectionId: REPO_ID } },
+            team: { isActive: true },
+            teamId: TEAM_ID,
+          },
+        })
+      );
     });
 
     it('stores the value encrypted and audits only the name', async () => {

@@ -1843,6 +1843,27 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
                       OR: [{ teamId: newTeamId }, { NOT: { team: { orgId: owner?.orgId } } }],
                     },
                   });
+                  // Grants of the previous team's secrets no longer reach this repository
+                  // (the loader checks the current team), so they are dropped with the move.
+                  const dropped = await tx.teamSecretGrant.findMany({
+                    select: { teamSecret: { select: { name: true } } },
+                    where: { connectionId: repo.id },
+                  });
+                  if (dropped.length) {
+                    await tx.teamSecretGrant.deleteMany({ where: { connectionId: repo.id } });
+                    await writeAuditLog(fastify, {
+                      action: 'UPDATE',
+                      actor: user,
+                      after: { teamSecretGrants: [] },
+                      before: {
+                        fromTeamId: repo.teamId,
+                        teamSecretGrants: dropped.map((g) => g.teamSecret.name).sort(),
+                      },
+                      client: tx,
+                      entityId: repo.id,
+                      entityType: 'Connection',
+                    });
+                  }
                   return row;
                 })
             )
@@ -2437,7 +2458,28 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         select: { name: true, updatedAt: true, valueLastFour: true },
         where: { connectionId: found.repo.id },
       });
-      return { data: rows.map(secretSummary) };
+      // Team secrets granted to this repository, when its current team is active. A repository's
+      // own secret of the same name wins, so the team entry is marked shadowed.
+      const teamRows = await fastify.prisma.teamSecret.findMany({
+        orderBy: { name: 'asc' },
+        select: { name: true, updatedAt: true, valueLastFour: true },
+        where: {
+          grants: { some: { connectionId: found.repo.id } },
+          team: { isActive: true },
+          teamId: found.repo.teamId,
+        },
+      });
+      const own = new Set(rows.map((r) => r.name));
+      return {
+        data: [
+          ...rows.map((r) => ({ ...secretSummary(r), source: 'repository' as const })),
+          ...teamRows.map((r) => ({
+            ...secretSummary(r),
+            shadowed: own.has(r.name),
+            source: 'team' as const,
+          })),
+        ],
+      };
     }
   );
 

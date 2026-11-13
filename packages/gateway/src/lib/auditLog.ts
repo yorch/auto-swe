@@ -56,6 +56,7 @@ export type AuditEntityType =
   | 'StorageConfig'
   | 'Team'
   | 'TeamMembership'
+  | 'TeamSecret'
   | 'ToolCatalogEntry'
   | 'User'
   | 'WorkflowTemplate'
