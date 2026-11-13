@@ -229,13 +229,15 @@ const CANCELLED_CAMPAIGN_STATES: ReadonlySet<string> = new Set(['CANCELLING', 'C
  *
  *  - for the whole campaign: the campaign row exists and is still STARTING or RUNNING (a
  *    CANCELLING or CANCELLED row stops it as a cancel, whether or not the cancel signal reached
- *    this execution), the launcher's account is active, the
- *    launcher still leads the owning team (or is a platform ADMIN), and `workflow.campaignsEnabled`
- *    is still on for the owning team. A failure stops every target not yet started;
+ *    this execution), the launcher's account is active, the owning team and the organization are
+ *    active, a non-admin launcher is still a member of the organization, the launcher still leads
+ *    the owning team (or is a platform ADMIN), and `workflow.campaignsEnabled` is still on for
+ *    the owning team. A failure stops every target not yet started;
  *  - for each target: the repository still exists, is active and is a git repository, is still
- *    owned by the team it had at launch, in the campaign's organization, and that team still has
- *    `workflow.campaignsEnabled` on and the launcher as a LEAD (or the launcher is a platform
- *    ADMIN). A failure ends that target unstarted.
+ *    owned by the team it had at launch, in the campaign's organization, that team and its
+ *    organization are active, and the team still has `workflow.campaignsEnabled` on and the
+ *    launcher as a LEAD (or the launcher is a platform ADMIN). A failure ends that target
+ *    unstarted.
  *
  * Not re-checked here: the GitHub permission gate (it judges a request's token, and a worker has
  * none), the organization and team budgets (each child is metered as it runs) and the size limits
@@ -249,7 +251,12 @@ export async function authorizeCampaignTargets(
     verdicts: [],
   });
   const campaign = await prisma.campaign.findUnique({
-    select: { orgId: true, ownerTeamId: true, state: true },
+    select: {
+      orgId: true,
+      ownerTeam: { select: { isActive: true, organization: { select: { isActive: true } } } },
+      ownerTeamId: true,
+      state: true,
+    },
     where: { id: input.campaignId },
   });
   if (!campaign) {
@@ -269,6 +276,23 @@ export async function authorizeCampaignTargets(
     return stop("the launcher's account is no longer active");
   }
   const isAdmin = launcher.role === 'ADMIN';
+  if (!campaign.ownerTeam.isActive) {
+    return stop('the owning team was deactivated');
+  }
+  if (!campaign.ownerTeam.organization.isActive) {
+    return stop("the campaign's organization was deactivated");
+  }
+  if (!isAdmin) {
+    // The launch requires it of a non-admin (the ledger's source authorization), and every child
+    // acts as the launcher inside this organization.
+    const orgMember = await prisma.organizationMembership.findUnique({
+      select: { userId: true },
+      where: { userId_orgId: { orgId: campaign.orgId, userId: input.launchedById } },
+    });
+    if (!orgMember) {
+      return stop("the launcher is no longer a member of the campaign's organization");
+    }
+  }
 
   const leads = new Map<string, boolean>();
   const leadsTeam = async (teamId: string): Promise<boolean> => {
@@ -313,7 +337,14 @@ export async function authorizeCampaignTargets(
     const refuse = (reason: string) =>
       verdicts.push({ allowed: false, connectionId: target.connectionId, reason });
     const repo = await prisma.connection.findUnique({
-      select: { isActive: true, team: { select: { orgId: true } }, teamId: true, type: true },
+      select: {
+        isActive: true,
+        team: {
+          select: { isActive: true, organization: { select: { isActive: true } }, orgId: true },
+        },
+        teamId: true,
+        type: true,
+      },
       where: { id: target.connectionId },
     });
     if (!repo?.isActive || repo.type !== 'git_repo') {
@@ -322,6 +353,10 @@ export async function authorizeCampaignTargets(
       refuse('the repository moved to another team after the launch');
     } else if (repo.team?.orgId !== campaign.orgId) {
       refuse("the repository is no longer in the campaign's organization");
+    } else if (!repo.team.isActive) {
+      refuse("the repository's team was deactivated");
+    } else if (!repo.team.organization.isActive) {
+      refuse("the repository's organization was deactivated");
     } else if (!(await enabledFor(target.teamId))) {
       refuse("workflow.campaignsEnabled was turned off for the repository's team");
     } else if (!(await leadsTeam(target.teamId))) {

@@ -79,10 +79,13 @@ exists, for the batch of targets about to start:
 | The campaign row still exists | Nothing more starts |
 | The campaign is still `STARTING` or `RUNNING` | `CANCELLING` or `CANCELLED`: the campaign stops as a cancel (§9), whether or not the cancel signal reached the workflow. Any other final state: nothing more starts |
 | The launcher's account is still active | Nothing more starts |
+| The owning team and the campaign's organization are still active | Nothing more starts |
+| A launcher who is not a platform ADMIN is still a member of the campaign's organization | Nothing more starts |
 | The launcher is still `LEAD` or `ADMIN` on the owning team, or a platform ADMIN | Nothing more starts |
 | `workflow.campaignsEnabled` is still on for the owning team | Nothing more starts |
 | The repository still exists, is active and is a git repository | That target does not start |
 | The repository is still owned by the team it had at launch, in the campaign's organization | That target does not start |
+| The repository's owning team and its organization are still active | That target does not start |
 | `workflow.campaignsEnabled` is still on for the repository's team | That target does not start |
 | The launcher is still `LEAD` or `ADMIN` on the repository's owning team, or a platform ADMIN | That target does not start |
 
@@ -97,7 +100,7 @@ after the activity's retries) fails closed the same way: the batch and the rest 
 `SKIPPED` rather than starting unchecked. The campaign then finishes `COMPLETED_WITH_FAILURES`.
 
 Checked **only at launch**: the platform `LEAD` role, the GitHub permission gate (it judges the
-token of a request, and the worker has none), organization membership, the organization and team
+token of a request, and the worker has none), the organization and team
 budgets (each child is metered as it runs), the size limits and parallelism (frozen into the
 campaign), the recipe and the template version (pinned), and the repository's source-control
 provider.
@@ -497,8 +500,8 @@ whose workflow was gone) and the actor. See [audit-log.md](./audit-log.md).
   closes the rows (§8).
 - **Budgets and the GitHub permission gate are checked at launch only.** Children are metered per
   run against their own organization and team budgets; a campaign has no budget of its own. The
-  re-check before each child (§2) covers the kill switch, the repository and the launcher's team
-  roles, not the permission gate, so a launcher whose GitHub access to a repository was revoked
+  re-check before each child (§2) covers the kill switch, the repository, team and organization
+  activation and the launcher's team roles and organization membership, not the permission gate, so a launcher whose GitHub access to a repository was revoked
   after the launch still has children started there until their team role or the repository
   changes.
 - **A launch tells a caller whether a repository id exists.** `REPOS_NOT_FOUND` is decided before

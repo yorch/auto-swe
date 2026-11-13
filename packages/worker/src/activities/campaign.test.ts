@@ -4,6 +4,7 @@ const db = vi.hoisted(() => ({
   campaign: { findUnique: vi.fn(), update: vi.fn() },
   campaignTarget: { updateMany: vi.fn() },
   connection: { findUnique: vi.fn() },
+  organizationMembership: { findUnique: vi.fn() },
   teamMembership: { findUnique: vi.fn() },
   user: { findUnique: vi.fn() },
 }));
@@ -267,8 +268,26 @@ describe('authorizeCampaignTargets', () => {
   /** teamId -> role of the launcher on it. */
   let roles: Record<string, string>;
   /** connectionId -> its row now. */
-  let repos: Record<string, { isActive: boolean; type: string; teamId: string; orgId: string }>;
+  let repos: Record<
+    string,
+    {
+      isActive: boolean;
+      type: string;
+      teamId: string;
+      orgId: string;
+      teamActive?: boolean;
+      orgActive?: boolean;
+    }
+  >;
   let launcher: { isActive: boolean; role: string } | null;
+  let orgMember: boolean;
+  let ownerTeam: { isActive: boolean; organization: { isActive: boolean } };
+  const campaignRow = (state = 'RUNNING') => ({
+    orgId: 'org-1',
+    ownerTeam,
+    ownerTeamId: 'owner',
+    state,
+  });
 
   beforeEach(() => {
     settings.disabledTeams = new Set();
@@ -278,11 +297,12 @@ describe('authorizeCampaignTargets', () => {
       r2: { isActive: true, orgId: 'org-1', teamId: 't2', type: 'git_repo' },
     };
     launcher = { isActive: true, role: 'LEAD' };
-    db.campaign.findUnique.mockResolvedValue({
-      orgId: 'org-1',
-      ownerTeamId: 'owner',
-      state: 'RUNNING',
-    });
+    orgMember = true;
+    ownerTeam = { isActive: true, organization: { isActive: true } };
+    db.campaign.findUnique.mockImplementation(async () => campaignRow());
+    db.organizationMembership.findUnique.mockImplementation(async () =>
+      orgMember ? { userId: 'u1' } : null
+    );
     db.user.findUnique.mockImplementation(async () => launcher);
     db.teamMembership.findUnique.mockImplementation(
       async (args: { where: { userId_teamId: { teamId: string } } }) => {
@@ -293,7 +313,16 @@ describe('authorizeCampaignTargets', () => {
     db.connection.findUnique.mockImplementation(async (args: { where: { id: string } }) => {
       const r = repos[args.where.id];
       return r
-        ? { isActive: r.isActive, team: { orgId: r.orgId }, teamId: r.teamId, type: r.type }
+        ? {
+            isActive: r.isActive,
+            team: {
+              isActive: r.teamActive ?? true,
+              organization: { isActive: r.orgActive ?? true },
+              orgId: r.orgId,
+            },
+            teamId: r.teamId,
+            type: r.type,
+          }
         : null;
     });
   });
@@ -372,7 +401,7 @@ describe('authorizeCampaignTargets', () => {
   });
 
   it.each(['STARTING', 'RUNNING'])('lets a %s campaign start children', async (state) => {
-    db.campaign.findUnique.mockResolvedValue({ orgId: 'org-1', ownerTeamId: 'owner', state });
+    db.campaign.findUnique.mockImplementation(async () => campaignRow(state));
     const v = await check();
     expect(v.stopReason).toBeUndefined();
     expect(v.cancelled).toBeUndefined();
@@ -382,7 +411,7 @@ describe('authorizeCampaignTargets', () => {
   it.each(['CANCELLING', 'CANCELLED'])(
     'stops a %s campaign as a cancel, whatever the launch still allows',
     async (state) => {
-      db.campaign.findUnique.mockResolvedValue({ orgId: 'org-1', ownerTeamId: 'owner', state });
+      db.campaign.findUnique.mockImplementation(async () => campaignRow(state));
       expect(await check()).toEqual({
         cancelled: true,
         stopReason: 'the campaign was cancelled',
@@ -396,13 +425,52 @@ describe('authorizeCampaignTargets', () => {
   it.each(['COMPLETED', 'COMPLETED_WITH_FAILURES', 'FAILED_TO_START'])(
     'stops a %s campaign: a final campaign never grows a child',
     async (state) => {
-      db.campaign.findUnique.mockResolvedValue({ orgId: 'org-1', ownerTeamId: 'owner', state });
+      db.campaign.findUnique.mockImplementation(async () => campaignRow(state));
       const v = await check();
       expect(v.stopReason).toBe(`the campaign is already ${state}`);
       expect(v.cancelled).toBeUndefined();
       expect(v.verdicts).toEqual([]);
     }
   );
+
+  it('stops everything when the owning team or the organization was deactivated', async () => {
+    ownerTeam = { isActive: false, organization: { isActive: true } };
+    expect((await check()).stopReason).toBe('the owning team was deactivated');
+    ownerTeam = { isActive: true, organization: { isActive: false } };
+    expect((await check()).stopReason).toBe("the campaign's organization was deactivated");
+    // A platform ADMIN launcher is stopped the same way.
+    launcher = { isActive: true, role: 'ADMIN' };
+    expect((await check()).stopReason).toBe("the campaign's organization was deactivated");
+  });
+
+  it('stops everything when a non-admin launcher left the organization', async () => {
+    orgMember = false;
+    expect((await check()).stopReason).toBe(
+      "the launcher is no longer a member of the campaign's organization"
+    );
+    expect(db.organizationMembership.findUnique).toHaveBeenCalledWith({
+      select: { userId: true },
+      where: { userId_orgId: { orgId: 'org-1', userId: 'u1' } },
+    });
+    // A platform ADMIN needs no organization membership, as at launch.
+    launcher = { isActive: true, role: 'ADMIN' };
+    expect((await check()).stopReason).toBeUndefined();
+  });
+
+  it('refuses a target whose team or organization was deactivated', async () => {
+    repos.r1 = { ...(repos.r1 as (typeof repos)['r1']), teamActive: false };
+    repos.r2 = { ...(repos.r2 as (typeof repos)['r2']), orgActive: false };
+    const { verdicts, stopReason } = await check();
+    expect(stopReason).toBeUndefined();
+    expect(verdicts).toEqual([
+      { allowed: false, connectionId: 'r1', reason: "the repository's team was deactivated" },
+      {
+        allowed: false,
+        connectionId: 'r2',
+        reason: "the repository's organization was deactivated",
+      },
+    ]);
+  });
 
   it('stops when the campaign row is gone', async () => {
     db.campaign.findUnique.mockResolvedValue(null);
