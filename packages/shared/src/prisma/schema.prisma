@@ -1355,7 +1355,8 @@ model Team {
   knowledgeGrants       KnowledgeItemTeamGrant[]
   packageRegistries     PackageRegistry[]
 
-  campaigns Campaign[]
+  campaigns       Campaign[]
+  campaignTargets CampaignTarget[]
   @@index([orgId])
   @@map("teams")
 }
@@ -1810,7 +1811,8 @@ model User {
   lessonFlags           LessonFlag[]             @relation("LessonFlagAuthor")
   quarantinedLessons    MemoryItem[]             @relation("LessonQuarantineAuthor")
 
-  campaignsCreated Campaign[] @relation("CampaignCreatedBy")
+  campaignsCreated   Campaign[] @relation("CampaignCreatedBy")
+  campaignsCancelled Campaign[] @relation("CampaignCancelledBy")
   @@map("users")
 }
 
@@ -5191,6 +5193,7 @@ model Campaign {
   createdById        String?          @map("created_by_id") @db.Uuid
   createdBy          User?            @relation("CampaignCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   cancelledById      String?          @map("cancelled_by_id") @db.Uuid
+  cancelledBy        User?            @relation("CampaignCancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull)
   cancelledAt        DateTime?        @map("cancelled_at") @db.Timestamptz
   completedAt        DateTime?        @map("completed_at") @db.Timestamptz
   createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz
@@ -5209,6 +5212,9 @@ model CampaignTarget {
   connectionId    String?               @map("connection_id") @db.Uuid
   connection      Connection?           @relation(fields: [connectionId], references: [id], onDelete: SetNull)
   teamId          String                @map("team_id") @db.Uuid
+  // The repository's owning team at launch. Cascade, like the campaign's own owning team: a
+  // deleted team takes its rows with it (teams are deactivated, not deleted, in normal use).
+  team            Team                  @relation(fields: [teamId], references: [id], onDelete: Cascade)
   repoLabel       String                @map("repo_label")
   position        Int
   state           CampaignTargetState   @default(PENDING)
