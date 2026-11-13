@@ -214,7 +214,7 @@ type ServingAuthorization =
   | {
       ok: true;
       /** Writes the audit rows the check found missing; run it in the write's transaction. */
-      record: (tx: Pick<FastifyInstance['prisma'], 'workflowShellAudit'>) => Promise<void>;
+      record: (tx: Pick<FastifyInstance['prisma'], 'workflowShellAudit' | 'team'>) => Promise<void>;
     };
 
 /** The stored spec as the predicates read it; an unparseable one still exposes its nodes. */
@@ -1579,7 +1579,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // keyed by version so a version that is both the arm and the active one is recorded once.
       const servingRecords = new Map<
         string,
-        (tx: Pick<FastifyInstance['prisma'], 'workflowShellAudit'>) => Promise<void>
+        (tx: Pick<FastifyInstance['prisma'], 'workflowShellAudit' | 'team'>) => Promise<void>
       >();
       if (expVersion !== undefined && expVersion !== null) {
         const v = await fastify.prisma.workflowTemplateVersion.findUnique({

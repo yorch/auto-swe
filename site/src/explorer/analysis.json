@@ -3208,9 +3208,12 @@
     {
       "body": "Choose open, restricted or blocked workspace egress; a launch may narrow the configured policy, never widen it.",
       "category": "Isolation",
-      "detail": "workspace.egressPolicy is run-pinned at the template/team/organization scope, with open as the default. The gateway rejects a widening request; the worker rechecks when pinning and retains the configured ceiling if another launch path asks for a looser policy. Restricted requires the team allowlist and a forwarding proxy when it is non-empty; an empty list locks down like blocked. Before setup or agent code, restricted and blocked repository workspaces are network-locked to the repository's git host and configured model/registry proxies, plus the forwarding proxy only for restricted and LFS storage hosts when setup needs them. Docker resolves destinations to IP rules, pins hostnames and verifies default-deny INPUT/OUTPUT policies; Kubernetes creates pod-owned allow policies, changes the pod's policy-selection label and verifies loss of direct access to a previously reachable public destination. A failed lock destroys the workspace. Restricted ephemeral steps receive proxy-only holder locks instead; worker-originated MCP and connector calls remain outside this policy.",
+      "detail": "workspace.egressPolicy is run-pinned at the template/team/organization scope, with restricted as the default. Restricted enforces the platform dependency-host baseline union team allowlist; open merges the baseline only with a non-empty team list, preserving unrestricted open/empty behavior. Baseline and team lists are read live, not frozen per run; template-code audit snapshots include both at sign-off. Compose and Helm enable the proxy on port 8792. GLOBAL restricted without a proxy refuses worker boot; scoped overrides retain runtime enforcement checks. The gateway rejects a widening launch request, and the worker rechecks when pinning. Restricted and blocked repository workspaces are network-locked to git and model/registry proxies, plus the forwarding proxy only for restricted and setup LFS storage hosts when needed. Docker resolves destinations to verified IP rules; Kubernetes uses pod-owned allow policies and verifies loss of direct public access. Failed locks destroy the workspace. Restricted ephemeral steps receive proxy-only holder locks; worker-originated MCP and connector calls remain outside this policy.",
       "id": "runEgressPolicy",
       "refs": [
+        "egressBaselineSetting",
+        "egressBaselineMerge",
+        "egressGlobalBoot",
         "egressLaunch",
         "egressPin",
         "workspaceEgressLock",
@@ -5286,7 +5289,7 @@
     {
       "body": "Restricted and blocked repository workspaces have network locks; restricted ephemeral steps are locked to wired proxies before author code starts.",
       "category": "Isolation",
-      "detail": "An open ephemeral step uses the private-range/metadata baseline, DNS filtering and host pins; direct public-IP traffic can bypass its cooperative proxy. A restricted step with a team allowlist receives a verified IPv4/IPv6 default-deny lock in its network holder before author startup, allowing only the wired egress and registry proxy endpoints. Detached sidecars share that lock, with worker-gateway ingress and established replies for their published port. Blocked, or restricted with an empty team allowlist, forces these steps to network none; sidecars are refused instead. Repository workspace locks also admit their git host and model proxy, unlike step locks. Failed locks remove the workspace or step and holder. Policies govern container traffic, not worker-originated connector or MCP calls. Docker shares the host kernel, and the daemon's socket proxy allowlists API paths rather than container options, so the Docker host remains a privileged trust boundary.",
+      "detail": "An explicitly open ephemeral step uses the private-range/metadata baseline, DNS filtering and host pins; direct public-IP traffic can bypass its cooperative proxy. Restricted is the default: baseline union team hosts are enforced through a verified IPv4/IPv6 default-deny holder lock before author startup, allowing only wired egress and registry proxy endpoints. Detached sidecars share that lock, with worker-gateway ingress and established replies for their published port. Blocked, or restricted with an empty effective baseline/team list, forces network none; sidecars are refused instead. Repository workspace locks also admit git and model proxies, unlike step locks. Allowlists are live, not frozen per run. Failed locks remove the workspace or step and holder. Policies govern container traffic, not worker-originated connector or MCP calls. Docker shares the host kernel, and the daemon's socket proxy allowlists API paths rather than container options, so the Docker host remains a privileged trust boundary.",
       "id": "egress",
       "refs": [
         "sandbox",
@@ -7929,11 +7932,32 @@
       "title": "Restricted ephemeral steps require a proxy and a verified holder network lock"
     },
     {
+      "anchor": "'workspace.egressBaselineAllowlist': defineSetting({",
+      "id": "egressBaselineSetting",
+      "lines": 13,
+      "path": "packages/shared/src/config/registry.ts",
+      "title": "ADMIN baseline is GLOBAL or ORGANIZATION scoped and live rather than run-pinned"
+    },
+    {
+      "anchor": "export async function resolveRunEgressAllowlist(",
+      "id": "egressBaselineMerge",
+      "lines": 15,
+      "path": "packages/worker/src/lib/egressWiring.ts",
+      "title": "Live baseline merges only where an allowlist is enforced"
+    },
+    {
+      "anchor": "export async function assertGlobalEgressReady(): Promise<void> {",
+      "id": "egressGlobalBoot",
+      "lines": 9,
+      "path": "packages/worker/src/lib/egressBoot.ts",
+      "title": "Only GLOBAL restricted without a proxy refuses worker boot"
+    },
+    {
       "anchor": "export function capStepNetwork(",
       "id": "stepNetworkCap",
       "lines": 15,
       "path": "packages/worker/src/lib/egressWiring.ts",
-      "title": "Blocked or restricted with an empty team list caps steps to no network"
+      "title": "Blocked or restricted with an empty effective list caps steps to no network"
     },
     {
       "anchor": "if (capStepNetwork(egressPolicy, egressAllowlist, 'egress').capped) {",

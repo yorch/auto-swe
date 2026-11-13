@@ -3,6 +3,11 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { orgTeamRoutes, teamRoutes } from './teams.js';
 
+vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  resolveSetting: vi.fn(async () => ['pypi.org']),
+}));
+
 /**
  * Tiny in-memory harness covering just the two endpoints these tests target:
  *   - DELETE /api/v1/teams/:id/members/:userId
@@ -922,7 +927,9 @@ describe('GET /api/v1/teams/:id/egress-allowlist', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ data: { egressAllowlist: ['registry.npmjs.org'] } });
+    expect(res.json()).toEqual({
+      data: { baselineAllowlist: ['pypi.org'], egressAllowlist: ['registry.npmjs.org'] },
+    });
   });
 
   it('404s when the team does not exist (platform ADMIN bypasses team-RBAC)', async () => {

@@ -129,11 +129,11 @@ worker:
     requests: { cpu: 500m, memory: 1Gi }
     limits: { memory: 2Gi }
   # The Claude Code harness's model proxy is required on this backend; the
-  # registry and egress proxies are optional (empty port: off).
+  # registry proxy is optional; restricted egress requires the egress proxy.
   proxies:
     modelPort: 8790
     registryPort: ""
-    egressPort: ""
+    egressPort: 8792
   env: {}
   podAnnotations: {}
   nodeSelector: {}

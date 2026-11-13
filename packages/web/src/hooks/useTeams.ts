@@ -239,7 +239,9 @@ export function useTeamEgressAllowlist(teamId: string) {
     enabled: !!teamId,
     queryFn: () =>
       api
-        .get<{ data: { egressAllowlist: string[] } }>(`/api/v1/teams/${teamId}/egress-allowlist`)
+        .get<{ data: { egressAllowlist: string[]; baselineAllowlist: string[] } }>(
+          `/api/v1/teams/${teamId}/egress-allowlist`
+        )
         .then((r) => r.data),
     queryKey: ['team-egress-allowlist', teamId],
   });

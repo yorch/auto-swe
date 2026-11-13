@@ -8,6 +8,7 @@ import {
   assertStepEgressEnforceable,
   capStepNetwork,
   egressPolicyFailure,
+  resolveRunEgressAllowlist,
   resolveRunEgressPolicy,
 } from '../lib/egressWiring.js';
 import { runEphemeralContainer, runSidecarContainer } from '../lib/ephemeralContainer.js';
@@ -86,12 +87,17 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
     },
   });
   const imageAllowlist = (conn?.team?.shellImageAllowlist as string[] | null) ?? [];
-  const egressAllowlist = (conn?.team?.egressAllowlist as string[] | null) ?? [];
+  const teamEgressAllowlist = (conn?.team?.egressAllowlist as string[] | null) ?? [];
   // Throws ShellImageNotAllowedError if the image isn't on the effective allowlist.
   assertShellImageAllowed(input.image, imageAllowlist);
 
   // The run's egress policy caps the node's `network` (see `capStepNetwork`).
   const egressPolicy = await resolveRunEgressPolicy(conn?.team?.id ?? null);
+  const egressAllowlist = await resolveRunEgressAllowlist(
+    conn?.team?.id ?? null,
+    teamEgressAllowlist,
+    egressPolicy
+  );
   const cap = capStepNetwork(egressPolicy, egressAllowlist, input.network);
   const stepNetwork = cap.network;
   const auditNetwork = cap.capped

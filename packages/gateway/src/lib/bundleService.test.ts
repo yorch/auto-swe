@@ -1,5 +1,10 @@
 import { generateKeyPairSync } from 'node:crypto';
 
+vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  resolveSetting: vi.fn(async () => ['registry.npmjs.org']),
+}));
+
 vi.mock('@auto-swe/shared/db', () => ({
   PrismaClient: vi.fn(),
   prisma: {},
@@ -1056,7 +1061,7 @@ describe('installBundle', () => {
             {
               authorUserId: 'admin-1',
               command: 'npm run lint',
-              egressAllowlistSnapshot: [],
+              egressAllowlistSnapshot: ['registry.npmjs.org'],
               image: '(agent workspace)',
               network: 'egress',
               nodeId: 'lint',

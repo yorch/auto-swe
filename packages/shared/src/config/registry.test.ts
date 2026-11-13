@@ -64,6 +64,26 @@ describe('onboarding draft hosts', () => {
   });
 });
 
+describe('restricted egress defaults', () => {
+  it('has a live ADMIN baseline scoped only to GLOBAL and ORGANIZATION', () => {
+    expect(SETTING_DEFINITIONS['workspace.egressPolicy'].defaultValue).toBe('restricted');
+    const setting = SETTING_DEFINITIONS['workspace.egressBaselineAllowlist'];
+    expect(setting.requiredRole).toBe('ADMIN');
+    expect(setting.overridableAt).toEqual(['ORGANIZATION']);
+    expect(setting.runPinned).toBe(false);
+    expect(setting.schema.parse(setting.defaultValue)).toEqual(setting.defaultValue);
+    expect(setting.defaultValue).toContain('registry.npmjs.org');
+    expect(setting.defaultValue.every((host) => !host.includes('*'))).toBe(true);
+    expect(setting.schema.safeParse([]).success).toBe(true);
+    for (const bad of [
+      ['https://github.com'],
+      ['github.com; echo bad'],
+      Array(101).fill('github.com'),
+    ]) {
+      expect(setting.schema.safeParse(bad).success).toBe(false);
+    }
+  });
+});
 describe('lesson recall experiment settings', () => {
   it('pins validated recall modes with template and tenant overrides', () => {
     const setting = SETTING_DEFINITIONS['memory.lessonRecall'];

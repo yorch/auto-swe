@@ -50,6 +50,7 @@ vi.mock('../lib/config/contextLookup.js', () => ({
 const egressPolicy = vi.hoisted(() => ({ value: 'open' as 'open' | 'restricted' | 'blocked' }));
 vi.mock('../lib/egressWiring.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/egressWiring.js')>()),
+  resolveRunEgressAllowlist: vi.fn(async (_teamId: string | null, team: string[]) => team),
   resolveRunEgressPolicy: vi.fn(async () => egressPolicy.value),
 }));
 vi.mock('../lib/activityContext.js', () => ({

@@ -16,6 +16,7 @@ vi.mock('../lib/egressProxy.js', () => ({
 const policy = vi.hoisted(() => ({ value: 'open' as 'open' | 'restricted' | 'blocked' }));
 vi.mock('../lib/egressWiring.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/egressWiring.js')>()),
+  resolveRunEgressAllowlist: vi.fn(async (_teamId: string | null, team: string[]) => team),
   resolveRunEgressPolicy: vi.fn(async () => policy.value),
 }));
 vi.mock('../lib/ephemeralContainer.js', () => ({

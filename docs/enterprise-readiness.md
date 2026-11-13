@@ -329,10 +329,10 @@ authenticated principal, and tenant keys on the tables joined through runs.
   It is ADMIN-only, run-pinned, overridable per template, team and organisation, and a launch
   may narrow it for one run but never widen it (`400 EGRESS_POLICY_WIDENS`)
   ([run-activity.md](./run-activity.md#run-egress-policy)).
-- **The default is `open`.** Under `open` an agent workspace has unfiltered outbound access (git
-  and package installs need it). With the worker's egress proxy configured, `HTTP_PROXY` holds
-  cooperating clients to the team allowlist, and a client that ignores proxy variables is not
-  held.
+- **The default is `restricted`.** The platform dependency-host baseline merges with team entries.
+  Compose and Helm enable the proxy; GLOBAL restricted without a configured proxy refuses worker
+  boot. Restricted containers are network-locked, so a client ignoring proxy variables cannot reach
+  other public hosts. Explicit `open` with an empty team list remains unrestricted.
 - **Setup can be looser than the agent.** The ADMIN-only, run-pinned `workspace.setupEgressPolicy`
   defaults to `inherit`. `open` or `restricted` can temporarily loosen agent-workspace setup, with
   verified process termination and replacement of the final network rules before agent execution.
@@ -348,9 +348,9 @@ authenticated principal, and tenant keys on the tables joined through runs.
   LFS and knowledge-base checkouts still authenticate in the workspace, including after repository
   code has run; see [architecture limitations](./architecture.md#limitations).
 - **Shell and container steps** default to `network: "none"` in the node. A step that sets
-  `network: "egress"` is held to the team's `egressAllowlist` by a DNS filter (and the egress
-  proxy when configured); under `open`, an empty allowlist permits any host. Under `restricted`
-  with an allowlist, a verified holder-netns lock confines the step and detached sidecars to the
+  `network: "egress"` uses the effective baseline/team list. Under `open`, an empty team list
+  remains unrestricted; otherwise the baseline merges with it. Under `restricted` with a non-empty
+  effective list, a verified holder-netns lock confines the step and detached sidecars to the
   egress proxy and any wired registry proxy. Direct public-IP sockets and `--noproxy` are blocked.
 - **Setting it to `restricted` or `blocked` at GLOBAL scope already makes the whole deployment
   default-deny**, for agent workspaces by a network lock (an `iptables` helper container on
@@ -392,16 +392,12 @@ when enforcement is unavailable. A default-deny deployment profile remains opt-i
 `NO_PROXY` git host and worker-originated traffic that no policy governs remain as stated
 in [run-activity.md](./run-activity.md) and [architecture.md](./architecture.md).
 
-### Proposed child issues
+### Operator configuration
 
-**Opt-in default-deny deployment profile** (size M; depends on nothing)
-- A documented profile (environment values, registry settings and a seeded team allowlist for the
-  git host, package mirrors and the model provider) that sets `restricted` at GLOBAL scope.
-- The templates in the library that need network access are identified, and the profile
-  allowlists the hosts they need deliberately.
-- The default for a fresh install stays `open` unless the issue decides otherwise; flipping it
-  is a separate, breaking change with an upgrade note.
-- Owner: unassigned
+Compose and Helm default to `restricted` with an enabled egress proxy. Operators review the hosts
+their templates need and add application-specific entries beyond the tight dependency baseline.
+Setting GLOBAL `workspace.egressPolicy` to `open` retains unrestricted public-host behavior for
+teams with an empty list. See [upgrade notes](./upgrade-notes.md#restricted-egress-default).
 
 ## 6. SOC 2 readiness path
 
@@ -497,8 +493,9 @@ None of these is implemented by the code, and an auditor will ask for each:
   its stored objects behind.
 - **Tenant isolation is not enforced by the database.** There is no row-level security, one
   database role, and no per-request database context.
-- **The default egress policy is `open`.** The default-deny levels exist and need an enforceable
-  deployment; nothing checks that before they are selected.
+- **Allowlists are live, not pinned per run.** The platform baseline and team entries are captured
+  in template-code audit snapshots, but later registrations and retries read current values.
+  Non-proxied clients and unlisted hosts need operator action under the restricted default.
 - **No certification.** There is no SOC 2 report or other attestation, and the platform supplies
   only part of the controls an audit examines.
 - **The proposals are not filed.** Each child issue above has an owner of `unassigned` and no

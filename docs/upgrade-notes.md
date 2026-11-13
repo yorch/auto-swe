@@ -1,5 +1,27 @@
 # Upgrade notes
 
+## Restricted egress default
+
+**Affected:** deployments relying on the implicit `open` egress policy, custom worker environments
+without an egress proxy, and repositories calling hosts outside the dependency baseline/team list.
+
+**Fixing commit:** `48423c5fdcabd5d2c08bfe80ea24365fa42b27a6`.
+
+`workspace.egressPolicy` defaults to `restricted`. Compose and Helm enable the proxy on port 8792;
+custom deployments must configure `EGRESS_PROXY_PORT` and a container-reachable `EGRESS_PROXY_URL`
+(required on Kubernetes). Otherwise GLOBAL restricted refuses worker startup. Review
+`workspace.egressBaselineAllowlist` at GLOBAL or ORGANIZATION scope and add application-specific
+hosts to each team's allowlist. Both use hostname or wildcard-hostname entries.
+
+Clients must use the HTTP(S) proxy. Unlisted hosts are refused; direct public sockets outside the
+platform/git exceptions are blocked even for allowlisted hostnames. Dependency redirects and CDN hosts not
+on the tight baseline may need explicit entries. Team and baseline allowlists remain live rather
+than frozen per run; template-code sign-off snapshots include both but do not pin execution.
+
+To retain the earlier behavior, set **GLOBAL `workspace.egressPolicy` to `open`** in platform
+configuration before restarting workers. An empty team list then remains unrestricted, with the
+baseline ignored. Existing explicit scoped policies and run-pinned policy values still apply.
+
 Notes for operators of a deployment that ran earlier code. Each entry describes an operator action
 required by an upgrade, including credential exposure and database migrations. An entry is
 keyed by the condition that makes your deployment affected and by the commit that fixed it, not by

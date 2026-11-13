@@ -31,7 +31,10 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   }),
 }));
 const settings = vi.hoisted(() => ({
-  resolveSetting: vi.fn(async (): Promise<unknown> => 'open'),
+  resolveSetting: vi.fn(
+    async (key: string): Promise<string | string[]> =>
+      key === 'workspace.egressBaselineAllowlist' ? [] : 'open'
+  ),
 }));
 vi.mock('@auto-swe/shared/config', () => settings);
 const contextLookup = vi.hoisted(() => ({
@@ -52,6 +55,7 @@ import {
   gitHostOf,
   lfsStorageHosts,
   resolveOnboardingDraftEgress,
+  resolveRunEgressAllowlist,
   resolveRunEgressPolicy,
   resolveRunSetupEgressPolicy,
 } from './egressWiring.js';
@@ -66,6 +70,39 @@ describe('temporary onboarding draft access', () => {
   beforeEach(() => {
     h.registries.mockResolvedValue([]);
     h.tools.mockResolvedValue([]);
+  });
+
+  it.each([true, false])(
+    'includes the live baseline only when the draft inherits the team allowlist (%s)',
+    async (includeTeamAllowlist) => {
+      if (includeTeamAllowlist) {
+        settings.resolveSetting.mockResolvedValueOnce(['baseline.example']);
+      }
+      await beginWorkspaceEgress('team', [], 'restricted', {
+        additionalHosts: ['draft.example'],
+        includeTeamAllowlist,
+      });
+      expect(h.register).toHaveBeenCalledWith(
+        includeTeamAllowlist
+          ? ['baseline.example', '*.example.com', 'draft.example']
+          : ['draft.example']
+      );
+      if (!includeTeamAllowlist) {
+        expect(settings.resolveSetting).not.toHaveBeenCalled();
+        expect(h.team).not.toHaveBeenCalled();
+      }
+    }
+  );
+
+  it('refuses inherited draft access when the live baseline cannot be resolved', async () => {
+    settings.resolveSetting.mockRejectedValueOnce(new Error('baseline unavailable'));
+    await expect(
+      beginWorkspaceEgress('team', [], 'restricted', {
+        additionalHosts: ['draft.example'],
+        includeTeamAllowlist: true,
+      })
+    ).rejects.toThrow('baseline unavailable');
+    expect(h.register).not.toHaveBeenCalled();
   });
 
   it.each(['restricted', 'blocked'] as const)(
@@ -156,6 +193,32 @@ describe('temporary onboarding draft access', () => {
     expect(h.register).not.toHaveBeenCalled();
   });
 });
+it('merges live organization baseline entries for restricted and open/non-empty only', async () => {
+  settings.resolveSetting.mockResolvedValueOnce(['registry.npmjs.org']);
+  expect(await resolveRunEgressAllowlist('team', ['team.test'], 'restricted')).toEqual([
+    'registry.npmjs.org',
+    'team.test',
+  ]);
+  expect(settings.resolveSetting).toHaveBeenLastCalledWith(
+    'workspace.egressBaselineAllowlist',
+    expect.objectContaining({ orgId: 'org-1', teamId: 'team' })
+  );
+  settings.resolveSetting.mockResolvedValueOnce(['pypi.org']);
+  expect(await resolveRunEgressAllowlist('team', ['team.test'], 'open')).toEqual([
+    'pypi.org',
+    'team.test',
+  ]);
+  settings.resolveSetting.mockClear();
+  expect(await resolveRunEgressAllowlist('team', [], 'open')).toEqual([]);
+  expect(await resolveRunEgressAllowlist('team', ['team.test'], 'blocked')).toEqual([]);
+  expect(settings.resolveSetting).not.toHaveBeenCalled();
+});
+it('propagates baseline resolution errors rather than granting unrestricted access', async () => {
+  settings.resolveSetting.mockRejectedValueOnce(new Error('configuration unavailable'));
+  await expect(resolveRunEgressAllowlist('team', [], 'restricted')).rejects.toThrow(
+    'configuration unavailable'
+  );
+});
 it('resolves the setup setting with the same pinned scope as the agent setting', async () => {
   settings.resolveSetting.mockResolvedValueOnce('restricted');
   expect(await resolveRunSetupEgressPolicy('team')).toBe('restricted');
@@ -166,7 +229,7 @@ it('resolves the setup setting with the same pinned scope as the agent setting',
 });
 it('does nothing when disabled without querying the team', async () => {
   h.enabled = false;
-  expect(await beginWorkspaceEgress('team')).toBeNull();
+  expect(await beginWorkspaceEgress('team', [], 'open')).toBeNull();
   expect(h.team).not.toHaveBeenCalled();
   expect(h.register).not.toHaveBeenCalled();
 });
@@ -189,7 +252,7 @@ it('uses the team allowlist and supplies upper/lowercase secret proxy variables 
   ]);
 });
 it('supports no team and does not hide registration failures', async () => {
-  await beginWorkspaceEgress(null);
+  await beginWorkspaceEgress(null, [], 'open');
   expect(h.register).toHaveBeenCalledWith([]);
   expect(h.team).not.toHaveBeenCalled();
   h.register.mockRejectedValueOnce(new Error('bind failed'));

@@ -1,7 +1,15 @@
 import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  resolveSetting: vi.fn(async (key: string) =>
+    key === 'workspace.egressBaselineAllowlist' ? ['registry.npmjs.org'] : false
+  ),
+}));
+
 import { workflowTemplateRoutes } from './workflowTemplates.js';
 
 const TEAM_ID = 'a1b2c3d4-1234-4567-89ab-cdef01234567';
