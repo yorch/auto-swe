@@ -60,6 +60,35 @@ strictest launch decision the platform has. All of these hold, in this order:
    where per-user credentials are enabled
    ([user-github-credentials.md](./user-github-credentials.md)).
 
+### Re-checked before each child starts
+
+A campaign starts its children over hours or days (its workflow may run for 30 days), each as the
+launcher, so part of the launch decision is made again by the worker right before each child
+exists, for the batch of targets about to start:
+
+| Check | On failure |
+|---|---|
+| The campaign row still exists | Nothing more starts |
+| The launcher's account is still active | Nothing more starts |
+| The launcher is still `LEAD` or `ADMIN` on the owning team, or a platform ADMIN | Nothing more starts |
+| `workflow.campaignsEnabled` is still on for the owning team | Nothing more starts |
+| The repository still exists, is active and is a git repository | That target does not start |
+| The repository is still owned by the team it had at launch, in the campaign's organization | That target does not start |
+| `workflow.campaignsEnabled` is still on for the repository's team | That target does not start |
+| The launcher is still `LEAD` or `ADMIN` on the repository's owning team, or a platform ADMIN | That target does not start |
+
+A target that does not start ends `SKIPPED` with the reason, prefixed `not started:`; when nothing
+more may start, every target still queued ends that way with the campaign-wide reason, and children
+already running are left to finish. A re-check that cannot be made (the database is unreachable
+after the activity's retries) fails closed the same way: the batch and the rest of the queue end
+`SKIPPED` rather than starting unchecked. The campaign then finishes `COMPLETED_WITH_FAILURES`.
+
+Checked **only at launch**: the platform `LEAD` role, the GitHub permission gate (it judges the
+token of a request, and the worker has none), organization membership, the organization and team
+budgets (each child is metered as it runs), the size limits and parallelism (frozen into the
+campaign), the recipe and the template version (pinned), and the repository's source-control
+provider.
+
 The in-app assistant cannot launch a campaign: the route is refused to it outright, because one call
 can open a draft pull request in up to `workflow.campaignMaxTargets` repositories of other teams.
 It can read campaigns and, after the person confirms, cancel one.
@@ -184,7 +213,7 @@ Each `CampaignTarget` records one repository's outcome.
 | `PR_OPENED` | A draft pull request was opened (`prUrl`, `prNumber`) |
 | `NOT_AFFECTED` | The child finished with nothing to change |
 | `FAILED` | The child failed, timed out, could not be started, was cancelled on its own (outside the campaign), or succeeded without opening a pull request or reporting `changed: false`; `failureReason` says why (at most 500 characters, control characters removed, credential-shaped text masked) |
-| `SKIPPED` | The child run ended `SKIPPED` |
+| `SKIPPED` | The target was not started because the launch no longer held when its turn came (§2, `failureReason` starts `not started:`), or its child run ended `SKIPPED` |
 | `CANCELLED` | The campaign was cancelled before the target started, or before its child finished successfully |
 
 `PR_OPENED`, `NOT_AFFECTED`, `FAILED`, `SKIPPED` and `CANCELLED` are final. A target also records:
@@ -370,8 +399,12 @@ with the state before and after (`CANCELLING`) and the actor. See [audit-log.md]
   request after it opens.
 - **Targets can stay `RUNNING` if the campaign workflow is terminated by hand.** No reaper
   reconciles campaign rows; a termination from the Temporal UI skips the finalizer.
-- **Budgets are checked at launch.** Children are metered per run against their own organization and
-  team budgets; a campaign has no budget of its own.
+- **Budgets and the GitHub permission gate are checked at launch only.** Children are metered per
+  run against their own organization and team budgets; a campaign has no budget of its own. The
+  re-check before each child (§2) covers the kill switch, the repository and the launcher's team
+  roles, not the permission gate, so a launcher whose GitHub access to a repository was revoked
+  after the launch still has children started there until their team role or the repository
+  changes.
 - **No dashboard page or CLI command.** The API is the interface.
 - **The assistant cannot launch a campaign,** and no event source (Dependabot, code-scanning
   alerts) starts one.

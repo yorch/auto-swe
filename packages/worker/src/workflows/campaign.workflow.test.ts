@@ -57,8 +57,33 @@ let inFlight = 0;
 let peak = 0;
 let failRecordActivities = false;
 let holdFanningOut = false;
+/** The launch re-check: targets it refuses (with the reason), and the target that stops the rest. */
+const refusedTargets = new Map<string, string>();
+let stopAt: { connectionId: string; reason: string } | null = null;
+let failAuthorize = false;
+const authorizeCalls: string[][] = [];
 
 const fakeActivities = {
+  async authorizeCampaignTargets(input: { targets: Array<{ connectionId: string }> }) {
+    authorizeCalls.push(input.targets.map((t) => t.connectionId));
+    if (failAuthorize) {
+      throw ApplicationFailure.nonRetryable('database unreachable');
+    }
+    if (stopAt && input.targets.some((t) => t.connectionId === stopAt?.connectionId)) {
+      return { stopReason: stopAt.reason, verdicts: [] };
+    }
+    return {
+      verdicts: input.targets.map((t) =>
+        refusedTargets.has(t.connectionId)
+          ? {
+              allowed: false,
+              connectionId: t.connectionId,
+              reason: refusedTargets.get(t.connectionId),
+            }
+          : { allowed: true, connectionId: t.connectionId }
+      ),
+    };
+  },
   async childBegan(): Promise<void> {
     inFlight += 1;
     peak = Math.max(peak, inFlight);
@@ -167,6 +192,10 @@ beforeEach((ctx: TestContext) => {
   peak = 0;
   failRecordActivities = false;
   holdFanningOut = false;
+  refusedTargets.clear();
+  stopAt = null;
+  failAuthorize = false;
+  authorizeCalls.length = 0;
 });
 
 afterAll(async () => {
@@ -322,6 +351,105 @@ describe('CampaignWorkflow — throttled fan-out', () => {
     expect(results).toEqual([]);
     // Finalize still receives every result, so it can reconcile the rows the records missed.
     expect(finalizations[0].results).toEqual(ids);
+  }, 60_000);
+});
+
+describe('CampaignWorkflow — the launch re-checked before each start', () => {
+  it('re-checks every target before its child starts, in input order', async () => {
+    if (!env) {
+      return;
+    }
+    const ids = repoIds(3);
+    for (const id of ids) {
+      scripts.set(id, { kind: 'result', result: { changed: false } });
+    }
+    await env.client.workflow.execute('CampaignWorkflow', {
+      args: [campaignInput(ids, { maxParallel: 2 })],
+      taskQueue: TASK_QUEUE,
+      workflowId: CAMPAIGN_WORKFLOW_ID,
+    });
+    // The first batch fills both slots; each later start is checked as its slot frees.
+    expect(authorizeCalls).toEqual([['repo-1', 'repo-2'], ['repo-3']]);
+    const history = await env.client.workflow.getHandle(CAMPAIGN_WORKFLOW_ID).fetchHistory();
+    const markers = (history.events ?? []).filter((e) => e.markerRecordedEventAttributes);
+    expect(markers).toHaveLength(1);
+  }, 60_000);
+
+  it('never starts a refused target: it ends SKIPPED with the reason, and the rest go on', async () => {
+    if (!env) {
+      return;
+    }
+    const ids = repoIds(4);
+    for (const id of ids) {
+      scripts.set(id, { kind: 'result', result: { changed: false } });
+    }
+    refusedTargets.set('repo-2', 'the repository is no longer an active git repository');
+    const result = await env.client.workflow.execute('CampaignWorkflow', {
+      args: [campaignInput(ids, { maxParallel: 2 })],
+      taskQueue: TASK_QUEUE,
+      workflowId: CAMPAIGN_WORKFLOW_ID,
+    });
+
+    expect(result.status).toBe('COMPLETED_WITH_FAILURES');
+    expect(launches.map((l) => l.repoId).sort()).toEqual(['repo-1', 'repo-3', 'repo-4']);
+    const refused = results.find((r) => r.connectionId === 'repo-2');
+    expect(refused).toMatchObject({ cancelled: false, status: 'SKIPPED' });
+    expect(refused?.skippedReason).toBe(
+      'not started: the repository is no longer an active git repository'
+    );
+    expect(result.childResults['repo-2']?.status).toBe('SKIPPED');
+    expect(finalizations[0].notStarted).toEqual([]);
+  }, 60_000);
+
+  it('stops every target still queued when the campaign-wide re-check refuses', async () => {
+    if (!env) {
+      return;
+    }
+    const ids = repoIds(4);
+    for (const id of ids) {
+      scripts.set(id, { kind: 'result', result: { changed: false } });
+    }
+    // The owning team's kill switch is turned off by the time repo-3's slot frees.
+    stopAt = {
+      connectionId: 'repo-3',
+      reason: 'workflow.campaignsEnabled was turned off for the owning team',
+    };
+    const result = await env.client.workflow.execute('CampaignWorkflow', {
+      args: [campaignInput(ids, { maxParallel: 2 })],
+      taskQueue: TASK_QUEUE,
+      workflowId: CAMPAIGN_WORKFLOW_ID,
+    });
+
+    expect(launches.map((l) => l.repoId).sort()).toEqual(['repo-1', 'repo-2']);
+    for (const id of ['repo-3', 'repo-4']) {
+      const r = results.find((x) => x.connectionId === id);
+      expect(r).toMatchObject({ status: 'SKIPPED' });
+      expect(r?.skippedReason).toMatch(/campaignsEnabled was turned off for the owning team/);
+    }
+    expect(result.status).toBe('COMPLETED_WITH_FAILURES');
+    expect(finalizations[0].notStarted).toEqual([]);
+  }, 60_000);
+
+  it('fails closed when the re-check cannot be made: nothing starts unchecked', async () => {
+    if (!env) {
+      return;
+    }
+    failAuthorize = true;
+    const ids = repoIds(3);
+    const result = await env.client.workflow.execute('CampaignWorkflow', {
+      args: [campaignInput(ids, { maxParallel: 2 })],
+      taskQueue: TASK_QUEUE,
+      workflowId: CAMPAIGN_WORKFLOW_ID,
+    });
+
+    expect(launches).toEqual([]);
+    expect(results.map((r) => [r.connectionId, r.status])).toEqual([
+      ['repo-1', 'SKIPPED'],
+      ['repo-2', 'SKIPPED'],
+      ['repo-3', 'SKIPPED'],
+    ]);
+    expect(results[0]?.skippedReason).toMatch(/could not be re-checked: .*database unreachable/);
+    expect(result.status).toBe('COMPLETED_WITH_FAILURES');
   }, 60_000);
 });
 

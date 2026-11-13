@@ -9,6 +9,7 @@ import {
   defineSignal,
   isCancellation,
   ParentClosePolicy,
+  patched,
   proxyActivities,
   setHandler,
   startChild,
@@ -24,9 +25,10 @@ export type { CampaignResult, CampaignWorkflowInput };
  * The campaign workflow: one pinned template fanned out to a set of repositories, at most
  * `maxParallel` at a time.
  *
- * A new workflow type with no history before it, so v1 carries no `patched()` gate. Any later
- * change to the scheduling or the command sequence goes behind `patched('campaign-…')`, and its
- * replay fixtures (`campaign-mixed`, `campaign-cancel`) are never re-recorded to make a test pass.
+ * Changes to the scheduling or the command sequence go behind `patched('campaign-…')`, and the
+ * replay fixtures are never re-recorded to make a test pass. `campaign-mixed` and `campaign-cancel`
+ * guard the unpatched v1 path; `campaign-recheck` guards `RECHECK_PATCH`, under which every batch
+ * of targets is re-authorized (`authorizeCampaignTargets`) right before its children start.
  *
  * Everything the workflow decides is frozen in its input by the gateway (the limits, the pinned
  * template and the target order): the isolate reads no settings and no rows.
@@ -55,6 +57,7 @@ const stateActivities = proxyActivities<Pick<typeof activitiesType, 'updateDomai
 const campaignActivities = proxyActivities<
   Pick<
     typeof activitiesType,
+    | 'authorizeCampaignTargets'
     | 'finalizeCampaign'
     | 'recordCampaignState'
     | 'recordCampaignTargetResult'
@@ -72,6 +75,12 @@ const campaignActivities = proxyActivities<
 export const campaignCancelSignal = defineSignal(CAMPAIGN_CANCEL_SIGNAL);
 
 // ── Workflow ──
+
+/**
+ * Re-check the launch (kill switch, repository, launcher) before each batch of children starts.
+ * Histories recorded before it took the v1 path, which started every target unchecked.
+ */
+const RECHECK_PATCH = 'campaign-recheck-before-start';
 
 /** Longest rejection text carried in a synthesized result (the activity bounds it again). */
 const REASON_MAX = 500;
@@ -94,6 +103,8 @@ function errorText(err: unknown): string {
 }
 
 export async function CampaignWorkflow(input: CampaignWorkflowInput): Promise<CampaignResult> {
+  // Decided once, before the first command, so a history's whole run takes one path.
+  const recheck = patched(RECHECK_PATCH);
   let cancelled = false;
   // Every child is started inside this scope, so cancelling it (the signal, or the campaign's own
   // cancellation, which cancels this child scope with its parent) cancels the children in flight
@@ -185,7 +196,98 @@ export async function CampaignWorkflow(input: CampaignWorkflowInput): Promise<Ca
     return target.connectionId;
   };
 
+  /**
+   * End a target that the re-check refused, without starting it: a SKIPPED result with the reason,
+   * written like a child's outcome (the finalizer re-applies it).
+   */
+  const refuseTarget = async (target: CampaignTargetInput, reason: string): Promise<void> => {
+    const result: WorkflowResult = {
+      lessonsGenerated: [],
+      skippedReason: `not started: ${reason}`.slice(0, REASON_MAX),
+      status: 'SKIPPED',
+      totalCIRetries: 0,
+      totalReviewRetries: 0,
+    };
+    childResults[target.connectionId] = result;
+    finished.push({ connectionId: target.connectionId, result, teamId: target.teamId });
+    await CancellationScope.nonCancellable(() =>
+      campaignActivities
+        .recordCampaignTargetResult({
+          campaignId: input.campaignId,
+          cancelled,
+          connectionId: target.connectionId,
+          result,
+          teamId: target.teamId,
+        })
+        .catch(() => undefined)
+    );
+  };
+
+  /**
+   * The patched scheduler: before a batch of queued targets starts, the launch is re-made for it
+   * by an activity (the workflow reads nothing itself). Targets start in input order, the allowed
+   * ones as children and the refused ones ending SKIPPED with the reason; a campaign-wide refusal
+   * ends every target still queued the same way. A re-check that cannot be made fails closed: the
+   * batch and the rest of the queue end SKIPPED rather than starting unchecked.
+   */
+  const runRechecked = async (): Promise<void> => {
+    const inFlight = new Map<string, Promise<string>>();
+    const limit = Math.max(1, input.maxParallel);
+    const fill = async (): Promise<void> => {
+      while (!cancelled && queue.length > 0 && inFlight.size < limit) {
+        const batch = queue.slice(0, limit - inFlight.size);
+        let verdict: Awaited<ReturnType<typeof campaignActivities.authorizeCampaignTargets>>;
+        try {
+          verdict = await campaignActivities.authorizeCampaignTargets({
+            campaignId: input.campaignId,
+            launchedById: input.launchedById,
+            targets: batch.map((t) => ({ connectionId: t.connectionId, teamId: t.teamId })),
+          });
+        } catch (err) {
+          if (isCancellation(err)) {
+            // Only the campaign's own cancel cancels this scope; finalize reports the queue.
+            cancelled = true;
+            return;
+          }
+          verdict = {
+            stopReason: `the launch could not be re-checked: ${errorText(err)}`,
+            verdicts: [],
+          };
+        }
+        if (cancelled) {
+          return;
+        }
+        queue.splice(0, batch.length);
+        const refusedRest = verdict.stopReason ? queue.splice(0, queue.length) : [];
+        for (const target of batch) {
+          const v = verdict.verdicts.find((x) => x.connectionId === target.connectionId);
+          if (!verdict.stopReason && v?.allowed === true) {
+            inFlight.set(target.connectionId, runTarget(target));
+          } else {
+            await refuseTarget(
+              target,
+              verdict.stopReason ?? v?.reason ?? 'the launch was not re-authorized'
+            );
+          }
+        }
+        for (const target of refusedRest) {
+          await refuseTarget(target, verdict.stopReason as string);
+        }
+      }
+    };
+    await fill();
+    while (inFlight.size > 0) {
+      const doneId = await Promise.race(inFlight.values());
+      inFlight.delete(doneId);
+      await fill();
+    }
+  };
+
   await childScope.run(async () => {
+    if (recheck) {
+      await runRechecked();
+      return;
+    }
     const inFlight = new Map<string, Promise<string>>();
     const startReady = (): void => {
       while (!cancelled && queue.length > 0 && inFlight.size < Math.max(1, input.maxParallel)) {

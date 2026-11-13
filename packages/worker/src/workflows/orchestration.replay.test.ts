@@ -90,6 +90,7 @@ describe('Epic and channel workflows — history replay', () => {
       ['assistant-conversation', 'AssistantConversationWorkflow'],
       ['campaign-cancel', 'CampaignWorkflow'],
       ['campaign-mixed', 'CampaignWorkflow'],
+      ['campaign-recheck', 'CampaignWorkflow'],
       ['channel-ambient', 'ChannelAmbientWorkflow'],
       ['channel-assistant-delegate', 'ChannelAssistantWorkflow'],
       ['channel-assistant-error', 'ChannelAssistantWorkflow'],
@@ -202,6 +203,27 @@ describe('Epic and channel workflows — history replay', () => {
       expect(activitiesOf('campaign-mixed')[0]).toBe('updateDomainState');
       expect(activitiesOf('campaign-mixed')).toContain('finalizeCampaign');
       expect(typesOf('campaign-mixed').at(-1)).toBe(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+      );
+    });
+
+    it('campaign-recheck re-authorized each batch and never started the refused targets', () => {
+      // Recorded under the patch, so replay guards the re-checking scheduler.
+      expect(patchesOf('campaign-recheck')).toEqual(['campaign-recheck-before-start']);
+      // t2 was refused (repository inactive), t4 by the campaign-wide stop.
+      expect(startedChildren('campaign-recheck')).toEqual([
+        'replay-fixture-campaign-recheck-t1',
+        'replay-fixture-campaign-recheck-t3',
+      ]);
+      const activities = activitiesOf('campaign-recheck');
+      expect(activities.slice(0, 3)).toEqual([
+        'updateDomainState',
+        'recordCampaignState',
+        'authorizeCampaignTargets',
+      ]);
+      expect(activities.filter((a) => a === 'authorizeCampaignTargets')).toHaveLength(3);
+      expect(activities.at(-2)).toBe('finalizeCampaign');
+      expect(typesOf('campaign-recheck').at(-1)).toBe(
         EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
       );
     });

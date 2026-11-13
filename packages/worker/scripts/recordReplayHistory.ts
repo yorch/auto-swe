@@ -226,6 +226,28 @@ const CAMPAIGN_RECORD_ACTIVITIES = {
   recordCampaignTargetStarted: async () => {},
 };
 
+/**
+ * The launch re-check (`authorizeCampaignTargets`) for the `campaign-recheck` scenario: t2's
+ * repository went inactive, and the owning team's kill switch is off by the time t4 would start.
+ */
+const campaignRecheck = async (input: { targets: Array<{ connectionId: string }> }) =>
+  input.targets.some((t) => t.connectionId === 't4')
+    ? {
+        stopReason: 'workflow.campaignsEnabled was turned off for the owning team',
+        verdicts: [],
+      }
+    : {
+        verdicts: input.targets.map((t) =>
+          t.connectionId === 't2'
+            ? {
+                allowed: false,
+                connectionId: t.connectionId,
+                reason: 'the repository is no longer an active git repository',
+              }
+            : { allowed: true, connectionId: t.connectionId }
+        ),
+      };
+
 /** A campaign child that ends at one terminal, by target. */
 const campaignChild = (status: string, result: Record<string, unknown>) =>
   spec(
@@ -1241,6 +1263,27 @@ const SCENARIOS: Scenario[] = [
     name: 'campaign-mixed',
     workflow: {
       args: [campaignInput('campaign-mixed', ['t1', 't2', 't3', 't4'], { maxParallel: 2 })],
+      type: 'CampaignWorkflow',
+    },
+  },
+  {
+    // The patched scheduler (`campaign-recheck-before-start`): every batch is re-authorized before
+    // its children start. t1 and t3 start and finish; t2 is refused (its repository went inactive)
+    // and t4 is stopped by the campaign-wide refusal, so neither ever starts.
+    activities: () => ({
+      createWorkflowRun: async (input: {
+        payload?: { connectionId?: string };
+        workflowId: string;
+      }) => ({
+        runId: `replay-${input.workflowId}`,
+        spec: CAMPAIGN_CHILD_SPECS[input.payload?.connectionId ?? ''],
+      }),
+      ...CAMPAIGN_RECORD_ACTIVITIES,
+      authorizeCampaignTargets: campaignRecheck,
+    }),
+    name: 'campaign-recheck',
+    workflow: {
+      args: [campaignInput('campaign-recheck', ['t1', 't2', 't3', 't4'], { maxParallel: 2 })],
       type: 'CampaignWorkflow',
     },
   },

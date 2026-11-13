@@ -15,11 +15,14 @@ export { failAssistantReply, runAssistantTurn } from './assistantTurn.js';
 export type { AwaitQodoReviewInput, QodoReviewResult } from './awaitQodoReview.js';
 export { awaitQodoReview } from './awaitQodoReview.js';
 export type {
+  AuthorizeCampaignTargetsInput,
+  AuthorizeCampaignTargetsResult,
   FinalizeCampaignInput,
   RecordCampaignTargetResultInput,
   RecordCampaignTargetStartedInput,
 } from './campaign.js';
 export {
+  authorizeCampaignTargets,
   finalizeCampaign,
   recordCampaignState,
   recordCampaignTargetResult,
