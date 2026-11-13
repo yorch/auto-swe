@@ -658,7 +658,7 @@ the first of:
 submodules: recursive   # false | true | recursive
 lfs: true
 env: { CI: "1" }        # upper-case names; not for secrets
-secrets: [NPM_TOKEN]    # setup secrets saved on the repository, by name
+secrets: [NPM_TOKEN]    # setup secrets saved on the repository or granted from its team, by name
 steps:
   - name: install
     run: yarn install --immutable
@@ -701,6 +701,17 @@ holds no value for, or one that cannot be decrypted, fails setup with `WORKSPACE
 name may not be both an `env` key and a secret. Saving and deleting are written to the audit log,
 by name only.
 
+**Team secrets.** A team admin can also store named secrets on a team and grant each one to a
+repository that team owns; the routes and the rules are in [team secrets](./teams.md#6-team-secrets).
+A setup definition names a granted team secret under `secrets` exactly as it names one of its own.
+Nothing is inherited, so a secret reaches a repository only through a grant. For each name the
+repository's own setup secret wins; otherwise a secret granted by the repository's current owning
+team is used, if that team is active; otherwise setup fails with `missing_secret`. `GET
+…/setup/secrets` lists the granted team secrets with `source: 'team'`, and marks one `shadowed` when
+a repository secret of the same name wins. The values reach setup steps and app previews through the
+same channel, leak scan and output masking as the repository's own secrets, and never the agent. A
+repository moved to another team loses its grants.
+
 ### Setup blockers
 
 Workspace setup failures carry typed diagnostics and retain the `WORKSPACE_SETUP_FAILED`
@@ -711,7 +722,7 @@ hints computed from the kind, not instructions generated from the output.
 
 | Kind | Raised when |
 |---|---|
-| `missing_secret` | A named setup secret has no saved value. |
+| `missing_secret` | A named setup secret is neither saved on the repository nor granted to it from its owning team. |
 | `secret_decrypt_failed` | A saved setup secret cannot be decrypted. |
 | `missing_tool` | A step exits 127 or its output indicates a shell command is missing. |
 | `egress_denied` | A failed step has a blocked egress-proxy audit row since its start. |
@@ -1268,3 +1279,12 @@ for whichever provider serves the repository.
   membership: the members of an inactive owning team still reach its repositories, and the members
   of an inactive team a repository was shared with still reach that one. Removing the share is what
   ends a shared team's access, and only active teams of the organization can be chosen when sharing.
+- **A repository whose setup comes from its checkout is open to anyone who can push to it.** A
+  definition read from `.auto-swe/setup.yml`, with no stored definition, lets whoever can push a
+  branch and launch a run on the repository name a granted secret and run steps with it. This holds
+  for the repository's own secrets today too. Grant secrets only to repositories whose contributors
+  the team trusts, or store the definition on the repository (the `setup` field) so that only shell
+  authors can change it.
+- **Setup egress follows the agent egress policy.** A setup step can send a secret to any host the
+  policy allows. The leak scan checks only files left on disk, so a secret sent over the network is
+  not caught by it.

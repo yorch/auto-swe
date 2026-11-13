@@ -905,6 +905,12 @@ export async function createWorkspace(
       defer?: boolean;
       connectionId?: string | null;
       recordBlockers?: boolean;
+      /**
+       * Whether a team secret granted to the repository may fill a name the setup lists. Default
+       * true. Eval workspaces pass false: an eval dataset can link a repository on its own
+       * authority (an ORG_ADMIN may link one), which must not reach the team's secrets.
+       */
+      allowTeamSecrets?: boolean;
     };
     /**
      * Install what this connection declares (its admin list and, when enabled, the base ref's
@@ -1228,7 +1234,8 @@ export async function createWorkspace(
     const git = await runSetupGitPhase(setupHost, setup, setupInputs(), gitAuthHeader);
     const secretEnv = await loadSetupSecrets(
       options?.repoSetup?.connectionId ?? null,
-      setup.secrets ?? []
+      setup.secrets ?? [],
+      { allowTeam: options?.repoSetup?.allowTeamSecrets ?? true }
     );
     setupSecrets.push(...Object.values(secretEnv));
     const { cache, steps } = await runSetupStepsPhase(setupHost, setup, setupInputs(), secretEnv);

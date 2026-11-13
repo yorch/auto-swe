@@ -641,10 +641,16 @@ async function saveCache(
  * The values of the setup secrets a definition names, from the repository's encrypted store.
  * A name with no stored value, or no repository to read from, fails setup: a step run without
  * the credential it was promised fails later and less clearly.
+ *
+ * A repository's own secret wins. Otherwise, with `allowTeam`, a team secret of that name fills it
+ * when the repository's CURRENT team (read here, never supplied by the caller) owns the secret, is
+ * active, and the secret has been granted to this repository. Callers that act on a repository
+ * someone else linked (eval datasets) pass `allowTeam: false`.
  */
 export async function loadSetupSecrets(
   connectionId: string | null,
-  names: readonly string[]
+  names: readonly string[],
+  opts: { allowTeam?: boolean } = {}
 ): Promise<Record<string, string>> {
   if (names.length === 0) {
     return {};
@@ -662,10 +668,48 @@ export async function loadSetupSecrets(
   const rows = await prisma.repoSetupSecret.findMany({
     where: { connectionId, name: { in: [...names] } },
   });
-  const missing = names.filter((n) => !rows.some((r) => r.name === n));
+  type Sealed = {
+    name: string;
+    valueAuthTag: Uint8Array;
+    valueCiphertext: Uint8Array;
+    valueKeyVersion: number;
+    valueNonce: Uint8Array;
+  };
+  const found = new Map<string, { row: Sealed; team: boolean }>(
+    rows.map((r) => [r.name, { row: r, team: false }])
+  );
+  const unresolved = names.filter((n) => !found.has(n));
+  if (unresolved.length && (opts.allowTeam ?? true)) {
+    const connection = await prisma.connection.findUnique({
+      select: {
+        team: {
+          select: { id: true, isActive: true, organization: { select: { isActive: true } } },
+        },
+        teamId: true,
+      },
+      where: { id: connectionId },
+    });
+    if (
+      connection?.teamId &&
+      connection.team?.isActive &&
+      connection.team.organization?.isActive !== false
+    ) {
+      const teamRows = await prisma.teamSecret.findMany({
+        where: {
+          grants: { some: { connectionId } },
+          name: { in: [...unresolved] },
+          teamId: connection.teamId,
+        },
+      });
+      for (const r of teamRows) {
+        found.set(r.name, { row: r, team: true });
+      }
+    }
+  }
+  const missing = names.filter((n) => !found.has(n));
   if (missing.length) {
     throw setupRunFailure(
-      `setup secret${missing.length > 1 ? 's' : ''} not set on the repository: ${missing.join(', ')}`,
+      `setup secret${missing.length > 1 ? 's' : ''} not set on the repository or granted from its team: ${missing.join(', ')}`,
       blocker(
         'missing_secret',
         `setup secrets not set: ${[...missing].sort().join(', ')}`,
@@ -674,21 +718,22 @@ export async function loadSetupSecrets(
     );
   }
   const values: Record<string, string> = {};
-  for (const row of rows) {
+  for (const [name, { row, team }] of found) {
     try {
-      values[row.name] = decryptSecret({
+      values[name] = decryptSecret({
         authTag: row.valueAuthTag,
         ciphertext: row.valueCiphertext,
         keyVersion: row.valueKeyVersion,
         nonce: row.valueNonce,
       });
     } catch {
+      const what = team ? 'team secret' : 'setup secret';
       throw setupRunFailure(
-        `setup secret ${row.name} could not be decrypted; save it again`,
+        `${what} ${name} could not be decrypted; save it again`,
         blocker(
           'secret_decrypt_failed',
-          `setup secret ${row.name} could not be decrypted; save it again`,
-          row.name
+          `${what} ${name} could not be decrypted; save it again`,
+          name
         )
       );
     }

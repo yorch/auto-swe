@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const hooks = vi.hoisted(() => ({
   remove: vi.fn(),
   save: vi.fn(),
-  secrets: [{ lastFour: 'cdef', name: 'NPM_TOKEN', updatedAt: '2026-11-06T12:00:00Z' }],
+  secrets: [{ lastFour: 'cdef', name: 'NPM_TOKEN', updatedAt: '2026-11-06T12:00:00Z' }] as Array<
+    Record<string, unknown>
+  >,
 }));
 vi.mock('@/hooks/useRepositories', () => ({
   useDeleteSetupSecret: () => ({ isPending: false, mutate: hooks.remove }),
@@ -55,5 +57,46 @@ describe('RepoSetupSecrets', () => {
     render(<RepoSetupSecrets disabled={false} repositoryId="repo-1" />);
     fireEvent.click(screen.getByRole('button', { name: 'Delete secret NPM_TOKEN' }));
     expect(hooks.remove).toHaveBeenCalledWith('NPM_TOKEN', expect.anything());
+  });
+
+  describe('team-granted secrets', () => {
+    const repoSecret = { lastFour: 'cdef', name: 'NPM_TOKEN', updatedAt: '2026-11-06T12:00:00Z' };
+    const teamSecret = (name: string, shadowed: boolean) => ({
+      lastFour: 'wxyz',
+      name,
+      shadowed,
+      source: 'team',
+      updatedAt: '2026-11-07T12:00:00Z',
+    });
+
+    afterEach(() => {
+      hooks.secrets = [repoSecret];
+    });
+
+    it('lists a team secret read-only under From team, with no delete button', () => {
+      hooks.secrets = [repoSecret, teamSecret('PIP_TOKEN', false)];
+      render(<RepoSetupSecrets disabled={false} repositoryId="repo-1" />);
+      expect(screen.getByText('PIP_TOKEN')).toBeTruthy();
+      expect(screen.getByText('From team')).toBeTruthy();
+      expect(screen.getByText('••••wxyz')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Delete secret PIP_TOKEN' })).toBeNull();
+      // The repository's own secret keeps its delete button.
+      expect(screen.getByRole('button', { name: 'Delete secret NPM_TOKEN' })).toBeTruthy();
+      expect(screen.queryByText(/shadowed by repository secret/)).toBeNull();
+    });
+
+    it('notes when a repository secret of the same name shadows the team secret', () => {
+      hooks.secrets = [repoSecret, teamSecret('NPM_TOKEN', true)];
+      render(<RepoSetupSecrets disabled={false} repositoryId="repo-1" />);
+      expect(screen.getByText('From team')).toBeTruthy();
+      expect(screen.getByText('shadowed by repository secret')).toBeTruthy();
+    });
+
+    it('keeps rows without a source as repository secrets, unchanged', () => {
+      hooks.secrets = [{ ...repoSecret, shadowed: false, source: 'repo' }];
+      render(<RepoSetupSecrets disabled={false} repositoryId="repo-1" />);
+      expect(screen.queryByText('From team')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Delete secret NPM_TOKEN' })).toBeTruthy();
+    });
   });
 });

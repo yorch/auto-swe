@@ -99,6 +99,7 @@ describe('repoOnboardingTrial', () => {
       expect.objectContaining({
         inheritSetupEgress: true,
         repoSetup: {
+          allowTeamSecrets: false,
           connectionId: 'repo-1',
           defer: true,
           field: draft.setup,
@@ -115,6 +116,7 @@ describe('repoOnboardingTrial', () => {
       m.capture.mock.invocationCallOrder[0] ?? 0
     );
     expect(m.preview).toHaveBeenCalledWith(expect.anything(), expect.objectContaining(config), {
+      allowTeamSecrets: false,
       connectionId: 'repo-1',
     });
     expect(m.stop).toHaveBeenCalledOnce();

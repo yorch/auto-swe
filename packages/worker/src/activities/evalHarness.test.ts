@@ -571,8 +571,8 @@ describe('runCaseDefault iteration cap', () => {
       .mocked(createWorkspace)
       .mock.calls.map((call) => (call[6] as { repoSetup?: unknown }).repoSetup);
     expect(setups).toEqual([
-      { connectionId: 'repo-1', field: null },
-      { connectionId: null, field: null },
+      { allowTeamSecrets: false, connectionId: 'repo-1', field: null },
+      { allowTeamSecrets: false, connectionId: null, field: null },
     ]);
   });
 

@@ -814,6 +814,8 @@ model Connection {
   /// Per-user GitHub tokens for this repository (see `ConnectionCredential`).
   credentials           ConnectionCredential[]
   setupSecrets          RepoSetupSecret[]
+  /// Team secrets granted to this repository (see `TeamSecretGrant`).
+  teamSecretGrants      TeamSecretGrant[]
   setupBlockers         RepoSetupBlocker[]
   /// Eval datasets whose cases read this repository's setup secrets.
   evalDatasetsUsingSetupSecrets EvalDataset[] @relation("EvalDatasetSetupSecrets")
@@ -1050,6 +1052,54 @@ model RepoSetupSecret {
 
   @@unique([connectionId, name])
   @@map("repo_setup_secrets")
+}
+
+/// A named secret a team holds once and grants to chosen repositories, so a credential shared by
+/// several repositories is stored and rotated in one place. Write-only like `RepoSetupSecret`: the
+/// value reaches only setup steps, as secret environment, never the agent. A repository's own
+/// `RepoSetupSecret` of the same name wins. Usable only through a `TeamSecretGrant`.
+model TeamSecret {
+  id     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId String @map("team_id") @db.Uuid
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  name   String
+
+  valueCiphertext Bytes  @map("value_ciphertext")
+  valueNonce      Bytes  @map("value_nonce")
+  valueAuthTag    Bytes  @map("value_auth_tag")
+  valueKeyVersion Int    @map("value_key_version")
+  valueLastFour   String @map("value_last_four")
+
+  createdById String? @map("created_by_id") @db.Uuid
+  createdBy   User?   @relation("TeamSecretCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  grants TeamSecretGrant[]
+
+  @@unique([teamId, name])
+  @@map("team_secrets")
+}
+
+/// Permission for one repository to read one `TeamSecret`. The loader also requires the
+/// repository's current team to be the secret's team, so a repository moved to another team loses
+/// access without the grant being touched.
+model TeamSecretGrant {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamSecretId String     @map("team_secret_id") @db.Uuid
+  teamSecret   TeamSecret @relation(fields: [teamSecretId], references: [id], onDelete: Cascade)
+  connectionId String     @map("connection_id") @db.Uuid
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  createdById String? @map("created_by_id") @db.Uuid
+  createdBy   User?   @relation("TeamSecretGrantCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([teamSecretId, connectionId])
+  @@index([connectionId])
+  @@map("team_secret_grants")
 }
 
 /// The webhook secret of one GitHub Enterprise Server host.
@@ -1328,6 +1378,8 @@ model Team {
   /// Event automations this team owns that belong to no repository (`Automation.teamId`).
   automations           Automation[]
   reviewPresets         ReviewPreset[]
+  /// Named secrets the team holds and grants to its repositories (see `TeamSecret`).
+  secrets               TeamSecret[]
   /// URLs other services post signed events to (`EventEndpoint`).
   eventEndpoints        EventEndpoint[]
   workflowTemplates     WorkflowTemplate[]
@@ -1724,6 +1776,8 @@ model ChannelBudgetHold {
 }
 
 model User {
+  createdTeamSecrets        TeamSecret[]       @relation("TeamSecretCreator")
+  createdTeamSecretGrants   TeamSecretGrant[]  @relation("TeamSecretGrantCreator")
   createdReviewPresets           ReviewPreset[]           @relation("ReviewPresetCreator")
   createdReviewPresetAttachments ReviewPresetAttachment[] @relation("ReviewPresetAttachmentCreator")
   createdKnowledgeBases     KnowledgeBase[]

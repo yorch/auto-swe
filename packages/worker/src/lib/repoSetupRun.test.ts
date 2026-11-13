@@ -25,6 +25,37 @@ const artifacts = vi.hoisted(() => ({
 const setupSecrets = vi.hoisted(() => ({
   findMany: vi.fn(async (): Promise<Array<Record<string, unknown>>> => []),
 }));
+type TeamSecretRow = {
+  grants: string[];
+  name: string;
+  teamId: string;
+  valueAuthTag: Buffer;
+  valueCiphertext: Buffer;
+  valueKeyVersion: number;
+  valueNonce: Buffer;
+};
+const teamData = vi.hoisted(() => ({
+  connection: null as null | {
+    team: { id: string; isActive: boolean; organization?: { isActive: boolean } } | null;
+    teamId: string | null;
+  },
+  secrets: [] as TeamSecretRow[],
+}));
+const teamSecrets = vi.hoisted(() => ({
+  // Evaluates the filter the loader sends, so a query that dropped a condition fails a test.
+  findMany: vi.fn(
+    async (args: {
+      where: { grants: { some: { connectionId: string } }; name: { in: string[] }; teamId: string };
+    }) =>
+      teamData.secrets.filter(
+        (r) =>
+          r.teamId === args.where.teamId &&
+          args.where.name.in.includes(r.name) &&
+          r.grants.includes(args.where.grants.some.connectionId)
+      )
+  ),
+}));
+const connections = vi.hoisted(() => ({ findUnique: vi.fn(async () => teamData.connection) }));
 const deniedCall = vi.hoisted(() => ({
   findFirst: vi.fn(async (): Promise<{ host: string } | null> => null),
 }));
@@ -34,8 +65,10 @@ vi.mock('./activityContext.js', () => ({
 }));
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
+    connection: connections,
     repoSetupSecret: setupSecrets,
     team: { findUnique: vi.fn(async () => null) },
+    teamSecret: teamSecrets,
     workflowHttpCall: deniedCall,
     workspaceSetupCache: cache,
   },
@@ -785,7 +818,9 @@ describe('setup secrets', () => {
     setupSecrets.findMany.mockResolvedValueOnce([row('NPM_TOKEN')]);
     await expect(loadSetupSecrets('repo-1', ['NPM_TOKEN', 'PIP_TOKEN'])).rejects.toMatchObject({
       details: [{ detail: expect.any(String), kind: 'missing_secret', subject: 'PIP_TOKEN' }],
-      message: expect.stringContaining('not set on the repository: PIP_TOKEN'),
+      message: expect.stringContaining(
+        'not set on the repository or granted from its team: PIP_TOKEN'
+      ),
       type: WORKSPACE_SETUP_FAILED,
     });
   });
@@ -803,6 +838,122 @@ describe('setup secrets', () => {
     expect(String((err as Error).message)).toContain('could not be decrypted');
     expect(String((err as Error).message)).not.toContain('corrupt');
     expect(err).toMatchObject({ details: [{ kind: 'secret_decrypt_failed' }] });
+  });
+
+  describe('team secrets', () => {
+    const teamRow = (name: string, over: Partial<TeamSecretRow> = {}): TeamSecretRow => ({
+      grants: ['repo-1'],
+      name,
+      teamId: 'team-1',
+      valueAuthTag: Buffer.from('t'),
+      valueCiphertext: Buffer.from(name),
+      valueKeyVersion: 1,
+      valueNonce: Buffer.from('n'),
+      ...over,
+    });
+
+    beforeEach(() => {
+      teamData.connection = { team: { id: 'team-1', isActive: true }, teamId: 'team-1' };
+      teamData.secrets = [];
+      teamSecrets.findMany.mockClear();
+      connections.findUnique.mockClear();
+    });
+
+    it('fills a name from a granted team secret', async () => {
+      teamData.secrets = [teamRow('NPM_TOKEN')];
+      await expect(loadSetupSecrets('repo-1', ['NPM_TOKEN'])).resolves.toEqual({
+        NPM_TOKEN: 'plain-NPM_TOKEN',
+      });
+    });
+
+    it("prefers the repository's own secret and never reads the team's", async () => {
+      setupSecrets.findMany.mockResolvedValueOnce([row('NPM_TOKEN', 'own')]);
+      teamData.secrets = [teamRow('NPM_TOKEN', { valueCiphertext: Buffer.from('team') })];
+      await expect(loadSetupSecrets('repo-1', ['NPM_TOKEN'])).resolves.toEqual({
+        NPM_TOKEN: 'plain-own',
+      });
+      expect(teamSecrets.findMany).not.toHaveBeenCalled();
+    });
+
+    it('mixes repository and team secrets in one call', async () => {
+      setupSecrets.findMany.mockResolvedValueOnce([row('A', 'own-a')]);
+      teamData.secrets = [teamRow('B')];
+      await expect(loadSetupSecrets('repo-1', ['A', 'B'])).resolves.toEqual({
+        A: 'plain-own-a',
+        B: 'plain-B',
+      });
+    });
+
+    it('refuses a team secret that was not granted to this repository', async () => {
+      teamData.secrets = [teamRow('NPM_TOKEN', { grants: ['repo-2'] })];
+      await expect(loadSetupSecrets('repo-1', ['NPM_TOKEN'])).rejects.toMatchObject({
+        details: [{ kind: 'missing_secret', subject: 'NPM_TOKEN' }],
+        type: WORKSPACE_SETUP_FAILED,
+      });
+    });
+
+    it('refuses the secrets of a team whose organization is inactive', async () => {
+      teamData.connection = {
+        team: { id: 'team-1', isActive: true, organization: { isActive: false } },
+        teamId: 'team-1',
+      };
+      teamData.secrets = [teamRow('NPM_TOKEN')];
+      await expect(loadSetupSecrets('conn-1', ['NPM_TOKEN'])).rejects.toThrow(
+        /granted from its team/
+      );
+    });
+
+    it('refuses the secrets of an inactive team', async () => {
+      teamData.connection = { team: { id: 'team-1', isActive: false }, teamId: 'team-1' };
+      teamData.secrets = [teamRow('NPM_TOKEN')];
+      await expect(loadSetupSecrets('repo-1', ['NPM_TOKEN'])).rejects.toMatchObject({
+        details: [{ kind: 'missing_secret' }],
+      });
+      expect(teamSecrets.findMany).not.toHaveBeenCalled();
+    });
+
+    it("scopes the lookup to the repository's current team, not the secret's", async () => {
+      // The grant outlived a move of the repository to another team.
+      teamData.connection = { team: { id: 'team-2', isActive: true }, teamId: 'team-2' };
+      teamData.secrets = [teamRow('NPM_TOKEN', { teamId: 'team-1' })];
+      await expect(loadSetupSecrets('repo-1', ['NPM_TOKEN'])).rejects.toMatchObject({
+        details: [{ kind: 'missing_secret' }],
+      });
+      expect(teamSecrets.findMany).toHaveBeenCalledWith({
+        where: {
+          grants: { some: { connectionId: 'repo-1' } },
+          name: { in: ['NPM_TOKEN'] },
+          teamId: 'team-2',
+        },
+      });
+    });
+
+    it('refuses a repository that no longer exists', async () => {
+      teamData.connection = null;
+      teamData.secrets = [teamRow('NPM_TOKEN')];
+      await expect(loadSetupSecrets('repo-1', ['NPM_TOKEN'])).rejects.toMatchObject({
+        details: [{ kind: 'missing_secret' }],
+      });
+    });
+
+    it('reads no team secret when allowTeam is false', async () => {
+      teamData.secrets = [teamRow('NPM_TOKEN')];
+      await expect(
+        loadSetupSecrets('repo-1', ['NPM_TOKEN'], { allowTeam: false })
+      ).rejects.toMatchObject({ details: [{ kind: 'missing_secret' }] });
+      expect(connections.findUnique).not.toHaveBeenCalled();
+      expect(teamSecrets.findMany).not.toHaveBeenCalled();
+    });
+
+    it('fails on a team secret that cannot be decrypted, naming it and not echoing it', async () => {
+      teamData.secrets = [teamRow('NPM_TOKEN', { valueCiphertext: Buffer.from('corrupt') })];
+      const err = await loadSetupSecrets('repo-1', ['NPM_TOKEN']).catch((e: Error) => e);
+      expect(String((err as Error).message)).toContain(
+        'team secret NPM_TOKEN could not be decrypted'
+      );
+      expect(String((err as Error).message)).not.toContain('corrupt');
+      expect(err).toMatchObject({ details: [{ kind: 'secret_decrypt_failed' }] });
+    });
   });
 
   it('hands values to the steps as secret environment, never as plain env', async () => {

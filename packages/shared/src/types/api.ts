@@ -487,6 +487,18 @@ export interface RepoSetupSecretSummary {
   name: string;
   lastFour: string;
   updatedAt: string;
+  /** `repository` (the default) or `team`, granted from the owning team. */
+  source?: 'repository' | 'team';
+  /** A team entry hidden by a repository secret of the same name, which wins. */
+  shadowed?: boolean;
+}
+
+/** A team secret as the API shows it: never the value, plus the repositories it is granted to. */
+export interface TeamSecretSummary {
+  name: string;
+  lastFour: string;
+  updatedAt: string;
+  grantedConnectionIds: string[];
 }
 
 export type RepoSetupFileProposalStatus =

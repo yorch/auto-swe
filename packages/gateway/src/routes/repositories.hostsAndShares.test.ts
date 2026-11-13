@@ -82,6 +82,11 @@ async function buildApp() {
     },
     team: { findMany: vi.fn(), findUnique: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
+    teamSecret: { findMany: vi.fn().mockResolvedValue([]) },
+    teamSecretGrant: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   };
   prisma.$transaction.mockImplementation((ops) =>
     typeof ops === 'function'

@@ -94,6 +94,8 @@ async function defaultLoadCases(datasetId: string): Promise<RevalCaseRow[]> {
  */
 export function runCaseReference(c: EvalCaseRow): Promise<GateResult> {
   return runGateStandalone({
+    // An eval dataset's repository link must not reach the team's secrets (see evalHarness.ts).
+    allowTeamSecrets: false,
     authedRepoUrl: c.repoUrl,
     branch: 'eval-reval',
     checkoutSha: c.baselineSha,
