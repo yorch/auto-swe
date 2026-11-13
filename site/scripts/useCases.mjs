@@ -203,8 +203,9 @@ export const USE_CASES = {
       'Applies one planned dependency change to a repository, deterministically first. A ' +
       'code-owned recipe makes an npm or Go upgrade in a sandbox; the agent takes over when ' +
       "there is no recipe or it cannot apply. Every change is verified against the repository's " +
-      'original tests, with the test files the change touched put back first, and an agent ' +
-      'that deletes, skips or weakens tests is stopped before it pushes. A failed verification ' +
+      'original tests, with the test, mock, fixture and setup files the change touched put back ' +
+      'first, and an agent the test-integrity guard catches deleting, skipping or weakening ' +
+      'tests is stopped before it pushes. A failed verification ' +
       'gets one fix attempt. The run ends at a draft pull request, or opens nothing when the ' +
       'repository is not affected.',
     title: 'Dependency upgrade campaign',

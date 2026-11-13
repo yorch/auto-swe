@@ -142,9 +142,13 @@ non-zero and pushes nothing.
    action, or one that adds a symlink or submodule. An agent that changes nothing also ends
    `SUCCESS` with `changed: false`.
 3. Every change, from the recipe or the agent, is verified by the `runTests` gate with
-   `protectTests: true`: the test files the change touched are put back to the change's recorded
-   base before the repository's setup and the tests run, in the gate's own workspace only. Editing
-   a test therefore cannot be how a change reaches green.
+   `protectTests: true`: the test files, test support files (fixtures, mocks, golden files,
+   helpers), runner setup files and pure test-runner configuration the change touched are put back
+   to the change's recorded base before the repository's setup and the tests run, in the gate's own
+   workspace only. An edit to a file recognised that way does not count towards green; what the
+   conventions do not recognise (inline tests, a test setting inside a manifest, the test command,
+   the code the tests run) is not restored
+   ([campaigns.md, Limitations](./campaigns.md#limitations)).
 4. A change that fails verification gets one attempt by the gate-fix agent, under the same `block`
    floor, and is verified again. Failing twice ends the run `FAILED` with `verification: FAILED` and no
    pull request.

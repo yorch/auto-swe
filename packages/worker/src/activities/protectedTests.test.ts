@@ -46,6 +46,23 @@ describe('which paths are protected', () => {
     '.mocharc.json',
     'phpunit.xml',
     'src/test/java/com/acme/FooTest.java',
+    // Test doubles, test data and helpers outside a test/ directory.
+    '__mocks__/lodash.js',
+    'src/__mocks__/axios.ts',
+    'pkg/render/testdata/golden.html',
+    'internal/testutil/fake.go',
+    'internal/testutils/fake.go',
+    'pkg/testhelpers/db.go',
+    'src/test-utils.tsx',
+    'src/test-utils/render.tsx',
+    // Runner setup files: they run inside every test.
+    'jest.setup.js',
+    'jest-setup.ts',
+    'vitest.setup.ts',
+    'src/setupTests.ts',
+    'test-setup.ts',
+    'karma.conf.js',
+    '.rspec',
   ])('protects %s', (p) => {
     expect(isProtectedTestPath(p)).toBe(true);
   });
@@ -62,6 +79,12 @@ describe('which paths are protected', () => {
     'Cargo.toml',
     'yarn.lock',
     'tsconfig.json',
+    // Babel and Vite configure the production build as well, and an upgrade can need them changed.
+    'babel.config.js',
+    '.babelrc',
+    'vite.config.ts',
+    'src/setup.ts',
+    'src/utils/format.ts',
     'src/a.ts',
     'src/server.go',
     'README.md',

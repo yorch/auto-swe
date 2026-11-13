@@ -90,8 +90,12 @@ const verifyGate = (next: string): Node => ({
  *  2. Without a recipe, or after a recipe that could not apply, the agent makes the change. Its
  *     step refuses a change that deletes, skips or weakens tests (`testIntegrity: 'block'`).
  *  3. Every change, from the recipe or the agent, is verified by the repository's original tests:
- *     the verification restores the test files the branch changed before it runs, in its own
- *     workspace, so editing a test can never be how a change gets to green.
+ *     the verification restores the test files, test support files (fixtures, mocks, golden
+ *     files, helpers), runner setup files and pure test-runner configuration the branch changed,
+ *     recognised by file-name convention, before it runs, in its own workspace. An edit to one of
+ *     those does not count towards green; a test outside the conventions, a test setting inside a
+ *     manifest, the test command, and the change's own code that the tests run are not restored
+ *     (docs/campaigns.md, Limitations).
  *  4. A change that fails verification gets one agent fix, verified again. Failing twice ends the
  *     run FAILED with no pull request.
  *

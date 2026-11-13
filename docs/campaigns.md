@@ -174,7 +174,7 @@ template is a complete workflow on its own
 There is no review network and no CI-fix loop in a child: a campaign adds no pushes after the
 draft opens, and the host's CI on the draft is what the reviewing person reads.
 
-## 5. Verification the agent cannot modify
+## 5. Verification the agent's test edits do not count in
 
 The risk in letting an agent upgrade a dependency is that it makes the tests pass by changing
 them. Two mechanisms close it, both described in
@@ -182,8 +182,20 @@ them. Two mechanisms close it, both described in
 
 - **Protected verification.** The `runTests` gate of the template runs with `protectTests: true`.
   In its own workspace, right after the clone and before the repository's setup and the tests run,
-  it restores every test file, test support file and pure test-runner configuration the change
-  touched to its content at the change's recorded base, and removes test files the change added.
+  it restores every protected file the change touched to its content at the change's recorded
+  base, and removes protected files the change added. Protected, by file-name convention:
+  - test files (`*.test.*`, `*.spec.*`, `*_test.go`, `test_*.py`, `*Test.java`, scripts under
+    `__tests__/`, …);
+  - test support files: anything under `test/`, `tests/`, `spec/`, `__tests__/`, `__snapshots__/`,
+    `__mocks__/`, Go's `testdata/`, and helper directories named `testutil(s)`, `testhelper(s)`,
+    `test-utils` or `test_helpers`, plus a `test-utils.*` module and `conftest.py`;
+  - runner setup files, which run inside every test: `jest.setup.*`, `vitest.setup.*`,
+    `setupTests.*`, `test-setup.*`, `karma.conf.*`, `.rspec`;
+  - pure test-runner configuration: `jest`, `vitest`, `playwright`, `cypress`, `karma`, `mocha` and
+    `ava` config files, `.mocharc`, `pytest.ini`, `phpunit.xml`, `.nycrc`.
+
+  Babel and Vite configuration are deliberately not protected: they configure the production build
+  as well as the tests, and an upgrade can legitimately need them changed, like a manifest.
   The recorded base is the one the change's code result carries, read before any agent or recipe
   ran: the base branch's tip when the agent's workspace was created, or the parent of the commit the
   recipe pushed. It is never a merge base computed at verification time, which an agent could move
@@ -196,7 +208,15 @@ them. Two mechanisms close it, both described in
   so a change that deletes, skips or weakens tests, loosens the test command, or weakens CI
   configuration fails before it is pushed, whatever `github.ciFixTestIntegrityGuard` says. This
   covers what restoring files cannot: edits to `package.json` scripts and test settings inside a
-  manifest.
+  manifest. It also reports an edit to a runner setup file as `test_setup_changed` (high, so the
+  floor refuses it) and an edit to a mock, golden file or test helper as `test_double_changed`
+  (low, recorded only).
+
+Together they mean an edit to a protected file does not count towards a passing verification. They
+do not mean a change cannot reach green through its tests: a test outside the naming conventions,
+a test setting inside a manifest the guard's heuristics miss, the gate command, and the change's
+own code (which the restored tests import and the setup runs) are not restored, as the Limitations
+below state.
 
 Both agent steps also refuse a change to a GitHub Actions workflow or action, a symlink or a
 submodule, and the campaign prompt tells the agent its test edits will not count and that nobody is
@@ -364,9 +384,12 @@ with the state before and after (`CANCELLING`) and the actor. See [audit-log.md]
   request. Campaigns suit behaviour-preserving changes. When the original tests cannot be restored
   the gate fails with `PROTECTED_TESTS_UNAVAILABLE`, which appears as a child that errored.
 - **Protection is by file-name convention.** Inline tests (Rust `#[cfg(test)]`, doctests), tests
-  outside the conventions, test settings inside a dependency manifest and helpers under `src/` are
-  not restored; only the guard's heuristics read manifests. The guard is heuristic, so a clean
-  result is not a proof.
+  outside the conventions, test settings inside a dependency manifest, helpers under `src/` that
+  are not named as test utilities, setup files named some other way (a `setupFiles` entry pointing
+  at `src/polyfills.ts`), Babel and Vite configuration, and a mock or fixture directory with
+  another name are not restored; only the guard's heuristics read manifests. A legitimate upgrade
+  that has to change a mock, a golden file or a setup file fails verification, like one that has to
+  change a test. The guard is heuristic, so a clean result is not a proof.
 - **The gate command is not protected.** It comes from the step configuration, the repository's
   gate commands or the default, and a default such as `yarn test` reads `package.json` scripts,
   which only the guard inspects. The quality-gates step `runQualityGates` ignores `protectTests`.
