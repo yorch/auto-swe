@@ -351,6 +351,11 @@ describe('cheap evasions', () => {
     ['a CRA setupTests', 'src/setupTests.ts'],
     ['a vitest setup file', 'vitest.setup.ts'],
     ['karma.conf.js', 'karma.conf.js'],
+    ['a Cypress support file', 'cypress/support/e2e.ts'],
+    ['a jest/ setup file', 'jest/setup.js'],
+    ['a .jest/ setup file', '.jest/setup.ts'],
+    ['a setup-jest file', 'src/setup-jest.ts'],
+    ["Angular's Karma entry", 'src/test.ts'],
   ])('flags an edit to %s as high: it runs inside every test', (_name, path) => {
     const result = analyseTestIntegrity(
       modify(
@@ -380,6 +385,9 @@ describe('cheap evasions', () => {
     ['a Go golden file', 'pkg/render/testdata/golden.html'],
     ['a Go test helper', 'internal/testutil/fake.go'],
     ['a test-utils module', 'src/test-utils.tsx'],
+    ['a fixture', 'fixtures/user.json'],
+    ['a __fixtures__ file', 'src/__fixtures__/user.json'],
+    ['a Mock Service Worker handler', 'src/mocks/handlers.ts'],
   ])('records an edit to %s as a low test_double_changed', (_name, path) => {
     const result = analyseTestIntegrity(modify(path, ['<p>expected</p>'], ['<p>anything</p>']));
     expect(result.findings).toEqual([

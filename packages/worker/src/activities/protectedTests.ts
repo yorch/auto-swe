@@ -88,8 +88,22 @@ export interface TreeChange {
   path: string;
 }
 
+/**
+ * A package manager's copy of third-party code: Go's and Composer's or Bundler's `vendor/`, npm's
+ * `node_modules/`, Bower's `bower_components/`, and Yarn's committed cache and unpacked packages
+ * under `.yarn/`. An upgrade legitimately rewrites these (a `go mod vendor`, say), and the files
+ * in them named like tests or test helpers are the dependency's, not the repository's, so putting
+ * them back would revert part of the upgrade. At any depth, for a monorepo's nested modules.
+ */
+export function isDependencyCopyPath(path: string): boolean {
+  return /(^|\/)(?:vendor|node_modules|bower_components|\.yarn)\//.test(path);
+}
+
 /** Whether a path belongs to the tests a change must not be able to edit its way past. */
 export function isProtectedTestPath(path: string): boolean {
+  if (isDependencyCopyPath(path)) {
+    return false;
+  }
   return isTestFilePath(path) || isTestSupportPath(path) || isPureTestConfig(path);
 }
 

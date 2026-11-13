@@ -435,6 +435,36 @@ exclude (
     expect(read('go.mod')).toContain(`${MOD} v1.9.0`);
   });
 
+  it('cannot apply to a module that vendors its dependencies: exit 3, go never runs', () => {
+    installGoStub();
+    file('go.mod', `module x\n\ngo 1.22\n\nrequire ${MOD} v1.8.0\n`);
+    mkdirSync(join(repo, 'vendor'));
+    file('vendor/modules.txt', `# ${MOD} v1.8.0\n`);
+    const r = run(cmd());
+    expect(r.status).toBe(RECIPE_EXIT_UNSUPPORTED);
+    expect(r.stderr).toMatch(/vendors its dependencies/);
+    expect(args()).toBeNull();
+    expect(read('go.mod')).toContain(`${MOD} v1.8.0`);
+  });
+
+  it('cannot apply inside a go.work workspace: exit 3, go never runs', () => {
+    installGoStub();
+    file('go.mod', `module x\n\ngo 1.22\n\nrequire ${MOD} v1.8.0\n`);
+    file('go.work', 'go 1.22\n\nuse .\n');
+    const r = run(cmd());
+    expect(r.status).toBe(RECIPE_EXIT_UNSUPPORTED);
+    expect(r.stderr).toMatch(/go\.work/);
+    expect(args()).toBeNull();
+  });
+
+  it('still reports a vendored module that does not require the module as not affected', () => {
+    installGoStub();
+    file('go.mod', 'module x\n\ngo 1.22\n\nrequire github.com/other/mod v1.0.0\n');
+    mkdirSync(join(repo, 'vendor'));
+    file('vendor/modules.txt', '# github.com/other/mod v1.0.0\n');
+    expect(run(cmd()).status).toBe(0);
+  });
+
   it('exits 4 when go resolves a different version', () => {
     installGoStub('v1.10.0');
     file('go.mod', `module x\n\ngo 1.22\n\nrequire ${MOD} v1.8.0\n`);

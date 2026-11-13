@@ -139,7 +139,7 @@ whole interface:
 |---|---|---|
 | 0, files changed | The recipe made the change | It is verified (§5) |
 | 0, nothing changed | **Not affected**: the root manifest does not declare the package (npm) or require the module (Go), there is no root manifest, or it is already at the version. A package used only transitively counts as not affected (see Limitations) | The child ends `SUCCESS` with `changed: false`; no pull request |
-| 3 | **Cannot apply**: a Yarn, pnpm or Bun lockfile, an npm shrinkwrap, no `package-lock.json`, a workspaces repository that does not list the package at its root, or a dependency declared as something other than a plain version range | Nothing was pushed; the agent takes over |
+| 3 | **Cannot apply**: a Yarn, pnpm or Bun lockfile, an npm shrinkwrap, no `package-lock.json`, a workspaces repository that does not list the package at its root, or a dependency declared as something other than a plain version range (npm); a module that vendors its dependencies (`vendor/modules.txt`) or a `go.work` workspace (Go) | Nothing was pushed; the agent takes over |
 | 4 | The tool ran but the lockfile or `go.mod` does not end at the requested version | Nothing was pushed; the agent takes over |
 | other non-zero | The tool failed (install error, no network) | Nothing was pushed; the agent takes over |
 
@@ -160,7 +160,9 @@ branch first.
 `npm-dependency@1` runs `npm install --package-lock-only --ignore-scripts`, keeping the declared
 range style (`^`, `~` or exact) and the section (`dependencies`, `devDependencies` or
 `optionalDependencies`). `--ignore-scripts` is mandatory. `go-module@1` runs `go get` and
-`go mod tidy`. Because a failing recipe pushes nothing, the agent that follows starts cleanly from
+`go mod tidy`, and never `go mod vendor`: a vendored module would be left with a stale `vendor/`,
+so it is refused as cannot apply, and so is a `go.work` workspace, whose build list spans modules
+the recipe does not read. Because a failing recipe pushes nothing, the agent that follows starts cleanly from
 the base branch.
 
 A campaign without a recipe is **agent-only**: the brief is everything the agent has. That is the
@@ -219,15 +221,21 @@ them. Two mechanisms close it, both described in
   - test files (`*.test.*`, `*.spec.*`, `*_test.go`, `test_*.py`, `*Test.java`, scripts under
     `__tests__/`, …);
   - test support files: anything under `test/`, `tests/`, `spec/`, `__tests__/`, `__snapshots__/`,
-    `__mocks__/`, Go's `testdata/`, and helper directories named `testutil(s)`, `testhelper(s)`,
-    `test-utils` or `test_helpers`, plus a `test-utils.*` module and `conftest.py`;
+    `__mocks__/`, `fixtures/`, `__fixtures__/`, Mock Service Worker's `src/mocks/`, Go's
+    `testdata/`, and helper directories named `testutil(s)`, `testhelper(s)`, `test-utils` or
+    `test_helpers`, plus a `test-utils.*` module and `conftest.py`;
   - runner setup files, which run inside every test: `jest.setup.*`, `vitest.setup.*`,
-    `setupTests.*`, `test-setup.*`, `karma.conf.*`, `.rspec`;
+    `setupTests.*`, `test-setup.*`, `setup-jest.*`, `setup.*` under `jest/` or `.jest/`, anything
+    under `cypress/support/`, Angular's `src/test.ts`, `karma.conf.*`, `.rspec`;
   - pure test-runner configuration: `jest`, `vitest`, `playwright`, `cypress`, `karma`, `mocha` and
     `ava` config files, `.mocharc`, `pytest.ini`, `phpunit.xml`, `.nycrc`.
 
   Babel and Vite configuration are deliberately not protected: they configure the production build
   as well as the tests, and an upgrade can legitimately need them changed, like a manifest.
+  Nothing inside a package manager's copy of third-party code is protected, whatever its name:
+  `vendor/`, `node_modules/`, `bower_components/` and `.yarn/`, at any depth. Their test files and
+  helpers are the dependency's, and an upgrade rewrites them (`go mod vendor`), so restoring them
+  would revert part of the upgrade.
   The recorded base is the one the change's code result carries, read before any agent or recipe
   ran: the base branch's tip when the agent's workspace was created, or, for a recipe, the base
   branch's tip resolved on the host before the recipe's clone, which the commit the recipe pushed
@@ -441,7 +449,8 @@ whose workflow was gone) and the actor. See [audit-log.md](./audit-log.md).
 - **One organization.** A campaign cannot span organizations.
 - **The recipes are narrow.** `npm-dependency@1` handles a root `package.json` and
   `package-lock.json` only: Yarn, pnpm and Bun lockfiles, npm shrinkwrap and workspaces fall to the
-  agent. `go-module@1` handles a root `go.mod`. Python and JVM projects, and OpenRewrite-style
+  agent. `go-module@1` handles a root `go.mod` without a `vendor/` directory or a `go.work`
+  workspace; those fall to the agent. Python and JVM projects, and OpenRewrite-style
   recipes, have no deterministic path. A recipe sets an exact version, so it can also lower one.
   The egress policy of the run can make a recipe's install fail, which sends the repository to the
   agent.
@@ -465,8 +474,12 @@ whose workflow was gone) and the actor. See [audit-log.md](./audit-log.md).
 - **Protection is by file-name convention.** Inline tests (Rust `#[cfg(test)]`, doctests), tests
   outside the conventions, test settings inside a dependency manifest, helpers under `src/` that
   are not named as test utilities, setup files named some other way (a `setupFiles` entry pointing
-  at `src/polyfills.ts`), Babel and Vite configuration, and a mock or fixture directory with
-  another name are not restored; only the guard's heuristics read manifests. A legitimate upgrade
+  at `src/polyfills.ts`), Babel and Vite configuration (`babel.config.js`, `.babelrc`,
+  `vite.config.*`), test settings in shared Python configuration (`tox.ini`, `setup.cfg`), a mock,
+  fixture or golden directory with another name (`__stubs__/`, `golden/`, `src/testing/`), and
+  anything under a dependency directory (`vendor/`, `node_modules/`, `bower_components/`,
+  `.yarn/`), including a repository's own code kept in a directory named `vendor/`, are not
+  restored; only the guard's heuristics read manifests. A legitimate upgrade
   that has to change a mock, a golden file or a setup file fails verification, like one that has to
   change a test. The guard is heuristic, so a clean result is not a proof.
 - **The gate command is not protected.** It comes from the step configuration, the repository's

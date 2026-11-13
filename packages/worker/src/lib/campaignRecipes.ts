@@ -8,8 +8,9 @@
  *
  *   0  nothing to do (the repository does not use the package, or it is already at the version),
  *      or the change was made. The platform tells the two apart by whether files changed.
- *   3  the recipe cannot apply here (an unsupported lockfile or workspace layout, a dependency
- *      declared in a form the recipe does not rewrite). The agent takes over, if the campaign has one.
+ *   3  the recipe cannot apply here (an unsupported lockfile or workspace layout, a vendored Go
+ *      module or a go.work workspace, a dependency declared in a form the recipe does not
+ *      rewrite). The agent takes over, if the campaign has one.
  *   4  the tool ran and did not end where the recipe asked.
  *   other non-zero: the tool failed (install error, no network). Same handling as 3.
  *
@@ -116,6 +117,11 @@ function goScript(params: CampaignRecipeParams): string {
     `CUR=$(${required})`,
     'if [ -z "$CUR" ]; then echo "not affected: $MOD is not required by go.mod"; exit 0; fi',
     'if [ "$CUR" = "$VER" ]; then echo "not affected: $MOD is already at $VER"; exit 0; fi',
+    // `go get` and `go mod tidy` leave a vendor directory stale (and `-mod=vendor` builds then
+    // fail), and a go.work workspace decides the build list across modules the recipe does not
+    // read. Neither is handled, so the agent takes over.
+    `if [ -f vendor/modules.txt ]; then echo "cannot apply: the module vendors its dependencies (vendor/modules.txt), and the recipe does not run go mod vendor" >&2; exit ${RECIPE_EXIT_UNSUPPORTED}; fi`,
+    `if [ -f go.work ]; then echo "cannot apply: a go.work workspace" >&2; exit ${RECIPE_EXIT_UNSUPPORTED}; fi`,
     'export GOTOOLCHAIN=local GOFLAGS=-mod=mod',
     'go get -- "$MOD@$VER"',
     'go mod tidy',

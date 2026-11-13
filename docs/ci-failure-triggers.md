@@ -314,9 +314,9 @@ Findings:
 | `ci_config_weakened` | in a CI definition (GitHub Actions workflow, `.gitlab-ci.yml`, CircleCI, Jenkinsfile, …) `continue-on-error: true`, `allow_failure: true` or `\|\| true` added, or a test step removed |
 | `test_file_unreadable` | git reports a test source file or a test-configuration file as binary, so its change cannot be read |
 | `gitattributes_changed` | any change to a `.gitattributes` file, which can change how a diff renders |
-| `test_support_deleted` | a fixture, helper, mock or setup file deleted: anything under a `test/`, `tests/`, `spec/`, `__tests__/`, `__mocks__/`, `testdata/` or `testutil(s)`/`testhelper(s)`/`test-utils`/`test_helpers` directory, a `test-utils.*` module, or a runner setup file (low) |
-| `test_setup_changed` | a test-runner setup file added, changed, deleted or renamed: `jest.setup.*`, `vitest.setup.*`, `setupTests.*`, `test-setup.*`, `karma.conf.*`, `.rspec`. It runs inside every test and can redefine what an assertion does, so any change is high |
-| `test_double_changed` | a mock (`__mocks__/`), a Go `testdata/` (golden) file or a file in a test-helper directory or `test-utils.*` module added or changed (low): it decides what tests compare against, and an upgrade often has to change one |
+| `test_support_deleted` | a fixture, helper, mock or setup file deleted: anything under a `test/`, `tests/`, `spec/`, `__tests__/`, `__mocks__/`, `fixtures/`, `__fixtures__/`, `src/mocks/`, `testdata/` or `testutil(s)`/`testhelper(s)`/`test-utils`/`test_helpers` directory, a `test-utils.*` module, or a runner setup file (low) |
+| `test_setup_changed` | a test-runner setup file added, changed, deleted or renamed: `jest.setup.*`, `vitest.setup.*`, `setupTests.*`, `test-setup.*`, `setup-jest.*`, `setup.*` under `jest/` or `.jest/`, anything under `cypress/support/`, Angular's `src/test.ts`, `karma.conf.*`, `.rspec`. It runs inside every test and can redefine what an assertion does, so any change is high |
+| `test_double_changed` | a mock (`__mocks__/`, Mock Service Worker's `src/mocks/`), a fixture (`fixtures/`, `__fixtures__/`), a Go `testdata/` (golden) file or a file in a test-helper directory or `test-utils.*` module added or changed (low): it decides what tests compare against, and an upgrade often has to change one |
 | `snapshot_updated` | a `.snap` snapshot changed or removed (low) |
 
 Each finding has a **severity**. `high` findings are the ones `block` mode refuses a change for.
@@ -351,8 +351,8 @@ steps ([maintenance-workflows.md](./maintenance-workflows.md)).
 test is the test the repository had. A `runTests` step with `protectTests: true` closes that gap
 for the verdict. Before the gate's command runs, and before the repository's setup, the gate
 workspace restores every test file, test support file (fixtures, helpers, snapshots, `__mocks__`,
-Go `testdata`, test-helper directories, runner setup files such as `jest.setup.*` and
-`setupTests.*`) and pure test-runner configuration (`jest`, `vitest`, `playwright`, `.mocharc`,
+`src/mocks/`, Go `testdata`, test-helper directories, runner setup files such as `jest.setup.*`,
+`setupTests.*` and `cypress/support/`) and pure test-runner configuration (`jest`, `vitest`, `playwright`, `.mocharc`,
 `pytest.ini`, `phpunit.xml`, …) the change touched to its content at the change's recorded base, and removes the
 test files the change added. The recorded base is `CodeResult.baseSha`: the commit the change was
 measured from, read before any agent or recipe ran (the base branch's tip when the implementer's

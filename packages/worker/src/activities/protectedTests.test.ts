@@ -68,6 +68,43 @@ describe('which paths are protected', () => {
   });
 
   it.each([
+    // Fixture and mock directories outside a test/ directory.
+    'fixtures/a.json',
+    'src/fixtures/a.json',
+    'src/__fixtures__/a.json',
+    'cypress/fixtures/user.json',
+    'src/mocks/handlers.ts',
+    'packages/web/src/mocks/browser.ts',
+    // Runner setup files under other common names.
+    'cypress/support/e2e.ts',
+    'cypress/support/commands.js',
+    'jest/setup.js',
+    '.jest/setup.ts',
+    'src/setup-jest.ts',
+    'setup_jest.js',
+    // Angular's Karma entry point.
+    'src/test.ts',
+    'projects/lib/src/test.ts',
+  ])('protects %s', (p) => {
+    expect(isProtectedTestPath(p)).toBe(true);
+  });
+
+  it.each([
+    // A package manager's copy of third-party code is the dependency's, not the repository's.
+    'vendor/google.golang.org/grpc/test/bufconn/bufconn.go',
+    'vendor/github.com/prometheus/client_golang/prometheus/testutil/testutil.go',
+    'vendor/github.com/x/y/testdata/golden.txt',
+    'services/api/vendor/github.com/x/y/z_test.go',
+    'node_modules/x/test/a.js',
+    'node_modules/x/__mocks__/fs.js',
+    'bower_components/x/test/a.js',
+    '.yarn/unplugged/x/node_modules/x/test/a.js',
+    'vendor/modules.txt',
+  ])('does not protect a dependency copy: %s', (p) => {
+    expect(isProtectedTestPath(p)).toBe(false);
+  });
+
+  it.each([
     // The upgrade itself lives in these: they are never put back.
     'package.json',
     'package-lock.json',

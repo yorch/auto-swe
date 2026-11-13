@@ -304,15 +304,20 @@ export function isTestFilePath(path: string): boolean {
 
 /**
  * A file a test runner loads before every test to set the run up: a Jest or Vitest setup file
- * (`jest.setup.js`, `vitest.setup.ts`, `setupTests.ts`, `test-setup.ts`), Karma's `karma.conf.js`,
- * RSpec's `.rspec`. It runs inside every test, so it can redefine what an assertion does (replace
+ * (`jest.setup.js`, `vitest.setup.ts`, `setupTests.ts`, `test-setup.ts`, `setup-jest.ts`, and
+ * `setup.*` under a `jest/` or `.jest/` directory), Karma's `karma.conf.js`, Angular's Karma entry
+ * `src/test.ts`, anything under `cypress/support/` (Cypress loads it before every spec), RSpec's
+ * `.rspec`. It runs inside every test, so it can redefine what an assertion does (replace
  * `expect`, stub the module under test) without touching a test file.
  */
 export function isTestSetupPath(path: string): boolean {
   return (
     /(^|\/)(?:jest|vitest)[-_.]setup(?:[-_.][\w-]+)*\.[cm]?[jt]sx?$/.test(path) ||
-    /(^|\/)(?:setupTests|setup[-_]tests|test[-_]setup)\.[cm]?[jt]sx?$/.test(path) ||
+    /(^|\/)(?:setupTests|setup[-_]tests|test[-_]setup|setup[-_]jest)\.[cm]?[jt]sx?$/.test(path) ||
+    /(^|\/)\.?jest\/setup(?:[-_.][\w-]+)*\.[cm]?[jt]sx?$/.test(path) ||
     /(^|\/)karma\.conf\.[cm]?[jt]s$/.test(path) ||
+    /(^|\/)src\/test\.ts$/.test(path) ||
+    /(^|\/)cypress\/support\//.test(path) ||
     /(^|\/)\.rspec$/.test(path)
   );
 }
@@ -321,14 +326,18 @@ export function isTestSetupPath(path: string): boolean {
  * A directory that holds only test doubles, test data or test helpers wherever it sits, so its
  * files belong to the tests even outside a `test/` directory: Jest's `__mocks__` (module mocks the
  * runner substitutes automatically), Go's `testdata` (ignored by the build; golden files and
- * fixtures), and helper packages named `testutil(s)`, `testhelper(s)`, `test-utils`, `test_helpers`.
- * A test-utilities module beside the source (`src/test-utils.tsx`) counts too.
+ * fixtures), `fixtures/` and `__fixtures__/`, Mock Service Worker's `src/mocks/` (request
+ * handlers the tests run against), and helper packages named `testutil(s)`, `testhelper(s)`,
+ * `test-utils`, `test_helpers`. A test-utilities module beside the source (`src/test-utils.tsx`)
+ * counts too.
  */
 function isTestHarnessDirOrModule(path: string): boolean {
   return (
-    /(^|\/)(?:__mocks__|testdata|testutils?|testhelpers?|test[-_]utils?|test[-_]helpers?)\//.test(
+    /(^|\/)(?:__mocks__|__fixtures__|fixtures|testdata|testutils?|testhelpers?|test[-_]utils?|test[-_]helpers?)\//.test(
       path
-    ) || /(^|\/)test[-_]utils?\.[cm]?[jt]sx?$/.test(path)
+    ) ||
+    /(^|\/)src\/mocks\//.test(path) ||
+    /(^|\/)test[-_]utils?\.[cm]?[jt]sx?$/.test(path)
   );
 }
 
