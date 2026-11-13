@@ -1555,12 +1555,15 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.number().int().min(1).max(200),
   }),
-  // Read by the gateway at campaign launch; the values are frozen into the campaign's workflow
-  // input, because the workflow isolate cannot read settings.
+  // Read by the gateway at campaign launch, for the owning team and each target's team, and read
+  // again by the worker's launch re-check (`authorizeCampaignTargets`) before every batch of
+  // children starts: turning it off stops a running campaign's remaining targets. Not run-pinned,
+  // since a run must see the current value; the two size limits above are the ones frozen into a
+  // campaign's workflow input at launch.
   'workflow.campaignsEnabled': defineSetting({
     defaultValue: false,
     description:
-      "Whether a team lead may launch a campaign that includes this team's repositories: one change fanned out to many repositories, one draft pull request each. Off by default because a single launch can open a draft pull request in every repository it names. A campaign is refused unless it is on for the owning team and for the team that owns each target repository.",
+      "Whether a team lead may launch a campaign that includes this team's repositories: one change fanned out to many repositories, one draft pull request each. Off by default because a single launch can open a draft pull request in every repository it names. A campaign is refused unless it is on for the owning team and for the team that owns each target repository, and it is checked again before each repository's run starts: turning it off stops a running campaign's remaining repositories.",
     group: 'workflow',
     label: 'Allow campaigns',
     overridableAt: ['TEAM', 'ORGANIZATION'],

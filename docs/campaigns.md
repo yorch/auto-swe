@@ -302,12 +302,14 @@ start is rolled back with its rows. `COMPLETED`, `COMPLETED_WITH_FAILURES`, `CAN
 ## 7. Limits and settings
 
 All three settings are in the `workflow` group, overridable at the team and organization scope and
-changeable by an ADMIN. None is pinned to a run: the gateway resolves them at launch and freezes
-the result into the campaign.
+changeable by an ADMIN. None is pinned to a run. The gateway resolves the two limits at launch and
+freezes them into the campaign; `workflow.campaignsEnabled` is checked at launch and again by the
+worker before every batch of children starts (§2), so turning it off stops a running campaign's
+remaining targets.
 
 | Setting | Default | Effect |
 |---|---|---|
-| `workflow.campaignsEnabled` | off | Whether a campaign may include a team's repositories. Checked for the owning team and for each distinct target team |
+| `workflow.campaignsEnabled` | off | Whether a campaign may include a team's repositories. Checked for the owning team and for each distinct target team, at launch and before each child starts |
 | `workflow.campaignMaxTargets` | 25 | The most repositories one campaign may name (1 to 200), resolved for the owning team. A longer list is refused, not truncated |
 | `workflow.campaignMaxParallelChildren` | 3 | The most children in flight at once (1 to 10). A launch may ask for fewer with `maxParallel`, never more |
 
