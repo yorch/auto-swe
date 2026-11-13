@@ -36,6 +36,8 @@ export interface StandaloneGateInput {
   setup?: unknown;
   /** The repository's connection id, for the setup secrets its definition names. */
   connectionId?: string | null;
+  /** Whether team secrets granted to the repository may fill setup secrets (default true). */
+  allowTeamSecrets?: boolean;
   image?: string;
   timeoutMs?: number;
 }
@@ -71,7 +73,13 @@ export async function runGateStandalone(input: StandaloneGateInput): Promise<Gat
     input.checkoutSha,
     input.existingBranch,
     {
-      repoSetup: { connectionId: input.connectionId ?? null, field: input.setup ?? null },
+      repoSetup: {
+        ...(input.allowTeamSecrets === undefined
+          ? {}
+          : { allowTeamSecrets: input.allowTeamSecrets }),
+        connectionId: input.connectionId ?? null,
+        field: input.setup ?? null,
+      },
       teamId: input.teamId ?? null,
     }
   );

@@ -268,14 +268,15 @@ export function previewStopScript(
 /** The values of the setup secrets a preview recipe names, from the repository's store. */
 async function previewSecrets(
   connectionId: string | null,
-  names: readonly string[]
+  names: readonly string[],
+  allowTeam: boolean
 ): Promise<Record<string, string>> {
   if (names.length === 0) {
     return {};
   }
   const { loadSetupSecrets } = await import('./repoSetupRun.js');
   try {
-    return await loadSetupSecrets(connectionId, names);
+    return await loadSetupSecrets(connectionId, names, allowTeam ? {} : { allowTeam: false });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`App preview: ${detail.replace(/^workspace setup: /, '')}`);
@@ -289,6 +290,8 @@ export async function startAppPreview(
     timeoutMs?: number;
     /** The repository whose setup secrets `secrets` names. */
     connectionId?: string | null;
+    /** False refuses team secrets, for a recipe nobody has approved yet. Default true. */
+    allowTeamSecrets?: boolean;
   } = {}
 ): Promise<{ baseUrl: string; stop(): Promise<void>; logTail(maxBytes: number): Promise<string> }> {
   const config = PreviewConfigSchema.parse(cfg);
@@ -299,7 +302,11 @@ export async function startAppPreview(
     );
   }
   const timeoutMs = options.timeoutMs ?? config.readyTimeoutMs;
-  const secrets = await previewSecrets(options.connectionId ?? null, config.secrets ?? []);
+  const secrets = await previewSecrets(
+    options.connectionId ?? null,
+    config.secrets ?? [],
+    options.allowTeamSecrets ?? true
+  );
   const secretEnv = { ...config.env, ...secrets };
   const scrub = (text: string) => redactSecrets(redactString(text), Object.values(secretEnv));
   const execOptions = (commandTimeoutMs: number) => ({

@@ -121,6 +121,7 @@ export const ENCRYPTED_FIELDS: Record<string, EncryptedField[]> = {
   ],
   slackConfig: [fieldsFor('clientSecret'), fieldsFor('signingSecret'), fieldsFor('botToken')],
   slackWorkspace: [fieldsFor('botToken')],
+  teamSecret: [fieldsFor('value')],
   workflowTemplate: [fieldsFor('webhookSigningSecret'), fieldsFor('webhookPreviousSigningSecret')],
 };
 

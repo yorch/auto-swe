@@ -279,7 +279,14 @@ export async function runCaseDefault(
       caseRow.baselineSha,
       undefined,
       {
-        repoSetup: { connectionId: caseRow.setupSecretsConnectionId ?? null, field: null },
+        // allowTeamSecrets is false: a dataset's `setupSecretsConnectionId` is set by whoever can
+        // edit the dataset (an ORG_ADMIN may link a repository of another team), so an eval run
+        // must read only that repository's own setup secrets, never the team's granted ones.
+        repoSetup: {
+          allowTeamSecrets: false,
+          connectionId: caseRow.setupSecretsConnectionId ?? null,
+          field: null,
+        },
         teamId: scope.teamId ?? caseRow.teamId ?? null,
       }
     );

@@ -21,6 +21,29 @@ export const RepoSetupSecretNameSchema = z
   .max(100)
   .regex(ENV_NAME, 'must be an environment variable name (A-Z, 0-9, _)');
 
+/** Most secrets one team may hold (`TeamSecret`). */
+export const MAX_TEAM_SECRETS = 50;
+
+/**
+ * Names a team secret may not take: variables that steer the shell, the loader, git, TLS trust or
+ * network routing of the process that receives it. A repository's own setup secret is written by
+ * its admins for its own steps, but a team secret is injected wherever a grant reaches, so it must
+ * not be able to redirect the environment it lands in.
+ */
+const RESERVED_TEAM_SECRET_NAME =
+  /^(?:PATH|HOME|USER|SHELL|NODE_OPTIONS|NODE_EXTRA_CA_CERTS|CONTAINER_STEP_INPUT|NO_PROXY|LD_.*|GIT_.*|SSL_CERT_.*|ASW_.*|.*_PROXY)$/i;
+
+/** Is `name` one a team secret may not use? */
+export function isReservedTeamSecretName(name: string): boolean {
+  return RESERVED_TEAM_SECRET_NAME.test(name);
+}
+
+/** The name of a team secret: a setup secret name that is not a reserved environment variable. */
+export const TeamSecretNameSchema = RepoSetupSecretNameSchema.refine(
+  (name) => !isReservedTeamSecretName(name),
+  'is a reserved environment variable name'
+);
+
 /** Most secrets one setup definition may name. */
 export const MAX_REPO_SETUP_SECRETS = 20;
 /**

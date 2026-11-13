@@ -145,7 +145,15 @@ async function runTrial(
         {
           detectedStack: repo.detectedStack,
           inheritSetupEgress: true,
-          repoSetup: { connectionId, defer: true, field: draft.setup, recordBlockers: false },
+          repoSetup: {
+            // The draft is written by an agent from repository content and runs before a human
+            // approves it, so it never receives a team secret.
+            allowTeamSecrets: false,
+            connectionId,
+            defer: true,
+            field: draft.setup,
+            recordBlockers: false,
+          },
           services: draft.previewConfig?.services,
           teamId: repo.teamId,
           toolsFor: { connectionId },
@@ -190,7 +198,10 @@ async function runTrial(
         started = Date.now();
         heartbeat('onboarding trial: preview readiness');
         try {
-          preview = await startAppPreview(workspace, draft.previewConfig, { connectionId });
+          preview = await startAppPreview(workspace, draft.previewConfig, {
+            allowTeamSecrets: false,
+            connectionId,
+          });
           previewItem.status = 'passed';
           previewItem.logTail = redact(await preview.logTail(4000));
         } catch (error) {

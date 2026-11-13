@@ -77,7 +77,7 @@ describe('startAppPreview', () => {
       { ...config, secrets: ['API_KEY'], setup: 'npm run seed' },
       { connectionId: 'repo-1' }
     );
-    expect(loadSetupSecrets).toHaveBeenCalledWith('repo-1', ['API_KEY']);
+    expect(loadSetupSecrets).toHaveBeenCalledWith('repo-1', ['API_KEY'], {});
     const secretEnv = { ...config.env, API_KEY: 'secret-value' };
     expect(exec.mock.calls[0]?.[1]).toMatchObject({ secretEnv });
     expect(exec.mock.calls[1]?.[1]).toMatchObject({ secretEnv });
@@ -85,6 +85,16 @@ describe('startAppPreview', () => {
       expect(command).not.toContain('secret-value');
     }
     await expect(preview.logTail(32)).resolves.toBe('password=***\n');
+  });
+
+  it('refuses team secrets when the caller opts out', async () => {
+    loadSetupSecrets.mockResolvedValueOnce({ API_KEY: 'secret-value' });
+    await startAppPreview(
+      workspace,
+      { ...config, secrets: ['API_KEY'] },
+      { allowTeamSecrets: false, connectionId: 'repo-1' }
+    );
+    expect(loadSetupSecrets).toHaveBeenCalledWith('repo-1', ['API_KEY'], { allowTeam: false });
   });
 
   it('refuses to start a recipe whose env still holds a secret-looking value', async () => {
