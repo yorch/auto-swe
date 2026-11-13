@@ -152,13 +152,17 @@ them. Two mechanisms close it, both described in
 [ci-failure-triggers.md §2.4](./ci-failure-triggers.md#24-the-test-integrity-guard):
 
 - **Protected verification.** The `runTests` gate of the template runs with `protectTests: true`.
-  In its own workspace, before the repository's setup and the tests run, it restores every test
-  file, test support file and pure test-runner configuration the branch changed to its content at
-  the commit the branch was cut from, and removes test files the branch added. The restore is never
-  pushed, so the branch keeps the change as made and only the verdict ignores any test edit.
-  Manifests such as `package.json` and `go.mod` are never restored, because they carry the change.
-  If the original tests cannot be restored, the gate fails closed as `PROTECTED_TESTS_UNAVAILABLE`
-  rather than passing.
+  In its own workspace, right after the clone and before the repository's setup and the tests run,
+  it restores every test file, test support file and pure test-runner configuration the change
+  touched to its content at the change's recorded base, and removes test files the change added.
+  The recorded base is the one the change's code result carries, read before any agent or recipe
+  ran: the base branch's tip when the agent's workspace was created, or the parent of the commit the
+  recipe pushed. It is never a merge base computed at verification time, which an agent could move
+  by rebuilding its commit on an older ancestor. The gate also refuses a branch tip that is not the
+  commit the change reported. The restore is never pushed, so the branch keeps the change as made
+  and only the verdict ignores any test edit. Manifests such as `package.json` and `go.mod` are
+  never restored, because they carry the change. If the original tests cannot be restored, the gate
+  fails closed as `PROTECTED_TESTS_UNAVAILABLE` rather than passing.
 - **The test-integrity guard at the `block` floor.** Both agent steps set `testIntegrity: 'block'`,
   so a change that deletes, skips or weakens tests, loosens the test command, or weakens CI
   configuration fails before it is pushed, whatever `github.ciFixTestIntegrityGuard` says. This
@@ -179,9 +183,9 @@ Each `CampaignTarget` records one repository's outcome.
 | `RUNNING` | Its child run is in flight; the detail view adds a `liveStatus` from the child's ledger row |
 | `PR_OPENED` | A draft pull request was opened (`prUrl`, `prNumber`) |
 | `NOT_AFFECTED` | The child finished with nothing to change |
-| `FAILED` | The child failed, timed out or could not be started; `failureReason` says why (at most 500 characters, credential-shaped text masked) |
-| `SKIPPED` | The child was skipped, or the campaign finished without starting it |
-| `CANCELLED` | The campaign was cancelled before the child finished |
+| `FAILED` | The child failed, timed out, could not be started, or succeeded without opening a pull request or reporting `changed: false`; `failureReason` says why (at most 500 characters, control characters removed, credential-shaped text masked) |
+| `SKIPPED` | The child run ended `SKIPPED` |
+| `CANCELLED` | The campaign was cancelled before the target started, or before its child finished successfully |
 
 `PR_OPENED`, `NOT_AFFECTED`, `FAILED`, `SKIPPED` and `CANCELLED` are final. A target also records:
 
@@ -190,8 +194,16 @@ Each `CampaignTarget` records one repository's outcome.
 - `verification`: `PASSED`, `FAILED` or `NOT_RUN`;
 - `childWorkflowId`: `campaign-<campaignId>-<connectionId>`.
 
+Target rows are written by the campaign workflow's activities as each child starts and ends, and
+every write is conditional on the row still being `PENDING` or `RUNNING`, so a retried or late write
+never moves a final row. When the fan-out ends, a finalizer re-applies every result the workflow
+holds, which repairs a row whose own write failed.
+
 The campaign itself moves `STARTING` → `RUNNING` → `COMPLETED`, or `COMPLETED_WITH_FAILURES` when
-any target ended `FAILED` or `SKIPPED`. A cancel moves it to `CANCELLING` and then `CANCELLED`.
+any target ended `FAILED` or `SKIPPED`. A cancel moves it to `CANCELLING` and then `CANCELLED`; a
+campaign whose cancel was requested after every child had finished keeps the state its finalizer
+wrote. The campaign's own ledger row ends `COMPLETED`, `FAILED` (for `COMPLETED_WITH_FAILURES`) or
+`CANCELLED`.
 `FAILED_TO_START` is a value of the enum that a launch never leaves behind: a workflow that cannot
 start is rolled back with its rows. `COMPLETED`, `COMPLETED_WITH_FAILURES`, `CANCELLED` and
 `FAILED_TO_START` are final.
@@ -273,8 +285,11 @@ Cancelling stops what has not finished and leaves what has:
 
 - Targets not yet started become `CANCELLED` and are never started.
 - In-flight children are cancelled; each is finalized by its own workflow and its target becomes
-  `CANCELLED`.
+  `CANCELLED`. A child that still ends `SUCCESS` (its draft was opened before the cancel reached
+  it) keeps `PR_OPENED` or `NOT_AFFECTED`.
 - Targets that already finished keep their outcome.
+- Cancelling the campaign's workflow directly (from Temporal) behaves the same as the cancel
+  route's signal: the finalizer still runs.
 - Draft pull requests already opened stay open. They are listed in the detail view for people to
   close; a cancel does not touch the host.
 
@@ -313,9 +328,27 @@ with the state before and after (`CANCELLING`) and the actor. See [audit-log.md]
   which only the guard inspects. The quality-gates step `runQualityGates` ignores `protectTests`.
 - **GitHub CI still runs the branch's own tests.** Protection covers the platform's verification,
   not the host's checks on the draft pull request.
-- **A failed finalize can leave a pushed branch.** A recipe commits and pushes before verification,
-  so a child that then fails (or errors during finalization) can leave the branch on the remote
-  with no pull request. Nothing deletes it.
+- **A failed child can leave a pushed branch.** A recipe commits and pushes before verification,
+  and so does the agent, so a child that then fails verification (or errors) can leave its branch
+  on the remote with no pull request. Nothing deletes it.
+- **A recipe that pushed but could not report its change costs an extra agent attempt.** The recipe
+  step runs once, with no retry, because a retry would find the branch already at the version and
+  report the repository as not affected. When the shell step's commit and push succeed but its
+  result cannot be confirmed, or the pushed commit cannot be read back, the template hands the
+  repository to the agent. The agent's first attempt starts from the base branch, and its push to
+  the branch that already holds the recipe's commit is not a fast-forward and is refused; the
+  step's retry syncs to the pushed branch and builds on the recipe's commit. The paid session runs
+  twice, and the target reports `path: AGENT` for a change that is partly the recipe's.
+- **Setup and the tests run the change's own code.** Protected verification restores test files
+  before any repository code runs, but the repository's setup and the test command then run the
+  branch as changed (a lifecycle script in a changed `package.json`, source a test imports), and
+  that code can alter a restored file before the tests read it. The restore bounds what an edited
+  test file can do, not what the change's code can do; the test-integrity guard's heuristics and
+  the person reviewing the draft are what read the code.
+- **A recipe's change is not security-scanned or reviewed by agents before the draft opens.** The
+  post-diff security gate and the review network run on agent steps; a recipe's change goes from
+  verification straight to the draft pull request, where a person reviews it. Its lockfile content
+  comes from the package registry the recipe reached.
 - **Agent steps can be paused.** The agent is a pausable step like any other; a question holds the
   child until it is answered or `workflow.needsInputTimeoutSeconds` passes.
 - **Opened drafts are not closed on cancel,** and a campaign does not track what happens to a pull

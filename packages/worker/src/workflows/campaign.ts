@@ -41,7 +41,8 @@ export type { CampaignResult, CampaignWorkflowInput };
  *
  * Known edge, deliberately not handled: a recipe that pushed its commit but whose finalize step
  * then failed reports `passed: false`, so the template falls back to the agent with a branch that
- * already carries the recipe's commit. The agent builds on it rather than starting clean.
+ * already carries the recipe's commit. The agent's first attempt starts from the base and its push
+ * is refused as not a fast-forward; the step's retry syncs to the pushed branch and builds on it.
  */
 
 // ── Activity Proxies ──
