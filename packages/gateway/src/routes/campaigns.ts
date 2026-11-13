@@ -499,6 +499,8 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         return {
           connectionId: id,
           repoLabel: `${repo.organizationName ?? '?'}/${repo.repoName ?? id}`,
+          // Pre-generated, so the workflow keys every per-target write on the row itself.
+          targetId: crypto.randomUUID(),
           teamId: repo.teamId,
         };
       });
@@ -569,6 +571,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
               data: targets.map((t, position) => ({
                 campaignId,
                 connectionId: t.connectionId,
+                id: t.targetId,
                 position,
                 repoLabel: t.repoLabel,
                 teamId: t.teamId,

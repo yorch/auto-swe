@@ -119,7 +119,12 @@ export async function CampaignWorkflow(input: CampaignWorkflowInput): Promise<Ca
 
   const queue: CampaignTargetInput[] = [...input.targets];
   const childResults: Record<string, WorkflowResult> = {};
-  const finished: Array<{ connectionId: string; teamId: string; result: WorkflowResult }> = [];
+  const finished: Array<{
+    targetId: string;
+    connectionId: string;
+    teamId: string;
+    result: WorkflowResult;
+  }> = [];
 
   // Under the same protection as the fan-out: a cancel of this workflow that lands while these run
   // must still reach the finalizer below (every target reported as not started), and a ledger write
@@ -153,6 +158,7 @@ export async function CampaignWorkflow(input: CampaignWorkflowInput): Promise<Ca
           campaignId: input.campaignId,
           childWorkflowId,
           connectionId: target.connectionId,
+          targetId: target.targetId,
           teamId: target.teamId,
         })
         .catch(() => undefined);
@@ -178,7 +184,12 @@ export async function CampaignWorkflow(input: CampaignWorkflowInput): Promise<Ca
       };
     }
     childResults[target.connectionId] = result;
-    finished.push({ connectionId: target.connectionId, result, teamId: target.teamId });
+    finished.push({
+      connectionId: target.connectionId,
+      result,
+      targetId: target.targetId,
+      teamId: target.teamId,
+    });
     // Non-cancellable: after a cancel this runs inside the cancelled child scope, and the row must
     // still be written. A failure here is not the scheduler's problem; finalize reconciles it.
     await CancellationScope.nonCancellable(() =>
@@ -188,6 +199,7 @@ export async function CampaignWorkflow(input: CampaignWorkflowInput): Promise<Ca
           cancelled,
           connectionId: target.connectionId,
           result,
+          targetId: target.targetId,
           teamId: target.teamId,
         })
         .catch(() => undefined)
@@ -208,7 +220,12 @@ export async function CampaignWorkflow(input: CampaignWorkflowInput): Promise<Ca
       totalReviewRetries: 0,
     };
     childResults[target.connectionId] = result;
-    finished.push({ connectionId: target.connectionId, result, teamId: target.teamId });
+    finished.push({
+      connectionId: target.connectionId,
+      result,
+      targetId: target.targetId,
+      teamId: target.teamId,
+    });
     await CancellationScope.nonCancellable(() =>
       campaignActivities
         .recordCampaignTargetResult({
@@ -216,6 +233,7 @@ export async function CampaignWorkflow(input: CampaignWorkflowInput): Promise<Ca
           cancelled,
           connectionId: target.connectionId,
           result,
+          targetId: target.targetId,
           teamId: target.teamId,
         })
         .catch(() => undefined)
@@ -294,7 +312,11 @@ export async function CampaignWorkflow(input: CampaignWorkflowInput): Promise<Ca
 
   // Finalize outside any cancellation: a cancelled campaign is exactly when the rows most need
   // closing (the lesson `runnable.ts` documents).
-  const notStarted = queue.map((t) => ({ connectionId: t.connectionId, teamId: t.teamId }));
+  const notStarted = queue.map((t) => ({
+    connectionId: t.connectionId,
+    targetId: t.targetId,
+    teamId: t.teamId,
+  }));
   const localStatus: CampaignResult['status'] = cancelled
     ? 'CANCELLED'
     : finished.some((f) => f.result.status !== 'SUCCESS')

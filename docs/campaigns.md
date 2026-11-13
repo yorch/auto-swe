@@ -285,8 +285,9 @@ Each `CampaignTarget` records one repository's outcome.
 - `verification`: `PASSED`, `FAILED` or `NOT_RUN`;
 - `childWorkflowId`: `campaign-<campaignId>-<connectionId>`.
 
-Target rows are written by the campaign workflow's activities as each child starts and ends, and
-every write is conditional on the row still being `PENDING` or `RUNNING`, so a retried or late write
+Target rows are written by the campaign workflow's activities as each child starts and ends. Each
+write is keyed on the target row's own id (with its team), never on the repository, and is
+conditional on the row still being `PENDING` or `RUNNING`, so a retried or late write
 never moves a final row. When the fan-out ends, a finalizer re-applies every result the workflow
 holds, which repairs a row whose own write failed.
 
@@ -403,8 +404,12 @@ When Temporal has no running workflow to signal (it closed, was terminated, or i
 while the campaign row is `RUNNING` or `CANCELLING`, nothing else will ever close the row: its finalizer did not
 run or exhausted its retries. The same call then closes it, in one transaction: the campaign
 becomes `CANCELLED` with `completedAt`, every target still `PENDING` or `RUNNING` becomes
-`CANCELLED` (a child of a closed campaign was cancelled with it), and finished targets keep their
-outcome. It writes a `Campaign` `UPDATE` audit row with the state before, `CANCELLED` after, the
+`CANCELLED`, and finished targets keep their outcome. `CANCELLED` there records that the campaign
+stopped waiting for the target, not that its child stopped: a closed campaign workflow asks its
+children to cancel (Temporal's request-cancel parent-close policy), and a child that does not honour
+the request in time can still open its draft pull request. No workflow is left to record that, so
+the row stays `CANCELLED` with no `prUrl`; the child's own run and the repository's pull requests
+show it. It writes a `Campaign` `UPDATE` audit row with the state before, `CANCELLED` after, the
 number of targets closed and the reason, and answers `200` with `state: CANCELLED`. A campaign a
 late finalizer closed meanwhile keeps the state the finalizer wrote.
 
@@ -519,7 +524,15 @@ whose workflow was gone) and the actor. See [audit-log.md](./audit-log.md).
 - **Targets can stay `RUNNING` if the campaign workflow is terminated by hand,** or its finalizer
   exhausts its retries, until someone cancels the campaign: no reaper reconciles campaign rows on
   its own, and a termination from the Temporal UI skips the finalizer. A cancel of such a campaign
-  closes the rows (§8).
+  closes the rows `CANCELLED` (§8), though a child that was still running may yet open a draft
+  pull request that its target row then does not list.
+- **Deleting a team or a repository changes campaigns it is part of.** A target row belongs to the
+  team that owned its repository at launch, and deleting that team deletes those rows from every
+  campaign, including campaigns another team owns: their counts shrink and those repositories'
+  outcomes (pull request links included) are gone from the campaign. Deleting a campaign's owning
+  team deletes the campaign. Deleting a repository keeps its row with its `org/repo` label and
+  outcome, but the row no longer names a repository, so the re-check refuses it if it had not
+  started, and to anyone but an ADMIN it counts in `hiddenTargetCount` rather than being listed.
 - **Budgets and the GitHub permission gate are checked at launch only.** Children are metered per
   run against their own organization and team budgets; a campaign has no budget of its own. The
   re-check before each child (§2) covers the kill switch, the repository, team and organization

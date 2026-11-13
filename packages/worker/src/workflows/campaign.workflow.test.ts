@@ -37,6 +37,7 @@ const started: Array<{
   campaignId: string;
   connectionId: string;
   childWorkflowId: string;
+  targetId: string;
   teamId: string;
 }> = [];
 const results: Array<{
@@ -147,6 +148,7 @@ const fakeActivities = {
     campaignId: string;
     childWorkflowId: string;
     connectionId: string;
+    targetId: string;
     teamId: string;
   }): Promise<void> {
     if (failRecordActivities) {
@@ -239,7 +241,12 @@ function campaignInput(
     externalTicketId: 'CAMPAIGN-111111111111',
     launchedById: 'user-lead',
     maxParallel: 2,
-    targets: ids.map((id) => ({ connectionId: id, repoLabel: `acme/${id}`, teamId: 'team-a' })),
+    targets: ids.map((id) => ({
+      connectionId: id,
+      repoLabel: `acme/${id}`,
+      targetId: `target-${id}`,
+      teamId: 'team-a',
+    })),
     templateId: 'tpl-upgrade',
     templateVersion: 7,
     workRequestId: '00000000-0000-4000-8000-000000000009',
@@ -301,6 +308,7 @@ describe('CampaignWorkflow — throttled fan-out', () => {
       campaignId: CAMPAIGN_ID,
       childWorkflowId: `${CAMPAIGN_WORKFLOW_ID}-repo-1`,
       connectionId: 'repo-1',
+      targetId: 'target-repo-1',
       teamId: 'team-a',
     });
     expect(campaignStates).toEqual(['RUNNING']);

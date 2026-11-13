@@ -311,6 +311,7 @@ const campaignInput = (
   targets: connectionIds.map((id) => ({
     connectionId: id,
     repoLabel: `acme/${id}`,
+    targetId: `target-${id}`,
     teamId: 'team-replay',
   })),
   templateId: over.templateId ?? 'tpl-campaign',

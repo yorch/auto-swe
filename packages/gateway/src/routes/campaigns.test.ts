@@ -821,9 +821,25 @@ describe('campaign routes', () => {
       // The launch request is stored once, on the RunInput row, not carried into the workflow.
       expect(call.input).not.toHaveProperty('requestPayload');
       expect(call.input.targets).toEqual([
-        { connectionId: REPO_B, repoLabel: 'org/beta', teamId: TEAM_2 },
-        { connectionId: REPO_A, repoLabel: 'org/alpha', teamId: TEAM_1 },
+        {
+          connectionId: REPO_B,
+          repoLabel: 'org/beta',
+          targetId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+          teamId: TEAM_2,
+        },
+        {
+          connectionId: REPO_A,
+          repoLabel: 'org/alpha',
+          targetId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+          teamId: TEAM_1,
+        },
       ]);
+      // Each target carries the id of the row the launch wrote for it, so the workflow's writes
+      // key on the row and not on the repository.
+      const frozen = call.input.targets as Array<{ connectionId: string; targetId: string }>;
+      for (const t of frozen) {
+        expect(targets.find((row) => row.connectionId === t.connectionId)?.id).toBe(t.targetId);
+      }
       expect(activeWorkflows[0]).toMatchObject({ budgetTier: 'LARGE' });
     });
 

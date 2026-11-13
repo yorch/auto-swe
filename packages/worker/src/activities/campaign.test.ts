@@ -57,12 +57,13 @@ describe('recordCampaignTargetStarted', () => {
       campaignId: 'c1',
       childWorkflowId: 'campaign-c1-r1',
       connectionId: 'r1',
+      targetId: 'tg1',
       teamId: 't1',
     });
     const arg = db.campaignTarget.updateMany.mock.calls[0][0];
     expect(arg.where).toEqual({
       campaignId: 'c1',
-      connectionId: 'r1',
+      id: 'tg1',
       state: 'PENDING',
       teamId: 't1',
     });
@@ -76,6 +77,7 @@ describe('recordCampaignTargetStarted', () => {
         campaignId: 'c1',
         childWorkflowId: 'w',
         connectionId: 'r1',
+        targetId: 'tg1',
         teamId: 't1',
       })
     ).resolves.toBeUndefined();
@@ -83,7 +85,13 @@ describe('recordCampaignTargetStarted', () => {
 });
 
 describe('recordCampaignTargetResult', () => {
-  const base = { campaignId: 'c1', cancelled: false, connectionId: 'r1', teamId: 't1' };
+  const base = {
+    campaignId: 'c1',
+    cancelled: false,
+    connectionId: 'r1',
+    targetId: 'tg1',
+    teamId: 't1',
+  };
 
   it('writes only over a PENDING or RUNNING target, scoped by team', async () => {
     await recordCampaignTargetResult({
@@ -93,7 +101,7 @@ describe('recordCampaignTargetResult', () => {
     const arg = db.campaignTarget.updateMany.mock.calls[0][0];
     expect(arg.where).toEqual({
       campaignId: 'c1',
-      connectionId: 'r1',
+      id: 'tg1',
       state: { in: ['PENDING', 'RUNNING'] },
       teamId: 't1',
     });
@@ -177,9 +185,10 @@ describe('finalizeCampaign', () => {
     {
       connectionId: 'r1',
       result: success({ prUrl: 'https://github.com/a/b/pull/1' }),
+      targetId: 'tg1',
       teamId: 't1',
     },
-    { connectionId: 'r2', result: success({ changed: false }), teamId: 't2' },
+    { connectionId: 'r2', result: success({ changed: false }), targetId: 'tg2', teamId: 't2' },
   ];
 
   it('reconciles every result with team and open-state predicates', async () => {
@@ -187,12 +196,18 @@ describe('finalizeCampaign', () => {
     expect(db.campaignTarget.updateMany).toHaveBeenCalledTimes(2);
     for (const [arg] of db.campaignTarget.updateMany.mock.calls) {
       expect(arg.where.campaignId).toBe('c1');
+      // Keyed on the target row, never on the repository, whose id a deletion sets to NULL.
+      expect(arg.where).not.toHaveProperty('connectionId');
       expect(typeof arg.where.teamId).toBe('string');
       expect(arg.where.state).toEqual({ in: ['PENDING', 'RUNNING'] });
     }
     expect(db.campaignTarget.updateMany.mock.calls.map(([a]) => a.where.teamId)).toEqual([
       't1',
       't2',
+    ]);
+    expect(db.campaignTarget.updateMany.mock.calls.map(([a]) => a.where.id)).toEqual([
+      'tg1',
+      'tg2',
     ]);
   });
 
@@ -215,7 +230,10 @@ describe('finalizeCampaign', () => {
         campaignId: 'c1',
         cancelled: false,
         notStarted: [],
-        results: [...results, { connectionId: 'r3', result: failed('nope'), teamId: 't1' }],
+        results: [
+          ...results,
+          { connectionId: 'r3', result: failed('nope'), targetId: 'tg3', teamId: 't1' },
+        ],
       })
     ).resolves.toBe('COMPLETED_WITH_FAILURES');
   });
@@ -225,14 +243,14 @@ describe('finalizeCampaign', () => {
       finalizeCampaign({
         campaignId: 'c1',
         cancelled: false,
-        notStarted: [{ connectionId: 'r9', teamId: 't9' }],
+        notStarted: [{ connectionId: 'r9', targetId: 'tg9', teamId: 't9' }],
         results: [],
       })
     ).resolves.toBe('COMPLETED_WITH_FAILURES');
     const arg = db.campaignTarget.updateMany.mock.calls[0][0];
     expect(arg.where).toEqual({
       campaignId: 'c1',
-      connectionId: 'r9',
+      id: 'tg9',
       state: 'PENDING',
       teamId: 't9',
     });
@@ -244,10 +262,15 @@ describe('finalizeCampaign', () => {
       finalizeCampaign({
         campaignId: 'c1',
         cancelled: true,
-        notStarted: [{ connectionId: 'r9', teamId: 't9' }],
+        notStarted: [{ connectionId: 'r9', targetId: 'tg9', teamId: 't9' }],
         results: [
           ...results,
-          { connectionId: 'r3', result: failed('campaign cancelled'), teamId: 't1' },
+          {
+            connectionId: 'r3',
+            result: failed('campaign cancelled'),
+            targetId: 'tg3',
+            teamId: 't1',
+          },
         ],
       })
     ).resolves.toBe('CANCELLED');

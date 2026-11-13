@@ -354,6 +354,12 @@ export const CAMPAIGN_CHILD_INPUT_BUDGET_BYTES = 32 * 1024;
 
 /** One repository of a campaign, frozen at launch. */
 export interface CampaignTargetInput {
+  /**
+   * The `CampaignTarget` row's id. Every per-target write is keyed on it (with the team), not on
+   * the repository, so a repository deleted after launch (which sets the row's `connectionId` to
+   * NULL) still has its row closed.
+   */
+  targetId: string;
   connectionId: string;
   /** The repository's owning team at launch: the tenant key on its `CampaignTarget` row. */
   teamId: string;

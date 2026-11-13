@@ -4,8 +4,9 @@
  * Every write is idempotent under Temporal retries and under a duplicate delivery, and none of
  * them can move a finished row:
  *
- *  - a target write is an `updateMany` whose `where` carries the target's `teamId` (the tenant
- *    key, frozen at launch) and a state predicate. A count of 0 means a retry already landed, or
+ *  - a target write is an `updateMany` keyed on the target row's id, whose `where` also carries
+ *    the target's `teamId` (the tenant key, frozen at launch) and a state predicate. It is never
+ *    keyed on the repository: deleting one sets the row's `connectionId` to NULL. A count of 0 means a retry already landed, or
  *    the target is already terminal, and is a no-op;
  *  - a campaign write is an `update` by id with a `state: { notIn: terminal }` predicate; the
  *    "no such row" error (P2025) is the same no-op.
@@ -29,6 +30,8 @@ const OPEN_TARGET_STATES = ['PENDING', 'RUNNING'] as const;
 
 export interface RecordCampaignTargetStartedInput {
   campaignId: string;
+  /** The `CampaignTarget` row; writes are keyed on it, never on the (nullable) repository. */
+  targetId: string;
   connectionId: string;
   teamId: string;
   childWorkflowId: string;
@@ -36,6 +39,7 @@ export interface RecordCampaignTargetStartedInput {
 
 export interface RecordCampaignTargetResultInput {
   campaignId: string;
+  targetId: string;
   connectionId: string;
   teamId: string;
   result: WorkflowResult;
@@ -47,9 +51,14 @@ export interface FinalizeCampaignInput {
   campaignId: string;
   cancelled: boolean;
   /** Every target that ran, with the result the workflow holds for it. */
-  results: Array<{ connectionId: string; teamId: string; result: WorkflowResult }>;
+  results: Array<{
+    targetId: string;
+    connectionId: string;
+    teamId: string;
+    result: WorkflowResult;
+  }>;
   /** Targets that were still queued when the scheduler stopped. */
-  notStarted: Array<{ connectionId: string; teamId: string }>;
+  notStarted: Array<{ targetId: string; connectionId: string; teamId: string }>;
 }
 
 function isNoRowError(err: unknown): boolean {
@@ -75,7 +84,7 @@ function outcomeData(result: WorkflowResult, cancelled: boolean) {
 
 async function writeTargetResult(input: {
   campaignId: string;
-  connectionId: string;
+  targetId: string;
   teamId: string;
   result: WorkflowResult;
   cancelled: boolean;
@@ -85,7 +94,7 @@ async function writeTargetResult(input: {
     data,
     where: {
       campaignId: input.campaignId,
-      connectionId: input.connectionId,
+      id: input.targetId,
       state: { in: [...OPEN_TARGET_STATES] },
       teamId: input.teamId,
     },
@@ -101,7 +110,7 @@ export async function recordCampaignTargetStarted(
     data: { childWorkflowId: input.childWorkflowId, startedAt: new Date(), state: 'RUNNING' },
     where: {
       campaignId: input.campaignId,
-      connectionId: input.connectionId,
+      id: input.targetId,
       state: 'PENDING',
       teamId: input.teamId,
     },
@@ -147,8 +156,8 @@ export async function finalizeCampaign(
       await writeTargetResult({
         campaignId: input.campaignId,
         cancelled: input.cancelled,
-        connectionId: r.connectionId,
         result: r.result,
+        targetId: r.targetId,
         teamId: r.teamId,
       })
     );
@@ -163,7 +172,7 @@ export async function finalizeCampaign(
       },
       where: {
         campaignId: input.campaignId,
-        connectionId: t.connectionId,
+        id: t.targetId,
         state: 'PENDING',
         teamId: t.teamId,
       },
