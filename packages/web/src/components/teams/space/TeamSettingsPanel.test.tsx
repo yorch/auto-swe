@@ -14,6 +14,9 @@ vi.mock('@/components/teams/EventEndpointsCard', () => ({ EventEndpointsCard: ()
 vi.mock('@/components/teams/TeamAgentLibrarySection', () => ({
   TeamAgentLibrarySection: () => null,
 }));
+vi.mock('@/components/teams/TeamSecretsPanel', () => ({
+  TeamSecretsPanel: () => <div data-testid="team-secrets-panel" />,
+}));
 
 vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).navigationMock());
 
@@ -279,5 +282,37 @@ describe('TeamSettingsPanel budget and sharing', () => {
     const chip = await screen.findByText('View only');
     expect(chip.closest('li')?.textContent).toContain('acme/ui');
     expect(chip.closest('li')?.textContent).toContain('from Design');
+  });
+});
+
+describe('TeamSettingsPanel secrets', () => {
+  beforeEach(() => {
+    setupFetchMock({ [`GET /api/v1/teams/${TEAM_ID}`]: () => team('Be terse.') });
+  });
+
+  it('offers the Secrets tab to a team ADMIN and shows the panel there', async () => {
+    renderPanel('ADMIN');
+    await screen.findByRole('tab', { name: 'Secrets' });
+    fireEvent.click(screen.getByRole('tab', { name: 'Secrets' }));
+    expect(screen.getByTestId('team-secrets-panel')).toBeTruthy();
+  });
+
+  it('hides the Secrets tab from a team LEAD, even a platform LEAD who leads the team', async () => {
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
+    renderPanel('LEAD');
+    await screen.findByRole('tab', { name: 'General' });
+    expect(screen.queryByRole('tab', { name: 'Secrets' })).toBeNull();
+  });
+
+  it('hides the Secrets tab from a team ENGINEER who is not a platform ADMIN', async () => {
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ENGINEER', sub: 'me' } });
+    renderPanel('ENGINEER');
+    await screen.findByRole('tab', { name: 'General' });
+    expect(screen.queryByRole('tab', { name: 'Secrets' })).toBeNull();
+  });
+
+  it('offers the Secrets tab to a platform ADMIN whatever their team role', async () => {
+    renderPanel('ENGINEER');
+    await screen.findByRole('tab', { name: 'Secrets' });
   });
 });

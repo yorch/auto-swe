@@ -4,6 +4,7 @@ import {
   MIN_REPO_SETUP_SECRET_CHARS,
   RepoSetupSecretNameSchema,
 } from '@auto-swe/shared/lib/repoSetup';
+import type { RepoSetupSecretSummary } from '@auto-swe/shared/types/api';
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -25,6 +26,9 @@ export function RepoSetupSecrets({
   repositoryId: string;
 }) {
   const secrets = useSetupSecrets(repositoryId);
+  // A team secret granted here comes back with `source: 'team'` and is read-only; `shadowed` says
+  // a repository secret of that name wins. Rows without `source` are repository secrets.
+  const rows: RepoSetupSecretSummary[] = secrets.data ?? [];
   const save = useSaveSetupSecret(repositoryId);
   const remove = useDeleteSetupSecret(repositoryId);
   const [name, setName] = useState('');
@@ -39,32 +43,51 @@ export function RepoSetupSecrets({
         Stored encrypted. Setup steps get the ones the definition lists under Secret names, as
         environment variables; the agent never does. A saved value cannot be read back.
       </p>
-      {secrets.data?.length ? (
+      {rows.length ? (
         <ul className="space-y-1">
-          {secrets.data.map((s) => (
-            <li className="flex items-center justify-between gap-2 text-sm" key={s.name}>
-              <span className="font-mono text-paper-200">{s.name}</span>
-              <span className="flex items-center gap-2 text-xs text-paper-500">
-                {s.lastFour ? `••••${s.lastFour}` : '••••'}
-                <Button
-                  aria-label={`Delete secret ${s.name}`}
-                  className="px-2 hover:text-danger-400"
-                  disabled={disabled || remove.isPending}
-                  onClick={() => {
-                    setError(null);
-                    remove.mutate(s.name, {
-                      onError: (err) => setError(errMsg(err, 'The secret could not be deleted')),
-                    });
-                  }}
-                  size="sm"
-                  title="Delete secret"
-                  variant="ghost"
-                >
-                  <Icon name="trash" size={14} />
-                </Button>
-              </span>
-            </li>
-          ))}
+          {rows.map((s) =>
+            s.source === 'team' ? (
+              <li
+                className="flex items-center justify-between gap-2 text-sm"
+                key={`${s.source ?? 'repository'}:${s.name}`}
+              >
+                <span className="font-mono text-paper-200">{s.name}</span>
+                <span className="flex items-center gap-2 text-xs text-paper-500">
+                  {s.lastFour ? `••••${s.lastFour}` : '••••'}
+                  <span className="rounded border border-ink-600 px-1.5 py-0.5">From team</span>
+                  {s.shadowed && (
+                    <span className="text-warning-400">shadowed by repository secret</span>
+                  )}
+                </span>
+              </li>
+            ) : (
+              <li
+                className="flex items-center justify-between gap-2 text-sm"
+                key={`${s.source ?? 'repository'}:${s.name}`}
+              >
+                <span className="font-mono text-paper-200">{s.name}</span>
+                <span className="flex items-center gap-2 text-xs text-paper-500">
+                  {s.lastFour ? `••••${s.lastFour}` : '••••'}
+                  <Button
+                    aria-label={`Delete secret ${s.name}`}
+                    className="px-2 hover:text-danger-400"
+                    disabled={disabled || remove.isPending}
+                    onClick={() => {
+                      setError(null);
+                      remove.mutate(s.name, {
+                        onError: (err) => setError(errMsg(err, 'The secret could not be deleted')),
+                      });
+                    }}
+                    size="sm"
+                    title="Delete secret"
+                    variant="ghost"
+                  >
+                    <Icon name="trash" size={14} />
+                  </Button>
+                </span>
+              </li>
+            )
+          )}
         </ul>
       ) : (
         !secrets.isLoading && <p className="text-xs text-paper-500">No setup secrets.</p>

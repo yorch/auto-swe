@@ -15,6 +15,7 @@ import { TeamAgentLibrarySection } from '@/components/teams/TeamAgentLibrarySect
 import { TeamBudgetSection } from '@/components/teams/TeamBudgetSection';
 import { TeamCallbackEndpointsSection } from '@/components/teams/TeamCallbackEndpointsSection';
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
+import { TeamSecretsPanel } from '@/components/teams/TeamSecretsPanel';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -38,7 +39,13 @@ import { canManageTeamBudget, teamPermissions } from '@/lib/teamPermissions';
 import { hasFullTeamSettings } from '@/lib/teamSpace';
 import { useAuthStore } from '@/stores/authStore';
 
-type SettingsTab = 'general' | 'budget' | 'service-principals' | 'automation' | 'sandbox';
+type SettingsTab =
+  | 'general'
+  | 'budget'
+  | 'service-principals'
+  | 'automation'
+  | 'secrets'
+  | 'sandbox';
 
 /** Persona text beyond this many characters is probably unintended; shown as a counter, not enforced. */
 const PERSONA_SOFT_LIMIT = 4000;
@@ -72,6 +79,7 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
     canEditAllowlists,
     canManageTeamAgents,
     canManageCallbacks,
+    canManageTeamSecrets,
   } = teamPermissions(platformRole, summary.myRole);
   // An ORG_ADMIN of the team's organization may manage its budget without being on the team; the
   // lookup is skipped for the callers who qualify some other way.
@@ -152,6 +160,7 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
     ...(canManageBudget ? [{ id: 'budget' as const, label: 'Budget' }] : []),
     ...(canManage ? [{ id: 'service-principals' as const, label: 'Service principals' }] : []),
     { id: 'automation', label: 'Events & agents' },
+    ...(canManageTeamSecrets ? [{ id: 'secrets' as const, label: 'Secrets' }] : []),
     ...(canEditAllowlists ? [{ id: 'sandbox' as const, label: 'Sandbox policy' }] : []),
   ];
   // The section lives in the URL so it can be linked to and survives a reload.
@@ -394,6 +403,12 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
           {canManageCallbacks && (
             <TeamCallbackEndpointsSection isPlatformAdmin={isPlatformAdmin} teamId={id} />
           )}
+        </div>
+      )}
+
+      {tab === 'secrets' && canManageTeamSecrets && (
+        <div className="space-y-6" {...tabPanelProps('team-settings', 'secrets')}>
+          <TeamSecretsPanel repositories={repositories} teamId={id} />
         </div>
       )}
 

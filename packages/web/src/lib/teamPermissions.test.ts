@@ -8,8 +8,15 @@ describe('teamPermissions', () => {
       canManageCallbacks: true,
       canManageMembers: true,
       canManageTeamAgents: true,
+      canManageTeamSecrets: true,
       grantableRoles: ['ENGINEER', 'LEAD', 'ADMIN'],
     });
+  });
+
+  it('lets a team ADMIN manage team secrets, and not a team LEAD or a platform LEAD', () => {
+    expect(teamPermissions('ENGINEER', 'ADMIN').canManageTeamSecrets).toBe(true);
+    expect(teamPermissions('LEAD', 'LEAD').canManageTeamSecrets).toBe(false);
+    expect(teamPermissions('ADMIN', undefined).canManageTeamSecrets).toBe(true);
   });
 
   it('lets a team LEAD manage run-callback endpoints, and not a team ENGINEER', () => {
