@@ -249,6 +249,14 @@ export async function CampaignWorkflow(input: CampaignWorkflowInput): Promise<Ca
         if (cancelled) {
           return;
         }
+        if (verdict.cancelled) {
+          // The campaign row says it was cancelled, though no signal reached this execution (a
+          // cancel recorded before it started, or a signal that was lost): stop exactly as the
+          // signal does. The batch stays queued, so it is reported as not started.
+          cancelled = true;
+          childScope.cancel();
+          return;
+        }
         queue.splice(0, batch.length);
         const refusedRest = verdict.stopReason ? queue.splice(0, queue.length) : [];
         for (const target of batch) {

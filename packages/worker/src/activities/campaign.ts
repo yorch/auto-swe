@@ -201,6 +201,12 @@ export interface AuthorizeCampaignTargetsResult {
    * queued ends with this reason, and no child is started.
    */
   stopReason?: string;
+  /**
+   * Set with `stopReason` when the campaign row says it was cancelled (CANCELLING or CANCELLED):
+   * a cancel whose signal never reached the execution, or one recorded before it started. The
+   * workflow then stops as the cancel signal stops it, rather than ending its targets SKIPPED.
+   */
+  cancelled?: true;
   /** One verdict per target in the batch, in its order. Ignored when `stopReason` is set. */
   verdicts: Array<{ connectionId: string; allowed: boolean; reason?: string }>;
 }
@@ -208,11 +214,22 @@ export interface AuthorizeCampaignTargetsResult {
 const TEAM_LEAD_ROLES: ReadonlySet<string> = new Set(['LEAD', 'ADMIN']);
 
 /**
+ * The campaign states in which a child may still start. STARTING is included because the
+ * workflow's own STARTING-to-RUNNING write is best effort; every other state stops the campaign:
+ * CANCELLING and CANCELLED as a cancel, and a terminal state written by anything else because no
+ * campaign that is already final may grow a child.
+ */
+const STARTABLE_CAMPAIGN_STATES: ReadonlySet<string> = new Set(['STARTING', 'RUNNING']);
+const CANCELLED_CAMPAIGN_STATES: ReadonlySet<string> = new Set(['CANCELLING', 'CANCELLED']);
+
+/**
  * The launch decision, re-made for the targets about to start. A campaign starts its children
  * over days (its workflow may run 30), each as the launcher, so what the launch route checked once
  * is checked again here, right before a child exists:
  *
- *  - for the whole campaign: the campaign row exists, the launcher's account is active, the
+ *  - for the whole campaign: the campaign row exists and is still STARTING or RUNNING (a
+ *    CANCELLING or CANCELLED row stops it as a cancel, whether or not the cancel signal reached
+ *    this execution), the launcher's account is active, the
  *    launcher still leads the owning team (or is a platform ADMIN), and `workflow.campaignsEnabled`
  *    is still on for the owning team. A failure stops every target not yet started;
  *  - for each target: the repository still exists, is active and is a git repository, is still
@@ -232,11 +249,17 @@ export async function authorizeCampaignTargets(
     verdicts: [],
   });
   const campaign = await prisma.campaign.findUnique({
-    select: { orgId: true, ownerTeamId: true },
+    select: { orgId: true, ownerTeamId: true, state: true },
     where: { id: input.campaignId },
   });
   if (!campaign) {
     return stop('the campaign no longer exists');
+  }
+  if (CANCELLED_CAMPAIGN_STATES.has(campaign.state)) {
+    return { ...stop('the campaign was cancelled'), cancelled: true };
+  }
+  if (!STARTABLE_CAMPAIGN_STATES.has(campaign.state)) {
+    return stop(`the campaign is already ${campaign.state}`);
   }
   const launcher = await prisma.user.findUnique({
     select: { isActive: true, role: true },

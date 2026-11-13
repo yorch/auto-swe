@@ -61,6 +61,8 @@ let holdFanningOut = false;
 const refusedTargets = new Map<string, string>();
 let stopAt: { connectionId: string; reason: string } | null = null;
 let failAuthorize = false;
+/** The target whose re-check finds the campaign row cancelled (a cancel the signal never carried). */
+let cancelledAt: string | null = null;
 const authorizeCalls: string[][] = [];
 
 const fakeActivities = {
@@ -68,6 +70,9 @@ const fakeActivities = {
     authorizeCalls.push(input.targets.map((t) => t.connectionId));
     if (failAuthorize) {
       throw ApplicationFailure.nonRetryable('database unreachable');
+    }
+    if (cancelledAt && input.targets.some((t) => t.connectionId === cancelledAt)) {
+      return { cancelled: true, stopReason: 'the campaign was cancelled', verdicts: [] };
     }
     if (stopAt && input.targets.some((t) => t.connectionId === stopAt?.connectionId)) {
       return { stopReason: stopAt.reason, verdicts: [] };
@@ -195,6 +200,7 @@ beforeEach((ctx: TestContext) => {
   refusedTargets.clear();
   stopAt = null;
   failAuthorize = false;
+  cancelledAt = null;
   authorizeCalls.length = 0;
 });
 
@@ -429,6 +435,33 @@ describe('CampaignWorkflow — the launch re-checked before each start', () => {
     }
     expect(result.status).toBe('COMPLETED_WITH_FAILURES');
     expect(finalizations[0].notStarted).toEqual([]);
+  }, 60_000);
+
+  it('stops as a cancel when the re-check finds the campaign row cancelled', async () => {
+    if (!env) {
+      return;
+    }
+    const ids = repoIds(4);
+    // repo-1 finishes; repo-2 parks. The campaign was cancelled in the database without a signal
+    // reaching this execution, so the re-check for repo-3's slot finds it cancelled.
+    scripts.set('repo-1', { delayMs: 1000, kind: 'result', result: { changed: false } });
+    scripts.set('repo-2', { kind: 'park' });
+    cancelledAt = 'repo-3';
+    const result = await env.client.workflow.execute('CampaignWorkflow', {
+      args: [campaignInput(ids, { maxParallel: 2 })],
+      taskQueue: TASK_QUEUE,
+      workflowId: CAMPAIGN_WORKFLOW_ID,
+    });
+
+    expect(result.status).toBe('CANCELLED');
+    expect(launches.map((l) => l.repoId).sort()).toEqual(['repo-1', 'repo-2']);
+    // The child in flight is cancelled with the campaign, as the signal would cancel it.
+    expect(cancelledChildren).toEqual([`${CAMPAIGN_WORKFLOW_ID}-repo-2`]);
+    expect(finalizations).toHaveLength(1);
+    expect(finalizations[0].cancelled).toBe(true);
+    expect(finalizations[0].notStarted).toEqual(['repo-3', 'repo-4']);
+    expect(results.find((r) => r.connectionId === 'repo-2')).toMatchObject({ cancelled: true });
+    expect(domainStates.at(-1)).toBe('CANCELLED');
   }, 60_000);
 
   it('fails closed when the re-check cannot be made: nothing starts unchecked', async () => {

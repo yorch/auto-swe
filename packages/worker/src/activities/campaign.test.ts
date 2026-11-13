@@ -278,7 +278,11 @@ describe('authorizeCampaignTargets', () => {
       r2: { isActive: true, orgId: 'org-1', teamId: 't2', type: 'git_repo' },
     };
     launcher = { isActive: true, role: 'LEAD' };
-    db.campaign.findUnique.mockResolvedValue({ orgId: 'org-1', ownerTeamId: 'owner' });
+    db.campaign.findUnique.mockResolvedValue({
+      orgId: 'org-1',
+      ownerTeamId: 'owner',
+      state: 'RUNNING',
+    });
     db.user.findUnique.mockImplementation(async () => launcher);
     db.teamMembership.findUnique.mockImplementation(
       async (args: { where: { userId_teamId: { teamId: string } } }) => {
@@ -359,6 +363,46 @@ describe('authorizeCampaignTargets', () => {
     expect(verdicts[0]).toEqual({ allowed: true, connectionId: 'r1' });
     expect(verdicts[1]?.allowed).toBe(false);
   });
+
+  it('reads the campaign state', async () => {
+    await check();
+    expect(db.campaign.findUnique.mock.calls[0]?.[0]).toMatchObject({
+      select: { state: true },
+    });
+  });
+
+  it.each(['STARTING', 'RUNNING'])('lets a %s campaign start children', async (state) => {
+    db.campaign.findUnique.mockResolvedValue({ orgId: 'org-1', ownerTeamId: 'owner', state });
+    const v = await check();
+    expect(v.stopReason).toBeUndefined();
+    expect(v.cancelled).toBeUndefined();
+    expect(v.verdicts.every((x) => x.allowed)).toBe(true);
+  });
+
+  it.each(['CANCELLING', 'CANCELLED'])(
+    'stops a %s campaign as a cancel, whatever the launch still allows',
+    async (state) => {
+      db.campaign.findUnique.mockResolvedValue({ orgId: 'org-1', ownerTeamId: 'owner', state });
+      expect(await check()).toEqual({
+        cancelled: true,
+        stopReason: 'the campaign was cancelled',
+        verdicts: [],
+      });
+      // Decided before anything else is read.
+      expect(db.user.findUnique).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['COMPLETED', 'COMPLETED_WITH_FAILURES', 'FAILED_TO_START'])(
+    'stops a %s campaign: a final campaign never grows a child',
+    async (state) => {
+      db.campaign.findUnique.mockResolvedValue({ orgId: 'org-1', ownerTeamId: 'owner', state });
+      const v = await check();
+      expect(v.stopReason).toBe(`the campaign is already ${state}`);
+      expect(v.cancelled).toBeUndefined();
+      expect(v.verdicts).toEqual([]);
+    }
+  );
 
   it('stops when the campaign row is gone', async () => {
     db.campaign.findUnique.mockResolvedValue(null);

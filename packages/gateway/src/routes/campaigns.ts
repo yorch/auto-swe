@@ -909,6 +909,28 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
 
+      // A STARTING campaign with no execution is most likely one whose launch has committed its
+      // rows but not yet started the workflow. Closing its rows here would let that workflow start
+      // into a campaign already final, and leave nothing able to stop it. So it is left
+      // CANCELLING: when the workflow starts, its re-check before the first child reads that state
+      // and stops as a cancel. A later cancel of a campaign still CANCELLING with no execution (a
+      // launch whose workflow never started) closes it as below, which is safe for the same reason.
+      if (delivery === 'not-running' && campaign.state === 'STARTING') {
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor: user,
+          after: {
+            cancelledById: user.sub,
+            pendingStart: 'the campaign workflow had not started; it stops when it does',
+            state: 'CANCELLING',
+          },
+          before: { state: campaign.state },
+          entityId: id,
+          entityType: 'Campaign',
+        });
+        return reply.status(202).send({ data: { campaignId: id, state: 'CANCELLING' } });
+      }
+
       // No running workflow to stop: it closed (or Temporal no longer knows it) without leaving
       // the campaign final, which is what a finalizer that exhausted its retries leaves. Nothing
       // else will ever close these rows, so this call does: the campaign CANCELLED and every

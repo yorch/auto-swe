@@ -77,6 +77,7 @@ exists, for the batch of targets about to start:
 | Check | On failure |
 |---|---|
 | The campaign row still exists | Nothing more starts |
+| The campaign is still `STARTING` or `RUNNING` | `CANCELLING` or `CANCELLED`: the campaign stops as a cancel (§9), whether or not the cancel signal reached the workflow. Any other final state: nothing more starts |
 | The launcher's account is still active | Nothing more starts |
 | The launcher is still `LEAD` or `ADMIN` on the owning team, or a platform ADMIN | Nothing more starts |
 | `workflow.campaignsEnabled` is still on for the owning team | Nothing more starts |
@@ -84,6 +85,10 @@ exists, for the batch of targets about to start:
 | The repository is still owned by the team it had at launch, in the campaign's organization | That target does not start |
 | `workflow.campaignsEnabled` is still on for the repository's team | That target does not start |
 | The launcher is still `LEAD` or `ADMIN` on the repository's owning team, or a platform ADMIN | That target does not start |
+
+Because the state is read before every batch, a cancel recorded in the database stops the campaign
+even when its signal was lost or arrived before the workflow existed: in-flight children are
+cancelled, and every target still queued ends `CANCELLED`.
 
 A target that does not start ends `SKIPPED` with the reason, prefixed `not started:`; when nothing
 more may start, every target still queued ends that way with the campaign-wide reason, and children
@@ -366,8 +371,16 @@ campaign becomes `CANCELLING` with `cancelledById` and `cancelledAt`, the workfl
 and the route answers `202`. A signal that cannot be delivered answers
 `503 CAMPAIGN_SIGNAL_FAILED` with the campaign left `CANCELLING`; cancelling again re-sends it.
 
+A `STARTING` campaign with no workflow to signal is one whose launch has committed its rows and not
+yet started the workflow (or never will). The route does not close it: it stays `CANCELLING`, the
+route writes the `UPDATE` audit row and answers `202`, and when the workflow starts, its re-check
+before the first child reads `CANCELLING` and stops as a cancel (§2), so no child starts. Closing
+the rows instead would let that workflow start into a campaign that is already final, which no
+later cancel could stop. A launch whose workflow never starts leaves the campaign `CANCELLING`
+with no execution; cancelling it again closes it as below.
+
 When Temporal has no running workflow to signal (it closed, was terminated, or is no longer known)
-while the campaign row is not final, nothing else will ever close the row: its finalizer did not
+while the campaign row is `RUNNING` or `CANCELLING`, nothing else will ever close the row: its finalizer did not
 run or exhausted its retries. The same call then closes it, in one transaction: the campaign
 becomes `CANCELLED` with `completedAt`, every target still `PENDING` or `RUNNING` becomes
 `CANCELLED` (a child of a closed campaign was cancelled with it), and finished targets keep their
@@ -392,6 +405,9 @@ Cancelling stops what has not finished and leaves what has:
   audited cancel stopped the target; a run cancelled through its own route has that route's audit
   row, and to the campaign it is a target that ended without a verdict, so the campaign finishes
   `COMPLETED_WITH_FAILURES`.
+- A cancel recorded on the campaign row stops it even if its signal never reached the workflow:
+  the re-check before the next batch reads `CANCELLING` or `CANCELLED` and stops the same way
+  (§2). That covers a cancel sent before the workflow started.
 - Cancelling the campaign's workflow directly (from Temporal) behaves the same as the cancel
   route's signal: the finalizer still runs, also when the cancel lands before the first child has
   started (every target then ends `CANCELLED`).

@@ -1335,6 +1335,34 @@ describe('campaign routes', () => {
       ]);
     });
 
+    it('never closes a STARTING campaign with no execution yet: it stays CANCELLING for its workflow to honour', async () => {
+      // The launch committed its rows and has not started the workflow yet.
+      seedActive('STARTING');
+      as('admin-1', 'ADMIN', {});
+      workflowGone = true;
+      const res = await cancel();
+      expect(res.statusCode).toBe(202);
+      expect(body(res).data).toEqual({ campaignId: U(1), state: 'CANCELLING' });
+      expect(campaigns[0]).toMatchObject({ cancelledById: 'admin-1', state: 'CANCELLING' });
+      expect(campaigns[0]?.completedAt ?? null).toBeNull();
+      // No target is closed: the workflow's re-check stops them when it starts.
+      expect(
+        targets.filter((t) => t.campaignId === U(1)).some((t) => t.state === 'CANCELLED')
+      ).toBe(false);
+      expect(audits).toEqual([
+        expect.objectContaining({
+          action: 'UPDATE',
+          afterJson: expect.objectContaining({ state: 'CANCELLING' }),
+          beforeJson: { state: 'STARTING' },
+        }),
+      ]);
+      // The campaign is still cancellable, so a later call can close one that never started.
+      audits.length = 0;
+      const again = await cancel();
+      expect(again.statusCode).toBe(200);
+      expect(campaigns[0]?.state).toBe('CANCELLED');
+    });
+
     it('closes a campaign left CANCELLING by a finalizer that never ran', async () => {
       seedActive('CANCELLING');
       as('admin-1', 'ADMIN', {});
