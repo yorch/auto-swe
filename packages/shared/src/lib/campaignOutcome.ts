@@ -51,6 +51,44 @@ export const CAMPAIGN_TERMINAL_STATES: readonly CampaignStateName[] = [
   'FAILED_TO_START',
 ];
 
+/**
+ * Whether a UTF-16 code unit may not appear in a campaign's name or brief: a C0 control other than
+ * tab, line feed and carriage return, DEL, or a C1 control. They have no place in a brief or a pull
+ * request, and JSON writes a C0 control as a six-byte escape, which would let a short brief take
+ * six times its length in every child's start event.
+ */
+function isForbiddenControl(code: number): boolean {
+  return (
+    (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) ||
+    (code >= 0x7f && code <= 0x9f)
+  );
+}
+
+/**
+ * Why `text` cannot be a campaign's name or brief, or null when it can. Besides the control
+ * characters above, a lone surrogate is refused: it is not text, and JSON escapes it in six bytes.
+ */
+export function campaignTextProblem(text: string): string | null {
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (isForbiddenControl(code)) {
+      return 'must not contain control characters other than tab and line breaks';
+    }
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        i += 1;
+        continue;
+      }
+      return 'must be well-formed Unicode text (no lone surrogates)';
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      return 'must be well-formed Unicode text (no lone surrogates)';
+    }
+  }
+  return null;
+}
+
 /** Longest failure reason stored on a target. */
 export const CAMPAIGN_FAILURE_REASON_MAX = 500;
 

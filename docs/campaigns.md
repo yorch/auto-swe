@@ -220,6 +220,12 @@ the result into the campaign.
 | `workflow.campaignMaxTargets` | 25 | The most repositories one campaign may name (1 to 200), resolved for the owning team. A longer list is refused, not truncated |
 | `workflow.campaignMaxParallelChildren` | 3 | The most children in flight at once (1 to 10). A launch may ask for fewer with `maxParallel`, never more |
 
+A campaign's Temporal history is bounded by what each child's start event carries: the brief, the
+recipe payload and the identifiers, never the launch request, which is stored once on the
+campaign's work request. The brief's 8,000-character bound and its character rules keep one child's
+start input under 32 KiB, so the child starts of a campaign at the 200-target ceiling stay under
+7 MiB, below Temporal's 10 MiB history warning; a unit test measures the worst case.
+
 Pull-request volume is bounded at five points: the target limit, the parallelism limit, the fact
 that a repository the change does not affect opens nothing, drafts only, and no CI loop. Each child
 is a full run with its own agent, workspace and budget; the optional `budget` tier of the launch
@@ -233,8 +239,8 @@ All routes are under `/api/v1/campaigns`.
 
 | Field | Meaning |
 |---|---|
-| `name` | 1 to 120 characters; shown in lists |
-| `description` | The brief: the agent's instructions for the fallback path and the pull request text |
+| `name` | 1 to 120 characters, with the same character rules as the brief; shown in lists |
+| `description` | The brief: the agent's instructions for the fallback path and the pull request text. At most 8,000 characters, with no control characters other than tab and line breaks and no lone surrogates (§7) |
 | `ownerTeamId` | The owning team (§2) |
 | `repoIds` | One to 200 distinct repository IDs |
 | `recipe` | Optional `{ ref, params: { packageName, targetVersion } }` (§3); absent means agent-only |

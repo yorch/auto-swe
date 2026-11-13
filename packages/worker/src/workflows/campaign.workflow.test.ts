@@ -194,7 +194,6 @@ function campaignInput(
     externalTicketId: 'CAMPAIGN-111111111111',
     launchedById: 'user-lead',
     maxParallel: 2,
-    requestPayload: '{}',
     targets: ids.map((id) => ({ connectionId: id, repoLabel: `acme/${id}`, teamId: 'team-a' })),
     templateId: 'tpl-upgrade',
     templateVersion: 7,

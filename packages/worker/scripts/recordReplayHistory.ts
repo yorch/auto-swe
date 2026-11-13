@@ -280,7 +280,6 @@ const campaignInput = (
   externalTicketId: 'REPLAY-CAMPAIGN-1',
   launchedById: 'user-replay',
   maxParallel: over.maxParallel,
-  requestPayload: '{}',
   targets: connectionIds.map((id) => ({
     connectionId: id,
     repoLabel: `acme/${id}`,

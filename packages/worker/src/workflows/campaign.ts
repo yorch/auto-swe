@@ -2,7 +2,6 @@ import type {
   CampaignResult,
   CampaignTargetInput,
   CampaignWorkflowInput,
-  RepoWorkRequest,
   WorkflowResult,
 } from '@auto-swe/shared/types/workflow';
 import {
@@ -16,6 +15,7 @@ import {
 } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
 import { CAMPAIGN_CANCEL_SIGNAL } from '../lib/workflowEngine.js';
+import { campaignChildArgs } from './campaignRequest.js';
 import { RETRY_STATE, T_30S } from './proxyOptions.js';
 
 export type { CampaignResult, CampaignWorkflowInput };
@@ -129,22 +129,11 @@ export async function CampaignWorkflow(input: CampaignWorkflowInput): Promise<Ca
     const childWorkflowId = `${input.campaignWorkflowId}-${target.connectionId}`;
     let result: WorkflowResult;
     try {
-      const request: RepoWorkRequest = {
-        connectionId: target.connectionId,
-        description: input.description,
-        externalTicketId: input.externalTicketId,
-        launchedById: input.launchedById,
-        parentWorkflowId: input.campaignWorkflowId,
-        payload: { ...input.childPayload, connectionId: target.connectionId },
-        repoId: target.connectionId,
-        requestPayload: input.requestPayload,
-        workRequestId: input.workRequestId,
-      };
       // The start command is issued before any activity is awaited. An activity's completion
       // time is not in the workflow's control, so awaiting the "started" record first would let
       // two targets swap places; issuing the command here keeps the start order the input order.
       const starting = startChild('RunnableWorkflow', {
-        args: [{ request, templateId: input.templateId, templateVersion: input.templateVersion }],
+        args: [campaignChildArgs(input, target)],
         parentClosePolicy: ParentClosePolicy.PARENT_CLOSE_POLICY_REQUEST_CANCEL,
         taskQueue: 'engineering-workflow',
         workflowId: childWorkflowId,

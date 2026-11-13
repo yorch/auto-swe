@@ -1,13 +1,17 @@
 import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
 import { resolveSetting } from '@auto-swe/shared/config';
-import { CAMPAIGN_TERMINAL_STATES } from '@auto-swe/shared/lib/campaignOutcome';
+import {
+  CAMPAIGN_TERMINAL_STATES,
+  campaignTextProblem,
+} from '@auto-swe/shared/lib/campaignOutcome';
 import { parseRecipeParams } from '@auto-swe/shared/lib/campaignRecipes';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
   BUDGET_TIERS,
+  CAMPAIGN_DESCRIPTION_MAX_LENGTH,
   type CampaignTargetInput,
   type CampaignWorkflowInput,
 } from '@auto-swe/shared/types/workflow';
@@ -24,7 +28,6 @@ import {
   permissionRequirement,
   reachableConnections,
 } from '../lib/tenantScope.js';
-import { MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -54,14 +57,24 @@ const CAMPAIGN_STATES = [
   'FAILED_TO_START',
 ] as const;
 
+function refineCampaignText(text: string, ctx: z.RefinementCtx): void {
+  const problem = campaignTextProblem(text);
+  if (problem) {
+    ctx.addIssue({ code: 'custom', message: problem });
+  }
+}
+
 const CreateCampaignSchema = z.object({
   budget: z.enum(BUDGET_TIERS).optional(),
+  // Bounded below the general description limit, and free of control characters, because every
+  // child's start event in the campaign's history carries it (CAMPAIGN_CHILD_INPUT_BUDGET_BYTES).
   description: z
     .string()
     .min(1, 'description is required — it is the agent brief and the pull request text')
-    .max(MAX_DESCRIPTION_LENGTH),
+    .max(CAMPAIGN_DESCRIPTION_MAX_LENGTH)
+    .superRefine(refineCampaignText),
   maxParallel: z.number().int().min(1).optional(),
-  name: z.string().trim().min(1).max(120),
+  name: z.string().trim().min(1).max(120).superRefine(refineCampaignText),
   ownerTeamId: z.string().uuid(),
   // The ref and parameters are validated by the shared catalogue (`parseRecipeParams`), which
   // answers CAMPAIGN_RECIPE_INVALID. Zod only guarantees their rough shape here.
@@ -378,7 +391,6 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         externalTicketId,
         launchedById: user.sub,
         maxParallel,
-        requestPayload,
         targets,
         templateId: template.id,
         templateVersion: template.activeVersion,

@@ -667,6 +667,17 @@ describe('campaign routes', () => {
       expect(connectionSelects[0]).toMatchObject({ scmProvider: true });
     });
 
+    it('bounds the brief and refuses control characters in it and in the name', async () => {
+      // Every child's start event carries the brief, so it has its own, lower bound.
+      expect((await post({ ...valid, description: 'x'.repeat(8_001) })).statusCode).toBe(400);
+      expect((await post({ ...valid, description: 'a\u0001b' })).statusCode).toBe(400);
+      expect((await post({ ...valid, description: 'a\ud800b' })).statusCode).toBe(400);
+      expect((await post({ ...valid, name: 'a\u001bb' })).statusCode).toBe(400);
+      expectNothingWritten();
+      const ok = await post({ ...valid, description: `${'x'.repeat(7_990)}\n\tdone` });
+      expect(ok.statusCode).toBe(201);
+    });
+
     it('rejects duplicate repository ids and an empty list as invalid input', async () => {
       expect((await post({ ...valid, repoIds: [REPO_A, REPO_A] })).statusCode).toBe(400);
       expect((await post({ ...valid, repoIds: [] })).statusCode).toBe(400);
@@ -756,6 +767,8 @@ describe('campaign routes', () => {
         templateVersion: 3,
         workRequestId: data.workRequestId,
       });
+      // The launch request is stored once, on the RunInput row, not carried into the workflow.
+      expect(call.input).not.toHaveProperty('requestPayload');
       expect(call.input.targets).toEqual([
         { connectionId: REPO_B, repoLabel: 'org/beta', teamId: TEAM_2 },
         { connectionId: REPO_A, repoLabel: 'org/alpha', teamId: TEAM_1 },

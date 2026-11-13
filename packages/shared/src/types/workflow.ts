@@ -336,6 +336,22 @@ export const CAMPAIGN_WORKFLOW_TYPE = 'CampaignWorkflow';
  */
 export const CAMPAIGN_CANCEL_SIGNAL = 'campaignCancelSignal';
 
+/**
+ * The longest campaign brief, in UTF-16 code units. Every child of a campaign carries the brief in
+ * its start event (its agent and pull-request steps read `request.description`), so the brief is
+ * bounded well below the general description limit: with the control characters and lone
+ * surrogates the launch route refuses, a code unit costs at most 3 bytes of JSON, so one child's
+ * start input stays inside {@link CAMPAIGN_CHILD_INPUT_BUDGET_BYTES}.
+ */
+export const CAMPAIGN_DESCRIPTION_MAX_LENGTH = 8_000;
+
+/**
+ * The most bytes one campaign child's start input (`StartChildWorkflowExecutionInitiated`) may
+ * take. At the 200-target ceiling of `workflow.campaignMaxTargets` that is at most 6.25 MiB of
+ * child start events, under Temporal's 10 MiB history-size warning and far from its 50 MiB limit.
+ */
+export const CAMPAIGN_CHILD_INPUT_BUDGET_BYTES = 32 * 1024;
+
 /** One repository of a campaign, frozen at launch. */
 export interface CampaignTargetInput {
   connectionId: string;
@@ -356,8 +372,11 @@ export interface CampaignWorkflowInput {
   campaignWorkflowId: string;
   workRequestId: string;
   externalTicketId: string;
+  /**
+   * The brief (at most {@link CAMPAIGN_DESCRIPTION_MAX_LENGTH}). The full launch request lives
+   * once, on the campaign's `RunInput` row; it is not carried here or into any child.
+   */
   description: string;
-  requestPayload: string;
   launchedById: string;
   templateId: string;
   templateVersion: number;
