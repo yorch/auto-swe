@@ -95,8 +95,9 @@ cancelled, and every target still queued ends `CANCELLED`.
 
 A target that does not start ends `SKIPPED` with the reason, prefixed `not started:`; when nothing
 more may start, every target still queued ends that way with the campaign-wide reason, and children
-already running are left to finish. A re-check that cannot be made (the database is unreachable
-after the activity's retries) fails closed the same way: the batch and the rest of the queue end
+already running are left to finish. A re-check that cannot be made (the database is still unreachable
+after the activity's retries, ten attempts with backoff over about eight minutes) fails closed the
+same way: the batch and the rest of the queue end
 `SKIPPED` rather than starting unchecked. The campaign then finishes `COMPLETED_WITH_FAILURES`.
 
 Checked **only at launch**: the platform `LEAD` role, the GitHub permission gate (it judges the

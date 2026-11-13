@@ -61,12 +61,20 @@ let holdFanningOut = false;
 const refusedTargets = new Map<string, string>();
 let stopAt: { connectionId: string; reason: string } | null = null;
 let failAuthorize = false;
+/** Transient re-check failures still to throw (retryable), before it answers. */
+let authorizeFailuresLeft = 0;
+let authorizeAttempts = 0;
 /** The target whose re-check finds the campaign row cancelled (a cancel the signal never carried). */
 let cancelledAt: string | null = null;
 const authorizeCalls: string[][] = [];
 
 const fakeActivities = {
   async authorizeCampaignTargets(input: { targets: Array<{ connectionId: string }> }) {
+    authorizeAttempts += 1;
+    if (authorizeFailuresLeft > 0) {
+      authorizeFailuresLeft -= 1;
+      throw ApplicationFailure.retryable('database unreachable for a moment');
+    }
     authorizeCalls.push(input.targets.map((t) => t.connectionId));
     if (failAuthorize) {
       throw ApplicationFailure.nonRetryable('database unreachable');
@@ -200,6 +208,8 @@ beforeEach((ctx: TestContext) => {
   refusedTargets.clear();
   stopAt = null;
   failAuthorize = false;
+  authorizeFailuresLeft = 0;
+  authorizeAttempts = 0;
   cancelledAt = null;
   authorizeCalls.length = 0;
 });
@@ -462,6 +472,29 @@ describe('CampaignWorkflow — the launch re-checked before each start', () => {
     expect(finalizations[0].notStarted).toEqual(['repo-3', 'repo-4']);
     expect(results.find((r) => r.connectionId === 'repo-2')).toMatchObject({ cancelled: true });
     expect(domainStates.at(-1)).toBe('CANCELLED');
+  }, 60_000);
+
+  it('retries a re-check that fails for minutes before failing closed', async () => {
+    if (!env) {
+      return;
+    }
+    // More failures than the five attempts the state writes get (RETRY_STATE), well inside the
+    // re-check's own policy: the campaign waits the blip out and starts its children.
+    authorizeFailuresLeft = 8;
+    const ids = repoIds(2);
+    for (const id of ids) {
+      scripts.set(id, { kind: 'result', result: { changed: false } });
+    }
+    const result = await env.client.workflow.execute('CampaignWorkflow', {
+      args: [campaignInput(ids, { maxParallel: 2 })],
+      taskQueue: TASK_QUEUE,
+      workflowId: CAMPAIGN_WORKFLOW_ID,
+    });
+
+    expect(authorizeAttempts).toBe(9);
+    expect(result.status).toBe('COMPLETED');
+    expect(launches.map((l) => l.repoId).sort()).toEqual(ids);
+    expect(results.every((r) => r.status === 'SUCCESS')).toBe(true);
   }, 60_000);
 
   it('fails closed when the re-check cannot be made: nothing starts unchecked', async () => {

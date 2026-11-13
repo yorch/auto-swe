@@ -16,7 +16,7 @@ import {
 import type * as activitiesType from '../activities/index.js';
 import { CAMPAIGN_CANCEL_SIGNAL } from '../lib/workflowEngine.js';
 import { campaignChildArgs } from './campaignRequest.js';
-import { RETRY_STATE, T_30S } from './proxyOptions.js';
+import { RETRY_FAIL_CLOSED_READ, RETRY_STATE, T_30S } from './proxyOptions.js';
 
 export type { CampaignResult, CampaignWorkflowInput };
 
@@ -57,7 +57,6 @@ const stateActivities = proxyActivities<Pick<typeof activitiesType, 'updateDomai
 const campaignActivities = proxyActivities<
   Pick<
     typeof activitiesType,
-    | 'authorizeCampaignTargets'
     | 'finalizeCampaign'
     | 'recordCampaignState'
     | 'recordCampaignTargetResult'
@@ -65,6 +64,14 @@ const campaignActivities = proxyActivities<
   >
 >({
   retry: RETRY_STATE,
+  startToCloseTimeout: T_30S,
+});
+
+// The launch re-check fails closed: when it cannot be made, the batch and the rest of the queue
+// end unstarted. So it gets minutes of retrying (RETRY_FAIL_CLOSED_READ), not RETRY_STATE's 15
+// seconds, before a database or network blip can end a whole campaign.
+const recheckActivities = proxyActivities<Pick<typeof activitiesType, 'authorizeCampaignTargets'>>({
+  retry: RETRY_FAIL_CLOSED_READ,
   startToCloseTimeout: T_30S,
 });
 
@@ -228,9 +235,9 @@ export async function CampaignWorkflow(input: CampaignWorkflowInput): Promise<Ca
     const fill = async (): Promise<void> => {
       while (!cancelled && queue.length > 0 && inFlight.size < limit) {
         const batch = queue.slice(0, limit - inFlight.size);
-        let verdict: Awaited<ReturnType<typeof campaignActivities.authorizeCampaignTargets>>;
+        let verdict: Awaited<ReturnType<typeof recheckActivities.authorizeCampaignTargets>>;
         try {
-          verdict = await campaignActivities.authorizeCampaignTargets({
+          verdict = await recheckActivities.authorizeCampaignTargets({
             campaignId: input.campaignId,
             launchedById: input.launchedById,
             targets: batch.map((t) => ({ connectionId: t.connectionId, teamId: t.teamId })),
