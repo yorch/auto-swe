@@ -88,7 +88,9 @@ const verifyGate = (next: string): Node => ({
  *     SUCCESS with no pull request; a layout the recipe cannot handle falls through to the agent,
  *     having pushed nothing.
  *  2. Without a recipe, or after a recipe that could not apply, the agent makes the change. Its
- *     step refuses a change that deletes, skips or weakens tests (`testIntegrity: 'block'`).
+ *     step refuses a change that deletes, skips or weakens tests (`testIntegrity: 'block'`). An
+ *     agent that changes nothing ends the run SUCCESS, not affected, only when there was no
+ *     recipe; after a recipe that could not apply it ends the run FAILED.
  *  3. Every change, from the recipe or the agent, is verified by the repository's original tests:
  *     the verification restores the test files, test support files (fixtures, mocks, golden
  *     files, helpers), runner setup files and pure test-runner configuration the branch changed,
@@ -208,10 +210,34 @@ export const DEPENDENCY_UPGRADE_CAMPAIGN_SPEC: WorkflowSpec = {
         expr: 'nodes.implement.output.filesChanged.length == 0',
         group: 'implement',
         onFalse: 'saveAgent',
-        onTrue: 'doneNotAffected',
+        onTrue: 'checkAgentOnly',
         title: 'Anything changed?',
         type: 'cond',
       },
+      // An agent that changes nothing means "not affected" only when the agent was the plan. After
+      // a recipe that could not apply, the recipe already found the package in use, so no change
+      // means the upgrade was not made: that is a failure, never a quiet success.
+      checkAgentOnly: {
+        expr: "(request.payload.recipe ?? '') == ''",
+        group: 'implement',
+        onFalse: 'failNoChange',
+        onTrue: 'doneNotAffected',
+        title: 'Was the agent the only plan?',
+        type: 'cond',
+      },
+      failNoChange: terminate('FAILED', {
+        group: 'implement',
+        result: {
+          changed: { literal: false },
+          path: { literal: 'NONE' },
+          skippedReason: {
+            literal:
+              'the recipe could not apply, and the agent that took over made no change, so the upgrade was not made',
+          },
+          verification: { literal: 'NOT_RUN' },
+        },
+        title: 'Recipe and agent made no change',
+      }),
       saveAgent: {
         group: 'implement',
         next: 'verify',

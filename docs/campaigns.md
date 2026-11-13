@@ -139,9 +139,9 @@ whole interface:
 |---|---|---|
 | 0, files changed | The recipe made the change | It is verified (§5) |
 | 0, nothing changed | **Not affected**: the root manifest does not declare the package (npm) or require the module (Go), there is no root manifest, or it is already at the version. A package used only transitively counts as not affected (see Limitations) | The child ends `SUCCESS` with `changed: false`; no pull request |
-| 3 | **Cannot apply**: a Yarn, pnpm or Bun lockfile, an npm shrinkwrap, no `package-lock.json`, a workspaces repository that does not list the package at its root, or a dependency declared as something other than a plain version range (npm); a module that vendors its dependencies (`vendor/modules.txt`) or a `go.work` workspace (Go) | Nothing was pushed; the agent takes over |
-| 4 | The tool ran but the lockfile or `go.mod` does not end at the requested version | Nothing was pushed; the agent takes over |
-| other non-zero | The tool failed (install error, no network) | Nothing was pushed; the agent takes over |
+| 3 | **Cannot apply**: a Yarn, pnpm or Bun lockfile, an npm shrinkwrap, no `package-lock.json`, a workspaces repository that does not list the package at its root, or a dependency declared as something other than a plain version range (npm); a module that vendors its dependencies (`vendor/modules.txt`) or a `go.work` workspace (Go) | Nothing was pushed; the agent takes over. If the agent then changes nothing, the child ends `FAILED` (never not affected) |
+| 4 | The tool ran but the lockfile or `go.mod` does not end at the requested version | Nothing was pushed; the agent takes over, as for 3 |
+| other non-zero | The tool failed (install error, no network) | Nothing was pushed; the agent takes over, as for 3 |
 
 **The recipe builds only on a branch it creates.** Before the recipe runs, the step resolves the
 base branch's tip on the host and records it by sha, and refuses a work branch that already exists
@@ -188,7 +188,8 @@ template is a complete workflow on its own
                           nothing changed   changed (path AGENT)
                                     │            │           │
                                     v            └─────┬─────┘
-                       done: not affected              v
+            no recipe: done: not affected              │
+            after a recipe: run ends FAILED            v
                                            verify with the original tests
                                               │                │
                                             passed           failed
@@ -273,7 +274,7 @@ Each `CampaignTarget` records one repository's outcome.
 | `RUNNING` | Its child run is in flight; the detail view adds a `liveStatus` from the child's ledger row |
 | `PR_OPENED` | A draft pull request was opened (`prUrl`, `prNumber`) |
 | `NOT_AFFECTED` | The child finished with nothing to change |
-| `FAILED` | The child failed, timed out, could not be started, was cancelled on its own (outside the campaign), or succeeded without opening a pull request or reporting `changed: false`; `failureReason` says why (at most 500 characters, control characters removed, credential-shaped text masked) |
+| `FAILED` | The child failed (including a recipe that could not apply followed by an agent that changed nothing), timed out, could not be started, was cancelled on its own (outside the campaign), or succeeded without opening a pull request or reporting `changed: false`; `failureReason` says why (at most 500 characters, control characters removed, credential-shaped text masked) |
 | `SKIPPED` | The target was not started because the launch no longer held when its turn came (§2, `failureReason` starts `not started:`), or its child run ended `SKIPPED` |
 | `CANCELLED` | The campaign was cancelled before the target started, or before its child finished successfully |
 

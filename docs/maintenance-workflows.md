@@ -143,8 +143,11 @@ non-zero and pushes nothing.
    ([ci-failure-triggers.md §2.4](./ci-failure-triggers.md#24-the-test-integrity-guard)), so a change
    that deletes, skips or weakens tests, or loosens the test command or CI configuration, fails
    before it is pushed. Both agent steps also refuse a change to a GitHub Actions workflow or
-   action, or one that adds a symlink or submodule. An agent that changes nothing also ends
-   `SUCCESS` with `changed: false`.
+   action, or one that adds a symlink or submodule. An agent that changes nothing ends `SUCCESS`
+   with `changed: false` only when no recipe was named. After a recipe that could not apply, the
+   recipe has already found the package in use, so an agent that changes nothing ends the run
+   `FAILED` (`path: NONE`, `verification: NOT_RUN`): the upgrade was not made, and the campaign
+   counts it as a failure rather than a repository it did not affect.
 3. Every change, from the recipe or the agent, is verified by the `runTests` gate with
    `protectTests: true`: the test files, test support files (fixtures, mocks, golden files,
    helpers), runner setup files and pure test-runner configuration the change touched are put back

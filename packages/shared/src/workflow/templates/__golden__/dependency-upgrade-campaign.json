@@ -3,10 +3,16 @@
   "entry": "setUpgrade",
   "name": "dependency-upgrade-campaign",
   "nodes": {
+    "checkAgentOnly": {
+      "expr": "(request.payload.recipe ?? '') == ''",
+      "onFalse": "failNoChange",
+      "onTrue": "doneNotAffected",
+      "type": "cond"
+    },
     "checkChanges": {
       "expr": "nodes.implement.output.filesChanged.length == 0",
       "onFalse": "saveAgent",
-      "onTrue": "doneNotAffected",
+      "onTrue": "checkAgentOnly",
       "type": "cond"
     },
     "checkRecipe": {
@@ -73,6 +79,24 @@
         }
       },
       "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "failNoChange": {
+      "result": {
+        "changed": {
+          "literal": false
+        },
+        "path": {
+          "literal": "NONE"
+        },
+        "skippedReason": {
+          "literal": "the recipe could not apply, and the agent that took over made no change, so the upgrade was not made"
+        },
+        "verification": {
+          "literal": "NOT_RUN"
+        }
+      },
+      "status": "FAILED",
       "type": "terminate"
     },
     "failRecipeRefused": {

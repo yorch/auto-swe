@@ -45,6 +45,7 @@ describe('dependency-upgrade-campaign template', () => {
     expect(terminals.sort()).toEqual([
       'done',
       'doneNotAffected',
+      'failNoChange',
       'failRecipeRefused',
       'failVerify',
     ]);
@@ -359,6 +360,35 @@ describe('dependency-upgrade-campaign template', () => {
       expect(result.status).toBe('SUCCESS');
       expect(result.result).toMatchObject({ changed: false, verification: 'NOT_RUN' });
       expect(names(steps)).toEqual(['executeImplementation']);
+    });
+
+    it.each([
+      ['exited 3 (cannot apply)', { exitCode: 3 }],
+      ['exited 4 (not resolved)', { exitCode: 4 }],
+    ])(
+      'recipe %s and the agent then changes nothing: FAILED, never not affected',
+      async (_name, extra) => {
+        const { d, steps } = dispatcher({
+          implement: { filesChanged: [] },
+          recipe: { filesChanged: [], passed: false, skipped: false, summary: 'x', ...extra },
+        });
+        const result = await runSpec(spec, base(), d);
+        expect(result.status).toBe('FAILED');
+        expect(result.result).toEqual({
+          changed: false,
+          path: 'NONE',
+          skippedReason:
+            'the recipe could not apply, and the agent that took over made no change, so the upgrade was not made',
+          verification: 'NOT_RUN',
+        });
+        expect(names(steps)).toEqual(['applyRecipe', 'executeImplementation']);
+      }
+    );
+
+    it('a recipe step that threw and an agent that changed nothing: FAILED too', async () => {
+      const { d } = dispatcher({ implement: { filesChanged: [] }, recipeThrows: true });
+      const result = await runSpec(spec, base(), d);
+      expect(result.status).toBe('FAILED');
     });
 
     it('failed verification gets one agent fix; a recipe change becomes RECIPE_THEN_AGENT', async () => {
