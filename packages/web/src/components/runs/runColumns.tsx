@@ -5,11 +5,12 @@ import type { DataTableColumn } from '@/components/ui/DataTable';
 import { Icon } from '@/components/ui/Icon';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { formatCost, formatDuration } from '@/lib/utils';
+import { describeRunInitiator, RUN_TRIGGER_LABELS } from '@/lib/runInitiator';
+import { cn, formatCost, formatDuration } from '@/lib/utils';
 
 /**
  * The column set shared by every list of runs and requests, in one order:
- * status, title, workflow, duration, cost, then a time. A list picks its own
+ * status, title, workflow, initiated by, duration, cost, then a time. A list picks its own
  * title wording, the time it shows, and whatever it adds under the title or
  * the workflow name.
  */
@@ -63,6 +64,45 @@ export function workflowColumn<Row extends WorkflowRunSummary>(
     ),
     header: 'Workflow',
     id: 'workflow',
+  };
+}
+
+/**
+ * Who started the run. For a person the trigger kind is a third line unless it is the plain
+ * work-request path, so a re-run or a Slack launch is visible; the text says it, not a colour.
+ */
+export function initiatedByColumn<Row extends WorkflowRunSummary>(): DataTableColumn<Row> {
+  return {
+    cell: (row) => {
+      const who = describeRunInitiator(row);
+      const showTrigger = who.kind === 'person' && row.trigger && row.trigger !== 'work-request';
+      return (
+        <div className="min-w-0">
+          <div
+            className={cn(
+              'max-w-56 truncate text-sm',
+              who.kind === 'unknown' ? 'text-paper-500' : 'text-paper-300'
+            )}
+            title={who.title ?? who.primary}
+          >
+            {who.kind === 'system' && <span className="sr-only">Trigger: </span>}
+            {who.primary}
+          </div>
+          {who.secondary && (
+            <div className="max-w-56 truncate text-xs text-paper-500" title={who.secondary}>
+              {who.secondary}
+            </div>
+          )}
+          {showTrigger && row.trigger && (
+            <div className="max-w-56 truncate text-xs text-paper-500">
+              <span className="sr-only">Trigger: </span>via {RUN_TRIGGER_LABELS[row.trigger]}
+            </div>
+          )}
+        </div>
+      );
+    },
+    header: 'Initiated by',
+    id: 'initiatedBy',
   };
 }
 

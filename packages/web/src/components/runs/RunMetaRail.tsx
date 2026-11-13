@@ -6,6 +6,7 @@ import { useId, useState } from 'react';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { Icon } from '@/components/ui/Icon';
 import { useTemporalWorkflowUrl } from '@/hooks/useTemporalUi';
+import { describeRunInitiator, RUN_TRIGGER_LABELS } from '@/lib/runInitiator';
 import { runMetaSummary } from '@/lib/runMeta';
 import {
   cn,
@@ -63,6 +64,7 @@ export function RunMetaRail({ run, collapsible = false }: RunMetaRailProps) {
   const totalTokens = run.tokensInputTotal + run.tokensOutputTotal;
 
   const summary = runMetaSummary(run);
+  const initiator = describeRunInitiator(run);
 
   const body = (
     <>
@@ -129,6 +131,40 @@ export function RunMetaRail({ run, collapsible = false }: RunMetaRailProps) {
               </Link>
             )}
           </MetaRow>
+          <MetaRow label="Initiated by">
+            <span
+              className={cn(RAIL_VALUE, 'block max-w-[170px] truncate')}
+              title={initiator.title}
+            >
+              {initiator.primary}
+            </span>
+            {initiator.secondary && (
+              <span
+                className="block max-w-[170px] truncate text-xs text-paper-500"
+                title={initiator.secondary}
+              >
+                {initiator.secondary}
+              </span>
+            )}
+          </MetaRow>
+          {run.trigger && initiator.kind !== 'system' && (
+            <MetaRow label="Trigger">
+              <Value>{RUN_TRIGGER_LABELS[run.trigger]}</Value>
+            </MetaRow>
+          )}
+          {run.rerunOfRunId && (
+            <MetaRow label="Previous attempt">
+              <Link
+                className={cn(
+                  'rounded-sm text-sm text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
+                  FOCUS_RING
+                )}
+                href={`/runs/${run.rerunOfRunId}`}
+              >
+                View
+              </Link>
+            </MetaRow>
+          )}
           <MetaRow label="Run ID">
             <div className="flex flex-col items-end gap-1">
               <span className={cn(RAIL_CODE, 'block max-w-[150px] truncate')} title={run.id}>

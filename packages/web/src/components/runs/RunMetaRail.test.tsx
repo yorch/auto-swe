@@ -13,13 +13,18 @@ const run = {
   costUsdAccrued: 1.5,
   endedAt: '2026-10-01T12:08:00Z',
   id: 'run-1',
+  initiatedBy: null,
+  initiatedByService: null,
   isAgentRun: false,
+  rerunOfRunId: null,
   startedAt: '2026-10-01T12:00:00Z',
   templateId: 't1',
   templateName: 'Fan-out',
   tokensInputTotal: 1000,
   tokensOutputTotal: 500,
   traces: [],
+  trigger: null,
+  triggerRefId: null,
   workflowId: 'wf-1',
   workRequest: { description: 'Fix it', externalTicketId: 'T-1', id: 'wr-1' },
 } as unknown as WorkflowRunDetail;
@@ -48,6 +53,58 @@ describe('RunMetaRail identifiers and trace count', () => {
     const long = { ...run, traces: new Array(3).fill({}), tracesTruncated: true };
     render(<RunMetaRail run={long as unknown as WorkflowRunDetail} />);
     expect(screen.getByText('3 (latest only)')).toBeTruthy();
+  });
+});
+
+describe('RunMetaRail provenance', () => {
+  it('shows the person, their email, the trigger and a link to the run it re-ran', () => {
+    const rerun = {
+      ...run,
+      initiatedBy: { email: 'ada@example.com', id: 'u1', name: 'Ada Lovelace' },
+      rerunOfRunId: 'run-0',
+      trigger: 'template-retry',
+      triggerRefId: 'opaque-ref',
+    } as unknown as WorkflowRunDetail;
+    render(<RunMetaRail run={rerun} />);
+    expect(screen.getByText('Initiated by')).toBeTruthy();
+    expect(screen.getByText('Ada Lovelace')).toBeTruthy();
+    expect(screen.getByText('ada@example.com')).toBeTruthy();
+    expect(screen.getByText('Trigger')).toBeTruthy();
+    expect(screen.getByText('Re-run')).toBeTruthy();
+    expect(screen.getByText('Previous attempt')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'View' }).getAttribute('href')).toBe('/runs/run-0');
+    expect(screen.queryByText(/opaque-ref/)).toBeNull();
+  });
+
+  it('omits Trigger and Previous attempt when not recorded, and says Not recorded', () => {
+    render(<RunMetaRail run={run} />);
+    expect(screen.getByText('Initiated by')).toBeTruthy();
+    expect(screen.getByText('Not recorded')).toBeTruthy();
+    expect(screen.queryByText('Trigger')).toBeNull();
+    expect(screen.queryByText('Previous attempt')).toBeNull();
+  });
+
+  it('hides the separate Trigger row for a system run, which Initiated by already says', () => {
+    render(<RunMetaRail run={{ ...run, trigger: 'schedule' } as unknown as WorkflowRunDetail} />);
+    expect(screen.getByText('Schedule').getAttribute('title')).toContain('Run now');
+    expect(screen.queryByText('Trigger')).toBeNull();
+  });
+
+  it('keeps the Trigger row for a service principal and labels it', () => {
+    render(
+      <RunMetaRail
+        run={
+          {
+            ...run,
+            initiatedByService: { id: 's1', name: 'ci-bot' },
+            trigger: 'service-token',
+          } as unknown as WorkflowRunDetail
+        }
+      />
+    );
+    expect(screen.getByText('Service principal')).toBeTruthy();
+    expect(screen.getByText('Trigger')).toBeTruthy();
+    expect(screen.getByText('API token')).toBeTruthy();
   });
 });
 
