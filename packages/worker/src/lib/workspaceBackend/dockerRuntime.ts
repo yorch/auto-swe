@@ -60,7 +60,25 @@ export async function assertDockerRuntime(
     if (workspace.HostConfig?.Runtime !== runtime) {
       throw new Error(`workspace did not use runtime ${runtime}`);
     }
-    const network = Object.keys(workspace.NetworkSettings?.Networks ?? {})[0];
+    let networks = workspace.NetworkSettings?.Networks;
+    const networkMode = workspace.HostConfig?.NetworkMode;
+    if (
+      !Object.keys(networks ?? {}).length &&
+      typeof networkMode === 'string' &&
+      networkMode.startsWith('container:')
+    ) {
+      const holder = JSON.parse(
+        await docker(['inspect', '--format', '{{json .}}', networkMode.slice('container:'.length)])
+      );
+      if (
+        holder.Config?.Labels?.['auto-swe.workspace'] !== 'true' ||
+        holder.Config?.Labels?.['asw.workspace'] !== name
+      ) {
+        throw new Error('workspace network holder is not owned by the runtime probe');
+      }
+      networks = holder.NetworkSettings?.Networks;
+    }
+    const network = Object.keys(networks ?? {})[0];
     if (!network) {
       throw new Error('workspace has no Docker network');
     }

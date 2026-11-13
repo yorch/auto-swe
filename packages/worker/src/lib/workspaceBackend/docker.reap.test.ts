@@ -79,6 +79,27 @@ describe('reapOrphans', () => {
   const listing = (rows: [string, string, number | string][]) =>
     rows.map(([id, name, at]) => `${id}|${name}|${at}`).join('\n');
 
+  it('reaps labelled Kata holders and sandboxes even when the workspace is absent', async () => {
+    const at = created(DOCKER_WORKSPACE_MAX_AGE_MS + 1000);
+    spawnCaptureAsync.mockImplementation(async (_bin: string, args: string[]) => ({
+      exitCode: 0,
+      stderr: '',
+      stdout:
+        args[0] === 'ps'
+          ? listing([
+              ['holder-id', 'workspace-old-net', at],
+              ['sandbox-id', 'workspace-old-sandbox', at],
+              ['young-id', 'workspace-live-sandbox', created(1000)],
+            ])
+          : '',
+    }));
+    expect(await dockerWorkspaceBackend().reapOrphans(NOW)).toEqual({
+      failed: [],
+      removed: ['holder-id', 'sandbox-id'],
+      scanned: 3,
+    });
+  });
+
   it('lists only marker-labelled containers and removes only the expired ones', async () => {
     spawnCaptureAsync.mockImplementation(async (_bin: string, args: string[]) =>
       args[0] === 'ps'

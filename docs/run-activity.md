@@ -260,6 +260,14 @@ settings retain them for retries. Workspace runtime events record the actual set
 A setup setting stricter than or equal to the agent policy is ignored. This setting applies only to
 agent workspaces on Docker and Kubernetes; **shell/containerStep steps are unchanged**.
 
+With Docker Kata tcfilter, the baseline and final lock use stateful tc/ct on the verified tap and
+lower veth ingress rather than namespace iptables. A trusted runc holder is guarded before an
+inert trusted Kata sandbox creates the tap. Full enforcement is verified before any untrusted
+workspace, author, sidecar or preview service starts. Those children share one Kata VM through
+owned CRI sandbox annotations. Setup-to-final replacement uses a fresh conntrack zone behind
+two-direction drop guards; failed or concurrent replacement removes the group. The holder and
+sandbox follow the workspace/step's ownership labels, cleanup and orphan reaping.
+
 Provisioning still clones the main repository, wires registries, installs configured catalog tools and
 clones knowledge bases before the setup lock. The looser setup phase covers repository setup scripts,
 dependency installs and cache restoration, Git LFS, submodules, and optional dependency-repository
@@ -295,6 +303,13 @@ transition rather than declaring it enforced.
 
 ## Limitations
 
+- Docker Kata is IPv4 tcfilter only: IPv6 is dropped, ARP is forwarded and other L2 traffic is
+  dropped. macvtap and unknown layouts are refused. DROP rather than REJECT means denied requests
+  can time out. runc and runsc-host keep their existing iptables behavior.
+- A step and its sidecars/preview share one Kata VM, not a VM boundary between those containers.
+  Kata requires usable KVM/nested virtualization and adds VM/helper startup and memory overhead.
+  The tested Go shim is deprecated upstream. Docker policy-broker profiles for owned CRI sandbox
+  annotations and trusted runc holders/helpers are not included.
 - Looser setup runs **repository-controlled code**, not trusted dependency installation. It can read
   the checkout, mounted knowledge/dependency repositories, declared setup secrets, registry proxy tokens
   and credentials in workspace environment/config files, and any wired model/egress proxy credentials.

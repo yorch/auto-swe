@@ -15,6 +15,7 @@ let copyFileIn: ReturnType<typeof vi.fn>;
 let lockEgress: ReturnType<typeof vi.fn>;
 let remove: ReturnType<typeof vi.fn>;
 let backend: WorkspaceBackend;
+let workspaceName = '';
 const ok = (stdout = '') => ({ exitCode: 0, stderr: '', stdout });
 const blocked = () => ({ exitCode: 1, stderr: 'Connection refused', stdout: '' });
 
@@ -27,6 +28,7 @@ beforeEach(() => {
   vi.spyOn(console, 'info').mockImplementation(() => undefined);
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   create = vi.fn(async (spec) => {
+    workspaceName = spec.name;
     if (fault === 'create') {
       throw new Error('baseline unavailable');
     }
@@ -72,10 +74,32 @@ beforeEach(() => {
         return ok(fault === 'inspect' ? 'runc' : 'runsc-host');
       }
       if (args.includes('{{json .}}')) {
+        if (args.at(-1) === 'holder') {
+          return ok(
+            JSON.stringify({
+              Config: {
+                Labels: {
+                  'asw.workspace': fault === 'foreign holder' ? 'other' : workspaceName,
+                  'auto-swe.workspace': 'true',
+                },
+              },
+              NetworkSettings: { Networks: { private: {} } },
+            })
+          );
+        }
         return ok(
           JSON.stringify({
-            HostConfig: { Runtime: fault === 'workspace runtime' ? 'runc' : 'runsc-host' },
-            NetworkSettings: { Networks: fault === 'network' ? {} : { private: {} } },
+            HostConfig: {
+              Runtime: fault === 'workspace runtime' ? 'runc' : 'runsc-host',
+              ...(fault === 'shared network' || fault === 'foreign holder'
+                ? { NetworkMode: 'container:holder' }
+                : {}),
+            },
+            NetworkSettings: {
+              Networks: ['network', 'shared network', 'foreign holder'].includes(fault)
+                ? {}
+                : { private: {} },
+            },
           })
         );
       }
@@ -97,6 +121,14 @@ afterEach(() => {
 });
 
 describe('Docker runtime boot gate', () => {
+  it('runs the same traffic and copy assertions through the owned shared-network holder', async () => {
+    fault = 'shared network';
+    await assertDockerRuntime(backend);
+    expect(publicCalls).toBe(2);
+    expect(copyFileIn).toHaveBeenCalledOnce();
+    expect(lockEgress).toHaveBeenCalledOnce();
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining('checks passed'));
+  });
   it.each(['', undefined])('does nothing with runtime %j', async (runtime) => {
     vi.stubEnv('WORKSPACE_RUNTIME', runtime);
     await assertDockerRuntime(backend);
@@ -133,6 +165,7 @@ describe('Docker runtime boot gate', () => {
     ['create', 'workspace creation/baseline'],
     ['workspace runtime', 'workspace did not use runtime'],
     ['network', 'no Docker network'],
+    ['foreign holder', 'network holder is not owned'],
     ['tools', 'requires wget and nc'],
     ['peer', 'positive control failed'],
     ['ip', 'no IPv4 address'],

@@ -11781,12 +11781,12 @@
       "title": "The worker refuses to boot on an unusable resolver list"
     },
     {
-      "anchor": "const dns = spec.dns.map((server) => `--dns=${shellQuote(server)}`).join(' ');",
+      "anchor": "const dns = kata ? '' : spec.dns.map((server) => `--dns=${shellQuote(server)}`).join(' ');",
       "before": 5,
       "id": "workspaceDnsRun",
       "lines": 12,
       "path": "packages/worker/src/lib/workspaceBackend/docker.ts",
-      "title": "createWorkspace adds one shell-quoted --dns flag per resolver"
+      "title": "Workspace DNS flags are shell-quoted; Kata inherits its holder's resolvers"
     },
     {
       "anchor": "export function memoryWriteRefusalEvent(",

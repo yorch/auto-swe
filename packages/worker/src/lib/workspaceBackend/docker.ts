@@ -17,6 +17,7 @@ import {
 } from '../execUtils.js';
 import { shellQuote } from '../shellQuote.js';
 import { assertNoCredentialEnvPairs } from './credentialEnv.js';
+import { type KataBaseline, KataNetworkGroup, kataHelperCommand } from './kataNetwork.js';
 import {
   isForbiddenAllowAddress,
   METADATA_V4,
@@ -583,7 +584,7 @@ export function buildEgressHelperCommand(
 /** The `--add-host` entry that makes the Docker host alias resolve to the host gateway. */
 const workerHostEntry = () => `--add-host=${DOCKER_HOST_ALIAS}:host-gateway`;
 
-async function workspaceResolutionContext(containerId: string) {
+async function workspaceResolutionContext(containerId: string, networkOwner = containerId) {
   const current = await spawnCaptureAsync('docker', ['exec', containerId, 'cat', '/etc/hosts'], {
     heartbeatLabel: 'workspace: reading hosts',
     timeoutMs: 30_000,
@@ -598,7 +599,7 @@ async function workspaceResolutionContext(containerId: string) {
   const trusted = new Map<string, string[]>();
   const inspected = await spawnCaptureAsync(
     'docker',
-    ['inspect', '--format', '{{json .HostConfig.ExtraHosts}}', containerId],
+    ['inspect', '--format', '{{json .HostConfig.ExtraHosts}}', networkOwner],
     { heartbeatLabel: 'workspace: reading extra hosts', timeoutMs: 30_000 }
   );
   if (inspected.exitCode !== 0) {
@@ -619,11 +620,19 @@ async function workspaceResolutionContext(containerId: string) {
 export async function installBaselineEgress(
   spec: Pick<WorkspaceContainerSpec, 'name' | 'dns' | 'baselineAllow'>,
   proxyUrls?: string[],
-  bootstrapDns?: string[]
-): Promise<void> {
+  bootstrapDns?: string[],
+  runc = false
+): Promise<KataBaseline> {
   const infra = resolveWorkspaceInfra();
+  const config: KataBaseline = {
+    allow: [],
+    blockMetadata: infra.blockMetadata,
+    blockPrivate: infra.blockPrivateEgress,
+    cidrs: infra.privateEgressAllow ?? [],
+    privateRanges: PRIVATE_V4,
+  };
   if (!infra.blockPrivateEgress && !infra.blockMetadata) {
-    return;
+    return config;
   }
   const allow: BaselineAllow[] = [];
   if (infra.blockPrivateEgress) {
@@ -680,10 +689,13 @@ export async function installBaselineEgress(
     bootstrapDns
   );
   const report = await execShellAsync(
-    buildEgressHelperCommand(spec.name, infra.metadataBlockImage, script),
+    runc
+      ? kataHelperCommand(spec.name, infra.metadataBlockImage, script)
+      : buildEgressHelperCommand(spec.name, infra.metadataBlockImage, script),
     { heartbeatLabel: 'workspace: installing baseline egress' }
   );
   assertBaselineEgress(report, needed, cidrs, infra.blockPrivateEgress, infra.blockMetadata);
+  return { ...config, allow: needed };
 }
 
 /**
@@ -764,7 +776,8 @@ export async function assertDockerDiskLimit(): Promise<void> {
 
 export function buildServiceContainerArgs(
   workspaceName: string,
-  service: WorkspaceServiceSpec
+  service: WorkspaceServiceSpec,
+  kata?: KataNetworkGroup
 ): string[] {
   const envNames = Object.keys(service.env ?? {}).sort();
   return [
@@ -773,6 +786,7 @@ export function buildServiceContainerArgs(
     '--name',
     `${workspaceName}-svc-${service.name}`,
     ...dockerRuntimeArgs(),
+    ...(kata?.childArgs() ?? []),
     '--label',
     `asw.workspace=${workspaceName}`,
     ...workspaceLabelArgs(),
@@ -914,6 +928,7 @@ export function workspaceBootstrapScript(): string {
 class DockerWorkspaceBackend implements WorkspaceBackend {
   readonly kind = 'docker' as const;
   private readonly egressPins = new Map<string, Map<string, string[]>>();
+  private readonly kataGroups = new Map<string, KataNetworkGroup>();
 
   async clearSetupProcesses(
     h: WorkspaceHandle,
@@ -1014,6 +1029,45 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
 
   async create(spec: WorkspaceContainerSpec): Promise<WorkspaceHandle> {
     const infra = resolveWorkspaceInfra();
+    assertNoCredentialEnvPairs(spec.env, 'docker run env');
+    const secretNames = secretEnvNames(spec.secretEnv);
+    let kata: KataNetworkGroup | undefined;
+    if (!spec.trusted && usesKataNetwork()) {
+      kata = new KataNetworkGroup(spec.name, infra.metadataBlockImage);
+      this.kataGroups.set(spec.name, kata);
+      try {
+        const holderArgs = ephemeralNetworkHolderArgs(
+          {
+            cpus: spec.cpus,
+            dns: spec.dns,
+            image: infra.metadataBlockImage,
+            memory: spec.memory,
+            name: spec.name,
+            network: 'egress',
+            reachWorker: spec.reachWorker,
+          },
+          kata.holder
+        );
+        forceRunc(holderArgs);
+        if (spec.network) {
+          if (['host', 'none'].includes(spec.network) || spec.network.startsWith('container:')) {
+            throw new Error('Kata network: unsupported holder network');
+          }
+          holderArgs[holderArgs.findIndex((arg) => arg.startsWith('--network='))] =
+            `--network=${spec.network}`;
+        }
+        await kata.start(
+          holderArgs,
+          infra.runtime ?? '',
+          { cpus: spec.cpus, memory: spec.memory },
+          () =>
+            installBaselineEgress({ ...spec, name: kata?.holder ?? '' }, undefined, undefined, true)
+        );
+      } catch (error) {
+        await this.remove(spec.name);
+        throw error;
+      }
+    }
     const storage = infra.diskLimit
       ? ` --storage-opt ${shellQuote(`size=${infra.diskLimit}`)}`
       : '';
@@ -1032,113 +1086,131 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     //  - `--cap-drop=ALL` + `--security-opt=no-new-privileges` remove Linux
     //    capabilities and privilege-escalation the workspace never needs.
     // A separate NET_ADMIN helper verifies the baseline before services start.
-    const dns = spec.dns.map((server) => `--dns=${shellQuote(server)}`).join(' ');
-    const addHosts = [
-      '--add-host=metadata.google.internal:0.0.0.0',
-      '--add-host=metadata.gke.internal:0.0.0.0',
-      ...(spec.reachWorker ? [workerHostEntry()] : []),
-    ].join(' ');
-    const network = spec.network ? ` --network=${shellQuote(spec.network)}` : '';
+    const dns = kata ? '' : spec.dns.map((server) => `--dns=${shellQuote(server)}`).join(' ');
+    const addHosts = kata
+      ? ''
+      : [
+          '--add-host=metadata.google.internal:0.0.0.0',
+          '--add-host=metadata.gke.internal:0.0.0.0',
+          ...(spec.reachWorker ? [workerHostEntry()] : []),
+        ].join(' ');
+    const network = kata
+      ? ` --network=${shellQuote(`container:${kata.holder}`)} ${kata.childArgs().map(shellQuote).join(' ')}`
+      : spec.network
+        ? ` --network=${shellQuote(spec.network)}`
+        : '';
     // A creation-time secret is named (`-e NAME`) and its value handed to the
     // docker client in its environment, so it is on no command line and in no
     // error text that echoes one.
-    assertNoCredentialEnvPairs(spec.env, 'docker run env');
     const env = [
       ...(spec.env ?? []).map((pair) => ` -e ${shellQuote(pair)}`),
-      ...secretEnvNames(spec.secretEnv).map((name) => ` -e ${name}`),
+      ...secretNames.map((name) => ` -e ${name}`),
       ...(infra.runAsRoot ? [] : [' -e HOME=/workspace/.home']),
     ].join('');
     const user = infra.runAsRoot ? '' : ' --user 1000:1000';
     // `memory` is a config string, so shell-quote it (the numeric caps can't
     // carry shell metacharacters); '--' separates docker flags from the image.
-    await execShellAsync(
-      `docker run -d --name ${spec.name} ${workspaceLabelArgs().join(' ')} --init${user} ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit}${storage}${runtime} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network}${env} -- ${shellQuote(spec.image)} sleep infinity`,
-      {
-        heartbeatLabel: 'workspace: starting container',
-        ...(spec.secretEnv ? { env: spec.secretEnv } : {}),
-      }
-    );
-
-    // Record the keeper PID now, while the `sleep infinity` under `--init` is
-    // provably the only child of PID 1 — before the first exec can leave a
-    // sibling behind. Zero or multiple candidates mean the image cannot run
-    // the keeper contract (`sleep infinity` under an init) or something raced
-    // in, so creation fails closed.
-    const probe = await execShellAsync(
-      `docker exec ${spec.name} sh -c ${shellQuote(keeperPidProbeScript())}`,
-      { heartbeatLabel: 'workspace: identifying keeper process' }
-    );
-    const candidates = probe
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => /^\d+$/.test(line))
-      .map(Number);
-    if (candidates.length !== 1) {
-      throw new Error(
-        `workspace ${spec.name}: expected exactly one keeper process (the child of PID 1), ` +
-          `found ${candidates.length} — the image must run \`sleep infinity\` under an init`
-      );
-    }
-    const keeperPid = candidates[0] ?? 0;
-    const handle: WorkspaceHandle = { id: spec.name, keeperPid };
-
     try {
-      if (!infra.runAsRoot) {
-        await this.prepareWorkspaceDirectories(handle);
-      }
-      this.bootstrapHandles.set(handle.id, handle);
-      await this.bootstrapTools(handle);
-      await installBaselineEgress(spec);
-    } catch (error) {
-      await execShellAsync(`docker rm -f ${shellQuote(spec.name)}`, {
-        heartbeatLabel: 'workspace: removing unsafe container',
-      });
-      throw error;
-    }
-
-    for (const service of spec.services ?? []) {
-      if (!/^[a-z][a-z0-9-]{0,30}$/.test(service.name)) {
-        throw new Error(`invalid workspace service name: ${service.name}`);
-      }
-      const serviceName = `${spec.name}-svc-${service.name}`;
-      const env = service.env ?? {};
-      for (const name of Object.keys(env)) {
-        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-          throw new Error(`invalid service environment name: ${name}`);
-        }
-      }
       await execShellAsync(
-        ['docker', ...buildServiceContainerArgs(spec.name, service)].map(shellQuote).join(' '),
+        `docker run -d --name ${spec.name} ${workspaceLabelArgs().join(' ')} --init${user} ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit}${storage}${runtime} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network}${env} -- ${shellQuote(spec.image)} sleep infinity`,
         {
-          heartbeatLabel: `workspace: starting service ${service.name}`,
-          ...(Object.keys(env).length > 0 ? { env } : {}),
+          heartbeatLabel: 'workspace: starting container',
+          ...(spec.secretEnv ? { env: spec.secretEnv } : {}),
         }
       );
-      if (service.readyCommand) {
-        const deadline = Date.now() + 120_000;
-        let ready = false;
-        while (Date.now() < deadline) {
-          try {
-            await execShellAsync(
-              `docker exec ${shellQuote(serviceName)} sh -c ${shellQuote(service.readyCommand)}`,
-              {
-                heartbeatLabel: `workspace: waiting for service ${service.name}`,
-                timeoutMs: 15_000,
-              }
-            );
-            ready = true;
-            break;
-          } catch {
-            await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      // Record the keeper PID now, while the `sleep infinity` under `--init` is
+      // provably the only child of PID 1 — before the first exec can leave a
+      // sibling behind. Zero or multiple candidates mean the image cannot run
+      // the keeper contract (`sleep infinity` under an init) or something raced
+      // in, so creation fails closed.
+      const probe = await execShellAsync(
+        `docker exec ${spec.name} sh -c ${shellQuote(keeperPidProbeScript())}`,
+        { heartbeatLabel: 'workspace: identifying keeper process' }
+      );
+      const candidates = probe
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => /^\d+$/.test(line))
+        .map(Number);
+      if (candidates.length !== 1) {
+        throw new Error(
+          `workspace ${spec.name}: expected exactly one keeper process (the child of PID 1), ` +
+            `found ${candidates.length} — the image must run \`sleep infinity\` under an init`
+        );
+      }
+      const keeperPid = candidates[0] ?? 0;
+      const handle: WorkspaceHandle = { id: spec.name, keeperPid };
+
+      try {
+        if (!infra.runAsRoot) {
+          await this.prepareWorkspaceDirectories(handle);
+        }
+        this.bootstrapHandles.set(handle.id, handle);
+        await this.bootstrapTools(handle);
+        if (!kata) {
+          await installBaselineEgress(spec);
+        }
+      } catch (error) {
+        await execShellAsync(`docker rm -f ${shellQuote(spec.name)}`, {
+          heartbeatLabel: 'workspace: removing unsafe container',
+        });
+        throw error;
+      }
+
+      for (const service of spec.services ?? []) {
+        if (!/^[a-z][a-z0-9-]{0,30}$/.test(service.name)) {
+          throw new Error(`invalid workspace service name: ${service.name}`);
+        }
+        const serviceName = `${spec.name}-svc-${service.name}`;
+        const env = service.env ?? {};
+        for (const name of Object.keys(env)) {
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+            throw new Error(`invalid service environment name: ${name}`);
           }
         }
-        if (!ready) {
-          throw new Error(`workspace service ${service.name} did not become ready within 120000ms`);
+        await execShellAsync(
+          ['docker', ...buildServiceContainerArgs(spec.name, service, kata)]
+            .map(shellQuote)
+            .join(' '),
+          {
+            heartbeatLabel: `workspace: starting service ${service.name}`,
+            ...(Object.keys(env).length > 0 ? { env } : {}),
+          }
+        );
+        if (service.readyCommand) {
+          const deadline = Date.now() + 120_000;
+          let ready = false;
+          while (Date.now() < deadline) {
+            try {
+              await execShellAsync(
+                `docker exec ${shellQuote(serviceName)} sh -c ${shellQuote(service.readyCommand)}`,
+                {
+                  heartbeatLabel: `workspace: waiting for service ${service.name}`,
+                  timeoutMs: 15_000,
+                }
+              );
+              ready = true;
+              break;
+            } catch {
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+            }
+          }
+          if (!ready) {
+            throw new Error(
+              `workspace service ${service.name} did not become ready within 120000ms`
+            );
+          }
         }
       }
-    }
 
-    return handle;
+      return handle;
+    } catch (error) {
+      if (kata) {
+        await this.remove(spec.name);
+      }
+      throw error;
+    }
   }
 
   private async prepareWorkspaceDirectories(handle: WorkspaceHandle): Promise<void> {
@@ -1263,6 +1335,12 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
   async remove(idOrHandle: string | WorkspaceHandle): Promise<void> {
     const id = typeof idOrHandle === 'string' ? idOrHandle : idOrHandle.id;
     this.egressPins.delete(id);
+    const kata = this.kataGroups.get(id);
+    for (const [key, group] of this.kataGroups) {
+      if (key === id || group === kata) {
+        this.kataGroups.delete(key);
+      }
+    }
     try {
       let owner = id;
       if (/^[a-f0-9]{64}$/i.test(id)) {
@@ -1295,6 +1373,9 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
       await execShellAsync(`docker rm -f ${id}`);
     } catch {
       /* already gone */
+    }
+    if (kata) {
+      await kata.destroy();
     }
   }
 
@@ -1369,7 +1450,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     spec: EphemeralContainerSpec,
     opts: EphemeralRunOptions
   ): Promise<CapturedResult> {
-    if (spec.network !== 'egress') {
+    if (spec.network !== 'egress' && !usesKataNetwork()) {
       return this.spawnEphemeral(spec, opts, false);
     }
     const named = { ...spec, name: spec.name ?? `shellstep-${randomUUID()}` };
@@ -1387,7 +1468,12 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     detached: boolean,
     holder?: string
   ): Promise<CapturedResult> {
-    return spawnCaptureAsync('docker', ephemeralArgs(spec, detached, holder), {
+    const args = ephemeralArgs(spec, detached, holder);
+    const kata = spec.name ? this.kataGroups.get(spec.name) : undefined;
+    if (kata) {
+      args.splice(args.indexOf('--'), 0, ...kata.childArgs());
+    }
+    return spawnCaptureAsync('docker', args, {
       heartbeatLabel: opts.heartbeatLabel,
       ...(spec.secretEnv ? { env: spec.secretEnv } : {}),
       ...(!detached && opts.onStdoutLine ? { onStdoutLine: opts.onStdoutLine } : {}),
@@ -1399,17 +1485,22 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     spec: EphemeralContainerSpec & { name: string }
   ): Promise<string> {
     const infra = resolveWorkspaceInfra();
-    const holder = `ephemeral-net-${randomUUID()}`;
+    const kata = usesKataNetwork()
+      ? new KataNetworkGroup(spec.name, infra.metadataBlockImage)
+      : undefined;
+    const holder = kata?.holder ?? `ephemeral-net-${randomUUID()}`;
     const dnsServers = spec.dns?.length ? spec.dns : infra.dns;
-    const started = await spawnCaptureAsync(
-      'docker',
-      ephemeralNetworkHolderArgs({ ...spec, dns: dnsServers }, holder),
-      {
-        heartbeatLabel: 'step: starting network holder',
-        timeoutMs: 60_000,
-      }
-    );
-    if (started.exitCode !== 0) {
+    const started = kata
+      ? undefined
+      : await spawnCaptureAsync(
+          'docker',
+          ephemeralNetworkHolderArgs({ ...spec, dns: dnsServers }, holder),
+          {
+            heartbeatLabel: 'step: starting network holder',
+            timeoutMs: 60_000,
+          }
+        );
+    if (started && started.exitCode !== 0) {
       throw new Error(`step network holder failed to start: ${started.stderr || started.stdout}`);
     }
     const origins = new Set(
@@ -1429,11 +1520,33 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
           proxy && origins.has(new URL(proxy.url).origin) ? [proxy.url] : []
         )
       : [];
-    await installBaselineEgress(
-      { dns: dnsServers, name: holder },
-      proxies,
-      dnsServers.includes('127.0.0.2') ? infra.dns : undefined
-    );
+    const baseline = () =>
+      installBaselineEgress(
+        { dns: dnsServers, name: holder },
+        proxies,
+        dnsServers.includes('127.0.0.2') ? infra.dns : undefined,
+        !!kata
+      );
+    if (kata) {
+      this.kataGroups.set(spec.name, kata);
+      this.kataGroups.set(holder, kata);
+      const args = ephemeralNetworkHolderArgs(
+        { ...spec, dns: dnsServers, network: 'egress' },
+        holder
+      );
+      forceRunc(args);
+      await kata.start(
+        args,
+        infra.runtime ?? '',
+        { cpus: spec.cpus ?? 1, memory: spec.memory ?? '512m' },
+        baseline
+      );
+      if (spec.network !== 'egress') {
+        await kata.install();
+      }
+    } else {
+      await baseline();
+    }
     if (spec.egressPolicy === 'restricted') {
       try {
         if (!infra.egressProxy || !proxies.includes(infra.egressProxy.url)) {
@@ -1460,7 +1573,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     spec: EphemeralContainerSpec,
     opts: EphemeralRunOptions
   ): Promise<CapturedResult> {
-    if (spec.network !== 'egress') {
+    if (spec.network !== 'egress' && !usesKataNetwork()) {
       return this.spawnEphemeral(spec, opts, true);
     }
     const named = { ...spec, name: spec.name ?? `sidecar-${randomUUID()}` };
@@ -1502,7 +1615,14 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     allow: EgressAllowEntry[],
     opts?: LockEgressOptions
   ): Promise<void> {
-    this.egressPins.set(handle.id, await this.installEgressLock(handle, allow, undefined, opts));
+    try {
+      this.egressPins.set(handle.id, await this.installEgressLock(handle, allow, undefined, opts));
+    } catch (error) {
+      if (usesKataNetwork()) {
+        await this.remove(handle);
+      }
+      throw error;
+    }
   }
 
   private async installEgressLock(
@@ -1515,7 +1635,14 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     const image = resolveWorkspaceInfra().metadataBlockImage;
     // /etc/hosts belongs to the workspace container, not to its network namespace, so the helper
     // cannot write it. Post-setup pinning uses the daemon, never a root workspace exec.
-    const { hostsText, mapped, trusted } = await workspaceResolutionContext(handle.id);
+    const kata = this.kataGroups.get(handle.id);
+    if (usesKataNetwork() && !kata) {
+      throw new Error('Kata network: workspace has no verified network group');
+    }
+    const { hostsText, mapped, trusted } = await workspaceResolutionContext(
+      handle.id,
+      kata?.holder
+    );
     const prior = this.egressPins.get(handle.id) ?? new Map<string, string[]>();
     if (opts?.replace) {
       for (const [name, ips] of prior) {
@@ -1548,7 +1675,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
       if (opts?.replace) {
         const inspected = await spawnCaptureAsync(
           'docker',
-          ['inspect', '--format', '{{.Id}}\t{{.HostsPath}}', handle.id],
+          ['inspect', '--format', '{{.Id}}\t{{.HostsPath}}', kata?.holder ?? handle.id],
           {
             heartbeatLabel: 'workspace: locating daemon-owned hosts file',
             timeoutMs: 30_000,
@@ -1598,6 +1725,29 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
             `egress lock: cannot write the workspace /etc/hosts: ${written.stderr.trim()}`
           );
         }
+        if (kata) {
+          const expected = `${hostsText}\n${lines}`;
+          const deadline = Date.now() + 5000;
+          for (;;) {
+            const visible = await spawnCaptureAsync(
+              'docker',
+              ['exec', handle.id, 'cat', '/etc/hosts'],
+              {
+                heartbeatLabel: 'workspace: verifying Kata host pins',
+                timeoutMs: 30_000,
+              }
+            );
+            if (visible.exitCode === 0 && visible.stdout === expected) {
+              break;
+            }
+            if (visible.exitCode !== 0 || Date.now() >= deadline) {
+              throw new Error(
+                'egress lock: daemon-owned host pins are not visible in the Kata workspace'
+              );
+            }
+            await new Promise((resolve) => setTimeout(resolve, 250));
+          }
+        }
       } else {
         const written = await spawnWithStdinAsync(
           'docker',
@@ -1611,10 +1761,14 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
       }
     }
     if (!opts?.prepareOnly) {
-      const report = await execShellAsync(buildEgressHelperCommand(handle.id, image, script), {
-        heartbeatLabel: 'workspace: locking egress',
-      });
-      assertEgressLocked(report);
+      if (kata) {
+        await kata.install(undefined, rules, incoming);
+      } else {
+        const report = await execShellAsync(buildEgressHelperCommand(handle.id, image, script), {
+          heartbeatLabel: 'workspace: locking egress',
+        });
+        assertEgressLocked(report);
+      }
     }
     for (const [name, ips] of trusted) {
       prior.set(name, ips);
@@ -1674,6 +1828,20 @@ function helperArgs(spec: HelperContainerSpec): string[] {
 export function dockerRuntimeArgs(): string[] {
   const runtime = resolveWorkspaceInfra().runtime;
   return runtime ? [`--runtime=${runtime}`] : [];
+}
+
+function usesKataNetwork(): boolean {
+  const runtime = resolveWorkspaceInfra().runtime;
+  return !!runtime && !['runc', 'runsc-host'].includes(runtime);
+}
+
+function forceRunc(args: string[]): void {
+  const runtime = args.findIndex((arg) => arg.startsWith('--runtime='));
+  if (runtime >= 0) {
+    args[runtime] = '--runtime=runc';
+  } else {
+    args.splice(args.indexOf('--'), 0, '--runtime=runc');
+  }
 }
 
 export function ephemeralArgs(
