@@ -50,7 +50,10 @@ strictest launch decision the platform has. All of these hold, in this order:
    refusal (`403 FORBIDDEN`, reason `team-lead-required`) names the repositories whose team the
    caller belongs to and counts the rest.
 5. Every repository belongs to the owning team's organization (`CAMPAIGN_CROSS_ORG` otherwise).
-   A campaign never spans organizations.
+   A campaign never spans organizations. Every repository is served by GitHub
+   (`409 SCM_PROVIDER_UNSUPPORTED` otherwise, naming the repositories and their provider): the
+   recipe's push, the draft pull request and per-user credentials all go through the GitHub
+   integration.
 6. `workflow.campaignsEnabled` is on for the owning team **and** for the team that owns each target
    repository. One team with it off refuses the whole launch (`CAMPAIGNS_DISABLED`), naming the
    owning team and the repositories (step 4 means the caller leads every one of them).
@@ -322,6 +325,7 @@ The refusals, in the order they are checked:
 | 404 | `TEAM_NOT_FOUND`, `REPOS_NOT_FOUND` | The owner team, or a named repository, does not exist or is inactive |
 | 403 | `FORBIDDEN` | No `LEAD`/`ADMIN` on a target's owning team (reason `team-lead-required`; repositories of teams the caller is not in are counted, not named) |
 | 400 | `CAMPAIGN_CROSS_ORG` | A repository is outside the owning team's organization |
+| 409 | `SCM_PROVIDER_UNSUPPORTED` | A repository is served by a source-control provider other than GitHub |
 | 403 | `CAMPAIGNS_DISABLED` | The setting is off for the owning team or a target's team |
 | 400 | `CAMPAIGN_TOO_MANY_TARGETS` | More repositories than `workflow.campaignMaxTargets` |
 | 400 | `CAMPAIGN_RECIPE_INVALID` | Unknown recipe, or parameters that fail the strict check |

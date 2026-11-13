@@ -6,6 +6,7 @@ import {
   campaignTextProblem,
 } from '@auto-swe/shared/lib/campaignOutcome';
 import { parseRecipeParams } from '@auto-swe/shared/lib/campaignRecipes';
+import { isGitHubRepository } from '@auto-swe/shared/lib/githubHostScope';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
@@ -275,6 +276,21 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
           400,
           'CAMPAIGN_CROSS_ORG',
           "Every repository of a campaign must belong to the owning team's organization"
+        );
+      }
+
+      // 4b. GitHub only. The recipe's clone and push, the draft pull request and the per-user
+      //     credentials of every child all go through the GitHub seam, and the worker refuses any
+      //     other provider when it gets there; refused here, before a campaign or a child exists.
+      const otherProvider = repos.filter((r) => !isGitHubRepository(r));
+      if (otherProvider.length > 0) {
+        return sendError(
+          reply,
+          409,
+          'SCM_PROVIDER_UNSUPPORTED',
+          `Campaigns run on GitHub repositories only; served by another provider: ${otherProvider
+            .map((r) => `${r.organizationName ?? '?'}/${r.repoName ?? r.id} (${r.scmProvider})`)
+            .join(', ')}`
         );
       }
 

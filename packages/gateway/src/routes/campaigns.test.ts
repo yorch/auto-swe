@@ -164,6 +164,8 @@ describe('campaign routes', () => {
   let activeWorkflows: Array<Record<string, unknown>> = [];
   let audits: Array<Record<string, unknown>> = [];
   let liveStatuses: Record<string, string> = {};
+  /** connectionId → its `scmProvider` when it is not GitHub. */
+  let scmProviders: Record<string, string> = {};
   const started: Array<{ id: string; input: Record<string, unknown> }> = [];
   const signalled: string[] = [];
 
@@ -196,7 +198,7 @@ describe('campaign routes', () => {
         isActive: true,
         organizationName: 'org',
         repoName: repo.repoName,
-        scmProvider: 'github',
+        scmProvider: scmProviders[id] ?? 'github',
         shares: [],
         team: {
           id: repo.teamId,
@@ -487,6 +489,7 @@ describe('campaign routes', () => {
     activeWorkflows = [];
     audits = [];
     liveStatuses = {};
+    scmProviders = {};
     started.length = 0;
     signalled.length = 0;
     settings.disabledTeams = new Set();
@@ -671,6 +674,16 @@ describe('campaign routes', () => {
       expect(res.statusCode).toBe(403);
       expect(body(res).error.message).not.toContain('beta');
       expect(body(res).error.message).toContain('1 other repository');
+      expectNothingWritten();
+    });
+
+    it('refuses a repository another SCM provider serves, before anything is written', async () => {
+      scmProviders = { [REPO_B]: 'gitlab' };
+      const res = await post(valid);
+      expect(res.statusCode).toBe(409);
+      expect(body(res).error.code).toBe('SCM_PROVIDER_UNSUPPORTED');
+      expect(body(res).error.message).toContain('org/beta (gitlab)');
+      expect(body(res).error.message).not.toContain('org/alpha');
       expectNothingWritten();
     });
 
