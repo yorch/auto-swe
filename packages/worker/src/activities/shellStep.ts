@@ -427,6 +427,18 @@ async function finalizeWorkspaceVolume(
     undefined,
     gitAuthSecretEnv(gitAuthHeader)
   );
+  return parseFinalizeOutput(out);
+}
+
+/** A commit id as `git rev-parse` prints it: SHA-1 (40 hex), SHA-256 (64 hex), or abbreviated. */
+const COMMIT_ID_LINE = /^(?:[0-9a-f]{7,40}|[0-9a-f]{64})$/;
+
+/**
+ * Read the finalize script's stdout: `NO_CHANGES`, or the `rev-parse HEAD` line followed by the
+ * changed paths. A SHA-256 repository's 64-hex id is a commit id like a SHA-1 one; read as a
+ * path, it would leave the commit unreported and the recipe's change unusable.
+ */
+export function parseFinalizeOutput(out: string): FinalizeResult {
   if (out.includes('NO_CHANGES')) {
     return { filesChanged: [] };
   }
@@ -437,8 +449,8 @@ async function finalizeWorkspaceVolume(
     .filter(Boolean);
   // After our script: last 1 line is the diff list (may be empty), preceded
   // by the rev-parse HEAD line.
-  const sha = lines.find((l) => /^[0-9a-f]{7,40}$/.test(l));
-  const files = lines.filter((l) => !/^[0-9a-f]{7,40}$/.test(l) && l !== 'NO_CHANGES');
+  const sha = lines.find((l) => COMMIT_ID_LINE.test(l));
+  const files = lines.filter((l) => !COMMIT_ID_LINE.test(l) && l !== 'NO_CHANGES');
   return {
     filesChanged: files,
     ...(sha ? { committedSha: sha } : {}),

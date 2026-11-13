@@ -126,7 +126,7 @@ import { registryWorkspaceEnv } from '../lib/registryProxy/render.js';
 import type { WorkspaceRegistryAccess } from '../lib/registryProxy/workspaceWiring.js';
 import { getScmProvider } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
-import { finalizeScript, runShellStep } from './shellStep.js';
+import { finalizeScript, parseFinalizeOutput, runShellStep } from './shellStep.js';
 import { GIT_AUTH_ENV, shellQuote } from './workspace.js';
 
 // The clone is issued hardened (`git -c … clone --depth=50 …`), so `git clone` never appears.
@@ -1043,5 +1043,27 @@ describe('runShellStep — registry wiring', () => {
     });
     expect(buildAllowlistMock).not.toHaveBeenCalled();
     expect(released).not.toHaveBeenCalled();
+  });
+});
+
+describe('parseFinalizeOutput', () => {
+  it('reads a SHA-1 commit id and the changed paths', () => {
+    const sha = 'a'.repeat(40);
+    expect(parseFinalizeOutput(`${sha}\npackage.json\npackage-lock.json\n`)).toEqual({
+      committedSha: sha,
+      filesChanged: ['package.json', 'package-lock.json'],
+    });
+  });
+
+  it('reads a SHA-256 repository’s 64-hex commit id as the commit, not as a changed path', () => {
+    const sha = 'b'.repeat(64);
+    expect(parseFinalizeOutput(`${sha}\ngo.mod\ngo.sum\n`)).toEqual({
+      committedSha: sha,
+      filesChanged: ['go.mod', 'go.sum'],
+    });
+  });
+
+  it('reports no commit when nothing changed', () => {
+    expect(parseFinalizeOutput('NO_CHANGES\n')).toEqual({ filesChanged: [] });
   });
 });
