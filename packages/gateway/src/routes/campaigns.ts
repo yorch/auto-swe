@@ -896,8 +896,9 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 409, 'CAMPAIGN_NOT_ACTIVE', 'Campaign is no longer active');
       }
 
+      let delivery: 'signalled' | 'not-running';
       try {
-        await fastify.temporal.signalCampaignCancel(campaign.temporalWorkflowId);
+        delivery = await fastify.temporal.signalCampaignCancel(campaign.temporalWorkflowId);
       } catch (err) {
         request.log.error({ campaignId: id, err }, 'campaign cancel signal failed');
         return sendError(
@@ -906,6 +907,57 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
           'CAMPAIGN_SIGNAL_FAILED',
           'The campaign is marked CANCELLING but the cancel signal could not be delivered; try again'
         );
+      }
+
+      // No running workflow to stop: it closed (or Temporal no longer knows it) without leaving
+      // the campaign final, which is what a finalizer that exhausted its retries leaves. Nothing
+      // else will ever close these rows, so this call does: the campaign CANCELLED and every
+      // target still PENDING or RUNNING with it (a child of a closed campaign was cancelled with
+      // its parent). The state predicate leaves a campaign a late finalizer closed as it wrote it.
+      if (delivery === 'not-running') {
+        const now = new Date();
+        const closed = await runUnscoped(
+          'closing the targets of a campaign whose workflow is gone; the caller was authorized on the campaign above',
+          ['Campaign', 'CampaignTarget'],
+          () =>
+            fastify.prisma.$transaction(async (tx) => {
+              const done = await tx.campaign.updateMany({
+                data: { completedAt: now, state: 'CANCELLED' },
+                where: { id, ownerTeamId: campaign.ownerTeamId, state: 'CANCELLING' },
+              });
+              if (done.count === 0) {
+                return null;
+              }
+              const targets = await tx.campaignTarget.updateMany({
+                data: { finishedAt: now, state: 'CANCELLED' },
+                where: { campaignId: id, state: { in: ['PENDING', 'RUNNING'] } },
+              });
+              return targets.count;
+            })
+        );
+        if (closed === null) {
+          const now2 = await fastify.prisma.campaign.findFirst({
+            select: { state: true },
+            where: { id, ownerTeamId: campaign.ownerTeamId },
+          });
+          return reply
+            .status(200)
+            .send({ data: { campaignId: id, state: now2?.state ?? campaign.state } });
+        }
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor: user,
+          after: {
+            cancelledById: user.sub,
+            reconciled: 'the campaign workflow was no longer running',
+            state: 'CANCELLED',
+            targetsClosed: closed,
+          },
+          before: { state: campaign.state },
+          entityId: id,
+          entityType: 'Campaign',
+        });
+        return reply.status(200).send({ data: { campaignId: id, state: 'CANCELLED' } });
       }
 
       await writeAuditLog(fastify, {

@@ -157,6 +157,8 @@ describe('campaign routes', () => {
   let templateFound = true;
   let startFailure: Error | null = null;
   let signalFailure: Error | null = null;
+  /** Temporal has no running execution for the campaign (it closed without a final state). */
+  let workflowGone = false;
   const connectionSelects: Array<Record<string, unknown>> = [];
   let campaigns: CampaignRow[] = [];
   let targets: TargetRow[] = [];
@@ -314,14 +316,15 @@ describe('campaign routes', () => {
             .slice(args.skip ?? 0, (args.skip ?? 0) + (args.take ?? 1000))
             .map((c) => pick(withRelations(c), args.select)),
         updateMany: async (args: {
-          where: { id: string; ownerTeamId: string; state: { notIn: string[] } };
+          where: { id: string; ownerTeamId: string; state: { notIn: string[] } | string };
           data: Partial<CampaignRow>;
         }) => {
+          const { state } = args.where;
           const rows = campaigns.filter(
             (c) =>
               c.id === args.where.id &&
               c.ownerTeamId === args.where.ownerTeamId &&
-              !args.where.state.notIn.includes(c.state)
+              (typeof state === 'string' ? c.state === state : !state.notIn.includes(c.state))
           );
           for (const row of rows) {
             Object.assign(row, args.data);
@@ -378,6 +381,18 @@ describe('campaign routes', () => {
             campaignId: r.campaignId,
             state: r.state,
           }));
+        },
+        updateMany: async (args: {
+          where: { campaignId: string; state: { in: string[] } };
+          data: Partial<TargetRow>;
+        }) => {
+          const rows = targets.filter(
+            (t) => t.campaignId === args.where.campaignId && args.where.state.in.includes(t.state)
+          );
+          for (const row of rows) {
+            Object.assign(row, args.data);
+          }
+          return { count: rows.length };
         },
       },
       configAuditLog: {
@@ -461,7 +476,11 @@ describe('campaign routes', () => {
         if (signalFailure) {
           throw signalFailure;
         }
+        if (workflowGone) {
+          return 'not-running';
+        }
         signalled.push(id);
+        return 'signalled';
       },
       startCampaignWorkflow: async (id: string, input: Record<string, unknown>) => {
         if (startFailure) {
@@ -485,6 +504,7 @@ describe('campaign routes', () => {
     templateFound = true;
     startFailure = null;
     signalFailure = null;
+    workflowGone = false;
     campaigns = [];
     targets = [];
     runInputs = [];
@@ -1278,6 +1298,53 @@ describe('campaign routes', () => {
       as('admin-1', 'ADMIN', {});
       expect((await cancel()).statusCode).toBe(202);
       expect(signalled).toHaveLength(1);
+    });
+
+    it('closes a campaign whose workflow is gone, with its open targets, and audits it', async () => {
+      // The workflow closed but its finalizer never wrote a final state: the row says RUNNING.
+      seedActive('RUNNING');
+      const mine = targets.filter((t) => t.campaignId === U(1));
+      expect(mine.length).toBeGreaterThan(1);
+      (mine[0] as TargetRow).state = 'PR_OPENED';
+      for (const t of mine.slice(1)) {
+        t.state = 'RUNNING';
+      }
+      as('admin-1', 'ADMIN', {});
+      workflowGone = true;
+      const res = await cancel();
+      expect(res.statusCode).toBe(200);
+      expect(body(res).data).toEqual({ campaignId: U(1), state: 'CANCELLED' });
+      expect(campaigns[0]).toMatchObject({ cancelledById: 'admin-1', state: 'CANCELLED' });
+      expect(campaigns[0]?.completedAt).toBeInstanceOf(Date);
+      // A finished target keeps its outcome; the open ones are closed with the campaign.
+      expect(mine.map((t) => t.state)).toEqual([
+        'PR_OPENED',
+        ...mine.slice(1).map(() => 'CANCELLED'),
+      ]);
+      expect(audits).toEqual([
+        expect.objectContaining({
+          action: 'UPDATE',
+          afterJson: expect.objectContaining({
+            reconciled: 'the campaign workflow was no longer running',
+            state: 'CANCELLED',
+            targetsClosed: mine.length - 1,
+          }),
+          beforeJson: { state: 'RUNNING' },
+          entityType: 'Campaign',
+        }),
+      ]);
+    });
+
+    it('closes a campaign left CANCELLING by a finalizer that never ran', async () => {
+      seedActive('CANCELLING');
+      as('admin-1', 'ADMIN', {});
+      workflowGone = true;
+      const res = await cancel();
+      expect(res.statusCode).toBe(200);
+      expect(campaigns[0]?.state).toBe('CANCELLED');
+      expect(targets.filter((t) => t.campaignId === U(1)).every((t) => t.state !== 'PENDING')).toBe(
+        true
+      );
     });
 
     it('answers 503 when the signal cannot be delivered, leaving the campaign CANCELLING', async () => {

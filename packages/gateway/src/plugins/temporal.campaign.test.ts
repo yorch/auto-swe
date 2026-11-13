@@ -76,7 +76,7 @@ describe('signalCampaignCancel', () => {
       Object.assign(new Error('not found'), { name: 'WorkflowNotFoundError' })
     );
     const app = await build();
-    await expect(app.temporal.signalCampaignCancel('campaign-c1')).resolves.toBeUndefined();
+    await expect(app.temporal.signalCampaignCancel('campaign-c1')).resolves.toBe('not-running');
   });
 
   it('still surfaces any other failure', async () => {

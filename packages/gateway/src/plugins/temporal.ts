@@ -376,10 +376,11 @@ declare module 'fastify' {
       /** Start a campaign's fan-out workflow. Its id is `campaign-<campaignId>`. */
       startCampaignWorkflow: (workflowId: string, input: CampaignWorkflowInput) => Promise<void>;
       /**
-       * Ask a running campaign to stop. A campaign that has already closed (or is unknown to
-       * Temporal) counts as success: its finalizer has written the terminal state.
+       * Ask a running campaign to stop. `'not-running'` when Temporal has no running execution to
+       * signal (it closed, or is unknown): the caller reconciles the campaign's rows itself, since
+       * a finalizer that failed would otherwise leave them open for good.
        */
-      signalCampaignCancel: (workflowId: string) => Promise<void>;
+      signalCampaignCancel: (workflowId: string) => Promise<'signalled' | 'not-running'>;
       /**
        * Generate a WorkflowSpec from a natural-language description. Unlike the
        * other helpers this is request/response: it starts WorkflowAuthorWorkflow
@@ -1296,15 +1297,17 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       });
     },
 
-    async signalCampaignCancel(workflowId: string): Promise<void> {
+    async signalCampaignCancel(workflowId: string): Promise<'signalled' | 'not-running'> {
       try {
         await client.workflow.getHandle(workflowId).signal(CAMPAIGN_CANCEL_SIGNAL);
+        return 'signalled';
       } catch (err) {
-        // A closed or forgotten execution cannot receive the signal; its finalizer already
-        // wrote the terminal state, so there is nothing left to stop.
+        // A closed or forgotten execution cannot receive the signal. There is nothing left to
+        // stop, but its finalizer may not have closed the rows; the route reconciles them.
         if (getErrorName(err) !== 'WorkflowNotFoundError') {
           throw err;
         }
+        return 'not-running';
       }
     },
 

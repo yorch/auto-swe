@@ -363,9 +363,17 @@ CAMPAIGN_NOT_FOUND`, never `403`. A `RUNNING` target carries `liveStatus` from t
 creator, a `LEAD` or `ADMIN` of its owning team, or a platform ADMIN; anyone else who can see it
 gets `403`. A campaign already in a final state answers `409 CAMPAIGN_NOT_ACTIVE`. Otherwise the
 campaign becomes `CANCELLING` with `cancelledById` and `cancelledAt`, the workflow is signalled,
-and the route answers `202`. A signal to a workflow that has already closed counts as delivered,
-since its finalizer has written the final state. A signal that cannot be delivered answers
+and the route answers `202`. A signal that cannot be delivered answers
 `503 CAMPAIGN_SIGNAL_FAILED` with the campaign left `CANCELLING`; cancelling again re-sends it.
+
+When Temporal has no running workflow to signal (it closed, was terminated, or is no longer known)
+while the campaign row is not final, nothing else will ever close the row: its finalizer did not
+run or exhausted its retries. The same call then closes it, in one transaction: the campaign
+becomes `CANCELLED` with `completedAt`, every target still `PENDING` or `RUNNING` becomes
+`CANCELLED` (a child of a closed campaign was cancelled with it), and finished targets keep their
+outcome. It writes a `Campaign` `UPDATE` audit row with the state before, `CANCELLED` after, the
+number of targets closed and the reason, and answers `200` with `state: CANCELLED`. A campaign a
+late finalizer closed meanwhile keeps the state the finalizer wrote.
 
 ## 9. Cancel semantics
 
@@ -395,7 +403,8 @@ Cancelling stops what has not finished and leaves what has:
 A launch writes the usual `WorkRequest` `CREATE` row with source `campaign`, and one `Campaign`
 `CREATE` row whose `afterJson` holds the name, recipe reference and parameters, owning team, target
 count, parallelism and the pinned template and version. A cancel writes a `Campaign` `UPDATE` row
-with the state before and after (`CANCELLING`) and the actor. See [audit-log.md](./audit-log.md).
+with the state before and after (`CANCELLING`, or `CANCELLED` when the cancel closed a campaign
+whose workflow was gone) and the actor. See [audit-log.md](./audit-log.md).
 
 ## Limitations
 
@@ -453,8 +462,10 @@ with the state before and after (`CANCELLING`) and the actor. See [audit-log.md]
   child until it is answered or `workflow.needsInputTimeoutSeconds` passes.
 - **Opened drafts are not closed on cancel,** and a campaign does not track what happens to a pull
   request after it opens.
-- **Targets can stay `RUNNING` if the campaign workflow is terminated by hand.** No reaper
-  reconciles campaign rows; a termination from the Temporal UI skips the finalizer.
+- **Targets can stay `RUNNING` if the campaign workflow is terminated by hand,** or its finalizer
+  exhausts its retries, until someone cancels the campaign: no reaper reconciles campaign rows on
+  its own, and a termination from the Temporal UI skips the finalizer. A cancel of such a campaign
+  closes the rows (§8).
 - **Budgets and the GitHub permission gate are checked at launch only.** Children are metered per
   run against their own organization and team budgets; a campaign has no budget of its own. The
   re-check before each child (§2) covers the kill switch, the repository and the launcher's team
