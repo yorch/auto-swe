@@ -222,6 +222,61 @@ describe('runShellStep — git identity', () => {
   });
 });
 
+describe('runShellStep — newBranchOnly', () => {
+  it('never runs the command on a branch that already exists on the host', async () => {
+    // The default helper answers every clone, so the work branch itself is cloned: it exists.
+    const result = await runShellStep({
+      command: 'echo hi',
+      image: 'alpine/git:latest',
+      newBranchOnly: true,
+      request: REQUEST,
+    });
+
+    expect(result).toMatchObject({
+      branchExisted: true,
+      exitCode: -1,
+      filesChanged: [],
+      passed: false,
+      persisted: false,
+    });
+    expect(result.summary).toMatch(/auto\/JIRA-1 already exists on the host/);
+    expect(mockedRunEphemeral).not.toHaveBeenCalled();
+    expect(helperScripts().some((s) => s.includes('push --no-verify'))).toBe(false);
+    // The volume is still removed.
+    expect(backendRemoveVolume).toHaveBeenCalled();
+  });
+
+  it('runs as usual when the branch does not exist yet and is cut from the default branch', async () => {
+    mockedExec.mockImplementation(async (command: string) => {
+      if (command.includes(`-b ${shellQuote('auto/JIRA-1')}`)) {
+        const err = new Error('fatal') as Error & { stderr?: string };
+        err.stderr = 'Remote branch auto/JIRA-1 not found in upstream origin';
+        throw err;
+      }
+      return '';
+    });
+    const result = await runShellStep({
+      command: 'echo hi',
+      image: 'alpine/git:latest',
+      newBranchOnly: true,
+      request: REQUEST,
+    });
+
+    expect(result.branchExisted).toBeUndefined();
+    expect(mockedRunEphemeral).toHaveBeenCalledTimes(1);
+  });
+
+  it('without it, an existing branch is cloned and built on', async () => {
+    const result = await runShellStep({
+      command: 'echo hi',
+      image: 'alpine/git:latest',
+      request: REQUEST,
+    });
+    expect(result.branchExisted).toBeUndefined();
+    expect(mockedRunEphemeral).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('runShellStep — token redaction', () => {
   it('does not leak the GitHub token into the summary when the finalize fails', async () => {
     const result = await runShellStep({

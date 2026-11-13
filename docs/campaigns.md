@@ -145,8 +145,12 @@ whole interface:
 
 **The recipe builds only on a branch it creates.** Before the recipe runs, the step resolves the
 base branch's tip on the host and records it by sha, and refuses a work branch that already exists
-on the host. After the recipe pushed, its commit's parent must be that recorded sha. Either refusal
-ends the child `FAILED` (`path: RECIPE`, `verification: NOT_RUN`) with the reason, and neither the
+on the host. Both lookups read the exact branch head (`refs/heads/<name>`), so a tag or another ref
+named like either branch neither refuses the recipe nor becomes its base. The clone checks again: a
+work branch that appeared after that lookup is refused when it is cloned, before the script runs,
+whether or not the script would have changed anything (a branch someone pushed already at the target
+version would otherwise read as not affected). After the recipe pushed, its commit's parent must be
+that recorded sha. Any of these refusals ends the child `FAILED` (`path: RECIPE`, `verification: NOT_RUN`) with the reason, and neither the
 agent nor verification runs on that branch. Without this, anyone with push access to a target
 repository could create the campaign's branch ahead of it with weakened tests, the recipe would
 commit on top, and verification would restore the tests to that commit. A run of the template

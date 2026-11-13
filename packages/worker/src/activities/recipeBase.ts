@@ -8,7 +8,8 @@
  * of the campaign (with weakened tests on it) would otherwise become the recipe's parent, and the
  * restore would put back the weakened tests. So, before the recipe runs:
  *
- *  - the base branch's tip is resolved on the host, by sha; and
+ *  - the base branch's tip is resolved on the host, by sha, as the exact branch head (a tag
+ *    named like the branch does not stand in for it); and
  *  - a work branch that already exists on the host is refused: the recipe step is the first to
  *    touch the branch, and a branch it did not create is not one it builds on.
  *
@@ -37,14 +38,15 @@ export async function pinRecipeBase(request: RepoWorkRequest, branch: string): P
   const provider = getScmProvider(repoRef);
   const baseBranch = await resolveRequestBaseBranch(request, repo);
 
-  const existing = await provider.resolveRef(repoRef, branch);
+  // Branch heads only: a tag or a sha named like either branch must not stand in for it.
+  const existing = await provider.resolveBranchHead(repoRef, branch);
   if (existing !== null) {
     return {
       ok: false,
       reason: `the work branch ${branch} already exists on the host (at ${existing.slice(0, 12)}); the recipe builds only on a branch it creates, so it was not run`,
     };
   }
-  const baseSha = await provider.resolveRef(repoRef, baseBranch);
+  const baseSha = await provider.resolveBranchHead(repoRef, baseBranch);
   if (baseSha === null || !SHA.test(baseSha)) {
     throw new Error(`could not resolve the base branch ${baseBranch} on the host`);
   }

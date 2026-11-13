@@ -97,6 +97,13 @@ export interface ShellStepInput {
   timeoutMs?: number;
   /** Override the branch checked out into the workspace. Defaults to the work-request branch. */
   branch?: string;
+  /**
+   * The step may only build on a branch it creates. When the branch already exists on the host
+   * at clone time, the command never runs, nothing is pushed, and the result says
+   * `branchExisted: true`, whatever the command would have changed. Without it, an existing
+   * branch is cloned and built on.
+   */
+  newBranchOnly?: boolean;
 }
 
 export interface ShellStepResult {
@@ -128,6 +135,11 @@ export interface ShellStepResult {
   persisted: boolean;
   /** Files touched relative to the prior HEAD. Empty when the command made no changes. */
   filesChanged: string[];
+  /**
+   * Set (with `passed: false` and `exitCode: -1`) when `newBranchOnly` was asked and the branch
+   * already existed on the host when it was cloned: the command was not run.
+   */
+  branchExisted?: true;
 }
 
 // Tiny (~5MB) helper image with git built-in, used by the prep + finalize
@@ -273,7 +285,7 @@ async function cloneIntoVolume(
   image: string,
   identity: GitIdentity,
   forRegistry = false
-): Promise<void> {
+): Promise<'branch' | 'default'> {
   // Every interpolated value stays `shellQuote`d — this string is the
   // injection boundary for the branch name and the remote URL.
   // The clone uses the CLEAN url and the credential is injected per call through
@@ -304,11 +316,13 @@ async function cloneIntoVolume(
     );
   try {
     await tryClone(branch);
+    return 'branch';
   } catch (err) {
     if (!isBranchNotFoundError(err)) {
       throw err;
     }
     await tryClone(meta.defaultBranch);
+    return 'default';
   }
 }
 
@@ -531,7 +545,27 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
   }
   try {
     heartbeat('shell-step: cloning branch into workspace volume');
-    await cloneIntoVolume(volumeName, meta, branch, helperImage, gitIdentity, registry !== null);
+    const cloned = await cloneIntoVolume(
+      volumeName,
+      meta,
+      branch,
+      helperImage,
+      gitIdentity,
+      registry !== null
+    );
+    if (input.newBranchOnly && cloned === 'branch') {
+      // Decided from what was actually cloned, not from an earlier lookup, so a branch created
+      // between the caller's check and this clone is refused too, even when the command would
+      // change nothing on it (a branch already at the target reads as "nothing to do").
+      return {
+        branchExisted: true,
+        exitCode: -1,
+        filesChanged: [],
+        passed: false,
+        persisted: false,
+        summary: `the branch ${branch} already exists on the host; this step builds only on a branch it creates, so the command was not run`,
+      };
+    }
 
     const executionStarted = performance.now();
     let result: Awaited<ReturnType<typeof runEphemeralContainer>>;

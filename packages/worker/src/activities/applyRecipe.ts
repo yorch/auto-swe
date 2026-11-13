@@ -15,8 +15,9 @@
  *    starts cleanly from the base.
  *
  *  - `refused`: the base the change would be measured from is not the one the platform pinned
- *    (`recipeBase.ts`): the work branch already existed on the host, or the pushed commit's parent
- *    is not the base branch tip recorded before the clone. The template ends the run FAILED with
+ *    (`recipeBase.ts`): the work branch already existed on the host (before the step, or when the
+ *    shell step cloned it, whether or not the recipe would have changed anything), or the pushed
+ *    commit's parent is not the base branch tip recorded before the clone. The template ends the run FAILED with
  *    the reason; neither the agent nor verification runs on such a branch.
  *
  * It never throws for a recipe that fails or a toolchain that cannot run, because the agent
@@ -282,6 +283,9 @@ export async function applyRecipe(input: ApplyRecipeInput): Promise<ApplyRecipeR
         command: buildRecipeCommand(parsed.ref, parsed.params),
         image,
         network: 'egress',
+        // Refuses at the clone a branch that appeared after `pinRecipeBase` looked: on such a
+        // branch an already-applied change would otherwise read as "not affected".
+        newBranchOnly: true,
         request: input.request,
         timeoutMs,
       });
@@ -306,6 +310,9 @@ export async function applyRecipe(input: ApplyRecipeInput): Promise<ApplyRecipeR
       };
     }
 
+    if (shell.branchExisted) {
+      return refuse(shell.summary);
+    }
     let codeResult: CodeResult | undefined;
     if (shell.passed && shell.filesChanged.length > 0) {
       try {

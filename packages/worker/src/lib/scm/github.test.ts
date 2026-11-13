@@ -160,6 +160,50 @@ describe('GitHubScmProvider.resolveRef', () => {
   });
 });
 
+describe('GitHubScmProvider.resolveBranchHead', () => {
+  const repo = {
+    installationHost: 'github.com',
+    organizationName: 'acme',
+    repoName: 'docs',
+    scmProvider: 'github',
+  };
+  const provider = new GitHubScmProvider();
+  const answer = (body: unknown, status = 200) =>
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify(body), {
+        headers: { 'content-type': 'application/json' },
+        status,
+      }) as never
+    );
+
+  it('looks up the exact branch ref, never a commit-ish', async () => {
+    const sha = 'b'.repeat(40);
+    answer({ object: { sha, type: 'commit' }, ref: 'refs/heads/auto/CAMPAIGN-x' });
+    expect(await provider.resolveBranchHead(repo, 'auto/CAMPAIGN-x')).toBe(sha);
+    const url = decodeURIComponent(lastFetch().url);
+    expect(url).toContain('/repos/acme/docs/git/ref/heads/auto/CAMPAIGN-x');
+    expect(url).not.toContain('/commits/');
+  });
+
+  it('returns null when there is no such branch, even if a tag has the name', async () => {
+    // A tag named like the branch answers `commits/<name>`, but not `git/ref/heads/<name>`.
+    answer({ message: 'Not Found' }, 404);
+    expect(await provider.resolveBranchHead(repo, 'main')).toBeNull();
+  });
+
+  it('throws on an answer that is not exactly that branch, rather than say "no branch"', async () => {
+    answer([{ object: { sha: 'c'.repeat(40), type: 'commit' }, ref: 'refs/heads/main-old' }]);
+    await expect(provider.resolveBranchHead(repo, 'main')).rejects.toThrow(/head of branch main/);
+    answer({ object: { sha: 'c'.repeat(40), type: 'tag' }, ref: 'refs/heads/main' });
+    await expect(provider.resolveBranchHead(repo, 'main')).rejects.toThrow(/head of branch main/);
+  });
+
+  it('propagates an authentication failure', async () => {
+    answer({}, 401);
+    await expect(provider.resolveBranchHead(repo, 'main')).rejects.toThrow();
+  });
+});
+
 describe('GitHubScmProvider.listTree', () => {
   const repo = {
     installationHost: 'github.com',

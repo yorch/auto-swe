@@ -307,6 +307,33 @@ describe('applyRecipe', () => {
     expect(pinRecipeBase).toHaveBeenCalledWith(request, 'auto/CAMPAIGN-abc123');
   });
 
+  it('asks the shell step to build only on a branch it creates', async () => {
+    await applyRecipe({ params: NPM, recipe: 'npm-dependency@1', request });
+    expect(runShellStep.mock.calls[0]?.[0]).toMatchObject({ newBranchOnly: true });
+  });
+
+  it('refuses a work branch that appeared between the pin and the clone, even with nothing changed', async () => {
+    // The branch was pushed after `pinRecipeBase` looked, already at the target version: the
+    // recipe would change nothing on it, which must not read as "not affected".
+    runShellStep.mockResolvedValue(
+      shellResult({
+        branchExisted: true,
+        committedSha: undefined,
+        exitCode: -1,
+        filesChanged: [],
+        passed: false,
+        persisted: false,
+        summary:
+          'the branch auto/CAMPAIGN-abc123 already exists on the host; this step builds only on a branch it creates, so the command was not run',
+      })
+    );
+    const result = await applyRecipe({ params: NPM, recipe: 'npm-dependency@1', request });
+    expect(result).toMatchObject({ filesChanged: [], passed: false, refused: true });
+    expect(result.summary).toMatch(/already exists on the host/);
+    expect(result.codeResult).toBeUndefined();
+    expect(provision).not.toHaveBeenCalled();
+  });
+
   it('refuses a pushed commit whose parent is not the base recorded before the clone', async () => {
     // The branch appeared between the check and the clone, with its own commit: the recipe's
     // commit sits on that, not on the base branch tip.
