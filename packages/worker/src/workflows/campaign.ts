@@ -15,6 +15,7 @@ import {
   startChild,
 } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
+import { CAMPAIGN_CANCEL_SIGNAL } from '../lib/workflowEngine.js';
 import { RETRY_STATE, T_30S } from './proxyOptions.js';
 
 export type { CampaignResult, CampaignWorkflowInput };
@@ -65,7 +66,9 @@ const campaignActivities = proxyActivities<
 
 // ── Signals ──
 
-export const campaignCancelSignal = defineSignal('campaignCancelSignal');
+// The gateway sends this signal by the same shared constant; `@auto-swe/shared/types/workflow` holds
+// only types and plain constants, so the value import (through `lib/workflowEngine`) is isolate-safe.
+export const campaignCancelSignal = defineSignal(CAMPAIGN_CANCEL_SIGNAL);
 
 // ── Workflow ──
 

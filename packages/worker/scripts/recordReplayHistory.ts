@@ -22,6 +22,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AGENT_RUN_SPEC } from '@auto-swe/shared/lib/agentRun';
+import { CAMPAIGN_CANCEL_SIGNAL } from '@auto-swe/shared/types/workflow';
 import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
 import proto from '@temporalio/proto';
@@ -1268,7 +1269,7 @@ const SCENARIOS: Scenario[] = [
     },
     drive: async (handle, states) => {
       await waitForStateCount(states, 'AWAITING_HUMAN', 2);
-      await handle.signal('campaignCancelSignal');
+      await handle.signal(CAMPAIGN_CANCEL_SIGNAL);
     },
     name: 'campaign-cancel',
     workflow: {

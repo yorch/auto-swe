@@ -7,7 +7,10 @@
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { CampaignWorkflowInput } from '@auto-swe/shared/types/workflow';
+import {
+  CAMPAIGN_CANCEL_SIGNAL,
+  type CampaignWorkflowInput,
+} from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
@@ -351,7 +354,7 @@ describe('CampaignWorkflow — cancel', () => {
       return;
     }
     const { handle } = await startParked();
-    await handle.signal('campaignCancelSignal');
+    await handle.signal(CAMPAIGN_CANCEL_SIGNAL);
     const result = await handle.result();
 
     expect(result.status).toBe('CANCELLED');
