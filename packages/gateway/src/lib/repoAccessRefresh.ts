@@ -9,6 +9,7 @@
  */
 import type { Prisma, PrismaClient } from '@auto-swe/shared';
 import { resolveUserCredentialPolicy } from '@auto-swe/shared/lib/connectionCredential';
+import { GITHUB_SCM_PROVIDER } from '@auto-swe/shared/lib/githubHostScope';
 import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
 import {
   allRepoMemberships,
@@ -84,7 +85,14 @@ export async function refreshInvalidatedAccess(
   // event names no repository, but it still may not reach another host's.
   let repoWhere: Prisma.ConnectionWhereInput;
   if (invalidation.kind === 'user') {
-    const reachable = repoMemberWhere({ user: { githubLogin: invalidation.login } });
+    // GitHub repositories only: a user event is a GitHub delivery, and the lookups below ask
+    // GitHub with a GitHub credential (they refuse another provider's row as well).
+    const reachable: Prisma.ConnectionWhereInput = {
+      AND: [
+        repoMemberWhere({ user: { githubLogin: invalidation.login } }),
+        { scmProvider: GITHUB_SCM_PROVIDER },
+      ],
+    };
     repoWhere = { AND: [reachable, await webhookHostScope(prisma, verifiedHost, reachable)] };
   } else {
     repoWhere = await webhookRepositoryWhere(

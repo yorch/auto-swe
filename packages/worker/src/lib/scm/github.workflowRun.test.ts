@@ -69,7 +69,11 @@ vi.mock('@octokit/rest', () => ({
 import { GitHubScmProvider, parseRunId, readTail } from './github.js';
 import type { RepoRef } from './types.js';
 
-const repo = { organizationName: 'acme', repoName: 'api' } as unknown as RepoRef;
+const repo = {
+  organizationName: 'acme',
+  repoName: 'api',
+  scmProvider: 'github',
+} as unknown as RepoRef;
 const run = {
   conclusion: 'failure',
   event: 'push',

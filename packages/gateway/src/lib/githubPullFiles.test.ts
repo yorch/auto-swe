@@ -35,6 +35,7 @@ const REPO: PullFilesRepo = {
   installation: null,
   organizationName: 'acme',
   repoName: 'api',
+  scmProvider: 'github',
 };
 const TARGET = { apiUrl: 'https://api.github.com', token: 'tok-secret' };
 const target = async () => TARGET;
@@ -310,7 +311,7 @@ describe('readPullFiles', () => {
       expect(m.token).not.toHaveBeenCalled();
     });
 
-    it.each(['mismatch', 'misconfigured', 'installation-mismatch'])(
+    it.each(['mismatch', 'misconfigured', 'installation-mismatch', 'scm-provider'])(
       'sends nothing when the credential scope is %s',
       async (scope) => {
         m.hosts.mockResolvedValue({ ok: true });
@@ -324,6 +325,22 @@ describe('readPullFiles', () => {
         expect(m.token).not.toHaveBeenCalled();
       }
     );
+
+    it("asks the credential choke point about the row's provider, and a gitlab row gets nothing", async () => {
+      m.hosts.mockResolvedValue({ ok: true });
+      m.credential.mockResolvedValue({ provider: 'gitlab', scope: 'scm-provider' });
+      const { fetchImpl, hits } = host(PULL);
+      expect(await readPullFiles({ ...REPO, scmProvider: 'gitlab' }, 7, { fetchImpl })).toEqual({
+        reason: 'no-credential',
+        type: 'unavailable',
+      });
+      expect(m.credential).toHaveBeenCalledWith(
+        expect.objectContaining({ scmProvider: 'gitlab' }),
+        expect.anything()
+      );
+      expect(hits).toHaveLength(0);
+      expect(m.token).not.toHaveBeenCalled();
+    });
 
     it('answers no credential when minting a token throws', async () => {
       usable();

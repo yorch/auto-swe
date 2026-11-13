@@ -9,6 +9,7 @@ vi.mock('@auto-swe/shared/lib/connectionCredential', async (orig) => ({
 }));
 
 import { CredentialUnreadableError } from '@auto-swe/shared/lib/connectionCredential';
+import { ScmProviderMismatchError } from '@auto-swe/shared/lib/githubHostScope';
 import { resolveReviewerWrite } from './reviewerCredential.js';
 
 const ARGS = { connectionId: 'conn-1', userId: 'user-1' };
@@ -83,6 +84,16 @@ describe('resolveReviewerWrite', () => {
       available: false,
       reason: 'unreadable',
     });
+  });
+
+  it('reads a repository another provider serves as unusable, not as a server error', async () => {
+    m.resolve.mockRejectedValue(new ScmProviderMismatchError('gitlab'));
+    const { findUnique, prisma } = db({ id: 'cred-1' });
+    expect(await resolveReviewerWrite(prisma, ARGS)).toEqual({
+      available: false,
+      reason: 'unusable',
+    });
+    expect(findUnique).not.toHaveBeenCalled();
   });
 
   it('lets any other failure through, rather than reading it as a missing token', async () => {

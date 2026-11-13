@@ -24,6 +24,41 @@
  * the set the token is minted from.
  */
 
+/** The `Connection.scmProvider` value of a GitHub repository (the column's default). */
+export const GITHUB_SCM_PROVIDER = 'github';
+
+/**
+ * A GitHub credential was about to be used for a repository that is not served by GitHub.
+ *
+ * Every GitHub credential — the platform's PAT and App, a user's saved token — is valid for the
+ * GitHub host it belongs to. A repository whose `scmProvider` is anything else (GitLab,
+ * Bitbucket, …) must never be reached through the GitHub client, so the credential choke points
+ * (`resolvePlatformCredential`, `resolveUserCredential`, the permission lookups) refuse such a
+ * row. It is a standing condition, not a transient one: callers must not retry it.
+ */
+export class ScmProviderMismatchError extends Error {
+  readonly provider: string;
+  constructor(provider: string) {
+    super(
+      `The source-control provider "${provider}" is not GitHub; a GitHub credential is never used for it.`
+    );
+    this.name = 'ScmProviderMismatchError';
+    this.provider = provider;
+  }
+}
+
+/** Whether a row's `scmProvider` is GitHub. Strict: an absent or unknown value is not GitHub. */
+export function isGitHubRepository(row: { scmProvider: string }): boolean {
+  return row.scmProvider === GITHUB_SCM_PROVIDER;
+}
+
+/** Throws {@link ScmProviderMismatchError} unless the row is a GitHub repository. */
+export function assertGitHubRepository(row: { scmProvider: string }): void {
+  if (!isGitHubRepository(row)) {
+    throw new ScmProviderMismatchError(row.scmProvider);
+  }
+}
+
 /**
  * `host[:port]` of a URL, lowercased; the lowercased string when it does not
  * parse (so two spellings of one bad value still compare equal).
@@ -108,6 +143,11 @@ export interface InstallationTargetRepo extends HostScopedRepo {
 export interface InstallationScopedRepo extends HostScopedRepo {
   /** The `GitHubInstallation.host` of the installation; null only when there is none. */
   installationHost: string | null;
+  /**
+   * The row's `Connection.scmProvider`. Required, so a caller that did not load it is a type
+   * error; any value other than `'github'` gets no GitHub credential at all.
+   */
+  scmProvider: string;
 }
 
 export interface HostScopedConfig {

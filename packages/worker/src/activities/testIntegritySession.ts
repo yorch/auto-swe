@@ -17,8 +17,8 @@ import {
   commitStaged,
   type PathGuard,
   readHeadSha,
+  readTestIntegrityDiff,
   readTreeChange,
-  testIntegrityDiffCommand,
 } from './allowedPaths.js';
 import type { Workspace } from './workspace.js';
 
@@ -64,8 +64,8 @@ export async function startTestIntegritySession(
 
 /**
  * Commit what is staged and, when a session is given, run the gate on the committed result before
- * returning its sha. Without a session this is exactly `commitStaged`. With one the commit has
- * hooks off, whether or not a path guard is set; the returned sha must be what is pushed. A block
+ * returning its sha. Without a session this is exactly `commitStaged` (always hooks-off). The
+ * returned sha must be what is pushed. A block
  * throws before anything is pushed.
  */
 export async function commitWithTestIntegrity(
@@ -74,28 +74,23 @@ export async function commitWithTestIntegrity(
   pathGuard: PathGuard | undefined,
   session: TestIntegritySession | undefined,
   tracer: AgentTracer
-): Promise<string | undefined> {
+): Promise<string> {
   if (!session) {
     return commitStaged(workspace, message, pathGuard);
   }
-  const sha = await commitStaged(workspace, message, pathGuard, { hardened: true });
-  if (!sha) {
-    return sha;
-  }
+  const sha = await commitStaged(workspace, message, pathGuard);
   const excludes = generatedPathspecs();
   await runTestIntegrityGate({
     mode: session.mode,
     readDiff: async () => {
-      const diff = await workspace.exec(
-        testIntegrityDiffCommand(session.startSha, sha, 'patch', excludes)
-      );
+      const diff = await readTestIntegrityDiff(workspace, session.startSha, sha, 'patch', excludes);
       if (diff.trim() === '') {
         await assertEmptyDiffIsReal(workspace, session.startSha, sha);
       }
       return diff;
     },
     readNameStatus: () =>
-      workspace.exec(testIntegrityDiffCommand(session.startSha, sha, 'name-status', excludes)),
+      readTestIntegrityDiff(workspace, session.startSha, sha, 'name-status', excludes),
     tracer,
   });
   return sha;

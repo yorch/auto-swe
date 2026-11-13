@@ -34,6 +34,7 @@ const GHE_REPO = {
   apiUrl: 'https://ghe.corp/api/v3',
   baseUrl: 'https://ghe.corp',
   installationHost: null,
+  scmProvider: 'github',
 };
 
 describe('hostKeyOf', () => {
@@ -75,14 +76,14 @@ describe('platformCredentialFor and the installation host', () => {
     const lookup = vi.fn().mockResolvedValue(cred());
     expect(
       await platformCredentialFor(
-        { installationHost: 'ghe.corp', installationId: '7' },
+        { installationHost: 'ghe.corp', installationId: '7', scmProvider: 'github' },
         INSTANCE,
         lookup
       )
     ).toEqual({ host: 'github.com', scope: 'installation-mismatch' });
     expect(
       await platformCredentialFor(
-        { ...GHE_REPO, installationHost: '', installationId: '7' },
+        { ...GHE_REPO, installationHost: '', installationId: '7', scmProvider: 'github' },
         INSTANCE,
         lookup
       )
@@ -92,13 +93,18 @@ describe('platformCredentialFor and the installation host', () => {
   it('accepts a matching installation, and refuses one whose host is absent', async () => {
     const lookup = vi.fn().mockResolvedValue(cred());
     expect(
-      (await platformCredentialFor({ installationHost: '', installationId: '7' }, INSTANCE, lookup))
-        .scope
+      (
+        await platformCredentialFor(
+          { installationHost: '', installationId: '7', scmProvider: 'github' },
+          INSTANCE,
+          lookup
+        )
+      ).scope
     ).toBe('instance');
     expect(
       (
         await platformCredentialFor(
-          { ...GHE_REPO, installationHost: 'ghe.corp', installationId: '7' },
+          { ...GHE_REPO, installationHost: 'ghe.corp', installationId: '7', scmProvider: 'github' },
           INSTANCE,
           lookup
         )
@@ -120,7 +126,11 @@ describe('platformCredentialFor and the installation host', () => {
 describe('platformCredentialFor', () => {
   it("returns the instance's own set for an instance repository, without a lookup", async () => {
     const lookup = vi.fn();
-    const r = await platformCredentialFor({ installationHost: null }, INSTANCE, lookup);
+    const r = await platformCredentialFor(
+      { installationHost: null, scmProvider: 'github' },
+      INSTANCE,
+      lookup
+    );
     expect(r).toEqual({ config: INSTANCE, scope: 'instance' });
     expect(lookup).not.toHaveBeenCalled();
   });
@@ -145,7 +155,7 @@ describe('platformCredentialFor', () => {
     const lookup = vi.fn().mockResolvedValue(cred());
     expect(
       await platformCredentialFor(
-        { baseUrl: 'https://ghe.corp', installationHost: null },
+        { baseUrl: 'https://ghe.corp', installationHost: null, scmProvider: 'github' },
         INSTANCE,
         lookup
       )
@@ -162,6 +172,7 @@ describe('platformCredentialFor', () => {
         apiUrl: 'https://api.acme.ghe.com',
         baseUrl: 'https://acme.ghe.com',
         installationHost: null,
+        scmProvider: 'github',
       },
       INSTANCE,
       lookup
@@ -174,11 +185,35 @@ describe('platformCredentialFor', () => {
     const ghe = { ...INSTANCE, apiUrl: 'https://ghe.corp/api/v3', baseUrl: 'https://ghe.corp' };
     const lookup = vi.fn().mockResolvedValue(cred({ host: 'github.com' }));
     const r = await platformCredentialFor(
-      { apiUrl: 'https://api.github.com', baseUrl: 'https://github.com', installationHost: null },
+      {
+        apiUrl: 'https://api.github.com',
+        baseUrl: 'https://github.com',
+        installationHost: null,
+        scmProvider: 'github',
+      },
       ghe,
       lookup
     );
     expect(lookup).toHaveBeenCalledWith('github.com');
     expect(r.scope).toBe('host');
   });
+});
+
+describe('platformCredentialFor and the repository provider', () => {
+  it.each(['gitlab', 'bitbucket', '', 'GitHub'])(
+    'gives a %j repository no credential, whatever its URLs say, and never looks one up',
+    async (scmProvider) => {
+      const lookup = vi.fn().mockResolvedValue(cred());
+      // On the instance's own host (null URLs): the instance PAT is exactly what must not go.
+      expect(
+        await platformCredentialFor({ installationHost: null, scmProvider }, INSTANCE, lookup)
+      ).toEqual({ provider: scmProvider, scope: 'scm-provider' });
+      // On a host with a credential set of its own: that set must not go either.
+      expect(await platformCredentialFor({ ...GHE_REPO, scmProvider }, INSTANCE, lookup)).toEqual({
+        provider: scmProvider,
+        scope: 'scm-provider',
+      });
+      expect(lookup).not.toHaveBeenCalled();
+    }
+  );
 });

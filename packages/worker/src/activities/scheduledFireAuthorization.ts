@@ -195,6 +195,7 @@ export async function scheduledFireRefusal(
       isActive: true,
       organizationName: true,
       repoName: true,
+      scmProvider: true,
       // Shared-team membership satisfies the launch decision, as at every launch.
       shares: {
         select: {

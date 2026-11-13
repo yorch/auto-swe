@@ -25,6 +25,7 @@ const {
 const NAMES = {
   organizationName: { equals: 'acme', mode: 'insensitive' },
   repoName: { equals: 'api', mode: 'insensitive' },
+  scmProvider: 'github',
 };
 
 describe('webhookRepositoryWhere', () => {
@@ -81,6 +82,7 @@ describe('webhookRepositoryWhere', () => {
     ).resolves.toEqual({
       organizationName: { equals: 'ACME', mode: 'insensitive' },
       repoName: { equals: 'Api', mode: 'insensitive' },
+      scmProvider: 'github',
     });
   });
 
@@ -90,6 +92,7 @@ describe('webhookRepositoryWhere', () => {
     expect(where).toEqual({
       organizationName: { equals: 'my\\_org', mode: 'insensitive' },
       repoName: { equals: '50\\%\\_off\\\\x', mode: 'insensitive' },
+      scmProvider: 'github',
     });
   });
 
@@ -205,6 +208,7 @@ describe('webhook host scope is bounded by the delivery', () => {
         {
           organizationName: { equals: 'My\\_Org', mode: 'insensitive' },
           repoName: { equals: 'a\\%b', mode: 'insensitive' },
+          scmProvider: 'github',
         },
       ],
     });

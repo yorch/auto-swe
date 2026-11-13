@@ -935,6 +935,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
               installation: { select: { host: true, installationId: true } },
               organizationName: true,
               repoName: true,
+              scmProvider: true,
               team: { select: { id: true, name: true, orgId: true, slug: true } },
               teamId: true,
             },

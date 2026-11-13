@@ -28,6 +28,7 @@ function repo(over: {
     installation: over.retired ? { host: '', installationId: 'inst-1', isActive: false } : null,
     organizationName: 'acme',
     repoName: over.id ?? 'repo-1',
+    scmProvider: 'github',
     shares:
       over.shareCanLaunch === undefined
         ? []

@@ -24,6 +24,7 @@ import { getErrorMessage, getExecErrorStdout } from '../lib/errors.js';
 import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
 import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
+import { resolveStandInOptions } from '../lib/nulAllowedPaths.js';
 import { rebaseOntoMovedBranch } from '../lib/pauseRebase.js';
 import {
   checkSurfaceState,
@@ -259,8 +260,6 @@ export async function runImplementerFixSession(
         heartbeat(`${mode}: remote branch not found, using clone HEAD`);
       }
     }
-    await workspace.runSetup?.();
-    await workspace.finishSetup?.();
 
     // The commit the fixer starts from, so the test-integrity gate reads exactly what the session
     // changed — staged or committed by the agent itself. Fails closed here in block mode.
@@ -279,6 +278,12 @@ export async function runImplementerFixSession(
       previousCodeResult.baseSha,
       { refuseWorkflowChanges: input.refuseWorkflowChanges }
     );
+
+    // Only now: the repository's setup command runs its own code, which includes whatever an
+    // earlier agent pushed to this branch. Every fact above is recorded, so that code cannot pick
+    // the base the change is measured from or the tree the integrity gate compares.
+    await workspace.runSetup?.();
+    await workspace.finishSetup?.();
 
     const packageJson = await workspace.exec(packageJsonReadCommand(repo.detectedStack));
     const fileCommands = await resolveRepoGateCommands(workspaceConfigReader(workspace, repo.id));
@@ -453,11 +458,15 @@ export async function runImplementerFixSession(
       workspace.gitAuthed(`push origin ${pushRefspec(previousCodeResult.branch, pushSha)}`)
     );
 
-    // `diffForResult` quotes the base like every other interpolated ref so it cannot
-    // smuggle shell syntax into the container.
-    const diff = await diffForResult(workspace, baseBranch, pathGuard, pushSha);
-    // A guarded step reports the commit it pushed, not whatever HEAD has become.
-    const headSha = pushSha ?? (await workspace.exec('git rev-parse HEAD')).trim();
+    // The pushed commit against the base recorded before the agent ran: no ref is resolved now.
+    const diff = await diffForResult(
+      workspace,
+      pathGuard,
+      pushSha,
+      await resolveStandInOptions(activityCtx)
+    );
+    // The step reports the commit it pushed, not whatever HEAD has become.
+    const headSha = pushSha;
 
     tracer.addActivityEvent({
       name: 'git.commit_push',
@@ -475,9 +484,8 @@ export async function runImplementerFixSession(
     });
 
     return {
-      // Carried forward for a guarded step only, so the next session can report the whole
-      // change against the same base; an unguarded step returns exactly what it always did.
-      ...(pathGuard && previousCodeResult.baseSha ? { baseSha: previousCodeResult.baseSha } : {}),
+      // Carried forward so the next session reports the whole change against the same base.
+      ...(previousCodeResult.baseSha ? { baseSha: previousCodeResult.baseSha } : {}),
       // Carried only when the previous result had it, so a result from before the field
       // existed stays exactly as it was (the default branch).
       ...(previousCodeResult.baseBranch ? { baseBranch } : {}),

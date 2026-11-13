@@ -33,7 +33,12 @@ describe.skipIf(!gate.enabled)(liveTitle('live GitHub checkout into a workspace'
       string,
       string,
     ];
-    const repo: RepoRef = { installationHost: null, organizationName, repoName };
+    const repo: RepoRef = {
+      installationHost: null,
+      organizationName,
+      repoName,
+      scmProvider: 'github',
+    };
     const provider = getScmProvider(repo);
     const credentials = await provider.cloneCredentials(repo);
     expect(credentials.token).toBeTruthy();

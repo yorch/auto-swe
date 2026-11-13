@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApproverClientFailure, ApproverSession } from '../lib/scm/approverApp.js';
 import type {
   BranchRules,
@@ -99,6 +99,7 @@ import {
   DEFAULT_BOT_APPROVAL_PATHS,
 } from '@auto-swe/shared/lib/prEvaluation';
 import { ApplicationFailure } from '@temporalio/activity';
+import { getScmProvider, registerScmProviderForTest } from '../lib/scm/index.js';
 import {
   boundReasons,
   type EvaluatePullRequestDeps,
@@ -258,6 +259,7 @@ beforeEach(() => {
     organizationName: 'acme',
     prEvaluationMode: null,
     repoName: 'widgets',
+    scmProvider: 'github',
     team: { orgId: 'org-1' },
     teamId: 'team-1',
   });
@@ -317,6 +319,208 @@ describe('evaluatePullRequest: skipped paths', () => {
     const scm = fakeScm();
     expect(await evaluatePullRequestWith(INPUT, depsWith(scm))).toMatchObject({
       outcome: 'skipped',
+    });
+    expect(scm.calls).toEqual([]);
+  });
+
+  it('refuses a repository served by a provider with no implementation, touching nothing', async () => {
+    m.connection.mockResolvedValue({ ...(await m.connection()), scmProvider: 'gitlab' });
+    const scm = fakeScm();
+    await expect(evaluatePullRequestWith(INPUT, depsWith(scm))).rejects.toMatchObject({
+      nonRetryable: true,
+      type: 'SCM_PROVIDER_UNSUPPORTED',
+    });
+    expect(scm.calls).toEqual([]);
+  });
+
+  describe('a repository served by a second REGISTERED provider', () => {
+    // A registered provider is dispatchable (`getScmProvider` returns it), which is exactly what
+    // let the old gate pass: it resolved the provider, discarded it, and evaluated through the
+    // GitHub client anyway. The evaluation is GitHub-only, so a registered provider must not pass.
+    let gitlab: Fake;
+    let unregister: () => void;
+    beforeEach(() => {
+      gitlab = fakeScm();
+      unregister = registerScmProviderForTest('gitlab', gitlab);
+    });
+    afterEach(() => unregister());
+
+    const asGitlab = async (over: Record<string, unknown> = {}) =>
+      m.connection.mockResolvedValue({
+        ...(await m.connection()),
+        scmProvider: 'gitlab',
+        ...over,
+      });
+    const withRegistry = (scm: Fake): EvaluatePullRequestDeps => ({
+      ...depsWith(scm),
+      scmFor: getScmProvider,
+    });
+
+    it('refuses a pull request evaluation, non-retryably, calling neither provider', async () => {
+      await asGitlab();
+      expect(getScmProvider({ scmProvider: 'gitlab' })).toBe(gitlab);
+      const github = fakeScm();
+      await expect(evaluatePullRequestWith(INPUT, withRegistry(github))).rejects.toMatchObject({
+        nonRetryable: true,
+        type: 'SCM_PROVIDER_UNSUPPORTED',
+      });
+      expect(github.calls).toEqual([]);
+      expect(gitlab.calls).toEqual([]);
+      expect(m.created).toHaveLength(0);
+    });
+
+    it('refuses the merged-approvals recount too', async () => {
+      await asGitlab();
+      const github = fakeScm();
+      await expect(
+        evaluatePullRequestWith({ ...INPUT, trigger: 'merged' }, withRegistry(github))
+      ).rejects.toMatchObject({ type: 'SCM_PROVIDER_UNSUPPORTED' });
+      expect(github.calls).toEqual([]);
+      expect(gitlab.calls).toEqual([]);
+    });
+
+    it('still disarms an arming made while the row was GitHub, as GitHub, on a disarm sweep', async () => {
+      await asGitlab();
+      m.previous.mockResolvedValue({
+        autoMergeEnabled: true,
+        headSha: HEAD,
+        id: 'row-old',
+        reasons: [],
+      });
+      const github = fakeScm({ getPullRequest: async () => ARMED });
+      const result = await evaluatePullRequestWith(
+        { ...INPUT, trigger: 'disarm-sweep' },
+        withRegistry(github)
+      );
+      expect(result).toMatchObject({ autoMerge: 'disabled', outcome: 'skipped' });
+      expect(github.calls).toEqual(['disableAutoMerge']);
+      // The GitHub client is handed the repository as the GitHub one it was armed as.
+      expect(argsOf('disableAutoMerge')[0]?.[0]).toMatchObject({ scmProvider: 'github' });
+      // The other provider is never asked to undo a GitHub arming.
+      expect(gitlab.calls).toEqual([]);
+    });
+
+    it('stands down when the feature is switched off, and when the repository is deactivated', async () => {
+      await asGitlab();
+      m.previous.mockResolvedValue({
+        autoMergeEnabled: true,
+        headSha: HEAD,
+        id: 'row-old',
+        reasons: [],
+      });
+      m.settings['prEvaluation.enabled'] = false;
+      const off = fakeScm({ getPullRequest: async () => ARMED });
+      expect(await evaluatePullRequestWith(INPUT, withRegistry(off))).toMatchObject({
+        autoMerge: 'disabled',
+        outcome: 'skipped',
+      });
+      expect(off.calls).toEqual(['disableAutoMerge']);
+      m.settings['prEvaluation.enabled'] = true;
+      await asGitlab({ isActive: false });
+      const inactive = fakeScm({ getPullRequest: async () => ARMED });
+      expect(await evaluatePullRequestWith(INPUT, withRegistry(inactive))).toMatchObject({
+        autoMerge: 'disabled',
+      });
+      expect(gitlab.calls).toEqual([]);
+    });
+
+    it('makes no call at all on a sweep when nothing was armed or approved', async () => {
+      await asGitlab();
+      const github = fakeScm();
+      const result = await evaluatePullRequestWith(
+        { ...INPUT, trigger: 'disarm-sweep' },
+        withRegistry(github)
+      );
+      expect(result.outcome).toBe('skipped');
+      expect(github.calls).toEqual([]);
+      expect(gitlab.calls).toEqual([]);
+    });
+
+    it('does not retry a stand-down it cannot do for a repository that is no longer GitHub', async () => {
+      await asGitlab();
+      m.previous.mockResolvedValue({
+        autoMergeEnabled: true,
+        headSha: HEAD,
+        id: 'row-old',
+        reasons: [],
+      });
+      const github = fakeScm({
+        getPullRequest: async () => {
+          throw ApplicationFailure.nonRetryable(
+            'no credential for this host',
+            'REPO_CREDENTIAL_HOST_MISMATCH'
+          );
+        },
+      });
+      await expect(
+        evaluatePullRequestWith({ ...INPUT, trigger: 'disarm-sweep' }, withRegistry(github))
+      ).resolves.toMatchObject({ outcome: 'skipped' });
+    });
+
+    it('rethrows a retryable failure of the stand-down so Temporal retries it', async () => {
+      await asGitlab();
+      m.previous.mockResolvedValue({
+        autoMergeEnabled: true,
+        headSha: HEAD,
+        id: 'row-old',
+        reasons: [],
+      });
+      for (const failure of [
+        ApplicationFailure.retryable(
+          'auto-merge could not be disabled',
+          'AUTO_MERGE_DISABLE_FAILED'
+        ),
+        Object.assign(new Error('bad gateway'), { status: 502 }),
+        Object.assign(new Error('API rate limit exceeded'), { status: 403 }),
+      ]) {
+        const github = fakeScm({
+          getPullRequest: async () => {
+            throw failure;
+          },
+        });
+        await expect(
+          evaluatePullRequestWith({ ...INPUT, trigger: 'disarm-sweep' }, withRegistry(github))
+        ).rejects.toBe(failure);
+      }
+    });
+
+    it('rethrows when the host refuses the disarm and the pull request is still armed', async () => {
+      await asGitlab();
+      m.previous.mockResolvedValue({
+        autoMergeEnabled: true,
+        headSha: HEAD,
+        id: 'row-old',
+        reasons: [],
+      });
+      const github = fakeScm({
+        disableAutoMerge: async () => ({ ok: false, reason: 'refused' }),
+        getPullRequest: async () => ARMED,
+      });
+      await expect(
+        evaluatePullRequestWith({ ...INPUT, trigger: 'disarm-sweep' }, withRegistry(github))
+      ).rejects.toMatchObject({ nonRetryable: false, type: 'AUTO_MERGE_DISABLE_FAILED' });
+    });
+  });
+
+  it('runs a GitHub repository through the provider the registry dispatches to, not the fixed one', async () => {
+    const fixed = fakeScm();
+    const dispatched = fakeScm();
+    await evaluatePullRequestWith(INPUT, {
+      ...depsWith(fixed),
+      scmFor: (repo) => {
+        expect(repo.scmProvider).toBe('github');
+        return dispatched;
+      },
+    });
+    expect(fixed.calls).toEqual([]);
+    expect(dispatched.calls).toContain('getPullRequest');
+  });
+
+  it('treats a row that carries no provider as foreign, never as GitHub', async () => {
+    m.connection.mockResolvedValue({ ...(await m.connection()), scmProvider: undefined });
+    const scm = fakeScm();
+    await expect(evaluatePullRequestWith(INPUT, depsWith(scm))).rejects.toMatchObject({
+      type: 'SCM_PROVIDER_UNSUPPORTED',
     });
     expect(scm.calls).toEqual([]);
   });
@@ -1350,6 +1554,7 @@ describe('expectedAppIdFor', () => {
     installationId: null,
     organizationName: 'acme',
     repoName: 'widgets',
+    scmProvider: 'github',
   };
   const config = (over: Record<string, unknown> = {}) =>
     ({
@@ -2502,6 +2707,7 @@ describe('evaluatePullRequest: bot approval', () => {
     prEvaluationBotApproval: true,
     prEvaluationMode: 'auto',
     repoName: 'widgets',
+    scmProvider: 'github',
     team: { orgId: 'org-1' },
     teamId: 'team-1',
   };

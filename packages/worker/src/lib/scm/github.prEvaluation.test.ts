@@ -60,7 +60,12 @@ vi.mock('@octokit/rest', () => ({
 import { GitHubScmProvider } from './github.js';
 import type { RepoRef } from './types.js';
 
-const repo: RepoRef = { installationHost: null, organizationName: 'acme', repoName: 'api' };
+const repo: RepoRef = {
+  installationHost: null,
+  organizationName: 'acme',
+  repoName: 'api',
+  scmProvider: 'github',
+};
 const provider = new GitHubScmProvider();
 
 const prData = (over: Record<string, unknown> = {}) => ({

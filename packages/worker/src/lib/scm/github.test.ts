@@ -88,6 +88,7 @@ describe('GitHubScmProvider.listDirectory', () => {
     installationHost: 'github.com',
     organizationName: 'acme',
     repoName: 'payments-api',
+    scmProvider: 'github',
   };
   const provider = new GitHubScmProvider();
   const json = (body: unknown, status = 200) => {
@@ -131,7 +132,12 @@ describe('GitHubScmProvider.listDirectory', () => {
 });
 
 describe('GitHubScmProvider.resolveRef', () => {
-  const repo = { installationHost: 'github.com', organizationName: 'acme', repoName: 'docs' };
+  const repo = {
+    installationHost: 'github.com',
+    organizationName: 'acme',
+    repoName: 'docs',
+    scmProvider: 'github',
+  };
   const provider = new GitHubScmProvider();
   it.each(['main', 'v1.2.0', 'a'.repeat(40)])('resolves the commit behind %s', async (ref) => {
     const sha = 'b'.repeat(40);
@@ -159,6 +165,7 @@ describe('GitHubScmProvider.listTree', () => {
     installationHost: 'github.com',
     organizationName: 'acme',
     repoName: 'payments-api',
+    scmProvider: 'github',
   };
   const provider = new GitHubScmProvider();
   const json = (body: unknown, status = 200) => {
@@ -313,6 +320,7 @@ describe('GitHubScmProvider.fetchCiLogs', () => {
       installationHost: null,
       organizationName: 'acme',
       repoName: 'api',
+      scmProvider: 'github',
     };
     const ghe = { apiUrl: 'https://ghe.corp.example/api/v3', baseUrl: 'https://ghe.corp.example' };
     // The instance is configured for another host, so the repository's host has no platform set.
@@ -337,6 +345,7 @@ describe('GitHubScmProvider.fetchCiLogs', () => {
       installationHost: null,
       organizationName: 'acme',
       repoName: 'api',
+      scmProvider: 'github',
     };
     const dotcomRepo = {
       ...gheRepo,
@@ -395,6 +404,7 @@ describe("GitHubScmProvider and the run launcher's own credential", () => {
     installationHost: null,
     organizationName: 'acme',
     repoName: 'api',
+    scmProvider: 'github',
   };
   const USABLE = {
     apiUrl: 'https://api.github.com',
@@ -526,6 +536,7 @@ describe("GitHubScmProvider and the run launcher's own credential", () => {
       installationHost: null,
       organizationName: 'acme',
       repoName: 'api',
+      scmProvider: 'github',
     });
     expect(currentRunLauncherId).not.toHaveBeenCalled();
     expect(resolveUserCredential).not.toHaveBeenCalled();
@@ -564,6 +575,7 @@ describe('the platform credential and the repository host', () => {
     installationHost: null,
     organizationName: 'acme',
     repoName: 'api',
+    scmProvider: 'github',
   };
   const APP = { appId: '1', appPrivateKey: 'key', authMode: 'app' as const };
   const instance = (extra: object = {}) => ({
@@ -630,6 +642,7 @@ describe('the platform credential and the repository host', () => {
       installationId: '777',
       organizationName: 'acme',
       repoName: 'api',
+      scmProvider: 'github',
     } as never);
     expect(creds.token).toBe('ghp_tok');
     expect(requireGitHubToken).toHaveBeenCalledWith(
@@ -656,6 +669,7 @@ describe('the platform credential and the repository host', () => {
       installationHost: null,
       organizationName: 'acme',
       repoName: 'api',
+      scmProvider: 'github',
     });
     expect(creds.token).toBe('ghp_tok');
   });
@@ -668,6 +682,7 @@ describe('the platform credential and the repository host', () => {
           installationHost: null,
           organizationName: 'acme',
           repoName: 'api',
+          scmProvider: 'github',
         },
         'package.json'
       )
@@ -687,6 +702,7 @@ describe('the platform credential and the repository host', () => {
           installationHost: null,
           organizationName: 'acme',
           repoName: 'api',
+          scmProvider: 'github',
         },
         'octocat'
       )
@@ -705,12 +721,14 @@ describe('the platform credential and the repository host', () => {
       installationHost: null,
       organizationName: 'acme',
       repoName: 'api',
+      scmProvider: 'github',
     };
     const API_ONLY = {
       apiUrl: 'https://ghe.corp/api/v3',
       installationHost: null,
       organizationName: 'acme',
       repoName: 'api',
+      scmProvider: 'github',
     };
 
     it.each([
@@ -786,6 +804,7 @@ describe('the platform credential and the repository host', () => {
         installationHost: null,
         organizationName: 'acme',
         repoName: 'api',
+        scmProvider: 'github',
       });
       expect(creds.token).toBe('ghp_tok');
     });
@@ -800,6 +819,7 @@ describe('the platform credential and the repository host', () => {
           installationId: '777',
           organizationName: 'acme',
           repoName: 'api',
+          scmProvider: 'github',
         })
       ).rejects.toMatchObject({ type: 'REPO_CREDENTIAL_HOST_MISMATCH' });
       expect(requireGitHubToken).not.toHaveBeenCalled();
@@ -899,6 +919,7 @@ describe('the platform credential and the repository host', () => {
           ...GHE,
           installationHost: '',
           installationId: '777',
+          scmProvider: 'github',
         } as never)
       ).rejects.toMatchObject({ nonRetryable: true, type: 'REPO_INSTALLATION_HOST_MISMATCH' });
       expect(requireGitHubToken).not.toHaveBeenCalled();
@@ -928,6 +949,7 @@ describe('the platform credential and the repository host', () => {
           installationHost: null,
           organizationName: 'acme',
           repoName: 'api',
+          scmProvider: 'github',
         })
       ).rejects.toMatchObject({ type: 'REPO_HOST_MISCONFIGURED' });
       expect(requireGitHubToken).not.toHaveBeenCalled();
@@ -996,5 +1018,81 @@ describe('GitHubScmProvider.fetchCiLogs redirects', () => {
     ).rejects.toThrow(/too many redirects/);
     expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(5);
     fetchMock.mockReset();
+  });
+});
+
+describe('GitHubScmProvider refuses a repository that is not a GitHub repository', () => {
+  const provider = new GitHubScmProvider();
+  // Null URLs: the instance's own host, which is where the instance credential would go.
+  const gitlab = {
+    connectionId: 'conn-gl',
+    installationHost: null,
+    organizationName: 'acme',
+    repoName: 'api',
+    scmProvider: 'gitlab',
+  };
+
+  beforeEach(() => {
+    vi.mocked(resolveUserCredential).mockClear();
+    vi.mocked(requireGitHubToken).mockClear();
+    vi.mocked(currentRunLauncherId).mockResolvedValue('launcher-1');
+  });
+  afterEach(() => {
+    vi.mocked(currentRunLauncherId).mockResolvedValue(null);
+  });
+
+  const expectRefusedWithoutACredential = async (call: Promise<unknown>) => {
+    await expect(call).rejects.toMatchObject({
+      nonRetryable: true,
+      type: 'SCM_PROVIDER_UNSUPPORTED',
+    });
+    expect(requireGitHubToken).not.toHaveBeenCalled();
+    expect(resolveGitHubToken).not.toHaveBeenCalled();
+    expect(resolveUserCredential).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  };
+
+  it('mints no clone credential', async () => {
+    await expectRefusedWithoutACredential(provider.cloneCredentials(gitlab));
+  });
+
+  it('calls no API: a pull request, a status, a file read', async () => {
+    await expectRefusedWithoutACredential(
+      provider.createOrUpdatePullRequest({
+        baseBranch: 'main',
+        body: 'b',
+        headBranch: 'auto/x',
+        repo: gitlab,
+        title: 't',
+      })
+    );
+    await expectRefusedWithoutACredential(provider.getPullRequest(gitlab, 1));
+    await expectRefusedWithoutACredential(provider.fetchFileContent(gitlab, 'README.md', 'main'));
+  });
+
+  it('answers "could not ask" to a permission question, without asking', async () => {
+    await expect(provider.repoPermission(gitlab, 'octocat')).resolves.toEqual({
+      failure: 'host-mismatch',
+      ok: false,
+    });
+    expect(resolveGitHubToken).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('fetches no CI logs and sends no token', async () => {
+    const text = await provider.fetchCiLogs('https://github.com/acme/api/actions/runs/1', gitlab);
+    expect(text).toMatch(/does not serve a "gitlab" repository/);
+    expect(resolveGitHubToken).not.toHaveBeenCalled();
+    expect(resolveUserCredential).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a stale ref whose stored row has since changed provider, from the token resolver', async () => {
+    const { ScmProviderMismatchError } = await import('@auto-swe/shared/lib/githubHostScope');
+    vi.mocked(resolveUserCredential).mockRejectedValueOnce(new ScmProviderMismatchError('gitlab'));
+    await expect(
+      provider.cloneCredentials({ ...gitlab, scmProvider: 'github' })
+    ).rejects.toMatchObject({ nonRetryable: true, type: 'SCM_PROVIDER_UNSUPPORTED' });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { withEndMarker } from './pinnedGitTestSupport.js';
 
 vi.mock('../lib/runKnowledgeBases.js', () => ({
   loadRunKnowledgeBases: vi.fn(async () => ({ checkouts: [], snapshotIds: [] })),
@@ -57,6 +58,9 @@ vi.mock('../lib/scm/index.js', () => ({
   toRepoRef: (repo: Record<string, unknown>) => repo,
 }));
 
+// The default branch's tip and the commit the checkout is at are different commits, so the diff
+// is between two distinct shas and an empty read for a different tree is reachable.
+const DEFAULT_TIP = 'd'.repeat(40);
 const execMock = vi.fn(async (cmd: string, _options?: { timeoutMs?: number }) => {
   if (cmd.includes('merge-base --is-ancestor')) {
     return 'rc=0\n';
@@ -65,11 +69,18 @@ const execMock = vi.fn(async (cmd: string, _options?: { timeoutMs?: number }) =>
     // The resume rebase reads the fetched remote ref fully qualified and wants a full id.
     return `${'a'.repeat(40)}\n`;
   }
+  if (cmd.includes('rev-parse --verify')) {
+    // A readable commit, for the pinned reads the diff is built from.
+    return `${cmd.includes('origin/') ? DEFAULT_TIP : 'e'.repeat(40)}\n`;
+  }
+  if (cmd.includes('merge-base')) {
+    return `${DEFAULT_TIP}\n`;
+  }
   if (cmd.includes('rev-parse')) {
     return 'abc123\n';
   }
-  if (cmd.startsWith('git diff origin/')) {
-    return 'diff --git a/x b/x';
+  if (cmd.includes('diff-tree') && cmd.includes(' --text ')) {
+    return withEndMarker(cmd, 'diff --git a/x b/x');
   }
   if (cmd.includes('cat package.json')) {
     return '{}';
@@ -80,6 +91,11 @@ const execMock = vi.fn(async (cmd: string, _options?: { timeoutMs?: number }) =>
   }
   return '';
 });
+// The default answers, for a test that overrides only the commands it cares about.
+const defaultExec = execMock.getMockImplementation() as (
+  cmd: string,
+  options?: { timeoutMs?: number }
+) => Promise<string>;
 // Mirrors the real gitAuthed: injects a (fake) credential header per-call and
 // forwards to the same underlying exec recording/return-value logic above,
 // so existing `execMock`-based command matchers still apply to these calls.
@@ -87,6 +103,7 @@ const gitAuthedMock = vi.fn((subcommand: string) =>
   execMock(`git -c http.extraheader='AUTHORIZATION: basic redacted' ${subcommand}`)
 );
 const destroyMock = vi.fn(async () => {});
+const runSetupMock = vi.fn(async () => {});
 const readBaseFileMock = vi.hoisted(() => vi.fn(async (): Promise<string | null> => null));
 vi.mock('./workspace.js', () => ({
   createWorkspace: vi.fn(async () => ({
@@ -96,6 +113,7 @@ vi.mock('./workspace.js', () => ({
     execCapture: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
     gitAuthed: gitAuthedMock,
     readBaseFile: readBaseFileMock,
+    runSetup: runSetupMock,
   })),
   fetchBranchesSubcommand: (branches: string[]) =>
     `fetch origin ${branches.map((b) => `'+refs/heads/${b}:refs/remotes/origin/${b}'`).join(' ')}`,
@@ -293,9 +311,11 @@ describe('runImplementerFixSession allowedPaths', () => {
     const base = execMock.getMockImplementation();
     execMock.mockImplementation((async (cmd: string, options?: { timeoutMs?: number }) => {
       if (cmd.includes('rev-parse --verify')) {
-        return `${BASE}\n`;
+        return `${cmd.includes('origin/') ? DEFAULT_TIP : BASE}\n`;
       }
-      return cmd.includes('diff-tree') ? names : base?.(cmd, options);
+      return cmd.includes('diff-tree') && !cmd.includes(' --text ')
+        ? withEndMarker(cmd, names)
+        : base?.(cmd, options);
     }) as never);
     return base;
   };
@@ -329,6 +349,27 @@ describe('runImplementerFixSession allowedPaths', () => {
     }
   });
 
+  it('records the starting commit and the guard base before the setup command runs repository code', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    runSetupMock.mockClear();
+    const base = stage('a.ts\0');
+    try {
+      await runImplementerFixSession(input({ allowedPaths: ['a.ts'] }));
+      expect(runSetupMock).toHaveBeenCalledTimes(1);
+      const setupAt = runSetupMock.mock.invocationCallOrder[0] as number;
+      const reads = cmds()
+        .map((c, i) => ({ at: execMock.mock.invocationCallOrder[i] as number, c }))
+        .filter(({ c }) => (c as string).includes('rev-parse --verify'));
+      // Both of the guard's reads (HEAD, origin/<default>) precede the setup command.
+      expect(reads.filter(({ at }) => at < setupAt).length).toBeGreaterThanOrEqual(2);
+      expect(
+        reads.filter(({ at }) => at > setupAt).every(({ c }) => !(c as string).includes('origin/'))
+      ).toBe(true);
+    } finally {
+      execMock.mockImplementation(base as never);
+    }
+  });
+
   it('starts the session at the work branch tip (after the sync), and carries the original base forward', async () => {
     findRepo.mockResolvedValue(REPO as never);
     const base = stage('a.ts\0');
@@ -346,11 +387,7 @@ describe('runImplementerFixSession allowedPaths', () => {
       expect(startHead).toBeGreaterThan(reset);
       // The whole change is reported against the original run's base, as two trees.
       expect(
-        all.some((c) =>
-          c.includes(
-            `diff --no-ext-diff --no-textconv --ignore-submodules=none ${'c'.repeat(40)} ${BASE}`
-          )
-        )
+        all.some((c) => c.includes(' --text ') && c.includes(`'${'c'.repeat(40)}' '${BASE}'`))
       ).toBe(true);
       expect(result.baseSha).toBe('c'.repeat(40));
     } finally {
@@ -358,19 +395,28 @@ describe('runImplementerFixSession allowedPaths', () => {
     }
   });
 
-  it('runs the original commit and diff when the step sets no list', async () => {
+  it('commits, pushes and reports the same pinned way when the step sets no list', async () => {
     findRepo.mockResolvedValue(REPO as never);
-    // The test-integrity guard has its own describe below; off, the commit is the original one.
+    // The test-integrity guard has its own describe below; off, only the path guard's pinning applies.
     vi.mocked(resolveSetting).mockImplementation((async (key: string) =>
       key === 'github.ciFixTestIntegrityGuard' ? 'off' : 'mastra') as never);
-    await runImplementerFixSession(input());
+    const result = await runImplementerFixSession(input());
     vi.mocked(resolveSetting).mockImplementation((async () => 'mastra') as never);
-    expect(cmds().some((c) => c.includes('rev-parse --verify') || c.includes('--no-verify'))).toBe(
-      false
-    );
-    expect(cmds()).toContain(
-      "git diff --cached --quiet || git commit -m 'auto: fix CI for auto/T-1'"
-    );
+    // Hooks off, never the plain `git commit`.
+    expect(cmds().some((c) => c.includes('commit --no-verify'))).toBe(true);
+    expect(cmds().some((c) => c.includes('git commit -m'))).toBe(false);
+    // The pushed commit is the one reported, and the diff is the fork point read before the
+    // agent ran (the default tip here) against it: two distinct shas.
+    const head = 'e'.repeat(40);
+    expect(
+      gitAuthedMock.mock.calls.some((c) =>
+        (c[0] as string).includes(`push origin ${head}:refs/heads/'auto/T-1'`)
+      )
+    ).toBe(true);
+    expect(result.headSha).toBe(head);
+    expect(
+      cmds().some((c) => c.includes(' --text ') && c.includes(`'${DEFAULT_TIP}' '${head}'`))
+    ).toBe(true);
   });
 });
 
@@ -397,7 +443,7 @@ describe('runImplementerFixSession', () => {
     });
     expect(findWorkflow).not.toHaveBeenCalled();
     expect(out.repoId).toBe('repo-1');
-    expect(out.headSha).toBe('abc123');
+    expect(out.headSha).toBe('e'.repeat(40));
   });
 
   it('falls back to the legacy branch lookup for old context snapshots', async () => {
@@ -492,7 +538,7 @@ describe('runImplementerFixSession', () => {
     scanDiffForCodeIssuesMock.mockRejectedValueOnce(new Error('pattern db down'));
     const out = await runImplementerFixSession(input());
     expect(out.codeSecurityFindings).toBeUndefined();
-    expect(out.headSha).toBe('abc123');
+    expect(out.headSha).toBe('e'.repeat(40));
   });
 
   it('gives the test run the long timeout instead of the 2-minute exec default', async () => {
@@ -506,8 +552,8 @@ describe('runImplementerFixSession', () => {
     findRepo.mockResolvedValue({ ...REPO, defaultBranch: 'main; touch /pwned' } as never);
     await runImplementerFixSession(input());
     const commands = execMock.mock.calls.map((c) => c[0]);
-    expect(commands).toContain("git diff origin/'main; touch /pwned'");
-    expect(commands).not.toContain('git diff origin/main; touch /pwned');
+    expect(commands.some((c) => c.includes("'origin/main; touch /pwned^{commit}'"))).toBe(true);
+    expect(commands.some((c) => c.includes(' origin/main; touch /pwned'))).toBe(false);
   });
 
   it('clones and diffs against the branch the change was cut from, and carries it forward', async () => {
@@ -517,7 +563,9 @@ describe('runImplementerFixSession', () => {
       input({ previousCodeResult: codeResult({ baseBranch: 'release/1.4', repoId: 'repo-1' }) })
     );
     expect(vi.mocked(createWorkspace).mock.calls.at(-1)?.[2]).toBe('release/1.4');
-    expect(execMock.mock.calls.map((c) => c[0])).toContain("git diff origin/'release/1.4'");
+    expect(
+      execMock.mock.calls.some((c) => String(c[0]).includes("'origin/release/1.4^{commit}'"))
+    ).toBe(true);
     expect(out.baseBranch).toBe('release/1.4');
   });
 
@@ -718,9 +766,9 @@ describe('runImplementerFixSession test-integrity guard', () => {
     const base = execMock.getMockImplementation();
     execMock.mockImplementation((async (cmd: string, options?: { timeoutMs?: number }) => {
       if (cmd.includes('rev-parse --verify')) {
-        return `${head}\n`;
+        return `${cmd.includes('origin/') ? DEFAULT_TIP : head}\n`;
       }
-      return cmd.includes(GUARD_DIFF) ? diff : base?.(cmd, options);
+      return cmd.includes(GUARD_DIFF) ? withEndMarker(cmd, diff) : base?.(cmd, options);
     }) as never);
     return base;
   }
@@ -787,14 +835,14 @@ describe('runImplementerFixSession test-integrity guard', () => {
     }
   });
 
-  it('runs the original commit and does not read a diff when off', async () => {
+  it('commits without hooks but reads no test-integrity diff when off', async () => {
     findRepo.mockResolvedValue(REPO as never);
     guardSetting('off');
     const base = stageCommittedDiff(DELETES_TEST);
     try {
       await runImplementerFixSession(input());
       expect(cmds().some((c) => c.includes(GUARD_DIFF))).toBe(false);
-      expect(cmds().some((c) => c.includes('commit --no-verify'))).toBe(false);
+      expect(cmds().some((c) => c.includes('commit --no-verify'))).toBe(true);
     } finally {
       execMock.mockImplementation(base as never);
     }
@@ -832,11 +880,18 @@ describe('runImplementerFixSession test-integrity guard', () => {
   it('fails closed before the paid session when the starting commit is unreadable in block mode', async () => {
     findRepo.mockResolvedValue(REPO as never);
     guardSetting('block');
-    // The default exec answers rev-parse with a value that is not a sha.
-    await expect(runImplementerFixSession(input())).rejects.toMatchObject({
-      nonRetryable: true,
-      type: 'TEST_INTEGRITY_GUARD_UNAVAILABLE',
-    });
+    // An exec that answers rev-parse with a value that is not a sha.
+    const base = execMock.getMockImplementation();
+    execMock.mockImplementation((async (cmd: string, options?: { timeoutMs?: number }) =>
+      cmd.includes('rev-parse --verify') ? 'abc123\n' : base?.(cmd, options)) as never);
+    try {
+      await expect(runImplementerFixSession(input())).rejects.toMatchObject({
+        nonRetryable: true,
+        type: 'TEST_INTEGRITY_GUARD_UNAVAILABLE',
+      });
+    } finally {
+      execMock.mockImplementation(base as never);
+    }
     expect(generateMock).not.toHaveBeenCalled();
     expect(cmds().some((c) => c.includes('push origin'))).toBe(false);
   });
@@ -990,7 +1045,9 @@ describe('runImplementerFixSession ask and resume', () => {
       if (cmd.includes('merge-base --is-ancestor')) {
         return 'rc=1\n';
       }
-      return cmd.includes('rev-parse') ? '1234567890123456789012345678901234567890\n' : '';
+      return cmd.includes('rev-parse')
+        ? '1234567890123456789012345678901234567890\n'
+        : defaultExec(cmd);
     }) as never);
     await runImplementerFixSession({
       ...input(),
@@ -1018,7 +1075,9 @@ describe('runImplementerFixSession ask and resume', () => {
       if (cmd.includes('rebase') && !cmd.includes('--abort')) {
         throw new Error('CONFLICT');
       }
-      return cmd.includes('rev-parse') ? '1234567890123456789012345678901234567890\n' : '';
+      return cmd.includes('rev-parse')
+        ? '1234567890123456789012345678901234567890\n'
+        : defaultExec(cmd);
     }) as never);
     const failure = await runImplementerFixSession({
       ...input(),

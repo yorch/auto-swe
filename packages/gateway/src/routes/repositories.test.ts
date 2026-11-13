@@ -1303,6 +1303,7 @@ describe('repositoryRoutes', () => {
             installation: null,
             organizationName: 'acme',
             repoName: 'widgets',
+            scmProvider: 'github',
           },
           'octocat'
         );

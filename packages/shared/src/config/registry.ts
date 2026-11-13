@@ -2041,6 +2041,18 @@ export const SETTING_DEFINITIONS = {
     schema: positiveInt.min(1_000).max(200_000),
     unit: 'characters',
   }),
+  'workspace.nulAllowedPaths': defineSetting({
+    defaultValue: [],
+    description:
+      'Globs of paths that may hold a NUL byte although their name does not say binary. A file the security gate reads is refused (a CRITICAL hidden-content finding, which fails the step) when it adds a NUL byte and is neither named like a binary, UTF-16 text, nor an executable or archive by its first bytes, because a NUL changes how tools read a file and can hide lines from a reviewer. A file that matches one of these globs is reduced to its printable strings like a binary instead: the gate no longer reads its lines, so list only a path whose content you accept unread (a test fixture directory such as `test/fixtures/**`, a vendored blob with an unusual name). UTF-16 text needs no entry; the repository-side alternative is `working-tree-encoding=UTF-8` in `.gitattributes`. Globs are anchored at the repository root and case-insensitive; `*` stays inside one directory and `**` crosses directories. A leading ./, / or !, a backslash and a trailing / can never match and are refused. Platform-wide: it cannot be overridden for a team, organization or workflow template.',
+    group: 'workspace',
+    label: 'Paths allowed to hold a NUL byte',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: reviewRoutingPathsSchema,
+  }),
   'workspace.repoSetupStackDefaults': defineSetting({
     defaultValue: false,
     description:

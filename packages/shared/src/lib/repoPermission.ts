@@ -13,7 +13,7 @@ import {
   resolveUserCredentialPolicy,
 } from './connectionCredential.js';
 import { resolvePlatformCredential } from './githubHostCredential.js';
-import { installationTargetFor } from './githubHostScope.js';
+import { installationTargetFor, isGitHubRepository } from './githubHostScope.js';
 import { accountTargets, verifyGithubLoginOwnership } from './githubIdentityCheck.js';
 import {
   PlatformCredentialHostError,
@@ -40,6 +40,11 @@ export interface PermissionRepo {
   githubApiUrl: string | null;
   githubUrl: string | null;
   installation: { installationId: string; host: string } | null;
+  /**
+   * Required: a lookup for a repository that is not served by GitHub is refused before any
+   * credential is chosen (see `lookupRepoPermission`).
+   */
+  scmProvider: string;
 }
 
 /**
@@ -62,6 +67,7 @@ export const PERMISSION_REPO_SELECT = {
   installation: { select: { host: true, installationId: true } },
   organizationName: true,
   repoName: true,
+  scmProvider: true,
 } as const;
 
 /**
@@ -81,6 +87,11 @@ export async function lookupRepoPermission(
     // error rather than a denial, so it is not reported as `none`.
     return { failure: 'repo-not-found', ok: false };
   }
+  // This asks GitHub with a GitHub credential, so a repository served by another provider is
+  // "could not ask" before any credential is chosen or any request is made.
+  if (!isGitHubRepository(repo)) {
+    return { failure: 'host-mismatch', ok: false };
+  }
   // An unapproved or non-canonical API override gets no credential — "could
   // not ask", never a denial, and a standing condition rather than a transient
   // one, so it must not read as "try again shortly".
@@ -99,6 +110,7 @@ export async function lookupRepoPermission(
     installationId: repo.installation?.installationId ?? null,
     organizationName: repo.organizationName,
     repoName: repo.repoName,
+    scmProvider: repo.scmProvider,
   };
   let credential: Awaited<ReturnType<typeof resolvePlatformCredential>>;
   try {
@@ -155,6 +167,11 @@ export async function lookupPermissionViaUserCredential(
 ): Promise<PermissionLookup | null> {
   if (!(repo.organizationName && repo.repoName)) {
     return null;
+  }
+  // A user's token is a GitHub token: another provider's repository is "could not ask", not a
+  // fall-through to the login-based question (which refuses it as well).
+  if (!isGitHubRepository(repo)) {
+    return { failure: 'host-mismatch', ok: false };
   }
   // An unreadable policy falls through to the login-based question, which is
   // exactly what every caller asked before this feature existed — so a settings

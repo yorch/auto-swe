@@ -12,7 +12,7 @@
  */
 import type { Prisma, PrismaClient } from '@auto-swe/shared';
 import { originOf } from '@auto-swe/shared/lib/connectionCredential';
-import { isDotcomStyleHost } from '@auto-swe/shared/lib/githubHostScope';
+import { GITHUB_SCM_PROVIDER, isDotcomStyleHost } from '@auto-swe/shared/lib/githubHostScope';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 
@@ -201,6 +201,9 @@ export async function webhookRepositoryWhere(
   const nameWhere: Prisma.ConnectionWhereInput = {
     organizationName: insensitiveName(org),
     repoName: insensitiveName(repoName),
+    // A GitHub delivery names a GitHub repository. A same-named row served by another provider is
+    // never matched, so nothing downstream acts on it with a GitHub credential.
+    scmProvider: GITHUB_SCM_PROVIDER,
   };
   const byName: Prisma.ConnectionWhereInput = {
     ...nameWhere,

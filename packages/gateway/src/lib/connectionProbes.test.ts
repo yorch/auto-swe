@@ -292,6 +292,7 @@ describe('probeRepositoryAccess', () => {
     installation: null,
     organizationName: 'acme',
     repoName: 'api',
+    scmProvider: 'github',
   };
   const prisma = {} as never;
   const instance = { config: { apiUrl: API }, scope: 'instance' };
@@ -309,6 +310,19 @@ describe('probeRepositoryAccess', () => {
       'user-1'
     );
     expect(result.ok).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('probes a gitlab repository with no credential: nothing is resolved, minted or sent', async () => {
+    const result = await probeRepositoryAccess(
+      prisma,
+      { ...repo, scmProvider: 'gitlab' },
+      'user-1'
+    );
+    expect(result.ok).toBe(false);
+    expect(resolvePlatformCredential).not.toHaveBeenCalled();
+    expect(resolveUserCredential).not.toHaveBeenCalled();
+    expect(mintToken).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

@@ -1,7 +1,7 @@
 import { resolveSetting } from '../../config/index.js';
 import { approvedRepositoryHosts } from '../connectionCredential.js';
 import { resolvePlatformCredential } from '../githubHostCredential.js';
-import { defaultApiUrlForHost, hostFamily } from '../githubHostScope.js';
+import { defaultApiUrlForHost, GITHUB_SCM_PROVIDER, hostFamily } from '../githubHostScope.js';
 import { resolveGitHubToken } from '../githubInstallation.js';
 import { createGuardedFetch } from '../guardedDispatcher.js';
 import { checkProbeUrl } from '../ssrfGuard.js';
@@ -147,7 +147,13 @@ export async function resolveAccess(
   const credential = await deps.platformCredential(
     // A skill source is read through no GitHub App installation, so there is
     // no installation host to check against.
-    { apiUrl: apiBase, baseUrl: `https://${host}`, installationHost: null },
+    // The source is a GitHub host by construction (not a repository row).
+    {
+      apiUrl: apiBase,
+      baseUrl: `https://${host}`,
+      installationHost: null,
+      scmProvider: GITHUB_SCM_PROVIDER,
+    },
     config
   );
   if (credential.scope === 'instance' || credential.scope === 'host') {

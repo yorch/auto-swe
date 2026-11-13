@@ -1,5 +1,6 @@
 import { Prisma, Role } from '@auto-swe/shared';
 import { resolveSetting, resolveSettings } from '@auto-swe/shared/config';
+import { isGitHubRepository } from '@auto-swe/shared/lib/githubHostScope';
 import {
   autoArmingRefusals,
   type BranchRulesLike,
@@ -246,6 +247,7 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
           id: true,
           prEvaluationBotApproval: true,
           prEvaluationMode: true,
+          scmProvider: true,
           team: { select: { orgId: true } },
           teamId: true,
         },
@@ -264,6 +266,17 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
       }
       const { botApproval, mode } = request.body;
+      // Evaluation, auto-merge and bot approval are GitHub features: the worker refuses any other
+      // provider's repository at run time, so choosing them here would only record a setting that
+      // can never take effect. Refused up front; turning them off stays open for every row.
+      if ((mode === 'auto' || botApproval === true) && !isGitHubRepository(repo)) {
+        return sendError(
+          reply,
+          409,
+          'SCM_PROVIDER_UNSUPPORTED',
+          `This repository is served by "${repo.scmProvider}"; auto mode and bot approval are available for GitHub repositories only.`
+        );
+      }
       const modeGiven = mode !== undefined;
       const newMode = modeGiven ? mode : (repo.prEvaluationMode as (typeof MODES)[number] | null);
 

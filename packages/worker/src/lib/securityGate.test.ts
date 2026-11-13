@@ -30,6 +30,27 @@ async function failureOf(p: Promise<unknown>): Promise<ApplicationFailure> {
 }
 
 describe('runPostDiffSecurityGate', () => {
+  it('refuses a NUL byte in a text file without asking a model', async () => {
+    const s = scanners();
+    const t = tracer();
+    const diff =
+      '[NUL byte in text file src/evil.js]\ndiff --git a/src/evil.js b/src/evil.js\n+// \\0\n';
+    const failure = await failureOf(runPostDiffSecurityGate(diff, t.tracer, s));
+    expect(failure).toMatchObject({ nonRetryable: true, type: 'SECURITY_GATE_FAILURE' });
+    expect(failure.message).toContain('src/evil.js');
+    expect(failure.details?.[0]).toMatchObject({
+      findings: [expect.objectContaining({ file: 'src/evil.js', severity: 'CRITICAL' })],
+    });
+    expect(s.scanDiffForSecurityIssues).not.toHaveBeenCalled();
+    expect(s.scanDiffForCodeIssues).not.toHaveBeenCalled();
+  });
+
+  it('does not take a content line for a NUL notice', async () => {
+    const s = scanners();
+    const diff = 'diff --git a/a b/a\n+[NUL byte in text file a]\n';
+    await expect(runPostDiffSecurityGate(diff, tracer().tracer, s)).resolves.toEqual([]);
+  });
+
   it('returns the advisory findings when the gate passes', async () => {
     const s = scanners();
     const finding = { file: 'a.ts', label: 'code-eval', line: 1, match: 'x' };

@@ -43,10 +43,16 @@ vi.mock('../lib/activityContext.js', () => ({
 }));
 
 vi.mock('../lib/scm/index.js', () => ({
-  getScmProvider: () => ({ repoPermission: (...a: unknown[]) => repoPermission(...a) }),
-  toRepoRef: (r: { organizationName: string; repoName: string }) => ({
+  getScmProvider: (ref: { scmProvider?: string }) => {
+    if (ref.scmProvider === 'unsupported') {
+      throw new Error('The source-control provider "unsupported" is not supported.');
+    }
+    return { repoPermission: (...a: unknown[]) => repoPermission(...a) };
+  },
+  toRepoRef: (r: { organizationName: string; repoName: string; scmProvider?: string }) => ({
     organizationName: r.organizationName,
     repoName: r.repoName,
+    scmProvider: r.scmProvider ?? 'github',
   }),
 }));
 
@@ -351,5 +357,31 @@ describe('syncRepoAccess', () => {
     await syncRepoAccess({ userId: 'user-2' });
     expect(repoPermission).toHaveBeenCalledTimes(1);
     expect(repoPermission.mock.calls[0][1]).toBe('hubot');
+  });
+});
+
+describe('syncRepoAccess with a repository it cannot serve', () => {
+  it('skips it, logs, and still refreshes the repositories after it', async () => {
+    // One repository whose provider has no implementation used to throw out of the loop, so every
+    // later repository kept a stale "granted" row after access was revoked.
+    findMany.mockResolvedValue([
+      repo([{ githubLogin: 'octocat', id: 'user-1' }], { id: 'conn-1' }),
+      repo([{ githubLogin: 'octocat', id: 'user-1' }], {
+        id: 'conn-bb',
+        scmProvider: 'unsupported',
+      }),
+      repo([{ githubLogin: 'octocat', id: 'user-1' }], { id: 'conn-3' }),
+    ]);
+    repoPermission.mockResolvedValue({ ok: true, permission: 'write' });
+
+    const result = await syncRepoAccess({});
+
+    expect(result.skippedRepos).toBe(1);
+    expect(result.refreshed).toBe(2);
+    expect(repoPermission).toHaveBeenCalledTimes(2);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.stringContaining('provider is unsupported'),
+      expect.objectContaining({ connectionId: 'conn-bb', scmProvider: 'unsupported' })
+    );
   });
 });

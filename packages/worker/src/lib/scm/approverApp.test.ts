@@ -21,7 +21,12 @@ const { privateKey: PRIVATE_KEY, publicKey: PUBLIC_KEY } = generateKeyPairSync('
 });
 const INSTALL_TOKEN = 'ghs_installation_token_secret';
 
-const repo: RepoRef = { installationHost: null, organizationName: 'acme', repoName: 'payments' };
+const repo: RepoRef = {
+  installationHost: null,
+  organizationName: 'acme',
+  repoName: 'payments',
+  scmProvider: 'github',
+};
 const approverConfig = { appId: '222', appSlug: 'Auto-SWE-Approver', privateKey: PRIVATE_KEY };
 const instance = { apiUrl: 'https://api.github.com', appId: '111', baseUrl: 'https://github.com' };
 
@@ -116,6 +121,23 @@ describe('getApproverClient', () => {
       baseUrl: 'https://ghe.example.com',
     };
     expect(await getApproverClient(other, h.deps)).toEqual({ ok: false, reason: 'host-mismatch' });
+    expect(h.created).toHaveLength(0);
+    expect(h.calls).toHaveLength(0);
+  });
+
+  it('refuses, non-retryably and before any request, a repository another provider serves', async () => {
+    const h = harness();
+    for (const scmProvider of ['gitlab', 'bitbucket', '']) {
+      // Default URLs: the host check alone would pass this row as the instance's own.
+      const err = await getApproverClient({ ...repo, scmProvider }, h.deps).then(
+        () => null,
+        (e: unknown) => e
+      );
+      expect(err, scmProvider).toMatchObject({
+        nonRetryable: true,
+        type: 'SCM_PROVIDER_UNSUPPORTED',
+      });
+    }
     expect(h.created).toHaveLength(0);
     expect(h.calls).toHaveLength(0);
   });

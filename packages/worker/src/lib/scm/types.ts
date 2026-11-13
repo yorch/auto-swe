@@ -1,18 +1,20 @@
 /**
- * SCM provider seam (EVOL-1).
+ * SCM provider seam.
  *
  * Everything the execution path needs from a source-control host is expressed
- * through `ScmProvider`. GitHub is the first (and currently only)
- * implementation — see `github.ts`. The interface is intentionally tight:
+ * through `ScmProvider`. `getScmProvider` (`index.ts`) picks the implementation from
+ * `Connection.scmProvider` through an explicit registry; GitHub (`github.ts`) is the only entry,
+ * and a name with no entry fails non-retryably instead of falling back. The interface is intentionally tight:
  * clone credentials, idempotent PR create-or-reuse, PR URL construction, CI log
  * fetching, and one user's permission on a repository. Webhook payload parsing
  * stays provider-specific in the gateway
  * (`packages/gateway/src/routes/webhooks.ts`); only its payload→domain-event
- * mapping is factored out there for reuse by a future GitLab route.
+ * mapping is factored out there so another provider's route can reuse it.
  */
 
 import type { PermissionLookup } from '@auto-swe/shared/lib/githubPermission';
 import type { ChangedFile } from '@auto-swe/shared/lib/prEvaluation';
+import { ApplicationFailure } from '@temporalio/activity';
 
 export type { PermissionLookup, RepoPermission } from '@auto-swe/shared/lib/githubPermission';
 
@@ -42,6 +44,13 @@ export interface RepoRef {
   installationId?: string | null;
   /** The `GitHubInstallation.host` of that installation: empty for the instance's. */
   installationHost: string | null;
+  /**
+   * The `Connection.scmProvider` this ref was built from, which `getScmProvider` dispatches on.
+   * Required: a hand-built ref says `'github'` explicitly, so an omission is a type error and
+   * never silently means GitHub. The GitHub client refuses any other value before it touches a
+   * credential.
+   */
+  scmProvider: string;
 }
 
 /** Result of resolving clone credentials for a repository. */
@@ -84,6 +93,22 @@ export interface CreatePullRequestInput {
    * ready-for-review PR, because "draft" is a promise to the reviewer.
    */
   draft?: boolean;
+}
+
+/** `ApplicationFailure` type of the non-retryable failure for a provider the code cannot serve. */
+export const SCM_PROVIDER_UNSUPPORTED = 'SCM_PROVIDER_UNSUPPORTED';
+
+/**
+ * The non-retryable failure for a repository whose `scmProvider` the code that is running cannot
+ * serve: no registry entry (`getScmProvider`), or a GitHub-only path (the GitHub client, the
+ * pull-request evaluation) reached with another provider's repository. A standing condition, so it
+ * is never retried.
+ */
+export function scmProviderUnsupported(name: string, detail?: string): ApplicationFailure {
+  return ApplicationFailure.nonRetryable(
+    `The source-control provider "${name}" is not supported.${detail ? ` ${detail}` : ''}`,
+    SCM_PROVIDER_UNSUPPORTED
+  );
 }
 
 /** The host rejected a draft pull request (the repository cannot have drafts). */

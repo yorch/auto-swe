@@ -54,6 +54,11 @@ export interface RepoAccessSubject {
   /** Required with `githubApiUrl`: together they say whether the platform credential applies. */
   githubUrl: string | null;
   installation: { host: string; installationId: string; isActive: boolean } | null;
+  /**
+   * `Connection.scmProvider`. Required: the GitHub permission check refuses a repository served by
+   * another provider ("could not ask", so a launch fails closed) instead of asking GitHub.
+   */
+  scmProvider: string;
   /** Must be filtered to the acting user, or pre-filtered by the query. */
   team: { memberships: Array<{ userId: string }> };
   /**

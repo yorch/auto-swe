@@ -43,6 +43,8 @@ export type PullFilesRepo = {
   installation: { host: string; installationId: string } | null;
   organizationName: string | null;
   repoName: string | null;
+  /** `Connection.scmProvider`: a repository that is not GitHub's is read with no credential. */
+  scmProvider: string;
 };
 
 export type PullFilesUnavailable =
@@ -127,9 +129,11 @@ async function platformTarget(
     installationId: repo.installation?.installationId ?? null,
     organizationName: repo.organizationName,
     repoName: repo.repoName,
+    scmProvider: repo.scmProvider,
   };
   try {
     const credential = await resolvePlatformCredential(scoped, ghConfig);
+    // `scm-provider` (a repository that is not GitHub's) lands here too: no credential.
     if (credential.scope !== 'instance' && credential.scope !== 'host') {
       return null;
     }

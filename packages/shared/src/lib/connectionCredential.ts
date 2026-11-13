@@ -22,6 +22,7 @@
 import { resolveSetting, resolveSettings } from '../config/index.js';
 import type { PrismaClient } from '../index.js';
 import { decryptSecret, encryptSecret } from './crypto.js';
+import { assertGitHubRepository } from './githubHostScope.js';
 import { isRepoMember, repoMembersSelect } from './repoMembership.js';
 import { resolveGitHubConfig } from './systemConfig.js';
 
@@ -222,6 +223,7 @@ export async function resolveUserCredential(
         select: {
           githubApiUrl: true,
           githubUrl: true,
+          scmProvider: true,
           // The owning team or a team it is shared with.
           ...repoMembersSelect({ userId: true }, { userId: args.userId }),
         },
@@ -238,6 +240,10 @@ export async function resolveUserCredential(
   if (!row?.user.isActive) {
     return null;
   }
+  // A user's GitHub token is for a GitHub repository only. A row whose provider was changed after
+  // the token was saved must not send it anywhere: this throws rather than answering null, because
+  // null means "fall back to the platform credential" and that is refused for the row too.
+  assertGitHubRepository(row.connection);
   if (row.user.role !== 'ADMIN' && !isRepoMember(row.connection, args.userId)) {
     return null;
   }

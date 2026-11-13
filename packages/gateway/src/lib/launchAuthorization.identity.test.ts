@@ -19,6 +19,7 @@ const REPO: LaunchRepo = {
   installation: null,
   organizationName: 'acme',
   repoName: 'api',
+  scmProvider: 'github',
   shares: [],
   team: {
     id: 'team-1',

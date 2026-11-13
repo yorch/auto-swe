@@ -11,11 +11,12 @@ import {
   resolveUserCredentialPolicy,
   type UsableCredential,
 } from '@auto-swe/shared/lib/connectionCredential';
+import { ScmProviderMismatchError } from '@auto-swe/shared/lib/githubHostScope';
 
 /**
  * `disabled`: an operator has the saved-token switch off. `no-token`: they saved none for this
  * repository. `unusable`: they saved one that may not be used now (the repository moved to another
- * host or origin, or they have left its team). `unreadable`: it cannot be decrypted any more.
+ * host or origin or to another source-control provider, or they have left its team). `unreadable`: it cannot be decrypted any more.
  */
 export type WriteUnavailable = 'disabled' | 'no-token' | 'unreadable' | 'unusable';
 
@@ -37,6 +38,12 @@ export async function resolveReviewerWrite(
   } catch (err) {
     if (err instanceof CredentialUnreadableError) {
       return { available: false, reason: 'unreadable' };
+    }
+    // The repository is now served by another provider (the column changed after a token was
+    // saved): a saved GitHub token is never used for it. A standing condition the page can show,
+    // not a server error.
+    if (err instanceof ScmProviderMismatchError) {
+      return { available: false, reason: 'unusable' };
     }
     throw err;
   }

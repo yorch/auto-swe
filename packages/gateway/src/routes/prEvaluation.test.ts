@@ -167,6 +167,7 @@ describe('pr evaluation routes', () => {
     id: REPO,
     prEvaluationBotApproval: botApproval,
     prEvaluationMode: mode,
+    scmProvider: 'github',
     team: { orgId: 'org-1' },
     teamId: TEAM,
     type: 'git_repo',
@@ -748,6 +749,34 @@ describe('pr evaluation routes', () => {
       ctx.prisma.prEvaluation.findFirst.mockResolvedValue({ readiness: READY });
       evidence(50, 0);
     }
+
+    it('refuses auto mode and bot approval for a repository another provider serves', async () => {
+      ctx.authState.role = 'ADMIN';
+      for (const scmProvider of ['gitlab', 'bitbucket', '']) {
+        ctx.prisma.connection.findFirst.mockResolvedValue({
+          ...repoRow('advisory'),
+          scmProvider,
+        });
+        ctx.prisma.prEvaluation.findFirst.mockResolvedValue({ readiness: READY });
+        evidence(50, 0);
+        for (const payload of [{ mode: 'auto' }, { botApproval: true }]) {
+          const res = await putBody(payload);
+          expect(res.statusCode, `${scmProvider} ${JSON.stringify(payload)}`).toBe(409);
+          expect(res.json().error.code).toBe('SCM_PROVIDER_UNSUPPORTED');
+        }
+        expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+      }
+    });
+
+    it('still lets a non-GitHub repository be switched off or to a lower mode', async () => {
+      ctx.authState.role = 'ADMIN';
+      ctx.prisma.connection.findFirst.mockResolvedValue({
+        ...repoRow('advisory'),
+        scmProvider: 'gitlab',
+      });
+      expect((await putBody({ mode: 'off' })).statusCode).toBe(200);
+      expect((await putBody({ botApproval: false })).statusCode).toBe(200);
+    });
 
     it('needs at least one of mode and botApproval', async () => {
       ctx.authState.role = 'ADMIN';

@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { resolvePlatformCredential } from '@auto-swe/shared/lib/githubHostCredential';
-import { hostFamily } from '@auto-swe/shared/lib/githubHostScope';
+import { GITHUB_SCM_PROVIDER, hostFamily } from '@auto-swe/shared/lib/githubHostScope';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { isGitHubDotComHost } from './repositoryHost.js';
@@ -66,8 +66,11 @@ export async function warnIfReposOnUnusableHosts(
           installation: { select: { host: true, installationId: true } },
           organizationName: true,
           repoName: true,
+          scmProvider: true,
         },
-        where: { isActive: true, type: 'git_repo' },
+        // Only GitHub repositories are judged against the GitHub credentials; another provider's
+        // rows are never given one, so "no credential for this host" is not a warning about them.
+        where: { isActive: true, scmProvider: GITHUB_SCM_PROVIDER, type: 'git_repo' },
       })
     );
     const ghConfig = await resolveGitHubConfig();
@@ -79,6 +82,7 @@ export async function warnIfReposOnUnusableHosts(
           baseUrl: r.githubUrl,
           installationHost: r.installation?.host ?? null,
           installationId: r.installation?.installationId ?? null,
+          scmProvider: r.scmProvider,
         },
         ghConfig
       );
@@ -89,7 +93,9 @@ export async function warnIfReposOnUnusableHosts(
               ? 'REPO_HOST_MISCONFIGURED'
               : scope === 'installation-mismatch'
                 ? 'REPO_INSTALLATION_HOST_MISMATCH'
-                : 'REPO_CREDENTIAL_HOST_MISMATCH',
+                : scope === 'scm-provider'
+                  ? 'SCM_PROVIDER_UNSUPPORTED'
+                  : 'REPO_CREDENTIAL_HOST_MISMATCH',
           host: hostFamily(r.githubUrl ?? r.githubApiUrl ?? ghConfig.baseUrl),
           id: r.id,
           repository: `${r.organizationName}/${r.repoName}`,

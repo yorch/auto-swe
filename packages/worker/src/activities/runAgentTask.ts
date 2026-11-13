@@ -339,7 +339,7 @@ export async function runAgentTaskCore(
           egressPolicy,
           knowledgeBaseSnapshotIds: references.snapshotIds,
           knowledgeBases: references.checkouts,
-          repoSetup: { connectionId: repo.id, field: repo.setup },
+          repoSetup: { connectionId: repo.id, defer: true, field: repo.setup },
           services,
           teamId: repo.teamId,
           toolsFor: { connectionId: repo.id },
@@ -348,6 +348,10 @@ export async function runAgentTaskCore(
     );
     await agentWs.finishSetup?.();
     const baseSha = (await agentWs.exec('git rev-parse HEAD')).trim();
+    // Only now: the repository's setup command runs its own code, which on a run built on an
+    // earlier agent's branch includes what that agent pushed. The commit the change is measured
+    // from is recorded above, so that code cannot choose it.
+    await agentWs.runSetup?.();
     if (input.initialChange) {
       if (deliver !== 'none') {
         throw refuse('Stored fixes cannot publish a branch', 'REVIEW_FIX_INVALID');

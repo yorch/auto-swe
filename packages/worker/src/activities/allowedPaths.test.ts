@@ -45,7 +45,7 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { force: true, recursive: true }));
 
-async function runGuarded(agent: () => void): Promise<string | undefined> {
+async function runGuarded(agent: () => void): Promise<string> {
   const guard = await startPathGuard(workspace, 'main', ALLOWED);
   expect(guard).toBeDefined();
   agent();
@@ -229,10 +229,9 @@ describe('the pushed commit is the checked commit', () => {
     }
   });
 
-  it('builds `<sha>:refs/heads/<branch>` when guarded and the original `<branch>` when not', () => {
+  it('builds `<sha>:refs/heads/<branch>`, never the bare branch name', () => {
     const sha = 'a'.repeat(40);
     expect(pushRefspec("auto/it's", sha)).toBe(`${sha}:refs/heads/'auto/it'\\''s'`);
-    expect(pushRefspec('auto/x', undefined)).toBe("'auto/x'");
   });
 
   it('reports the pushed commit, not HEAD', async () => {
@@ -246,7 +245,7 @@ describe('the pushed commit is the checked commit', () => {
     const sha = (await commitStaged(workspace, 'auto: implement', guard)) as string;
     sh('git checkout -q auto/x');
     // HEAD is now the sneaky branch; the report still reads the checked commit.
-    const diff = await diffForResult(workspace, 'main', guard, sha);
+    const diff = await diffForResult(workspace, guard, sha);
     expect(diff).toContain('catalog.ts');
     expect(diff).not.toContain('ci.yml');
   });
@@ -279,7 +278,7 @@ describe('what the step reports (cumulative)', () => {
     const sha = await commitStaged(workspace, 'auto: fix', guard);
     // Even with origin/main dragged forward by the agent, the report covers both sessions.
     sh('git update-ref refs/remotes/origin/main HEAD');
-    const diff = await diffForResult(workspace, 'main', guard, sha);
+    const diff = await diffForResult(workspace, guard, sha);
     expect(diff).toContain('[2]');
     expect(diff).toContain('diff --git a/catalog.ts b/catalog.ts');
   });
@@ -294,7 +293,7 @@ describe('what the step reports (cumulative)', () => {
     sh('git add -A');
     const sha = await commitStaged(workspace, 'auto: fix', guard);
     // The branch carried a commit ahead of the default tip: reported as a merge-base range.
-    expect(await diffForResult(workspace, 'main', guard, sha)).toContain('catalog.ts');
+    expect(await diffForResult(workspace, guard, sha)).toContain('catalog.ts');
   });
 });
 
@@ -304,29 +303,41 @@ describe('what the step reports', () => {
     write('catalog.ts', 'export const BUILTIN_MODELS = [8];\n');
     write('ci.yml', 'name: pwned\n');
     sh('git add -A && git commit -q -m sneaky && git update-ref refs/remotes/origin/main HEAD');
-    const diff = await diffForResult(workspace, 'main', guard, sh('git rev-parse HEAD').trim());
+    const diff = await diffForResult(workspace, guard, sh('git rev-parse HEAD').trim());
     expect(diff).toContain('diff --git a/ci.yml b/ci.yml');
-    // The unguarded command is the original one and would have been fooled.
-    expect(await diffForResult(workspace, 'main', undefined)).toBe('');
+    // Re-resolving `origin/main` after the agent ran (what an unguarded step used to do) would
+    // have read this as an empty diff.
+    expect(sh('git rev-parse origin/main').trim()).toBe(sh('git rev-parse HEAD').trim());
   });
 });
 
 describe('with no allowedPaths', () => {
-  it('starts no guard and runs the original commands', async () => {
+  const SHA_A = 'a'.repeat(40);
+  const SHA_B = 'b'.repeat(40);
+  it('still records the base, and commits hooks-off through the pinned call', async () => {
     const seen: string[] = [];
     const ws = {
       exec: async (cmd: string) => {
         seen.push(cmd);
-        return '';
+        if (cmd.includes('rev-parse --verify')) {
+          return `${cmd.includes('origin/') ? SHA_A : SHA_B}\n`;
+        }
+        return cmd.includes('merge-base') ? `${SHA_A}\n` : '';
       },
     };
-    expect(await startPathGuard(ws, 'main', undefined)).toBeUndefined();
-    await commitStaged(ws, "it's", undefined);
-    await diffForResult(ws, 'main', undefined);
-    expect(seen).toEqual([
-      "git diff --cached --quiet || git commit -m 'it'\\''s'",
-      "git diff origin/'main'",
-    ]);
+    const guard = await startPathGuard(ws, 'main', undefined);
+    expect(guard).toMatchObject({
+      allowedPaths: undefined,
+      report: { sha: SHA_A },
+      sessionBase: SHA_B,
+    });
+    const sha = await commitStaged(ws, "it's", guard);
+    expect(sha).toBe(SHA_B);
+    const commit = seen.find((c) => c.includes(' commit ')) ?? '';
+    expect(commit).toContain('commit --no-verify');
+    expect(commit).toContain('GIT_GRAFT_FILE=/dev/null');
+    expect(commit).toContain('core.hooksPath=/dev/null');
+    expect(commit).toContain("-m 'it'\\''s'");
   });
 });
 
@@ -408,7 +419,7 @@ describe('startPathGuard', () => {
 });
 
 describe('the workflow-change refusal (refuseWorkflowChanges)', () => {
-  async function runRefusing(agent: () => void, allowed?: string[]): Promise<string | undefined> {
+  async function runRefusing(agent: () => void, allowed?: string[]): Promise<string> {
     const guard = await startPathGuard(workspace, 'main', allowed, undefined, {
       refuseWorkflowChanges: true,
     });
@@ -419,7 +430,9 @@ describe('the workflow-change refusal (refuseWorkflowChanges)', () => {
   }
 
   it('guards a step with no allowed-paths list at all', async () => {
-    await expect(startPathGuard(workspace, 'main', undefined)).resolves.toBeUndefined();
+    await expect(startPathGuard(workspace, 'main', undefined)).resolves.toMatchObject({
+      refuseWorkflowChanges: false,
+    });
     const sha = await runRefusing(() => write('src/sum.ts', 'export const sum = 1;\n'));
     expect(sha).toMatch(/^[0-9a-f]{40}$/);
     expect(pushedFiles()).toBe('src/sum.ts');

@@ -190,6 +190,7 @@ export const servicePrincipalRoutes: FastifyPluginAsync = async (fastify) => {
           isActive: true,
           organizationName: true,
           repoName: true,
+          scmProvider: true,
           shares: {
             select: {
               ...repoMembersSelect({ userId: true }, { userId: user.sub }).shares.select,

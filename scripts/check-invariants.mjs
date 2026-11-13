@@ -42,6 +42,42 @@ function walk(dir, test, acc = []) {
   return acc;
 }
 
+const SCM_DIR = 'packages/worker/src/lib/scm';
+
+/** The only two seam files that make no request, named by full path (never by basename). */
+const SCM_NON_PROVIDER_FILES = new Set([`${SCM_DIR}/types.ts`, `${SCM_DIR}/index.ts`]);
+const SOURCE_EXTENSION = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
+const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+
+/** A repo-relative path with forward slashes, whatever the platform. */
+const posixPath = (file) => file.split(sep).join('/').split('\\').join('/');
+
+/**
+ * Is `file` (a repo-relative path) a provider file of the SCM seam? Every source file under
+ * `packages/worker/src/lib/scm/`, at any depth and in any JS/TS extension, except the interface
+ * (`scm/types.ts`) and the dispatcher (`scm/index.ts`) NAMED BY FULL PATH, and tests. A provider
+ * that grows a directory (`scm/gitlab/index.ts`, `scm/gitlab/types.ts`) is therefore covered; only
+ * the seam's own two top-level files, which make no request, are exempt.
+ */
+export function isScmProviderFile(file) {
+  const f = posixPath(file);
+  return (
+    f.startsWith(`${SCM_DIR}/`) &&
+    SOURCE_EXTENSION.test(f) &&
+    !TEST_FILE.test(f) &&
+    !SCM_NON_PROVIDER_FILES.has(f)
+  );
+}
+
+/**
+ * Every provider file of the SCM seam (see `isScmProviderFile`). Globbed by directory, not named,
+ * so a provider file added later (`gitlab.ts`, `bitbucket/client.ts`) is covered by the rules that
+ * use it without anyone having to remember to list it.
+ */
+export function scmProviderFiles() {
+  return walk(SCM_DIR, isScmProviderFile);
+}
+
 // ---------------------------------------------------------------------------
 // INVARIANT 1 — a workspace image is inherited, never written inline.
 //
@@ -343,10 +379,145 @@ const DATABASE_WORDS = [
   [/\$queryRaw|\$executeRaw/, 'runs raw SQL'],
 ];
 
-function stripComments(src) {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
-    .replace(/^\s*\/\/.*$/gm, '');
+/**
+ * `src` with every comment blanked to spaces (newlines kept, so offsets and line numbers hold).
+ * A lexer, not a regex: it skips single- and double-quoted strings, template literals (with `${…}`
+ * nesting) and regular-expression literals, so a glob string such as 'packages/*' + '/src' no
+ * longer opens a "comment" that hides everything up to the next star-slash, and a trailing `// …`
+ * comment is removed without touching the code before it. Regular-expression detection is the
+ * usual previous-token heuristic and is bounded to one line, so a wrong guess costs at most that
+ * line. JSX text containing a quote is bounded the same way (a string ends at its line).
+ */
+export function stripComments(src) {
+  const out = src.split('');
+  const n = src.length;
+  const blank = (from, to) => {
+    for (let k = from; k < to; k++) {
+      if (out[k] !== '\n' && out[k] !== '\r') {
+        out[k] = ' ';
+      }
+    }
+  };
+  const regexAfterWord = new Set([
+    'return',
+    'typeof',
+    'case',
+    'do',
+    'else',
+    'in',
+    'of',
+    'void',
+    'delete',
+    'throw',
+    'new',
+    'await',
+    'yield',
+  ]);
+  const skipString = (from) => {
+    const quote = src[from];
+    let i = from + 1;
+    while (i < n && src[i] !== '\n') {
+      if (src[i] === '\\') {
+        i += 2;
+      } else if (src[i] === quote) {
+        return i + 1;
+      } else {
+        i++;
+      }
+    }
+    return Math.min(i, n);
+  };
+  const skipRegex = (from) => {
+    let inClass = false;
+    for (let i = from + 1; i < n && src[i] !== '\n'; i++) {
+      if (src[i] === '\\') {
+        i++;
+      } else if (src[i] === '[') {
+        inClass = true;
+      } else if (src[i] === ']') {
+        inClass = false;
+      } else if (src[i] === '/' && !inClass) {
+        return i + 1;
+      }
+    }
+    return from + 1; // no closing slash on this line: it was a division
+  };
+  let template;
+  const code = (from, inInterpolation) => {
+    let i = from;
+    let depth = 0;
+    let prev = '';
+    let prevWord = '';
+    while (i < n) {
+      const c = src[i];
+      const d = src[i + 1];
+      if (c === '/' && d === '/') {
+        let j = src.indexOf('\n', i);
+        j = j < 0 ? n : j;
+        blank(i, j);
+        i = j;
+      } else if (c === '/' && d === '*') {
+        const j = src.indexOf('*/', i + 2);
+        const end = j < 0 ? n : j + 2;
+        blank(i, end);
+        i = end;
+      } else if (c === "'" || c === '"') {
+        i = skipString(i);
+        prev = '"';
+        prevWord = '';
+      } else if (c === '`') {
+        i = template(i + 1);
+        prev = '`';
+        prevWord = '';
+      } else if (c === '/') {
+        const regexAllowed =
+          prev === '' || '(,=:[!&|?{};+-*%<>~^}'.includes(prev) || regexAfterWord.has(prevWord);
+        i = regexAllowed ? skipRegex(i) : i + 1;
+        prev = '/';
+        prevWord = '';
+      } else if (/[\w$]/.test(c)) {
+        let j = i;
+        while (j < n && /[\w$]/.test(src[j])) {
+          j++;
+        }
+        prevWord = src.slice(i, j);
+        prev = 'a';
+        i = j;
+      } else {
+        if (c === '{') {
+          depth++;
+        } else if (c === '}') {
+          if (inInterpolation && depth === 0) {
+            return i + 1;
+          }
+          depth--;
+        }
+        if (!/\s/.test(c)) {
+          prev = c;
+          prevWord = '';
+        }
+        i++;
+      }
+    }
+    return i;
+  };
+  template = (from) => {
+    let i = from;
+    while (i < n) {
+      if (src[i] === '\\') {
+        i += 2;
+      } else if (src[i] === '`') {
+        return i + 1;
+      } else if (src[i] === '$' && src[i + 1] === '{') {
+        i = code(i + 2, true);
+      } else {
+        i++;
+      }
+    }
+    return i;
+  };
+  code(0, false);
+  return out.join('');
 }
 
 function checkMcpCodeHasNoDatabaseAccess() {
@@ -399,8 +570,24 @@ function checkMcpCodeHasNoDatabaseAccess() {
 //
 // This is a tripwire, not a proof: it reads source text for `fetch(` and `globalThis.fetch(`, so an
 // aliased or injected fetch (`const f = fetch; f(…)`, a `fetchImpl` parameter, another HTTP
-// client) is not seen. It catches the common omission, not a determined bypass.
+// client) is not seen. It catches the common omission, not a determined bypass. Scope:
+// `shared/lib/integrations`, `worker/src/connectors`, and the SCM seam directory (see
+// `scmProviderFiles`).
 // ---------------------------------------------------------------------------
+
+/** Violations in one file's source: the line of each `fetch(…)` call that states no `redirect`. */
+export function connectorFetchRedirectViolations(source) {
+  const found = [];
+  const src = stripComments(source);
+  for (const m of src.matchAll(/(?:(?<![.\w])|\bglobalThis\.)fetch\s*\(/g)) {
+    const open = m.index + m[0].length - 1;
+    const init = callArgs(src, open)[1] ?? '';
+    if (!/\bredirect\b/.test(init)) {
+      found.push({ line: src.slice(0, open).split('\n').length });
+    }
+  }
+  return found;
+}
 
 function checkConnectorFetchesSetRedirect() {
   const files = [
@@ -409,21 +596,17 @@ function checkConnectorFetchesSetRedirect() {
       (f) => f.endsWith('.ts') && !f.endsWith('.test.ts')
     ),
     ...walk('packages/worker/src/connectors', (f) => f.endsWith('.ts') && !f.endsWith('.test.ts')),
+    ...scmProviderFiles(),
   ];
   for (const file of files) {
-    const src = read(file);
-    for (const m of src.matchAll(/(?:(?<![.\w])|\bglobalThis\.)fetch\s*\(/g)) {
-      const open = m.index + m[0].length - 1;
-      const init = callArgs(src, open)[1] ?? '';
-      if (!/\bredirect\b/.test(init)) {
-        fail(
-          file,
-          src.slice(0, open).split('\n').length,
-          'connector-fetch-sets-redirect',
-          'a connector fetch(…) call does not set `redirect`',
-          "Default `fetch` follows redirects, so a credentialed request can be bounced to an unchecked host. Add `redirect: 'error'`, or follow hops by hand with a check on each (see fetchGuarded)."
-        );
-      }
+    for (const v of connectorFetchRedirectViolations(read(file))) {
+      fail(
+        file,
+        v.line,
+        'connector-fetch-sets-redirect',
+        'a connector fetch(…) call does not set `redirect`',
+        "Default `fetch` follows redirects, so a credentialed request can be bounced to an unchecked host. Add `redirect: 'error'`, or follow hops by hand with a check on each (see fetchGuarded)."
+      );
     }
   }
 }
@@ -445,9 +628,11 @@ function checkConnectorFetchesSetRedirect() {
 // defaults to the bare one is the same bypass. `typeof fetch` (a type) and a `fetch:` property key
 // are not flagged.
 //
-// Covered: the modules listed below, plus `scm/github.ts` for the whole file — its Octokit and
-// GitHub Enterprise calls do not go through `fetch` and are documented exclusions, and the one
-// request that does (the CI log download) goes through `fetchGuarded`. Not covered: an aliased
+// Covered: the modules listed below, plus every source file in `worker/src/lib/scm/` other than
+// `types.ts` and `index.ts` (globbed by directory, so a future provider file is covered the day it
+// is added). In `scm/github.ts` the Octokit and GitHub Enterprise calls do not go through `fetch`
+// and are documented exclusions, and the one request that does (the CI log download) goes through
+// `fetchGuarded`. Not covered: an aliased
 // fetch (`const f = globalThis['fetch']`), another HTTP client, and the modules that mix fixed and
 // operator-supplied hosts (reviewed by hand).
 // ---------------------------------------------------------------------------
@@ -465,29 +650,41 @@ const GUARDED_FETCH_MODULES = [
   'packages/worker/src/lib/registryProxy/index.ts',
   'packages/worker/src/agents/mcpTools.ts',
   'packages/worker/src/lib/callbackSender.ts',
-  'packages/worker/src/lib/scm/github.ts',
+  // Every file under packages/worker/src/lib/scm/ is covered too (scmProviderFiles()).
 ];
 
+/**
+ * Violations in one file's source: the line of each bare `fetch` (call, default parameter or
+ * passed value).
+ */
+export function bareFetchViolations(source) {
+  const found = [];
+  // Strings are blanked too, so prose such as 'Cannot fetch CI logs' is not read as code. Line
+  // numbers survive: only the characters between the quotes are removed.
+  const src = stripComments(source).replace(
+    /'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g,
+    (str) => str[0] + str.slice(1, -1).replace(/[^\n]/g, ' ') + str[str.length - 1]
+  );
+  for (const m of src.matchAll(/(?:(?<![.\w])|\bglobalThis\.)fetch\b/g)) {
+    const before = src.slice(0, m.index);
+    if (/\btypeof\s+$/.test(before)) {
+      continue;
+    }
+    // A property key (`{ fetch: x }`, `, fetch?: T`) follows `{` or `,`; `cond ? fetch : x` does not.
+    if (/^\??\s*:/.test(src.slice(m.index + m[0].length)) && /[{,]\s*$/.test(before)) {
+      continue;
+    }
+    found.push({ line: before.split('\n').length });
+  }
+  return found;
+}
+
 function checkOperatorUrlFetchesAreGuarded() {
-  for (const file of GUARDED_FETCH_MODULES) {
-    // Strings are blanked too, so prose such as 'Cannot fetch CI logs' is not read as code. Line
-    // numbers survive: only the characters between the quotes are removed.
-    const src = stripComments(read(file)).replace(
-      /'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g,
-      (str) => str[0] + str.slice(1, -1).replace(/[^\n]/g, ' ') + str[str.length - 1]
-    );
-    for (const m of src.matchAll(/(?:(?<![.\w])|\bglobalThis\.)fetch\b/g)) {
-      const before = src.slice(0, m.index);
-      if (/\btypeof\s+$/.test(before)) {
-        continue;
-      }
-      // A property key (`{ fetch: x }`, `, fetch?: T`) follows `{` or `,`; `cond ? fetch : x` does not.
-      if (/^\??\s*:/.test(src.slice(m.index + m[0].length)) && /[{,]\s*$/.test(before)) {
-        continue;
-      }
+  for (const file of [...GUARDED_FETCH_MODULES, ...scmProviderFiles()]) {
+    for (const v of bareFetchViolations(read(file))) {
       fail(
         file,
-        src.slice(0, m.index).split('\n').length,
+        v.line,
         'operator-url-fetch-is-guarded',
         'a bare fetch (call, default parameter or passed value) in a module whose requests go to operator-supplied URLs',
         'The text guard does not resolve DNS, so a public name that resolves to an internal address ' +
@@ -850,37 +1047,274 @@ function checkCredentialsAreNotInEnv() {
 // was evaluated. An immediate merge would bypass that: `pulls.merge` / `repos.merge` (also
 // written `pulls['merge'](`), the REST `…/pulls/N/merge` and `POST …/merges` routes, the
 // `mergePullRequest`, `mergeBranch` and `enqueuePullRequest` GraphQL mutations, or a literal
-// `git push … HEAD:main` / `HEAD:master` refspec. Each type-checks and works, so nothing else
-// fails when one is added.
+// `git push … HEAD:main` / `HEAD:master` refspec. The GitLab and Bitbucket spellings are covered
+// the same way: the REST routes `…/merge_requests/<id>/merge` and `…/pullrequests/<id>/merge`
+// (also `pull-requests`; literal, `{id}` or `${id}` forms), `merge_when_pipeline_succeeds` /
+// `mergeWhenPipelineSucceeds`, `accept_merge_request`, `acceptMergeRequest`, `mergeMergeRequest`,
+// the GraphQL `mergeRequestAccept`, and a `mergeRequests` / `pullrequests` client's `.merge(` or
+// `.accept(`. Each type-checks and works, so nothing else fails when one is added.
+//
+// Covered beyond GitHub and the first GitLab/Bitbucket spellings: `git push … main|master|trunk|
+// develop|development` and `git push … <src>:<those>` (also `+`/`--force`, and an interpolated
+// default branch such as the template spelling of `HEAD:` followed by `defaultBranch`), the same
+// pushes written as an argv array (`['push', 'origin', 'HEAD:main']`), Gerrit's
+// `…/changes/<id>/submit` and `…/revisions/<rev>/submit`, Azure DevOps
+// `…/pullrequests/<id>` bodies that set `status` to `completed` (and `PullRequestStatus.Completed`,
+// `updatePullRequest`), and a singular `mergeRequest.merge(`. Adjacent lines are joined where a
+// `${…}` interpolation breaks across them, so a template literal wrapped inside its braces is
+// still read as one route.
+//
+// Read-only lookalikes are not flagged: `…/merge_requests/<id>/merge-base` and `…/merge_ref`, the
+// Bitbucket `…/pullrequests/<id>/merge/task-status/<id>`, and a route that the call text shows is a
+// GET (`'GET /repos/…/pulls/N/merge'`, `.get(…/merge)`, `{ method: 'GET' }` — GitHub's is-merged
+// check and Bitbucket Server's can-merge check). The GET test reads the characters around the route
+// only; a method held in a variable is not seen, so such a read is flagged and the author names
+// the provider file in the allowlist below or rewrites the call.
+//
+// The allowlist below is empty. A future provider that implements opt-in auto-merge adds its single
+// file (under `scm/`) to `IMMEDIATE_MERGE_PROVIDER_ALLOWLIST` deliberately, mirroring
+// `enableAutoMerge` in `scm/github.ts` (and, with it, the `enableAutoMerge` naming rule below). It
+// exempts that file from the non-GitHub spellings only (GitLab, Bitbucket, Gerrit, Azure, Gitea);
+// the GitHub spellings and the `git push` refspec rules are never exempt. Reading GitLab's
+// `merge_when_pipeline_succeeds` response field also trips the rule for any other file; that is
+// accepted until such a provider exists.
 //
 // A tripwire over source text with comments removed: it matches those spellings only. An aliased
-// client, a route or refspec built from pieces, an argv-array `git push` and any other merge
-// mechanism are not seen, so it is a floor, not proof that nothing merges. Like the MCP rule, a
-// standing constraint rather than a past incident.
+// client, a route or refspec built from pieces (`base + '/merge'`, `.join('/')`), a method or path
+// held in a variable and any other merge mechanism are not seen, so it is a floor, not proof that
+// nothing merges. Like the MCP rule, a standing constraint rather than a past incident.
 // ---------------------------------------------------------------------------
 
-const IMMEDIATE_MERGE = new RegExp(
-  [
-    String.raw`\b(?:pulls|repos)\s*\.\s*merge\s*\(`,
-    String.raw`\b(?:pulls|repos)\s*\[\s*['"\x60]merge['"\x60]\s*\]\s*\(`,
-    String.raw`\b(?:mergePullRequest|mergeBranch|enqueuePullRequest)\b`,
-    String.raw`\/pulls\/[^'"\x60\s]*\/merge\b`,
-    String.raw`\/repos\/[^'"\x60\s]*\/merges(?![\w-])`,
-    String.raw`\bgit\s+push\b[^\n]*?[\s+][^\s:]*:(?:refs\/heads\/)?(?:main|master)(?![\w/.-])`,
-  ].join('|')
-);
+// A run of path characters: anything but whitespace and quotes, or a `${…}` interpolation (which
+// may itself contain spaces: `${a + b}`).
+const PATH_RUN = String.raw`(?:\$\{[^}\n]*\}|[^'"\x60\s$]|\$(?!\{))*`;
+const MR_CLIENT = `(?:merge_requests|mergeRequests|MergeRequests|mergeRequest|MergeRequest|pullrequests|pullRequests|PullRequests|pullrequest|pullRequest|PullRequest)`;
+// A default-branch name, or an interpolated/variable default branch, as a push destination.
+const DEFAULT_BRANCH_NAME = String.raw`(?:refs\/heads\/)?(?:(?:main|master|trunk|develop|development)(?![\w/.-])|\$\{[^}\n]*(?:[dD]efault|[bB]ase)_?[bB]ranch[^}\n]*\}|\$\{?[A-Z_]*DEFAULT_BRANCH\b\}?)`;
+// One character of a shell command: anything but a command separator.
+const SHELL_ARG = String.raw`[^\n;&|]`;
+const DEFAULT_BRANCH_ARGV = String.raw`(?:[^'"\x60\s:]*:)?${DEFAULT_BRANCH_NAME}`;
 
-/** Violations in one file's source: `{ line, text }` per immediate-merge call. */
-export function immediateMergeViolations(src) {
-  const found = [];
-  stripComments(src)
-    .split('\n')
-    .forEach((text, i) => {
-      if (IMMEDIATE_MERGE.test(text)) {
-        found.push({ line: i + 1, text: text.trim() });
+/**
+ * Rules as `{ re, route, provider }`. `route` rules read a URL, so a visible GET exempts them;
+ * `provider` rules are the non-GitHub spellings an allowlisted provider file may use.
+ */
+const MERGE_RULES = [
+  // GitHub
+  { re: String.raw`\b(?:pulls|repos)\s*\.\s*merge\s*\(` },
+  { re: String.raw`\b(?:pulls|repos)\s*\[\s*['"\x60]merge['"\x60]\s*\]\s*\(` },
+  { re: String.raw`\b(?:mergePullRequest|mergeBranch|enqueuePullRequest)\b` },
+  // The GitHub REST spellings are never exempt, not even for a visible GET: nothing in the tree
+  // reads them, and a read-looking context is exactly what a disguised PUT would borrow.
+  { re: String.raw`\/pulls\/${PATH_RUN}\/merge(?![\w-])` },
+  { re: String.raw`\/repos\/${PATH_RUN}\/merges(?![\w-])` },
+  // A literal push of a default branch: `HEAD:main`, `+x:refs/heads/master`, a bare `main`
+  // destination, or an interpolated default branch. `shell` rules run on the source with every
+  // quote and backtick removed, so `'HEAD':'main'`, a `git -c … push`, a `git -C dir push` and a
+  // bare `gitAuthed(\`push origin HEAD:main\`)` all read as one command. A command ends at a shell
+  // separator (`;`, `&`, `|`) or the line end, so `git push origin x && git checkout main` is clean.
+  // `push` is not preceded by `.` or a word character, so `list.push(a, main)` is not a push.
+  {
+    re: String.raw`(?<![.\w$-])push\s+${SHELL_ARG}*?[\s+][^\s:;&|]*:${DEFAULT_BRANCH_NAME}`,
+    shell: true,
+  },
+  {
+    re: String.raw`(?<![.\w$-])push(?=\s)${SHELL_ARG}*?\s${DEFAULT_BRANCH_NAME}`,
+    shell: true,
+  },
+  // The same push as an argv array. Newlines are allowed up to the closing bracket.
+  {
+    re: String.raw`['"\x60]push['"\x60]\s*,[^\]]*?['"\x60]${DEFAULT_BRANCH_ARGV}['"\x60]`,
+  },
+  {
+    re: String.raw`['"\x60]push['"\x60]\s*,[^\]]*?['"\x60]\s*,\s*(?:[\w.]*\.)?(?:default|base)Branch\s*[,\]]`,
+  },
+  // GitLab and Bitbucket. A `…/merge_requests/<id>/cancel_merge_when_pipeline_succeeds` route is
+  // not matched: the segment must be exactly `/merge`, and the option name starts at a word edge.
+  // `/merge-base`, `/merge_ref` and Bitbucket's `/merge/task-status/…` are reads.
+  {
+    provider: true,
+    re: String.raw`\/(?:merge_requests|pullrequests|pull-requests)\/${PATH_RUN}\/merge(?![\w-])(?!\/task-status)`,
+    route: true,
+  },
+  {
+    provider: true,
+    re: String.raw`\b(?:merge_when_pipeline_succeeds|mergeWhenPipelineSucceeds)\b`,
+  },
+  {
+    provider: true,
+    re: String.raw`\b(?:accept_merge_request|acceptMergeRequest|merge_merge_request|mergeMergeRequest|mergeRequestAccept)\b`,
+  },
+  { provider: true, re: String.raw`\b${MR_CLIENT}\s*\.\s*(?:merge|accept)\s*\(` },
+  {
+    provider: true,
+    re: String.raw`\b${MR_CLIENT}\s*\[\s*['"\x60](?:merge|accept)['"\x60]\s*\]\s*\(`,
+  },
+  // Gerrit: `POST /changes/<id>/submit` and `/revisions/<rev>/submit` (`submit_preview` and
+  // `submitted_together` are reads and do not match).
+  {
+    provider: true,
+    re: String.raw`\/(?:changes|revisions)\/${PATH_RUN}\/submit(?![\w-])`,
+    route: true,
+  },
+  // Azure DevOps: completing a pull request is a PATCH of `pullrequests/<id>` with
+  // `status: 'completed'`, or the client's `updatePullRequest`.
+  // `updatePullRequest` is also GitHub's non-merging GraphQL mutation, so the name counts only
+  // beside Azure's completing shape (`status: completed` or the enum's `3`, `PullRequestStatus.Completed`,
+  // `completionOptions`) within 400 characters either side.
+  {
+    provider: true,
+    re: String.raw`\bupdatePullRequest\b[\s\S]{0,400}?(?:\bcompletionOptions\b|\bPullRequestStatus\s*\.\s*Completed\b|\bstatus['"\x60]?\s*[:=]\s*(?:['"\x60]?completed\b|3\b))`,
+  },
+  {
+    provider: true,
+    re: String.raw`(?:\bcompletionOptions\b|\bPullRequestStatus\s*\.\s*Completed\b|\bstatus['"\x60]?\s*[:=]\s*(?:['"\x60]?completed\b|3\b))[\s\S]{0,400}?\bupdatePullRequest\b`,
+  },
+  { provider: true, re: String.raw`\bPullRequestStatus\s*\.\s*Completed\b` },
+  {
+    provider: true,
+    re: String.raw`pullrequests\/[\s\S]{0,400}?\bstatus['"\x60]?\s*[:=]\s*['"\x60]?completed\b`,
+  },
+  {
+    provider: true,
+    re: String.raw`\bstatus['"\x60]?\s*[:=]\s*['"\x60]?completed\b[\s\S]{0,400}?pullrequests\/`,
+  },
+].map((r) => ({ ...r, re: new RegExp(r.re, 'g') }));
+
+/**
+ * Provider files allowed to name the non-GitHub merge spellings, as repo-relative paths under
+ * `packages/worker/src/lib/scm/`. Empty: no provider implements opt-in auto-merge yet.
+ */
+export const IMMEDIATE_MERGE_PROVIDER_ALLOWLIST = new Set([]);
+
+/** The index of the `(` that opens the innermost call enclosing `pos`, or -1. */
+function enclosingCallOpen(flat, pos) {
+  let depth = 0;
+  for (let i = pos - 1; i >= Math.max(0, pos - 2000); i--) {
+    const c = flat[i];
+    if (c === ')') {
+      depth++;
+    } else if (c === '(') {
+      if (depth === 0) {
+        return i;
       }
-    });
+      depth--;
+    }
+  }
+  return -1;
+}
+
+/** The `method` values written as direct keys of an object-literal argument (`{ … }`). */
+function topLevelMethods(arg) {
+  const found = [];
+  const text = arg.trim();
+  if (!text.startsWith('{')) {
+    return found;
+  }
+  let depth = 0;
+  let prev = '';
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "'" || c === '"' || c === '`') {
+      const m = depth === 1 && (prev === '{' || prev === ',') ? text.slice(i) : '';
+      const key = /^(['"\x60])method\1\s*:\s*(['"\x60])(\w+)\2/.exec(m);
+      if (key) {
+        found.push(key[3].toUpperCase());
+      } else if (/^(['"\x60])method\1\s*:/.test(m)) {
+        found.push('?');
+      }
+      for (i++; i < text.length && text[i] !== c; i++) {
+        if (text[i] === '\\') {
+          i++;
+        }
+      }
+      prev = 'a';
+      continue;
+    }
+    if (depth === 1 && (prev === '{' || prev === ',') && /[\w$]/.test(c)) {
+      const m = /^method\s*:\s*(?:(['"\x60])(\w+)\1)?/.exec(text.slice(i));
+      if (m) {
+        found.push(m[2] ? m[2].toUpperCase() : '?');
+      }
+    }
+    if (c === '{' || c === '[' || c === '(') {
+      depth++;
+    } else if (c === '}' || c === ']' || c === ')') {
+      depth--;
+    }
+    if (!/\s/.test(c)) {
+      prev = /[\w$]/.test(c) ? 'a' : c;
+    }
+  }
   return found;
+}
+
+/**
+ * Does the text around a non-GitHub route show that the request is a GET (a read, not a merge)?
+ * Three spellings, each tied to the call that carries the route:
+ *  - the route literal itself opens with the verb: `request('GET /…')`;
+ *  - the enclosing call has exactly ONE `method` key among the direct keys of its object
+ *    arguments, and it is a literal GET (`headers: { 'x-orig-method': 'GET' }` and
+ *    `meta: { method: 'GET' }` are nested, so they count for nothing, and a second `method` key
+ *    makes the call undecidable, so it is not exempt);
+ *  - the enclosing call IS `….get(…)` and no write verb literal ('PUT', 'POST', …) precedes it in
+ *    the call that wraps it.
+ */
+function looksLikeGet(flat, start) {
+  const before = flat.slice(Math.max(0, start - 160), start);
+  if (/['"\x60]\s*GET\s+[^'"\x60\s]*$/i.test(before)) {
+    return true;
+  }
+  const open = enclosingCallOpen(flat, start);
+  if (open < 0) {
+    return false;
+  }
+  const methods = callArgs(flat, open).flatMap(topLevelMethods);
+  if (methods.length > 0) {
+    return methods.length === 1 && methods[0] === 'GET';
+  }
+  if (/\.\s*get\s*$/.test(flat.slice(Math.max(0, open - 20), open))) {
+    const outer = enclosingCallOpen(flat, open);
+    const wrapper = outer < 0 ? '' : flat.slice(outer, open);
+    return !/['"\x60]\s*(?:PUT|POST|PATCH|DELETE)\b/i.test(wrapper);
+  }
+  return false;
+}
+
+/**
+ * Violations in one file's source: `{ line, text }` per immediate-merge call. Pass the file's
+ * repo-relative path to honour `IMMEDIATE_MERGE_PROVIDER_ALLOWLIST` (or an `allowlist` of your own).
+ */
+export function immediateMergeViolations(
+  src,
+  file = '',
+  allowlist = IMMEDIATE_MERGE_PROVIDER_ALLOWLIST
+) {
+  const stripped = stripComments(src);
+  // Newlines inside a `${…}` become spaces (same length), so a template literal that wraps inside
+  // its interpolation is one route again and offsets still map to the same lines.
+  const flat = stripped.replace(/\$\{[^}]*\}/g, (m) => m.replace(/\n/g, ' '));
+  // The same text with quotes and backticks removed, for the rules that read a shell command.
+  const shell = flat.replace(/['"\x60]/g, '');
+  const lines = stripped.split('\n');
+  const providerAllowed = file !== '' && allowlist.has(posixPath(file)) && isScmProviderFile(file);
+  const hits = new Set();
+  for (const rule of MERGE_RULES) {
+    if (rule.provider && providerAllowed) {
+      continue;
+    }
+    rule.re.lastIndex = 0;
+    const text = rule.shell ? shell : flat;
+    for (const m of text.matchAll(rule.re)) {
+      if (rule.route && looksLikeGet(flat, m.index)) {
+        continue;
+      }
+      hits.add(text.slice(0, m.index).split('\n').length);
+    }
+  }
+  return [...hits]
+    .sort((a, b) => a - b)
+    .map((line) => ({ line, text: (lines[line - 1] ?? '').trim() }));
 }
 
 // The one merge-capable call, `enableAutoMerge` (GraphQL `enablePullRequestAutoMerge`), is named
@@ -916,10 +1350,7 @@ function checkNoImmediateMerge() {
   for (const pkg of readdirSync(join(ROOT, 'packages'))) {
     if (existsSync(join(ROOT, 'packages', pkg, 'src'))) {
       files.push(
-        ...walk(
-          join('packages', pkg, 'src'),
-          (f) => /\.(ts|tsx)$/.test(f) && !/\.test\.tsx?$/.test(f)
-        )
+        ...walk(join('packages', pkg, 'src'), (f) => SOURCE_EXTENSION.test(f) && !TEST_FILE.test(f))
       );
     }
   }
@@ -937,7 +1368,7 @@ function checkNoImmediateMerge() {
           "evaluation's gates. If a new caller is genuinely needed, route it through the activity."
       );
     }
-    for (const v of immediateMergeViolations(src)) {
+    for (const v of immediateMergeViolations(src, file)) {
       fail(
         file,
         v.line,
@@ -1015,7 +1446,7 @@ function checkSlackMessageWriters() {
       files.push(
         ...walk(
           join('packages', pkg, 'src'),
-          (f) => /\.(ts|tsx)$/.test(f) && !/\.test\.tsx?$/.test(f) && !f.includes('generated')
+          (f) => SOURCE_EXTENSION.test(f) && !TEST_FILE.test(f) && !f.includes('generated')
         )
       );
     }
@@ -1039,6 +1470,85 @@ function checkSlackMessageWriters() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// INVARIANT 12 — another SCM provider's network code lives in `worker/src/lib/scm/`.
+//
+// The SCM seam's rules (bare-fetch, redirect policy, merge spellings, file globbing) are scoped to
+// `packages/worker/src/lib/scm/`. A GitLab, Bitbucket, Gitea, Azure DevOps or Gerrit client written
+// anywhere else — a gateway route, a shared helper — type-checks, authenticates and works, and
+// escapes every one of them: it can use a bare `fetch`, follow redirects with a credential and
+// merge. This is a tripwire for the common spellings: a REST path or SDK import that only a
+// non-GitHub provider client has (`/api/v4/`, `/2.0/repositories`, `/rest/api/1.0`, `gitbeaker`,
+// a `bitbucket` package import, `merge_requests` paths, `api.bitbucket.org`, `dev.azure.com`,
+// `_apis/git`, the Gitea `/api/v1/repos/` and Gerrit `/a/changes/` routes).
+//
+// A tripwire over source text with comments removed (tests excluded): a base path assembled from
+// pieces, a client reached through a name that avoids these tokens and any other HTTP client are
+// not seen. Files in `PROVIDER_CODE_ALLOWLIST` may name the tokens; it is empty, and a file belongs
+// on it only with a stated reason. A standing constraint on a new surface, not a past incident.
+// ---------------------------------------------------------------------------
+
+const PROVIDER_API_TOKENS = [
+  /\/api\/v4\//,
+  /\/2\.0\/repositories/,
+  /\/rest\/api\/1\.0/,
+  /gitbeaker/i,
+  /(?:from\s+|import\s*\(\s*|require\s*\(\s*)['"](?:bitbucket|bitbucket\/[^'"]*)['"]/,
+  /\bmerge_requests\b/,
+  /api\.bitbucket\.org/,
+  /dev\.azure\.com/,
+  /_apis\/git/,
+  /azure-devops-node-api/,
+  /\/api\/v1\/repos\//,
+  /\/a\/changes\//,
+];
+
+/** Files outside `scm/` allowed to name a provider API token, each with a reason. Empty. */
+export const PROVIDER_CODE_ALLOWLIST = new Set([]);
+
+/** Violations in one file (repo-relative path) and its source: `{ line, text }` per hit. */
+export function providerCodeOutsideScmViolations(file, src, allowlist = PROVIDER_CODE_ALLOWLIST) {
+  const f = posixPath(file);
+  if (f.startsWith(`${SCM_DIR}/`) || allowlist.has(f) || /\.(?:test|spec)\./.test(f)) {
+    return [];
+  }
+  const found = [];
+  stripComments(src)
+    .split('\n')
+    .forEach((text, i) => {
+      if (PROVIDER_API_TOKENS.some((re) => re.test(text))) {
+        found.push({ line: i + 1, text: text.trim() });
+      }
+    });
+  return found;
+}
+
+function checkProviderCodeLivesInScm() {
+  for (const pkg of readdirSync(join(ROOT, 'packages'))) {
+    if (!existsSync(join(ROOT, 'packages', pkg, 'src'))) {
+      continue;
+    }
+    const files = walk(
+      join('packages', pkg, 'src'),
+      (f) => SOURCE_EXTENSION.test(f) && !/\.(?:test|spec)\./.test(f)
+    ).filter((f) => !posixPath(f).includes('/generated/'));
+    for (const file of files) {
+      for (const v of providerCodeOutsideScmViolations(file, read(file))) {
+        fail(
+          file,
+          v.line,
+          'provider-code-lives-in-scm',
+          `names another SCM provider's API outside lib/scm/: ${v.text.slice(0, 120)}`,
+          'Provider network code must live in packages/worker/src/lib/scm/, where the bare-fetch, ' +
+            'redirect and merge rules apply, and must call the SSRF guards (createGuardedFetch). ' +
+            'A gateway or shared file must not carry its own GitLab, Bitbucket, Gitea, Azure ' +
+            'DevOps or Gerrit client.'
+        );
+      }
+    }
+  }
+}
+
 function main() {
   checkWorkspaceImageLiterals();
   checkDockerfileYarnProvisioning();
@@ -1052,6 +1562,7 @@ function main() {
   checkCredentialsAreNotInEnv();
   checkNoImmediateMerge();
   checkSlackMessageWriters();
+  checkProviderCodeLivesInScm();
   report();
 }
 
@@ -1069,13 +1580,15 @@ function report() {
     process.exit(1);
   }
 
-  console.log('Invariant check passed — 11 invariants, no violations.');
+  console.log('Invariant check passed — 12 invariants, no violations.');
   console.log('  workspace image is inherited, never written inline at a call site');
   console.log('  every Dockerfile stage that runs yarn provides one first, and no other does');
   console.log('  the root layout renders per request when it reads NEXT_PUBLIC_* at runtime');
   console.log('  MCP code takes no database access: it reaches data only through a REST route');
-  console.log('  connector fetches state a redirect policy');
-  console.log('  fetches to operator-supplied URLs resolve and pin their address');
+  console.log('  connector and SCM-provider fetches state a redirect policy');
+  console.log(
+    '  fetches to operator-supplied URLs and SCM provider files resolve and pin their address'
+  );
   console.log('  every database- or Docker-backed test suite runs in CI with its opt-in flag set');
   console.log(
     '  every live suite runs from live-e2e.yml, which starts only on a schedule or on demand'
@@ -1088,6 +1601,7 @@ function report() {
   console.log(
     '  Slack messages are sent only through known writers, and the worker defuses broadcasts'
   );
+  console.log("  another SCM provider's API client lives in worker/src/lib/scm/, nowhere else");
 }
 
 const invokedDirectly =

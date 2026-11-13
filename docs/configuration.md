@@ -37,7 +37,10 @@ organization because a team on an isolated network may need its own mirror. The 
 (`workspace.agentRunMaxSteps`, `workspace.agentRunMaxWallClockSeconds`,
 `workspace.agentRunMaxConcurrentGlobal`, `workspace.agentRunMaxConcurrentPerTeam` and
 `workspace.agentRunAllowWorkflowChanges`) are registry settings too, all ADMIN-only; see
-[agent-runs.md](./agent-runs.md#6-bounds).
+[agent-runs.md](./agent-runs.md#6-bounds). `workspace.nulAllowedPaths` (ADMIN-only, GLOBAL scope only, empty
+by default) lists path globs whose files may hold a NUL byte although their name does not say binary:
+the post-diff security gate reduces them to their printable strings instead of refusing the step
+([agents.md](./agents.md#11-limitations)).
 
 The `assistant` group holds `assistant.enabled` (ADMIN-only, default off), the switch for the in-app
 assistant: off, the gateway refuses every request made with an assistant token, including the next

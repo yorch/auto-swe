@@ -7,8 +7,10 @@
  * repository — both cascade — and an admin who wants these unused turns off
  * `github.userCredentialsEnabled`.
  *
- * Saving is refused unless the feature is on, the repository's hosts are on the
- * admin's allowlist, and GitHub confirms the token can write to the repository.
+ * Saving is refused unless the feature is on, the repository is a GitHub one
+ * (409 `SCM_PROVIDER_UNSUPPORTED` otherwise, before any request is made), the
+ * repository's hosts are on the admin's allowlist, and GitHub confirms the
+ * token can write to the repository.
  * Removing is always allowed, feature on or off, so a user is never stuck with a
  * secret they want gone.
  */
@@ -18,6 +20,7 @@ import {
   originOf,
   resolveUserCredentialPolicy,
 } from '@auto-swe/shared/lib/connectionCredential';
+import { isGitHubRepository } from '@auto-swe/shared/lib/githubHostScope';
 import { fetchOwnRepoPermission, permissionMeets } from '@auto-swe/shared/lib/githubPermission';
 import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
 import { isRepoMember, repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
@@ -55,6 +58,7 @@ export const connectionCredentialRoutes: FastifyPluginAsync = async (fastify) =>
         isActive: true,
         organizationName: true,
         repoName: true,
+        scmProvider: true,
         // A member of a team the repository is shared with launches on it, so
         // they may hold a token for it too.
         shares: repoMembersSelect({ userId: true }, { userId: user.sub }).shares,
@@ -129,6 +133,17 @@ export const connectionCredentialRoutes: FastifyPluginAsync = async (fastify) =>
       }
       if (!(repo.isActive && repo.team.isActive)) {
         return sendError(reply, 409, 'REPO_INACTIVE', 'This repository or its team is inactive.');
+      }
+      // A saved token is a GitHub token: it is sent to this row's API URL to be verified and is
+      // later used for runs, so it is refused here, before any request and any write, for a
+      // repository another provider serves. (Removing a token stays allowed for every row.)
+      if (!isGitHubRepository(repo)) {
+        return sendError(
+          reply,
+          409,
+          'SCM_PROVIDER_UNSUPPORTED',
+          `This repository is served by "${repo.scmProvider}"; personal GitHub tokens are not used for it.`
+        );
       }
 
       // Both hosts, because a run sends the token to both: the web base for

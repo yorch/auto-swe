@@ -16,7 +16,11 @@ import {
 } from '@auto-swe/shared/lib/connectionTypes';
 import { credentialDestinationChanged } from '@auto-swe/shared/lib/credentialDestination';
 import { decryptSecret } from '@auto-swe/shared/lib/crypto';
-import { installationHostFor, sameHostFamily } from '@auto-swe/shared/lib/githubHostScope';
+import {
+  GITHUB_SCM_PROVIDER,
+  installationHostFor,
+  sameHostFamily,
+} from '@auto-swe/shared/lib/githubHostScope';
 import { type PermissionLookup, permissionMeets } from '@auto-swe/shared/lib/githubPermission';
 import {
   PREVIEW_ENV_LOOKS_SECRET,
@@ -1119,6 +1123,8 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         installation: verifiedInstallation ?? null,
         organizationName,
         repoName,
+        // The create path takes no provider: a new row is the column's default, GitHub.
+        scmProvider: GITHUB_SCM_PROVIDER,
       });
       if (accessProblem) {
         throw new RepositoryCreateError(
@@ -1382,6 +1388,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           organizationName: true,
           previewConfig: true,
           repoName: true,
+          scmProvider: true,
           setup: true,
           teamId: true,
           tools: true,
@@ -1650,6 +1657,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           installation: repo.installation ?? null,
           organizationName: repo.organizationName,
           repoName: repo.repoName,
+          scmProvider: repo.scmProvider,
         });
         if (accessProblem) {
           return sendError(reply, accessProblem.status, accessProblem.code, accessProblem.message);

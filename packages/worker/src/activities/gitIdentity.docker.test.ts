@@ -122,7 +122,7 @@ function defineAttributionTests(
       const sha = await commitStaged(workspaceFor(dir, identity), 'auto: it', {
         allowedPaths: undefined,
         refuseWorkflowChanges: false,
-        report: { sha: '', twoTree: false },
+        report: { sha: '' },
         sessionBase,
       });
       expect(sha).toMatch(/^[0-9a-f]{40}$/);

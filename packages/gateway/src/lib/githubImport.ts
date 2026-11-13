@@ -1,5 +1,9 @@
 import { resolvePlatformCredential } from '@auto-swe/shared/lib/githubHostCredential';
-import { defaultApiUrlForHost, hostFamily } from '@auto-swe/shared/lib/githubHostScope';
+import {
+  defaultApiUrlForHost,
+  GITHUB_SCM_PROVIDER,
+  hostFamily,
+} from '@auto-swe/shared/lib/githubHostScope';
 import { resolveGitHubToken } from '@auto-swe/shared/lib/githubInstallation';
 import { permissionMeets } from '@auto-swe/shared/lib/githubPermission';
 import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
@@ -147,6 +151,8 @@ export async function installationRepos(
       baseUrl: source.githubUrl,
       installationHost: installation.host,
       installationId: installation.installationId,
+      // Listings come from a GitHub installation; no other provider has one.
+      scmProvider: GITHUB_SCM_PROVIDER,
     },
     config
   );
@@ -382,6 +388,7 @@ export async function availableGitHubRepos(
               installation,
               organizationName: repo.org,
               repoName: repo.name,
+              scmProvider: GITHUB_SCM_PROVIDER,
             },
             login
           );

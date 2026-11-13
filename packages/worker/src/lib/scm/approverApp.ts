@@ -15,13 +15,13 @@
  */
 import { createSign } from 'node:crypto';
 import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
-import { platformCredentialScope } from '@auto-swe/shared/lib/githubHostScope';
+import { isGitHubRepository, platformCredentialScope } from '@auto-swe/shared/lib/githubHostScope';
 import {
   type ResolvedGitHubApproverAppConfig,
   resolveGitHubApproverAppConfig,
   resolveGitHubConfig,
 } from '@auto-swe/shared/lib/systemConfig';
-import type { RepoRef } from './types.js';
+import { type RepoRef, scmProviderUnsupported } from './types.js';
 
 /** The slice of Octokit this module uses: a route-string request. */
 export interface ApproverClient {
@@ -141,12 +141,18 @@ function installationIsNarrow(data: unknown): boolean {
 /**
  * A ready Octokit for the approver App, scoped to `repo` alone with `pull_requests: write` only,
  * or the reason there is none. Nothing is cached: GitHub is asked who the App is on every call,
- * so a wrong or foreign slug is refused, and the caller revokes the token with `release()`.
+ * so a wrong or foreign slug is refused, and the caller revokes the token with `release()`. A
+ * repository another source-control provider serves is refused with a non-retryable failure.
  */
 export async function getApproverClient(
   repo: RepoRef,
   deps: ApproverDeps = defaultDeps
 ): Promise<ApproverClientResult> {
+  // The App is a GitHub App and `platformCredentialScope` reads URLs only, so a repository another
+  // provider serves, on default URLs, would pass the host check below. Refused first, non-retryable.
+  if (!isGitHubRepository(repo)) {
+    throw scmProviderUnsupported(repo.scmProvider, 'The approver App serves GitHub only.');
+  }
   const config = await deps.loadApproverConfig();
   if (!config) {
     return { ok: false, reason: 'not-configured' };

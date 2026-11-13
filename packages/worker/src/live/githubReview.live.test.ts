@@ -44,7 +44,7 @@ async function github<T>(method: string, path: string, body?: unknown): Promise<
 }
 
 describe.skipIf(!gate.enabled)(liveTitle('live GitHub inline review comments', gate), () => {
-  const provider = getScmProvider();
+  const provider = getScmProvider({ scmProvider: 'github' });
   const branch = `live-review-${Date.now().toString(36)}`;
   const file = 'src/live-review-target.js';
   let repo: RepoRef;
@@ -59,7 +59,7 @@ describe.skipIf(!gate.enabled)(liveTitle('live GitHub inline review comments', g
     ).toBe(liveEnv('LIVE_E2E_DATABASE_URL'));
     slug = liveEnv('LIVE_E2E_FIXTURE_REPO');
     const [organizationName, repoName] = slug.split('/') as [string, string];
-    repo = { installationHost: null, organizationName, repoName };
+    repo = { installationHost: null, organizationName, repoName, scmProvider: 'github' };
   });
 
   afterAll(async () => {

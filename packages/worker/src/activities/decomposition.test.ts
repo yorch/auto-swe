@@ -111,6 +111,57 @@ vi.mock('./workspace.js', () => ({
   shellQuote: (s: string) => `'${s.replace(/'/g, "'\\''")}'`,
 }));
 
+// The hardened git side of the resolver (hooks off, recorded shas, index snapshot, parent check) is
+// covered against real git in mergeResolution.test.ts; here each step is a readable stand-in that
+// issues the command the test can see, so the orchestration is what is under test.
+vi.mock('./allowedPaths.js', () => ({
+  readHeadSha: vi.fn(async () => 'start-sha'),
+}));
+
+vi.mock('./mergeResolution.js', () => {
+  const q = (v: string) => `'${v}'`;
+  return {
+    assertHeadIs: vi.fn(async () => {}),
+    commitResolvedMerge: vi.fn(
+      async (ws: { exec: (c: string) => Promise<string> }, message: string) => {
+        await ws.exec(`git commit -m ${q(message)}`);
+        return (await ws.exec('git rev-parse HEAD')).trim();
+      }
+    ),
+    diffResolution: vi.fn(
+      async (ws: { exec: (c: string) => Promise<string> }, parent: string, sha: string) =>
+        ws.exec(`git diff ${q(parent)} ${q(sha)}`)
+    ),
+    recordMergeInputs: vi.fn(async (_ws: unknown, sources: string[]) => ({
+      sourceTips: Object.fromEntries(sources.map((s) => [s, `tip-of-${s}`])),
+      start: 'start-sha',
+    })),
+    runMerge: vi.fn(
+      async (
+        ws: { exec: (c: string) => Promise<string> },
+        message: string,
+        step: { source: string }
+      ) => {
+        await ws.exec(`git merge --no-ff --no-edit -m ${q(message)} origin/${q(step.source)}`);
+      }
+    ),
+    settleMerge: vi.fn(async () => 'merged-sha'),
+    snapshotIndex: vi.fn(async () => ({ entries: [] })),
+    stageResolved: vi.fn(
+      async (ws: { exec: (c: string) => Promise<string> }, _snap: unknown, files: string[]) => {
+        await ws.exec(`git add -- ${files.map(q).join(' ')}`);
+        const left = await ws.exec('git diff --name-only -z --diff-filter=U');
+        return left.split('\0').some((f) => f.length > 0) ? 'unmerged' : 'staged';
+      }
+    ),
+    startMerge: vi.fn(async (_ws: unknown, source: string, sourceSha: string) => ({
+      parent: 'parent-sha',
+      source,
+      sourceSha,
+    })),
+  };
+});
+
 // Clone URL + token resolution moved from env-var/githubAuth call sites into
 // the ScmProvider seam (lib/scm).
 vi.mock('../lib/scm/index.js', () => ({
@@ -232,6 +283,7 @@ import {
   resolveMergeConflict,
   subtaskBranchName,
 } from './decomposition.js';
+import { recordMergeInputs, startMerge } from './mergeResolution.js';
 
 const baseRequest = {
   description: 'test',
@@ -333,7 +385,8 @@ describe('mergeBranches', () => {
     expect(result.passed).toBe(true);
     expect(result.mergedBranches).toEqual(['auto/TICK-1/auth', 'auto/TICK-1/db']);
     expect(result.conflicts).toEqual([]);
-    expect(result.headSha).toBe('abc123');
+    // The sha the tracked merges ended at, not whatever a branch name resolves to afterwards.
+    expect(result.headSha).toBe('merged-sha');
 
     const cmds = fakeWorkspace.exec.mock.calls.map((c) => c[0] as string);
     // fetch + push now go through gitAuthed (credential injected per-call
@@ -344,7 +397,31 @@ describe('mergeBranches', () => {
     );
     expect(cmds.some((c) => c.includes('git merge --no-ff'))).toBe(true);
     expect(cmds.some((c) => c.includes('push origin'))).toBe(true);
-    expect(pushEffect).toHaveBeenCalledWith('auto/TICK-1', undefined, expect.any(Function));
+    expect(pushEffect).toHaveBeenCalledWith('auto/TICK-1', 'merged-sha', expect.any(Function));
+    expect(cmds.some((c) => c.includes('push origin merged-sha:refs/heads/'))).toBe(true);
+  });
+
+  it('merges the recorded shas and never runs the repository setup command', async () => {
+    primeRepo();
+    fakeWorkspace.exec.mockImplementation(() => '');
+    const runSetup = vi.fn(async () => null);
+    (fakeWorkspace as unknown as { runSetup: unknown }).runSetup = runSetup;
+    vi.mocked(startMerge).mockClear();
+    try {
+      await mergeBranches({
+        request: baseRequest,
+        sourceBranches: ['auto/TICK-1/auth', 'auto/TICK-1/db'],
+        targetBranch: 'auto/TICK-1',
+      });
+    } finally {
+      delete (fakeWorkspace as unknown as { runSetup?: unknown }).runSetup;
+    }
+    expect(recordMergeInputs).toHaveBeenCalled();
+    expect(vi.mocked(startMerge).mock.calls.map((c) => c.slice(1))).toEqual([
+      ['auto/TICK-1/auth', 'tip-of-auto/TICK-1/auth', 'start-sha'],
+      ['auto/TICK-1/db', 'tip-of-auto/TICK-1/db', 'merged-sha'],
+    ]);
+    expect(runSetup).not.toHaveBeenCalled();
   });
 
   it('adds the co-author trailer to each merge commit in co-author-trailer mode', async () => {
@@ -481,7 +558,7 @@ function installFakeGit(git: FakeGit) {
     if (cmd.startsWith('git diff origin/')) {
       return 'diff --git a/EPIC b/EPIC\n+every subtask already on the epic';
     }
-    if (cmd.startsWith("git diff 'resolved-sha^1' 'resolved-sha' -- ")) {
+    if (cmd.startsWith("git diff 'parent-sha' 'resolved-sha'")) {
       return 'diff --git a/foo.ts b/foo.ts\n+A\n+B';
     }
     if (cmd.includes('git rev-parse HEAD')) {
@@ -841,16 +918,16 @@ describe('resolveMergeConflict', () => {
     const diff = 'diff --git a/foo.ts b/foo.ts\n+A\n+B';
     expect(scanCodeMock).toHaveBeenCalledWith(diff);
     expect(scanSecurityMock).toHaveBeenCalledWith(diff);
-    // Only the resolver's own delta: the committed merge against its target
-    // parent, restricted to the conflicted paths — never the whole epic
-    // against the default branch, and never the uncommitted working tree.
+    // The resolver's delta: the committed merge against the target parent the activity recorded
+    // before the merge, with no pathspec — never the whole epic against the default branch, and
+    // never the uncommitted working tree.
     const cmds = execCommands();
-    expect(cmds).toContain("git diff 'resolved-sha^1' 'resolved-sha' -- 'foo.ts'");
+    expect(cmds).toContain("git diff 'parent-sha' 'resolved-sha'");
     expect(cmds.some((c) => c.startsWith('git diff origin/'))).toBe(false);
-    expect(cmds.some((c) => /^git diff(?! --name-only)(?! '\S+\^1')/.test(c))).toBe(false);
+    expect(cmds.some((c) => /^git diff(?! --name-only)(?! 'parent-sha')/.test(c))).toBe(false);
     // The scan runs on the committed resolution, so it follows the commit.
     const commitIdx = cmds.findIndex((c) => c.startsWith('git commit'));
-    const scanIdx = cmds.findIndex((c) => c.startsWith("git diff 'resolved-sha^1'"));
+    const scanIdx = cmds.findIndex((c) => c.startsWith("git diff 'parent-sha'"));
     expect(commitIdx).toBeGreaterThanOrEqual(0);
     expect(scanIdx).toBeGreaterThan(commitIdx);
   });
@@ -870,7 +947,7 @@ describe('resolveMergeConflict', () => {
         n += 1;
         return `sha-${n}\n`;
       }
-      if (cmd.startsWith("git diff 'sha-")) {
+      if (cmd.startsWith("git diff 'parent-sha' 'sha-")) {
         return `diff for ${cmd}`;
       }
       return base(cmd);
@@ -884,15 +961,96 @@ describe('resolveMergeConflict', () => {
 
     expect(result.passed).toBe(true);
     const cmds = execCommands();
-    expect(cmds).toContain("git diff 'sha-1^1' 'sha-1' -- 'foo.ts'");
-    expect(cmds).toContain("git diff 'sha-2^1' 'sha-2' -- 'foo.ts'");
+    expect(cmds).toContain("git diff 'parent-sha' 'sha-1'");
+    expect(cmds).toContain("git diff 'parent-sha' 'sha-2'");
     expect(scanSecurityMock).toHaveBeenCalledTimes(1);
     const scanned = scanSecurityMock.mock.calls[0]?.[0] as string;
-    expect(scanned).toContain("'sha-1^1'");
-    expect(scanned).toContain("'sha-2^1'");
+    expect(scanned).toContain("'sha-1'");
+    expect(scanned).toContain("'sha-2'");
     // Both branches resolve in the one workspace, through the one resolver session.
     expect(buildImplementerMock).toHaveBeenCalledTimes(1);
     expect(closeMcpMock).toHaveBeenCalledTimes(1);
+  });
+
+  describe('what is recorded before an agent or repository code runs', () => {
+    const DB = 'auto/TICK-1/db';
+    const CACHE = 'auto/TICK-1/cache';
+    const withDiffs = (git: FakeGit) => {
+      installFakeGit(git);
+      const base = fakeWorkspace.exec.getMockImplementation() as (cmd: string) => unknown;
+      fakeWorkspace.exec.mockImplementation((cmd: string) =>
+        cmd.startsWith("git diff 'parent-sha' 'merged-sha'") ? 'diff of a merge' : base(cmd)
+      );
+    };
+
+    it('merges the sha recorded at provisioning, not the ref as it stands later', async () => {
+      primeRepo();
+      const git = conflictingGit();
+      withDiffs(git);
+      resolverThatFixes(git);
+      await resolveMergeConflict({
+        request: baseRequest,
+        sourceBranches: [DB, CACHE],
+        targetBranch: 'auto/TICK-1',
+      });
+      const starts = vi.mocked(startMerge).mock.calls;
+      expect(starts.map((c) => [c[1], c[2], c[3]])).toEqual([
+        [DB, `tip-of-${DB}`, 'start-sha'],
+        [CACHE, `tip-of-${CACHE}`, 'resolved-sha'],
+      ]);
+    });
+
+    it('records the tips before the setup command runs repository code', async () => {
+      primeRepo();
+      const order: string[] = [];
+      vi.mocked(recordMergeInputs).mockImplementationOnce(async (_ws, sources) => {
+        order.push('record');
+        return { sourceTips: Object.fromEntries(sources.map((s) => [s, 'x'])), start: 'start-sha' };
+      });
+      (fakeWorkspace as unknown as { runSetup: () => void }).runSetup = () => {
+        order.push('setup');
+      };
+      try {
+        installFakeGit({ conflictOn: () => false, files: {} });
+        await resolveMergeConflict({
+          request: baseRequest,
+          sourceBranches: [DB],
+          targetBranch: 'auto/TICK-1',
+        });
+      } finally {
+        delete (fakeWorkspace as unknown as { runSetup?: () => void }).runSetup;
+      }
+      expect(order).toEqual(['record', 'setup']);
+    });
+
+    it('scans a clean merge made after the resolver ran', async () => {
+      primeRepo();
+      const git = conflictingGit();
+      withDiffs(git);
+      resolverThatFixes(git);
+      await resolveMergeConflict({
+        request: baseRequest,
+        sourceBranches: [DB, CACHE],
+        targetBranch: 'auto/TICK-1',
+      });
+      expect(scanSecurityMock).toHaveBeenCalledTimes(1);
+      const scanned = scanSecurityMock.mock.calls[0]?.[0] as string;
+      expect(scanned).toContain('diff of a merge');
+    });
+
+    it('does not scan a clean merge made before any resolver ran', async () => {
+      primeRepo();
+      const git = conflictingGit();
+      withDiffs(git);
+      resolverThatFixes(git);
+      await resolveMergeConflict({
+        request: baseRequest,
+        sourceBranches: [CACHE, DB],
+        targetBranch: 'auto/TICK-1',
+      });
+      const scanned = scanSecurityMock.mock.calls[0]?.[0] as string;
+      expect(scanned).not.toContain('diff of a merge');
+    });
   });
 
   it('treats a README whose setext heading is "=======" as resolved', async () => {
