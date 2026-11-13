@@ -835,6 +835,45 @@ describe('runImplementerFixSession test-integrity guard', () => {
     }
   });
 
+  it('a block floor stops a deleted test even when the setting is off', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    guardSetting('off');
+    const base = stageCommittedDiff(DELETES_TEST);
+    try {
+      await expect(
+        runImplementerFixSession(input({ mode: 'GATE_FIX', testIntegrityFloor: 'block' }))
+      ).rejects.toMatchObject({ nonRetryable: true, type: 'TEST_INTEGRITY_GUARD' });
+      expect(cmds().some((c) => c.includes('push origin'))).toBe(false);
+    } finally {
+      execMock.mockImplementation(base as never);
+    }
+  });
+
+  it('a block floor holds even a mode the guard does not otherwise cover', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    guardSetting('off');
+    const base = stageCommittedDiff(DELETES_TEST);
+    try {
+      await expect(
+        runImplementerFixSession(input({ mode: 'REVIEW_FIX', testIntegrityFloor: 'block' }))
+      ).rejects.toMatchObject({ type: 'TEST_INTEGRITY_GUARD' });
+    } finally {
+      execMock.mockImplementation(base as never);
+    }
+  });
+
+  it('without a floor the setting still decides (off reads no diff)', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    guardSetting('off');
+    const base = stageCommittedDiff(DELETES_TEST);
+    try {
+      await runImplementerFixSession(input({ mode: 'GATE_FIX' }));
+      expect(cmds().some((c) => c.includes(GUARD_DIFF))).toBe(false);
+    } finally {
+      execMock.mockImplementation(base as never);
+    }
+  });
+
   it('commits without hooks but reads no test-integrity diff when off', async () => {
     findRepo.mockResolvedValue(REPO as never);
     guardSetting('off');

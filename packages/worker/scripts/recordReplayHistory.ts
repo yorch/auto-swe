@@ -22,6 +22,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AGENT_RUN_SPEC } from '@auto-swe/shared/lib/agentRun';
+import { CAMPAIGN_CANCEL_SIGNAL } from '@auto-swe/shared/types/workflow';
 import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
 import proto from '@temporalio/proto';
@@ -208,6 +209,132 @@ const EPIC_REQUEST = {
   requestPayload: '{}',
   workRequestId: '00000000-0000-4000-8000-000000000003',
 };
+
+/**
+ * The campaign workflow's record activities, as no-ops (the recorder has no database), and a
+ * launch re-check that allows every target (`campaign-recheck` overrides it).
+ */
+const CAMPAIGN_RECORD_ACTIVITIES = {
+  authorizeCampaignTargets: async (input: { targets: Array<{ connectionId: string }> }) => ({
+    verdicts: input.targets.map((t) => ({ allowed: true, connectionId: t.connectionId })),
+  }),
+  finalizeCampaign: async (input: {
+    cancelled: boolean;
+    results: Array<{ result: { status: string } }>;
+  }) =>
+    input.cancelled
+      ? 'CANCELLED'
+      : input.results.some((r) => r.result.status !== 'SUCCESS')
+        ? 'COMPLETED_WITH_FAILURES'
+        : 'COMPLETED',
+  recordCampaignState: async () => {},
+  recordCampaignTargetResult: async () => {},
+  recordCampaignTargetStarted: async () => {},
+};
+
+/**
+ * The launch re-check (`authorizeCampaignTargets`) for the `campaign-recheck` scenario: t2's
+ * repository went inactive, and the owning team's kill switch is off by the time t4 would start.
+ */
+const campaignRecheck = async (input: { targets: Array<{ connectionId: string }> }) =>
+  input.targets.some((t) => t.connectionId === 't4')
+    ? {
+        stopReason: 'workflow.campaignsEnabled was turned off for the owning team',
+        verdicts: [],
+      }
+    : {
+        verdicts: input.targets.map((t) =>
+          t.connectionId === 't2'
+            ? {
+                allowed: false,
+                connectionId: t.connectionId,
+                reason: 'the repository is no longer an active git repository',
+              }
+            : { allowed: true, connectionId: t.connectionId }
+        ),
+      };
+
+/** A campaign child that ends at one terminal, by target. */
+const campaignChild = (status: string, result: Record<string, unknown>) =>
+  spec(
+    {
+      done: {
+        result: Object.fromEntries(Object.entries(result).map(([k, v]) => [k, { literal: v }])),
+        status,
+        type: 'terminate',
+      },
+    },
+    'done'
+  );
+
+const CAMPAIGN_CHILD_SPECS: Record<string, Spec> = {
+  t1: campaignChild('SUCCESS', {
+    changed: true,
+    path: 'RECIPE',
+    prNumber: 1,
+    prUrl: 'https://github.com/acme/t1/pull/1',
+    verification: 'PASSED',
+  }),
+  t2: campaignChild('SUCCESS', { changed: false, path: 'NONE', verification: 'NOT_RUN' }),
+  t3: campaignChild('FAILED', {
+    path: 'AGENT',
+    skippedReason: 'did not pass the original tests',
+    verification: 'FAILED',
+  }),
+  t4: campaignChild('SUCCESS', {
+    changed: true,
+    path: 'AGENT',
+    prNumber: 4,
+    prUrl: 'https://github.com/acme/t4/pull/4',
+    verification: 'PASSED',
+  }),
+};
+
+/** A `CampaignWorkflow` input over the named targets, frozen the way the gateway freezes it. */
+const campaignInput = (
+  name: string,
+  connectionIds: string[],
+  over: { maxParallel: number; templateId?: string }
+) => ({
+  campaignId: `campaign-${name}`,
+  campaignWorkflowId: `replay-fixture-${name}`,
+  childPayload: {
+    budget: 'STANDARD',
+    packageName: 'left-pad',
+    recipe: 'npm-dependency@1',
+    targetVersion: '1.3.0',
+  },
+  description: 'replay fixture campaign',
+  externalTicketId: 'REPLAY-CAMPAIGN-1',
+  launchedById: 'user-replay',
+  maxParallel: over.maxParallel,
+  targets: connectionIds.map((id) => ({
+    connectionId: id,
+    repoLabel: `acme/${id}`,
+    targetId: `target-${id}`,
+    teamId: 'team-replay',
+  })),
+  templateId: over.templateId ?? 'tpl-campaign',
+  templateVersion: 1,
+  workRequestId: '00000000-0000-4000-8000-000000000004',
+});
+
+/** A child that parks at a human gate until something cancels it. */
+const CAMPAIGN_PARKED_CHILD = spec(
+  {
+    approved: { status: 'SUCCESS', type: 'terminate' },
+    gate: {
+      onApprove: 'approved',
+      onReject: 'approved',
+      onTimeout: 'approved',
+      timeout: '24h',
+      title: 'Hold the child open',
+      type: 'humanApproval',
+    },
+    mark: marker('AWAITING_HUMAN', 'gate'),
+  },
+  'mark'
+);
 
 /** A child spec that succeeds without parking. */
 const CHILD_OK = spec({ done: { status: 'SUCCESS', type: 'terminate' } }, 'done');
@@ -1103,23 +1230,7 @@ const SCENARIOS: Scenario[] = [
     activities: () => ({
       resolveTemplateForRepo: async () => ({ templateId: 'tpl-park', templateVersion: 1 }),
     }),
-    childSpecs: {
-      'tpl-park': spec(
-        {
-          approved: { status: 'SUCCESS', type: 'terminate' },
-          gate: {
-            onApprove: 'approved',
-            onReject: 'approved',
-            onTimeout: 'approved',
-            timeout: '24h',
-            title: 'Hold the child open',
-            type: 'humanApproval',
-          },
-          mark: marker('AWAITING_HUMAN', 'gate'),
-        },
-        'mark'
-      ),
-    },
+    childSpecs: { 'tpl-park': CAMPAIGN_PARKED_CHILD },
     drive: async (handle, states) => {
       await waitForStateCount(states, 'AWAITING_HUMAN', 2);
       await handle.signal('epicCancelSignal');
@@ -1141,6 +1252,94 @@ const SCENARIOS: Scenario[] = [
         },
       ],
       type: 'EpicOrchestratorWorkflow',
+    },
+  },
+  {
+    // The campaign fan-out with mixed outcomes: t1..t4 under maxParallel 2, so t3 and t4 start as
+    // t1 and t2 finish. t1 opens a PR, t2 is not affected, t3's verification fails and t4 opens a
+    // PR. Every batch is re-checked first (all allowed), and the history carries no patch markers.
+    activities: () => ({
+      createWorkflowRun: async (input: {
+        payload?: { connectionId?: string };
+        workflowId: string;
+      }) => ({
+        runId: `replay-${input.workflowId}`,
+        spec: CAMPAIGN_CHILD_SPECS[input.payload?.connectionId ?? ''],
+      }),
+      ...CAMPAIGN_RECORD_ACTIVITIES,
+    }),
+    name: 'campaign-mixed',
+    workflow: {
+      args: [campaignInput('campaign-mixed', ['t1', 't2', 't3', 't4'], { maxParallel: 2 })],
+      type: 'CampaignWorkflow',
+    },
+  },
+  {
+    // Every batch is re-authorized before its children start. t1 and t3 start and finish; t2 is refused (its repository went inactive)
+    // and t4 is stopped by the campaign-wide refusal, so neither ever starts.
+    activities: () => ({
+      createWorkflowRun: async (input: {
+        payload?: { connectionId?: string };
+        workflowId: string;
+      }) => ({
+        runId: `replay-${input.workflowId}`,
+        spec: CAMPAIGN_CHILD_SPECS[input.payload?.connectionId ?? ''],
+      }),
+      ...CAMPAIGN_RECORD_ACTIVITIES,
+      authorizeCampaignTargets: campaignRecheck,
+    }),
+    name: 'campaign-recheck',
+    workflow: {
+      args: [campaignInput('campaign-recheck', ['t1', 't2', 't3', 't4'], { maxParallel: 2 })],
+      type: 'CampaignWorkflow',
+    },
+  },
+  {
+    // `campaignCancelSignal` while two children are parked: the child scope is cancelled, both
+    // children are cancelled with it, and the third target never starts (it is reported as not
+    // started to `finalizeCampaign`, which runs in the non-cancellable scope).
+    activities: () => CAMPAIGN_RECORD_ACTIVITIES,
+    childSpecs: { 'tpl-park': CAMPAIGN_PARKED_CHILD },
+    drive: async (handle, states) => {
+      await waitForStateCount(states, 'AWAITING_HUMAN', 2);
+      await handle.signal(CAMPAIGN_CANCEL_SIGNAL);
+    },
+    name: 'campaign-cancel',
+    workflow: {
+      args: [
+        campaignInput('campaign-cancel', ['t1', 't2', 't3'], {
+          maxParallel: 2,
+          templateId: 'tpl-park',
+        }),
+      ],
+      type: 'CampaignWorkflow',
+    },
+  },
+  {
+    // A child cancelled on its own (the run's cancel route, the Temporal UI), not by the campaign:
+    // under maxParallel 1, t1 parks and is cancelled from outside; its target fails with the
+    // reason, the campaign is not cancelled, and t2 and t3 still start and finish after it.
+    activities: () => ({
+      createWorkflowRun: async (input: {
+        payload?: { connectionId?: string };
+        workflowId: string;
+      }) => ({
+        runId: `replay-${input.workflowId}`,
+        spec:
+          input.payload?.connectionId === 't1'
+            ? CAMPAIGN_PARKED_CHILD
+            : CAMPAIGN_CHILD_SPECS[input.payload?.connectionId ?? ''],
+      }),
+      ...CAMPAIGN_RECORD_ACTIVITIES,
+    }),
+    drive: async (_handle, states, env) => {
+      await waitForStateCount(states, 'AWAITING_HUMAN', 1);
+      await env.client.workflow.getHandle('replay-fixture-campaign-child-cancelled-t1').cancel();
+    },
+    name: 'campaign-child-cancelled',
+    workflow: {
+      args: [campaignInput('campaign-child-cancelled', ['t1', 't2', 't3'], { maxParallel: 1 })],
+      type: 'CampaignWorkflow',
     },
   },
   {

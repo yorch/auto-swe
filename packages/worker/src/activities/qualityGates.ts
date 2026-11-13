@@ -34,8 +34,10 @@ import {
   currentRunningWorkflowRunId,
   currentTemporalRunId,
   currentWorkflowRunId,
+  persistActivityTrace,
 } from '../lib/activityContext.js';
 import { currentNodeTag } from '../lib/activityNodeTag.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { recordGateEval } from '../lib/evalCapture.js';
 import { throwIfActivityCancelled } from '../lib/execUtils.js';
@@ -44,9 +46,16 @@ import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
+import type { TestIntegrityFloor } from '../lib/testIntegrityGate.js';
 import { captureWorkspaceCommand } from '../lib/workspaceCommand.js';
 import { DEFAULT_COMMANDS, gateCommandFor } from './gateCommand.js';
 import { runImplementerFixSession } from './implementerSession.js';
+import {
+  PROTECTED_TESTS_EVENT,
+  type ProtectedTestsReport,
+  type ProtectedTestsTarget,
+  restoreProtectedTests,
+} from './protectedTests.js';
 import { parseTestOutput, testRunTimeoutMs, testStatusWord } from './utils.js';
 import {
   createWorkspace,
@@ -76,6 +85,16 @@ export interface GateInput {
    * branch.
    */
   branch?: string;
+  /**
+   * Verify against the repository's original tests: before setup and before the command, restore
+   * every test file, test support file and pure test-runner config the change touched to its
+   * content at `baseSha`, the base the change's code result recorded before any agent or recipe
+   * ran (see `protectedTests.ts`). With `headSha`, the gate also refuses a branch tip that is not
+   * the commit the code result reported. The restore happens only in this gate's discarded
+   * workspace. Set by a template's `protectTests: true` on the step, from
+   * `context.currentCodeResult`; unset, the gate runs exactly as it always did.
+   */
+  protectTests?: ProtectedTestsTarget;
 }
 
 export interface GateResult {
@@ -246,13 +265,18 @@ export function noCommandResult(gate: GateName): GateResult {
  * remote commit. The implementer pushes commits to this branch, so gates
  * need to see the same tree the reviewer/CI sees.
  */
-async function provisionGateWorkspace(
+export async function provisionGateWorkspace(
   request: RepoWorkRequest,
   gate: GateName,
-  branchOverride?: string
+  branchOverride?: string,
+  options: { protectTests?: ProtectedTestsTarget; skipSetup?: boolean } = {}
 ): Promise<{
   workspace: Workspace;
   branch: string;
+  /** The branch the change was cut from (the run's base). */
+  baseBranch: string;
+  /** Present when `protectTests` ran: what was restored. */
+  protectedTests?: ProtectedTestsReport;
 }> {
   const [repo, workflowDefaults] = await Promise.all([
     prisma.connection
@@ -305,14 +329,35 @@ async function provisionGateWorkspace(
         getErrorMessage(err).slice(0, 500)
     );
   }
+  // Before the repository's setup and before the command, so neither ever sees the agent's version
+  // of a test, and so every git read and write of the restore happens while the checkout holds
+  // only what the clone and the fetch wrote: setup is the first repository-controlled code to run
+  // here. A failure destroys the workspace and fails the gate; it never runs unprotected.
+  let protectedTests: ProtectedTestsReport | undefined;
+  if (options.protectTests) {
+    try {
+      protectedTests = await restoreProtectedTests(workspace, {
+        ...options.protectTests,
+        baseBranch,
+        branch,
+      });
+    } catch (err) {
+      await workspace.destroy();
+      throw err;
+    }
+  }
   try {
-    await workspace.runSetup?.();
+    if (!options.skipSetup) {
+      await workspace.runSetup?.();
+    }
+    // Always, with or without setup: it moves the workspace from the setup network posture to
+    // the run's and clears setup processes.
     await workspace.finishSetup?.();
   } catch (err) {
     await workspace.destroy();
     throw err;
   }
-  return { branch, workspace };
+  return { baseBranch, branch, ...(protectedTests ? { protectedTests } : {}), workspace };
 }
 
 /**
@@ -471,20 +516,41 @@ async function runGateCommand({
  */
 async function runGate(gate: GateName, input: GateInput): Promise<GateResult> {
   heartbeat(`gate ${gate}: resolving command`);
-  const { workspace } = await provisionGateWorkspace(input.request, gate, input.branch);
+  const { workspace, protectedTests } = await provisionGateWorkspace(
+    input.request,
+    gate,
+    input.branch,
+    input.protectTests ? { protectTests: input.protectTests } : {}
+  );
   try {
     const command = await resolveCommand(gate, input.request, input.command, workspace);
     if (!command) {
       return noCommandResult(gate);
     }
-    return await runGateCommand({
+    const result = await runGateCommand({
       command,
       gate,
       timeoutMs: input.timeoutMs,
       workspace,
     });
+    if (protectedTests) {
+      await recordProtectedTests(protectedTests);
+      return { ...result, summary: `${result.summary} (${protectedTests.summary})` };
+    }
+    return result;
   } finally {
     await workspace.destroy();
+  }
+}
+
+/** Record what protected verification restored as an activity event. Best effort: a gate verdict is not lost to a trace write. */
+async function recordProtectedTests(report: ProtectedTestsReport): Promise<void> {
+  try {
+    const tracer = new AgentTracer();
+    tracer.addActivityEvent({ name: PROTECTED_TESTS_EVENT, outputJson: report.event });
+    await persistActivityTrace(tracer, 'qualityGate');
+  } catch {
+    // Never abort the gate over its own trace.
   }
 }
 
@@ -666,6 +732,8 @@ export interface GateFixInput extends PauseOptions {
   systemPromptOverride?: string;
   /** Refuse, before the push, a change to a GitHub Actions workflow or action. */
   refuseWorkflowChanges?: boolean;
+  /** The weakest test-integrity guard mode the fix runs with (`testIntegrity: 'block'` on the step). */
+  testIntegrityFloor?: TestIntegrityFloor;
 }
 
 export async function executeGateFixImplementation(
@@ -688,6 +756,7 @@ export async function executeGateFixImplementation(
   return runImplementerFixSession({
     ...(typeof input.knowledgeBases === 'boolean' ? { knowledgeBases: input.knowledgeBases } : {}),
     ...(input.refuseWorkflowChanges ? { refuseWorkflowChanges: true } : {}),
+    ...(input.testIntegrityFloor ? { testIntegrityFloor: input.testIntegrityFloor } : {}),
     // Re-run the failed gate against the fixed code (mirrors the system
     // prompt's "Re-run the affected gate locally" instruction). Tests still
     // run afterwards as a regression check so a fix that silences the gate

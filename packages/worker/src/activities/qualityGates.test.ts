@@ -37,11 +37,20 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkflowDefaults: vi.fn(async () => ({ branchPrefix: 'auto' })),
   resolveWorkspaceInfra: vi.fn(() => ({ stackImages: {} })),
 }));
+const { persistTrace, restoreMock } = vi.hoisted(() => ({
+  persistTrace: vi.fn(async () => true),
+  restoreMock: vi.fn(),
+}));
+vi.mock('./protectedTests.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./protectedTests.js')>()),
+  restoreProtectedTests: restoreMock,
+}));
 vi.mock('../lib/activityContext.js', () => ({
   currentRunningWorkflowRunId: vi.fn(async () => 'db-run'),
   currentTemporalRunId: vi.fn(() => 'temporal-run'),
   currentWorkflowId: vi.fn(() => 'wf-1'),
   currentWorkflowRunId: vi.fn(async () => 'db-run'),
+  persistActivityTrace: persistTrace,
 }));
 vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
   putArtifact: vi.fn(async () => ({ id: 'artifact-1' })),
@@ -420,6 +429,30 @@ describe('executeGateFixImplementation re-run', () => {
   });
 });
 
+describe('executeGateFixImplementation test-integrity floor', () => {
+  const gateOutput = { exitCode: 1, passed: false, summary: 'boom' } as never;
+  const previousCodeResult = { branch: 'auto/T-1' } as CodeResult;
+
+  it('hands a floor to the fix session', async () => {
+    fixSessionMock.mockResolvedValue({});
+    await executeGateFixImplementation({
+      gateName: 'runTests',
+      gateOutput,
+      previousCodeResult,
+      testIntegrityFloor: 'block',
+    });
+    expect(fixSessionMock.mock.calls.at(-1)?.[0]).toMatchObject({ testIntegrityFloor: 'block' });
+  });
+
+  it('passes no floor key when the step set none, so the session is called exactly as before', async () => {
+    fixSessionMock.mockResolvedValue({});
+    await executeGateFixImplementation({ gateName: 'runTests', gateOutput, previousCodeResult });
+    expect(Object.keys(fixSessionMock.mock.calls.at(-1)?.[0] as object)).not.toContain(
+      'testIntegrityFloor'
+    );
+  });
+});
+
 describe('executeGateFixImplementation ask and resume', () => {
   it('hands the pause fields to the fix session as the gate fixer', async () => {
     fixSessionMock.mockResolvedValue({});
@@ -694,5 +727,137 @@ describe('runQualityGates', () => {
     const result = await runQualityGates({ gates: [], request: baseRequest });
     expect(result.passed).toBe(false);
     expect(result.summary).toMatch(/nothing was verified/);
+  });
+});
+
+describe('protectTests on a gate', () => {
+  const report = {
+    base: 'abcdef0123456789abcdef0123456789abcdef01',
+    event: {
+      base: 'abcdef0123456789abcdef0123456789abcdef01',
+      removed: [],
+      removedCount: 0,
+      restored: ['src/a.test.ts'],
+      restoredCount: 1,
+    },
+    removed: [],
+    restored: ['src/a.test.ts'],
+    summary: 'restored 1 test files from abcdef01',
+  };
+  const TARGET = {
+    baseSha: '1111111111111111111111111111111111111111',
+    headSha: '2222222222222222222222222222222222222222',
+  };
+  const order: string[] = [];
+  const setup = vi.fn(async () => {
+    order.push('setup');
+    return null;
+  });
+  const finishSetup = vi.fn(async () => {
+    order.push('finishSetup');
+  });
+
+  beforeEach(() => {
+    mockedFindUnique.mockResolvedValue({ defaultBranch: 'main', gateCommands: null } as never);
+    order.length = 0;
+    restoreMock.mockReset();
+    restoreMock.mockImplementation(async () => {
+      order.push('restore');
+      return report;
+    });
+    persistTrace.mockClear();
+    vi.mocked(createWorkspace).mockReset();
+    Object.assign(fakeWorkspace, { finishSetup, runSetup: setup });
+    fakeWorkspace.destroy.mockClear();
+    fakeWorkspace.execCapture.mockReset();
+    fakeWorkspace.execCapture.mockImplementation(async () => {
+      order.push('command');
+      return { exitCode: 0, stderr: '', stdout: 'ok' };
+    });
+    vi.mocked(createWorkspace).mockResolvedValue(fakeWorkspace as never);
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(fakeWorkspace, 'runSetup');
+    Reflect.deleteProperty(fakeWorkspace, 'finishSetup');
+  });
+
+  it('restores the original tests before the repository setup and before the command', async () => {
+    const result = await runTests({
+      command: 'yarn test',
+      protectTests: TARGET,
+      request: baseRequest,
+    });
+    expect(order).toEqual(['restore', 'setup', 'finishSetup', 'command']);
+    // The recorded shas reach the restore as given, beside the branches it fetches by name.
+    expect(restoreMock).toHaveBeenCalledWith(fakeWorkspace, {
+      ...TARGET,
+      baseBranch: 'main',
+      branch: 'auto/TICK-1',
+    });
+    expect(result.passed).toBe(true);
+    expect(result.summary).toContain('runTests passed (exit 0)');
+    expect(result.summary).toContain('restored 1 test files from abcdef01');
+    expect(fakeWorkspace.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('records what it restored as a campaign.protected_tests activity event', async () => {
+    await runTests({ command: 'yarn test', protectTests: TARGET, request: baseRequest });
+    expect(persistTrace).toHaveBeenCalledTimes(1);
+    const [tracer] = persistTrace.mock.calls[0] as unknown as [
+      { records: Array<{ name?: string; outputJson?: unknown }> },
+    ];
+    const recorded = JSON.stringify(tracer);
+    expect(recorded).toContain('campaign.protected_tests');
+    expect(recorded).toContain('src/a.test.ts');
+  });
+
+  it('does not lose the gate verdict when the trace cannot be written', async () => {
+    persistTrace.mockRejectedValueOnce(new Error('db down'));
+    const result = await runTests({
+      command: 'yarn test',
+      protectTests: TARGET,
+      request: baseRequest,
+    });
+    expect(result.passed).toBe(true);
+  });
+
+  it('runs the gate exactly as before when the step does not ask for protection', async () => {
+    const result = await runTests({ command: 'yarn test', request: baseRequest });
+    expect(restoreMock).not.toHaveBeenCalled();
+    expect(persistTrace).not.toHaveBeenCalled();
+    expect(order).toEqual(['setup', 'finishSetup', 'command']);
+    expect(result.summary).toBe('runTests passed (exit 0)');
+  });
+
+  it('treats an absent target as off', async () => {
+    await runTests({ command: 'yarn test', protectTests: undefined, request: baseRequest });
+    expect(restoreMock).not.toHaveBeenCalled();
+  });
+
+  it('fails the gate and runs nothing when the originals cannot be restored', async () => {
+    restoreMock.mockRejectedValueOnce(new Error('PROTECTED_TESTS_UNAVAILABLE'));
+    await expect(
+      runTests({ command: 'yarn test', protectTests: TARGET, request: baseRequest })
+    ).rejects.toThrow('PROTECTED_TESTS_UNAVAILABLE');
+    expect(order).toEqual([]);
+    expect(fakeWorkspace.execCapture).not.toHaveBeenCalled();
+    expect(fakeWorkspace.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('still reports a failing run, with the restore noted', async () => {
+    fakeWorkspace.execCapture.mockImplementation(async () => ({
+      exitCode: 1,
+      stderr: 'boom',
+      stdout: '',
+    }));
+    const result = await runTests({
+      command: 'yarn test',
+      protectTests: TARGET,
+      request: baseRequest,
+    });
+    expect(result.passed).toBe(false);
+    expect(result.summary).toContain('runTests failed');
+    expect(result.summary).toContain('restored 1 test files');
   });
 });

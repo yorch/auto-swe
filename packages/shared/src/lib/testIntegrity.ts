@@ -33,7 +33,9 @@ export type TestIntegrityKind =
   | 'test_run_bypassed'
   | 'test_command_changed'
   | 'ci_config_weakened'
-  | 'gitattributes_changed';
+  | 'gitattributes_changed'
+  | 'test_setup_changed'
+  | 'test_double_changed';
 
 /**
  * `high` findings are the ones `block` mode refuses a change for. `low` ones are recorded (and
@@ -300,12 +302,56 @@ export function isTestFilePath(path: string): boolean {
   return TEST_FILE_PATTERNS.some((p) => p.test(path));
 }
 
-/** A fixture, helper, mock or snapshot that belongs to the tests but is not itself a test. */
+/**
+ * A file a test runner loads before every test to set the run up: a Jest or Vitest setup file
+ * (`jest.setup.js`, `vitest.setup.ts`, `setupTests.ts`, `test-setup.ts`, `setup-jest.ts`, and
+ * `setup.*` under a `jest/` or `.jest/` directory), Karma's `karma.conf.js`, Angular's Karma entry
+ * `src/test.ts`, anything under `cypress/support/` (Cypress loads it before every spec), RSpec's
+ * `.rspec`. It runs inside every test, so it can redefine what an assertion does (replace
+ * `expect`, stub the module under test) without touching a test file.
+ */
+export function isTestSetupPath(path: string): boolean {
+  return (
+    /(^|\/)(?:jest|vitest)[-_.]setup(?:[-_.][\w-]+)*\.[cm]?[jt]sx?$/.test(path) ||
+    /(^|\/)(?:setupTests|setup[-_]tests|test[-_]setup|setup[-_]jest)\.[cm]?[jt]sx?$/.test(path) ||
+    /(^|\/)\.?jest\/setup(?:[-_.][\w-]+)*\.[cm]?[jt]sx?$/.test(path) ||
+    /(^|\/)karma\.conf\.[cm]?[jt]s$/.test(path) ||
+    /(^|\/)src\/test\.ts$/.test(path) ||
+    /(^|\/)cypress\/support\//.test(path) ||
+    /(^|\/)\.rspec$/.test(path)
+  );
+}
+
+/**
+ * A directory that holds only test doubles, test data or test helpers wherever it sits, so its
+ * files belong to the tests even outside a `test/` directory: Jest's `__mocks__` (module mocks the
+ * runner substitutes automatically), Go's `testdata` (ignored by the build; golden files and
+ * fixtures), `fixtures/` and `__fixtures__/`, Mock Service Worker's `src/mocks/` (request
+ * handlers the tests run against), and helper packages named `testutil(s)`, `testhelper(s)`,
+ * `test-utils`, `test_helpers`. A test-utilities module beside the source (`src/test-utils.tsx`)
+ * counts too.
+ */
+function isTestHarnessDirOrModule(path: string): boolean {
+  return (
+    /(^|\/)(?:__mocks__|__fixtures__|fixtures|testdata|testutils?|testhelpers?|test[-_]utils?|test[-_]helpers?)\//.test(
+      path
+    ) ||
+    /(^|\/)src\/mocks\//.test(path) ||
+    /(^|\/)test[-_]utils?\.[cm]?[jt]sx?$/.test(path)
+  );
+}
+
+/**
+ * A fixture, helper, mock, snapshot or runner setup file that belongs to the tests but is not
+ * itself a test.
+ */
 export function isTestSupportPath(path: string): boolean {
   if (isTestFilePath(path)) {
     return false;
   }
   return (
+    isTestSetupPath(path) ||
+    isTestHarnessDirOrModule(path) ||
     /(^|\/)__tests__\//.test(path) ||
     /(^|\/)(tests?|spec|specs|e2e|integration-tests?)\//i.test(path) ||
     /(^|\/)__snapshots__\//.test(path) ||
@@ -326,7 +372,7 @@ const TEST_CONFIG_PATTERNS: RegExp[] = [
 ];
 
 /** A configuration file that configures only a test runner, so any exclusion in it is about tests. */
-function isPureTestConfig(path: string): boolean {
+export function isPureTestConfig(path: string): boolean {
   return (
     /(^|\/)(jest|vitest|playwright|cypress|karma|mocha|ava)[\w.-]*\.(config|workspace)(\.[\w-]+)*\.[cm]?[jt]s(on)?$/.test(
       path
@@ -939,6 +985,29 @@ function analyseFiles(parsed: FileDiff[]): TestIntegrityFinding[] {
     if (isTestSupportPath(f.path) && f.deleted && !/\.snap$/.test(f.path)) {
       add(f, 'test_support_deleted', 'test fixture or helper deleted', { severity: 'low' });
     }
+    // A runner setup file runs inside every test, so any change to it can change what every
+    // assertion means; a mock or a golden file decides what a test compares against.
+    const touched =
+      f.isNew || f.deleted || f.renamed || f.binary || p.added.length > 0 || p.removed.length > 0;
+    if (touched && (isTestSetupPath(f.path) || (f.renamed && isTestSetupPath(f.oldPath)))) {
+      add(
+        f,
+        'test_setup_changed',
+        'a test-runner setup file changed; it runs before every test and can redefine what an assertion does'
+      );
+    } else if (
+      touched &&
+      !f.deleted &&
+      isTestHarnessDirOrModule(f.path) &&
+      !isTestFilePath(f.path)
+    ) {
+      add(
+        f,
+        'test_double_changed',
+        'a mock, test-data (golden) file or test helper changed, which decides what tests compare against',
+        { severity: 'low' }
+      );
+    }
     if (/\.snap$/.test(f.path) && (p.removed.length > 0 || f.deleted)) {
       add(f, 'snapshot_updated', 'snapshot changed or removed', { severity: 'low' });
     }
@@ -1171,7 +1240,8 @@ export function analyseTestIntegrity(diff: string): TestIntegrityResult {
 
 /**
  * Findings from `git diff --name-status` output alone: what can still be said when the full diff
- * was too large to read. Deleted or renamed-away test files and attribute changes only.
+ * was too large to read. Deleted or renamed-away test files, attribute changes and test-runner
+ * setup changes only.
  */
 export function analyseNameStatus(text: string): TestIntegrityFinding[] {
   const findings: TestIntegrityFinding[] = [];
@@ -1199,6 +1269,11 @@ export function analyseNameStatus(text: string): TestIntegrityFinding[] {
     }
     if (isGitattributes(first) || (second && isGitattributes(second))) {
       findings.push(finding('gitattributes_changed', second ?? first, 'attributes file changed'));
+    }
+    if (isTestSetupPath(first) || (second && isTestSetupPath(second))) {
+      findings.push(
+        finding('test_setup_changed', second ?? first, 'test-runner setup file changed')
+      );
     }
   }
   return findings;

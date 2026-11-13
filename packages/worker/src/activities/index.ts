@@ -3,13 +3,31 @@ export { loadChangeForReview, publishReviewResult } from './codeReview.js';
 export { replaceEvalLessons } from './evalLessons.js';
 export { retryReviewFix } from './reviewFixes.js';
 export { dispatchReviewLaunches } from './reviewLaunches.js';
+
 // In-app assistant — one conversation turn, and the reply it leaves when a turn cannot run
 
+// Campaign recipes — a code-owned deterministic change, run through the shell-step machinery
+export type { ApplyRecipeInput, ApplyRecipeResult } from './applyRecipe.js';
+export { applyRecipe } from './applyRecipe.js';
 export { nameAssistantConversationNow } from './assistantTitle.js';
 export type { AssistantTurnInput, AssistantTurnResult } from './assistantTurn.js';
 export { failAssistantReply, runAssistantTurn } from './assistantTurn.js';
 export type { AwaitQodoReviewInput, QodoReviewResult } from './awaitQodoReview.js';
 export { awaitQodoReview } from './awaitQodoReview.js';
+export type {
+  AuthorizeCampaignTargetsInput,
+  AuthorizeCampaignTargetsResult,
+  FinalizeCampaignInput,
+  RecordCampaignTargetResultInput,
+  RecordCampaignTargetStartedInput,
+} from './campaign.js';
+export {
+  authorizeCampaignTargets,
+  finalizeCampaign,
+  recordCampaignState,
+  recordCampaignTargetResult,
+  recordCampaignTargetStarted,
+} from './campaign.js';
 // Channel assistant (Phase 3) — ambient digest
 export { runChannelAmbientDigest } from './channelAmbient.js';
 // Channel assistant (Phase 0) — channel-resident Slack assistant

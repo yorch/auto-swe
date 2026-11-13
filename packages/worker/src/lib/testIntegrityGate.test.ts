@@ -1,8 +1,14 @@
+import { resolveSetting } from '@auto-swe/shared/config';
 import { TEST_INTEGRITY_GUARD_EVENT as TEST_INTEGRITY_EVENT } from '@auto-swe/shared/lib/testIntegrity';
 import { ApplicationFailure } from '@temporalio/activity';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentTracer } from './agentTracer.js';
-import { runTestIntegrityGate } from './testIntegrityGate.js';
+import { resolveTestIntegrityMode, runTestIntegrityGate } from './testIntegrityGate.js';
+
+vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/config')>()),
+  resolveSetting: vi.fn(),
+}));
 
 function tracer() {
   const addActivityEvent = vi.fn();
@@ -201,5 +207,34 @@ describe('runTestIntegrityGate', () => {
         outputJson: expect.objectContaining({ blocked: false, highCount: 0, mode: 'block' }),
       })
     );
+  });
+});
+
+describe('resolveTestIntegrityMode floor', () => {
+  const ctx = {} as Parameters<typeof resolveTestIntegrityMode>[0];
+  const setting = (value: unknown) => vi.mocked(resolveSetting).mockResolvedValue(value as never);
+
+  it.each([
+    ['off', undefined, 'off'],
+    ['warn', undefined, 'warn'],
+    ['block', undefined, 'block'],
+    ['banana', undefined, 'warn'],
+    ['off', 'warn', 'warn'],
+    ['warn', 'warn', 'warn'],
+    ['block', 'warn', 'block'],
+    ['off', 'block', 'block'],
+    ['warn', 'block', 'block'],
+    ['block', 'block', 'block'],
+  ] as const)('setting %s with floor %s is %s', async (configured, floor, expected) => {
+    setting(configured);
+    expect(await resolveTestIntegrityMode(ctx, floor)).toBe(expected);
+  });
+
+  it('answers a block floor without reading the setting, so a lookup failure cannot loosen it', async () => {
+    vi.mocked(resolveSetting).mockReset();
+    vi.mocked(resolveSetting).mockRejectedValue(new Error('down'));
+    expect(await resolveTestIntegrityMode(ctx, 'block')).toBe('block');
+    expect(resolveSetting).not.toHaveBeenCalled();
+    await expect(resolveTestIntegrityMode(ctx)).rejects.toThrow('down');
   });
 });

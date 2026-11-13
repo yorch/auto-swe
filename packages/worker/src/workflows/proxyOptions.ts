@@ -146,6 +146,20 @@ export const RETRY_SINGLE_ATTEMPT = {
   maximumAttempts: 1,
 } satisfies RetryPolicy;
 
+/**
+ * 10 attempts, 2s → 2m backoff: about eight minutes of trying before the caller gives up.
+ * `{ backoffCoefficient: 2, initialInterval: '2s', maximumAttempts: 10, maximumInterval: '2m' }`
+ * For a read the workflow fails closed on (a campaign's launch re-check), where giving up after a
+ * short database or network blip would end far more work than waiting for it to pass.
+ * Used by: authorizeCampaignTargets (campaign).
+ */
+export const RETRY_FAIL_CLOSED_READ = {
+  backoffCoefficient: 2,
+  initialInterval: '2s',
+  maximumAttempts: 10,
+  maximumInterval: '2m',
+} satisfies RetryPolicy;
+
 // ── Timeout tiers ───────────────────────────────────────────────────────────
 //
 // Named by their exact literal duration string so a reviewer can confirm no

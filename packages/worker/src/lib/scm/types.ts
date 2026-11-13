@@ -437,6 +437,13 @@ export interface ScmProvider {
   listTree(repo: RepoRef, ref?: string): Promise<{ paths: string[]; truncated: boolean } | null>;
   resolveRef(repo: RepoRef, ref: string): Promise<string | null>;
   /**
+   * The commit a branch head points at, matching `refs/heads/<branch>` exactly; null when there
+   * is no such branch (404). Unlike `resolveRef`, a tag, a sha or another ref with the same name
+   * is never taken for the branch. An answer that is not exactly that branch's commit throws,
+   * so a caller never reads "cannot tell" as "no branch".
+   */
+  resolveBranchHead(repo: RepoRef, branch: string): Promise<string | null>;
+  /**
    * Whether `branch` exists on the host, how many commits it has that `baseBranch`
    * lacks (null when it does not exist), and the open PR from it if any. Lets a run
    * that would reuse a fixed branch (a schedule) stop before it spends a workspace on

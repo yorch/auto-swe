@@ -829,6 +829,7 @@ model Connection {
   knowledgeItems        KnowledgeItem[]
   prEvaluations         PrEvaluation[]
 
+  campaignTargets CampaignTarget[]
   @@index([teamId])
   @@index([installationId])
   reviewPresetAttachments ReviewPresetAttachment[]
@@ -1327,6 +1328,7 @@ model Organization {
   skills            Skill[]
   skillSources      SkillSource[]
 
+  campaigns Campaign[]
   @@map("organizations")
 }
 
@@ -1405,6 +1407,8 @@ model Team {
   knowledgeGrants       KnowledgeItemTeamGrant[]
   packageRegistries     PackageRegistry[]
 
+  campaigns       Campaign[]
+  campaignTargets CampaignTarget[]
   @@index([orgId])
   @@map("teams")
 }
@@ -1861,6 +1865,8 @@ model User {
   lessonFlags           LessonFlag[]             @relation("LessonFlagAuthor")
   quarantinedLessons    MemoryItem[]             @relation("LessonQuarantineAuthor")
 
+  campaignsCreated   Campaign[] @relation("CampaignCreatedBy")
+  campaignsCancelled Campaign[] @relation("CampaignCancelledBy")
   @@map("users")
 }
 
@@ -2023,6 +2029,7 @@ model RunInput {
   /// never carries the sealed URL or the caller's context.
   callback              RunCallback?
 
+  campaign Campaign?
   @@unique([requestedById, idempotencyKey])
   @@index([connectionId])
   @@index([billingOrgId])
@@ -3564,6 +3571,7 @@ model WorkflowTemplate {
   automations           Automation[]
   autonomyPolicies      AutonomyPolicy[]
 
+  campaigns Campaign[]
   @@unique([teamId, name])
   @@map("workflow_templates")
 }
@@ -5182,4 +5190,100 @@ enum AssistantMessageStatus {
   STREAMING
   COMPLETE
   FAILED
+}
+
+// Campaigns: one pinned template fanned out to a set of repositories in one organisation.
+enum CampaignState {
+  STARTING
+  RUNNING
+  CANCELLING
+  COMPLETED
+  COMPLETED_WITH_FAILURES
+  CANCELLED
+  FAILED_TO_START
+}
+
+enum CampaignTargetState {
+  PENDING
+  RUNNING
+  PR_OPENED
+  NOT_AFFECTED
+  FAILED
+  SKIPPED
+  CANCELLED
+}
+
+enum CampaignTargetPath {
+  RECIPE
+  AGENT
+  RECIPE_THEN_AGENT
+  NONE
+}
+
+enum CampaignVerification {
+  PASSED
+  FAILED
+  NOT_RUN
+}
+
+model Campaign {
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name               String
+  description        String
+  ownerTeamId        String           @map("owner_team_id") @db.Uuid
+  ownerTeam          Team             @relation(fields: [ownerTeamId], references: [id], onDelete: Cascade)
+  orgId              String           @map("org_id") @db.Uuid
+  organization       Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  recipeRef          String?          @map("recipe_ref")
+  recipeParams       Json?            @map("recipe_params")
+  templateId         String           @map("template_id") @db.Uuid
+  template           WorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  templateVersion    Int              @map("template_version")
+  maxParallel        Int              @map("max_parallel")
+  state              CampaignState    @default(STARTING)
+  temporalWorkflowId String           @unique @map("temporal_workflow_id")
+  workRequestId      String           @unique @map("work_request_id") @db.Uuid
+  workRequest        RunInput         @relation(fields: [workRequestId], references: [id], onDelete: Cascade)
+  createdById        String?          @map("created_by_id") @db.Uuid
+  createdBy          User?            @relation("CampaignCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  cancelledById      String?          @map("cancelled_by_id") @db.Uuid
+  cancelledBy        User?            @relation("CampaignCancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull)
+  cancelledAt        DateTime?        @map("cancelled_at") @db.Timestamptz
+  completedAt        DateTime?        @map("completed_at") @db.Timestamptz
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  targets            CampaignTarget[]
+
+  @@index([ownerTeamId, createdAt])
+  @@index([orgId, createdAt])
+  @@map("campaigns")
+}
+
+model CampaignTarget {
+  id              String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  campaignId      String                @map("campaign_id") @db.Uuid
+  campaign        Campaign              @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  connectionId    String?               @map("connection_id") @db.Uuid
+  connection      Connection?           @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  teamId          String                @map("team_id") @db.Uuid
+  // The repository's owning team at launch. Cascade, like the campaign's own owning team: a
+  // deleted team takes its rows with it (teams are deactivated, not deleted, in normal use).
+  team            Team                  @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  repoLabel       String                @map("repo_label")
+  position        Int
+  state           CampaignTargetState   @default(PENDING)
+  path            CampaignTargetPath?
+  verification    CampaignVerification?
+  childWorkflowId String?               @unique @map("child_workflow_id")
+  prUrl           String?               @map("pr_url")
+  prNumber        Int?                  @map("pr_number")
+  failureReason   String?               @map("failure_reason")
+  startedAt       DateTime?             @map("started_at") @db.Timestamptz
+  finishedAt      DateTime?             @map("finished_at") @db.Timestamptz
+  updatedAt       DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([campaignId, connectionId])
+  @@index([teamId])
+  @@index([connectionId])
+  @@map("campaign_targets")
 }

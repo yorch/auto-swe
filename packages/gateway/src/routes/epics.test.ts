@@ -705,6 +705,27 @@ describe('epic routes', () => {
       );
     });
 
+    it('excludes a campaign, which is cross-repo with its template pinned', async () => {
+      currentRole = 'ADMIN';
+      workRequestFixtures.push({
+        createdAt: new Date('2026-06-03T00:00:00Z'),
+        description: 'A campaign',
+        externalTicketId: 'CAMPAIGN-0123456789ab',
+        id: 'wr-campaign',
+        isCrossRepo: true,
+        requestedBy: null,
+        requestPayload: JSON.stringify({ repoIds: [REPO_A] }),
+        templateId: 'tpl-campaign',
+        templateVersion: 3,
+      });
+      const res = await app.inject({ headers: auth, method: 'GET', url: '/api/v1/epics' });
+      const body = JSON.parse(res.payload);
+      expect(body.meta.total).toBe(2);
+      expect(body.data.map((e: { externalTicketId: string }) => e.externalTicketId)).not.toContain(
+        'CAMPAIGN-0123456789ab'
+      );
+    });
+
     it('paginates in the query and reports the full total', async () => {
       currentRole = 'ADMIN';
       const res = await app.inject({

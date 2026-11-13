@@ -32,15 +32,18 @@ import type {
   RepoSetupFileProposal,
   RepoSetupFileProposalStatus,
 } from '@auto-swe/shared/types/api';
-import type {
-  ChannelAssistantTurnInput,
-  ConsolidateLessonsInput,
-  EpicRequest,
-  EvalScreenInput,
-  RepoWorkRequest,
-  ScheduledConsolidationInput,
-  ScheduledEvalInput,
-  ScheduledRevalidationInput,
+import {
+  CAMPAIGN_CANCEL_SIGNAL,
+  CAMPAIGN_WORKFLOW_TYPE,
+  type CampaignWorkflowInput,
+  type ChannelAssistantTurnInput,
+  type ConsolidateLessonsInput,
+  type EpicRequest,
+  type EvalScreenInput,
+  type RepoWorkRequest,
+  type ScheduledConsolidationInput,
+  type ScheduledEvalInput,
+  type ScheduledRevalidationInput,
 } from '@auto-swe/shared/types/workflow';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import {
@@ -370,6 +373,14 @@ declare module 'fastify' {
         input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
       ) => Promise<void>;
       startEpicWorkflow: (workflowId: string, request: EpicRequest) => Promise<void>;
+      /** Start a campaign's fan-out workflow. Its id is `campaign-<campaignId>`. */
+      startCampaignWorkflow: (workflowId: string, input: CampaignWorkflowInput) => Promise<void>;
+      /**
+       * Ask a running campaign to stop. `'not-running'` when Temporal has no running execution to
+       * signal (it closed, or is unknown): the caller reconciles the campaign's rows itself, since
+       * a finalizer that failed would otherwise leave them open for good.
+       */
+      signalCampaignCancel: (workflowId: string) => Promise<'signalled' | 'not-running'>;
       /**
        * Generate a WorkflowSpec from a natural-language description. Unlike the
        * other helpers this is request/response: it starts WorkflowAuthorWorkflow
@@ -1286,6 +1297,20 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       });
     },
 
+    async signalCampaignCancel(workflowId: string): Promise<'signalled' | 'not-running'> {
+      try {
+        await client.workflow.getHandle(workflowId).signal(CAMPAIGN_CANCEL_SIGNAL);
+        return 'signalled';
+      } catch (err) {
+        // A closed or forgotten execution cannot receive the signal. There is nothing left to
+        // stop, but its finalizer may not have closed the rows; the route reconciles them.
+        if (getErrorName(err) !== 'WorkflowNotFoundError') {
+          throw err;
+        }
+        return 'not-running';
+      }
+    },
+
     async signalWorkflow(
       workflowId: string,
       signalName: string,
@@ -1293,6 +1318,15 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
     ): Promise<void> {
       const handle = client.workflow.getHandle(workflowId);
       await handle.signal(signalName, ...args);
+    },
+
+    async startCampaignWorkflow(workflowId: string, input: CampaignWorkflowInput): Promise<void> {
+      await client.workflow.start(CAMPAIGN_WORKFLOW_TYPE, {
+        args: [input],
+        taskQueue: 'engineering-workflow',
+        workflowExecutionTimeout: '30d',
+        workflowId,
+      });
     },
 
     async startChannelAssistant(

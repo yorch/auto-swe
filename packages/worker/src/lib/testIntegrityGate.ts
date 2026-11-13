@@ -20,11 +20,22 @@ export const TEST_INTEGRITY_SETTING = 'github.ciFixTestIntegrityGuard';
  * read could return the default) is the default, `warn`, never `off`.
  */
 export async function resolveTestIntegrityMode(
-  ctx: Parameters<typeof resolveSetting>[1]
+  ctx: Parameters<typeof resolveSetting>[1],
+  floor?: TestIntegrityFloor
 ): Promise<TestIntegrityGuardMode> {
+  // A `block` floor is the strictest mode there is, so nothing the setting says can change it:
+  // it is answered without a lookup, which also means a settings outage cannot fail the step.
+  if (floor === 'block') {
+    return 'block';
+  }
   const configured = await resolveSetting(TEST_INTEGRITY_SETTING, ctx);
-  return configured === 'off' || configured === 'block' ? configured : 'warn';
+  const mode: TestIntegrityGuardMode =
+    configured === 'off' || configured === 'block' ? configured : 'warn';
+  return floor === 'warn' && mode === 'off' ? 'warn' : mode;
 }
+
+/** The weakest guard mode a step accepts (`testIntegrity` on the step's config). */
+export type TestIntegrityFloor = 'warn' | 'block';
 
 export interface TestIntegrityGateInput {
   mode: TestIntegrityGuardMode;

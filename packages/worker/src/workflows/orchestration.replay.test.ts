@@ -1,6 +1,6 @@
 /**
  * Determinism guard for the workflows that are not `RunnableWorkflow`: the epic
- * orchestrator, the channel assistant family and the in-app assistant's conversation workflow. The sibling of
+ * orchestrator, the campaign workflow, the channel assistant family and the in-app assistant's conversation workflow. The sibling of
  * `runnable.replay.test.ts`, with the same contract — each committed history is
  * replayed against current workflow code, and a change that makes the workflow
  * take a different path on replay fails it.
@@ -88,6 +88,10 @@ describe('Epic and channel workflows — history replay', () => {
     // the wrong workflow, would quietly narrow the guard.
     expect(fixtures.map((f) => [f.name, f.type])).toEqual([
       ['assistant-conversation', 'AssistantConversationWorkflow'],
+      ['campaign-cancel', 'CampaignWorkflow'],
+      ['campaign-child-cancelled', 'CampaignWorkflow'],
+      ['campaign-mixed', 'CampaignWorkflow'],
+      ['campaign-recheck', 'CampaignWorkflow'],
       ['channel-ambient', 'ChannelAmbientWorkflow'],
       ['channel-assistant-delegate', 'ChannelAssistantWorkflow'],
       ['channel-assistant-error', 'ChannelAssistantWorkflow'],
@@ -176,6 +180,104 @@ describe('Epic and channel workflows — history replay', () => {
         )
       ).toBe(2);
       expect(count('epic-cancel', EventType.EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED)).toBe(2);
+    });
+  });
+
+  describe('CampaignWorkflow', () => {
+    const startedChildren = (name: string) =>
+      eventsOf(name)
+        .map((e) => e.startChildWorkflowExecutionInitiatedEventAttributes?.workflowId)
+        .filter(Boolean);
+
+    it('campaign-mixed started every target in input order and carries no patch markers', () => {
+      // One scheduling path and no patch: a marker here means a patch crept in without a fixture.
+      expect(patchesOf('campaign-mixed')).toEqual([]);
+      expect(
+        count('campaign-mixed', EventType.EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED)
+      ).toBe(4);
+      expect(startedChildren('campaign-mixed')).toEqual([
+        'replay-fixture-campaign-mixed-t1',
+        'replay-fixture-campaign-mixed-t2',
+        'replay-fixture-campaign-mixed-t3',
+        'replay-fixture-campaign-mixed-t4',
+      ]);
+      expect(activitiesOf('campaign-mixed')[0]).toBe('updateDomainState');
+      expect(activitiesOf('campaign-mixed')).toContain('finalizeCampaign');
+      expect(typesOf('campaign-mixed').at(-1)).toBe(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+      );
+    });
+
+    it('campaign-recheck re-authorized each batch and never started the refused targets', () => {
+      expect(patchesOf('campaign-recheck')).toEqual([]);
+      // t2 was refused (repository inactive), t4 by the campaign-wide stop.
+      expect(startedChildren('campaign-recheck')).toEqual([
+        'replay-fixture-campaign-recheck-t1',
+        'replay-fixture-campaign-recheck-t3',
+      ]);
+      const activities = activitiesOf('campaign-recheck');
+      expect(activities.slice(0, 3)).toEqual([
+        'updateDomainState',
+        'recordCampaignState',
+        'authorizeCampaignTargets',
+      ]);
+      expect(activities.filter((a) => a === 'authorizeCampaignTargets')).toHaveLength(3);
+      expect(activities.at(-2)).toBe('finalizeCampaign');
+      expect(typesOf('campaign-recheck').at(-1)).toBe(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+      );
+    });
+
+    it('campaign-cancel cancelled the in-flight children and never started the third', () => {
+      expect(patchesOf('campaign-cancel')).toEqual([]);
+      expect(typesOf('campaign-cancel')).toContain(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED
+      );
+      expect(startedChildren('campaign-cancel')).toEqual([
+        'replay-fixture-campaign-cancel-t1',
+        'replay-fixture-campaign-cancel-t2',
+      ]);
+      expect(
+        count(
+          'campaign-cancel',
+          EventType.EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED
+        )
+      ).toBe(2);
+      expect(count('campaign-cancel', EventType.EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED)).toBe(
+        2
+      );
+      // Finalization ran after the cancel, and the history closed.
+      expect(activitiesOf('campaign-cancel').at(-2)).toBe('finalizeCampaign');
+      expect(typesOf('campaign-cancel').at(-1)).toBe(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+      );
+    });
+
+    it('campaign-child-cancelled kept starting targets after a child was cancelled on its own', () => {
+      expect(patchesOf('campaign-child-cancelled')).toEqual([]);
+      // The campaign itself received no cancel signal and requested no cancel of a child.
+      expect(typesOf('campaign-child-cancelled')).not.toContain(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED
+      );
+      expect(
+        count(
+          'campaign-child-cancelled',
+          EventType.EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED
+        )
+      ).toBe(0);
+      expect(
+        count('campaign-child-cancelled', EventType.EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED)
+      ).toBe(1);
+      // maxParallel 1: t2 and t3 started only after t1 was cancelled.
+      expect(startedChildren('campaign-child-cancelled')).toEqual([
+        'replay-fixture-campaign-child-cancelled-t1',
+        'replay-fixture-campaign-child-cancelled-t2',
+        'replay-fixture-campaign-child-cancelled-t3',
+      ]);
+      expect(activitiesOf('campaign-child-cancelled').at(-2)).toBe('finalizeCampaign');
+      expect(typesOf('campaign-child-cancelled').at(-1)).toBe(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+      );
     });
   });
 

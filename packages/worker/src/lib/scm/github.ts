@@ -802,6 +802,35 @@ export class GitHubScmProvider implements ScmProvider {
     }
   }
 
+  async resolveBranchHead(repo: RepoRef, branch: string): Promise<string | null> {
+    const octokit = await octokitFor(repo);
+    let data: unknown;
+    try {
+      // `git/ref/heads/<branch>` (singular) is an exact lookup: a tag or a sha with the same name
+      // does not answer it, as it would `repos.getCommit`.
+      ({ data } = await octokit.git.getRef({
+        owner: repo.organizationName,
+        ref: `heads/${branch}`,
+        repo: repo.repoName,
+      }));
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) {
+        return null;
+      }
+      throw err;
+    }
+    const ref = data as { ref?: unknown; object?: { sha?: unknown; type?: unknown } };
+    if (
+      Array.isArray(data) ||
+      ref.ref !== `refs/heads/${branch}` ||
+      ref.object?.type !== 'commit' ||
+      typeof ref.object.sha !== 'string'
+    ) {
+      throw new Error(`the host did not answer with the head of branch ${branch}`);
+    }
+    return ref.object.sha;
+  }
+
   async listTree(
     repo: RepoRef,
     ref?: string

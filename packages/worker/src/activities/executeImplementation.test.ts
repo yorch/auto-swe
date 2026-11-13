@@ -231,6 +231,7 @@ vi.mock('./workspace.js', () => ({
   shellQuote: (s: string) => `'${s}'`,
 }));
 
+import { resolveSetting } from '@auto-swe/shared/config';
 import { buildImplementerForActivity, resolveImplementerConfig } from '../agents/implementer.js';
 import { buildImplementerTurnRunner } from '../agents/implementerRuntimeSelect.js';
 import {
@@ -1525,4 +1526,101 @@ describe('executeImplementation ask and resume', () => {
 // A failing assertion must not leak a spy on AgentTracer into the next test.
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe('executeImplementation test-integrity floor', () => {
+  const GUARD_DIFF = ' --text -U1 ';
+  const DELETES_TEST = [
+    'diff --git a/src/a.test.ts b/src/a.test.ts',
+    'deleted file mode 100644',
+    '--- a/src/a.test.ts',
+    '+++ /dev/null',
+    '@@ -1,2 +0,0 @@',
+    "-it('adds', () => {",
+    '-  expect(add(1, 2)).toBe(3);',
+    '',
+  ].join('\n');
+  const commands = () => workspaceMock.exec.mock.calls.map((c) => c[0] as string);
+  const pushed = () =>
+    workspaceMock.gitAuthed.mock.calls.some((c) => (c[0] as string).includes('push origin'));
+  // The default workspace answers, with the test-integrity guard's own read returning a deleted
+  // test. Pinned reads echo their end marker like a shell.
+  const stage = () =>
+    workspaceMock.exec.mockImplementation(async (cmd: string) =>
+      cmd.includes(GUARD_DIFF) ? withEndMarker(cmd, DELETES_TEST) : defaultExec(cmd)
+    );
+  const guardSetting = (value: string) =>
+    vi
+      .mocked(resolveSetting)
+      .mockImplementation((async (key: string) =>
+        key === 'github.ciFixTestIntegrityGuard' ? value : 'mastra') as never);
+  const run = (floor?: 'warn' | 'block') =>
+    executeImplementation(
+      REQUEST,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      floor ? { testIntegrityFloor: floor } : undefined
+    );
+
+  afterEach(() => {
+    vi.mocked(resolveSetting).mockImplementation((async (key: string) =>
+      key === 'workflow.ticketContextFallback' ? false : 'mastra') as never);
+  });
+
+  it('a block floor stops a change that deletes a test, whatever the setting says', async () => {
+    for (const setting of ['off', 'warn', 'block']) {
+      workspaceMock.exec.mockReset();
+      workspaceMock.gitAuthed.mockClear();
+      guardSetting(setting);
+      stage();
+      await expect(run('block'), setting).rejects.toThrow(/deletes, skips or weakens tests/);
+      expect(pushed(), setting).toBe(false);
+      // Committed without hooks, and the committed result was the thing analysed.
+      expect(commands().some((c) => c.includes('commit --no-verify'))).toBe(true);
+    }
+  });
+
+  it('a block floor needs no settings lookup: an outage cannot weaken it', async () => {
+    vi.mocked(resolveSetting).mockImplementation((async (key: string) => {
+      if (key === 'github.ciFixTestIntegrityGuard') {
+        throw new Error('settings down');
+      }
+      return 'mastra';
+    }) as never);
+    stage();
+    await expect(run('block')).rejects.toThrow(/deletes, skips or weakens tests/);
+  });
+
+  it('a warn floor lifts an off setting to warn: the trip is recorded and the change goes on', async () => {
+    guardSetting('off');
+    stage();
+    const events: Array<{ name: string; outputJson?: Record<string, unknown> }> = [];
+    vi.spyOn(AgentTracer.prototype, 'addActivityEvent').mockImplementation((opts) => {
+      events.push(opts as never);
+    });
+    await run('warn');
+    expect(events.find((e) => e.name === 'ci_fix.test_integrity_guard')?.outputJson).toMatchObject({
+      blocked: false,
+      mode: 'warn',
+    });
+    expect(pushed()).toBe(true);
+  });
+
+  it('a warn floor never loosens a block setting', async () => {
+    guardSetting('block');
+    stage();
+    await expect(run('warn')).rejects.toThrow(/deletes, skips or weakens tests/);
+  });
+
+  it('with no floor and no workflow refusal the guard does not run, as before', async () => {
+    guardSetting('block');
+    stage();
+    await run();
+    expect(commands().some((c) => c.includes(GUARD_DIFF))).toBe(false);
+    // Every implementer commit is hooks-off, guarded or not.
+    expect(commands().some((c) => c.includes('commit --no-verify'))).toBe(true);
+    expect(pushed()).toBe(true);
+  });
 });

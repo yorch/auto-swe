@@ -185,6 +185,78 @@ describe('launchTrackedWorkflow audit', () => {
   });
 });
 
+describe('launchTrackedWorkflow inTransaction hook', () => {
+  it('runs inside the ledger transaction, after the ledger rows and before the start', async () => {
+    const { prisma } = mockPrisma();
+    const order: string[] = [];
+    prisma.runInput.create.mockImplementation(async (args: { data: Record<string, unknown> }) => {
+      order.push('runInput');
+      return { id: 'ri-1', ...args.data };
+    });
+    prisma.activeWorkflow.create.mockImplementation(async () => {
+      order.push('activeWorkflow');
+      return { id: 'aw-1' };
+    });
+    const res = await launchTrackedWorkflow(
+      prisma as never,
+      ROWS,
+      async () => {
+        order.push('start');
+      },
+      {
+        inTransaction: async (tx) => {
+          expect(tx).toBe(prisma);
+          order.push('hook');
+        },
+      }
+    );
+    expect(res).toEqual({ activeWorkflowId: 'aw-1', ok: true });
+    expect(order).toEqual(['runInput', 'activeWorkflow', 'hook', 'start']);
+  });
+
+  it('reports a unique violation inside the hook as a ledger DUPLICATE and never starts', async () => {
+    const { prisma } = mockPrisma();
+    const start = vi.fn(async () => {});
+    const res = await launchTrackedWorkflow(prisma as never, ROWS, start, {
+      inTransaction: async () => {
+        throw uniqueViolation();
+      },
+    });
+    expect(res).toEqual({ ok: false, reason: 'DUPLICATE', source: 'ledger' });
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('lets another hook failure propagate and never starts', async () => {
+    const { prisma } = mockPrisma();
+    const start = vi.fn(async () => {});
+    await expect(
+      launchTrackedWorkflow(prisma as never, ROWS, start, {
+        inTransaction: async () => {
+          throw new Error('boom');
+        },
+      })
+    ).rejects.toThrow('boom');
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('compensates the ledger when the start fails after the hook ran', async () => {
+    const { prisma, state } = mockPrisma();
+    const hook = vi.fn(async () => {});
+    await expect(
+      launchTrackedWorkflow(
+        prisma as never,
+        ROWS,
+        async () => {
+          throw new Error('temporal down');
+        },
+        { inTransaction: hook }
+      )
+    ).rejects.toThrow('temporal down');
+    expect(hook).toHaveBeenCalledTimes(1);
+    expect(state.runInputDeletes).toHaveLength(1);
+  });
+});
+
 describe('launchTrackedWorkflow', () => {
   it('writes the ledger BEFORE starting the workflow', async () => {
     const { prisma } = mockPrisma();

@@ -1531,6 +1531,47 @@ export const SETTING_DEFINITIONS = {
     schema: z.number().int().min(1).max(3650),
     unit: 'days',
   }),
+  'workflow.campaignMaxParallelChildren': defineSetting({
+    defaultValue: 3,
+    description:
+      'The most repositories a campaign works on at once. A launch may ask for fewer and never more. Every child is a full run with its own agent, workspace and budget, so this bounds both load and how fast draft pull requests appear for people to review.',
+    group: 'workflow',
+    label: 'Campaign parallelism',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(10),
+  }),
+  'workflow.campaignMaxTargets': defineSetting({
+    defaultValue: 25,
+    description:
+      "The most repositories one campaign may name. Resolved for the campaign's owning team at launch; a longer list is refused rather than truncated.",
+    group: 'workflow',
+    label: 'Campaign repository limit',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(200),
+  }),
+  // Read by the gateway at campaign launch, for the owning team and each target's team, and read
+  // again by the worker's launch re-check (`authorizeCampaignTargets`) before every batch of
+  // children starts: turning it off stops a running campaign's remaining targets. Not run-pinned,
+  // since a run must see the current value; the two size limits above are the ones frozen into a
+  // campaign's workflow input at launch.
+  'workflow.campaignsEnabled': defineSetting({
+    defaultValue: false,
+    description:
+      "Whether a team lead may launch a campaign that includes this team's repositories: one change fanned out to many repositories, one draft pull request each. Off by default because a single launch can open a draft pull request in every repository it names. A campaign is refused unless it is on for the owning team and for the team that owns each target repository, and it is checked again before each repository's run starts: turning it off stops a running campaign's remaining repositories.",
+    group: 'workflow',
+    label: 'Allow campaigns',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
 
   // ── Workflow interpreter ───────────────────────────────────────────────────
   // These bound how a single run may expand. They are run-pinned: the

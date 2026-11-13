@@ -12,6 +12,7 @@ import { automationRoutes } from './automations.js';
 import { autonomyPolicyRoutes } from './autonomyPolicies.js';
 import { bundleRoutes } from './bundles.js';
 import { callbackEndpointRoutes, runCallbackDeliveryRoutes } from './callbackEndpoints.js';
+import { campaignRoutes } from './campaigns.js';
 import { codeReviewRoutes } from './codeReview.js';
 import { configSettingsRoutes } from './configSettings.js';
 import { connectionCredentialRoutes } from './connectionCredentials.js';
@@ -137,6 +138,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(slackChannelRoutes, { prefix: '/api/v1/platform/slack-channels' });
   // Deprecated alias — kept for one release.
   await app.register(slackChannelRoutes, { prefix: '/api/v1/admin/slack-channels' });
+  await app.register(campaignRoutes, { prefix: '/api/v1/campaigns' });
   await app.register(epicRoutes, { prefix: '/api/v1/epics' });
   await app.register(prdRunRoutes, { prefix: '/api/v1/prd-runs' });
   await app.register(adminRoutes, { prefix: '/api/v1/platform' });

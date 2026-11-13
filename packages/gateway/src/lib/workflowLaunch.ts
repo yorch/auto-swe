@@ -379,6 +379,15 @@ export async function launchTrackedWorkflow(
   opts?: {
     log?: { error: (obj: unknown, msg?: string) => void };
     guard?: LaunchGuard;
+    /**
+     * Rows that must exist exactly when the ledger rows do, written in the ledger transaction
+     * AFTER `RunInput` and `ActiveWorkflow` (so a foreign key to the work request holds). A
+     * campaign writes itself and its targets here. If the workflow then fails to start, the
+     * compensation deletes the `RunInput`, and the rows written here go with it only when they
+     * cascade from it — the caller owns that. A unique-constraint failure inside the hook rolls the
+     * whole ledger write back and reads as a `DUPLICATE`.
+     */
+    inTransaction?: (tx: Prisma.TransactionClient) => Promise<void>;
     sourceAuthorization?: LaunchSourceAuthorization;
     /**
      * Who launched the run and through which door (`work-request`, `webhook`, ...), for the
@@ -505,6 +514,9 @@ export async function launchTrackedWorkflow(
         const created = activeWorkflow
           ? await tx.activeWorkflow.create({ data: activeWorkflow as never })
           : null;
+        if (opts?.inTransaction) {
+          await opts.inTransaction(tx);
+        }
         return { activeWorkflowId: created ? (created as { id: string }).id : null };
       }
     );

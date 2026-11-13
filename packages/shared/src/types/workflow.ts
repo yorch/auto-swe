@@ -325,6 +325,79 @@ export interface EpicResult {
   childResults: Record<string, WorkflowResult>;
 }
 
+// ── Campaigns ──
+
+/** The workflow type name the gateway starts for a campaign. */
+export const CAMPAIGN_WORKFLOW_TYPE = 'CampaignWorkflow';
+
+/**
+ * The name of the signal that cancels a campaign. The gateway sends it and the campaign workflow
+ * defines its handler under this exact name, so both import this one constant.
+ */
+export const CAMPAIGN_CANCEL_SIGNAL = 'campaignCancelSignal';
+
+/**
+ * The longest campaign brief, in UTF-16 code units. Every child of a campaign carries the brief in
+ * its start event (its agent and pull-request steps read `request.description`), so the brief is
+ * bounded well below the general description limit: with the control characters and lone
+ * surrogates the launch route refuses, a code unit costs at most 3 bytes of JSON, so one child's
+ * start input stays inside {@link CAMPAIGN_CHILD_INPUT_BUDGET_BYTES}.
+ */
+export const CAMPAIGN_DESCRIPTION_MAX_LENGTH = 8_000;
+
+/**
+ * The most bytes one campaign child's start input (`StartChildWorkflowExecutionInitiated`) may
+ * take. At the 200-target ceiling of `workflow.campaignMaxTargets` that is at most 6.25 MiB of
+ * child start events, under Temporal's 10 MiB history-size warning and far from its 50 MiB limit.
+ */
+export const CAMPAIGN_CHILD_INPUT_BUDGET_BYTES = 32 * 1024;
+
+/** One repository of a campaign, frozen at launch. */
+export interface CampaignTargetInput {
+  /**
+   * The `CampaignTarget` row's id. Every per-target write is keyed on it (with the team), not on
+   * the repository, so a repository deleted after launch (which sets the row's `connectionId` to
+   * NULL) still has its row closed.
+   */
+  targetId: string;
+  connectionId: string;
+  /** The repository's owning team at launch: the tenant key on its `CampaignTarget` row. */
+  teamId: string;
+  /** `org/repo`, a snapshot for display. */
+  repoLabel: string;
+}
+
+/**
+ * Everything the campaign workflow needs, resolved by the gateway at launch. The workflow isolate
+ * reads no settings and no database rows, so the limits, the pinned template and the target order
+ * are all frozen in here.
+ */
+export interface CampaignWorkflowInput {
+  campaignId: string;
+  /** `campaign-<campaignId>`; the prefix of every child's workflow ID. */
+  campaignWorkflowId: string;
+  workRequestId: string;
+  externalTicketId: string;
+  /**
+   * The brief (at most {@link CAMPAIGN_DESCRIPTION_MAX_LENGTH}). The full launch request lives
+   * once, on the campaign's `RunInput` row; it is not carried here or into any child.
+   */
+  description: string;
+  launchedById: string;
+  templateId: string;
+  templateVersion: number;
+  /** The recipe, its parameters and the budget; `connectionId` is added per child. */
+  childPayload: Record<string, unknown>;
+  maxParallel: number;
+  /** In launch order; children start in this order. */
+  targets: CampaignTargetInput[];
+}
+
+export interface CampaignResult {
+  status: 'COMPLETED' | 'COMPLETED_WITH_FAILURES' | 'CANCELLED';
+  childResults: Record<string, WorkflowResult>;
+}
+
 // ── Epic Planning Types (Phase 3) ──
 
 export interface EpicPlanRequest {

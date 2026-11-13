@@ -246,9 +246,11 @@ export async function executeImplementation(
   // A step that implements from untrusted CI text or feedback (it carries
   // `refuseWorkflowChanges`, the same marker the workflow-file refusal keys on) is a fix: the
   // test-integrity guard covers it. Resolved before the paid session, like the fix sessions do.
+  // A step may also set a floor (`testIntegrity: 'block'`), which covers it whether or not it
+  // refuses workflow changes; the setting can only make the mode stricter than the floor.
   const guardMode: TestIntegrityGuardMode =
-    guardOptions?.refuseWorkflowChanges === true
-      ? await resolveTestIntegrityMode(activityCtx)
+    guardOptions?.refuseWorkflowChanges === true || guardOptions?.testIntegrityFloor !== undefined
+      ? await resolveTestIntegrityMode(activityCtx, guardOptions?.testIntegrityFloor)
       : 'off';
   let services: ReturnType<typeof PreviewConfigSchema.parse>['services'];
   {

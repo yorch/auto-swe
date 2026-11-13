@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   IDEMPOTENCY_KEY_MAX_LENGTH,
   IdempotencyHeaderSchema,
+  uuidFromIdempotencyKey,
   workflowIdFromIdempotencyKey,
 } from './idempotency.js';
 
@@ -71,5 +72,22 @@ describe('IdempotencyHeaderSchema', () => {
 
   it('rejects an empty key, which would otherwise alias every caller onto one run', () => {
     expect(IdempotencyHeaderSchema.safeParse({ 'idempotency-key': '' }).success).toBe(false);
+  });
+});
+
+describe('uuidFromIdempotencyKey', () => {
+  const UUID_V8 = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  it('is a version-8 UUID, the same for the same scope and key', () => {
+    const a = uuidFromIdempotencyKey('campaign:u1:t1', 'k');
+    expect(a).toMatch(UUID_V8);
+    expect(uuidFromIdempotencyKey('campaign:u1:t1', 'k')).toBe(a);
+  });
+
+  it('differs across scopes and keys, including a scope/key boundary shift', () => {
+    const a = uuidFromIdempotencyKey('campaign:u1:t1', 'k');
+    expect(uuidFromIdempotencyKey('campaign:u2:t1', 'k')).not.toBe(a);
+    expect(uuidFromIdempotencyKey('campaign:u1:t1', 'k2')).not.toBe(a);
+    expect(uuidFromIdempotencyKey('ab', 'c')).not.toBe(uuidFromIdempotencyKey('a', 'bc'));
   });
 });

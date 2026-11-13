@@ -242,6 +242,7 @@ looks like that.
 | The quality-gate fix (`executeGateFixImplementation`) | yes |
 | The pull-request feedback fix (`executePrFeedbackImplementation`) and its CI follow-up | yes |
 | **The agent-run follow-up (`runAgentPrFeedbackTask`), which resumes the agent that opened the pull request, including the `retryAgentFix` step ("Fix CI with the same agent") of `address-pr-feedback`** | **NO: a CI-fix path that reaches a push with no guard** |
+| The campaign template's two agent steps (`implement` and `fixVerify` in `dependency-upgrade-campaign`) | yes, with a block floor: the step sets `testIntegrity: 'block'`, whatever the setting says (see "A floor on a step") |
 | A review fix (`executeReviewFixImplementation`), which answers a reviewer's comments | no: removing a test can be what the reviewer asked for |
 | The initial implementation of a ticket, and anything a person pushes | no |
 
@@ -313,7 +314,9 @@ Findings:
 | `ci_config_weakened` | in a CI definition (GitHub Actions workflow, `.gitlab-ci.yml`, CircleCI, Jenkinsfile, …) `continue-on-error: true`, `allow_failure: true` or `\|\| true` added, or a test step removed |
 | `test_file_unreadable` | git reports a test source file or a test-configuration file as binary, so its change cannot be read |
 | `gitattributes_changed` | any change to a `.gitattributes` file, which can change how a diff renders |
-| `test_support_deleted` | a fixture, helper or mock under a `test/`, `tests/`, `spec/` or `__tests__/` directory deleted (low) |
+| `test_support_deleted` | a fixture, helper, mock or setup file deleted: anything under a `test/`, `tests/`, `spec/`, `__tests__/`, `__mocks__/`, `fixtures/`, `__fixtures__/`, `src/mocks/`, `testdata/` or `testutil(s)`/`testhelper(s)`/`test-utils`/`test_helpers` directory, a `test-utils.*` module, or a runner setup file (low) |
+| `test_setup_changed` | a test-runner setup file added, changed, deleted or renamed: `jest.setup.*`, `vitest.setup.*`, `setupTests.*`, `test-setup.*`, `setup-jest.*`, `setup.*` under `jest/` or `.jest/`, anything under `cypress/support/`, Angular's `src/test.ts`, `karma.conf.*`, `.rspec`. It runs inside every test and can redefine what an assertion does, so any change is high |
+| `test_double_changed` | a mock (`__mocks__/`, Mock Service Worker's `src/mocks/`), a fixture (`fixtures/`, `__fixtures__/`), a Go `testdata/` (golden) file or a file in a test-helper directory or `test-utils.*` module added or changed (low): it decides what tests compare against, and an upgrade often has to change one |
 | `snapshot_updated` | a `.snap` snapshot changed or removed (low) |
 
 Each finding has a **severity**. `high` findings are the ones `block` mode refuses a change for.
@@ -332,6 +335,55 @@ fixes legitimately rewrite tests is covered by setting its team to `warn` or `of
 | `warn` (default) | The change goes through; the findings are recorded on the run and counted in the report. |
 | `block` | The change is not pushed. The step fails non-retryably with `TEST_INTEGRITY_GUARD` and the findings in its message, when any finding is `high`. Like `SECURITY_GATE_FAILURE` it is not retried, because a retry would re-run the whole paid session and the fixer is likely to repeat itself. |
 | `off` | Not checked, and the commit is the unchanged `git commit`. |
+
+**A floor on a step.** A step can set `testIntegrity` in its config to the weakest guard mode it
+accepts. `block` fails the step before anything is pushed whatever `github.ciFixTestIntegrityGuard`
+says, and the guard then covers the step whether or not it refuses workflow changes. The setting
+can only make the mode stricter than the floor, never looser: a `block` floor with the setting at
+`off` is `block`, a `warn` floor with the setting at `off` is `warn`, and a floor never loosens a
+stricter setting. A `block` floor is answered without reading the setting, so a settings outage
+cannot weaken it. The steps that take the field are `executeImplementation` and
+`executeGateFixImplementation`. A step with no `testIntegrity` behaves exactly as described
+above. The `dependency-upgrade-campaign` template sets the `block` floor on both of its agent
+steps ([maintenance-workflows.md](./maintenance-workflows.md)).
+
+**Protected verification.** The guard reads what an agent changed; it cannot say that a passing
+test is the test the repository had. A `runTests` step with `protectTests: true` closes that gap
+for the verdict. Before the gate's command runs, and before the repository's setup, the gate
+workspace restores every test file, test support file (fixtures, helpers, snapshots, `__mocks__`,
+`src/mocks/`, Go `testdata`, test-helper directories, runner setup files such as `jest.setup.*`,
+`setupTests.*` and `cypress/support/`) and pure test-runner configuration (`jest`, `vitest`, `playwright`, `.mocharc`,
+`pytest.ini`, `phpunit.xml`, …) the change touched to its content at the change's recorded base, and removes the
+test files the change added. The recorded base is `CodeResult.baseSha`: the commit the change was
+measured from, read before any agent or recipe ran (the base branch's tip when the implementer's
+workspace was created, carried forward by a fix session; for a recipe, the base branch's tip the
+recipe step resolved on the host before its clone, which the commit it pushed must have as its
+parent, on a work branch that did not exist before the step). It is never a merge base computed in the gate, because an agent chooses its
+commit's history and could otherwise move the anchor to an older ancestor, restoring older tests and
+dropping every test added since. The comparison is between two trees, the base's and the branch
+tip's, and the gate refuses a branch tip that is not the commit the change reported
+(`CodeResult.headSha`). The restore happens right after the gate's clone and fetch, before the
+repository's setup or any other repository-controlled code runs in the workspace, and its reads use
+the same pinned plumbing as the security scan; the changed-path list carries an end marker, so a
+capture cut short fails closed instead of restoring fewer files. The restore is never committed or
+pushed: the gate workspace is discarded, so the branch keeps the change as made and only the verdict
+ignores it. `package.json`, `go.mod`, `pom.xml`, `pyproject.toml`, lockfiles and
+other manifests are never restored, because they carry the change itself; the guard's heuristics
+are what read them.
+
+The files are written without the repository's own git configuration: the restore runs against a
+fresh git directory that shares only the object database, so a filter driver, hook, `fsmonitor`
+command, `core.worktree` or `info/attributes` the checkout names does not run, and a tracked
+`.gitattributes` that names a filter has no driver to run. After the restore the work tree is
+compared with the base tree at the restored paths and the added files are checked absent. The
+restore is recorded as a `campaign.protected_tests` activity event (the base, up to 50 paths of each
+list and the full counts) and noted in the gate's summary.
+
+Protected verification fails closed. When the change carries no recorded base, the base is not in
+the history (a shallow history is deepened first), the branch tip is not the reported commit, the
+changed paths cannot be read in full, a file cannot be restored or the check after the restore
+disagrees, the gate does not run: the activity fails non-retryably as `PROTECTED_TESTS_UNAVAILABLE`.
+A gate that cannot say the tests are the originals does not pass them.
 
 **Where a blocked fix goes.** The fixer is never told why it failed, and the findings are not
 passed on to a person by a template: the step fails with the typed error, and the template's
@@ -488,6 +540,20 @@ See [github-app-setup.md](./github-app-setup.md).
   seen. The review fix, a person's edit and **the agent-run pull-request follow-up (the
   `retryAgentFix` step, "Fix CI with the same agent", of `address-pr-feedback`) are not checked: that
   CI-fix path reaches a push with no guard** (§2.4).
+- **Protected verification covers tests by file-name convention.** A test the restore does not
+  recognise as one is not restored: inline tests (Rust `#[cfg(test)]`, doctests), tests outside the
+  naming conventions, test settings inside a dependency manifest (only the guard's heuristics read
+  those), and helpers under `src/`. The gate's command is not protected either: it comes from the
+  step, the repository's gate commands or the default, and a default such as `yarn test` runs a
+  `package.json` script an agent could have edited, which only the guard's `test_command_changed`
+  and `test_run_bypassed` findings catch. The restore bounds what an edited test file can do, not
+  what the change's code can do: the repository's setup and the test command run after it, and both
+  run the branch's own code (a lifecycle script in a changed `package.json`, source a test imports),
+  which could rewrite a restored file before the tests read it. The host's own CI on the pull request
+  runs the branch as pushed, with the tests the agent left.
+- **Protected verification makes a breaking upgrade fail.** A change that legitimately needs a test
+  updated has that test put back for the verdict, so it fails verification and ends without a pull
+  request. It verifies behaviour-preserving changes.
 - **A replaced `git` binary defeats every git-based check.** The guard, the path guard and the push
   all trust the `git` the workspace image provides, and the agent runs as root in that container.
   Replacing `git` (or `sh`) hands the guard whatever diff the agent wants it to read. Pinning the

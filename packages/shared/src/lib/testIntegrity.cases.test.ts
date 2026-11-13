@@ -346,6 +346,69 @@ describe('cheap evasions', () => {
     expect(kinds(diff)).toContain(kind);
   });
 
+  it.each([
+    ['a jest setup file', 'jest.setup.js'],
+    ['a CRA setupTests', 'src/setupTests.ts'],
+    ['a vitest setup file', 'vitest.setup.ts'],
+    ['karma.conf.js', 'karma.conf.js'],
+    ['a Cypress support file', 'cypress/support/e2e.ts'],
+    ['a jest/ setup file', 'jest/setup.js'],
+    ['a .jest/ setup file', '.jest/setup.ts'],
+    ['a setup-jest file', 'src/setup-jest.ts'],
+    ["Angular's Karma entry", 'src/test.ts'],
+  ])('flags an edit to %s as high: it runs inside every test', (_name, path) => {
+    const result = analyseTestIntegrity(
+      modify(
+        path,
+        ["require('@testing-library/jest-dom');"],
+        [
+          "require('@testing-library/jest-dom');",
+          'const noop = () => new Proxy(function () {}, { get: () => noop(), apply: () => noop() });',
+          'global.expect = noop;',
+        ]
+      )
+    );
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ file: path, kind: 'test_setup_changed', severity: 'high' })
+    );
+  });
+
+  it('flags a new setup file and one renamed away', () => {
+    expect(kinds(create('vitest.setup.ts', ['globalThis.expect = () => ({});']))).toContain(
+      'test_setup_changed'
+    );
+    expect(kinds(rename('jest.setup.js', 'jest.setup.old.txt'))).toContain('test_setup_changed');
+  });
+
+  it.each([
+    ['a module mock', '__mocks__/lodash.js'],
+    ['a Go golden file', 'pkg/render/testdata/golden.html'],
+    ['a Go test helper', 'internal/testutil/fake.go'],
+    ['a test-utils module', 'src/test-utils.tsx'],
+    ['a fixture', 'fixtures/user.json'],
+    ['a __fixtures__ file', 'src/__fixtures__/user.json'],
+    ['a Mock Service Worker handler', 'src/mocks/handlers.ts'],
+  ])('records an edit to %s as a low test_double_changed', (_name, path) => {
+    const result = analyseTestIntegrity(modify(path, ['<p>expected</p>'], ['<p>anything</p>']));
+    expect(result.findings).toEqual([
+      expect.objectContaining({ file: path, kind: 'test_double_changed', severity: 'low' }),
+    ]);
+  });
+
+  it('counts the new support paths as test support, so their deletion is recorded', () => {
+    for (const path of ['__mocks__/a.js', 'x/testdata/b.json', 'jest.setup.js']) {
+      expect(isTestSupportPath(path)).toBe(true);
+    }
+    expect(kinds(remove('__mocks__/lodash.js', ['module.exports = {};']))).toContain(
+      'test_support_deleted'
+    );
+  });
+
+  it('leaves Babel and Vite configuration alone: they configure the production build too', () => {
+    expect(kinds(modify('babel.config.js', ['a'], ['b']))).toEqual([]);
+    expect(isTestSupportPath('babel.config.js')).toBe(false);
+  });
+
   it('snapshot and fixture signals never carry high severity', () => {
     const result = analyseTestIntegrity(
       modify('src/__snapshots__/a.test.ts.snap', ['x'], ['y']) +
@@ -376,12 +439,14 @@ describe('helpers', () => {
         'D\tsrc/a.test.ts',
         'R100\tsrc/b.test.ts\tsrc/b.old.ts',
         'M\t.gitattributes',
+        'M\tsrc/setupTests.ts',
       ].join('\n')
     );
     expect(findings.map((f) => f.kind)).toEqual([
       'test_file_deleted',
       'test_file_deleted',
       'gitattributes_changed',
+      'test_setup_changed',
     ]);
   });
 });

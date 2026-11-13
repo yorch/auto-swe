@@ -126,7 +126,7 @@ import { registryWorkspaceEnv } from '../lib/registryProxy/render.js';
 import type { WorkspaceRegistryAccess } from '../lib/registryProxy/workspaceWiring.js';
 import { getScmProvider } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
-import { finalizeScript, runShellStep } from './shellStep.js';
+import { finalizeScript, parseFinalizeOutput, runShellStep } from './shellStep.js';
 import { GIT_AUTH_ENV, shellQuote } from './workspace.js';
 
 // The clone is issued hardened (`git -c … clone --depth=50 …`), so `git clone` never appears.
@@ -219,6 +219,61 @@ describe('runShellStep — git identity', () => {
     );
     expect(clone).not.toContain("user.name 'auto-swe'");
     expect(clone).not.toContain('auto-swe@localhost');
+  });
+});
+
+describe('runShellStep — newBranchOnly', () => {
+  it('never runs the command on a branch that already exists on the host', async () => {
+    // The default helper answers every clone, so the work branch itself is cloned: it exists.
+    const result = await runShellStep({
+      command: 'echo hi',
+      image: 'alpine/git:latest',
+      newBranchOnly: true,
+      request: REQUEST,
+    });
+
+    expect(result).toMatchObject({
+      branchExisted: true,
+      exitCode: -1,
+      filesChanged: [],
+      passed: false,
+      persisted: false,
+    });
+    expect(result.summary).toMatch(/auto\/JIRA-1 already exists on the host/);
+    expect(mockedRunEphemeral).not.toHaveBeenCalled();
+    expect(helperScripts().some((s) => s.includes('push --no-verify'))).toBe(false);
+    // The volume is still removed.
+    expect(backendRemoveVolume).toHaveBeenCalled();
+  });
+
+  it('runs as usual when the branch does not exist yet and is cut from the default branch', async () => {
+    mockedExec.mockImplementation(async (command: string) => {
+      if (command.includes(`-b ${shellQuote('auto/JIRA-1')}`)) {
+        const err = new Error('fatal') as Error & { stderr?: string };
+        err.stderr = 'Remote branch auto/JIRA-1 not found in upstream origin';
+        throw err;
+      }
+      return '';
+    });
+    const result = await runShellStep({
+      command: 'echo hi',
+      image: 'alpine/git:latest',
+      newBranchOnly: true,
+      request: REQUEST,
+    });
+
+    expect(result.branchExisted).toBeUndefined();
+    expect(mockedRunEphemeral).toHaveBeenCalledTimes(1);
+  });
+
+  it('without it, an existing branch is cloned and built on', async () => {
+    const result = await runShellStep({
+      command: 'echo hi',
+      image: 'alpine/git:latest',
+      request: REQUEST,
+    });
+    expect(result.branchExisted).toBeUndefined();
+    expect(mockedRunEphemeral).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1043,5 +1098,27 @@ describe('runShellStep — registry wiring', () => {
     });
     expect(buildAllowlistMock).not.toHaveBeenCalled();
     expect(released).not.toHaveBeenCalled();
+  });
+});
+
+describe('parseFinalizeOutput', () => {
+  it('reads a SHA-1 commit id and the changed paths', () => {
+    const sha = 'a'.repeat(40);
+    expect(parseFinalizeOutput(`${sha}\npackage.json\npackage-lock.json\n`)).toEqual({
+      committedSha: sha,
+      filesChanged: ['package.json', 'package-lock.json'],
+    });
+  });
+
+  it('reads a SHA-256 repository’s 64-hex commit id as the commit, not as a changed path', () => {
+    const sha = 'b'.repeat(64);
+    expect(parseFinalizeOutput(`${sha}\ngo.mod\ngo.sum\n`)).toEqual({
+      committedSha: sha,
+      filesChanged: ['go.mod', 'go.sum'],
+    });
+  });
+
+  it('reports no commit when nothing changed', () => {
+    expect(parseFinalizeOutput('NO_CHANGES\n')).toEqual({ filesChanged: [] });
   });
 });

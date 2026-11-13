@@ -9,6 +9,7 @@ export type AuditEntityType =
   | 'Automation'
   | 'AutonomyPolicy'
   | 'Bundle'
+  | 'Campaign'
   | 'CallbackEndpoint'
   | 'ConfigPermission'
   | 'Connection'
