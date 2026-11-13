@@ -49,7 +49,7 @@ person re-running it, and re-validates everything: the agent may have been deact
 lowered, or the caller's access revoked since. The generic `POST /work-requests/:id/retry` refuses an
 agent run (`USE_AGENT_RUN_RERUN`): agent delivery requires a fresh ticket and branch for each
 attempt. The agent re-run endpoint accepts optional `instructions` (up to 4,000 characters), appends
-them to the original task for that attempt, and leaves the original request unchanged.
+them to the original task for that attempt, and leaves the original request unchanged. A re-run records the previous run as `rerunOfRunId` ([run-provenance.md](./run-provenance.md)).
 
 ### Who may launch, and as whom
 

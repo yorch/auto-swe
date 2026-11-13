@@ -139,7 +139,7 @@ cannot.
 ## 5. Attribution and visibility
 
 A principal's run records it in `RunInput.requestedByServiceId`; `requestedById` and `launchedById` are
-null, which is what makes the worker use the platform credential.
+null, which is what makes the worker use the platform credential. A run started with a service token records the principal as `initiatedByServiceId` with trigger `service-token`, and run lists show it by name ([run-provenance.md](./run-provenance.md)).
 
 Who else sees it follows the run's repository, exactly as for a person's run: a run on a repository is
 visible to those who reach the repository (owning or shared team, under the [access

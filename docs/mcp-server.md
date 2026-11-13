@@ -105,11 +105,11 @@ is refused, not ignored.
 |---|---|---|
 | `list_templates` | `GET /api/v1/workflow-templates` | Only visible ACTIVE, promoted, non-system templates: `id`, sanitised `name`, `description` (500 code points), and reduced `inputSchema`. The schema retains `type: object`, property names/types, `required`, enum values, UUID format, array item types/enums and descriptions (280 code points); no defaults, prompts, nodes, spec or author. Unsupported/absent schemas return null, empty contracts retain empty properties. Contracts are bounded to 100 fields and 50 enum values; unsafe or overlong keys/enums make the schema null rather than changing payload semantics. Repository access and budget are checked at launch. |
 | `list_agents` | `GET /api/v1/agent-runs/agents` | Launchable agents: `key`, `version`, `name`, and a sanitised description clipped to 300 code points. Optional `repoId` resolves organization overrides as the launch does. No prompts, models, skills or tools. |
-| `wait_for_run` | Polls `GET /api/v1/workflow-runs`, `GET /api/v1/workflow-runs/:id`, and `GET /api/v1/human-steps?runId=…` | Exactly one of `runId` or `workRequestId`, and `timeoutSeconds` (default 25, schema maximum 600). Without request `_meta.progressToken`, clamps the timeout to 50 seconds. With a token, allows 600 seconds and emits progress per poll. Returns the `get_run` fields plus `changed` and `pendingHumanStep` (`id`, sanitised `title`, `inboxUrl`, or null). Returns on a status change, terminal status, pending human step, or timeout. When no run row exists yet, waits for one; a timeout without a row returns only `changed: false` and `pendingHumanStep: null`. Honors request cancellation. |
+| `wait_for_run` | Polls `GET /api/v1/workflow-runs`, `GET /api/v1/workflow-runs/:id`, and `GET /api/v1/human-steps?runId=…` | Exactly one of `runId` or `workRequestId`, and `timeoutSeconds` (default 25, schema maximum 600). Without request `_meta.progressToken`, clamps the timeout to 50 seconds. With a token, allows 600 seconds and emits progress per poll. Returns the `get_run` fields (provenance included) plus `changed` and `pendingHumanStep` (`id`, sanitised `title`, `inboxUrl`, or null). Returns on a status change, terminal status, pending human step, or timeout. When no run row exists yet, waits for one; a timeout without a row returns only `changed: false` and `pendingHumanStep: null`. Honors request cancellation. |
 | `list_repositories` | `GET /api/v1/repositories` | `id`, `organizationName`, `repoName`, `defaultBranch`, `isActive`, `team` (`id`, `name`, `slug`). Git repositories only. Inputs: `limit` (default 50, max 100), `offset`. |
 | `list_work_requests` | `GET /api/v1/work-requests` | `id`, `externalTicketId`, `createdAt`, `isMine`, and the work request's workflows as `id` and `status`. No description and no requester's name. Inputs: `limit`, `offset`, `ticket` (substring of the ticket id). |
-| `list_runs` | `GET /api/v1/workflow-runs` | `id`, `status`, `templateName`, `startedAt`, `endedAt`, `costUsdAccrued`, `workRequest` (`id`, `externalTicketId`). Inputs: `limit`, `offset`, `status`, `workRequestId`. |
-| `get_run` | `GET /api/v1/workflow-runs/:id` | `id`, `status`, `templateName`, timestamps, `costUsdAccrued`, token totals, `steps` as `nodeId`, `status`, `attempt`, `failed`, `result`, `workRequest`, `dashboardUrl`, `branch`, `failure`, and `diffStat`. Input: `runId` (a UUID). |
+| `list_runs` | `GET /api/v1/workflow-runs` | `id`, `status`, `templateName`, `startedAt`, `endedAt`, `costUsdAccrued`, `workRequest` (`id`, `externalTicketId`), and the provenance fields `trigger`, `triggerRefId`, `initiatedBy`, `initiatedByService` and `rerunOfRunId` ([run-provenance.md](./run-provenance.md)). Inputs: `limit`, `offset`, `status`, `workRequestId`. |
+| `get_run` | `GET /api/v1/workflow-runs/:id` | `id`, `status`, `templateName`, timestamps, the provenance fields (`trigger`, `triggerRefId`, `initiatedBy`, `initiatedByService`, `rerunOfRunId`), `costUsdAccrued`, token totals, `steps` as `nodeId`, `status`, `attempt`, `failed`, `result`, `workRequest`, `dashboardUrl`, `branch`, `failure`, and `diffStat`. Input: `runId` (a UUID). |
 | `list_pending_human_steps` | `GET /api/v1/human-steps` | `id`, `runId`, `kind`, `nodeId`, `title`, `requestedAt`, `timeoutAt`, `requiredApprovers`, `currentApprovers`, `inboxUrl`, and `truncated`. Pending steps on runs the caller can see (every team's for an administrator), at most 100, newest first; `truncated` is true when the cap was reached. No inputs. |
 
 Paged list tools return `total`, `limit` and `offset` beside their rows. `get_run.branch` is a validated work branch from the stored result, or null when unknown. `failure` is null unless the run failed or timed out; then it is `{ type }`, a fixed enum of the agent-run viewer's known refusal types, `TIMED_OUT`, or `UNKNOWN`, never an error message. `diffStat` sums the already stored result's file line counts as `filesChanged`, `insertions`, and `deletions`, or is null when absent. No diff or file paths are returned. `get_run.result` is exactly
@@ -118,12 +118,19 @@ returns `structuredContent` that matches its `outputSchema`, and the same JSON a
 
 **What is never returned.** Output is built from an explicit allowlist, because a tool result lands in a
 model's context and anything another person wrote is a prompt-injection channel. A tool never returns a
-work request's description, a requester's name or email, a step's error, inputs or outputs, a run's
+work request's description, a work request's requester name or email (a run's initiator is the one exception, below), a step's error, inputs or outputs, a run's
 context or spec snapshot, traces, a human step's context, fields or options, a repository's
 description, configuration or credentials, or a link other than the dashboard's and the pull request's.
+
 A ticket id that is outside the characters the submit route accepts is returned as `null`. The few names
 a team member authors (a template, a workflow node, a human step's title) are clipped and stripped of
 control characters, and are still text a person wrote. Characters a person cannot see but a model reads (zero-width and bidirectional-override characters, the Unicode tag block, private-use characters, unpaired surrogates) are removed, and names are clipped by code point.
+
+**The one exception: a run's provenance.** `list_runs`, `get_run` and `wait_for_run` return `trigger`,
+`triggerRefId`, `initiatedBy` (`id`, `name`, `email`), `initiatedByService` (`id`, `name`) and
+`rerunOfRunId` for runs the caller may see, the same as the REST run endpoints
+([run-provenance.md](./run-provenance.md)). Control and bidirectional characters are stripped and
+lengths clipped, but the name, email and service name are user-controlled text and remain untrusted.
 
 Not exposed: answering or approving a human step, merging, retrying, any write other than the four below,
 template editing or specs, traces, and every administrative surface. `list_pending_human_steps` shows that a person is needed and where to go;
@@ -377,8 +384,9 @@ and needs no restart. None is read only at startup.
 - The domain tools cover teams, pull requests and agent-run limits. Most other things the dashboard
   reads (library, knowledge, reports, usage, platform configuration) and every dashboard write other
   than the four write tools are available through the REST API but not over MCP.
-- A team's members are returned as user ids and roles. A client that needs a person's name or email
-  must ask for it in the dashboard; no MCP tool resolves an id to a person.
+- A team's members are returned as user ids and roles. `get_team` resolves no id to a person, but the
+  run tools return an initiator's `id`, name and email, so a client can map member ids to emails for
+  the people who initiated runs it can see. Any other name or email must come from the dashboard.
 - Consent is read or write, not per repository or per tool: a token reads everything its user can read.
 - `list_repositories` filters out the connections that are not git repositories after the route has
   counted them, so its `total` can exceed the rows a client can ever page through.
