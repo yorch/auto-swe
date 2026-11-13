@@ -40,6 +40,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/agentPrompts.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/stableJson',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/stableJson.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/assistantAction',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/assistantAction.ts'),
       },

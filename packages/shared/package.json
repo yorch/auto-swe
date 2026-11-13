@@ -30,6 +30,7 @@
     "./lib/transcripts/normalize": "./dist/lib/transcripts/normalize.js",
     "./lib/transcripts/piiScrub": "./dist/lib/transcripts/piiScrub.js",
     "./lib/assistantAction": "./dist/lib/assistantAction.js",
+    "./lib/stableJson": "./dist/lib/stableJson.js",
     "./lib/assistantConversation": "./dist/lib/assistantConversation.js",
     "./lib/docFiles": "./dist/lib/docFiles.js",
     "./lib/docSearch": "./dist/lib/docSearch.js",

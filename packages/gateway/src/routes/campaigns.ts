@@ -9,6 +9,7 @@ import { parseRecipeParams } from '@auto-swe/shared/lib/campaignRecipes';
 import { isGitHubRepository } from '@auto-swe/shared/lib/githubHostScope';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
+import { stableStringify } from '@auto-swe/shared/lib/stableJson';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
   BUDGET_TIERS,
@@ -108,6 +109,22 @@ function emptyCounts(): TargetCounts {
 
 const LEAD_ROLES = new Set(['LEAD', 'ADMIN']);
 
+/**
+ * Whether a stored launch request and a new one are the same request, compared in a canonical
+ * form (keys sorted at every depth): a client that serialises `recipe.params` in another key order
+ * is retrying, not asking for something else.
+ */
+function sameRequest(stored: string | null | undefined, current: string): boolean {
+  if (typeof stored !== 'string') {
+    return false;
+  }
+  try {
+    return stableStringify(JSON.parse(stored)) === stableStringify(JSON.parse(current));
+  } catch {
+    return false;
+  }
+}
+
 export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -194,7 +211,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         });
         // Wrapped: a Fastify reply is a thenable, so an async function returning one bare would
         // resolve to the send's completion (undefined), not to the reply.
-        if (stored?.requestPayload !== requestPayload) {
+        if (!sameRequest(stored?.requestPayload, requestPayload)) {
           return {
             reply: sendError(
               reply,

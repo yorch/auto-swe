@@ -1020,6 +1020,50 @@ describe('campaign routes', () => {
       expect(started).toHaveLength(1);
     });
 
+    it('treats the same request with its keys in another order as a retry, not a mismatch', async () => {
+      const first = await postKeyed(
+        {
+          ...valid,
+          recipe: {
+            params: { packageName: 'lodash', targetVersion: '4.17.21' },
+            ref: 'npm-dependency@1',
+          },
+        },
+        'launch-order'
+      );
+      expect(first.statusCode).toBe(201);
+      // Every object, recipe.params included, serialised in another key order.
+      const reordered = {
+        description: valid.description,
+        name: valid.name,
+        ownerTeamId: valid.ownerTeamId,
+        recipe: {
+          params: { packageName: 'lodash', targetVersion: '4.17.21' },
+          ref: 'npm-dependency@1',
+        },
+        repoIds: valid.repoIds,
+      };
+      const retry = await postKeyed(reordered, 'launch-order');
+      expect(retry.statusCode).toBe(200);
+      expect(body(retry).data).toMatchObject({
+        campaignId: body(first).data.campaignId,
+        deduplicated: true,
+      });
+      expect(started).toHaveLength(1);
+      // A different value in the same position is still a different request.
+      const changed = await postKeyed(
+        {
+          ...reordered,
+          recipe: {
+            ...reordered.recipe,
+            params: { ...reordered.recipe.params, targetVersion: '4.17.20' },
+          },
+        },
+        'launch-order'
+      );
+      expect(changed.statusCode).toBe(422);
+    });
+
     it('scopes the key to the caller: another LEAD with the same key gets its own campaign', async () => {
       const first = body(await postKeyed(valid, 'shared-key')).data;
       currentSub = 'user-2';

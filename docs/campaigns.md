@@ -344,7 +344,8 @@ An optional `Idempotency-Key` header (1 to 255 characters) makes a retried launc
 campaign's id, and so its workflow ID, is then derived from the key, scoped to the caller and the
 owning team (a version-8 UUID of a SHA-256 digest), instead of being random. A request whose key
 already launched a campaign answers `200` with the same body plus `deduplicated: true` when the
-request is the same, and `422 IDEMPOTENCY_KEY_MISMATCH` when it differs; it is answered right after
+request is the same (compared with object keys sorted at every depth, so a client that serialises
+`recipe.params` in another order is retrying), and `422 IDEMPOTENCY_KEY_MISMATCH` when it differs; it is answered right after
 the owning-team check, before anything the first launch passed is checked again. Two concurrent
 requests with one key launch once: the second collides on the ledger's unique workflow ID and is
 answered with the first. Without the header every launch is a new campaign.
