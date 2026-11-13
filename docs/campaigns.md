@@ -129,7 +129,7 @@ whole interface:
 | Exit | Meaning | What happens |
 |---|---|---|
 | 0, files changed | The recipe made the change | It is verified (§5) |
-| 0, nothing changed | **Not affected**: the repository does not use the package or module, has no root manifest, or is already at the version | The child ends `SUCCESS` with `changed: false`; no pull request |
+| 0, nothing changed | **Not affected**: the root manifest does not declare the package (npm) or require the module (Go), there is no root manifest, or it is already at the version. A package used only transitively counts as not affected (see Limitations) | The child ends `SUCCESS` with `changed: false`; no pull request |
 | 3 | **Cannot apply**: a Yarn, pnpm or Bun lockfile, an npm shrinkwrap, no `package-lock.json`, a workspaces repository that does not list the package at its root, or a dependency declared as something other than a plain version range | Nothing was pushed; the agent takes over |
 | 4 | The tool ran but the lockfile or `go.mod` does not end at the requested version | Nothing was pushed; the agent takes over |
 | other non-zero | The tool failed (install error, no network) | Nothing was pushed; the agent takes over |
@@ -421,6 +421,19 @@ whose workflow was gone) and the actor. See [audit-log.md](./audit-log.md).
   recipes, have no deterministic path. A recipe sets an exact version, so it can also lower one.
   The egress policy of the run can make a recipe's install fail, which sends the repository to the
   agent.
+- **"Not affected" means "not declared at the root".** `npm-dependency@1` reads only the root
+  `package.json`'s `dependencies`, `devDependencies` and `optionalDependencies`, so a package the
+  repository gets only transitively (through another dependency, present in `package-lock.json`)
+  is reported `NOT_AFFECTED` and nothing is changed, even when the lockfile pins the version the
+  campaign is raising it from; npm `overrides` are not written. `go-module@1` reads only the
+  `require` lines of `go.mod`: a module the build gets only through another module is not
+  affected, and a `replace` directive for the module is neither read nor changed, so a recipe can
+  raise the `require` line and report the change while the `replace` keeps the build on another
+  version or a local path. Verification runs the build as the `replace` makes it.
+- **No database-backed test of the campaign activities.** The record, finalize and re-check
+  activities are unit-tested against a mocked Prisma client; there is no `*.pg.test.ts` suite that
+  runs their `updateMany` predicates and the new foreign keys against PostgreSQL, so a predicate
+  the mock accepts but the database reads differently would surface only in a deployment.
 - **Verification fails breaking upgrades by design.** A change that legitimately needs a test
   updated fails protected verification and ends `FAILED` with `verification: FAILED` and no pull
   request. Campaigns suit behaviour-preserving changes. When the original tests cannot be restored

@@ -124,8 +124,9 @@ are validated against a strict shape (a registry package name or a Go module pat
 version), by the gateway at launch and again by the worker, and reach the script only as quoted
 environment values. `npm-dependency@1` handles a root `package.json` with a `package-lock.json`
 (`npm install --package-lock-only --ignore-scripts`, keeping the declared range style and
-section); `go-module@1` handles a root `go.mod` (`go get`, `go mod tidy`). A repository that does not
-use the package, or already has the version, changes nothing. A layout the recipe cannot handle (a
+section); `go-module@1` handles a root `go.mod` (`go get`, `go mod tidy`). A repository whose root
+manifest does not declare the package (a transitive-only use included), or already has the
+version, changes nothing ([campaigns.md, Limitations](./campaigns.md#limitations)). A layout the recipe cannot handle (a
 Yarn, pnpm or Bun lockfile, an npm shrinkwrap, a workspaces repository that does not list the
 package at its root, a dependency declared as a Git or file specifier, an install that fails) exits
 non-zero and pushes nothing.
