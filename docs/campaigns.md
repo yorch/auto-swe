@@ -183,7 +183,7 @@ Each `CampaignTarget` records one repository's outcome.
 | `RUNNING` | Its child run is in flight; the detail view adds a `liveStatus` from the child's ledger row |
 | `PR_OPENED` | A draft pull request was opened (`prUrl`, `prNumber`) |
 | `NOT_AFFECTED` | The child finished with nothing to change |
-| `FAILED` | The child failed, timed out, could not be started, or succeeded without opening a pull request or reporting `changed: false`; `failureReason` says why (at most 500 characters, control characters removed, credential-shaped text masked) |
+| `FAILED` | The child failed, timed out, could not be started, was cancelled on its own (outside the campaign), or succeeded without opening a pull request or reporting `changed: false`; `failureReason` says why (at most 500 characters, control characters removed, credential-shaped text masked) |
 | `SKIPPED` | The child run ended `SKIPPED` |
 | `CANCELLED` | The campaign was cancelled before the target started, or before its child finished successfully |
 
@@ -288,6 +288,14 @@ Cancelling stops what has not finished and leaves what has:
   `CANCELLED`. A child that still ends `SUCCESS` (its draft was opened before the cancel reached
   it) keeps `PR_OPENED` or `NOT_AFFECTED`.
 - Targets that already finished keep their outcome.
+- Only the campaign's own cancel cancels the campaign: the cancel route's signal, or a cancel of
+  the campaign's workflow itself. A single child run cancelled on its own (through the run's cancel
+  route or the Temporal UI) is that target's outcome, `FAILED` with the reason "the child run was
+  cancelled outside the campaign", and the campaign goes on starting the rest. It is `FAILED`
+  rather than `CANCELLED` because `CANCELLED` records that the campaign's permission-checked,
+  audited cancel stopped the target; a run cancelled through its own route has that route's audit
+  row, and to the campaign it is a target that ended without a verdict, so the campaign finishes
+  `COMPLETED_WITH_FAILURES`.
 - Cancelling the campaign's workflow directly (from Temporal) behaves the same as the cancel
   route's signal: the finalizer still runs.
 - Draft pull requests already opened stay open. They are listed in the detail view for people to

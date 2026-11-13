@@ -385,6 +385,37 @@ describe('CampaignWorkflow — cancel', () => {
     }
   }, 60_000);
 
+  it('a child cancelled on its own fails that target and does not cancel the campaign', async () => {
+    if (!env) {
+      return;
+    }
+    const ids = repoIds(4);
+    // repo-1 parks (the default); the others finish, so the rest of the queue must still start.
+    for (const id of ['repo-2', 'repo-3', 'repo-4']) {
+      scripts.set(id, { delayMs: 60_000, kind: 'result', result: { changed: false } });
+    }
+    const handle = await env.client.workflow.start('CampaignWorkflow', {
+      args: [campaignInput(ids, { maxParallel: 2 })],
+      taskQueue: TASK_QUEUE,
+      workflowId: CAMPAIGN_WORKFLOW_ID,
+    });
+    await waitFor(() => launches.length === 2 && inFlight === 2, 'two children in flight');
+    // A per-run cancel of one child, as the run's own cancel route or the Temporal UI sends it.
+    await env.client.workflow.getHandle(`${CAMPAIGN_WORKFLOW_ID}-repo-1`).cancel();
+    const result = await handle.result();
+
+    expect(result.status).toBe('COMPLETED_WITH_FAILURES');
+    expect(launches.map((l) => l.repoId).sort()).toEqual(ids);
+    expect(finalizations).toHaveLength(1);
+    expect(finalizations[0].cancelled).toBe(false);
+    expect(finalizations[0].notStarted).toEqual([]);
+    const cancelledOne = results.find((r) => r.connectionId === 'repo-1');
+    expect(cancelledOne).toMatchObject({ cancelled: false, status: 'FAILED' });
+    expect(cancelledOne?.skippedReason).toMatch(/cancelled outside the campaign/);
+    expect(results.filter((r) => r.cancelled)).toEqual([]);
+    expect(domainStates.at(-1)).toBe('FAILED');
+  }, 60_000);
+
   it('cancelling the campaign workflow itself behaves the same and still finalizes', async () => {
     if (!env) {
       return;

@@ -76,6 +76,10 @@ export const campaignCancelSignal = defineSignal(CAMPAIGN_CANCEL_SIGNAL);
 /** Longest rejection text carried in a synthesized result (the activity bounds it again). */
 const REASON_MAX = 500;
 
+/** The failure reason of a target whose child run was cancelled outside the campaign. */
+const CHILD_CANCELLED_REASON =
+  'the child run was cancelled outside the campaign; the campaign itself was not cancelled';
+
 /** The messages along an error's cause chain: a child's real failure sits below its wrapper. */
 function errorText(err: unknown): string {
   const parts: string[] = [];
@@ -147,15 +151,18 @@ export async function CampaignWorkflow(input: CampaignWorkflowInput): Promise<Ca
       await recordStarted;
       result = (await handle.result()) as WorkflowResult;
     } catch (err: unknown) {
-      const wasCancelled = cancelled || isCancellation(err);
-      if (wasCancelled) {
-        cancelled = true;
-      }
+      // Only the campaign's own cancel (the signal, or a cancel of this workflow, both through
+      // `childScope`) sets `cancelled`. A child that was cancelled on its own, through the run's
+      // cancel route or the Temporal UI, is that target's outcome: it ends FAILED with the reason,
+      // and the campaign carries on starting the rest. Letting it set the campaign-wide flag would
+      // stop every queued target without the campaign cancel's permission check or audit row.
       result = {
         lessonsGenerated: [],
-        skippedReason: wasCancelled
+        skippedReason: cancelled
           ? 'campaign cancelled'
-          : `child failed to start or errored: ${errorText(err)}`,
+          : isCancellation(err)
+            ? CHILD_CANCELLED_REASON
+            : `child failed to start or errored: ${errorText(err)}`,
         status: 'FAILED',
         totalCIRetries: 0,
         totalReviewRetries: 0,
