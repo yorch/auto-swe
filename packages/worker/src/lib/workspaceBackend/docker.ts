@@ -578,17 +578,25 @@ export function buildEgressHelperCommand(
   if (!WORKSPACE_NAME_RE.test(containerName)) {
     throw new Error(`egress lock: invalid workspace name ${JSON.stringify(containerName)}`);
   }
-  return `docker run --rm ${workspaceLabelArgs().join(' ')} --network container:${containerName} --cap-add=NET_ADMIN --security-opt=no-new-privileges -- ${shellQuote(image)} sh -c ${shellQuote(script)}`;
+  return `docker run --rm ${workspaceLabelArgs().join(' ')} --label auto-swe.profile=iptables --network container:${containerName} --cap-drop=ALL --cap-add=NET_ADMIN --memory=256m --cpus=1 --pids-limit=128 --security-opt=no-new-privileges -- ${shellQuote(image)} sh -c ${shellQuote(script)}`;
 }
 
 /** The `--add-host` entry that makes the Docker host alias resolve to the host gateway. */
 const workerHostEntry = () => `--add-host=${DOCKER_HOST_ALIAS}:host-gateway`;
 
-async function workspaceResolutionContext(containerId: string, networkOwner = containerId) {
-  const current = await spawnCaptureAsync('docker', ['exec', containerId, 'cat', '/etc/hosts'], {
-    heartbeatLabel: 'workspace: reading hosts',
-    timeoutMs: 30_000,
-  });
+async function workspaceResolutionContext(
+  containerId: string,
+  networkOwner = containerId,
+  asRoot = false
+) {
+  const current = await spawnCaptureAsync(
+    'docker',
+    ['exec', ...(asRoot ? ['-u', 'root'] : []), containerId, 'cat', '/etc/hosts'],
+    {
+      heartbeatLabel: 'workspace: reading hosts',
+      timeoutMs: 30_000,
+    }
+  );
   if (current.exitCode !== 0) {
     throw new Error('egress lock: cannot read the workspace /etc/hosts');
   }
@@ -636,7 +644,7 @@ export async function installBaselineEgress(
   }
   const allow: BaselineAllow[] = [];
   if (infra.blockPrivateEgress) {
-    const { mapped, trusted } = await workspaceResolutionContext(spec.name);
+    const { mapped, trusted } = await workspaceResolutionContext(spec.name, spec.name, true);
     const resolve = (host: string) => resolveInWorkspace(spec.name, host, mapped);
     const proxies =
       proxyUrls ??
@@ -738,14 +746,14 @@ export async function assertDockerDiskLimit(): Promise<void> {
   }
   try {
     await execShellAsync(
-      `docker run --rm --storage-opt ${shellQuote(`size=${infra.diskLimit}`)} -- ${shellQuote(infra.metadataBlockImage)} true`,
+      `docker run --rm --label auto-swe.profile=probe --cap-drop=ALL --security-opt=no-new-privileges --memory=128m --cpus=1 --pids-limit=64 --storage-opt ${shellQuote(`size=${infra.diskLimit}`)} -- ${shellQuote(infra.metadataBlockImage)} true`,
       { heartbeatLabel: 'workspace: probing Docker disk quota' }
     );
     const name = `workspace-disk-probe-${randomUUID()}`;
     let created = false;
     try {
       await execShellAsync(
-        `docker create --name ${name} ${workspaceLabelArgs().join(' ')} --storage-opt ${shellQuote(`size=${infra.diskLimit}`)} -- ${shellQuote(infra.metadataBlockImage)} true`,
+        `docker create --name ${name} ${workspaceLabelArgs().join(' ')} --label auto-swe.profile=probe --cap-drop=ALL --security-opt=no-new-privileges --memory=128m --cpus=1 --pids-limit=64 --storage-opt ${shellQuote(`size=${infra.diskLimit}`)} -- ${shellQuote(infra.metadataBlockImage)} true`,
         { heartbeatLabel: 'workspace: identifying Docker quota driver' }
       );
       created = true;
@@ -783,6 +791,8 @@ export function buildServiceContainerArgs(
   return [
     'run',
     '-d',
+    '--label',
+    'auto-swe.profile=service',
     '--name',
     `${workspaceName}-svc-${service.name}`,
     ...dockerRuntimeArgs(),
@@ -944,6 +954,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
         'docker',
         'run',
         '--rm',
+        '--label=auto-swe.profile=pid-cleanup',
         '--network=none',
         `--pid=container:${h.id}`,
         '--cap-drop=ALL',
@@ -952,6 +963,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
         '--security-opt=no-new-privileges',
         '--read-only',
         '--memory=128m',
+        '--cpus=1',
         '--pids-limit=64',
         '--',
         resolveWorkspaceInfra().metadataBlockImage,
@@ -1112,7 +1124,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     // carry shell metacharacters); '--' separates docker flags from the image.
     try {
       await execShellAsync(
-        `docker run -d --name ${spec.name} ${workspaceLabelArgs().join(' ')} --init${user} ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit}${storage}${runtime} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network}${env} -- ${shellQuote(spec.image)} sleep infinity`,
+        `docker run -d --name ${spec.name} ${workspaceLabelArgs().join(' ')} --label auto-swe.profile=workspace --init${user} ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit}${storage}${runtime} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network}${env} -- ${shellQuote(spec.image)} sleep infinity`,
         {
           heartbeatLabel: 'workspace: starting container',
           ...(spec.secretEnv ? { env: spec.secretEnv } : {}),
@@ -1125,7 +1137,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
       // the keeper contract (`sleep infinity` under an init) or something raced
       // in, so creation fails closed.
       const probe = await execShellAsync(
-        `docker exec ${spec.name} sh -c ${shellQuote(keeperPidProbeScript())}`,
+        `docker exec --user 0 ${spec.name} sh -c ${shellQuote(keeperPidProbeScript())}`,
         { heartbeatLabel: 'workspace: identifying keeper process' }
       );
       const candidates = probe
@@ -1432,10 +1444,15 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     return result;
   }
 
-  async createVolume(name: string): Promise<void> {
-    await execShellAsync(`docker volume create ${shellQuote(name)}`, {
-      heartbeatLabel: 'workspace: creating volume',
-    }).then(() => undefined);
+  async createVolume(name: string): Promise<string> {
+    return (
+      await execShellAsync(
+        `docker volume create --label ${shellQuote(`auto-swe.volume-request=${name}`)}`,
+        {
+          heartbeatLabel: 'workspace: creating volume',
+        }
+      )
+    ).trim();
   }
 
   async removeVolume(name: string): Promise<void> {
@@ -1658,7 +1675,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
         if (opts?.replace && this.egressPins.has(handle.id)) {
           throw new Error(`egress lock: no prepared host pin for ${host}`);
         }
-        return resolveInWorkspace(handle.id, host, mapped, undefined, !opts?.replace);
+        return resolveInWorkspace(handle.id, host, mapped, undefined, false);
       },
       trusted
     );
@@ -1672,91 +1689,83 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     const script = buildEgressLockScript(rules, incoming);
     if (hosts.length > 0) {
       const lines = hosts.map(([ip, name]) => `${ip}\t${name}\n`).join('');
-      if (opts?.replace) {
-        const inspected = await spawnCaptureAsync(
-          'docker',
-          ['inspect', '--format', '{{.Id}}\t{{.HostsPath}}', kata?.holder ?? handle.id],
-          {
-            heartbeatLabel: 'workspace: locating daemon-owned hosts file',
-            timeoutMs: 30_000,
-          }
-        );
-        const [containerId, hostsPath] = inspected.stdout.trim().split('\t');
-        if (
-          inspected.exitCode !== 0 ||
-          !containerId ||
-          !/^[a-f0-9]{64}$/.test(containerId) ||
-          !hostsPath ||
-          !path.posix.isAbsolute(hostsPath) ||
-          /[,\r\n]/.test(hostsPath) ||
-          !hostsPath.endsWith(`/${containerId}/hosts`)
-        ) {
-          throw new Error('egress lock: cannot locate the daemon-owned workspace hosts file');
+      const inspected = await spawnCaptureAsync(
+        'docker',
+        ['inspect', '--format', '{{.Id}}\t{{.HostsPath}}', kata?.holder ?? handle.id],
+        {
+          heartbeatLabel: 'workspace: locating daemon-owned hosts file',
+          timeoutMs: 30_000,
         }
-        const written = await spawnWithStdinAsync(
-          'docker',
-          [
-            'run',
-            '--rm',
-            '-i',
-            '--network=none',
-            '--user=0:0',
-            '--cap-drop=ALL',
-            '--security-opt=no-new-privileges',
-            '--read-only',
-            '--memory=128m',
-            '--pids-limit=64',
-            '--mount',
-            `type=bind,src=${hostsPath},dst=/asw-hosts`,
-            '--',
-            image,
-            '/usr/bin/env',
-            '-i',
-            'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
-            '/bin/sh',
-            '-ec',
-            'cat > /asw-hosts',
-          ],
-          `${hostsText}\n${lines}`,
-          { heartbeatLabel: 'workspace: pinning egress hosts', timeoutMs: 30_000 }
+      );
+      const [containerId, hostsPath] = inspected.stdout.trim().split('\t');
+      if (
+        inspected.exitCode !== 0 ||
+        !containerId ||
+        !/^[a-f0-9]{64}$/.test(containerId) ||
+        !hostsPath ||
+        !path.posix.isAbsolute(hostsPath) ||
+        /[,\r\n]/.test(hostsPath) ||
+        !hostsPath.endsWith(`/${containerId}/hosts`)
+      ) {
+        throw new Error('egress lock: cannot locate the daemon-owned workspace hosts file');
+      }
+      const written = await spawnWithStdinAsync(
+        'docker',
+        [
+          'run',
+          '--rm',
+          '--label=auto-swe.profile=hosts-writer',
+          `--label=auto-swe.target=${kata?.holder ?? handle.id}`,
+          '-i',
+          '--network=none',
+          '--user=0:0',
+          '--cap-drop=ALL',
+          '--security-opt=no-new-privileges',
+          '--read-only',
+          '--memory=128m',
+          '--cpus=1',
+          '--pids-limit=64',
+          ...(process.env.DOCKER_BROKER_REQUIRED === 'false'
+            ? ['--mount', `type=bind,src=${hostsPath},dst=/asw-hosts`]
+            : []),
+          '--',
+          image,
+          '/usr/bin/env',
+          '-i',
+          'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+          '/bin/sh',
+          '-ec',
+          'cat > /asw-hosts',
+        ],
+        `${hostsText}\n${lines}`,
+        { heartbeatLabel: 'workspace: pinning egress hosts', timeoutMs: 30_000 }
+      );
+      if (written.exitCode !== 0) {
+        throw new Error(
+          `egress lock: cannot write the workspace /etc/hosts: ${written.stderr.trim()}`
         );
-        if (written.exitCode !== 0) {
-          throw new Error(
-            `egress lock: cannot write the workspace /etc/hosts: ${written.stderr.trim()}`
+      }
+      if (kata) {
+        const expected = `${hostsText}\n${lines}`;
+        const deadline = Date.now() + 5000;
+        for (;;) {
+          const visible = await spawnCaptureAsync(
+            'docker',
+            ['exec', handle.id, 'cat', '/etc/hosts'],
+            {
+              heartbeatLabel: 'workspace: verifying Kata host pins',
+              timeoutMs: 30_000,
+            }
           );
-        }
-        if (kata) {
-          const expected = `${hostsText}\n${lines}`;
-          const deadline = Date.now() + 5000;
-          for (;;) {
-            const visible = await spawnCaptureAsync(
-              'docker',
-              ['exec', handle.id, 'cat', '/etc/hosts'],
-              {
-                heartbeatLabel: 'workspace: verifying Kata host pins',
-                timeoutMs: 30_000,
-              }
-            );
-            if (visible.exitCode === 0 && visible.stdout === expected) {
-              break;
-            }
-            if (visible.exitCode !== 0 || Date.now() >= deadline) {
-              throw new Error(
-                'egress lock: daemon-owned host pins are not visible in the Kata workspace'
-              );
-            }
-            await new Promise((resolve) => setTimeout(resolve, 250));
+          if (visible.exitCode === 0 && visible.stdout === expected) {
+            break;
           }
-        }
-      } else {
-        const written = await spawnWithStdinAsync(
-          'docker',
-          ['exec', '-i', '-u', 'root', handle.id, 'sh', '-c', 'cat >> /etc/hosts'],
-          lines,
-          { heartbeatLabel: 'workspace: pinning egress hosts', timeoutMs: 30_000 }
-        );
-        if (written.exitCode !== 0) {
-          throw new Error('egress lock: cannot write the workspace /etc/hosts');
+          if (visible.exitCode !== 0 || Date.now() >= deadline) {
+            throw new Error(
+              'egress lock: daemon-owned host pins are not visible in the Kata workspace'
+            );
+          }
+          await new Promise((resolve) => setTimeout(resolve, 250));
         }
       }
     }
@@ -1813,6 +1822,12 @@ function helperArgs(spec: HelperContainerSpec): string[] {
   return [
     'run',
     '--rm',
+    '--label=auto-swe.profile=git-helper',
+    '--cap-drop=ALL',
+    '--security-opt=no-new-privileges',
+    '--memory=512m',
+    '--cpus=1',
+    '--pids-limit=128',
     ...(spec.volumes ?? []).flatMap((v) => [
       '-v',
       `${v.source}:${v.target}:${v.readOnly ? 'ro' : 'rw'}`,
@@ -1847,7 +1862,8 @@ function forceRunc(args: string[]): void {
 export function ephemeralArgs(
   spec: EphemeralContainerSpec,
   detached: boolean,
-  holder?: string
+  holder?: string,
+  profile: 'author' | 'holder' = 'author'
 ): string[] {
   // Its callers pass the shell step's non-secret registry env; a registry token and the
   // container step's `CONTAINER_STEP_INPUT` travel as `secretEnv`, and this refuses a
@@ -1882,6 +1898,7 @@ export function ephemeralArgs(
     '--rm',
     ...(spec.name ? ['--name', spec.name] : []),
     ...workspaceLabelArgs(),
+    `--label=auto-swe.profile=${profile}`,
     ...flags,
     ...(!holder && spec.publishPort ? ['-p', `127.0.0.1::${spec.publishPort}/tcp`] : []),
     '--',
@@ -1905,7 +1922,9 @@ export function ephemeralNetworkHolderArgs(
       volumes: [],
       workdir: undefined,
     },
-    true
+    true,
+    undefined,
+    'holder'
   );
   args.splice(args.indexOf('--'), 0, '--entrypoint=sleep', '--label', `asw.workspace=${spec.name}`);
   return args;

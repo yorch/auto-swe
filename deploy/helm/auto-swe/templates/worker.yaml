@@ -104,6 +104,8 @@ spec:
               value: {{ .Values.workspaces.namespace | quote }}
             - name: K8S_REQUIRE_NETWORK_POLICY
               value: {{ .Values.workspaces.requireNetworkPolicy | toString | quote }}
+            - name: K8S_REQUIRE_ADMISSION_POLICY
+              value: {{ .Values.workspaces.requireAdmissionPolicy | toString | quote }}
             - name: K8S_WORKSPACE_STORAGE_LIMIT
               value: {{ .Values.workspaces.storageLimit | quote }}
             - name: K8S_WORKSPACE_MAX_LIFETIME_SEC

@@ -9,6 +9,12 @@ import {
 } from './ready.js';
 
 vi.mock('../../execUtils.js', () => ({ spawnCaptureAsync: vi.fn() }));
+beforeEach(() => {
+  vi.stubEnv('K8S_REQUIRE_ADMISSION_POLICY', 'false');
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@auto-swe/shared/lib/systemConfig')>()),
   resolveWorkspaceInfra: () => ({

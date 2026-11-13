@@ -111,13 +111,14 @@ describe('lockEgress', () => {
           '--network=none',
           '--cap-drop=ALL',
           '--user=0:0',
-          '--mount',
-          `type=bind,src=/var/lib/docker/containers/${'a'.repeat(64)}/hosts,dst=/asw-hosts`,
+          '--label=auto-swe.profile=hosts-writer',
+          `--label=auto-swe.target=${h.id}`,
         ]),
         expect.stringContaining('203.0.113.7\tgit.example.com'),
         expect.anything()
       );
       expect(spawnWithStdinAsync.mock.calls[0]?.[1]).not.toContain('--runtime');
+      expect(spawnWithStdinAsync.mock.calls[0]?.[1]).not.toContain('--mount');
       expect(spawnCaptureAsync.mock.calls.some(([, args]) => args.includes('root'))).toBe(false);
     } finally {
       await dockerWorkspaceBackend().remove(h);
@@ -175,29 +176,27 @@ describe('lockEgress', () => {
     expect(spawnWithStdinAsync).not.toHaveBeenCalled();
   });
 
-  it('resolves names in the workspace, pins them as root in the workspace, then locks', async () => {
+  it('resolves names without root exec, pins them through the broker hosts writer, then locks', async () => {
     execShellAsync.mockResolvedValue(LOCKED);
     await dockerWorkspaceBackend().lockEgress(handle, [{ host: 'git.example.com', port: 443 }]);
-    // Resolved inside the workspace, as root, never by the worker.
+    // Resolved inside the workspace, never by the worker.
     expect(lookup).not.toHaveBeenCalled();
     expect(spawnCaptureAsync).toHaveBeenCalledWith(
       'docker',
-      ['exec', '-u', 'root', 'workspace-abc', 'getent', 'ahosts', 'git.example.com'],
+      ['exec', 'workspace-abc', 'getent', 'ahosts', 'git.example.com'],
       expect.anything()
     );
     const [file, args, stdin] = spawnWithStdinAsync.mock.calls[0] ?? [];
     expect(file).toBe('docker');
-    expect(args).toEqual([
-      'exec',
-      '-i',
-      '-u',
-      'root',
-      'workspace-abc',
-      'sh',
-      '-c',
-      'cat >> /etc/hosts',
-    ]);
-    expect(stdin).toBe('203.0.113.7\tgit.example.com\n');
+    expect(args).toEqual(
+      expect.arrayContaining([
+        'run',
+        '--label=auto-swe.profile=hosts-writer',
+        '--label=auto-swe.target=workspace-abc',
+      ])
+    );
+    expect(args).not.toContain('exec');
+    expect(stdin).toBe(`${hostsFile}\n203.0.113.7\tgit.example.com\n`);
     const cmd = String(execShellAsync.mock.calls[0]?.[0]);
     expect(cmd).toContain('203.0.113.7');
     expect(cmd).not.toContain('git.example.com');
@@ -235,7 +234,9 @@ describe('lockEgress', () => {
       (c[1] as string[]).includes('getent')
     );
     expect(lookups).toHaveLength(1);
-    expect(spawnWithStdinAsync.mock.calls[0]?.[2]).toBe('203.0.113.7\tgit.example.com\n');
+    expect(spawnWithStdinAsync.mock.calls[0]?.[2]).toBe(
+      `${hostsFile}\n203.0.113.7\tgit.example.com\n`
+    );
     const cmd = String(execShellAsync.mock.calls[0]?.[0]);
     expect(cmd).toMatch(/allow_ip \S*203\.0\.113\.7\S* \S*443/);
     expect(cmd).toMatch(/allow_ip \S*203\.0\.113\.7\S* \S*22/);

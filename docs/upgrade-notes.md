@@ -1370,6 +1370,65 @@ if those inviters must not approve new accounts. Platform ADMIN invitations appr
 `team_lead`. With trust cleared, that invitation creates an inactive account in the approval queue.
 Existing approved accounts are not deactivated by clearing trust.
 
+## Docker deployments whose worker addresses HAProxy or the socket directly
+
+**Fixed by:** `fed5612afdb2cf5fa6e2a443776a66b7be72f01b`.
+
+**Affected:** custom Docker compose deployments whose worker's `DOCKER_HOST` names HAProxy or the
+host socket rather than `docker-policy-broker`. Identify the required build by the presence of
+`packages/docker-broker/src/server.ts` and `assertDockerBroker` in worker startup.
+
+**Action:** add/build the `docker-policy-broker` service and its private `docker-broker-state`
+volume from the app/prod compose definitions. Connect worker and broker on one internal network,
+broker and HAProxy on a different internal network, and remove every worker route to HAProxy or
+the host socket. Set `DOCKER_HOST=tcp://docker-policy-broker:2375`. Publish neither API port.
+Keep HAProxy's socket mount and root user; its read-only filesystem, dropped capabilities and
+no-new-privileges remain required.
+
+Configure `DOCKER_BROKER_ALLOWED_IMAGES` for custom/private executor, service and git-helper
+repositories. Helper images match the exact `WORKSPACE_METADATA_BLOCK_IMAGE` reference; match
+`WORKSPACE_RUNTIME` on broker and worker. Preserve the broker state volume across upgrades;
+existing containers/volumes without its private label are deliberately not adopted. Drain and
+remove old workspaces before cutover. Use one broker per daemon/state volume, not active replicas.
+Pin `APP_IMAGE_DOCKER_BROKER` with the other application images. See
+[deployment](./deployment.md#0-what-youre-deploying) for limits and repository-pattern syntax.
+
+The worker refuses startup without the broker's signed denial probe. Only direct-socket local
+development may explicitly set `DOCKER_BROKER_REQUIRED=false`; it logs that policy protection is
+disabled. Broker bootstrap retries transient upstream failures without serving before ownership
+reconstruction; invalid state or permanent upstream policy failures stop it.
+
+## Kubernetes workers without workspace Pod admission resources
+
+**Fixed by:** `fed5612afdb2cf5fa6e2a443776a66b7be72f01b`.
+
+**Affected:** Kubernetes deployments without the `<workspace-namespace>-pods`
+ValidatingAdmissionPolicy and Deny binding, or without the worker's named-resource read grants.
+Identify the required worker by `assertWorkspaceAdmission` in
+`packages/worker/src/lib/workspaceBackend/kubernetes/ready.ts`.
+
+**Action:** use Kubernetes 1.30+ and apply both
+`infra/kubernetes/workspace-namespace.yaml` and `infra/kubernetes/workspace-admission.yaml`,
+adjusting the namespace and worker ServiceAccount references together, or upgrade the Helm chart.
+The installer needs cluster-scoped admission and RBAC installation privileges. The worker receives
+only `get` on its named policy, binding and namespace; its namespaced workload permissions stay
+unchanged. Helm also grants `get` on the configured RuntimeClass when required. Do not grant it
+policy mutation rights.
+
+Keep PodSecurity `restricted`. Root/capability-adding preview services retain their existing
+namespace-exception requirement. With `K8S_REQUIRE_RUNTIME_CLASS=true`, label the namespace
+`asw/required-runtime-class=<K8S_WORKSPACE_RUNTIME_CLASS>`; Helm's
+`workspaces.requireRuntimeClass=true` does this when creating the namespace.
+For existing namespaces (`workspaces.createNamespace=false`), maintain the labels yourself.
+Optional `workspaces.serviceAccountName` designates one additional allowed account; default stays
+allowed. Pod Secret env references must name `<pod-name>-env`; do not retain unrelated Secrets in
+this namespace. CEL cannot verify their owner UIDs or prevent a deleted pod name being reused
+while its Secret awaits garbage collection.
+
+The boot check defaults on. Only explicit `K8S_REQUIRE_ADMISSION_POLICY=false` (Helm
+`workspaces.requireAdmissionPolicy=false`) skips it with a warning for local development.
+That opt-out does not remove chart-rendered admission rules. See
+[Kubernetes Helm](./kubernetes-helm.md#limitations) for remaining limits.
 ## Limitations
 
 - **A SHA identifies code, not your deployed image.** The comparison in §1 holds only if your

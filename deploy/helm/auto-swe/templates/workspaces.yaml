@@ -13,6 +13,12 @@ metadata:
     # Workspace pods are built to pass `restricted`; the namespace enforces it.
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
+    {{- if .Values.workspaces.requireRuntimeClass }}
+    asw/required-runtime-class: {{ required "workspaces.runtimeClassName is required when requireRuntimeClass=true" .Values.workspaces.runtimeClassName | quote }}
+    {{- end }}
+    {{- with .Values.workspaces.serviceAccountName }}
+    asw/workspace-service-account: {{ . | quote }}
+    {{- end }}
 ---
 {{- end }}
 # Default-deny, then allow exactly: DNS, this release's worker proxies, and the
@@ -120,6 +126,41 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: {{ include "auto-swe.fullname" . }}-worker
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "auto-swe.workerServiceAccount" . }}
+    namespace: {{ .Release.Namespace }}
+---
+{{ include "auto-swe.workspaceAdmission" . }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "auto-swe.fullname" . }}-workspace-admission-reader
+rules:
+  {{- if .Values.workspaces.requireRuntimeClass }}
+  - apiGroups: [node.k8s.io]
+    resources: [runtimeclasses]
+    resourceNames: [{{ required "workspaces.runtimeClassName is required when requireRuntimeClass=true" .Values.workspaces.runtimeClassName | quote }}]
+    verbs: [get]
+  {{- end }}
+  - apiGroups: [admissionregistration.k8s.io]
+    resources: [validatingadmissionpolicies, validatingadmissionpolicybindings]
+    resourceNames: [{{ $ns }}-pods]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [namespaces]
+    resourceNames: [{{ $ns | quote }}]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "auto-swe.fullname" . }}-workspace-admission-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "auto-swe.fullname" . }}-workspace-admission-reader
 subjects:
   - kind: ServiceAccount
     name: {{ include "auto-swe.workerServiceAccount" . }}

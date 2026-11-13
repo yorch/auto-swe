@@ -160,6 +160,9 @@ workspaces:
   # The worker refuses to start unless a probe pod proves the NetworkPolicy is
   # enforced. Only false skips that check (a local cluster with no policy CNI).
   requireNetworkPolicy: true
+  requireAdmissionPolicy: true
+  # Additional designated workspace SA; the default SA remains allowed.
+  serviceAccountName: ""
   runtimeClassName: ""
   # Require the selected RuntimeClass and a matching startup probe pod.
   requireRuntimeClass: false

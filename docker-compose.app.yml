@@ -77,7 +77,7 @@ services:
     init: true
     restart: unless-stopped
     depends_on:
-      docker-socket-proxy:
+      docker-policy-broker:
         condition: service_started
       postgres:
         condition: service_healthy
@@ -142,8 +142,9 @@ services:
       - HARNESS_MODEL_PROXY_PORT=${HARNESS_MODEL_PROXY_PORT-8790}
       - HARNESS_MODEL_PROXY_URL=${HARNESS_MODEL_PROXY_URL:-http://{hostname}:${HARNESS_MODEL_PROXY_PORT:-8790}}
       - WORKSPACE_NETWORK=${WORKSPACE_NETWORK:-auto-swe-workspaces}
-      # The Docker CLI the worker shells out to talks to the socket proxy, not a socket.
-      - DOCKER_HOST=tcp://docker-socket-proxy:2375
+      # The Docker CLI reaches only the policy broker, never HAProxy or the socket.
+      - DOCKER_HOST=tcp://docker-policy-broker:2375
+      - DOCKER_BROKER_REQUIRED=${DOCKER_BROKER_REQUIRED:-true}
     volumes:
       - artifacts:/var/lib/auto-swe/artifacts
     networks:
@@ -151,12 +152,28 @@ services:
       - workspaces
       - docker-proxy
 
-  # Docker API filter in front of the host socket: haproxy with the allowlist
-  # and timeouts in infra/docker-socket-proxy/haproxy.cfg, which says what each
-  # allowed path is for. The worker reaches the daemon only through this
-  # container (DOCKER_HOST), so it never holds the socket. It limits the API
-  # surface, NOT the options of a container the worker is allowed to create:
-  # see docs/deployment.md. Root only to open the socket; nothing else runs here.
+  docker-policy-broker:
+    build:
+      context: .
+      dockerfile: packages/docker-broker/Dockerfile
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      docker-socket-proxy:
+        condition: service_started
+    environment:
+      DOCKER_BROKER_UPSTREAM: http://docker-socket-proxy:2375
+      DOCKER_BROKER_ALLOWED_IMAGES: ${DOCKER_BROKER_ALLOWED_IMAGES:-docker.io/library/*,docker.io/alpine/git,mirror.gcr.io/library/*,ghcr.io/yorch/auto-swe/executor-*}
+      DOCKER_BROKER_HELPER_IMAGES: ${DOCKER_BROKER_HELPER_IMAGES:-${WORKSPACE_METADATA_BLOCK_IMAGE:-alpine:3.20}}
+      DOCKER_BROKER_NETWORKS: ${DOCKER_BROKER_NETWORKS:-bridge,${WORKSPACE_NETWORK:-auto-swe-workspaces}}
+      WORKSPACE_RUNTIME: ${WORKSPACE_RUNTIME:-}
+    volumes:
+      - docker-broker-state:/state
+    networks: [docker-proxy, docker-daemon]
+
+  # The path filter is a second layer behind the body/ownership policy broker.
   docker-socket-proxy:
     image: ${DOCKER_SOCKET_PROXY_IMAGE:-haproxy:3.4-alpine@sha256:2caaf8b1a1ef67f3f1ea9b721f2821675d3ba4500fb518e23884fecb93e8dbaa}
     restart: unless-stopped
@@ -170,7 +187,7 @@ services:
       - ./infra/docker-socket-proxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
-      - docker-proxy
+      - docker-daemon
 
   # Observability: Grafana LGTM (Grafana + Tempo + Loki + Prometheus + OTel Collector)
   otel-lgtm:
@@ -222,6 +239,7 @@ services:
       - HOSTNAME=0.0.0.0
 
 volumes:
+  docker-broker-state:
   # The filesystem artifact store, when ARTIFACT_FS_DIR is configured. A named
   # volume (rather than a host path) so a fresh install needs no chown; point
   # ARTIFACT_FS_DIR at a bind mount instead if the files must be visible on the
@@ -233,8 +251,8 @@ networks:
   # worker's model proxy here, never the database or Temporal.
   workspaces:
     name: ${WORKSPACE_NETWORK:-auto-swe-workspaces}
-  # The worker and the socket proxy, and nothing else. `internal` gives it no
-  # route out, so the unauthenticated Docker API on :2375 is reachable by
-  # exactly these two containers.
+  # The worker can reach the broker, never the daemon-facing proxy.
   docker-proxy:
+    internal: true
+  docker-daemon:
     internal: true

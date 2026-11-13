@@ -243,7 +243,7 @@ describe('metadata-only baseline helper', () => {
 
   it('does not grant the sidecar capabilities beyond NET_ADMIN', () => {
     const cmd = metadataCommand('workspace-abc123', 'alpine:3.20');
-    expect(cmd).not.toContain('--cap-drop');
+    expect(cmd).toContain('--cap-drop=ALL');
   });
 });
 
@@ -482,7 +482,7 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
     const metadataCmd = commands.find((c) => c.includes('--network container:'));
     expect(metadataCmd).toBeDefined();
     expect(metadataCmd).toContain('--cap-add=NET_ADMIN');
-    expect(metadataCmd).not.toContain('--cap-drop=ALL');
+    expect(metadataCmd).toContain('--cap-drop=ALL');
     expect(metadataCmd).not.toBe(startCmd);
 
     // Both commands must reference the same container name — the sidecar

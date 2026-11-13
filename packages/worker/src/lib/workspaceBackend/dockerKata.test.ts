@@ -68,12 +68,14 @@ describe('Docker Kata integration', () => {
   it.each([false, true])(
     'verifies daemon host pins through guest cache (permanently stale: %s)',
     async (stale) => {
+      vi.stubEnv('DOCKER_BROKER_REQUIRED', 'false');
       const handle = await backend.create(spec);
       const hosts = '127.0.0.1 localhost\n';
       let written = '';
       let reads = 0;
       const id = 'b'.repeat(64);
       vi.mocked(spawnWithStdinAsync).mockImplementation(async (_bin, args, data) => {
+        expect(args).toContain('--label=auto-swe.target=workspace-kata-test-net');
         expect(args).toContain(
           `type=bind,src=/var/lib/docker/containers/${id}/hosts,dst=/asw-hosts`
         );

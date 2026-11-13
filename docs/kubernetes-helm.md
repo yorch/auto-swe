@@ -27,6 +27,9 @@ ServiceAccount token: it runs `kubectl` against the workspace namespace with it.
 
 ## 2. Before installing
 
+- **Kubernetes 1.30 or later**, with GA ValidatingAdmissionPolicy enabled. The installer needs
+  cluster-scoped admission-policy/binding and read-only ClusterRole/ClusterRoleBinding privileges.
+
 - **PostgreSQL** with the `vector` extension, 0.8 or later ([`deployment.md` §3](./deployment.md#3-database-setup)).
 - **Temporal**, its frontend reachable from the release namespace ([`deployment.md` §4](./deployment.md#4-temporal-setup)).
 - **A CNI that enforces NetworkPolicy** (GKE Dataplane V2; EKS VPC CNI with network policy
@@ -103,6 +106,9 @@ GitHub App** registers the instance's App from a manifest ([`github-app-setup.md
 | `workspaces.manage` | true | Render that namespace's resources (section 1) |
 | `workspaces.createNamespace` | true | Render the Namespace object itself; set `false` when the namespace already exists (for example applied from `infra/kubernetes/workspace-namespace.yaml`), which `helm install` would otherwise fail on. The other objects are still rendered into it, and its `pod-security.kubernetes.io/enforce=restricted` label is then yours to keep |
 | `workspaces.requireNetworkPolicy` | true | Only `false` skips the worker's start-up proof that the policy is enforced — for a local cluster |
+| `workspaces.requireAdmissionPolicy` | true | Only `false` skips the worker's policy/binding readiness check (`K8S_REQUIRE_ADMISSION_POLICY=false`); the chart still renders admission resources |
+| `workspaces.requireRuntimeClass` | false | Sets `K8S_REQUIRE_RUNTIME_CLASS` and requires `runtimeClassName`; labels the namespace so admission enforces that class |
+| `workspaces.serviceAccountName` | empty | Optional additional designated workspace ServiceAccount; admission always permits `default`. Does not create the account or change the worker's identity |
 | `workspaces.runtimeClassName`, `storageLimit`, `maxLifetimeSec`, `imagePullSecrets`, `quota` | —, `10Gi`, 86400, —, see `values.yaml` | The `K8S_WORKSPACE_*` settings and the namespace quota |
 | `workspaces.requireRuntimeClass` | false | Require a readable selected RuntimeClass and a matching startup pod |
 | `workspaces.kataRuntimeClass.create`, `overhead`, `nodeSelector` | false, 250m / 160Mi, Kata-labelled nodes | Optionally create the selected class with handler `kata`; see [Kata RuntimeClass](#kata-runtimeclass) |
@@ -163,6 +169,19 @@ override, preserving an existing gate configured through `worker.env`. This Runt
 does not depend on admission-policy resources. PodSecurity remains `restricted`, including its
 existing root-preview limitation.
 
+## 6. Workspace admission configuration
+
+For non-Helm deployments apply both `infra/kubernetes/workspace-namespace.yaml` and
+`infra/kubernetes/workspace-admission.yaml`, adjusting namespace and worker ServiceAccount names
+in both. When runtime enforcement is required, set the namespace label
+`asw/required-runtime-class` to `K8S_WORKSPACE_RUNTIME_CLASS`. An optional
+`asw/workspace-service-account` namespace label designates one additional permitted account.
+With `workspaces.createNamespace=false`, operators maintain these labels themselves; remove the
+runtime label when no longer requiring that runtime. Workspace pods must carry `asw/role=workspace`
+and explicitly disable service-account-token automount.
+
+The worker's ClusterRole grants only named-resource reads for this readiness check, plus a read
+of the named RuntimeClass when required. It cannot modify admission policies or bindings.
 ## Limitations
 
 - **Kata scheduling is not a VM attestation.** Nodes need working KVM/nested virtualization and the
@@ -175,6 +194,22 @@ existing root-preview limitation.
   the proxy or set GLOBAL `workspace.egressPolicy` to `open` before disabling it; otherwise worker
   boot refuses. Clients must honor the proxy; an allowlisted hostname is not a direct-socket grant.
   Allowlist edits are live for later registrations rather than frozen per run.
+- **Workspace Pod admission complements PodSecurity, not ownership isolation.** The namespace keeps
+  `restricted`; root/added-capability preview services still require an operator-managed exception.
+  CEL only recognizes the exact existing root preview profile (UID/GID 0, no escalation, drop ALL,
+  exactly CHOWN/SETUID/SETGID/FOWNER/DAC_OVERRIDE); it does not override PodSecurity.
+- **Per-pod Secret references are name-bound, not ownership-verified.** `envFrom`, Secret volumes,
+  PVCs, hostPath, projected tokens and projected Secrets are forbidden. In normal, init and
+  ephemeral containers, `secretKeyRef` must name `<this-pod-name>-env`. CEL cannot inspect the
+  Secret's owner UID. Regular workspace names contain 64 random bits, so blind guessing is
+  impractical, but the worker has Pod list/get rights and can discover them. A malicious creator can reuse a deleted
+  workspace's name while its Secret awaits garbage collection, or reference an unrelated Secret
+  already bearing its own expected name. Keep the namespace dedicated; do not store other Secrets
+  there. Different-name cross-workspace references are rejected even when the name is known.
+- **Admission readiness is a boot-time configuration check.** It requires a Fail policy and Deny
+  binding scoped to the workspace namespace, rejects reported CEL warnings, and checks the required
+  runtime namespace label. It does not continuously audit policy content or prove Secret ownership.
+  Only explicit `K8S_REQUIRE_ADMISSION_POLICY=false` skips it, with a warning, for local clusters.
 - **Workspaces run on the Kubernetes backend only.** Shell steps, container steps and sidecars need
   the Docker backend and fail with `WORKSPACE_BACKEND_UNSUPPORTED` here. The chart deploys no
   Docker-backed worker and no `docker-socket-proxy`; a deployment that needs those steps sets

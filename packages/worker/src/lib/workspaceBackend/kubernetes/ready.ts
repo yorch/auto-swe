@@ -178,6 +178,7 @@ export async function assertWorkspaceRbac(): Promise<void> {
 /** Everything a worker with `WORKSPACE_BACKEND=kubernetes` checks before it takes work. */
 export async function assertKubernetesReady(backend: WorkspaceBackend): Promise<void> {
   await assertWorkspaceRbac();
+  await assertWorkspaceAdmission();
   await assertRuntimeClassAvailable();
   if (resolveWorkspaceInfra().kubernetes.requireNetworkPolicy) {
     await assertNetworkPolicyEnforced({ backend });
@@ -197,6 +198,60 @@ export async function assertKubernetesReady(backend: WorkspaceBackend): Promise<
       } finally {
         await backend.remove(name);
       }
+    }
+  }
+}
+
+export async function assertWorkspaceAdmission(): Promise<void> {
+  if (process.env.K8S_REQUIRE_ADMISSION_POLICY === 'false') {
+    console.warn(
+      '[workspace] K8S_REQUIRE_ADMISSION_POLICY=false: not checking workspace Pod admission.'
+    );
+    return;
+  }
+  const config = resolveWorkspaceInfra().kubernetes;
+  const name = `${config.namespace}-pods`;
+  const read = async (resource: string, resourceName: string) => {
+    const result = await spawnCaptureAsync(
+      config.kubectl,
+      ['get', resource, resourceName, '-o', 'json'],
+      {
+        heartbeatLabel: 'workspace: checking Pod admission',
+        timeoutMs: 30_000,
+      }
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `workspace admission requires ${resource}/${resourceName}: ${result.stderr.trim()}`
+      );
+    }
+    return JSON.parse(result.stdout);
+  };
+  const policy = await read('validatingadmissionpolicies', name);
+  const binding = await read('validatingadmissionpolicybindings', name);
+  const selector = (
+    value: { namespaceSelector?: { matchLabels?: Record<string, string> } } | undefined
+  ) => value?.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'] === config.namespace;
+  if (
+    policy.spec?.failurePolicy !== 'Fail' ||
+    !selector(policy.spec?.matchConstraints) ||
+    !policy.spec?.validations?.length ||
+    policy.status?.typeChecking?.expressionWarnings?.length ||
+    binding.spec?.policyName !== name ||
+    !binding.spec?.validationActions?.includes('Deny') ||
+    !selector(binding.spec?.matchResources)
+  ) {
+    throw new Error(
+      `workspace admission policy/binding ${name} is not an enforcing, namespace-scoped policy`
+    );
+  }
+  if (config.requireRuntimeClass) {
+    const namespace = await read('namespace', config.namespace);
+    if (
+      !config.runtimeClassName ||
+      namespace.metadata?.labels?.['asw/required-runtime-class'] !== config.runtimeClassName
+    ) {
+      throw new Error('workspace admission namespace must declare the required RuntimeClass');
     }
   }
 }
