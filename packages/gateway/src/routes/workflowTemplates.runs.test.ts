@@ -440,3 +440,67 @@ describe('POST /workflow-templates/:id/runs with a callback', () => {
     expect(h.started).toHaveLength(0);
   });
 });
+
+describe('GET /workflow-templates/:id/runs provenance', () => {
+  it('serializes run provenance and never sends launchedById or extra initiator columns', async () => {
+    const h = buildHarness();
+    const prisma = h.app.prisma as unknown as {
+      workflowRun: {
+        count: () => Promise<number>;
+        findMany: (args: unknown) => Promise<unknown[]>;
+      };
+    };
+    let include: Record<string, unknown> = {};
+    prisma.workflowRun.findMany = async (args) => {
+      include = (args as { include: Record<string, unknown> }).include;
+      return [
+        {
+          costUsdAccrued: '1.0000',
+          endedAt: null,
+          id: 'bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb',
+          initiatedBy: {
+            email: 'dev@corp.test',
+            id: '33333333-3333-4333-8333-333333333333',
+            name: 'Dev Person',
+            passwordHash: 'PLANTED-HASH',
+          },
+          initiatedByService: { id: '44444444-4444-4444-8444-444444444444', name: 'ci-bot' },
+          launchedById: 'launcher-credential-key',
+          rerunOfRunId: '55555555-5555-4555-8555-555555555555',
+          startedAt: new Date('2026-10-01T10:00:00.000Z'),
+          status: 'RUNNING',
+          templateId: TEMPLATE_ID,
+          templateName: 'Some workflow',
+          templateVersion: 3,
+          trigger: 'automation',
+          triggerRefId: 'automation-1',
+          workflowId: 'wf-1',
+          workRequest: null,
+        },
+      ];
+    };
+    prisma.workflowRun.count = async () => 1;
+    await h.app.ready();
+    const res = await h.app.inject({
+      headers: { authorization: 'Bearer t' },
+      method: 'GET',
+      url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
+    });
+    expect(res.statusCode).toBe(200);
+    const row = res.json().data[0];
+    expect(row).toMatchObject({
+      initiatedBy: {
+        email: 'dev@corp.test',
+        id: '33333333-3333-4333-8333-333333333333',
+        name: 'Dev Person',
+      },
+      initiatedByService: { id: '44444444-4444-4444-8444-444444444444', name: 'ci-bot' },
+      rerunOfRunId: '55555555-5555-4555-8555-555555555555',
+      trigger: 'automation',
+      triggerRefId: 'automation-1',
+    });
+    expect(row).not.toHaveProperty('launchedById');
+    expect(JSON.stringify(res.json())).not.toMatch(/launcher-credential-key|PLANTED-HASH/);
+    expect(include.initiatedBy).toEqual({ select: { email: true, id: true, name: true } });
+  });
+});

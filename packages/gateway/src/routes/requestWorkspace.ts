@@ -15,7 +15,11 @@ import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { assertTeamParam } from '../lib/teamParam.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
-import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
+import {
+  projectRunSummary,
+  RUN_INITIATOR_INCLUDE,
+  RunListPaginationQuery,
+} from './workflowProjections.js';
 
 const Query = RunListPaginationQuery.extend({
   requestId: z.string().uuid().optional(),
@@ -155,6 +159,7 @@ export const requestWorkspaceRoutes: FastifyPluginAsync = async (fastify) => {
       const instanceBaseUrl = await resolveGitHubBaseUrl();
       const rows = await fastify.prisma.workflowRun.findMany({
         include: {
+          ...RUN_INITIATOR_INCLUDE,
           connection: { select: connectionSelect },
           template: { select: { name: true, workspaceProvider: true } },
           workRequest: {

@@ -6,6 +6,7 @@
  * the same list-pagination querystring. Keep the projection here so the
  * wire shape stays in lockstep.
  */
+import { isRunTrigger, type RunTrigger } from '@auto-swe/shared/lib/runTrigger';
 import {
   type AutonomyDecisionDto,
   type EvalResultDto,
@@ -34,7 +35,46 @@ export const AutonomyDecisionSchema = z.object({
   runId: z.string().uuid(),
 });
 
-export interface RunWithWorkRequest {
+/** The `include` that every query feeding `projectRunSummary` adds: the initiator, minimally. */
+export const RUN_INITIATOR_INCLUDE = {
+  initiatedBy: { select: { email: true, id: true, name: true } },
+  initiatedByService: { select: { id: true, name: true } },
+} as const;
+
+/** Provenance columns plus the initiator relations, as the run list and detail project them. */
+export interface RunProvenanceFields {
+  trigger?: string | null;
+  triggerRefId?: string | null;
+  initiatedBy?: { id: string; name: string | null; email: string } | null;
+  initiatedByService?: { id: string; name: string } | null;
+  rerunOfRunId?: string | null;
+}
+
+/**
+ * The provenance fields of a run's wire shape. `launchedById` is a credential key and is never
+ * part of this: the initiator is `initiatedBy`.
+ */
+export function projectRunProvenance(r: RunProvenanceFields): {
+  trigger: RunTrigger | null;
+  triggerRefId: string | null;
+  initiatedBy: { id: string; name: string | null; email: string } | null;
+  initiatedByService: { id: string; name: string } | null;
+  rerunOfRunId: string | null;
+} {
+  return {
+    initiatedBy: r.initiatedBy
+      ? { email: r.initiatedBy.email, id: r.initiatedBy.id, name: r.initiatedBy.name }
+      : null,
+    initiatedByService: r.initiatedByService
+      ? { id: r.initiatedByService.id, name: r.initiatedByService.name }
+      : null,
+    rerunOfRunId: r.rerunOfRunId ?? null,
+    trigger: isRunTrigger(r.trigger) ? r.trigger : null,
+    triggerRefId: r.triggerRefId ?? null,
+  };
+}
+
+export interface RunWithWorkRequest extends RunProvenanceFields {
   id: string;
   workflowId: string;
   templateId: string;
@@ -85,6 +125,7 @@ export function projectRunSummary(r: RunWithWorkRequest, viewerId?: string) {
     endedAt: r.endedAt,
     id: r.id,
     isMine: viewerId !== undefined && r.launchedById != null && r.launchedById === viewerId,
+    ...projectRunProvenance(r),
     outcomeDomain: r.outcomeDomain,
     outcomeType: r.outcomeType,
     startedAt: r.startedAt,

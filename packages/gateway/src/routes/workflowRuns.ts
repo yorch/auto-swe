@@ -52,8 +52,10 @@ import {
   AutonomyDecisionSchema,
   projectAutonomyDecision,
   projectEvalResult,
+  projectRunProvenance,
   projectRunSummary,
   projectWorkRequest,
+  RUN_INITIATOR_INCLUDE,
   RunListPaginationQuery,
 } from './workflowProjections.js';
 
@@ -684,6 +686,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       const [rows, total] = await Promise.all([
         fastify.prisma.workflowRun.findMany({
           include: {
+            ...RUN_INITIATOR_INCLUDE,
             template: { select: { name: true, workspaceProvider: true } },
             workRequest: {
               select: { description: true, externalTicketId: true, id: true, requestPayload: true },
@@ -1085,6 +1088,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const run = await fastify.prisma.workflowRun.findFirst({
         include: {
+          ...RUN_INITIATOR_INCLUDE,
           // The owning team of the run's repository, the only team the detail names.
           connection: { select: { team: { select: { id: true, name: true, slug: true } } } },
           steps: { orderBy: [{ startedAt: 'asc' }, { attempt: 'asc' }] },
@@ -1172,6 +1176,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           isAgentRun:
             run.template.teamId === null && run.template.origin === AGENT_RUN_TEMPLATE_ORIGIN,
           ownerTeam,
+          ...projectRunProvenance(run),
           pullRequestId: pullRequest?.id ?? null,
           result: (run.contextSnapshot as { result?: unknown })?.result ?? null,
           review,

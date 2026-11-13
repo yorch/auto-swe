@@ -133,7 +133,11 @@ import {
   workflowRunRollupHorizonMs,
 } from '../lib/workflowRunRollupWindows.js';
 import { type JwtPayload, requireAuth, requireCaller, requireUser } from '../plugins/auth.js';
-import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
+import {
+  projectRunSummary,
+  RUN_INITIATOR_INCLUDE,
+  RunListPaginationQuery,
+} from './workflowProjections.js';
 
 /**
  * Stable marker the `generateWorkflowSpec` activity puts in its thrown message
@@ -2719,6 +2723,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const [rows, total] = await Promise.all([
         fastify.prisma.workflowRun.findMany({
           include: {
+            ...RUN_INITIATOR_INCLUDE,
             workRequest: {
               select: { description: true, externalTicketId: true, id: true },
             },

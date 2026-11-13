@@ -6,6 +6,7 @@ import type { ReviewRouting, RoutingReason } from '../lib/prEvaluation/reviewRou
 import type { PreviewConfig } from '../lib/previewConfig.js';
 import type { PullRequestState } from '../lib/pullRequest.js';
 import type { RepoSetup } from '../lib/repoSetup.js';
+import type { RunTrigger } from '../lib/runTrigger.js';
 import type { SetupBlocker } from '../lib/setupBlocker.js';
 import type { WorkspaceProviderType } from '../lib/workspaceProviders.js';
 import type { BudgetTier, WorkflowStatus } from './workflow.js';
@@ -1074,6 +1075,18 @@ export interface WorkflowRunSummary {
   outcomeDomain: string | null;
   outcomeType: string | null;
   costUsdAccrued: number;
+  /** Whether the viewer launched the run; present only on caller-relative lists. */
+  isMine?: boolean;
+  /** What started the run; null for a run that predates provenance. */
+  trigger: RunTrigger | null;
+  /** Opaque id of the automation, schedule or parent named by `trigger`. */
+  triggerRefId: string | null;
+  /** The person who initiated the run. */
+  initiatedBy: { id: string; name: string | null; email: string } | null;
+  /** The service principal that initiated the run. */
+  initiatedByService: { id: string; name: string } | null;
+  /** The run this one re-ran. */
+  rerunOfRunId: string | null;
   workRequest: {
     title?: string;
     id: string;
