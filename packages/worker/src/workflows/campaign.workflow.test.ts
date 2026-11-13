@@ -371,8 +371,9 @@ describe('CampaignWorkflow — the launch re-checked before each start', () => {
     // The first batch fills both slots; each later start is checked as its slot frees.
     expect(authorizeCalls).toEqual([['repo-1', 'repo-2'], ['repo-3']]);
     const history = await env.client.workflow.getHandle(CAMPAIGN_WORKFLOW_ID).fetchHistory();
+    // One scheduling path: no patch marker.
     const markers = (history.events ?? []).filter((e) => e.markerRecordedEventAttributes);
-    expect(markers).toHaveLength(1);
+    expect(markers).toHaveLength(0);
   }, 60_000);
 
   it('never starts a refused target: it ends SKIPPED with the reason, and the rest go on', async () => {

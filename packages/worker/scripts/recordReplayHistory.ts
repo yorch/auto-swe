@@ -210,8 +210,14 @@ const EPIC_REQUEST = {
   workRequestId: '00000000-0000-4000-8000-000000000003',
 };
 
-/** The campaign workflow's record activities, as no-ops (the recorder has no database). */
+/**
+ * The campaign workflow's record activities, as no-ops (the recorder has no database), and a
+ * launch re-check that allows every target (`campaign-recheck` overrides it).
+ */
 const CAMPAIGN_RECORD_ACTIVITIES = {
+  authorizeCampaignTargets: async (input: { targets: Array<{ connectionId: string }> }) => ({
+    verdicts: input.targets.map((t) => ({ allowed: true, connectionId: t.connectionId })),
+  }),
   finalizeCampaign: async (input: {
     cancelled: boolean;
     results: Array<{ result: { status: string } }>;
@@ -311,6 +317,23 @@ const campaignInput = (
   templateVersion: 1,
   workRequestId: '00000000-0000-4000-8000-000000000004',
 });
+
+/** A child that parks at a human gate until something cancels it. */
+const CAMPAIGN_PARKED_CHILD = spec(
+  {
+    approved: { status: 'SUCCESS', type: 'terminate' },
+    gate: {
+      onApprove: 'approved',
+      onReject: 'approved',
+      onTimeout: 'approved',
+      timeout: '24h',
+      title: 'Hold the child open',
+      type: 'humanApproval',
+    },
+    mark: marker('AWAITING_HUMAN', 'gate'),
+  },
+  'mark'
+);
 
 /** A child spec that succeeds without parking. */
 const CHILD_OK = spec({ done: { status: 'SUCCESS', type: 'terminate' } }, 'done');
@@ -1206,23 +1229,7 @@ const SCENARIOS: Scenario[] = [
     activities: () => ({
       resolveTemplateForRepo: async () => ({ templateId: 'tpl-park', templateVersion: 1 }),
     }),
-    childSpecs: {
-      'tpl-park': spec(
-        {
-          approved: { status: 'SUCCESS', type: 'terminate' },
-          gate: {
-            onApprove: 'approved',
-            onReject: 'approved',
-            onTimeout: 'approved',
-            timeout: '24h',
-            title: 'Hold the child open',
-            type: 'humanApproval',
-          },
-          mark: marker('AWAITING_HUMAN', 'gate'),
-        },
-        'mark'
-      ),
-    },
+    childSpecs: { 'tpl-park': CAMPAIGN_PARKED_CHILD },
     drive: async (handle, states) => {
       await waitForStateCount(states, 'AWAITING_HUMAN', 2);
       await handle.signal('epicCancelSignal');
@@ -1249,7 +1256,7 @@ const SCENARIOS: Scenario[] = [
   {
     // The campaign fan-out with mixed outcomes: t1..t4 under maxParallel 2, so t3 and t4 start as
     // t1 and t2 finish. t1 opens a PR, t2 is not affected, t3's verification fails and t4 opens a
-    // PR. The campaign is unpatched v1: the history carries no patch markers.
+    // PR. Every batch is re-checked first (all allowed), and the history carries no patch markers.
     activities: () => ({
       createWorkflowRun: async (input: {
         payload?: { connectionId?: string };
@@ -1267,8 +1274,7 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
-    // The patched scheduler (`campaign-recheck-before-start`): every batch is re-authorized before
-    // its children start. t1 and t3 start and finish; t2 is refused (its repository went inactive)
+    // Every batch is re-authorized before its children start. t1 and t3 start and finish; t2 is refused (its repository went inactive)
     // and t4 is stopped by the campaign-wide refusal, so neither ever starts.
     activities: () => ({
       createWorkflowRun: async (input: {
@@ -1292,23 +1298,7 @@ const SCENARIOS: Scenario[] = [
     // children are cancelled with it, and the third target never starts (it is reported as not
     // started to `finalizeCampaign`, which runs in the non-cancellable scope).
     activities: () => CAMPAIGN_RECORD_ACTIVITIES,
-    childSpecs: {
-      'tpl-park': spec(
-        {
-          approved: { status: 'SUCCESS', type: 'terminate' },
-          gate: {
-            onApprove: 'approved',
-            onReject: 'approved',
-            onTimeout: 'approved',
-            timeout: '24h',
-            title: 'Hold the child open',
-            type: 'humanApproval',
-          },
-          mark: marker('AWAITING_HUMAN', 'gate'),
-        },
-        'mark'
-      ),
-    },
+    childSpecs: { 'tpl-park': CAMPAIGN_PARKED_CHILD },
     drive: async (handle, states) => {
       await waitForStateCount(states, 'AWAITING_HUMAN', 2);
       await handle.signal(CAMPAIGN_CANCEL_SIGNAL);
@@ -1321,6 +1311,33 @@ const SCENARIOS: Scenario[] = [
           templateId: 'tpl-park',
         }),
       ],
+      type: 'CampaignWorkflow',
+    },
+  },
+  {
+    // A child cancelled on its own (the run's cancel route, the Temporal UI), not by the campaign:
+    // under maxParallel 1, t1 parks and is cancelled from outside; its target fails with the
+    // reason, the campaign is not cancelled, and t2 and t3 still start and finish after it.
+    activities: () => ({
+      createWorkflowRun: async (input: {
+        payload?: { connectionId?: string };
+        workflowId: string;
+      }) => ({
+        runId: `replay-${input.workflowId}`,
+        spec:
+          input.payload?.connectionId === 't1'
+            ? CAMPAIGN_PARKED_CHILD
+            : CAMPAIGN_CHILD_SPECS[input.payload?.connectionId ?? ''],
+      }),
+      ...CAMPAIGN_RECORD_ACTIVITIES,
+    }),
+    drive: async (_handle, states, env) => {
+      await waitForStateCount(states, 'AWAITING_HUMAN', 1);
+      await env.client.workflow.getHandle('replay-fixture-campaign-child-cancelled-t1').cancel();
+    },
+    name: 'campaign-child-cancelled',
+    workflow: {
+      args: [campaignInput('campaign-child-cancelled', ['t1', 't2', 't3'], { maxParallel: 1 })],
       type: 'CampaignWorkflow',
     },
   },

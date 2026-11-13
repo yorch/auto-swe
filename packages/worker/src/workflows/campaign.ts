@@ -9,7 +9,6 @@ import {
   defineSignal,
   isCancellation,
   ParentClosePolicy,
-  patched,
   proxyActivities,
   setHandler,
   startChild,
@@ -25,10 +24,11 @@ export type { CampaignResult, CampaignWorkflowInput };
  * The campaign workflow: one pinned template fanned out to a set of repositories, at most
  * `maxParallel` at a time.
  *
- * Changes to the scheduling or the command sequence go behind `patched('campaign-…')`, and the
- * replay fixtures are never re-recorded to make a test pass. `campaign-mixed` and `campaign-cancel`
- * guard the unpatched v1 path; `campaign-recheck` guards `RECHECK_PATCH`, under which every batch
- * of targets is re-authorized (`authorizeCampaignTargets`) right before its children start.
+ * Every batch of queued targets is re-authorized (`authorizeCampaignTargets`) right before its
+ * children start. There is one scheduling path and no `patched()` gate: from here on, a change to
+ * the scheduling or the command sequence goes behind `patched('campaign-…')`, and the replay
+ * fixtures are never re-recorded to make a test pass. The fixtures `campaign-mixed`,
+ * `campaign-recheck`, `campaign-cancel` and `campaign-child-cancelled` guard that path.
  *
  * Everything the workflow decides is frozen in its input by the gateway (the limits, the pinned
  * template and the target order): the isolate reads no settings and no rows.
@@ -76,12 +76,6 @@ export const campaignCancelSignal = defineSignal(CAMPAIGN_CANCEL_SIGNAL);
 
 // ── Workflow ──
 
-/**
- * Re-check the launch (kill switch, repository, launcher) before each batch of children starts.
- * Histories recorded before it took the v1 path, which started every target unchecked.
- */
-const RECHECK_PATCH = 'campaign-recheck-before-start';
-
 /** Longest rejection text carried in a synthesized result (the activity bounds it again). */
 const REASON_MAX = 500;
 
@@ -103,8 +97,6 @@ function errorText(err: unknown): string {
 }
 
 export async function CampaignWorkflow(input: CampaignWorkflowInput): Promise<CampaignResult> {
-  // Decided once, before the first command, so a history's whole run takes one path.
-  const recheck = patched(RECHECK_PATCH);
   let cancelled = false;
   // Every child is started inside this scope, so cancelling it (the signal, or the campaign's own
   // cancellation, which cancels this child scope with its parent) cancels the children in flight
@@ -224,7 +216,7 @@ export async function CampaignWorkflow(input: CampaignWorkflowInput): Promise<Ca
   };
 
   /**
-   * The patched scheduler: before a batch of queued targets starts, the launch is re-made for it
+   * The scheduler: before a batch of queued targets starts, the launch is re-made for it
    * by an activity (the workflow reads nothing itself). Targets start in input order, the allowed
    * ones as children and the refused ones ending SKIPPED with the reason; a campaign-wide refusal
    * ends every target still queued the same way. A re-check that cannot be made fails closed: the
@@ -283,28 +275,7 @@ export async function CampaignWorkflow(input: CampaignWorkflowInput): Promise<Ca
     }
   };
 
-  await childScope.run(async () => {
-    if (recheck) {
-      await runRechecked();
-      return;
-    }
-    const inFlight = new Map<string, Promise<string>>();
-    const startReady = (): void => {
-      while (!cancelled && queue.length > 0 && inFlight.size < Math.max(1, input.maxParallel)) {
-        const next = queue.shift();
-        if (!next) {
-          return;
-        }
-        inFlight.set(next.connectionId, runTarget(next));
-      }
-    };
-    startReady();
-    while (inFlight.size > 0) {
-      const doneId = await Promise.race(inFlight.values());
-      inFlight.delete(doneId);
-      startReady();
-    }
-  });
+  await childScope.run(runRechecked);
 
   // Finalize outside any cancellation: a cancelled campaign is exactly when the rows most need
   // closing (the lesson `runnable.ts` documents).
