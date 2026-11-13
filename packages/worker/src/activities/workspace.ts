@@ -1822,9 +1822,8 @@ export async function createWorkspace(
     await finishSetup();
   }
 
-  return {
-    baseSha: trustedBaseSha,
   const workspace: Workspace = {
+    baseSha: trustedBaseSha,
     containerId: containerName,
     copyFileOut: copyWorkspaceFileOut,
     destroy: async () => {
