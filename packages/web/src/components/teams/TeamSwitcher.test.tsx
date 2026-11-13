@@ -48,7 +48,7 @@ function open(path = '/') {
 }
 
 describe('TeamSwitcher', () => {
-  it('lists My desk first, then the member teams with role and needs-you badges', () => {
+  it('lists All my teams first, then the member teams with role and needs-you badges', () => {
     const menu = open();
     const rows = menu.getAllByRole('link');
     expect(rows.map((r) => r.getAttribute('href'))).toEqual([
@@ -56,7 +56,7 @@ describe('TeamSwitcher', () => {
       '/teams/payments',
       '/teams/platform',
     ]);
-    expect(rows[0]?.textContent).toContain('My desk');
+    expect(rows[0]?.textContent).toContain('All my teams');
     expect(rows[1]?.textContent).toContain('Lead');
     expect(within(rows[1] as HTMLElement).getByTestId('needs-you-badge').textContent).toContain(
       '3'

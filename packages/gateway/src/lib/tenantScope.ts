@@ -105,6 +105,19 @@ export function reachableConnections(
   return { AND: [memberOrSharedTeams(actor), permissionRequirement(actor, gate)] };
 }
 
+/** Repository management includes org administrators without widening launch authorization. */
+export function manageableOrReachableConnections(
+  actor: ScopeActor,
+  gate: MaybeGate
+): Prisma.ConnectionWhereInput {
+  return {
+    AND: [
+      { OR: [memberOrSharedTeams(actor), { team: repositoryManagementTeams(actor) }] },
+      permissionRequirement(actor, gate),
+    ],
+  };
+}
+
 /**
  * Repositories whose owning team the actor belongs to, or that have been
  * shared with a team the actor belongs to (`ConnectionTeamShare`).
@@ -175,4 +188,19 @@ export function permissionRequirement(
  */
 export function ledTeams(actor: ScopeActor): Prisma.TeamWhereInput {
   return { memberships: { some: { role: { in: ['LEAD', 'ADMIN'] }, userId: actor.sub } } };
+}
+
+/** Active teams whose repositories the actor may manage. */
+export function repositoryManagementTeams(actor: ScopeActor): Prisma.TeamWhereInput {
+  return {
+    AND: [
+      { isActive: true },
+      {
+        OR: [
+          ledTeams(actor),
+          { organization: { memberships: { some: { role: 'ORG_ADMIN', userId: actor.sub } } } },
+        ],
+      },
+    ],
+  };
 }

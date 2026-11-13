@@ -45,11 +45,13 @@ const CreateSchema = z.object({
   host: hostEntry.optional(),
   installationId: InstallationIdSchema,
   isActive: z.boolean().optional().default(true),
+  organizationId: z.string().uuid().nullable().optional(),
 });
 
 const UpdateSchema = z.object({
   accountLogin: z.string().min(1).max(200).optional(),
   isActive: z.boolean().optional(),
+  organizationId: z.string().uuid().nullable().optional(),
 });
 
 const IdParams = z.object({ id: z.string().uuid() });
@@ -57,6 +59,33 @@ const IdParams = z.object({ id: z.string().uuid() });
 export const githubInstallationRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const outsideCount = (id: string, organizationId: string | null | undefined) =>
+    organizationId
+      ? runUnscoped(
+          'platform admin reviews installation links across organizations',
+          ['Connection'],
+          () =>
+            fastify.prisma.connection.count({
+              where: { installationId: id, team: { orgId: { not: organizationId } } },
+            })
+        )
+      : Promise.resolve(0);
+
+  app.get(
+    '/github-installations/:id/link-impact',
+    {
+      onRequest: adminOnly,
+      schema: { params: IdParams, querystring: z.object({ organizationId: z.string().uuid() }) },
+    },
+    async (request) => ({
+      data: {
+        outsideOrganizationConnectionCount: await outsideCount(
+          request.params.id,
+          request.query.organizationId
+        ),
+      },
+    })
+  );
 
   // GET /github-installations
   app.get('/github-installations', { onRequest: adminOnly }, async () => {
@@ -64,7 +93,14 @@ export const githubInstallationRoutes: FastifyPluginAsync = async (fastify) => {
       include: { _count: { select: { connections: true } } },
       orderBy: { accountLogin: 'asc' },
     });
-    return { data: rows };
+    return {
+      data: await Promise.all(
+        rows.map(async (row) => ({
+          ...row,
+          outsideOrganizationConnectionCount: await outsideCount(row.id, row.organizationId),
+        }))
+      ),
+    };
   });
 
   // POST /github-installations
@@ -73,6 +109,14 @@ export const githubInstallationRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: adminOnly, schema: { body: CreateSchema } },
     async (request, reply) => {
       // Stored as the host family, with the instance's own host as ''.
+      if (
+        request.body.organizationId &&
+        !(await fastify.prisma.organization.findUnique({
+          where: { id: request.body.organizationId },
+        }))
+      ) {
+        return sendError(reply, 400, 'ORGANIZATION_NOT_FOUND', 'Organization not found');
+      }
       let host = '';
       if (request.body.host) {
         const key = hostKeyOf(request.body.host);
@@ -114,6 +158,14 @@ export const githubInstallationRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: adminOnly, schema: { body: UpdateSchema, params: IdParams } },
     async (request, reply) => {
       try {
+        if (
+          request.body.organizationId &&
+          !(await fastify.prisma.organization.findUnique({
+            where: { id: request.body.organizationId },
+          }))
+        ) {
+          return sendError(reply, 400, 'ORGANIZATION_NOT_FOUND', 'Organization not found');
+        }
         const updated = await fastify.prisma.gitHubInstallation.update({
           // An admin's choice about `isActive` replaces whatever retired the row:
           // clearing `retiredReason` means a later webhook no longer treats the
@@ -124,7 +176,15 @@ export const githubInstallationRoutes: FastifyPluginAsync = async (fastify) => {
           },
           where: { id: request.params.id },
         });
-        return { data: updated };
+        return {
+          data: {
+            ...updated,
+            outsideOrganizationConnectionCount: await outsideCount(
+              updated.id,
+              updated.organizationId
+            ),
+          },
+        };
       } catch (err) {
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
           return sendError(reply, 404, 'INSTALLATION_NOT_FOUND', 'Installation not found');

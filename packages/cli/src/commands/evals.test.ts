@@ -339,7 +339,18 @@ describe('runEvalsCommand', () => {
       }
       return (inner as unknown as (u: string) => Promise<Response>)(url);
     }) as unknown as typeof fetch;
-    await runEvalsCommand(['run', 'golden', '--candidate=feat', '--against=main'], ENV);
+    await runEvalsCommand(
+      [
+        'run',
+        'golden',
+        '--candidate=feat',
+        '--against=main',
+        '--candidate-memory=on',
+        '--against-memory=shadow',
+      ],
+      ENV
+    );
+    expect(body).toMatchObject({ baselineMemoryMode: 'shadow', candidateMemoryMode: 'on' });
     expect(body).not.toHaveProperty('candidateRuntime');
     expect(body).not.toHaveProperty('baselineRuntime');
   });

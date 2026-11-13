@@ -6260,7 +6260,7 @@
     "ConfigAuditLog": "Before/after change audit for configuration entities.",
     "ConfigPermission": "Scoped configuration write grant subject to role floors.",
     "ConfigSetting": "Validated registry value at a configuration scope.",
-    "Connection": "Team-owned typed integration target; repo coordinates or generic config plus an encrypted token and, for mcp connections, an encrypted set of custom request headers. Git repositories can also store a workspace setup definition that overrides the checked-in setup file.",
+    "Connection": "Team-owned typed integration target; repo coordinates or generic config plus an encrypted token and, for mcp connections, an encrypted set of custom request headers. Git repositories can also store a workspace setup definition that overrides the checked-in setup file. Nullable onboarding milestones record successful access testing, the onboarding pull request URL and number, and dismissal of the first-run checklist. List and detail responses derive stack, unresolved-blocker and first-run milestones from stored detection and relation counts; existing connections are migrated as dismissed. The Connections row menu proposes tools and pull request policy files through the onboarding workflow, with available catalog-tool suggestions from detected stacks.",
     "ConnectionCredential": "Schema entity; inspect fields and relationship declarations below.",
     "ConnectionTeamShare": "Shares a repository with another team; canLaunch off makes the share view only, so its members see the repository but cannot start new work on it.",
     "ContextSnapshot": "Captured request context: ticket, knowledge, Figma design and success criteria.",
@@ -6268,6 +6268,7 @@
     "EmbeddingConfig": "Singleton embedding model and credential selection; the provider must be openai, google or compatible, and vectors are 1536 wide.",
     "EvalCase": "Fixture repository and baseline SHA, toolchain stack (node, python, jvm or go, mapped to a pinned image), golden test, quarantine flag and flake-screen state (runs, screened, infrastructure errors).",
     "EvalDataset": "Benchmark dataset containing frozen cases.",
+    "EvalLesson": "Dataset-scoped authored or imported lesson corpus with embeddings and source provenance, isolated from production memory.",
     "EvalResult": "Normalized per-axis score linked to online or offline evaluation and the node that produced it; a scorer that could not score is marked.",
     "EvalRubric": "Scoped/versioned judge scoring prompt.",
     "EvalRun": "Candidate versus baseline benchmark execution, each side’s runtime and a summary; INCONCLUSIVE when no case was screened.",
@@ -6277,7 +6278,7 @@
     "GitHubConfig": "Schema entity; inspect fields and relationship declarations below.",
     "GitHubHostCredential": "Encrypted PAT and/or GitHub App credentials for one approved non-instance GitHub host family; sent only to that host.",
     "GitHubHostWebhookSecret": "Schema entity; inspect fields and relationship declarations below.",
-    "GitHubInstallation": "A GitHub App installation, identified by its host and installation id; repositories may point only at an installation on their own host. retiredReason marks a retirement a GitHub webhook made, which only a webhook reverses.",
+    "GitHubInstallation": "A GitHub App installation, identified by its host and installation id; repositories may point only at an installation on their own host. Its nullable indexed organizationId links an installation to an Organization (deleting the organization sets it null). The link scopes new imports and installation changes, never existing runs. Org admins connect only new installations of the instance App through signed, user-bound state and OAuth installation verification, and can retire their linked rows; platform admins alone unlink, relink or reactivate, with an outside-org repository count. Unlinked installations remain cross-organization. retiredReason marks a webhook retirement, which only a webhook reverses; manual retirement clears it.",
     "HarnessProfile": "A named, admin-approved Claude Code profile: the git repository it comes from; its versions are immutable.",
     "HarnessProfileVersion": "One approved, hash-pinned snapshot of a profile (pinned commit, content hash, stored archive) that an Agent version binds and a run pins.",
     "HumanApproval": "Distinct human response linked to a human step.",
@@ -6307,7 +6308,7 @@
     "OauthConsent": "Scopes a user granted a client; its update time marks the grant generation.",
     "OauthRefreshToken": "Hashed refresh token tied to the user and granting session.",
     "OauthResource": "Protected resource the authorization server issues tokens for.",
-    "Organization": "Organization ownership, governance and budget grouping; trustedInvites lets an org admin’s invite approve the account.",
+    "Organization": "Organization ownership, governance and budget grouping; trustedInvites lets organization-admin and team-lead/admin invites approve accounts while the organization is active.",
     "OrganizationMembership": "Schema entity; inspect fields and relationship declarations below.",
     "OrgMonthlyUsage": "Schema entity; inspect fields and relationship declarations below.",
     "OutboundDelivery": "Run-callback outbox row written with the event it reports; holds the last status code and a fixed error class, never a response body.",
@@ -6401,6 +6402,7 @@
       "EvalResult",
       "EvalDataset",
       "EvalCase",
+      "EvalLesson",
       "EvalRun",
       "EvalRubric",
       "AgentTrace",
@@ -10235,11 +10237,11 @@
       "title": "Scheduled work request ticket id flagged as generated"
     },
     {
-      "anchor": "ticketIsSynthetic: externalTicketId === workRequestId,",
+      "anchor": "ticketIsSynthetic: request.externalTicketId === request.workRequestId,",
       "before": 6,
       "id": "ticketSynth",
       "lines": 12,
-      "path": "packages/gateway/src/routes/workflowTemplates.ts",
+      "path": "packages/gateway/src/lib/trackedTemplateLaunch.ts",
       "title": "Synthetic ticket flag recorded at template launch"
     },
     {
@@ -13043,12 +13045,12 @@
       "title": "A run over cases none of which is screened ends INCONCLUSIVE"
     },
     {
-      "anchor": "let approvalSource: 'admin' | 'org_admin' | null =",
+      "anchor": "let approvalSource: string | null =",
       "before": 6,
       "id": "trustedInvites",
       "lines": 20,
-      "path": "packages/gateway/src/routes/orgMembers.ts",
-      "title": "An org admin’s invite is approved only in a trusted, active organization"
+      "path": "packages/gateway/src/lib/inviteUser.ts",
+      "title": "Non-platform-admin org and team invites are approved only in a trusted, active organization"
     },
     {
       "anchor": "export async function runPostDiffSecurityGate(",

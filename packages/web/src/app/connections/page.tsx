@@ -9,9 +9,12 @@ import type { ConnectionPrefill } from '@/components/repositories/ConnectionForm
 import { ConnectionFormModal } from '@/components/repositories/ConnectionFormModal';
 import { ImportFromGitHubModal } from '@/components/repositories/ImportFromGitHubModal';
 import { MyCredentialModal } from '@/components/repositories/MyCredentialModal';
+import { OnboardingPrModal } from '@/components/repositories/OnboardingPrModal';
 import { RepoAutomationsModal } from '@/components/repositories/RepoAutomationsModal';
 import { RepoDependenciesModal } from '@/components/repositories/RepoDependenciesModal';
 import { RepoDependencySuggestions } from '@/components/repositories/RepoDependencySuggestions';
+import { RepoOnboardingChecklist } from '@/components/repositories/RepoOnboardingChecklist';
+import { OnboardingRunLink } from '@/components/repositories/RunOnboardingButton';
 import { ShareRepoModal } from '@/components/repositories/ShareRepoModal';
 import { ToggleConnectionActiveModal } from '@/components/repositories/ToggleConnectionActiveModal';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
@@ -39,13 +42,13 @@ import {
   useRepoDependencySuggestions,
   useTriggerRepoDependencyScan,
 } from '@/hooks/useRepoDependencies';
-import type { GitHubRepoInfo } from '@/hooks/useRepositories';
-import { useMyCredentials, useRepositories } from '@/hooks/useRepositories';
-import { useLedTeamIds, useTeams } from '@/hooks/useTeams';
+import { useMyCredentials, useRepositories, useRunRepoOnboarding } from '@/hooks/useRepositories';
+import { useRepositoryTeams } from '@/hooks/useRepositoryTeams';
+import { useAdminTeamIds, useTeams } from '@/hooks/useTeams';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
-import { canWriteTeamResource, repoLeadReason, repoManageReason } from '@/lib/teamPermissions';
+import { canAuthorTeamCode, repoLeadReason, repoManageReason } from '@/lib/teamPermissions';
 import { useAuthStore } from '@/stores/authStore';
 
 type ModalMode =
@@ -57,6 +60,8 @@ type ModalMode =
   | { kind: 'credential'; repo: RepositorySummary }
   | { kind: 'share'; repo: RepositorySummary }
   | { kind: 'test'; repo: RepositorySummary }
+  | { kind: 'onboarding-pr'; repo: RepositorySummary }
+  | { kind: 'test-pagerduty'; repo: RepositorySummary }
   | { kind: 'toggle'; repo: RepositorySummary }
   | { kind: 'import' }
   | null;
@@ -73,22 +78,19 @@ function ConnectionTypeBadge({ type }: { type: string }) {
 const PAGE_SIZE = 30;
 
 export default function ConnectionsPage() {
-  // Connection writes are LEAD routes that also require LEAD membership on the
-  // connection's team (canManageTeamRepos); a platform ADMIN bypasses that.
-  // `canManage` gates the page-level controls — add, import, show inactive —
-  // which need at least one led team; each row gates on its own team.
-  const isLead = useHasRole('LEAD');
-  const isAdmin = useHasRole('ADMIN');
+  const onboarding = useRunRepoOnboarding();
+  const adminTeamIds = useAdminTeamIds();
   const platformRole = useAuthStore((s) => s.user?.role);
-  const ledTeamIds = useLedTeamIds();
+  const isAdmin = useHasRole('ADMIN');
+  const managedTeams = useRepositoryTeams();
   const canManageTeam = useCallback(
-    (teamId: string | null | undefined) => canWriteTeamResource(platformRole, teamId, ledTeamIds),
-    [platformRole, ledTeamIds]
+    (teamId: string | null | undefined) => isAdmin || managedTeams.some((t) => t.id === teamId),
+    [isAdmin, managedTeams]
   );
   // The owner chip names a team the viewer is looking at from outside; their own team's repository
   // is not "owned by" someone else.
   const myTeamIds = new Set((useTeams({ memberOnly: true }).data ?? []).map((t) => t.id));
-  const canManage = isAdmin || (isLead && (ledTeamIds?.size ?? 0) > 0);
+  const canManage = isAdmin || managedTeams.length > 0;
   // Deactivating a connection must not make it vanish for the people who can
   // reactivate it — they can opt into seeing inactive rows.
   const [showInactive, setShowInactive] = useState(false);
@@ -124,23 +126,6 @@ export default function ConnectionsPage() {
   // A saved change (deactivated, token saved) closes its dialog, so say it here.
   const [notice, setNotice] = useState<string | null>(null);
 
-  function handleImportSelect(repo: GitHubRepoInfo) {
-    setMode({
-      kind: 'create',
-      prefill: {
-        defaultBranch: repo.defaultBranch,
-        description: repo.description ?? undefined,
-        // No URL overrides: the import list comes from the instance's own
-        // GitHub host, which is what an unset override already means. The
-        // repo-level `htmlUrl`/`apiUrl` are not bases — stored as overrides
-        // they made every clone and API call land on a path that does not exist.
-        language: repo.language ?? undefined,
-        organizationName: repo.org,
-        repoName: repo.name,
-      },
-    });
-  }
-
   const formMode = mode?.kind === 'create' || mode?.kind === 'edit' ? mode : null;
   const credentialsEnabled = myCredentials.data?.enabled ?? false;
   const credentialFor = (id: string) =>
@@ -154,6 +139,14 @@ export default function ConnectionsPage() {
 
   return (
     <div className="space-y-8">
+      {onboarding.isError && (
+        <Alert variant="error">{errMsg(onboarding.error, 'Could not start onboarding')}</Alert>
+      )}
+      {onboarding.data && (
+        <Alert variant="info">
+          <OnboardingRunLink run={onboarding.data} />
+        </Alert>
+      )}
       <PageHeader
         actions={
           canManage ? (
@@ -287,8 +280,30 @@ export default function ConnectionsPage() {
                   const isGitRepo = !r.type || r.type === 'git_repo';
                   const label = connectionLabel(r);
                   const menu: ActionMenuItem[] = [
+                    ...(isGitRepo &&
+                    r.isActive &&
+                    canAuthorTeamCode(platformRole, r.team?.id, adminTeamIds)
+                      ? [
+                          {
+                            disabledReason: onboarding.isPending ? 'Starting onboarding' : null,
+                            icon: 'workflows' as const,
+                            id: 'onboarding',
+                            label: 'Run onboarding',
+                            onAction: () => onboarding.mutate(r.id),
+                          },
+                        ]
+                      : []),
                     ...(isGitRepo
                       ? [
+                          {
+                            disabledReason: canManageTeam(r.team?.id)
+                              ? null
+                              : repoManageReason(r.team?.name, 'open an onboarding PR for'),
+                            icon: 'pullRequest' as const,
+                            id: 'onboarding-pr',
+                            label: 'Open onboarding PR',
+                            onAction: () => setMode({ kind: 'onboarding-pr', repo: r }),
+                          },
                           {
                             icon: 'layers' as const,
                             id: 'dependencies',
@@ -362,6 +377,21 @@ export default function ConnectionsPage() {
                           Test access
                         </GuardedButton>
                       )}
+                      {r.type === 'pagerduty' && (
+                        <GuardedButton
+                          aria-label={`Test connection ${label}`}
+                          blockedReason={
+                            canManageTeam(r.team?.id)
+                              ? null
+                              : repoManageReason(r.team?.name, 'test')
+                          }
+                          onClick={() => setMode({ kind: 'test-pagerduty', repo: r })}
+                          size="sm"
+                          variant="ghost"
+                        >
+                          Test connection
+                        </GuardedButton>
+                      )}
                       <GuardedButton
                         aria-label={`Edit ${label}`}
                         blockedReason={
@@ -388,18 +418,30 @@ export default function ConnectionsPage() {
                       const myCredential = credentialFor(r.id);
                       const showCredential = showsCredential(r);
                       const image = !r.type || r.type === 'git_repo' ? r.executorImage : null;
-                      return r.description || showCredential || image ? (
-                        <span className="block truncate">
-                          {r.description}
-                          {r.description && (showCredential || image) && ' · '}
-                          {image && `Image ${image}`}
-                          {image && showCredential && ' · '}
-                          {showCredential &&
-                            (myCredential
-                              ? `Your token …${myCredential.lastFour || '????'}${credentialsEnabled ? '' : ' (unused)'}`
-                              : 'Platform credential')}
-                        </span>
-                      ) : null;
+                      return (
+                        <>
+                          {(r.description || showCredential || image) && (
+                            <span className="block truncate">
+                              {r.description}
+                              {r.description && (showCredential || image) && ' · '}
+                              {image && `Image ${image}`}
+                              {image && showCredential && ' · '}
+                              {showCredential &&
+                                (myCredential
+                                  ? `Your token …${myCredential.lastFour || '????'}${credentialsEnabled ? '' : ' (unused)'}`
+                                  : 'Platform credential')}
+                            </span>
+                          )}
+                          <RepoOnboardingChecklist
+                            canManage={canManageTeam(r.team?.id)}
+                            onOnboardingPr={() => setMode({ kind: 'onboarding-pr', repo: r })}
+                            onSetup={() => setMode({ kind: 'edit', repo: r })}
+                            onStack={() => setMode({ kind: 'edit', repo: r })}
+                            onTestAccess={() => setMode({ kind: 'test', repo: r })}
+                            repo={r}
+                          />
+                        </>
+                      );
                     },
                     width: 'sm:max-w-md',
                   },
@@ -541,15 +583,7 @@ export default function ConnectionsPage() {
         </div>
       </section>
 
-      <ImportFromGitHubModal
-        onClose={() =>
-          // Functional update so that if onSelect already transitioned mode to
-          // 'create', the dialog's programmatic close event doesn't overwrite it.
-          setMode((prev) => (prev?.kind === 'create' ? prev : null))
-        }
-        onSelect={handleImportSelect}
-        open={mode?.kind === 'import'}
-      />
+      {mode?.kind === 'import' && <ImportFromGitHubModal onClose={() => setMode(null)} open />}
 
       {formMode && <ConnectionFormModal mode={formMode} onClose={() => setMode(null)} open />}
 
@@ -565,10 +599,26 @@ export default function ConnectionsPage() {
 
       {mode?.kind === 'test' && (
         <ProbeModal
-          onClose={() => setMode(null)}
+          onClose={() => {
+            setMode(null);
+            refetch();
+          }}
           path={`/api/v1/repositories/${mode.repo.id}/test-access`}
           subtitle={connectionLabel(mode.repo)}
           title="Test repository access"
+        />
+      )}
+
+      {mode?.kind === 'onboarding-pr' && (
+        <OnboardingPrModal onClose={() => setMode(null)} repo={mode.repo} />
+      )}
+
+      {mode?.kind === 'test-pagerduty' && (
+        <ProbeModal
+          onClose={() => setMode(null)}
+          path={`/api/v1/repositories/${mode.repo.id}/test-pagerduty`}
+          subtitle={connectionLabel(mode.repo)}
+          title="Test PagerDuty connection"
         />
       )}
 

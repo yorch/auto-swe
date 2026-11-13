@@ -1,10 +1,10 @@
 'use client';
 
 import { use, useState } from 'react';
+import { EvalMemoryPins } from '@/components/evals/EvalMemory';
 import { EvalResultsTable } from '@/components/evals/EvalResultsTable';
 import { EvalRunStatusBadge } from '@/components/evals/EvalRunStatusBadge';
 import { Alert } from '@/components/ui/Alert';
-import { BackLink } from '@/components/ui/BackLink';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
@@ -12,6 +12,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useEvalRun } from '@/hooks/useAdmin';
+import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { formatArm, runtimeLabel } from '@/lib/evalRuntime';
 import { formatPoints, type PairedDelta, significance, verdictSentence } from '@/lib/evalVerdict';
 import { validateRouteParam } from '@/lib/routeParams';
@@ -217,13 +218,15 @@ export default function EvalRunPage({ params }: { params: Promise<{ id: string }
   const id = validateRouteParam(use(params).id);
   const [scorer, setScorer] = useState('');
   const { data: run, error, isError, isFetching, refetch, isLoading } = useEvalRun(id);
+  useEntityTitle(
+    run ? `${run.datasetName ?? 'Dataset'} benchmark run` : null,
+    run
+      ? { href: `/admin/evals/datasets/${run.datasetId}`, label: run.datasetName ?? 'Dataset' }
+      : undefined
+  );
 
   return (
     <div className="space-y-6">
-      <BackLink
-        href={run ? `/admin/evals/datasets/${run.datasetId}` : '/admin/evals'}
-        label={run?.datasetName ?? 'Dataset'}
-      />
       <QueryBoundary
         error={error}
         isError={isError}
@@ -240,6 +243,7 @@ export default function EvalRunPage({ params }: { params: Promise<{ id: string }
               subtitle={`${formatArm(run.candidateRef, run.candidateRuntime)} vs ${formatArm(run.baselineRef, run.baselineRuntime)} · started ${formatDate(run.startedAt)}${run.endedAt ? ` · ended ${formatDate(run.endedAt)}` : ''}`}
               title={run.datasetName ? `${run.datasetName} benchmark run` : 'Benchmark run'}
             />
+            <EvalMemoryPins run={run} />
             <Card>
               <CardHeader>
                 <CardTitle hint="Candidate vs baseline">Verdict</CardTitle>

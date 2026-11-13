@@ -496,7 +496,8 @@ deployment. They are read on each request and passed to the browser with the res
 
 A value that fails its rule is dropped, and the web container logs one warning per process for
 each distinct message. The rest still show. With none set, nothing is rendered. The contact appears on the sign-in screen, including
-the awaiting-approval screen, on the error and not-found pages, and in the sidebar footer. The
+the awaiting-approval screen, on the error and not-found pages, and in the expanded sidebar footer
+or the collapsed sidebar's user menu. The
 compose files pass the three variables through, because the web container does not receive `.env`.
 
 ## 9. Extra issue-tracker repositories
@@ -573,6 +574,27 @@ Titles of pull requests that already exist are not rewritten, and a feedback or 
 touch them.
 
 ---
+
+## Repository onboarding
+
+`onboarding.autoRunOnConnect` is an ADMIN-only boolean, default `false`, overridable at TEAM and
+ORGANIZATION scope. It is live, not run-pinned. When enabled, Git connection creation starts the
+builtin onboarding workflow best-effort after the dependency scan kick-off, attributed to the
+creating user. Normal repository permissions and budgets still apply. A deterministic key per
+connection prevents retry duplicates; launch failure is logged and audited without failing creation.
+
+`onboarding.draftEgressHosts` is an ADMIN-only hostname list, overridable at ORGANIZATION and
+TEAM scope. It is live rather than run-pinned; a workspace uses the value resolved at provisioning.
+The defaults cover npm/Yarn, PyPI, Go modules, Maven, crates.io, RubyGems and GitHub download
+hosts. The worker unions these with applicable active registry upstreams and non-revoked tool
+download hosts. Entries are plain hostnames, not URLs, wildcard patterns or host:port pairs.
+
+Widening applies only to workspace nodes using `repo-onboarder` in an execution-verified seeded
+version of the global `repo-onboarding` template. A restricted draft retains the team allowlist;
+a blocked draft does not add the team allowlist. Existing Git/platform access is preserved.
+The egress proxy is required; without it the worker warns and retains normal policy enforcement.
+Each workspace registration is released on destruction. Onboarding trials retain the real run
+policy and never use this host list. See [Onboarding agent](./repositories.md#onboarding-agent).
 
 ## Run activity and container egress
 

@@ -86,8 +86,10 @@ async function buildApp() {
   const prisma = {
     configAuditLog: { create: vi.fn() },
     connection: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
+    organizationMembership: { findUnique: vi.fn() },
     prEvaluation: { count: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), groupBy: vi.fn() },
     prReviewVisit: { findMany: vi.fn() },
+    team: { findUnique: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
   };
   const temporal = { startPrEvaluationWorkflow: vi.fn() };
@@ -297,6 +299,7 @@ describe('pr evaluation routes', () => {
       });
 
     it('refuses a plain member', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow());
       const res = await put('advisory');
       expect(res.statusCode).toBe(403);
       expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
@@ -369,6 +372,7 @@ describe('pr evaluation routes', () => {
       });
 
       it('refuses a plain member and a LEAD of another team', async () => {
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow());
         expect((await put('enforce')).statusCode).toBe(403);
         ctx.authState.role = 'LEAD';
         ctx.prisma.connection.findFirst.mockResolvedValue(repoRow());

@@ -169,7 +169,7 @@ const RunTracesQuery = z.object({
    * Return only traces created at or after this instant. Inclusive so a row in
    * the cursor's own millisecond is not skipped; callers merge by trace id, so
    * the overlap is harmless. `createdAt` is the writing worker's clock when it
-   * built the insert, not the commit time, so no cursor can promise every row
+   * recorded the event, not the commit time, so no cursor can promise every row
    * behind it has been read — `total` is what lets a caller notice a gap.
    */
   since: z.iso.datetime({ offset: true }).optional(),

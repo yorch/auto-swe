@@ -38,8 +38,8 @@ ID is configured (in the database or the environment).
      loopback address GitHub cannot reach;
    - the permissions listed under [Creating the GitHub App](#creating-the-github-app) below;
    - the events listed there;
-   - a redirect back to `<PUBLIC_URL>/api/v1/integrations/github-app-manifest/callback`, and a setup
-     URL of `<WEB_URL>/admin/integrations`;
+   - a manifest-conversion redirect back to `<PUBLIC_URL>/api/v1/integrations/github-app-manifest/callback`;
+   - OAuth during installation, with `<WEB_URL>/github/install/callback` as the first user-authorization callback;
    - `public: false`, so the App can be installed only on the account that owns it.
 3. On GitHub, review and confirm **Create GitHub App**. GitHub sends the browser back to the callback
    with a one-time code.
@@ -225,6 +225,33 @@ per-host webhook secret.
 
 ---
 
+## Connecting an organization
+
+An organization's admin opens **Admin → Organizations → the organization → GitHub**, then
+**Connect a GitHub org**. The browser visits the instance App's installation page with a signed,
+ten-minute state bound to the signed-in user, organization, App and host. After installing a new
+installation and authorizing the App, confirm **Connect installation** on the callback page.
+
+GitHub's [registration documentation](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app)
+states that **Request user authorization (OAuth) during installation** disables the Setup URL and
+redirects to the user-authorization Callback URL instead. With multiple callbacks and no
+`redirect_uri`, GitHub uses the
+[first callback](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/about-the-user-authorization-callback-url).
+Set it to `<WEB_URL>/github/install/callback`. A callback without organization state returns to
+the existing admin installation form; it does not claim an organization link.
+
+The gateway exchanges the one-use code using the instance App's client credentials, checks the
+installation against the authorizing user's paginated `/user/installations`, and fetches its account
+login with the App JWT. It creates and audits a new installation linked to the selected organization.
+The user token is neither stored nor logged. An installation already registered anywhere on this host
+cannot be claimed; only a platform admin can change its organization link.
+
+Org admins can list and retire their linked installations. Retirement blocks new runs but leaves
+in-flight work running; a manual retirement clears the webhook retirement reason. Reactivation,
+unlinking and relinking require a platform admin. The platform installation editor previews the count
+of existing repositories owned by teams outside a proposed organization and asks for confirmation.
+Those repositories keep working; linking restricts new imports and installation changes, not runs.
+
 ## Configuring in auto-swe
 
 Go to **Admin → Integrations → GitHub → App authentication (optional)**.
@@ -293,6 +320,15 @@ cache keeps the two apart, so a narrow token is never served for a wider request
 
 ## Limitations
 
+- Self-service connections use only the instance's own App and host, not per-host Apps. The App's
+  client ID, client secret and private key must be configured; its slug is verified through `GET /app`.
+  An existing App needs its OAuth-on-install setting and first callback updated by an operator.
+  The GitHub web and API URLs must use HTTPS and belong to the same host family.
+- The manifest creates a private App. To let other GitHub accounts install it, the App owner must
+  allow installation on **Any account** in GitHub's settings.
+- The callback needs a successful OAuth authorization, including a code and installation ID. It
+  does not turn an installation update, an authorization denial or an expired state into a claim.
+
 - A personal access token cannot be narrowed. A PAT (including a host's PAT credential and a user's
   own saved token) carries all the repositories its owner can reach, and a deployment that uses one
   gets none of the per-repository restriction above.
@@ -319,13 +355,13 @@ cache keeps the two apart, so a narrow token is never served for a wider request
 - The manifest flow creates only the instance's own App. An App for another approved host (Per-host
   credentials) is registered by hand ([An App on another host](#an-app-on-another-host)).
 - The manifest flow does not replace or rotate an existing App: clear the App ID first to create a new one.
-- The installation id is offered from the query string GitHub appends after an install; the
-  platform does not look the installation up before saving it. A wrong id fails at the first token
-  mint, as one typed into the form would.
+- In the platform-admin registration flow, an installation id offered from the query string is
+  not verified before saving. Self-service organization claims verify the authorizing user's access
+  and the App's installation record rather than trusting the query string.
 - The manifest asks for no **Workflows** permission, so the App cannot push a change to files under
   `.github/workflows/`. Add it on GitHub if agents are meant to edit workflow files.
 - `PUBLIC_URL` and `WEB_URL` are written into the App as they are at creation time. Changing either
-  later means editing the App's webhook URL and setup URL on GitHub.
+  later means editing the App's webhook URL and callback URL on GitHub.
 
 ---
 

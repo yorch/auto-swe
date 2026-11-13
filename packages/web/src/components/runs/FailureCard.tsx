@@ -1,15 +1,17 @@
 'use client';
 
-import type { WorkflowStepRecord } from '@auto-swe/shared/types/api';
+import type { RepoSetupBlockerSummary, WorkflowStepRecord } from '@auto-swe/shared/types/api';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { CopyButton } from '@/components/ui/CopyButton';
 import { ExpandablePre } from '@/components/ui/ExpandablePre';
 import { Icon } from '@/components/ui/Icon';
+import { setupBlockerLabel } from '@/lib/setupBlockers';
 import { cn } from '@/lib/utils';
 
 interface FailureCardProps {
   step: WorkflowStepRecord;
+  setupBlocker?: RepoSetupBlockerSummary;
   onJumpToFailure?: () => void;
   onReRun?: () => void;
   /** "full" shows suggested fix; "inline" omits it */
@@ -47,10 +49,30 @@ function getSuggestedFix(step: WorkflowStepRecord, code: string): string | null 
   return null;
 }
 
-export function FailureCard({ step, onJumpToFailure, onReRun, size = 'full' }: FailureCardProps) {
+export function FailureCard({
+  step,
+  setupBlocker,
+  onJumpToFailure,
+  onReRun,
+  size = 'full',
+}: FailureCardProps) {
   const errorCode = getErrorCode(step);
-  const errorTitle = getErrorTitle(errorCode);
-  const suggestedFix = size === 'full' ? getSuggestedFix(step, errorCode) : null;
+  const errorTitle = setupBlocker ? setupBlockerLabel(setupBlocker.kind) : getErrorTitle(errorCode);
+  const suggestedFix = !setupBlocker && size === 'full' ? getSuggestedFix(step, errorCode) : null;
+  const diagnostics = step.error ? (
+    <div className="mt-3">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-xs font-medium text-paper-500">Error message</span>
+        <CopyButton value={step.error} />
+      </div>
+      <ExpandablePre
+        className="whitespace-pre-wrap break-words rounded-md border border-ink-500/60 bg-ink-950/50 px-3 py-2 font-mono text-xs leading-relaxed text-paper-300"
+        collapsedHeight="9rem"
+      >
+        {step.error}
+      </ExpandablePre>
+    </div>
+  ) : null;
 
   return (
     <div
@@ -77,20 +99,26 @@ export function FailureCard({ step, onJumpToFailure, onReRun, size = 'full' }: F
             at step <span className="font-mono text-paper-300">{step.nodeId}</span>
           </div>
 
-          {/* Error summary: the raw message, so it reads as output */}
-          {step.error && (
-            <div className="mt-3">
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <span className="text-xs font-medium text-paper-500">Error message</span>
-                <CopyButton value={step.error} />
-              </div>
-              <ExpandablePre
-                className="whitespace-pre-wrap break-words rounded-md border border-ink-500/60 bg-ink-950/50 px-3 py-2 font-mono text-xs leading-relaxed text-paper-300"
-                collapsedHeight="9rem"
-              >
-                {step.error}
-              </ExpandablePre>
+          {setupBlocker && (
+            <div className="mt-3 space-y-2">
+              <p className="text-sm font-semibold text-paper-100">{setupBlocker.remedy}</p>
+              {setupBlocker.subject && (
+                <p className="break-all font-mono text-sm text-paper-300">{setupBlocker.subject}</p>
+              )}
+              {setupBlocker.step && (
+                <p className="text-xs text-paper-400">Setup step: {setupBlocker.step}</p>
+              )}
             </div>
+          )}
+
+          {/* Error summary: the raw message, so it reads as output */}
+          {setupBlocker ? (
+            <details className="mt-3 text-sm text-paper-400">
+              <summary className="cursor-pointer">Diagnostics</summary>
+              {diagnostics}
+            </details>
+          ) : (
+            diagnostics
           )}
 
           {/* Suggested fix (full size only) */}

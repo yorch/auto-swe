@@ -12,7 +12,7 @@ import {
 import { type AdmissionDecision, decideAdmission } from '@auto-swe/shared/lib/agentRunAdmission';
 import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import type { NeedsInputQuestion } from '@auto-swe/shared/lib/needsInput';
-import { PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
+import type { PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
 import { clampPullRequestTitle } from '@auto-swe/shared/lib/pullRequest';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
@@ -31,7 +31,12 @@ import { buildKnowledgeTools } from '../agents/knowledgeTools.js';
 import { loadMcpTools } from '../agents/mcpTools.js';
 import { createProvisionTool, grantsProvisionTool } from '../agents/provisionTool.js';
 import { buildWorkspaceTools } from '../agents/workspaceTools.js';
-import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
+import {
+  currentWorkflowId,
+  persistActivityTrace,
+  startTraceFlushing,
+  traceWorkspacePreparation,
+} from '../lib/activityContext.js';
 import { logWarn } from '../lib/activityLog.js';
 import { loadLiveAgentRunSlots } from '../lib/agentRunSlots.js';
 import { AgentTracer, redactString } from '../lib/agentTracer.js';
@@ -64,6 +69,7 @@ import {
   resumeCheckoutSha,
   resumeMessage,
 } from '../lib/pauseResume.js';
+import { resolvePreviewFromScm } from '../lib/repoConfigResolver.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
@@ -282,9 +288,9 @@ export async function runAgentTaskCore(
       select: { previewConfig: true },
       where: { id: repo.id },
     });
-    services = previewRow?.previewConfig
-      ? PreviewConfigSchema.parse(previewRow.previewConfig).services
-      : undefined;
+    services = (
+      await resolvePreviewFromScm({ ...repo, previewConfig: previewRow?.previewConfig }, baseBranch)
+    )?.services;
   }
 
   // The run's pinned egress policy. The agent's container takes it as is. The trusted delivery
@@ -307,6 +313,7 @@ export async function runAgentTaskCore(
   let agentWs: Workspace | undefined;
   let trusted: Workspace | undefined;
   let closeMcp: (() => Promise<void>) | undefined;
+  const stopTraceFlushing = startTraceFlushing(tracer, resolved.key);
   try {
     // The agent's container is cloned with the credential (a private repo needs
     // it) but the credential is never written into it: origin is the clean URL
@@ -317,24 +324,27 @@ export async function runAgentTaskCore(
       repoId: repo.id,
       teamId: repo.teamId,
     });
-    agentWs = await createWorkspace(
-      authedCloneUrl,
-      branch,
-      baseBranch,
-      executorImageFor(repo),
-      // A resumed run is cut from the commit its saved tree was taken against, not the branch tip.
-      resumeCheckoutSha(resume) ?? input.initialChange?.baseSha,
-      undefined,
-      {
-        detectedStack: repo.detectedStack,
-        egressPolicy,
-        knowledgeBaseSnapshotIds: references.snapshotIds,
-        knowledgeBases: references.checkouts,
-        repoSetup: { connectionId: repo.id, defer: true, field: repo.setup },
-        services,
-        teamId: repo.teamId,
-        toolsFor: { connectionId: repo.id },
-      }
+    agentWs = await traceWorkspacePreparation(tracer, resolved.key, () =>
+      createWorkspace(
+        authedCloneUrl,
+        branch,
+        baseBranch,
+        executorImageFor(repo),
+        // A resumed run is cut from the commit its saved tree was taken against, not the branch tip.
+        resumeCheckoutSha(resume) ?? input.initialChange?.baseSha,
+        undefined,
+        {
+          ...(resumeCheckoutSha(resume) ? { trustedBaseBranch: baseBranch } : {}),
+          detectedStack: repo.detectedStack,
+          egressPolicy,
+          knowledgeBaseSnapshotIds: references.snapshotIds,
+          knowledgeBases: references.checkouts,
+          repoSetup: { connectionId: repo.id, defer: true, field: repo.setup },
+          services,
+          teamId: repo.teamId,
+          toolsFor: { connectionId: repo.id },
+        }
+      )
     );
     await agentWs.finishSetup?.();
     const baseSha = (await agentWs.exec('git rev-parse HEAD')).trim();
@@ -507,6 +517,7 @@ export async function runAgentTaskCore(
       gate: 'passed',
     };
   } finally {
+    stopTraceFlushing();
     await closeMcp?.();
     await persistActivityTrace(tracer, resolved.key);
     // The agent workspace never holds the push credential, but both are removed.

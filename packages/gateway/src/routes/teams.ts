@@ -8,11 +8,16 @@ import { writeAuditLog } from '../lib/auditLog.js';
 import { sendConflict } from '../lib/conflict.js';
 import { loadEgressReadiness } from '../lib/egressReadiness.js';
 import { sendError } from '../lib/httpErrors.js';
+import { inviteUser } from '../lib/inviteUser.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
-import { memberTeams, permissionRequirement } from '../lib/tenantScope.js';
-import { requireAuth, requireUser } from '../plugins/auth.js';
+import {
+  memberTeams,
+  permissionRequirement,
+  repositoryManagementTeams,
+} from '../lib/tenantScope.js';
+import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { teamScopedConfigRoutes } from './modelConfig.js';
 
 /// Auditable subset of a team row.
@@ -39,6 +44,7 @@ function membershipAuditFields(row: { role: string; teamId: string; userId: stri
 }
 
 const CreateTeamSchema = z.object({
+  adminUserId: z.string().uuid().optional(),
   description: z.string().max(500).default(''),
   name: z.string().min(1).max(100),
   /** P5: owning organization. Defaults to the 'default' org when omitted. */
@@ -49,6 +55,123 @@ const CreateTeamSchema = z.object({
     .max(50)
     .regex(/^[a-z0-9-]+$/, 'slug must be lowercase-kebab-case'),
 });
+
+class OrganizationMemberRequired extends Error {}
+
+async function ensureOrganizationMember(
+  fastify: FastifyInstance,
+  tx: Prisma.TransactionClient,
+  actor: JwtPayload,
+  orgId: string,
+  userId: string,
+  allowCreate: boolean
+) {
+  const existing = await tx.organizationMembership.findUnique({
+    where: { userId_orgId: { orgId, userId } },
+  });
+  if (existing) {
+    return;
+  }
+  if (!allowCreate) {
+    throw new OrganizationMemberRequired();
+  }
+  const rows = await tx.organizationMembership.createMany({
+    data: { orgId, role: 'ORG_MEMBER', userId },
+    skipDuplicates: true,
+  });
+  if (rows.count) {
+    const membership = await tx.organizationMembership.findUniqueOrThrow({
+      where: { userId_orgId: { orgId, userId } },
+    });
+    await writeAuditLog(fastify, {
+      action: 'CREATE',
+      actor,
+      after: { orgId, role: 'ORG_MEMBER', userId },
+      client: tx,
+      entityId: membership.id,
+      entityType: 'OrganizationMembership',
+    });
+  }
+}
+
+async function createTeam(
+  fastify: FastifyInstance,
+  actor: JwtPayload,
+  body: z.infer<typeof CreateTeamSchema>,
+  orgId: string
+) {
+  return fastify.prisma.$transaction(async (tx) => {
+    await ensureOrganizationMember(
+      fastify,
+      tx,
+      actor,
+      orgId,
+      body.adminUserId ?? actor.sub,
+      actor.role === 'ADMIN' && !body.adminUserId
+    );
+    const team = await tx.team.create({
+      data: { description: body.description, name: body.name, orgId, slug: body.slug },
+    });
+    const membership = await tx.teamMembership.create({
+      data: { role: 'ADMIN', teamId: team.id, userId: body.adminUserId ?? actor.sub },
+    });
+    await writeAuditLog(fastify, {
+      action: 'CREATE',
+      actor,
+      after: teamAuditFields(team),
+      client: tx,
+      entityId: team.id,
+      entityType: 'Team',
+    });
+    await writeAuditLog(fastify, {
+      action: 'CREATE',
+      actor,
+      after: membershipAuditFields(membership),
+      client: tx,
+      entityId: membership.id,
+      entityType: 'TeamMembership',
+    });
+    return team;
+  });
+}
+
+export const orgTeamRoutes: FastifyPluginAsync = async (fastify) => {
+  fastify.withTypeProvider<ZodTypeProvider>().post(
+    '/:orgId/teams',
+    {
+      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_ADMIN' }),
+      schema: {
+        body: CreateTeamSchema.omit({ orgId: true }),
+        params: z.object({ orgId: z.string().uuid() }),
+      },
+    },
+    async (request, reply) => {
+      const org = await fastify.prisma.organization.findUnique({
+        where: { id: request.params.orgId },
+      });
+      if (!org) {
+        return sendError(reply, 400, 'ORG_NOT_FOUND', 'Organization not found');
+      }
+      try {
+        const team = await createTeam(fastify, requireUser(request), request.body, org.id);
+        return reply.status(201).send({ data: team });
+      } catch (err) {
+        if (err instanceof OrganizationMemberRequired) {
+          return sendError(
+            reply,
+            400,
+            'ORG_MEMBERSHIP_REQUIRED',
+            'Team admin must be a member of the organization'
+          );
+        }
+        if (isUniqueConstraintError(err)) {
+          return sendConflict(reply, 'TEAM_EXISTS', 'Team name or slug already exists');
+        }
+        throw err;
+      }
+    }
+  );
+};
 
 const UpdateTeamSchema = z.object({
   defaultPersonaPrompt: z.string().max(2000).nullable().optional(),
@@ -155,7 +278,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { body: CreateTeamSchema },
     },
     async (request, reply) => {
-      const { name, slug, description, orgId } = request.body;
+      const { name, slug, orgId } = request.body;
 
       const existing = await fastify.prisma.team.findFirst({
         where: { OR: [{ name }, { slug }] },
@@ -182,23 +305,21 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       // name/slug are the real guard, so map their violation to the same 409.
       let team: Awaited<ReturnType<typeof fastify.prisma.team.create>>;
       try {
-        team = await fastify.prisma.team.create({
-          data: { description, name, orgId: org.id, slug },
-        });
+        team = await createTeam(fastify, requireUser(request), request.body, org.id);
       } catch (err) {
+        if (err instanceof OrganizationMemberRequired) {
+          return sendError(
+            reply,
+            400,
+            'ORG_MEMBERSHIP_REQUIRED',
+            'Team admin must be a member of the organization'
+          );
+        }
         if (isUniqueConstraintError(err)) {
           return sendConflict(reply, 'TEAM_EXISTS', 'Team name or slug already exists');
         }
         throw err;
       }
-
-      await writeAuditLog(fastify, {
-        action: 'CREATE',
-        actor: requireUser(request),
-        after: teamAuditFields(team),
-        entityId: team.id,
-        entityType: 'Team',
-      });
 
       return reply.status(201).send({ data: team });
     }
@@ -221,7 +342,14 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       // `memberTeams(user)` is a literal AND element so the tenant guard's static check sees the
       // membership predicate; `{}` (no restriction) is only reachable for a platform ADMIN.
       const where: Prisma.TeamWhereInput = {
-        AND: [{ isActive: true }, memberOnly ? memberTeams(user) : {}],
+        AND: [
+          { isActive: true },
+          memberOnly
+            ? request.query.member
+              ? memberTeams(user)
+              : { OR: [memberTeams(user), repositoryManagementTeams(user)] }
+            : {},
+        ],
       };
 
       // Unscoped only for a platform admin who did not ask for `member=true`, which is the
@@ -580,7 +708,48 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // POST /api/v1/teams/:id/members — Add member (requires LEAD in this team)
+  app.post(
+    '/:id/members/invite',
+    {
+      onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
+      schema: {
+        body: z.object({
+          email: z.string().trim().toLowerCase().email(),
+          role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']).default('ENGINEER'),
+        }),
+        params: TeamParamsSchema,
+      },
+    },
+    async (request, reply) => {
+      const actor = requireUser(request);
+      const actorRole = (request.teamRole as Role | undefined) ?? actor.role;
+      if (roleMeets(request.body.role, actorRole) && request.body.role !== actorRole) {
+        return sendError(
+          reply,
+          403,
+          'PRIVILEGE_ESCALATION',
+          'Cannot grant a role higher than your own'
+        );
+      }
+      const team = await fastify.prisma.team.findUnique({ where: { id: request.params.id } });
+      if (!team) {
+        return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
+      }
+      const result = await inviteUser(fastify, actor, {
+        email: request.body.email,
+        orgId: team.orgId,
+        orgRole: 'ORG_MEMBER',
+        source: 'team_lead',
+        teamId: team.id,
+        teamRole: request.body.role,
+      });
+      if (!result.ok) {
+        return sendError(reply, result.status, result.code, result.message);
+      }
+      return reply.status(201).send({ data: { ...result.user, teamRole: request.body.role } });
+    }
+  );
+
   app.post(
     '/:id/members',
     {
@@ -616,6 +785,15 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
           request.params.id,
           false,
           async (db) => {
+            const team = await db.team.findUniqueOrThrow({ where: { id: request.params.id } });
+            await ensureOrganizationMember(
+              fastify,
+              db,
+              requireUser(request),
+              team.orgId,
+              userId,
+              requireUser(request).role === 'ADMIN'
+            );
             const membership = await db.teamMembership.create({
               data: {
                 role,
@@ -640,6 +818,14 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         }
         return reply.status(201).send({ data: result.value });
       } catch (err) {
+        if (err instanceof OrganizationMemberRequired) {
+          return sendError(
+            reply,
+            400,
+            'ORG_MEMBERSHIP_REQUIRED',
+            'User must be a member of the team organization'
+          );
+        }
         if (isUniqueConstraintError(err)) {
           return sendConflict(reply, 'MEMBER_EXISTS', 'User is already a member of this team');
         }

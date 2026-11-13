@@ -175,6 +175,14 @@ export const USE_CASES = {
       'nothing. Put it on a repository schedule so the docs are rechecked every week.',
     title: 'Documentation refresh',
   },
+  'repo-onboarding': {
+    group: 'engineering',
+    maturity: 'seeded',
+    source: 'packages/shared/src/workflow/templates/repoOnboarding.ts',
+    summary:
+      'An agent explores a repository and proposes setup, check commands and an optional preview. A fresh checkout trials the proposal under the real network policy, with up to two repair rounds. A person reviews the reports before one configuration pull request is opened. Trial failures and operator blockers remain visible; approval does not require a passing trial.',
+    title: 'Repository onboarding',
+  },
   'vulnerability-remediation': {
     group: 'engineering',
     maturity: 'composed',
@@ -393,6 +401,26 @@ export const USE_CASES = {
       'held for approval under the default autonomy policy.',
     title: 'File a tracker issue',
   },
+  'incident-triage': {
+    group: 'engineering',
+    maturity: 'seeded',
+    source: 'packages/shared/src/workflow/templates/incidentTriage.ts',
+    summary:
+      'Reads a PagerDuty incident with its alerts and log entries, diagnoses it against the ' +
+      'repository, and adds the diagnosis to the incident as a note. Fix mode also opens a ' +
+      'draft pull request when the cause is a code defect.',
+    title: 'Incident triage',
+  },
+  'incident-postmortem': {
+    group: 'engineering',
+    maturity: 'seeded',
+    source: 'packages/shared/src/workflow/templates/incidentPostmortem.ts',
+    summary:
+      'Drafts a postmortem when a PagerDuty incident resolves, from its timeline, alerts and ' +
+      'notes read against the repository, and adds it to the incident as a note. With a ' +
+      'Confluence connection it is also published as a page after approval.',
+    title: 'Incident postmortem draft',
+  },
   'zendesk-ticket-reply': {
     group: 'support',
     maturity: 'seeded',
@@ -473,16 +501,6 @@ export const WORKFLOW_IDEAS = [
       'Draft release notes from the pull requests merged since the last tag, for a person to ' +
       'edit before they are published.',
     title: 'Release notes',
-  },
-  {
-    builtFrom:
-      'The template webhook, fired by the incident tool with the timeline as its payload; an ' +
-      '`agent` node to draft; a `humanReview` node for the incident lead; `writeOutcome` to ' +
-      'a Notion page.',
-    summary:
-      'Turn an incident timeline into a first-draft postmortem the incident lead corrects, ' +
-      'rather than writes from a blank page.',
-    title: 'Incident postmortem draft',
   },
   {
     builtFrom:

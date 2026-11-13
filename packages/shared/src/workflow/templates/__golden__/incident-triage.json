@@ -1,0 +1,383 @@
+{
+  "description": "Diagnose a PagerDuty incident against the repository and post the diagnosis as an incident note. In fix mode, a code defect diagnosed with enough confidence also gets a draft pull request, linked from the note. The note is an internal write: it posts without approval under the default autonomy policy.",
+  "entry": "readIncident",
+  "name": "incident-triage",
+  "nodes": {
+    "autoWrite": {
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.pagerdutyConnectionId"
+        },
+        "content": {
+          "from": "nodes.parseTriage.output.markdown"
+        },
+        "fixOutcome": {
+          "from": "context.fixOutcome"
+        },
+        "incidentId": {
+          "from": "request.payload.incidentId"
+        }
+      },
+      "next": "done",
+      "step": "writeOutcome",
+      "type": "step"
+    },
+    "checkAuto": {
+      "expr": "nodes.publishOutcome.output.decision == 'require_approval'",
+      "onFalse": "autoWrite",
+      "onTrue": "humanApproval",
+      "type": "cond"
+    },
+    "checkChanged": {
+      "expr": "context.currentCodeResult.filesChanged.length == 0",
+      "onFalse": "runLint",
+      "onTrue": "noChange",
+      "type": "cond"
+    },
+    "done": {
+      "result": {
+        "confidence": {
+          "from": "nodes.parseTriage.output.confidence"
+        },
+        "fixable": {
+          "from": "nodes.parseTriage.output.fixable"
+        },
+        "fixOutcome": {
+          "from": "context.fixOutcome"
+        },
+        "incidentId": {
+          "from": "request.payload.incidentId"
+        },
+        "noted": {
+          "literal": true
+        },
+        "summary": {
+          "from": "nodes.parseTriage.output.summary"
+        },
+        "text": {
+          "from": "nodes.parseTriage.output.markdown"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "doneRejected": {
+      "result": {
+        "confidence": {
+          "from": "nodes.parseTriage.output.confidence"
+        },
+        "fixable": {
+          "from": "nodes.parseTriage.output.fixable"
+        },
+        "incidentId": {
+          "from": "request.payload.incidentId"
+        },
+        "noted": {
+          "literal": false
+        },
+        "summary": {
+          "from": "nodes.parseTriage.output.summary"
+        },
+        "text": {
+          "from": "nodes.parseTriage.output.markdown"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "fixAutoWrite": {
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.pagerdutyConnectionId"
+        },
+        "content": {
+          "from": "nodes.parseTriage.output.markdown"
+        },
+        "incidentId": {
+          "from": "request.payload.incidentId"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "next": "fixed",
+      "step": "writeOutcome",
+      "type": "step"
+    },
+    "fixCheckAuto": {
+      "expr": "nodes.fixPublishOutcome.output.decision == 'require_approval'",
+      "onFalse": "fixAutoWrite",
+      "onTrue": "fixHumanApproval",
+      "type": "cond"
+    },
+    "fixDoneRejected": {
+      "result": {
+        "confidence": {
+          "from": "nodes.parseTriage.output.confidence"
+        },
+        "fixable": {
+          "from": "nodes.parseTriage.output.fixable"
+        },
+        "incidentId": {
+          "from": "request.payload.incidentId"
+        },
+        "noted": {
+          "literal": false
+        },
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        },
+        "summary": {
+          "from": "nodes.parseTriage.output.summary"
+        },
+        "text": {
+          "from": "nodes.parseTriage.output.markdown"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "fixed": {
+      "result": {
+        "confidence": {
+          "from": "nodes.parseTriage.output.confidence"
+        },
+        "fixable": {
+          "from": "nodes.parseTriage.output.fixable"
+        },
+        "incidentId": {
+          "from": "request.payload.incidentId"
+        },
+        "noted": {
+          "literal": true
+        },
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        },
+        "summary": {
+          "from": "nodes.parseTriage.output.summary"
+        },
+        "text": {
+          "from": "nodes.parseTriage.output.markdown"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "fixFailed": {
+      "next": "publishOutcome",
+      "type": "set",
+      "values": {
+        "context.fixOutcome": {
+          "literal": "a fix was attempted but failed before a pull request was opened"
+        }
+      }
+    },
+    "fixHumanApproval": {
+      "approverCount": {
+        "from": "nodes.fixPublishOutcome.output.approverCount"
+      },
+      "contextFrom": "nodes.parseTriage.output.markdown",
+      "description": "An incident diagnosis and its draft fix are ready to be added to the PagerDuty incident as a note. Approve to post it, reject to discard it.",
+      "onApprove": "fixManualWrite",
+      "onReject": "fixDoneRejected",
+      "onTimeout": "fixDoneRejected",
+      "timeout": "24h",
+      "title": "Approve PagerDuty incident note",
+      "type": "humanApproval"
+    },
+    "fixManualWrite": {
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.pagerdutyConnectionId"
+        },
+        "content": {
+          "from": "nodes.parseTriage.output.markdown"
+        },
+        "incidentId": {
+          "from": "request.payload.incidentId"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "next": "fixed",
+      "step": "writeOutcome",
+      "type": "step"
+    },
+    "fixPublishOutcome": {
+      "config": {
+        "action": "internal_write"
+      },
+      "inputs": {
+        "description": {
+          "from": "nodes.parseTriage.output.summary"
+        }
+      },
+      "next": "fixCheckAuto",
+      "step": "publishOutcome",
+      "type": "step"
+    },
+    "humanApproval": {
+      "approverCount": {
+        "from": "nodes.publishOutcome.output.approverCount"
+      },
+      "contextFrom": "nodes.parseTriage.output.markdown",
+      "description": "An incident diagnosis is ready to be added to the PagerDuty incident as a note. Approve to post it, reject to discard it.",
+      "onApprove": "manualWrite",
+      "onReject": "doneRejected",
+      "onTimeout": "doneRejected",
+      "timeout": "24h",
+      "title": "Approve PagerDuty incident note",
+      "type": "humanApproval"
+    },
+    "implement": {
+      "inputs": {
+        "incidentDiagnosis": {
+          "from": "nodes.parseTriage.output.brief"
+        }
+      },
+      "next": "checkChanged",
+      "onFailure": "fixFailed",
+      "status": "IMPLEMENTING",
+      "step": "executeImplementation",
+      "storeAs": "context.currentCodeResult",
+      "type": "step"
+    },
+    "manualWrite": {
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.pagerdutyConnectionId"
+        },
+        "content": {
+          "from": "nodes.parseTriage.output.markdown"
+        },
+        "fixOutcome": {
+          "from": "context.fixOutcome"
+        },
+        "incidentId": {
+          "from": "request.payload.incidentId"
+        }
+      },
+      "next": "done",
+      "step": "writeOutcome",
+      "type": "step"
+    },
+    "noChange": {
+      "next": "publishOutcome",
+      "type": "set",
+      "values": {
+        "context.fixOutcome": {
+          "literal": "the fix attempt changed no files"
+        }
+      }
+    },
+    "openPR": {
+      "config": {
+        "draft": true
+      },
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "savePrInfo",
+      "step": "createOrUpdatePullRequest",
+      "type": "step"
+    },
+    "parseTriage": {
+      "config": {
+        "kind": "incidentTriage"
+      },
+      "inputs": {
+        "text": {
+          "from": "nodes.triage.output.text"
+        }
+      },
+      "next": "routeFix",
+      "step": "parseAgentOutput",
+      "type": "step"
+    },
+    "publishOutcome": {
+      "config": {
+        "action": "internal_write"
+      },
+      "inputs": {
+        "description": {
+          "from": "nodes.parseTriage.output.summary"
+        }
+      },
+      "next": "checkAuto",
+      "step": "publishOutcome",
+      "type": "step"
+    },
+    "readIncident": {
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.pagerdutyConnectionId"
+        },
+        "incidentId": {
+          "from": "request.payload.incidentId"
+        }
+      },
+      "next": "triage",
+      "step": "readSource",
+      "type": "step"
+    },
+    "routeFix": {
+      "expr": "request.payload.mode == 'fix' && nodes.parseTriage.output.valid == true && nodes.parseTriage.output.fixable == true && nodes.parseTriage.output.confidence >= (request.payload.minFixConfidence ?? 0.7)",
+      "onFalse": "publishOutcome",
+      "onTrue": "implement",
+      "type": "cond"
+    },
+    "runLint": {
+      "next": "runTypecheck",
+      "onFail": "warn",
+      "step": "runLint",
+      "type": "step"
+    },
+    "runTests": {
+      "next": "openPR",
+      "onFail": "warn",
+      "step": "runTests",
+      "type": "step"
+    },
+    "runTypecheck": {
+      "next": "runTests",
+      "onFail": "warn",
+      "step": "runTypecheck",
+      "type": "step"
+    },
+    "savePrInfo": {
+      "next": "fixPublishOutcome",
+      "type": "set",
+      "values": {
+        "context.prNumber": {
+          "from": "nodes.openPR.output.prNumber"
+        },
+        "context.prUrl": {
+          "from": "nodes.openPR.output.prUrl"
+        }
+      }
+    },
+    "triage": {
+      "agentRef": "incidentTriager",
+      "inputs": {
+        "incident": {
+          "from": "nodes.readIncident.output.data"
+        }
+      },
+      "next": "parseTriage",
+      "spanName": "llm.incident_triage",
+      "type": "agent",
+      "workspace": true
+    }
+  },
+  "schemaVersion": 1
+}

@@ -29,6 +29,7 @@ const { checkoutMock, generateMock, loadMock, prismaMock, ticketMock, workspaceM
       exec: vi.fn(async (_command: string, _options?: { timeoutMs?: number }) => ''),
       execCapture: vi.fn(),
       gitAuthed: vi.fn(async (_subcommand: string) => ''),
+      readBaseFile: vi.fn(async (): Promise<string | null> => null),
     },
   })
 );
@@ -134,6 +135,9 @@ vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowRunId: vi.fn(async () => 'run-1'),
   persistActivityTrace: vi.fn(async () => {}),
   startTraceFlushing: vi.fn(() => () => {}),
+  traceWorkspacePreparation: vi.fn(async (_tracer, _key, prepare: () => Promise<unknown>) =>
+    prepare()
+  ),
 }));
 
 vi.mock('../lib/activityLog.js', () => ({ logWarn: vi.fn() }));
@@ -213,6 +217,8 @@ vi.mock('../lib/repoDependencyContext.js', async (importOriginal) => {
 vi.mock('../lib/scm/index.js', () => ({
   getScmProvider: () => ({
     cloneCredentials: vi.fn(async () => ({ authedCloneUrl: 'https://x:t@github.com/a/b.git' })),
+    fetchFileContent: async () => null,
+    resolveRef: async () => 'base-sha',
   }),
   toRepoRef: (r: unknown) => r,
 }));
@@ -327,6 +333,16 @@ describe('executeImplementation agent turn', () => {
         (c[1] as { timeoutMs?: number } | undefined)?.timeoutMs === TEST_RUN_TIMEOUT_MS
     );
     expect(testCall?.[0]).toBe('{ go test ./...\n} 2>&1');
+  });
+
+  it('runs the trusted repository-file test command', async () => {
+    workspaceMock.readBaseFile.mockResolvedValueOnce('runTests: make test');
+    await executeImplementation(REQUEST);
+    const testCall = workspaceMock.exec.mock.calls.find(
+      (c) => c[1]?.timeoutMs === TEST_RUN_TIMEOUT_MS
+    );
+    expect(testCall?.[0]).toBe('{ make test\n} 2>&1');
+    expect(workspaceMock.readBaseFile).toHaveBeenCalledWith('.auto-swe/gates.yml');
   });
 });
 

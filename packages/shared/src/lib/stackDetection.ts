@@ -3,6 +3,23 @@ import { packageManagerPins } from './packageManagerPins.js';
 
 export type Stack = 'node' | 'python' | 'jvm' | 'go';
 
+const ONBOARDING_TOOLS: Record<Stack, readonly string[]> = {
+  go: ['golangci-lint'],
+  jvm: ['maven', 'gradle'],
+  node: ['jq'],
+  python: ['uv', 'ruff'],
+};
+
+export function suggestedOnboardingTools(
+  detected: unknown,
+  catalogKeys: readonly string[]
+): string[] {
+  const available = new Set(catalogKeys);
+  return [
+    ...new Set((detectedStacks(detected) ?? []).flatMap((stack) => ONBOARDING_TOOLS[stack])),
+  ].filter((key) => available.has(key));
+}
+
 /**
  * Fixed precedence for `primary` when a repository presents several stacks:
  * node, then python, then jvm, then go. The order favours the stacks whose

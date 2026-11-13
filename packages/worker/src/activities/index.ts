@@ -1,5 +1,6 @@
 export type { PublishReviewInput } from './codeReview.js';
 export { loadChangeForReview, publishReviewResult } from './codeReview.js';
+export { replaceEvalLessons } from './evalLessons.js';
 export { retryReviewFix } from './reviewFixes.js';
 export { dispatchReviewLaunches } from './reviewLaunches.js';
 // In-app assistant — one conversation turn, and the reply it leaves when a turn cannot run
@@ -259,6 +260,8 @@ export type {
   ReembedStaleMemoryBatchResult,
 } from './reembedMemory.js';
 export { reembedMemoryItemActivity, reembedStaleMemoryBatch } from './reembedMemory.js';
+export { repoOnboardingPr } from './repoOnboardingPr.js';
+export { repoOnboardingTrial } from './repoOnboardingTrial.js';
 export type {
   ResolveWorkspaceInput,
   WorkspaceContext,

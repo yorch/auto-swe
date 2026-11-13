@@ -21,6 +21,8 @@ export interface GithubInstallationRow {
   isActive: boolean;
   /** The host the installation lives on: empty for the instance's own. */
   host: string;
+  organizationId?: string | null;
+  outsideOrganizationConnectionCount?: number;
   createdAt?: string;
   _count?: { connections: number };
 }
@@ -34,6 +36,7 @@ export interface CreateGithubInstallationBody {
 }
 
 export interface UpdateGithubInstallationBody {
+  organizationId?: string | null;
   accountLogin?: string;
   isActive?: boolean;
 }
@@ -71,5 +74,18 @@ export function useDeleteGithubInstallation() {
   return useMutation({
     mutationFn: (id: string) => api.delete(`${BASE}/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useInstallationLinkImpact(id: string | undefined, organizationId: string) {
+  return useQuery({
+    enabled: Boolean(id && organizationId),
+    queryFn: () =>
+      api
+        .get<{ data: { outsideOrganizationConnectionCount: number } }>(
+          `${BASE}/${id}/link-impact?organizationId=${encodeURIComponent(organizationId)}`
+        )
+        .then((r) => r.data),
+    queryKey: ['installation-link-impact', id, organizationId],
   });
 }

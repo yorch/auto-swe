@@ -1,7 +1,6 @@
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
-import { PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
 import {
@@ -16,7 +15,7 @@ import { buildKnowledgeTools } from '../agents/knowledgeTools.js';
 import { loadMcpTools } from '../agents/mcpTools.js';
 import { createProvisionTool, grantsProvisionTool } from '../agents/provisionTool.js';
 import { buildWorkspaceTools } from '../agents/workspaceTools.js';
-import { persistActivityTrace } from '../lib/activityContext.js';
+import { persistActivityTrace, startTraceFlushing } from '../lib/activityContext.js';
 import { logWarn } from '../lib/activityLog.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { boundToolKeys } from '../lib/boundToolKeys.js';
@@ -34,6 +33,7 @@ import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
+import { isOnboardingDraftAgent } from '../lib/onboardingEgress.js';
 import {
   checkSurfaceState,
   cloneCredentialSecrets,
@@ -46,6 +46,7 @@ import {
   resumeCheckoutSha,
   resumeMessage,
 } from '../lib/pauseResume.js';
+import { resolvePreviewFromScm } from '../lib/repoConfigResolver.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
 import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
@@ -147,6 +148,7 @@ async function runAgentNodeImpl(
   // the binding or the run throws. Whatever the node opens (the MCP client, a
   // harness session, the checkout) is released in finally, last opened first.
   const tracer = new AgentTracer();
+  const stopTraceFlushing = startTraceFlushing(tracer, key);
   const opened: (() => Promise<void>)[] = [];
   const onOpen = (close: () => Promise<void>) => {
     opened.push(close);
@@ -234,6 +236,7 @@ async function runAgentNodeImpl(
     });
     return { object: result.object, text: result.text };
   } finally {
+    stopTraceFlushing();
     // Each release is independent: one that rejects (a harness session, an MCP
     // client) must not leak the checkout opened before it or drop the trace.
     for (const close of opened.reverse()) {
@@ -344,10 +347,11 @@ async function runInCheckout(args: {
     repoId: repo.id,
     teamId: repo.teamId,
   });
-  const services =
-    grantsBrowserTool(resolved.toolKeys) && repo.previewConfig
-      ? PreviewConfigSchema.parse(repo.previewConfig).services
-      : undefined;
+  const services = grantsBrowserTool(resolved.toolKeys)
+    ? (await resolvePreviewFromScm(repo, baseBranch))?.services
+    : undefined;
+  tracer.addActivityEvent({ name: 'workspace.preparing' });
+  const preparationStarted = Date.now();
   const workspace = await createWorkspace(
     authedCloneUrl,
     branch,
@@ -357,7 +361,9 @@ async function runInCheckout(args: {
     resumeCheckoutSha(resume),
     undefined,
     {
+      ...(resumeCheckoutSha(resume) ? { trustedBaseBranch: baseBranch } : {}),
       detectedStack: repo.detectedStack,
+      ...((await isOnboardingDraftAgent(key)) ? { onboardingDraft: true } : {}),
       knowledgeBaseSnapshotIds: references.snapshotIds,
       knowledgeBases: references.checkouts,
       repoSetup: { connectionId: repo.id, defer: true, field: repo.setup },
@@ -367,6 +373,7 @@ async function runInCheckout(args: {
     }
   );
   onOpen(workspace.destroy);
+  tracer.addActivityEvent({ durationMs: Date.now() - preparationStarted, name: 'workspace.ready' });
   let checkedOut = branch;
   const pinnedSha = resumeCheckoutSha(resume);
   if (pinnedSha) {

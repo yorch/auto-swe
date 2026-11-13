@@ -23,6 +23,7 @@ export {
   type ConnectionType,
   type ConnectionTypeMetadata,
   ConnectionTypeSchema,
+  connectionConfigProblem,
   getConnectionTypeMetadata,
   getWorkspaceTargetTypes,
   type IssueTrackerConnectionConfig,
@@ -32,9 +33,12 @@ export {
   listConnectionTypes,
   type NotionConnectionConfig,
   NotionConnectionConfigSchema,
+  type PagerDutyConnectionConfig,
+  PagerDutyConnectionConfigSchema,
   parseConfluenceConnectionConfig,
   parseIssueTrackerConnectionConfig,
   parseNotionConnectionConfig,
+  parsePagerDutyConnectionConfig,
   parseSlackConnectionConfig,
   parseZendeskConnectionConfig,
   type SlackConnectionConfig,
@@ -49,6 +53,7 @@ export {
 } from './lib/credentialScope.js';
 export type { EncryptedSecret } from './lib/crypto.js';
 export { decryptSecret, encryptSecret } from './lib/crypto.js';
+export { type EvalLessonInput, type EvalMemoryMode, evalCorpusHash } from './lib/evalLessons.js';
 export type { IssueTrackerProvider } from './lib/integrations/issueTracker.js';
 export type { KnowledgeBaseProvider } from './lib/integrations/knowledgeBase.js';
 export {

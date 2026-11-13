@@ -13,11 +13,8 @@ import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Toolbar } from '@/components/ui/Toolbar';
-import {
-  TemplateBackLink,
-  TemplateNotFound,
-  TemplateSubNav,
-} from '@/components/workflow/templateNav';
+import { TemplateNotFound, TemplateSubNav } from '@/components/workflow/templateNav';
+import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useAllWorkflowRuns } from '@/hooks/useRuns';
 import { useWorkflowTemplate } from '@/hooks/useTemplates';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
@@ -36,6 +33,7 @@ const RUN_STATUSES = runStatusOptions();
 function TemplateRuns({ id: rawId }: { id: string }) {
   const id = validateRouteParam(rawId);
   const { data: template } = useWorkflowTemplate(id ?? '');
+  useEntityTitle(template?.name);
   const { params, update } = useUrlFilters();
   const offset = parseOffset(params.get('offset'));
   const statusFilter = params.get('status') ?? '';
@@ -83,7 +81,6 @@ function TemplateRuns({ id: rawId }: { id: string }) {
   return (
     <div className="space-y-6">
       <div>
-        <TemplateBackLink href={`/library/${id}`} label={template?.name ?? 'Workflow'} />
         <PageHeader
           actions={
             runnable ? (

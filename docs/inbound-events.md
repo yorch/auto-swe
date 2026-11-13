@@ -26,6 +26,7 @@ An endpoint (`EventEndpoint`) has:
 | `signatureHeader`, `signaturePrefix`, `signatureEncoding` | For `hmac-sha256` and `shared-secret-header`: the header the value is in, text before it (`sha256=`, `Bearer `), and for an HMAC whether it is `hex` or `base64` |
 | `format` | `json`, or `cloudevents` (§3.2) |
 | `typePointer` or `fixedType`, `idPointer`, `subjectPointer`, `scopePointer`, `timePointer` | Where in the event its type, id, subject, scope and time are, or for the type a constant `fixedType` instead (§3.1.1). Exactly one of `typePointer` and `fixedType` is set |
+| `cancelOnTypes` | Event types that cancel runs (at most 10, empty by default): an event of one of them first cancels every run this endpoint's automations started for the same subject that is still running, then is decided as usual |
 | the secret | Sealed with the same AES-256-GCM envelope as every other stored credential; only its last four characters are ever shown |
 
 Its receiver is `POST /api/v1/webhooks/events/<endpoint id>`. The id is not a credential: a call
@@ -39,9 +40,18 @@ on/off switch, **Rotate secret**, and **Automations**, which opens the team's au
 |---|---|
 | `GET /api/v1/teams/:teamId/event-endpoints` | A member of the team, or ADMIN. Never a secret. The response says whether the caller may manage them (`canManage`) |
 | `POST /api/v1/teams/:teamId/event-endpoints` | ADMIN, or a LEAD of the team. Returns a generated secret **once**; a `secret` the caller sends (16–512 characters, for a sender that generates its own) is stored and never returned |
-| `PATCH /api/v1/teams/:teamId/event-endpoints/:id` | The same: name, switch, scheme settings and pointers. The secret is changed only by rotating it |
+| `PATCH /api/v1/teams/:teamId/event-endpoints/:id` | The same: name, switch, scheme settings, pointers and `cancelOnTypes`. The secret is changed only by rotating it |
 | `POST /api/v1/teams/:teamId/event-endpoints/:id/secret/rotate` | The same. A new secret (generated and returned once, or the one sent); the one it replaces is still accepted for **24 hours** |
 | `DELETE /api/v1/teams/:teamId/event-endpoints/:id` | The same. Refused (`409 EVENT_ENDPOINT_IN_USE`) while an automation reacts to the endpoint |
+
+**Cancelling on an event.** A run is matched to the event by the endpoint and the subject the
+run's decision recorded, so another endpoint's runs and another subject's are never touched. Each
+run is cancelled in Temporal first, as the dashboard's **Cancel** does: a run that already ended
+is left as it is, and the run's own cancellation path records its end and cost. A run Temporal
+refuses to cancel stays `RUNNING`, and the receiver answers `503 RUN_CANCEL_FAILED` without deciding
+the event, so the sender's retry tries again; a redelivery after a cancel that succeeded finds
+nothing still running. Each cancelled run is written to the audit log (entity `WorkflowRun`) with
+the endpoint and the event that cancelled it.
 
 A non-member gets `404`. Every create, change, rotation and removal is written to the audit log
 (entity `EventEndpoint`) with the endpoint's settings and the secret's last four characters, never
@@ -63,6 +73,7 @@ integrations: check them against what the sender actually posts.
 | CloudEvents | `autoswe-v1` | CloudEvents | the event's attributes (§3.2) |
 | HMAC-SHA256, GitHub-style header | `hmac-sha256` in `X-Hub-Signature-256` as `sha256=<hex>` | JSON | placeholders (`/action`, `/id`): set them to where the sender puts its type and id |
 | Snyk project snapshot | `hmac-sha256` in `X-Hub-Signature` as `sha256=<hex>` | JSON | constant type `project_snapshot/v0`, subject and scope `/project/id`, no id pointer (§6) |
+| PagerDuty v3 webhook | `hmac-sha256` in `X-PagerDuty-Signature` as `v1=<hex>` | JSON | type `/event/event_type`, id `/event/id`, subject `/event/data/id`, scope `/event/data/service/id`, time `/event/occurred_at` (§7) |
 
 ## 2. Signing a call
 
@@ -109,6 +120,12 @@ sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$secret" -hex | sed 's/^
 curl -X POST "$url" -H 'content-type: application/json' \
   -H "X-Signature: sha256=$sig" --data-binary "$body"
 ```
+
+The header may carry a comma-separated list of signatures (`v1=<hex>, v1=<hex>`), at most 8. This
+is how PagerDuty signs while one of its secrets rotates: once with each. Entries without the
+endpoint's prefix are skipped, so a scheme version the endpoint was not set up for is never read as
+a digest, and the call verifies when any listed signature matches any of the endpoint's secrets. A
+header with no entry that decodes is malformed.
 
 There is no timestamp in this scheme: a captured call verifies for as long as the secret does
 (see Limitations). A header sent twice is refused.
@@ -221,10 +238,13 @@ In order — each check runs only when every earlier one passed:
 | `401 SIGNATURE_INVALID` | The call is not verified |
 | `409 EVENT_ENDPOINT_DISABLED`, `409 TEAM_INACTIVE`, `409 INBOUND_EVENTS_DISABLED` | The endpoint is off, its team inactive, or the switch off for the team |
 | `400 INVALID_EVENT`, `415 UNSUPPORTED_EVENT`, `422 EVENT_TYPE_MISSING` | The body cannot be read as an event |
+| `503 RUN_CANCEL_FAILED` | The event's type is one of the endpoint's `cancelOnTypes` and a run could not be cancelled: send the same event again |
 | `503 AUTOMATION_START_FAILED` | A run was decided but could not be started: send the same event again |
 | `202 { eventId, outcome }` | Decided: the outcome of the decision (`STARTED`, `SUPPRESSED_…`, `FAILED_TO_START`) |
 | `202 { eventId, duplicate: true }` | The event was decided before |
 | `202 { eventId, ignored: true }` | No enabled automation of the team selects it |
+
+Any `202` after a cancel also carries `cancelled`, the number of runs the event cancelled.
 
 The answer never says why a decision was made; the team sees that in the automation's history.
 The receiver is rate-limited to 120 calls a minute per client address.
@@ -448,6 +468,112 @@ them, because a pointer that misses simply leaves its input unfilled.
   range; the agent works the range out from the advisory and the package's registry (its brief
   already has it check every value).
 
+## 7. Recipe: PagerDuty to `incident-triage`
+
+PagerDuty v3 webhook subscriptions post an event for each change to an incident. With a PagerDuty
+event endpoint, a `pagerduty` connection and one automation per repository, a newly triggered
+incident on a service starts the `incident-triage` template on the repository that service runs.
+The run reads the incident, its alerts and its log entries, has the `incidentTriager` agent
+diagnose it against a throwaway checkout, and adds the diagnosis to the incident as a note.
+
+**What was checked.** The signature, the envelope and the incident fields come from PagerDuty's
+developer documentation ("Verifying Signatures" and "V3 Webhooks Overview" for webhooks, and the
+REST API reference for incidents, alerts, log entries and notes). They are not confirmed against a
+recorded delivery or a live account: send a test and read the first real body before trusting
+them.
+
+**What PagerDuty sends** (documented):
+
+- `X-PagerDuty-Signature: v1=<hex>`, an HMAC-SHA256 of the raw body keyed with the subscription's
+  secret, with one signature per secret while PagerDuty rotates it (§2). PagerDuty generates the
+  secret when the subscription is created: paste it as the endpoint's secret.
+- A body of `event` with `id`, `event_type` (`incident.triggered`, `incident.acknowledged`,
+  `incident.resolved`, …), `occurred_at` and `data`, the incident: `id`, `title`, `status`,
+  `service.id` and more.
+
+**The connection.** A `pagerduty` connection on the team holds a PagerDuty REST API key (the
+connection's `apiToken`: the connection form's write-only **REST API key** field, or `POST`/`PATCH
+/api/v1/repositories`, stored encrypted like every connection token) and, in its config,
+`fromEmail`, which is refused when it is not an email:
+the email of a PagerDuty user, which PagerDuty requires on a note write and shows as the note's
+author. A scoped key needs read access to incidents and `incidents.write` for notes. The worker
+calls `https://api.pagerduty.com` only.
+**Test connection** on the connections page (`POST /api/v1/repositories/:id/test-pagerduty`, the
+role that edits the connection) lists the account's users matching `fromEmail` with the stored key:
+it passes when PagerDuty accepts the key and one of those users has exactly that email.
+
+**The automation.** One `inbound.event` automation per repository, on the PagerDuty endpoint:
+
+| Setting | Value |
+|---|---|
+| Template | `incident-triage` |
+| Repository | the repository the service runs |
+| Event types | `incident.triggered` |
+| Match | `/event/data/service/id` `eq` the PagerDuty service id |
+| Fields | `incidentId` from `/event/data/id` |
+| Options | `pagerdutyConnectionId`: the team's `pagerduty` connection; `mode`: `triage` (the default) or `fix`; optionally `minFixConfidence` |
+
+The connection is an option of the automation, never a field read from the event, so a forged or
+forwarded body cannot choose the credential: the team's access to it is checked when the
+automation is saved and again at every fire. The id is the event's, so a redelivery is a
+duplicate; the subject is the incident and the scope its service, so the cooldown counts per
+service.
+
+**What the run does.**
+
+- `triage` mode: diagnose, then post the diagnosis as a note. The diagnosis names a category
+  (`code`, `configuration`, `dependency`, `infrastructure`, `external` or `unknown`), a root cause,
+  the evidence checked, a suggested fix and a confidence. A reply that is not the expected JSON is
+  still posted, marked unstructured.
+- `fix` mode: when the diagnosis is `code`, says it is fixable, and its confidence is at least
+  `minFixConfidence` (default 0.7), the implementer attempts the change with the diagnosis fenced
+  as untrusted data, the quality gates run, and a **draft** pull request opens. The note links it.
+  A fix that fails or changes nothing still posts the diagnosis, with the reason no fix opened.
+- The note is an `internal_write`: under the default autonomy policy it posts without waiting for
+  anyone. A team that wants a person to sign off requires approval for `internal_write` in its
+  policy ([autonomy-policies.md](./autonomy-policies.md)); the run then waits for that approval.
+
+**When the incident resolves.** The PagerDuty preset sets the endpoint's `cancelOnTypes` to
+`incident.resolved` (§1): when the incident resolves while its triage is still running, that run is
+cancelled, and since the automations select `incident.triggered` only, the event starts nothing.
+Clear the field to let a triage finish after its incident resolves.
+
+## 8. Recipe: PagerDuty to `incident-postmortem`
+
+When an incident resolves, the `incident-postmortem` template drafts its postmortem and adds it to
+the incident as a note. The run reads the incident, its alerts, its log entries and its notes (the
+triage diagnosis among them), and the `incidentPostmortemWriter` agent drafts against a throwaway
+checkout of the repository: a title, summary, impact, timeline, root cause, resolution and
+follow-up actions.
+
+**A second endpoint.** The postmortem needs its own endpoint, fed by a second PagerDuty webhook
+subscription that sends `incident.resolved` only. On the triage endpoint the resolution has the
+same subject as the triage that ran for it, so the same-subject guard drops it, and the endpoint's
+`cancelOnTypes` uses it to cancel that triage (§7). The second endpoint has decided nothing for the
+incident yet, so its resolution starts the postmortem. Create it from the **PagerDuty v3 webhook**
+preset and clear **Cancel on**: there is no triage on this endpoint to cancel.
+
+**The automation.** One `inbound.event` automation per repository, on the postmortem endpoint:
+
+| Setting | Value |
+|---|---|
+| Template | `incident-postmortem` |
+| Repository | the repository the service runs |
+| Event types | `incident.resolved` |
+| Match | `/event/data/service/id` `eq` the PagerDuty service id |
+| Fields | `incidentId` from `/event/data/id` |
+| Options | `pagerdutyConnectionId`: the team's `pagerduty` connection; optionally `docConnectionId`: a `confluence` connection, with `spaceKey` and `parentPageId` (the connection's own when unset) |
+
+**What the run does.**
+
+- It posts the draft as a note, an `internal_write`: under the default autonomy policy it posts
+  without waiting. A reply that is not the expected JSON is still posted, marked unstructured.
+- With a `docConnectionId`, and a draft that parsed, it then creates a Confluence page with the
+  draft's title and body. That is an `external_write`, which waits for approval under the default
+  policy. Rejecting the page leaves the note; rejecting the note (when a team requires approval for
+  `internal_write`) ends the run, so no page is published either.
+- The result carries `noted`, `published` and, once a page exists, its `pageUrl`.
+
 ## Limitations
 
 - **Qodo is not an inbound-event sender.** Qodo emits no outbound webhooks, so there is nothing for
@@ -489,6 +615,23 @@ them, because a pointer that misses simply leaves its input unfilled.
   documented as able to change while the webhooks are in beta. Only `newIssues[0]` is handled: a
   delivery whose first new issue is a licence finding is dropped even when a later one is a
   vulnerability.
+- **The PagerDuty recipe is checked against documentation only (§7).** The signature, envelope
+  and REST calls follow PagerDuty's documentation; nothing was tested against a live PagerDuty
+  account or a recorded delivery.
+- **The PagerDuty recipe's rules are required, and nothing enforces them (§7).** An automation that
+  selects more than `incident.triggered` starts a run for each acknowledgement, escalation and
+  resolution of an incident it already triaged, bounded by its cooldown and `maxRunsPerDay`; one
+  without the service id rule triages every service's incidents against its one repository.
+- **A postmortem is a draft from a bounded view (§8).** It reads the same 25 alerts and log
+  entries as a triage, plus the 25 most recent notes, each cut to 4,000 characters: a long incident's
+  early timeline can be missing. It reads the repository, not the pull requests or deploys, so it
+  names a change only when a note or the checkout shows it. Every run creates a new Confluence page;
+  there is no update of an earlier one.
+- **The postmortem recipe needs its own subscription (§8).** An `incident.resolved` on the triage
+  endpoint never starts a postmortem, and nothing checks that a second endpoint exists.
+- **A PagerDuty triage reads a bounded view.** The run reads the 25 most recent alerts and log
+  entries, each alert body cut to 4,000 characters, and posts at most 25,000 characters. Notes are
+  plain text: PagerDuty does not render Markdown in them.
 - **The recipe's two match rules are required, and nothing enforces them (§6).** An automation
   without `/newIssues/0` `exists` and `/newIssues/0/issueType` `eq` `vuln` starts a run for every
   snapshot and ping it selects, bounded only by its cooldown and `maxRunsPerDay`. Neither the

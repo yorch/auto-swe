@@ -399,6 +399,7 @@ export const SUPPORTED_BUNDLE_CONNECTION_TYPES: readonly string[] = [
   'confluence',
   'zendesk',
   'slack_workspace',
+  'pagerduty',
 ];
 
 /** The declared dependency types this deployment cannot satisfy; empty means all are supported. */

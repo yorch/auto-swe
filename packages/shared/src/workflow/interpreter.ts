@@ -95,6 +95,7 @@ type BranchSink = { token?: CancellationToken; shouldAbort?: () => boolean };
 export const WORKFLOW_CANCEL_PATCH = 'workflow-cancel-propagates';
 export const NON_RETRYABLE_PATCH = 'interpreter-skips-retry-of-non-retryable';
 export const DISPATCH_PREP_FAILURE_PATCH = 'interpreter-records-dispatch-prep-failure';
+export const DISPATCH_PROGRESS_PATCH = 'interpreter-records-dispatch-start';
 
 function isPatched(dispatcher: Dispatcher, id: string): boolean {
   return dispatcher.patched ? dispatcher.patched(id) : true;
@@ -987,6 +988,12 @@ async function runRetryable(args: {
       throw cancelled;
     }
     try {
+      if (isPatched(dispatcher, DISPATCH_PROGRESS_PATCH)) {
+        await safeRecord(dispatcher, { attempt, inputs, nodeId, status: 'RUNNING' });
+        if (args.shouldAbort?.()) {
+          throw new BranchCancelledError();
+        }
+      }
       const output = await invoke(attempt);
 
       if (isGateFailure(output)) {

@@ -106,16 +106,18 @@ describe('Home product tour', () => {
 });
 
 describe('My desk', () => {
-  it('offers Continue in the last-visited member team beside the header actions', () => {
+  it('keeps only the tour, workflows and Start work header actions without single-team context', () => {
     useRequests.mockReturnValue(bucket(0));
     withSummary(summary());
     useUserPreferences.mockReturnValue({ lastTeamSlug: 'payments', loaded: true });
     render(<HomePage />);
     const header = within(document.querySelector('header') as HTMLElement);
-    const link = header.getByRole('link', { name: 'Continue in Payments' });
-    expect(link.getAttribute('href')).toBe('/teams/payments');
+    expect(header.queryByRole('link', { name: /Continue in/ })).toBeNull();
+    expect(header.getByRole('button', { name: /^Take the tour/ })).toBeTruthy();
+    expect(header.getByRole('link', { name: 'Browse workflows' })).toBeTruthy();
     expect(header.getByRole('link', { name: 'Start work' })).toBeTruthy();
-    expect(useTeams).toHaveBeenCalledWith({ memberOnly: true });
+    expect(screen.queryByText(/You are in/)).toBeNull();
+    expect(useTeams).not.toHaveBeenCalled();
   });
 
   it('omits Continue when the remembered slug is not a member team', () => {
@@ -187,12 +189,14 @@ describe('My desk', () => {
     );
   });
 
-  it('shows a calm empty state and the quick start when nothing needs you and nothing runs', () => {
+  it('shows a calm empty state without a redundant quick start card', () => {
     useRequests.mockReturnValue(bucket(0));
     withSummary(summary());
     render(<HomePage />);
     expect(screen.getByText('Nothing needs you')).toBeTruthy();
-    expect(screen.getByRole('link', { name: /Run a workflow/ })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: /Run a workflow/ })).toBeNull();
+    expect(screen.queryByText('Start something new')).toBeNull();
+    expect(screen.queryByRole('complementary', { name: 'Get started' })).toBeNull();
   });
 
   it('hides the quick start while something needs you', () => {

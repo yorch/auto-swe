@@ -7,7 +7,6 @@ import { Icon } from '@/components/ui/Icon';
 import { SparkleIcon, SparkleTextIcon } from '@/components/ui/icons';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { TemplateBackLink } from '@/components/workflow/templateNav';
 import { VersionTags } from '@/components/workflow/VersionTags';
 import { HELP_LINKS } from '@/lib/helpLinks';
 
@@ -38,7 +37,6 @@ export function TemplateHeader({
     template.status === 'ACTIVE' && template.activeVersion !== null && !handLaunchBlock(template);
   return (
     <div>
-      {!compact && <TemplateBackLink href="/library" label="Workflow library" />}
       <PageHeader
         actions={
           <>

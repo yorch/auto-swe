@@ -343,7 +343,7 @@ export function useRetryWorkRequest() {
   });
 }
 
-/** How long to look for a re-run's WorkflowRun row before giving up on it. */
+/** How long before warning that a worker has not materialized the run yet. */
 export const RETRIED_RUN_WAIT_MS = 60_000;
 const RETRIED_RUN_POLL_MS = 2_000;
 
@@ -351,7 +351,8 @@ const RETRIED_RUN_POLL_MS = 2_000;
  * Finds the run a re-run started. The worker creates the WorkflowRun row once
  * the workflow begins, so right after the retry call it does not exist yet: poll
  * the work request's runs for the one keyed by the Temporal workflow id, for a
- * bounded time. `timedOut` lets the caller fall back to a generic link.
+ * shorter interval initially, then more slowly. `timedOut` lets the caller show
+ * a delayed-start warning and a generic link without abandoning discovery.
  */
 export function useRetriedRun(workRequestId: string | null, workflowId: string | null) {
   const [timedOut, setTimedOut] = useState(false);
@@ -365,7 +366,7 @@ export function useRetriedRun(workRequestId: string | null, workflowId: string |
   }, [workflowId]);
 
   const { data: runId } = useQuery({
-    enabled: !!workRequestId && !!workflowId && !timedOut,
+    enabled: !!workRequestId && !!workflowId,
     queryFn: () =>
       api
         .get<{ data: WorkflowRunSummary[] }>(
@@ -374,7 +375,11 @@ export function useRetriedRun(workRequestId: string | null, workflowId: string |
         .then((r) => r.data),
     queryKey: ['workflow-runs', 'retried', workRequestId, workflowId],
     refetchInterval: (q) =>
-      q.state.data?.some((r) => r.workflowId === workflowId) ? false : RETRIED_RUN_POLL_MS,
+      q.state.data?.some((r) => r.workflowId === workflowId)
+        ? false
+        : timedOut
+          ? 10_000
+          : RETRIED_RUN_POLL_MS,
     select: (runs) => runs.find((r) => r.workflowId === workflowId)?.id ?? null,
   });
   return { runId: runId ?? null, timedOut: timedOut && !runId };

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Context } from './expr.js';
-import { BranchCancelledError, type Dispatcher, runSpec } from './interpreter.js';
+import {
+  BranchCancelledError,
+  DISPATCH_PROGRESS_PATCH,
+  type Dispatcher,
+  runSpec,
+} from './interpreter.js';
 import { parseWorkflowSpec, SPEC_SCHEMA_VERSION } from './spec.js';
 import { TICKET_TO_MERGE_SPEC } from './templates/ticketToMerge.js';
 
@@ -101,6 +106,122 @@ const baseCtx = (): Context => ({
   nodes: {},
   request: { externalTicketId: 'TEST-1', repoId: 'repo-1' },
   workflow: { id: 'eng-test-1' },
+});
+
+describe('live dispatch progress', () => {
+  it('does not start a sibling activity if the fan-out is blocked during its progress write', async () => {
+    const fanSpec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'cancel-during-progress',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          concurrency: 2,
+          join: 'done',
+          onBranchFail: 'block',
+          over: { literal: [0, 1] },
+          subgraph: 'work',
+          type: 'fanOut',
+        },
+        work: { inputs: { i: { from: 'subtask' } }, next: 'done', step: 'work', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const { dispatcher, calls, records } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        work: (inputs: Record<string, unknown>) => {
+          if (inputs.i === 0) {
+            throw new Error('blocked');
+          }
+          return { passed: true };
+        },
+      },
+    });
+    const record = dispatcher.recordStep;
+    dispatcher.recordStep = async (args) => {
+      await record(args);
+      if (args.nodeId === 'fan[1]/work' && args.status === 'RUNNING') {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    };
+    await expect(runSpec(fanSpec, baseCtx(), dispatcher)).rejects.toThrow('blocked');
+    expect(calls.filter((call) => call.inputs.i === 1)).toHaveLength(0);
+    expect(records.filter((r) => r.nodeId === 'fan[1]/work').map((r) => r.status)).toEqual([
+      'RUNNING',
+      'FAILED',
+    ]);
+  });
+
+  const spec = parseWorkflowSpec({
+    entry: 'work',
+    name: 'progress',
+    nodes: {
+      done: { status: 'SUCCESS', type: 'terminate' },
+      work: { next: 'done', step: 'validateContext', type: 'step' },
+    },
+    schemaVersion: SPEC_SCHEMA_VERSION,
+  });
+
+  it.each([false, true])(
+    'records a running step before invoking the activity (patched=%s)',
+    async (patched) => {
+      const records: Parameters<Dispatcher['recordStep']>[0][] = [];
+      let release: (value: unknown) => void = () => {};
+      const activity = new Promise((resolve) => {
+        release = resolve;
+      });
+      let started: () => void = () => {};
+      const invoked = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const dispatcher: Dispatcher = {
+        async dispatchStep() {
+          expect(records.filter((r) => r.nodeId === 'work').map((r) => r.status)).toEqual(
+            patched ? ['RUNNING'] : []
+          );
+          started();
+          return activity;
+        },
+        patched: (id) => id !== DISPATCH_PROGRESS_PATCH || patched,
+        async recordStep(record) {
+          records.push(record);
+        },
+        async waitSignal() {
+          return undefined;
+        },
+      };
+      const running = runSpec(spec, baseCtx(), dispatcher);
+      await invoked;
+      expect(records.some((r) => r.status === 'PASSED')).toBe(false);
+      release({ passed: true });
+      expect((await running).status).toBe('SUCCESS');
+      expect(records.filter((r) => r.nodeId === 'work').map((r) => [r.attempt, r.status])).toEqual(
+        patched
+          ? [
+              [1, 'RUNNING'],
+              [1, 'PASSED'],
+            ]
+          : [[1, 'PASSED']]
+      );
+    }
+  );
+
+  it('does not fail execution when the progress write fails', async () => {
+    const { dispatcher, calls } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: { validateContext: { passed: true } },
+    });
+    const record = dispatcher.recordStep;
+    dispatcher.recordStep = async (args) => {
+      if (args.status === 'RUNNING') {
+        throw new Error('database unavailable');
+      }
+      await record(args);
+    };
+    expect((await runSpec(spec, baseCtx(), dispatcher)).status).toBe('SUCCESS');
+    expect(calls).toHaveLength(1);
+  });
 });
 
 describe('eval node packing', () => {
@@ -1505,7 +1626,10 @@ describe('runSpec', () => {
     const result = await runSpec(spec, baseCtx(), dispatcher);
     expect(invoked).toBe(1);
     expect(result.status).toBe('SUCCESS');
-    expect(records.find((r) => r.nodeId === 'sh')?.status).toBe('PASSED');
+    expect(records.filter((r) => r.nodeId === 'sh').map((r) => r.status)).toEqual([
+      'RUNNING',
+      'PASSED',
+    ]);
   });
 
   it('shell node onFail:warn continues past a passed:false result', async () => {
@@ -1541,7 +1665,10 @@ describe('runSpec', () => {
     };
     const result = await runSpec(spec, baseCtx(), dispatcher);
     expect(result.status).toBe('SUCCESS');
-    expect(records.filter((r) => r.nodeId === 'sh').map((r) => r.status)).toEqual(['FAILED']);
+    expect(records.filter((r) => r.nodeId === 'sh').map((r) => r.status)).toEqual([
+      'RUNNING',
+      'FAILED',
+    ]);
   });
 
   it('shell node onFail:block throws on passed:false', async () => {
@@ -1615,7 +1742,14 @@ describe('runSpec', () => {
     expect(result.status).toBe('SUCCESS');
     expect(calls).toBe(3);
     const shRecords = records.filter((r) => r.nodeId === 'sh');
-    expect(shRecords.map((r) => r.status)).toEqual(['FAILED', 'FAILED', 'PASSED']);
+    expect(shRecords.map((r) => r.status)).toEqual([
+      'RUNNING',
+      'FAILED',
+      'RUNNING',
+      'FAILED',
+      'RUNNING',
+      'PASSED',
+    ]);
   });
 
   it('shell node throws when the dispatcher has no dispatchShell handler', async () => {
@@ -2285,7 +2419,7 @@ describe('run cancellation and non-retryable errors', () => {
     });
     const result = await runSpec(oneStep({ onError: 'continue' }), baseCtx(), dispatcher);
     expect(result.status).toBe('SUCCESS');
-    expect(patchIds).toEqual(['workflow-cancel-propagates']);
+    expect(patchIds).toEqual([DISPATCH_PROGRESS_PATCH, 'workflow-cancel-propagates']);
   });
 
   it('treats any error as an ordinary failure when the dispatcher has no cancellation hook', async () => {
@@ -2341,7 +2475,10 @@ describe('run cancellation and non-retryable errors', () => {
         runSpec(oneStep({ onFail: { retry: 3 } }), baseCtx(), dispatcher)
       ).rejects.toThrow(err.message);
       expect(attempts()).toBe(1);
-      expect(patchIds).toEqual(['interpreter-skips-retry-of-non-retryable']);
+      expect(patchIds).toEqual([
+        DISPATCH_PROGRESS_PATCH,
+        'interpreter-skips-retry-of-non-retryable',
+      ]);
     }
   });
 

@@ -23,6 +23,7 @@ const SUB_HELP = `auto-swe evals — inspect eval datasets and run the regressio
   evals results [--run=<id>] [--source=GATE|REVIEW|MERGE] [--scorer=<s>] [--limit=N]
                                       Query captured eval signals
   evals run <dataset-slug> --candidate=<ref> --against=<ref>
+            [--candidate-memory=on|shadow|off] [--against-memory=on|shadow|off]
             [--candidate-runtime=mastra|claude-code] [--against-runtime=mastra|claude-code]
                                       Start the nightly regression gate; exits 0 on SUCCESS,
                                       1 on a regression, 2 when the run fails without a verdict,
@@ -153,6 +154,12 @@ async function cmdRescreen(rest: string[], env: CliEnv): Promise<number> {
 async function cmdRun(rest: string[], env: CliEnv): Promise<number> {
   const { flags, positional } = parseFlags(rest);
   const slug = positional[0];
+  for (const flag of ['candidate-memory', 'against-memory']) {
+    if (flags[flag] && !['on', 'shadow', 'off'].includes(flags[flag])) {
+      process.stderr.write(`--${flag} must be on, shadow, or off\n`);
+      return 1;
+    }
+  }
   if (!slug || !flags.candidate || !flags.against) {
     process.stderr.write(RUN_USAGE);
     return 1;
@@ -180,6 +187,8 @@ async function cmdRun(rest: string[], env: CliEnv): Promise<number> {
     baselineRef: flags.against,
     ...(baselineRuntime ? { baselineRuntime } : {}),
     candidateRef: flags.candidate,
+    ...(flags['candidate-memory'] ? { candidateMemoryMode: flags['candidate-memory'] } : {}),
+    ...(flags['against-memory'] ? { baselineMemoryMode: flags['against-memory'] } : {}),
     ...(candidateRuntime ? { candidateRuntime } : {}),
     datasetId: ds.id,
   });

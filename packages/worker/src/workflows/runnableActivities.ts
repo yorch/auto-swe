@@ -67,6 +67,27 @@ export const genericActivities = proxyActivities<
   startToCloseTimeout: T_1M,
 });
 
+export const onboardingPrActivities = proxyActivities<
+  Pick<typeof activitiesType, 'repoOnboardingPr'>
+>({
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '10s',
+    maximumAttempts: 3,
+    maximumInterval: '1m',
+  },
+  startToCloseTimeout: T_10M,
+});
+
+export const onboardingTrialActivities = proxyActivities<
+  Pick<typeof activitiesType, 'repoOnboardingTrial'>
+>({
+  heartbeatTimeout: '1m',
+  retry: { maximumAttempts: 1 },
+  // Up to twenty hour-long setup steps, 25 submodule fetches and 26 LFS pulls, then gates/preview.
+  startToCloseTimeout: '36h',
+});
+
 export const agentActivities = proxyActivities<
   Pick<
     typeof activitiesType,

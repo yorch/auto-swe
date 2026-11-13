@@ -16,11 +16,13 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
+import { useOrganizationDirectory } from '@/hooks/useAdmin';
 import {
   type GithubInstallationRow,
   useCreateGithubInstallation,
   useDeleteGithubInstallation,
   useGithubInstallations,
+  useInstallationLinkImpact,
   useUpdateGithubInstallation,
 } from '@/hooks/useGithubInstallations';
 import { errMsg } from '@/lib/errors';
@@ -112,6 +114,10 @@ function EditInstallationModal({
 }) {
   const [accountLogin, setAccountLogin] = useState(installation?.accountLogin ?? '');
   const [isActive, setIsActive] = useState(installation?.isActive ? 'true' : 'false');
+  const [organizationId, setOrganizationId] = useState(installation?.organizationId ?? '');
+  const organizations = useOrganizationDirectory();
+  const impact = useInstallationLinkImpact(installation?.id, organizationId);
+  const [confirmLink, setConfirmLink] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const update = useUpdateGithubInstallation();
 
@@ -124,10 +130,21 @@ function EditInstallationModal({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (organizationId !== (target.organizationId ?? '')) {
+      setConfirmLink(true);
+      return;
+    }
+    await save();
+  }
+  async function save() {
     setError(null);
     try {
       await update.mutateAsync({
-        body: { accountLogin: accountLogin.trim(), isActive: isActive === 'true' },
+        body: {
+          accountLogin: accountLogin.trim(),
+          isActive: isActive === 'true',
+          organizationId: organizationId || null,
+        },
         id: target.id,
       });
       onClose();
@@ -138,7 +155,27 @@ function EditInstallationModal({
 
   return (
     <Modal onClose={onClose} open title={`Edit ${installation.accountLogin}`}>
+      <ConfirmModal
+        confirmLabel="Change organization"
+        message={`${organizationId ? (impact.data?.outsideOrganizationConnectionCount ?? 0) : 0} repositories used by teams outside the selected organization already use this installation. Existing repositories keep working. New imports are restricted to the selected organization; unlinking makes the installation available to every organization.`}
+        onClose={() => setConfirmLink(false)}
+        onConfirm={save}
+        open={confirmLink}
+        title="Change installation organization"
+      />
       <form className="space-y-4" onSubmit={submit}>
+        <Select
+          label="Organization"
+          onChange={setOrganizationId}
+          options={[
+            { label: 'Unlinked (all organizations)', value: '' },
+            ...(organizations.data ?? []).map((org) => ({ label: org.name, value: org.id })),
+          ]}
+          value={organizationId}
+        />
+        {impact.isError && (
+          <Alert>Could not calculate the affected repositories. Retry before linking.</Alert>
+        )}
         <Input
           id="gh-install-edit-account"
           label="Account"
@@ -158,6 +195,9 @@ function EditInstallationModal({
         />
         {error && <Alert>{error}</Alert>}
         <ModalFooter
+          disabled={Boolean(
+            organizationId && organizationId !== (target.organizationId ?? '') && !impact.isSuccess
+          )}
           isPending={update.isPending}
           onCancel={onClose}
           pendingLabel="Saving…"
@@ -288,6 +328,17 @@ export default function StudioGithubInstallationsPage() {
                     ),
                     header: 'Installation ID',
                     id: 'installationId',
+                  },
+                  {
+                    cell: (i) => (
+                      <span>
+                        {i.organizationId ?? 'Unlinked'}
+                        {i.organizationId &&
+                          ` · ${i.outsideOrganizationConnectionCount ?? 0} outside-org repositories`}
+                      </span>
+                    ),
+                    header: 'Organization',
+                    id: 'organization',
                   },
                   {
                     align: 'right',

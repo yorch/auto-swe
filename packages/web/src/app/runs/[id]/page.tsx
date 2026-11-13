@@ -40,19 +40,19 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import type { SecurityEvent } from '@/hooks/useAdmin';
 import { useApprovals } from '@/hooks/useApprovals';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useRunReRun } from '@/hooks/useRunReRun';
 import { useCancelWorkflowRun, useRetriedRun, useRunDetail } from '@/hooks/useRuns';
 import { buildDagOverlay } from '@/lib/dagOverlay';
 import { errMsg } from '@/lib/errors';
 import { IMPLEMENTER_RUNTIME_LABELS } from '@/lib/evalRuntime';
 import { RUN_TOUR } from '@/lib/pageTours';
-import { requestHref } from '@/lib/requestDisplay';
 import { validateRouteParam } from '@/lib/routeParams';
 import { findFailedStep } from '@/lib/runFailure';
 import { deriveRunVerdict } from '@/lib/runVerdict';
 import { runControlReason } from '@/lib/teamPermissions';
 import { buildTraceLinker } from '@/lib/traceLinkage';
-import { cn, FOCUS_RING, formatDate, formatRelativeTime } from '@/lib/utils';
+import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 /**
  * The header's runtime badge. The runtimes the run pinned for agents that have
@@ -82,11 +82,6 @@ function runtimeBadge(run: {
 
 /** `sm` buttons are 28px tall: on a phone the header actions get a 40px target instead. */
 const TOUCH_SM = 'h-[40px] lg:h-8';
-
-const CRUMB = cn(
-  'rounded-sm transition-colors hover:text-paper-200 max-lg:inline-flex max-lg:min-h-[40px] max-lg:items-center',
-  FOCUS_RING
-);
 
 /** The page's shape while the run loads: a header band, then the layout area. */
 function RunDetailSkeleton() {
@@ -154,6 +149,7 @@ export default function RunDetailPage({ params }: PageProps) {
     run?.templateName ||
     'Run';
   useDocumentTitle(run ? `Run · ${runTitle}` : null);
+  useEntityTitle(run ? runTitle : null);
   const badge = run ? runtimeBadge(run) : null;
   const queryClient = useQueryClient();
   const cancelRun = useCancelWorkflowRun(id ?? '');
@@ -318,23 +314,6 @@ export default function RunDetailPage({ params }: PageProps) {
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-ink-800 [@media(max-height:500px)]:overflow-y-auto">
       {/* ── Page header band ──────────────────────────────────────────────── */}
       <header className="shrink-0 border-b border-ink-600/40 bg-ink-900 px-4 py-2 md:px-6 md:pt-3 md:pb-4">
-        <nav
-          aria-label="Breadcrumb"
-          className="mb-1.5 flex flex-wrap items-center gap-x-1.5 text-sm text-paper-500"
-        >
-          <Link className={CRUMB} href="/runs">
-            All runs
-          </Link>
-          {run.workRequest && (
-            <>
-              <Icon className="text-paper-600" name="chevronRight" size={12} />
-              <Link className={CRUMB} href={requestHref(run.workRequest.id)}>
-                Request
-              </Link>
-            </>
-          )}
-        </nav>
-
         <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
           {/* Title: the request this run belongs to, not the template's name */}
           <div className="min-w-0 flex-1 basis-[20rem]">
@@ -526,6 +505,7 @@ export default function RunDetailPage({ params }: PageProps) {
       <RunVerdictBanner
         onGoToGate={() => setOverviewNonce((n) => n + 1)}
         onJumpToFailure={handleJumpToFailure}
+        run={run}
         verdict={verdict}
       />
       <RunWorkspace

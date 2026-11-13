@@ -21,7 +21,7 @@ const SCRIPT = join(REPO, 'scripts', 'check-doc-drift.mjs');
 /** Keys of every seeded agent, which the two roster docs must name. */
 const agentKeys = [
   ...readFileSync(join(REPO, 'packages/shared/src/lib/syncBuiltins.ts'), 'utf8').matchAll(
-    /^\s+key: '([a-zA-Z]+)',$/gm
+    /^\s+key: '([a-zA-Z0-9_-]+)',$/gm
   ),
 ].map((m) => m[1]);
 const roster = (keys) => keys.map((k) => `- \`${k}\``).join('\n');
@@ -188,6 +188,15 @@ describe('check-doc-drift', () => {
     expect(r.status).toBe(1);
     expect(r.out).toContain('Incomplete agent roster');
     expect(r.out).toContain(omitted);
+  });
+
+  it('checks hyphenated agent keys instead of silently omitting them from the roster', () => {
+    const root = fixture();
+    shadow(root, 'packages/shared/src/lib/syncBuiltins.ts', "  key: 'example-agent',\n");
+    const r = run(root);
+    expect(r.status).toBe(1);
+    expect(r.out).toContain('Incomplete agent roster');
+    expect(r.out).toContain('example-agent');
   });
 
   it('fails loudly when it finds no seeded agent keys, instead of checking a roster of nothing', () => {

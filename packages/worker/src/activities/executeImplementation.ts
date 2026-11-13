@@ -1,7 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import type { FigmaDesignSummary } from '@auto-swe/shared/lib/integrations/figmaDesign';
-import { PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
+import type { PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
 import {
   resolveIssueTrackerConfig,
   resolveWorkflowDefaults,
@@ -30,6 +30,7 @@ import {
   currentWorkflowId,
   persistActivityTrace,
   startTraceFlushing,
+  traceWorkspacePreparation,
 } from '../lib/activityContext.js';
 import { logWarn } from '../lib/activityLog.js';
 import { AgentTracer } from '../lib/agentTracer.js';
@@ -59,6 +60,11 @@ import {
   resumeCheckoutSha,
   resumeMessage,
 } from '../lib/pauseResume.js';
+import {
+  resolvePreviewFromScm,
+  resolveRepoGateCommands,
+  workspaceConfigReader,
+} from '../lib/repoConfigResolver.js';
 import {
   type CrossRepoStepOptions,
   checkoutUpstreamRepos,
@@ -245,10 +251,10 @@ export async function executeImplementation(
       ? await resolveTestIntegrityMode(activityCtx)
       : 'off';
   let services: ReturnType<typeof PreviewConfigSchema.parse>['services'];
-  if (repo.previewConfig) {
+  {
     const implementerConfig = await resolveImplementerConfig(activityCtx, 'implementer');
     if (implementerConfig.toolKeys?.includes('browser')) {
-      services = PreviewConfigSchema.parse(repo.previewConfig).services;
+      services = (await resolvePreviewFromScm(repo, baseBranch))?.services;
     }
   }
 
@@ -268,26 +274,29 @@ export async function executeImplementation(
       )
     : undefined;
 
-  const workspace = await createWorkspace(
-    authedCloneUrl,
-    branch,
-    baseBranch,
-    executorImageFor(repo),
-    // A resumed run is cut from the commit its saved tree was taken against, not the branch tip.
-    resumeCheckoutSha(resume),
-    undefined,
-    {
-      detectedStack: repo.detectedStack,
-      knowledgeBaseSnapshotIds: references.snapshotIds,
-      knowledgeBases: references.checkouts,
-      repoSetup: { connectionId: repo.id, defer: true, field: repo.setup },
-      services,
-      teamId: repo.teamId,
-      toolsFor: { connectionId: repo.id },
-    }
+  const tracer = new AgentTracer();
+  const workspace = await traceWorkspacePreparation(tracer, 'implementer', () =>
+    createWorkspace(
+      authedCloneUrl,
+      branch,
+      baseBranch,
+      executorImageFor(repo),
+      // A resumed run is cut from the commit its saved tree was taken against, not the branch tip.
+      resumeCheckoutSha(resume),
+      undefined,
+      {
+        ...(resumeCheckoutSha(resume) ? { trustedBaseBranch: baseBranch } : {}),
+        detectedStack: repo.detectedStack,
+        knowledgeBaseSnapshotIds: references.snapshotIds,
+        knowledgeBases: references.checkouts,
+        repoSetup: { connectionId: repo.id, defer: true, field: repo.setup },
+        services,
+        teamId: repo.teamId,
+        toolsFor: { connectionId: repo.id },
+      }
+    )
   );
 
-  const tracer = new AgentTracer();
   // The run viewer tails traces while this runs; the final persist in finally writes the rest.
   const stopTraceFlushing = startTraceFlushing(tracer, 'implementer');
   // Holds the MCP client open under the Mastra loop — closed in finally.
@@ -370,8 +379,19 @@ export async function executeImplementation(
 
     // Detect test framework
     const packageJson = await workspace.exec(packageJsonReadCommand(repo.detectedStack));
-    const testCommand = detectTestCommand(packageJson, repo.gateCommands, repo.detectedStack);
-    const testSource = testCommandSource(packageJson, repo.gateCommands, repo.detectedStack);
+    const fileCommands = await resolveRepoGateCommands(workspaceConfigReader(workspace, repo.id));
+    const testCommand = detectTestCommand(
+      packageJson,
+      repo.gateCommands,
+      repo.detectedStack,
+      fileCommands
+    );
+    const testSource = testCommandSource(
+      packageJson,
+      repo.gateCommands,
+      repo.detectedStack,
+      fileCommands
+    );
 
     // The runtime — the Mastra loop or the Claude Code harness — is chosen first,
     // and only what it needs is built: tool config + skills (WORKFLOW_TEMPLATE →

@@ -67,13 +67,13 @@ describe('Requests page clear filters', () => {
 });
 
 describe('Requests page epics', () => {
-  it('links to the epics list from the header', () => {
+  it('keeps the type filter without a redundant epics header link', () => {
     nav.search = '';
     useRequests.mockReturnValue({ ...settled, data: { data: [], meta: { total: 0 } } });
     useEpics.mockReturnValue({ ...settled, data: undefined });
     render(<RequestsPage />);
-    const link = screen.getByRole('link', { name: 'Multi-repo epics' });
-    expect(link.getAttribute('href')).toBe('/epics');
+    expect(screen.queryByRole('link', { name: 'Multi-repo epics' })).toBeNull();
+    expect(screen.getByRole('button', { name: /Request type/ })).toBeTruthy();
   });
 
   it('lists epics when the type filter is epics, and only queries epics', () => {

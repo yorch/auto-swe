@@ -1,12 +1,13 @@
 import { resolveSetting } from '@auto-swe/shared/config/resolveSetting';
 import { prisma } from '@auto-swe/shared/db';
-import { type PreviewConfig, PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
+import type { PreviewConfig } from '@auto-swe/shared/lib/previewConfig';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
 import { BrowserSession } from '../browser/session.js';
 import { auditLog } from '../lib/activityLog.js';
 import { type AgentTracer, redactString } from '../lib/agentTracer.js';
+import { resolveRepoPreview, workspaceConfigReader } from '../lib/repoConfigResolver.js';
 import { recordActivityEvidence } from '../lib/runEvidence.js';
 import { screenMcpResult } from './mcpScreen.js';
 
@@ -214,7 +215,7 @@ export class BrowserToolset implements BrowserToolContext {
   private closed = false;
   private browser?: BrowserSession;
   private sessionPromise?: Promise<BrowserSession>;
-  private previewConfig?: z.infer<typeof PreviewConfigSchema> | null;
+  private previewConfig?: PreviewConfig | null;
   private preview?: Awaited<ReturnType<typeof import('../lib/appPreview.js')['startAppPreview']>>;
   private previewPromise?: Promise<
     Awaited<ReturnType<typeof import('../lib/appPreview.js')['startAppPreview']>>
@@ -443,8 +444,10 @@ export class BrowserToolset implements BrowserToolContext {
       select: { previewConfig: true },
       where: { id: this.options.repoId },
     });
-    const parsed = PreviewConfigSchema.safeParse(repo?.previewConfig);
-    this.previewConfig = parsed.success ? parsed.data : null;
+    this.previewConfig = await resolveRepoPreview(
+      workspaceConfigReader(this.options.workspace, this.options.repoId),
+      repo?.previewConfig
+    );
   }
 }
 

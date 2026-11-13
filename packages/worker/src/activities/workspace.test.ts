@@ -66,11 +66,17 @@ vi.mock('../lib/egressWiring.js', () => ({
   gitHostOf: (url: string) => new URL(url).hostname,
   lfsStorageHostEntries: vi.fn(async () => []),
   lfsStorageHosts: vi.fn(() => []),
+  resolveOnboardingDraftEgress: vi.fn(async () => null),
   resolveRunEgressPolicy: vi.fn(async () => policy.value),
   resolveRunSetupEgressPolicy: vi.fn(async () => policy.setup),
 }));
 
-import { beginWorkspaceEgress, blockedEgressAllow } from '../lib/egressWiring.js';
+import { runWithActivityNodeTag } from '../lib/activityNodeTag.js';
+import {
+  beginWorkspaceEgress,
+  blockedEgressAllow,
+  resolveOnboardingDraftEgress,
+} from '../lib/egressWiring.js';
 
 afterEach(() => {
   policy.value = 'open';
@@ -145,6 +151,7 @@ import {
   resolveGitIdentity,
 } from '../lib/gitIdentity.js';
 import { beginWorkspaceRegistries } from '../lib/registryProxy/workspaceWiring.js';
+import { resolveRepoGateCommands, workspaceConfigReader } from '../lib/repoConfigResolver.js';
 import { resetToolCatalogCache } from '../lib/toolCatalogLoader.js';
 import { baselineRules, dockerWorkspaceBackend } from '../lib/workspaceBackend/docker.js';
 import { ToolRefusal } from '../lib/workspaceTools.js';
@@ -245,6 +252,86 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
     vi.mocked(execShellAsync).mockImplementation(okExec);
   });
 
+  it('ignores gates.yml edits and commits after provisioning, reading the captured base SHA', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'repo-gates-trust-'));
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
+    const capture = vi.mocked(spawnCaptureAsync).getMockImplementation();
+    let ws: Awaited<ReturnType<typeof createWorkspace>> | undefined;
+    try {
+      git('init', '-q');
+      mkdirSync(join(dir, '.auto-swe'));
+      writeFileSync(join(dir, '.auto-swe/gates.yml'), 'runTests: trusted tests\n');
+      git('add', '.auto-swe/gates.yml');
+      git('-c', 'user.name=test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'base');
+      const base = git('rev-parse', 'HEAD');
+      vi.mocked(execShellAsync).mockImplementation(async (command) =>
+        command.includes('git rev-parse') ? git('rev-parse', 'HEAD') : okExec(command)
+      );
+      vi.mocked(spawnCaptureAsync).mockImplementation(async (_file, args) => {
+        const script = args.at(-1) ?? '';
+        if (!script.includes('cat-file')) {
+          return { exitCode: 0, stderr: '', stdout: '' };
+        }
+        const result = spawnSync('sh', ['-c', script], { cwd: dir, encoding: 'utf8' });
+        return { exitCode: result.status ?? 1, stderr: result.stderr, stdout: result.stdout };
+      });
+      ws = await createWorkspace('https://github.com/acme/repo.git', 'b', 'main');
+      expect(ws.baseSha).toBe(base);
+      writeFileSync(join(dir, '.auto-swe/gates.yml'), 'runTests: agent bypass\n');
+      expect(await resolveRepoGateCommands(workspaceConfigReader(ws))).toEqual({
+        runTests: 'trusted tests',
+      });
+      git('add', '.auto-swe/gates.yml');
+      git('-c', 'user.name=test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'agent');
+      expect(await resolveRepoGateCommands(workspaceConfigReader(ws))).toEqual({
+        runTests: 'trusted tests',
+      });
+      git('replace', base, 'HEAD');
+      expect(await resolveRepoGateCommands(workspaceConfigReader(ws))).toEqual({
+        runTests: 'trusted tests',
+      });
+      expect(await ws.readBaseFile('.auto-swe/preview.yml')).toBeNull();
+    } finally {
+      await ws?.destroy();
+      if (capture) {
+        vi.mocked(spawnCaptureAsync).mockImplementation(capture);
+      }
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  it('reads resumed configuration from the trusted base branch, not the snapshot pin', async () => {
+    const base = 'a'.repeat(40);
+    vi.mocked(execShellAsync).mockImplementation(async (command) =>
+      command.includes('git rev-parse') ? `${base}\n` : okExec(command)
+    );
+    const ws = await createWorkspace(
+      'https://github.com/acme/repo.git',
+      'b',
+      'main',
+      undefined,
+      'b'.repeat(40),
+      undefined,
+      { trustedBaseBranch: 'main' }
+    );
+    try {
+      expect(ws.baseSha).toBe(base);
+      expect(
+        vi
+          .mocked(execShellAsync)
+          .mock.calls.some(
+            ([cmd]) =>
+              cmd.includes('git rev-parse') &&
+              cmd.includes('origin/main') &&
+              !cmd.includes('b'.repeat(40))
+          )
+      ).toBe(true);
+    } finally {
+      await ws.destroy();
+    }
+  });
+
   it.each([false, true])('resolves blockers after successful setup (defer=%s)', async (defer) => {
     setupBlockerResolveMock.mockClear();
     const ws = await createWorkspace(
@@ -317,6 +404,51 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
         ).toBe(true);
       }
       await ws?.destroy();
+    }
+  );
+
+  it.each([false, true])(
+    'trial setup neither records failures nor resolves blockers (defer=%s)',
+    async (defer) => {
+      setupBlockerUpsertMock.mockClear();
+      setupBlockerResolveMock.mockClear();
+      for (const failed of [false, true]) {
+        vi.mocked(spawnCaptureAsync).mockImplementation(async (_file, args) => ({
+          exitCode: failed && args.join(' ').includes('trial-setup-command') ? 1 : 0,
+          stderr: '',
+          stdout: '',
+        }));
+        let ws: Awaited<ReturnType<typeof createWorkspace>> | undefined;
+        const work = async () => {
+          ws = await createWorkspace(
+            'https://github.com/acme/repo.git',
+            'b',
+            'main',
+            undefined,
+            undefined,
+            false,
+            {
+              repoSetup: {
+                connectionId: 'repo',
+                defer,
+                field: { steps: [{ name: 'trial', run: 'trial-setup-command' }] },
+                recordBlockers: false,
+              },
+            }
+          );
+          if (defer) {
+            await ws.runSetup?.();
+          }
+        };
+        if (failed) {
+          await expect(work()).rejects.toMatchObject({ type: 'WORKSPACE_SETUP_FAILED' });
+        } else {
+          await work();
+        }
+        await ws?.destroy();
+      }
+      expect(setupBlockerUpsertMock).not.toHaveBeenCalled();
+      expect(setupBlockerResolveMock).not.toHaveBeenCalled();
     }
   );
 
@@ -535,6 +667,133 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
       vi.mocked(execShellAsync).mockReset();
       vi.mocked(execShellAsync).mockImplementation(okExec);
     });
+
+    it.each(['blocked', 'restricted'] as const)(
+      'registers, locks, audits and revokes draft widening from %s',
+      async (realPolicy) => {
+        policy.value = realPolicy;
+        policy.setup = 'open';
+        const expansion = {
+          additionalHosts: ['downloads.example'],
+          includeTeamAllowlist: realPolicy === 'restricted',
+        };
+        vi.mocked(resolveOnboardingDraftEgress).mockResolvedValueOnce(expansion);
+        const release = vi.fn(async () => {});
+        vi.mocked(beginWorkspaceEgress).mockResolvedValueOnce({
+          env: [],
+          registration: { release, token: 'token', url: 'http://proxy.internal:8792' },
+          secretEnv: {
+            HTTP_PROXY: 'http://egress:token@proxy.internal',
+            HTTPS_PROXY: 'http://egress:token@proxy.internal',
+            http_proxy: 'http://egress:token@proxy.internal',
+            https_proxy: 'http://egress:token@proxy.internal',
+          },
+        });
+        const lock = vi.spyOn(backend, 'lockEgress').mockResolvedValue();
+        const logs = vi.spyOn(console, 'log');
+        try {
+          const ws = await runWithActivityNodeTag(
+            { recordingId: 'r', specNodeId: 'draft', stepAttempt: 1 },
+            () =>
+              createWorkspace(
+                'https://github.com/acme/repo.git',
+                'b',
+                'main',
+                undefined,
+                undefined,
+                false,
+                { onboardingDraft: true, repoSetup: { defer: true, field: {} }, teamId: 'team' }
+              )
+          );
+          expect(ws.egressPolicy).toBe('restricted');
+          expect(ws.setupEgressPolicy).toBe('restricted');
+          expect(beginWorkspaceEgress).toHaveBeenLastCalledWith(
+            'team',
+            ['github.com'],
+            'restricted',
+            expansion
+          );
+          expect(blockedEgressAllow).toHaveBeenLastCalledWith(
+            'github.com',
+            expect.objectContaining({ egressProxyUrl: 'http://proxy.internal:8792' })
+          );
+          expect(lock).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), {
+            mode: 'restricted',
+          });
+          const prefix = 'workspace.onboardingDraftEgress ';
+          const event = logs.mock.calls
+            .map(([line]) => String(line))
+            .find((line) => line.startsWith(prefix));
+          expect(JSON.parse(event?.slice(prefix.length) ?? '{}')).toMatchObject({
+            draftHostCount: 1,
+            nodeId: 'draft',
+            workflowId: 'workflow',
+          });
+          expect(release).not.toHaveBeenCalled();
+          await ws.destroy();
+          expect(release).toHaveBeenCalledOnce();
+        } finally {
+          lock.mockRestore();
+          logs.mockRestore();
+        }
+      }
+    );
+
+    it('keeps the real policy when no draft expansion is available', async () => {
+      policy.value = 'blocked';
+      vi.mocked(resolveOnboardingDraftEgress).mockResolvedValueOnce(null);
+      const lock = vi.spyOn(backend, 'lockEgress').mockResolvedValue();
+      try {
+        const ws = await createWorkspace(
+          'https://github.com/acme/repo.git',
+          'b',
+          'main',
+          undefined,
+          undefined,
+          false,
+          { onboardingDraft: true }
+        );
+        expect(ws.egressPolicy).toBe('blocked');
+        expect(beginWorkspaceEgress).toHaveBeenLastCalledWith(null, ['github.com'], 'blocked');
+        await ws.destroy();
+      } finally {
+        lock.mockRestore();
+      }
+    });
+
+    it.each(['blocked', 'restricted'] as const)(
+      'trial disables open setup widening under %s',
+      async (realPolicy) => {
+        policy.value = realPolicy;
+        policy.setup = 'open';
+        vi.mocked(resolveOnboardingDraftEgress).mockClear();
+        const lock = vi.spyOn(backend, 'lockEgress').mockResolvedValue();
+        try {
+          const ws = await createWorkspace(
+            'https://github.com/acme/repo.git',
+            'b',
+            'main',
+            undefined,
+            undefined,
+            false,
+            {
+              inheritSetupEgress: true,
+              onboardingDraft: true,
+              repoSetup: { defer: true, field: {} },
+            }
+          );
+          expect(ws.setupEgressPolicy).toBe(realPolicy);
+          expect(ws.egressPolicy).toBe(realPolicy);
+          expect(resolveOnboardingDraftEgress).not.toHaveBeenCalled();
+          expect(lock.mock.calls.every(([, , options]) => !options?.prepareOnly)).toBe(true);
+          await ws.runSetup?.();
+          await ws.finishSetup?.();
+          await ws.destroy();
+        } finally {
+          lock.mockRestore();
+        }
+      }
+    );
 
     it('runs open setup with the baseline only, then verifies processes and replaces the agent lock once', async () => {
       policy.value = 'blocked';

@@ -1,7 +1,11 @@
 import { resolveSetting } from '@auto-swe/shared/config';
 import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
-import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
+import {
+  currentWorkflowId,
+  persistActivityTrace,
+  startTraceFlushing,
+} from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { abortSignalOption } from '../lib/cancellation.js';
 import type { AgentSpec } from '../lib/config/agentSpec.js';
@@ -54,7 +58,8 @@ export interface RunAgentOptions {
   perStepAccounting?: boolean;
   /**
    * Record into the caller's tracer instead of a private one, and leave
-   * persisting it to the caller. For a caller whose tools record their own
+   * persisting and live flushing it to the caller (including any trace tags).
+   * For a caller whose tools record their own
    * calls on that tracer (MCP and workspace tools do): the loop's rows and the
    * tool rows then share one `seq` sequence and persist once. Name those tools
    * in `selfRecordingTools` so their calls are not recorded a second time.
@@ -140,6 +145,7 @@ export async function runAgent<T = unknown>(
 ): Promise<RunAgentResult<T>> {
   const spanName = options.spanName ?? 'llm.run_agent';
   const tracer = options.tracer ?? new AgentTracer();
+  const stopTraceFlushing = options.tracer ? () => {} : startTraceFlushing(tracer, spec.agentKey);
   try {
     return await otelTracer.startActiveSpan(spanName, async (span) => {
       const start = Date.now();
@@ -229,6 +235,10 @@ export async function runAgent<T = unknown>(
 
         let genResult: Awaited<ReturnType<InstanceType<typeof Agent>['generate']>> | undefined;
         try {
+          tracer.addActivityEvent({
+            name: 'agent.generating',
+            outputJson: { agentKey: spec.agentKey },
+          });
           genResult = await withHeartbeat(
             `agent ${spec.agentKey}: generating`,
             spec.outputSchema
@@ -336,6 +346,7 @@ export async function runAgent<T = unknown>(
       }
     });
   } finally {
+    stopTraceFlushing();
     if (!options.tracer) {
       await persistActivityTrace(tracer, spec.agentKey);
     }

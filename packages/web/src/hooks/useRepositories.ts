@@ -10,11 +10,47 @@ import type {
   RepositorySummary,
 } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRef } from 'react';
 import { type ListOptions, listUrl, useListQuery } from '@/hooks/useListQuery';
 import { READINESS_KEY } from '@/hooks/useReadiness';
 import { api } from '@/lib/api';
 
+export interface RepoOnboardingRun {
+  workflowId: string | null;
+  temporalWorkflowId: string;
+  workRequestId: string;
+  runId: string | null;
+  deduplicated: boolean;
+}
+
+export function useRunRepoOnboarding() {
+  const keys = useRef(new Map<string, string>());
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (connectionId: string) => {
+      const key = keys.current.get(connectionId) ?? crypto.randomUUID();
+      keys.current.set(connectionId, key);
+      return (
+        await api.fetch<{ data: RepoOnboardingRun }>(
+          `/api/v1/repositories/${connectionId}/onboarding-runs`,
+          { body: '{}', headers: { 'Idempotency-Key': key }, method: 'POST' }
+        )
+      ).data;
+    },
+    onSuccess: (_, connectionId) => {
+      keys.current.delete(connectionId);
+      void queryClient.invalidateQueries({ queryKey: ['workflow-runs'] });
+      void queryClient.invalidateQueries({ queryKey: ['work-requests'] });
+    },
+  });
+}
+
 export interface GitHubRepoInfo {
+  installationId: string | null;
+  installationAccount: string | null;
+  githubUrl: string | null;
+  githubApiUrl: string | null;
+  access: 'readable' | 'unchecked';
   org: string;
   name: string;
   description: string | null;
@@ -47,6 +83,8 @@ export interface CreateConnectionBody {
   teamId: string;
   description?: string;
   config?: unknown;
+  /** Write-only; stored encrypted. */
+  apiToken?: string;
   // git_repo only
   organizationName?: string;
   repoName?: string;
@@ -73,6 +111,8 @@ export interface UpdateRepoBody {
   githubApiUrl?: string | null;
   name?: string | null;
   config?: unknown;
+  /** A new write-only token; leave out to keep the stored one. */
+  apiToken?: string;
 }
 
 export function useRepositories(
@@ -240,22 +280,71 @@ export function useGitHubAvailableRepos(enabled = false) {
   return useQuery({
     enabled,
     queryFn: () =>
-      api
-        .get<{ data: GitHubRepoInfo[] }>('/api/v1/repositories/github/available')
-        .then((r) => r.data),
+      api.get<{ data: GitHubRepoInfo[]; sources: GitHubImportSource[] }>(
+        '/api/v1/repositories/github/available'
+      ),
     queryKey: ['github-available-repos'],
     staleTime: 30_000,
   });
 }
 
-export function useSetupBlockers(connectionId: string) {
+export interface GitHubImportSource {
+  installationId: string | null;
+  installationAccount: string | null;
+  githubUrl: string;
+  error?: string;
+}
+export interface GitHubImportResult {
+  organizationName: string;
+  repoName: string;
+  status: 'created' | 'failed';
+  id?: string;
+  code?: string;
+  message?: string;
+}
+export function useImportGitHubRepos() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      teamId: string;
+      repos: {
+        organizationName: string;
+        repoName: string;
+        installationId: string | null;
+        defaultBranch?: string;
+      }[];
+    }) =>
+      api
+        .post<{ data: GitHubImportResult[] }>('/api/v1/repositories/import', body)
+        .then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['repositories'] });
+      qc.invalidateQueries({ queryKey: ['github-available-repos'] });
+      qc.invalidateQueries({ queryKey: READINESS_KEY });
+    },
+  });
+}
+
+export function useSetupBlockers(
+  connectionId: string,
+  options: { includeResolved?: boolean } = {}
+) {
+  const includeResolved = options.includeResolved ?? false;
   return useQuery({
     queryFn: () =>
       api
-        .get<RepoSetupBlockersResponse>(`/api/v1/repositories/${connectionId}/setup-blockers`)
+        .get<RepoSetupBlockersResponse>(
+          `/api/v1/repositories/${connectionId}/setup-blockers${includeResolved ? '?includeResolved=true' : ''}`
+        )
         .then((r) => r.blockers),
-    queryKey: ['repositories', connectionId, 'setup-blockers'],
+    queryKey: ['repositories', connectionId, 'setup-blockers', includeResolved],
+    ...(includeResolved ? { retry: false } : {}),
   });
+}
+
+export function useWorkflowSetupBlocker(connectionId: string, workflowId: string) {
+  const query = useSetupBlockers(connectionId, { includeResolved: true });
+  return query.isError ? undefined : query.data?.find((row) => row.lastWorkflowId === workflowId);
 }
 
 export function useDismissSetupBlocker(connectionId: string) {

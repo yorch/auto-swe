@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
@@ -72,10 +72,14 @@ describe('login page: gateway down', () => {
 
   it('re-probes when the browser comes back online', async () => {
     h.probe.mockResolvedValueOnce(null);
-    render(<LoginPage />);
+    await act(async () => {
+      render(<LoginPage />);
+    });
     await screen.findByRole('button', { name: 'Retry' });
-    window.dispatchEvent(new Event('online'));
+    expect(h.probe).toHaveBeenCalledTimes(1);
+    fireEvent(window, new Event('online'));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull());
+    expect(h.probe).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -333,6 +333,8 @@ describe('StartWork', () => {
     render(withQuery(<StartWork />));
     const aside = screen.getByLabelText('What happens next');
     expect(aside.className).not.toContain('hidden');
+    expect(aside.classList.contains('xl:sticky')).toBe(true);
+    expect(aside.classList.contains('xl:self-start')).toBe(true);
     expect(screen.getByText('Running a workflow')).toBeTruthy();
   });
 

@@ -42,6 +42,7 @@ function newMockPrisma() {
       findUnique: vi.fn(),
       update: vi.fn().mockResolvedValue({}),
     },
+    evalLesson: { findMany: vi.fn().mockResolvedValue([]) },
     evalResult: {
       count: vi.fn().mockResolvedValue(0),
       findMany: vi.fn().mockResolvedValue([]),
@@ -58,6 +59,7 @@ function newMockPrisma() {
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    memoryItem: { findMany: vi.fn().mockResolvedValue([]) },
   };
   return prisma;
 }
@@ -76,11 +78,18 @@ async function buildApp(
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'admin-1' }),
   } as unknown as never);
   const startEvalScreenWorkflow = vi.fn(async (_id: string, _input: { datasetId: string }) => {});
-  app.decorate('temporal', { startEvalRunWorkflow, startEvalScreenWorkflow } as unknown as never);
+  const replaceEvalLessons = vi.fn(
+    async (_datasetId: string, lessons: unknown[]) => lessons.length
+  );
+  app.decorate('temporal', {
+    replaceEvalLessons,
+    startEvalRunWorkflow,
+    startEvalScreenWorkflow,
+  } as unknown as never);
   app.decorate('temporalConnection', { state: () => temporalState } as unknown as never);
   await app.register(evalRoutes, { prefix: '/api/v1/platform' });
   await app.ready();
-  return { app, prisma, startEvalScreenWorkflow };
+  return { app, prisma, replaceEvalLessons, startEvalScreenWorkflow };
 }
 
 const AUTH = { authorization: 'Bearer fake' };
@@ -88,6 +97,135 @@ const AUTH = { authorization: 'Bearer fake' };
 beforeEach(() => vi.clearAllMocks());
 
 describe('evalRoutes', () => {
+  it.each(['GET', 'PUT', 'POST'] as const)('restricts corpus %s to admins', async (method) => {
+    const { app } = await buildApp('ENGINEER');
+    const res = await app.inject({
+      headers: AUTH,
+      method,
+      url: `/api/v1/platform/evals/11111111-1111-4111-8111-111111111111/lessons${method === 'POST' ? '/import' : ''}`,
+      ...(method === 'PUT'
+        ? { payload: { lessons: [] } }
+        : method === 'POST'
+          ? { payload: { repoId: '22222222-2222-4222-8222-222222222222' } }
+          : {}),
+    });
+    expect(res.statusCode).toBe(403);
+  });
+  it('lists a hashed corpus and handles missing datasets', async () => {
+    const { app, prisma } = await buildApp();
+    const url = '/api/v1/platform/evals/11111111-1111-4111-8111-111111111111/lessons';
+    expect((await app.inject({ headers: AUTH, method: 'GET', url })).statusCode).toBe(404);
+    prisma.evalDataset.findUnique.mockResolvedValue({ id: 'dataset' });
+    prisma.evalLesson.findMany.mockResolvedValue([
+      { content: 'Use transactions', failureType: null },
+    ]);
+    const res = await app.inject({ headers: AUTH, method: 'GET', url });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toMatchObject({
+      corpusHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      count: 1,
+      lessons: [{ content: 'Use transactions' }],
+    });
+  });
+  it('replaces and clears authored corpora, rejecting caps', async () => {
+    const { app, prisma, replaceEvalLessons } = await buildApp();
+    prisma.evalDataset.findUnique.mockResolvedValue({ id: 'dataset' });
+    const url = '/api/v1/platform/evals/11111111-1111-4111-8111-111111111111/lessons';
+    for (const lessons of [[{ content: 'Use transactions', tags: ['db'] }], []]) {
+      expect(
+        (await app.inject({ headers: AUTH, method: 'PUT', payload: { lessons }, url })).statusCode
+      ).toBe(200);
+      expect(replaceEvalLessons).toHaveBeenLastCalledWith(
+        '11111111-1111-4111-8111-111111111111',
+        lessons
+      );
+    }
+    for (const lessons of [
+      Array.from({ length: 51 }, () => ({ content: 'one' })),
+      [{ content: 'x'.repeat(5001) }],
+      [{ content: ' ' }],
+    ]) {
+      expect(
+        (await app.inject({ headers: AUTH, method: 'PUT', payload: { lessons }, url })).statusCode
+      ).toBe(400);
+    }
+    expect(replaceEvalLessons).toHaveBeenCalledTimes(2);
+  });
+  it('imports only active lessons from the requested repository with provenance', async () => {
+    const { app, prisma, replaceEvalLessons } = await buildApp();
+    prisma.evalDataset.findUnique.mockResolvedValue({ id: 'dataset' });
+    prisma.memoryItem.findMany.mockResolvedValue([
+      {
+        content: 'raw',
+        failureType: 'TEST',
+        id: 'source',
+        lessonSummary: 'Use transactions',
+        tags: ['db'],
+      },
+    ]);
+    const repoId = '22222222-2222-4222-8222-222222222222';
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { limit: 3, repoId },
+      url: '/api/v1/platform/evals/11111111-1111-4111-8111-111111111111/lessons/import',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(prisma.memoryItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        take: 3,
+        where: {
+          consolidatedAt: null,
+          quarantinedAt: null,
+          repoId,
+          scope: 'swe-lessons',
+          supersededAt: null,
+        },
+      })
+    );
+    expect(replaceEvalLessons).toHaveBeenCalledWith(expect.any(String), [
+      {
+        content: 'Use transactions',
+        failureType: 'TEST',
+        source: 'IMPORTED',
+        sourceMemoryItemId: 'source',
+        tags: ['db'],
+      },
+    ]);
+  });
+  it('rejects enabled arms with empty corpora and pins independent modes/hash', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.evalDataset.findUnique.mockResolvedValue({ id: 'dataset' });
+    prisma.evalRun.create.mockResolvedValue({ endedAt: null, id: 'run', startedAt: new Date() });
+    const payload = {
+      baselineMemoryMode: 'shadow',
+      baselineRef: 'same',
+      candidateMemoryMode: 'on',
+      candidateRef: 'same',
+      datasetId: '11111111-1111-4111-8111-111111111111',
+    };
+    const request = {
+      headers: AUTH,
+      method: 'POST' as const,
+      payload,
+      url: '/api/v1/platform/evals/runs',
+    };
+    expect((await app.inject(request)).statusCode).toBe(400);
+    expect(prisma.evalRun.create).not.toHaveBeenCalled();
+    prisma.evalLesson.findMany.mockResolvedValue([
+      { content: 'Use transactions', failureType: null },
+    ]);
+    expect((await app.inject(request)).statusCode).toBe(202);
+    expect(prisma.evalRun.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          baselineMemoryMode: 'SHADOW',
+          candidateMemoryMode: 'ON',
+          corpusHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+        }),
+      })
+    );
+  });
   it('rejects non-admins', async () => {
     const { app } = await buildApp('ENGINEER');
     const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/platform/evals' });

@@ -173,13 +173,15 @@ function Harness({
   currentRun = run,
   currentSpec = spec,
   monitoringPaused = false,
+  initialSelection = 'impl',
 }: {
   jumpNonce?: number;
   currentRun?: WorkflowRunDetail;
   currentSpec?: typeof spec;
   monitoringPaused?: boolean;
+  initialSelection?: string | null;
 }) {
-  const [selected, setSelected] = useState<string | null>('impl');
+  const [selected, setSelected] = useState<string | null>(initialSelection);
   return (
     <RunWorkspace
       activity={<p>activity</p>}
@@ -200,6 +202,54 @@ function Harness({
   );
 }
 describe('linked run workspace', () => {
+  it('shows one empty state and compact node names when no steps have recordings', () => {
+    render(<Harness currentRun={{ ...run, steps: [], traces: [] }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Steps' }));
+    const execution = screen.getByRole('complementary', { name: 'Execution steps' });
+    expect(within(execution).getAllByText('No steps recorded yet')).toHaveLength(1);
+    expect(within(execution).queryByText('No step recording')).toBeNull();
+    for (const name of ['fan', 'Implement', 'done']) {
+      const node = within(execution).getByRole('button', { name });
+      expect(node.classList.contains('py-2')).toBe(true);
+    }
+  });
+
+  it('shows preparation while the run has no steps', () => {
+    render(
+      <Harness
+        currentRun={{ ...run, endedAt: null, status: 'RUNNING', steps: [], traces: [] }}
+        initialSelection={null}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Steps' }));
+    expect(screen.getByText('Preparing run')).toBeTruthy();
+    expect(screen.getByText(/worker is preparing this run/)).toBeTruthy();
+  });
+
+  it('keeps live events across nodes visible as later executions arrive, until explicitly selected', () => {
+    const first = {
+      ...run,
+      endedAt: null,
+      status: 'RUNNING',
+      steps: [steps[0]],
+      traces: [traces[0]],
+    } as WorkflowRunDetail;
+    const { rerender } = render(<Harness currentRun={first} initialSelection={null} />);
+    expect(screen.getByTestId('events').textContent).toContain('t0');
+    const later = {
+      ...first,
+      steps: [steps[0], { ...steps[1], endedAt: null, status: 'RUNNING' }],
+      traces: [traces[0], traces[1], traces[3]],
+    } as WorkflowRunDetail;
+    rerender(<Harness currentRun={later} initialSelection={null} />);
+    expect(screen.getByTestId('events').textContent).toBe('t0,t1,outside');
+    fireEvent.click(screen.getByRole('button', { name: 'Graph' }));
+    fireEvent.click(screen.getByRole('button', { name: 'graph:' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Events' }));
+    expect(screen.getByTestId('events').textContent).toBe('t0,t1');
+    rerender(<Harness currentRun={{ ...later, status: 'SUCCESS' }} initialSelection={null} />);
+    expect(screen.getByTestId('events').textContent).toBe('t0,t1');
+  });
   it.each(['RUNNING', 'SUCCESS'] as const)(
     'does not infer reachability from missing step recordings in a %s run',
     (status) => {

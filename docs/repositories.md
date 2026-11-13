@@ -3,7 +3,8 @@
 A repository is a `Connection` with `type = 'git_repo'`. This document covers what identifies one,
 which hosts its URLs may point at, and which teams may use it.
 
-Repository settings also accept an optional `previewConfig` JSON recipe for UI validation. Only
+Repository settings also accept an optional `previewConfig` JSON recipe for UI validation, overriding
+the repository's `.auto-swe/preview.yml`. Only
 `git_repo` connections can store one, and changing it takes the same team shell-authoring role as
 changing gate commands; see [UI validation](./ui-validation.md) for its schema and runtime behavior.
 Preview sessions need a browser in the repository's executor image: `defaults/Dockerfile.node-browser`
@@ -29,7 +30,7 @@ Everything that names a repository by owner and name takes the host into account
 | Where | How |
 |---|---|
 | Onboarding (`POST /repositories`) | the duplicate check and the unique index include the host and compare owner and name case-insensitively |
-| Import from GitHub | the list comes from the instance host, so only repositories with no override count as already imported |
+| Import from GitHub | lists active installations and the default credential; imported identity includes the host as well as owner/name |
 | PR and CI webhooks, the access webhook | the delivery is first bound to the host its secret proved (see [Webhook secrets per host](#webhook-secrets-per-host)). Within that, when the owner/name is onboarded on more than one distinct host, the payload's `repository.html_url` picks which; otherwise the match is by name, as before. Owner and name match case-insensitively and literally (`_` and `%` in a name are not wildcards), whatever casing the payload uses |
 | Workflow ids | a repository with a `githubUrl` override gets the host in its id (`eng-<host>-<owner>-<name>-<ticket>`); one on the instance host keeps `eng-<owner>-<name>-<ticket>`. Owner and name are lowercased in the id; the ticket id keeps its casing. A run still in flight under an earlier form of the id (stored casing, or without the host) blocks a new one, as one under the current id does. So does a run of another row for the same repository — the same host (no override is the instance's host) and the same owner and name compared case-insensitively; a repository on another host with the same owner and name is a different repository and never blocks |
 | Dependency detection | a dependency URL that names a host matches only a repository on that host |
@@ -187,14 +188,35 @@ checks are still running keeps waiting while the others are signalled.
 
 ### Importing from GitHub
 
-Importing lists repositories from the instance's own host and onboards them with no override. The
-repository-level URLs a GitHub listing returns are not base URLs; stored as overrides they made every
-clone and API call land on a path that does not exist.
+Connections → **Import from GitHub** lists repositories from every active registered GitHub App
+installation, including other approved GitHub hosts, plus the instance's default PAT or singleton
+App installation. Installation entries take precedence when sources overlap. Each row identifies
+its installation account; a source that cannot be listed shows an error without hiding other sources.
+Already-imported identity includes the host, with case-insensitive owner and repository names.
+
+Select up to 50 repositories and one team, then import the batch. Imported rows are disabled;
+**Access unchecked** rows remain selectable because the server checks access again at creation.
+The result view shows created repositories and individual failures without rolling back successes.
+`POST /repositories/import` verifies each chosen installation against its repository listing and
+sets the installation and host base URL overrides server-side. Manually choosing an installation
+on the ordinary create or edit endpoint remains restricted to platform admins.
+
+For non-admins, discovery first tries the caller's linked GitHub sign-in token on its own host.
+A complete App-user-token installation listing is authoritative; other token-visible repositories
+are positive evidence only. Remaining repositories use the caller's verified GitHub login and
+platform-credential read-permission lookups. Known unreadable repositories are omitted. Platform
+admins see every listed repository without filtering.
 
 ### Who may onboard
 
-Onboarding (`POST /repositories`, which the import dialog also uses) needs the LEAD role in the
-target team. A caller who is not a platform ADMIN must also be able to **read the repository on
+Onboarding (`POST /repositories` and `POST /repositories/import`) requires a platform ADMIN,
+LEAD or ADMIN membership in the active target team, or ORG_ADMIN membership in that team's
+organization. The caller's platform role need not be LEAD. These roles also govern editing,
+moving and sharing connections; moving requires permission in both the owning and target teams.
+GitHub discovery (`GET /repositories/github/available`) requires a platform ADMIN or permission
+to manage repositories in at least one active team.
+
+A caller who is not a platform ADMIN must also be able to **read the repository on
 GitHub themselves**: once the row exists, the team's members can launch runs that clone and push
 with the platform's credential, so a lead naming any `owner/name` that credential can see would
 otherwise give their team a repository nobody on it can open. The check is made live on every
@@ -228,7 +250,7 @@ it, because that token is the identity their runs act as. The answer is always `
 `{ ok, detail, checks[], durationMs }`; a failing step is a check, not an error, and the wording is
 fixed per status class.
 
-Only a platform ADMIN or a lead of the owning team may ask, the rule that governs editing the
+Only a platform ADMIN, a lead of the owning team or its organization's ORG_ADMIN may ask, the rule that governs editing the
 repository. The check is about a repository that is already connected, so it cannot be used to
 find which private repositories the platform credential can see.
 
@@ -236,11 +258,31 @@ find which private repositories the platform credential can see.
 
 A repository can give each gate step its own command (`Connection.gateCommands`): `runLint`,
 `runTypecheck`, `runTests`, `runBuild`, `runVulnScan` and `runPerfBench`. A gate step that sets no
-`command` of its own runs the repository's, else the worker's built-in default; the implementer's
-test loop reads `runTests` the same way. They are edited in the connection form's **Gate commands**
+`command` of its own resolves each key from the connection override, then `.auto-swe/gates.yml`,
+then the detected stack default, then the worker's built-in default. A connection override for
+`runTests` does not hide a file's `runLint`. The implementer's test loop reads `runTests` from the
+connection, then the file, then its stack/package-script detection. Overrides are edited in the connection form's **Gate commands**
 section (when onboarding or editing), with `POST /repositories` / `PATCH /repositories/:id`
 `{ gateCommands }` — a PATCH replaces the stored set; a gate left out, null or blank falls back to
-the default, and `null` clears them all — or with the CLI's `auto-swe repos gate-commands`.
+the next source, and `null` clears them all — or with the CLI's `auto-swe repos gate-commands`.
+
+The file uses the same command validation as the connection (4,000 characters per command);
+unknown keys are errors. Null or blank entries fall through to the next source.
+
+```yaml
+runTests: make test
+runLint: make lint
+runBuild: make build
+```
+
+Repository gate and preview files are read from trusted base-branch content, never the agent-editable
+working tree. Provisioning captures an immutable base commit SHA before setup or agents run;
+workspace consumers read files using `git cat-file` at that SHA, even after branch changes or agent
+commits. On resume, the saved snapshot's checkout pin restores the agent's work, but configuration
+comes from the run's trusted base branch, not that snapshot pin. Preview services needed before a
+workspace exists use the SCM provider at a resolved SHA of the same base branch. A missing file is
+unset. An invalid file names its path in a typed failure; workspace consumers attach an
+`invalid_config` setup blocker. Test-command evidence labels file-selected commands `repo-file`.
 
 The test loop runs `runTests` when set, else a command guessed from `package.json` that falls back to
 `npm test`. When the command cannot run in the workspace — exit status 127 or 126, npm's
@@ -401,9 +443,18 @@ Installs happen before the egress policy locks the network; a tool an agent requ
 started (`provisionTool`) is refused under the `blocked` and `restricted` policies. An agent may not pin
 a `DEPRECATED` row, and a workspace stops running installers after `max(3, maxTools)` failed attempts.
 
-**Letting the platform propose the files.** A repository's owning-team lead (or a platform admin)
-can have the platform open a pull request that adds `.auto-swe/tools.yml`, `.auto-swe/pr-policy.yml`
-or both: `POST /api/v1/repositories/:id/onboarding-pr` with the files to include, and
+**Letting the platform propose the files.** In Connections, **Open onboarding PR** in a git
+repository's row menu opens a dialog for `.auto-swe/tools.yml` and `.auto-swe/pr-policy.yml`.
+Each file has its own include checkbox. The tools picker lists non-revoked catalog keys, allows
+up to 32 selections, and suggests only available keys from the detected stacks: Node suggests
+`jq`, Python `uv` and `ruff`, JVM `maven` and `gradle`, and Go `golangci-lint`. Unknown or truncated
+stack detection supplies no suggestions. Sensitive-path globs are editable, one per line; the
+defaults protect auth and migration directories. The dialog polls the workflow and shows whether
+the pull request is opened, updated, already matches, or fails, with a link when available.
+
+A repository's owning-team lead, the owning organization's admin, or a platform admin can propose
+these files; sharing does not grant management. The API is
+`POST /api/v1/repositories/:id/onboarding-pr` with the files to include, and
 `GET /api/v1/repositories/:id/onboarding-pr/:workflowId` for the outcome. A team the repository is only
 shared with cannot do this. The tools named must exist in the catalog and not be revoked. The files
 are rendered by the platform from that selection (the request supplies no path and no free-form
@@ -414,6 +465,24 @@ branch only, so a person reviews the diff. Nothing is ever merged or force-pushe
 request enables nothing: `toolsFileEnabled` stays an administrator's separate switch, so the file is
 inert until then. The pull request touches `.auto-swe/**`, a sensitive path in pull request
 evaluation, so it never qualifies for bot-approved auto-merge.
+
+### First-run checklist
+
+New git repositories show an expandable **First-run checklist** in Connections to their managers.
+It tracks the last successful **Test access**, a completed stack scan (`detectedStackAt`), no
+unresolved setup blockers, an opened or updated onboarding pull request, and at least one launched
+workflow run. The action links open access testing, repository settings (stack and setup health),
+the onboarding dialog or stored pull request, and the launch page. Stack scans run on onboarding
+and on the dependency schedule; the checklist does not run a scan itself. Setup operations retain
+their team-ADMIN or platform-ADMIN restriction.
+
+Access failures do not clear earlier success: this is a first-run milestone, not a live health
+indicator. The onboarding URL and number are recorded when its status endpoint observes an opened
+or updated pull request. The list and detail responses derive the checklist with relation counts,
+without per-repository client requests. Managers can dismiss it for everyone on the connection
+with `POST /api/v1/repositories/:id/onboarding-checklist/dismiss`; it also hides when all milestones
+are complete. Repositories present before checklist storage is introduced are backfilled as
+dismissed. New repositories start undismissed.
 
 ### Detected stack
 
@@ -553,6 +622,12 @@ dependencies, fetch its submodules and Git LFS objects, run a code generator. Ev
 it — the agent's, the quality gates', UI and CI verification, merges and evals — so each sees the
 tree the agent worked in.
 
+Managing setup requires the owning team's ADMIN role or platform ADMIN. Team LEAD and
+ORG_ADMIN alone do not grant shell-authoring permission. This restriction covers changing the
+setup definition, proposing its pull request, managing setup secrets, moving preview environment
+values to secrets, and reading or dismissing setup blockers. Non-platform administrators also
+need the owning team to be active.
+
 The definition is one schema (`RepoSetupSchema`, in `@auto-swe/shared/lib/repoSetup`), read from
 the first of:
 
@@ -655,6 +730,15 @@ setup resolves all open blockers on that connection. **Dismiss** manually resolv
 recurs, setup reopens the same row and increments its occurrence count. Resolving a blocker
 does not change the setup definition or retry a run.
 
+When a run's blamed failed step reports `WORKSPACE_SETUP_FAILED`, the run and request panels
+look up that repository's blockers, including resolved rows, and match the run's workflow ID
+against `lastWorkflowId`. A match shows the kind, remedy, subject and setup step; the recorded
+error stays under diagnostics. The request panel also names the kind on its blocker line.
+Without a match, repository or workflow identity, permission to read blockers, or a successful
+lookup, the panels keep the recorded error without an additional error message. Blocker rows
+are deduplicated: a later workflow can replace `lastWorkflowId`, so an older run then falls back
+to its recorded error.
+
 `GET /api/v1/repositories/:id/setup-blockers` returns open blockers newest first; use
 `?includeResolved=true` to include resolved rows. `POST
 /api/v1/repositories/:id/setup-blockers/:blockerId/resolve` dismisses one. Both use the same
@@ -735,6 +819,55 @@ it runs only in preview sessions, after workspace setup, with the recipe's `env`
 secrets). Dependency installs belong in workspace setup, where every workspace and the cache get
 them; the preview's `setup` is for what only a running app needs, such as seeding its database.
 
+### Onboarding agent
+
+The built-in `repo-onboarding` workflow takes a required `connectionId` for a Git repository.
+Choose **Run onboarding** in a Git repository's Connections row menu or beside **Setup health**
+in its setup editor. These controls require LEAD access and repository shell-author/team-admin
+permission, matching setup editing. The workflow library's normal launch form also accepts it.
+The `repo-onboarder` agent explores
+the trusted base checkout, reads repository guidance and build evidence, tries commands and
+returns a structured proposal for `.auto-swe/setup.yml`, `.auto-swe/gates.yml` and an optional
+`.auto-swe/preview.yml`.
+
+The draft workspace has temporary download access controlled by
+`onboarding.draftEgressHosts`, applicable active package-registry upstreams and non-revoked
+tool-catalog download hosts. Open policy is unchanged. Restricted policy adds these hosts to
+the team allowlist; blocked policy uses only these hosts plus the existing Git/platform access.
+The proxy registration belongs to that workspace and is revoked on destruction. Without the
+egress proxy there is no widening. Worker verification requires the onboarder agent in the
+seeded global template and a seeded version; copying or editing the template does not grant it.
+
+A deterministic trial provisions a fresh base-branch workspace under the **real run policy**,
+with no setup-only widening. It applies the proposed setup in memory, runs the exact drafted
+gate commands and checks optional preview readiness. Trial setup neither records nor resolves
+the repository's **Setup health** blockers; it returns typed blockers in the trial report instead.
+
+Invalid proposals and repairable trial failures return to the drafter, up to three draft visits
+(two repair rounds). Operator-only blockers, such as missing secrets or denied egress, go to
+review without an automatic repair. A person sees both the draft summary and the trial report,
+including blockers. They can approve even a failed trial, request changes within the same draft
+visit budget, or reject. Exhaustion still reaches review; an invalid draft is explicitly marked
+and cannot reach delivery even when approved. Approval opens one configuration PR; it does not
+merge it. The PR body includes the latest trial report, bounded to 12,000 characters and redacted
+for credential shapes and known delivery credentials; report text does not change the file hash
+or branch identity. On merge, connection overrides retain precedence over the files.
+
+`POST /api/v1/repositories/:id/onboarding-runs` starts the active global builtin and accepts
+`Idempotency-Key`. It uses normal tracked launch authorization, budgets, attribution and ledger
+rows. The response contains `workflowId` (the active-workflow row), `temporalWorkflowId`,
+`workRequestId` and `runId`. The worker creates the run-detail row asynchronously, so `runId`
+can be null at first; the UI links to the request while it is pending and to the run when known.
+A repeated key for the same creator and repository joins the recorded launch.
+
+`onboarding.autoRunOnConnect` is off by default. An admin can enable it for a team or organization.
+After a Git repository connects and its dependency scan is kicked off, onboarding starts with
+the creator's identity and normal permissions and budgets. A deterministic per-connection key
+prevents retry duplicates. Failure is logged and audited without undoing connection creation.
+Bulk GitHub import follows the same path: each imported Git repository auto-runs onboarding
+when the setting is enabled. A failed auto-launch does not fail that import or prevent later
+repositories in the batch from being imported and launching onboarding.
+
 ### Pull request titles
 
 A repository can choose how the pull requests opened for it are titled (`Connection.prTitleFormat`
@@ -760,8 +893,8 @@ the same organization (`ConnectionTeamShare`).
 | Save a personal GitHub token for it | yes | yes |
 | Be a channel-assistant code task's repository, by name | yes | yes, unless the team owns one by that name |
 | Be a channel-assistant code task's repository by default (no name given) | if it is the team's only repository | never |
-| Edit, deactivate or move the repository | lead | no |
-| Change who it is shared with | lead | no |
+| Edit, deactivate or move the repository | team lead or owning organization's ORG_ADMIN | no |
+| Change who it is shared with | team lead or owning organization's ORG_ADMIN | no |
 | Create a schedule | lead | lead |
 | Edit, fire or delete a schedule | any schedule on the repository (lead) | the team's own schedules only (lead) |
 | Add or confirm dependency edges | lead | no |
@@ -776,7 +909,11 @@ The team list (`GET /api/v1/teams`) tells the caller their own role in each team
 (`ADMIN`, `LEAD`, `ENGINEER`, or `null` for a team they do not belong to, which a platform admin
 sees), plus the owning organization's `orgId` and `orgName`; it never carries another member's
 role. `?member=true` restricts the list to the caller's own teams, even for a platform admin. The
-dashboard derives which teams the caller leads from this list, with no per-team request.
+dashboard derives which teams the caller leads from this list, with no per-team request. The
+default list also includes active teams of organizations the caller administers, with a null
+`myRole` when they are not a team member. Connection controls combine `myRole` with the caller's
+organization roles from `GET /api/v1/platform/organizations`; platform ADMIN-only controls remain
+restricted to platform administrators.
 
 On the connections list, a row's "More actions" menu keeps **Share with teams** and
 **Deactivate** (or **Reactivate**) for everyone and shows them disabled, with the owning team's
@@ -839,9 +976,9 @@ Sharing is managed from the repository card on the **Connections** page, or over
 
 | Route | Who | Does |
 |---|---|---|
-| `GET /api/v1/repositories/:id/share-candidates` | the owning team's leads, platform admins | Active teams in the owning team's organization, other than the owner |
-| `PUT /api/v1/repositories/:id/shares` | the owning team's leads, platform admins | Replace the set of teams it is shared with; audited. A team that stays keeps its `canLaunch`, a new team starts with `true`. Answers each share with its `canLaunch` |
-| `PATCH /api/v1/repositories/:id/shares/:teamId` | the owning team's leads, platform admins | Body `{ "canLaunch": boolean }`: make one share view-only or launching again; audited; `404 SHARE_NOT_FOUND` for a team the repository is not shared with |
+| `GET /api/v1/repositories/:id/share-candidates` | the owning team's leads, its organization's ORG_ADMINs, platform admins | Active teams in the owning team's organization, other than the owner |
+| `PUT /api/v1/repositories/:id/shares` | the owning team's leads, its organization's ORG_ADMINs, platform admins | Replace the set of teams it is shared with; audited. A team that stays keeps its `canLaunch`, a new team starts with `true`. Answers each share with its `canLaunch` |
+| `PATCH /api/v1/repositories/:id/shares/:teamId` | the owning team's leads, its organization's ORG_ADMINs, platform admins | Body `{ "canLaunch": boolean }`: make one share view-only or launching again; audited; `404 SHARE_NOT_FOUND` for a team the repository is not shared with |
 
 `GET /api/v1/repositories?teamId=<team>` lists only the repositories that team owns or that are
 shared to it. The filter is its own `AND` term beside reachability, so it only narrows; the caller
@@ -880,6 +1017,51 @@ for whichever provider serves the repository.
 
 ## Limitations
 
+- **Bulk import can start many onboarding runs at once.** With `onboarding.autoRunOnConnect`
+  enabled, each imported Git repository starts its own run, subject to the creator's permissions
+  and normal launch budgets. The import does not impose an additional concurrency limit.
+- **Onboarding preview readiness is only an HTTP check.** A response below 500 counts as ready,
+  including authentication errors and missing pages. The trial does not perform browser or
+  functional end-to-end verification, or run a preview recipe's smoke/e2e checks.
+- **Secrets are not independently verified against their upstream services.** Existing secrets
+  are resolved and may be used by commands; the agent only names requirements in `setup.secrets`
+  and does not invent, create or validate new secret values.
+- **Onboarding is bounded, not a guarantee of correctness.** Approval can accept a failed trial.
+  Changes requested after all draft visits return to review without another agent visit.
+  Bash is a general-purpose tool, not a technical read-only or no-push boundary; the seeded
+  agent is instructed not to push and has no dedicated PR/push tools.
+- **Trial report redaction is not general-purpose data-loss prevention.** Trial command output
+  is redacted before reporting, and delivery masks known credentials and credential-shaped text;
+  arbitrary sensitive prose is not guaranteed to be recognized.
+
+- An organization-linked GitHub installation is offered only to platform admins and callers who
+  manage an active team in that organization. New imports and installation changes must target a
+  team in the linked organization. Unlinked, admin-registered installations remain available across
+  organizations. Linking an installation does not disconnect its existing repositories or block
+  their runs, even when their teams belong to another organization.
+  A registered singleton default App follows the same link scope; omitting an installation ID
+  does not bypass it. An independent default PAT remains a separate source.
+- Organization admins connect new installations from their organization's **GitHub** section.
+  They can retire their links, but only platform admins can unlink, relink or reactivate them.
+  Self-service uses only the instance's own App and host; see [GitHub App setup](./github-app-setup.md#connecting-an-organization).
+
+- Gate and preview file edits on a work branch do not change that run's commands or services;
+  they must reach the trusted base branch first. Pre-provisioning preview reads and workspace
+  provisioning can see different trusted commits if the base branch advances between them.
+- Preview connection overrides replace the entire file recipe; fields and services are not merged.
+  Invalid overridden preview files are not read. Repository configuration files are limited to 64 KiB.
+
+- **Discovery permission checks are bounded.** A request makes at most 100 uncached per-repository
+  lookups. Missing linked identities, unanswered lookups and repositories beyond that cap are
+  **Access unchecked**, not readable. Reloading uses cached answers and checks further repositories.
+- **GitHub sign-in token evidence is best effort.** No additional OAuth scopes are requested.
+  OAuth-App sign-in tokens only see public repositories with the sign-in scopes; refused or expired
+  tokens fall back to platform-credential permission checks. A GitHub login is used only on its
+  linked account's host.
+- **Discovery caches can be stale for three minutes.** Source listings and access answers are
+  cached in-process, including unanswered permission lookups. Each source lists up to 500
+  repositories; a truncated user installation listing supplies positive evidence only. Creation
+  still performs the normal live onboarding read-access check.
 - **Egress blocker detection relies on proxy audit rows.** Kernel-dropped traffic is not classified
   as `egress_denied`, and only the first denied host is reported for a failed step.
 - **Missing-tool detection is heuristic.** Exit 127, `command not found` and shell missing-command
@@ -989,8 +1171,8 @@ for whichever provider serves the repository.
   images. A row is as trustworthy as the person who wrote it: the platform verifies the download
   against the row's digest, not the digest against anything upstream.
 - **The onboarding pull request uses the platform credential only.** A user's own token
-  ([`user-github-credentials.md`](./user-github-credentials.md)) is not used for it, and the repository
-  settings screen has no button for it yet: it is an API call.
+  ([`user-github-credentials.md`](./user-github-credentials.md)) is not used for it. The checklist
+  records its URL only after a client reads the completed onboarding workflow status.
 - **A standalone gate run installs no tools.** The path that runs gates outside an implementation
   run has no connection to read tool declarations from, so a repository whose gates need an
   on-demand tool fails there with exit 127. Gates inside an implementation, CI verification and UI

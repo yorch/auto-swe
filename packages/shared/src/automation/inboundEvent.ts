@@ -70,6 +70,11 @@ export interface EventEndpointPointers {
   subjectPointer: string | null;
   scopePointer: string | null;
   timePointer: string | null;
+  /**
+   * Event types that cancel the runs this endpoint started for the same subject before the event
+   * is decided as usual: a PagerDuty `incident.resolved` stops the incident's triage.
+   */
+  cancelOnTypes?: string[];
 }
 
 /** What an endpoint is configured with, secrets aside. */
@@ -208,6 +213,25 @@ export const EVENT_ENDPOINT_PRESETS: ReadonlyArray<{
       'Snyk project snapshots: an HMAC-SHA256 hex digest of the request body in X-Hub-Signature as sha256=<hex>, a constant event type (Snyk names it only in the unsigned X-Snyk-Event header), and the Snyk project id (/project/id) as subject and scope so the cooldown and in-flight checks count per project. The body has no event id, so each delivery is keyed by a digest of its body. Snyk documents the digest as of "the request body" without saying whether it is the raw bytes; check the first delivery. Every automation on this endpoint needs two match rules, /newIssues/0 exists and /newIssues/0/issueType eq vuln: without them every snapshot and ping starts a run, bounded only by the cooldown and the daily cap.',
     key: 'snyk',
     label: 'Snyk project snapshot',
+  },
+  {
+    config: {
+      cancelOnTypes: ['incident.resolved'],
+      format: 'json',
+      idPointer: '/event/id',
+      scheme: 'hmac-sha256',
+      scopePointer: '/event/data/service/id',
+      signatureEncoding: 'hex',
+      signatureHeader: 'X-PagerDuty-Signature',
+      signaturePrefix: 'v1=',
+      subjectPointer: '/event/data/id',
+      timePointer: '/event/occurred_at',
+      typePointer: '/event/event_type',
+    },
+    description:
+      'PagerDuty v3 webhook subscriptions: an HMAC-SHA256 hex digest of the raw body in X-PagerDuty-Signature as v1=<hex>, one per signing secret while PagerDuty rotates it. The type is /event/event_type (incident.triggered, incident.resolved, …), the id /event/id, the subject the incident (/event/data/id) and the scope its service (/event/data/service/id), so the cooldown counts per service. PagerDuty generates the secret: paste it when creating the endpoint. Every automation on this endpoint should select incident.triggered only and match /event/data/service/id to the service its repository serves. An incident.resolved cancels the triage still running for that incident.',
+    key: 'pagerduty-v3',
+    label: 'PagerDuty v3 webhook',
   },
 ];
 

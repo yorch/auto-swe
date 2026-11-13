@@ -9,6 +9,23 @@ import {
 } from './stepRegistry.js';
 
 describe('stepRegistry', () => {
+  it('registers repository onboarding trials without gate-failure routing', () => {
+    expect(getStepMetadata('repoOnboardingTrial')).toMatchObject({
+      category: 'shell',
+      configFields: [],
+    });
+    expect(getStepMetadata('repoOnboardingTrial').description).toContain('trialPassed');
+  });
+  it('registers onboarding delivery and the draft parser kind', () => {
+    expect(getStepMetadata('repoOnboardingPr')).toMatchObject({
+      category: 'vcs',
+      configFields: [],
+    });
+    expect(
+      getStepMetadata('parseAgentOutput').configFields.find((field) => field.key === 'kind')
+        ?.enumValues
+    ).toContain('repoOnboardingDraft');
+  });
   it('describes stored verification and opt-in tests without promising a published review commit', () => {
     const { description } = getStepMetadata('loadChangeForReview');
     expect(description).toContain('safely reapply a stored diff at its recorded base');

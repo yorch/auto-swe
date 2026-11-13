@@ -1229,6 +1229,32 @@ HTTP URL and confirm success. A raw public-IP TCP connect and
 `egress (allowlist via proxy; network-locked)`. A missing proxy or unprovable strict lock refuses
 the step before author startup.
 
+### Organization GitHub connections (`8d4d3a64`)
+
+**Affected.** Deployments applying commit `8d4d3a64` or a descendant that use an existing GitHub
+App without OAuth during installation or with a Setup URL instead of the organization callback.
+
+**Actions.** In the instance GitHub App's settings, enable **Request user authorization (OAuth)
+during installation**. GitHub disables the Setup URL in this mode. Set the first user-authorization
+Callback URL to `<WEB_URL>/github/install/callback`; preserve any other callbacks needed by the App.
+Keep the App's client ID, client secret and private key configured in the platform. The web and API
+URLs must use HTTPS and belong to the same GitHub host family; the gateway verifies the App's slug
+through `GET /app`. The manifest creates a private App: an operator who wants installations on
+other GitHub accounts changes its installation availability to **Any account**.
+
+The standard migration deploy adds the nullable, indexed installation-to-organization link with
+`ON DELETE SET NULL`. Existing installations remain unlinked and available across organizations.
+Platform admins link or unlink installations through the installation editor; the confirmation
+shows the count of existing repositories whose teams belong to another organization.
+
+**Verification.** An organization admin connects a new, unregistered installation from the
+organization's GitHub section and confirms the OAuth callback. A registered installation cannot
+be claimed again; a platform admin changes its link instead. A callback without organization
+state returns to the existing admin installation form. Existing repositories continue working
+after linking, including repositories owned by teams outside the linked organization. Links scope
+only new imports and installation changes, not runs. See [GitHub App setup](./github-app-setup.md#connecting-an-organization)
+for the self-service flow and its limitations.
+
 ---
 
 
@@ -1275,6 +1301,52 @@ Starting the gateway before applying the migration fails during that sync.
 `kind: "automation"` and have no hand-launch action; integrations and the run API still launch them.
 
 ---
+
+### UN-26. Existing repository preview files become active configuration
+
+**Affected:** A connected repository already contains `.auto-swe/preview.yml` on its trusted base
+branch, has no connection `previewConfig` override, and uses UI verification or a browser-enabled
+agent. Previously ignored files supply the preview recipe, including service images and commands.
+
+**Action:** Review that file before running previews. Remove or rename a stray file if it is not
+intended to configure previews, or set an explicit connection recipe to override it. Invalid files
+fail preview resolution instead of behaving as an unconfigured repository.
+
+**Source marker:** `resolveRepoPreview` in `packages/worker/src/lib/repoConfigResolver.ts` reads
+`REPO_PREVIEW_FILE` when the connection recipe is unset.
+
+### Team members require organization membership backfill
+
+**Affected.** Deployments with team memberships whose users have no membership in the team's
+organization.
+
+**Fix commit.** Identified before its SHA is assigned by migration
+`20261112180000_team_member_organizations`; compare the source when commit ancestry is unavailable.
+
+**Actions.** Run `yarn db:deploy` before starting the updated gateway. The migration inserts missing
+`ORG_MEMBER` rows without changing existing organization roles. It is idempotent and leaves HNSW
+indexes unchanged. Review the resulting organization access: existing team members gain organization
+membership. Sign-up and platform user-invite default-team enrollment also ensure organization
+membership transactionally and preserve existing roles. Organization removal does not cascade to teams.
+
+**Verify.** Every existing team member has an organization membership for that team's organization
+immediately after the migration; a later organization removal can leave a team membership behind.
+
+### Trusted organizations also approve team invitations
+
+**Affected.** Deployments with `Organization.trustedInvites` enabled on any organization.
+
+**Fix commit.** Identified before its SHA is assigned by the shared `inviteUser` helper and
+`POST /api/v1/teams/:id/members/invite`; compare the source when commit ancestry is unavailable.
+
+**Actions.** Review the organization's team leads and team admins before deploying the gateway.
+Trust covers their team invitations as well as organization-admin invitations while the organization
+is active. Clear `trustedInvites` through `PATCH /platform/organizations/:orgId` before upgrading
+if those inviters must not approve new accounts. Platform ADMIN invitations approve regardless of trust.
+
+**Verify.** An invitation from a team lead in an active trusted organization records approval source
+`team_lead`. With trust cleared, that invitation creates an inactive account in the approval queue.
+Existing approved accounts are not deactivated by clearing trust.
 
 ## Limitations
 

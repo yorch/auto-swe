@@ -21,6 +21,8 @@ import {
   DOMAIN_LOGIC_REVIEWER_PROMPT,
   GATE_FIX_SYSTEM_PROMPT,
   IMPLEMENTER_SYSTEM_PROMPT,
+  INCIDENT_POSTMORTEM_WRITER_PROMPT,
+  INCIDENT_TRIAGER_PROMPT,
   ISSUE_DRAFTER_PROMPT,
   LESSON_CONSOLIDATOR_PROMPT,
   MEMORY_SUMMARIZER_PROMPT,
@@ -33,6 +35,7 @@ import {
   PRD_DECOMPOSER_PROMPT,
   PRD_WRITER_PROMPT,
   PRODUCT_ANALYST_PROMPT,
+  REPO_ONBOARDER_PROMPT,
   REVIEW_FIX_SYSTEM_PROMPT,
   SECURITY_AUDITOR_PROMPT,
   SECURITY_REVIEW_PROMPT,
@@ -549,6 +552,15 @@ You MUST respond with valid JSON matching this schema:
 
 export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
   {
+    description:
+      'Explores a repository and trials setup, gates and preview commands before proposing configuration for review.',
+    key: 'repo-onboarder',
+    modelSpec: 'anthropic/claude-sonnet-5-5',
+    name: 'Repository Onboarder',
+    systemPrompt: REPO_ONBOARDER_PROMPT,
+    toolKeys: ['bash', 'readFile', 'listDirectory'],
+  },
+  {
     description: 'Writes code in the workspace via the TDD loop.',
     key: 'implementer',
     modelSpec: 'anthropic/claude-opus-5-5',
@@ -869,6 +881,32 @@ export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     key: 'ciTriager',
     name: 'CI Triager',
     systemPrompt: CI_TRIAGER_PROMPT,
+  },
+  // ── Incident triage ────────────────────────────────────────────────────────
+  {
+    // Diagnoses a PagerDuty incident against a throwaway checkout of the repository
+    // (`incident-triage`). Read-only tools: the checkout is discarded, and a fix, when the
+    // template attempts one, is the implementer's. Resolved on demand by the generic `agent`
+    // node, so it is not in MODEL_BACKED_AGENT_KEYS and does not gate worker boot.
+    description:
+      'Diagnoses a PagerDuty incident against the repository and says whether a code fix applies.',
+    inheritsModelFrom: 'planner',
+    key: 'incidentTriager',
+    name: 'Incident Triager',
+    systemPrompt: INCIDENT_TRIAGER_PROMPT,
+    toolKeys: ['readFile', 'listDirectory', 'bash'],
+  },
+  {
+    // Drafts a resolved PagerDuty incident's postmortem against a throwaway checkout
+    // (`incident-postmortem`). Read-only tools, resolved on demand by the generic `agent` node
+    // like the triager.
+    description:
+      'Drafts a blameless postmortem for a resolved PagerDuty incident from its timeline and notes.',
+    inheritsModelFrom: 'planner',
+    key: 'incidentPostmortemWriter',
+    name: 'Incident Postmortem Writer',
+    systemPrompt: INCIDENT_POSTMORTEM_WRITER_PROMPT,
+    toolKeys: ['readFile', 'listDirectory', 'bash'],
   },
   // ── Pull-request feedback ──────────────────────────────────────────────────
   {

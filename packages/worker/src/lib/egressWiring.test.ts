@@ -8,22 +8,31 @@ const h = vi.hoisted(() => ({
     token: 'random-secret',
     url: 'http://host.docker.internal:8792',
   })),
+  registries: vi.fn(async (): Promise<unknown[]> => []),
   team: vi.fn(async (_args?: unknown) => ({
     egressAllowlist: ['*.example.com'] as string[],
     orgId: 'org-1' as string | null,
   })),
+  tools: vi.fn(),
+  warn: vi.fn(),
 }));
 vi.mock('./egressProxy.js', () => ({
   workerEgressProxy: () => (h.enabled ? { register: h.register } : null),
 }));
-vi.mock('@auto-swe/shared/db', () => ({ prisma: { team: { findUnique: h.team } } }));
+vi.mock('@auto-swe/shared/db', () => ({
+  prisma: { packageRegistry: { findMany: h.registries }, team: { findUnique: h.team } },
+}));
+vi.mock('./toolCatalogLoader.js', () => ({ loadToolCatalog: h.tools }));
+vi.mock('./activityLog.js', () => ({ logWarn: h.warn }));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkspaceInfra: () => ({
     ...(h.modelProxy ? { harnessModelProxy: { url: 'http://host.docker.internal:8790' } } : {}),
     registryProxy: { url: 'http://registry.internal:8791' },
   }),
 }));
-const settings = vi.hoisted(() => ({ resolveSetting: vi.fn(async () => 'open') }));
+const settings = vi.hoisted(() => ({
+  resolveSetting: vi.fn(async (): Promise<unknown> => 'open'),
+}));
 vi.mock('@auto-swe/shared/config', () => settings);
 const contextLookup = vi.hoisted(() => ({
   currentRequestContext: vi.fn(
@@ -42,6 +51,7 @@ import {
   capStepNetwork,
   gitHostOf,
   lfsStorageHosts,
+  resolveOnboardingDraftEgress,
   resolveRunEgressPolicy,
   resolveRunSetupEgressPolicy,
 } from './egressWiring.js';
@@ -50,6 +60,101 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.enabled = true;
   h.modelProxy = false;
+});
+
+describe('temporary onboarding draft access', () => {
+  beforeEach(() => {
+    h.registries.mockResolvedValue([]);
+    h.tools.mockResolvedValue([]);
+  });
+
+  it.each(['restricted', 'blocked'] as const)(
+    'derives workspace-only hosts under %s',
+    async (policy) => {
+      settings.resolveSetting.mockResolvedValueOnce(['draft.example', 'downloads.example']);
+      const registry = (id: string, teamId: string | null, upstreamUrl: string) => ({
+        ecosystem: 'npm',
+        id,
+        isActive: true,
+        npmScopes: [],
+        teamId,
+        upstreamUrl,
+      });
+      h.registries.mockResolvedValueOnce([
+        registry('global', null, 'https://shadowed.example'),
+        registry('team', 'team', 'https://registry.example/path'),
+        registry('other', 'other', 'https://other.example'),
+      ]);
+      h.tools.mockResolvedValueOnce([
+        {
+          archs: {
+            amd64: { url: 'https://downloads.example/linux.tar.gz' },
+            arm64: { url: 'https://arm.example/linux.tar.gz' },
+          },
+          status: 'ACTIVE',
+        },
+        { archs: { amd64: { url: 'https://old.example/tool.tar.gz' } }, status: 'DEPRECATED' },
+        { archs: { amd64: { url: 'https://revoked.example/tool.tar.gz' } }, status: 'REVOKED' },
+      ]);
+      const expansion = await resolveOnboardingDraftEgress('team', policy);
+      expect(expansion).toEqual({
+        additionalHosts: [
+          'arm.example',
+          'downloads.example',
+          'draft.example',
+          'old.example',
+          'registry.example',
+          'shadowed.example',
+        ],
+        includeTeamAllowlist: policy === 'restricted',
+      });
+      expect(settings.resolveSetting).toHaveBeenCalledWith(
+        'onboarding.draftEgressHosts',
+        expect.objectContaining({ orgId: 'org-1', teamId: 'team' })
+      );
+      await beginWorkspaceEgress('team', ['git.example'], 'restricted', expansion ?? undefined);
+      expect(h.register).toHaveBeenLastCalledWith([
+        ...(policy === 'restricted' ? ['*.example.com'] : []),
+        ...(expansion?.additionalHosts ?? []),
+      ]);
+    }
+  );
+
+  it('leaves open unchanged without reading hosts or catalogs', async () => {
+    expect(await resolveOnboardingDraftEgress('team', 'open')).toBeNull();
+    expect(settings.resolveSetting).not.toHaveBeenCalled();
+    expect(h.registries).not.toHaveBeenCalled();
+    expect(h.tools).not.toHaveBeenCalled();
+  });
+
+  it.each(['blocked', 'restricted'] as const)(
+    'keeps %s unchanged without a proxy and warns',
+    async (policy) => {
+      h.enabled = false;
+      expect(await resolveOnboardingDraftEgress('team', policy)).toBeNull();
+      expect(h.warn).toHaveBeenCalledWith(expect.stringContaining('unchanged'), {
+        policy,
+        teamId: 'team',
+      });
+      expect(h.register).not.toHaveBeenCalled();
+      expect(settings.resolveSetting).not.toHaveBeenCalled();
+    }
+  );
+
+  it('never turns an empty derived host list into unrestricted proxy access', async () => {
+    settings.resolveSetting.mockResolvedValueOnce([]);
+    expect(await resolveOnboardingDraftEgress(null, 'blocked')).toBeNull();
+    expect(h.register).not.toHaveBeenCalled();
+  });
+
+  it('does not hide host configuration/catalog lookup failures', async () => {
+    settings.resolveSetting.mockResolvedValueOnce([]);
+    h.tools.mockRejectedValueOnce(new Error('catalog unavailable'));
+    await expect(resolveOnboardingDraftEgress('team', 'blocked')).rejects.toThrow(
+      'catalog unavailable'
+    );
+    expect(h.register).not.toHaveBeenCalled();
+  });
 });
 it('resolves the setup setting with the same pinned scope as the agent setting', async () => {
   settings.resolveSetting.mockResolvedValueOnce('restricted');

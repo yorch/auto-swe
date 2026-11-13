@@ -19,7 +19,7 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
 import { isTemporalUnavailable, sendTemporalUnavailable } from '../lib/temporalErrors.js';
-import { reachableConnections } from '../lib/tenantScope.js';
+import { manageableOrReachableConnections } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import { canManageTeamRepos } from './repositories.js';
 
@@ -87,7 +87,7 @@ export const repositoryOnboardingRoutes: FastifyPluginAsync = async (fastify) =>
   app.post(
     '/repositories/:id/onboarding-pr',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: { body: OnboardingRequestSchema, params: RepoParams },
     },
     async (request, reply) => {
@@ -104,7 +104,9 @@ export const repositoryOnboardingRoutes: FastifyPluginAsync = async (fastify) =>
         },
         where: {
           id: request.params.id,
-          ...(user.role === Role.ADMIN ? {} : reachableConnections(user, request.repoAccessGate)),
+          ...(user.role === Role.ADMIN
+            ? {}
+            : manageableOrReachableConnections(user, request.repoAccessGate)),
         },
       });
       if (!repo) {
@@ -220,7 +222,9 @@ export const repositoryOnboardingRoutes: FastifyPluginAsync = async (fastify) =>
         where: {
           id,
           type: 'git_repo',
-          ...(user.role === Role.ADMIN ? {} : reachableConnections(user, request.repoAccessGate)),
+          ...(user.role === Role.ADMIN
+            ? {}
+            : manageableOrReachableConnections(user, request.repoAccessGate)),
         },
       });
       if (!repo) {
@@ -230,7 +234,7 @@ export const repositoryOnboardingRoutes: FastifyPluginAsync = async (fastify) =>
         const membership = await fastify.prisma.teamMembership.findUnique({
           where: { userId_teamId: { teamId: repo.teamId, userId: user.sub } },
         });
-        if (!membership) {
+        if (!membership && !(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
           return sendError(
             reply,
             403,
@@ -255,7 +259,52 @@ export const repositoryOnboardingRoutes: FastifyPluginAsync = async (fastify) =>
       if (!status) {
         return sendError(reply, 404, 'RUN_NOT_FOUND', 'Onboarding run not found');
       }
+      if (
+        status.status === 'completed' &&
+        (status.result?.status === 'opened' || status.result?.status === 'updated') &&
+        status.result.pullRequestUrl
+      ) {
+        await fastify.prisma.connection.update({
+          data: {
+            onboardingPrNumber: status.result.pullRequestNumber ?? null,
+            onboardingPrUrl: status.result.pullRequestUrl,
+          },
+          where: { id: repo.id },
+        });
+      }
       return { data: status };
+    }
+  );
+
+  app.post(
+    '/repositories/:id/onboarding-checklist/dismiss',
+    {
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      schema: { params: RepoParams },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const repo = await fastify.prisma.connection.findFirst({
+        select: { id: true, teamId: true },
+        where: {
+          id: request.params.id,
+          type: 'git_repo',
+          ...(user.role === Role.ADMIN
+            ? {}
+            : manageableOrReachableConnections(user, request.repoAccessGate)),
+        },
+      });
+      if (!repo) {
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
+      }
+      if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+        return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
+      }
+      await fastify.prisma.connection.updateMany({
+        data: { onboardingChecklistDismissedAt: new Date() },
+        where: { id: repo.id, onboardingChecklistDismissedAt: null, teamId: repo.teamId },
+      });
+      return { data: { dismissed: true } };
     }
   );
 };

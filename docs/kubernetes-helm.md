@@ -104,6 +104,8 @@ GitHub App** registers the instance's App from a manifest ([`github-app-setup.md
 | `workspaces.createNamespace` | true | Render the Namespace object itself; set `false` when the namespace already exists (for example applied from `infra/kubernetes/workspace-namespace.yaml`), which `helm install` would otherwise fail on. The other objects are still rendered into it, and its `pod-security.kubernetes.io/enforce=restricted` label is then yours to keep |
 | `workspaces.requireNetworkPolicy` | true | Only `false` skips the worker's start-up proof that the policy is enforced — for a local cluster |
 | `workspaces.runtimeClassName`, `storageLimit`, `maxLifetimeSec`, `imagePullSecrets`, `quota` | —, `10Gi`, 86400, —, see `values.yaml` | The `K8S_WORKSPACE_*` settings and the namespace quota |
+| `workspaces.requireRuntimeClass` | false | Require a readable selected RuntimeClass and a matching startup pod |
+| `workspaces.kataRuntimeClass.create`, `overhead`, `nodeSelector` | false, 250m / 160Mi, Kata-labelled nodes | Optionally create the selected class with handler `kata`; see [Kata RuntimeClass](#kata-runtimeclass) |
 | `migrations.enabled=false` | on | Drops the migration hook Job; the gateway entrypoint still migrates at start |
 | `ingress.*` | off | `className`, `annotations`, `tls` |
 | `*.resources` | see `values.yaml` | Requests and memory limits per service; no CPU limits |
@@ -120,7 +122,53 @@ concurrent runs are serialised by Prisma's advisory lock. `prisma migrate dev` i
 `helm upgrade` replaces the worker (`Recreate`): it stops before the new one starts. Activities
 that were running are retried by Temporal on the new worker according to their retry policies.
 
+## Kata RuntimeClass
+
+Kata is the VM-isolation option: each sandbox uses a guest kernel rather than the worker node's
+kernel. Install it on the nodes first, following the pinned
+[upstream installation guide](https://github.com/kata-containers/kata-containers/blob/4.2.0/docs/installation.md).
+For example, install `oci://ghcr.io/kata-containers/kata-deploy-charts/kata-deploy` with Helm version
+`4.2.0`, then inspect `kubectl get runtimeclasses`. Prefer referencing the class the node installer
+provides, such as `kata-qemu-runtime-rs`; selecting a name does not install its CRI handler:
+
+```yaml
+workspaces:
+  runtimeClassName: kata-qemu-runtime-rs
+  requireRuntimeClass: true
+```
+
+For nodes whose CRI configuration explicitly registers the handler `kata`, the reference manifest
+[`infra/kubernetes/kata-runtimeclass.yaml`](../infra/kubernetes/kata-runtimeclass.yaml) creates a
+class named `kata`. Alternatively the application chart can own it:
+
+```yaml
+workspaces:
+  runtimeClassName: kata
+  requireRuntimeClass: true
+  kataRuntimeClass:
+    create: true
+```
+
+`create` defaults to false: leave it false for a class owned by `kata-deploy` or another operator.
+Creation requires a non-empty `runtimeClassName`. The class uses handler `kata`, 250m CPU / 160Mi
+memory in `overhead.podFixed`, and node selector `katacontainers.io/kata-runtime=true`. Label only
+prepared nodes; tune `workspaces.kataRuntimeClass.overhead` and `nodeSelector` for your VMM and
+hardware. The chart does not configure containerd/CRI-O.
+
+`requireRuntimeClass: true` sets `K8S_REQUIRE_RUNTIME_CLASS=true`; the worker reads the selected
+class and verifies a startup pod's `runtimeClassName`. With managed workspaces the chart grants
+only `get` on that class, not create/update permissions. With `workspaces.manage=false`, provide
+the matching cluster-scoped reader permission yourself. The default false value omits the env
+override, preserving an existing gate configured through `worker.env`. This RuntimeClass check
+does not depend on admission-policy resources. PodSecurity remains `restricted`, including its
+existing root-preview limitation.
+
 ## Limitations
+
+- **Kata scheduling is not a VM attestation.** Nodes need working KVM/nested virtualization and the
+  selected CRI handler. Pod overhead is a sizing starting point. No live Kubernetes Kata workload
+  or CNI is validated by the Docker diagnostics. The tested Docker Go shim leaks past OUTPUT
+  filtering and is refused by the worker gate; see [deployment](./deployment.md#kata-with-docker).
 
 - **Workspaces run on the Kubernetes backend only.** Shell steps, container steps and sidecars need
   the Docker backend and fail with `WORKSPACE_BACKEND_UNSUPPORTED` here. The chart deploys no

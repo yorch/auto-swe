@@ -1,13 +1,14 @@
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
-import { type PreviewConfigInput, PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
+import type { PreviewConfigInput } from '@auto-swe/shared/lib/previewConfig';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { BrowserSession, type DriverResult } from '../browser/session.js';
 import { PreviewNotReadyError, startAppPreview } from '../lib/appPreview.js';
+import { resolvePreviewFromScm } from '../lib/repoConfigResolver.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
@@ -111,10 +112,13 @@ async function checkoutWorkspace(
 export async function runUiVerify(input: UiVerifyInput): Promise<UiVerifyResult> {
   const repoId = requireRepoId(input.request, 'uiVerify');
   const repoRow = await prisma.connection.findUniqueOrThrow({
-    select: { previewConfig: true },
+    include: { installation: { select: { host: true, installationId: true } } },
     where: { id: repoId },
   });
-  if (!repoRow.previewConfig) {
+  const config = await resolvePreviewFromScm(repoRow, () =>
+    resolveRequestBaseBranch(input.request, repoRow)
+  );
+  if (!config) {
     return {
       exitCode: 0,
       passed: true,
@@ -122,7 +126,6 @@ export async function runUiVerify(input: UiVerifyInput): Promise<UiVerifyResult>
       summary: 'UI verification skipped: the repository has no app preview configured',
     };
   }
-  const config = PreviewConfigSchema.parse(repoRow.previewConfig as PreviewConfigInput);
   const mode = input.mode ?? (config.e2e ? 'both' : 'smoke');
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const failOnConsoleErrors = input.failOnConsoleErrors ?? true;

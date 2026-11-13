@@ -150,7 +150,7 @@ applies the memory gate (§5) before it embeds anything.
 
 ## 3. Recalling lessons
 
-Every agent that works on a repository recalls that repository's lessons into its system prompt,
+With recall enabled, every agent that works on a repository recalls that repository's lessons into its system prompt,
 each by the text that says what it is working on (`recallLessonsBlock`, `lib/lessonRecall.ts`):
 
 | Agent | Recalled by |
@@ -167,6 +167,58 @@ Each takes unsuperseded, unconsolidated rows embedded by the current model, at o
 fence that marks them as reference data, each with its id, its failure type and a
 `low confidence` label where it applies. Recall failing is logged and the agent runs without
 lessons.
+
+### Recall modes and holdout
+
+`memory.lessonRecall` selects `on` (default), `shadow`, or `off`. It requires LEAD and permits
+workflow-template, team and organization overrides. `memory.lessonHoldoutPercent` is an integer
+from 0 to 50, defaults to 0, requires LEAD and permits team and organization overrides. Both are
+run-pinned through the existing settings snapshot at workflow-run creation; later setting edits
+affect new runs only.
+
+Each new `WorkflowRun` stores `lessonRecallArm` (`ON`, `SHADOW`, `OFF`) and
+`lessonRecallHeldOut`. Otherwise-on runs enter SHADOW when a SHA-256 bucket of their run UUID
+falls below the configured percentage. Retries keep the persisted assignment. Configured shadow
+or off runs are never labelled held out. Legacy rows with a null arm, and contexts without a
+WorkflowRun, behave as ON. The defaults preserve normal recall without holding out runs.
+
+All implementer, fixer and review-network prompt recall passes through this persisted arm, looked
+up using trusted Temporal activity identity rather than a model argument. ON preserves retrieval
+and prompt injection. SHADOW performs the same retrieval and emits `lessons.shadow_retrieved`
+with lesson IDs, failure types, similarities and recalling role, but returns no prompt block
+(`promptInjected: false`). OFF performs no retrieval and emits `lessons.recall_skipped` with
+`reason: arm`. Completed retrievals record `result: matched` or `no_match`, including empty
+results, separately from skipped recall. Errors emit `lessons.recall_error` and supply no lessons.
+Repository `searchLessons` and `explainLesson` tools explicitly refuse lesson access for SHADOW
+and OFF, returning an unavailable message. Successful ON tool reads also emit `lessons.retrieved`.
+Quarantine and aging filters remain in force; these modes do not alter channel memory.
+
+### Outcome comparison
+
+Managers inspect `GET /api/v1/lessons/recall-experiment` with exactly one of `repoId` or `teamId`
+and optional ISO `since` (default: 30 days ago). Authority follows repository management:
+owning-team LEAD/ADMIN or organization admin, with platform ADMIN able to inspect any scope.
+Team scope includes repositories currently owned by the team, not repositories merely shared
+with it. Reporting uses repository attribution, finalized runs started within the window and
+non-null persisted arms; legacy/unattributed runs are excluded. More than 5,000 matching runs
+returns an error asking for a narrower window, never a silently truncated comparison.
+
+The manager-only panel on `/lessons` offers repository and start-date selectors. It displays
+per-arm run and held-out counts, success/failure rates, merge and gate-pass rates, mean engineering
+fix-loop attempts and mean accrued USD cost. Success/failure labels are SUCCESS versus
+FAILED/TIMED_OUT; CANCELLED/SKIPPED are not classified as either. Every rate includes its known
+outcome denominator. Merge evidence is any MERGED attributed pull request or positive MERGE
+EvalResult; only runs whose attributed PRs are all CLOSED count as known unmerged. Missing/open
+PR evidence is unknown. Gates use the latest non-null GATE EvalResult per scorer and pass only
+when all observed latest gates pass. Fix iterations count distinct started node/attempt pairs
+for the engineering gate, review and CI fix steps, not reviewer rejections or Temporal retries.
+
+The like-for-like view includes ON runs with at least one traced lesson returned and SHADOW runs
+with at least one traced would-be match, deduplicated by run. This measures exposure, not whether
+the model used or followed a lesson. Both views show ON-minus-SHADOW rate differences with 95%
+Newcombe/Wilson independent-proportion intervals for success, merge and gates. Missing denominators
+produce unknown rates/intervals. Fewer than 30 runs in either comparison arm triggers a small-sample
+warning; outcome denominators can be smaller still. Copy describes associations, not causal effects.
 
 **Lessons can age out.** `memory.lessonMaxAgeDays` (setting registry, `/admin/platform-settings`,
 overridable per team and organization) is the age in days past which a lesson is no longer recalled.
@@ -227,7 +279,8 @@ drop is listed under `MEMORY_RECALL_DROPPED` too, as `memory.transcript_digest_d
 
 ## 6. Administration
 
-`/lessons` lists and searches lessons for every role. An engineer or lead sees the lessons of
+The **Lessons** tab in the sidebar's **Knowledge** destination (`/lessons`) lists and searches
+lessons for every role. An engineer or lead sees the lessons of
 the repositories they can reach — the owning team's or a team it is shared with, under the access
 gate — each with its failure type, the run's outcome, a `Low confidence` label below 0.5, and a link
 to the run it was written from. Managing a repository's lessons — deleting one, starting
@@ -300,6 +353,23 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
 ---
 
 ## Limitations
+
+- **Offline lesson experiments use a separate static corpus.** Dataset-backed ON/SHADOW/OFF arms
+  do not read or write production lessons; see [dataset lesson memory](./evals.md#dataset-lesson-memory).
+
+- **Outcome comparisons are observational.** Configuration arms are not randomized; task mix,
+  templates and time can confound comparisons. Holdout randomizes only runs configured as `on`,
+  and the report pools configured-shadow and held-out shadow runs (showing held-out counts).
+  Retrieval-match filtering is a post-assignment subset, not a causal estimate. Intervals are
+  unadjusted for repeated tasks or team/template clustering, and small samples remain uncertain.
+- **Run pinning is not retrospective.** Settings affect new assignments, not existing runs.
+  Legacy null arms behave as ON but are excluded from comparison. Recall traces and EvalResult
+  capture are best-effort and may be retained for less time than runs; missing exposure can remove
+  a run from the like-for-like subset. Accrued cost depends on run finalization, and missing gate
+  or merge evidence is not a negative outcome. Custom fix steps are not counted unless they use
+  the recognized engineering fix-step names. Other knowledge (skills, repository files, channel
+  memory and model training) is not held out. Shadow retrieval still incurs embedding cost and
+  its stored traces remain human-readable; it is not a data-erasure mode.
 
 - **Flags send no notification.** Managers discover flags and quarantines through lesson and run
   pages, not an assigned inbox or push notification. Below the configured threshold a flagged

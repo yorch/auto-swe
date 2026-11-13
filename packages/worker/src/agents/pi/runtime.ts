@@ -197,7 +197,10 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
     options.toolKeys?.includes('searchKnowledge') ?? false
   );
   const policy: PiPolicyContext = {
-    browserTools: options.browserToolset ? BROWSER_TOOLS.map((entry) => entry.name) : [],
+    browserTools: [
+      ...(options.browserToolset ? BROWSER_TOOLS.map((entry) => entry.name) : []),
+      ...(options.evalLessonTools ?? []).map((entry) => entry.name),
+    ],
     containerId: workspace.containerId,
     projectContextLoaded: loadProjectSettings,
     tools,
@@ -248,9 +251,21 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
             parameters: entry.schema.toJSONSchema() as AgentTool['parameters'],
           }))
         : [];
+      const evalTools = (options.evalLessonTools ?? []).map((entry) => ({
+        description: entry.description,
+        async execute(_id: string, params: unknown) {
+          return {
+            content: [{ text: JSON.stringify(await entry.call(params)), type: 'text' as const }],
+            details: undefined,
+          };
+        },
+        label: entry.name,
+        name: entry.name,
+        parameters: entry.schema.toJSONSchema() as AgentTool['parameters'],
+      }));
       session = {
-        agentTools: [...own, ...mcpTools, ...browserTools],
-        browserTools,
+        agentTools: [...own, ...mcpTools, ...browserTools, ...evalTools],
+        browserTools: [...browserTools, ...evalTools],
         mcpTools,
         messages: [],
         projectContext: loadProjectSettings ? await readProjectContext(turn) : null,

@@ -11,6 +11,8 @@ const update = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
 const create = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
 const evalDatasets = vi.hoisted(() => ({ data: [] as unknown[] }));
 
+vi.mock('@/hooks/useAdmin', () => ({ useUserOrgs: () => ({ data: [] }) }));
+
 vi.mock('@/stores/authStore', () => ({
   useAuthStore: (select: (s: { user: { role: string } }) => unknown) =>
     select({ user: { role: auth.role } }),
@@ -30,6 +32,7 @@ vi.mock('@/hooks/useRepositories', () => ({
   useMovePreviewEnvToSecrets: () => ({ isPending: false, mutate: vi.fn() }),
   useProposeSetupFile: () => ({ data: undefined, isPending: false, mutate: vi.fn() }),
   useRepoEvalDatasets: () => ({ data: evalDatasets.data, isError: false, isLoading: false }),
+  useRunRepoOnboarding: () => ({ isError: false, isPending: false, mutate: vi.fn() }),
   useSaveSetupSecret: () => ({ isPending: false, mutate: vi.fn() }),
   useSetupBlockers: () => ({ data: [], isError: false, isLoading: false }),
   useSetupFileProposalStatus: () => ({ data: undefined, isError: false }),
@@ -420,5 +423,44 @@ describe('ConnectionFormModal workspace setup', () => {
   it('shows the definition as setup.yml text to copy', () => {
     renderEdit(withSetup);
     expect(screen.getByText(/run: npm ci/)).toBeTruthy();
+  });
+});
+
+describe('ConnectionFormModal PagerDuty API key', () => {
+  beforeAll(() => stubDialogPrototype());
+  beforeEach(() => {
+    update.mutateAsync.mockReset().mockResolvedValue({});
+    auth.role = 'LEAD';
+    auth.teamRole = 'LEAD';
+  });
+
+  const pagerduty = {
+    ...repo,
+    config: { fromEmail: 'oncall@example.com' },
+    hasApiToken: true,
+    name: 'PagerDuty',
+    type: 'pagerduty',
+  } as unknown as RepositorySummary;
+
+  it('keeps the saved key when the field is left blank', async () => {
+    renderEdit(pagerduty);
+    const field = screen.getByLabelText('Replace REST API key') as HTMLInputElement;
+    expect(field.type).toBe('password');
+    expect(field.value).toBe('');
+    save();
+    await waitFor(() => expect(update.mutateAsync).toHaveBeenCalled());
+    expect(update.mutateAsync.mock.calls[0]?.[0]).not.toHaveProperty('apiToken');
+  });
+
+  it('sends a typed key as apiToken, never in config', async () => {
+    renderEdit(pagerduty);
+    fireEvent.change(screen.getByLabelText('Replace REST API key'), {
+      target: { value: ' u+new-key ' },
+    });
+    save();
+    await waitFor(() => expect(update.mutateAsync).toHaveBeenCalled());
+    const body = update.mutateAsync.mock.calls[0]?.[0];
+    expect(body.apiToken).toBe('u+new-key');
+    expect(JSON.stringify(body.config)).not.toContain('u+new-key');
   });
 });

@@ -423,15 +423,32 @@ function matchesSearch(t: WorkflowTemplateSummary, query: string): boolean {
 
 /**
  * The visible primary action of a row: Run for a runnable workflow, otherwise
- * a disabled Run that says why (the reason is read out, not only shown on hover).
+ * a compact label explaining its launch path.
  */
 function RunAction({ template }: { template: WorkflowTemplateSummary }) {
   if (template.status === 'ARCHIVED') {
-    return null;
+    return (
+      <Badge
+        className="inline-flex min-h-8 items-center px-2.5"
+        title="Restore this archived workflow before running it"
+        tone="neutral"
+      >
+        Archived
+      </Badge>
+    );
   }
   const block = handLaunchBlock(template);
   if (block) {
-    return <span className="text-paper-500 text-xs">{block.reason}</span>;
+    return (
+      <Badge
+        className="inline-flex min-h-8 items-center px-2.5"
+        title={block.reason}
+        tone="neutral"
+      >
+        {template.kind === 'review' ? 'Review only' : 'Automatic'}
+        <span className="sr-only">: {block.reason}</span>
+      </Badge>
+    );
   }
   if (template.status === 'ACTIVE' && template.activeVersion !== null) {
     return (
@@ -448,14 +465,9 @@ function RunAction({ template }: { template: WorkflowTemplateSummary }) {
   }
   const reason = template.status === 'DRAFT' ? 'Activate it to run' : 'Promote a version to run';
   return (
-    <span className="inline-flex cursor-not-allowed" title={reason}>
-      <Button aria-describedby={`run-reason-${template.id}`} disabled size="sm" variant="secondary">
-        Run
-      </Button>
-      <span className="sr-only" id={`run-reason-${template.id}`}>
-        {reason}
-      </span>
-    </span>
+    <Badge className="inline-flex min-h-8 items-center px-2.5" title={reason} tone="neutral">
+      Not ready<span className="sr-only">: {reason}</span>
+    </Badge>
   );
 }
 
@@ -515,13 +527,7 @@ function TemplateActions({
 
   return (
     <>
-      {systemManaged ? (
-        <span className="max-w-[14rem] text-xs text-paper-500 max-sm:max-w-none">
-          No Run button: the platform starts this one itself, for channel assistants.
-        </span>
-      ) : (
-        <RunAction template={t} />
-      )}
+      <RunAction template={t} />
       <ActionMenu items={menuItems} label={`More actions for ${t.name}`} />
     </>
   );
@@ -550,7 +556,7 @@ const templateColumns: DataTableColumn<WorkflowTemplateSummary>[] = [
         </div>
         {t.description && (
           <p
-            className="mt-0.5 line-clamp-1 max-w-xl text-sm font-normal text-paper-500 max-sm:line-clamp-2"
+            className="mt-0.5 line-clamp-1 max-w-xl text-sm font-normal text-paper-400 max-sm:line-clamp-2"
             title={t.description}
           >
             {t.description}

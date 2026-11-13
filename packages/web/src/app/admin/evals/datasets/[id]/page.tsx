@@ -1,9 +1,9 @@
 'use client';
 
 import { use, useState } from 'react';
+import { EvalLessonCorpus } from '@/components/evals/EvalMemory';
 import { EvalRunStatusBadge } from '@/components/evals/EvalRunStatusBadge';
 import { Alert } from '@/components/ui/Alert';
-import { BackLink } from '@/components/ui/BackLink';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -22,6 +22,7 @@ import {
   useSetEvalSetupSecretsRepository,
   useUpdateEvalCaseStack,
 } from '@/hooks/useAdmin';
+import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useRepositories } from '@/hooks/useRepositories';
 import { errMsg } from '@/lib/errors';
 import { formatArm } from '@/lib/evalRuntime';
@@ -97,6 +98,7 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
   // The stack change awaiting confirmation; it re-screens the case.
   const [confirmStack, setConfirmStack] = useState<{ caseId: string; stack: Stack } | null>(null);
   const ds = dataset.data;
+  useEntityTitle(ds?.name);
   const runRows = runs.data?.data ?? [];
   const runsTotal = runs.data?.meta.total ?? 0;
   const allCases = ds?.cases ?? [];
@@ -106,7 +108,6 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
 
   return (
     <div className="space-y-6">
-      <BackLink href="/admin/evals" label="Evals" />
       <QueryBoundary
         error={dataset.error}
         isError={dataset.isError}
@@ -118,6 +119,7 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
       >
         {ds && (
           <>
+            <EvalLessonCorpus lessons={ds.lessons} />
             <PageHeader className="mb-2" subtitle={ds.description ?? undefined} title={ds.name} />
             <dl className="flex flex-wrap gap-x-8 gap-y-3 text-sm">
               <div>

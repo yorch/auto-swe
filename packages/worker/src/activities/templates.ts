@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
 import type { SettingResolveCtx } from '@auto-swe/shared/config';
 import { snapshotPinnedSettings } from '@auto-swe/shared/config';
@@ -50,6 +51,7 @@ import { backfillPinnedSettings } from '../lib/config/pinnedSettings.js';
 import { recordTrackerSync } from '../lib/effectLedger.js';
 import { type EndRunOutcome, endWorkflowRun } from '../lib/endRun.js';
 import { recordWorkerLaunchAudit, type WorkerLaunchSource } from '../lib/launchAudit.js';
+import { assignLessonRecall } from '../lib/lessonRecallAssignment.js';
 import { recordRunFinalized } from '../lib/metrics.js';
 import { pinDetectionsOnRun } from '../lib/runDetection.js';
 import {
@@ -696,12 +698,14 @@ export async function createWorkflowRun(
     payload: input.payload ?? null,
     workspaceConnectionId: input.runConnectionId ?? input.repoId ?? scheduledRepoId ?? null,
   });
+  const runId = reviewPayload?.success ? reviewRunId(input.workflowId) : randomUUID();
   const runUpsert: Prisma.WorkflowRunUpsertArgs = {
     create: {
+      id: runId,
+      ...assignLessonRecall(runId, pinnedSettings),
       ...(reviewPayload?.success
         ? {
             connectionId: reviewPayload.data.connectionId,
-            id: reviewRunId(input.workflowId),
             reviewOfRunId: reviewPayload.data.sourceRunId,
             reviewPresetId: reviewPayload.data.presetId ?? null,
           }

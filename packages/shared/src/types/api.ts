@@ -543,6 +543,16 @@ export interface DetectedStack {
   treeTruncated?: boolean;
 }
 
+export interface RepositoryOnboardingChecklist {
+  accessVerified: boolean;
+  stackScanned: boolean;
+  setupHealthy: boolean;
+  onboardingPrOpened: boolean;
+  firstRunLaunched: boolean;
+  dismissed: boolean;
+  onboardingPrUrl: string | null;
+}
+
 /** Shape returned by GET /api/v1/repositories */
 export interface RepositorySummary {
   id: string;
@@ -552,6 +562,8 @@ export interface RepositorySummary {
   name: string | null;
   /** Type-specific config JSON (for non-git_repo connections) */
   config: unknown;
+  /** Whether a write-only API token is stored for the connection (never the token itself). */
+  hasApiToken?: boolean;
   organizationName: string | null;
   repoName: string | null;
   defaultBranch: string;
@@ -581,6 +593,7 @@ export interface RepositorySummary {
   prTitleTemplate?: string | null;
   /** Stack detected from root manifests by the dependency scan; null until one ran. */
   detectedStack?: DetectedStack | null;
+  onboardingChecklist?: RepositoryOnboardingChecklist;
   language: string | null;
   description: string | null;
   team: TeamRef;
@@ -1669,6 +1682,13 @@ export interface EvalDatasetSummary {
 }
 
 export interface EvalDatasetDetail extends EvalDatasetSummary {
+  lessons?: {
+    id: string;
+    content: string;
+    failureType: string | null;
+    tags: string[];
+    source: 'AUTHORED' | 'IMPORTED';
+  }[];
   cases: EvalCaseDto[];
   /** The repository whose setup secrets the cases' workspace setup reads; null reads none. */
   setupSecretsRepository: { id: string; name: string } | null;
@@ -1679,6 +1699,9 @@ export interface EvalDatasetDetail extends EvalDatasetSummary {
 }
 
 export interface EvalRunDto {
+  candidateMemoryMode?: 'ON' | 'SHADOW' | 'OFF';
+  baselineMemoryMode?: 'ON' | 'SHADOW' | 'OFF';
+  corpusHash?: string | null;
   id: string;
   datasetId: string;
   /** The benchmark's name and slug. */

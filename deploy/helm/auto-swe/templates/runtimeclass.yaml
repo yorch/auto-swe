@@ -1,0 +1,48 @@
+{{- if .Values.worker.enabled }}
+{{- if .Values.workspaces.kataRuntimeClass.create }}
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: {{ .Values.workspaces.runtimeClassName | quote }}
+  labels:
+    {{- include "auto-swe.labels" . | nindent 4 }}
+handler: kata
+overhead:
+  podFixed:
+    {{- toYaml .Values.workspaces.kataRuntimeClass.overhead | nindent 4 }}
+{{- with .Values.workspaces.kataRuntimeClass.nodeSelector }}
+scheduling:
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+{{- end }}
+---
+{{- end }}
+{{- if and .Values.workspaces.manage .Values.workspaces.runtimeClassName }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "auto-swe.fullname" . }}-runtimeclass
+  labels:
+    {{- include "auto-swe.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [node.k8s.io]
+    resources: [runtimeclasses]
+    resourceNames: [{{ .Values.workspaces.runtimeClassName | quote }}]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "auto-swe.fullname" . }}-runtimeclass
+  labels:
+    {{- include "auto-swe.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "auto-swe.fullname" . }}-runtimeclass
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "auto-swe.workerServiceAccount" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}

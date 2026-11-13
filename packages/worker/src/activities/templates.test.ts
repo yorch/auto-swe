@@ -3,6 +3,7 @@ import { reviewRunId } from '@auto-swe/shared/lib/reviewLaunch';
 import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { Context } from '@temporalio/activity';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { assignLessonRecall } from '../lib/lessonRecallAssignment.js';
 
 vi.mock('@auto-swe/shared/lib/reviewLaunch', async (original) => ({
   ...(await original<object>()),
@@ -295,6 +296,24 @@ afterEach(() => {
 const UPDATE_REWRITES_ONLY_THE_PIN = { authorizedConnectionIds: [] };
 
 describe('createWorkflowRun', () => {
+  it('persists the recall assignment with its UUID and pins, without updating it on an upsert retry', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    await createWorkflowRun({ templateId: 'tpl-1', templateVersion: 1, workflowId: 'wf-recall' });
+    const args = upsertRun.mock.calls.at(-1)?.[0];
+    expect(args?.create.pinnedSettings).toMatchObject({
+      'memory.lessonHoldoutPercent': 0,
+      'memory.lessonRecall': 'on',
+    });
+    expect(args?.create).toMatchObject(
+      assignLessonRecall(
+        args?.create.id as string,
+        args?.create.pinnedSettings as Record<string, unknown>
+      )
+    );
+    expect(args?.create.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(args?.update).not.toHaveProperty('lessonRecallArm');
+    expect(args?.update).not.toHaveProperty('lessonRecallHeldOut');
+  });
   it('persists launch knowledge base overrides without replacing them on retry', async () => {
     findVersion.mockResolvedValue({ spec: validSpec } as never);
     const knowledgeBaseOverrides = {
@@ -1482,6 +1501,25 @@ describe('createWorkflowRun', () => {
 });
 
 describe('recordWorkflowStep', () => {
+  it('preserves the start recorded before dispatch when the same attempt completes', async () => {
+    vi.useFakeTimers();
+    try {
+      upsertStep.mockResolvedValue({} as never);
+      const startedAt = new Date('2026-11-12T15:00:00Z');
+      vi.setSystemTime(startedAt);
+      await recordWorkflowStep({ attempt: 2, nodeId: 'a', runId: 'r1', status: 'RUNNING' });
+      vi.advanceTimersByTime(30_000);
+      await recordWorkflowStep({ attempt: 2, nodeId: 'a', runId: 'r1', status: 'PASSED' });
+      const [running, completed] = upsertStep.mock.calls.map(([args]) => args);
+      expect(running?.create.startedAt).toEqual(startedAt);
+      expect(completed?.where).toEqual(running?.where);
+      expect(completed?.update).not.toHaveProperty('startedAt');
+      expect(completed?.update.endedAt).toEqual(new Date(startedAt.getTime() + 30_000));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('sets endedAt only for terminal statuses', async () => {
     upsertStep.mockResolvedValue({} as never);
     await recordWorkflowStep({ nodeId: 'a', runId: 'r1', status: 'RUNNING' });

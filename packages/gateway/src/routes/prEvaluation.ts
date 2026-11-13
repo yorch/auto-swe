@@ -29,7 +29,7 @@ import { REPOSITORY_SWEEP_CAP, sweepArmedPullRequests } from '../lib/prEvaluatio
 import { isCheckConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { resolveRepositoryRouting } from '../lib/reviewQueue.js';
-import { reachableConnections } from '../lib/tenantScope.js';
+import { manageableOrReachableConnections, reachableConnections } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import { canManageTeamRepos } from './repositories.js';
 
@@ -235,7 +235,7 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
   app.put(
     '/repositories/:id/pr-evaluation',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: { body: SetPolicyBody, params: RepoParams },
     },
     async (request, reply) => {
@@ -254,7 +254,9 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
         where: {
           id: request.params.id,
           type: 'git_repo',
-          ...(user.role === Role.ADMIN ? {} : reachableConnections(user, request.repoAccessGate)),
+          ...(user.role === Role.ADMIN
+            ? {}
+            : manageableOrReachableConnections(user, request.repoAccessGate)),
         },
       });
       if (!repo) {

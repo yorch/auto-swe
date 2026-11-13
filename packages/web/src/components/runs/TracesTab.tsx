@@ -30,6 +30,7 @@ import {
 // both appear: the harness records the tool name and input exactly as its
 // hooks receive them (`agents/claudeCode/runtime.ts`).
 const TOOL_LABELS: Record<string, string> = {
+  'agent.generating': 'Agent generating',
   Bash: 'bash',
   bash: 'bash',
   Edit: 'edit',
@@ -39,6 +40,9 @@ const TOOL_LABELS: Record<string, string> = {
   Read: 'read',
   readFile: 'read',
   Write: 'write',
+  'workspace.failed': 'Workspace preparation failed',
+  'workspace.preparing': 'Preparing workspace',
+  'workspace.ready': 'Workspace ready',
   writeFile: 'write',
 };
 

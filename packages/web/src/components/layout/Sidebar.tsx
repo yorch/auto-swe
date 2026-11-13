@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { BrandMark } from '@/components/layout/AuthLayout';
 import { PALETTE_CHOICES } from '@/components/layout/ThemeToggle';
 import { SupportContact } from '@/components/SupportContact';
@@ -24,6 +25,7 @@ function NavLink({ item, active, badge }: { item: NavItem; active: boolean; badg
   return (
     <Link
       aria-current={active ? 'page' : undefined}
+      aria-label={item.label}
       className={cn(
         'relative mx-2.5 flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium no-underline transition-colors pointer-coarse:min-h-[44px]',
         FOCUS_RING,
@@ -31,6 +33,8 @@ function NavLink({ item, active, badge }: { item: NavItem; active: boolean; badg
           ? 'bg-ink-600 text-paper-50 before:absolute before:inset-y-1.5 before:-left-2.5 before:w-[3px] before:rounded-r-full before:bg-accent-400'
           : 'text-paper-500 hover:bg-ink-700/70 hover:text-paper-200'
       )}
+      data-rail-item
+      data-sidebar-label={item.label}
       data-tour={`nav:${item.href}`}
       href={item.href}
     >
@@ -39,9 +43,14 @@ function NavLink({ item, active, badge }: { item: NavItem; active: boolean; badg
         name={isIconName(item.icon) ? item.icon : 'dashboard'}
         size={15}
       />
-      <span className="flex-1">{item.label}</span>
+      <span className="flex-1" data-rail-label>
+        {item.label}
+      </span>
       {badge !== undefined && badge > 0 && (
-        <span className="rounded-full bg-accent-500 px-1.5 py-px text-xs font-semibold tabular-nums text-white">
+        <span
+          className="rounded-full bg-accent-500 px-1.5 py-px text-xs font-semibold tabular-nums text-white"
+          data-rail-label
+        >
           {badge}
           <span className="sr-only"> pending</span>
         </span>
@@ -101,14 +110,18 @@ function UserMenu() {
   };
 
   return (
-    <div className="relative mx-[14px] mb-[10px]" ref={root}>
+    <div className="sidebar-user relative mx-[14px] mb-[10px]" ref={root}>
       <button
         aria-controls={MENU_ID}
         aria-expanded={open}
+        aria-label={`User menu: ${name}`}
         className={cn(
           'flex w-full items-center gap-2.5 rounded-lg border border-ink-500 bg-ink-700/60 px-2.5 py-2 text-left text-sm transition-colors pointer-coarse:min-h-[44px] hover:border-ink-300 hover:bg-ink-700',
           FOCUS_RING
         )}
+        data-rail-item
+        data-sidebar-label={`User menu: ${name}`}
+        data-tour="sidebar:user-menu"
         onClick={() => setOpen((o) => !o)}
         ref={trigger}
         type="button"
@@ -119,7 +132,7 @@ function UserMenu() {
         >
           {name[0].toUpperCase()}
         </span>
-        <span className="min-w-0 flex-1">
+        <span className="min-w-0 flex-1" data-rail-label>
           <span className="block truncate text-sm font-semibold text-paper-200">{name}</span>
           {(user?.role?.toLowerCase() ?? 'member') !== name.toLowerCase() && (
             <span className="block text-xs text-paper-400">
@@ -128,14 +141,17 @@ function UserMenu() {
           )}
         </span>
         <Icon
-          className={cn('text-paper-500 transition-transform', open && 'rotate-180')}
+          className={cn(
+            'sidebar-user-chevron text-paper-500 transition-transform',
+            open && 'rotate-180'
+          )}
           name="chevronDown"
           size={14}
         />
       </button>
       {open && (
         <div
-          className="absolute inset-x-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-ink-400 bg-ink-900 shadow-xl"
+          className="sidebar-user-menu absolute inset-x-0 top-full z-50 mt-1 overflow-hidden rounded-lg border border-ink-400 bg-ink-900 shadow-xl"
           id={MENU_ID}
         >
           <div className="truncate border-b border-ink-400 px-3 py-2 text-xs text-paper-400">
@@ -171,6 +187,14 @@ function UserMenu() {
           >
             Settings
           </Link>
+          <Link
+            className={cn('block px-3 py-2 text-sm text-paper-200 hover:bg-ink-700', FOCUS_RING)}
+            href="/docs"
+            onClick={() => setOpen(false)}
+          >
+            Docs
+          </Link>
+          <SupportContact className="border-t border-ink-400 px-3 py-2" />
           <button
             className={cn(
               'block w-full px-3 py-2 text-left text-sm text-paper-200 pointer-coarse:min-h-[44px] hover:bg-ink-700',
@@ -218,9 +242,10 @@ function TeamsGroup({ pathname }: { pathname: string }) {
   }
   const currentSlug = teamSlugFromPath(pathname);
   return (
-    <div>
+    <div data-rail-group>
       <div
         className="px-5 pt-5 pb-1.5 text-2xs font-semibold uppercase tracking-[0.08em] text-paper-600"
+        data-rail-heading
         id="nav-group-teams"
       >
         Teams
@@ -232,6 +257,7 @@ function TeamsGroup({ pathname }: { pathname: string }) {
             <li key={team.id}>
               <Link
                 aria-current={active ? 'page' : undefined}
+                aria-label={team.name}
                 className={cn(
                   'relative mx-2.5 flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium no-underline transition-colors pointer-coarse:min-h-[44px]',
                   FOCUS_RING,
@@ -239,11 +265,27 @@ function TeamsGroup({ pathname }: { pathname: string }) {
                     ? 'bg-ink-600 text-paper-50'
                     : 'text-paper-500 hover:bg-ink-700/70 hover:text-paper-200'
                 )}
+                data-rail-item
+                data-sidebar-label={team.name}
                 href={teamHref(team.slug)}
               >
-                <Icon name="teams" size={15} />
-                <span className="min-w-0 flex-1 truncate">{team.name}</span>
-                <NeedsYouBadge count={needsYou} />
+                <span aria-hidden="true" className="sidebar-team-initials hidden">
+                  {team.name
+                    .split(/\s+/)
+                    .map((s) => s[0])
+                    .join('')
+                    .slice(0, 2)
+                    .toUpperCase()}
+                </span>
+                <span data-rail-label>
+                  <Icon name="teams" size={15} />
+                </span>
+                <span className="min-w-0 flex-1 truncate" data-rail-label>
+                  {team.name}
+                </span>
+                <span data-rail-label>
+                  <NeedsYouBadge count={needsYou} />
+                </span>
               </Link>
             </li>
           );
@@ -265,14 +307,38 @@ interface SidebarProps {
   onClose: () => void;
   /** First focus target when the drawer opens. */
   closeButtonRef?: RefObject<HTMLButtonElement | null>;
-  drawerOnly?: boolean;
+  collapsed?: boolean;
+  onToggle?: () => void;
 }
 
-export function Sidebar({ open, onClose, closeButtonRef, drawerOnly = false }: SidebarProps) {
+export function Sidebar({
+  open,
+  onClose,
+  closeButtonRef,
+  collapsed = false,
+  onToggle,
+}: SidebarProps) {
   const pathname = usePathname();
   const inboxCount = useApprovalsCount();
 
   const groups = useVisibleNavGroups();
+  const [tip, setTip] = useState<{ label: string; top: number; left: number } | null>(null);
+  const showTip = (target: EventTarget) => {
+    if (!(target instanceof Element)) {
+      return;
+    }
+    const item = target.closest<HTMLElement>('[data-sidebar-label]');
+    const sidebar = item?.closest('aside');
+    if (!item || !sidebar || sidebar.getBoundingClientRect().width > 100) {
+      return;
+    }
+    const rect = item.getBoundingClientRect();
+    setTip({
+      label: item.dataset.sidebarLabel ?? '',
+      left: rect.right + 12,
+      top: rect.top + rect.height / 2,
+    });
+  };
   // The most-specific matching sidebar item wins; every /admin page lights the Admin entry.
   const activeHref = useMemo(
     () =>
@@ -287,36 +353,58 @@ export function Sidebar({ open, onClose, closeButtonRef, drawerOnly = false }: S
     <aside
       aria-label="Main navigation"
       className={cn(
-        'flex w-[234px] flex-col border-r border-ink-500/70 bg-ink-900',
+        'sidebar flex w-[234px] flex-col border-r border-ink-500/70 bg-ink-900',
         // Below md the sidebar is an off-canvas drawer; `invisible` when closed
         // takes its links out of the tab order and the accessibility tree.
-        drawerOnly
-          ? 'fixed inset-y-0 left-0 z-40 shadow-2xl duration-200'
-          : 'max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:shadow-2xl max-md:duration-200',
+        'max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:shadow-2xl max-md:duration-200',
         // Visibility flips immediately on open (so focus can move in) and only
         // after the slide-out on close.
-        drawerOnly
-          ? open
-            ? 'visible translate-x-0 transition-transform'
-            : 'invisible -translate-x-full transition-[transform,visibility]'
-          : open
-            ? 'max-md:visible max-md:translate-x-0 max-md:transition-transform'
-            : 'max-md:invisible max-md:-translate-x-full max-md:transition-[transform,visibility]'
+        open
+          ? 'max-md:visible max-md:translate-x-0 max-md:transition-transform'
+          : 'max-md:invisible max-md:-translate-x-full max-md:transition-[transform,visibility]'
       )}
       data-tour="sidebar"
       id={SIDEBAR_ID}
+      onBlur={() => setTip(null)}
+      onClick={() => setTip(null)}
+      onFocus={(e) => showTip(e.target)}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') {
+          setTip(null);
+        }
+      }}
+      onMouseLeave={() => setTip(null)}
+      onMouseOver={(e) => showTip(e.target)}
     >
       <div className="flex items-center justify-between">
         {/* Brand */}
         <Link
-          className={cn('flex items-center gap-3 px-[18px] py-[18px] no-underline', FOCUS_RING)}
+          aria-label="auto-swe home"
+          className={cn(
+            'sidebar-brand flex items-center gap-3 px-[18px] py-[18px] no-underline',
+            FOCUS_RING
+          )}
           href="/"
         >
-          <BrandMark size="sm" />
+          <span data-rail-label>
+            <BrandMark size="sm" />
+          </span>
         </Link>
+        <button
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className={cn(
+            'sidebar-toggle hidden rounded-lg p-2 text-paper-400 hover:bg-ink-700 md:block',
+            FOCUS_RING
+          )}
+          data-sidebar-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          onClick={onToggle}
+          type="button"
+        >
+          <Icon name={collapsed ? 'arrowRight' : 'arrowLeft'} size={18} />
+        </button>
         <IconButton
           aria-label="Close navigation"
-          className={cn('mr-3', !drawerOnly && 'md:hidden')}
+          className="mr-3 md:hidden"
           onClick={onClose}
           ref={closeButtonRef}
           size="md"
@@ -332,15 +420,18 @@ export function Sidebar({ open, onClose, closeButtonRef, drawerOnly = false }: S
         <div className="px-[14px] pt-1">
           <Link
             aria-current={isStartWorkPath(pathname) ? 'page' : undefined}
+            aria-label="Start work"
             className={cn(
               'flex items-center justify-center gap-2 rounded-lg border border-transparent bg-accent-500 px-3 py-2 text-sm font-semibold text-white no-underline transition-colors pointer-coarse:min-h-[44px] hover:bg-accent-600',
               FOCUS_RING
             )}
+            data-rail-item
+            data-sidebar-label="Start work"
             data-tour="nav:/start"
             href="/start"
           >
             <Icon name="plus" size={14} strokeWidth={2.4} />
-            Start work
+            <span data-rail-label>Start work</span>
           </Link>
         </div>
         {groups.map((group, index) => {
@@ -350,36 +441,50 @@ export function Sidebar({ open, onClose, closeButtonRef, drawerOnly = false }: S
           return (
             <div key={group.label}>
               {index === 1 && <TeamsGroup pathname={pathname} />}
-              {headless ? (
-                <div className="pt-4" />
-              ) : (
-                <div
-                  className="px-5 pt-5 pb-1.5 text-2xs font-semibold uppercase tracking-[0.08em] text-paper-600"
-                  id={headingId}
+              <div data-rail-group>
+                {headless ? (
+                  <div className="pt-4" />
+                ) : (
+                  <div
+                    className="px-5 pt-5 pb-1.5 text-2xs font-semibold uppercase tracking-[0.08em] text-paper-600"
+                    data-rail-heading
+                    id={headingId}
+                  >
+                    {group.label}
+                  </div>
+                )}
+                <ul
+                  aria-label={headless ? group.label : undefined}
+                  aria-labelledby={headless ? undefined : headingId}
                 >
-                  {group.label}
-                </div>
-              )}
-              <ul
-                aria-label={headless ? group.label : undefined}
-                aria-labelledby={headless ? undefined : headingId}
-              >
-                {group.items.map((item) => (
-                  <li key={item.href}>
-                    <NavLink
-                      active={activeHref === item.href}
-                      badge={item.href === APPROVALS_HREF ? inboxCount : undefined}
-                      item={item}
-                    />
-                  </li>
-                ))}
-              </ul>
+                  {group.items.map((item) => (
+                    <li key={item.href}>
+                      <NavLink
+                        active={activeHref === item.href}
+                        badge={item.href === APPROVALS_HREF ? inboxCount : undefined}
+                        item={item}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
           );
         })}
       </nav>
 
-      <SupportContact className="shrink-0 border-t border-ink-500/70 px-[18px] py-3" />
+      <SupportContact className="sidebar-support shrink-0 border-t border-ink-500/70 px-[18px] py-3" />
+      {tip &&
+        createPortal(
+          <div
+            className="pointer-events-none fixed z-50 -translate-y-1/2 rounded-lg border border-ink-400 bg-ink-700 px-3 py-2 text-sm text-paper-100 shadow-lg"
+            role="tooltip"
+            style={{ left: tip.left, top: tip.top }}
+          >
+            {tip.label}
+          </div>,
+          document.body
+        )}
     </aside>
   );
 }

@@ -71,8 +71,9 @@ async function buildApp() {
       findFirst: vi.fn(),
       update: vi.fn().mockResolvedValue({}),
     },
-    gitHubInstallation: { findUnique: vi.fn() },
+    gitHubInstallation: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
     knowledgeItem: { count: vi.fn().mockResolvedValue(0) },
+    organizationMembership: { findUnique: vi.fn() },
     runInput: { findUnique: vi.fn() },
     scheduledWorkRequest: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -333,6 +334,22 @@ describe('repository URL overrides', () => {
       expect(onInstance.statusCode).toBe(400);
       expect(JSON.parse(onInstance.payload).error.code).toBe('INSTALLATION_HOST_MISMATCH');
     });
+    it('restricts linked installations to teams in the same organization on create', async () => {
+      ctx.prisma.gitHubInstallation.findUnique.mockResolvedValue({
+        host: '',
+        installationId: '4242',
+        organizationId: 'org-a',
+      });
+      ctx.prisma.team.findUnique.mockResolvedValue({ id: TEAM, isActive: true, orgId: 'org-b' });
+      const refused = await onboard({ installationId: INSTALLATION });
+      expect(refused.statusCode).toBe(403);
+      expect(refused.json().error).toMatchObject({
+        code: 'GITHUB_ACCESS_UNVERIFIED',
+        message: expect.stringContaining('different organization'),
+      });
+      ctx.prisma.team.findUnique.mockResolvedValue({ id: TEAM, isActive: true, orgId: 'org-a' });
+      expect((await onboard({ installationId: INSTALLATION })).statusCode).toBe(201);
+    });
 
     it("refuses another host's installation, even one with the same numeric id", async () => {
       installation('ghe.other');
@@ -376,6 +393,19 @@ describe('repository URL overrides', () => {
         expect(res.statusCode).toBe(400);
         expect(JSON.parse(res.payload).error.code).toBe('INSTALLATION_HOST_MISMATCH');
         expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+      });
+      it('checks organization scope only when the installation changes', async () => {
+        ctx.prisma.gitHubInstallation.findUnique.mockResolvedValue({
+          host: '',
+          installationId: '4242',
+          organizationId: 'different-org',
+        });
+        const refused = await patch({ installationId: '44444444-4444-4444-8444-444444444444' });
+        expect(refused.statusCode).toBe(403);
+        expect(refused.json().error.code).toBe('GITHUB_ACCESS_UNVERIFIED');
+        expect(
+          (await patch({ defaultBranch: 'main', installationId: INSTALLATION })).statusCode
+        ).toBe(200);
       });
 
       it('allows repointing together with a matching installation, and stores it', async () => {
@@ -626,11 +656,16 @@ describe('repository sharing', () => {
         ctx.auth.role = 'LEAD';
         memberOf({ [TEAM]: 'ENGINEER' });
         expect((await setLaunch(false)).statusCode).toBe(403);
-        // A platform ENGINEER never reaches the handler at all.
         (ctx.auth as { role: string }).role = 'ENGINEER';
-        memberOf({ [TEAM]: 'LEAD' });
         expect((await setLaunch(false)).statusCode).toBe(403);
         expect(ctx.prisma.connectionTeamShare.update).not.toHaveBeenCalled();
+      });
+
+      it('allows a platform ENGINEER who leads the owning team', async () => {
+        (ctx.auth as { role: string }).role = 'ENGINEER';
+        memberOf({ [TEAM]: 'LEAD' });
+        expect((await setLaunch(false)).statusCode).toBe(200);
+        expect(ctx.prisma.connectionTeamShare.update).toHaveBeenCalled();
       });
 
       it('refuses a LEAD of an owning team that is no longer active', async () => {

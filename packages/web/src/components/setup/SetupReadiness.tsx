@@ -2,11 +2,11 @@
 
 import Link from 'next/link';
 import { OnboardingCard } from '@/components/setup/OnboardingCard';
-import { Alert } from '@/components/ui/Alert';
 import { ButtonLink } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
 import { useHasRole } from '@/hooks/useHasRole';
 import { type ReadinessItemId, useReadiness } from '@/hooks/useReadiness';
+import { readinessSummary } from '@/lib/readinessSummary';
 import { cn, FOCUS_RING } from '@/lib/utils';
 
 /**
@@ -15,7 +15,13 @@ import { cn, FOCUS_RING } from '@/lib/utils';
  * and once everything is in place without informational notes. A fully set-up admin never sees
  * a placeholder flash and collapse.
  */
-export function SetupReadiness() {
+export function SetupReadiness({
+  embedded = false,
+  onNavigate,
+}: {
+  embedded?: boolean;
+  onNavigate?: () => void;
+}) {
   const isAdmin = useHasRole('ADMIN');
   const { data, isLoading } = useReadiness(isAdmin);
   if (!isAdmin) {
@@ -32,7 +38,7 @@ export function SetupReadiness() {
   const nextId = data.items.find((i) => !i.ok)?.id;
   return (
     <OnboardingCard
-      className="border-warning-400/30"
+      className={embedded ? 'border-0 bg-transparent p-0 sm:p-0' : 'border-warning-400/30'}
       status={
         <span className="tabular text-sm text-paper-300">
           {done} of {total} done
@@ -88,7 +94,24 @@ export function SetupReadiness() {
                 <span className="sr-only">{item.ok ? ' (done)' : ' (to do)'}</span>
               </div>
               {(!item.ok || item.informational) && (
-                <div className="mt-0.5 text-xs text-paper-400">{item.detail}</div>
+                <div className="mt-0.5 text-xs text-paper-400">
+                  {readinessSummary(item, data).map((line) => (
+                    <p key={line}>{line}</p>
+                  ))}
+                  {item.id === 'credentials' && !item.ok && (
+                    <details className="mt-1">
+                      <summary
+                        className={cn(
+                          'w-fit cursor-pointer rounded-sm hover:text-paper-100',
+                          FOCUS_RING
+                        )}
+                      >
+                        View affected agents
+                      </summary>
+                      <p className="mt-1 break-words">{item.detail}</p>
+                    </details>
+                  )}
+                </div>
               )}
             </div>
             {item.ok ? (
@@ -97,6 +120,7 @@ export function SetupReadiness() {
               <ButtonLink
                 className="shrink-0"
                 href={item.href}
+                onClick={onNavigate}
                 size="sm"
                 variant={item.id === nextId ? 'primary' : 'secondary'}
               >
@@ -114,9 +138,7 @@ export function SetupReadiness() {
 
 /**
  * A compact banner for a studio page, limited to the items that page can fix.
- * `here` is the href of the page and tab the banner sits on: a "Fix this" link
- * to where the person already is does nothing, so it is replaced by `inPage`
- * (an action that works on the open page) or left out.
+ * `inPage` replaces a link to the current tab with an action on that page.
  */
 export function SetupBanner({
   items,
@@ -132,7 +154,7 @@ export function SetupBanner({
   const isAdmin = useHasRole('ADMIN');
   const { data } = useReadiness(isAdmin);
   const missing = data?.items.filter((i) => !i.ok && items.includes(i.id)) ?? [];
-  if (!isAdmin || missing.length === 0) {
+  if (!isAdmin || !data || missing.length === 0) {
     return null;
   }
   const linkClass = cn(
@@ -140,29 +162,28 @@ export function SetupBanner({
     FOCUS_RING
   );
   const banner = (
-    <Alert title="Setup incomplete" variant="warning">
-      <ul className="space-y-1">
-        {missing.map((item) => (
-          <li key={item.id}>
-            {item.detail}{' '}
-            {item.href !== here ? (
+    <ul aria-label="Setup needs attention" className="space-y-1 text-sm text-warning-400">
+      {missing.flatMap((item) =>
+        readinessSummary(item, data).map((line) => (
+          <li key={`${item.id}:${line}`}>
+            <span>{line}</span>
+            {' — '}
+            {item.href === here && inPage ? (
+              <button className={linkClass} onClick={inPage.onClick} type="button">
+                {inPage.label}
+                <Icon name="arrowRight" size={12} />
+              </button>
+            ) : (
               <Link className={linkClass} href={item.href}>
-                Fix this
+                Fix
                 <span className="sr-only">: {item.label}</span>
                 <Icon name="arrowRight" size={12} />
               </Link>
-            ) : (
-              inPage && (
-                <button className={linkClass} onClick={inPage.onClick} type="button">
-                  {inPage.label}
-                  <Icon name="arrowRight" size={12} />
-                </button>
-              )
             )}
           </li>
-        ))}
-      </ul>
-    </Alert>
+        ))
+      )}
+    </ul>
   );
   return compact ? (
     <details className="rounded-lg border border-warning-400/30 bg-warning-400/5 p-3">

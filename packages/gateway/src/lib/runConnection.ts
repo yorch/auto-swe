@@ -206,12 +206,12 @@ export async function authorizePayloadDeclaredConnections(
  * payload declares, so a second connection cannot be checked against a thinner
  * row than the first.
  */
-function findLaunchConnection(
+export async function findLaunchConnection(
   prisma: FastifyInstance['prisma'],
   connectionId: string,
   user: JwtPayload | null
 ) {
-  return prisma.connection.findUnique({
+  return await prisma.connection.findUnique({
     include: {
       installation: { select: { host: true, installationId: true, isActive: true } },
       // `teamId` too, for a service principal, whose reach is its team's.

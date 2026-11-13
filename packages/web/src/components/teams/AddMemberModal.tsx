@@ -6,6 +6,8 @@ import { MemberUserPicker } from '@/components/MemberUserPicker';
 import { Alert } from '@/components/ui/Alert';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
+import { useHasRole } from '@/hooks/useHasRole';
+import { useOrgMembers } from '@/hooks/useOrg';
 import { useAddTeamMember } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
 import { platformRoleLabel } from '@/lib/govLabels';
@@ -18,6 +20,7 @@ export function AddMemberModal({
   teamId,
   existingUserIds,
   grantableRoles = ALL_ROLES,
+  orgId,
 }: {
   open: boolean;
   onClose: () => void;
@@ -25,8 +28,11 @@ export function AddMemberModal({
   existingUserIds: string[];
   /** Team roles the caller may grant; the gateway refuses anything above their own. */
   grantableRoles?: Role[];
+  orgId?: string;
 }) {
   const add = useAddTeamMember(teamId);
+  const platformAdmin = useHasRole('ADMIN');
+  const orgMembers = useOrgMembers(open && !platformAdmin ? (orgId ?? '') : '');
   const [userId, setUserId] = useState('');
   const [role, setRole] = useState<Role>('ENGINEER');
   const [error, setError] = useState<string | null>(null);
@@ -66,12 +72,30 @@ export function AddMemberModal({
       title="Add a member"
     >
       <form className="space-y-5" onSubmit={handleSubmit}>
-        <MemberUserPicker
-          existingUserIds={existingUserIds}
-          key={pickerKey}
-          onChange={setUserId}
-          value={userId}
-        />
+        {platformAdmin ? (
+          <MemberUserPicker
+            existingUserIds={existingUserIds}
+            key={pickerKey}
+            onChange={setUserId}
+            value={userId}
+          />
+        ) : (
+          <Select
+            disabled={orgMembers.isLoading || orgMembers.isError}
+            error={orgMembers.isError ? 'Unable to load organization members.' : undefined}
+            hint={
+              orgMembers.data && !orgMembers.data.some((m) => !existingUserIds.includes(m.userId))
+                ? 'No organization members left to add. Invite a new person by email instead.'
+                : "Only members of this team's organization can be added."
+            }
+            label="Organization member"
+            onChange={setUserId}
+            options={(orgMembers.data ?? [])
+              .filter((m) => !existingUserIds.includes(m.userId))
+              .map((m) => ({ label: m.user.email, value: m.userId }))}
+            value={userId}
+          />
+        )}
         <Select
           id="role"
           label="Team role"

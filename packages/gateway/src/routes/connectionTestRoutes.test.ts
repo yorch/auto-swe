@@ -1,6 +1,8 @@
+import { randomBytes } from 'node:crypto';
+import { encryptConnectionApiToken } from '@auto-swe/shared';
 import Fastify, { type FastifyPluginAsync } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The "test this connection" endpoints beside the connections they test: who may call each, what
@@ -11,6 +13,7 @@ const probeRepositoryAccess = vi.fn();
 const probeHostCredential = vi.fn();
 const probeApproverApp = vi.fn();
 const probeRegistryRow = vi.fn();
+const probePagerDutyConnection = vi.fn();
 vi.mock('../lib/connectionProbes.js', () => ({
   failed: (name: string, detail: string) => ({
     checks: [{ detail, name, ok: false }],
@@ -21,6 +24,7 @@ vi.mock('../lib/connectionProbes.js', () => ({
   probeApproverApp: (...args: unknown[]) => probeApproverApp(...args),
   probeHostCredential: (...args: unknown[]) => probeHostCredential(...args),
   probePackageRegistry: vi.fn(),
+  probePagerDutyConnection: (...args: unknown[]) => probePagerDutyConnection(...args),
   probeRegistryRow: (...args: unknown[]) => probeRegistryRow(...args),
   probeRepositoryAccess: (...args: unknown[]) => probeRepositoryAccess(...args),
   summarize: vi.fn(),
@@ -63,9 +67,11 @@ async function buildApp(
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   const prisma = {
-    connection: { findUnique: vi.fn() },
+    connection: { findUnique: vi.fn(), update: vi.fn() },
     gitHubHostCredential: { findUnique: vi.fn() },
+    organizationMembership: { findUnique: vi.fn() },
     packageRegistry: { findUnique: vi.fn() },
+    team: { findUnique: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
   };
   app.decorate('prisma', prisma as unknown as never);
@@ -169,11 +175,12 @@ describe('POST /repositories/:id/test-access', () => {
   const url = `/api/v1/repositories/${ID}/test-access`;
   const repo = { defaultBranch: 'main', id: ID, teamId: TEAM_ID, type: 'git_repo' };
 
-  it('refuses a platform ENGINEER before reading the repository', async () => {
+  it('refuses a platform ENGINEER who cannot manage the repository', async () => {
     const { app, prisma } = await buildApp('ENGINEER', repositoryRoutes, '/api/v1/repositories');
+    prisma.connection.findUnique.mockResolvedValue(repo);
     const res = await app.inject({ headers: AUTH, method: 'POST', url });
     expect(res.statusCode).toBe(403);
-    expect(prisma.connection.findUnique).not.toHaveBeenCalled();
+    expect(probeRepositoryAccess).not.toHaveBeenCalled();
   });
 
   it('is 404 for a connection that is not a git repository', async () => {
@@ -194,7 +201,7 @@ describe('POST /repositories/:id/test-access', () => {
   });
 
   it("runs the check for a lead of the repository's team, as that user", async () => {
-    const { app, prisma } = await buildApp('LEAD', repositoryRoutes, '/api/v1/repositories');
+    const { app, prisma } = await buildApp('ENGINEER', repositoryRoutes, '/api/v1/repositories');
     prisma.connection.findUnique.mockResolvedValue(repo);
     prisma.teamMembership.findUnique.mockResolvedValue({ role: 'LEAD', team: { isActive: true } });
     probeRepositoryAccess.mockResolvedValue(RESULT);
@@ -202,6 +209,28 @@ describe('POST /repositories/:id/test-access', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ data: RESULT });
     expect(probeRepositoryAccess).toHaveBeenCalledWith(prisma, repo, 'user-1');
+    expect(prisma.connection.update).toHaveBeenCalledWith({
+      data: { accessVerifiedAt: expect.any(Date) },
+      where: { id: ID },
+    });
+  });
+
+  it('does not record failed access checks', async () => {
+    const { app, prisma } = await buildApp('ADMIN', repositoryRoutes, '/api/v1/repositories');
+    prisma.connection.findUnique.mockResolvedValue(repo);
+    probeRepositoryAccess.mockResolvedValue({ ...RESULT, ok: false });
+    expect((await app.inject({ headers: AUTH, method: 'POST', url })).statusCode).toBe(200);
+    expect(prisma.connection.update).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('does not record checks that throw', async () => {
+    const { app, prisma } = await buildApp('ADMIN', repositoryRoutes, '/api/v1/repositories');
+    prisma.connection.findUnique.mockResolvedValue(repo);
+    probeRepositoryAccess.mockRejectedValue(new Error('probe unavailable'));
+    expect((await app.inject({ headers: AUTH, method: 'POST', url })).statusCode).toBe(500);
+    expect(prisma.connection.update).not.toHaveBeenCalled();
+    await app.close();
   });
 
   it('lets a platform admin check any team repository', async () => {
@@ -211,6 +240,66 @@ describe('POST /repositories/:id/test-access', () => {
     const res = await app.inject({ headers: AUTH, method: 'POST', url });
     expect(res.statusCode).toBe(200);
     expect(prisma.teamMembership.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /repositories/:id/test-pagerduty', () => {
+  const url = `/api/v1/repositories/${ID}/test-pagerduty`;
+  const originalKey = process.env.CONFIG_ENCRYPTION_KEY;
+  let conn: Record<string, unknown>;
+  beforeAll(() => {
+    process.env.CONFIG_ENCRYPTION_KEY = randomBytes(32).toString('base64');
+    conn = {
+      ...encryptConnectionApiToken('pd-key'),
+      config: { fromEmail: 'oncall@example.com' },
+      teamId: TEAM_ID,
+      type: 'pagerduty',
+    };
+  });
+  afterAll(() => {
+    process.env.CONFIG_ENCRYPTION_KEY = originalKey;
+  });
+
+  it('is 404 for a connection that is not a PagerDuty one', async () => {
+    const { app, prisma } = await buildApp('ADMIN', repositoryRoutes, '/api/v1/repositories');
+    prisma.connection.findUnique.mockResolvedValue({ ...conn, type: 'zendesk' });
+    const res = await app.inject({ headers: AUTH, method: 'POST', url });
+    expect(res.statusCode).toBe(404);
+    expect(probePagerDutyConnection).not.toHaveBeenCalled();
+  });
+
+  it('refuses a lead of another team', async () => {
+    const { app, prisma } = await buildApp('LEAD', repositoryRoutes, '/api/v1/repositories');
+    prisma.connection.findUnique.mockResolvedValue(conn);
+    prisma.teamMembership.findUnique.mockResolvedValue(null);
+    const res = await app.inject({ headers: AUTH, method: 'POST', url });
+    expect(res.statusCode).toBe(403);
+    expect(probePagerDutyConnection).not.toHaveBeenCalled();
+  });
+
+  it('answers a connection with no saved key as a failed check without calling PagerDuty', async () => {
+    const { app, prisma } = await buildApp('ADMIN', repositoryRoutes, '/api/v1/repositories');
+    prisma.connection.findUnique.mockResolvedValue({
+      ...conn,
+      apiKeyAuthTag: null,
+      apiKeyCiphertext: null,
+      apiKeyNonce: null,
+    });
+    const res = await app.inject({ headers: AUTH, method: 'POST', url });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.ok).toBe(false);
+    expect(probePagerDutyConnection).not.toHaveBeenCalled();
+  });
+
+  it('checks the decrypted key and the configured fromEmail, and never returns the key', async () => {
+    const { app, prisma } = await buildApp('ADMIN', repositoryRoutes, '/api/v1/repositories');
+    prisma.connection.findUnique.mockResolvedValue(conn);
+    probePagerDutyConnection.mockResolvedValue(RESULT);
+    const res = await app.inject({ headers: AUTH, method: 'POST', url });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ data: RESULT });
+    expect(probePagerDutyConnection).toHaveBeenCalledWith('pd-key', 'oncall@example.com');
+    expect(res.body).not.toContain('pd-key');
   });
 });
 

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
 
 /**
@@ -83,6 +84,7 @@ type ToolDef<I, O> = { execute: (input: I) => Promise<O> };
 type WriteTool = ToolDef<{ path: string; content: string }, { result: string }>;
 
 const workspace = {
+  baseSha: 'a'.repeat(40),
   containerId: 'workspace-test',
   copyFileOut: vi.fn(async () => ({
     cleanup: async () => {},
@@ -98,6 +100,7 @@ const workspace = {
     author: { email: 'auto-swe@localhost', name: 'auto-swe' },
     committer: { email: 'auto-swe@localhost', name: 'auto-swe' },
   },
+  readBaseFile: vi.fn(async () => null),
   readFile: vi.fn(async () => Buffer.alloc(0)),
 } satisfies Workspace;
 
@@ -120,6 +123,30 @@ beforeEach(() => {
 });
 
 describe('Mastra knowledge search binding', () => {
+  it('binds a corpus tool independently of production repository lessons', async () => {
+    const call = vi.fn(async () => ({ lessons: [] }));
+    const { agent } = await createImplementerAgent(
+      workspace,
+      undefined,
+      null,
+      [],
+      {
+        evalLessonTools: [
+          {
+            call,
+            description: 'Search eval corpus',
+            name: 'searchLessons',
+            schema: z.object({ query: z.string() }),
+          },
+        ],
+      },
+      {} as never
+    );
+    const tools = (agent as unknown as { tools: Record<string, ToolDef<unknown, unknown>> }).tools;
+    await tools.searchLessons.execute({ query: 'task' });
+    expect(call).toHaveBeenCalledWith({ query: 'task' });
+    expect(tools).not.toHaveProperty('explainLesson');
+  });
   it.each([false, true])('binds pinned KBs with governed grant=%s', async (granted) => {
     const ids = ['pin-a'];
     const { agent } = await createImplementerAgent(

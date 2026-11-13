@@ -9,7 +9,9 @@ import { MAX_DEPENDENCY_CHECKOUTS } from '@auto-swe/shared/lib/knowledgeBaseReso
 import { detectedStacks } from '@auto-swe/shared/lib/stackDetection';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { assertShellImageAllowed, DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
+import { currentWorkflowId } from '../lib/activityContext.js';
 import { auditLog, logWarn } from '../lib/activityLog.js';
+import { currentNodeTag } from '../lib/activityNodeTag.js';
 import {
   beginWorkspaceEgress,
   blockedEgressAllow,
@@ -17,6 +19,7 @@ import {
   gitHostOf,
   lfsStorageHostEntries,
   lfsStorageHosts,
+  resolveOnboardingDraftEgress,
   resolveRunEgressPolicy,
   resolveRunSetupEgressPolicy,
 } from '../lib/egressWiring.js';
@@ -40,6 +43,7 @@ import {
   loadSetupSecrets,
   type RepoSetupHost,
   type RepoSetupReport,
+  readSetupFile,
   resolveWorkspaceSetup,
   runSetupGitPhase,
   runSetupStepsPhase,
@@ -84,6 +88,10 @@ export {
 export { shellQuote };
 
 export interface Workspace {
+  /** Scrub credentials known to this workspace before publishing diagnostics. */
+  redact?: (text: string) => string;
+  readonly baseSha: string;
+  readBaseFile: (path: string) => Promise<string | null>;
   knowledgeBaseSnapshotIds?: string[];
   knowledgeBases?: MountedKnowledgeBase[];
   containerId: string;
@@ -860,6 +868,8 @@ export async function createWorkspace(
    */
   existingBranch?: boolean,
   options?: {
+    /** Resume snapshot pins may contain agent commits; configuration still comes from this base branch. */
+    trustedBaseBranch?: string;
     knowledgeBaseSnapshotIds?: string[];
     knowledgeBases?: KnowledgeBaseCheckout[];
     teamId?: string | null;
@@ -880,13 +890,22 @@ export async function createWorkspace(
      * `open` (see `runAgentTask`).
      */
     egressPolicy?: EgressPolicy;
+    /** Internal trials must test setup under the real run policy, without setup-phase widening. */
+    inheritSetupEgress?: boolean;
+    /** Set only by the worker after verifying the seeded onboarding run and agent. */
+    onboardingDraft?: boolean;
     /**
      * Run the repository's setup (`.auto-swe/setup.yml`, or `field` — the repository's
      * `Connection.setup` — which overrides it). Absent, the workspace gets none: only the trusted
      * delivery workspace leaves it out. With `defer`, setup waits for `workspace.runSetup()`, for
      * a caller that moves the checkout to another branch first.
      */
-    repoSetup?: { field: unknown; defer?: boolean; connectionId?: string | null };
+    repoSetup?: {
+      field: unknown;
+      defer?: boolean;
+      connectionId?: string | null;
+      recordBlockers?: boolean;
+    };
     /**
      * Install what this connection declares (its admin list and, when enabled, the base ref's
      * `.auto-swe/tools.yml`), if `workspace.toolInstall.enabled` is on.
@@ -900,11 +919,18 @@ export async function createWorkspace(
   // override).
   const infra = resolveWorkspaceInfra();
   const effectiveImage = image ?? infra.image;
-  const egressPolicy =
+  const realEgressPolicy =
     options?.egressPolicy ?? (await resolveRunEgressPolicy(options?.teamId ?? null));
+  const onboardingEgress =
+    options?.onboardingDraft && !options.inheritSetupEgress
+      ? await resolveOnboardingDraftEgress(options.teamId ?? null, realEgressPolicy)
+      : null;
+  const egressPolicy: EgressPolicy = onboardingEgress ? 'restricted' : realEgressPolicy;
   let setupEgressPolicy = effectiveSetupEgressPolicy(
     egressPolicy,
-    options?.trusted ? 'inherit' : await resolveRunSetupEgressPolicy(options?.teamId ?? null)
+    options?.trusted || options?.inheritSetupEgress || onboardingEgress
+      ? 'inherit'
+      : await resolveRunSetupEgressPolicy(options?.teamId ?? null)
   );
   let setupPhase = setupEgressPolicy !== egressPolicy;
   let transitioning = false;
@@ -1095,6 +1121,7 @@ export async function createWorkspace(
     }
   }
   let baseRef: () => Promise<string> = async () => 'HEAD';
+  let trustedBaseSha = '';
   let baseRefFetch: Promise<string> | undefined;
   // Secrets minted during setup (submodule credentials), scrubbed like the clone's own.
   const setupSecrets: string[] = [];
@@ -1191,7 +1218,7 @@ export async function createWorkspace(
   // Submodules, LFS, cache and steps: all after the lock, on the tree the workspace works on.
   const runResolvedSetup = async (): Promise<RepoSetupReport | null> => {
     if (!resolvedSetup) {
-      if (options?.repoSetup?.connectionId) {
+      if (options?.repoSetup?.connectionId && options.repoSetup.recordBlockers !== false) {
         await resolveSetupBlockers(options.repoSetup.connectionId);
       }
       return null;
@@ -1214,7 +1241,7 @@ export async function createWorkspace(
       submodules: git.submodules,
     };
     auditLog(`workspace.setup ${containerName} ${JSON.stringify(report)}`);
-    if (options?.repoSetup?.connectionId) {
+    if (options?.repoSetup?.connectionId && options.repoSetup.recordBlockers !== false) {
       await resolveSetupBlockers(options.repoSetup.connectionId);
     }
     return report;
@@ -1332,7 +1359,8 @@ export async function createWorkspace(
     egress = await beginWorkspaceEgress(
       options?.teamId ?? null,
       gitHost ? [gitHost] : [],
-      setupEgressPolicy === 'restricted' ? setupEgressPolicy : egressPolicy
+      setupEgressPolicy === 'restricted' ? setupEgressPolicy : egressPolicy,
+      ...(onboardingEgress ? ([onboardingEgress] as const) : ([] as const))
     );
     if (setupEgressPolicy === 'restricted' && setupPhase && !egress) {
       setupEgressPolicy = egressPolicy;
@@ -1451,7 +1479,14 @@ export async function createWorkspace(
     );
     // The commit the workspace was cut from: where the registry allowlist and the setup
     // definition are read from. HEAD is that commit until after provisioning.
-    const cutFrom = checkoutSha ? checkoutSha : existingBranch ? null : 'HEAD';
+    const cutFrom = options?.trustedBaseBranch
+      ? null
+      : checkoutSha
+        ? checkoutSha
+        : existingBranch
+          ? null
+          : 'HEAD';
+    const configBaseBranch = options?.trustedBaseBranch ?? defaultBranch;
     baseRef = async () => {
       if (cutFrom) {
         return cutFrom;
@@ -1459,7 +1494,7 @@ export async function createWorkspace(
       baseRefFetch ??= (async () => {
         const fetchScript = [
           killStrayProcessesScript(handle.keeperPid),
-          authedGitScript('/workspace/target-repo', fetchBranchesSubcommand([defaultBranch]), {
+          authedGitScript('/workspace/target-repo', fetchBranchesSubcommand([configBaseBranch]), {
             authed: Boolean(gitAuthHeader),
             cleanUrl,
           }),
@@ -1471,10 +1506,13 @@ export async function createWorkspace(
           heartbeatLabel: 'workspace: fetching the base branch',
           onTimeout: tag.onTimeout,
         });
-        return `origin/${defaultBranch}`;
+        return `origin/${configBaseBranch}`;
       })();
       return baseRefFetch;
     };
+    trustedBaseSha = (
+      await rootExec(`cd /workspace/target-repo && git rev-parse ${shellQuote(await baseRef())}`)
+    ).trim();
 
     // On-demand tools: installed as the exec user into `/workspace/.tools/bin`, then put LAST on
     // the PATH of every later exec (the image's own binaries always win). What a connection declares is read from the BASE ref before
@@ -1688,7 +1726,7 @@ export async function createWorkspace(
     if (options?.repoSetup) {
       resolvedSetup = await resolveWorkspaceSetup(setupHost, {
         ...setupInputs(),
-        baseRef: await baseRef(),
+        baseRef: trustedBaseSha,
       });
     }
 
@@ -1732,11 +1770,16 @@ export async function createWorkspace(
     }
     // Setup runs after the lock, as the workspace user: package installs reach the registry
     // proxy, submodules the git host, and nothing else a restricting policy forbids.
+    if (onboardingEgress && egress) {
+      auditLog(
+        `workspace.onboardingDraftEgress ${JSON.stringify({ containerName, draftHostCount: onboardingEgress.additionalHosts.length, nodeId: currentNodeTag()?.specNodeId ?? null, workflowId: currentWorkflowId() })}`
+      );
+    }
     if (options?.repoSetup && !options.repoSetup.defer) {
       setupReport = Promise.resolve(await runResolvedSetup());
     }
   } catch (err) {
-    if (options?.repoSetup?.connectionId) {
+    if (options?.repoSetup?.connectionId && options.repoSetup.recordBlockers !== false) {
       await recordSetupFailure(options.repoSetup.connectionId, err);
     }
     await registry?.registration.release().catch(() => {});
@@ -1760,6 +1803,7 @@ export async function createWorkspace(
   }
 
   return {
+    baseSha: trustedBaseSha,
     containerId: containerName,
     copyFileOut: copyWorkspaceFileOut,
     destroy: async () => {
@@ -1768,6 +1812,7 @@ export async function createWorkspace(
       await backend.remove(containerName);
     },
     egressPolicy,
+    readBaseFile: (path) => readSetupFile(setupHost, trustedBaseSha, path),
     ...(setupPhase ? { finishSetup } : {}),
     exec: (command: string, options) => {
       const tag = newExecTag();
@@ -1849,6 +1894,7 @@ export async function createWorkspace(
         []),
     ],
     knowledgeBases: mountedKnowledgeBases,
+    redact: (text) => redactSecrets(redactForRecord(text), setupSecrets),
     setupEgressPolicy,
     ...(installLate ? { installTools: installLate } : {}),
     readFile: readWorkspaceFile,
@@ -1862,7 +1908,7 @@ export async function createWorkspace(
               try {
                 return await runResolvedSetup();
               } catch (err) {
-                if (options.repoSetup?.connectionId) {
+                if (options.repoSetup?.connectionId && options.repoSetup.recordBlockers !== false) {
                   await recordSetupFailure(options.repoSetup.connectionId, err);
                 }
                 if (setupPhase) {

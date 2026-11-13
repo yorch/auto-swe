@@ -85,6 +85,7 @@ function NewEndpointForm({
   const [subjectPointer, setSubjectPointer] = useState(base?.subjectPointer ?? '');
   const [scopePointer, setScopePointer] = useState(base?.scopePointer ?? '');
   const [format, setFormat] = useState(base?.format ?? 'json');
+  const [cancelOn, setCancelOn] = useState((base?.cancelOnTypes ?? []).join(', '));
   const applyPreset = (key: string) => {
     const p = EVENT_ENDPOINT_PRESETS.find((x) => x.key === key)?.config;
     setPreset(key);
@@ -102,6 +103,7 @@ function NewEndpointForm({
     setIdPointer(p.idPointer ?? '');
     setSubjectPointer(p.subjectPointer ?? '');
     setScopePointer(p.scopePointer ?? '');
+    setCancelOn((p.cancelOnTypes ?? []).join(', '));
   };
   const orNull = (v: string) => (v.trim() === '' ? null : v.trim());
   const needsHeader = scheme !== 'autoswe-v1';
@@ -112,9 +114,14 @@ function NewEndpointForm({
     name.trim() !== '' &&
     (!needsHeader || header.trim() !== '') &&
     (typeFrom === 'pointer' ? !missingPointer : fixedType.trim() !== '');
+  const cancelOnTypes = cancelOn
+    .split(',')
+    .map((t) => t.trim())
+    .filter((t) => t !== '');
   const save = () =>
     create.mutate(
       {
+        cancelOnTypes,
         format,
         idPointer: orNull(idPointer),
         name: name.trim(),
@@ -229,6 +236,12 @@ function NewEndpointForm({
           onChange={(e) => setScopePointer(e.target.value)}
           value={scopePointer}
         />
+        <Input
+          hint="Comma-separated event types that cancel the runs this endpoint started for the same subject"
+          label="Cancel on"
+          onChange={(e) => setCancelOn(e.target.value)}
+          value={cancelOn}
+        />
       </div>
       {create.isError && <Alert>{errMsg(create.error, 'Could not create the endpoint.')}</Alert>}
       <div className="flex justify-end gap-2">
@@ -286,6 +299,11 @@ function EndpointRow({
             · id {endpoint.idPointer ?? 'body digest'} · subject{' '}
             {endpoint.subjectPointer ?? 'the id'} · scope {endpoint.scopePointer ?? 'the type'}
           </div>
+          {endpoint.cancelOnTypes && endpoint.cancelOnTypes.length > 0 && (
+            <div className="mt-0.5 text-paper-500 text-xs">
+              cancels runs on {endpoint.cancelOnTypes.join(', ')}
+            </div>
+          )}
         </div>
         <ToggleSwitch
           ariaLabel={`${endpoint.enabled ? 'Disable' : 'Enable'} ${endpoint.name}`}

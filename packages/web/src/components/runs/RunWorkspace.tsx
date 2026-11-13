@@ -156,6 +156,9 @@ export function RunWorkspace({
       return;
     }
     initialized.current = true;
+    if (!isTerminalWorkflowRunStatus(run.status)) {
+      return;
+    }
     const initial =
       findFailedStep(run.status, run.steps) ??
       run.steps.find((s) => s.status === 'RUNNING' || s.status === 'PENDING') ??
@@ -248,9 +251,13 @@ export function RunWorkspace({
         </div>
         {steps.length === 0 && (
           <EmptyState
-            hint="Steps appear as execution begins."
+            hint={
+              time.live
+                ? 'The worker is preparing this run. Its current step appears when execution begins.'
+                : 'No step transitions were recorded for this run.'
+            }
             icon="workflows"
-            title="No steps recorded yet"
+            title={time.live ? 'Preparing run' : 'No steps recorded yet'}
           />
         )}
         {steps.map((step) => (
@@ -285,7 +292,8 @@ export function RunWorkspace({
             .map(([id, node]) => (
               <button
                 className={cn(
-                  'flex w-full flex-col gap-1 border-b border-ink-600/40 px-4 py-3 text-left hover:bg-ink-700',
+                  'flex w-full flex-col border-b border-ink-600/40 px-4 text-left hover:bg-ink-700',
+                  steps.length ? 'gap-1 py-3' : 'py-2',
                   FOCUS_RING
                 )}
                 key={id}
@@ -293,7 +301,9 @@ export function RunWorkspace({
                 type="button"
               >
                 <span className="text-sm text-paper-400">{nodeDisplayName(node, id)}</span>
-                <span className="text-xs text-paper-500">No step recording</span>
+                {steps.length > 0 && (
+                  <span className="text-xs text-paper-500">No step recording</span>
+                )}
               </button>
             ))}
       </aside>

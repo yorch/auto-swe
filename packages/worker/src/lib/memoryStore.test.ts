@@ -56,6 +56,24 @@ beforeEach(() => {
 });
 
 describe('reembedMemoryItem', () => {
+  it('production vector recall only queries memory_items, never the eval corpus', async () => {
+    queryRawUnsafeMock.mockResolvedValue([]);
+    generateEmbeddingWithSpecMock.mockResolvedValue({
+      embedding: new Array(1536).fill(0.1),
+      spec: 'test',
+    });
+    await searchMemoryItemsByVector({
+      limit: 5,
+      queryText: 'task',
+      scopeColumn: 'repo_id',
+      scopeId: 'repo',
+      selectColumns: ['id'],
+      similarityThreshold: 0.7,
+    });
+    const sql = queryRawUnsafeMock.mock.calls.map((call) => call[0]).join('\n');
+    expect(sql).toContain('memory_items');
+    expect(sql).not.toContain('eval_lessons');
+  });
   it('reads the current summary, embeds it, and issues the UPDATE', async () => {
     queryRawUnsafeMock.mockResolvedValue([{ lessonSummary: 'updated summary text' }]);
     const embedding = new Array(1536).fill(0.25);

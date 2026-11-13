@@ -8,6 +8,7 @@ import {
 } from '../connectors/confluence.js';
 import { createIssue, fetchIssue } from '../connectors/issueTracker.js';
 import { appendNotionBlocks, createNotionPage, readNotionPage } from '../connectors/notion.js';
+import { fetchPagerDutyIncident, postPagerDutyNote } from '../connectors/pagerduty.js';
 import { fetchZendeskTicket, postZendeskComment } from '../connectors/zendesk.js';
 import { readSource, runTool, writeOutcome } from './genericActions.js';
 
@@ -54,6 +55,11 @@ vi.mock('../connectors/notion.js', () => ({
   appendNotionBlocks: vi.fn(),
   createNotionPage: vi.fn(),
   readNotionPage: vi.fn(),
+}));
+
+vi.mock('../connectors/pagerduty.js', () => ({
+  fetchPagerDutyIncident: vi.fn(),
+  postPagerDutyNote: vi.fn(),
 }));
 
 vi.mock('../connectors/zendesk.js', () => ({
@@ -401,6 +407,63 @@ describe('runTool governance', () => {
       expect.objectContaining({
         data: expect.objectContaining({ state: 'DONE' }),
       })
+    );
+  });
+});
+
+describe('pagerduty', () => {
+  const PD = '5af1a0ac-d2a0-4896-ad7e-ca8845e819c5';
+  const pdConnection = () =>
+    makeConnection('pagerduty', { config: { fromEmail: 'oncall@example.com' }, token: true });
+
+  it('reads an incident from readSource with an incidentId', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(pdConnection());
+    (fetchPagerDutyIncident as ReturnType<typeof vi.fn>).mockResolvedValue({
+      incident: { id: 'Q1' },
+    });
+    const result = await readSource({ connectionId: PD, query: { incidentId: 'Q1' } });
+    expect(result).toMatchObject({ connectionType: 'pagerduty', data: { incident: { id: 'Q1' } } });
+    expect(fetchPagerDutyIncident).toHaveBeenCalledWith(
+      expect.objectContaining({ config: { fromEmail: 'oncall@example.com' } }),
+      'Q1'
+    );
+  });
+
+  it('posts a note with the draft pull request linked, or why no fix opened', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(pdConnection());
+    (postPagerDutyNote as ReturnType<typeof vi.fn>).mockResolvedValue({
+      incidentId: 'Q1',
+      noteId: 'N1',
+    });
+    const withPr = await writeOutcome({
+      connectionId: PD,
+      data: { content: 'Diagnosis', incidentId: 'Q1', prUrl: 'https://github.com/a/b/pull/9' },
+    });
+    expect(withPr).toMatchObject({ connectionType: 'pagerduty', ok: true, reference: 'N1' });
+    expect(postPagerDutyNote).toHaveBeenLastCalledWith(
+      expect.anything(),
+      'Q1',
+      'Diagnosis\n\nDraft fix: https://github.com/a/b/pull/9'
+    );
+    await writeOutcome({
+      connectionId: PD,
+      data: {
+        content: 'Diagnosis',
+        fixOutcome: 'the fix attempt changed no files',
+        incidentId: 'Q1',
+      },
+    });
+    expect(postPagerDutyNote).toHaveBeenLastCalledWith(
+      expect.anything(),
+      'Q1',
+      'Diagnosis\n\nNo fix opened: the fix attempt changed no files'
+    );
+  });
+
+  it('refuses a note without an incident id', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(pdConnection());
+    await expect(writeOutcome({ connectionId: PD, data: { content: 'x' } })).rejects.toThrow(
+      'incidentId and content'
     );
   });
 });

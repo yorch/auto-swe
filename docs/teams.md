@@ -16,10 +16,9 @@ contains, who sees what, and how its counts agree with the lists behind them.
 | `needsYou.items` | Up to 25 things waiting on the caller, most urgent first |
 | `needsYou.total` | How many there were before the 25-item cap |
 
-When the user has opened a team space before, My desk shows a **Continue in <Team>** link to it.
-The link comes from the stored `lastTeamSlug` preference ([§3](#navigation)) and is resolved
-through the teams the caller is a **member** of: a slug that is stale, unknown or names a team they
-are not in shows nothing, with no error, and so does a team list that has not loaded.
+My desk's header offers **Take the tour**, **Browse workflows** and **Start work**. Its In flight
+and Recent results sections span the page width. Member team spaces are reachable through the
+sidebar and team switcher ([§3](#navigation)); Home remains a cross-team desk.
 
 A platform ADMIN's desk is member-scoped like anyone's: it lists only the teams they belong to and
 only the work of those teams. Their visibility and control filters are unrestricted, so every desk
@@ -225,18 +224,31 @@ answers for them (`team.myRole` is `null`) and the global pages' `?team=` filter
 for them ([§4](#4-the-team-filter-on-global-pages)). That does not put the team in their navigation:
 the switcher, the sidebar and the badges list only the teams they belong to.
 
+### Team setup checklist
+
+The Overview shows **Team setup** to team LEAD/ADMIN and platform ADMIN while any setup item
+is incomplete: another member besides the first admin, at least one active owned or shared
+repository, and a team budget. Each item links to Members, Connections, or Settings → Budget.
+A zero-dollar budget counts as set and refuses launches. A team or organization admin sets the
+budget; a team lead who cannot edit it asks one of those admins. The checklist reads the existing
+team detail and disappears when every item is complete. It does not check model readiness:
+models resolve per agent through the configuration cascade rather than a single team setting.
+
 ### Navigation
 
-- **Team switcher.** The top bar holds a switcher that lists **My desk** first and then the teams
+- **Team switcher.** The top bar holds a switcher that lists **All my teams** first and then the teams
   the caller is a member of, sorted by name, each with the caller's role in it and a badge with what
   is waiting on them there (the team's `needsYou` from `GET /api/v1/me/summary`). Choosing a team
   opens its space on the tab the caller is already on. The switcher is for moving around; it narrows
-  nothing.
+  nothing. It appears on Home, work lists, Start work and team spaces, plus the team-aware Workflow
+  library, Knowledge, Automations and Reports pages. Other configuration, account, Docs and Admin
+  pages, and focused editor/run/diff routes, omit both the top-bar switcher and its mobile strip.
+  The Home page title remains **My desk**.
 - **Sidebar Teams group.** The sidebar lists the member teams as links to their spaces, each with the
   same badge: the teams the user pinned first, in pin order, else the member teams up to a limit.
 - **Preferences.** `PATCH /api/v1/me/preferences` stores two per-user hints beside the run-detail
-  layout. `lastTeamSlug` is the last member team space the user opened; My desk's **Continue in <Team>**
-  link reads it. `pinnedTeamSlugs` is an ordered list of up to 20 slugs that the sidebar shows, set
+  layout. `lastTeamSlug` records the last member team space the user opened; it does not redirect
+  Home. `pinnedTeamSlugs` is an ordered list of up to 20 slugs that the sidebar shows, set
   by the pin toggle beside each team in the team switcher menu (a new pin goes last; the toggle is
   disabled at 20). The sidebar shows every pinned team and caps only its default list. Neither is checked against existing teams or
   the caller's membership: the dashboard resolves a slug through the member team list, so a stale or
@@ -342,8 +354,75 @@ only by the mid-run guard.
 
 ---
 
+## Creating teams and managing membership
+
+On `/admin/teams`, **New team** is available to platform ADMINs and anyone who administers an
+organization. Organization admins choose among their administered organizations (the picker is
+omitted for a single organization). The optional **First team admin** lists that organization's
+members and defaults to the creator. The organization detail page at `/admin/organizations/:orgId`
+offers the same action for its admins and platform ADMINs. Name/slug conflicts and first-admin
+organization-membership errors stay in the dialog with guidance.
+
+The team space's **Members** tab offers **Add member** and **Invite by email** to platform ADMINs
+and team leads/admins who also hold platform LEAD or above. Add-member lists organization members;
+platform ADMINs can choose any active user. Both forms restrict team roles to the caller's own
+role or below. An invitation reports the response's active or waiting-for-approval state. The
+organization's invite form also offers an optional team from that organization and a team role.
+
+An organization's `ORG_ADMIN` creates a team with
+`POST /api/v1/platform/organizations/:orgId/teams` (also available under
+`/api/v1/admin/organizations/:orgId/teams`). Platform `ADMIN` can create in any organization.
+`POST /api/v1/teams` remains platform-ADMIN-only and accepts an optional `orgId`, falling back
+to the default organization. Team names and slugs are globally unique.
+
+Both routes accept `name`, `slug`, optional `description` and optional `adminUserId`. The creator
+becomes the first team `ADMIN` unless `adminUserId` selects another existing organization member.
+An out-of-organization selection returns `400 ORG_MEMBERSHIP_REQUIRED`. A platform ADMIN creating
+a team without selecting someone else receives an `ORG_MEMBER` membership if needed. Team creation,
+the first team membership and any automatic organization membership commit together with audits.
+
+Adding a member through `POST /api/v1/teams/:id/members` requires that user to belong to the team's
+organization (`400 ORG_MEMBERSHIP_REQUIRED` otherwise). A platform ADMIN can add a non-member;
+the gateway creates an audited `ORG_MEMBER` membership in the same transaction.
+
+Sign-up and platform user invitations enroll the user in the default team's organization as
+`ORG_MEMBER` and in the default team as `ENGINEER` in one audited transaction. Existing organization
+and team roles are preserved; repeated enrollment creates neither duplicate memberships nor audits.
+Enrollment failures are logged without failing account creation, and neither membership is committed
+if that enrollment transaction fails.
+
+### Inviting someone directly into a team
+
+`POST /api/v1/teams/:id/members/invite` accepts `email` and an optional team `role`
+(`ADMIN`, `LEAD`, or `ENGINEER`, default `ENGINEER`). A team `LEAD` or `ADMIN` can invite, but
+cannot grant a role above their own. Platform ADMIN can invite into any team. The account's
+platform role is `ENGINEER`; the supplied role applies only to the team.
+As with member-add, other inviters also need platform `LEAD` or above.
+
+Organization admins can also supply optional `teamId` and `teamRole` on
+`POST /api/v1/platform/organizations/:orgId/members/invite` (including its admin-prefix alias).
+The team must belong to that organization (`400 TEAM_ORG_MISMATCH` otherwise); `teamRole`
+defaults to `ENGINEER` and is separate from the invite's `orgRole`.
+
+Both invitation routes create the account, organization membership and any team membership in one
+audited transaction, then send a magic link. Team invitations grant `ORG_MEMBER` in the team's
+organization. Existing email addresses return `409 USER_EXISTS`; use member-add for existing users.
+Platform ADMIN invitations approve the account immediately (`admin`). Other team invitations approve
+only in an active organization with `trustedInvites` enabled (`team_lead`); otherwise the account waits
+in the approval queue. See [invited users](./oauth-setup.md#invited-users) for the trust policy.
+
 ## Limitations
 
+- Organization admins manage linked GitHub installations from **Admin → Organizations → the
+  organization → GitHub**. Connect authorizes a new installation of the instance App, and Retire
+  prevents new runs through it. Existing runs continue. Only platform admins can reactivate,
+  unlink or relink installations. Self-service does not support per-host Apps or claiming an
+  installation already registered; see [GitHub App setup](./github-app-setup.md#connecting-an-organization).
+
+- Team invitations require a new email address; existing users are added through the member-add
+  route. A failed invitation email does not roll back the account or memberships.
+
+- Removing an organization membership does not remove that user's team memberships.
 - **Engineers see failures only for runs they launched.** A lead does not see a failure on a
   teammate's run in the desk, and a run the caller controls but did not launch is excluded.
 - **Expired approvals are not in Needs you.** An expired step cannot be answered, so the actionable
@@ -361,8 +440,8 @@ only by the mid-run guard.
   only under it is in neither the list nor the counts, nor in `mine=true`.
 - **Platform ADMIN approvals are wider elsewhere.** The approvals page and the sidebar badge are
   platform-wide for an ADMIN; the desk is member-scoped, so the two totals differ for them.
-- **`lastTeamSlug` does not choose the landing page.** My desk offers a link to the last team space
-  opened, but the dashboard always lands on My desk, never in that team's space.
+- **`lastTeamSlug` does not choose the landing page.** The dashboard lands on My desk, not the last
+  team space opened.
 - **Overview of a deactivated team.** The overview endpoint answers for a deactivated team to a
   member; the dashboard's team lists leave deactivated teams out.
 - **The desk refreshes by polling.** It re-reads every 20 seconds and after the caller answers an

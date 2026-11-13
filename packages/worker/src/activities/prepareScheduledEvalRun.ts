@@ -8,6 +8,7 @@
  * benchmark hasn't been seeded yet) so the workflow can no-op instead of failing.
  */
 
+import { evalCorpusHash } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import type { ScheduledEvalInput } from '@auto-swe/shared/types/workflow';
 import type { HarnessInput } from './evalHarness.js';
@@ -23,10 +24,17 @@ export async function prepareScheduledEvalRun(
     return null;
   }
 
+  const corpus = await prisma.evalLesson.findMany({
+    select: { content: true, failureType: true },
+    where: { datasetId: dataset.id },
+  });
   const run = await prisma.evalRun.create({
     data: {
+      baselineMemoryMode: 'OFF',
       baselineRef: input.baselineRef,
+      candidateMemoryMode: 'OFF',
       candidateRef: input.candidateRef,
+      corpusHash: evalCorpusHash(corpus),
       datasetId: dataset.id,
       status: 'RUNNING',
     },

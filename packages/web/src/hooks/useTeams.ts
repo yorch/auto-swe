@@ -23,11 +23,17 @@ export function useTeams(options: { enabled?: boolean; memberOnly?: boolean } = 
   });
 }
 
-export function useTeam(id: string) {
+export function useTeam(id: string, options: { refetchOnMount?: boolean | 'always' } = {}) {
   return useQuery({
     enabled: !!id,
-    queryFn: () => api.get<{ data: TeamDetail }>(`/api/v1/teams/${id}`).then((r) => r.data),
+    queryFn: () =>
+      api
+        .get<{ data: TeamDetail & { monthlyBudgetUsdCents?: number | null } }>(
+          `/api/v1/teams/${id}`
+        )
+        .then((r) => r.data),
     queryKey: ['team', id],
+    refetchOnMount: options.refetchOnMount,
   });
 }
 
@@ -111,8 +117,20 @@ export type TeamRecord = Omit<TeamSummary, 'myRole' | 'orgName' | '_count'>;
 export function useCreateTeam() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name: string; slug: string; description?: string }) =>
-      api.post<{ data: TeamRecord }>('/api/v1/teams', body),
+    mutationFn: ({
+      orgId,
+      ...body
+    }: {
+      name: string;
+      slug: string;
+      description?: string;
+      orgId?: string;
+      adminUserId?: string;
+    }) =>
+      api.post<{ data: TeamRecord }>(
+        orgId ? `/api/v1/platform/organizations/${orgId}/teams` : '/api/v1/teams',
+        body
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['teams'] }),
   });
 }
@@ -141,6 +159,27 @@ export function useAddTeamMember(teamId: string) {
       // ['teams'] prefix-matches ['teams', 'member'], which the led/admin sets read `myRole` from.
       qc.invalidateQueries({ queryKey: ['teams'] });
       qc.invalidateQueries({ queryKey: ['team', teamId] });
+    },
+  });
+}
+
+export function useInviteTeamMember(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { email: string; role: 'ADMIN' | 'LEAD' | 'ENGINEER' }) =>
+      api.post<{ data: { id: string; email: string; isActive: boolean } }>(
+        `/api/v1/teams/${teamId}/members/invite`,
+        body
+      ),
+    onSuccess: () => {
+      for (const queryKey of [
+        ['teams'],
+        ['team', teamId],
+        ['team-overview', teamId],
+        ['org-members'],
+      ]) {
+        void qc.invalidateQueries({ queryKey });
+      }
     },
   });
 }

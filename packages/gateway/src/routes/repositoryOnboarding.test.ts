@@ -51,7 +51,9 @@ async function buildApp() {
   const authState: AuthState = { role: 'ENGINEER', sub: 'user-1' };
   const prisma = {
     configAuditLog: { create: vi.fn() },
-    connection: { findFirst: vi.fn() },
+    connection: { findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    organizationMembership: { findUnique: vi.fn() },
+    team: { findUnique: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
     toolCatalogEntry: { findMany: vi.fn() },
   };
@@ -133,6 +135,17 @@ describe('repository onboarding routes', () => {
       expect(ctx.temporal.startOnboardingPrWorkflow).not.toHaveBeenCalled();
     });
 
+    it.each(['own-org', 'other-org'])(
+      'checks an ENGINEER organization admin against %s',
+      async (orgId) => {
+        ctx.prisma.team.findUnique.mockResolvedValue({ isActive: true, orgId });
+        ctx.prisma.organizationMembership.findUnique.mockImplementation(async ({ where }) =>
+          where.userId_orgId.orgId === 'own-org' ? { role: 'ORG_ADMIN' } : null
+        );
+        expect((await post()).statusCode).toBe(orgId === 'own-org' ? 202 : 403);
+      }
+    );
+
     it('is 403 for a LEAD whose team only has the repository shared with it', async () => {
       ctx.authState.role = 'LEAD';
       leadOfOwningTeam(false);
@@ -151,7 +164,7 @@ describe('repository onboarding routes', () => {
     });
 
     it('starts the workflow for a LEAD of the owning team and answers 202', async () => {
-      ctx.authState.role = 'LEAD';
+      ctx.authState.role = 'ENGINEER';
       leadOfOwningTeam(true);
       const res = await post();
       expect(res.statusCode).toBe(202);
@@ -329,6 +342,43 @@ describe('repository onboarding routes', () => {
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ data: status });
       expect(ctx.temporal.getOnboardingPrStatus).toHaveBeenCalledWith(OWN_RUN);
+      expect(ctx.prisma.connection.update).toHaveBeenCalledWith({
+        data: { onboardingPrNumber: 7, onboardingPrUrl: 'https://github.com/o/r/pull/7' },
+        where: { id: REPO },
+      });
+    });
+
+    it.each(['running', 'failed', 'nothing_to_do'] as const)(
+      'does not record a PR for %s',
+      async (outcome) => {
+        ctx.authState.role = 'ADMIN';
+        ctx.temporal.getOnboardingPrStatus.mockResolvedValue(
+          outcome === 'nothing_to_do'
+            ? { result: { changed: [], skipped: [], status: outcome }, status: 'completed' }
+            : { status: outcome }
+        );
+        expect((await get()).statusCode).toBe(200);
+        expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+      }
+    );
+
+    it('records an updated PR too', async () => {
+      ctx.authState.role = 'ADMIN';
+      ctx.temporal.getOnboardingPrStatus.mockResolvedValue({
+        result: {
+          changed: [],
+          pullRequestNumber: 9,
+          pullRequestUrl: 'https://github.com/o/r/pull/9',
+          skipped: [],
+          status: 'updated',
+        },
+        status: 'completed',
+      });
+      expect((await get()).statusCode).toBe(200);
+      expect(ctx.prisma.connection.update).toHaveBeenCalledWith({
+        data: { onboardingPrNumber: 9, onboardingPrUrl: 'https://github.com/o/r/pull/9' },
+        where: { id: REPO },
+      });
     });
 
     it('passes a running and a failed state through', async () => {
@@ -340,6 +390,13 @@ describe('repository onboarding routes', () => {
         status: 'failed',
       });
       expect((await get()).json().data.status).toBe('failed');
+    });
+
+    it('returns status to an ENGINEER who administers the owning organization', async () => {
+      ctx.prisma.team.findUnique.mockResolvedValue({ isActive: true, orgId: 'own-org' });
+      ctx.prisma.organizationMembership.findUnique.mockResolvedValue({ role: 'ORG_ADMIN' });
+      ctx.temporal.getOnboardingPrStatus.mockResolvedValue({ status: 'running' });
+      expect((await get()).statusCode).toBe(200);
     });
 
     it('is 404 when Temporal does not know the run', async () => {
@@ -371,6 +428,41 @@ describe('repository onboarding routes', () => {
       ctx.authState.role = 'ADMIN';
       ctx.temporal.getOnboardingPrStatus.mockRejectedValue(new TemporalUnavailableError());
       expect((await get()).statusCode).toBe(503);
+    });
+  });
+
+  describe('POST /repositories/:id/onboarding-checklist/dismiss', () => {
+    const dismiss = () =>
+      ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: `/api/v1/repositories/${REPO}/onboarding-checklist/dismiss`,
+      });
+    it.each([
+      ['LEAD', 'ORG_MEMBER', 200],
+      ['ENGINEER', 'ORG_ADMIN', 200],
+      ['ENGINEER', 'ORG_MEMBER', 403],
+    ] as const)('checks owning team/org roles: %s %s', async (teamRole, orgRole, status) => {
+      ctx.prisma.teamMembership.findUnique.mockResolvedValue({
+        role: teamRole,
+        team: { isActive: true },
+      });
+      ctx.prisma.team.findUnique.mockResolvedValue({ isActive: true, orgId: 'org-1' });
+      ctx.prisma.organizationMembership.findUnique.mockResolvedValue({ role: orgRole });
+      expect((await dismiss()).statusCode).toBe(status);
+      if (status === 200) {
+        expect(ctx.prisma.connection.updateMany).toHaveBeenCalledWith({
+          data: { onboardingChecklistDismissedAt: expect.any(Date) },
+          where: { id: REPO, onboardingChecklistDismissedAt: null, teamId: TEAM },
+        });
+      } else {
+        expect(ctx.prisma.connection.updateMany).not.toHaveBeenCalled();
+      }
+    });
+    it('does not write for an unreachable repository', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(null);
+      expect((await dismiss()).statusCode).toBe(404);
+      expect(ctx.prisma.connection.updateMany).not.toHaveBeenCalled();
     });
   });
 });

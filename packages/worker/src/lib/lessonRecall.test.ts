@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { retrieveMock, findFirstMock, findManyMock, scanMock } = vi.hoisted(() => ({
+const { retrieveMock, findFirstMock, findManyMock, scanMock, armMock } = vi.hoisted(() => ({
+  armMock: vi.fn(),
   findFirstMock: vi.fn(),
   findManyMock: vi.fn(),
   retrieveMock: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   })),
 }));
 vi.mock('./lessonRetrieval.js', () => ({ retrieveSimilarLessons: retrieveMock }));
+vi.mock('./lessonRecallArm.js', () => ({ currentLessonRecallArm: armMock }));
 vi.mock('@auto-swe/shared/lib/skillScanner', () => ({ scanSkillContent: scanMock }));
 
 import { explainLesson, lessonLine, recallLessonsBlock, searchLessons } from './lessonRecall.js';
@@ -31,6 +33,7 @@ const LESSON = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  armMock.mockResolvedValue('ON');
   scanMock.mockImplementation(async (text: string) => {
     const warnings = text.includes('INJECT') ? ['injection:x'] : [];
     return { incomplete: false, safe: warnings.length === 0, warnings };
@@ -38,6 +41,70 @@ beforeEach(() => {
 });
 
 describe('recallLessonsBlock', () => {
+  it.each(['implementer', 'ciFixer', 'reviewFixer', 'gateFixer', 'reviewer'])(
+    'enforces every arm for %s with matched and no-match traces',
+    async (role) => {
+      const tracer = { addActivityEvent: vi.fn() };
+      const input = { query: 'test', recalledFor: role, repoId: 'repo-1', tracer: tracer as never };
+      for (const arm of ['ON', 'SHADOW', 'OFF']) {
+        armMock.mockResolvedValue(arm);
+        for (const lessons of [[LESSON], []]) {
+          retrieveMock.mockClear().mockResolvedValue(lessons);
+          tracer.addActivityEvent.mockClear();
+          const block = await recallLessonsBlock(input);
+          expect(Boolean(block)).toBe(arm === 'ON' && lessons.length > 0);
+          if (arm === 'OFF') {
+            expect(retrieveMock).not.toHaveBeenCalled();
+            expect(tracer.addActivityEvent).toHaveBeenCalledWith(
+              expect.objectContaining({
+                name: 'lessons.recall_skipped',
+                outputJson: expect.objectContaining({ arm, reason: 'arm' }),
+              })
+            );
+          } else {
+            expect(retrieveMock).toHaveBeenCalledWith('test', 'repo-1', 5, 0.7);
+            expect(tracer.addActivityEvent).toHaveBeenCalledWith({
+              name: arm === 'SHADOW' ? 'lessons.shadow_retrieved' : 'lessons.retrieved',
+              outputJson: expect.objectContaining({
+                arm,
+                lessons: lessons.map((lesson) => ({
+                  failureType: lesson.failureType,
+                  lessonId: lesson.lessonId,
+                  similarity: lesson.similarity,
+                })),
+                promptInjected: arm === 'ON' && lessons.length > 0,
+                recalledFor: role,
+                result: lessons.length ? 'matched' : 'no_match',
+              }),
+            });
+          }
+        }
+      }
+    }
+  );
+  it('fails closed when the trusted arm cannot be read and records an error', async () => {
+    armMock.mockRejectedValue(new Error('db unavailable'));
+    const tracer = { addActivityEvent: vi.fn() };
+    expect(
+      await recallLessonsBlock({
+        query: 'test',
+        recalledFor: 'implementer',
+        repoId: 'repo-1',
+        tracer: tracer as never,
+      })
+    ).toBe('');
+    expect(retrieveMock).not.toHaveBeenCalled();
+    expect(tracer.addActivityEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'lessons.recall_error' })
+    );
+  });
+  it.each(['SHADOW', 'OFF'])('refuses direct tool helper reads in %s', async (arm) => {
+    armMock.mockResolvedValue(arm);
+    expect(await searchLessons('repo-1', 'test', 5)).toEqual([]);
+    expect(await explainLesson('repo-1', LESSON.lessonId)).toBeNull();
+    expect(retrieveMock).not.toHaveBeenCalled();
+    expect(findFirstMock).not.toHaveBeenCalled();
+  });
   it('fences recalled lessons with their ids, and records who recalled them', async () => {
     retrieveMock.mockResolvedValue([LESSON]);
     const tracer = { addActivityEvent: vi.fn() };

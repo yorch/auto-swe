@@ -23,6 +23,7 @@ import {
 import { RepoEvalDatasets } from './RepoEvalDatasets';
 import { RepoSetupHealth } from './RepoSetupHealth';
 import { RepoSetupSecrets } from './RepoSetupSecrets';
+import { RunOnboardingButton } from './RunOnboardingButton';
 
 const SUBMODULE_OPTIONS: Array<{ label: string; value: SubmodulesChoice }> = [
   { label: 'Not fetched', value: 'off' },
@@ -288,6 +289,7 @@ export function RepoSetupEditor({
 
       {repositoryId && <RepoSetupSecrets disabled={disabled} repositoryId={repositoryId} />}
       {repositoryId && <RepoSetupHealth disabled={disabled} repositoryId={repositoryId} />}
+      {repositoryId && <RunOnboardingButton canRun={!disabled} repositoryId={repositoryId} />}
       {repositoryId && <RepoEvalDatasets repositoryId={repositoryId} />}
 
       <SetupFilePanel

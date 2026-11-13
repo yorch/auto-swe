@@ -34,6 +34,7 @@ import { mcpConnectionRoutes } from './mcpConnections.js';
 import { meRoutes } from './me.js';
 import { modelCatalogRoutes } from './modelCatalog.js';
 import { modelConfigRoutes } from './modelConfig.js';
+import { organizationGithubRoutes } from './organizationGithub.js';
 import { organizationRoutes } from './organizations.js';
 import { orgBudgetRoutes } from './orgBudget.js';
 import { orgMembersRoutes } from './orgMembers.js';
@@ -61,7 +62,7 @@ import { slackChannelRoutes } from './slackChannels.js';
 import { systemConfigRoutes } from './systemConfig.js';
 import { teamBudgetRoutes } from './teamBudget.js';
 import { teamOverviewRoutes } from './teamOverview.js';
-import { teamRoutes } from './teams.js';
+import { orgTeamRoutes, teamRoutes } from './teams.js';
 import { ticketRoutes } from './tickets.js';
 import { tokenRoutes } from './tokens.js';
 import { toolCatalogRoutes } from './toolCatalog.js';
@@ -102,6 +103,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(reportDigestRoutes, { prefix: '/api/v1/report-digests' });
   await app.register(humanErrorBaselineRoutes, { prefix: '/api/v1/human-error-baselines' });
   await app.register(organizationRoutes, { prefix: '/api/v1/platform/organizations' });
+  await app.register(organizationGithubRoutes, { prefix: '/api/v1' });
   // Deprecated alias — kept for one release.
   await app.register(organizationRoutes, { prefix: '/api/v1/admin/organizations' });
   await app.register(workflowRunRoutes, { prefix: '/api/v1/workflow-runs' });
@@ -177,8 +179,10 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(assistantDiagnosticsRoutes, { prefix: '/api/v1/platform' });
   await app.register(readinessRoutes, { prefix: '/api/v1/platform' });
   await app.register(orgMembersRoutes, { prefix: '/api/v1/platform/organizations' });
+  await app.register(orgTeamRoutes, { prefix: '/api/v1/platform/organizations' });
   // Deprecated alias — kept for one release.
   await app.register(orgMembersRoutes, { prefix: '/api/v1/admin/organizations' });
+  await app.register(orgTeamRoutes, { prefix: '/api/v1/admin/organizations' });
   await app.register(orgBudgetRoutes, { prefix: '/api/v1/platform/organizations' });
   // Deprecated alias — kept for one release.
   await app.register(orgBudgetRoutes, { prefix: '/api/v1/admin/organizations' });

@@ -6,6 +6,7 @@ import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
 vi.mock('../lib/runKnowledgeBases.js', () => ({
   loadRunKnowledgeBases: vi.fn(async () => ({ checkouts: [], snapshotIds: [] })),
 }));
+vi.mock('../lib/onboardingEgress.js', () => ({ isOnboardingDraftAgent: vi.fn(async () => false) }));
 vi.mock('../lib/knowledgeBaseSearch.js', () => ({
   searchRunKnowledge: vi.fn(async () => ({ injectionDropped: 0, mode: 'text', results: [] })),
 }));
@@ -64,6 +65,8 @@ vi.mock('../agents/workspaceTools.js', () => ({
 vi.mock('../lib/scm/index.js', () => ({
   getScmProvider: vi.fn(() => ({
     cloneCredentials: async () => ({ authedCloneUrl: 'https://x-access-token:T@h/o/r.git' }),
+    fetchFileContent: async () => null,
+    resolveRef: async () => 'base-sha',
   })),
   toRepoRef: vi.fn(() => ({ organizationName: 'o', repoName: 'r' })),
 }));
@@ -105,6 +108,7 @@ vi.mock('../agents/mcpTools.js', () => ({ loadMcpTools: vi.fn() }));
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowRunId: vi.fn(async () => 'run-1'),
   persistActivityTrace: vi.fn().mockResolvedValue(undefined),
+  startTraceFlushing: vi.fn(() => () => {}),
 }));
 vi.mock('../lib/pauseSnapshot.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/pauseSnapshot.js')>()),
@@ -132,6 +136,7 @@ import { resolveAgentRuntime } from '../lib/config/agentRuntime.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
+import { isOnboardingDraftAgent } from '../lib/onboardingEgress.js';
 import { QUESTIONS, resumeInputFor } from '../lib/pauseResumeFixtures.js';
 import { restoreWorkingTree, snapshotWorkingTree } from '../lib/pauseSnapshot.js';
 import { runAgent } from './runAgent.js';
@@ -180,6 +185,7 @@ describe('runAgentNode', () => {
     await runAgentNode({ agentRef: 'reviewer', userMessage: 'inspect the preview' });
 
     expect(vi.mocked(createWorkspace)).not.toHaveBeenCalled();
+    expect(isOnboardingDraftAgent).not.toHaveBeenCalled();
     expect(browser.construct).not.toHaveBeenCalled();
     expect(vi.mocked(createMastraBrowserTools)).not.toHaveBeenCalled();
     expect(mockedRunAgent.mock.calls[0]?.[0].tools ?? {}).not.toHaveProperty('browser_start_app');
@@ -577,6 +583,34 @@ describe('runAgentNode', () => {
       harness.build.mockReturnValue({ close: harness.close, runTurn: vi.fn() });
       harness.bind.mockReturnValue({ build: harness.build, kind: 'claude-code' });
       harness.select.mockReturnValue({ bind: harness.bind });
+    });
+
+    it.each([false, true])(
+      'only passes a worker-verified onboarding flag to the workspace (verified=%s)',
+      async (verified) => {
+        vi.mocked(isOnboardingDraftAgent).mockResolvedValueOnce(verified);
+        await runAgentNode({
+          agentRef: 'repo-onboarder@2',
+          inputs: { draftEgress: true, onboardingDraft: true },
+          workspace: { repoId: 'repo-1', ticketId: 'onboard' },
+        });
+        expect(isOnboardingDraftAgent).toHaveBeenCalledWith('repo-onboarder');
+        const options = vi.mocked(createWorkspace).mock.calls[0]?.[6];
+        if (verified) {
+          expect(options).toHaveProperty('onboardingDraft', true);
+        } else {
+          expect(options).not.toHaveProperty('onboardingDraft');
+        }
+        expect(workspace.destroy).toHaveBeenCalledOnce();
+      }
+    );
+
+    it('does not widen a non-onboarding agent workspace', async () => {
+      await runAgentNode({
+        agentRef: 'reviewer',
+        workspace: { repoId: 'repo-1', ticketId: 'review' },
+      });
+      expect(vi.mocked(createWorkspace).mock.calls[0]?.[6]).not.toHaveProperty('onboardingDraft');
     });
 
     it('binds browser tools and preview services for a granted Mastra workspace node, then closes them', async () => {

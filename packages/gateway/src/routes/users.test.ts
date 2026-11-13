@@ -51,6 +51,10 @@ async function buildApp() {
     configAuditLog: {
       create: vi.fn().mockResolvedValue({}),
     },
+    organizationMembership: {
+      createMany: vi.fn().mockResolvedValue({ count: 1 }),
+      findUniqueOrThrow: vi.fn().mockResolvedValue({ id: 'org-member' }),
+    },
     session: {
       findMany: vi.fn().mockResolvedValue([]),
     },
@@ -58,7 +62,8 @@ async function buildApp() {
       findUnique: vi.fn(),
     },
     teamMembership: {
-      upsert: vi.fn().mockResolvedValue({}),
+      createMany: vi.fn().mockResolvedValue({ count: 1 }),
+      findUniqueOrThrow: vi.fn().mockResolvedValue({ id: 'team-member' }),
     },
     user: {
       create: vi.fn(),
@@ -106,7 +111,8 @@ describe('userRoutes', () => {
     ctx.authState.sub = 'admin-1';
     ctx.mockPrisma.configAuditLog.create.mockReset();
     ctx.mockPrisma.team.findUnique.mockReset();
-    ctx.mockPrisma.teamMembership.upsert.mockReset().mockResolvedValue({});
+    ctx.mockPrisma.teamMembership.createMany.mockReset().mockResolvedValue({ count: 1 });
+    ctx.mockPrisma.organizationMembership.createMany.mockReset().mockResolvedValue({ count: 1 });
     ctx.mockPrisma.user.create.mockReset();
     ctx.mockPrisma.user.findFirst.mockReset();
     ctx.mockPrisma.user.findMany.mockReset();
@@ -518,7 +524,10 @@ describe('userRoutes', () => {
         isActive: true,
         role: 'ENGINEER',
       });
-      ctx.mockPrisma.team.findUnique.mockResolvedValueOnce({ id: 'team-default' });
+      ctx.mockPrisma.team.findUnique.mockResolvedValueOnce({
+        id: 'team-default',
+        orgId: 'org-default',
+      });
 
       const res = await ctx.app.inject({
         headers: AUTH_HEADER,
@@ -540,7 +549,17 @@ describe('userRoutes', () => {
           data: expect.objectContaining({ emailVerified: true, isActive: true }),
         })
       );
-      expect(ctx.mockPrisma.teamMembership.upsert).toHaveBeenCalled();
+      expect(ctx.mockPrisma.teamMembership.createMany).toHaveBeenCalledWith({
+        data: { role: 'ENGINEER', teamId: 'team-default', userId: USER_ID },
+        skipDuplicates: true,
+      });
+      expect(ctx.mockPrisma.organizationMembership.createMany).toHaveBeenCalledWith({
+        data: { orgId: 'org-default', role: 'ORG_MEMBER', userId: USER_ID },
+        skipDuplicates: true,
+      });
+      expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ actorId: 'admin-1', entityType: 'OrganizationMembership' }),
+      });
       expect(signInMagicLinkMock).toHaveBeenCalled();
     });
 
@@ -562,7 +581,8 @@ describe('userRoutes', () => {
       });
 
       expect(res.statusCode).toBe(201);
-      expect(ctx.mockPrisma.teamMembership.upsert).not.toHaveBeenCalled();
+      expect(ctx.mockPrisma.teamMembership.createMany).not.toHaveBeenCalled();
+      expect(ctx.mockPrisma.organizationMembership.createMany).not.toHaveBeenCalled();
     });
 
     it('lower-cases the invited email before storing it', async () => {

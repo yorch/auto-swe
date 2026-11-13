@@ -1,5 +1,21 @@
 import { stringify } from 'yaml';
 import { z } from 'zod';
+import { PreviewConfigSchema } from './previewConfig.js';
+import {
+  parseRepoGatesYaml,
+  parseRepoPreviewYaml,
+  REPO_GATES_FILE,
+  REPO_PREVIEW_FILE,
+  RepoGateCommandsSchema,
+  repoGatesToYaml,
+  repoPreviewToYaml,
+} from './repoConfigFiles.js';
+import {
+  parseRepoSetupYaml,
+  REPO_SETUP_FILE,
+  RepoSetupSchema,
+  repoSetupToYaml,
+} from './repoSetup.js';
 import { renderToolsFile, TOOLS_FILE_PATH, ToolRequestSchema } from './toolsFile.js';
 
 export {
@@ -13,15 +29,23 @@ export {
  * The contract for "open a pull request that adds this repository's `.auto-swe/` config files".
  * The gateway validates a request and starts the workflow; the worker's activity writes the files
  * and opens the pull request. There is deliberately no free-form path or content input: the only
- * files that can be proposed are the two below, at their fixed paths, rendered from structured
+ * files that can be proposed are the kinds below, at their fixed paths, rendered from structured
  * data here — so a caller cannot use this to write anywhere else in the repository.
  *
- * Pure and I/O-free. Hashing the rendered content is the gateway's job (it passes the 16-hex
+ * Pure and I/O-free. Hashing the rendered content is the caller's job (it passes the 16-hex
  * digest as `contentHash`), which keeps `node:crypto` out of anything a workflow isolate imports.
  */
 
-export const ONBOARDING_FILE_KINDS = ['tools', 'prPolicy'] as const;
+export const ONBOARDING_FILE_KINDS = ['tools', 'prPolicy', 'setup', 'gates', 'preview'] as const;
 export type OnboardingFileKind = (typeof ONBOARDING_FILE_KINDS)[number];
+
+export const RepoOnboardingDraftSchema = z.strictObject({
+  gateCommands: RepoGateCommandsSchema,
+  notes: z.string().max(8000).default(''),
+  previewConfig: PreviewConfigSchema.nullable().optional().default(null),
+  setup: RepoSetupSchema,
+});
+export type RepoOnboardingDraft = z.infer<typeof RepoOnboardingDraftSchema>;
 
 export const PR_POLICY_FILE_PATH = '.auto-swe/pr-policy.yml';
 
@@ -56,6 +80,9 @@ const PrPolicyFileRequestSchema = z.strictObject({
 export const OnboardingFileRequestSchema = z.discriminatedUnion('kind', [
   ToolsFileRequestSchema,
   PrPolicyFileRequestSchema,
+  z.strictObject({ kind: z.literal('setup'), setup: RepoSetupSchema }),
+  z.strictObject({ gateCommands: RepoGateCommandsSchema, kind: z.literal('gates') }),
+  z.strictObject({ kind: z.literal('preview'), previewConfig: PreviewConfigSchema }),
 ]);
 
 export const OnboardingRequestSchema = z.strictObject({
@@ -92,7 +119,21 @@ function renderPrPolicyFile(sensitivePaths: readonly string[] | undefined): stri
   return `${PR_POLICY_HEADER}\n# Paths whose changes are never LOW risk.\n${list}`;
 }
 
-/** The files a request proposes, in a fixed order (`tools`, then `prPolicy`), deterministic. */
+function sortedMaps(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortedMaps);
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, sortedMaps((value as Record<string, unknown>)[key])])
+    );
+  }
+  return value;
+}
+
+/** The files a request proposes, in the fixed kind order, deterministic. */
 export function renderOnboardingFiles(
   request: OnboardingRequest
 ): { path: string; content: string }[] {
@@ -104,6 +145,28 @@ export function renderOnboardingFiles(
       out.push({ content: renderToolsFile(file.tools), path: TOOLS_FILE_PATH });
     } else if (file?.kind === 'prPolicy') {
       out.push({ content: renderPrPolicyFile(file.sensitivePaths), path: PR_POLICY_FILE_PATH });
+    } else if (file?.kind === 'setup') {
+      out.push({
+        content: repoSetupToYaml(RepoSetupSchema.parse(sortedMaps(file.setup))),
+        path: REPO_SETUP_FILE,
+      });
+    } else if (file?.kind === 'gates') {
+      out.push({ content: repoGatesToYaml(file.gateCommands), path: REPO_GATES_FILE });
+    } else if (file?.kind === 'preview') {
+      out.push({ content: repoPreviewToYaml(file.previewConfig), path: REPO_PREVIEW_FILE });
+    }
+  }
+  for (const file of out) {
+    const parsed =
+      file.path === REPO_SETUP_FILE
+        ? parseRepoSetupYaml(file.content)
+        : file.path === REPO_GATES_FILE
+          ? parseRepoGatesYaml(file.content)
+          : file.path === REPO_PREVIEW_FILE
+            ? parseRepoPreviewYaml(file.content)
+            : null;
+    if (parsed && !parsed.ok) {
+      throw new Error(`${file.path} cannot round-trip through its parser`);
     }
   }
   return out;

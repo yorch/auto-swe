@@ -258,6 +258,7 @@ export async function performOnce<T>(args: {
  * placeholder handler that performs no write is still treated as a mutation.
  */
 const READ_ONLY_CONNECTOR_TOOLS: ReadonlySet<string> = new Set([
+  'fetchIncident',
   'fetchIssue',
   'fetchPage',
   'fetchTicket',

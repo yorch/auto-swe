@@ -9,7 +9,7 @@ import { usePaletteSearch } from '@/hooks/usePaletteSearch';
 import { confirmLeave } from '@/hooks/useUnsavedChangesGuard';
 import { useVisibleNavGroups } from '@/hooks/useVisibleNav';
 import { runHref, templateHref } from '@/lib/entityLinks';
-import { flattenNavItems } from '@/lib/navigation';
+import { flattenNavItems, USER_NAV_ITEMS } from '@/lib/navigation';
 import { requestHref } from '@/lib/requestDisplay';
 import { teamHref } from '@/lib/teamSpace';
 import { cn, FOCUS_RING } from '@/lib/utils';
@@ -117,6 +117,13 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
   const entries = useMemo<Entry[]>(
     () => [
       { group: 'Actions', href: '/start', icon: 'plus', id: 'href:/start', label: 'Start work' },
+      ...USER_NAV_ITEMS.map((item) => ({
+        group: 'Account',
+        href: item.href,
+        icon: item.icon,
+        id: `href:${item.href}`,
+        label: item.label,
+      })),
       ...groups.flatMap((g) =>
         flattenNavItems(g.items).map((item) => ({
           group: item.section ? `${g.label} · ${item.section}` : g.label,

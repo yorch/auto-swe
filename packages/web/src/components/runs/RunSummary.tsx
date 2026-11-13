@@ -12,11 +12,13 @@ import { Icon } from '@/components/ui/Icon';
 import type { useApprovals } from '@/hooks/useApprovals';
 import { classifyAgentRunFailure } from '@/lib/agentRun';
 import { NEEDS_RESPONSE_ANCHOR } from '@/lib/runVerdict';
+import { runRepositoryId } from '@/lib/setupBlockers';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { AgentRunFailureNote } from './AgentRunOutcomeCard';
 import { ArtifactAwareText } from './ArtifactAwareText';
 import { FailureCard } from './FailureCard';
 import { RunOutcomeCard } from './RunOutcomeCard';
+import { SetupFailureCard } from './SetupFailureCard';
 import { TrackerWritebackNote } from './TrackerWritebackNote';
 
 type ApprovalSteps = NonNullable<ReturnType<typeof useApprovals>['data']>;
@@ -83,6 +85,8 @@ export function RunSummary({
   const hasResult = hasRunResult(run.result);
   const ended = run.status === 'FAILED' || run.status === 'TIMED_OUT';
   const hasFailure = failedStep != null || (!full && ended);
+  const repositoryId = runRepositoryId(run.contextSnapshot);
+  const setupFailure = ended && failedStep?.error?.startsWith('WORKSPACE_SETUP_FAILED');
 
   const hasWriteback = readTrackerWriteback(run.contextSnapshot) !== null;
 
@@ -203,7 +207,17 @@ export function RunSummary({
               <AgentRunFailureNote failure={agentFailure} />
             </div>
           )}
-          {failedStep ? (
+          {failedStep && setupFailure && repositoryId && run.workflowId ? (
+            <SetupFailureCard
+              compact={!full}
+              onJumpToFailure={onJumpToFailure}
+              onReRun={onReRun}
+              repositoryId={repositoryId}
+              size="full"
+              step={failedStep}
+              workflowId={run.workflowId}
+            />
+          ) : failedStep ? (
             <FailureCard
               onJumpToFailure={onJumpToFailure}
               onReRun={onReRun}
