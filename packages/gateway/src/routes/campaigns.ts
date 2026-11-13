@@ -21,6 +21,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
+import { IdempotencyHeaderSchema, uuidFromIdempotencyKey } from '../lib/idempotency.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { paginationQuery } from '../lib/pagination.js';
 import {
@@ -157,12 +158,65 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
     '/',
     {
       onRequest: requireAuth({ requiredRole: 'LEAD' }),
-      schema: { body: CreateCampaignSchema },
+      schema: { body: CreateCampaignSchema, headers: IdempotencyHeaderSchema },
     },
     async (request, reply) => {
       const body = request.body;
       const { budget, description, name, ownerTeamId, recipe, repoIds } = body;
       const user = requireUser(request);
+      const idempotencyKey = request.headers['idempotency-key'];
+      // With an Idempotency-Key the campaign's id, and so its workflow ID `campaign-<id>`, is
+      // derived from the key, scoped to the caller and the owning team: a retried launch collides
+      // with the first on the ledger's unique workflow ID instead of starting a second campaign.
+      const campaignId = idempotencyKey
+        ? uuidFromIdempotencyKey(`campaign:${user.sub}:${ownerTeamId}`, idempotencyKey)
+        : crypto.randomUUID();
+      const temporalWorkflowId = `${CAMPAIGN_ID_PREFIX}${campaignId}`;
+      const requestPayload = JSON.stringify({ ...body, label: name });
+      /**
+       * The campaign this key already launched, answered as a deduplicated success when the
+       * request is the same one, or 422 when the key was used for a different request.
+       */
+      const replay = async () => {
+        if (!idempotencyKey) {
+          return null;
+        }
+        const previous = await fastify.prisma.campaign.findFirst({
+          select: { createdById: true, id: true, temporalWorkflowId: true, workRequestId: true },
+          where: { id: campaignId, ownerTeamId },
+        });
+        if (!previous || previous.createdById !== user.sub) {
+          return null;
+        }
+        const stored = await fastify.prisma.runInput.findUnique({
+          select: { requestPayload: true },
+          where: { id: previous.workRequestId },
+        });
+        // Wrapped: a Fastify reply is a thenable, so an async function returning one bare would
+        // resolve to the send's completion (undefined), not to the reply.
+        if (stored?.requestPayload !== requestPayload) {
+          return {
+            reply: sendError(
+              reply,
+              422,
+              'IDEMPOTENCY_KEY_MISMATCH',
+              'This Idempotency-Key was already used for a different campaign launch. Use a new key for a different request.'
+            ),
+          };
+        }
+        return {
+          reply: reply.status(200).send({
+            data: {
+              campaignId: previous.id,
+              deduplicated: true,
+              detailPath: `/campaigns/${previous.id}`,
+              targetCount: repoIds.length,
+              temporalWorkflowId: previous.temporalWorkflowId,
+              workRequestId: previous.workRequestId,
+            },
+          }),
+        };
+      };
 
       // 1. The owning team: the caller leads it (or is a platform ADMIN). The campaign's
       //    organization is the team's.
@@ -189,6 +243,12 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
       const orgId = ownerTeam.orgId;
+      // A retry of a launch that already happened answers with it, before any check that the
+      // first launch already passed is made again (a setting turned off since, say).
+      const replayed = await replay();
+      if (replayed) {
+        return replayed.reply;
+      }
 
       // 2. The repositories. Unscoped for the reason epics.ts gives: access is decided from the
       //    memberships selected here (steps 3 and 9), and filtering by team up front would turn "you
@@ -414,11 +474,8 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Writes. The Campaign and its targets are created inside the launch ledger transaction,
       // after the RunInput they reference, so a refused or compensated launch leaves none.
-      const campaignId = crypto.randomUUID();
       const workRequestId = crypto.randomUUID();
-      const temporalWorkflowId = `${CAMPAIGN_ID_PREFIX}${campaignId}`;
       const externalTicketId = `CAMPAIGN-${campaignId.replaceAll('-', '').slice(0, 12)}`;
-      const requestPayload = JSON.stringify({ ...body, label: name });
       const repoById = new Map(repos.map((r) => [r.id, r]));
       const targets: CampaignTargetInput[] = repoIds.map((id) => {
         const repo = repoById.get(id) as (typeof repos)[number];
@@ -506,6 +563,11 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         }
       );
       if (!launch.ok) {
+        // Two requests with one key raced: the loser answers with the winner's campaign.
+        const raced = await replay();
+        if (raced) {
+          return raced.reply;
+        }
         return sendError(
           reply,
           409,

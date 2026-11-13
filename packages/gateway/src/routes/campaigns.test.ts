@@ -419,6 +419,8 @@ describe('campaign routes', () => {
           campaigns = campaigns.filter((c) => !gone.includes(c.id));
           targets = targets.filter((t) => !gone.includes(t.campaignId));
         },
+        findUnique: async (args: { where: { id: string } }) =>
+          runInputs.find((r) => r.id === args.where.id) ?? null,
       },
       team: {
         findUnique: async (args: { where: { id: string } }) => {
@@ -962,6 +964,63 @@ describe('campaign routes', () => {
       (teamRoles[teamId] as Record<string, string>)[sub] = teamRole;
     }
   };
+
+  describe('POST /api/v1/campaigns — Idempotency-Key', () => {
+    const postKeyed = (payload: unknown, key: string) =>
+      app.inject({
+        headers: { ...auth, 'idempotency-key': key },
+        method: 'POST',
+        payload: payload as object,
+        url: '/api/v1/campaigns',
+      });
+
+    it('derives the campaign id from the key, so a retry answers with the first launch', async () => {
+      const first = await postKeyed(valid, 'launch-1');
+      expect(first.statusCode).toBe(201);
+      const { data } = body(first);
+      expect(data.campaignId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+      );
+      expect(data.temporalWorkflowId).toBe(`campaign-${data.campaignId}`);
+
+      const retry = await postKeyed(valid, 'launch-1');
+      expect(retry.statusCode).toBe(200);
+      expect(body(retry).data).toEqual({ ...data, deduplicated: true });
+      // One campaign, one workflow start, one audit row for the campaign.
+      expect(campaigns).toHaveLength(1);
+      expect(started).toHaveLength(1);
+      expect(audits.filter((a) => a.entityType === 'Campaign')).toHaveLength(1);
+    });
+
+    it('answers 422 when the key was already used for a different request', async () => {
+      expect((await postKeyed(valid, 'launch-1')).statusCode).toBe(201);
+      const res = await postKeyed({ ...valid, name: 'another' }, 'launch-1');
+      expect(res.statusCode).toBe(422);
+      expect(body(res).error.code).toBe('IDEMPOTENCY_KEY_MISMATCH');
+      expect(started).toHaveLength(1);
+    });
+
+    it('scopes the key to the caller: another LEAD with the same key gets its own campaign', async () => {
+      const first = body(await postKeyed(valid, 'shared-key')).data;
+      currentSub = 'user-2';
+      teamRoles = {
+        [TEAM_1]: { 'user-1': 'LEAD', 'user-2': 'LEAD' },
+        [TEAM_2]: { 'user-1': 'LEAD', 'user-2': 'LEAD' },
+        [TEAM_3]: {},
+      };
+      const res = await postKeyed(valid, 'shared-key');
+      expect(res.statusCode).toBe(201);
+      expect(body(res).data.campaignId).not.toBe(first.campaignId);
+      expect(started).toHaveLength(2);
+    });
+
+    it('without a key every launch is a new campaign', async () => {
+      const a = body(await post(valid)).data;
+      const b = body(await post(valid)).data;
+      expect(a.campaignId).not.toBe(b.campaignId);
+      expect(started).toHaveLength(2);
+    });
+  });
 
   describe('GET /api/v1/campaigns', () => {
     const list = async (query = '') =>

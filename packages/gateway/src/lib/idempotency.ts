@@ -50,3 +50,23 @@ export function workflowIdFromIdempotencyKey(prefix: string, scopeId: string, ke
   const digest = createHash('sha256').update(`${scopeId.length}:${scopeId}${key}`).digest('hex');
   return `${prefix}-${scopeId}-${digest.slice(0, 16)}`;
 }
+
+/**
+ * A deterministic UUID for `key`, scoped like {@link workflowIdFromIdempotencyKey}, for a launch
+ * whose workflow ID embeds a row's UUID primary key (a campaign is `campaign-<campaignId>`). The
+ * first 128 bits of the same length-prefixed SHA-256, written as an RFC 9562 version-8 UUID
+ * (application-defined), so the row id, the route's UUID parameters and the workflow ID all keep
+ * their shapes. Two different (scope, key) pairs collide only with SHA-256's own probability,
+ * and a collision is a refused launch, never two merged ones.
+ */
+export function uuidFromIdempotencyKey(scopeId: string, key: string): string {
+  const hex = createHash('sha256').update(`${scopeId.length}:${scopeId}${key}`).digest('hex');
+  const variant = ((Number.parseInt(hex[16] as string, 16) & 0x3) | 0x8).toString(16);
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    `8${hex.slice(13, 16)}`,
+    `${variant}${hex.slice(17, 20)}`,
+    hex.slice(20, 32),
+  ].join('-');
+}

@@ -317,6 +317,15 @@ All routes are under `/api/v1/campaigns`.
 | `budget` | Optional budget tier for each child |
 
 It answers `201` with `{ campaignId, temporalWorkflowId, workRequestId, targetCount, detailPath }`.
+
+An optional `Idempotency-Key` header (1 to 255 characters) makes a retried launch safe. The
+campaign's id, and so its workflow ID, is then derived from the key, scoped to the caller and the
+owning team (a version-8 UUID of a SHA-256 digest), instead of being random. A request whose key
+already launched a campaign answers `200` with the same body plus `deduplicated: true` when the
+request is the same, and `422 IDEMPOTENCY_KEY_MISMATCH` when it differs; it is answered right after
+the owning-team check, before anything the first launch passed is checked again. Two concurrent
+requests with one key launch once: the second collides on the ledger's unique workflow ID and is
+answered with the first. Without the header every launch is a new campaign.
 The refusals, in the order they are checked:
 
 | Status | Code | Cause |
@@ -333,7 +342,8 @@ The refusals, in the order they are checked:
 | 400 | `CAMPAIGN_INPUT_INVALID` | The payload fails the template's input schema |
 | 403 | `FORBIDDEN`, `REPO_ACCESS_DENIED`, … | From the launch decision: no repository access, or no organization membership |
 | 402 | `ORG_BUDGET_EXCEEDED`, `TEAM_BUDGET_EXCEEDED` | A monthly budget is spent |
-| 409 | `CAMPAIGN_ALREADY_EXISTS` | The workflow ID is taken (reachable only on an ID collision) |
+| 422 | `IDEMPOTENCY_KEY_MISMATCH` | The `Idempotency-Key` already launched a different request |
+| 409 | `CAMPAIGN_ALREADY_EXISTS` | The workflow ID is taken by a campaign this caller cannot be answered with (an ID collision) |
 
 **`GET /`** (any signed-in user). Query `limit`, `offset`, `ownerTeamId`, `state`. An ADMIN sees every
 campaign. Anyone else sees a campaign when they belong to its owning team or can reach at least one
