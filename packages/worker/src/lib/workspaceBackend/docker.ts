@@ -584,7 +584,11 @@ export function buildEgressHelperCommand(
 /** The `--add-host` entry that makes the Docker host alias resolve to the host gateway. */
 const workerHostEntry = () => `--add-host=${DOCKER_HOST_ALIAS}:host-gateway`;
 
-async function workspaceResolutionContext(containerId: string, networkOwner = containerId, asRoot = false) {
+async function workspaceResolutionContext(
+  containerId: string,
+  networkOwner = containerId,
+  asRoot = false
+) {
   const current = await spawnCaptureAsync(
     'docker',
     ['exec', ...(asRoot ? ['-u', 'root'] : []), containerId, 'cat', '/etc/hosts'],
