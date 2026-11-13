@@ -557,7 +557,20 @@ describe('campaign routes', () => {
       expectNothingWritten();
     });
 
-    it('refuses a repository in another organization without naming it', async () => {
+    it('refuses a repository of a team the caller does not lead before saying anything about its organization', async () => {
+      // REPO_X is in another organization and the caller is not in its team: the answer is the
+      // team-lead refusal, which counts it without naming it, never CAMPAIGN_CROSS_ORG.
+      const res = await post({ ...valid, repoIds: [REPO_A, REPO_X] });
+      expect(res.statusCode).toBe(403);
+      expect(body(res).error.code).toBe('FORBIDDEN');
+      expect(body(res).error.message).toContain('1 other repository');
+      expect(body(res).error.reasons).toEqual([]);
+      expect(JSON.stringify(body(res))).not.toContain('gamma');
+      expectNothingWritten();
+    });
+
+    it('refuses an ADMIN a repository in another organization, without naming it', async () => {
+      currentRole = 'ADMIN';
       const res = await post({ ...valid, repoIds: [REPO_A, REPO_X] });
       expect(res.statusCode).toBe(400);
       expect(body(res).error.code).toBe('CAMPAIGN_CROSS_ORG');
@@ -584,13 +597,15 @@ describe('campaign routes', () => {
       expectNothingWritten();
     });
 
-    it('counts, rather than names, a disabled repository of a team the caller is outside', async () => {
+    it('says nothing about the settings of a team the caller is outside', async () => {
       removeFromTeam(TEAM_2);
       settings.disabledTeams = new Set([TEAM_2]);
       const res = await post(valid);
       expect(res.statusCode).toBe(403);
-      expect(body(res).error.code).toBe('CAMPAIGNS_DISABLED');
+      // The team-lead refusal comes first, so whether campaigns are on there is not disclosed.
+      expect(body(res).error.code).toBe('FORBIDDEN');
       expect(body(res).error.message).not.toContain('beta');
+      expect(body(res).error.message).not.toContain('campaignsEnabled');
       expect(body(res).error.message).toContain('1 other repository');
     });
 
@@ -650,11 +665,12 @@ describe('campaign routes', () => {
       expectNothingWritten();
     });
 
-    it('refuses a repository the caller cannot reach', async () => {
+    it('refuses a repository the caller cannot reach, counting rather than naming it', async () => {
       removeFromTeam(TEAM_2);
       const res = await post(valid);
       expect(res.statusCode).toBe(403);
-      expect(body(res).error.message).toContain('org/beta');
+      expect(body(res).error.message).not.toContain('beta');
+      expect(body(res).error.message).toContain('1 other repository');
       expectNothingWritten();
     });
 

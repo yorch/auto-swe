@@ -43,17 +43,22 @@ strictest launch decision the platform has. All of these hold, in this order:
 2. The caller is `LEAD` or `ADMIN` on the **owning team** named in the request, or a platform
    `ADMIN`. The owning team decides the campaign's organization and who may cancel it.
 3. Every repository exists, is active and is a git repository.
-4. Every repository belongs to the owning team's organization (`CAMPAIGN_CROSS_ORG` otherwise).
+4. The caller is `LEAD` or `ADMIN` on the team that owns **each** repository, or a platform ADMIN
+   (membership through a share does not count). This is decided before anything is said about a
+   repository's organization or settings, so a caller cannot use the next two refusals to learn
+   which repositories of other teams are in another organization or have campaigns turned off. The
+   refusal (`403 FORBIDDEN`, reason `team-lead-required`) names the repositories whose team the
+   caller belongs to and counts the rest.
+5. Every repository belongs to the owning team's organization (`CAMPAIGN_CROSS_ORG` otherwise).
    A campaign never spans organizations.
-5. `workflow.campaignsEnabled` is on for the owning team **and** for the team that owns each target
-   repository. One team with it off refuses the whole launch (`CAMPAIGNS_DISABLED`). The refusal
-   names the owning team and the repositories whose team the caller belongs to; repositories of
-   other teams are counted, not named.
-6. The number of repositories does not exceed `workflow.campaignMaxTargets` for the owning team.
-7. The recipe, when given, passes the strict parameter check in §3.
-8. The `dependency-upgrade-campaign` template is present, and a payload for one target satisfies
+6. `workflow.campaignsEnabled` is on for the owning team **and** for the team that owns each target
+   repository. One team with it off refuses the whole launch (`CAMPAIGNS_DISABLED`), naming the
+   owning team and the repositories (step 4 means the caller leads every one of them).
+7. The number of repositories does not exceed `workflow.campaignMaxTargets` for the owning team.
+8. The recipe, when given, passes the strict parameter check in §3.
+9. The `dependency-upgrade-campaign` template is present, and a payload for one target satisfies
    its input schema.
-9. The standard launch authorization for a fan-out: repository access for every repository, team
+10. The standard launch authorization for a fan-out: repository access for every repository, team
    `LEAD` or `ADMIN` on the team that owns **each** repository (membership through a share does not
    count), membership of the organization, and the organization's and teams' monthly budgets.
    Every child run is launched as the caller, so a child may use the caller's own saved token
@@ -313,14 +318,16 @@ The refusals, in the order they are checked:
 
 | Status | Code | Cause |
 |---|---|---|
-| 403 | `FORBIDDEN` | Not `LEAD` or `ADMIN` on the owning team; or, from the launch decision, no `LEAD`/`ADMIN` on a target's owning team (reason `team-lead-required`), no repository access, or no organization membership |
+| 403 | `FORBIDDEN` | Not `LEAD` or `ADMIN` on the owning team |
 | 404 | `TEAM_NOT_FOUND`, `REPOS_NOT_FOUND` | The owner team, or a named repository, does not exist or is inactive |
+| 403 | `FORBIDDEN` | No `LEAD`/`ADMIN` on a target's owning team (reason `team-lead-required`; repositories of teams the caller is not in are counted, not named) |
 | 400 | `CAMPAIGN_CROSS_ORG` | A repository is outside the owning team's organization |
 | 403 | `CAMPAIGNS_DISABLED` | The setting is off for the owning team or a target's team |
 | 400 | `CAMPAIGN_TOO_MANY_TARGETS` | More repositories than `workflow.campaignMaxTargets` |
 | 400 | `CAMPAIGN_RECIPE_INVALID` | Unknown recipe, or parameters that fail the strict check |
 | 503 | `CAMPAIGN_TEMPLATE_MISSING` | The built-in template is not seeded |
 | 400 | `CAMPAIGN_INPUT_INVALID` | The payload fails the template's input schema |
+| 403 | `FORBIDDEN`, `REPO_ACCESS_DENIED`, … | From the launch decision: no repository access, or no organization membership |
 | 402 | `ORG_BUDGET_EXCEEDED`, `TEAM_BUDGET_EXCEEDED` | A monthly budget is spent |
 | 409 | `CAMPAIGN_ALREADY_EXISTS` | The workflow ID is taken (reachable only on an ID collision) |
 
@@ -440,6 +447,10 @@ with the state before and after (`CANCELLING`) and the actor. See [audit-log.md]
   roles, not the permission gate, so a launcher whose GitHub access to a repository was revoked
   after the launch still has children started there until their team role or the repository
   changes.
+- **A launch tells a caller whether a repository id exists.** `REPOS_NOT_FOUND` is decided before
+  the team-lead check, so a platform `LEAD` can learn whether an id they hold names an active git
+  repository (`404` against `403`). Nothing else about a repository of a team they do not lead
+  (its name, organization or settings) is disclosed.
 - **No dashboard page or CLI command.** The API is the interface.
 - **The assistant cannot launch a campaign,** and no event source (Dependabot, code-scanning
   alerts) starts one.

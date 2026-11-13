@@ -190,7 +190,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
       const orgId = ownerTeam.orgId;
 
       // 2. The repositories. Unscoped for the reason epics.ts gives: access is decided from the
-      //    memberships selected here (step 8), and filtering by team up front would turn "you
+      //    memberships selected here (steps 3 and 9), and filtering by team up front would turn "you
       //    cannot see this repo" into "no such repo".
       const repos = await runUnscoped(
         'access is decided from the memberships selected here, not by the where clause',
@@ -238,8 +238,37 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
 
-      // 3. One organization. Nothing is named: the caller may not be able to see the other org's
-      //    repositories yet.
+      // 3. Team LEAD (or ADMIN) on the team that owns every repository, decided from the
+      //    memberships selected above, BEFORE anything is said about a repository's organization
+      //    or settings: otherwise a LEAD of any team could learn, repository by repository, which
+      //    are in another organization or have campaigns turned off. A repository is named only to
+      //    a member of its team; the rest are counted. The full launch decision (repository access,
+      //    organization membership, budgets) still runs in step 9.
+      if (user.role !== 'ADMIN') {
+        const notLed = repos.filter((r) => !r.team.memberships.some((m) => LEAD_ROLES.has(m.role)));
+        if (notLed.length > 0) {
+          const named = notLed
+            .filter((r) => r.team.memberships.length > 0)
+            .map((r) => `${r.organizationName ?? '?'}/${r.repoName ?? r.id}`);
+          const unnamed = notLed.length - named.length;
+          const parts = [
+            ...named,
+            ...(unnamed > 0
+              ? [`${unnamed} other repositor${unnamed === 1 ? 'y' : 'ies'} of teams you are not in`]
+              : []),
+          ];
+          return reply.status(403).send({
+            error: {
+              code: 'FORBIDDEN',
+              message: `Launching a campaign requires team LEAD or ADMIN on the team that owns each repository: ${parts.join(', ')}`,
+              reasons: named.map((repo) => ({ reason: 'team-lead-required', repo })),
+            },
+          });
+        }
+      }
+
+      // 4. One organization. Nothing is named: only an ADMIN can reach this with a repository of
+      //    another organization (step 3 refuses everyone else first).
       if (repos.some((r) => r.team.orgId !== orgId)) {
         return sendError(
           reply,
@@ -249,7 +278,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
 
-      // 4. The kill switch, for the owning team and for the team that owns each target. A
+      // 5. The kill switch, for the owning team and for the team that owns each target. A
       //    repository is named only to a caller who is a member of its team (or a platform
       //    ADMIN); the rest are counted.
       const teamCtx = new Map<string, { teamId: string; orgId: string }>([
@@ -284,7 +313,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
 
-      // 5. Size limits, resolved for the owning team and frozen into the workflow input.
+      // 6. Size limits, resolved for the owning team and frozen into the workflow input.
       const ownerCtx = { orgId, teamId: ownerTeam.id };
       const [maxTargets, maxParallelCeiling] = await Promise.all([
         resolveSetting('workflow.campaignMaxTargets', ownerCtx),
@@ -300,7 +329,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const maxParallel = Math.min(body.maxParallel ?? maxParallelCeiling, maxParallelCeiling);
 
-      // 6. The recipe, validated by the shared catalogue. The template's input pattern is wider
+      // 7. The recipe, validated by the shared catalogue. The template's input pattern is wider
       //    on purpose, so this call is what keeps `github:evil/repo`, `$(…)` and
       //    `--registry=…` out of a payload.
       let recipeRef: string | null = null;
@@ -314,7 +343,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         recipeParams = parsed.params;
       }
 
-      // 7. The template, pinned at its active version, and the child payload checked against its
+      // 8. The template, pinned at its active version, and the child payload checked against its
       //    input schema for one sample target.
       const template = await fastify.prisma.workflowTemplate.findFirst({
         select: { activeVersion: true, id: true, inputSchema: true },
@@ -353,7 +382,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      // 8. Launch authorization: repository access, an owning-team LEAD on every target, the
+      // 9. Launch authorization: repository access, an owning-team LEAD on every target, the
       //    org checks and the budgets. Every child is launched as the caller.
       const authorization = await authorizeLaunch(fastify.prisma, user, {
         gate: request.repoAccessGate,
