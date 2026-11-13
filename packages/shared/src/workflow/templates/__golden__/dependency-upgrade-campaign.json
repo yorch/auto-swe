@@ -21,6 +21,12 @@
       "onTrue": "markRecipeThenAgent",
       "type": "cond"
     },
+    "checkRecipeRefused": {
+      "expr": "nodes.recipe.output.refused == true",
+      "onFalse": "routeRecipe",
+      "onTrue": "failRecipeRefused",
+      "type": "cond"
+    },
     "checkReverify": {
       "expr": "nodes.reverify.output.passed == true",
       "onFalse": "failVerify",
@@ -67,6 +73,21 @@
         }
       },
       "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "failRecipeRefused": {
+      "result": {
+        "path": {
+          "literal": "RECIPE"
+        },
+        "skippedReason": {
+          "from": "nodes.recipe.output.summary"
+        },
+        "verification": {
+          "literal": "NOT_RUN"
+        }
+      },
+      "status": "FAILED",
       "type": "terminate"
     },
     "failVerify": {
@@ -160,7 +181,7 @@
           "from": "request.payload.targetVersion"
         }
       },
-      "next": "routeRecipe",
+      "next": "checkRecipeRefused",
       "onFail": "warn",
       "status": "IMPLEMENTING",
       "step": "applyRecipe",

@@ -137,13 +137,32 @@ export const DEPENDENCY_UPGRADE_CAMPAIGN_SPEC: WorkflowSpec = {
           recipe: { default: '', from: 'request.payload.recipe' },
           targetVersion: { default: '', from: 'request.payload.targetVersion' },
         },
-        next: 'routeRecipe',
+        next: 'checkRecipeRefused',
         onFail: 'warn',
         status: 'IMPLEMENTING',
         step: 'applyRecipe',
         title: 'Apply the recipe',
         type: 'step',
       },
+      // A work branch the step did not cut from the pinned base (one that already existed on the
+      // host) ends the run: neither the agent nor the verification may build on it.
+      checkRecipeRefused: {
+        expr: 'nodes.recipe.output.refused == true',
+        group: 'recipe',
+        onFalse: 'routeRecipe',
+        onTrue: 'failRecipeRefused',
+        title: 'Was the branch refused?',
+        type: 'cond',
+      },
+      failRecipeRefused: terminate('FAILED', {
+        group: 'recipe',
+        result: {
+          path: { literal: 'RECIPE' },
+          skippedReason: { from: 'nodes.recipe.output.summary' },
+          verification: { literal: 'NOT_RUN' },
+        },
+        title: 'Work branch refused',
+      }),
       routeRecipe: {
         expr: 'nodes.recipe.output.passed == true',
         group: 'recipe',

@@ -132,8 +132,11 @@ non-zero and pushes nothing.
 
 **The flow.**
 
-1. With a recipe, the recipe runs. Nothing to change ends the run `SUCCESS` with `changed: false`
-   and no pull request. A recipe that could not apply, or no recipe, hands the work to the agent,
+1. With a recipe, the recipe runs, on a work branch it creates from the base branch's tip as
+   recorded on the host just before: a work branch that already exists on the host, or a pushed
+   commit whose parent is not that tip, ends the run `FAILED` with the reason
+   ([campaigns.md §3](./campaigns.md#3-recipes)). Nothing to change ends the run `SUCCESS` with
+   `changed: false` and no pull request. A recipe that could not apply, or no recipe, hands the work to the agent,
    which starts from the base branch.
 2. The agent makes the change under the campaign brief. Its step carries `testIntegrity: 'block'`
    ([ci-failure-triggers.md §2.4](./ci-failure-triggers.md#24-the-test-integrity-guard)), so a change

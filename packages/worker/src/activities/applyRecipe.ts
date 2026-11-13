@@ -14,6 +14,11 @@
  *  - not `passed`: the recipe could not apply. Nothing was pushed, so an agent that takes over
  *    starts cleanly from the base.
  *
+ *  - `refused`: the base the change would be measured from is not the one the platform pinned
+ *    (`recipeBase.ts`): the work branch already existed on the host, or the pushed commit's parent
+ *    is not the base branch tip recorded before the clone. The template ends the run FAILED with
+ *    the reason; neither the agent nor verification runs on such a branch.
+ *
  * It never throws for a recipe that fails or a toolchain that cannot run, because the agent
  * fallback is the answer to that; it throws only for a cancellation. The parameters are validated
  * again here: the payload text is not trusted on the worker.
@@ -32,6 +37,7 @@ import { requireRepoId } from '../lib/requireRepoId.js';
 import { execPinned } from './allowedPaths.js';
 import { pinnedGit } from './protectedTests.js';
 import { provisionGateWorkspace } from './qualityGates.js';
+import { pinRecipeBase } from './recipeBase.js';
 import { runShellStep } from './shellStep.js';
 import { fetchBranchesSubcommand, shellQuote, type Workspace } from './workspace.js';
 
@@ -55,7 +61,12 @@ export interface ApplyRecipeResult {
   filesChanged: string[];
   /** The change, ready for the gates and the pull request. Present when files changed. */
   codeResult?: CodeResult;
+  /** The branch's base is not the pinned one; `summary` says why. The run must stop. */
+  refused?: boolean;
 }
+
+/** The pushed commit does not sit on the base the step pinned before the clone. */
+class RecipeBaseRefused extends Error {}
 
 /** The activity event the recipe records. */
 export const RECIPE_EVENT = 'campaign.recipe';
@@ -104,22 +115,29 @@ function fileChangesFrom(
  *
  * Both ends are the platform's own commits, never refs resolved here: the head is the sha the
  * shell step's finalize committed and pushed (a branch tip that is any other commit is refused),
- * and the base is that commit's first parent, the commit the shell step cut the branch from. The
- * recipe step is the first to touch the branch, and only the platform wrote that commit (with the
- * volume's git config rewritten first), so its parent is not something a recipe or an agent chose.
- * That base is what the protected verification later restores the tests to.
+ * and the base is the base branch tip `pinRecipeBase` recorded before the clone, which must be
+ * that commit's first parent. A parent that is anything else (a work branch someone created on the
+ * host before or during the step, which the shell step then cloned) is refused, so the base the
+ * protected verification later restores the tests to is never one a pusher chose.
  */
 async function describeChange(
   request: RepoWorkRequest,
   branch: string,
   committedSha: string | undefined,
+  pinnedBaseSha: string,
   note: string
 ): Promise<CodeResult> {
   const { workspace, baseBranch } = await provisionGateWorkspace(request, 'runTests', branch, {
     skipSetup: true,
   });
   try {
-    return await readCodeResult(workspace, request, { baseBranch, branch, committedSha, note });
+    return await readCodeResult(workspace, request, {
+      baseBranch,
+      branch,
+      committedSha,
+      note,
+      pinnedBaseSha,
+    });
   } finally {
     await workspace.destroy();
   }
@@ -130,7 +148,13 @@ const SHA = /^[0-9a-f]{40,64}$/;
 async function readCodeResult(
   workspace: Pick<Workspace, 'exec' | 'gitAuthed'>,
   request: RepoWorkRequest,
-  ctx: { baseBranch: string; branch: string; committedSha: string | undefined; note: string }
+  ctx: {
+    baseBranch: string;
+    branch: string;
+    committedSha: string | undefined;
+    note: string;
+    pinnedBaseSha: string;
+  }
 ): Promise<CodeResult> {
   const headSha = (
     await workspace.exec(pinnedGit(`rev-parse --verify ${shellQuote('HEAD^{commit}')}`))
@@ -168,6 +192,11 @@ async function readCodeResult(
   }
   if (!base) {
     throw new Error(`could not read the commit ${ctx.branch} was cut from`);
+  }
+  if (base !== ctx.pinnedBaseSha) {
+    throw new RecipeBaseRefused(
+      `the recipe's commit on ${ctx.branch} sits on ${base.slice(0, 12)}, not on the base branch tip ${ctx.pinnedBaseSha.slice(0, 12)} recorded before the clone; the branch was not cut from the base by this step`
+    );
   }
   const range = `${base} ${headSha}`;
   const common = '-r --no-renames --ignore-submodules=none';
@@ -231,8 +260,23 @@ export async function applyRecipe(input: ApplyRecipeInput): Promise<ApplyRecipeR
     const branch = workBranchOf(input.request, branchPrefix);
     const note = `Applied recipe ${parsed.ref}: ${parsed.params.packageName} to ${parsed.params.targetVersion}. The platform runs the repository's original tests on this change before a pull request is opened.`;
 
+    const refuse = (reason: string): ApplyRecipeResult => {
+      tracer.addActivityEvent({
+        error: reason,
+        name: RECIPE_EVENT,
+        outputJson: { ref: parsed.ref, refused: true },
+      });
+      return { filesChanged: [], passed: false, refused: true, skipped: false, summary: reason };
+    };
+
     let shell: Awaited<ReturnType<typeof runShellStep>>;
+    let pinnedBaseSha: string;
     try {
+      const pinned = await pinRecipeBase(input.request, branch);
+      if (!pinned.ok) {
+        return refuse(pinned.reason);
+      }
+      pinnedBaseSha = pinned.baseSha;
       shell = await runShellStep({
         branch,
         command: buildRecipeCommand(parsed.ref, parsed.params),
@@ -264,7 +308,20 @@ export async function applyRecipe(input: ApplyRecipeInput): Promise<ApplyRecipeR
 
     let codeResult: CodeResult | undefined;
     if (shell.passed && shell.filesChanged.length > 0) {
-      codeResult = await describeChange(input.request, branch, shell.committedSha, note);
+      try {
+        codeResult = await describeChange(
+          input.request,
+          branch,
+          shell.committedSha,
+          pinnedBaseSha,
+          note
+        );
+      } catch (err) {
+        if (err instanceof RecipeBaseRefused) {
+          return refuse(err.message);
+        }
+        throw err;
+      }
     }
     tracer.addActivityEvent({
       durationMs: Date.now() - started,

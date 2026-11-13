@@ -42,7 +42,12 @@ describe('dependency-upgrade-campaign template', () => {
   });
 
   it('ends every path at a terminal: no node is a dead end and every node reaches one', () => {
-    expect(terminals.sort()).toEqual(['done', 'doneNotAffected', 'failVerify']);
+    expect(terminals.sort()).toEqual([
+      'done',
+      'doneNotAffected',
+      'failRecipeRefused',
+      'failVerify',
+    ]);
     for (const [id, node] of nodes) {
       if (node.type === 'terminate') {
         continue;
@@ -171,6 +176,8 @@ describe('dependency-upgrade-campaign template', () => {
   describe('run', () => {
     interface Script {
       recipe?: Record<string, unknown>;
+      /** The recipe step throws (its `warn` policy leaves a null output). */
+      recipeThrows?: boolean;
       implement?: Record<string, unknown>;
       /** The verdicts of the protected gate, in order. */
       verdicts?: boolean[];
@@ -193,6 +200,9 @@ describe('dependency-upgrade-campaign template', () => {
           steps.push({ config, inputs, step });
           switch (step) {
             case 'applyRecipe':
+              if (script.recipeThrows) {
+                throw new Error('could not provision the gate workspace');
+              }
               return (
                 script.recipe ?? {
                   codeResult: codeResult('recipe'),
@@ -309,6 +319,28 @@ describe('dependency-upgrade-campaign template', () => {
         'createOrUpdatePullRequest',
       ]);
       expect(result.result).toMatchObject({ path: 'AGENT' });
+    });
+
+    it('a refused work branch ends the run FAILED: no agent, no verification, no PR', async () => {
+      const reason = 'the work branch auto/CAMPAIGN-x already exists on the host (at 0123456789ab)';
+      const { d, steps } = dispatcher({
+        recipe: { filesChanged: [], passed: false, refused: true, skipped: false, summary: reason },
+      });
+      const result = await runSpec(spec, base(), d);
+      expect(result.status).toBe('FAILED');
+      expect(result.result).toEqual({
+        path: 'RECIPE',
+        skippedReason: reason,
+        verification: 'NOT_RUN',
+      });
+      expect(names(steps)).toEqual(['applyRecipe']);
+    });
+
+    it('a recipe step that threw (output null) still falls to the agent, not the refusal', async () => {
+      const { d, steps } = dispatcher({ recipeThrows: true });
+      const result = await runSpec(spec, base(), d);
+      expect(result.status).toBe('SUCCESS');
+      expect(names(steps)[1]).toBe('executeImplementation');
     });
 
     it('recipe passes with no files changed: not affected, nothing opened', async () => {

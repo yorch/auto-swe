@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
 
+const { pinRecipeBase } = vi.hoisted(() => ({ pinRecipeBase: vi.fn() }));
+vi.mock('./recipeBase.js', () => ({ pinRecipeBase }));
+
 const { runShellStep, provision, persistTrace, workspace } = vi.hoisted(() => {
   const workspace = {
     destroy: vi.fn(async () => {}),
@@ -84,6 +87,7 @@ function describeWorkspace() {
 beforeEach(() => {
   vi.clearAllMocks();
   runShellStep.mockResolvedValue(shellResult());
+  pinRecipeBase.mockResolvedValue({ baseBranch: 'main', baseSha: BASE, ok: true });
   provision.mockResolvedValue({ baseBranch: 'main', branch: 'auto/CAMPAIGN-abc123', workspace });
   describeWorkspace();
 });
@@ -282,6 +286,53 @@ describe('applyRecipe', () => {
     expect(cmds.some((c) => c.includes('merge-base'))).toBe(false);
     expect(cmds.some((c) => c.includes(`'${HEAD}^1'`))).toBe(true);
     expect(cmds.some((c) => c.includes('diff-tree') && c.includes(`${BASE} ${HEAD}`))).toBe(true);
+  });
+
+  it('refuses a work branch that already exists on the host: the recipe never runs', async () => {
+    pinRecipeBase.mockResolvedValue({
+      ok: false,
+      reason:
+        'the work branch auto/CAMPAIGN-abc123 already exists on the host (at cccccccccccc); the recipe builds only on a branch it creates, so it was not run',
+    });
+    const result = await applyRecipe({ params: NPM, recipe: 'npm-dependency@1', request });
+    expect(result).toMatchObject({
+      filesChanged: [],
+      passed: false,
+      refused: true,
+      skipped: false,
+    });
+    expect(result.summary).toMatch(/already exists on the host/);
+    expect(result.codeResult).toBeUndefined();
+    expect(runShellStep).not.toHaveBeenCalled();
+    expect(pinRecipeBase).toHaveBeenCalledWith(request, 'auto/CAMPAIGN-abc123');
+  });
+
+  it('refuses a pushed commit whose parent is not the base recorded before the clone', async () => {
+    // The branch appeared between the check and the clone, with its own commit: the recipe's
+    // commit sits on that, not on the base branch tip.
+    const PLANTED = 'c'.repeat(40);
+    pinRecipeBase.mockResolvedValue({ baseBranch: 'main', baseSha: PLANTED, ok: true });
+    const result = await applyRecipe({ params: NPM, recipe: 'npm-dependency@1', request });
+    expect(result).toMatchObject({ passed: false, refused: true, skipped: false });
+    expect(result.summary).toMatch(
+      /not on the base branch tip cccccccccccc recorded before the clone/
+    );
+    expect(result.codeResult).toBeUndefined();
+    expect(workspace.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('records the base before the recipe runs', async () => {
+    const order: string[] = [];
+    pinRecipeBase.mockImplementation(async () => {
+      order.push('pin');
+      return { baseBranch: 'main', baseSha: BASE, ok: true };
+    });
+    runShellStep.mockImplementation(async () => {
+      order.push('shell');
+      return shellResult();
+    });
+    await applyRecipe({ params: NPM, recipe: 'npm-dependency@1', request });
+    expect(order).toEqual(['pin', 'shell']);
   });
 
   it('refuses a branch tip that is not the commit the recipe pushed', async () => {

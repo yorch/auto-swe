@@ -126,6 +126,16 @@ whole interface:
 | 4 | The tool ran but the lockfile or `go.mod` does not end at the requested version | Nothing was pushed; the agent takes over |
 | other non-zero | The tool failed (install error, no network) | Nothing was pushed; the agent takes over |
 
+**The recipe builds only on a branch it creates.** Before the recipe runs, the step resolves the
+base branch's tip on the host and records it by sha, and refuses a work branch that already exists
+on the host. After the recipe pushed, its commit's parent must be that recorded sha. Either refusal
+ends the child `FAILED` (`path: RECIPE`, `verification: NOT_RUN`) with the reason, and neither the
+agent nor verification runs on that branch. Without this, anyone with push access to a target
+repository could create the campaign's branch ahead of it with weakened tests, the recipe would
+commit on top, and verification would restore the tests to that commit. A run of the template
+started by hand with a ticket whose branch already exists is refused the same way; delete the
+branch first.
+
 `npm-dependency@1` runs `npm install --package-lock-only --ignore-scripts`, keeping the declared
 range style (`^`, `~` or exact) and the section (`dependencies`, `devDependencies` or
 `optionalDependencies`). `--ignore-scripts` is mandatory. `go-module@1` runs `go get` and
@@ -144,7 +154,8 @@ template is a complete workflow on its own
 
 ```
  recipe given?
-   yes ──> apply the recipe ──┬─ applied, no files changed ───────────────> done: not affected
+   yes ──> apply the recipe ──┬─ work branch not cut by this step ────────> run ends FAILED
+                              ├─ applied, no files changed ───────────────> done: not affected
                               ├─ applied, files changed ──┐
                               └─ not applied ─┐           │ path RECIPE
    no ───────────────────────────────────────┐│           │
@@ -197,8 +208,9 @@ them. Two mechanisms close it, both described in
   Babel and Vite configuration are deliberately not protected: they configure the production build
   as well as the tests, and an upgrade can legitimately need them changed, like a manifest.
   The recorded base is the one the change's code result carries, read before any agent or recipe
-  ran: the base branch's tip when the agent's workspace was created, or the parent of the commit the
-  recipe pushed. It is never a merge base computed at verification time, which an agent could move
+  ran: the base branch's tip when the agent's workspace was created, or, for a recipe, the base
+  branch's tip resolved on the host before the recipe's clone, which the commit the recipe pushed
+  must have as its parent (§3). It is never a merge base computed at verification time, which an agent could move
   by rebuilding its commit on an older ancestor. The gate also refuses a branch tip that is not the
   commit the change reported. The restore is never pushed, so the branch keeps the change as made
   and only the verdict ignores any test edit. Manifests such as `package.json` and `go.mod` are

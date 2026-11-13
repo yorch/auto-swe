@@ -356,8 +356,9 @@ Go `testdata`, test-helper directories, runner setup files such as `jest.setup.*
 `pytest.ini`, `phpunit.xml`, …) the change touched to its content at the change's recorded base, and removes the
 test files the change added. The recorded base is `CodeResult.baseSha`: the commit the change was
 measured from, read before any agent or recipe ran (the base branch's tip when the implementer's
-workspace was created, carried forward by a fix session; for a recipe, the parent of the commit the
-recipe step pushed). It is never a merge base computed in the gate, because an agent chooses its
+workspace was created, carried forward by a fix session; for a recipe, the base branch's tip the
+recipe step resolved on the host before its clone, which the commit it pushed must have as its
+parent, on a work branch that did not exist before the step). It is never a merge base computed in the gate, because an agent chooses its
 commit's history and could otherwise move the anchor to an older ancestor, restoring older tests and
 dropping every test added since. The comparison is between two trees, the base's and the branch
 tip's, and the gate refuses a branch tip that is not the commit the change reported
