@@ -15,6 +15,10 @@ import { CREATE_ISSUE_SPEC } from './createIssue.js';
 import { CREATE_ISSUE_FROM_BRIEF_SPEC } from './createIssueFromBrief.js';
 import { DB_MIGRATION_DRY_RUN_SPEC } from './dbMigrationDryRun.js';
 import { DEPENDENCY_UPDATE_SPEC } from './dependencyUpdate.js';
+import {
+  DEPENDENCY_UPGRADE_CAMPAIGN_INPUT_SCHEMA,
+  DEPENDENCY_UPGRADE_CAMPAIGN_SPEC,
+} from './dependencyUpgradeCampaign.js';
 import { DOCS_REFRESH_SPEC } from './docsRefresh.js';
 import { EXTERNAL_APPROVAL_GATE_SPEC } from './externalApprovalGate.js';
 import { FOUR_EYES_SPEC } from './fourEyes.js';
@@ -117,6 +121,13 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     inputSchema: VULNERABILITY_REMEDIATION_INPUT_SCHEMA,
     name: VULNERABILITY_REMEDIATION_SPEC.name,
     spec: VULNERABILITY_REMEDIATION_SPEC,
+  },
+  {
+    // Every child of a campaign runs this template, pinned to one version at launch.
+    description: DEPENDENCY_UPGRADE_CAMPAIGN_SPEC.description,
+    inputSchema: DEPENDENCY_UPGRADE_CAMPAIGN_INPUT_SCHEMA,
+    name: DEPENDENCY_UPGRADE_CAMPAIGN_SPEC.name,
+    spec: DEPENDENCY_UPGRADE_CAMPAIGN_SPEC,
   },
   {
     description: MODEL_CATALOG_REFRESH_SPEC.description,
@@ -446,6 +457,10 @@ export { CREATE_ISSUE_SPEC } from './createIssue.js';
 export { CREATE_ISSUE_FROM_BRIEF_SPEC } from './createIssueFromBrief.js';
 export { DB_MIGRATION_DRY_RUN_SPEC } from './dbMigrationDryRun.js';
 export { DEPENDENCY_UPDATE_SPEC } from './dependencyUpdate.js';
+export {
+  DEPENDENCY_UPGRADE_CAMPAIGN_INPUT_SCHEMA,
+  DEPENDENCY_UPGRADE_CAMPAIGN_SPEC,
+} from './dependencyUpgradeCampaign.js';
 export { DOCS_REFRESH_SPEC } from './docsRefresh.js';
 export { EXTERNAL_APPROVAL_GATE_SPEC } from './externalApprovalGate.js';
 export { FOUR_EYES_SPEC } from './fourEyes.js';

@@ -79,6 +79,8 @@ export const BUILTIN_STEPS = [
   // Live provider model ids for the catalog-refresh template (keys stay in the worker)
   'listProviderModels',
   'checkPriceListNotes',
+  // Campaign recipes: a code-owned deterministic change through the shell-step machinery
+  'applyRecipe',
   // CI wait strategy: resolve signal-vs-poll config, then poll when configured
   'resolveCiWaitConfig',
   'waitForCiByPolling',

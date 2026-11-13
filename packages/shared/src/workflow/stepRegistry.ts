@@ -114,6 +114,15 @@ const ALLOWED_PATHS_FIELD = {
   type: 'json' as const,
 } as const;
 
+const TEST_INTEGRITY_FIELD = {
+  description:
+    "The weakest test-integrity guard this step runs with. 'block' fails the step, before anything is pushed, when the change deletes, skips or weakens tests or loosens the test command or CI config; the platform setting can only make the guard stricter than this, never looser. Leave empty to follow the setting (and the guard runs only on steps that refuse workflow changes).",
+  enumValues: ['warn', 'block'],
+  key: 'testIntegrity',
+  label: 'Test-integrity guard floor',
+  type: 'enum' as const,
+} as const;
+
 const IMPLEMENTER_TOOLS_FIELD = {
   description:
     'Tools available to the implementer agent. Leave empty to enable all tools (default). Uncheck a tool to restrict the agent from using it.',
@@ -213,6 +222,7 @@ register({
     CROSS_REPO_CONTEXT_FIELD,
     CROSS_REPO_CHECKOUT_FIELD,
     ALLOWED_PATHS_FIELD,
+    TEST_INTEGRITY_FIELD,
   ],
   costHint: { role: 'implementer', tokensIn: 20000, tokensOut: 8000 },
   description: 'Run the implementer agent inside a fresh Docker workspace.',
@@ -638,7 +648,16 @@ register({
 
 register({
   category: 'gate',
-  configFields: GATE_CONFIG_FIELDS,
+  configFields: [
+    ...GATE_CONFIG_FIELDS,
+    {
+      description:
+        "Verify against the repository's original tests. Before the command runs, every test file, test support file and pure test-runner config the change touched is put back to its content at the base the change's code result recorded (context.currentCodeResult.baseSha, read before any agent or recipe ran), in this gate's own workspace only: nothing is committed or pushed, so the branch keeps the change as made. Added test files are removed for the run. Fails the gate run (it does not pass) when the original tests cannot be restored, when the code result recorded no base, or when the branch tip is not the commit the code result reported. Manifests such as package.json and go.mod are never restored. Off by default.",
+      key: 'protectTests',
+      label: 'Protect the original tests',
+      type: 'boolean' as const,
+    },
+  ],
   description: 'Run the full test suite as a hard gate (separate from implementer TDD).',
   label: 'Run tests',
   name: 'runTests',
@@ -745,11 +764,28 @@ register({
 
 register({
   category: 'agent',
-  configFields: [SYSTEM_PROMPT_FIELD, IMPLEMENTER_TOOLS_FIELD],
+  configFields: [SYSTEM_PROMPT_FIELD, IMPLEMENTER_TOOLS_FIELD, TEST_INTEGRITY_FIELD],
   costHint: { role: 'implementer', tokensIn: 15000, tokensOut: 5000 },
   description: 'Re-run the implementer with a failed gate output as context.',
   label: 'Apply gate fix',
   name: 'executeGateFixImplementation',
+});
+
+register({
+  category: 'vcs',
+  configFields: [
+    {
+      description:
+        "A recipe in the campaign catalogue, such as 'npm-dependency@1' or 'go-module@1'. Normally bound from the run's input (`inputs.recipe`); empty runs nothing.",
+      key: 'recipe',
+      label: 'Recipe',
+      type: 'string' as const,
+    },
+  ],
+  description:
+    'Run a code-owned campaign recipe (a deterministic dependency upgrade) against the repository in a sandbox, and push the result to the work branch. Inputs: `recipe`, `packageName`, `targetVersion`; the parameters are validated again by the worker. Output: `skipped` (no recipe named), `passed`, `filesChanged`, and, when files changed, `codeResult` for the gates and the pull request. A repository the recipe does not apply to (the package is not used, or it is already at the version) passes with no files changed; a layout the recipe cannot handle fails, having pushed nothing.',
+  label: 'Apply recipe',
+  name: 'applyRecipe',
 });
 
 // ── Phase 3 — Decomposition + branch merging ────────────────────────────────

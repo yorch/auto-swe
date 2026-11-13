@@ -232,6 +232,15 @@ jobs:
           TOOL_INSTALL_DOCKER_TEST: '1'
         run: yarn test packages/worker/src/lib/toolInstall.docker.test.ts
 
+      # Runs the campaign recipes in the Node and Go images the shell step uses, against the real
+      # package managers: the lockfile ends at the requested version, no script runs, and a
+      # repository the recipe does not apply to is reported as such. Two cases resolve a real
+      # version, so this step reaches the npm registry and the Go module proxy.
+      - name: Campaign recipes (Docker-backed)
+        env:
+          CAMPAIGN_RECIPES_DOCKER_TEST: '1'
+        run: yarn test packages/worker/src/lib/campaignRecipes.docker.test.ts
+
       # The same suites through the socket proxy the worker uses in compose, with
       # the same config: the suites cover `run -d`, `exec -i`, `cp`, `pause` and
       # `rm`, and the start step covers volumes, a foreground `run --rm` and `port`.

@@ -43,7 +43,11 @@ import { withRunDetection } from '../lib/runDetection.js';
 import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
-import { resolveTestIntegrityMode, type TestIntegrityGuardMode } from '../lib/testIntegrityGate.js';
+import {
+  resolveTestIntegrityMode,
+  type TestIntegrityFloor,
+  type TestIntegrityGuardMode,
+} from '../lib/testIntegrityGate.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import { diffForResult, pushRefspec, startPathGuard } from './allowedPaths.js';
 import { commitWithTestIntegrity, startTestIntegritySession } from './testIntegritySession.js';
@@ -109,6 +113,8 @@ export interface FixSessionInput extends PauseOptions {
   allowedPaths?: string[];
   /** Refuse, before the push, a change to a GitHub Actions workflow or action. */
   refuseWorkflowChanges?: boolean;
+  /** The weakest test-integrity guard mode this session runs with (`testIntegrity` on the step). */
+  testIntegrityFloor?: TestIntegrityFloor;
   /** Conventional commit message for the fix commit. */
   commitMessage: string;
   /** OTel/cost event name, e.g. 'llm.ci_fix'. */
@@ -195,9 +201,10 @@ export async function runImplementerFixSession(
   await assertRolePricedForUsdCap(input.agentKey);
   const activityCtx = await currentRequestContext();
   // Before the paid session: a lookup that throws afterwards would fail retryably and re-run it.
-  const guardMode: TestIntegrityGuardMode = TEST_GUARDED_MODES.has(mode)
-    ? await resolveTestIntegrityMode(activityCtx)
-    : 'off';
+  const guardMode: TestIntegrityGuardMode =
+    TEST_GUARDED_MODES.has(mode) || input.testIntegrityFloor !== undefined
+      ? await resolveTestIntegrityMode(activityCtx, input.testIntegrityFloor)
+      : 'off';
   const repo = await withRunDetection(await resolveSessionRepo(previousCodeResult));
 
   const repoRef = toRepoRef(repo);

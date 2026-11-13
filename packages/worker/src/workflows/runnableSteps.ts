@@ -51,6 +51,7 @@ import {
   prFeedbackAgentTaskActivities,
   prFeedbackQodoGatherActivities,
   qodoReviewActivities,
+  recipeActivities,
   stateActivities,
   trackerCommentActivities,
   uiVerifyActivities,
@@ -106,12 +107,23 @@ function resolveConnectionId(step: string, ctx: Context, inputs: Record<string, 
  * default applies.
  */
 /** Per-step fix-session options, omitted when none are explicitly configured. */
-function guardOptionsConfig(
-  config: Record<string, unknown>
-): { refuseWorkflowChanges?: true; untrustedCiLogs?: true; knowledgeBases?: boolean } | undefined {
+function guardOptionsConfig(config: Record<string, unknown>):
+  | {
+      refuseWorkflowChanges?: true;
+      untrustedCiLogs?: true;
+      knowledgeBases?: boolean;
+      testIntegrityFloor?: 'warn' | 'block';
+    }
+  | undefined {
   const refuse = config.refuseWorkflowChanges === true;
   const untrusted = config.untrustedCiLogs === true;
-  if (!refuse && !untrusted && typeof config.knowledgeBases !== 'boolean') {
+  // The weakest test-integrity guard mode the step accepts. The configured mode can only be
+  // stricter; any value but `warn` and `block` is ignored.
+  const floor =
+    config.testIntegrity === 'block' || config.testIntegrity === 'warn'
+      ? config.testIntegrity
+      : undefined;
+  if (!refuse && !untrusted && floor === undefined && typeof config.knowledgeBases !== 'boolean') {
     return undefined;
   }
   return {
@@ -119,6 +131,7 @@ function guardOptionsConfig(
       ? { knowledgeBases: config.knowledgeBases }
       : {}),
     ...(refuse ? { refuseWorkflowChanges: true as const } : {}),
+    ...(floor ? { testIntegrityFloor: floor } : {}),
     ...(untrusted ? { untrustedCiLogs: true as const } : {}),
   };
 }
@@ -202,6 +215,19 @@ function crossRepoOptions(config: Record<string, unknown>): {
 
 // Shared executor for the six shell-bound quality gates — they differ only by
 // the activity name, which is the step name itself.
+/** The shas a protected gate verifies against, from `context.currentCodeResult`. */
+function protectedTestsTarget(ctx: Parameters<typeof lookupPath>[0]): {
+  baseSha?: string;
+  headSha?: string;
+} {
+  const baseSha = lookupPath(ctx, 'context.currentCodeResult.baseSha');
+  const headSha = lookupPath(ctx, 'context.currentCodeResult.headSha');
+  return {
+    ...(typeof baseSha === 'string' ? { baseSha } : {}),
+    ...(typeof headSha === 'string' ? { headSha } : {}),
+  };
+}
+
 const gateExecutor: StepExecutor = ({ step, ctx, request, config, inputs }) => {
   // Per-branch fan-out can override `branch` to point gates at the
   // subtask branch instead of the parent ticket branch (phase 8).
@@ -212,6 +238,10 @@ const gateExecutor: StepExecutor = ({ step, ctx, request, config, inputs }) => {
   const gateInput = {
     ...(branchOverride ? { branch: branchOverride } : {}),
     command: (inputs.command as string | undefined) ?? (config.command as string | undefined),
+    // Only when the step asks for it, so every other gate's input is byte-identical to before.
+    // The restore base and the expected tip are the shas the change's code result recorded
+    // before any agent or recipe ran, never refs the gate resolves; missing, the gate fails closed.
+    ...(config.protectTests === true ? { protectTests: protectedTestsTarget(ctx) } : {}),
     request,
     timeoutMs: (inputs.timeoutMs as number | undefined) ?? (config.timeoutMs as number | undefined),
   };
@@ -615,6 +645,20 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       return config.draft === true
         ? githubActivities.createOrUpdatePullRequest(request, codeResult, { draft: true })
         : githubActivities.createOrUpdatePullRequest(request, codeResult);
+    },
+  ],
+  [
+    'applyRecipe',
+    ({ request, config, inputs }) => {
+      const recipe = inputs.recipe ?? config.recipe;
+      const hasParams = inputs.packageName !== undefined || inputs.targetVersion !== undefined;
+      return recipeActivities.applyRecipe({
+        ...(hasParams
+          ? { params: { packageName: inputs.packageName, targetVersion: inputs.targetVersion } }
+          : {}),
+        ...(typeof recipe === 'string' && recipe !== '' ? { recipe } : {}),
+        request,
+      });
     },
   ],
   ['listProviderModels', ({ request }) => catalogActivities.listProviderModels({ request })],
@@ -1073,6 +1117,9 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         ...pause,
         ...(guardOptionsConfig(config)?.refuseWorkflowChanges
           ? { refuseWorkflowChanges: true }
+          : {}),
+        ...(guardOptionsConfig(config)?.testIntegrityFloor
+          ? { testIntegrityFloor: guardOptionsConfig(config)?.testIntegrityFloor }
           : {}),
         systemPromptOverride: config.systemPrompt as string | undefined,
       });

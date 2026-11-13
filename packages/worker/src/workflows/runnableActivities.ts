@@ -138,6 +138,16 @@ export const shellActivities = proxyActivities<Pick<typeof activitiesType, 'runS
   startToCloseTimeout: T_60M,
 });
 
+// Campaign recipes: a shell step plus a read of the pushed commit. One attempt, deliberately. A
+// retry after a recipe had already pushed would find the branch at the target version, "change
+// nothing", and report the repository as not affected. A failure that is the recipe's own
+// (unsupported layout, install error) comes back as a result, not a throw, and is the agent's cue.
+export const recipeActivities = proxyActivities<Pick<typeof activitiesType, 'applyRecipe'>>({
+  heartbeatTimeout: T_5M,
+  retry: { maximumAttempts: 1 },
+  startToCloseTimeout: T_60M,
+});
+
 // P4/WS4: container-contract coded steps. Same sandbox/lifecycle shape as shell.
 export const containerStepActivities = proxyActivities<
   Pick<typeof activitiesType, 'runContainerStep'>

@@ -1,6 +1,6 @@
 # Maintenance and document workflows
 
-Three built-in templates cover recurring upkeep work. Each ends at something a person looks at
+Four built-in templates cover recurring upkeep work. Each ends at something a person looks at
 before it matters: a draft pull request, or a proposal that waits for approval. None of them
 merges anything.
 
@@ -8,6 +8,7 @@ merges anything.
 |---|---|---|---|
 | `docs-refresh` | A repository schedule, or by hand | Markdown files in a git repository | A draft pull request, or nothing when the docs are current |
 | `vulnerability-remediation` | A request that carries an advisory | Dependency manifests, lockfiles and the code a breaking change forces | A draft pull request, with CI repaired up to three times, or nothing when the repository is not affected |
+| `dependency-upgrade-campaign` | A package (or Go module) and an exact version, or a brief; by hand, or once per repository from a campaign | The dependency manifest and lockfile, plus the code a breaking change forces | A draft pull request after the repository's original tests pass, or nothing when the repository is not affected |
 | `confluence-review-to-tickets` | A Confluence page id, started by hand or from an event | Comments on the page, then an epic, tickets and sub-tasks in Jira | Comments (the page is not ready), or created tickets (a person approved the structure) |
 
 They are ordinary templates: clone one to change a prompt, a gate or a limit, and launch it the
@@ -104,7 +105,57 @@ tests record their result and do not stop the run; the draft pull request and CI
 **Not affected.** A repository whose resolved version is already fixed, or that does not use the
 package, ends `SUCCESS` with `changed: false` and opens nothing.
 
-## 3. Confluence review to Jira tickets
+## 3. Dependency upgrade campaign
+
+`dependency-upgrade-campaign` applies one planned change to one repository, deterministically
+first, and is the template every child of a campaign runs. It is a complete workflow on its own.
+
+| Input | Meaning |
+|---|---|
+| `connectionId` | The repository |
+| `recipe` | A recipe in the code-owned catalogue: `npm-dependency@1` or `go-module@1`. Leave empty for an agent-only change |
+| `packageName` | The npm package, or the Go module path |
+| `targetVersion` | The exact version to raise it to: `4.17.21` (npm) or `v1.9.0` (Go). Ranges and tags are refused |
+| `description` | The brief. The agent reads it; an agent-only change is described here |
+
+**The recipes.** A recipe is a script the platform owns and versions, run in the Node or Go image
+of the shell step with the run's egress policy and no credential in the volume. Its two parameters
+are validated against a strict shape (a registry package name or a Go module path; an exact
+version), by the gateway at launch and again by the worker, and reach the script only as quoted
+environment values. `npm-dependency@1` handles a root `package.json` with a `package-lock.json`
+(`npm install --package-lock-only --ignore-scripts`, keeping the declared range style and
+section); `go-module@1` handles a root `go.mod` (`go get`, `go mod tidy`). A repository that does not
+use the package, or already has the version, changes nothing. A layout the recipe cannot handle (a
+Yarn, pnpm or Bun lockfile, an npm shrinkwrap, a workspaces repository that does not list the
+package at its root, a dependency declared as a Git or file specifier, an install that fails) exits
+non-zero and pushes nothing.
+
+**The flow.**
+
+1. With a recipe, the recipe runs. Nothing to change ends the run `SUCCESS` with `changed: false`
+   and no pull request. A recipe that could not apply, or no recipe, hands the work to the agent,
+   which starts from the base branch.
+2. The agent makes the change under the campaign brief. Its step carries `testIntegrity: 'block'`
+   ([ci-failure-triggers.md §2.4](./ci-failure-triggers.md#24-the-test-integrity-guard)), so a change
+   that deletes, skips or weakens tests, or loosens the test command or CI configuration, fails
+   before it is pushed. Both agent steps also refuse a change to a GitHub Actions workflow or
+   action, or one that adds a symlink or submodule. An agent that changes nothing also ends
+   `SUCCESS` with `changed: false`.
+3. Every change, from the recipe or the agent, is verified by the `runTests` gate with
+   `protectTests: true`: the test files the change touched are put back to the change's recorded
+   base before the repository's setup and the tests run, in the gate's own workspace only. Editing
+   a test therefore cannot be how a change reaches green.
+4. A change that fails verification gets one attempt by the gate-fix agent, under the same `block`
+   floor, and is verified again. Failing twice ends the run `FAILED` with `verification: FAILED` and no
+   pull request.
+5. A verified change opens a **draft** pull request. There is no CI loop and nothing merges; the
+   host's own CI on the draft is what a person reads.
+
+**The result.** The run reports `changed`, `path` and `verification` beside the pull request. `path`
+is `RECIPE`, `AGENT`, `RECIPE_THEN_AGENT` (a recipe's change the agent fixed) or `NONE`;
+`verification` is `PASSED`, `FAILED` or `NOT_RUN`.
+
+## 4. Confluence review to Jira tickets
 
 `confluence-review-to-tickets` reviews a page against criteria and, when it is ready, turns it into
 Jira tickets a person has approved.
@@ -155,6 +206,19 @@ validated again by the write itself. The page text is untrusted: both prompts tr
 and the text posted back is escaped storage, never markup.
 
 ## Limitations
+
+- **The upgrade recipes are narrow.** Two exist, and they handle a root `package.json` with an npm
+  lockfile and a root `go.mod`. Yarn, pnpm and Bun lockfiles, monorepo workspaces, Python and JVM
+  projects fall to the agent, which has no deterministic path to follow. A recipe sets an exact
+  version, so it can also lower one.
+- **Verification is only as strong as the tests it can restore.** It puts back test files by
+  file-name convention. Inline tests, tests outside the conventions, test settings inside a
+  dependency manifest and the gate's own command are not protected, and the host's CI runs the
+  branch as pushed. A breaking upgrade that needs a test updated fails verification and opens no pull
+  request ([ci-failure-triggers.md §2.4](./ci-failure-triggers.md#24-the-test-integrity-guard)).
+- **An agent step can stop to ask a person.** The upgrade agents are pausable steps like any other
+  implementer step, so a question holds a run until it is answered or
+  `workflow.needsInputTimeoutSeconds` passes; the campaign prompt tells the agent nobody can answer.
 
 - **Vulnerability scanning covers Node repositories only.** `runVulnScan` has a default command for
   npm, pnpm and Yarn Berry. Python, JVM and Go have none, and their audit tools read vulnerability

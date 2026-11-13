@@ -54,6 +54,7 @@ import {
   gitIdentityFlags,
   withCoAuthorTrailer,
 } from '../lib/gitIdentity.js';
+import type { TestIntegrityFloor } from '../lib/testIntegrityGate.js';
 import { type StandInOptions, standInBinarySections } from './scanDiffText.js';
 import { gitWithAuthHeader, shellQuote, type Workspace } from './workspace.js';
 
@@ -103,6 +104,12 @@ export function pathAllowed(allowed: readonly string[], changedPath: string): bo
 export interface PathGuardOptions {
   /** See {@link PathGuard.refuseWorkflowChanges}. */
   refuseWorkflowChanges?: boolean;
+  /**
+   * The weakest test-integrity guard mode the step runs with (`testIntegrity: 'block'` on the
+   * step). The configured mode can only be stricter than this, never looser. Read by the
+   * implementer activities, not by the path guard itself.
+   */
+  testIntegrityFloor?: TestIntegrityFloor;
 }
 
 /** What the guard measures against, and what it allows. Present only for a guarded step. */
