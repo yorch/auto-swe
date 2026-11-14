@@ -115,7 +115,7 @@ export function SkillHistory({
                 <Td className="py-2 text-right">
                   <div className="flex justify-end gap-1">
                     <Button
-                      aria-label={`Show what changed in revision ${r.revision}`}
+                      aria-label={`Show changes for revision ${r.revision}`}
                       onClick={() => setSelected(r.revision)}
                       size="sm"
                       variant="ghost"

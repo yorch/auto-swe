@@ -127,7 +127,10 @@ export function useUpdateSkill() {
       api
         .put<{ data: Skill; scanWarnings?: string[] }>(`/api/v1/platform/skills/${id}`, body)
         .then(toSaveResult),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['skills'] });
+      qc.invalidateQueries({ queryKey: ['admin-agent-library'] });
+    },
   });
 }
 
@@ -140,7 +143,10 @@ export function useVerifySkill() {
   return useMutation({
     mutationFn: ({ id, revision }: { id: string; revision: number }) =>
       api.post<{ data: Skill }>(`/api/v1/platform/skills/${id}/verify`, { revision }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['skills'] });
+      qc.invalidateQueries({ queryKey: ['admin-agent-library'] });
+    },
   });
 }
 

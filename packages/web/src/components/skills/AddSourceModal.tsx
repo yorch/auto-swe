@@ -307,6 +307,7 @@ export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () =
     const pickable = previewed.skills.filter((s) => unselectableReason(s) === null);
     return (
       <Modal
+        dismissible={!create.isPending}
         onClose={close}
         open={open}
         size="lg"
@@ -421,7 +422,7 @@ export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () =
   }
 
   return (
-    <Modal onClose={close} open={open} title="Add external source">
+    <Modal dismissible={!preview.isPending} onClose={close} open={open} title="Add external source">
       <form className="space-y-4" onSubmit={runPreview}>
         <Input
           hint="Paste a link to the repository or a folder in it to fill the fields below"
@@ -444,7 +445,7 @@ export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () =
           required
           value={form.host}
         />
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Input
             id="skill-source-owner"
             label="Owner"
@@ -460,7 +461,7 @@ export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () =
             value={form.repo}
           />
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Input
             hint="Folder to search for skills; empty is the whole repository"
             id="skill-source-path"

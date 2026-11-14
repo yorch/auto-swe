@@ -112,7 +112,15 @@ function AddedSkill({
   );
 }
 
-function InstallBody({ onClose, sourceId }: { onClose: () => void; sourceId: string }) {
+function InstallBody({
+  install,
+  onClose,
+  sourceId,
+}: {
+  install: ReturnType<typeof useInstallIntoSource>;
+  onClose: () => void;
+  sourceId: string;
+}) {
   const sources = useSkillSources();
   const source = sources.data?.find((x) => x.id === sourceId);
   if (!source) {
@@ -120,6 +128,15 @@ function InstallBody({ onClose, sourceId }: { onClose: () => void; sourceId: str
       <div className="space-y-4">
         {sources.isLoading ? (
           <SkeletonRows label="skill source" rows={2} />
+        ) : sources.isError ? (
+          <Alert>
+            {errMsg(sources.error, 'Failed to load the skill source')}
+            <div className="mt-2">
+              <Button disabled={sources.isFetching} onClick={() => sources.refetch()} size="sm">
+                Retry
+              </Button>
+            </div>
+          </Alert>
         ) : (
           <Alert>This source no longer exists.</Alert>
         )}
@@ -129,6 +146,7 @@ function InstallBody({ onClose, sourceId }: { onClose: () => void; sourceId: str
   }
   return (
     <InstallList
+      install={install}
       key={source.pinnedSha}
       onClose={onClose}
       onReloadSource={() => sources.refetch()}
@@ -139,11 +157,13 @@ function InstallBody({ onClose, sourceId }: { onClose: () => void; sourceId: str
 }
 
 function InstallList({
+  install,
   onClose,
   onReloadSource,
   pinnedSha,
   sourceId,
 }: {
+  install: ReturnType<typeof useInstallIntoSource>;
   onClose: () => void;
   onReloadSource: () => unknown;
   pinnedSha: string;
@@ -153,7 +173,6 @@ function InstallList({
   // there, and the install sends this same sha, so the admin installs what they read. The
   // list is keyed by the pin, so a pin that moved starts this over on the current one.
   const diffQuery = useSourceDiff(sourceId, pinnedSha);
-  const install = useInstallIntoSource();
   const readFull = useReadIncomingSkill();
   const [installing, setInstalling] = useState<string | null>(null);
   const [reading, setReading] = useState<string | null>(null);
@@ -233,7 +252,14 @@ function InstallList({
   if (!diff) {
     return (
       <div className="space-y-4">
-        <Alert>{errMsg(diffQuery.error, 'Failed to read the source')}</Alert>
+        <Alert>
+          {errMsg(diffQuery.error, 'Failed to read the source')}
+          <div className="mt-2">
+            <Button disabled={diffQuery.isFetching} onClick={() => diffQuery.refetch()} size="sm">
+              Retry
+            </Button>
+          </div>
+        </Alert>
         <ModalFooter cancelLabel="Close" onCancel={onClose} />
       </div>
     );
@@ -276,7 +302,7 @@ function InstallList({
           ))}
         </ul>
       )}
-      <ModalFooter cancelLabel="Close" onCancel={onClose} />
+      <ModalFooter cancelLabel="Close" isPending={install.isPending} onCancel={onClose} />
     </div>
   );
 }
@@ -291,15 +317,21 @@ export function InstallSkillsModal({
 }) {
   const { data } = useSkillSources(sourceId !== null);
   const source = data?.find((x) => x.id === sourceId);
+  // Owned here, above the keyed body, so the modal can refuse to close while an install runs and
+  // the per-skill outcome is never unmounted before it is read.
+  const install = useInstallIntoSource();
   return (
     <Modal
+      dismissible={!install.isPending}
       onClose={onClose}
       open={sourceId !== null}
       size="lg"
       subtitle={source ? sourceLabel(source) : undefined}
       title="Install more skills"
     >
-      {sourceId !== null && <InstallBody key={sourceId} onClose={onClose} sourceId={sourceId} />}
+      {sourceId !== null && (
+        <InstallBody install={install} key={sourceId} onClose={onClose} sourceId={sourceId} />
+      )}
     </Modal>
   );
 }
