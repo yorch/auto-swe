@@ -194,11 +194,17 @@ describe('buildBrief', () => {
   });
 
   it('stays under 60 000 characters for a huge PR', () => {
-    const files = Array.from({ length: 3000 }, (_, i) =>
+    // Enough files that dropping any of the list caps would push the brief past the limit
+    // (each folded line is about 170 characters, so about 360 files fill it; the flagged lines
+    // are longer still), and no more: the caps hold at any size above that, while the work of
+    // ordering the files grows with it. 3000 files took about two seconds under CI's coverage
+    // run, close enough to the default five-second limit that a loaded runner failed it.
+    const HUGE_PR_FILES = 700;
+    const files = Array.from({ length: HUGE_PR_FILES }, (_, i) =>
       file(`src/${'d'.repeat(150)}/${i}.ts`, { additions: 5 })
     );
     // The cap belongs to the brief builder, so it is handed a classification in which every file
-    // is a sensitive-path hit (the worst case for the brief's size) instead of classifying 3000
+    // is a sensitive-path hit (the worst case for the brief's size) instead of classifying the
     // files against ~100 globs: that is the expensive part, and it made this test depend on
     // machine load under CI's coverage run without adding anything to what is asserted.
     const result = buildBrief(
@@ -219,7 +225,7 @@ describe('buildBrief', () => {
       effective
     );
     expect(result.markdown.length).toBeLessThan(60_000);
-    expect(result.path).toHaveLength(3000);
+    expect(result.path).toHaveLength(HUGE_PR_FILES);
     // the folded block is capped and still closes inside the limit
     expect(result.markdown).toContain('</details>');
     expect(result.markdown).not.toContain('(truncated)');
