@@ -66,7 +66,7 @@ Each container registration gets a random Basic-auth proxy token. The worker ret
 and binds the registration to the registering activity's context and egress allowlist snapshot.
 The container receives uppercase/lowercase `HTTP_PROXY` and `HTTPS_PROXY` variables containing
 the credentials. `NO_PROXY` / `no_proxy` exclude localhost, loopback, and configured registry/model
-proxy hosts and the repository's own git host (clone, fetch and push go direct). A `NO_PROXY` entry also covers subdomains of that host, so `github.com` covers `api.github.com`. Only a plain hostname or IP literal is written there. Teardown releases the registration, closes remaining exchanges, and waits with a
+proxy hosts and the repository's own git host (clone, fetch and push go direct). The egress proxy's own host is excluded as well, and the IPv6 loopback is written both as `::1` and `[::1]`. Only a plain hostname or IP literal is written there. curl, and `fetch` on the 24 line of Node (undici 7), also treat an entry as covering its subdomains, so `github.com` covers `api.github.com`. `fetch` on the 22 line (undici 6) matches exactly unless the entry starts with a dot or `*`, and `node:http` and `node:https` match the exact host only. The container also gets `NODE_USE_ENV_PROXY=1` (not a secret), so Node's built-in clients use the proxy variables. The 22 line honours the variable from 22.21 and every release of the 24 line does; `fetch` honours it from the first of those, and `node:http` and `node:https` from 24.5 (22.21 on the 22 line). A release before those ignores it, so `fetch` there fails under `restricted`. Teardown releases the registration, closes remaining exchanges, and waits with a
 five-second bound. Registrations allow 32 concurrent exchanges and use a 60-second idle timeout.
 
 - Absolute-form plain HTTP is forwarded with method, sanitized path, status, duration and bytes.
@@ -318,6 +318,11 @@ transition rather than declaring it enforced.
   Kata requires usable KVM/nested virtualization and adds VM/helper startup and memory overhead.
   The tested Go shim is deprecated upstream. Docker policy-broker profiles for owned CRI sandbox
   annotations and trusted runc holders/helpers are not included.
+- The 22 line of Node prints a one-time `UNDICI-EHPA` experimental warning to stderr the first time
+  it uses the environment proxy (`NODE_USE_ENV_PROXY=1`). The warning goes to stderr, so a tool that
+  treats any stderr output as a failure may break.
+- undici tunnels plain `http` targets with `CONNECT` as well, so a Node `fetch` to an `http` URL is
+  recorded as a `tcp` tunnel without method or path, not as an absolute-form plain HTTP row.
 - Team and baseline allowlists are read live, not frozen per run. The template-code audit snapshot
   includes both at sign-off, but does not pin execution. Changes apply to later registrations,
   including retries; existing registrations retain their original list until teardown.

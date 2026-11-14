@@ -62,17 +62,27 @@ export async function beginEgressAccess(allowlist: string[], bypassHosts: string
   url.username = 'egress';
   url.password = registration.token;
   const infra = resolveWorkspaceInfra();
+  // The proxy's own host is excluded too: a client that applies `HTTP_PROXY` itself (an old axios,
+  // `request`) sends an absolute-form request to the proxy with the target in `Host`, which Node's
+  // proxy-aware agent refuses unless the proxy host is itself in `NO_PROXY`. `::1` is spelled both
+  // ways because undici parses `host:port` and mis-reads the bare form, while Node core `http`
+  // handles it.
   const noProxy = [
-    'localhost',
-    '127.0.0.1',
-    '::1',
-    ...[infra.registryProxy, infra.harnessModelProxy].flatMap((config) =>
-      config ? [new URL(config.url).hostname] : []
-    ),
-    ...bypassHosts,
+    ...new Set([
+      'localhost',
+      '127.0.0.1',
+      '::1',
+      '[::1]',
+      ...[infra.registryProxy, infra.harnessModelProxy].flatMap((config) =>
+        config ? [new URL(config.url).hostname] : []
+      ),
+      ...[validHost(url.hostname)].flatMap((host) => (host ? [host] : [])),
+      ...bypassHosts,
+    ]),
   ].join(',');
   return {
-    env: [`NO_PROXY=${noProxy}`, `no_proxy=${noProxy}`],
+    // Node's built-in `fetch` (undici) ignores the proxy variables unless told to read them.
+    env: [`NO_PROXY=${noProxy}`, `no_proxy=${noProxy}`, 'NODE_USE_ENV_PROXY=1'],
     registration,
     secretEnv: {
       HTTP_PROXY: url.href,
