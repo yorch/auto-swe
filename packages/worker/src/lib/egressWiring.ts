@@ -273,7 +273,7 @@ async function resolveRunNetworkSetting<
   return resolveSetting(key, await resolveEgressScope(teamId));
 }
 
-async function resolveEgressScope(teamId: string | null) {
+export async function resolveEgressScope(teamId: string | null) {
   const ctx = await currentRequestContext();
   let orgId = ctx.orgId;
   if (orgId === undefined && teamId) {

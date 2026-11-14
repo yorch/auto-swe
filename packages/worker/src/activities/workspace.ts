@@ -69,6 +69,8 @@ import {
 } from '../lib/workspaceBackend/kubernetes/safeTar.js';
 import { agentWorkspaceSpec } from '../lib/workspaceBackend/spec.js';
 import type { WorkspaceHandle, WorkspaceServiceSpec } from '../lib/workspaceBackend/types.js';
+import { describeWorkspaceOom } from '../lib/workspaceOom.js';
+import { resolveRunWorkspaceSize } from '../lib/workspaceSizing.js';
 import {
   type InstalledTool,
   installLateTools,
@@ -929,6 +931,7 @@ export async function createWorkspace(
   // override).
   const infra = resolveWorkspaceInfra();
   const effectiveImage = image ?? infra.image;
+  const workspaceSize = await resolveRunWorkspaceSize(options?.teamId ?? null, infra);
   const realEgressPolicy =
     options?.egressPolicy ?? (await resolveRunEgressPolicy(options?.teamId ?? null));
   const onboardingEgress =
@@ -1362,7 +1365,13 @@ export async function createWorkspace(
     return transition;
   };
   try {
-    const spec = agentWorkspaceSpec(containerName, effectiveImage, infra, options?.services);
+    const spec = agentWorkspaceSpec(
+      containerName,
+      effectiveImage,
+      infra,
+      options?.services,
+      workspaceSize
+    );
     if (options?.trusted) {
       spec.trusted = true;
     }
@@ -1845,9 +1854,9 @@ export async function createWorkspace(
         workdir: '/workspace/target-repo',
       });
     },
-    execCapture: (command: string, options) => {
+    execCapture: async (command: string, options) => {
       const tag = newExecTag();
-      return backend.exec(handle, ['sh', '-c', command], {
+      const result = await backend.exec(handle, ['sh', '-c', command], {
         env: [tag.env, ...toolsEnv],
         heartbeatLabel: 'workspace: exec (capture)',
         ...phaseSecrets(),
@@ -1855,6 +1864,18 @@ export async function createWorkspace(
         timeoutMs: options?.timeoutMs ?? 600_000,
         workdir: '/workspace/target-repo',
       });
+      // The common choke point of the gates, the agent's bash tool and the CI verifier: a command
+      // the kernel killed for memory otherwise reads as an ordinary failure, and a fixer agent
+      // loops on it. The note goes on stderr when that stream has content; on an empty stderr it
+      // goes on stdout instead, because the gate summary reads `stderr || stdout` and a note on an
+      // empty stderr would hide the test output that shows what was running when it was killed.
+      const oom = describeWorkspaceOom(result, workspaceSize.memory);
+      if (!oom) {
+        return result;
+      }
+      return result.stderr.trim() === ''
+        ? { ...result, stdout: `${result.stdout}\n${oom}`.trim() }
+        : { ...result, stderr: `${result.stderr}\n${oom}`.trim() };
     },
     execStdin: async (command: string, stdin: string | Buffer) => {
       const tag = newExecTag();

@@ -3,6 +3,7 @@ import { hostname } from 'node:os';
 import path from 'node:path';
 import { DOCKER_IMAGE_REF_RE } from '../workflow/shellImageAllowlist.js';
 import { decryptSecret } from './crypto.js';
+import { DOCKER_MEMORY_RE } from './dockerMemory.js';
 import { hostFamily } from './githubHostScope.js';
 
 // Lazy DB access — defers prisma module load until first resolver call so that
@@ -1222,7 +1223,6 @@ export function resolveGatewayInternalUrl(): string {
 }
 
 const IMAGE_HINT = 'a valid Docker image reference';
-const DOCKER_MEMORY_RE = /^\d+[bkmg]?$/i;
 const DOCKER_DISK_RE = /^(?=[0-9]*[1-9])[0-9]+[bkmg]?$/i;
 const DOCKER_RUNTIME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
 

@@ -243,8 +243,8 @@ WEB_URL=https://app.example.com      # base URL for the "Open approvals" link (t
                                        # (each typically holds a Docker workspace)
 # Agent workspace sizing and sidecar images (all optional; defaults shown; the
 # worker refuses to start on a value it cannot use)
-# WORKSPACE_MEMORY=4g
-# WORKSPACE_CPUS=2
+# WORKSPACE_MEMORY=4g                  # defaults; an ADMIN can set the workspace.memory and
+# WORKSPACE_CPUS=2                     # workspace.cpus settings per team, organization or template
 # WORKSPACE_PIDS_LIMIT=512
 # WORKSPACE_IMAGE=node:24-alpine
 # WORKSPACE_RUN_AS_ROOT=false          # Docker agent workspaces: UID/GID 1000; true restores image USER/HOME
@@ -297,7 +297,7 @@ WEB_URL=https://app.example.com      # base URL for the "Open approvals" link (t
 
 ## 2b. Admin UI configuration (post-boot)
 
-Integration credentials that an operator rotates during normal use are stored encrypted in the DB and managed via the admin UI; their env vars remain accepted as fallbacks. What a process needs at start-up — sign-in provider credentials, artifact storage, and workspace sizing — is environment-only (see [`configuration.md`](./configuration.md)).
+Integration credentials that an operator rotates during normal use are stored encrypted in the DB and managed via the admin UI; their env vars remain accepted as fallbacks. What a process needs at start-up — sign-in provider credentials, artifact storage, and the workspace sizing default — is environment-only (see [`configuration.md`](./configuration.md)).
 
 | Admin page | What it configures | Restart required? |
 |---|---|---|
@@ -315,7 +315,7 @@ Integration credentials that an operator rotates during normal use are stored en
 6. Start the worker (`… up -d worker`, or `yarn dev:worker` locally). The worker reads all config from the DB.
 7. Optionally clear the `GITHUB_TOKEN` and `GITHUB_WEBHOOK_SECRET` env vars — the DB config is now the source of truth.
 
-> **Restarts.** Everything set through environment variables — sign-in credentials, storage, workspace sizing, the scheduled-sweep settings — is read at process start, so changing one means restarting the service that reads it. Every admin-UI change (GitHub token and webhook secret, Slack credentials, workflow defaults) takes effect on the next request or activity call.
+> **Restarts.** Everything set through environment variables — sign-in credentials, storage, the workspace sizing defaults, the scheduled-sweep settings — is read at process start, so changing one means restarting the service that reads it. Every admin-UI change (GitHub token and webhook secret, Slack credentials, workflow defaults) takes effect on the next request or activity call.
 
 ---
 

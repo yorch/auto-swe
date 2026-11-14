@@ -357,7 +357,11 @@ artifact storage (`resolveStorageConfig()`), and workspace sizing, images and wo
 (`resolveWorkspaceInfra()`). They are read from `process.env` inside those resolvers — never
 elsewhere — and none of them touches the database. Do not add a column or a form for any of them:
 the rule is that what a process needs at start-up, or what only a deployer should be able to
-change, stays in the environment ([`docs/configuration.md`](./docs/configuration.md)).
+change, stays in the environment ([`docs/configuration.md`](./docs/configuration.md)). The one
+exception is workspace memory and CPUs: the environment value is the default and the deployer's
+authority, and an ADMIN may lower or raise it per team, organization or workflow template through the
+registry settings `workspace.memory` and `workspace.cpus` (read by `resolveRunWorkspaceSize()`, run-pinned),
+as `workspace.gitHelperImage` already puts workspace infrastructure in the registry.
 
 | Admin page | Manages | Resolver |
 |---|---|---|
