@@ -104,11 +104,7 @@ describe('NodePalette per-type help', () => {
 
   it('states the real authoring rule for shell and container steps, without a native title', () => {
     const { container } = render(<NodePalette onAdd={vi.fn()} steps={[]} />);
-    expect(
-      screen.getAllByText(
-        /needs a platform admin, or a team admin who is also at least a platform lead/i
-      )
-    ).toHaveLength(2);
+    expect(screen.getAllByText(/needs a platform admin or a team admin/i)).toHaveLength(2);
     expect(screen.queryByText(/team leads and admins/i)).toBeNull();
     expect(container.querySelectorAll('[title]')).toHaveLength(0);
     // The note is also each elevated item's description.

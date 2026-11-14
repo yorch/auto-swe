@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canWriteTeamResource, teamPermissions } from './teamPermissions';
+import { canAuthorTeamCode, canWriteTeamResource, teamPermissions } from './teamPermissions';
 
 describe('teamPermissions', () => {
   it('lets a platform ADMIN do everything, whatever their team role', () => {
@@ -47,16 +47,23 @@ describe('teamPermissions', () => {
     expect(p.canEditAllowlists).toBe(false);
   });
 
-  it('keeps a platform ENGINEER out of member ops even as team LEAD', () => {
+  it('lets a platform ENGINEER who leads the team manage members: the team role alone decides', () => {
     const p = teamPermissions('ENGINEER', 'LEAD');
+    expect(p.canManageMembers).toBe(true);
+    expect(p.grantableRoles).toEqual(['ENGINEER', 'LEAD']);
+  });
+
+  it('keeps a platform ENGINEER who is only a team ENGINEER out of member ops', () => {
+    const p = teamPermissions('ENGINEER', 'ENGINEER');
     expect(p.canManageMembers).toBe(false);
     expect(p.grantableRoles).toEqual([]);
   });
 
-  it('lets a platform ENGINEER who is team ADMIN manage team agents only', () => {
+  it('lets a platform ENGINEER who is team ADMIN manage team agents and members, not allowlists', () => {
     const p = teamPermissions('ENGINEER', 'ADMIN');
     expect(p.canManageTeamAgents).toBe(true);
-    expect(p.canManageMembers).toBe(false);
+    expect(p.canManageMembers).toBe(true);
+    expect(p.grantableRoles).toEqual(['ENGINEER', 'LEAD', 'ADMIN']);
     expect(p.canEditAllowlists).toBe(false);
   });
 });
@@ -69,18 +76,39 @@ describe('canWriteTeamResource', () => {
     expect(canWriteTeamResource('ADMIN', 'team-z', new Set())).toBe(true);
   });
 
-  it('requires a platform LEAD to also lead the owning team', () => {
+  it('follows the owning team alone, whatever the platform role', () => {
     expect(canWriteTeamResource('LEAD', 'team-a', led)).toBe(true);
     expect(canWriteTeamResource('LEAD', 'team-b', led)).toBe(false);
+    expect(canWriteTeamResource('ENGINEER', 'team-a', led)).toBe(true);
+    expect(canWriteTeamResource('ENGINEER', 'team-b', led)).toBe(false);
   });
 
   it('refuses a GLOBAL (team-less) resource to a non-ADMIN', () => {
     expect(canWriteTeamResource('LEAD', null, led)).toBe(false);
   });
 
-  it('refuses an ENGINEER even on a team they lead, and answers false while loading', () => {
-    expect(canWriteTeamResource('ENGINEER', 'team-a', led)).toBe(false);
+  it('answers false while the led teams load', () => {
+    expect(canWriteTeamResource('ENGINEER', 'team-a', null)).toBe(false);
     expect(canWriteTeamResource('LEAD', 'team-a', null)).toBe(false);
+  });
+});
+
+describe('canAuthorTeamCode', () => {
+  const admin = new Set(['team-a']);
+
+  it('lets a team ADMIN author code whatever their platform role', () => {
+    expect(canAuthorTeamCode('ENGINEER', 'team-a', admin)).toBe(true);
+    expect(canAuthorTeamCode('LEAD', 'team-a', admin)).toBe(true);
+  });
+
+  it('refuses a team the caller does not administer, a GLOBAL resource and a loading list', () => {
+    expect(canAuthorTeamCode('LEAD', 'team-b', admin)).toBe(false);
+    expect(canAuthorTeamCode('LEAD', null, admin)).toBe(false);
+    expect(canAuthorTeamCode('ENGINEER', 'team-a', null)).toBe(false);
+  });
+
+  it('lets a platform ADMIN author anything', () => {
+    expect(canAuthorTeamCode('ADMIN', null, null)).toBe(true);
   });
 });
 

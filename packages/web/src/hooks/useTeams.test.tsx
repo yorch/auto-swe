@@ -72,13 +72,19 @@ describe('team id hooks derived from myRole', () => {
     expect([...(result.current ?? [])]).toEqual(['a']);
   });
 
-  it('does not load the list for a platform ADMIN or ENGINEER', () => {
-    for (const role of ['ADMIN', 'ENGINEER'] as const) {
-      signIn(role);
-      const { result } = renderHook(() => useLedTeamIds(), { wrapper });
-      expect(result.current).toEqual(new Set());
-    }
+  it('does not load the list for a platform ADMIN, who bypasses team checks', () => {
+    signIn('ADMIN');
+    const { result } = renderHook(() => useLedTeamIds(), { wrapper });
+    expect(result.current).toEqual(new Set());
     expect(get).not.toHaveBeenCalled();
+  });
+
+  it('loads the list for a platform ENGINEER, because the team role alone decides', async () => {
+    signIn('ENGINEER');
+    const { result } = renderHook(() => useLedTeamIds(), { wrapper });
+    await waitFor(() => expect(result.current).not.toBeNull());
+    expect([...(result.current ?? [])].sort()).toEqual(['a', 'l']);
+    expect(get).toHaveBeenCalledTimes(1);
   });
 });
 

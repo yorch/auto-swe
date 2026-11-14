@@ -116,7 +116,9 @@ gets the title `Requires the LEAD role in this team` (or the role it needs). Rew
 needs platform LEAD.
 **Files**: `packages/web/src/lib/teamPermissions.ts`, `packages/web/src/hooks/useTeams.ts`,
 `packages/web/src/components/workflow/containerNodes.ts`, `packages/web/src/components/requests/StartWork.tsx`,
-`packages/web/src/components/teams/space/TeamMembersPanel.tsx`
+`packages/web/src/app/library/page.tsx`, `packages/web/src/app/review-presets/layout.tsx`,
+`packages/web/src/lib/navigation.ts`, `packages/web/src/lib/roles.ts`, and the tests that encoded the old
+conjunction (decision D10)
 **Depends on**: Task 1
 **Verify**: `yarn vitest run packages/web/src/lib/teamPermissions.test.ts packages/web/src/components/teams`.
 `teamPermissions('ENGINEER','LEAD')` returns `canManageMembers: true` and `grantableRoles` of

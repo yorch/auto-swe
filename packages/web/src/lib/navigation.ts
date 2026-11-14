@@ -339,7 +339,7 @@ export const NAV_GROUPS: NavGroup[] = [
         href: '/review-presets',
         icon: 'checkCircle',
         label: 'Review presets',
-        minRole: 'LEAD',
+        minRole: 'ENGINEER',
       },
     ],
     label: 'Build',

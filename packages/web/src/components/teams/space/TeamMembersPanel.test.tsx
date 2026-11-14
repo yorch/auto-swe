@@ -26,8 +26,9 @@ describe('team member onboarding gates', () => {
   it.each([
     ['LEAD', 'LEAD', true],
     ['ADMIN', null, true],
+    ['ENGINEER', 'LEAD', true],
+    ['ENGINEER', 'ADMIN', true],
     ['ENGINEER', 'ENGINEER', false],
-    ['ENGINEER', 'ADMIN', false],
     ['LEAD', 'ENGINEER', false],
   ] as const)('platform %s / team %s controls=%s', async (platformRole, myRole, expected) => {
     useAuthStore.setState({ user: { role: platformRole, sub: 'me' } });
