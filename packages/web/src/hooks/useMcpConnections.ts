@@ -14,7 +14,7 @@ export interface McpConnectionRow {
     allowPrivateNetwork?: boolean;
     /** Marks the team's Qodo connection: only Qodo's read tools bind and results are screened. */
     integration?: 'qodo';
-    /** A stored custom tool list. Set through the API; the page only reports its size. */
+    /** A stored custom tool list; the page edits it for a Qodo connection. */
     allowedTools?: string[];
     scanResults?: boolean;
   } | null;
@@ -98,6 +98,8 @@ export interface UpdateMcpConnectionBody {
   integration?: 'qodo' | null;
   /** `true` turns screening on, `null` removes it; omit to keep it. */
   scanResults?: boolean | null;
+  /** Replaces the tool allowlist; `null` removes it (the read-only default applies); omit to keep it. */
+  allowedTools?: string[] | null;
   /** The complete header set after the edit; omit to keep every stored header. */
   headers?: McpHeaderInput[];
   /** Replaces the stored token. Omit to keep it. */
