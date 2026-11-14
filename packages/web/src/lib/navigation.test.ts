@@ -215,6 +215,8 @@ describe('visibleNavGroups', () => {
     expect(hrefs).toContain('/admin/organizations');
     expect(hrefs).not.toContain('/admin/baselines');
     expect(hrefs).not.toContain('/admin/review-presets');
+    // Team review presets are chosen from the teams the caller leads, so any engineer may open the page.
+    expect(hrefs).toContain('/review-presets');
     expect(hrefs).toContain('/connections');
     expect(hrefs).toContain('/library');
     expect(hrefs).toContain('/knowledge');

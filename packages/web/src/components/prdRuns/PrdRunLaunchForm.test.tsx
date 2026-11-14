@@ -5,15 +5,21 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bodyOf, setupFetchMock, withQuery } from '@/test/rtl-helpers';
 import { PrdRunLaunchForm } from './PrdRunLaunchForm';
 
-const auth = vi.hoisted(() => ({ role: 'LEAD' }));
+// The platform role is ENGINEER throughout: the form follows whether the caller leads a team.
+const auth = vi.hoisted(() => ({ leads: true, role: 'ENGINEER' }));
 vi.mock('@/stores/authStore', () => ({
   useAuthStore: (selector: (s: { user: { role: string } | null }) => unknown) =>
     selector({ user: { role: auth.role } }),
 }));
+vi.mock('@/hooks/useTeams', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useTeams')>()),
+  useLeadsATeam: () => auth.leads,
+}));
 
 afterEach(() => {
   cleanup();
-  auth.role = 'LEAD';
+  auth.role = 'ENGINEER';
+  auth.leads = true;
   vi.unstubAllGlobals();
 });
 
@@ -40,8 +46,8 @@ function fill() {
 }
 
 describe('PrdRunLaunchForm', () => {
-  it('tells an engineer the run needs a lead and offers no form', () => {
-    auth.role = 'ENGINEER';
+  it('tells someone who leads no team the run needs a lead and offers no form', () => {
+    auth.leads = false;
     setupFetchMock({ 'GET /api/v1/repositories': () => ({ data: REPOS }) });
     render(withQuery(<PrdRunLaunchForm />));
     expect(screen.getByText(/needs a team lead or administrator/i)).toBeTruthy();

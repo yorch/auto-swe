@@ -27,9 +27,9 @@ export function teamMembershipFilter(user: {
  *
  * A team template needs LEAD (or ADMIN) membership on an active owning team,
  * the same bar `canManageTeamRepos` sets for the team's repositories. The
- * route-level `requiredRole: 'LEAD'` checks only the platform role, so without
- * this a platform LEAD who is a plain ENGINEER on a team could rewrite the
- * workflow every one of that team's runs executes.
+ * routes ask the platform role for no more than ENGINEER, so this filter is the
+ * whole write check: without it any signed-in user could rewrite the workflow
+ * every one of that team's runs executes.
  */
 export function templateWriteFilter(user: {
   sub: string;

@@ -2249,7 +2249,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/test-pagerduty',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: { params: RepoParamsSchema },
     },
     async (request, reply) => {
@@ -2301,7 +2301,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/test-pagerduty-events',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: { params: RepoParamsSchema },
     },
     async (request, reply) => {
@@ -2384,7 +2384,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/onboarding-runs',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: { headers: IdempotencyHeaderSchema, params: RepoParamsSchema },
     },
     async (request, reply) => {

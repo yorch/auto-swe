@@ -282,15 +282,12 @@ describe('template webhook signing routes', () => {
     expect(JSON.stringify(h.updateWheres[0])).toContain('teamId');
   });
 
-  it('needs platform LEAD, like the token routes', async () => {
+  it('asks the platform role for no more than ENGINEER: the template write filter decides', async () => {
     h.role = 'ENGINEER';
-    for (const [method, suffix, payload] of [
-      ['POST', '/webhook/signing-secret/rotate', undefined],
-      ['DELETE', '/webhook/signing-secret', undefined],
-      ['PUT', '/webhook/require-signature', { required: false }],
-    ] as const) {
-      expect((await call(h, method, suffix, payload)).statusCode).toBe(403);
-    }
+    const res = await call(h, 'POST', '/webhook/signing-secret/rotate');
+    expect(res.statusCode).toBe(200);
+    // The team check is the write filter on the lookup, which a non-ADMIN always carries.
+    expect(JSON.stringify(h.updateWheres[0])).toContain('teamId');
   });
 
   it('404s a template the caller may not edit', async () => {

@@ -10,6 +10,7 @@ import { useAnsweredGate } from '@/hooks/useAnsweredGate';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useRequests } from '@/hooks/useRequests';
+import { useLedTeamIds } from '@/hooks/useTeams';
 import { usePullRequests } from '@/hooks/useWorkViews';
 import { focusMainContent, useDismissed } from '@/lib/dismissed';
 import { cn, FOCUS_RING } from '@/lib/utils';
@@ -41,7 +42,8 @@ export function FirstRunChecklist() {
 }
 
 function FirstRunChecklistBody() {
-  const isLead = useHasRole('LEAD');
+  const ledTeamIds = useLedTeamIds();
+  const isLead = (ledTeamIds?.size ?? 0) > 0;
   const { ready, dismissed, dismiss } = useDismissed(FIRST_RUN_DISMISS_KEY);
   // Personal progress across every team, so neither list is narrowed to one.
   // Connections of every type come back, so the repository step looks for a git repository.
@@ -57,7 +59,8 @@ function FirstRunChecklistBody() {
   const answered = useAnsweredGate();
 
   const queries = [repos, requests, answered, merged];
-  const settled = queries.every((q) => !q.isLoading);
+  // The led teams word the repository step, so wait for them: the wording must not flip.
+  const settled = queries.every((q) => !q.isLoading) && ledTeamIds !== null;
   // A query that failed cannot say a step is open, so show nothing rather than a false prompt.
   if (!ready || dismissed || !settled || queries.some((q) => q.isError)) {
     return null;

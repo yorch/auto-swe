@@ -225,6 +225,28 @@ describe('Workflow library', () => {
     expect(
       (screen.getByRole('button', { name: 'New workflow' }) as HTMLButtonElement).disabled
     ).toBe(true);
-    expect(screen.getByText(/Lead a team to author workflows for it/)).toBeTruthy();
+    expect(screen.getByText(/lead a team to author workflows for it/i)).toBeTruthy();
+  });
+
+  it('does not state a reason for New workflow while the teams are still loading', () => {
+    state.templates = [base];
+    state.authoring = { global: false, isLoading: true, teams: [] };
+    useAuthStore.setState({ user: { role: 'ENGINEER' } } as never);
+    render(<TemplatesPage />);
+    expect(screen.queryByText(/lead a team to author workflows for it/i)).toBeNull();
+  });
+
+  it('turns New workflow on for a platform ENGINEER who leads a team: the team role decides', () => {
+    state.templates = [base];
+    state.authoring = {
+      global: false,
+      isLoading: false,
+      teams: [{ id: 'team-1', name: 'Payments' }],
+    };
+    useAuthStore.setState({ user: { role: 'ENGINEER' } } as never);
+    render(<TemplatesPage />);
+    expect(
+      (screen.getByRole('button', { name: 'New workflow' }) as HTMLButtonElement).disabled
+    ).toBe(false);
   });
 });

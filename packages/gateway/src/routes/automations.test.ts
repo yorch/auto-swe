@@ -536,19 +536,19 @@ describe('automationRoutes (event automations)', () => {
       settings.signingPolicyTeams = [];
     });
 
-    it('needs platform role LEAD as well as write access to manage a webhook', async () => {
+    it('lets write access alone decide whether a webhook can be managed, whatever the platform role', async () => {
       const hooked = [
         { id: TEMPLATE, name: 'hooked', status: 'ACTIVE', team: { id: 't', name: 'T' } },
       ];
-      ctx.prisma.workflowTemplate.findMany
-        .mockResolvedValueOnce(hooked)
-        .mockResolvedValueOnce([{ id: TEMPLATE }]);
-      expect((await list()).json().data[0].canManage).toBe(false);
-      ctx.auth.role = 'LEAD';
+      // Writable: a platform ENGINEER who leads the team may manage it.
       ctx.prisma.workflowTemplate.findMany
         .mockResolvedValueOnce(hooked)
         .mockResolvedValueOnce([{ id: TEMPLATE }]);
       expect((await list()).json().data[0].canManage).toBe(true);
+      // Not writable: no platform role makes it so.
+      ctx.auth.role = 'LEAD';
+      ctx.prisma.workflowTemplate.findMany.mockResolvedValueOnce(hooked).mockResolvedValueOnce([]);
+      expect((await list()).json().data[0].canManage).toBe(false);
     });
 
     it('reports a webhook’s last call from the ledger, only calls the caller may see', async () => {

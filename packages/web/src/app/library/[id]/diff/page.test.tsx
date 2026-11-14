@@ -20,7 +20,7 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ replace: vi.fn() }),
   useSearchParams: () => new URLSearchParams(state.query),
 }));
-vi.mock('@/hooks/useTeams', () => ({ useLedTeamIds: () => [] }));
+vi.mock('@/hooks/useTeams', () => ({ useLedTeamIds: () => new Set<string>() }));
 vi.mock('@/hooks/useTemplates', () => ({
   useWorkflowSpecDiff: (_id: string, a: number | null, b: number | null) => ({
     data: {

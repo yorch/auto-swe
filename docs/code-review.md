@@ -17,8 +17,8 @@ exposes **Review template (requires a source run)**. The built-in choices are:
 
 A preset selects a review template and supplies a name, description, optional reviewer system
 prompt, enabled flag, and `onBlocking: report | fix`. Platform administrators manage global presets at
-`/admin/review-presets`. Team leads and team administrators with platform LEAD access manage their
-team's presets at `/review-presets`. Names are unique within a team or within the global scope.
+`/admin/review-presets`. Team leads and team administrators manage their team's presets at
+`/review-presets`, whatever their platform role. Names are unique within a team or within the global scope.
 Team presets use a global or same-team review template, attach only to that team's source templates
 and repositories, and review only that team's runs. Global and team attachments both auto-start.
 `report` publishes the result without starting a fix.

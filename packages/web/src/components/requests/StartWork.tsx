@@ -188,10 +188,10 @@ function Step({
 const BASE_EPIC_REASON = 'Requires team lead or administrator.';
 
 /**
- * Whether the caller may start an epic, and why not. POST /epics needs a platform LEAD, and on
- * top of that the caller must lead the team that owns each repository the epic spans (their
- * `myRole`). Under a team scope that is that team; without one, any team they lead — the form
- * then lists only repositories of the teams they lead.
+ * Whether the caller may start an epic, and why not. The caller must lead the team that owns
+ * each repository the epic spans (their `myRole`), whatever their platform role. Under a team
+ * scope that is that team; without one, any team they lead — the form then lists only
+ * repositories of the teams they lead.
  */
 function epicAccess(
   platformRole: string | null | undefined,
@@ -201,9 +201,6 @@ function epicAccess(
   const base = BASE_EPIC_REASON;
   if (hasRole(platformRole, 'ADMIN')) {
     return { allowed: true, epicTeamIds: 'all', reason: '' };
-  }
-  if (!hasRole(platformRole, 'LEAD')) {
-    return { allowed: false, epicTeamIds: new Set(), reason: base };
   }
   if (!memberTeams) {
     return { allowed: false, epicTeamIds: null, reason: base };

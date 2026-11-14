@@ -7,10 +7,14 @@ import { EpicLaunchForm } from './EpicLaunchForm';
 
 const pushSpy = vi.fn();
 
-// authStore drives the role gate on the "+ New epic" button — admin/lead only.
+// The "+ New epic" button is for a platform admin or someone who leads a team.
 vi.mock('@/stores/authStore', () => ({
   useAuthStore: (selector: (s: { user: { role: string } | null }) => unknown) =>
-    selector({ user: { role: 'LEAD' } }),
+    selector({ user: { role: 'ENGINEER' } }),
+}));
+vi.mock('@/hooks/useTeams', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useTeams')>()),
+  useLeadsATeam: () => true,
 }));
 
 beforeEach(stubDialogPrototype);

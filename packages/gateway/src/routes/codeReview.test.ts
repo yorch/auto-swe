@@ -73,6 +73,20 @@ describe('team review preset scoping', () => {
     expect((await app.inject({ headers: AUTH, url: adminUrl })).statusCode).toBe(403);
     await app.close();
   });
+  it('lets a platform ENGINEER who leads the selected team manage its presets', async () => {
+    const { app, db } = await fixture('ENGINEER');
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { name: 'Team review', templateId: TEMPLATE },
+      url: `${adminUrl}?teamId=${TEAM}`,
+    });
+    expect(res.statusCode).toBe(201);
+    expect(db.reviewPreset.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ teamId: TEAM }) })
+    );
+    await app.close();
+  });
   it('denies non-leads and nonmembers, and hides presets outside the authorized scope', async () => {
     const { app, db, preset } = await fixture('LEAD');
     const url = `${adminUrl}/${PRESET}?teamId=${TEAM}`;

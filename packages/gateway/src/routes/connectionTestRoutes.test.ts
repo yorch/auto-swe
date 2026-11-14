@@ -277,6 +277,28 @@ describe('POST /repositories/:id/test-pagerduty', () => {
     expect(probePagerDutyConnection).not.toHaveBeenCalled();
   });
 
+  it('lets a platform ENGINEER who leads the connection team run the check', async () => {
+    const { app, prisma } = await buildApp('ENGINEER', repositoryRoutes, '/api/v1/repositories');
+    prisma.connection.findUnique.mockResolvedValue(conn);
+    prisma.teamMembership.findUnique.mockResolvedValue({ role: 'LEAD', team: { isActive: true } });
+    probePagerDutyConnection.mockResolvedValue(RESULT);
+    const res = await app.inject({ headers: AUTH, method: 'POST', url });
+    expect(res.statusCode).toBe(200);
+    expect(probePagerDutyConnection).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a platform ENGINEER who is only an ENGINEER of the connection team', async () => {
+    const { app, prisma } = await buildApp('ENGINEER', repositoryRoutes, '/api/v1/repositories');
+    prisma.connection.findUnique.mockResolvedValue(conn);
+    prisma.teamMembership.findUnique.mockResolvedValue({
+      role: 'ENGINEER',
+      team: { isActive: true },
+    });
+    const res = await app.inject({ headers: AUTH, method: 'POST', url });
+    expect(res.statusCode).toBe(403);
+    expect(probePagerDutyConnection).not.toHaveBeenCalled();
+  });
+
   it('answers a connection with no saved key as a failed check without calling PagerDuty', async () => {
     const { app, prisma } = await buildApp('ADMIN', repositoryRoutes, '/api/v1/repositories');
     prisma.connection.findUnique.mockResolvedValue({

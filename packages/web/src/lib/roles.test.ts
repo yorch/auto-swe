@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasRole, isRole, requiresRoleTitle } from './roles';
+import { hasRole, isRole } from './roles';
 
 describe('hasRole', () => {
   it('orders roles ENGINEER < LEAD < ADMIN', () => {
@@ -25,11 +25,5 @@ describe('isRole', () => {
     expect(isRole('LEAD')).toBe(true);
     expect(isRole('OWNER')).toBe(false);
     expect(isRole(3)).toBe(false);
-  });
-});
-
-describe('requiresRoleTitle', () => {
-  it('names the role', () => {
-    expect(requiresRoleTitle('LEAD')).toBe('Requires the LEAD role');
   });
 });

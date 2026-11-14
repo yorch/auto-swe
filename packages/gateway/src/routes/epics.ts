@@ -87,7 +87,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: {
         body: CreateEpicSchema,
       },
@@ -166,7 +166,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
         log: request.log,
         refusalShape: 'multi',
         repos,
-        // An epic writes to every repository it names: the platform LEAD role is not enough.
+        // An epic writes to every repository it names: LEAD on each owning team is the authority.
         requireOwningTeamLead: true,
         // Every child run is launched as the caller (`launchedById`).
         runIdentity: 'caller',

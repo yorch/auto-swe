@@ -214,7 +214,8 @@ describe('NODE_HELP', { timeout: 30_000 }, () => {
     for (const type of ['shell', 'containerStep'] as const) {
       expect(nodeHelp(type).gotcha).toContain(CONTAINER_AUTHORING_RULE);
     }
-    expect(CONTAINER_AUTHORING_RULE).toMatch(/platform lead/);
+    expect(CONTAINER_AUTHORING_RULE).toMatch(/team admin/);
+    expect(CONTAINER_AUTHORING_RULE).not.toMatch(/platform lead/);
   });
 
   it('the signal gotcha is true: a duration is accepted, a vague word is not', () => {

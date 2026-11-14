@@ -3,7 +3,10 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import TeamReviewPresetsPage from './page';
 
-const state = vi.hoisted(() => ({ admin: false, led: new Set(['mine']) }));
+const state = vi.hoisted(() => ({
+  admin: false,
+  led: new Set(['mine']) as Set<string> | null,
+}));
 vi.mock('@/hooks/useTeams', () => ({
   useLedTeamIds: () => state.led,
   useTeams: () => ({
@@ -34,14 +37,20 @@ describe('team review preset view', () => {
     expect(screen.queryByText('Other team')).toBeNull();
   });
   it('does not mount a global or other-team management view when no teams are led', () => {
-    state.led.clear();
+    state.led?.clear();
     render(<TeamReviewPresetsPage />);
     expect(screen.getByText('No teams you lead are available.')).toBeTruthy();
     expect(screen.queryByText('Presets for mine')).toBeNull();
   });
+  it('says nothing about teams while the led teams are still loading', () => {
+    state.led = null;
+    render(<TeamReviewPresetsPage />);
+    expect(screen.queryByText('No teams you lead are available.')).toBeNull();
+    expect(screen.queryByText('Presets for mine')).toBeNull();
+  });
   it('allows platform administrators to select teams without a team membership', () => {
     state.admin = true;
-    state.led.clear();
+    state.led?.clear();
     render(<TeamReviewPresetsPage />);
     expect(screen.getByText('Presets for mine')).toBeTruthy();
   });

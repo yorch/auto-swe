@@ -1131,13 +1131,15 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
         // completed job should surface as a structured failure, not a 500 that
         // leaves the poller stuck on "Generating…".
         try {
-          const result = (await handle.result()) as {
+          const full = (await handle.result()) as {
             templateId: string;
             name: string;
             summary: string;
             attempts: number;
           };
-          return { result, status: 'done' };
+          // Only the fields a job returns, whatever else the workflow result carries.
+          const { attempts, name: jobName, summary, templateId } = full;
+          return { result: { attempts, name: jobName, summary, templateId }, status: 'done' };
         } catch {
           return {
             code: 'GENERATION_UNAVAILABLE',

@@ -834,8 +834,8 @@ them; the preview's `setup` is for what only a running app needs, such as seedin
 
 The built-in `repo-onboarding` workflow takes a required `connectionId` for a Git repository.
 Choose **Run onboarding** in a Git repository's Connections row menu or beside **Setup health**
-in its setup editor. These controls require LEAD access and repository shell-author/team-admin
-permission, matching setup editing. The workflow library's normal launch form also accepts it.
+in its setup editor. These controls require LEAD or ADMIN of the owning team (whatever the platform role) and the
+repository shell-author permission, matching setup editing; a platform ADMIN passes both. The workflow library's normal launch form also accepts it.
 The `repo-onboarder` agent explores
 the trusted base checkout, reads repository guidance and build evidence, tries commands and
 returns a structured proposal for `.auto-swe/setup.yml`, `.auto-swe/gates.yml` and an optional

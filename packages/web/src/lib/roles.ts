@@ -18,8 +18,3 @@ export function isRole(value: unknown): value is Role {
 export function hasRole(actual: string | null | undefined, required: Role): boolean {
   return isRole(actual) && roleMeets(actual, required);
 }
-
-/** Tooltip for a control shown disabled because the caller's role is too low. */
-export function requiresRoleTitle(required: Role): string {
-  return `Requires the ${required} role`;
-}

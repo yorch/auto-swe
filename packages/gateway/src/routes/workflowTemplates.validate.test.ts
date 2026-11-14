@@ -408,10 +408,34 @@ describe('POST /workflow-templates/validate', () => {
   });
 
   describe('access', () => {
-    it('refuses an ENGINEER with 403', async () => {
+    it('accepts a platform ENGINEER who leads the named team', async () => {
       const { app } = buildApp({ role: 'ENGINEER' });
+      const res = await validate(app, { spec: VALID, teamId: TEAM_ID });
+      expect(res.statusCode).toBe(200);
+      await app.close();
+    });
+
+    it('refuses a platform ENGINEER who leads no team with 403', async () => {
+      const { app } = buildApp({ role: 'ENGINEER', teamRole: null });
+      const res = await validate(app, { spec: VALID, teamId: TEAM_ID });
+      expect(res.statusCode).toBe(403);
+      await app.close();
+    });
+
+    it('refuses a caller who leads no team and names none, before any cross-team lookup', async () => {
+      const { app } = buildApp({ role: 'ENGINEER', teamRole: null });
       const res = await validate(app, { spec: VALID });
       expect(res.statusCode).toBe(403);
+      await app.close();
+    });
+
+    it('judges a platform ENGINEER who leads a team, naming none, as a global author', async () => {
+      const { app } = buildApp({ role: 'ENGINEER' });
+      const res = await validate(app, { spec: VALID });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.issues).toContainEqual(
+        expect.objectContaining({ code: 'FORBIDDEN', source: 'authoring' })
+      );
       await app.close();
     });
 

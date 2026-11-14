@@ -103,9 +103,9 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
   const createVersion = useCreateWorkflowVersion(id ?? '');
   const reviewVersion = useReviewWorkflowVersion(id ?? '');
   // Every write here (new version, promote, review, refine, metadata, webhook)
-  // is a LEAD route on the gateway that also requires LEAD membership on the
-  // template's owning team (templateWriteFilter) — a GLOBAL template is
-  // ADMIN-only. Anyone else gets a read-only view.
+  // asks the platform role for nothing beyond ENGINEER and requires LEAD
+  // membership on the template's owning team (templateWriteFilter) — a GLOBAL
+  // template is ADMIN-only. Anyone else gets a read-only view.
   const platformRole = useAuthStore((s) => s.user?.role);
   const ledTeamIds = useLedTeamIds();
   const canManage = canWriteTeamResource(platformRole, template?.team?.id, ledTeamIds);

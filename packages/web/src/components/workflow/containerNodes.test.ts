@@ -30,9 +30,9 @@ describe('countContainerNodes', () => {
     expect(countContainerNodes(spec({ c: { status: 'SUCCESS', type: 'terminate' } }))).toBe(0);
   });
 
-  it('states both gates: platform lead and a team or platform admin', () => {
-    expect(CONTAINER_AUTHORING_RULE).toMatch(/platform admin/);
-    expect(CONTAINER_AUTHORING_RULE).toMatch(/at least a platform lead/);
+  it('states the gate: a team or platform admin, with no platform-lead requirement', () => {
+    expect(CONTAINER_AUTHORING_RULE).toMatch(/platform admin or a team admin/);
+    expect(CONTAINER_AUTHORING_RULE).not.toMatch(/platform lead/);
     expect(CONTAINER_AUTHORING_RULE).toMatch(/global template/);
   });
 });

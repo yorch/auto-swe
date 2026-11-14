@@ -153,7 +153,7 @@ describe('knowledge base page', () => {
     expect(screen.getByText('docs/large.md')).toBeTruthy();
     expect(screen.getByText(/per file bytes/)).toBeTruthy();
   });
-  it('hides management actions from engineers, and from leads of another team', async () => {
+  it('hides management actions on a base owned by a team the caller does not lead', async () => {
     useAuthStore.setState({ user: { role: 'LEAD', sub: 'me' } });
     mock([
       base({
@@ -170,10 +170,12 @@ describe('knowledge base page', () => {
     expect(screen.queryByRole('button', { name: 'Reindex' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
     cleanup();
+    // The platform role asks for nothing: this ENGINEER leads `team1`, so they may create there,
+    // but the base below belongs to `team2`, which they do not lead.
     useAuthStore.setState({ user: { role: 'ENGINEER', sub: 'me' } });
     render(withQuery(<KnowledgeBasesPage />));
     await screen.findByText('Ops docs');
-    expect(screen.queryByRole('button', { name: 'Create knowledge base' })).toBeNull();
+    expect(await screen.findByRole('button', { name: 'Create knowledge base' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
   });
   it('creates from an eligible connection and edits fields without changing its connection', async () => {

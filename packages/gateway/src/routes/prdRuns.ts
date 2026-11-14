@@ -44,7 +44,7 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: CreatePrdRunSchema, headers: IdempotencyHeaderSchema },
     },
     async (request, reply) => {
@@ -111,7 +111,7 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
         log: request.log,
         refusalShape: 'multi',
         repos,
-        // A PRD run writes to every repository it names: the platform LEAD role is not enough.
+        // A PRD run writes to every repository it names: LEAD on each owning team is the authority.
         requireOwningTeamLead: true,
         // Every story run is launched as the caller (`launchedById`).
         runIdentity: 'caller',

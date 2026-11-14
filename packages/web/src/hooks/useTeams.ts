@@ -58,18 +58,19 @@ export function useAdminTeamIds(): ReadonlySet<string> | null {
 /**
  * Ids of the teams where the caller's own membership is at least `minRole`, read from the
  * `myRole` the team list carries. The list is requested `member=true`, so a team a platform
- * ADMIN does not belong to is absent, and a null `myRole` is never counted. Only a platform LEAD
- * needs it: an ENGINEER can write nothing and a platform ADMIN bypasses team checks, so neither
- * loads the list.
+ * ADMIN does not belong to is absent, and a null `myRole` is never counted. Anyone but a platform
+ * ADMIN needs it, because the team role alone decides; a platform ADMIN bypasses team checks and
+ * does not load the list.
  */
 function useTeamIdsWithRole(minRole: 'LEAD' | 'ADMIN'): ReadonlySet<string> | null {
   const user = useAuthStore((s) => s.user);
-  const needsLookup = hasRole(user?.role, 'LEAD') && !hasRole(user?.role, 'ADMIN');
-  const teams = useTeams({ enabled: needsLookup, memberOnly: true });
+  const platformAdmin = hasRole(user?.role, 'ADMIN');
+  // No lookup before the user is known: the request would go out unauthenticated.
+  const teams = useTeams({ enabled: !!user && !platformAdmin, memberOnly: true });
   // Reduce to a string key first so the returned Set keeps its identity across
   // renders — callers put it in memo / callback deps.
   let key: string | null;
-  if (!needsLookup) {
+  if (platformAdmin) {
     key = '';
   } else if (!user || !teams.data) {
     key = null;
@@ -84,6 +85,17 @@ function useTeamIdsWithRole(minRole: 'LEAD' | 'ADMIN'): ReadonlySet<string> | nu
 }
 
 /**
+ * Whether the caller may start work that needs the lead of an owning team (an epic, a campaign): a
+ * platform ADMIN, or anyone who leads at least one active team. False while the list loads, which
+ * hides the control rather than flashing one that would be refused.
+ */
+export function useLeadsATeam(): boolean {
+  const user = useAuthStore((s) => s.user);
+  const led = useLedTeamIds();
+  return hasRole(user?.role, 'ADMIN') || (led?.size ?? 0) > 0;
+}
+
+/**
  * The teams the caller may author team-owned resources for (a workflow template): the teams
  * they LEAD or ADMIN, read from `myRole`. A platform ADMIN may author for any team and for no
  * team at all (`global`), so they get every team the directory lists.
@@ -95,16 +107,15 @@ export function useAuthoringTeams(): {
 } {
   const user = useAuthStore((s) => s.user);
   const platformAdmin = hasRole(user?.role, 'ADMIN');
-  const platformLead = hasRole(user?.role, 'LEAD');
   const all = useTeams({ enabled: platformAdmin });
-  const member = useTeams({ enabled: platformLead && !platformAdmin, memberOnly: true });
+  const member = useTeams({ enabled: !!user && !platformAdmin, memberOnly: true });
   if (platformAdmin) {
     return { global: true, isLoading: all.isLoading, teams: all.data ?? [] };
   }
   return {
     global: false,
-    isLoading: platformLead && member.isLoading,
-    teams: platformLead ? (member.data ?? []).filter((t) => hasRole(t.myRole, 'LEAD')) : [],
+    isLoading: member.isLoading,
+    teams: (member.data ?? []).filter((t) => hasRole(t.myRole, 'LEAD')),
   };
 }
 

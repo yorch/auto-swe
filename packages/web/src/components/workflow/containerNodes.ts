@@ -14,9 +14,9 @@ export function countContainerNodes(spec: WorkflowSpec | null | undefined): numb
   return Object.values(spec?.nodes ?? {}).filter(isContainerCodeNode).length;
 }
 
-/** Who may save a spec that contains such a node; every save route also needs platform LEAD. */
+/** Who may save a spec that contains such a node: the team role decides, whatever the platform role. */
 export const CONTAINER_AUTHORING_RULE =
-  'Needs a platform admin, or a team admin who is also at least a platform lead; on a global template, a platform admin.';
+  'Needs a platform admin or a team admin; on a global template, a platform admin.';
 
 /**
  * Nodes that carry a command the author wrote, run in the agent workspace: a gate step's

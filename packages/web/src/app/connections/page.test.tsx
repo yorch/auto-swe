@@ -58,11 +58,17 @@ import ConnectionsPage from './page';
 afterEach(cleanup);
 
 describe('Connections page', () => {
-  it.each(['ADMIN', 'LEAD', 'ENGINEER'])(
-    'offers onboarding only to eligible setup authors: %s',
-    (role) => {
+  it.each([
+    ['ADMIN', 'ENGINEER', true],
+    ['LEAD', 'ADMIN', true],
+    ['ENGINEER', 'ADMIN', true],
+    ['ENGINEER', 'ENGINEER', false],
+    ['LEAD', 'ENGINEER', false],
+  ] as const)(
+    'offers onboarding only to eligible setup authors: platform %s, team %s',
+    (role, teamRole, eligible) => {
       auth.role = role;
-      auth.teamRole = 'ADMIN';
+      auth.teamRole = teamRole;
       repos.list = [
         {
           _count: { activeWorkflows: 0 },
@@ -78,9 +84,8 @@ describe('Connections page', () => {
       try {
         render(withQuery(<ConnectionsPage />));
         fireEvent.click(screen.getByRole('button', { name: /More actions for acme\/api/ }));
-        expect(Boolean(screen.queryByRole('menuitem', { name: 'Run onboarding' }))).toBe(
-          role !== 'ENGINEER'
-        );
+        // The team role alone decides: a team ADMIN is eligible whatever the platform role.
+        expect(Boolean(screen.queryByRole('menuitem', { name: 'Run onboarding' }))).toBe(eligible);
       } finally {
         repos.list = [];
         auth.role = 'ENGINEER';

@@ -1541,3 +1541,71 @@ address cannot be reached through the proxy.
 **Verify.** A Node `fetch` to an allowlisted host succeeds and to an unlisted host is refused.
 
 ---
+
+### The team role alone decides team-scoped actions
+
+**Affected.** Every deployment. Two groups of people change: a user whose platform role is `ENGINEER`
+and who is `LEAD` or `ADMIN` of a team gains access, and a user whose platform role is `LEAD` and who
+is only an `ENGINEER` (or no member) in a team loses access to that team's actions.
+
+**Fix commit.** Identified before its SHA is assigned by the route test
+`packages/gateway/src/routes/teamRoleFloor.test.ts`; compare the source when commit ancestry is
+unavailable.
+
+**What changes.** Routes that act on a team's work no longer ask for a platform `LEAD` role on top of
+the team role. The team role decides: member and team management, service principals, repository
+dependencies, PagerDuty tests and onboarding, workflow templates (create, edit, generate, refine,
+review, promote, webhook and signing secrets), epics, PRD runs, campaigns, team review presets, the
+Slack **Approve** button (a `LEAD` or `ADMIN` of a team that owns the run) and the add-member user
+lookup (a `LEAD` or `ADMIN` of any active team). A team `LEAD` can now invite users: an organization
+with `trustedInvites` on approves those accounts at once, any other creates them inactive. Each
+invitation sends a sign-in email, and an address that already has an account answers `409`; the
+route has no rate limit of its own. The
+platform `LEAD` role still gates platform settings, the global review presets are platform
+`ADMIN` only, and the organization-scoped error baselines still decide by organization membership.
+A team `ADMIN` can now author shell, container and gate-command steps and run repository
+onboarding without a platform `LEAD` role, because team `ADMIN` was always the check that decided
+it and the platform floor in front of it is gone. The template webhook `canManage` flag in
+`GET /automations` follows write access to the template alone. A caller who leads no
+team can no longer ask `POST /workflow-templates/validate` without naming a team (`403`), and
+`GET /workflow-templates/generate/jobs/:jobId` takes only the `wfauthorjob-` ids the generate route
+mints. Any signed-in caller who holds a UUID can learn from a `404` against a `403` whether a
+repository, connection or edge exists, and an ORG_ADMIN of a repository's organization passes the
+PagerDuty test and dependency routes. A run that no team owns (a service principal's run, or one
+controlled only through its launcher) can be approved from Slack only by a platform `ADMIN`.
+
+**Actions.** List who gains and who loses before deploying, and decide whether each should:
+
+```sql
+-- Gains: platform ENGINEER who leads or administers an active team.
+SELECT u.email, t.slug, m.role
+FROM users u
+JOIN team_memberships m ON m.user_id = u.id
+JOIN teams t ON t.id = m.team_id AND t.is_active
+WHERE u.is_active AND u.role = 'ENGINEER' AND m.role IN ('LEAD', 'ADMIN');
+
+-- Loses everywhere: platform LEAD who leads or administers no active team.
+SELECT u.email
+FROM users u
+WHERE u.is_active AND u.role = 'LEAD'
+  AND NOT EXISTS (
+    SELECT 1 FROM team_memberships m JOIN teams t ON t.id = m.team_id AND t.is_active
+    WHERE m.user_id = u.id AND m.role IN ('LEAD', 'ADMIN')
+  );
+
+-- Loses on one team: platform LEAD who is only an ENGINEER in a team they belong to.
+SELECT u.email, t.slug
+FROM users u
+JOIN team_memberships m ON m.user_id = u.id AND m.role = 'ENGINEER'
+JOIN teams t ON t.id = m.team_id AND t.is_active
+WHERE u.is_active AND u.role = 'LEAD';
+```
+
+To keep a person from a power, change their team role. To stop team leads approving invited
+accounts, clear `trustedInvites` through `PATCH /platform/organizations/:orgId`. No migration, no
+credential rotation.
+
+**Verify.** A user with platform role `ENGINEER` and `LEAD` of a team can add a member to that team
+and gets `403` on a team they do not lead. A user with platform role `LEAD` and `ENGINEER` in a team
+gets `403` `Requires LEAD role in this team` on that team's member routes.
+
