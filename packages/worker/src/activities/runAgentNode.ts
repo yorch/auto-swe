@@ -320,6 +320,9 @@ async function runInCheckout(args: {
     tracer,
   });
 
+  // Decided once, from this resolution. The seeded definition binds no MCP server, and every
+  // later resolution of the key must be this same row, or the activity stops (below).
+  const onboardingDraft = await isOnboardingDraftAgent(key, resolved.id, loop);
   const repo = await withRunDetection(
     await prisma.connection.findUniqueOrThrow({
       include: { installation: { select: { host: true, installationId: true } } },
@@ -363,7 +366,7 @@ async function runInCheckout(args: {
     {
       ...(resumeCheckoutSha(resume) ? { trustedBaseBranch: baseBranch } : {}),
       detectedStack: repo.detectedStack,
-      ...((await isOnboardingDraftAgent(key)) ? { onboardingDraft: true } : {}),
+      ...(onboardingDraft ? { onboardingDraft: true } : {}),
       knowledgeBaseSnapshotIds: references.snapshotIds,
       knowledgeBases: references.checkouts,
       repoSetup: { connectionId: repo.id, defer: true, field: repo.setup },
@@ -434,7 +437,7 @@ async function runInCheckout(args: {
       loadProjectSettings: true,
       maxTurns: await resolveSetting('workspace.agentMaxSteps', resolveCtx),
       // The connection the Mastra loop would bind, relayed from the worker.
-      mcp: await resolveAgentMcpUrl(key, resolveCtx, { tracer }),
+      mcp: onboardingDraft ? null : await resolveAgentMcpUrl(key, resolveCtx, { tracer }),
       toolKeys: resolved.toolKeys,
       ...pausable(input.allowPause, loop.runtime),
       ...(profile ? { profile } : {}),
@@ -524,6 +527,16 @@ async function runInCheckout(args: {
     },
     resolveCtx
   );
+  if (onboardingDraft && spec.agent?.id !== resolved.id) {
+    // An override created after the workspace was widened would otherwise run inside it. Failing
+    // is non-retryable by design, a safe-fail trade-off: even a harmless mid-run override race
+    // fails the whole onboarding run instead of falling back to the team allowlist.
+    throw ApplicationFailure.nonRetryable(
+      `Agent '${key}' resolved to a different definition after its workspace was widened for ` +
+        'onboarding; refusing to run it there.',
+      'ONBOARDING_AGENT_CHANGED'
+    );
+  }
   if (workspace.knowledgeBaseSnapshotIds?.length) {
     spec.tools = { ...spec.tools, searchKnowledge: knowledgeTools.searchKnowledge } as AgentTools;
   }
@@ -532,7 +545,9 @@ async function runInCheckout(args: {
   }
   spec.systemPrompt =
     `${spec.systemPrompt}\n\n${CHECKOUT_PREAMBLE}${await knowledgeBasePromptBlock(workspace)}`.trim();
-  const mcpTools = await bindMcpTools(key, resolveCtx, tracer, onOpen);
+  const mcpTools = onboardingDraft
+    ? undefined
+    : await bindMcpTools(key, resolveCtx, tracer, onOpen);
   if (mcpTools) {
     spec.tools = { ...mcpTools, ...spec.tools } as AgentTools;
   }

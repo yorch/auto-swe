@@ -16,8 +16,10 @@ import { hasAuthoredCode } from '../workflow/containerCode.js';
 import { SWE_INPUT_SCHEMA } from '../workflow/templates/index.js';
 import {
   BUILTIN_TEMPLATES_PREVIOUSLY_WITHOUT_INPUT_SCHEMA,
+  firstDifferenceFromSeed,
   PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES,
   PREVIOUS_BUILTIN_INPUT_SCHEMAS,
+  SWE_AGENTS,
   seedCoreDefaults,
   seedSweStarter,
 } from './syncBuiltins.js';
@@ -868,6 +870,55 @@ describe('syncBuiltins — agents and skill refs', () => {
     const { orderBys, prisma } = makeFake();
     await seedSweStarter(prisma);
     expect(orderBys.every((o) => JSON.stringify(o).includes('"version":"desc"'))).toBe(true);
+  });
+});
+
+describe('syncBuiltins — the onboarding agent as persisted', () => {
+  it('is, as syncAgents writes it, the seeded content the egress check accepts', async () => {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    const row = tables.agent.find(({ key }) => key === 'repo-onboarder') as Row;
+    const seed = SWE_AGENTS.find((def) => def.key === 'repo-onboarder');
+    expect(seed).toBeDefined();
+    // A missing column reads back from Postgres as null, where the in-memory fake has undefined.
+    const column = (name: string) => (row[name] ?? null) as never;
+    const persisted = {
+      channelId: column('channelId'),
+      harnessProfile: column('harnessProfile'),
+      inheritsModelFrom: column('inheritsModelFrom'),
+      key: row.key as string,
+      mcpConnectionId: column('mcpConnectionId'),
+      orgId: column('orgId'),
+      runtime: column('runtime'),
+      scope: row.scope as string,
+      skillRefs: tables.agentSkillRef
+        .filter((ref) => ref.agentId === row.id)
+        .map((ref) => ({
+          skill: {
+            name: (tables.skill.find((skill) => skill.id === ref.skillId) as Row).name as string,
+          },
+          sortOrder: ref.sortOrder as number,
+        })),
+      systemPrompt: row.systemPrompt as string,
+      teamId: column('teamId'),
+      toolKeys: row.toolKeys,
+      workflowTemplateId: column('workflowTemplateId'),
+    };
+    expect(firstDifferenceFromSeed(persisted, seed as never)).toBeNull();
+  });
+
+  it('pins the onboarding prompt: changing it needs the outgoing hash in the previous-prompt list', () => {
+    // Why: an untouched deployment stores the OLD prompt, and only a hash in
+    // PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES['repo-onboarder'] lets syncAgents move it to the new
+    // one. Without it that deployment keeps the old prompt, which then no longer equals the seed,
+    // so the onboarding draft silently loses its wider egress. When this fails: add the sha256 of
+    // the outgoing prompt to the list, then update PINNED_PROMPT_SHA256 below to the new one.
+    const PINNED_PROMPT_SHA256 = '084076167240a25d2e7572752ac004e42b7712954dbd7ab84a254d8edd926f71';
+    const current = SWE_AGENTS.find((def) => def.key === 'repo-onboarder')?.systemPrompt ?? '';
+    expect(
+      createHash('sha256').update(current).digest('hex'),
+      "REPO_ONBOARDER_PROMPT changed: first add the sha256 of the OUTGOING prompt to PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES['repo-onboarder'], and only then update PINNED_PROMPT_SHA256; otherwise untouched deployments keep the old prompt and lose the onboarding draft's wider egress"
+    ).toBe(PINNED_PROMPT_SHA256);
   });
 });
 

@@ -194,6 +194,14 @@ export function onboardingPrBody(paths: readonly string[], trialReport?: string)
         ]
       : []),
     '',
+    // What keeps this true: no PullRequest row is written for this pull request. The row comes
+    // from the activities/createOrUpdatePullRequest.ts activity, which this file does not use (it
+    // calls the SCM provider's createOrUpdatePullRequest itself), and pull-request
+    // evaluation, `auto` mode included, only acts on a pull request whose row links a run
+    // (findPlatformPullRequest). It is not a draft, so drafts are not the reason. Caveat:
+    // reuseExisting adopts an open pull request by head branch, so a platform run that pushed the
+    // same branch name would give this pull request that run's row; the onboarding branch name is
+    // its own, so that does not happen in practice.
     'A person reviews and merges this pull request; the platform never merges it.',
     ...(trialReport?.trim()
       ? [
