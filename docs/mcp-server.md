@@ -156,6 +156,10 @@ team for an administrator, exactly as the dashboard does. Their inputs are stric
 | `get_agent_run_limits` | `GET /api/v1/agent-runs/limits` | The step, wall-clock and concurrency ceilings an agent run launches under, and whether agent runs are enabled. Input: optional `repoId`. |
 | `list_epics` | `GET /api/v1/epics` | `ticketId`, `status`, `repositoryCount`, timestamps, `requestedById` and `workRequestId` for cross-repository epics. No description, name or email. Inputs: `limit`, `offset`, `scope` (`TEAM` by default), `teamId`. |
 | `list_schedules` | `GET /api/v1/scheduled-work-requests` | `id`, `name`, `cron`, `isActive`, `paused`, `lastFiredAt`, `lastRunAt`, `nextRunAt`, `budgetTier`, `repository` and `canManage` for schedules on repositories the caller can reach; `scheduleKnown` is false when the scheduler could not be asked. No description, author or submitted work. |
+| `get_run_eval_results` | `GET /api/v1/workflow-runs/:id/eval-results` | For one run, each eval result as `id`, `scorer`, `scoreType`, `source`, `value` (0 to 1), `passed`, `scored` (false when the scorer did not run and `value` is a placeholder), `nodeId`, `agentKey` and `createdAt`. Input: `runId`. Rationales and metadata are not returned. |
+| `list_run_effects` | `GET /api/v1/workflow-runs/:id/effects` | For one run, each external effect the run made as `id`, `kind` (pull request, git push, tracker, knowledge base, MCP tool), `status`, `via`, `nodeId`, `agentKey` and `createdAt`, plus `truncated`, which is true when older effects were cut. Input: `runId`. Targets, details and errors are not returned. |
+| `list_run_autonomy_decisions` | `GET /api/v1/workflow-runs/:id/autonomy-decisions` | For one run, each publish, approve, reject, request-changes, select or submit event (anything else as `unknown`) as `id`, `event`, `actorId`, `policyName`, `riskClass`, `requiredApprovers` and `createdAt`. Inputs: `runId`, `limit` (1 to 100), `offset`. Decision payloads are not returned. |
+| `list_run_evidence` | `GET /api/v1/workflow-runs/:id/evidence` | For one run, each captured UI evidence item as `id`, `kind` (`screenshot`, `video`, `trace` or `log`), `sizeBytes`, `width`, `height`, `nodeId`, `stepAttempt` and `createdAt`. Input: `runId`. Content, links and captions are not returned. |
 
 A tool's output schema holds plain types only, because a JSON Schema cannot represent a transform: the
 sanitising schemas that read the REST body (`shortName`, `status`, `ticketId` in `projections.ts`) are
@@ -383,7 +387,7 @@ and needs no restart. None is read only at startup.
   with it even at the cap, and a retry that raced its own first submit is answered with the replay or
   "still starting", not the cap; a new key for a ticket already in flight is answered "already running".
 - Resources and prompts are not exposed.
-- The domain tools cover teams, pull requests and agent-run limits. Most other things the dashboard
+- The domain tools cover the teams, pull requests, epics, schedules and run records listed in the domain read table. Most other things the dashboard
   reads (library, knowledge, reports, usage, platform configuration) and every dashboard write other
   than the four write tools are available through the REST API but not over MCP.
 - A team's members are returned as user ids and roles. `get_team` resolves no id to a person, but the
