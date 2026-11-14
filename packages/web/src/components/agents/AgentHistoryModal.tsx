@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Modal } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Table, Td, THead, Th } from '@/components/ui/Table';
 import {
   type AgentRow,
   type AgentSaveWarnings,
@@ -18,7 +18,7 @@ import {
   useRestoreAgentVersion,
 } from '@/hooks/useAgentLibrary';
 import { diffAgentVersions } from '@/lib/agentDiff';
-import { modelLabel } from '@/lib/agentDisplay';
+import { modelLabel, scopeLabel } from '@/lib/agentDisplay';
 import { formatDate } from '@/lib/utils';
 
 /**
@@ -31,8 +31,11 @@ export function AgentHistoryModal({
   mcpNames,
   credentialNames,
   onClose,
+  scopeTarget,
 }: {
   agent: AgentRow;
+  /** The team, organization, channel or workflow a scoped agent is pinned to, where resolved. */
+  scopeTarget?: string | null;
   mcpNames?: ReadonlyMap<string, string>;
   credentialNames?: ReadonlyMap<string, string>;
   onClose: () => void;
@@ -74,7 +77,7 @@ export function AgentHistoryModal({
         open
         size="lg"
         subtitle="Saving an edit creates a new version. Runs in progress keep the version they started with."
-        title={`History of ${agent.name}`}
+        title={`History of ${agent.name} · ${scopeLabel(agent.scope)}${scopeTarget ? `: ${scopeTarget}` : ''}`}
       >
         <div className="max-h-[70vh] space-y-5 overflow-y-auto pr-1">
           {restored !== null && (
@@ -88,6 +91,7 @@ export function AgentHistoryModal({
           <ModelSaveWarnings
             catalogWarnings={modelWarnings.catalogWarnings}
             credentialWarnings={modelWarnings.credentialWarnings}
+            runtimeWarnings={modelWarnings.runtimeWarnings}
           />
           <QueryBoundary
             error={error}
@@ -106,7 +110,13 @@ export function AgentHistoryModal({
               </THead>
               <tbody>
                 {(versions ?? []).map((v) => (
-                  <TRow className={v.id === selectedId ? 'bg-ink-800' : undefined} key={v.id}>
+                  <tr
+                    aria-current={v.id === selectedId ? 'true' : undefined}
+                    className={`border-b border-ink-600 last:border-0 ${
+                      v.id === selectedId ? 'border-l-2 border-l-accent-400 bg-ink-700' : ''
+                    }`}
+                    key={v.id}
+                  >
                     <Td className="py-2 pr-3">
                       <span className="tabular-nums text-paper-100">v{v.version}</span>
                       {v.version === latestVersion && (
@@ -128,7 +138,8 @@ export function AgentHistoryModal({
                     <Td className="py-2 text-right">
                       <div className="flex justify-end gap-1">
                         <Button
-                          aria-label={`Show what changed in version ${v.version}`}
+                          aria-label={`Show changes for version ${v.version}`}
+                          aria-pressed={v.id === selectedId}
                           onClick={() => setSelected(v.id)}
                           size="sm"
                           variant="ghost"
@@ -147,7 +158,7 @@ export function AgentHistoryModal({
                         )}
                       </div>
                     </Td>
-                  </TRow>
+                  </tr>
                 ))}
               </tbody>
             </Table>

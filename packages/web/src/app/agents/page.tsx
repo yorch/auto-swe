@@ -65,6 +65,7 @@ import {
 import { buildAgentUpdate } from '@/lib/agentEditPatch';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
+import { navLabel } from '@/lib/navigation';
 import { originLabel } from '@/lib/originLabel';
 import { scanWarningLead } from '@/lib/scanWarnings';
 
@@ -224,6 +225,12 @@ function AgentLibraryContent() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [createForm, setCreateForm] = useState<CreateAgentBody>(EMPTY_CREATE);
+  // What the form held when it opened, so a prefilled override is not "dirty" until it is edited.
+  const [createBaseline, setCreateBaseline] = useState<CreateAgentBody>(EMPTY_CREATE);
+  // An override of a platform agent keeps that agent's key.
+  const [createKeyLocked, setCreateKeyLocked] = useState(false);
+  // Bumped per opening so the form's own state (model mode, remembered bindings) starts fresh.
+  const [createSession, setCreateSession] = useState(0);
   const [editing, setEditing] = useState<AgentRow | null>(null);
   // The row as loaded, so a save sends only what changed.
   const [editingOriginal, setEditingOriginal] = useState<AgentRow | null>(null);
@@ -295,7 +302,7 @@ function AgentLibraryContent() {
     }
   }
 
-  const createDirty = JSON.stringify(createForm) !== JSON.stringify(EMPTY_CREATE);
+  const createDirty = JSON.stringify(createForm) !== JSON.stringify(createBaseline);
   const editDirty =
     editing !== null &&
     editingOriginal !== null &&
@@ -313,6 +320,8 @@ function AgentLibraryContent() {
   function closeCreate() {
     setCreateOpen(false);
     setCreateForm(EMPTY_CREATE);
+    setCreateBaseline(EMPTY_CREATE);
+    setCreateKeyLocked(false);
     setCreateError(null);
   }
 
@@ -324,16 +333,17 @@ function AgentLibraryContent() {
     closeEdit();
   }
 
-  async function reactivate(a: AgentRow): Promise<boolean> {
+  /** The new version the reactivation cut (it has its own id), or null when it failed. */
+  async function reactivate(a: AgentRow): Promise<AgentRow | null> {
     setActionError(null);
     try {
-      await updateAgent.mutateAsync({ body: { isActive: true }, id: a.id });
-      return true;
+      const res = await updateAgent.mutateAsync({ body: { isActive: true }, id: a.id });
+      return res.data;
     } catch (e) {
       // A reactivation that fails is otherwise invisible: the list simply stays as
       // it was, and the operator has no way to tell that anything was attempted.
       setActionError(errMsg(e, 'Reactivate failed'));
-      return false;
+      return null;
     }
   }
 
@@ -369,6 +379,12 @@ function AgentLibraryContent() {
       keyNames.set(a.key, a.name);
     }
   }
+  const globalNames = new Map<string, string>();
+  for (const a of agents ?? []) {
+    if (a.scope === 'GLOBAL') {
+      globalNames.set(a.key, a.name);
+    }
+  }
   const visibleAgents = (agents ?? [])
     .filter((a) => !scopeFilter || a.scope === scopeFilter)
     .filter((a) => {
@@ -384,7 +400,11 @@ function AgentLibraryContent() {
       }
     })
     .filter(
-      (a) => !query || `${a.key} ${a.name} ${a.description ?? ''}`.toLowerCase().includes(query)
+      (a) =>
+        !query ||
+        `${a.key} ${a.name} ${a.description ?? ''} ${a.modelSpec ?? ''} ${a.inheritsModelFrom ?? ''}`
+          .toLowerCase()
+          .includes(query)
     )
     .sort(
       (a, b) =>
@@ -411,6 +431,16 @@ function AgentLibraryContent() {
     (createForm.scope === 'TEAM' && !createForm.teamId) ||
     (createForm.scope === 'CHANNEL' && !createForm.channelId) ||
     (createForm.scope === 'WORKFLOW_TEMPLATE' && !createForm.workflowTemplateId);
+
+  // The scope target a new agent still needs, named for the hint beside the disabled button.
+  const createScopeTargetMissing = createScopeIncomplete ? scopeNoun(createForm.scope) : null;
+  const createKeyNote =
+    createForm.scope !== 'GLOBAL' &&
+    createForm.key &&
+    !createKeyLocked &&
+    !(agents ?? []).some((a) => a.scope === 'GLOBAL' && a.key === createForm.key)
+      ? 'No platform agent has this key — this creates a standalone agent.'
+      : undefined;
 
   function setEditSkillRefs(refs: SkillRefInput[]) {
     if (!editing) {
@@ -439,6 +469,44 @@ function AgentLibraryContent() {
 
   const openCreate = () => {
     setCreateError(null);
+    setCreateSession((session) => session + 1);
+    setCreateOpen(true);
+  };
+
+  /** A new narrower-scope agent that starts as a copy of a platform-wide one, key included. */
+  const openOverride = (a: AgentRow) => {
+    const scope: AgentScope =
+      (teams ?? []).length > 0
+        ? 'TEAM'
+        : (orgs ?? []).length > 0
+          ? 'ORGANIZATION'
+          : (slackChannels ?? []).length > 0
+            ? 'CHANNEL'
+            : (templates ?? []).length > 0
+              ? 'WORKFLOW_TEMPLATE'
+              : 'TEAM';
+    const form: CreateAgentBody = {
+      ...EMPTY_CREATE,
+      credentialId: a.credentialId,
+      description: a.description ?? '',
+      harnessProfile: a.harnessProfile,
+      inheritsModelFrom: a.inheritsModelFrom ?? '',
+      key: a.key,
+      mcpConnectionId: a.mcpConnectionId,
+      modelSpec: a.modelSpec ?? '',
+      name: a.name,
+      reasoning: a.reasoning,
+      runtime: a.runtime,
+      scope,
+      skillRefs: a.skillRefs.map((r) => ({ skillId: r.skillId, sortOrder: r.sortOrder })),
+      systemPrompt: a.systemPrompt ?? '',
+      toolKeys: a.toolKeys,
+    };
+    setCreateError(null);
+    setCreateForm(form);
+    setCreateBaseline(form);
+    setCreateKeyLocked(true);
+    setCreateSession((session) => session + 1);
     setCreateOpen(true);
   };
 
@@ -460,6 +528,16 @@ function AgentLibraryContent() {
             label: 'Version history',
             onAction: () => setHistory(a),
           },
+          ...(a.scope === 'GLOBAL'
+            ? [
+                {
+                  icon: 'plus' as const,
+                  id: 'override',
+                  label: 'Create override…',
+                  onAction: () => openOverride(a),
+                },
+              ]
+            : []),
           ...(!a.isActive
             ? [
                 {
@@ -486,10 +564,6 @@ function AgentLibraryContent() {
     </>
   );
 
-  // An agent whose key repeats the row above is a narrower-scope override of it.
-  const overrideIds = new Set(
-    visibleAgents.filter((a, i) => i > 0 && visibleAgents[i - 1].key === a.key).map((a) => a.id)
-  );
   const agentColumns: DataTableColumn<AgentRow>[] = [
     // Only an admin can send a bulk change, so only an admin gets the selection column.
     ...(isAdmin
@@ -544,7 +618,7 @@ function AgentLibraryContent() {
     {
       cell: (a) => (
         <span className="flex min-w-0 items-baseline gap-2">
-          {overrideIds.has(a.id) && (
+          {a.scope !== 'GLOBAL' && globalNames.has(a.key) && (
             <span aria-hidden className="text-paper-600">
               ↳
             </span>
@@ -557,8 +631,8 @@ function AgentLibraryContent() {
       id: 'agent',
       primary: true,
       secondary: (a) =>
-        overrideIds.has(a.id) ? (
-          `Override of ${keyNames.get(a.key) ?? a.key}`
+        a.scope !== 'GLOBAL' && globalNames.has(a.key) ? (
+          `Override of ${globalNames.get(a.key)}`
         ) : a.description ? (
           <span className="line-clamp-1" title={a.description}>
             {a.description}
@@ -671,7 +745,7 @@ function AgentLibraryContent() {
         }
         learnMore={{ ...HELP_LINKS.agentLibrary, label: 'About the agent library' }}
         subtitle="Agents pair a model with a prompt, skills and tools. Workflow steps call them by key."
-        title="Agent library"
+        title={navLabel('/agents')}
       />
       <SetupBanner items={['credentials']} />
 
@@ -711,7 +785,7 @@ function AgentLibraryContent() {
               <span className="text-xs text-paper-500 tabular-nums">
                 {filtering
                   ? `${visibleAgents.length} of ${agents.length} agents`
-                  : `${agents.length} agents`}
+                  : `${agents.length} ${agents.length === 1 ? 'agent' : 'agents'}`}
               </span>
             ) : null
           }
@@ -839,11 +913,20 @@ function AgentLibraryContent() {
       )}
 
       {/* ── Create ── */}
-      <Modal onClose={requestCloseCreate} open={createOpen} size="lg" title="New agent">
+      <Modal
+        dismissible={!createAgent.isPending}
+        onClose={requestCloseCreate}
+        open={createOpen}
+        size="lg"
+        title="New agent"
+      >
         <AgentFormFields
           copy={CREATE_COPY}
           credentials={credentials ?? []}
           harnessProfiles={isAdmin ? (harnessProfiles ?? []) : undefined}
+          key={createSession}
+          keyLocked={createKeyLocked}
+          keyNote={createKeyNote}
           mcpConnections={mcpConnections ?? []}
           mode="create"
           onChange={(patch) => setCreateForm({ ...createForm, ...patch })}
@@ -854,6 +937,7 @@ function AgentLibraryContent() {
                 id: c.id,
                 name: c.name ?? c.slackChannelId,
               }))}
+              excludeGlobal={createKeyLocked}
               form={createForm}
               onChange={setCreateForm}
               orgs={orgs ?? []}
@@ -885,15 +969,27 @@ function AgentLibraryContent() {
           {(!createForm.key || !createForm.name.trim()) && (
             <span className="text-xs text-paper-500">Key and name are required.</span>
           )}
+          {createScopeTargetMissing && (
+            <span className="text-xs text-paper-500">
+              Pick the {createScopeTargetMissing} this agent applies to.
+            </span>
+          )}
         </ModalFooter>
       </Modal>
 
       {/* ── Edit ── */}
       <Modal
+        dismissible={!updateAgent.isPending}
         onClose={requestCloseEdit}
         open={editing !== null}
         size="lg"
-        subtitle={editing ? `${editing.key} · v${editing.version} → v${editing.version + 1}` : ''}
+        subtitle={
+          editing
+            ? `${editing.key} · ${scopeLabel(editing.scope)}${
+                scopeTarget(editing, names) ? `: ${scopeTarget(editing, names)}` : ''
+              } · v${editing.version} → v${editing.version + 1}`
+            : ''
+        }
         title="Edit agent"
       >
         {editing ? (
@@ -904,9 +1000,11 @@ function AgentLibraryContent() {
                   <Button
                     disabled={updateAgent.isPending}
                     onClick={async () => {
-                      if (await reactivate(editing)) {
-                        setEditing({ ...editing, isActive: true });
-                        setEditingOriginal({ ...editing, isActive: true });
+                      // Reactivating cuts a new version with its own id; later saves must target it.
+                      const next = await reactivate(editing);
+                      if (next) {
+                        setEditing({ ...next });
+                        setEditingOriginal(next);
                       }
                     }}
                     size="sm"
@@ -977,6 +1075,7 @@ function AgentLibraryContent() {
           credentialNames={credentialNames}
           mcpNames={mcpNames}
           onClose={() => setHistory(null)}
+          scopeTarget={scopeTarget(history, names)}
         />
       )}
 

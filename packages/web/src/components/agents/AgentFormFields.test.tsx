@@ -221,4 +221,18 @@ describe('AgentFormFields', () => {
     fireEvent.click(screen.getByRole('option', { name: /Docs/ }));
     expect(onChange).toHaveBeenLastCalledWith({ mcpConnectionId: 'm1', toolKeys: ['bash', 'mcp'] });
   });
+
+  it('labels an unnamed MCP server without printing undefined', () => {
+    render(
+      <AgentFormFields
+        mcpConnections={[{ config: {}, id: 'm1', name: null } as unknown as McpConnectionRow]}
+        mode="edit"
+        onChange={vi.fn()}
+        skills={[]}
+        value={{ mcpConnectionId: 'm1', name: 'A' }}
+      />
+    );
+    expect(screen.getByDisplayValue('Unnamed server')).toBeTruthy();
+    expect(screen.queryByDisplayValue(/undefined/)).toBeNull();
+  });
 });
