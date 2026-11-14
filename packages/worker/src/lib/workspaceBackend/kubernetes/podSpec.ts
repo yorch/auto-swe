@@ -17,6 +17,25 @@ export const WORKSPACE_SECRET_ROLE = 'workspace-env';
 /** On the Secret: the pod it belongs to. */
 export const WORKSPACE_POD_LABEL = 'asw/workspace';
 
+/**
+ * Service sidecars (postgres, redis, …) get their own fixed resources, never the
+ * workspace's, so a pod costs the workspace size plus a constant per service
+ * instead of (1 + N) times the workspace size. CPU and memory mirror the Docker
+ * backend's `--memory=512m --cpus=1` in `buildServiceContainerArgs` (docker.ts).
+ * Ephemeral storage: only the workspace container mounts the `workspace`
+ * emptyDir, so a service writes to its own container layer (a data directory
+ * and logs) and never needs the large workspace volume. Counting
+ * `storageLimit` against each service would also inflate the pod's total. The
+ * Docker backend sets no storage limit on services; 4Gi is a generous
+ * ceiling for a test database that still keeps a runaway service from filling
+ * the node.
+ */
+const SERVICE_RESOURCES = {
+  cpu: '1000m',
+  'ephemeral-storage': '4Gi',
+  memory: String(512 * 1024 ** 2),
+};
+
 const SECRET_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const MEMORY_UNITS: Record<string, number> = { '': 1, b: 1, g: 1024 ** 3, k: 1024, m: 1024 ** 2 };
@@ -242,10 +261,7 @@ export function buildWorkspacePod(
               }),
             image: service.image,
             name: service.name,
-            resources: {
-              limits: resources,
-              requests: resources,
-            },
+            resources: { limits: SERVICE_RESOURCES, requests: SERVICE_RESOURCES },
             securityContext:
               service.runAsUser === undefined
                 ? {

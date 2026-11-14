@@ -130,6 +130,29 @@ describe('buildWorkspacePod', () => {
     });
   });
 
+  it('gives service sidecars fixed resources that do not follow the workspace size', () => {
+    const services = [{ image: 'mirror.gcr.io/library/postgres:18', name: 'postgres' }];
+    const build = (memory: string, cpus: number) =>
+      buildWorkspacePod({ ...spec, cpus, memory, services }, config) as unknown as PodShape;
+    const small = build('4g', 2);
+    const large = build('16g', 8);
+    const fixed = {
+      cpu: '1000m',
+      'ephemeral-storage': '4Gi',
+      memory: String(512 * 1024 ** 2),
+    };
+    for (const p of [small, large]) {
+      const service = p.spec.containers[1]?.resources;
+      expect(service?.limits).toEqual(fixed);
+      expect(service?.requests).toEqual(fixed);
+    }
+    expect(large.spec.containers[0]?.resources.limits).toEqual({
+      cpu: '8000m',
+      'ephemeral-storage': '10Gi',
+      memory: String(16 * 1024 ** 3),
+    });
+  });
+
   it('keeps the container alive with sleep under a shared process namespace', () => {
     const { spec: s } = pod();
     expect(s.containers[0].command).toEqual(['sleep', 'infinity']);
