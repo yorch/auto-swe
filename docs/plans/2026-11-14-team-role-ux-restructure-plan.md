@@ -25,9 +25,9 @@ Conventions for every task:
 - [x] Task 3: Repository dependency and onboarding routes drop the platform LEAD floor — `47066c4d`
 - [x] Task 4: Workflow template routes drop the platform LEAD floor — `4301d7c8`
 - [x] Task 5: Web permissions use the team role alone, with explained disabled controls — `ec3637d4`
-- [x] Task 6: Move Analytics, Reports and LLM usage to `/insights/*` with redirects — `f60093e7`
-- [x] Task 7: Move Automations and the Teams directory, then reorder the sidebar — `763a7c86`; follow-ups `fix(gateway)` allowlist and `docs(site)` explorer locators
-- [x] Task 8: Team overview returns a `mine` block — `695d0efb`
+- [x] Task 6: Move Analytics, Reports and LLM usage to `/insights/*` with redirects — `c810c18a`
+- [x] Task 7: Move Automations and the Teams directory, then reorder the sidebar — `193532bc`; follow-ups `fix(gateway)` allowlist and `docs(site)` explorer locators
+- [x] Task 8: Team overview returns a `mine` block — `7f84e290`
 - [ ] Task 9: "My work" card and Start work links on the team Overview
 - [ ] Task 10: Manage tab with Repositories, Budget and Service principals
 - [ ] Task 11: Manage tab Schedules and Automations sections
