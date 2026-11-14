@@ -38,6 +38,16 @@ const schedule = (over: Record<string, unknown>) => ({
 afterEach(() => vi.unstubAllGlobals());
 
 describe('TriggersCard', () => {
+  it('says the webhook is unsigned when it has no signing secret', async () => {
+    setupFetchMock({
+      '/api/v1/automations': () => ({ data: [] }),
+      '/api/v1/scheduled-work-requests': () => ({ data: [] }),
+    });
+    render(withQuery(<TriggersCard template={template} webhookConfigured webhookSigned={false} />));
+    expect(await screen.findByText('Webhook URL exists (unsigned)')).toBeTruthy();
+    expect(screen.queryByText('Signed webhook URL exists')).toBeNull();
+  });
+
   it('lists only events and schedules that start this template, with manage links', async () => {
     setupFetchMock({
       '/api/v1/automations': () => ({
@@ -54,7 +64,7 @@ describe('TriggersCard', () => {
         ],
       }),
     });
-    render(withQuery(<TriggersCard template={template} webhookConfigured />));
+    render(withQuery(<TriggersCard template={template} webhookConfigured webhookSigned />));
 
     expect(await screen.findByText('Explicit')).toBeTruthy();
     expect(screen.getByText('Source default')).toBeTruthy();
@@ -75,7 +85,11 @@ describe('TriggersCard', () => {
       '/api/v1/automations': () => ({ data: [] }),
       '/api/v1/scheduled-work-requests': () => ({ data: [] }),
     });
-    render(withQuery(<TriggersCard template={template} webhookConfigured={false} />));
+    render(
+      withQuery(
+        <TriggersCard template={template} webhookConfigured={false} webhookSigned={false} />
+      )
+    );
     expect(await screen.findByText('Nothing starts this template automatically yet.')).toBeTruthy();
   });
 
@@ -86,13 +100,17 @@ describe('TriggersCard', () => {
     });
     const teamOwned = { ...template, team: { id: 't1' } };
     const { unmount } = render(
-      withQuery(<TriggersCard template={teamOwned} webhookConfigured={false} />)
+      withQuery(
+        <TriggersCard template={teamOwned} webhookConfigured={false} webhookSigned={false} />
+      )
     );
     expect(await screen.findByText('Nothing starts this template automatically yet.')).toBeTruthy();
     expect(screen.queryByText('Source default')).toBeNull();
     unmount();
     const draft = { ...template, status: 'DRAFT' };
-    render(withQuery(<TriggersCard template={draft} webhookConfigured={false} />));
+    render(
+      withQuery(<TriggersCard template={draft} webhookConfigured={false} webhookSigned={false} />)
+    );
     expect(await screen.findByText('Nothing starts this template automatically yet.')).toBeTruthy();
     expect(screen.queryByText('Source default')).toBeNull();
   });
@@ -102,7 +120,11 @@ describe('TriggersCard', () => {
       '/api/v1/automations': () => ({ data: [] }),
       '/api/v1/scheduled-work-requests': () => ({ data: [] }),
     });
-    render(withQuery(<TriggersCard template={template} webhookConfigured={false} />));
+    render(
+      withQuery(
+        <TriggersCard template={template} webhookConfigured={false} webhookSigned={false} />
+      )
+    );
     expect(
       (await screen.findByRole('link', { name: 'Platform settings' })).getAttribute('href')
     ).toBe('/admin/platform-settings');
@@ -121,7 +143,11 @@ describe('TriggersCard', () => {
             })
       )
     );
-    render(withQuery(<TriggersCard template={template} webhookConfigured={false} />));
+    render(
+      withQuery(
+        <TriggersCard template={template} webhookConfigured={false} webhookSigned={false} />
+      )
+    );
     expect(await screen.findByText('Nightly')).toBeTruthy();
     expect(screen.getAllByRole('alert')).toHaveLength(1);
   });
@@ -138,7 +164,11 @@ describe('TriggersCard', () => {
           : new Response('{}', { status: 500 })
       )
     );
-    render(withQuery(<TriggersCard template={template} webhookConfigured={false} />));
+    render(
+      withQuery(
+        <TriggersCard template={template} webhookConfigured={false} webhookSigned={false} />
+      )
+    );
     expect(await screen.findByText('Source default')).toBeTruthy();
     expect(screen.getAllByRole('alert')).toHaveLength(1);
   });
@@ -148,7 +178,11 @@ describe('TriggersCard', () => {
       'fetch',
       vi.fn(async () => new Response('{}', { status: 500 }))
     );
-    render(withQuery(<TriggersCard template={template} webhookConfigured={false} />));
+    render(
+      withQuery(
+        <TriggersCard template={template} webhookConfigured={false} webhookSigned={false} />
+      )
+    );
     expect((await screen.findAllByRole('alert')).length).toBe(2);
   });
 });

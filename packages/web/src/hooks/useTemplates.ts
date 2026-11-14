@@ -142,11 +142,16 @@ export function useCreateWorkflowVersion(templateId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (spec: unknown) =>
-      api.post<{ data: WorkflowTemplateVersionDetail }>(
+      api.post<{ data: WorkflowTemplateVersionDetail; warnings?: string[] }>(
         `/api/v1/workflow-templates/${templateId}/versions`,
         { spec }
       ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['workflow-template', templateId] }),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ['workflow-template', templateId] }),
+        // The library list shows the version count and the active version.
+        qc.invalidateQueries({ queryKey: ['workflow-templates'] }),
+      ]),
   });
 }
 
@@ -236,7 +241,12 @@ export function useWorkflowSpecDiff(templateId: string, a: number | null, b: num
   });
 }
 
-export function useWorkflowTemplateAnalytics(templateId: string, windowDays = 30) {
+export function useWorkflowTemplateAnalytics(
+  templateId: string,
+  windowDays = 30,
+  /** `poll: false` reads once per mount and on invalidation; the analytics page keeps polling. */
+  options: { poll?: boolean } = {}
+) {
   return useQuery({
     enabled: !!templateId,
     queryFn: () =>
@@ -246,7 +256,7 @@ export function useWorkflowTemplateAnalytics(templateId: string, windowDays = 30
         )
         .then((r) => r.data),
     queryKey: ['workflow-template-analytics', templateId, windowDays],
-    refetchInterval: 30_000,
+    refetchInterval: options.poll === false ? false : 30_000,
   });
 }
 

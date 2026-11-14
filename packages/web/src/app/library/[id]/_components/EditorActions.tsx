@@ -49,6 +49,11 @@ export function EditorActions({
       <SegmentedControl
         ariaLabel="Editor view"
         onChange={(next) => {
+          // Leaving unparseable edits would drop the typed text: fix them (or Cancel) first.
+          // An untouched stored version that does not parse can still be left.
+          if (isDirty && jsonInvalid && next !== 'json') {
+            return;
+          }
           if ((next === 'json') !== (mode === 'json')) {
             setMode(mode === 'json' ? (canManage ? 'edit' : 'view') : 'json');
           }
@@ -72,7 +77,7 @@ export function EditorActions({
       )}
       {isDirty && jsonInvalid && (
         <span className="text-xs text-danger-400" id="save-blocked-reason">
-          Fix the JSON to save
+          Fix the JSON, or Cancel, to switch to Visual
         </span>
       )}
       {(isDirty || mode === 'edit') && (

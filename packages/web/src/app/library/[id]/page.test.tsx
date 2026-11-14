@@ -30,6 +30,7 @@ const hooks = vi.hoisted(() => ({
       requireSignature: false,
     },
   },
+  triggerRenders: 0,
   version: {
     generatedBy: null,
     reviewedAt: null,
@@ -42,6 +43,7 @@ const hooks = vi.hoisted(() => ({
     },
     version: 1,
   },
+  versionQuery: { error: null as Error | null, isError: false, refetch: vi.fn(), undefined: false },
 }));
 
 const idle = { isError: false, isLoading: false, isPending: false, mutateAsync: vi.fn() };
@@ -64,7 +66,13 @@ vi.mock('@/hooks/useTemplates', () => ({
     isLoading: false,
   }),
   useWorkflowTemplateAnalytics: () => ({ data: undefined }),
-  useWorkflowTemplateVersion: () => ({ data: hooks.version }),
+  useWorkflowTemplateVersion: () => ({
+    data: hooks.versionQuery.undefined ? undefined : hooks.version,
+    error: hooks.versionQuery.error,
+    isError: hooks.versionQuery.isError,
+    isFetching: false,
+    refetch: hooks.versionQuery.refetch,
+  }),
 }));
 vi.mock('@/hooks/useModelCatalog', () => ({ useRolePricing: () => ({ data: undefined }) }));
 vi.mock('@/hooks/useTeams', () => ({
@@ -98,7 +106,12 @@ vi.mock('@/components/workflow/templateNav', () => ({
   TemplateNotFound: () => null,
   TemplateSubNav: () => null,
 }));
-vi.mock('./_components/TriggersCard', () => ({ TriggersCard: () => null }));
+vi.mock('./_components/TriggersCard', () => ({
+  TriggersCard: () => {
+    hooks.triggerRenders += 1;
+    return null;
+  },
+}));
 vi.mock('next/navigation', () => ({
   usePathname: () => '/library/x',
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -114,6 +127,11 @@ beforeEach(() => {
   hooks.mutateAsync.mockResolvedValue({ data: { version: 2 } });
   hooks.editorProps = null;
   hooks.refineProps = null;
+  hooks.triggerRenders = 0;
+  hooks.versionQuery.error = null;
+  hooks.versionQuery.isError = false;
+  hooks.versionQuery.undefined = false;
+  hooks.versionQuery.refetch.mockReset();
   hooks.template.versions = [{ createdAt: '2026-01-01T00:00:00.000Z', version: 1 }];
   hooks.adminTeamIds = null;
   hooks.ledTeamIds = new Set();
@@ -140,9 +158,9 @@ describe('workflow editor with lint errors', () => {
   it('makes the description readable in Settings without management permissions', async () => {
     useAuthStore.setState({ user: { role: 'ENGINEER' } } as never);
     await renderPage();
-    fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
+    fireEvent.click(await screen.findByRole('tab', { name: 'Settings' }));
     expect(
-      within(screen.getByRole('region', { name: 'Workflow settings' })).getByText(
+      within(screen.getByRole('tabpanel', { name: 'Settings' })).getByText(
         hooks.template.description
       )
     ).toBeTruthy();
@@ -306,5 +324,235 @@ describe('the editor dirty model', () => {
       (screen.getByRole('button', { name: 'Refine with AI' }) as HTMLButtonElement).disabled
     ).toBe(true);
     add.mockRestore();
+  });
+});
+
+describe('discarding edits', () => {
+  async function openDirtyEditor() {
+    await renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    await waitFor(() => expect(hooks.editorProps).not.toBeNull());
+    act(() =>
+      hooks.editorProps?.onChange?.({ ...hooks.version.spec, description: 'changed by the author' })
+    );
+  }
+
+  it('asks before Cancel throws away unsaved edits, and keeps them on Keep editing', async () => {
+    await openDirtyEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByRole('dialog', { name: 'Discard your edits?' });
+    // Still in edit mode until confirmed.
+    expect(screen.getByRole('button', { name: 'Save new version' })).toBeTruthy();
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Discard your edits?' })).getByRole('button', {
+        name: 'Cancel',
+      })
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Discard your edits?' })).toBeNull()
+    );
+    expect(screen.queryByRole('button', { name: 'Save new version' })).not.toBeNull();
+  });
+
+  it('discards the edits once confirmed', async () => {
+    await openDirtyEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard changes' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Save new version' })).toBeNull()
+    );
+  });
+
+  it('cancels at once when nothing was changed', async () => {
+    await renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog', { name: 'Discard your edits?' })).toBeNull();
+    await screen.findByRole('button', { name: 'Edit' });
+  });
+});
+
+describe('the workspace tabs', () => {
+  it('keeps the settings mounted, so a webhook secret shown once survives a tab switch', async () => {
+    await renderPage();
+    fireEvent.click(await screen.findByRole('tab', { name: 'Settings' }));
+    const panel = screen.getByRole('tabpanel', { name: 'Settings' });
+    fireEvent.click(await screen.findByRole('tab', { name: 'Definition' }));
+    expect(panel.isConnected).toBe(true);
+    expect(panel.className).toContain('hidden');
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    expect(screen.getByRole('tabpanel', { name: 'Settings' })).toBe(panel);
+    expect(panel.className).not.toContain('hidden');
+  });
+
+  it('mounts the settings only once they are first opened', async () => {
+    await renderPage();
+    await screen.findByRole('tab', { name: 'Settings' });
+    expect(hooks.triggerRenders).toBe(0);
+    expect(
+      within(screen.getByRole('tabpanel', { hidden: true, name: 'Settings' })).queryByText(
+        hooks.template.description
+      )
+    ).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    expect(hooks.triggerRenders).toBeGreaterThan(0);
+    expect(
+      within(screen.getByRole('tabpanel', { name: 'Settings' })).getByText(
+        hooks.template.description
+      )
+    ).toBeTruthy();
+  });
+
+  it('links to analytics, run history and compare from every section', async () => {
+    await renderPage();
+    for (const tab of ['Definition', 'Settings', 'Versions']) {
+      fireEvent.click(await screen.findByRole('tab', { name: tab }));
+      const reports = screen.getByRole('navigation', { name: 'Workflow reports' });
+      expect(within(reports).getByRole('link', { name: 'Analytics' }).getAttribute('href')).toBe(
+        `/library/${TEMPLATE_ID}/analytics`
+      );
+      expect(within(reports).getByRole('link', { name: 'Run history' })).toBeTruthy();
+      expect(within(reports).getByRole('link', { name: 'Compare versions' })).toBeTruthy();
+    }
+  });
+
+  it('says what editing will do only while editing', async () => {
+    await renderPage();
+    expect(screen.getByText('Read only')).toBeTruthy();
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    expect(await screen.findByText('Editing v1 — saves as a new version')).toBeTruthy();
+  });
+});
+
+describe('the selected version failing to load', () => {
+  it('shows a skeleton, not the previous graph, when the selected version has not loaded', async () => {
+    const view = await renderPage();
+    // v1 is loaded: its definition (and lint) is on screen.
+    expect(await screen.findByTestId('spec-errors')).toBeTruthy();
+    expect(screen.queryByText(/Loading the definition/i)).toBeNull();
+    // The newly selected version has not loaded yet.
+    hooks.versionQuery.undefined = true;
+    view.rerender(
+      <Suspense fallback={null}>
+        <TemplateDetailPage params={PARAMS} />
+      </Suspense>
+    );
+    expect(await screen.findByText(/Loading the definition/i)).toBeTruthy();
+    expect(screen.queryByTestId('spec-errors')).toBeNull();
+  });
+
+  it('says so when the workflow has no version, instead of loading forever', async () => {
+    const activeVersion = hooks.template.activeVersion;
+    hooks.template.activeVersion = null as never;
+    hooks.versionQuery.undefined = true;
+    try {
+      await renderPage();
+      expect(await screen.findByText('This workflow has no version yet.')).toBeTruthy();
+      expect(screen.queryByText(/Loading the definition/i)).toBeNull();
+      expect(screen.queryByText(/Could not load/)).toBeNull();
+    } finally {
+      hooks.template.activeVersion = activeVersion;
+    }
+  });
+
+  it('shows the error with a Retry that refetches the version', async () => {
+    hooks.versionQuery.undefined = true;
+    hooks.versionQuery.isError = true;
+    hooks.versionQuery.error = new Error('boom from the gateway');
+    await renderPage();
+    expect(await screen.findByText('Could not load v1')).toBeTruthy();
+    expect(screen.getByText('boom from the gateway')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(hooks.versionQuery.refetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('error titles', () => {
+  async function saveWith(failure: Error) {
+    hooks.mutateAsync.mockRejectedValue(failure);
+    await renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'JSON' }));
+    const box = screen.getByLabelText('Raw JSON') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: `${box.value}\n` } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Save new version' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(hooks.mutateAsync).toHaveBeenCalledTimes(1));
+    return box;
+  }
+
+  it('titles a failed request "Could not save" and clears it once the text changes', async () => {
+    const box = await saveWith(new Error('network down'));
+    expect(await screen.findByText('Could not save')).toBeTruthy();
+    expect(screen.getByText('network down')).toBeTruthy();
+    fireEvent.change(box, { target: { value: `${box.value} ` } });
+    await waitFor(() => expect(screen.queryByText('Could not save')).toBeNull());
+  });
+
+  it('shows the advisory warnings of a saved version', async () => {
+    hooks.mutateAsync.mockResolvedValue({
+      data: { version: 2 },
+      warnings: ['agent reference "ghost" was not found'],
+    });
+    await renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'JSON' }));
+    const box = screen.getByLabelText('Raw JSON') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: `${box.value}\n` } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Save new version' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save draft' }));
+    expect(await screen.findByText('Saved with warnings')).toBeTruthy();
+    expect(screen.getByText('agent reference "ghost" was not found')).toBeTruthy();
+  });
+});
+
+describe('the warnings of a saved version', () => {
+  it('drop away when another version is viewed', async () => {
+    hooks.template.versions = [
+      { createdAt: '2026-01-01T00:00:00.000Z', version: 1 },
+      { createdAt: '2026-01-02T00:00:00.000Z', version: 2 },
+    ];
+    hooks.mutateAsync.mockResolvedValue({ data: { version: 2 }, warnings: ['heads up'] });
+    await renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'JSON' }));
+    const box = screen.getByLabelText('Raw JSON') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: `${box.value}\n` } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Save new version' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save draft' }));
+    expect(await screen.findByText('heads up')).toBeTruthy();
+    fireEvent.click(await screen.findByRole('tab', { name: 'Versions' }));
+    const rows = within(screen.getByRole('tabpanel', { name: 'Versions' })).getAllByRole('button');
+    const v1 = rows.find((row) => /^v1/.test(row.textContent ?? ''));
+    expect(v1).toBeTruthy();
+    if (v1) {
+      fireEvent.click(v1);
+    }
+    await waitFor(() => expect(screen.queryByText('heads up')).toBeNull());
+  });
+});
+
+describe('leaving the JSON view', () => {
+  it('stays in JSON while the text does not parse, and says why', async () => {
+    await renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'JSON' }));
+    fireEvent.change(screen.getByLabelText('Raw JSON'), { target: { value: '{ not json' } });
+    expect(screen.getByText('Fix the JSON, or Cancel, to switch to Visual')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Visual' }));
+    expect((screen.getByLabelText('Raw JSON') as HTMLTextAreaElement).value).toBe('{ not json');
+  });
+
+  it('lets an untouched, unparseable stored version switch to Visual, even read-only', async () => {
+    useAuthStore.setState({ user: { role: 'ENGINEER' } } as never);
+    const stored = hooks.version.spec;
+    hooks.version.spec = { broken: true } as unknown as typeof stored;
+    try {
+      await renderPage();
+      fireEvent.click(await screen.findByRole('button', { name: 'JSON' }));
+      expect(screen.getByLabelText('Raw JSON')).toBeTruthy();
+      expect(screen.queryByText('Fix the JSON, or Cancel, to switch to Visual')).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Visual' }));
+      expect(await screen.findByText('This version cannot be drawn')).toBeTruthy();
+      expect(screen.queryByLabelText('Raw JSON')).toBeNull();
+    } finally {
+      hooks.version.spec = stored;
+    }
   });
 });

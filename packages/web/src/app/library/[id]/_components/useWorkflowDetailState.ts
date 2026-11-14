@@ -23,6 +23,7 @@ import {
   useWorkflowTemplateVersion,
 } from '@/hooks/useTemplates';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
+import { ApiError } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
 import { estimatorPricing } from '@/lib/modelCatalog';
 import { hasRole } from '@/lib/roles';
@@ -31,6 +32,27 @@ import { schemaIssues } from '@/lib/specSchemaIssues';
 import { canAuthorTeamCode, canWriteTeamResource } from '@/lib/teamPermissions';
 import { useAuthStore } from '@/stores/authStore';
 import type { ViewMode } from './EditorActions';
+
+/**
+ * Where the message in the page's error banner came from, so its title says what failed:
+ * a save the gateway refused for its content (`rejected`, also fed to the editor's issue list),
+ * a save that failed for another reason (`save`), one stopped before the request (`blocked`), a
+ * review (`review`), or a stored definition that does not parse (`spec`).
+ */
+export type ActionErrorSource = 'blocked' | 'rejected' | 'review' | 'save' | 'spec';
+
+export const ACTION_ERROR_TITLES: Record<ActionErrorSource, string> = {
+  blocked: 'Cannot save',
+  rejected: 'Save rejected',
+  review: 'Could not approve this version',
+  save: 'Could not save',
+  spec: 'This version’s definition could not be read',
+};
+
+/** The gateway answers a spec it will not store with a 4xx validation status. */
+function isRejection(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 400 || err.status === 422);
+}
 
 function formatSpecError(err: unknown): string {
   if (err instanceof Error && 'issues' in err) {
@@ -74,7 +96,14 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
     error,
   } = useWorkflowTemplate(id ?? '');
   useEntityTitle(template?.name);
-  const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
+  const [selectedVersion, setSelectedVersionRaw] = useState<number | null>(null);
+  // Advisory notes the gateway attached to the version this page just saved.
+  const [saveWarnings, setSaveWarnings] = useState<string[]>([]);
+  // Notes belong to the version on screen: viewing another one drops them.
+  const setSelectedVersion = useCallback((version: number | null) => {
+    setSaveWarnings([]);
+    setSelectedVersionRaw(version);
+  }, []);
   const effectiveVersion = selectedVersion ?? template?.activeVersion ?? null;
   // The newest version this page knew of when it loaded the template. The server check compares it
   // with the template's newest version, so it reports versions saved since (another tab, another
@@ -97,9 +126,22 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
     [id]
   );
   const baseVersion = loadedLatest && loadedLatest.id === id ? loadedLatest.latest : undefined;
-  const { data: versionDetail } = useWorkflowTemplateVersion(id ?? '', effectiveVersion);
-  const { data: stepRegistry } = useStepRegistry();
-  const { data: analytics } = useWorkflowTemplateAnalytics(id ?? '', 30);
+  const {
+    data: versionDetail,
+    error: versionError,
+    isError: versionIsError,
+    isFetching: versionFetching,
+    refetch: refetchVersion,
+  } = useWorkflowTemplateVersion(id ?? '', effectiveVersion);
+  const {
+    data: stepRegistry,
+    error: stepRegistryError,
+    isError: stepRegistryIsError,
+    isFetching: stepRegistryFetching,
+    refetch: refetchStepRegistry,
+  } = useStepRegistry();
+  // Only the cost figure on the settings tab reads this, so it is not polled.
+  const { data: analytics } = useWorkflowTemplateAnalytics(id ?? '', 30, { poll: false });
   const createVersion = useCreateWorkflowVersion(id ?? '');
   const reviewVersion = useReviewWorkflowVersion(id ?? '');
   // Every write here (new version, promote, review, refine, metadata, webhook)
@@ -121,7 +163,11 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
   const [editorSpec, setEditorSpec] = useState<WorkflowSpec | null>(null);
   const [editorJson, setEditorJson] = useState('');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<{
+    source: ActionErrorSource;
+    message: string;
+  } | null>(null);
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [pendingShellSpec, setPendingShellSpec] = useState<WorkflowSpec | null>(null);
   const [pendingErrorSpec, setPendingErrorSpec] = useState<WorkflowSpec | null>(null);
   const [editMetaOpen, setEditMetaOpen] = useState(false);
@@ -136,12 +182,16 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
     if (versionDetail) {
       try {
         setEditorSpec(parseWorkflowSpec(versionDetail.spec));
-        setSaveError(null);
+        setActionError(null);
       } catch (err) {
         setEditorSpec(null);
-        setSaveError(formatSpecError(err));
+        setActionError({ message: formatSpecError(err), source: 'spec' });
       }
       setEditorJson(JSON.stringify(versionDetail.spec, null, 2));
+    } else {
+      // A newly selected version has not loaded (or failed): never show the previous one's graph.
+      setEditorSpec(null);
+      setEditorJson('');
     }
   }, [versionDetail]);
 
@@ -214,11 +264,16 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
     try {
       const result = await createVersion.mutateAsync(spec);
       noteOwnVersion(result.data.version);
-      setSelectedVersion(result.data.version);
+      setSelectedVersionRaw(result.data.version);
       setMode('view');
-      setSaveError(null);
+      setActionError(null);
+      setSaveWarnings(result.warnings ?? []);
     } catch (err) {
-      setSaveError(errMsg(err, 'save failed'));
+      setSaveWarnings([]);
+      setActionError({
+        message: errMsg(err, 'save failed'),
+        source: isRejection(err) ? 'rejected' : 'save',
+      });
     }
   };
 
@@ -228,7 +283,10 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
       // Say so before the round trip when the gateway would refuse the save: it refuses a
       // version holding authored code, including code an admin wrote into an earlier version.
       if (canAuthorCode === false) {
-        setSaveError(`${authoredCode} ${CONTAINER_AUTHORING_RULE}`);
+        setActionError({
+          message: `${authoredCode} ${CONTAINER_AUTHORING_RULE}`,
+          source: 'blocked',
+        });
         return;
       }
       setPendingShellSpec(specToSave);
@@ -240,7 +298,10 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
   const handleSave = async () => {
     const specToSave = mode === 'json' ? (jsonParsed?.ok ? jsonParsed.spec : null) : editorSpec;
     if (!specToSave) {
-      setSaveError(jsonParsed?.ok === false ? jsonParsed.error : 'no spec to save');
+      setActionError({
+        message: jsonParsed?.ok === false ? jsonParsed.error : 'no spec to save',
+        source: 'blocked',
+      });
       return;
     }
     // Errors do not stop a save, which keeps work in progress; they ask first, and the version
@@ -253,17 +314,27 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
   };
 
   const handleCancel = () => {
-    setSaveError(null);
+    setActionError(null);
+    setSaveWarnings([]);
     if (versionDetail) {
       try {
         setEditorSpec(parseWorkflowSpec(versionDetail.spec));
       } catch (err) {
         setEditorSpec(null);
-        setSaveError(formatSpecError(err));
+        setActionError({ message: formatSpecError(err), source: 'spec' });
       }
       setEditorJson(JSON.stringify(versionDetail.spec, null, 2));
     }
     setMode('view');
+  };
+
+  // Cancel throws the draft away, so it asks first when there is one.
+  const requestCancel = () => {
+    if (isDirty) {
+      setCancelConfirmOpen(true);
+    } else {
+      handleCancel();
+    }
   };
 
   const handleReview = async () => {
@@ -272,14 +343,14 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
     }
     try {
       await reviewVersion.mutateAsync(effectiveVersion);
-      setSaveError(null);
+      setActionError(null);
       // A draft's only version has nothing else to promote, so approving it
       // leads straight to activating it.
       if (template?.status === 'DRAFT' && effectiveVersion === template.activeVersion) {
         setPromoteOpen(true);
       }
     } catch (err) {
-      setSaveError(errMsg(err, 'review failed'));
+      setActionError({ message: errMsg(err, 'review failed'), source: 'review' });
     }
   };
 
@@ -290,7 +361,14 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
     versionDetail?.generatedBy != null &&
     versionDetail?.reviewedAt == null;
 
+  // An edit makes the last save's error and notes stale; a stored-spec parse error stays.
+  const clearStaleSaveFeedback = () => {
+    setActionError((prev) => (prev?.source === 'spec' ? prev : null));
+    setSaveWarnings([]);
+  };
+
   const handleSpecChange = (next: WorkflowSpec) => {
+    clearStaleSaveFeedback();
     setEditorSpec(next);
     setEditorJson(JSON.stringify(next, null, 2));
     if (mode !== 'edit') {
@@ -299,6 +377,7 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
   };
 
   const handleJsonChange = (text: string) => {
+    clearStaleSaveFeedback();
     setEditorJson(text);
     const parsed = tryParseSpec(text);
     if (parsed.ok) {
@@ -323,12 +402,17 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
     template?.status === 'ACTIVE' ? ('secondary' as const) : ('primary' as const);
   const isActiveVersion = effectiveVersion === template?.activeVersion;
 
+  // The editor lists the gateway's refusal as issues; every other failure shows in the banner only.
+  const saveError = actionError?.source === 'rejected' ? actionError.message : null;
+
   const templateInputSchema = template?.inputSchema;
   const inputSchema = isInputSchema(templateInputSchema) ? templateInputSchema : null;
 
   return {
+    actionError,
     analytics,
     baseVersion,
+    cancelConfirmOpen,
     canManage,
     canPromote,
     commitSave,
@@ -369,11 +453,16 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
     promoteReason,
     promoteVariant,
     refetch,
+    refetchStepRegistry,
+    refetchVersion,
     refineOpen,
+    requestCancel,
     reviewVersion,
     saveError,
+    saveWarnings,
     selectedNeedsReview,
     selectedNodeId,
+    setCancelConfirmOpen,
     setEditMetaOpen,
     setEditSchemaOpen,
     setExplainOpen,
@@ -386,8 +475,14 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
     setSelectedNodeId,
     setSelectedVersion,
     stepRegistry,
+    stepRegistryError,
+    stepRegistryFetching,
+    stepRegistryIsError,
     template,
     versionDetail,
+    versionError,
+    versionFetching,
+    versionIsError,
     visualSpec,
   };
 }
