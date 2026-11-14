@@ -365,6 +365,12 @@ export interface TeamOverview {
   budget: BudgetStatus | null;
   /** The caller's own actionable items on this team's repositories. */
   needsYou: { total: number };
+  /**
+   * The caller's own work on this team, for every viewer level: requests they launched that are
+   * running, failed attempts they launched, and pull requests of their requests that await a human
+   * merge. The last two are the desk's own items, so the two pages agree.
+   */
+  mine: { running: number; failed: number; prsAwaitingMerge: number };
   running: number;
   queued: number;
   /** Requests started in the last 7 days on this team's repositories (owned or shared). */

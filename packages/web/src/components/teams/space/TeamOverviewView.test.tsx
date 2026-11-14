@@ -20,6 +20,7 @@ const base: TeamOverview = {
   ],
   budget: null,
   last7d: { failed: 1, started: 4, succeeded: 3 },
+  mine: { failed: 0, prsAwaitingMerge: 0, running: 0 },
   needsYou: { total: 2 },
   pullRequests: {
     closedUnmerged: 1,

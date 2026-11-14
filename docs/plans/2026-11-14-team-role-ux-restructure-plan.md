@@ -26,8 +26,8 @@ Conventions for every task:
 - [x] Task 4: Workflow template routes drop the platform LEAD floor — `4301d7c8`
 - [x] Task 5: Web permissions use the team role alone, with explained disabled controls — `ec3637d4`
 - [x] Task 6: Move Analytics, Reports and LLM usage to `/insights/*` with redirects — `f60093e7`
-- [x] Task 7: Move Automations and the Teams directory, then reorder the sidebar — see git log
-- [ ] Task 8: Team overview returns a `mine` block
+- [x] Task 7: Move Automations and the Teams directory, then reorder the sidebar — `763a7c86`
+- [x] Task 8: Team overview returns a `mine` block — see git log
 - [ ] Task 9: "My work" card and Start work links on the team Overview
 - [ ] Task 10: Manage tab with Repositories, Budget and Service principals
 - [ ] Task 11: Manage tab Schedules and Automations sections
@@ -167,11 +167,10 @@ viewer level. Reuse the desk's rules: a failure counts when the caller launched 
 a pull request counts when the caller requested it and it awaits a human merge. Add the type to the
 shared API types. Update the existing overview and desk tests to the new shape.
 **Files**: `packages/gateway/src/lib/teamOverview.ts`, `packages/shared/src/types/api.ts`,
-`packages/gateway/src/lib/teamOverview.test.ts`, `packages/gateway/src/lib/teamAttention.pg.test.ts` (new,
-listed in `ci.yml`)
+`packages/gateway/src/routes/teamOverview.test.ts` (the overview's route tests; no Postgres suite here: the
+counts reuse the desk's own queries and this task adds none, and the first new query lands in Task 12)
 **Depends on**: none
-**Verify**: `yarn vitest run packages/gateway/src/lib/teamOverview.test.ts` and the new pg test with its
-flag set as `ci.yml` does. For an `ENGINEER` caller, `mine` counts only their own items and the `lead`
+**Verify**: `yarn vitest run packages/gateway/src/routes/teamOverview.test.ts`. For an `ENGINEER` caller, `mine` counts only their own items and the `lead`
 block is still absent.
 
 ### Task 9: "My work" card and Start work links on the team Overview

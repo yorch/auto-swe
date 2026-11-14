@@ -105,6 +105,7 @@ role of LEAD does not raise anything for a non-member: only the platform ADMIN i
 |---|---|---|
 | `team` | everyone | `id`, `slug`, `name`, `orgId`, `orgName`, the caller's `myRole` |
 | `needsYou.total` | everyone | The caller's own items on this team's work, by the desk's rules ([§1](#what-needs-you-contains)) scoped to this team. Its approvals are exactly `GET /api/v1/human-steps?actionable=true&teamId=<team>` |
+| `mine` | everyone | The caller's own work on this team: `running` (requests they launched that are running, counted as `running` is), `failed` (failed attempts they launched) and `prsAwaitingMerge` (pull requests of their requests that await a human merge). The last two are the desk's own `failed_run` and `pr_merge` items, so the team page and the desk agree |
 | `running`, `queued` | everyone | Requests running on the team's work, split as the desk's team cards split them |
 | `last7d` | everyone | `started`, `succeeded`, `failed`: requests whose latest attempt started in the last 7 days on repositories the team owns or that are shared to it |
 | `pullRequests` | everyone | Last 30 days, owner-attributed: `opened`, `merged`, `closedUnmerged`, `mergeRate`, `timeToMergeP50Hours`. The same filters and summary as `GET /api/v1/pull-requests/outcomes?scope=TEAM&teamId=` (`teamPullRequestOutcomes()` in `gateway/src/lib/pullRequestOutcomesQuery.ts`) |

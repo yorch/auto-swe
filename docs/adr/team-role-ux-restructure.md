@@ -122,3 +122,10 @@
 **Reason**: The sidebar already drew My teams before its second group; making Home a group of one gives the order the spec asks for without a second place that decides it. A team's admin page is reached by id from lists and the audit log, and moving it would need an id-to-slug lookup in a redirect for no gain.
 **Alternatives considered**: Moving the team admin page into the team space was rejected as a larger change than this restructure needs. Hand-ordering the sidebar in `Sidebar.tsx` was rejected because the page map is the one place that owns the order.
 
+## D15 — 2026-11-14 — Task 8: `mine` is derived from the desk, and the explorer baselines stay
+
+**Status**: Accepted
+**Decision**: `mine.failed` and `mine.prsAwaitingMerge` are the counts of the desk's own `failed_run` and `pr_merge` entries on the team, and `mine.running` counts the running requests whose latest attempt the caller launched, using the same grouping as the team's `running`. The desk query now also selects `launchedById` on its running rows. The Task 8 plan named a Postgres suite; the route tests cover it instead, because no new query was added. The Task 6 and 7 page moves also forced an update of the public explorer's evidence locators (`"path"` fields and the `reportsNav` anchor in `site/src/explorer/analysis.json`). Its `codeHashes` and `sourceHashes` baselines and `reviewedCommit` are untouched, so the explorer keeps showing "Narrative review needed", as the platform-explorer skill requires for a bounded correction.
+**Reason**: Deriving from the desk makes it impossible for the team page and the desk to disagree. Re-attesting the explorer would claim a review nobody did.
+**Alternatives considered**: A separate count query was rejected as a second definition of the same thing. Running `explorer:review` was rejected for the reason above.
+

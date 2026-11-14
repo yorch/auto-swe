@@ -347,6 +347,14 @@ export async function buildTeamOverview(
   const repos = toOverviewRepos(repoRows, team.id, budgets);
 
   const counts = countRunningRequests(desk.running);
+  // The caller's own share of the same rows, for "My work": the desk's own failed and merge items
+  // (so the team page and the desk cannot disagree) and the running requests they launched.
+  const mine = {
+    failed: desk.deduped.filter((entry) => entry.item.kind === 'failed_run').length,
+    prsAwaitingMerge: desk.deduped.filter((entry) => entry.item.kind === 'pr_merge').length,
+    running: countRunningRequests(desk.running.filter((run) => run.launchedById === user.sub))
+      .running,
+  };
   const groups = groupRequestExecutions(recent);
   const overview: TeamOverview = {
     activity,
@@ -356,6 +364,7 @@ export async function buildTeamOverview(
       started: groups.length,
       succeeded: groups.filter((g) => g.status === 'SUCCESS').length,
     },
+    mine,
     needsYou: { total: desk.deduped.length },
     pullRequests: {
       closedUnmerged: pullRequests.closedUnmerged,

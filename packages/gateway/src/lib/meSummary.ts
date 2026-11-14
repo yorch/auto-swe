@@ -210,7 +210,12 @@ export async function loadDeskEntries({
   user,
 }: DeskDeps & { scope: DeskScope }): Promise<{
   deduped: DeskEntry[];
-  running: (RunTeamRow & { id: string; status: string; workRequestId: string | null })[];
+  running: (RunTeamRow & {
+    id: string;
+    launchedById: string | null;
+    status: string;
+    workRequestId: string | null;
+  })[];
 }> {
   const now = Date.now();
   const dueSoonUntil = now + dueSoonHours * 60 * 60 * 1000;
@@ -271,7 +276,13 @@ export async function loadDeskEntries({
     prisma.workflowRun.findMany({
       distinct: ['workRequestId', 'connectionId'],
       orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
-      select: { ...RUN_TEAM_SELECT, id: true, status: true, workRequestId: true },
+      select: {
+        ...RUN_TEAM_SELECT,
+        id: true,
+        launchedById: true,
+        status: true,
+        workRequestId: true,
+      },
       where: deskRunningWhere(user, gate, scope),
     }),
   ]);

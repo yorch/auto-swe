@@ -59,6 +59,8 @@ const runRow = (overrides: Record<string, unknown> = {}) => ({
 
 interface Fixture {
   activity?: unknown[];
+  /** The desk's latest attempts (the failed ones and the ones awaiting a merge). */
+  attempts?: unknown[];
   /** The team's org cap in cents (null: none) and its month-to-date spend in USD. */
   orgCapCents?: number | null;
   /** The viewer's role in the team's org (null: not a member). */
@@ -213,7 +215,7 @@ async function build(fx: Fixture) {
             return fx.running ?? [];
           }
           if (text.includes('"launchedById"')) {
-            return [];
+            return fx.attempts ?? [];
           }
           const last = (args.where as { AND: Record<string, unknown>[] }).AND.at(-1) ?? {};
           return 'startedAt' in last ? (fx.recent ?? []) : (fx.unowned ?? []);
@@ -270,6 +272,7 @@ describe('GET /api/v1/teams/:id/overview', () => {
         'activity',
         'budget',
         'last7d',
+        'mine',
         'needsYou',
         'pullRequests',
         'queued',
@@ -569,6 +572,80 @@ describe('GET /api/v1/teams/:id/overview', () => {
     // The control filter's marks: an unanswered, unexpired, pending step, ANDed with the run ids.
     expect(JSON.stringify(query?.where)).toContain('"humanApprovals":{"none"');
     expect(query?.where.AND.at(-1)).toEqual({ runId: { in: ['visible-only'] } });
+  });
+
+  describe('mine', () => {
+    const OTHER = 'someone-else';
+    const running = (id: string, launchedById: string) =>
+      runRow({
+        id,
+        launchedById,
+        status: 'RUNNING',
+        workflowId: `wf-${id}`,
+        workRequest: {
+          ...runRow().workRequest,
+          activeWorkflows: [
+            { currentStatus: 'IMPLEMENTING', repository, temporalWorkflowId: `wf-${id}` },
+          ],
+          id: `w-${id}`,
+        },
+        workRequestId: `w-${id}`,
+      });
+    const failed = (id: string, launchedById: string) =>
+      runRow({
+        id,
+        launchedById,
+        status: 'FAILED',
+        workRequest: { ...runRow().workRequest, id: `w-${id}`, requestedById: launchedById },
+        workRequestId: `w-${id}`,
+      });
+    const merging = (id: string, requestedById: string) =>
+      runRow({
+        id,
+        status: 'RUNNING',
+        workflowId: `wf-${id}`,
+        workRequest: {
+          ...runRow().workRequest,
+          activeWorkflows: [
+            {
+              currentStatus: 'AWAITING_HUMAN_MERGE',
+              repository,
+              temporalWorkflowId: `wf-${id}`,
+              updatedAt: new Date('2026-06-02T11:00:00Z'),
+            },
+          ],
+          id: `w-${id}`,
+          requestedById,
+        },
+        workRequestId: `w-${id}`,
+      });
+
+    it("counts only the caller's own running requests, beside the team's", async () => {
+      const { res } = await get({
+        running: [running('a', ME), running('b', OTHER), running('c', OTHER)],
+        teamRole: 'ENGINEER',
+      });
+      const { data } = res.json();
+      expect(data.running).toBe(3);
+      expect(data.mine.running).toBe(1);
+    });
+
+    it('counts the failed attempts the caller launched and the merges awaiting them, and no one else', async () => {
+      const { res } = await get({
+        attempts: [failed('f1', ME), failed('f2', OTHER), merging('m1', ME), merging('m2', OTHER)],
+        teamRole: 'ENGINEER',
+      });
+      const { data } = res.json();
+      expect(data.mine).toMatchObject({ failed: 1, prsAwaitingMerge: 1 });
+    });
+
+    it.each(['ENGINEER', 'LEAD', 'ADMIN'] as const)(
+      'is present for a team %s',
+      async (teamRole) => {
+        const { res } = await get({ teamRole });
+        expect(res.json().data.mine).toEqual({ failed: 0, prsAwaitingMerge: 0, running: 0 });
+      }
+    );
   });
 
   describe('launchBudget on the repositories', () => {
