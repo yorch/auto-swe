@@ -11,7 +11,7 @@
  * read by its members and managed by ADMIN or its LEADs (`teamAutomationAccess`). Saving one
  * that can start runs is a launch decision, as for a schedule.
  */
-import type { Prisma, Role } from '@auto-swe/shared';
+import type { Prisma } from '@auto-swe/shared';
 import {
   AutomationInputsSchema,
   automationOptionsProblem,
@@ -30,7 +30,6 @@ import {
   teamOwnerKey,
 } from '@auto-swe/shared/automation';
 import { resolveSetting } from '@auto-swe/shared/config';
-import { roleMeets } from '@auto-swe/shared/config/permissions';
 import { latestActivity, TEMPLATE_WEBHOOK_SOURCE } from '@auto-swe/shared/lib/automationLedger';
 import { isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { AtlassianError } from '@auto-swe/shared/lib/integrations/atlassianClient';
@@ -728,12 +727,10 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
     const signaturePolicy = new Map(
       await Promise.all(templates.map(async (t) => [t.id, await policyFor(t)] as const))
     );
-    // Editing a webhook (regenerate, remove) also needs platform role LEAD.
-    const mayEditWebhooks = roleMeets(user.role as Role, 'LEAD' as Role);
     const webhooks = templates.map((t) => {
       const last = lastWebhookCalls.get(t.id);
       return {
-        canManage: mayEditWebhooks && writable.has(t.id),
+        canManage: writable.has(t.id),
         enabled: t.status === 'ACTIVE',
         id: t.id,
         kind: 'template_webhook' as const,

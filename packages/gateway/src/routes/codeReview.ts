@@ -73,7 +73,7 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
     if (user.role === 'ADMIN') {
       return { teamId };
     }
-    if (teamId && (!write || roleMeets(user.role, 'LEAD'))) {
+    if (teamId) {
       const membership = await fastify.prisma.teamMembership.findUnique({
         where: { userId_teamId: { teamId, userId: user.sub } },
       });

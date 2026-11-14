@@ -71,3 +71,11 @@
 **Accepted residuals (Tasks 20 and 21 reviews):**
 - Lookup rate limit (D7): the route uses the global `rateLimitKey`, which keys a session or JWT caller by user and a personal-access-token caller by IP. A PAT caller therefore shares an IP bucket. This is how every route is limited and a platform LEAD had the same limit, so it is not changed here. Lookup rights spread by delegation only: an ordinary ENGINEER cannot create a team, so cannot grant themselves the right. Tighten with a minimum team size or a per-user limiter inside the handler if this becomes a concern.
 - Slack approval (D8): the owning teams are exactly the run's repository team, its work request's repository team and its template team, which is narrower than every team that may control the run. A run controlled only through its launcher, a service principal's team, or a multi-repository `activeWorkflows` repository has no owning team, so only a platform ADMIN can approve it from Slack. A user who launched a run but leads no owning team, and a platform LEAD who is only a team ENGINEER, can no longer approve from Slack. The upgrade note (Task 19) names this.
+
+## D9 — 2026-11-14 — Task 22: Two in-handler platform checks that no route-floor search finds
+
+**Status**: Accepted
+**Decision**: `scopeFor` in `routes/codeReview.ts` no longer requires platform LEAD before it checks the team membership for a write, and the `canManage` flag of a template webhook in `routes/automations.ts` no longer ANDs in the platform role. Both follow the team role, as the routes they describe now do.
+**Reason**: The route-floor searches in Tasks 1 to 4 looked for `requiredRole`. These two used `roleMeets(user.role, 'LEAD')` inside the handler, so the web would have shown a team lead enabled controls the server then refused, or hidden controls the server allows. A search for `roleMeets(`, `hasRole(` and `role ===` over `routes`, `lib` and `plugins` now finds no other platform-LEAD check on a team-scoped action. The remaining hits are team-membership checks, the organization-scoped error baselines (D5), and the platform-wide pages.
+**Alternatives considered**: None. Leaving them would reintroduce the two-axis surprise.
+

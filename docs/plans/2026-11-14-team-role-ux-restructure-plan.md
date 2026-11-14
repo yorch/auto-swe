@@ -39,8 +39,9 @@ Conventions for every task:
 - [ ] Task 17: Attention section: stale approvals and nudge
 - [ ] Task 18: Budget request UI
 - [ ] Task 19: Docs, upgrade note and full quality gates
-- [ ] Task 20: User lookup is open to any team lead
-- [ ] Task 21: Slack approval needs LEAD on the run's owning team
+- [x] Task 20: User lookup is open to any team lead — `175a01b5`
+- [x] Task 21: Slack approval needs LEAD on the run's owning team — `8615f02d`
+- [ ] Task 22: Code review presets and webhook management follow the team role
 
 ## Tasks
 
@@ -331,7 +332,7 @@ invite users (gated by the organization's `trustedInvites`, decision D3), names 
 follow the existing entry format and fixing-commit convention. Update `docs/work-views.md` or other
 docs only where a moved address appears. Run every gate in `CLAUDE.md` §5.
 **Files**: `docs/teams.md`, `docs/upgrade-notes.md`, other `docs/*.md` where a moved address appears
-**Depends on**: Task 1, Task 7, Task 11, Task 13, Task 14, Task 15, Task 18, Task 20, Task 21
+**Depends on**: Task 1, Task 7, Task 11, Task 13, Task 14, Task 15, Task 18, Task 20, Task 21, Task 22
 **Verify**: `yarn install --immutable`, `yarn typecheck`, `yarn biome check <explicit directories>`,
 `yarn test`, `yarn build`, `yarn docs:check`, `yarn invariants:check`,
 `yarn workspace @auto-swe/site build`, the matching `*.pg.test.ts` suites with Postgres up, and the
@@ -366,4 +367,20 @@ approve it`. The `retry_ci_` action and the HITL buttons keep their current chec
 **Verify**: `yarn vitest run packages/gateway/src/routes/slack.test.ts`. A platform `ENGINEER` who
 leads the run's team approves (200, `humanMergeSignal` sent). A platform `LEAD` who is only a team
 `ENGINEER` gets 403 and no signal. A platform `ADMIN` approves any run they can control.
+
+### Task 22: Code review presets and webhook management follow the team role
+
+**What**: Found while updating the web tests for Task 5: two in-handler platform checks that earlier
+inventories missed, because they use `roleMeets(user.role, 'LEAD')` and not a route floor. In
+`routes/codeReview.ts`, `scopeFor` required platform LEAD for a write and then team LEAD; keep only
+the team check. In `routes/automations.ts`, `mayEditWebhooks` gated the `canManage` flag of a
+template webhook on the platform role; the flag follows write access alone, as the webhook routes
+now do (Task 4). Remove the imports this leaves unused.
+**Files**: `packages/gateway/src/routes/codeReview.ts`, `packages/gateway/src/routes/automations.ts`,
+`packages/gateway/src/routes/codeReview.test.ts`, `packages/gateway/src/routes/automations.test.ts`
+**Depends on**: Task 4
+**Verify**: `yarn vitest run packages/gateway/src/routes/codeReview.test.ts packages/gateway/src/routes/automations.test.ts`.
+A platform `ENGINEER` who leads the selected team creates a team review preset (201). A webhook's
+`canManage` is true for a writable template whatever the platform role, and false for one the caller
+may not write.
 
