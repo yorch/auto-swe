@@ -160,6 +160,9 @@ team for an administrator, exactly as the dashboard does. Their inputs are stric
 | `list_run_effects` | `GET /api/v1/workflow-runs/:id/effects` | For one run, each external effect the run made as `id`, `kind` (pull request, git push, tracker, knowledge base, MCP tool), `status`, `via`, `nodeId`, `agentKey` and `createdAt`, plus `truncated`, which is true when older effects were cut. Input: `runId`. Targets, details and errors are not returned. |
 | `list_run_autonomy_decisions` | `GET /api/v1/workflow-runs/:id/autonomy-decisions` | For one run, each publish, approve, reject, request-changes, select or submit event (anything else as `unknown`) as `id`, `event`, `actorId`, `policyName`, `riskClass`, `requiredApprovers` and `createdAt`. Inputs: `runId`, `limit` (1 to 100), `offset`. Decision payloads are not returned. |
 | `list_run_evidence` | `GET /api/v1/workflow-runs/:id/evidence` | For one run, each captured UI evidence item as `id`, `kind` (`screenshot`, `video`, `trace` or `log`), `sizeBytes`, `width`, `height`, `nodeId`, `stepAttempt` and `createdAt`. Input: `runId`. Content, links and captions are not returned. |
+| `list_agent_library` | `GET /api/v1/platform/agent-library` | Administrators only. The agents in the library as `id`, `key`, `name`, `scope`, `version`, `isActive`, `isVerified`, `modelSpec`, `createdAt` and `updatedAt`: the latest version of each by default, or every version with `all`. Inputs: `all`, `scope`, `orgId`, `teamId`, `channelId`, `workflowTemplateId`. Prompts, descriptions, tool configuration, connection ids, author emails, skill text and scan warning text are not returned. |
+| `list_agent_versions` | `GET /api/v1/platform/agent-library/:id/versions` | Administrators only. Every version of one agent lineage, newest first, as `id`, `version`, `isActive`, `isVerified`, `modelSpec`, `createdById` (the creating user's id) and `createdAt`. Input: `agentId`. Prompts, descriptions, tool configuration, connection ids, author emails, skill text and scan warning text are not returned. |
+| `list_skills` | `GET /api/v1/platform/skills` | Administrators only. The skills in the library as `id`, `name`, `isBuiltIn`, `isVerified`, `isActive`, `currentRevision`, `usedByCount`, `usedBy` (the agent keys that use it, at most 50), `scanWarningCount` and `externalSource` (`host`, `owner`, `repo`). No inputs. Skill text, descriptions, scan warning text, prompts, tool configuration, connection ids and author emails are not returned. |
 
 A tool's output schema holds plain types only, because a JSON Schema cannot represent a transform: the
 sanitising schemas that read the REST body (`shortName`, `status`, `ticketId` in `projections.ts`) are
@@ -387,8 +390,8 @@ and needs no restart. None is read only at startup.
   with it even at the cap, and a retry that raced its own first submit is answered with the replay or
   "still starting", not the cap; a new key for a ticket already in flight is answered "already running".
 - Resources and prompts are not exposed.
-- The domain tools cover the teams, pull requests, epics, schedules and run records listed in the domain read table. Most other things the dashboard
-  reads (library, knowledge, reports, usage, platform configuration) and every dashboard write other
+- The domain tools cover the teams, pull requests, epics, schedules, run records, and the agent library and skills listed in the domain read table. Most other things the dashboard
+  reads (knowledge, reports, usage, platform configuration) and every dashboard write other
   than the four write tools are available through the REST API but not over MCP.
 - A team's members are returned as user ids and roles. `get_team` resolves no id to a person, but the
   run tools return an initiator's `id`, name and email, so a client can map member ids to emails for
