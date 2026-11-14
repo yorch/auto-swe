@@ -22,7 +22,7 @@ Conventions for every task:
 
 - [x] Task 1: Team-scoped team routes use the team role alone — `8183c368`
 - [x] Task 2: Launch routes (epics, PRD runs, campaigns) drop the platform LEAD floor — `3be051fb`
-- [ ] Task 3: Repository dependency and onboarding routes drop the platform LEAD floor
+- [x] Task 3: Repository dependency and onboarding routes drop the platform LEAD floor — `edbbdfa5`
 - [ ] Task 4: Workflow template routes drop the platform LEAD floor
 - [ ] Task 5: Web permissions use the team role alone, with explained disabled controls
 - [ ] Task 6: Move Analytics, Reports and LLM usage to `/insights/*` with redirects
@@ -108,9 +108,11 @@ caller who is not platform `ADMIN` is refused on a GLOBAL template.
 (keep the platform `ADMIN` bypass). In `hooks/useTeams.ts` make `useTeamIdsWithRole` and its callers
 look up led teams for any signed-in user, not only platform `LEAD`. In `StartWork.tsx` replace the
 platform-`LEAD` test with led-team membership. A control that stays disabled for a missing team role
-gets the title `Requires the LEAD role in this team` (or the role it needs).
+gets the title `Requires the LEAD role in this team` (or the role it needs). Reword
+`CONTAINER_AUTHORING_RULE` in `components/workflow/containerNodes.ts`, which still says every save route
+needs platform LEAD.
 **Files**: `packages/web/src/lib/teamPermissions.ts`, `packages/web/src/hooks/useTeams.ts`,
-`packages/web/src/components/requests/StartWork.tsx`,
+`packages/web/src/components/workflow/containerNodes.ts`, `packages/web/src/components/requests/StartWork.tsx`,
 `packages/web/src/components/teams/space/TeamMembersPanel.tsx`
 **Depends on**: Task 1
 **Verify**: `yarn vitest run packages/web/src/lib/teamPermissions.test.ts packages/web/src/components/teams`.

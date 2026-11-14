@@ -7,7 +7,7 @@ import {
 } from '@auto-swe/shared/workflow';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import * as specRefValidation from '../lib/specRefValidation.js';
 import { workflowTemplateRoutes } from './workflowTemplates.js';
@@ -83,6 +83,10 @@ function buildApp(state: {
   }>;
   pullRequestArgs?: Mutable[];
   userRole?: string;
+  /** When true, the caller leads no team: the LEAD/ADMIN membership lookup finds nothing. */
+  noLeadMembership?: boolean;
+  /** The `where` of every LEAD/ADMIN membership lookup, for assertions. */
+  leadLookups?: Mutable[];
   /** Every run-visibility predicate the last-run lookup passed, for assertions. */
   runVisibilityTerms?: Mutable[];
   analyticsGroupByArgs?: Mutable[];
@@ -221,10 +225,15 @@ function buildApp(state: {
         },
       },
       teamMembership: {
-        findFirst: async () => ({
-          teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
-          userId: 'user-1',
-        }),
+        findFirst: async (args: { where?: Mutable }) => {
+          state.leadLookups?.push(args.where ?? {});
+          return state.noLeadMembership
+            ? null
+            : {
+                teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
+                userId: 'user-1',
+              };
+        },
         findMany: async () => (state.memberTeamIds ?? []).map((teamId) => ({ teamId })),
         findUnique: async ({ where }: { where: Mutable }) => {
           const composite = where.userId_teamId as { userId: string; teamId: string };
@@ -1001,7 +1010,7 @@ describe('workflow-templates routes', () => {
     const res = await app.inject({
       headers: { authorization: 'Bearer x' },
       method: 'GET',
-      url: '/api/v1/workflow-templates/generate/jobs/wfauthorjob-abc',
+      url: '/api/v1/workflow-templates/generate/jobs/wfauthorjob-0123456789abcdef0123456789abcdef',
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().data).toMatchObject({ phase: 'persisting', status: 'running' });
@@ -1015,7 +1024,7 @@ describe('workflow-templates routes', () => {
     const res = await app.inject({
       headers: { authorization: 'Bearer x' },
       method: 'GET',
-      url: '/api/v1/workflow-templates/generate/jobs/wfauthorjob-abc',
+      url: '/api/v1/workflow-templates/generate/jobs/wfauthorjob-0123456789abcdef0123456789abcdef',
     });
     (state as { jobStatus?: unknown }).jobStatus = undefined;
     expect(res.statusCode).toBe(200);
@@ -1737,6 +1746,94 @@ describe('workflow-templates routes', () => {
 });
 
 // ── Phase 6: shell-step authoring RBAC + image allowlist ──
+
+describe('workflow-templates: the team role alone decides authoring', () => {
+  const TEAM = 'a1b2c3d4-1234-4567-89ab-cdef01234567';
+  let app: FastifyInstance;
+  let state: Parameters<typeof buildApp>[0];
+
+  beforeEach(async () => {
+    state = { runs: [], templates: [], userRole: 'ENGINEER', versions: new Map() };
+    app = buildApp(state);
+    await app.ready();
+  });
+  afterEach(() => app.close());
+
+  const send = (method: 'GET' | 'POST' | 'PATCH', url: string, payload?: Mutable) =>
+    app.inject({
+      headers: { authorization: 'Bearer x' },
+      method,
+      url: `/api/v1/workflow-templates${url}`,
+      ...(payload ? { payload } : {}),
+    });
+
+  it('lets a platform ENGINEER who leads the team create a template', async () => {
+    const res = await send('POST', '', { name: 'by-engineer', spec: VALID_SPEC, teamId: TEAM });
+    expect(res.statusCode).toBe(201);
+  });
+
+  it('refuses a platform ENGINEER who leads no team a team template', async () => {
+    state.noLeadMembership = true;
+    const res = await send('POST', '', { name: 'by-engineer', spec: VALID_SPEC, teamId: TEAM });
+    expect(res.statusCode).toBe(403);
+    expect(state.templates).toHaveLength(0);
+  });
+
+  it('lets a platform ENGINEER who leads the team edit one of its templates', async () => {
+    await send('POST', '', { name: 'to-edit', spec: VALID_SPEC, teamId: TEAM });
+    const [tpl] = state.templates;
+    const res = await send('PATCH', `/${tpl?.id}`, { description: 'renamed' });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('starts an async generation job for a platform ENGINEER who leads the team', async () => {
+    const res = await send('POST', '/generate/jobs', { prompt: 'build a flow', teamId: TEAM });
+    expect(res.statusCode).toBe(202);
+  });
+
+  it('refuses a generation job to a platform ENGINEER who leads no team', async () => {
+    state.noLeadMembership = true;
+    const res = await send('POST', '/generate/jobs', { prompt: 'build a flow', teamId: TEAM });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('lets a platform ENGINEER who leads a team poll a generation job', async () => {
+    (state as { jobStatus?: unknown }).jobStatus = { phase: 'persisting', status: 'running' };
+    const res = await send('GET', '/generate/jobs/wfauthorjob-0123456789abcdef0123456789abcdef');
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('refuses the poll to a platform ENGINEER who leads no team', async () => {
+    state.noLeadMembership = true;
+    (state as { jobStatus?: unknown }).jobStatus = { phase: 'persisting', status: 'running' };
+    const res = await send('GET', '/generate/jobs/wfauthorjob-0123456789abcdef0123456789abcdef');
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('asks for LEAD or ADMIN on an active team when it checks the poll', async () => {
+    state.leadLookups = [];
+    (state as { jobStatus?: unknown }).jobStatus = { phase: 'persisting', status: 'running' };
+    await send('GET', '/generate/jobs/wfauthorjob-0123456789abcdef0123456789abcdef');
+    expect(state.leadLookups).toContainEqual({
+      role: { in: ['LEAD', 'ADMIN'] },
+      team: { isActive: true },
+      userId: 'user-1',
+    });
+  });
+
+  it('refuses an id that is not a generation job id, before reading any workflow', async () => {
+    const res = await send('GET', '/generate/jobs/eng-acme-payments-JIRA-1234');
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('lets a platform ADMIN poll without leading any team', async () => {
+    state.userRole = 'ADMIN';
+    state.noLeadMembership = true;
+    (state as { jobStatus?: unknown }).jobStatus = { phase: 'persisting', status: 'running' };
+    const res = await send('GET', '/generate/jobs/wfauthorjob-0123456789abcdef0123456789abcdef');
+    expect(res.statusCode).toBe(200);
+  });
+});
 
 describe('workflow-templates shell-step RBAC', () => {
   const SHELL_SPEC = {

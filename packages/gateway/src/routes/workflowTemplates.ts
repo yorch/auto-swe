@@ -1066,7 +1066,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/generate',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: GenerateTemplateBody },
     },
     async (request, reply) => {
@@ -1211,7 +1211,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/generate/jobs',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: GenerateTemplateBody },
     },
     async (request, reply) => {
@@ -1234,14 +1234,28 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
 
   // ── Async generation: poll a job ──
   // GET /generate/jobs/:jobId → { status: 'running'|'done'|'failed', ... }
-  const JobIdParam = z.object({ jobId: z.string().min(8).max(80) });
+  // Exactly the id `POST /generate/jobs` mints. Any other value would let the poll read the result
+  // of an unrelated workflow in the namespace, whose id the caller chooses.
+  const JobIdParam = z.object({ jobId: z.string().regex(/^wfauthorjob-[0-9a-f]{32}$/) });
   app.get(
     '/generate/jobs/:jobId',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { params: JobIdParam },
     },
-    async (request) => {
+    async (request, reply) => {
+      // The job id is the only handle, so the caller must at least lead a team. Without a team
+      // role there is nothing else to check: the job records its creator, but the status does not.
+      const user = requireUser(request);
+      if (user.role !== 'ADMIN') {
+        const leads = await fastify.prisma.teamMembership.findFirst({
+          select: { teamId: true },
+          where: { role: { in: ['LEAD', 'ADMIN'] }, team: { isActive: true }, userId: user.sub },
+        });
+        if (!leads) {
+          return reply.status(403).send({ error: TEMPLATE_AUTHOR_REFUSAL });
+        }
+      }
       const status = await fastify.temporal.getWorkflowAuthorJobStatus(request.params.jobId);
       if (status.status === 'running') {
         return { data: { phase: status.phase ?? 'generating', status: 'running' } };
@@ -1334,7 +1348,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: CreateTemplateBody },
     },
     async (request, reply) => {
@@ -1430,7 +1444,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/validate',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: ValidateSpecBody },
     },
     async (request, reply) => {
@@ -1452,6 +1466,17 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         // As on create: a team the caller cannot author for is refused, so the team's image
         // allowlist is never echoed back to someone outside it.
         if (!(await findTemplateAuthorMembership(fastify, user, scopeTeamId))) {
+          return reply.status(403).send({ error: TEMPLATE_AUTHOR_REFUSAL });
+        }
+      } else if (!scopeTeamId && user.role !== 'ADMIN') {
+        // No scope named: the spec is judged as a global one, and the checks below look agent
+        // keys and connection ids up across teams. Someone who leads no team has no business
+        // asking, so the answer would only be an existence oracle.
+        const leadsATeam = await fastify.prisma.teamMembership.findFirst({
+          select: { teamId: true },
+          where: { role: { in: ['LEAD', 'ADMIN'] }, team: { isActive: true }, userId: user.sub },
+        });
+        if (!leadsATeam) {
           return reply.status(403).send({ error: TEMPLATE_AUTHOR_REFUSAL });
         }
       }
@@ -1560,7 +1585,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: UpdateTemplateBody, params: TemplateIdParam },
     },
     async (request, reply) => {
@@ -1803,15 +1828,15 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   // template's LATEST version spec + a plain-language change, then save the
   // refined result as a NEW version (DRAFT-friendly: history is preserved and a
   // human still activates). This is the inverse-of-generate iteration loop that
-  // backs the web chat panel and the Slack thread. Write-level (LEAD), same
-  // shell gating as POST /:id/versions.
+  // backs the web chat panel and the Slack thread. Write-level (team LEAD through
+  // `templateWriteFilter`), same shell gating as POST /:id/versions.
   const RefineTemplateBody = z.object({
     prompt: z.string().min(1).max(8000),
   });
   app.post(
     '/:id/refine',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: RefineTemplateBody, params: TemplateIdParam },
     },
     async (request, reply) => {
@@ -1993,7 +2018,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/versions/:version/review',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { params: VersionParam },
     },
     async (request, reply) => {
@@ -2057,7 +2082,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/versions',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: CreateVersionBody, params: TemplateIdParam },
     },
     async (request, reply) => {
@@ -2143,7 +2168,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/promote',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: PromoteBody, params: TemplateIdParam },
     },
     async (request, reply) => {
@@ -2751,11 +2776,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // ── Webhook: generate a new token ──
-  // POST /:id/webhook/regenerate — LEAD+, generates a new random webhook token.
+  // POST /:id/webhook/regenerate — team LEAD of the owning team, generates a new random webhook token.
   app.post(
     '/:id/webhook/regenerate',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { params: TemplateIdParam },
     },
     async (request, reply) => {
@@ -2785,11 +2810,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // ── Webhook: revoke token ──
-  // DELETE /:id/webhook — LEAD+, removes the webhook token.
+  // DELETE /:id/webhook — team LEAD of the owning team, removes the webhook token.
   app.delete(
     '/:id/webhook',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { params: TemplateIdParam },
     },
     async (request, reply) => {
@@ -2817,7 +2842,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // ── Webhook signing (docs/automations.md §5) ──
-  // Same permission as the token routes: platform LEAD+, and a template the caller may edit.
+  // Same permission as the token routes: team LEAD of the owning team, through the write filter.
   // The audit log records whether a secret exists and the switch, never the secret.
   const loadWritableTemplate = async (
     request: { params: { id: string } },
@@ -2875,7 +2900,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/webhook/signing-secret/rotate',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { params: TemplateIdParam },
     },
     async (request, reply) => {
@@ -2928,7 +2953,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.delete(
     '/:id/webhook/signing-secret',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { params: TemplateIdParam },
     },
     async (request, reply) => {
@@ -2979,7 +3004,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.put(
     '/:id/webhook/require-signature',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: RequireSignatureBody, params: TemplateIdParam },
     },
     async (request, reply) => {
