@@ -15,6 +15,10 @@
  * lookup.
  */
 
+import { hostFamily } from './githubHostScope.js';
+import { createGuardedFetch } from './guardedDispatcher.js';
+import { fetchGuarded } from './guardedFetch.js';
+
 /** GitHub's collaborator permission levels, weakest first. */
 export const REPO_PERMISSIONS = ['none', 'read', 'write', 'admin'] as const;
 
@@ -164,8 +168,27 @@ function repoApiPath(apiUrl: string, organizationName: string, repoName: string)
   );
 }
 
+const GUARD_REFUSALS = ['RedirectRefusedError', 'SsrfBlockedError'];
+
+/** The class name of a guard refusal, looking through undici's `fetch failed` wrapper. */
+function guardRefusalName(err: unknown): string | null {
+  for (let e: unknown = err, depth = 0; e instanceof Error && depth < 3; depth++) {
+    if (GUARD_REFUSALS.includes(e.name)) {
+      return e.name;
+    }
+    e = e.cause;
+  }
+  return null;
+}
+
 /**
  * GET a GitHub REST resource and classify every way it can fail to answer.
+ *
+ * The URL comes from a repository's configured API base and the request carries a
+ * credential, so it goes through the resolve-and-pin guarded fetch (a GitHub
+ * Enterprise host may be on a private address; github.com may not) and redirects
+ * are followed by hand, only within the API's own origin (a renamed repository
+ * answers with one). Any other redirect, or a blocked address, is `unavailable`.
  *
  * Never throws, for the reason {@link fetchRepoPermission} gives.
  */
@@ -178,16 +201,32 @@ async function getJson(
 > {
   let res: Response;
   try {
-    res = await fetch(url, {
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-        'User-Agent': 'auto-swe/1.0',
-        'X-GitHub-Api-Version': '2022-11-28',
+    const target = new URL(url);
+    res = await fetchGuarded(
+      url,
+      {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${token}`,
+          'User-Agent': 'auto-swe/1.0',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
       },
-      signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
-    });
-  } catch {
+      {
+        allowRedirect: (u) => u.origin === target.origin,
+        check: (u) => u.protocol === 'https:' || u.protocol === 'http:',
+        credentialOrigin: target.origin,
+        fetchImpl: createGuardedFetch({ allowPrivate: hostFamily(url) !== 'github.com' }),
+      }
+    );
+  } catch (err) {
+    const refusal = guardRefusalName(err);
+    if (refusal !== null) {
+      // A refusal is standing configuration, not an outage: retrying never helps. Only the error's
+      // class is logged, never its text, which can carry the address, the URL or the token.
+      console.warn(`githubPermission: the lookup was refused by the request guard (${refusal})`);
+    }
     return { failure: 'unavailable', ok: false };
   }
 
