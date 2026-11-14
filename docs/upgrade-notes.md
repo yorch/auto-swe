@@ -1502,3 +1502,24 @@ credential rotation.
 `pre-commit` hook, and a pushed branch tip equals the run's reported `headSha`.
 
 ---
+
+### Node clients in workspaces use the egress proxy (`<fixing commit SHA>`)
+
+**Affected.** Deployments with the egress proxy configured whose repositories' Node code (global
+`fetch`, `node:http` and `node:https`, axios) reaches hosts outside the team or baseline allowlist,
+or hosts on private addresses, including under the `open` policy.
+
+**What changes.** A workspace that receives the egress proxy variables also receives
+`NODE_USE_ENV_PROXY=1`, so Node's `fetch` and, from 24.5 (22.21 on the 22 line), `node:http` and
+`node:https` go through the proxy. They are held to the team and baseline allowlist where one
+applies, and refused for private-address destinations (the proxy refuses them even with an empty
+list); before, they connected directly under `open`. curl and pip already behaved this way. The
+egress proxy's own host is added to `NO_PROXY`, so a client that applies `HTTP_PROXY` itself (an
+old axios) is not refused by Node. This is not an environment-variable or migration change.
+
+**Actions.** Add the public hosts such code needs to the team allowlist. A destination on a private
+address cannot be reached through the proxy.
+
+**Verify.** A Node `fetch` to an allowlisted host succeeds and to an unlisted host is refused.
+
+---

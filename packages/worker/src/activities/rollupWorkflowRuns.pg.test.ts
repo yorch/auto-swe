@@ -18,16 +18,16 @@ describe.skipIf(!enabled)('workflow run rollup sweep against Postgres', () => {
   let dayStart: Date;
   let previousState: { lastSuccessfulStartAt: Date | null } | null = null;
   let now: Date;
-  /** November 2026: no fixture run starts there, so a day built in it has no rollup rows. */
-  const emptyWindow = { gte: new Date(Date.UTC(2026, 10, 1)), lt: new Date(Date.UTC(2026, 11, 1)) };
+  /** November 2099: no fixture run starts there, so a day built in it has no rollup rows. */
+  const emptyWindow = { gte: new Date(Date.UTC(2099, 10, 1)), lt: new Date(Date.UTC(2099, 11, 1)) };
 
   beforeAll(async () => {
     vi.stubEnv('WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS', '1');
     vi.stubEnv('WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS', '0');
     ({ prisma } = await import('@auto-swe/shared/db'));
     ({ rollupWorkflowRuns } = await import('./rollupWorkflowRuns.js'));
-    now = new Date(Date.UTC(2026, 10, 15, 12));
-    dayStart = new Date(Date.UTC(2026, 9, 1));
+    now = new Date(Date.UTC(2099, 10, 15, 12));
+    dayStart = new Date(Date.UTC(2099, 9, 1));
     previousState = await prisma.rollupSweepState.findUnique({
       select: { lastSuccessfulStartAt: true },
       where: { name: SWEEP_NAME },
@@ -150,7 +150,7 @@ describe.skipIf(!enabled)('workflow run rollup sweep against Postgres', () => {
           select: { id: true },
           where: {
             endedAt: { gt: new Date(now.getTime() - 3_600_000), lte: now },
-            startedAt: { lt: new Date(Date.UTC(2026, 10, 14)) },
+            startedAt: { lt: new Date(Date.UTC(2099, 10, 14)) },
           },
         })
     );
