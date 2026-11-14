@@ -30,7 +30,7 @@ interface Harness {
   startedRequests: Array<Record<string, unknown>>;
   startError?: Error;
   /** Platform role the token carries. */
-  role: 'ADMIN' | 'LEAD';
+  role: 'ADMIN' | 'ENGINEER' | 'LEAD';
   /** The caller's role on the repository's owning team. */
   teamRole: 'ADMIN' | 'ENGINEER' | 'LEAD';
   /** Whether the caller belongs to the repository's org. */
@@ -301,6 +301,23 @@ describe('POST /prd-runs', () => {
     h.role = 'LEAD';
     h.teamRole = 'LEAD';
     expect((await submit(h)).statusCode).toBe(201);
+  });
+
+  it('lets a platform ENGINEER who leads the owning team start a PRD run', async () => {
+    h.role = 'ENGINEER';
+    h.teamRole = 'LEAD';
+    expect((await submit(h)).statusCode).toBe(201);
+  });
+
+  it('refuses a platform ENGINEER who is only a team ENGINEER on the owning team', async () => {
+    h.role = 'ENGINEER';
+    h.teamRole = 'ENGINEER';
+    const res = await submit(h);
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.reasons).toEqual([
+      { reason: 'team-lead-required', repo: 'acme/payments' },
+    ]);
+    expect(h.started).toHaveLength(0);
   });
 
   it('lets a platform ADMIN start one whatever the team role', async () => {

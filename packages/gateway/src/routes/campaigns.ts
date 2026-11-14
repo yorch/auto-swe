@@ -174,7 +174,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: CreateCampaignSchema, headers: IdempotencyHeaderSchema },
     },
     async (request, reply) => {

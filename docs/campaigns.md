@@ -39,7 +39,7 @@ workflow cannot read settings or the database.
 A campaign pushes branches and opens pull requests in every repository it names, so it takes the
 strictest launch decision the platform has. All of these hold, in this order:
 
-1. The caller has the platform `LEAD` role.
+1. The caller is signed in. The platform role does not matter.
 2. The caller is `LEAD` or `ADMIN` on the **owning team** named in the request, or a platform
    `ADMIN`. The owning team decides the campaign's organization and who may cancel it.
 3. Every repository exists, is active and is a git repository.
@@ -100,7 +100,7 @@ after the activity's retries, ten attempts with backoff over about eight minutes
 same way: the batch and the rest of the queue end
 `SKIPPED` rather than starting unchecked. The campaign then finishes `COMPLETED_WITH_FAILURES`.
 
-Checked **only at launch**: the platform `LEAD` role, the GitHub permission gate (it judges the
+Checked **only at launch**: the team `LEAD` or `ADMIN` role on the owning team, the GitHub permission gate (it judges the
 token of a request, and the worker has none), the organization and team
 budgets (each child is metered as it runs), the size limits and parallelism (frozen into the
 campaign), the recipe and the template version (pinned), and the repository's source-control
@@ -329,7 +329,7 @@ applies to each child.
 
 All routes are under `/api/v1/campaigns`.
 
-**`POST /`** (platform `LEAD`). Body:
+**`POST /`** (team `LEAD` or `ADMIN` on the owning team). Body:
 
 | Field | Meaning |
 |---|---|
@@ -567,7 +567,7 @@ whose workflow was gone) and the actor. See [audit-log.md](./audit-log.md).
   after the launch still has children started there until their team role or the repository
   changes.
 - **A launch tells a caller whether a repository id exists.** `REPOS_NOT_FOUND` is decided before
-  the team-lead check, so a platform `LEAD` can learn whether an id they hold names an active git
+  the team-lead check, so any signed-in caller can learn whether an id they hold names an active git
   repository (`404` against `403`). Nothing else about a repository of a team they do not lead
   (its name, organization or settings) is disclosed.
 - **No CLI command.** The dashboard and the API are the interfaces.

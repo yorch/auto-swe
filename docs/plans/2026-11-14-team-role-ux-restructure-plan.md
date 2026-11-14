@@ -20,7 +20,7 @@ Conventions for every task:
 
 ## Progress
 
-- [x] Task 1: Team-scoped team routes use the team role alone — `72f27e4b`
+- [x] Task 1: Team-scoped team routes use the team role alone — `8183c368`
 - [ ] Task 2: Launch routes (epics, PRD runs, campaigns) drop the platform LEAD floor
 - [ ] Task 3: Repository dependency and onboarding routes drop the platform LEAD floor
 - [ ] Task 4: Workflow template routes drop the platform LEAD floor

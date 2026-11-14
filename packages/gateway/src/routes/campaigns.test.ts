@@ -551,10 +551,12 @@ describe('campaign routes', () => {
       expect(res.statusCode).toBe(401);
     });
 
-    it('refuses an ENGINEER', async () => {
+    it('refuses a platform ENGINEER who is only an ENGINEER on the owning team', async () => {
       currentRole = 'ENGINEER';
+      teamRoles[TEAM_1] = { 'user-1': 'ENGINEER' };
       const res = await post(valid);
       expect(res.statusCode).toBe(403);
+      expect(body(res).error.message).toContain('team LEAD or ADMIN');
       expectNothingWritten();
     });
 
@@ -736,6 +738,12 @@ describe('campaign routes', () => {
   });
 
   describe('POST /api/v1/campaigns — launch', () => {
+    it('launches for a platform ENGINEER who leads the owning team', async () => {
+      currentRole = 'ENGINEER';
+      const res = await post({ ...valid, repoIds: [REPO_A] });
+      expect(res.statusCode).toBe(201);
+    });
+
     it('writes the campaign, its ordered targets and the ledger, then starts the workflow', async () => {
       // REPO_B first: target order follows the request, not the database.
       const res = await post({ ...valid, maxParallel: 10, repoIds: [REPO_B, REPO_A] });

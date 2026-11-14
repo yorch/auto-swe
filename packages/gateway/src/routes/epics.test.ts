@@ -489,6 +489,35 @@ describe('epic routes', () => {
       expect(createdWorkRequests).toHaveLength(0);
     });
 
+    it('allows a platform ENGINEER who leads the owning team', async () => {
+      currentRole = 'ENGINEER';
+      currentTeamRole = 'LEAD';
+      const res = await app.inject({
+        headers: auth,
+        method: 'POST',
+        payload: { ...payload, repoIds: [REPO_A] },
+        url: '/api/v1/epics',
+      });
+      expect(res.statusCode).toBe(201);
+      expect(startedEpicIds).toEqual(['epic-EPIC-1']);
+    });
+
+    it('refuses a platform ENGINEER who is only a team ENGINEER on the owning team', async () => {
+      currentRole = 'ENGINEER';
+      currentTeamRole = 'ENGINEER';
+      const res = await app.inject({
+        headers: auth,
+        method: 'POST',
+        payload: { ...payload, repoIds: [REPO_A] },
+        url: '/api/v1/epics',
+      });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload).error.reasons).toEqual([
+        { reason: 'team-lead-required', repo: 'org/alpha' },
+      ]);
+      expect(startedEpicIds).toHaveLength(0);
+    });
+
     it('refuses a member who reaches the repository only through a share', async () => {
       sharedOnlyRepos = new Set([REPO_A]);
       const res = await app.inject({
