@@ -20,7 +20,7 @@ setDefaultFetchForTests(((input: Parameters<typeof fetch>[0], init?: RequestInit
 // The same goes for the 5 s per-test limit on a component test: the first render and the first
 // role query in a file are one-time costs of about 0.8 s of CPU, which a starved runner stretches
 // past 5 s (measured; the later tests in the file take milliseconds). So jsdom suites get 20 s.
-// Node suites keep the default.
+// Node suites get the 15 s set in vitest.config.ts.
 if (typeof document !== 'undefined') {
   const { configure } = await import('@testing-library/dom');
   configure({ asyncUtilTimeout: 10_000 });
