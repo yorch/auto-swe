@@ -106,7 +106,9 @@ evaluations are read as exact (repository, pull request number) pairs of the coh
 evaluation cap cuts, the oldest evaluations go first, so a pull request's ready time can read later
 than it was and its waits shorter: treat a `truncated` read as understated. The open queue carries
 `truncated` too (more open pull requests than the 1,000 it orders, or its 20,000-row evaluation read
-was cut) and `evaluationsTruncated` for the second case alone.
+was cut) and `evaluationsTruncated` for the second case alone. The dashboard shows it as the
+**Review time** card on **Platform analytics** (`/admin/analytics`), under the pull request outcomes
+card, following the page's date range.
 
 Every figure is built from timestamps the platform stores, in `packages/shared/src/lib/prEvaluation/reviewerTime.ts`:
 

@@ -12,6 +12,7 @@ import {
 } from '@auto-swe/shared/types/api';
 import { useEffect, useMemo, useState } from 'react';
 import { PreviewEnvToSecrets } from '@/components/repositories/PreviewEnvToSecrets';
+import { RepoReviewRouting } from '@/components/repositories/RepoReviewRouting';
 import { RepoSetupEditor } from '@/components/repositories/RepoSetupEditor';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -667,6 +668,12 @@ export function ConnectionFormModal({
                     repositoryId={isEdit ? initial?.id : undefined}
                   />
                 </fieldset>
+                {isEdit && initial?.id && (
+                  <fieldset className="min-w-0 space-y-3">
+                    <legend className="text-sm font-medium text-paper-200">Review routing</legend>
+                    <RepoReviewRouting disabled={!canEditGateCommands} repositoryId={initial.id} />
+                  </fieldset>
+                )}
               </div>
             </details>
           </>

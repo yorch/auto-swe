@@ -8,6 +8,7 @@ vi.mock('@/components/workflow/WorkflowDefaultsForm', () => ({
 }));
 vi.mock('@/components/workflow/ConsolidationForm', () => ({ ConsolidationForm: () => null }));
 vi.mock('@/components/workflow/RevalidationForm', () => ({ RevalidationForm: () => null }));
+vi.mock('@/components/workflow/EvalScheduleForm', () => ({ EvalScheduleForm: () => null }));
 vi.mock('@/components/workflow/CanaryForm', () => ({ CanaryForm: () => null }));
 
 const { default: Page } = await import('./page');

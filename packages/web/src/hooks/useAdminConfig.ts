@@ -450,6 +450,41 @@ export const useUpdateRevalidationConfig = configMutation<
 
 export const triggerRevalidationNow = () => postConfigTrigger('revalidation');
 
+// ── Eval regression schedule ──
+
+export interface EvalScheduleStatus {
+  exists: boolean;
+  paused: boolean;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+}
+
+export interface EvalScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+  datasetSlug: string;
+  candidateRef: string;
+  baselineRef: string;
+  schedule: EvalScheduleStatus;
+}
+
+export interface EvalScheduleConfigInput {
+  enabled?: boolean;
+  cronExpression?: string;
+  datasetSlug?: string;
+  candidateRef?: string;
+  baselineRef?: string;
+}
+
+export const useEvalScheduleConfig = unwrappedConfigQuery<EvalScheduleConfig>('eval-schedule');
+
+export const useUpdateEvalScheduleConfig = configMutation<
+  EvalScheduleConfig,
+  EvalScheduleConfigInput
+>('eval-schedule');
+
+export const triggerEvalScheduleNow = () => postConfigTrigger('eval-schedule');
+
 // ── Canary routing config ──
 
 export interface CanaryConfig {

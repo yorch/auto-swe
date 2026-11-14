@@ -304,7 +304,9 @@ The same pull requests as a file for a spreadsheet or BI tool: one row per PR **
 window** (no previous window), newest first. It takes the outcomes read's `window`, `since`/`until`,
 `scope`, `teamId`, `repoId` and `templateId`, plus `format`: `csv` (default) or `ndjson`. Visibility is the
 outcomes read's, from the same filter function, so an export reaches no row the summary would not.
-ENGINEER and above may call it.
+ENGINEER and above may call it. The **Export CSV** button on the pull request outcomes card of
+`/admin/analytics` downloads the CSV for the page's window and the repository chosen on the card,
+and says so when the file was cut at the row limit.
 
 Columns (CSV header, and the keys of each NDJSON object): `pull_request_id`, `repository_org`,
 `repository_name`, `pr_number`, `status`, `is_draft`, `ci_status`, `opened_at`, `merged_at`,

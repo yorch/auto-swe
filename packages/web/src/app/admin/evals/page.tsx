@@ -6,6 +6,7 @@ import { ScorerBreakdownChart } from '@/components/charts/ScorerBreakdownChart';
 import { ScorerTrendChart } from '@/components/charts/ScorerTrendChart';
 import { SuiteHealthChart } from '@/components/charts/SuiteHealthChart';
 import { EvalResultsTable } from '@/components/evals/EvalResultsTable';
+import { EvalRubrics } from '@/components/evals/EvalRubrics';
 import { EvalRunStatusBadge } from '@/components/evals/EvalRunStatusBadge';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -450,6 +451,8 @@ function EvalsWorkspace() {
           scorers={scorerNames}
         />
       </Card>
+
+      <EvalRubrics />
     </div>
   );
 }

@@ -5,6 +5,7 @@ import type { InputSchema } from '@auto-swe/shared/lib/inputSchema';
 import type {
   GlobalAnalyticsResponse,
   PullRequestOutcomesResponse,
+  PullRequestReviewTimeResponse,
   SpecDiffResponse,
   StepRegistryEntry,
   WebhookSigningSummary,
@@ -278,6 +279,48 @@ export function usePullRequestOutcomes(
     queryKey: ['pull-request-outcomes', rangeKey(range), repoId ?? null],
     refetchInterval: 30_000,
   });
+}
+
+/** How long reviewers take on the pull requests opened in the window, plus the open queue now. */
+export function usePullRequestReviewTime(
+  range: DateRange = { days: 30, kind: 'preset' },
+  repoId?: string
+) {
+  const query = { ...rangeQuery(range), ...(repoId ? { repoId } : {}) };
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: PullRequestReviewTimeResponse }>(
+          `/api/v1/pull-requests/review-time?${new URLSearchParams(query)}`
+        )
+        .then((r) => r.data),
+    queryKey: ['pull-request-review-time', rangeKey(range), repoId ?? null],
+    refetchInterval: 30_000,
+  });
+}
+
+/**
+ * The window's pull requests as CSV text, under the same window and repository filter as
+ * {@link usePullRequestOutcomes}. `truncated` is true when more pull requests matched than one
+ * export carries, so the file holds only the newest part; `limit` is the most rows it holds.
+ */
+export async function exportPullRequestOutcomes(
+  range: DateRange,
+  repoId?: string
+): Promise<{ csv: string; limit: number | null; truncated: boolean }> {
+  const qs = new URLSearchParams({
+    format: 'csv',
+    ...rangeQuery(range),
+    ...(repoId ? { repoId } : {}),
+  });
+  let truncated = false;
+  let limit: number | null = null;
+  const csv = await api.get<string>(`/api/v1/pull-requests/outcomes/export?${qs}`, (res) => {
+    truncated = res.headers.get('x-export-truncated') === 'true';
+    const rows = Number(res.headers.get('x-export-row-limit'));
+    limit = Number.isInteger(rows) && rows > 0 ? rows : null;
+  });
+  return { csv, limit, truncated };
 }
 
 export function useRegenerateWebhook(templateId: string) {

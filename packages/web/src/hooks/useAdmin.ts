@@ -7,6 +7,7 @@ import type {
   EvalDatasetSummary,
   EvalRescreenResultDto,
   EvalResultDto,
+  EvalRubricDto,
   EvalRunDto,
   EvalSignalSourceValue,
   EvalSuiteHealthDto,
@@ -791,6 +792,52 @@ export function useUpdateEvalCaseStack(datasetId: string) {
       void qc.invalidateQueries({ queryKey: ['eval-dataset', datasetId] });
       void qc.invalidateQueries({ queryKey: ['eval-suite-health'] });
     },
+  });
+}
+
+/**
+ * Replace a dataset's lesson corpus with the newest active `swe-lessons` memory of a repository
+ * (ADMIN). The corpus is pinned by hash at launch, so runs started later see the new one.
+ */
+export function useImportEvalLessons(datasetId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { repoId: string; limit: number }) =>
+      api
+        .post<{ data: { count: number } }>(
+          `/api/v1/platform/evals/${datasetId}/lessons/import`,
+          input
+        )
+        .then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['eval-dataset', datasetId] }),
+  });
+}
+
+/** Judge rubrics, newest first (ADMIN). */
+export function useEvalRubrics() {
+  return useQuery({
+    queryFn: () =>
+      api.get<{ data: EvalRubricDto[] }>('/api/v1/platform/evals/rubrics').then((r) => r.data),
+    queryKey: ['eval-rubrics'],
+  });
+}
+
+export interface CreateEvalRubricInput {
+  promptText: string;
+  scale: string;
+  slug: string;
+}
+
+/** Create a GLOBAL judge rubric; the response carries the advisory scan warnings of its prompt. */
+export function useCreateEvalRubric() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateEvalRubricInput) =>
+      api.post<{ data: EvalRubricDto; scanWarnings: string[] }>('/api/v1/platform/evals/rubrics', {
+        ...input,
+        scope: 'GLOBAL',
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['eval-rubrics'] }),
   });
 }
 

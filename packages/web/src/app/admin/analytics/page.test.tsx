@@ -123,9 +123,37 @@ const outcomes = {
   window: { days: 30, end: '2026-09-30T00:00:00.000Z', start: '2026-09-01T00:00:00.000Z' },
 };
 
+const reviewTime = {
+  byRepository: [],
+  byTeam: [],
+  overall: {
+    changeRequestRate: null,
+    lowSample: true,
+    pullRequests: 0,
+    reviewed: 0,
+    reviewRounds: { max: 0, mean: null, median: null },
+    reviewToMerge: { count: 0, p50: null, p90: null },
+    timeToFirstReview: { count: 0, p50: null, p90: null },
+    timeToFirstView: { count: 0, p50: null, p90: null },
+    unmeasured: 0,
+  },
+  queue: {
+    batches: { deep: 0, none: 0, quick: 0, standard: 0 },
+    evaluationsTruncated: false,
+    medianWaitingMs: null,
+    needsHuman: 0,
+    oldestWaitingMs: null,
+    open: 0,
+    truncated: false,
+  },
+  truncated: false,
+  window: { days: 30, end: '2026-09-30T00:00:00.000Z', start: '2026-09-01T00:00:00.000Z' },
+};
+
 function mock() {
   return setupFetchMock({
     'GET /api/v1/pull-requests/outcomes': () => ({ data: outcomes }),
+    'GET /api/v1/pull-requests/review-time': () => ({ data: reviewTime }),
     'GET /api/v1/workflow-templates/analytics': () => ({ data: analytics }),
   });
 }

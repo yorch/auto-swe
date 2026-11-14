@@ -6,6 +6,7 @@ import { Alert } from '@/components/ui/Alert';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { CanaryForm } from '@/components/workflow/CanaryForm';
 import { ConsolidationForm } from '@/components/workflow/ConsolidationForm';
+import { EvalScheduleForm } from '@/components/workflow/EvalScheduleForm';
 import { RevalidationForm } from '@/components/workflow/RevalidationForm';
 import { WorkflowDefaultsForm } from '@/components/workflow/WorkflowDefaultsForm';
 import { HELP_LINKS } from '@/lib/helpLinks';
@@ -17,6 +18,7 @@ const SECTIONS: { id: string; label: string; hint: string }[] = [
   { hint: 'Branch prefix, PR templates, team, budgets', id: 'defaults', label: 'Run defaults' },
   { hint: 'When lessons are merged', id: 'consolidation', label: 'Consolidation' },
   { hint: 'When eval datasets re-run', id: 'revalidation', label: 'Re-validation' },
+  { hint: 'Scheduled benchmark runs', id: 'eval-schedule', label: 'Eval schedule' },
   { hint: 'A/B traffic split', id: 'canary', label: 'Canary' },
 ];
 
@@ -81,6 +83,9 @@ export default function GovernWorkflowPage() {
           </Section>
           <Section id="revalidation">
             <RevalidationForm />
+          </Section>
+          <Section id="eval-schedule">
+            <EvalScheduleForm />
           </Section>
           <Section id="canary">
             <CanaryForm />
