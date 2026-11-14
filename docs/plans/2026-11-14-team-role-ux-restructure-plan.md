@@ -327,7 +327,7 @@ shows the pending message.
 **What**: Update `docs/teams.md` (role rule, the "My work" panel, the `mine` block, the Manage tab,
 attention actions, and a `## Limitations` entry for nudge reach and approver resolution). Add one
 `docs/upgrade-notes.md` entry that names both affected groups, names that a team `LEAD` may now
-invite users (gated by the organization's `trustedInvites`, decision D3), names the existence-signal widening and the ORG_ADMIN reach (D4, D5), and gives a query that lists them;
+invite users (gated by the organization's `trustedInvites`, decision D3), names the existence-signal widening and the ORG_ADMIN reach (D4, D5), the user lookup now open to any team lead (D7), the Slack approval that now needs LEAD on the run's owning team (D8), and gives a query that lists them;
 follow the existing entry format and fixing-commit convention. Update `docs/work-views.md` or other
 docs only where a moved address appears. Run every gate in `CLAUDE.md` §5.
 **Files**: `docs/teams.md`, `docs/upgrade-notes.md`, other `docs/*.md` where a moved address appears

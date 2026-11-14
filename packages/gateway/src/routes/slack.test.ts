@@ -130,7 +130,10 @@ interface FakeState {
   humanStepUpdateCount: number;
   humanStepUpdateCalls: Array<{ data: Record<string, unknown>; where: Record<string, unknown> }>;
   /** Run the Slack button's workflow id resolves to for this user (null = not visible). */
-  visibleRun: { id: string } | null;
+  visibleRun: { id: string; connection?: { teamId: string } } | null;
+  /** Whether the caller leads a team that owns the run; the lookups made are recorded. */
+  leadsRunTeam?: boolean;
+  leadLookups?: unknown[];
   signalCalls: Array<{ workflowId: string; signalName: string; args: unknown[] }>;
   /** When set, `signalWorkflow` rejects with this instead of recording a call. */
   signalError: Error | null;
@@ -384,7 +387,15 @@ function buildApp(state: FakeState): FastifyInstance {
     team: {
       findUnique: async () => ({ id: 'team-default', orgId: 'org-1', slug: 'default' }),
     },
-    teamMembership: { findUnique: async () => ({ role: 'LEAD' }) },
+    teamMembership: {
+      findFirst: async (args: { where?: { teamId?: { in?: string[] } } }) => {
+        state.leadLookups = [...(state.leadLookups ?? []), args];
+        // The caller leads `team-led` only, so the answer follows the teams the route names.
+        const named = args.where?.teamId?.in ?? [];
+        return state.leadsRunTeam && named.includes('team-led') ? { teamId: 'team-led' } : null;
+      },
+      findUnique: async () => ({ role: 'LEAD' }),
+    },
     user: {
       // `isActive` is applied, not ignored: the access decision filters on it,
       // and a fake that drops the filter cannot tell a deactivated user from a
@@ -2606,6 +2617,104 @@ describe('Slack buttons respect run visibility', () => {
     expect(state.signalCalls).toEqual([
       { args: [true], signalName: 'humanMergeSignal', workflowId: 'wf-mine' },
     ]);
+  });
+
+  describe('approving needs LEAD on the team that owns the run', () => {
+    beforeEach(() => {
+      state.visibleRun = { connection: { teamId: 'team-led' }, id: 'run-1' };
+    });
+
+    it('lets a platform ENGINEER who leads the run team approve', async () => {
+      (state.users[0] as { role: string }).role = 'ENGINEER';
+      state.leadsRunTeam = true;
+      const res = await inject(buttonPayload('approve_merge', 'wf-mine'));
+      expect(res.statusCode).toBe(200);
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
+    it('refuses a platform LEAD who leads no team that owns the run', async () => {
+      (state.users[0] as { role: string }).role = 'LEAD';
+      state.leadsRunTeam = false;
+      const res = await inject(buttonPayload('approve_merge', 'wf-mine'));
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.message).toContain('team that owns the run');
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
+    it("asks for LEAD or ADMIN on an active team among the run's owning teams", async () => {
+      (state.users[0] as { role: string }).role = 'ENGINEER';
+      state.leadsRunTeam = true;
+      await inject(buttonPayload('approve_merge', 'wf-mine'));
+      expect(state.leadLookups).toContainEqual({
+        select: { teamId: true },
+        where: {
+          role: { in: ['LEAD', 'ADMIN'] },
+          team: { isActive: true },
+          teamId: { in: ['team-led'] },
+          userId: 'u1',
+        },
+      });
+    });
+
+    it('lets a platform ADMIN approve without leading any team', async () => {
+      (state.users[0] as { role: string }).role = 'ADMIN';
+      state.leadsRunTeam = false;
+      const res = await inject(buttonPayload('approve_merge', 'wf-mine'));
+      expect(res.statusCode).toBe(200);
+      expect(state.signalCalls).toHaveLength(1);
+    });
+
+    it('refuses a non-ADMIN for a run that no team owns, even one who leads a team', async () => {
+      (state.users[0] as { role: string }).role = 'ENGINEER';
+      state.leadsRunTeam = true;
+      state.visibleRun = { id: 'run-1' };
+      const res = await inject(buttonPayload('approve_merge', 'wf-mine'));
+      expect(res.statusCode).toBe(403);
+      expect(state.signalCalls).toHaveLength(0);
+    });
+
+    it('lets the lead of the template team approve a run on another team’s repository', async () => {
+      (state.users[0] as { role: string }).role = 'ENGINEER';
+      state.leadsRunTeam = true;
+      state.visibleRun = {
+        connection: { teamId: 'team-other' },
+        id: 'run-1',
+        template: { teamId: 'team-led' },
+      } as typeof state.visibleRun;
+      const res = await inject(buttonPayload('approve_merge', 'wf-mine'));
+      expect(res.statusCode).toBe(200);
+      expect(state.leadLookups).toContainEqual(
+        expect.objectContaining({
+          where: expect.objectContaining({ teamId: { in: ['team-other', 'team-led'] } }),
+        })
+      );
+    });
+
+    it('names each owning team once', async () => {
+      (state.users[0] as { role: string }).role = 'ENGINEER';
+      state.leadsRunTeam = true;
+      state.visibleRun = {
+        connection: { teamId: 'team-led' },
+        id: 'run-1',
+        template: { teamId: 'team-led' },
+        workRequest: { connection: { teamId: 'team-led' } },
+      } as typeof state.visibleRun;
+      await inject(buttonPayload('approve_merge', 'wf-mine'));
+      expect(state.leadLookups).toContainEqual(
+        expect.objectContaining({
+          where: expect.objectContaining({ teamId: { in: ['team-led'] } }),
+        })
+      );
+    });
+
+    it('does not apply the lead rule to a CI-fix request, which only needs control', async () => {
+      (state.users[0] as { role: string }).role = 'ENGINEER';
+      state.leadsRunTeam = false;
+      const res = await inject(buttonPayload('retry_ci_x', 'wf-mine'));
+      expect(res.statusCode).toBe(200);
+      expect(state.leadLookups ?? []).toHaveLength(0);
+      expect(state.signalCalls).toHaveLength(1);
+    });
   });
 });
 

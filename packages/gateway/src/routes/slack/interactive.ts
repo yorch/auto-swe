@@ -17,7 +17,6 @@ import {
 } from '../../lib/slack/runModal.js';
 import type { SlackInteractivePayload } from '../../lib/slack/types.js';
 import { openSlackView, verifySlackSignature } from '../../lib/slack.js';
-import { hasRole } from '../../plugins/auth.js';
 
 /**
  * A Slack button carries the target workflow id in its `value`, which any
@@ -25,25 +24,50 @@ import { hasRole } from '../../plugins/auth.js';
  * the same run-control predicate the dashboard's cancel and human-step routes
  * use — control, not visibility: seeing a run does not entitle anyone to
  * approve its merge or drive its CI fixes.
+ *
+ * Returns the run with the teams that own it, or null. The owners are the team of the run's
+ * repository, of its work request's repository, and of its template. A run controlled only
+ * through its launcher or a service principal's team has none of these, so only a platform ADMIN
+ * can approve it.
  */
-async function canControlRun(
+async function findControlledRun(
   fastify: FastifyInstance,
   user: { id: string; role: Role },
   workflowId: string
-): Promise<boolean> {
+): Promise<{ ownerTeamIds: string[] } | null> {
   // Slack routes authenticate by request signature rather than `requireAuth`,
   // so there is no `request.repoAccessGate` to inherit — the gate is resolved
   // here instead. Leaving it out would make every Slack button a way past a
   // check the dashboard applies, and these buttons signal workflows.
   const gate = (await resolveRepoAccessGateOrLastKnown()) ?? undefined;
   const run = await fastify.prisma.workflowRun.findFirst({
-    select: { id: true },
+    select: {
+      connection: { select: { teamId: true } },
+      template: { select: { teamId: true } },
+      workRequest: { select: { connection: { select: { teamId: true } } } },
+    },
     where: {
       workflowId,
       ...buildWorkflowRunControlFilter({ role: user.role, sub: user.id }, gate),
     },
   });
-  return run !== null;
+  if (run === null) {
+    return null;
+  }
+  const ids = [
+    run.connection?.teamId,
+    run.workRequest?.connection?.teamId,
+    run.template?.teamId,
+  ].filter((id): id is string => typeof id === 'string');
+  return { ownerTeamIds: [...new Set(ids)] };
+}
+
+async function canControlRun(
+  fastify: FastifyInstance,
+  user: { id: string; role: Role },
+  workflowId: string
+): Promise<boolean> {
+  return (await findControlledRun(fastify, user, workflowId)) !== null;
 }
 
 export async function registerInteractiveRoutes(fastify: FastifyInstance): Promise<void> {
@@ -216,23 +240,39 @@ export async function registerInteractiveRoutes(fastify: FastifyInstance): Promi
 
       // Handle known actions
       if (actionId.startsWith('approve_')) {
-        // Only LEAD or ADMIN can approve
-        if (!hasRole(user.role, 'LEAD')) {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'Only LEAD or ADMIN can approve workflows' },
-          });
-        }
-
         const workflowId = payload.actions?.[0]?.value;
         if (!workflowId) {
           return reply.status(400).send({
             error: { code: 'INVALID_PAYLOAD', message: 'Missing workflow id in action value' },
           });
         }
-        if (!(await canControlRun(fastify, user, workflowId))) {
+        const controlled = await findControlledRun(fastify, user, workflowId);
+        if (!controlled) {
           return reply
             .status(404)
             .send({ error: { code: 'RUN_NOT_FOUND', message: 'Run not found' } });
+        }
+        // Only a LEAD or ADMIN of a team that owns the run can approve it; the platform role
+        // decides nothing but the ADMIN bypass. Checked after control, so a refusal tells the
+        // clicker nothing about a run they cannot see.
+        if (user.role !== 'ADMIN') {
+          const leadsOwner = await fastify.prisma.teamMembership.findFirst({
+            select: { teamId: true },
+            where: {
+              role: { in: ['LEAD', 'ADMIN'] },
+              team: { isActive: true },
+              teamId: { in: controlled.ownerTeamIds },
+              userId: user.id,
+            },
+          });
+          if (!leadsOwner) {
+            return reply.status(403).send({
+              error: {
+                code: 'FORBIDDEN',
+                message: 'Only a LEAD or ADMIN of the team that owns the run can approve it',
+              },
+            });
+          }
         }
         await fastify.temporal.signalWorkflow(workflowId, 'humanMergeSignal', [true]);
         return { data: { action: 'approved', workflowId } };

@@ -282,6 +282,7 @@ describe('userRoutes', () => {
           url: '/api/v1/users/lookup?email=a@example.com',
         });
         expect(res.statusCode).toBe(403);
+        expect(JSON.parse(res.payload).error.code).toBe('FORBIDDEN');
         expect(ctx.mockPrisma.user.findMany).not.toHaveBeenCalled();
       }
     );
