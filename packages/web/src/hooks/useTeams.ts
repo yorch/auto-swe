@@ -64,12 +64,13 @@ export function useAdminTeamIds(): ReadonlySet<string> | null {
  */
 function useTeamIdsWithRole(minRole: 'LEAD' | 'ADMIN'): ReadonlySet<string> | null {
   const user = useAuthStore((s) => s.user);
-  const needsLookup = !hasRole(user?.role, 'ADMIN');
-  const teams = useTeams({ enabled: needsLookup, memberOnly: true });
+  const platformAdmin = hasRole(user?.role, 'ADMIN');
+  // No lookup before the user is known: the request would go out unauthenticated.
+  const teams = useTeams({ enabled: !!user && !platformAdmin, memberOnly: true });
   // Reduce to a string key first so the returned Set keeps its identity across
   // renders — callers put it in memo / callback deps.
   let key: string | null;
-  if (!needsLookup) {
+  if (platformAdmin) {
     key = '';
   } else if (!user || !teams.data) {
     key = null;
@@ -107,7 +108,7 @@ export function useAuthoringTeams(): {
   const user = useAuthStore((s) => s.user);
   const platformAdmin = hasRole(user?.role, 'ADMIN');
   const all = useTeams({ enabled: platformAdmin });
-  const member = useTeams({ enabled: !platformAdmin, memberOnly: true });
+  const member = useTeams({ enabled: !!user && !platformAdmin, memberOnly: true });
   if (platformAdmin) {
     return { global: true, isLoading: all.isLoading, teams: all.data ?? [] };
   }

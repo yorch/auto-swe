@@ -80,6 +80,13 @@ describe('team id hooks derived from myRole', () => {
     expect(get).not.toHaveBeenCalled();
   });
 
+  it('asks for nothing and reports loading while no user is signed in', () => {
+    useAuthStore.setState({ user: null } as never);
+    const { result } = renderHook(() => useLedTeamIds(), { wrapper });
+    expect(result.current).toBeNull();
+    expect(get).not.toHaveBeenCalled();
+  });
+
   it('loads the list for a platform ENGINEER, because the team role alone decides', async () => {
     signIn('ENGINEER');
     const { result } = renderHook(() => useLedTeamIds(), { wrapper });
@@ -107,9 +114,14 @@ describe('useLeadsATeam', () => {
   it('is false for someone who only has ENGINEER or no membership', async () => {
     signIn('LEAD');
     get.mockResolvedValue({ data: [team('e', 'ENGINEER'), team('n', null)] });
-    const { result } = renderHook(() => useLeadsATeam(), { wrapper });
-    await waitFor(() => expect(get).toHaveBeenCalled());
-    expect(result.current).toBe(false);
+    // Read the led set beside it: it turns non-null only once the team list has resolved, so the
+    // `false` below is an answer about the memberships, not about loading.
+    const { result } = renderHook(() => ({ leads: useLeadsATeam(), led: useLedTeamIds() }), {
+      wrapper,
+    });
+    await waitFor(() => expect(result.current.led).not.toBeNull());
+    expect([...(result.current.led ?? [])]).toEqual([]);
+    expect(result.current.leads).toBe(false);
   });
 });
 

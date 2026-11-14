@@ -22,8 +22,8 @@ const MAX_REPOS = 200;
 const NAME_MAX = 120;
 
 /**
- * Starts a campaign. The route needs the platform LEAD role and LEAD or ADMIN on the owning team
- * and on the team that owns every repository, so the choices are limited to those; the gateway
+ * Starts a campaign. The route needs LEAD or ADMIN on the owning team and on the team that owns
+ * every repository, whatever the platform role, so the choices are limited to those; the gateway
  * still decides. `onStarted` receives the campaign's page path.
  */
 export function CampaignStartModal({

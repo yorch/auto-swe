@@ -14,7 +14,7 @@ export interface ModeChoice {
 
 /**
  * The decision list for "Not sure?". An epic is offered only to a team lead or administrator
- * (POST /epics requires LEAD); below that the row says so and offers no control, so nobody is
+ * (POST /epics requires LEAD on each owning team); below that the row says so and offers no control, so nobody is
  * steered towards a mode they cannot launch.
  */
 export function modeChoices(canStartEpic: boolean, epicReason?: string): ModeChoice[] {

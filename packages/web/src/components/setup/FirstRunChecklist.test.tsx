@@ -7,8 +7,16 @@ import { FirstRunChecklist } from './FirstRunChecklist';
 
 let role = 'ENGINEER';
 // The checklist words the repository step for anyone who leads a team; the platform role is only
-// a stand-in here for who does.
-vi.mock('@/hooks/useTeams', () => ({ useLeadsATeam: () => role !== 'ENGINEER' }));
+// a stand-in here for who does. `null` is the led-team set while the team list loads.
+let ledLoading = false;
+vi.mock('@/hooks/useTeams', () => ({
+  useLedTeamIds: () => {
+    if (ledLoading) {
+      return null;
+    }
+    return role === 'ENGINEER' ? new Set<string>() : new Set(['team-1']);
+  },
+}));
 vi.mock('@/hooks/useHasRole', () => ({
   useHasRole: (required: string) => {
     const rank: Record<string, number> = { ADMIN: 3, ENGINEER: 1, LEAD: 2 };
@@ -74,6 +82,7 @@ function reset() {
 beforeEach(() => {
   reset();
   role = 'ENGINEER';
+  ledLoading = false;
   installMemoryStorage();
   useAuthStore.setState({ user: { role: 'ENGINEER', sub: 'u1' } });
 });
@@ -121,6 +130,12 @@ describe('FirstRunChecklist', () => {
     role = 'LEAD';
     render(<FirstRunChecklist />);
     expect(screen.getByRole('link', { name: /Connect a repository/ })).toBeTruthy();
+  });
+
+  it('shows nothing until the led teams are known, so the wording does not flip', () => {
+    ledLoading = true;
+    const { container } = render(<FirstRunChecklist />);
+    expect(container.textContent).toBe('');
   });
 
   it('counts only git repositories, not other connection types', () => {
