@@ -11,10 +11,10 @@ import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Textarea';
 import { SearchInput } from '@/components/ui/Toolbar';
-import { useHasRole } from '@/hooks/useHasRole';
 import { type CreatePrdRunResponse, useCreatePrdRun } from '@/hooks/usePrdRuns';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useRunsForWorkRequest } from '@/hooks/useRuns';
+import { useLeadsATeam } from '@/hooks/useTeams';
 import { useIsViewOnly } from '@/hooks/useViewOnlyRepos';
 import { ApiError } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
@@ -59,12 +59,12 @@ function StartedPrdRun({ started }: { started: CreatePrdRunResponse }) {
 
 /**
  * Starts a PRD run: the PRD text, a title, an optional tracker project key and the repositories
- * it spans. POST /prd-runs needs a platform LEAD and, on top of that, team LEAD on the team that
- * owns every named repository, so the choices are limited to repositories of teams the caller
- * leads and a 403 from the gateway names the repositories it refused.
+ * it spans. POST /prd-runs needs team LEAD on the team that owns every named repository, whatever
+ * the platform role, so the choices are limited to repositories of teams the caller leads and a
+ * 403 from the gateway names the repositories it refused.
  */
 export function PrdRunLaunchForm({ reviewBeforeLaunch = false }: { reviewBeforeLaunch?: boolean }) {
-  const canCreate = useHasRole('LEAD');
+  const canCreate = useLeadsATeam();
   const { data: allRepos = [] } = useRepositories();
   // The same limit as an epic: only repositories whose owning team the caller leads.
   const scope = useStartScope();
