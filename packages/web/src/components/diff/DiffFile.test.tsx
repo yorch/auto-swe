@@ -504,7 +504,7 @@ describe('commenting on a line', () => {
     expect(commentButtons()).toHaveLength(0);
   });
 
-  it('turns the new number of each added and unchanged line into a button, and none for a removed one', () => {
+  it('turns the new number of each added and unchanged line into a button', () => {
     render(<DiffFile {...props({ onLineComment: () => undefined })} />);
     expect(commentButtons().map((b) => b.getAttribute('aria-label'))).toEqual([
       'Comment on line 10',
@@ -518,7 +518,7 @@ describe('commenting on a line', () => {
     render(<DiffFile {...props({ onLineComment })} />);
     fireEvent.click(screen.getByRole('button', { name: 'Comment on line 11' }));
     expect(onLineComment).toHaveBeenCalledTimes(1);
-    expect(onLineComment).toHaveBeenCalledWith(11);
+    expect(onLineComment).toHaveBeenCalledWith(11, 'RIGHT', false);
   });
 
   it('keeps the number visible in the button', () => {
@@ -535,7 +535,73 @@ describe('commenting on a line', () => {
       'Comment on line 12',
     ]);
     fireEvent.click(screen.getByRole('button', { name: 'Comment on line 12' }));
-    expect(onLineComment).toHaveBeenCalledWith(12);
+    expect(onLineComment).toHaveBeenCalledWith(12, 'RIGHT', false);
+  });
+
+  describe('on removed lines', () => {
+    const leftButtons = () => screen.queryAllByRole('button', { name: /^Comment on deleted line/ });
+
+    it.each(['unified', 'split'] as const)('numbers the old line as a LEFT button (%s)', (mode) => {
+      const onLineComment = vi.fn();
+      render(<DiffFile {...props({ mode, onLineComment })} />);
+      expect(leftButtons().map((b) => b.getAttribute('aria-label'))).toEqual([
+        'Comment on deleted line 11',
+      ]);
+      fireEvent.click(screen.getByRole('button', { name: 'Comment on deleted line 11' }));
+      expect(onLineComment).toHaveBeenCalledWith(11, 'LEFT', false);
+    });
+
+    it.each(['unified', 'split'] as const)('passes Shift through (%s)', (mode) => {
+      const onLineComment = vi.fn();
+      render(<DiffFile {...props({ mode, onLineComment })} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Comment on deleted line 11' }), {
+        shiftKey: true,
+      });
+      expect(onLineComment).toHaveBeenCalledWith(11, 'LEFT', true);
+      fireEvent.click(screen.getByRole('button', { name: 'Comment on line 12' }), {
+        shiftKey: true,
+      });
+      expect(onLineComment).toHaveBeenLastCalledWith(12, 'RIGHT', true);
+    });
+
+    it.each(['unified', 'split'] as const)('gives context lines no LEFT button (%s)', (mode) => {
+      render(<DiffFile {...props({ mode, onLineComment: () => undefined })} />);
+      expect(leftButtons()).toHaveLength(1);
+      expect(screen.queryByRole('button', { name: 'Comment on deleted line 10' })).toBeNull();
+    });
+
+    it('has no LEFT buttons without a handler', () => {
+      render(<DiffFile {...props()} />);
+      expect(leftButtons()).toHaveLength(0);
+    });
+
+    it.each(['unified', 'split'] as const)(
+      'draws a leftAnnotation under the removed line, once (%s)',
+      (mode) => {
+        render(
+          <DiffFile
+            {...props({
+              annotations: new Map([[11, <p key="r">right note</p>]]),
+              leftAnnotations: new Map([[11, <p key="l">left note</p>]]),
+              mode,
+            })}
+          />
+        );
+        expect(screen.getAllByText('left note')).toHaveLength(1);
+        expect(screen.getAllByText('right note')).toHaveLength(1);
+        const left = screen.getByText('left note');
+        const right = screen.getByText('right note');
+        // The removed line comes before the added one, so its note comes first.
+        expect(left.compareDocumentPosition(right) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      }
+    );
+
+    it('does not hang a leftAnnotation on a context line with the same number', () => {
+      render(
+        <DiffFile {...props({ leftAnnotations: new Map([[10, <p key="l">ctx note</p>]]) })} />
+      );
+      expect(screen.queryByText('ctx note')).toBeNull();
+    });
   });
 
   it('draws no buttons for a closed file', () => {

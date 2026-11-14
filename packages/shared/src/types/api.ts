@@ -483,6 +483,22 @@ export type RepoSetupFileProposal =
  * Where a request to open that pull request stands. `queued` until a worker has finished it;
  * `failed` carries the refusal (`exists`, ...) or `error` when the request itself did not finish.
  */
+/**
+ * What a just-saved personal GitHub token can do for pull-request reviews, as far as the save
+ * could tell. Advisory: never stored, and `insufficient` does not block the save.
+ */
+export type TokenWriteCapability = 'ok' | 'insufficient' | 'unverifiable';
+
+/** Body of `PUT /api/v1/repositories/:id/credential`. */
+export interface SavedRepoCredential {
+  connectionId: string;
+  createdAt: string;
+  lastFour: string;
+  permission: 'none' | 'read' | 'write' | 'admin';
+  updatedAt: string;
+  writeCapability: TokenWriteCapability;
+}
+
 /** A repository setup secret as the API shows it: never the value. */
 export interface RepoSetupSecretSummary {
   name: string;
@@ -2019,8 +2035,12 @@ export interface PullRequestCockpitSinceVisit {
 export interface PullRequestCockpitDraft {
   id: string;
   path: string;
-  /** A line of the file's new side. */
+  /** The line the comment is on, or the last line of a range, numbered by `side`. */
   line: number;
+  /** RIGHT is the file's new side; LEFT is its old side, where a deleted line is. */
+  side: 'LEFT' | 'RIGHT';
+  /** The first line of a multi-line comment, on `side`; null for a single line. */
+  startLine: number | null;
   body: string;
   /** The head the line number was taken at. */
   headSha: string;
@@ -2068,6 +2088,23 @@ export interface PullRequestCockpit {
   /** Set only when the caller has opened this page before and the head has moved since. */
   sinceLastVisit: PullRequestCockpitSinceVisit | null;
 }
+
+/**
+ * Response data of POST /api/v1/pull-requests/:id/review/check. `found` is a review on the host
+ * that matches the one the page tried to send, and its drafts are cleared. `not-found` proves
+ * nothing: the review may still exist, and the page must not say it was not sent.
+ */
+export type PullRequestReviewCheckResponse =
+  | {
+      status: 'found';
+      confirmed: true;
+      comments: number;
+      draftsKept: boolean;
+      event: 'APPROVE' | 'COMMENT' | 'REQUEST_CHANGES';
+      reviewId: number;
+      url: string | null;
+    }
+  | { status: 'not-found'; message: string };
 
 /** Outcome figures for a cohort of pull requests opened in one window. */
 export interface PullRequestOutcomeSummary {

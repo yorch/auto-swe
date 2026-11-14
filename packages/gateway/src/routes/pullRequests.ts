@@ -1024,6 +1024,8 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
             line: true,
             patchDigest: true,
             path: true,
+            side: true,
+            startLine: true,
           },
           take: MAX_DRAFTS_PER_PULL_REQUEST,
           where: { pullRequestId: row.id, userId: user.sub },

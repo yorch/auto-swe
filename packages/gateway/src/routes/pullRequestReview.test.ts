@@ -26,6 +26,8 @@ const stored = (over: Record<string, unknown> = {}) => ({
   id: DRAFT_ID,
   line: 2,
   path: 'src/a.ts',
+  side: 'RIGHT',
+  startLine: null,
   ...over,
 });
 
@@ -82,6 +84,8 @@ describe('POST /api/v1/pull-requests/:id/drafts', () => {
         patchDigest: DIGEST,
         path: 'src/a.ts',
         pullRequestId: PR_ID,
+        side: 'RIGHT',
+        startLine: null,
         userId: 'user-1',
       },
     });
@@ -92,7 +96,21 @@ describe('POST /api/v1/pull-requests/:id/drafts', () => {
       id: DRAFT_ID,
       line: 2,
       path: 'src/a.ts',
+      side: 'RIGHT',
+      startLine: null,
     });
+  });
+
+  it('keeps a comment on the old side, and a range, as written', async () => {
+    const b = await buildApp();
+    const res = await call(b, 'POST', url(), newDraft({ line: 9, side: 'LEFT', startLine: 4 }));
+    expect(res.statusCode).toBe(201);
+    expect(b.prisma.prReviewDraft.create.mock.calls[0]?.[0].data).toMatchObject({
+      line: 9,
+      side: 'LEFT',
+      startLine: 4,
+    });
+    expect(res.json().data).toMatchObject({ line: 9, side: 'LEFT', startLine: 4 });
   });
 
   it('limits an engineer to repositories they can reach, and answers 404 otherwise', async () => {
@@ -148,6 +166,10 @@ describe('POST /api/v1/pull-requests/:id/drafts', () => {
     ['a path past the key limit', { path: 'p'.repeat(501) }],
     ['line zero', { line: 0 }],
     ['a fractional line', { line: 1.5 }],
+    ['an unknown side', { side: 'BOTH' }],
+    ['a range that ends where it starts', { line: 4, startLine: 4 }],
+    ['a range that ends before it starts', { line: 4, startLine: 6 }],
+    ['a start line of zero', { line: 4, startLine: 0 }],
     ['a line past any file', { line: 10_000_001 }],
     ['a head that is not a commit id', { headSha: 'main' }],
     ['a short digest', { patchDigest: 'abc' }],

@@ -1,6 +1,6 @@
 'use client';
 
-import type { RepositorySummary } from '@auto-swe/shared/types/api';
+import type { RepositorySummary, TokenWriteCapability } from '@auto-swe/shared/types/api';
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -16,6 +16,29 @@ import {
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
 import { formatDate } from '@/lib/utils';
+
+/**
+ * The notice shown after a save when the token may not be able to write. `ok`, or a
+ * capability the gateway did not report, needs no notice.
+ */
+export function writeCapabilityNotice(
+  capability: TokenWriteCapability | undefined
+): { variant: 'warning' | 'info'; text: string } | null {
+  switch (capability) {
+    case 'insufficient':
+      return {
+        text: 'Saved. This token does not have the repo scope, so reviews and comments sent from the pull request page will probably be refused.',
+        variant: 'warning',
+      };
+    case 'unverifiable':
+      return {
+        text: "Saved. This token's permissions could not be checked here. If sending a review is refused, check that it may write pull requests on this repository.",
+        variant: 'info',
+      };
+    default:
+      return null;
+  }
+}
 
 /**
  * Save, replace or remove the signed-in user's own GitHub token for one
@@ -41,6 +64,7 @@ export function MyCredentialModal({
 }) {
   const [token, setToken] = useState('');
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [writeNotice, setWriteNotice] = useState<ReturnType<typeof writeCapabilityNotice>>(null);
   const save = useSaveMyCredential(repo.id);
   const remove = useDeleteMyCredential(repo.id);
   const busy = save.isPending || remove.isPending;
@@ -48,13 +72,23 @@ export function MyCredentialModal({
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    await save.mutateAsync(token.trim());
+    setWriteNotice(null);
+    const saved = await save.mutateAsync(token.trim());
     setToken('');
+    const notice = writeCapabilityNotice(saved.data.writeCapability);
+    // The token is saved either way, so the page hears it. With a notice the modal stays open
+    // (the page closes it only through onClose) so the notice stays in view; the user closes it.
+    if (notice) {
+      setWriteNotice(notice);
+      onSaved?.('Token saved. Your runs on this repository now use it.');
+      return;
+    }
     onSaved?.('Token saved and verified. Your runs on this repository now use it.');
     onClose();
   }
 
   async function handleRemove() {
+    setWriteNotice(null);
     await remove.mutateAsync();
     onSaved?.('Token removed. Your runs go back to the platform credential.');
     onClose();
@@ -101,6 +135,8 @@ export function MyCredentialModal({
             </Alert>
           )}
 
+          {writeNotice && <Alert variant={writeNotice.variant}>{writeNotice.text}</Alert>}
+
           {error && (
             <Alert>
               {errMsg(error, 'Could not update the credential.')}{' '}
@@ -124,7 +160,7 @@ export function MyCredentialModal({
             </div>
             <div className="flex items-center gap-3">
               <Button onClick={onClose} type="button" variant="ghost">
-                Cancel
+                {writeNotice ? 'Close' : 'Cancel'}
               </Button>
               {enabled && (
                 <Button

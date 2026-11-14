@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
-import type { PullRequestCockpit, PullRequestCockpitFile } from '@auto-swe/shared/types/api';
+import type {
+  PullRequestCockpit,
+  PullRequestCockpitDraft,
+  PullRequestCockpitFile,
+} from '@auto-swe/shared/types/api';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +17,25 @@ import { PullRequestReview } from './PullRequestReview';
 // The real highlighter is exercised in its own tests; here the page only needs to know what it asks.
 vi.mock('@/lib/diffSyntax', () => ({ syntaxForDiff: vi.fn(async () => null) }));
 const syntaxFor = vi.mocked(syntaxForDiff);
+
+// Every render of a file's diff is recorded with its props, so a test can see which files a
+// keystroke made draw again with new annotation maps.
+const diffFileRenders = vi.hoisted(
+  () => [] as { annotations: unknown; leftAnnotations: unknown; path: string }[]
+);
+vi.mock('./ReviewDiffFile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./ReviewDiffFile')>();
+  return {
+    ReviewDiffFile: (props: Parameters<typeof actual.ReviewDiffFile>[0]) => {
+      diffFileRenders.push({
+        annotations: props.annotations,
+        leftAnnotations: props.leftAnnotations,
+        path: props.path,
+      });
+      return actual.ReviewDiffFile(props);
+    },
+  };
+});
 
 const DIGEST = 'a'.repeat(64);
 const PATCH = ['@@ -1,2 +1,3 @@', ' keep', '+added', ' tail'].join('\n');
@@ -729,7 +752,7 @@ describe('commenting on a line from the page', () => {
     feedbackLoopEnabled: true,
     reason: null,
   };
-  const draft = (over: Record<string, unknown> = {}) => ({
+  const draft = (over: Partial<PullRequestCockpitDraft> = {}): PullRequestCockpitDraft => ({
     body: 'use <=',
     createdAt: '2026-11-04T10:00:00.000Z',
     headSha: 'abc1234def',
@@ -737,6 +760,8 @@ describe('commenting on a line from the page', () => {
     line: 2,
     outdated: false,
     path: 'src/a.ts',
+    side: 'RIGHT',
+    startLine: null,
     ...over,
   });
   const commentButtons = () => screen.queryAllByRole('button', { name: /^Comment on line/ });
@@ -813,6 +838,7 @@ describe('commenting on a line from the page', () => {
         line: 2,
         patchDigest: DIGEST,
         path: 'src/a.ts',
+        side: 'RIGHT',
       })
     );
     await waitFor(() =>
@@ -931,5 +957,212 @@ describe('commenting on a line from the page', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Comment on line 2' })[1] as HTMLElement);
     expect(screen.getAllByText('Draft comment')).toHaveLength(1);
     expect(screen.getAllByRole('textbox', { name: 'Comment on line 2' })).toHaveLength(1);
+  });
+
+  describe('deleted lines and ranges', () => {
+    const MULTI = [
+      '@@ -1,4 +1,3 @@',
+      ' one',
+      '-two',
+      '-three',
+      ' four',
+      '+five',
+      '@@ -20,2 +19,3 @@',
+      ' twenty',
+      '+added',
+      ' tail',
+    ].join('\n');
+    const showMulti = (extra: Partial<PullRequestCockpit> = {}) =>
+      show(withFiles([file({ patch: MULTI })], { write: canWrite, ...extra }));
+    const save = (label: string, text: string) => {
+      fireEvent.change(screen.getByRole('textbox', { name: label }), { target: { value: text } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    };
+
+    it('opens a LEFT editor on a deleted line and saves it with side LEFT', async () => {
+      const spy = gateway();
+      showMulti();
+      fireEvent.click(screen.getByRole('button', { name: 'Comment on deleted line 2' }));
+      save('Comment on deleted line 2', 'why drop it');
+      await waitFor(() =>
+        expect(bodyOf(spy, draftsUrl)).toEqual({
+          body: 'why drop it',
+          headSha: 'abc1234def',
+          line: 2,
+          patchDigest: DIGEST,
+          path: 'src/a.ts',
+          side: 'LEFT',
+        })
+      );
+    });
+
+    it('saves a Shift-click range within a hunk with its first and last line', async () => {
+      const spy = gateway();
+      showMulti();
+      fireEvent.click(screen.getByRole('button', { name: 'Comment on line 1' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Comment on line 3' }), {
+        shiftKey: true,
+      });
+      expect(screen.getAllByRole('textbox', { name: /^Comment on/ })).toHaveLength(1);
+      save('Comment on lines 1–3', 'all of this');
+      await waitFor(() =>
+        expect(bodyOf(spy, draftsUrl)).toEqual({
+          body: 'all of this',
+          headSha: 'abc1234def',
+          line: 3,
+          patchDigest: DIGEST,
+          path: 'src/a.ts',
+          side: 'RIGHT',
+          startLine: 1,
+        })
+      );
+    });
+
+    it.each([
+      ['a later line', 'Comment on line 1', 'Comment on line 3'],
+      ['an earlier line', 'Comment on line 3', 'Comment on line 1'],
+    ])('keeps the typed text when Shift-click extends the range to %s', (_name, first, second) => {
+      gateway();
+      showMulti();
+      fireEvent.click(screen.getByRole('button', { name: first }));
+      fireEvent.change(screen.getByRole('textbox', { name: first }), {
+        target: { value: 'half written' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: second }), { shiftKey: true });
+      const box = screen.getByRole('textbox', { name: 'Comment on lines 1–3' });
+      expect((box as HTMLTextAreaElement).value).toBe('half written');
+      expect(screen.getAllByRole('textbox', { name: /^Comment on/ })).toHaveLength(1);
+    });
+
+    it('keeps the typed text when Shift-click collapses the range back to its first line', () => {
+      gateway();
+      showMulti();
+      fireEvent.click(screen.getByRole('button', { name: 'Comment on line 1' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Comment on line 3' }), {
+        shiftKey: true,
+      });
+      fireEvent.change(screen.getByRole('textbox', { name: 'Comment on lines 1–3' }), {
+        target: { value: 'half written' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Comment on line 1' }), {
+        shiftKey: true,
+      });
+      const box = screen.getByRole('textbox', { name: 'Comment on line 1' });
+      expect((box as HTMLTextAreaElement).value).toBe('half written');
+      expect(screen.getAllByRole('textbox', { name: /^Comment on/ })).toHaveLength(1);
+    });
+
+    it('does not redraw the other files’ annotations on a keystroke', () => {
+      gateway();
+      const other = file({ path: 'src/b.ts' });
+      show(
+        withFiles([file({ patch: MULTI }), other], {
+          drafts: [draft({ id: 'd-b', path: 'src/b.ts' })],
+          write: canWrite,
+        })
+      );
+      // Both files have a line 1; the first button is src/a.ts's.
+      fireEvent.click(
+        screen.getAllByRole('button', { name: 'Comment on line 1' })[0] as HTMLElement
+      );
+      const box = screen.getByRole('textbox', { name: 'Comment on line 1' });
+      const lastOf = (path: string) => diffFileRenders.filter((r) => r.path === path).at(-1);
+      fireEvent.change(box, { target: { value: 'h' } });
+      const before = lastOf('src/b.ts');
+      const beforeA = lastOf('src/a.ts');
+      fireEvent.change(box, { target: { value: 'he' } });
+      fireEvent.change(box, { target: { value: 'hel' } });
+      expect(before?.annotations).toBeDefined();
+      expect(lastOf('src/b.ts')?.annotations).toBe(before?.annotations);
+      expect(lastOf('src/a.ts')?.annotations).toBe(beforeA?.annotations);
+      expect((box as HTMLTextAreaElement).value).toBe('hel');
+    });
+
+    it('starts empty on a plain click elsewhere, and after a cancel', () => {
+      gateway();
+      showMulti();
+      fireEvent.click(screen.getByRole('button', { name: 'Comment on line 1' }));
+      fireEvent.change(screen.getByRole('textbox', { name: 'Comment on line 1' }), {
+        target: { value: 'half written' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Comment on line 3' }));
+      expect(
+        (screen.getByRole('textbox', { name: 'Comment on line 3' }) as HTMLTextAreaElement).value
+      ).toBe('');
+      fireEvent.change(screen.getByRole('textbox', { name: 'Comment on line 3' }), {
+        target: { value: 'more' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Comment on line 3' }));
+      expect(
+        (screen.getByRole('textbox', { name: 'Comment on line 3' }) as HTMLTextAreaElement).value
+      ).toBe('');
+    });
+
+    it('makes a range of deleted lines', () => {
+      gateway();
+      showMulti();
+      fireEvent.click(screen.getByRole('button', { name: 'Comment on deleted line 2' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Comment on deleted line 3' }), {
+        shiftKey: true,
+      });
+      expect(screen.getByRole('textbox', { name: 'Comment on deleted lines 2–3' })).toBeTruthy();
+    });
+
+    it('does not make a range across hunks', () => {
+      gateway();
+      showMulti();
+      fireEvent.click(screen.getByRole('button', { name: 'Comment on line 1' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Comment on line 20' }), {
+        shiftKey: true,
+      });
+      expect(screen.getByRole('textbox', { name: 'Comment on line 20' })).toBeTruthy();
+      expect(screen.queryByRole('textbox', { name: /lines/ })).toBeNull();
+    });
+
+    it('treats Shift with no open editor as a plain click', () => {
+      gateway();
+      showMulti();
+      fireEvent.click(screen.getByRole('button', { name: 'Comment on line 3' }), {
+        shiftKey: true,
+      });
+      expect(screen.getByRole('textbox', { name: 'Comment on line 3' })).toBeTruthy();
+    });
+
+    it('draws a LEFT draft under the deleted line, with its wording', () => {
+      gateway();
+      showMulti({
+        drafts: [draft({ body: 'gone for a reason', line: 3, side: 'LEFT' })],
+      });
+      expect(screen.getByText('gone for a reason')).toBeTruthy();
+      expect(screen.getByText('deleted line 3')).toBeTruthy();
+    });
+
+    it('places a LEFT draft after its deleted row and before the rows that follow it', () => {
+      gateway();
+      showMulti({
+        drafts: [draft({ body: 'gone for a reason', line: 3, side: 'LEFT' })],
+      });
+      const note = screen.getByText('gone for a reason');
+      const after = (a: Node, b: Node) =>
+        a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING;
+      // Old line 3 is `three`; on the new side line 3 is `five`, so a RIGHT draw would put the
+      // note after `five`, and a LEFT one puts it before `four`.
+      expect(after(screen.getByText('-three'), note)).toBeTruthy();
+      expect(after(note, screen.getByText('four'))).toBeTruthy();
+      expect(after(note, screen.getByText('+five'))).toBeTruthy();
+    });
+
+    it('words a saved range and keeps the outdated badge', () => {
+      gateway();
+      showMulti({
+        drafts: [
+          draft({ id: 'd-1', line: 3, startLine: 1 }),
+          draft({ id: 'd-2', line: 2, outdated: true, side: 'LEFT', startLine: 2 }),
+        ],
+      });
+      expect(screen.getByText('lines 1–3')).toBeTruthy();
+      expect(screen.getAllByText('Outdated')).toHaveLength(1);
+    });
   });
 });

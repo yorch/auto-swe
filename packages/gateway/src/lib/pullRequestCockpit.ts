@@ -6,7 +6,7 @@
  * The stored brief is JSON written by the worker, possibly by an older version of it, so each part
  * is read on its own and a part that does not parse is left out instead of failing the page.
  */
-import { lineInDiff, readingOrder } from '@auto-swe/shared/lib/prEvaluation';
+import { anchorInDiff, lineInDiff, readingOrder } from '@auto-swe/shared/lib/prEvaluation';
 import type {
   PullRequestCockpitDraft,
   PullRequestCockpitEvaluation,
@@ -260,6 +260,8 @@ export type DraftRow = {
   line: number;
   patchDigest: string;
   path: string;
+  side: string;
+  startLine: number | null;
 };
 
 /**
@@ -268,14 +270,18 @@ export type DraftRow = {
  * refuse one, so the two cannot disagree.
  */
 export function draftIsCurrent(
-  draft: Pick<DraftRow, 'line' | 'patchDigest' | 'path'>,
+  draft: Pick<DraftRow, 'line' | 'patchDigest' | 'path' | 'side' | 'startLine'>,
   files: ReadonlyMap<string, { patch?: string; patchDigest?: string }>
 ): boolean {
   const file = files.get(draft.path);
   return (
     file !== undefined &&
     file.patchDigest === draft.patchDigest &&
-    lineInDiff(file.patch, draft.line)
+    anchorInDiff(file.patch, {
+      line: draft.line,
+      side: draft.side === 'LEFT' ? 'LEFT' : 'RIGHT',
+      startLine: draft.startLine,
+    })
   );
 }
 
@@ -293,6 +299,8 @@ export function draftsFor(
     line: row.line,
     outdated: byPath !== null && !draftIsCurrent(row, byPath),
     path: row.path,
+    side: row.side === 'LEFT' ? 'LEFT' : 'RIGHT',
+    startLine: row.startLine,
   }));
 }
 

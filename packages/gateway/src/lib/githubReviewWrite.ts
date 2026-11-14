@@ -43,7 +43,7 @@ export const WRITE_FAILURE_MESSAGES: Record<WriteFailure, string> = {
     'The host could not find the pull request, or your saved token cannot see this repository.',
   'rate-limited': 'The host is limiting requests. Try again in a minute.',
   rejected:
-    'The host rejected it. A pull request’s author cannot approve it, and a comment must be on a line the pull request changes.',
+    'The host rejected it. A pull request’s author cannot approve it, and a comment must be on lines the pull request’s diff shows, and a range must sit inside one hunk.',
   unknown:
     'The host did not answer clearly, so it may or may not have been sent. Check the pull request on the host before trying again.',
 };
@@ -124,7 +124,8 @@ const repoPath = (repo: WriteRepo) =>
 
 /**
  * A review with its line comments, as one request so the host shows them as one review. Each
- * comment is on a single line of the file's new side, which is the only kind the page writes.
+ * comment is on one line, or a range of lines ending there, of one side of the file's diff: RIGHT
+ * for the new file, LEFT for the old one (a deleted line).
  * `commitId` pins the review to the head the reviewer saw.
  */
 export function postReview(
@@ -133,7 +134,13 @@ export function postReview(
   prNumber: number,
   input: {
     body: string;
-    comments: readonly { body: string; line: number; path: string }[];
+    comments: readonly {
+      body: string;
+      line: number;
+      path: string;
+      side: 'LEFT' | 'RIGHT';
+      startLine?: number | null;
+    }[];
     commitId: string;
     event: ReviewEvent;
   },
@@ -151,7 +158,8 @@ export function postReview(
           body: c.body,
           line: c.line,
           path: c.path,
-          side: 'RIGHT',
+          side: c.side,
+          ...(c.startLine != null && { start_line: c.startLine, start_side: c.side }),
         })),
       }),
     },

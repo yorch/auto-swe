@@ -447,6 +447,8 @@ describe("the caller's draft comments in the cockpit", () => {
     line: 2,
     patchDigest: 'digest',
     path: 'src/a.ts',
+    side: 'RIGHT',
+    startLine: null,
     ...over,
   });
 
@@ -463,6 +465,8 @@ describe("the caller's draft comments in the cockpit", () => {
         line: 2,
         outdated: false,
         path: 'src/a.ts',
+        side: 'RIGHT',
+        startLine: null,
       },
     ]);
     expect(b.prisma.prReviewDraft.findMany.mock.calls[0]?.[0]).toMatchObject({

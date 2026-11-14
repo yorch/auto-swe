@@ -8,6 +8,7 @@ import type {
   RepoSetupFileProposalStatus,
   RepoSetupSecretSummary,
   RepositorySummary,
+  SavedRepoCredential,
 } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef } from 'react';
@@ -261,10 +262,9 @@ export function useSaveMyCredential(connectionId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (token: string) =>
-      api.put<{ data: MyCredential & { permission: string } }>(
-        `/api/v1/repositories/${connectionId}/credential`,
-        { token }
-      ),
+      api.put<{ data: SavedRepoCredential }>(`/api/v1/repositories/${connectionId}/credential`, {
+        token,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['my-repo-credentials'] }),
   });
 }

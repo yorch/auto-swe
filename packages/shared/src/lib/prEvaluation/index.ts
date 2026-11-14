@@ -2,6 +2,7 @@ export * from './arming.js';
 export * from './botApproval.js';
 export * from './brief.js';
 export * from './classify.js';
+export * from './diffAnchor.js';
 export * from './engagement.js';
 export * from './findings.js';
 export * from './paths.js';

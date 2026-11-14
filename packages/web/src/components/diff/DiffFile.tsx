@@ -96,18 +96,27 @@ function LineText({
   );
 }
 
+/** Which side of the change a comment line number belongs to: the old file or the new one. */
+export type DiffSide = 'LEFT' | 'RIGHT';
+
+/** Starts a comment: the line's number on its side, the side, and whether Shift was held. */
+export type LineCommentHandler = (line: number, side?: DiffSide, shift?: boolean) => void;
+
 const GUTTER = 'tabular w-10 shrink-0 select-none border-r border-ink-600/60 pr-2 text-right';
 
 /**
- * The line number of the new side. With a handler, it is a button that starts a comment on that
- * line; a `+` appears on hover or focus, and the number stays where it is.
+ * A line number of one side. With a handler, it is a button that starts a comment on that line;
+ * a `+` appears on hover or focus, and the number stays where it is. The new side is the default;
+ * a removed line's old number is `LEFT`.
  */
 function NewNumber({
   no,
   onComment,
+  side = 'RIGHT',
 }: {
   no: number | null;
-  onComment: ((line: number) => void) | undefined;
+  onComment: LineCommentHandler | undefined;
+  side?: DiffSide;
 }) {
   if (no === null || onComment === undefined) {
     return (
@@ -118,13 +127,13 @@ function NewNumber({
   }
   return (
     <button
-      aria-label={`Comment on line ${no}`}
+      aria-label={side === 'LEFT' ? `Comment on deleted line ${no}` : `Comment on line ${no}`}
       className={cn(
         GUTTER,
         FOCUS_RING,
         'group cursor-pointer text-paper-600 hover:text-accent-400'
       )}
-      onClick={() => onComment(no)}
+      onClick={(event) => onComment(no, side, event.shiftKey)}
       type="button"
     >
       <span
@@ -149,7 +158,7 @@ function DiffLine({
   id: string | undefined;
   line: ParsedDiffLine;
   moved?: boolean;
-  onComment?: ((line: number) => void) | undefined;
+  onComment?: LineCommentHandler | undefined;
   segments?: readonly Segment[] | undefined;
   tokens?: readonly SyntaxToken[] | undefined;
 }) {
@@ -157,12 +166,16 @@ function DiffLine({
   return (
     <div className={cn('flex', LINE_CLASS[line.kind], moved && MOVED_CLASS)} id={id}>
       {moved ? <span className="sr-only">Moved: </span> : null}
-      <span
-        aria-hidden="true"
-        className="tabular w-10 shrink-0 select-none border-r border-ink-600/60 pr-2 text-right text-paper-600"
-      >
-        {line.oldNo ?? ''}
-      </span>
+      {line.kind === 'del' ? (
+        <NewNumber no={line.oldNo} onComment={onComment} side="LEFT" />
+      ) : (
+        <span
+          aria-hidden="true"
+          className="tabular w-10 shrink-0 select-none border-r border-ink-600/60 pr-2 text-right text-paper-600"
+        >
+          {line.oldNo ?? ''}
+        </span>
+      )}
       <NewNumber no={line.newNo} onComment={line.kind === 'del' ? undefined : onComment} />
       <span className="whitespace-pre px-2">
         {hasMarker ? (
@@ -192,13 +205,15 @@ function SplitCell({
   moved,
   onComment,
   segments,
+  side,
   tokens,
 }: {
   borderRight: boolean;
   cell: DiffCell | null;
   id: string | undefined;
   moved: boolean;
-  onComment?: ((line: number) => void) | undefined;
+  onComment?: LineCommentHandler | undefined;
+  side: DiffSide;
   segments: readonly Segment[] | undefined;
   tokens: readonly SyntaxToken[] | undefined;
 }) {
@@ -221,7 +236,7 @@ function SplitCell({
       id={id}
     >
       {moved ? <span className="sr-only">Moved: </span> : null}
-      <NewNumber no={cell.no} onComment={onComment} />
+      <NewNumber no={cell.no} onComment={onComment} side={side} />
       {/* Wrapped, not scrolled: two panes that scrolled sideways on their own would drift apart. */}
       <span className="min-w-0 whitespace-pre-wrap break-words px-2">
         <LineText
@@ -239,6 +254,7 @@ function SplitRow({
   anchorId,
   annotations,
   edits,
+  leftAnnotations,
   moved,
   onComment,
   row,
@@ -246,18 +262,22 @@ function SplitRow({
 }: {
   anchorId: string | undefined;
   annotations: ReadonlyMap<number, ReactNode> | undefined;
+  leftAnnotations: ReadonlyMap<number, ReactNode> | undefined;
   edits: ReadonlyMap<number, readonly Segment[]> | null;
   moved: ReadonlySet<number> | undefined;
-  onComment: ((line: number) => void) | undefined;
+  onComment: LineCommentHandler | undefined;
   row: DiffRow;
   syntax: LineSyntax | undefined;
 }) {
   if (row.type === 'full') {
     return <DiffLine id={undefined} line={row.line} />;
   }
-  // Notes and links belong to the new side: a removed line has no place there to hang one.
+  // Links belong to the new side. A note hangs under the new line it is keyed to, or, keyed by old
+  // number in `leftAnnotations`, under a removed line.
   const newNo = row.right?.no ?? null;
   const note = newNo !== null ? annotations?.get(newNo) : undefined;
+  const leftNo = row.left?.kind === 'del' ? row.left.no : null;
+  const leftNote = leftNo !== null ? leftAnnotations?.get(leftNo) : undefined;
   const lineId = anchorId !== undefined && newNo !== null ? diffLineId(anchorId, newNo) : undefined;
   return (
     <div>
@@ -267,7 +287,9 @@ function SplitRow({
           cell={row.left}
           id={undefined}
           moved={row.left?.kind === 'del' && moved?.has(row.left.index) === true}
+          onComment={row.left?.kind === 'del' ? onComment : undefined}
           segments={row.left ? edits?.get(row.left.index) : undefined}
+          side="LEFT"
           tokens={row.left ? syntax?.get(row.left.index) : undefined}
         />
         <SplitCell
@@ -277,9 +299,13 @@ function SplitRow({
           moved={row.right?.kind === 'add' && moved?.has(row.right.index) === true}
           onComment={onComment}
           segments={row.right ? edits?.get(row.right.index) : undefined}
+          side="RIGHT"
           tokens={row.right ? syntax?.get(row.right.index) : undefined}
         />
       </div>
+      {leftNote !== undefined ? (
+        <div className="border-y border-ink-600/60 bg-ink-900 px-3 py-2 font-sans">{leftNote}</div>
+      ) : null}
       {note !== undefined ? (
         <div className="border-y border-ink-600/60 bg-ink-900 px-3 py-2 font-sans">{note}</div>
       ) : null}
@@ -305,6 +331,8 @@ export type DiffFileProps = {
   anchorId?: string | undefined;
   /** Drawn under the line of the new side with that number. Keep the map stable between renders. */
   annotations?: ReadonlyMap<number, ReactNode> | undefined;
+  /** Drawn under the removed line with that old-file number. Keep the map stable between renders. */
+  leftAnnotations?: ReadonlyMap<number, ReactNode> | undefined;
   /** Shown beside the file name, outside the toggle (a viewed checkbox, a risk marker). */
   headerExtra?: ReactNode;
   /** Rows drawn before "Show more"; only an open file draws any. */
@@ -322,10 +350,12 @@ export type DiffFileProps = {
    */
   syntax?: LineSyntax | null | undefined;
   /**
-   * Makes the number of every added and unchanged line a button that starts a comment on it; the
-   * argument is the line's number on the new side. Absent, the numbers are plain. Keep it stable.
+   * Makes the number of every line a comment can land on a button that starts one: an added or
+   * unchanged line calls `(newNo, 'RIGHT', shiftKey)`, a removed line `(oldNo, 'LEFT', shiftKey)`.
+   * The side and shift arguments are optional to receive, so a `(line) => void` still fits. Absent,
+   * the numbers are plain. Keep it stable.
    */
-  onLineComment?: ((line: number) => void) | undefined;
+  onLineComment?: LineCommentHandler | undefined;
 };
 
 /**
@@ -361,6 +391,7 @@ function DiffFileImpl({
   anchorId,
   annotations,
   headerExtra,
+  leftAnnotations,
   lines,
   mode = 'unified',
   moved,
@@ -429,6 +460,7 @@ function DiffFileImpl({
                     edits={edits}
                     // biome-ignore lint/suspicious/noArrayIndexKey: diff rows are positional
                     key={n}
+                    leftAnnotations={leftAnnotations}
                     moved={moved}
                     onComment={onLineComment}
                     row={row}
@@ -436,7 +468,14 @@ function DiffFileImpl({
                   />
                 ))
               : shown.map((line, n) => {
-                  const note = line.newNo !== null ? annotations?.get(line.newNo) : undefined;
+                  const note =
+                    line.kind === 'del'
+                      ? line.oldNo !== null
+                        ? leftAnnotations?.get(line.oldNo)
+                        : undefined
+                      : line.newNo !== null
+                        ? annotations?.get(line.newNo)
+                        : undefined;
                   const lineId =
                     anchorId !== undefined && line.newNo !== null && line.kind !== 'del'
                       ? diffLineId(anchorId, line.newNo)
@@ -452,7 +491,7 @@ function DiffFileImpl({
                         segments={edits?.get(n)}
                         tokens={syntax?.get(n)}
                       />
-                      {note !== undefined && line.kind !== 'del' ? (
+                      {note !== undefined ? (
                         <div className="border-y border-ink-600/60 bg-ink-900 px-3 py-2 font-sans">
                           {note}
                         </div>

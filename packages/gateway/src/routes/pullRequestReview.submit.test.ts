@@ -55,6 +55,24 @@ const repository = {
   repoName: 'api',
 };
 
+const twoHunkFile = {
+  additions: 3,
+  deletions: 1,
+  patch: [
+    '@@ -1,2 +1,2 @@',
+    ' keep',
+    '-gone',
+    '+added',
+    '@@ -20,3 +20,4 @@',
+    ' x',
+    '+y',
+    ' z',
+    ' w',
+  ].join('\n'),
+  patchDigest: DIGEST,
+  path: 'src/a.ts',
+};
+
 const liveFiles = (over: Record<string, unknown> = {}) => ({
   files: [{ additions: 1, deletions: 0, patch: PATCH, patchDigest: DIGEST, path: 'src/a.ts' }],
   headSha: HEAD,
@@ -70,6 +88,8 @@ const draft = (over: Record<string, unknown> = {}) => ({
   line: 2,
   patchDigest: DIGEST,
   path: 'src/a.ts',
+  side: 'RIGHT',
+  startLine: null,
   ...over,
 });
 
@@ -153,7 +173,7 @@ describe('POST /api/v1/pull-requests/:id/review', () => {
         7,
         {
           body: 'Looks good with one change.',
-          comments: [{ body: 'use <=', line: 2, path: 'src/a.ts' }],
+          comments: [{ body: 'use <=', line: 2, path: 'src/a.ts', side: 'RIGHT', startLine: null }],
           commitId: HEAD,
           event: 'REQUEST_CHANGES',
         }
@@ -179,6 +199,21 @@ describe('POST /api/v1/pull-requests/:id/review', () => {
         connectionId: REPO_ID,
         userId: 'user-1',
       });
+    });
+
+    it('passes a deleted-line comment and a range through with their side and start', async () => {
+      const b = await buildApp();
+      m.readPullFiles.mockResolvedValue(liveFiles({ files: [twoHunkFile] }));
+      b.prisma.prReviewDraft.findMany.mockResolvedValue([
+        draft({ line: 2, side: 'LEFT' }),
+        draft({ id: D2, line: 22, startLine: 20 }),
+      ]);
+      const res = await send(b, review({ draftIds: [D1, D2] }));
+      expect(res.statusCode).toBe(200);
+      expect(m.postReview.mock.calls[0]?.[3].comments).toEqual([
+        { body: 'use <=', line: 2, path: 'src/a.ts', side: 'LEFT', startLine: null },
+        { body: 'use <=', line: 22, path: 'src/a.ts', side: 'RIGHT', startLine: 20 },
+      ]);
     });
 
     it('trims the body and sends an approval with nothing else', async () => {
@@ -418,6 +453,25 @@ describe('POST /api/v1/pull-requests/:id/review', () => {
       });
       expect(m.postReview).not.toHaveBeenCalled();
       expect(b.tx.prReviewDraft.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('sends nothing when a comment on the old side is past the lines the old file has there', async () => {
+      const b = await buildApp();
+      b.prisma.prReviewDraft.findMany.mockResolvedValue([draft({ line: 3, side: 'LEFT' })]);
+      const res = await send(b, review());
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error).toMatchObject({ code: 'DRAFTS_OUTDATED' });
+      expect(m.postReview).not.toHaveBeenCalled();
+    });
+
+    it('sends nothing when a range crosses hunks', async () => {
+      const b = await buildApp();
+      m.readPullFiles.mockResolvedValue(liveFiles({ files: [twoHunkFile] }));
+      b.prisma.prReviewDraft.findMany.mockResolvedValue([draft({ line: 21, startLine: 2 })]);
+      const res = await send(b, review());
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.details).toEqual({ draftIds: [D1] });
+      expect(m.postReview).not.toHaveBeenCalled();
     });
 
     it('sends nothing at all when only one of several drafts is outdated', async () => {

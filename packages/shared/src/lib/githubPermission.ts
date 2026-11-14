@@ -47,7 +47,15 @@ export type PermissionLookupFailure =
   | 'unavailable';
 
 export type PermissionLookup =
-  | { ok: true; permission: RepoPermission }
+  | {
+      ok: true;
+      permission: RepoPermission;
+      /**
+       * The raw `x-oauth-scopes` header, present only on {@link fetchOwnRepoPermission} and only
+       * when GitHub sent one (classic tokens). Untrusted host text: classify it, never echo it.
+       */
+      oauthScopes?: string;
+    }
   | { ok: false; failure: PermissionLookupFailure };
 
 export interface RepoPermissionQuery {
@@ -136,16 +144,17 @@ export async function fetchOwnRepoPermission(
     return { failure: 'unavailable', ok: false };
   }
   const f = flags as Record<string, unknown>;
+  const scopes = result.oauthScopes === null ? {} : { oauthScopes: result.oauthScopes };
   if (f.admin === true) {
-    return { ok: true, permission: 'admin' };
+    return { ok: true, permission: 'admin', ...scopes };
   }
   if (f.maintain === true || f.push === true) {
-    return { ok: true, permission: 'write' };
+    return { ok: true, permission: 'write', ...scopes };
   }
   if (f.triage === true || f.pull === true) {
-    return { ok: true, permission: 'read' };
+    return { ok: true, permission: 'read', ...scopes };
   }
-  return { ok: true, permission: 'none' };
+  return { ok: true, permission: 'none', ...scopes };
 }
 
 function repoApiPath(apiUrl: string, organizationName: string, repoName: string): string {
@@ -163,7 +172,10 @@ function repoApiPath(apiUrl: string, organizationName: string, repoName: string)
 async function getJson(
   url: string,
   token: string
-): Promise<{ ok: true; body: unknown } | { ok: false; failure: PermissionLookupFailure }> {
+): Promise<
+  | { ok: true; body: unknown; oauthScopes: string | null }
+  | { ok: false; failure: PermissionLookupFailure }
+> {
   let res: Response;
   try {
     res = await fetch(url, {
@@ -200,7 +212,7 @@ async function getJson(
   }
 
   try {
-    return { body: await res.json(), ok: true };
+    return { body: await res.json(), oauthScopes: res.headers.get('x-oauth-scopes'), ok: true };
   } catch {
     return { failure: 'unavailable', ok: false };
   }

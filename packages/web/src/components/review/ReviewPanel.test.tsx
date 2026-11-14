@@ -18,6 +18,8 @@ const draft = (over: Partial<PullRequestCockpitDraft> = {}): PullRequestCockpitD
   line: 2,
   outdated: false,
   path: 'src/a.ts',
+  side: 'RIGHT',
+  startLine: null,
   ...over,
 });
 
@@ -329,6 +331,275 @@ describe('sending the review', () => {
     confirm('Approve');
     await screen.findByText('Review sent');
     expect(calls[0]?.body).toEqual({ body: '', draftIds: [], event: 'APPROVE', headSha: HEAD });
+  });
+});
+
+describe('when the outcome of a send is unknown', () => {
+  const UNKNOWN_MESSAGE = 'The host did not answer clearly, so it may or may not have been sent.';
+  const found = {
+    comments: 1,
+    confirmed: true,
+    draftsKept: false,
+    event: 'COMMENT',
+    reviewId: 9,
+    status: 'found',
+    url: 'https://github.com/acme/api/pull/7#pullrequestreview-9',
+  };
+  const failure = (code: string, message: string, status = 502) => ({
+    body: { error: { code, message } },
+    status,
+  });
+
+  /** Send once, answering the send with `first` and any check with `second`. */
+  async function sendThenFail(
+    second: () => { body: unknown; status?: number },
+    first = failure('OUTCOME_UNKNOWN', UNKNOWN_MESSAGE)
+  ) {
+    const calls = gateway((call) => (call.url.endsWith('/review/check') ? second() : first));
+    const view = show(cockpit({ drafts: [draft()] }));
+    writeSummary('Looks fine.');
+    const before = Date.now();
+    fireEvent.click(sendButton('Send comments'));
+    confirm('Send comments');
+    await waitFor(() => expect(calls.length).toBeGreaterThan(0));
+    return { before, calls, view };
+  }
+  const checkButton = () => screen.queryByRole('button', { name: 'Check whether it was sent' });
+
+  it('shows the message and a button to check', async () => {
+    await sendThenFail(() => ({ body: {} }));
+    expect(await screen.findByText(UNKNOWN_MESSAGE)).toBeTruthy();
+    expect(checkButton()).not.toBeNull();
+    expect(screen.queryByText('Review sent')).toBeNull();
+  });
+
+  it('checks with what was sent and when, and treats a found review as a send', async () => {
+    const { before, calls } = await sendThenFail(() => ({ body: { data: found } }));
+    await screen.findByText(UNKNOWN_MESSAGE);
+    fireEvent.click(checkButton() as HTMLElement);
+    await screen.findByText('Review sent');
+    const after = Date.now();
+    const check = calls[1];
+    expect(check).toMatchObject({
+      method: 'POST',
+      url: `/api/v1/pull-requests/${PR}/review/check`,
+    });
+    expect(check).toBeDefined();
+    const { attemptedAt, ...payload } = (check as Call).body as Record<string, string>;
+    expect(payload).toEqual({
+      body: 'Looks fine.',
+      draftIds: ['d-1'],
+      event: 'COMMENT',
+      headSha: HEAD,
+    });
+    expect(new Date(attemptedAt as string).toISOString()).toBe(attemptedAt);
+    expect(Date.parse(attemptedAt as string)).toBeGreaterThanOrEqual(before);
+    expect(Date.parse(attemptedAt as string)).toBeLessThanOrEqual(after);
+    expect(screen.getByText(/confirmed on GitHub/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: /View it on the host/ }).getAttribute('href')).toBe(
+      found.url
+    );
+    expect(checkButton()).toBeNull();
+    expect((screen.getByLabelText('Review summary') as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('shows the server text as it is when it was not found, and keeps the button', async () => {
+    await sendThenFail(() => ({
+      body: { data: { message: 'No such review <b>yet</b>.', status: 'not-found' } },
+    }));
+    await screen.findByText(UNKNOWN_MESSAGE);
+    fireEvent.click(checkButton() as HTMLElement);
+    expect(await screen.findByText('No such review <b>yet</b>.')).toBeTruthy();
+    expect(screen.queryByText('Review sent')).toBeNull();
+    expect(checkButton()).not.toBeNull();
+  });
+
+  it('shows the gateway’s text for an error from the check', async () => {
+    await sendThenFail(() => failure('HOST_RATE_LIMITED', 'The host is rate limiting you.'));
+    await screen.findByText(UNKNOWN_MESSAGE);
+    fireEvent.click(checkButton() as HTMLElement);
+    expect(await screen.findByText('The host is rate limiting you.')).toBeTruthy();
+    expect(checkButton()).not.toBeNull();
+  });
+
+  it.each([
+    ['ATTEMPT_TIME_INVALID', 400],
+    ['DRAFTS_CHANGED', 409],
+  ])(
+    'says the send cannot be checked from here for %s, without promising a reload',
+    async (code, status) => {
+      await sendThenFail(() => failure(code, 'raw text', status));
+      await screen.findByText(UNKNOWN_MESSAGE);
+      fireEvent.click(checkButton() as HTMLElement);
+      expect(await screen.findByText(/cannot be checked from here/)).toBeTruthy();
+      expect(
+        screen.getByText(/Look at the pull request on the host before sending again/)
+      ).toBeTruthy();
+      expect(screen.queryByText(/reload/i)).toBeNull();
+      expect(screen.queryByText('raw text')).toBeNull();
+    }
+  );
+
+  it('holds Send back while the attempt shows, and says why', async () => {
+    await sendThenFail(() => ({ body: {} }));
+    await screen.findByText(UNKNOWN_MESSAGE);
+    expect(sendButton('Send comments').disabled).toBe(true);
+    expect(
+      screen.getByText(/Check whether it was sent, or dismiss it, before sending again/)
+    ).toBeTruthy();
+  });
+
+  it('lets the reviewer dismiss the attempt, which frees Send again', async () => {
+    await sendThenFail(() => ({ body: {} }));
+    await screen.findByText(UNKNOWN_MESSAGE);
+    fireEvent.click(screen.getByRole('button', { name: 'It was not sent — dismiss' }));
+    expect(screen.queryByText(UNKNOWN_MESSAGE)).toBeNull();
+    expect(checkButton()).toBeNull();
+    expect(sendButton('Send comments').disabled).toBe(false);
+  });
+
+  it('frees Send after a found check, as after a normal send', async () => {
+    await sendThenFail(() => ({ body: { data: found } }));
+    await screen.findByText(UNKNOWN_MESSAGE);
+    fireEvent.click(checkButton() as HTMLElement);
+    await screen.findByText('Review sent');
+    expect(sendButton('Send comments').disabled).toBe(false);
+    expect(screen.queryByText(/before sending again/)).toBeNull();
+  });
+
+  it('holds the summary while a check is in flight, so the result cannot wipe typing', async () => {
+    let release: (response: Response) => void = () => {};
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/review/check')) {
+          return new Promise<Response>((resolve) => {
+            release = resolve;
+          });
+        }
+        return new Response(
+          JSON.stringify({ error: { code: 'OUTCOME_UNKNOWN', message: UNKNOWN_MESSAGE } }),
+          { headers: { 'content-type': 'application/json' }, status: 502 }
+        );
+      })
+    );
+    show(cockpit({ drafts: [draft()] }));
+    writeSummary('Looks fine.');
+    fireEvent.click(sendButton('Send comments'));
+    confirm('Send comments');
+    await screen.findByText(UNKNOWN_MESSAGE);
+    fireEvent.click(checkButton() as HTMLElement);
+    await waitFor(() =>
+      expect((screen.getByLabelText('Review summary') as HTMLTextAreaElement).disabled).toBe(true)
+    );
+    release(
+      new Response(JSON.stringify({ data: { message: 'Not yet.', status: 'not-found' } }), {
+        headers: { 'content-type': 'application/json' },
+        status: 200,
+      })
+    );
+    await screen.findByText('Not yet.');
+    expect((screen.getByLabelText('Review summary') as HTMLTextAreaElement).disabled).toBe(false);
+  });
+
+  const stillHeld = () => {
+    expect(screen.getByText(UNKNOWN_MESSAGE)).toBeTruthy();
+    expect(checkButton()).not.toBeNull();
+    expect(
+      (screen.getByRole('button', { name: /^Send comments$|^Approve$/ }) as HTMLButtonElement)
+        .disabled
+    ).toBe(true);
+  };
+
+  it('keeps the alert and the hold after the summary is edited, even by a space', async () => {
+    await sendThenFail(() => ({ body: {} }));
+    await screen.findByText(UNKNOWN_MESSAGE);
+    writeSummary('Looks fine. ');
+    stillHeld();
+    writeSummary('Something else.');
+    stillHeld();
+  });
+
+  it('keeps the alert and the hold after the verdict is changed', async () => {
+    await sendThenFail(() => ({ body: {} }));
+    await screen.findByText(UNKNOWN_MESSAGE);
+    chooseVerdict(/approve/i);
+    stillHeld();
+  });
+
+  it('keeps the alert and the hold after the set of drafts changes', async () => {
+    const { view } = await sendThenFail(() => ({ body: {} }));
+    await screen.findByText(UNKNOWN_MESSAGE);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    view.rerender(
+      <QueryClientProvider client={qc}>
+        <ReviewPanel data={cockpit({ drafts: [draft(), draft({ id: 'd-2', line: 5 })] })} />
+      </QueryClientProvider>
+    );
+    stillHeld();
+    view.rerender(
+      <QueryClientProvider client={qc}>
+        <ReviewPanel data={cockpit({ drafts: [] })} />
+      </QueryClientProvider>
+    );
+    stillHeld();
+  });
+
+  it('announces the unknown outcome as a status, and the check results inside it', async () => {
+    await sendThenFail(() => ({
+      body: { data: { message: 'Not on the host yet.', status: 'not-found' } },
+    }));
+    await screen.findByText(UNKNOWN_MESSAGE);
+    const alert = screen
+      .getAllByRole('status')
+      .find((el) => el.textContent?.includes('It is not known whether the review was sent'));
+    expect(alert).toBeDefined();
+    fireEvent.click(checkButton() as HTMLElement);
+    const note = await screen.findByText('Not on the host yet.');
+    expect(alert?.contains(note)).toBe(true);
+  });
+
+  it('moves focus to the check button when the dialog closes on an unknown outcome', async () => {
+    await sendThenFail(() => ({ body: {} }));
+    await screen.findByText(UNKNOWN_MESSAGE);
+    await waitFor(() => expect(document.activeElement).toBe(checkButton()));
+  });
+
+  it('clears the earlier sent result when a later send is unknown', async () => {
+    let sends = 0;
+    gateway((call) => {
+      if (call.url.endsWith('/review')) {
+        sends++;
+        return sends === 1
+          ? {
+              body: {
+                data: { comments: 0, draftsKept: false, event: 'COMMENT', reviewId: 9, url: null },
+              },
+            }
+          : failure('OUTCOME_UNKNOWN', UNKNOWN_MESSAGE);
+      }
+      return { body: {} };
+    });
+    show(cockpit());
+    writeSummary('First.');
+    fireEvent.click(sendButton('Send comments'));
+    confirm('Send comments');
+    await screen.findByText('Review sent');
+    writeSummary('Second.');
+    fireEvent.click(sendButton('Send comments'));
+    confirm('Send comments');
+    await screen.findByText(UNKNOWN_MESSAGE);
+    expect(screen.queryByText('Review sent')).toBeNull();
+  });
+
+  it('offers no check for another failure', async () => {
+    await sendThenFail(
+      () => ({ body: {} }),
+      failure('HOST_REJECTED', 'The host refused the review.')
+    );
+    expect(await dialog().findByText('The host refused the review.')).toBeTruthy();
+    expect(checkButton()).toBeNull();
   });
 });
 

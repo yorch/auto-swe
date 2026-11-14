@@ -171,8 +171,9 @@ nothing is read from the host until that is decided. The answer has these parts,
   of the current one, which a force-push causes; the commits are then those the branch has beyond
   the last one they share. `commits` is null when the host could not be asked for them, so only the
   move is known.
-- `drafts` — the caller's own unsent line comments (§2.4), oldest first. Each is `outdated` when its
-  file's patch is no longer the one it was written against or its line is no longer in the patch;
+- `drafts` — the caller's own unsent line comments (§2.4), oldest first, each with its `side` and
+  `startLine`. Each is `outdated` when its file's patch is no longer the one it was written against
+  or its line, or its range, is no longer anchorable in the patch (§2.4);
   while the files cannot be read nothing is flagged, since nothing can be said.
 - `write` — whether the caller can send from the page (§2.5): `available`, and when not, a `reason`
   (`disabled`, `no-token`, `unusable` or `unreadable`). `approvalMayNotCount` is true for the person
@@ -213,15 +214,22 @@ The visibility and 404 are the cockpit's. The in-app assistant may not call it.
 
 ## 2.4 Draft line comments
 
-`POST /api/v1/pull-requests/:id/drafts` keeps a comment for the caller on one line of a file's new
-side: `{ path, line, body, headSha, patchDigest }`. `PATCH …/drafts/:draftId` changes the text and
+`POST /api/v1/pull-requests/:id/drafts` keeps a comment for the caller:
+`{ path, line, body, headSha, patchDigest, side?, startLine? }`. `side` is `RIGHT` (the default; `line`
+is a line of the file's new side) or `LEFT` (an old-side line number, which is how a removed line is
+commented on). `startLine`, when present, must be below `line` and makes the comment cover the range
+from `startLine` to `line` on the same side (`400` otherwise). `PATCH …/drafts/:draftId` changes the text and
 `DELETE …/drafts/:draftId` discards it. A draft is the caller's alone and never leaves the platform
 until a review is sent (§2.5); a person holds at most 100 per pull request
 (`400 TOO_MANY_DRAFTS`). Text is refused (`400 REVIEW_TEXT_REFUSED`, with `details.problem`) when it
 is empty, longer than 4000 characters, holds the platform's automation marker (the platform would
 read it as its own text and ignore it), or has a line starting `/auto-swe fix`, which starts a run
-when it reaches the host and has its own button (§2.6). Whether the line is still in the diff is
-decided when a review is sent. The visibility and 404 are the cockpit's, and a draft that is not the
+when it reaches the host and has its own button (§2.6). Whether the anchor is still in the diff is
+decided against the host's patch when a review is sent, and by the cockpit's `outdated` flag. On
+`RIGHT` the anchor must be an added or unchanged line, numbered by the new side; on `LEFT` a removed
+or unchanged line, numbered by the old side (a hunk header `@@ -a,b +c,d @@` gives each side's first
+number). A range needs both ends valid on its side and inside the same hunk, because the host refuses
+a range that spans hunks; a "No newline at end of file" marker is not a line. The visibility and 404 are the cockpit's, and a draft that is not the
 caller's is a `404 DRAFT_NOT_FOUND`. The in-app assistant may not call these.
 
 ## 2.5 `POST /api/v1/pull-requests/:id/review`
@@ -238,19 +246,50 @@ body or a draft (`400 NOTHING_TO_SEND`). The text rules are §2.4's.
 The host is read first, and nothing is sent when the pull request cannot be read
 (`409 FILES_UNAVAILABLE`), is no longer open (`409 PULL_REQUEST_NOT_OPEN`), has moved from `headSha`
 (`409 STALE_HEAD`, with `details.currentHeadSha`), or when any named draft is on a file whose patch has
-changed or on a line no longer in it (`409 DRAFTS_OUTDATED`, with `details.draftIds`); a draft that
+changed or on a line or range no longer anchorable in it (`409 DRAFTS_OUTDATED`, with `details.draftIds`); a draft that
 no longer exists is `409 DRAFTS_CHANGED`. A refusal by the host is a `502` whose code says which:
 `HOST_FORBIDDEN`, `HOST_NOT_FOUND`, `HOST_RATE_LIMITED`, `HOST_REJECTED` (an author cannot approve
-their own pull request, and a comment must be on a changed line) or `OUTCOME_UNKNOWN`. The message
+their own pull request, and a comment must be on lines the diff shows, a range within one hunk) or `OUTCOME_UNKNOWN`. The message
 is fixed text, never the host's words.
 
 A review is sent once and never retried. It carries no idempotency key, because a key would have to
 be a marker in the text, and text with the marker is read as the platform's own. When the connection
 fails or the host answers 5xx, the review may or may not exist, and the answer says exactly that;
-the drafts are kept so nothing is lost, and the reviewer checks the pull request before trying
-again. On success the sent drafts are deleted and an audit entry of entity type `PullRequestReview` is
+the drafts are kept so nothing is lost, and the reviewer can ask the platform to check (below) or
+look at the pull request before trying again. On success the sent drafts are deleted and an audit entry of entity type `PullRequestReview` is
 written in one transaction ([`audit-log.md`](./audit-log.md)); if that step fails the answer is still
 a success, with `draftsKept: true`. The answer carries the review's id and an http(s) address.
+
+`POST /api/v1/pull-requests/:id/review/check` answers whether a review whose send ended unknown is on
+the host. It takes the submit body plus `attemptedAt`, the time of the send, and it applies the
+submit route's own refusals first (`400 REVIEW_TEXT_REFUSED`, `REVIEW_BODY_REQUIRED` and
+`NOTHING_TO_SEND`, so a body that could never have been sent is never looked for). A send older than
+an hour is `400 ATTEMPT_TIME_INVALID`; one dated in the future is a fast browser clock and is
+clamped to the server's now. The page's time is a hint, not a bound. It reads only: the caller's own saved token (`409 NO_USER_CREDENTIAL`
+as for a send, never the platform's) learns the reviewer's login, then the pull request's reviews
+are listed, the first page or, when the host reports more, the last two pages. It needs neither an
+open pull request nor the current head, because the review was sent against `headSha`; the drafts
+must still exist (`409 DRAFTS_CHANGED`). A review matches when it is the reviewer's, on `headSha`,
+in the state its event produces, with the same text once trimmed, and stamped no later than a
+minute from now and no earlier than the window start. The window starts at the earlier of two
+minutes before `attemptedAt` (clamped to now) and ten minutes before now, so it always reaches back
+at least ten minutes, and further when the page claims an older attempt, never past the hour. A
+wider window means an identical review sent earlier inside it can match, which the one-to-one
+comment, text, head and state match makes unlikely. Its line comments must also be the drafts
+that were sent, one to one in any order, by path, line, side, start line and trimmed text, with the
+lines read in the numbering of the head the review was sent on (`original_line` and
+`original_start_line`), which holds after a later push has moved or outdated them, and a
+review sent with no drafts must have no line comments; this keeps a reply the reviewer typed on the
+host from being taken for the send. The comments of the newest three candidates are read at most, and a
+candidate whose comments span more than one page is not matched. A
+match is conclusive enough to act on: the drafts are deleted and the audit entry is written in one
+transaction under an advisory lock on the pull request, so two concurrent checks write one row,
+with `confirmed: true`, and the answer is the submit answer plus `status: "found"` and
+`confirmed: true`. When an audit entry for that host review id already exists, from the send or an
+earlier check, no second one is written and the answer is the same. No match is `status:
+"not-found"` with fixed text, the drafts are kept, nothing is audited, and it proves nothing,
+because the host may not list the review yet. Two identical reviews sent inside that window cannot
+be told apart. A host failure is the same `502` as for a send.
 
 ## 2.6 `POST /api/v1/pull-requests/:id/send-back`
 
@@ -457,8 +496,10 @@ reload.
   commit subjects, or that the branch was rewritten), kept on screen for the visit, and a file whose
   patch changed under a viewed mark says so in the rail and on the file.
   A reviewer with a saved GitHub token for the repository can also write from the page, as
-  themselves: the number of each added or unchanged line is a button that opens a box under the line,
-  saved as a draft; a panel sends the verdict (comment, approve, request changes), a summary and the
+  themselves: the number of each added, unchanged or deleted line is a button that opens a box under
+  the line (a deleted line is commented on by its old-file number), saved as a draft; Shift-clicking
+  a second line of the same hunk, on the same side, turns the open box into a multi-line comment
+  (across hunks it is a plain click); a panel sends the verdict (comment, approve, request changes), a summary and the
   drafts as one review; and "Send back to the agent" leaves `/auto-swe fix`, with a note if wanted.
   Every send asks first and says it is posted as them. Without such a token the panel says why and
   offers nothing; drafts that no longer fit the diff are listed in the panel, where they can be
@@ -489,12 +530,21 @@ text with invisible and direction-changing characters made visible, never markup
 
 - The outcomes `teamId` filter matches through the pull request's attribution run, so a pull request with no run, or a run with no attributed team, appears under no team's metrics (it still appears when no `teamId` is given).
 - Writing from the page needs a token the reviewer saved for the repository, with the switch for
-  saved tokens on. The token's scope is not checked when it is saved, so a token that cannot write
-  fails at the first send (`HOST_FORBIDDEN`). A comment is on one line of the new side: a comment on a
-  removed line, on a range of lines or on a whole file is written on the host.
+  saved tokens on. Saving a classic token reports whether it has the `repo` scope; a fine-grained
+  token cannot be checked there, so a write can still be refused (`HOST_FORBIDDEN`) at the first
+  send. A comment is on one line or one range of lines within a
+  single hunk, on the new side or, for a removed line, the old side; a comment on a range that spans
+  hunks, or on a whole file, is written on the host.
 - A review is sent once and never retried, and carries no key the host could de-duplicate by, so a
-  send whose outcome is unknown (`OUTCOME_UNKNOWN`) is for the reviewer to check on the host. The
-  host's own rules still apply: an author cannot approve their own pull request, and a review
+  send whose outcome is unknown (`OUTCOME_UNKNOWN`) leaves it to the reviewer to ask the platform to
+  check. The check matches on the review's head, event, text, time window and line comments, so a
+  match is taken as the review having landed, a miss proves nothing about whether it was sent, and
+  an identical review sent twice in the window is indistinguishable. A review dismissed between the
+  send and the check no longer has the sent state, so it is not found. A check repeated after an
+  earlier check already cleared the drafts is refused (`DRAFTS_CHANGED`, the page asks to reload)
+  instead of saying it was already confirmed. A check makes up to seven sequential reads (the
+  login, up to three review pages, and up to three comment reads), so it can be slow on a slow
+  host. The host's own rules still apply: an author cannot approve their own pull request, and a review
   requesting changes or approving counts toward branch protection only as the host decides. The
   platform sets aside the approval of whoever launched or requested the work, and the page warns
   only for the latest run and the requester it can see, not for every run of the same work.
