@@ -706,60 +706,69 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
   // List schedules. Admins see everything; everyone else sees schedules for
   // repos on teams they belong to. Live next/last-fire info comes from the
   // Temporal Schedule (best-effort — DB columns are only bookkeeping).
-  app.get('/', { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) }, async (request) => {
-    const user = requireUser(request);
-    // A schedule is visible through the repository it runs on (owner or shared
-    // team), not through its own team: the owner sees every team's schedules on
-    // its repository, so the scope is the repository relation.
-    const rows = await runUnscoped(
-      'schedules are scoped through the repository the caller can reach; an admin sees all',
-      ['ScheduledWorkRequest'],
-      () =>
-        fastify.prisma.scheduledWorkRequest.findMany({
-          include: scheduleListInclude(user.sub),
-          orderBy: { createdAt: 'desc' },
-          where:
-            user.role === 'ADMIN'
-              ? {}
-              : { repository: reachableConnections(user, request.repoAccessGate) },
+  app.get(
+    '/',
+    { config: { mcpScope: 'read' }, onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
+    async (request) => {
+      const user = requireUser(request);
+      // A schedule is visible through the repository it runs on (owner or shared
+      // team), not through its own team: the owner sees every team's schedules on
+      // its repository, so the scope is the repository relation.
+      const rows = await runUnscoped(
+        'schedules are scoped through the repository the caller can reach; an admin sees all',
+        ['ScheduledWorkRequest'],
+        () =>
+          fastify.prisma.scheduledWorkRequest.findMany({
+            include: scheduleListInclude(user.sub),
+            orderBy: { createdAt: 'desc' },
+            where:
+              user.role === 'ADMIN'
+                ? {}
+                : { repository: reachableConnections(user, request.repoAccessGate) },
+          })
+      );
+      // Not connected: the live state is unknown, which is not the same as "no schedule".
+      // `exists: null` + `unavailable: true` lets a client say so instead of showing an
+      // unscheduled row for a schedule that is firing.
+      const unknownStatus = {
+        exists: null,
+        lastRunAt: null,
+        nextRunAt: null,
+        paused: false,
+        unavailable: true,
+      };
+      const statuses = await Promise.all(
+        rows.map(async (row) => {
+          if (!temporalConnected(fastify)) {
+            return unknownStatus;
+          }
+          try {
+            return await fastify.temporal.getWorkRequestScheduleStatus(row.id);
+          } catch {
+            // "No such schedule" is already `exists: false` from the status call; anything
+            // that throws here means the scheduler could not be asked, which is unknown.
+            return unknownStatus;
+          }
         })
-    );
-    // Not connected: the live state is unknown, which is not the same as "no schedule".
-    // `exists: null` + `unavailable: true` lets a client say so instead of showing an
-    // unscheduled row for a schedule that is firing.
-    const unknownStatus = {
-      exists: null,
-      lastRunAt: null,
-      nextRunAt: null,
-      paused: false,
-      unavailable: true,
-    };
-    const statuses = await Promise.all(
-      rows.map(async (row) => {
-        if (!temporalConnected(fastify)) {
-          return unknownStatus;
-        }
-        try {
-          return await fastify.temporal.getWorkRequestScheduleStatus(row.id);
-        } catch {
-          // "No such schedule" is already `exists: false` from the status call; anything
-          // that throws here means the scheduler could not be asked, which is unknown.
-          return unknownStatus;
-        }
-      })
-    );
-    // The rows are the caller's to see; so is what their fires decided.
-    const decisions = await latestActivity(
-      fastify.prisma,
-      SCHEDULE_FIRE_SOURCE,
-      rows.map((r) => r.id)
-    );
-    return {
-      data: rows.map((row, i) =>
-        serializeSchedule(row, statuses[i], rowCanManage(user, row), decisions.get(row.id) ?? null)
-      ),
-    };
-  });
+      );
+      // The rows are the caller's to see; so is what their fires decided.
+      const decisions = await latestActivity(
+        fastify.prisma,
+        SCHEDULE_FIRE_SOURCE,
+        rows.map((r) => r.id)
+      );
+      return {
+        data: rows.map((row, i) =>
+          serializeSchedule(
+            row,
+            statuses[i],
+            rowCanManage(user, row),
+            decisions.get(row.id) ?? null
+          )
+        ),
+      };
+    }
+  );
 
   app.post(
     '/',

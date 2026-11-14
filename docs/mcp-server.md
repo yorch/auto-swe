@@ -154,6 +154,8 @@ team for an administrator, exactly as the dashboard does. Their inputs are stric
 | `get_team` | `GET /api/v1/teams/:id` | A team's members as `userId` and team `role` (no names or emails), the repositories it owns, and the repositories shared with it. Input: `teamId`. |
 | `list_pull_requests` | `GET /api/v1/pull-requests` | `id`, `number`, `status`, `isDraft`, `ciStatus`, timestamps, `repository`, `ticketId`, `workRequestId`, `latestRun`, `costUsd` and `url` (rebuilt and checked against the configured GitHub hosts, as for `get_run`). No title. Inputs: `limit`, `offset`, `state`, `draft`, `scope` (`MINE` by default), `repoId`, `teamId`, `ticket`. |
 | `get_agent_run_limits` | `GET /api/v1/agent-runs/limits` | The step, wall-clock and concurrency ceilings an agent run launches under, and whether agent runs are enabled. Input: optional `repoId`. |
+| `list_epics` | `GET /api/v1/epics` | `ticketId`, `status`, `repositoryCount`, timestamps, `requestedById` and `workRequestId` for cross-repository epics. No description, name or email. Inputs: `limit`, `offset`, `scope` (`TEAM` by default), `teamId`. |
+| `list_schedules` | `GET /api/v1/scheduled-work-requests` | `id`, `name`, `cron`, `isActive`, `paused`, `lastFiredAt`, `lastRunAt`, `nextRunAt`, `budgetTier`, `repository` and `canManage` for schedules on repositories the caller can reach; `scheduleKnown` is false when the scheduler could not be asked. No description, author or submitted work. |
 
 A tool's output schema holds plain types only, because a JSON Schema cannot represent a transform: the
 sanitising schemas that read the REST body (`shortName`, `status`, `ticketId` in `projections.ts`) are

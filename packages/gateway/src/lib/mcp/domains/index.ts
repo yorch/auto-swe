@@ -1,6 +1,7 @@
 import type { McpToolDeps, ToolKit } from '../toolKit.js';
 import { deliveryDomain } from './delivery.js';
 import { teamsDomain } from './teams.js';
+import { workDomain } from './work.js';
 
 /**
  * The tools beyond the original eight, grouped by what they are about. A domain lists each tool it
@@ -28,7 +29,7 @@ export interface McpDomain {
   register(kit: ToolKit, deps: McpToolDeps): void;
 }
 
-export const MCP_DOMAINS: readonly McpDomain[] = [deliveryDomain, teamsDomain];
+export const MCP_DOMAINS: readonly McpDomain[] = [deliveryDomain, teamsDomain, workDomain];
 
 const allTools = MCP_DOMAINS.flatMap((d) => d.tools);
 
