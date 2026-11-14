@@ -127,6 +127,7 @@ describe('githubApproverAppRoutes', () => {
       appSlug: null,
       configured: false,
       privateKeyLastFour: null,
+      retiredAppSlugs: [],
       updatedAt: null,
     });
   });
@@ -139,9 +140,18 @@ describe('githubApproverAppRoutes', () => {
       appSlug: 'approver-bot',
       configured: true,
       privateKeyLastFour: 'zzzz',
+      retiredAppSlugs: [],
       updatedAt: '2026-10-29T00:00:00.000Z',
     });
     expect(res.payload).not.toMatch(/ciphertext|nonce|authTag|PRIVATE KEY/i);
+  });
+
+  it('GET lists the retired slugs, oldest first', async () => {
+    admin.prisma.gitHubApproverApp.findUnique.mockResolvedValue(
+      row({ retiredAppSlugs: ['older', 'old'] })
+    );
+    const res = await admin.app.inject({ headers: AUTH, method: 'GET', url: URL });
+    expect(JSON.parse(res.payload).retiredAppSlugs).toEqual(['older', 'old']);
   });
 
   it('GET is not configured when the key is missing', async () => {
@@ -405,13 +415,11 @@ describe('githubApproverAppRoutes', () => {
       expect(saved().retiredAppSlugs).toEqual(['a2', 'a3', 'a4', 'a5', 'approver-bot']);
     });
 
-    it('never puts a slug in an audit entry or a response', async () => {
+    it('never puts a slug in an audit entry', async () => {
       admin.prisma.gitHubApproverApp.findUnique.mockResolvedValue(row());
       await admin.app.inject({ headers: AUTH, method: 'DELETE', url: URL });
       const audit = JSON.stringify(admin.prisma.configAuditLog.create.mock.calls);
       expect(audit).not.toContain('approver-bot');
-      const get = await admin.app.inject({ headers: AUTH, method: 'GET', url: URL });
-      expect(get.payload).not.toContain('retired');
     });
   });
 

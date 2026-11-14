@@ -805,7 +805,7 @@ is the count of all matching open pull requests, not the number ordered. The Pul
 | `GET /api/v1/pr-evaluations` | ENGINEER | Evaluations, newest first, for repositories you can reach. Filters `repoId`, `riskClass`, `merged`; `limit` (default 50, at most 100) and `offset`. Each row reports whether a brief exists and its length, not the brief |
 | `GET /api/v1/pr-evaluations/engagement` | ENGINEER | Whether reviewers act on the brief, for repositories you can reach: `days` (default 30, 1 to 365) and `repoId`. Evaluations, how many a person reviewed, the median minutes to the first review, the share of reviewed ones with a request for changes, and where inline comments landed (on a flagged file, on a file the brief said to skim, elsewhere), and `pullRequestsViewed` with `medianMinutesToFirstView`, how soon a pull request opened in the window was first opened on the review page. Reads at most 5000 evaluations and 5000 first visits and says `capped` when the window held more of either |
 | `GET /api/v1/pr-evaluations/:id` | ENGINEER | One evaluation in full: reasons, the brief, and the branch rules it read |
-| `GET /api/v1/integrations/github-approver-app` | ADMIN | Whether the approver App is configured, its App id and slug, the last four characters of its private key, and when it changed. The key is never returned |
+| `GET /api/v1/integrations/github-approver-app` | ADMIN | Whether the approver App is configured, its App id and slug, the last four characters of its private key, the retired slugs (`retiredAppSlugs`, oldest first), and when it changed. The key is never returned |
 | `PUT /api/v1/integrations/github-approver-app` | ADMIN | Body `{ "appId"?, "appSlug"?, "privateKey"? }`. Checked against GitHub before anything is stored (§16.2). A blank `privateKey` keeps the stored one |
 | `DELETE /api/v1/integrations/github-approver-app` | ADMIN | Removes the App id, slug and key (`204`); the removed slug is kept so its approvals can still be withdrawn |
 
@@ -1306,7 +1306,14 @@ documentation change as a platform pull request and read the evaluation's reason
   the class is only as good as that review.
 - **`auto` merges use the squash method only.**
 - **GitHub only.** Other source-control hosts are not evaluated.
-- **The dashboard has no page for the evaluations themselves.** The brief lives on the pull request
-  and the routes in §13 expose the state; the CLI reads it. A single pull request has a review page
-  (`/pull-requests/<id>`, described in [`work-views.md`](./work-views.md)) that draws the stored
-  brief and the live diff together.
+- **The evaluations list is an admin page with narrow filters.** `/admin/pr-evaluations` (ADMIN)
+  lists evaluations from `GET /api/v1/pr-evaluations` with their class, mode, commit status,
+  whether auto-merge is armed and whether a brief exists, and opens the stored brief as plain text.
+  It filters by repository, class and merged state only, because those are the route's filters;
+  there is no filter by commit status or mode. With a repository chosen it shows the repository's
+  mode and bot approval and lets an ADMIN change both through `PUT …/pr-evaluation`, so the gateway's
+  refusals (`AUTO_NOT_READY`, `BOT_APPROVAL_NOT_READY`) appear with their reasons. The list row names
+  its pull request by repository and number only, so the page finds the review page
+  (`/pull-requests/<id>`, described in [`work-views.md`](./work-views.md)) from each visible
+  repository's newest 100 pull requests: an older pull request's row shows no link. The page is
+  admin-only; an ENGINEER reads the same data through the routes in §13 or the CLI.

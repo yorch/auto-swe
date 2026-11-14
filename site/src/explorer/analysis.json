@@ -6191,7 +6191,7 @@
     {
       "body": "A command written into a gate step, a runQualityGates gate or an eval gate scorer runs in the agent workspace with network access; the role and the audit row are its only controls.",
       "category": "Isolation",
-      "detail": "Unlike container code it takes no image allowlist and no network policy. Coverage at sign-off is matched by node, image and command, and rows are never pruned, so a version needs the role again only when no row covers its code, such as an older built-in version the built-in sync did not record; the table grows with the versions that carry code. A gate command is checked when it is saved or moved, not when a run starts, so a stored command stays in use after the admin who set it loses the role. A repository’s gate commands reach every run on it that sets no command of its own.",
+      "detail": "Unlike container code it takes no image allowlist and no network policy. Coverage at sign-off is matched by node, image and command, and rows of active and draft templates are never pruned (only old rows of archived templates are, by an admin’s request), so a version needs the role again only when no row covers its code, such as an older built-in version the built-in sync did not record; the table grows with the versions that carry code. A gate command is checked when it is saved or moved, not when a run starts, so a stored command stays in use after the admin who set it loses the role. A repository’s gate commands reach every run on it that sets no command of its own.",
       "id": "authoredCommandsUnsandboxed",
       "refs": [
         "authoredCommandNode",
@@ -12731,12 +12731,12 @@
       "title": "A version about to serve runs: uncovered authored code needs the role, and is audited per node, image and command"
     },
     {
-      "anchor": "// Kept for the callers (crons) that already call it; it deletes nothing. A",
+      "anchor": "// A `WorkflowShellAudit` row is the record of who let a version's code run. Any",
       "before": 0,
       "id": "shellAuditPrune",
       "lines": 14,
       "path": "packages/gateway/src/routes/admin.ts",
-      "title": "The shell-audit prune route deletes nothing: a version’s audit rows live as long as its template"
+      "title": "The shell-audit prune route deletes only old rows of archived templates; an active or draft template’s rows are kept"
     },
     {
       "anchor": "async function auditBuiltinVersion(",

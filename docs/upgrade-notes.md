@@ -1503,6 +1503,24 @@ credential rotation.
 
 ---
 
+### Shell audit prune now deletes rows of archived templates (`<fixing commit SHA>`)
+
+**Affected.** Deployments with a cron or script that calls `POST /api/v1/platform/shell-audit/prune`.
+
+**What changes.** The endpoint used to answer `deleted: 0` and remove nothing. It now deletes
+`WorkflowShellAudit` rows older than `days` (default 90) whose template version belongs to a template
+with status `ARCHIVED`, and writes an audit-log entry. Rows of ACTIVE and DRAFT templates are never
+touched. The response is `{ data: { deleted, olderThanDays, dryRun } }`. No migration.
+
+**Actions.** If you keep shell audit rows as a permanent record, stop the cron or lengthen `days`.
+Call it with `dryRun=true` first to see the count; the Audit log page has the same preview and a
+confirmed delete.
+
+**Verify.** `POST /api/v1/platform/shell-audit/prune?days=90&dryRun=true` returns the number of rows
+that would go and deletes none.
+
+---
+
 ### Node clients in workspaces use the egress proxy (`<fixing commit SHA>`)
 
 **Affected.** Deployments with the egress proxy configured whose repositories' Node code (global

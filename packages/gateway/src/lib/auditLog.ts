@@ -60,6 +60,7 @@ export type AuditEntityType =
   | 'TeamSecret'
   | 'ToolCatalogEntry'
   | 'User'
+  | 'WorkflowShellAudit'
   | 'WorkflowTemplate'
   | 'WorkRequest'
   | 'WorkflowRun';

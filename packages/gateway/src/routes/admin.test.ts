@@ -32,6 +32,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
       findMany: vi.fn().mockResolvedValue([]),
     },
     workflowShellAudit: {
+      count: vi.fn().mockResolvedValue(0),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
   };
@@ -165,24 +166,63 @@ describe('adminRoutes', () => {
     });
     afterAll(() => ctx.app.close());
 
-    it('deletes nothing: a row lives as long as its template version', async () => {
+    beforeEach(() => {
+      ctx.mockPrisma.workflowShellAudit.count.mockClear();
+      ctx.mockPrisma.workflowShellAudit.deleteMany.mockReset();
+      ctx.mockPrisma.workflowShellAudit.deleteMany.mockResolvedValue({ count: 0 });
+      ctx.mockPrisma.configAuditLog.create.mockClear();
+    });
+
+    it('deletes only old rows of ARCHIVED templates and audits the delete', async () => {
+      ctx.mockPrisma.workflowShellAudit.deleteMany.mockResolvedValueOnce({ count: 3 });
+      const before = Date.now();
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'POST',
         url: '/api/v1/platform/shell-audit/prune?days=30',
       });
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload).data).toEqual({ deleted: 0, olderThanDays: 30 });
-      expect(ctx.mockPrisma.workflowShellAudit.deleteMany).not.toHaveBeenCalled();
+      expect(JSON.parse(res.payload).data).toEqual({
+        deleted: 3,
+        dryRun: false,
+        olderThanDays: 30,
+      });
+      const { where } = ctx.mockPrisma.workflowShellAudit.deleteMany.mock.calls[0][0];
+      // Rows of ACTIVE/DRAFT templates and recent rows are excluded by the filter itself.
+      expect(where.templateVersion).toEqual({ template: { status: 'ARCHIVED' } });
+      const cutoff = (where.createdAt.lt as Date).getTime();
+      expect(cutoff).toBeLessThanOrEqual(before - 30 * 86_400_000 + 1000);
+      expect(cutoff).toBeGreaterThan(before - 30 * 86_400_000 - 5000);
+      expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalledTimes(1);
     });
 
-    it('still answers the default window, for the crons that call it', async () => {
+    it('dryRun counts with the same filter and deletes nothing', async () => {
+      ctx.mockPrisma.workflowShellAudit.count.mockResolvedValueOnce(7);
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'POST',
-        url: '/api/v1/platform/shell-audit/prune',
+        url: '/api/v1/platform/shell-audit/prune?days=30&dryRun=true',
       });
-      expect(JSON.parse(res.payload).data.olderThanDays).toBe(90);
+      expect(JSON.parse(res.payload).data).toEqual({
+        deleted: 7,
+        dryRun: true,
+        olderThanDays: 30,
+      });
+      expect(ctx.mockPrisma.workflowShellAudit.deleteMany).not.toHaveBeenCalled();
+      expect(ctx.mockPrisma.configAuditLog.create).not.toHaveBeenCalled();
+      expect(
+        ctx.mockPrisma.workflowShellAudit.count.mock.calls[0][0].where.templateVersion
+      ).toEqual({ template: { status: 'ARCHIVED' } });
+    });
+
+    it('treats dryRun=false as a real delete', async () => {
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: '/api/v1/platform/shell-audit/prune?dryRun=false',
+      });
+      expect(JSON.parse(res.payload).data).toMatchObject({ dryRun: false, olderThanDays: 90 });
+      expect(ctx.mockPrisma.workflowShellAudit.deleteMany).toHaveBeenCalledTimes(1);
     });
 
     it('stays platform-admin only', async () => {

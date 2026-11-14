@@ -813,6 +813,41 @@ export function useImportEvalLessons(datasetId: string) {
   });
 }
 
+export interface CreateEvalCaseInput {
+  baselineSha: string;
+  goldenTest: string;
+  input: string;
+  reference?: string;
+  repoUrl: string;
+  stack?: 'node' | 'python' | 'jvm' | 'go' | null;
+  tags?: string[];
+}
+
+export interface CreateEvalDatasetInput {
+  cases: CreateEvalCaseInput[];
+  description?: string | null;
+  name: string;
+  slug: string;
+}
+
+/**
+ * Create a GLOBAL dataset together with its cases (ADMIN). Cases can only be supplied here: the
+ * API has no route that adds one to an existing dataset.
+ */
+export function useCreateEvalDataset() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateEvalDatasetInput) =>
+      api
+        .post<{ data: EvalDatasetSummary }>('/api/v1/platform/evals', { ...input, scope: 'GLOBAL' })
+        .then((r) => r.data),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['eval-datasets'] });
+      void qc.invalidateQueries({ queryKey: ['eval-suite-health'] });
+    },
+  });
+}
+
 /** Judge rubrics, newest first (ADMIN). */
 export function useEvalRubrics() {
   return useQuery({
@@ -874,5 +909,34 @@ export function useEvalRun(id: string | null) {
       api.get<{ data: EvalRunDto }>(`/api/v1/platform/evals/runs/${id}`).then((r) => r.data),
     queryKey: ['eval-run', id],
     refetchInterval: (q) => (q.state.data?.status === 'RUNNING' ? 10_000 : false),
+  });
+}
+
+export interface ShellAuditPruneResult {
+  /** Rows deleted, or, for a dry run, rows that would be. */
+  deleted: number;
+  dryRun: boolean;
+  olderThanDays: number;
+}
+
+/**
+ * Prune shell-step audit rows older than `days` whose template is ARCHIVED. With `dryRun` it only
+ * counts. ADMIN-only on the API.
+ */
+export function useShellAuditPrune() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ days, dryRun }: { days: number; dryRun: boolean }) =>
+      api
+        .post<{ data: ShellAuditPruneResult }>(
+          `/api/v1/platform/shell-audit/prune?days=${days}&dryRun=${dryRun}`,
+          {}
+        )
+        .then((r) => r.data),
+    onSuccess: (result) => {
+      if (!result.dryRun) {
+        void qc.invalidateQueries({ queryKey: ['audit-log'] });
+      }
+    },
   });
 }

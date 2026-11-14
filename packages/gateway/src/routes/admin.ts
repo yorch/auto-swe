@@ -1,5 +1,6 @@
 import { Readable } from 'node:stream';
 import type { Prisma } from '@auto-swe/shared';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -8,6 +9,7 @@ import { csvCell } from '../lib/csv.js';
 import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { safePatAuditFields, tokenAuditEntity } from '../lib/patAuditFields.js';
+import { booleanQueryParam } from '../lib/queryParams.js';
 import {
   extractSessionCookieValue,
   invalidateSessionCache,
@@ -27,7 +29,7 @@ import {
  *   DELETE /api/v1/platform/sessions/:id           — revoke a session
  *   POST   /api/v1/platform/sessions/revoke-user   — revoke every session of one user (not the caller's own)
  *   GET    /api/v1/platform/audit-log               — config-audit rows, filtered + paginated
- *   POST   /api/v1/platform/shell-audit/prune      — deletes nothing: shell audit rows live as long as their version
+ *   POST   /api/v1/platform/shell-audit/prune      — delete shell audit rows older than `days` whose template is ARCHIVED (`dryRun` only counts)
  */
 
 const TokenIdParam = z.object({ id: z.string().uuid() });
@@ -35,7 +37,10 @@ const SessionIdParam = z.object({ id: z.string().uuid() });
 const RevokeUserBody = z.object({ userId: z.string().uuid() });
 const PruneQuery = z.object({
   days: z.coerce.number().int().min(1).max(3650).default(90),
+  dryRun: booleanQueryParam(false),
 });
+/** Fixed entity id for `ConfigAuditLog`, whose entity column is a UUID. */
+const SHELL_AUDIT_PRUNE_AUDIT_ID = '00000000-0000-0000-0001-000000000015';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const AuditLogQuery = paginationQuery({ defaultLimit: 50, maxLimit: 200 }).extend({
   action: z.enum(['CREATE', 'DELETE', 'UPDATE']).optional(),
@@ -516,17 +521,43 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // Kept for the callers (crons) that already call it; it deletes nothing. A
-  // `WorkflowShellAudit` row is the record of who let a version's code run, and a
-  // version is kept as long as its template exists — any version can be promoted
-  // again — so its rows are kept exactly as long: they go when the template is
-  // deleted (the foreign key cascades), never by age.
+  // A `WorkflowShellAudit` row is the record of who let a version's code run. Any
+  // version of an ACTIVE or DRAFT template can be promoted again, so those rows are
+  // never pruned. Rows older than `days` whose version belongs to an ARCHIVED
+  // template are deleted; `dryRun` returns the count and deletes nothing.
   app.post(
     '/shell-audit/prune',
     {
       onRequest: requireAuth({ requiredRole: 'ADMIN' }),
       schema: { querystring: PruneQuery },
     },
-    async (request) => ({ data: { deleted: 0, olderThanDays: request.query.days } })
+    async (request) => {
+      const { days, dryRun } = request.query;
+      const where = {
+        createdAt: { lt: new Date(Date.now() - days * DAY_MS) },
+        templateVersion: { template: { status: 'ARCHIVED' as const } },
+      };
+      if (dryRun) {
+        const count = await runUnscoped(
+          'ADMIN previews a platform-wide shell-audit prune',
+          ['WorkflowShellAudit'],
+          () => fastify.prisma.workflowShellAudit.count({ where })
+        );
+        return { data: { deleted: count, dryRun: true, olderThanDays: days } };
+      }
+      const { count } = await runUnscoped(
+        'ADMIN prunes shell-audit rows of archived templates across every team',
+        ['WorkflowShellAudit'],
+        () => fastify.prisma.workflowShellAudit.deleteMany({ where })
+      );
+      await writeAuditLog(fastify, {
+        action: 'DELETE',
+        actor: requireUser(request),
+        after: { deleted: count, olderThanDays: days },
+        entityId: SHELL_AUDIT_PRUNE_AUDIT_ID,
+        entityType: 'WorkflowShellAudit',
+      });
+      return { data: { deleted: count, dryRun: false, olderThanDays: days } };
+    }
   );
 };

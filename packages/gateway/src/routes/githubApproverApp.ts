@@ -96,6 +96,7 @@ function present(row: Row | null) {
     appSlug: row?.appSlug ?? null,
     configured: Boolean(row?.appId && row.appSlug && hasKey),
     privateKeyLastFour: hasKey ? (row?.privateKeyLastFour ?? null) : null,
+    retiredAppSlugs: row?.retiredAppSlugs ?? [],
     updatedAt: row?.updatedAt ?? null,
   };
 }

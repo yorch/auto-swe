@@ -12,6 +12,8 @@ export interface GithubApproverApp {
   appSlug: string | null;
   configured: boolean;
   privateKeyLastFour: string | null;
+  /** Slugs of Apps this one replaced, oldest first; their approvals are still recognised and withdrawn. */
+  retiredAppSlugs: string[];
   updatedAt: string | null;
 }
 

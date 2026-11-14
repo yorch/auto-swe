@@ -218,10 +218,12 @@ dynamic catalog + the user's intent go in the user message.
   shipped it; it also fills in the rows of the built-in version a template is on when they are
   missing). A version whose code is on record stays promotable by any LEAD who may write the
   template.
-- **Audit rows live as long as their version.** Any version can be promoted again, so its rows are
-  kept until its template is deleted, when the foreign key removes them. The shell-audit prune
-  (`POST /api/v1/platform/shell-audit/prune`, platform admin) is kept for the callers that already
-  use it and deletes nothing; the dashboard offers no prune control.
+- **Audit rows live as long as their template, unless it is archived.** Any version of an ACTIVE or
+  DRAFT template can be promoted again, so its rows are kept, and deleting a template removes its rows
+  through the foreign key. The shell-audit prune (`POST /api/v1/platform/shell-audit/prune?days=N`,
+  platform admin, off the assistant's reach) deletes rows older than `days` (default 90) whose template
+  is ARCHIVED, and writes an audit entry. `dryRun=true` returns the count and deletes nothing. The
+  security page offers it as a preview followed by a confirmed delete.
 
 ---
 
