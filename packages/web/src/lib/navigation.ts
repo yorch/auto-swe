@@ -150,6 +150,13 @@ const ADMIN_PAGES: NavItem[] = [
     section: 'Security',
   },
   {
+    href: '/admin/pr-evaluations',
+    icon: 'filter',
+    label: 'PR evaluations',
+    minRole: 'ADMIN',
+    section: 'Security',
+  },
+  {
     href: '/admin/policies',
     icon: 'security',
     label: 'Autonomy policies',
