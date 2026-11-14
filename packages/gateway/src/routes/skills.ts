@@ -111,7 +111,11 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /api/v1/platform/skills — `usedByCount` is how many Agents reference it.
   app.get(
     '/skills',
-    { onRequest: adminOnly, schema: { querystring: ListSkillsQuery } },
+    {
+      config: { mcpScope: 'read' },
+      onRequest: adminOnly,
+      schema: { querystring: ListSkillsQuery },
+    },
     async () => {
       const skills = await runUnscoped('admin skill library spans every team', ['Skill'], () =>
         fastify.prisma.skill.findMany({

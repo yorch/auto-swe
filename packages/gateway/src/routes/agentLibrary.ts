@@ -297,7 +297,11 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get(
     '/agent-library',
-    { onRequest: adminOnly, schema: { querystring: ListQuery } },
+    {
+      config: { mcpScope: 'read' },
+      onRequest: adminOnly,
+      schema: { querystring: ListQuery },
+    },
     async (request) => {
       // Every filter here is an optional query parameter, so the unfiltered
       // call — the admin library view with nothing selected — is the normal
