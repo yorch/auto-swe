@@ -188,8 +188,10 @@ describe('run pinning', () => {
       'workflow.maxNeedsInputRounds': 5,
       'workflow.maxTransitions': 500,
       'workflow.needsInputTimeoutSeconds': 86_400,
+      'workspace.cpus': 0,
       'workspace.egressPolicy': 'restricted',
       'workspace.implementerRuntime': 'mastra',
+      'workspace.memory': '',
       'workspace.setupEgressPolicy': 'inherit',
     });
   });

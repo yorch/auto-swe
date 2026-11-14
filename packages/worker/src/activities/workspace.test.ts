@@ -72,12 +72,24 @@ vi.mock('../lib/egressWiring.js', () => ({
   resolveRunSetupEgressPolicy: vi.fn(async () => policy.setup),
 }));
 
+// The sizing resolver reads the setting registry; its own test covers that. Here it defaults to
+// the environment-backed infra values, as an unconfigured deployment resolves.
+vi.mock('../lib/workspaceSizing.js', () => ({
+  resolveRunWorkspaceSize: vi.fn(
+    async (_teamId: string | null, infra: { memory: string; cpus: number }) => ({
+      cpus: infra.cpus,
+      memory: infra.memory,
+    })
+  ),
+}));
+
 import { runWithActivityNodeTag } from '../lib/activityNodeTag.js';
 import {
   beginWorkspaceEgress,
   blockedEgressAllow,
   resolveOnboardingDraftEgress,
 } from '../lib/egressWiring.js';
+import { resolveRunWorkspaceSize } from '../lib/workspaceSizing.js';
 
 afterEach(() => {
   policy.value = 'open';
@@ -520,6 +532,70 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
     expect(await start()).toContain(
       `--dns=${shellQuote('1.1.1.1')} --dns=${shellQuote('8.8.8.8')} `
     );
+  });
+
+  it("sizes the workspace from the run's resolved size, keeping the deployment's pids limit", async () => {
+    vi.mocked(resolveRunWorkspaceSize).mockResolvedValueOnce({ cpus: 3.5, memory: '12g' });
+
+    const ws = await createWorkspace(
+      'https://github.com/acme/repo.git',
+      'auto/TICKET-1',
+      'main',
+      undefined,
+      undefined,
+      undefined,
+      {
+        teamId: 'team-1',
+      }
+    );
+    const startCmd = vi
+      .mocked(execShellAsync)
+      .mock.calls.map((call) => call[0] as string)
+      .find((c) => c.includes('docker run -d --name'));
+
+    expect(resolveRunWorkspaceSize).toHaveBeenCalledWith('team-1', expect.anything());
+    expect(startCmd).toContain(`--memory=${shellQuote('12g')}`);
+    expect(startCmd).toContain('--cpus=3.5');
+    expect(startCmd).toContain('--pids-limit=512');
+
+    await ws.destroy();
+  });
+
+  it('annotates an exit-137 execCapture with the memory note and the real limit, and only that', async () => {
+    vi.mocked(resolveRunWorkspaceSize).mockResolvedValueOnce({ cpus: 2, memory: '12g' });
+    const ws = await createWorkspace('https://github.com/acme/repo.git', 'auto/TICKET-1', 'main');
+    const killed = { exitCode: 137, stderr: 'Killed', stdout: 'partial' };
+    vi.mocked(spawnCaptureAsync).mockResolvedValueOnce(killed);
+    const oom = await ws.execCapture('yarn test');
+    expect(oom.exitCode).toBe(137);
+    expect(oom.stdout).toBe('partial');
+    expect(oom.stderr).toMatch(/^Killed\n/);
+    expect(oom.stderr).toContain('most likely because the workspace ran out of memory (limit 12g)');
+    expect(oom.stderr).toContain('workspace.memory');
+
+    vi.mocked(spawnCaptureAsync).mockResolvedValueOnce({ exitCode: 1, stderr: 'boom', stdout: '' });
+    expect((await ws.execCapture('yarn test')).stderr).toBe('boom');
+
+    await ws.destroy();
+  });
+
+  it('puts the memory note on stdout when stderr is empty, so the gate summary keeps the test output', async () => {
+    vi.mocked(resolveRunWorkspaceSize).mockResolvedValueOnce({ cpus: 2, memory: '12g' });
+    const ws = await createWorkspace('https://github.com/acme/repo.git', 'auto/TICKET-1', 'main');
+    // vitest and jest write to stdout and `sh -c` prints no "Killed" line, so stderr is empty. The
+    // gate summary reads `stderr || stdout`: a note on the empty stderr would hide this output.
+    vi.mocked(spawnCaptureAsync).mockResolvedValueOnce({
+      exitCode: 137,
+      stderr: '',
+      stdout: 'RUN  src/heavy.test.ts',
+    });
+    const oom = await ws.execCapture('yarn test');
+    expect(oom.stderr).toBe('');
+    expect(oom.stdout).toMatch(/^RUN {2}src\/heavy\.test\.ts\n/);
+    expect(oom.stdout).toContain('ran out of memory (limit 12g)');
+    expect(oom.stderr || oom.stdout).toContain('src/heavy.test.ts');
+
+    await ws.destroy();
   });
 
   it('applies the workspace caps + default image from the environment', async () => {

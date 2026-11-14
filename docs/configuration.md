@@ -6,7 +6,7 @@ everything else is data an operator can change without a deploy.**
 
 | Tier | Lives in | Contents | Changed by |
 |---|---|---|---|
-| Bootstrap | Environment, permanently | `DATABASE_URL`, `CONFIG_ENCRYPTION_KEY`, `TEMPORAL_ADDRESS`, `PORT`, JWT/auth secrets, `BUNDLE_TRUSTED_KEYS`, `NEXT_PUBLIC_*`; sign-in credentials (`GITHUB_CLIENT_*`, `GOOGLE_CLIENT_*`, `OKTA_*`); artifact storage (`ARTIFACT_S3_*`, `ARTIFACT_FS_DIR`, `ARTIFACT_WRITE_BACKEND`, `AWS_*`); workspace sizing, images and network (`WORKSPACE_*`); the harness model proxy (`HARNESS_MODEL_PROXY_*`, `REGISTRY_PROXY_*`); `WORKER_MAX_CONCURRENT_ACTIVITIES`; `SCANNER_REGEX_BUDGET_MS`; the scheduled sweeps (`REPO_ACCESS_SYNC_*`, `REPO_DEPENDENCY_SCAN_*`, `MODEL_DISCOVERY_*`, `RUN_REAPER_*`, `WORKSPACE_REAPER_*`, `AUTOMATION_DECISION_PRUNE_*`, `SKILL_SOURCE_SYNC_*`, `SLACK_CHANNEL_SYNC_*`, `CALLBACK_DELIVERY_*`, `CALLBACK_DELIVERY_PRUNE_*`, `AGENT_TRANSCRIPT_PRUNE_*`, `AGENT_TRACE_ROLLUP_*`, `AUDIT_ACTIVITY_PRUNE_*`) | The deploy pipeline |
+| Bootstrap | Environment, permanently | `DATABASE_URL`, `CONFIG_ENCRYPTION_KEY`, `TEMPORAL_ADDRESS`, `PORT`, JWT/auth secrets, `BUNDLE_TRUSTED_KEYS`, `NEXT_PUBLIC_*`; sign-in credentials (`GITHUB_CLIENT_*`, `GOOGLE_CLIENT_*`, `OKTA_*`); artifact storage (`ARTIFACT_S3_*`, `ARTIFACT_FS_DIR`, `ARTIFACT_WRITE_BACKEND`, `AWS_*`); workspace sizing defaults, images and network (`WORKSPACE_*`); the harness model proxy (`HARNESS_MODEL_PROXY_*`, `REGISTRY_PROXY_*`); `WORKER_MAX_CONCURRENT_ACTIVITIES`; `SCANNER_REGEX_BUDGET_MS`; the scheduled sweeps (`REPO_ACCESS_SYNC_*`, `REPO_DEPENDENCY_SCAN_*`, `MODEL_DISCOVERY_*`, `RUN_REAPER_*`, `WORKSPACE_REAPER_*`, `AUTOMATION_DECISION_PRUNE_*`, `SKILL_SOURCE_SYNC_*`, `SLACK_CHANNEL_SYNC_*`, `CALLBACK_DELIVERY_*`, `CALLBACK_DELIVERY_PRUNE_*`, `AGENT_TRANSCRIPT_PRUNE_*`, `AGENT_TRACE_ROLLUP_*`, `AUDIT_ACTIVITY_PRUNE_*`) | The deploy pipeline |
 | Integrations | Singleton config tables | GitHub, the GitHub approver App (database only, no environment fallback), Slack, issue tracker, knowledge base, Figma, workflow defaults | Admins, at `/admin/integrations` and `/admin/workflow-defaults`; the approver App in its own card on the GitHub tab of `/admin/integrations` (or `PUT /api/v1/integrations/github-approver-app`) |
 | Policy | The setting registry | Operator knobs, not constants in the worker | Admins and grant holders, at `/admin/platform-settings` |
 
@@ -22,7 +22,7 @@ write access could otherwise mark a malicious bundle verified.
 The bootstrap tier also holds anything an admin edit could never usefully change, or should not be
 able to. Sign-in credentials and the Okta issuer are read once when the gateway boots, so an
 editable copy needs a restart to apply and would only add a second place to look. Storage is a
-deploy-time infrastructure choice, and workspace sizing and sidecar images describe the host the
+deploy-time infrastructure choice, and workspace sizing defaults and sidecar images describe the host the
 worker runs on. The worker validates those variables at boot and refuses to start on one it cannot
 use — a malformed image reference, a non-numeric limit, or `WORKSPACE_BLOCK_METADATA` set to anything
 but `true` or `false`. The gateway does the same for the sweep variables: a flag that is not `true` or
@@ -37,7 +37,14 @@ organization because a team on an isolated network may need its own mirror. The 
 (`workspace.agentRunMaxSteps`, `workspace.agentRunMaxWallClockSeconds`,
 `workspace.agentRunMaxConcurrentGlobal`, `workspace.agentRunMaxConcurrentPerTeam` and
 `workspace.agentRunAllowWorkflowChanges`) are registry settings too, all ADMIN-only; see
-[agent-runs.md](./agent-runs.md#6-bounds). `workspace.nulAllowedPaths` (ADMIN-only, GLOBAL scope only, empty
+[agent-runs.md](./agent-runs.md#6-bounds). Like `workspace.gitHelperImage`, `workspace.memory` and
+`workspace.cpus` put workspace infrastructure in the registry, because one team's runs may need more than the
+deployment's default: memory as a Docker value from `512m` to `64g`, CPUs from `0.5` to `16`. Both are ADMIN-only,
+run-pinned and overridable at workflow template, team and organization scope. They default to unset (an empty string
+and `0`), which means the deployment's `WORKSPACE_MEMORY` and `WORKSPACE_CPUS` apply; the environment value is the
+default and the deployer's authority, and a set value replaces it for every new workspace of the runs it covers. A
+value the schema refuses, or a failed read, also falls back to the environment value. The PID cap and storage limit
+stay environment-only. `workspace.nulAllowedPaths` (ADMIN-only, GLOBAL scope only, empty
 by default) lists path globs whose files may hold a NUL byte although their name does not say binary:
 the post-diff security gate reduces them to their printable strings instead of refusing the step
 ([agents.md](./agents.md#11-limitations)).
@@ -688,12 +695,21 @@ to enabling `uiValidation.prInlineImages`. The public bucket policy is operator-
   as a private address, or whose name resolves to one, is refused when its URL is typed but
   unsaved; the stored configuration is not re-checked by that guard, so save it and test the
   saved values.
+- **Workspace sizing is not checked against capacity.** `workspace.memory` and `workspace.cpus` are range-checked
+  when written, not against the nodes or quota behind them. Under Kubernetes a pod larger than the namespace quota
+  or any node stays Pending until the ready timeout and the run fails then; under Docker the daemon or broker
+  rejects an oversize request when the container is created.
+- **A memory kill is recognised only by its exit status.** A captured command that exits 137 is annotated as most likely
+  out of memory (see the Resources row in [architecture.md](./architecture.md)). A child killed while the shell survives and
+  exits 0 or 1, a runner that catches the death and reports its own failure, and a SIGKILL from another cause (`kill -9`)
+  are not told apart; the backend's `OOMKilled` state is not consulted, and a gate that was OOM-killed still fails and is
+  retried by its fix step like any other failure.
 - **The registry does not yet cover every compiled-in constant.** Temporal retry and timeout
   profiles (`packages/worker/src/workflows/proxyOptions.ts`), the context-spill budgets in
   `runnableContext.ts`, the model price table in `costTracking.ts`, and several agent loop caps are still
   code. Each is a definition away, but they are not done.
-- **`WorkflowDefaults` is platform-wide.** Branch prefix, PR templates, budget tiers, workspace
-  sizing, and the TDD/eval iteration caps resolve from one global row and do not cascade to a team.
+- **`WorkflowDefaults` is platform-wide.** Branch prefix, PR templates, budget tiers,
+  and the TDD/eval iteration caps resolve from one global row and do not cascade to a team.
   Moving them into the registry would give them the cascade; until then `/admin/workflow-defaults` edits them
   for the whole deployment.
 - **Cache invalidation is per process.** A write invalidates the writing process's cache

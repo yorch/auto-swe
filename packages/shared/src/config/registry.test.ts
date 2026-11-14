@@ -691,3 +691,47 @@ describe('workspace.lfsStorageHosts', () => {
     }
   });
 });
+
+describe('workspace sizing', () => {
+  const memory = SETTING_DEFINITIONS['workspace.memory'];
+  const cpus = SETTING_DEFINITIONS['workspace.cpus'];
+
+  it('is unset by default, admin-only, run-pinned and cascades below global', () => {
+    for (const setting of [memory, cpus]) {
+      expect(setting).toMatchObject({
+        group: 'workspace',
+        overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+        requiredRole: 'ADMIN',
+        restartRequired: false,
+        runPinned: true,
+      });
+    }
+    expect(memory.defaultValue).toBe('');
+    expect(cpus.defaultValue).toBe(0);
+  });
+
+  it('accepts Docker memory values from 512m to 64g, and unset', () => {
+    for (const ok of ['', '4g', '512m', '8g', '64g', '65536m', '536870912']) {
+      expect(memory.schema.safeParse(ok).success, ok).toBe(true);
+    }
+  });
+
+  it('refuses memory outside the range or not a Docker memory value', () => {
+    for (const bad of ['0', '256m', '65g', '4gb', '4g --privileged', '-1g', '1.5g', ' 4g']) {
+      expect(memory.schema.safeParse(bad).success, bad).toBe(false);
+    }
+    expect(memory.schema.safeParse(4).success).toBe(false);
+  });
+
+  it('accepts cpus from 0.5 to 16, and unset', () => {
+    for (const ok of [0, 0.5, 2, 16]) {
+      expect(cpus.schema.safeParse(ok).success, String(ok)).toBe(true);
+    }
+  });
+
+  it('refuses cpus outside the range or not a number', () => {
+    for (const bad of [0.1, -1, 17, Number.NaN, '4']) {
+      expect(cpus.schema.safeParse(bad).success, String(bad)).toBe(false);
+    }
+  });
+});

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { AGENT_RUN_MAX_WALL_CLOCK_SECONDS } from '../lib/agentRun.js';
 import { GlobListSchema } from '../lib/ciTrigger.js';
+import { DOCKER_MEMORY_RE, parseDockerMemoryBytes } from '../lib/dockerMemory.js';
 import {
   DEFAULT_EGRESS_BASELINE_ALLOWLIST,
   type EgressPolicy,
@@ -1957,6 +1958,25 @@ export const SETTING_DEFINITIONS = {
     schema: positiveInt.min(60).max(AGENT_RUN_MAX_WALL_CLOCK_SECONDS),
     unit: 'seconds',
   }),
+  // Both default to unset (`''` and `0`, as the other registry knobs spell "off": the admin form
+  // types a setting by its default, so a `null` would render as the text "null" and save a
+  // number as a string): the deployer's `WORKSPACE_MEMORY` / `WORKSPACE_CPUS` stay the value
+  // every run gets until an ADMIN sets one. Pinned, so a retry or replay builds the same
+  // workspace; `resolveRunWorkspaceSize` reads the pin.
+  'workspace.cpus': defineSetting<number>({
+    defaultValue: 0,
+    description:
+      "CPU limit for each agent workspace, in cores (`0.5` to `16`). `0` uses the deployment's `WORKSPACE_CPUS`. Applies to every new workspace of a run, so a larger value spends shared node capacity on every run it covers. The deployer's hardware, container broker and Kubernetes quota still cap it: a request they cannot satisfy fails to start the workspace or leaves its pod Pending until the ready timeout. Pinned to the run at start.",
+    group: 'workspace',
+    label: 'Workspace CPUs',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: true,
+    schema: z.union([z.literal(0), z.number().min(0.5).max(16)]),
+    unit: 'cores (0 = deployment value)',
+  }),
+
   'workspace.egressBaselineAllowlist': defineSetting({
     defaultValue: DEFAULT_EGRESS_BASELINE_ALLOWLIST,
     description:
@@ -2095,6 +2115,28 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: positiveInt.min(1_000).max(200_000),
     unit: 'characters',
+  }),
+  // See `workspace.cpus`.
+  'workspace.memory': defineSetting<string>({
+    defaultValue: '',
+    description:
+      "Memory limit for each agent workspace, as a Docker value (`512m` to `64g`, for example `8g`). Empty uses the deployment's `WORKSPACE_MEMORY`. Applies to every new workspace of a run, so a larger value spends shared node capacity on every run it covers. The deployer's hardware, container broker and Kubernetes quota still cap it: a request they cannot satisfy fails to start the workspace or leaves its pod Pending until the ready timeout. Pinned to the run at start.",
+    group: 'workspace',
+    label: 'Workspace memory',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: true,
+    schema: z.union([
+      z.literal(''),
+      z
+        .string()
+        .regex(DOCKER_MEMORY_RE, 'must be a Docker memory value such as 512m or 8g')
+        .refine((value) => {
+          const bytes = parseDockerMemoryBytes(value);
+          return bytes !== null && bytes >= 512 * 1024 ** 2 && bytes <= 64 * 1024 ** 3;
+        }, 'must be between 512m and 64g'),
+    ]),
   }),
   'workspace.nulAllowedPaths': defineSetting({
     defaultValue: [],
