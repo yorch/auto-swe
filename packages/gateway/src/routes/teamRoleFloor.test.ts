@@ -19,6 +19,8 @@ interface TeamScopedRoute {
 }
 
 let teamScoped: TeamScopedRoute[] = [];
+/** Every route that asks for a platform LEAD, however it decides the rest. */
+let platformLead: string[] = [];
 
 beforeAll(async () => {
   const app = Fastify();
@@ -28,10 +30,17 @@ beforeAll(async () => {
     app.decorate(name, {} as never);
   }
   const seen: TeamScopedRoute[] = [];
+  const leadRoutes: string[] = [];
   app.addHook('onRoute', (route) => {
     const hooks = [route.onRequest ?? []].flat();
     for (const hook of hooks) {
       const options = (hook as { [RBAC_OPTIONS]?: RBACOptions })[RBAC_OPTIONS];
+      if (options?.requiredRole === 'LEAD') {
+        // Fastify adds a HEAD twin of every GET; it says nothing the GET does not.
+        for (const method of [route.method].flat().filter((m) => m !== 'HEAD')) {
+          leadRoutes.push(`${method} ${route.url}`);
+        }
+      }
       if (options?.requiredTeamRole) {
         for (const method of [route.method].flat()) {
           seen.push({ method, options, url: route.url });
@@ -43,6 +52,7 @@ beforeAll(async () => {
   await app.ready();
   await app.close();
   teamScoped = seen;
+  platformLead = leadRoutes.sort();
 }, 60_000);
 
 /**
@@ -76,5 +86,22 @@ describe('team-scoped routes', () => {
       .filter(({ options }) => options.requiredRole === 'ADMIN')
       .map(({ method, url }) => `${method} ${url}`);
     expect(adminOnly.sort()).toEqual([...PLATFORM_ADMIN_ONLY].sort());
+  });
+});
+
+/**
+ * Routes whose handler, not a `requiredTeamRole`, decides who may act on a team's work (templates,
+ * epics, campaigns, dependencies) must not ask for a platform LEAD either, or a team lead with the
+ * platform ENGINEER role is refused before the handler runs. The organization-scoped error
+ * baselines are the only routes that still do: they decide by organization membership (D5), so a
+ * route added here needs the same reason.
+ */
+describe('platform LEAD routes', () => {
+  it('are only the organization-scoped error baselines', () => {
+    expect(platformLead).toEqual([
+      'DELETE /api/v1/human-error-baselines/:id',
+      'GET /api/v1/human-error-baselines',
+      'POST /api/v1/human-error-baselines',
+    ]);
   });
 });
