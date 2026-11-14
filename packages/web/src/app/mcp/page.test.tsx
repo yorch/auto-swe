@@ -433,7 +433,48 @@ describe('MCP connections page', () => {
       render(withQuery(<StudioMcpConnectionsPage />));
       expect(await screen.findByText('Qodo')).toBeTruthy();
       fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-      expect(screen.getByText('Custom tool list: 1 tool (set through the API)')).toBeTruthy();
+      const status = screen.getByRole('status');
+      expect(status.textContent).toContain('Stored list: 1 of');
+    });
+
+    it('saves a narrowed allowlist through the PATCH', async () => {
+      const spy = mount(QODO);
+      render(withQuery(<StudioMcpConnectionsPage />));
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+      fireEvent.click(document.getElementById('mcp-edit-tool-rules-get') as HTMLInputElement);
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await waitFor(() => expect(bodyOf(spy, '/mcp-connections/m1', 'PATCH')).toBeTruthy());
+      const body = bodyOf(spy, '/mcp-connections/m1', 'PATCH') as { allowedTools: string[] };
+      expect(body.allowedTools).not.toContain('rules-get');
+      expect(body.allowedTools).toContain('rules-list');
+    });
+
+    it('clears the stored list when reset to the default', async () => {
+      const spy = mount({ ...QODO, config: { ...QODO.config, allowedTools: ['rules-get'] } });
+      render(withQuery(<StudioMcpConnectionsPage />));
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Reset to the read-only default' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await waitFor(() => expect(bodyOf(spy, '/mcp-connections/m1', 'PATCH')).toBeTruthy());
+      expect(
+        (bodyOf(spy, '/mcp-connections/m1', 'PATCH') as { allowedTools: unknown }).allowedTools
+      ).toBeNull();
+    });
+
+    it('does not send allowedTools when the list is untouched', async () => {
+      const spy = mount(QODO);
+      render(withQuery(<StudioMcpConnectionsPage />));
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await waitFor(() => expect(bodyOf(spy, '/mcp-connections/m1', 'PATCH')).toBeTruthy());
+      expect('allowedTools' in (bodyOf(spy, '/mcp-connections/m1', 'PATCH') as object)).toBe(false);
+    });
+
+    it('offers no allowlist editor for an unmarked connection', async () => {
+      mount(CONNECTION);
+      render(withQuery(<StudioMcpConnectionsPage />));
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+      expect(screen.queryByText('Allowed tools')).toBeNull();
     });
 
     it('shows the Qodo section of a test result only when the server reports one', async () => {

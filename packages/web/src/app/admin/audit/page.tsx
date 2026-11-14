@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { type ReactNode, Suspense, useEffect, useId, useState } from 'react';
+import { ShellAuditPrune } from '@/components/audit/ShellAuditPrune';
 import {
   TRANSCRIPT_ACCESS_FILTER_KEYS,
   TranscriptAccessLog,
@@ -393,7 +394,10 @@ function AuditPage() {
           <TranscriptAccessLog />
         </div>
       ) : (
-        <AuditWorkspace />
+        <>
+          <AuditWorkspace />
+          <ShellAuditPrune />
+        </>
       )}
     </div>
   );

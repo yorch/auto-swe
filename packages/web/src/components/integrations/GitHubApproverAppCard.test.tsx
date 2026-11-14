@@ -12,6 +12,7 @@ const configured = {
   appSlug: 'approver-bot',
   configured: true,
   privateKeyLastFour: 'WXYZ',
+  retiredAppSlugs: [] as string[],
   updatedAt: '2026-10-01T00:00:00Z',
 };
 
@@ -29,6 +30,22 @@ describe('GitHubApproverAppCard', () => {
     expect(await screen.findByDisplayValue('approver-bot')).toBeTruthy();
     expect(screen.getByText(/Set \(…WXYZ\)/)).toBeTruthy();
     expect(screen.getByText('Configured')).toBeTruthy();
+  });
+
+  it('lists retired slugs only when there are some', async () => {
+    setupFetchMock({
+      [`GET ${PATH}`]: () => ({ ...configured, retiredAppSlugs: ['old-bot', 'older-bot'] }),
+    });
+    render(withQuery(<GitHubApproverAppCard />));
+    const note = await screen.findByTestId('gh-approver-retired');
+    expect(note.textContent).toContain('old-bot, older-bot');
+  });
+
+  it('shows no retired-slug note when none are kept', async () => {
+    setupFetchMock({ [`GET ${PATH}`]: () => configured });
+    render(withQuery(<GitHubApproverAppCard />));
+    await screen.findByLabelText('App slug');
+    expect(screen.queryByTestId('gh-approver-retired')).toBeNull();
   });
 
   it('saves only the fields that changed and never sends a blank key', async () => {

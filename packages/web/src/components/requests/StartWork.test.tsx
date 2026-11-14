@@ -308,7 +308,29 @@ describe('StartWork', () => {
     render(withQuery(<StartWork />));
     const radio = screen.getByRole('radio', { name: /multi-repo epic/i }) as HTMLInputElement;
     expect(radio.disabled).toBe(true);
-    expect(screen.getByText('Requires team lead or administrator.')).toBeTruthy();
+    // The epic and PRD options share the one reason.
+    expect(screen.getAllByText('Requires team lead or administrator.')).toHaveLength(2);
+  });
+
+  it('offers a PRD run on the same gating as an epic', async () => {
+    auth.role = 'ENGINEER';
+    gateway();
+    render(withQuery(<StartWork />));
+    expect(
+      (screen.getByRole('radio', { name: /run from a prd/i }) as HTMLInputElement).disabled
+    ).toBe(true);
+    cleanup();
+    auth.role = 'LEAD';
+    gateway();
+    render(withQuery(<StartWork initialMode="prd" />));
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('radio', { name: /run from a prd/i }) as HTMLInputElement).disabled
+      ).toBe(false)
+    );
+    expect(
+      (screen.getByRole('radio', { name: /run from a prd/i }) as HTMLInputElement).checked
+    ).toBe(true);
   });
 
   it('starts in the requested mode', () => {

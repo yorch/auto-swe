@@ -1,6 +1,11 @@
 'use client';
 
 import { useState } from 'react';
+import {
+  allowlistChange,
+  effectiveQodoTools,
+  QodoToolAllowlist,
+} from '@/components/mcp/QodoToolAllowlist';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -504,10 +509,13 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
 }
 
 function EditMcpConnectionModal({
+  advertisedTools,
   connection,
   onClose,
 }: {
   connection: McpConnectionRow | null;
+  /** Tool names from the last Test of this connection, if it was tested. */
+  advertisedTools?: string[];
   onClose: () => void;
 }) {
   const update = useUpdateMcpConnection();
@@ -525,6 +533,9 @@ function EditMcpConnectionModal({
     scan: connection?.config?.scanResults === true,
     url: connection?.config?.url ?? '',
   });
+  const [selectedTools, setSelectedTools] = useState<string[]>(() =>
+    effectiveQodoTools(connection?.config?.allowedTools)
+  );
   const [clearToken, setClearToken] = useState(false);
   const [removedUnreadable, setRemovedUnreadable] = useState(false);
   const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() =>
@@ -568,10 +579,20 @@ function EditMcpConnectionModal({
     // A marked connection is screened whatever scanResults says, so the box is not read then.
     const scanResults: Pick<UpdateMcpConnectionBody, 'scanResults'> =
       form.qodo || form.scan === wasScan ? {} : { scanResults: form.scan ? true : null };
+    // Only a connection that stays marked has an editable list; an unmarked one keeps its list.
+    const toolChange =
+      form.qodo && wasQodo
+        ? allowlistChange(connection.config?.allowedTools, selectedTools)
+        : undefined;
+    if (toolChange !== null && toolChange?.length === 0) {
+      setError('Tick at least one tool, or reset the list to the read-only default.');
+      return;
+    }
     try {
       await update.mutateAsync({
         body: {
           ...integration,
+          ...(toolChange !== undefined ? { allowedTools: toolChange } : {}),
           ...scanResults,
           ...(form.allowPrivateNetwork ? { allowPrivateNetwork: true } : {}),
           ...(touchedHeaders ? { headers: headers.headers } : {}),
@@ -669,12 +690,22 @@ function EditMcpConnectionModal({
             Tool results stay screened until Screen tool results is cleared as well.
           </Alert>
         )}
-        {connection.config?.allowedTools && (
-          <p className="text-xs text-paper-500">
-            {`Custom tool list: ${connection.config.allowedTools.length} ${
-              connection.config.allowedTools.length === 1 ? 'tool' : 'tools'
-            } (set through the API)`}
-          </p>
+        {connection.config?.integration === 'qodo' && form.qodo ? (
+          <QodoToolAllowlist
+            advertised={advertisedTools}
+            idPrefix="mcp-edit"
+            onChange={setSelectedTools}
+            selected={selectedTools}
+            stored={connection.config?.allowedTools}
+          />
+        ) : (
+          connection.config?.allowedTools && (
+            <p className="text-xs text-paper-500">
+              {`Custom tool list: ${connection.config.allowedTools.length} ${
+                connection.config.allowedTools.length === 1 ? 'tool' : 'tools'
+              }`}
+            </p>
+          )
         )}
         <McpTimeoutFields
           callTimeoutMs={form.callTimeoutMs}
@@ -940,6 +971,7 @@ export default function StudioMcpConnectionsPage() {
 
       <CreateMcpConnectionModal onClose={() => setNewOpen(false)} open={newOpen} />
       <EditMcpConnectionModal
+        advertisedTools={editTarget ? results[editTarget.id]?.toolNames : undefined}
         connection={editTarget}
         key={editTarget?.id}
         onClose={() => {

@@ -28,6 +28,7 @@ export const UI_ROUTE_TEMPLATES: readonly string[] = [
   '/admin/platform-settings',
   '/admin/policies',
   '/admin/policies/decisions',
+  '/admin/pr-evaluations',
   '/admin/reports',
   '/admin/review-presets',
   '/admin/scanner',

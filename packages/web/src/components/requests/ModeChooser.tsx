@@ -2,7 +2,7 @@
 
 import { Button } from '@/components/ui/Button';
 
-export type WorkMode = 'workflow' | 'agent' | 'epic';
+export type WorkMode = 'workflow' | 'agent' | 'epic' | 'prd';
 
 export interface ModeChoice {
   mode: WorkMode;
@@ -39,6 +39,17 @@ export function modeChoices(canStartEpic: boolean, epicReason?: string): ModeCho
           mode: 'epic',
           note: `${epicReason ?? 'Only team leads and administrators can start an epic.'} For several repositories, ask one, or start a workflow or an agent on each repository separately.`,
           question: 'The change spans several repositories.',
+        },
+    canStartEpic
+      ? {
+          action: 'Run from a PRD',
+          mode: 'prd',
+          question: 'You have a product requirements document to break into stories.',
+        }
+      : {
+          mode: 'prd',
+          note: epicReason ?? 'Only team leads and administrators can start a PRD run.',
+          question: 'You have a product requirements document to break into stories.',
         },
   ];
 }

@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetNavigation } from '@/test/mockNavigation';
-import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
+import { setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 
 vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).navigationMock());
 
@@ -33,6 +33,7 @@ vi.mock('@/components/charts/SuiteHealthChart', () => ({
 
 import GovernEvalsPage from './page';
 
+beforeAll(() => stubDialogPrototype());
 beforeEach(() => resetNavigation('', '/admin/evals'));
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -329,5 +330,16 @@ describe('GovernEvalsPage', () => {
       expect.objectContaining({ label: 'a/x' }),
       expect.objectContaining({ label: '(none)' }),
     ]);
+  });
+
+  it('opens the new-dataset dialog from the Datasets card', async () => {
+    mock();
+    render(withQuery(<GovernEvalsPage />));
+    await screen.findByText('Window mean');
+
+    fireEvent.click(screen.getByRole('button', { name: 'New dataset' }));
+
+    expect(await screen.findByText('New eval dataset')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create dataset' })).toBeTruthy();
   });
 });

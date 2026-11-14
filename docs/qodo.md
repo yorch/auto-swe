@@ -14,9 +14,10 @@ A team's Qodo connection is an `mcp` Connection with these properties:
 - **Credential** — the Qodo API key, sent as a bearer token.
 - **Marker** — `config.integration: 'qodo'`. The marker is what makes it the team's Qodo connection,
   and it implies result screening and the read-only allowlist below.
-- **Allowlist** — `config.allowedTools`, set through the API only; the `/mcp` page shows the size of
-  a stored list and offers no way to edit it. A marked connection with no stored list
-  gets the read-only list, so it cannot bind unfiltered. A stored list on a marked connection can
+- **Allowlist** — `config.allowedTools`, edited on the `/mcp` page (ADMIN-only, like every connection
+  edit) or through the API. A marked connection with no stored list
+  gets the read-only list, so it cannot bind unfiltered. An empty stored list is not the same as no
+  list: it binds no tool at all, so the page never saves one and clears the list instead. A stored list on a marked connection can
   only narrow it: the gateway answers `400 QODO_WRITE_TOOLS`, naming the tools, when a create or an
   edit leaves a name outside the read list in the marked connection's list (including an edit that
   sets the marker on a connection whose stored list already has one), and the worker intersects a
@@ -35,8 +36,13 @@ because a marked connection is always screened. The edit form sends a policy fie
 differs from the stored value, so saving without touching the boxes changes neither; clearing the
 Qodo box on a marked connection sends `integration: null`, keeps the screening box ticked so that
 results stay screened until the admin clears it too, and shows a warning that the read-only guard
-goes with the marker. A marked connection carries a "Qodo" badge in the list, and a stored custom tool list
-appears as a read-only count. A `400 QODO_WRITE_TOOLS` answer shows its message in the form's alert.
+goes with the marker. A marked connection carries a "Qodo" badge in the list. Its edit form shows
+the read tools (`QODO_READ_TOOLS`) as checkboxes, all ticked when no list is stored, and states that
+the read-only default applies in that case. Unticking narrows the list; saving sends `allowedTools`
+only when the selection changed, and ticking every tool again sends `null`, which removes the stored
+list. A save with nothing ticked is refused on the page. After a connection test, each tool shows
+whether the server advertised it, and advertised tools outside the read list are named as not
+allowable. A `400 QODO_WRITE_TOOLS` answer shows its message in the form's alert.
 
 The connection test (`POST /api/v1/platform/mcp-connections/:id/test`, which lists tools and calls
 none) also reports, for a marked connection, a `qodo` object with `matchedReadTools` (how many
@@ -254,6 +260,9 @@ every run, as above. The template is not the default.
 - A review runs asynchronously, so a read made right after a push can describe an earlier commit.
   Compare the session's `commitSha` with the PR head.
 - At most 50 findings are returned per read, and a `truncated` result has lost text or findings.
+- The allowlist editor offers only the read list, not the tool names a server advertises under other
+  names, so a server that namespaces them leaves nothing to tick; the advertised names are shown
+  after a test but cannot be added.
 - The tool allowlist is maintained by hand against Qodo's catalog, using the names the Qodo CLI
   catalog gives. Nothing here confirms the MCP server advertises the same names: if it namespaces
   them, the allowlist binds nothing and every feature reads as `connection_refused` or

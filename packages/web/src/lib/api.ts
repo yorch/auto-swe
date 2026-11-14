@@ -37,13 +37,19 @@ export class ApiError extends Error {
   readonly offendingAddresses: string[] | null;
   /** Opted-out addresses a write must confirm before re-adding; null when none were named. Untrusted. */
   readonly optedOutAddresses: string[] | null;
+  /**
+   * The per-repository refusals a multi-repository launch route attaches to a 403
+   * (`error.reasons`); empty when the response named none. Untrusted.
+   */
+  readonly reasons: { repo: string; reason: string }[];
 
   constructor(
     message: string,
     status: number,
     code: string | null,
     details?: unknown,
-    addresses?: { offendingAddresses?: string[]; optedOutAddresses?: string[] }
+    addresses?: { offendingAddresses?: string[]; optedOutAddresses?: string[] },
+    reasons?: unknown
   ) {
     super(message);
     this.name = 'ApiError';
@@ -52,7 +58,20 @@ export class ApiError extends Error {
     this.details = details;
     this.offendingAddresses = addresses?.offendingAddresses ?? null;
     this.optedOutAddresses = addresses?.optedOutAddresses ?? null;
+    this.reasons = refusalReasons(reasons);
   }
+}
+
+/** The `{ repo, reason }` string pairs of an error body's `reasons`; anything else is dropped. */
+function refusalReasons(value: unknown): { repo: string; reason: string }[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((item) =>
+    isRecord(item) && typeof item.repo === 'string' && typeof item.reason === 'string'
+      ? [{ reason: item.reason, repo: item.repo }]
+      : []
+  );
 }
 
 /** The string-array fields a gateway may attach to an error body; anything else is dropped. */
@@ -244,7 +263,7 @@ export class ApiClient {
         ? err.message
         : `HTTP ${res.status}`;
     const code = err && typeof err.code === 'string' ? err.code : null;
-    return new ApiError(message, res.status, code, err?.details);
+    return new ApiError(message, res.status, code, err?.details, undefined, err?.reasons);
   }
 
   private tryRefresh(): Promise<boolean> {

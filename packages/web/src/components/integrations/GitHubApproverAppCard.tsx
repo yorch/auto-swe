@@ -96,6 +96,12 @@ function ApproverForm({ current }: { current: GithubApproverApp }) {
           rows={4}
           value={privateKey}
         />
+        {current.retiredAppSlugs.length > 0 && (
+          <p className="text-xs text-paper-500" data-testid="gh-approver-retired">
+            Retired slugs, still recognised so their approvals can be withdrawn:{' '}
+            <span className="font-mono">{current.retiredAppSlugs.join(', ')}</span>
+          </p>
+        )}
         <p className="text-xs text-paper-500">
           Saving checks the id, slug and key against GitHub; nothing is stored if they do not name
           one App. Replacing or removing the App re-evaluates open pull requests.
