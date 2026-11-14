@@ -475,7 +475,7 @@ rendered as plain text. `url` is returned only for an http(s) address; anything 
 
 ## 5. Dashboard
 
-The Work group of the sidebar lists **Pull requests** (`/pull-requests`) and **Tickets**
+The All teams group of the sidebar lists **Pull requests** (`/pull-requests`) and **Tickets**
 (`/tickets`). Filters live in the address, so a filtered list can be bookmarked and survives a
 reload.
 

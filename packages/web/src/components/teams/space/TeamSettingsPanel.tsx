@@ -450,7 +450,7 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
         onConfirm={async () => {
           await api.delete(`/api/v1/teams/${id}`);
           await queryClient.invalidateQueries({ queryKey: ['teams'] });
-          router.push('/admin/teams');
+          router.push('/teams');
         }}
         open={confirmDelete}
         title="Delete team?"

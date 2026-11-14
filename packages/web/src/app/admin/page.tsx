@@ -17,7 +17,6 @@ const PAGE_DESCRIPTIONS: Record<string, string> = {
   '/admin/api-tokens': 'Every personal and service-principal token; revoke any of them.',
   '/admin/assistant': 'Where the in-app assistant failed to answer.',
   '/admin/audit': 'The record of who changed what, and when.',
-  '/admin/automations': 'Rules that start runs on schedules and events.',
   '/admin/baselines': 'Known error patterns, so new failures stand out.',
   '/admin/config-grants': 'Let a role or person change specific platform settings.',
   '/admin/evals': 'Evaluation runs for agents and workflows.',
@@ -31,7 +30,6 @@ const PAGE_DESCRIPTIONS: Record<string, string> = {
   '/admin/security': 'Events raised by the security scanners.',
   '/admin/sessions': 'Browser sessions that are signed in; sign people out.',
   '/admin/slack-channels': 'Channels the assistant answers in, with their spend.',
-  '/admin/teams': 'Team members, repositories, sandbox policy and agent overrides.',
   '/admin/users': 'Invite people, approve sign-ups, set roles, suspend accounts.',
   '/admin/workflow-defaults': 'Branch prefix, templates, budgets and iteration limits.',
 };

@@ -115,3 +115,10 @@
 **Reason**: A page that moved out of the Admin layout needs both a guard and a place in the navigation, or it is either unguarded or unreachable. `docs:check` and `legacyRedirects.test.ts` already enforce that every old address maps to a real page.
 **Alternatives considered**: Route groups that keep the `/admin/...` URLs were rejected: they would leave ordinary pages under an address that says Admin, which is what this restructure removes.
 
+## D14 — 2026-11-14 — Task 7: Home leads as its own group, and a team's own admin page stays put
+
+**Status**: Accepted
+**Decision**: The sidebar's first group is Home alone, which the existing rule renders without a heading. The My teams block therefore follows Home with no change to where it is drawn, and the old Work group becomes All teams. Teams (the directory, now `/teams`) and Automations (`/automations`) joined Analytics, Reports and LLM usage in Teams and insights. Only the bare `/admin/teams` list redirects: `/admin/teams/:id`, a team's admin page, keeps its address and is titled Teams, with its detail parent now the directory. The command palette and the sidebar read the same `useVisibleNavGroups` hook, so they offer the same pages by construction.
+**Reason**: The sidebar already drew My teams before its second group; making Home a group of one gives the order the spec asks for without a second place that decides it. A team's admin page is reached by id from lists and the audit log, and moving it would need an id-to-slug lookup in a redirect for no gain.
+**Alternatives considered**: Moving the team admin page into the team space was rejected as a larger change than this restructure needs. Hand-ordering the sidebar in `Sidebar.tsx` was rejected because the page map is the one place that owns the order.
+

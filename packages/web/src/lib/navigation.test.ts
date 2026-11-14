@@ -37,7 +37,7 @@ describe('team switcher scope', () => {
     '/teams/default/work',
     '/library',
     '/knowledge',
-    '/admin/automations',
+    '/automations',
     '/insights/reports',
   ])('shows on team-aware route %s', (path) => {
     expect(showsTeamSwitcher(path)).toBe(true);
@@ -79,9 +79,9 @@ describe('detail parents', () => {
     ['/pull-requests/id', '/pull-requests'],
     ['/docs/architecture', '/docs'],
     ['/epics/id', '/epics'],
-    ['/teams/default', '/admin/teams'],
-    ['/teams/default/settings', '/admin/teams'],
-    ['/admin/teams/id', '/admin/teams'],
+    ['/teams/default', '/teams'],
+    ['/teams/default/settings', '/teams'],
+    ['/admin/teams/id', '/teams'],
     ['/admin/organizations/id', '/admin/organizations'],
     ['/admin/slack-channels/id', '/admin/slack-channels'],
     ['/admin/evals/datasets/id', '/admin/evals'],
@@ -123,7 +123,7 @@ function layoutFloor(href: string): Role {
 
 describe('NAV_GROUPS', () => {
   it('places Epics after Requests and keeps each destination active independently', () => {
-    const work = NAV_GROUPS.find((group) => group.label === 'Work')?.items ?? [];
+    const work = NAV_GROUPS.find((group) => group.label === 'All teams')?.items ?? [];
     const requests = work.findIndex((item) => item.href === '/requests');
     expect(work[requests + 1]).toMatchObject({ href: '/epics', minRole: 'ENGINEER' });
     for (const path of ['/epics', '/epics/id']) {
@@ -199,9 +199,10 @@ describe('visibleNavGroups', () => {
   const hrefsFor = (role: string, scoped?: boolean) =>
     visibleNavGroups(role, scoped).flatMap((g) => flattenNavItems(g.items).map((i) => i.href));
 
-  it('groups the sidebar into Work, Teams and insights, Build, Connect, Knowledge and Admin', () => {
+  it('groups the sidebar into Home, All teams, Teams and insights, Build, Connect, Knowledge and Admin', () => {
     expect(NAV_GROUPS.map((g) => g.label)).toEqual([
-      'Work',
+      'Home',
+      'All teams',
       'Teams and insights',
       'Build',
       'Connect',
@@ -210,18 +211,26 @@ describe('visibleNavGroups', () => {
     ]);
   });
 
-  it('offers Analytics, Reports and LLM usage in their own group, and not in Admin', () => {
+  it('offers Teams, Analytics, Reports, LLM usage and Automations in their own group, and not in Admin', () => {
     const groups = visibleNavGroups('ENGINEER', true);
     const insights = groups.find((g) => g.label === 'Teams and insights');
     expect(insights?.items.map((i) => i.href)).toEqual([
+      '/teams',
       '/insights/analytics',
       '/insights/reports',
       '/insights/usage',
+      '/automations',
     ]);
     const adminHrefs = groups
       .find((g) => g.label === 'Admin')
       ?.items[0]?.children?.map((c) => c.href);
-    for (const old of ['/admin/analytics', '/admin/reports', '/admin/usage']) {
+    for (const old of [
+      '/admin/analytics',
+      '/admin/reports',
+      '/admin/usage',
+      '/admin/teams',
+      '/admin/automations',
+    ]) {
       expect(adminHrefs).not.toContain(old);
     }
     expect(adminHrefs).not.toContain('/insights/analytics');
@@ -229,7 +238,8 @@ describe('visibleNavGroups', () => {
 
   it('shows an ENGINEER only ENGINEER pages', () => {
     const hrefs = hrefsFor('ENGINEER');
-    expect(hrefs).toContain('/admin/automations');
+    expect(hrefs).toContain('/automations');
+    expect(hrefs).toContain('/teams');
     expect(hrefs).toContain('/admin/organizations');
     expect(hrefs).not.toContain('/admin/baselines');
     expect(hrefs).not.toContain('/admin/review-presets');
@@ -334,7 +344,7 @@ describe('activeNavHref', () => {
     expect(activeNavHref('/runs', NAV_ITEMS)).toBe('/runs');
     expect(activeNavHref('/runs/abc', NAV_ITEMS)).toBe('/runs');
     expect(activeNavHref('/epics/wf-1', NAV_ITEMS)).toBe('/epics');
-    expect(activeNavHref('/admin/schedules', NAV_ITEMS)).toBe('/admin/automations');
+    expect(activeNavHref('/admin/schedules', NAV_ITEMS)).toBe('/automations');
   });
 
   it('knows the Start work path', () => {
@@ -366,8 +376,8 @@ describe('pageTitle', () => {
   });
 
   it('puts each page in its sidebar group for the breadcrumb', () => {
-    expect(pageSection('/approvals')).toBe('Work');
-    expect(pageSection('/requests/abc')).toBe('Work');
+    expect(pageSection('/approvals')).toBe('All teams');
+    expect(pageSection('/requests/abc')).toBe('All teams');
     expect(pageSection('/library/abc')).toBe('Build');
     expect(pageSection('/agents')).toBe('Build');
     expect(pageSection('/admin/users')).toBe('Admin');

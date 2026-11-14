@@ -248,7 +248,7 @@ function TeamsGroup({ pathname }: { pathname: string }) {
         data-rail-heading
         id="nav-group-teams"
       >
-        Teams
+        My teams
       </div>
       <ul aria-labelledby="nav-group-teams">
         {shown.map(({ needsYou, team }) => {

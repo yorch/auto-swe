@@ -257,7 +257,7 @@ models resolve per agent through the configuration cascade rather than a single 
   library, Knowledge, Automations and Reports pages. Other configuration, account, Docs and Admin
   pages, and focused editor/run/diff routes, omit both the top-bar switcher and its mobile strip.
   The Home page title remains **My desk**.
-- **Sidebar Teams group.** The sidebar lists the member teams as links to their spaces, each with the
+- **Sidebar My teams group.** The sidebar lists the member teams as links to their spaces, each with the
   same badge: the teams the user pinned first, in pin order, else the member teams up to a limit.
 - **Preferences.** `PATCH /api/v1/me/preferences` stores two per-user hints beside the run-detail
   layout. `lastTeamSlug` records the last member team space the user opened; it does not redirect
@@ -468,7 +468,7 @@ stops the secrets it holds from resolving for the repositories it owns.
 
 ## Creating teams and managing membership
 
-On `/admin/teams`, **New team** is available to platform ADMINs and anyone who administers an
+On `/teams`, **New team** is available to platform ADMINs and anyone who administers an
 organization. Organization admins choose among their administered organizations (the picker is
 omitted for a single organization). The optional **First team admin** lists that organization's
 members and defaults to the creator. The organization detail page at `/admin/organizations/:orgId`

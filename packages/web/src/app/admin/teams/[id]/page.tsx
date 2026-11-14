@@ -83,7 +83,7 @@ function TeamRedirect({ id }: { id: string | null }) {
   return (
     <Frame>
       <EmptyState
-        action={<ButtonLink href="/admin/teams">Back to teams</ButtonLink>}
+        action={<ButtonLink href="/teams">Back to teams</ButtonLink>}
         bordered
         hint="It may have been deleted, or the link is wrong."
         icon="teams"

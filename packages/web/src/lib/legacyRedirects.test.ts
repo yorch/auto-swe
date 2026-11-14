@@ -106,6 +106,11 @@ const MOVED: [string, string][] = [
   ['/govern/analytics', '/insights/analytics'],
   ['/govern/usage', '/insights/usage'],
   ['/govern/reports?team=t-1', '/insights/reports?team=t-1'],
+  // Automations and the Teams directory left Admin too. A team's own page keeps its address.
+  ['/admin/automations', '/automations'],
+  ['/admin/automations?team=payments', '/automations?team=payments'],
+  ['/admin/teams', '/teams'],
+  ['/admin/teams?q=pay', '/teams?q=pay'],
   // Analytics, Reports and LLM usage left Admin: any role may open them, so they sit in their own group.
   ['/admin/analytics', '/insights/analytics'],
   ['/admin/analytics?window=30', '/insights/analytics?window=30'],
@@ -117,7 +122,8 @@ const MOVED: [string, string][] = [
   ['/govern/platform-settings', '/admin/platform-settings'],
   ['/govern/workflow-defaults', '/admin/workflow-defaults'],
   ['/govern/config-grants', '/admin/config-grants'],
-  ['/govern/automations', '/admin/automations'],
+  ['/govern/automations', '/automations'],
+  ['/govern/teams', '/teams'],
   ['/govern/schedules', '/admin/schedules'],
   ['/govern/slack-channels/c-1', '/admin/slack-channels/c-1'],
   ['/govern/lessons', '/lessons'],

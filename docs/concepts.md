@@ -112,9 +112,10 @@ through the **scope cascade**, so one platform can behave differently per team.
 
 ## Dashboard workspace
 
-The sidebar groups the dashboard into **Work** (Home, Approvals, Requests, Epics, All runs, Pull
-requests and Tickets), **Teams** (member team spaces), **Build** (Workflow library, Agents, Skills
-and Review presets), **Connect** (Connections, Model configuration, MCP connections and Bundles),
+The sidebar leads with Home, then **My teams** (member team spaces), and groups the rest into **All
+teams** (Approvals, Requests, Epics, Campaigns, All runs, Pull requests and Tickets), **Teams and
+insights** (the Teams directory, Analytics, Reports, LLM usage and Automations), **Build** (Workflow
+library, Agents, Skills and Review presets), **Connect** (Connections, Model configuration, MCP connections and Bundles),
 **Knowledge** and **Admin**. Each role sees only the destinations it may open. The single Knowledge
 destination has role-filtered **Knowledge**, **Knowledge bases** and **Lessons** tabs at `/knowledge`,
 `/knowledge-bases` and `/lessons`. Admin opens `/admin` with its own role-gated sub-navigation;
