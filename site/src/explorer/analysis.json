@@ -9921,7 +9921,7 @@
       "before": 4,
       "id": "usageGate",
       "lines": 12,
-      "path": "packages/web/src/app/admin/usage/layout.tsx",
+      "path": "packages/web/src/app/insights/usage/layout.tsx",
       "title": "The usage page is gated on a held scope, not the platform role"
     },
     {
@@ -15121,7 +15121,7 @@
       "before": 0,
       "id": "reportCsvCell",
       "lines": 12,
-      "path": "packages/web/src/app/admin/reports/reportCsv.ts",
+      "path": "packages/web/src/app/insights/reports/reportCsv.ts",
       "title": "Report CSV cells: numbers verbatim, nested values as JSON, text formula-prefixed"
     },
     {
@@ -15129,14 +15129,14 @@
       "before": 4,
       "id": "reportCsvExport",
       "lines": 16,
-      "path": "packages/web/src/app/admin/reports/page.tsx",
+      "path": "packages/web/src/app/insights/reports/page.tsx",
       "title": "The Reports page builds each tab’s CSV in the browser and names it with the range and team"
     },
     {
-      "anchor": "href: '/admin/reports',",
-      "before": 1,
+      "anchor": "href: '/insights/reports',",
+      "before": 0,
       "id": "reportsNav",
-      "lines": 7,
+      "lines": 1,
       "path": "packages/web/src/lib/navigation.ts",
       "title": "Reports appear in navigation for ENGINEERs and above"
     },
@@ -16636,7 +16636,7 @@
       "before": 3,
       "id": "reportAutoRefresh",
       "lines": 5,
-      "path": "packages/web/src/app/admin/reports/page.tsx",
+      "path": "packages/web/src/app/insights/reports/page.tsx",
       "title": "The Reports page refreshes every 30 seconds only while its range includes today"
     },
     {
