@@ -383,6 +383,22 @@ under 90%. Cache errors fall through to the upstream.
 - **Berry scoped registries live in the exec user's home rc**, and a project `.yarnrc.yml` scope
   entry overrides them. That fails closed: the scope resolves against the real registry without
   the proxy credential.
+- **A scope line in a project `.npmrc` overrides the platform's.** npm gives the project `.npmrc`
+  priority over the user-level file the platform writes, so a committed `@scope:registry=` line
+  replaces the generated one for that scope. A request for the scope's package metadata (adding or
+  updating a dependency, an incomplete lockfile, `npm view`, `npm outdated`) then goes to the
+  project's host and bypasses the registry proxy entirely: it carries no registry proxy
+  credential, so a private scope fails unless the project supplies its own token, and the metadata
+  is not filtered by the lockfile allowlist. Whether it succeeds depends on the
+  [run egress policy](./run-activity.md#run-egress-policy) and the host. With a default registry
+  configured, `NPM_CONFIG_REGISTRY` and `NPM_CONFIG_REPLACE_REGISTRY_HOST=always` still send
+  tarballs to the registry proxy, which routes them by package name (to the registry that claims
+  the scope, else the default registry) and checks them against the allowlist, and `npm ci` from a
+  complete lockfile makes no metadata request. Without a default registry, a project `registry=`
+  line takes effect as well. An admin-configured registry that claims the scope through `npmScopes`
+  does not help while the project line stays, because the project line still wins. To avoid this,
+  claim the scope that way and remove the scope line from the project `.npmrc`, moving it to
+  developers' user-level `.npmrc` or CI config if local development needs it.
 - **A Corepack pin needs signatures or a hash.** An upstream that strips `dist.signatures` from
   version manifests fails Corepack's verification for a pin without a `+sha512.` hash. The fix
   is to hash-pin `packageManager`; the workspace never sets `COREPACK_INTEGRITY_KEYS` to disable
