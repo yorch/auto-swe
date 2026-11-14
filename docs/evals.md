@@ -432,10 +432,14 @@ CLI equivalents are `--candidate-memory=on` and `--against-memory=off` on `evals
   Replacing identical text with different embeddings does not change the hash. A run fails on
   an incompatible embedding model; freeze provider/settings externally for stricter reproduction.
 
-- **A case's stack is set at creation through the API only.** `stack` is accepted on a case when a
-  dataset is created, through the dataset create API; the dashboard cannot add a case. A stored
-  case's stack can be changed from the dataset page and by the case route, which resets that case's
-  stability check and quarantine. The `gate` scorer is unaffected: it runs on the repository's own executor image.
+- **A dataset's cases are set when it is created.** The dashboard's New dataset dialog (and the
+  dataset create API behind it) takes the dataset with all its cases, each with a prompt, repository
+  URL, baseline commit, golden test, optional expectations text, optional `stack` and tags. No
+  route adds a case to an existing dataset or edits a stored case's other fields, so a new case
+  means a new dataset. The dialog creates global datasets only: the create body carries no team or
+  organization, and it has no per-case judge-rubric reference. A stored case's stack can be changed
+  from the dataset page and by the case route, which resets that case's stability check and
+  quarantine. The `gate` scorer is unaffected: it runs on the repository's own executor image.
 - **Historical replay is not built.** Replaying real production tickets against their original
   repository states would need snapshot infrastructure the platform does not have. The regression
   gate rests on the frozen benchmark plus online scoring and canary instead.

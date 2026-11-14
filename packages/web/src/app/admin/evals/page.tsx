@@ -5,10 +5,12 @@ import { Suspense, useState } from 'react';
 import { ScorerBreakdownChart } from '@/components/charts/ScorerBreakdownChart';
 import { ScorerTrendChart } from '@/components/charts/ScorerTrendChart';
 import { SuiteHealthChart } from '@/components/charts/SuiteHealthChart';
+import { CreateEvalDatasetModal } from '@/components/evals/CreateEvalDatasetModal';
 import { EvalResultsTable } from '@/components/evals/EvalResultsTable';
 import { EvalRubrics } from '@/components/evals/EvalRubrics';
 import { EvalRunStatusBadge } from '@/components/evals/EvalRunStatusBadge';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { DateRangeControl } from '@/components/ui/DateRangeControl';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -93,6 +95,7 @@ function EvalsWorkspace() {
   // looking at one scorer's trend never empties the list of every other result.
   const chosenScorer = params.get('scorer') ?? '';
   const [resultScorer, setResultScorer] = useState('');
+  const [creatingDataset, setCreatingDataset] = useState(false);
   const trendsQuery = useEvalTrends(range, {
     by: by || undefined,
     templateId: templateId || undefined,
@@ -356,11 +359,16 @@ function EvalsWorkspace() {
         <Card>
           <CardHeader>
             <CardTitle>Datasets</CardTitle>
-            {datasets && datasets.length > 0 && (
-              <span className="text-xs text-paper-500 tabular-nums">
-                {datasets.length} dataset{datasets.length === 1 ? '' : 's'}
-              </span>
-            )}
+            <span className="flex items-center gap-3">
+              {datasets && datasets.length > 0 && (
+                <span className="text-xs text-paper-500 tabular-nums">
+                  {datasets.length} dataset{datasets.length === 1 ? '' : 's'}
+                </span>
+              )}
+              <Button onClick={() => setCreatingDataset(true)} size="sm">
+                New dataset
+              </Button>
+            </span>
           </CardHeader>
           <QueryBoundary
             error={datasetsQuery.error}
@@ -399,7 +407,7 @@ function EvalsWorkspace() {
               <EmptyState
                 hint={
                   <>
-                    Datasets are created through the platform API; list and run them with{' '}
+                    Create one with New dataset; list and run datasets with{' '}
                     <code className="font-mono text-paper-300">auto-swe evals list</code> and{' '}
                     <code className="font-mono text-paper-300">auto-swe evals run</code>.
                   </>
@@ -453,6 +461,7 @@ function EvalsWorkspace() {
       </Card>
 
       <EvalRubrics />
+      <CreateEvalDatasetModal onClose={() => setCreatingDataset(false)} open={creatingDataset} />
     </div>
   );
 }
