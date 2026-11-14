@@ -12,8 +12,8 @@ and versions makes the change in a sandbox, with no model involved. The agent ru
 is no recipe or the recipe cannot apply, and once more to fix a change that fails verification.
 Every change, whoever made it, is verified by the repository's **original** tests.
 
-Campaigns are off by default (`workflow.campaignsEnabled`). The API is described in §8; there is no
-dashboard page yet, but every child appears in the existing run and pull-request views.
+Campaigns are off by default (`workflow.campaignsEnabled`). The API is described in §8 and the
+dashboard pages in §8.1; every child also appears in the existing run and pull-request views.
 
 ## 1. What a launch creates
 
@@ -413,6 +413,33 @@ show it. It writes a `Campaign` `UPDATE` audit row with the state before, `CANCE
 number of targets closed and the reason, and answers `200` with `state: CANCELLED`. A campaign a
 late finalizer closed meanwhile keeps the state the finalizer wrote.
 
+### 8.1 Dashboard
+
+The dashboard has a **Campaigns** list at `/campaigns` and a detail page at `/campaigns/<id>`.
+
+- **List.** One row per campaign, newest first: name and recipe, state, how many repositories have
+  finished with a per-state breakdown, owning team, who started it and when. It can be filtered by
+  state, and by team through the team filter. It refreshes every ten seconds.
+- **Detail.** The brief, the state, and one row per repository in launch order with its state, the
+  path taken (`RECIPE`, `AGENT`, `RECIPE_THEN_AGENT` or none), the verification result and, for a
+  failed or skipped repository, the reason. A repository links to its child run when the viewer can
+  read that run, and a repository with a draft pull request links to the platform's review page for
+  it, or to the pull request on its host when the review page is not found. Repositories the viewer
+  cannot reach are not listed; a note gives how many there are, and they count in the totals. The
+  page refreshes every ten seconds until the campaign is in a final state.
+- **Start.** A **Start a campaign** form (platform `LEAD` and above; the button is not shown to
+  anyone else) takes the fields of `POST /` in §8: name, brief, owning team, an optional recipe
+  with its package and exact version, the repositories, an optional parallelism and an optional
+  budget tier. It offers only the teams the caller leads and, for a non-ADMIN, only repositories of
+  teams they lead in the owning team's organization. The gateway makes the decision; its refusal is
+  shown in the form. The form sends one `Idempotency-Key` for as long as the request is unchanged,
+  so a submit repeated after a lost response answers with the campaign the first one launched, and
+  a changed request gets a new key.
+- **Cancel.** The detail page shows **Cancel campaign**, behind a confirmation, to the campaign's
+  creator, a `LEAD` or `ADMIN` of its owning team and a platform ADMIN, while the campaign is not in
+  a final state. A campaign already `CANCELLING` offers **Send cancel again**, which re-sends the
+  signal (§8).
+
 ## 9. Cancel semantics
 
 Cancelling stops what has not finished and leaves what has:
@@ -543,6 +570,11 @@ whose workflow was gone) and the actor. See [audit-log.md](./audit-log.md).
   the team-lead check, so a platform `LEAD` can learn whether an id they hold names an active git
   repository (`404` against `403`). Nothing else about a repository of a team they do not lead
   (its name, organization or settings) is disclosed.
-- **No dashboard page or CLI command.** The API is the interface.
+- **No CLI command.** The dashboard and the API are the interfaces.
+- **The detail page matches runs and review pages in bulk.** It looks up the campaign's child runs
+  and its pull requests in one page of at most 100 each, so for a campaign with more repositories
+  than that, a repository beyond the first 100 shows without a run link, and the review-page lookup
+  uses the viewer's team scope, so a draft the viewer cannot find there links to the host instead.
+- **The start form lists at most the first 100 repositories** the repositories list returns.
 - **The assistant cannot launch a campaign,** and no event source (Dependabot, code-scanning
   alerts) starts one.
