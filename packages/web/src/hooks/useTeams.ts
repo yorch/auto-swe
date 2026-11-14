@@ -84,6 +84,17 @@ function useTeamIdsWithRole(minRole: 'LEAD' | 'ADMIN'): ReadonlySet<string> | nu
 }
 
 /**
+ * Whether the caller may start work that needs the lead of an owning team (an epic, a campaign): a
+ * platform ADMIN, or anyone who leads at least one active team. False while the list loads, which
+ * hides the control rather than flashing one that would be refused.
+ */
+export function useLeadsATeam(): boolean {
+  const user = useAuthStore((s) => s.user);
+  const led = useLedTeamIds();
+  return hasRole(user?.role, 'ADMIN') || (led?.size ?? 0) > 0;
+}
+
+/**
  * The teams the caller may author team-owned resources for (a workflow template): the teams
  * they LEAD or ADMIN, read from `myRole`. A platform ADMIN may author for any team and for no
  * team at all (`global`), so they get every team the directory lists.

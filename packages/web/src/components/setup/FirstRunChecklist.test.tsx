@@ -6,6 +6,9 @@ import { installMemoryStorage } from '@/test/memoryStorage';
 import { FirstRunChecklist } from './FirstRunChecklist';
 
 let role = 'ENGINEER';
+// The checklist words the repository step for anyone who leads a team; the platform role is only
+// a stand-in here for who does.
+vi.mock('@/hooks/useTeams', () => ({ useLeadsATeam: () => role !== 'ENGINEER' }));
 vi.mock('@/hooks/useHasRole', () => ({
   useHasRole: (required: string) => {
     const rank: Record<string, number> = { ADMIN: 3, ENGINEER: 1, LEAD: 2 };

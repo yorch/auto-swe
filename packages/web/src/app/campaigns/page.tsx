@@ -16,8 +16,8 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Toolbar } from '@/components/ui/Toolbar';
 import { CAMPAIGN_STATES, type CampaignState, useCampaigns } from '@/hooks/useCampaigns';
-import { useHasRole } from '@/hooks/useHasRole';
 import { useTeamParam } from '@/hooks/useTeamParam';
+import { useLeadsATeam } from '@/hooks/useTeams';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { teamGatedBoundary } from '@/lib/teamGate';
 
@@ -30,8 +30,9 @@ const STATE_OPTIONS = [
 
 function Campaigns() {
   const router = useRouter();
-  // Starting a campaign requires the platform LEAD role (and LEAD on the owning team).
-  const canStart = useHasRole('LEAD');
+  // Starting a campaign requires LEAD on the owning team, whatever the platform role, so the
+  // button shows to anyone who leads a team and to a platform ADMIN.
+  const canStart = useLeadsATeam();
   const [starting, setStarting] = useState(false);
   const { params, update } = useUrlFilters();
   const stateParam = params.get('state');

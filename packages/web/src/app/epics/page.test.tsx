@@ -28,7 +28,7 @@ const useEpics = vi.fn();
 vi.mock('@/hooks/useEpics', () => ({
   useEpics: (...args: unknown[]) => useEpics(...args),
 }));
-vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => true }));
+vi.mock('@/hooks/useTeams', () => ({ useLeadsATeam: () => true }));
 
 import EpicsPage from './page';
 

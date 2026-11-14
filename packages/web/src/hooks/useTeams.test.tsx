@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/authStore';
 import {
   useAddTeamMember,
   useAdminTeamIds,
+  useLeadsATeam,
   useLedTeamIds,
   useRemoveTeamMember,
   useUpdateTeamMember,
@@ -85,6 +86,30 @@ describe('team id hooks derived from myRole', () => {
     await waitFor(() => expect(result.current).not.toBeNull());
     expect([...(result.current ?? [])].sort()).toEqual(['a', 'l']);
     expect(get).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('useLeadsATeam', () => {
+  it('is true for a platform ADMIN without loading anything', () => {
+    signIn('ADMIN');
+    const { result } = renderHook(() => useLeadsATeam(), { wrapper });
+    expect(result.current).toBe(true);
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it('is true for a platform ENGINEER who leads a team, once the list has loaded', async () => {
+    signIn('ENGINEER');
+    const { result } = renderHook(() => useLeadsATeam(), { wrapper });
+    expect(result.current).toBe(false);
+    await waitFor(() => expect(result.current).toBe(true));
+  });
+
+  it('is false for someone who only has ENGINEER or no membership', async () => {
+    signIn('LEAD');
+    get.mockResolvedValue({ data: [team('e', 'ENGINEER'), team('n', null)] });
+    const { result } = renderHook(() => useLeadsATeam(), { wrapper });
+    await waitFor(() => expect(get).toHaveBeenCalled());
+    expect(result.current).toBe(false);
   });
 });
 
