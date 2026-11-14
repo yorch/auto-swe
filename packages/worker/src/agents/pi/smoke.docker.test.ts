@@ -4,7 +4,7 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runSmoke, type SmokeOptions, scriptedModel } from './smoke.js';
 
 /**
@@ -48,9 +48,23 @@ async function options(overrides: Partial<SmokeOptions> = {}): Promise<SmokeOpti
   };
 }
 
-async function leftoverContainers(): Promise<string> {
+async function smokeContainers(): Promise<string[]> {
   const { stdout } = await run('docker', ['ps', '-aq', '--filter', 'name=workspace-smoke-']);
-  return stdout.trim();
+  return stdout.split('\n').filter((id) => id.trim() !== '');
+}
+
+// The smoke containers that already existed when the current test began. A test is judged on the
+// containers it left behind, not on any `workspace-smoke-` container the daemon holds: without
+// this, one test that times out and leaks its container made every test after it fail the same
+// check, so a single slow start in CI read as six failures.
+let containersBefore = new Set<string>();
+
+beforeEach(async () => {
+  containersBefore = new Set(await smokeContainers());
+});
+
+async function leftoverContainers(): Promise<string> {
+  return (await smokeContainers()).filter((id) => !containersBefore.has(id)).join('\n');
 }
 
 afterAll(async () => {
