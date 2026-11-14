@@ -247,9 +247,35 @@ it('uses the team allowlist and supplies upper/lowercase secret proxy variables 
     );
   }
   expect(access?.env).toEqual([
-    'NO_PROXY=localhost,127.0.0.1,::1,registry.internal',
-    'no_proxy=localhost,127.0.0.1,::1,registry.internal',
+    'NO_PROXY=localhost,127.0.0.1,::1,[::1],registry.internal,host.docker.internal',
+    'no_proxy=localhost,127.0.0.1,::1,[::1],registry.internal,host.docker.internal',
+    'NODE_USE_ENV_PROXY=1',
   ]);
+});
+it('makes Node fetch use the proxy only when a proxy is configured', async () => {
+  const access = await beginEgressAccess([]);
+  expect(access?.env).toContain('NODE_USE_ENV_PROXY=1');
+  expect(access?.secretEnv).not.toHaveProperty('NODE_USE_ENV_PROXY');
+  h.enabled = false;
+  expect(await beginEgressAccess([])).toBeNull();
+});
+it('excludes the egress proxy host and both IPv6 loopback spellings from the proxy', async () => {
+  const access = await beginEgressAccess([]);
+  for (const name of ['NO_PROXY', 'no_proxy']) {
+    const entries = access?.env.find((entry) => entry.startsWith(`${name}=`))?.split('=')[1];
+    expect(entries?.split(',')).toEqual(
+      expect.arrayContaining(['host.docker.internal', '::1', '[::1]'])
+    );
+  }
+});
+it('does not repeat a host shared by the proxy, the registry and the bypass list', async () => {
+  h.register.mockResolvedValueOnce({
+    release: vi.fn(),
+    token: 'random-secret',
+    url: 'http://registry.internal:8792',
+  });
+  const access = await beginEgressAccess([], ['registry.internal']);
+  expect(access?.env[0]).toBe('NO_PROXY=localhost,127.0.0.1,::1,[::1],registry.internal');
 });
 it('supports no team and does not hide registration failures', async () => {
   await beginWorkspaceEgress(null, [], 'open');
@@ -261,8 +287,9 @@ it('supports no team and does not hide registration failures', async () => {
 it('lets the repository git host bypass the proxy', async () => {
   const access = await beginWorkspaceEgress('team', ['ghe.corp.internal']);
   expect(access?.env).toEqual([
-    'NO_PROXY=localhost,127.0.0.1,::1,registry.internal,ghe.corp.internal',
-    'no_proxy=localhost,127.0.0.1,::1,registry.internal,ghe.corp.internal',
+    'NO_PROXY=localhost,127.0.0.1,::1,[::1],registry.internal,host.docker.internal,ghe.corp.internal',
+    'no_proxy=localhost,127.0.0.1,::1,[::1],registry.internal,host.docker.internal,ghe.corp.internal',
+    'NODE_USE_ENV_PROXY=1',
   ]);
 });
 it('extracts the git host from https, ssh and scp-style URLs', () => {
