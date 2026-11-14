@@ -24,7 +24,7 @@ Conventions for every task:
 - [x] Task 2: Launch routes (epics, PRD runs, campaigns) drop the platform LEAD floor — `3be051fb`
 - [x] Task 3: Repository dependency and onboarding routes drop the platform LEAD floor — `edbbdfa5`
 - [x] Task 4: Workflow template routes drop the platform LEAD floor — `f2c45619`
-- [ ] Task 5: Web permissions use the team role alone, with explained disabled controls
+- [x] Task 5: Web permissions use the team role alone, with explained disabled controls — `5e85a1d7`
 - [ ] Task 6: Move Analytics, Reports and LLM usage to `/insights/*` with redirects
 - [ ] Task 7: Move Automations and the Teams directory, then reorder the sidebar
 - [ ] Task 8: Team overview returns a `mine` block
@@ -41,7 +41,7 @@ Conventions for every task:
 - [ ] Task 19: Docs, upgrade note and full quality gates
 - [x] Task 20: User lookup is open to any team lead — `175a01b5`
 - [x] Task 21: Slack approval needs LEAD on the run's owning team — `8615f02d`
-- [ ] Task 22: Code review presets and webhook management follow the team role
+- [x] Task 22: Code review presets and webhook management follow the team role — `a013a11b`
 
 ## Tasks
 
