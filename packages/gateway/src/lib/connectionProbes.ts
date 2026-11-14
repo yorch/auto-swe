@@ -44,6 +44,7 @@ import {
   resolveGitHubApproverAppConfig,
   resolveGitHubConfig,
 } from '@auto-swe/shared/lib/systemConfig';
+import { postChangeEvent } from './pagerdutyChangeEvents.js';
 
 export interface ProbeCheck {
   name: string;
@@ -705,4 +706,48 @@ export async function probePagerDutyConnection(
         )
   );
   return summarize(checks, startedAt);
+}
+
+/**
+ * A `pagerduty_events` connection. The Events API has no read-only check, so the probe sends a
+ * real change event, marked as a test, and reports whether PagerDuty accepted the routing key: it
+ * shows on the service's change timeline.
+ */
+export async function probePagerDutyEventsConnection(
+  routingKey: string,
+  doFetch: typeof fetch = createGuardedFetch({ allowPrivate: false })
+): Promise<ProbeResult> {
+  const startedAt = Date.now();
+  const status = await postChangeEvent(
+    routingKey,
+    {
+      links: [],
+      payload: {
+        custom_details: { test: true },
+        source: 'auto-swe',
+        summary: 'auto-swe connection test: change events reach this service',
+        timestamp: new Date().toISOString(),
+      },
+    },
+    doFetch
+  );
+  if (status === 0) {
+    return summarize(
+      [fail('Routing key', `PagerDuty could not be reached: ${UNREACHABLE}`)],
+      startedAt
+    );
+  }
+  return summarize(
+    [
+      status >= 200 && status < 300
+        ? pass('Routing key', 'PagerDuty accepted a test change event for this routing key.')
+        : status === 400
+          ? fail(
+              'Routing key',
+              'PagerDuty refused the test change event: the routing key is not valid.'
+            )
+          : fail('Routing key', `PagerDuty refused the test change event: ${refusal(status)}.`),
+    ],
+    startedAt
+  );
 }

@@ -577,6 +577,8 @@ export interface RepositorySummary {
   config: unknown;
   /** Whether a write-only API token is stored for the connection (never the token itself). */
   hasApiToken?: boolean;
+  /** git_repo only: the `pagerduty_events` connection sent a change event on merge; null for none. */
+  pagerdutyEventsConnectionId?: string | null;
   organizationName: string | null;
   repoName: string | null;
   defaultBranch: string;

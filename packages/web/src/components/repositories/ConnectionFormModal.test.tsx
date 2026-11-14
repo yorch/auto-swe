@@ -24,6 +24,10 @@ vi.mock('@/hooks/useTeams', () => ({
     data: [{ id: 't1', myRole: 'LEAD', name: 'Payments', orgId: 'o1', orgName: 'Org' }],
   }),
 }));
+const pagerdutyEventsConnections = [
+  { id: 'pde-1', name: 'Payments service', team: { id: 'team-1' }, type: 'pagerduty_events' },
+];
+
 vi.mock('@/hooks/useRepositories', () => ({
   useCreateRepository: () => ({ isPending: false, mutateAsync: create.mutateAsync }),
   useDeleteSetupSecret: () => ({ isPending: false, mutate: vi.fn() }),
@@ -32,6 +36,7 @@ vi.mock('@/hooks/useRepositories', () => ({
   useMovePreviewEnvToSecrets: () => ({ isPending: false, mutate: vi.fn() }),
   useProposeSetupFile: () => ({ data: undefined, isPending: false, mutate: vi.fn() }),
   useRepoEvalDatasets: () => ({ data: evalDatasets.data, isError: false, isLoading: false }),
+  useRepositories: () => ({ data: pagerdutyEventsConnections }),
   useRunRepoOnboarding: () => ({ isError: false, isPending: false, mutate: vi.fn() }),
   useSaveSetupSecret: () => ({ isPending: false, mutate: vi.fn() }),
   useSetupBlockers: () => ({ data: [], isError: false, isLoading: false }),
@@ -217,6 +222,14 @@ describe('ConnectionFormModal PR title', () => {
     save();
     await waitFor(() => expect(update.mutateAsync).toHaveBeenCalled());
     expect(update.mutateAsync.mock.calls[0]?.[0].prTitleFormat).toBe('conventional');
+  });
+
+  it('offers the PagerDuty change events setting and leaves it alone when unchanged', async () => {
+    renderEdit({ ...repo, pagerdutyEventsConnectionId: 'pde-1' });
+    expect(screen.getAllByText('PagerDuty change events').length).toBeGreaterThan(0);
+    save();
+    await waitFor(() => expect(update.mutateAsync).toHaveBeenCalled());
+    expect(update.mutateAsync.mock.calls[0]?.[0]).not.toHaveProperty('pagerdutyEventsConnectionId');
   });
 });
 

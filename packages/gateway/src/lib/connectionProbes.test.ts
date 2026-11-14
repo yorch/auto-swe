@@ -40,6 +40,7 @@ const {
   probeGitHubCredentialSet,
   probePackageRegistry,
   probePagerDutyConnection,
+  probePagerDutyEventsConnection,
   probeRepositoryAccess,
   probeApproverApp,
 } = await import('./connectionProbes.js');
@@ -514,5 +515,31 @@ describe('probePagerDutyConnection', () => {
     const result = await probePagerDutyConnection('pd-key', 'oncall@example.com', fetchMock);
     expect(result.ok).toBe(false);
     expect(result.detail).not.toMatch(/10\.0\.0\.7/);
+  });
+});
+
+describe('probePagerDutyEventsConnection', () => {
+  it('passes when PagerDuty accepts the test change event', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 202 }));
+    const result = await probePagerDutyEventsConnection('rk', fetchMock);
+    expect(result.ok).toBe(true);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://events.pagerduty.com/v2/change/enqueue');
+    const body = JSON.parse(init.body as string);
+    expect(body.routing_key).toBe('rk');
+    expect(body.payload.custom_details).toEqual({ test: true });
+  });
+
+  it('reports an invalid routing key on a 400', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 400 }));
+    const result = await probePagerDutyEventsConnection('rk', fetchMock);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('routing key is not valid');
+  });
+
+  it('reports PagerDuty as unreachable', async () => {
+    fetchMock.mockRejectedValueOnce(new Error('ECONNRESET'));
+    const result = await probePagerDutyEventsConnection('rk', fetchMock);
+    expect(result.detail).toContain('could not be reached');
   });
 });

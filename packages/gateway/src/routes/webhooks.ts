@@ -91,6 +91,7 @@ const JiraWebhookSchema = z
   })
   .passthrough();
 
+import { sendMergeChangeEvent } from '../lib/pagerdutyChangeEvents.js';
 import {
   claimsHostWithOwnSecret,
   deliveryHostMatches,
@@ -1484,6 +1485,27 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             request.log.warn({ err }, 'tracker sync failed (non-fatal)');
             return null;
           });
+        }
+
+        // Best-effort PagerDuty change event, so responders see the merge on the service's
+        // timeline. Only reached once per merge: a duplicate delivery returned above.
+        const repoRow = pullRequest.workflow.repository;
+        if (repoRow?.pagerdutyEventsConnectionId) {
+          const webBase = repoRow.githubUrl ?? (await resolveGitHubConfig()).baseUrl;
+          await sendMergeChangeEvent(
+            fastify.prisma,
+            repoRow.pagerdutyEventsConnectionId,
+            {
+              mergedAt: event.mergedAt,
+              org,
+              prNumber,
+              prUrl: `${webBase}/${org}/${repoName}/pull/${prNumber}`,
+              repoName,
+              ticketId: wr?.externalTicketId ?? null,
+              title: pullRequest.title,
+            },
+            request.log
+          );
         }
 
         return {

@@ -16,6 +16,7 @@ export const CONNECTION_TYPES = [
   'confluence',
   'zendesk',
   'pagerduty',
+  'pagerduty_events',
   'hubspot',
   'slack_workspace',
   'http_api',
@@ -90,6 +91,14 @@ const METADATA: Record<ConnectionType, ConnectionTypeMetadata> = {
     key: 'pagerduty',
     label: 'PagerDuty',
     supportsConfig: true,
+  },
+  pagerduty_events: {
+    description:
+      'A PagerDuty service integration (Events API v2 routing key) that receives a change event when a pull request from an auto-swe run merges.',
+    isWorkspaceTarget: false,
+    key: 'pagerduty_events',
+    label: 'PagerDuty change events',
+    supportsConfig: false,
   },
   slack_workspace: {
     description: 'Slack workspace-level connection for posting messages and reading channels.',

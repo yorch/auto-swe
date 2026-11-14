@@ -59,6 +59,7 @@ import { sendConflict } from '../lib/conflict.js';
 import {
   failed,
   probePagerDutyConnection,
+  probePagerDutyEventsConnection,
   probeRepositoryAccess,
 } from '../lib/connectionProbes.js';
 import { redactConnection } from '../lib/connectionRedaction.js';
@@ -249,8 +250,9 @@ const UpdateRepoSchema = z.object({
   isActive: z.boolean().optional(),
   language: z.string().nullable().optional(),
   name: z.string().max(200).nullable().optional(),
-  previewConfig: PreviewConfigSchema.nullable().optional(),
   /** The repository's own PR title format; null inherits `workflow.prTitleFormat`. */
+  pagerdutyEventsConnectionId: z.string().uuid().nullable().optional(),
+  previewConfig: PreviewConfigSchema.nullable().optional(),
   prTitleFormat: z.enum(PR_TITLE_FORMATS).nullable().optional(),
   /** The repository's own PR title template; blank or null inherits. */
   prTitleTemplate: z
@@ -1386,6 +1388,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           installation: { select: { host: true, installationId: true } },
           installationId: true,
           organizationName: true,
+          pagerdutyEventsConnectionId: true,
           previewConfig: true,
           repoName: true,
           scmProvider: true,
@@ -1588,6 +1591,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         isActive,
         language,
         name,
+        pagerdutyEventsConnectionId,
         previewConfig: bodyPreviewConfig,
         prTitleFormat,
         prTitleTemplate,
@@ -1719,6 +1723,38 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
 
+      // The change-event target must be a `pagerduty_events` connection of the team that will own
+      // this repository; re-checked on a team move, since the old team's key is not the new one's.
+      const nextPagerDutyEvents =
+        pagerdutyEventsConnectionId !== undefined
+          ? pagerdutyEventsConnectionId
+          : repo.pagerdutyEventsConnectionId;
+      if (
+        nextPagerDutyEvents &&
+        (pagerdutyEventsConnectionId !== undefined || (!!newTeamId && newTeamId !== repo.teamId))
+      ) {
+        if (repo.type !== 'git_repo') {
+          return sendError(
+            reply,
+            400,
+            'VALIDATION_ERROR',
+            'Only a git repository sends PagerDuty change events'
+          );
+        }
+        const target = await fastify.prisma.connection.findUnique({
+          select: { teamId: true, type: true },
+          where: { id: nextPagerDutyEvents },
+        });
+        if (target?.type !== 'pagerduty_events' || target.teamId !== (newTeamId ?? repo.teamId)) {
+          return sendError(
+            reply,
+            400,
+            'PAGERDUTY_EVENTS_CONNECTION_INVALID',
+            "The PagerDuty change events connection must be a pagerduty_events connection of the repository's team"
+          );
+        }
+      }
+
       const tokenUpdate =
         apiToken === undefined
           ? undefined
@@ -1793,6 +1829,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
                       : (bodyPreviewConfig as Prisma.InputJsonValue),
                 }
               : {}),
+            ...(pagerdutyEventsConnectionId !== undefined ? { pagerdutyEventsConnectionId } : {}),
             prTitleFormat,
             prTitleTemplate,
             ...(setupChange
@@ -2255,6 +2292,59 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const { fromEmail } = parsePagerDutyConnectionConfig(conn.config);
       return { data: await probePagerDutyConnection(apiToken, fromEmail) };
+    }
+  );
+
+  // POST /api/v1/repositories/:id/test-pagerduty-events — a `pagerduty_events` connection's stored
+  // routing key, checked by sending PagerDuty a test change event. Same role and shape as
+  // `test-pagerduty`; the key is decrypted only for the check.
+  app.post(
+    '/:id/test-pagerduty-events',
+    {
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      schema: { params: RepoParamsSchema },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const conn = await fastify.prisma.connection.findUnique({
+        select: {
+          apiKeyAuthTag: true,
+          apiKeyCiphertext: true,
+          apiKeyNonce: true,
+          apiKeyVersion: true,
+          teamId: true,
+          type: true,
+        },
+        where: { id: request.params.id },
+      });
+      if (conn?.type !== 'pagerduty_events') {
+        return sendError(reply, 404, 'NOT_FOUND', 'PagerDuty change events connection not found');
+      }
+      if (!(await canManageTeamRepos(fastify.prisma, user, conn.teamId))) {
+        return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this connection's team");
+      }
+      if (!(conn.apiKeyCiphertext && conn.apiKeyNonce && conn.apiKeyAuthTag)) {
+        return {
+          data: failed('Routing key', 'No routing key is saved. Edit the connection to add one.'),
+        };
+      }
+      let routingKey: string;
+      try {
+        routingKey = decryptSecret({
+          authTag: conn.apiKeyAuthTag,
+          ciphertext: conn.apiKeyCiphertext,
+          keyVersion: conn.apiKeyVersion,
+          nonce: conn.apiKeyNonce,
+        });
+      } catch {
+        return {
+          data: failed(
+            'Routing key',
+            'The saved routing key could not be read. Enter it again and save.'
+          ),
+        };
+      }
+      return { data: await probePagerDutyEventsConnection(routingKey) };
     }
   );
 

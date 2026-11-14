@@ -246,6 +246,10 @@ vi.mock('@auto-swe/shared/config', async (orig) => {
     }),
   };
 });
+vi.mock('../lib/pagerdutyChangeEvents.js', () => ({
+  sendMergeChangeEvent: vi.fn(async () => true),
+}));
+
 vi.mock('../lib/automations/engine.js', async (orig) => ({
   ...(await orig<typeof import('../lib/automations/engine.js')>()),
   handleOccurrence: vi.fn(async () => ({ automationId: 'automation-1', outcome: 'STARTED' })),
@@ -260,6 +264,7 @@ import { AutomationStartError, handleOccurrence } from '../lib/automations/engin
 import { registerFormBodyParser } from '../lib/formBody.js';
 import { GITHUB_WEBHOOK_MAX_BODY_BYTES } from '../lib/github.js';
 import { clearWebhookSecretCache } from '../lib/githubWebhookSecret.js';
+import { sendMergeChangeEvent } from '../lib/pagerdutyChangeEvents.js';
 import { logRequestError } from '../lib/requestErrorLog.js';
 import { ipRateLimitKey } from '../plugins/auth.js';
 import { webhookRoutes } from './webhooks.js';
@@ -2907,6 +2912,48 @@ describe('webhook routes', () => {
           expect.anything(),
           expect.anything()
         );
+      });
+    });
+
+    describe('a PagerDuty change event on merge', () => {
+      beforeEach(() => vi.mocked(sendMergeChangeEvent).mockClear());
+
+      it("goes to the repository's pagerduty_events connection", async () => {
+        trackedPr = {
+          ...trackedOn('repo-github'),
+          workflow: {
+            repository: { githubUrl: null, pagerdutyEventsConnectionId: 'pde-1', team: null },
+            temporalWorkflowId: 'wf-1',
+            workRequest: { externalTicketId: 'PROJ-1' },
+          },
+        };
+        const body = mergedBody(GITHUB_URL);
+        const res = await inject('/api/v1/webhooks/git', body, sign(body));
+        expect(res.statusCode).toBe(200);
+        expect(sendMergeChangeEvent).toHaveBeenCalledWith(
+          expect.anything(),
+          'pde-1',
+          expect.objectContaining({
+            prNumber: 7,
+            prUrl: 'https://github.com/acme/api/pull/7',
+            ticketId: 'PROJ-1',
+          }),
+          expect.anything()
+        );
+      });
+
+      it('is not sent for a repository that names no connection', async () => {
+        trackedPr = {
+          ...trackedOn('repo-github'),
+          workflow: {
+            repository: { githubUrl: null, team: null },
+            temporalWorkflowId: 'wf-1',
+            workRequest: null,
+          },
+        };
+        const body = mergedBody(GITHUB_URL);
+        await inject('/api/v1/webhooks/git', body, sign(body));
+        expect(sendMergeChangeEvent).not.toHaveBeenCalled();
       });
     });
 
