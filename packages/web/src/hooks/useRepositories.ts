@@ -7,6 +7,7 @@ import type {
   RepoSetupBlockersResponse,
   RepoSetupFileProposalStatus,
   RepoSetupSecretSummary,
+  RepositoryReviewRouting,
   RepositorySummary,
   SavedRepoCredential,
 } from '@auto-swe/shared/types/api';
@@ -448,5 +449,37 @@ export function useLinkRepoEvalDataset(connectionId: string) {
       ),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ['repositories', connectionId, 'eval-datasets'] }),
+  });
+}
+
+// ── Review routing ──
+
+/** The routing override a repository stores and the routing in force (ENGINEER; reachable repositories). */
+export function useRepositoryReviewRouting(connectionId: string | undefined) {
+  return useQuery({
+    enabled: Boolean(connectionId),
+    queryFn: () =>
+      api
+        .get<{ data: RepositoryReviewRouting }>(
+          `/api/v1/repositories/${connectionId}/review-routing`
+        )
+        .then((r) => r.data),
+    queryKey: ['repositories', connectionId, 'review-routing'],
+  });
+}
+
+/** Replace the override; `null` (or an empty object) clears it. LEAD of the owning team or ADMIN. */
+export function useSetRepositoryReviewRouting(connectionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (override: RepositoryReviewRouting['override'] | null) =>
+      api
+        .put<{ data: RepositoryReviewRouting }>(
+          `/api/v1/repositories/${connectionId}/review-routing`,
+          { override }
+        )
+        .then((r) => r.data),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ['repositories', connectionId, 'review-routing'] }),
   });
 }

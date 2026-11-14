@@ -12,6 +12,7 @@ import type { SkillRefInput } from '@/hooks/useAgentLibrary';
 import type { McpConnectionRow } from '@/hooks/useMcpConnections';
 import type { ProviderCredentialRow } from '@/hooks/useModelConfig';
 import type { SkillOption } from '@/hooks/useSkills';
+import { visibleText } from '@/lib/visibleText';
 import { SkillRefEditor, ToolKeysEditor } from './AgentEditorFields';
 
 /** The editable fields of an Agent, shared by the create and edit forms. */
@@ -27,7 +28,7 @@ export interface AgentFormValue {
   mcpConnectionId?: string | null;
   credentialId?: string | null;
   runtime?: ImplementerRuntimeKind | null;
-  /** Shown read-only: bound through the API by a platform admin, never edited here. */
+  /** The approved profile (by name). Editable only where `harnessProfiles` is passed (platform admin). */
   harnessProfile?: string | null;
   reasoning?: ReasoningLevel | null;
 }
@@ -92,6 +93,7 @@ export function AgentFormFields({
   copy = {},
   credentials,
   disabled = false,
+  harnessProfiles,
   mcpConnections,
   mode,
   onChange,
@@ -108,6 +110,11 @@ export function AgentFormFields({
   credentials?: ProviderCredentialRow[];
   /** Every field read-only, for an agent that is deactivated. */
   disabled?: boolean;
+  /**
+   * The approved harness profiles a platform admin can bind. Passing it makes the binding
+   * editable; without it a bound profile is shown read-only.
+   */
+  harnessProfiles?: Array<{ name: string; status: 'OK' | 'DISABLED' }>;
   mcpConnections: McpConnectionRow[];
   mode: 'create' | 'edit';
   onChange: (patch: Partial<AgentFormValue>) => void;
@@ -336,10 +343,28 @@ export function AgentFormFields({
           value={value.runtime ?? ''}
         />
       )}
-      {showRuntime && value.harnessProfile && (
+      {showRuntime && harnessProfiles && (
+        <Combobox
+          hint="Plugins and instructions the Claude Code harness loads for this agent. Needs the Claude Code runtime, and is not inherited: bind each agent that should have one."
+          label={optional('Harness profile')}
+          onChange={(v) => onChange({ harnessProfile: v || null })}
+          options={[
+            { label: 'None', value: '' },
+            ...harnessProfiles
+              // A disabled profile cannot be newly bound; one already bound stays visible.
+              .filter((p) => p.status === 'OK' || p.name === value.harnessProfile)
+              .map((p) => ({
+                label:
+                  p.status === 'OK' ? visibleText(p.name) : `${visibleText(p.name)} (disabled)`,
+                value: p.name,
+              })),
+          ]}
+          value={value.harnessProfile ?? ''}
+        />
+      )}
+      {showRuntime && !harnessProfiles && value.harnessProfile && (
         <p className="text-xs text-paper-500">
-          Harness profile: <code>{value.harnessProfile}</code> (set through the API by a platform
-          admin)
+          Harness profile: <code>{value.harnessProfile}</code> (changed by a platform admin)
         </p>
       )}
       {credentials && (

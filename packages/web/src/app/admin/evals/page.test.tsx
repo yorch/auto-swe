@@ -88,6 +88,7 @@ function mock(
       ],
       meta: { limit: 25, offset: 0, total: 60 },
     }),
+    'GET /api/v1/platform/evals/rubrics': () => ({ data: [] }),
     'GET /api/v1/platform/evals/runs': () => ({
       data: [
         {

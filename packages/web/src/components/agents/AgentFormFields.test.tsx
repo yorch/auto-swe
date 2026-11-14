@@ -49,6 +49,27 @@ describe('AgentFormFields', () => {
     expect(screen.queryByRole('textbox', { name: /profile/i })).toBeNull();
   });
 
+  it('lets an admin bind an enabled profile and clear it', () => {
+    const onChange = vi.fn();
+    render(
+      <AgentFormFields
+        harnessProfiles={[
+          { name: 'review-kit', status: 'OK' },
+          { name: 'old-kit', status: 'DISABLED' },
+        ]}
+        mcpConnections={[]}
+        mode="edit"
+        onChange={onChange}
+        showRuntime
+        skills={[]}
+        value={{ ...VALUE, harnessProfile: 'review-kit', runtime: 'claude-code' }}
+      />
+    );
+
+    const box = screen.getByRole('combobox', { name: 'Harness profile' });
+    expect((box as HTMLInputElement).value).toBe('review-kit');
+  });
+
   it('edit mode has no key field and plain labels', () => {
     render(
       <AgentFormFields

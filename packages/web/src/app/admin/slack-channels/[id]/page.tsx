@@ -1,22 +1,25 @@
 'use client';
 
-import { use } from 'react';
+import { use, useState } from 'react';
 import { ChannelActivityTab } from '@/components/slackChannels/ChannelActivityTab';
 import { ChannelMemoryTab } from '@/components/slackChannels/ChannelMemoryTab';
 import { ChannelOpenItemsTab } from '@/components/slackChannels/ChannelOpenItemsTab';
 import { ChannelSettingsTab } from '@/components/slackChannels/ChannelSettingsTab';
+import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
-import { ButtonLink } from '@/components/ui/Button';
+import { Button, ButtonLink } from '@/components/ui/Button';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useHasRole } from '@/hooks/useHasRole';
-import { useSlackChannel } from '@/hooks/useSlackChannels';
+import { useResetChannelBudget, useSlackChannel } from '@/hooks/useSlackChannels';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { ApiError } from '@/lib/api';
 import { validateRouteParam } from '@/lib/routeParams';
+import { formatTotalCost, plural } from '@/lib/utils';
 
 type Tab = 'settings' | 'memory' | 'open-items' | 'activity';
 
@@ -43,6 +46,9 @@ export default function SlackChannelDetailPage({ params }: { params: Promise<{ i
   const rawTab = query.get('tab');
   const tab: Tab = tabs.some((t) => t.id === rawTab) ? (rawTab as Tab) : defaultTab;
   const setTab = (next: Tab) => update({ tab: next === defaultTab ? null : next });
+  const resetBudget = useResetChannelBudget();
+  const [confirmingReset, setConfirmingReset] = useState(false);
+  const [resetOutcome, setResetOutcome] = useState<string | null>(null);
 
   return (
     <div className="space-y-6">
@@ -75,6 +81,19 @@ export default function SlackChannelDetailPage({ params }: { params: Promise<{ i
           ) : (
             <>
               <PageHeader
+                actions={
+                  isAdmin ? (
+                    <Button
+                      onClick={() => {
+                        setResetOutcome(null);
+                        setConfirmingReset(true);
+                      }}
+                      variant="secondary"
+                    >
+                      Reset budget
+                    </Button>
+                  ) : undefined
+                }
                 className="mb-4"
                 help={
                   <p>
@@ -91,6 +110,23 @@ export default function SlackChannelDetailPage({ params }: { params: Promise<{ i
                   </span>
                 }
                 title={channel.name ? `#${channel.name}` : 'Unnamed channel'}
+              />
+              {resetOutcome && <Alert variant="success">{resetOutcome}</Alert>}
+              <ConfirmModal
+                confirmLabel="Reset budget"
+                message="Releases this month's outstanding budget holds: estimates claimed by turns that never settled, for example after a worker crashed mid-turn. Real spend is left alone and the monthly cap still applies."
+                onClose={() => setConfirmingReset(false)}
+                onConfirm={async () => {
+                  const r = await resetBudget.mutateAsync(channel.id);
+                  setResetOutcome(
+                    r.holdsReleased === 0
+                      ? 'No outstanding budget holds to release.'
+                      : `Released ${plural(r.holdsReleased, 'hold')} and reclaimed ${formatTotalCost(r.reclaimedUsd)}.`
+                  );
+                }}
+                open={confirmingReset}
+                pendingLabel="Resetting…"
+                title={`Reset the budget holds for ${channel.name ? `#${channel.name}` : 'this channel'}?`}
               />
               <TabBar
                 active={tab}

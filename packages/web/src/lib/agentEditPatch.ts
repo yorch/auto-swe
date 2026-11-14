@@ -51,6 +51,10 @@ export function buildAgentUpdate(original: AgentRow, draft: AgentRow): UpdateAge
   if ((draft.runtime ?? null) !== (original.runtime ?? null)) {
     body.runtime = draft.runtime ?? null;
   }
+  // Same rule: only an ADMIN may change it, and a body that never names it keeps the binding.
+  if ((draft.harnessProfile ?? null) !== (original.harnessProfile ?? null)) {
+    body.harnessProfile = draft.harnessProfile ?? null;
+  }
   if ((draft.reasoning ?? null) !== (original.reasoning ?? null)) {
     body.reasoning = draft.reasoning ?? null;
   }

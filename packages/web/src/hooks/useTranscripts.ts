@@ -3,6 +3,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { API_BASE } from '@/lib/config';
+import { downloadFile } from '@/lib/downloadFile';
 
 export interface TranscriptMeta {
   activityOutcome: string | null;
@@ -139,4 +140,44 @@ export function useTranscriptAccessLog(
     queryKey: ['transcript-access-log', filters],
     refetchInterval: 30_000,
   });
+}
+
+// ── Bulk export (ADMIN) ──
+
+export interface TranscriptExportOptions {
+  activityType?: string;
+  agentKey?: string;
+  format: 'raw' | 'normalized';
+  /** ISO instants: `from` inclusive, `to` exclusive; the gateway allows at most 31 days. */
+  from: string;
+  scrubPii: boolean;
+  to: string;
+}
+
+/** The export route's URL for these options; blank filters are left out. */
+export function transcriptExportPath(options: TranscriptExportOptions): string {
+  const qs = new URLSearchParams({
+    format: options.format,
+    from: options.from,
+    scrubPii: String(options.scrubPii),
+    to: options.to,
+  });
+  if (options.activityType?.trim()) {
+    qs.set('activityType', options.activityType.trim());
+  }
+  if (options.agentKey?.trim()) {
+    qs.set('agentKey', options.agentKey.trim());
+  }
+  return `/api/v1/platform/transcripts/export?${qs}`;
+}
+
+/**
+ * Download the transcripts of a date range as one NDJSON file across all tenants. The request
+ * goes through the API client so the bearer token travels; the file is saved from memory.
+ */
+export function exportTranscripts(options: TranscriptExportOptions): Promise<void> {
+  return downloadFile(
+    transcriptExportPath(options),
+    `transcripts-export-${options.from.slice(0, 10)}-${options.to.slice(0, 10)}.ndjson`
+  );
 }

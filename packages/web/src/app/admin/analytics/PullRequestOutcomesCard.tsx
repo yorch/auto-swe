@@ -2,13 +2,16 @@
 
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Stat } from '@/components/ui/Stat';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
-import { usePullRequestOutcomes } from '@/hooks/useTemplates';
+import { exportPullRequestOutcomes, usePullRequestOutcomes } from '@/hooks/useTemplates';
 import type { DateRange } from '@/lib/dateRange';
 import { formatDelta } from '@/lib/delta';
+import { saveTextFile } from '@/lib/downloadFile';
+import { errMsg } from '@/lib/errors';
 import { successTone } from '@/lib/tone';
 import { formatDuration, formatPercent } from '@/lib/utils';
 
@@ -29,15 +32,60 @@ export function PullRequestOutcomesCard({
   const filtered = usePullRequestOutcomes(range, repoId || undefined);
   const { data, error, isError, isFetching, isLoading, refetch } = repoId ? filtered : all;
   const noun = `vs previous ${windowDays} days`;
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
+
+  async function handleExport() {
+    setExporting(true);
+    setExportError(null);
+    setExportNotice(null);
+    try {
+      const { csv, limit, truncated } = await exportPullRequestOutcomes(range, repoId || undefined);
+      setExportNotice(
+        truncated
+          ? `More pull requests matched than one export can hold, so the file has only the newest ${
+              limit ? `${limit.toLocaleString('en-US')} ` : ''
+            }of them. Narrow the window or pick a repository to export the rest.`
+          : null
+      );
+      saveTextFile(csv, 'pull-request-outcomes.csv', 'text/csv');
+    } catch (err) {
+      setExportError(errMsg(err, 'Could not export the pull requests'));
+    } finally {
+      setExporting(false);
+    }
+  }
 
   return (
     <Card className="p-5 sm:p-6">
-      <h2 className="mb-1 text-lg font-semibold tracking-tight text-paper-50">
-        Pull request outcomes
-      </h2>
+      <div className="mb-1 flex items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold tracking-tight text-paper-50">
+          Pull request outcomes
+        </h2>
+        <Button
+          disabled={exporting}
+          onClick={() => void handleExport()}
+          size="sm"
+          variant="secondary"
+        >
+          {exporting ? 'Exporting…' : 'Export CSV'}
+        </Button>
+      </div>
       <p className="mb-4 text-sm text-paper-500">
-        Pull requests opened in this window, judged as of now.
+        Pull requests opened in this window, judged as of now. The export has one row per pull
+        request, for the window and repository shown.
       </p>
+      {exportError && (
+        <Alert className="mb-4" variant="error">
+          {exportError}
+        </Alert>
+      )}
+      {exportNotice && (
+        <Alert className="mb-4" variant="warning">
+          {exportNotice}
+        </Alert>
+      )}
       <QueryBoundary
         error={error}
         isError={isError}

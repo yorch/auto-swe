@@ -364,13 +364,13 @@ verdicts into trends per template, model, and prompt version.
 
 | Surface | Where |
 |---|---|
-| Dashboard | `/admin/evals` — each scorer's daily mean over a 7, 30, or 90-day UTC window or a custom span of up to 366 days, charted by week above 90 days (`since` / `until` on `GET /api/v1/platform/evals/trends`); every captured result, paginated and filterable by scorer and source, linked to the run or harness run it scored; the datasets |
-| Dataset detail | `/admin/evals/datasets/[id]` — the cases with their stability (flake-screen) state, a re-check of every case or of one already checked, and the dataset's harness runs, each side with its runtime override |
+| Dashboard | `/admin/evals` — each scorer's daily mean over a 7, 30, or 90-day UTC window or a custom span of up to 366 days, charted by week above 90 days (`since` / `until` on `GET /api/v1/platform/evals/trends`); every captured result, paginated and filterable by scorer and source, linked to the run or harness run it scored; the datasets; the judge rubrics, with a form to create a global one |
+| Dataset detail | `/admin/evals/datasets/[id]` — the cases with their stability (flake-screen) state, a re-check of every case or of one already checked, the lesson corpus with an import from a repository's recorded lessons, and the dataset's harness runs, each side with its runtime override |
 | Harness run detail | `/admin/evals/runs/[id]` — the paired verdict, overall and per tag, the runtimes each side ran on, the cases left unscored for want of a passing screen, why a run is inconclusive, and that run's results with the runtime of each |
 | Run detail | The eval panel on `/runs/[id]` |
 | REST | `/api/v1/platform/evals` (datasets, cases, runs, rubrics, `results`, `trends` — one bounded aggregate per UTC day — and `rescreen`) |
 | CLI | `auto-swe evals` — list, show, `rescreen`, and `run` a dataset, optionally on a runtime per side; `results` prints a harness row's runtime |
-| Schedules | `/admin/workflow-defaults` — nightly regression and re-validation cadence |
+| Schedules | `/admin/workflow-defaults` — nightly regression (dataset, candidate and baseline refs, cron, and a run-now button) and re-validation cadence |
 
 ---
 

@@ -42,6 +42,7 @@ import { formatCost, formatDuration, formatPercent } from '@/lib/utils';
 import { ApprovalLatencyCard } from './ApprovalLatencyCard';
 import { BriefEngagementCard } from './BriefEngagementCard';
 import { PullRequestOutcomesCard } from './PullRequestOutcomesCard';
+import { ReviewTimeCard } from './ReviewTimeCard';
 
 type TemplateSort = 'name' | 'runs' | 'successRate' | 'totalCost' | 'avgCost';
 type DomainSort =
@@ -352,6 +353,8 @@ function AnalyticsWorkspace() {
             </Card>
 
             <PullRequestOutcomesCard range={range} windowDays={windowDays} />
+
+            <ReviewTimeCard range={range} />
 
             <BriefEngagementCard windowDays={windowDays} />
 

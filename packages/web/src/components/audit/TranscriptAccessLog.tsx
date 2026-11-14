@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -24,6 +25,7 @@ import {
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { customRangeIgnored, dateRangePatch, dayBounds, parseDateRange } from '@/lib/dateRange';
 import { cn, FOCUS_RING } from '@/lib/utils';
+import { TranscriptExportModal } from './TranscriptExportModal';
 
 const LIMIT = 50;
 
@@ -154,6 +156,7 @@ function IdFilterButton({
  */
 export function TranscriptAccessLog() {
   const { params, update } = useUrlFilters();
+  const [exportOpen, setExportOpen] = useState(false);
   const range = params.get('range') ? parseDateRange(params) : null;
   const offset = parseOffset(params.get('offset'));
   const rawAction = params.get('action');
@@ -199,11 +202,16 @@ export function TranscriptAccessLog() {
     <Card className="fade-up stagger-1 p-4 sm:p-6">
       <Toolbar
         end={
-          total > 0 && (
-            <span className="text-xs text-paper-500 tabular-nums">
-              {total} {total === 1 ? 'entry' : 'entries'}
-            </span>
-          )
+          <>
+            {total > 0 && (
+              <span className="text-xs text-paper-500 tabular-nums">
+                {total} {total === 1 ? 'entry' : 'entries'}
+              </span>
+            )}
+            <Button onClick={() => setExportOpen(true)} size="sm" variant="secondary">
+              Export transcripts
+            </Button>
+          </>
         }
       >
         <Select
@@ -318,6 +326,7 @@ export function TranscriptAccessLog() {
           />
         </div>
       )}
+      <TranscriptExportModal onClose={() => setExportOpen(false)} open={exportOpen} />
     </Card>
   );
 }

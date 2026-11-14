@@ -11,7 +11,9 @@ vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).n
 
 const ID = '11111111-1111-4111-8111-111111111111';
 
+const resetMutate = vi.fn();
 vi.mock('@/hooks/useSlackChannels', () => ({
+  useResetChannelBudget: () => ({ isPending: false, mutateAsync: resetMutate }),
   useSlackChannel: (id: string) => ({
     data: { id, isActive: true, name: 'general', workspace: { name: 'Acme' } },
     error: null,
@@ -41,6 +43,14 @@ vi.mock('@/components/slackChannels/ChannelActivityTab', () => ({
 import SlackChannelDetailPage from './page';
 
 beforeEach(() => {
+  resetMutate.mockReset();
+  HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+    this.setAttribute('open', '');
+  };
+  HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+    this.removeAttribute('open');
+    this.dispatchEvent(new Event('close'));
+  };
   resetNavigation('', `/admin/slack-channels/${ID}`);
   useAuthStore.setState({ isAuthenticated: true, user: { role: 'ADMIN', sub: 'me' } });
 });
@@ -92,5 +102,22 @@ describe('SlackChannelDetailPage tabs', () => {
     resetNavigation('tab=activity', `/admin/slack-channels/${ID}`);
     await renderPage();
     expect(await screen.findByText('activity tab')).toBeTruthy();
+  });
+
+  it('resets the budget holds only after confirming, and reports how many were released', async () => {
+    resetMutate.mockResolvedValue({ channelId: ID, holdsReleased: 2, reclaimedUsd: 0.5 });
+    await renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Reset budget' }));
+    expect(resetMutate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Reset budget' }).at(-1) as HTMLElement);
+    expect(await screen.findByText(/Released 2 holds/)).toBeTruthy();
+    expect(resetMutate).toHaveBeenCalledWith(ID);
+  });
+
+  it('offers no budget reset to anyone but an admin', async () => {
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ENGINEER', sub: 'me' } });
+    await renderPage();
+    await screen.findByText('memory tab');
+    expect(screen.queryByRole('button', { name: 'Reset budget' })).toBeNull();
   });
 });

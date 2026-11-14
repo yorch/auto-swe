@@ -44,6 +44,7 @@ import {
   useUpdateAgent,
 } from '@/hooks/useAgentLibrary';
 import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
+import { useHarnessProfiles } from '@/hooks/useHarnessProfiles';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { useAdminCredentials } from '@/hooks/useModelConfig';
@@ -215,6 +216,7 @@ function AgentLibraryContent() {
   // Readiness already knows which providers lack a credential, so one request covers every row.
   const isAdmin = useHasRole('ADMIN');
   const { data: readiness } = useReadiness(isAdmin);
+  const { data: harnessProfiles } = useHarnessProfiles(isAdmin);
   const { data: slackChannels } = useSlackChannels();
   const createAgent = useCreateAgent();
   const updateAgent = useUpdateAgent();
@@ -841,6 +843,7 @@ function AgentLibraryContent() {
         <AgentFormFields
           copy={CREATE_COPY}
           credentials={credentials ?? []}
+          harnessProfiles={isAdmin ? (harnessProfiles ?? []) : undefined}
           mcpConnections={mcpConnections ?? []}
           mode="create"
           onChange={(patch) => setCreateForm({ ...createForm, ...patch })}
@@ -920,6 +923,7 @@ function AgentLibraryContent() {
               copy={EDIT_COPY}
               credentials={credentials ?? []}
               disabled={!editing.isActive}
+              harnessProfiles={isAdmin ? (harnessProfiles ?? []) : undefined}
               mcpConnections={mcpConnections ?? []}
               mode="edit"
               onChange={patchEditing}
