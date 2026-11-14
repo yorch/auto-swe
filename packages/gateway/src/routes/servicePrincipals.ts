@@ -131,7 +131,6 @@ function liveTokenWhere(now: Date): Prisma.ApiTokenWhereInput {
 export const servicePrincipalRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const lead = requireAuth({
-    requiredRole: 'LEAD',
     requiredTeamRole: 'LEAD',
     teamIdParam: 'teamId',
   });

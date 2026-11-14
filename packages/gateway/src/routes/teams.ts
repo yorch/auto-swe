@@ -454,7 +454,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
+      onRequest: requireAuth({ requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
       schema: { body: UpdateTeamSchema, params: TeamParamsSchema },
     },
     async (request, reply) => {
@@ -703,7 +703,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/members/invite',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
+      onRequest: requireAuth({ requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
       schema: {
         body: z.object({
           email: z.string().trim().toLowerCase().email(),
@@ -745,7 +745,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/members',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
+      onRequest: requireAuth({ requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
       schema: { body: AddMemberSchema, params: TeamParamsSchema },
     },
     async (request, reply) => {
@@ -830,7 +830,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:id/members/:userId',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
+      onRequest: requireAuth({ requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
       schema: { body: UpdateMemberSchema, params: TeamMemberParamsSchema },
     },
     async (request, reply) => {
@@ -887,7 +887,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.delete(
     '/:id/members/:userId',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
+      onRequest: requireAuth({ requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
       schema: { params: TeamMemberParamsSchema },
     },
     async (request, reply) => {

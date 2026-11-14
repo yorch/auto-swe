@@ -161,7 +161,7 @@ Every write above is audited with `writeAuditLog`. Every new route has an entry 
 3. When a platform `ADMIN` who is not a member of T calls a team-scoped route for T, the system shall authorize the request.
 4. If a team `LEAD` grants a team role above their own, then the system shall return HTTP 403 with code `PRIVILEGE_ESCALATION`.
 5. The system shall require platform role `LEAD` for `/review-presets` and `/admin/platform-settings` and for no team-scoped route.
-6. The route test shall fail when any registered route sets `requiredTeamRole` and a `requiredRole` above `ENGINEER`.
+6. The route test shall fail when any registered route sets `requiredTeamRole` and a `requiredRole` above `ENGINEER`, except the two sandbox allowlist routes that are platform `ADMIN` only by design.
 7. `teamPermissions('ENGINEER', 'LEAD')` shall return `canManageMembers: true` and `grantableRoles` equal to `['ENGINEER', 'LEAD']`.
 8. `teamPermissions('LEAD', 'ENGINEER')` shall return `canManageMembers: false` and an empty `grantableRoles`.
 9. While a control is disabled for a missing team role, the system shall set its title to `Requires the LEAD role in this team` (or the role it needs).

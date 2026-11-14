@@ -20,7 +20,7 @@ Conventions for every task:
 
 ## Progress
 
-- [ ] Task 1: Team-scoped team routes use the team role alone
+- [x] Task 1: Team-scoped team routes use the team role alone — `72f27e4b`
 - [ ] Task 2: Launch routes (epics, PRD runs, campaigns) drop the platform LEAD floor
 - [ ] Task 3: Repository dependency and onboarding routes drop the platform LEAD floor
 - [ ] Task 4: Workflow template routes drop the platform LEAD floor
@@ -321,7 +321,8 @@ shows the pending message.
 
 **What**: Update `docs/teams.md` (role rule, the "My work" panel, the `mine` block, the Manage tab,
 attention actions, and a `## Limitations` entry for nudge reach and approver resolution). Add one
-`docs/upgrade-notes.md` entry that names both affected groups and gives a query that lists them;
+`docs/upgrade-notes.md` entry that names both affected groups, names that a team `LEAD` may now
+invite users (gated by the organization's `trustedInvites`, decision D3), and gives a query that lists them;
 follow the existing entry format and fixing-commit convention. Update `docs/work-views.md` or other
 docs only where a moved address appears. Run every gate in `CLAUDE.md` §5.
 **Files**: `docs/teams.md`, `docs/upgrade-notes.md`, other `docs/*.md` where a moved address appears

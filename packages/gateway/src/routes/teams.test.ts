@@ -287,6 +287,20 @@ function buildApp(state: State): FastifyInstance {
           state.memberships.find((m) => m.userId === k.userId && m.teamId === k.teamId) ?? null
         );
       },
+      update: async ({
+        data,
+        where,
+      }: {
+        data: Partial<Pick<MembershipRow, 'role'>>;
+        where: { id: string };
+      }) => {
+        const row = state.memberships.find((m) => m.id === where.id);
+        if (!row) {
+          throw new Error('membership not found');
+        }
+        Object.assign(row, data);
+        return row;
+      },
     },
     workerEgressCapability: { findMany: async () => [] },
   };
@@ -750,6 +764,92 @@ describe('DELETE /api/v1/teams/:id/members/:userId', () => {
     expect(state.memberships.map((m) => m.userId).sort()).toEqual(
       [ADMIN_USER_ID, TARGET_USER_ID].sort()
     );
+  });
+});
+
+describe('the team role alone decides team management', () => {
+  const NEW_USER_ID = '00000000-0000-4000-8000-0000000000cc';
+  const headers = { authorization: 'Bearer fake-jwt' };
+  const joiner = {
+    orgMemberships: [
+      { id: 'new-user-org', orgId: TEAM_ID, role: 'ORG_MEMBER', userId: NEW_USER_ID },
+    ],
+  };
+
+  it('lets a platform ENGINEER who leads the team rename it', async () => {
+    const state = freshState({ userRole: 'ENGINEER' });
+    const res = await buildApp(state).inject({
+      body: { name: 'platform-eng' },
+      headers,
+      method: 'PATCH',
+      url: `/api/v1/teams/${TEAM_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(state.teams[0].name).toBe('platform-eng');
+  });
+
+  it('lets a platform ENGINEER who leads the team remove a member', async () => {
+    const state = freshState({ userRole: 'ENGINEER' });
+    const res = await buildApp(state).inject({
+      headers,
+      method: 'DELETE',
+      url: `/api/v1/teams/${TEAM_ID}/members/${TARGET_USER_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(state.memberships.map((m) => m.userId)).toEqual([ADMIN_USER_ID]);
+  });
+
+  it.each([
+    ['add a member', 'POST', '/members', { role: 'ENGINEER', userId: NEW_USER_ID }, 201],
+    ['change a role', 'PATCH', `/members/${TARGET_USER_ID}`, { role: 'LEAD' }, 200],
+  ] as const)(
+    'lets a platform ENGINEER who leads the team: %s',
+    async (_name, method, path, payload, status) => {
+      const res = await buildApp(freshState({ userRole: 'ENGINEER', ...joiner })).inject({
+        headers,
+        method,
+        payload,
+        url: `/api/v1/teams/${TEAM_ID}${path}`,
+      });
+      expect(res.statusCode).toBe(status);
+    }
+  );
+
+  it('refuses a platform LEAD who is only an ENGINEER of the team', async () => {
+    const state = freshState({ userRole: 'LEAD' });
+    state.memberships[0].role = 'ENGINEER';
+    const res = await buildApp(state).inject({
+      body: { name: 'platform-eng' },
+      headers,
+      method: 'PATCH',
+      url: `/api/v1/teams/${TEAM_ID}`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.message).toBe('Requires LEAD role in this team');
+    expect(state.teams[0].name).toBe('platform');
+  });
+
+  it('lets a platform ADMIN who is not a member rename the team', async () => {
+    const state = freshState({ memberships: [], userRole: 'ADMIN' });
+    const res = await buildApp(state).inject({
+      body: { name: 'platform-eng' },
+      headers,
+      method: 'PATCH',
+      url: `/api/v1/teams/${TEAM_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('refuses a team LEAD who grants a role above their own', async () => {
+    const state = freshState({ userRole: 'ENGINEER', ...joiner });
+    const res = await buildApp(state).inject({
+      headers,
+      method: 'POST',
+      payload: { role: 'ADMIN', userId: NEW_USER_ID },
+      url: `/api/v1/teams/${TEAM_ID}/members`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('PRIVILEGE_ESCALATION');
   });
 });
 
