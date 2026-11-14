@@ -437,6 +437,10 @@ lifecycle changes and delegated configuration grants are managed under `/admin/a
 - **A PRD run is visible to the team of its first repository only.** It records its primary
   repository as its work request's connection; the teams of its other repositories see the per-repo
   work requests it submits, not the PRD run and its approval steps.
+- **The dashboard PRD form takes pasted text only.** Start work → **Run from a PRD** has no file
+  upload, no link import and no sample task; a PRD kept in Confluence or Google Docs is copied in.
+  The form offers repositories of teams the caller leads (the server's rule), so a repository owned
+  by another team cannot be named from it even if the caller can see it.
 - **A requester keeps visibility of their own runs after leaving the team.** The requester term is
   not re-checked against current membership, so someone who launched a run can still see it, cancel
   it and resolve its steps after being removed from the team that owns its repository. Revoking

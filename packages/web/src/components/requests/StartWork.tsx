@@ -7,6 +7,7 @@ import { type ReactNode, useState } from 'react';
 import { AgentRunForm } from '@/components/agentRuns/AgentRunForm';
 import { EpicLaunchForm } from '@/components/epics/EpicLaunchForm';
 import { HowItWorks } from '@/components/help/HowItWorks';
+import { PrdRunLaunchForm } from '@/components/prdRuns/PrdRunLaunchForm';
 import { ModeChooser } from '@/components/requests/ModeChooser';
 import { StartScopeProvider, type StartScopeValue } from '@/components/requests/StartScope';
 import { WorkflowLaunchForm } from '@/components/requests/WorkflowLaunchForm';
@@ -36,7 +37,7 @@ import { hasRole } from '@/lib/roles';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
-type Mode = 'workflow' | 'agent' | 'epic';
+type Mode = 'workflow' | 'agent' | 'epic' | 'prd';
 
 interface ModeOption {
   value: Mode;
@@ -64,6 +65,14 @@ const GUIDE: Record<Exclude<Mode, 'workflow'>, { title: string; points: string[]
     ],
     title: 'Running an epic',
   },
+  prd: {
+    points: [
+      'An agent analyses the PRD and you review the analysis.',
+      'It is decomposed into epics and stories, and you approve the breakdown.',
+      'Tickets are created and each story becomes a work request on its repository.',
+    ],
+    title: 'Running a PRD',
+  },
 };
 
 /**
@@ -82,7 +91,7 @@ function WorkModePicker({
   return (
     <fieldset>
       <legend className="sr-only">How do you want to work?</legend>
-      <div className="grid gap-2 sm:grid-cols-3 sm:gap-3">
+      <div className="grid gap-2 sm:grid-cols-2 sm:gap-3 xl:grid-cols-4">
         {options.map((option) => {
           const selected = option.value === value;
           return (
@@ -306,6 +315,14 @@ export function StartWork({
       label: 'Run a multi-repo epic',
       value: 'epic',
     },
+    {
+      // POST /prd-runs takes the same decision as an epic: team lead on every repository's owner.
+      description: canStartEpic ? 'Break a product requirements doc into stories.' : epic.reason,
+      disabled: !canStartEpic,
+      icon: 'docs',
+      label: 'Run from a PRD',
+      value: 'prd',
+    },
   ];
   const guide = mode === 'workflow' ? workflowRail : GUIDE[mode];
   const detailsStep = mode === 'workflow' ? 3 : 2;
@@ -452,6 +469,11 @@ export function StartWork({
             <div hidden={mode !== 'epic'}>
               <Step number={detailsStep} title="Describe the epic">
                 <EpicLaunchForm onLaunched={(path) => router.push(path)} reviewBeforeLaunch />
+              </Step>
+            </div>
+            <div hidden={mode !== 'prd'}>
+              <Step number={detailsStep} title="Describe the PRD">
+                <PrdRunLaunchForm reviewBeforeLaunch />
               </Step>
             </div>
           </div>

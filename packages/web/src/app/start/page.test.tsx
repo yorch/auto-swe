@@ -14,6 +14,7 @@ describe('/start parameters', () => {
   it('reads a known mode and ignores an unknown one', async () => {
     expect((await propsFor({ mode: 'agent' })).initialMode).toBe('agent');
     expect((await propsFor({ mode: 'epic' })).initialMode).toBe('epic');
+    expect((await propsFor({ mode: 'prd' })).initialMode).toBe('prd');
     expect((await propsFor({ mode: 'bogus' })).initialMode).toBeUndefined();
   });
 

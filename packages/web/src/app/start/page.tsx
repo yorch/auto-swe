@@ -1,6 +1,6 @@
 import { StartWork } from '@/components/requests/StartWork';
 
-const MODES = ['workflow', 'agent', 'epic'] as const;
+const MODES = ['workflow', 'agent', 'epic', 'prd'] as const;
 
 export default async function StartWorkPage({
   searchParams,
