@@ -35,9 +35,6 @@ export async function launchRepoOnboarding(
   idempotencyKey?: string
 ) {
   const user = requireUser(request);
-  if (user.role !== 'LEAD' && user.role !== 'ADMIN') {
-    refuse(403, 'REPO_SETUP_FORBIDDEN', 'Requires LEAD role');
-  }
   const repo = await findLaunchConnection(fastify.prisma, connectionId, user);
   if (!repo?.isActive) {
     refuse(404, 'REPO_NOT_FOUND', 'Repository not found or inactive');

@@ -76,6 +76,7 @@ async function build() {
         async ({ where }: { where: { id: string } }) => created.get(where.id) ?? repo
       ),
     },
+    organizationMembership: { findUnique: vi.fn().mockResolvedValue(null) },
     team: { findUnique: vi.fn().mockResolvedValue({ id: TEAM, isActive: true, orgId: 'org-1' }) },
     teamMembership: {
       findUnique: vi.fn().mockResolvedValue({ role: 'ADMIN', team: { isActive: true } }),
@@ -124,6 +125,38 @@ afterEach(async () => {
 });
 
 describe('onboarding run trigger', () => {
+  it('lets a platform ENGINEER who administers the repository team launch onboarding', async () => {
+    const ctx = await build();
+    ctx.actor.role = 'ENGINEER';
+    const response = await ctx.post('direct-key');
+    expect(response.statusCode).toBeLessThan(300);
+    expect(m.launch).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a platform ENGINEER who is only an ENGINEER of the repository team', async () => {
+    const ctx = await build();
+    ctx.actor.role = 'ENGINEER';
+    ctx.prisma.teamMembership.findUnique.mockResolvedValue({
+      role: 'ENGINEER',
+      team: { isActive: true },
+    });
+    const response = await ctx.post('direct-key');
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error.code).toBe('REPO_SETUP_FORBIDDEN');
+    // The membership check refuses first, so the shell-author check never runs.
+    expect(m.shell).not.toHaveBeenCalled();
+    expect(m.launch).not.toHaveBeenCalled();
+  });
+
+  it('refuses a platform ENGINEER who belongs to no team of the repository', async () => {
+    const ctx = await build();
+    ctx.actor.role = 'ENGINEER';
+    ctx.prisma.teamMembership.findUnique.mockResolvedValue(null);
+    const response = await ctx.post('direct-key');
+    expect(response.statusCode).toBe(403);
+    expect(m.launch).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])('direct creation auto-onboarding enabled: %s', async (enabled) => {
     const ctx = await build();
     m.settings.mockResolvedValue({ 'onboarding.autoRunOnConnect': enabled });
@@ -215,11 +248,9 @@ describe('onboarding run trigger', () => {
       })
     );
   });
-  it('requires authentication and LEAD role', async () => {
+  it('requires authentication', async () => {
     const ctx = await build();
     expect((await ctx.post(undefined, false)).statusCode).toBe(401);
-    ctx.actor.role = 'ENGINEER';
-    expect((await ctx.post()).statusCode).toBe(403);
     expect(m.launch).not.toHaveBeenCalled();
   });
   it('requires repo management and shell authoring', async () => {

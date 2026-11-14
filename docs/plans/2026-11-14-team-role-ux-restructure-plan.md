@@ -21,7 +21,7 @@ Conventions for every task:
 ## Progress
 
 - [x] Task 1: Team-scoped team routes use the team role alone — `8183c368`
-- [ ] Task 2: Launch routes (epics, PRD runs, campaigns) drop the platform LEAD floor
+- [x] Task 2: Launch routes (epics, PRD runs, campaigns) drop the platform LEAD floor — `3be051fb`
 - [ ] Task 3: Repository dependency and onboarding routes drop the platform LEAD floor
 - [ ] Task 4: Workflow template routes drop the platform LEAD floor
 - [ ] Task 5: Web permissions use the team role alone, with explained disabled controls
@@ -74,15 +74,16 @@ epic, PRD and campaign suites still pass.
 ### Task 3: Repository dependency and onboarding routes drop the platform LEAD floor
 
 **What**: In `routes/repoDependencies.ts` (four routes) lower `requiredRole` to `ENGINEER`; each
-handler already calls `canManageTeamRepos`. In `lib/repoOnboardingLaunch.ts` replace the platform
-check `user.role !== 'LEAD' && user.role !== 'ADMIN'` with a `canManageTeamRepos` check on the
-repository's owning team, keeping the error code `REPO_SETUP_FORBIDDEN`. Extend the matrix test
-pattern of Task 2 to these routes in the same test file style.
-**Files**: `packages/gateway/src/routes/repoDependencies.ts`,
+handler already calls `canManageTeamRepos`. In `routes/repositories.ts` lower the three
+`Role.LEAD` gates (`test-pagerduty`, `test-pagerduty-events`, `onboarding-runs`), which also call
+`canManageTeamRepos`. In `lib/repoOnboardingLaunch.ts` remove the redundant platform check; the
+existing `canManageTeamRepos` and `isShellAuthor` checks decide. Leave `routes/humanErrorBaselines.ts`:
+it decides by organization membership (decision D5). Extend the matrix test pattern of Task 2.
+**Files**: `packages/gateway/src/routes/repoDependencies.ts`, `packages/gateway/src/routes/repositories.ts`,
 `packages/gateway/src/lib/repoOnboardingLaunch.ts`, `packages/gateway/src/routes/repoDependencies.test.ts`,
-`packages/gateway/src/lib/repoOnboardingLaunch.test.ts`
+`packages/gateway/src/routes/connectionTestRoutes.test.ts`, `packages/gateway/src/routes/repositoryOnboardingRuns.test.ts`
 **Depends on**: none
-**Verify**: `yarn vitest run packages/gateway/src/routes/repoDependencies.test.ts packages/gateway/src/lib/repoOnboardingLaunch.test.ts`.
+**Verify**: `yarn vitest run packages/gateway/src/routes/repoDependencies.test.ts packages/gateway/src/routes/connectionTestRoutes.test.ts packages/gateway/src/routes/repositoryOnboardingRuns.test.ts`.
 The same three cases as Task 2 hold for a manual edge and for onboarding. A manual edge still needs
 `LEAD` on both teams.
 
@@ -322,7 +323,7 @@ shows the pending message.
 **What**: Update `docs/teams.md` (role rule, the "My work" panel, the `mine` block, the Manage tab,
 attention actions, and a `## Limitations` entry for nudge reach and approver resolution). Add one
 `docs/upgrade-notes.md` entry that names both affected groups, names that a team `LEAD` may now
-invite users (gated by the organization's `trustedInvites`, decision D3), and gives a query that lists them;
+invite users (gated by the organization's `trustedInvites`, decision D3), names the existence-signal widening and the ORG_ADMIN reach (D4, D5), and gives a query that lists them;
 follow the existing entry format and fixing-commit convention. Update `docs/work-views.md` or other
 docs only where a moved address appears. Run every gate in `CLAUDE.md` §5.
 **Files**: `docs/teams.md`, `docs/upgrade-notes.md`, other `docs/*.md` where a moved address appears

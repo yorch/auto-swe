@@ -207,7 +207,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
   // configured confidence threshold), never straight into agent context.
   app.post(
     '/:id/dependencies/infer',
-    { onRequest: requireAuth({ requiredRole: 'LEAD' }), schema: { params: RepoParams } },
+    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: RepoParams } },
     async (request, reply) => {
       const user = requireUser(request);
       const repo = await loadRepo(fastify.prisma, request.params.id);
@@ -316,7 +316,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/dependencies',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: CreateEdgeSchema, params: RepoParams },
     },
     async (request, reply) => {
@@ -380,7 +380,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:id/dependencies/:edgeId',
     {
-      onRequest: requireAuth({ requiredRole: 'LEAD' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: PatchEdgeSchema, params: EdgeParams },
     },
     async (request, reply) => {
@@ -454,7 +454,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
   // DELETE /:id/dependencies/:edgeId — remove (either team's LEAD).
   app.delete(
     '/:id/dependencies/:edgeId',
-    { onRequest: requireAuth({ requiredRole: 'LEAD' }), schema: { params: EdgeParams } },
+    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: EdgeParams } },
     async (request, reply) => {
       const user = requireUser(request);
       const edge = await fastify.prisma.repoDependency.findUnique({

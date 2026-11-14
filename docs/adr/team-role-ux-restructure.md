@@ -29,3 +29,16 @@
 **Alternatives considered**: Adding a new owning-team check in the route was rejected: the handlers already enforce it, and a second copy could drift.
 
 **Accepted residual (Task 2 security review, low):** any signed-in caller can now reach the repository-existence lookup of the three launch routes, so a `404` against a `403` tells them whether a UUID they hold names an active repository or team. The 404 body echoes only the ids the caller sent. Ids are random UUIDs, and the existence signal was already a deliberate choice in these handlers. `docs/campaigns.md` states it.
+
+## D5 — 2026-11-14 — Task 3: The floor inventory missed `Role.LEAD`, and organization-scoped routes stay
+
+**Status**: Accepted
+**Decision**: Task 3 also lowers three `requiredRole: Role.LEAD` gates in `routes/repositories.ts` (`test-pagerduty`, `test-pagerduty-events`, `onboarding-runs`) and removes the platform check in `lib/repoOnboardingLaunch.ts`. The earlier inventory grepped for the string `'LEAD'` and missed this spelling. Each of these handlers already calls `canManageTeamRepos`, and onboarding also needs `isShellAuthor` (team ADMIN). The three `Role.LEAD` gates in `routes/humanErrorBaselines.ts` are left alone: they decide by organization membership, and organization roles are out of scope. In `repositoryOnboardingRuns.test.ts` the case "requires authentication and LEAD role" was narrowed to authentication, because its platform-ENGINEER half asserted the removed floor.
+**Reason**: The team role is the authority wherever a handler reads a team membership. A route that reads an organization membership is a different axis.
+**Alternatives considered**: Lowering the baseline routes too was rejected as a change to organization semantics the spec does not cover.
+
+**Accepted residuals (Task 3 security review, low):** with the platform floor gone, any signed-in caller who already holds a UUID can tell from `404` against `403` or `400` whether a connection exists, what type it has, whether two repositories share an organization, and whether an edge exists. The same holds for onboarding. No response returns data, and the UUIDs are random. Same residual as D4. `canManageTeamRepos` also admits an ORG_ADMIN of the owning organization, so a platform ENGINEER who is an ORG_ADMIN now passes the PagerDuty test and dependency routes (onboarding still needs team ADMIN or platform ADMIN through `isShellAuthor`). The upgrade note (Task 19) names both.
+
+**Open items for the user (found by the Task 3 review, not in the spec):**
+- `GET /api/v1/users/lookup` (`routes/users.ts`) keeps `requiredRole: LEAD`. It is the exact-email lookup behind the team and organization "add member" pickers and a rate-limited enumeration oracle. A team lead with platform role ENGINEER can invite by email but cannot use the picker. Lowering it means choosing who may enumerate users (any team lead of any team?).
+- `routes/slack/interactive.ts:220` gates approving a workflow from Slack with `hasRole(user.role, 'LEAD')`, a platform check on what is a team-scoped action.

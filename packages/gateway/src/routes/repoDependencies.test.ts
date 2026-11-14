@@ -199,8 +199,12 @@ describe('repoDependencyRoutes', () => {
       expect(res.statusCode).toBe(409);
     });
 
-    it('forbids an ENGINEER outright (403 at the role gate)', async () => {
+    it('refuses a platform ENGINEER who leads neither team (403 from the team check)', async () => {
       ctx.authState.role = 'ENGINEER';
+      ctx.mockPrisma.connection.findUnique
+        .mockResolvedValueOnce(repoRow(FROM, TEAM_FROM))
+        .mockResolvedValueOnce(repoRow(TO, TEAM_TO));
+      leadOf(ctx.mockPrisma, []);
       const res = await ctx.app.inject({
         body: { toRepoId: TO },
         headers: AUTH,
@@ -208,6 +212,75 @@ describe('repoDependencyRoutes', () => {
         url: `/api/v1/repositories/${FROM}/dependencies`,
       });
       expect(res.statusCode).toBe(403);
+      expect(ctx.mockPrisma.repoDependency.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a platform ENGINEER who leads only one of the two teams (403)', async () => {
+      ctx.authState.role = 'ENGINEER';
+      ctx.mockPrisma.connection.findUnique
+        .mockResolvedValueOnce(repoRow(FROM, TEAM_FROM))
+        .mockResolvedValueOnce(repoRow(TO, TEAM_TO));
+      leadOf(ctx.mockPrisma, [TEAM_FROM]);
+      const res = await ctx.app.inject({
+        body: { toRepoId: TO },
+        headers: AUTH,
+        method: 'POST',
+        url: `/api/v1/repositories/${FROM}/dependencies`,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(ctx.mockPrisma.repoDependency.create).not.toHaveBeenCalled();
+    });
+
+    it('creates a manual edge for a platform ENGINEER who leads both teams', async () => {
+      ctx.authState.role = 'ENGINEER';
+      ctx.mockPrisma.connection.findUnique
+        .mockResolvedValueOnce(repoRow(FROM, TEAM_FROM))
+        .mockResolvedValueOnce(repoRow(TO, TEAM_TO));
+      leadOf(ctx.mockPrisma, [TEAM_FROM, TEAM_TO]);
+      ctx.mockPrisma.repoDependency.create.mockResolvedValueOnce({ id: EDGE, status: 'active' });
+      const res = await ctx.app.inject({
+        body: { toRepoId: TO },
+        headers: AUTH,
+        method: 'POST',
+        url: `/api/v1/repositories/${FROM}/dependencies`,
+      });
+      expect(res.statusCode).toBe(201);
+    });
+  });
+
+  describe('a platform ENGINEER who leads the depended-upon team', () => {
+    beforeEach(() => {
+      ctx.authState.role = 'ENGINEER';
+      ctx.mockPrisma.repoDependency.findUnique.mockResolvedValue({
+        fromRepoId: FROM,
+        id: EDGE,
+        toRepoId: TO,
+      });
+      ctx.mockPrisma.connection.findUnique
+        .mockResolvedValueOnce(repoRow(FROM, TEAM_FROM))
+        .mockResolvedValueOnce(repoRow(TO, TEAM_TO));
+      leadOf(ctx.mockPrisma, [TEAM_TO]);
+    });
+
+    it('may dismiss an edge', async () => {
+      ctx.mockPrisma.repoDependency.update.mockResolvedValueOnce({ id: EDGE, status: 'dismissed' });
+      const res = await ctx.app.inject({
+        body: { status: 'dismissed' },
+        headers: AUTH,
+        method: 'PATCH',
+        url: `/api/v1/repositories/${FROM}/dependencies/${EDGE}`,
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('may remove an incoming edge', async () => {
+      ctx.mockPrisma.repoDependency.delete.mockResolvedValueOnce({ id: EDGE });
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'DELETE',
+        url: `/api/v1/repositories/${TO}/dependencies/${EDGE}`,
+      });
+      expect(res.statusCode).toBe(204);
     });
   });
 
@@ -475,6 +548,31 @@ describe('repoDependencyRoutes', () => {
         `repo-dep-infer-${FROM}`,
         FROM
       );
+    });
+
+    it('starts inference for a platform ENGINEER who leads the repo own team', async () => {
+      ctx.authState.role = 'ENGINEER';
+      ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce(repoRow(FROM, TEAM_FROM));
+      leadOf(ctx.mockPrisma, [TEAM_FROM]);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: `/api/v1/repositories/${FROM}/dependencies/infer`,
+      });
+      expect(res.statusCode).toBe(202);
+    });
+
+    it('forbids a platform ENGINEER who leads no team, and starts nothing', async () => {
+      ctx.authState.role = 'ENGINEER';
+      ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce(repoRow(FROM, TEAM_FROM));
+      leadOf(ctx.mockPrisma, []);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: `/api/v1/repositories/${FROM}/dependencies/infer`,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(ctx.mockTemporal.startRepoDependencyInference).not.toHaveBeenCalled();
     });
 
     it('forbids a LEAD of some other team — inference costs a model call', async () => {
