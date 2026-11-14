@@ -151,6 +151,27 @@ available to the in-app assistant for writes; list and get are readable.
 There is no `DELETE`. Fetch refusals use the fixed `HARNESS_PROFILE_<CODE>` codes with the same
 strings as skill sources.
 
+### Dashboard
+
+`/admin/harness-profiles` (ADMIN) lists every profile with its latest version, commit, file count,
+warning count and status, and drives the same API:
+
+- **Add profile** previews a folder (host, owner, repository, path, ref, or a pasted GitHub link),
+  then shows the manifest, the exact commit sha, the validation result, the warnings and every file.
+  Each file can be opened (the `file` preview option, at the previewed commit). Approval sends the
+  previewed `sha`, `contentHash` and `warningsHash`; it is disabled while the name collides with an
+  existing profile and, when the preview has warnings, until they are acknowledged. A `409
+  PREVIEW_STALE` or `SHA_MOVED` answer offers a fresh preview.
+- **Details** shows the source, every version with its file list and the warnings acknowledged at
+  approval, and **Check for update** (`preview-update`), which reads the stored source again, says
+  when the content already is a version, and accepts a changed one as the next version under the
+  same rules.
+- **Disable** (after a confirmation) and **Enable** use `PATCH`.
+
+All repository-derived text (names, descriptions, paths, warnings, file content) is shown with
+control and invisible characters made visible, as plain text. Content of a stored version is not
+readable on the page, because the API returns it only for a preview.
+
 ## 8. Binding a profile to an agent
 
 `Agent.harnessProfile` (nullable text) holds the **name** of an approved profile. It is a plain
@@ -173,7 +194,10 @@ resolving fails the run closed (below) rather than degrading.
   `400 PROFILE_DISABLED` for a disabled profile. A profile disabled later does not block editing
   the agent's other fields.
 - **Restoring a version** restores its profile with its runtime and applies the same checks.
-- The agent library DTOs and listing carry `harnessProfile`; the dashboard shows it read-only.
+- The agent library DTOs and listing carry `harnessProfile`. The dashboard's agent form (create and
+  edit, platform-wide library) offers a platform ADMIN a picker of the enabled profiles (a bound
+  profile that was disabled later stays listed, marked), and sends `harnessProfile` only when the
+  value changed. Everyone else, and the per-team override form, sees the bound name read-only.
 
 **Resolution.** `resolveHarnessProfile(agentKey, ctx, resolved?)` reads the profile name from the
 agent's resolved version (the caller's own resolution when it passes one, so the profile always
@@ -324,7 +348,6 @@ event names the agent, the profile, the runtime it resolved to and the loop it r
 ## Limitations
 
 - **Global and admin-only.** There is no team or organization scope and no delegation of approval.
-- **API only.** There is no dashboard page for profiles.
 - **Plugin MCP servers are ignored.** A plugin's `.mcp.json` is stored and shown in the preview but
   never used at run time.
 - **Hooks and scripts run in the container.** The scanners are advisory pattern checks, not a
@@ -338,8 +361,11 @@ event names the agent, the profile, the runtime it resolved to and the loop it r
   approved, and bound to agents, separately on each deployment.
 - **No inheritance of the binding.** Personas that inherit a model do not inherit the profile; each
   agent version is bound explicitly.
-- **Binding is API only.** The dashboard shows an agent's profile read-only; an ADMIN sets it with
-  `harnessProfile` on the agent library routes.
+- **Binding is editable only in the platform-wide agent form.** The per-team override form shows an
+  agent's profile read-only; an ADMIN binds it there with `harnessProfile` on the agent library
+  routes, or in the platform-wide library form.
+- **Stored file content is not reviewable on the page.** File text is read from a preview of a
+  commit (add, check for update); a stored version shows its file list and warnings only.
 - **A commit sha does not prove branch membership.** A raw sha can name a commit that exists only
   in a fork of the repository, because GitHub serves fork commits through the parent. The recorded
   `owner/repo@sha` says where the content was read, not that the commit is on the repository's

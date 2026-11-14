@@ -21,6 +21,7 @@ export const HELP_LINKS = {
   configuration: { slug: 'configuration' },
   evals: { slug: 'evals' },
   githubAppSetup: { slug: 'github-app-setup' },
+  harnessProfiles: { slug: 'harness-profiles' },
   knowledge: { slug: 'knowledge' },
   mcpServer: { slug: 'mcp-server' },
   modelConfiguration: { slug: 'model-configuration' },

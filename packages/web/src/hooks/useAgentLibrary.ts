@@ -128,6 +128,8 @@ export interface CreateAgentBody {
   credentialId?: string | null;
   /** Platform-admin only. */
   runtime?: ImplementerRuntimeKind | null;
+  /** Platform-admin only; the name of an approved, enabled harness profile. */
+  harnessProfile?: string | null;
   reasoning?: ReasoningLevel | null;
 }
 
