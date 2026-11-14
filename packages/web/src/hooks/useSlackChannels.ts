@@ -141,6 +141,40 @@ export function useDeleteSlackChannel() {
   });
 }
 
+export interface ResetBudgetResult {
+  channelId: string;
+  currentMonthUsage: SlackChannelUsage | null;
+  holdsReleased: number;
+  reclaimedUsd: number;
+}
+
+/** Clears this month's outstanding budget holds. Real spend is left alone. */
+export function useResetChannelBudget() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ data: ResetBudgetResult }>(`${BASE}/${id}/budget/reset`, {}).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export interface EraseUserMemoryResult {
+  forgotten: number;
+  restored: number;
+}
+
+/** Forgets every channel memory written from one Slack user's turns, in every channel. */
+export function useEraseSlackUserMemory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slackUserId: string) =>
+      api
+        .post<{ data: EraseUserMemoryResult }>(`${BASE}/memory/erase-user`, { slackUserId })
+        .then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
 // ── Multi-workspace install (Full multi-workspace) ─────────────────────────────
 
 export interface SlackWorkspaceRow {

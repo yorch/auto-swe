@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { EraseUserMemoryCard } from '@/components/slackChannels/EraseUserMemoryCard';
 import { RegisterChannelModal } from '@/components/slackChannels/RegisterChannelModal';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -292,6 +293,8 @@ export default function GovernSlackChannelsPage() {
           )}
         </QueryBoundary>
       </Card>
+
+      {isAdmin && <EraseUserMemoryCard />}
 
       <RegisterChannelModal
         onClose={() => setRegisterOpen(false)}

@@ -341,7 +341,8 @@ The response and the audit row list every id deleted and restored.
 (ADMIN, body `{ "slackUserId": "U…" }`) forgets, the same way, every channel-memory item written
 from that Slack user's turns (`metadata.userSlackId`) in every channel. Its audit row records the
 Slack user id and how many items went and came back — never their text, which would keep what was
-erased. There is no dashboard control for it; it is API-only.
+erased. The control is **Erase a user's channel memory** on `/admin/slack-channels` (ADMIN): it takes the Slack
+user id, asks for it to be typed again to confirm, and reports how many items were forgotten and restored.
 
 After the embedding model changes, the Embeddings tab at `/models` shows how many memory rows
 the configured model did not embed (`GET /api/v1/platform/embedding-config/reembed`) and starts

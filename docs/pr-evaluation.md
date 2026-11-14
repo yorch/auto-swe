@@ -578,7 +578,7 @@ detection is a title heuristic; and the rows of a repository are deleted with it
 | Set a repository to `auto` | Platform admin only, and only while the preconditions below hold |
 | Turn bot approval on for a repository | Platform admin only, and only while the preconditions in §16 hold |
 | Turn bot approval off for a repository | Lead of the owning team, or platform admin |
-| Read, set or delete the approver App's credentials | Platform admin (§16.2) |
+| Read, set, test or delete the approver App's credentials (the Approver App card on the GitHub tab of `/admin/integrations`, or the API) | Platform admin (§16.2) |
 | Change any `prEvaluation.*` setting | Platform admin |
 
 Choosing `auto` is refused with `400 AUTO_NOT_READY` and the list of reasons unless the feature and
@@ -743,7 +743,7 @@ team and per organization (§12). A repository can add to them on its own row
 rather than a setting scope because a repository is not a scope of the registry: the same reason the
 mode, the title format and bot approval are columns. `GET` and `PUT
 /api/v1/repositories/:id/review-routing` read and write it (§13); the write is audited. A key whose
-stored value no longer parses is ignored for that key alone.
+stored value no longer parses is ignored for that key alone. The dashboard edits it under **Advanced: gate commands and app preview → Review routing** in a repository's edit dialog, with the value in force shown beside each field; a blank field inherits.
 
 **An override can only tighten.** Routing is the strictest of the setting at the repository's team
 and organization scope and the override, key by key, computed when the queue is read:

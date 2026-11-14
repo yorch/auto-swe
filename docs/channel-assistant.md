@@ -335,8 +335,8 @@ the extra round-trips; a channel that has genuinely spent its budget — for whi
 
 The corollary is that a channel comfortably under its cap never sweeps at all, so its abandoned holds
 sit until something pushes it to the cap.
-`POST /api/v1/platform/slack-channels/:id/budget/reset` clears them on demand — API-only, with no
-control in the admin UI. It reports how many holds it actually released, and is deliberately not a
+`POST /api/v1/platform/slack-channels/:id/budget/reset` clears them on demand, from the **Reset budget** button on the
+channel's page (ADMIN, behind a confirmation). It reports how many holds it actually released, and is deliberately not a
 "zero the month" button: it subtracts exactly what the holds added and leaves real spend alone, so
 recovering from a crash never doubles as disabling the cap.
 
@@ -379,7 +379,7 @@ Channels are listed at `/admin/slack-channels` and configured on each channel's 
 `/api/v1/platform/slack-channels` (plus `/:id/budget`, `/:id/budget/reset`, `/:id/audit`, and the
 memory and open-item
 sub-resources); channel-scoped agents are created from the agent-library form with `CHANNEL` scope
-and a channel picker. `/:id/budget/reset` has no UI control — it is called directly, by an admin who
+and a channel picker. `/:id/budget/reset` is the **Reset budget** button in the channel page's header, for an admin who
 knows a worker crashed mid-turn.
 
 Everyone else on a channel's owning team sees the same pages read-only: the list of their teams'
@@ -443,7 +443,7 @@ unproven on real traffic, and turn them on one channel at a time.
   difference, and the aggregate overshoot still scales with how many calls the remaining headroom
   admits. `finalizeChannelTaskRun` spends on the ledger with no hold at all. A hold lost to a worker
   crash over-counts the channel until the sweep reclaims it — which only happens once the channel
-  reaches its cap, or an admin calls `/:id/budget/reset` (API-only; there is no UI control).
+  reaches its cap, or an admin resets the budget holds (**Reset budget** on the channel page, `/:id/budget/reset`).
 - **An unpriced model is only refused where a USD cap applies.** A channel with no monthly budget
   records $0 for a model with no catalog price (`llm.cost_pricing_known=false`), and the run's token
   tiers still bind. Embedding calls are priced and accrued separately and are not covered by the

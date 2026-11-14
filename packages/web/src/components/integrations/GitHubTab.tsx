@@ -23,6 +23,7 @@ import { HELP_LINKS } from '@/lib/helpLinks';
 import { ConfigField } from './ConfigField';
 import { ConfigStatusBadge, fieldState, groupState } from './ConfigStatusBadge';
 import { GitHubAppManifestCard } from './GitHubAppManifestCard';
+import { GitHubApproverAppCard } from './GitHubApproverAppCard';
 import { GitHubHostCredentialsCard } from './GitHubHostCredentialsCard';
 import { GitHubHostSecretsCard } from './GitHubHostSecretsCard';
 import { FieldGrid, IntegrationCard } from './IntegrationCard';
@@ -380,6 +381,7 @@ export function GitHubTab() {
           saved={saved}
         />
       </form>
+      <GitHubApproverAppCard />
       <GitHubHostCredentialsCard />
       <GitHubHostSecretsCard />
     </div>

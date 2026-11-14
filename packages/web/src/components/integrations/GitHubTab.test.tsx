@@ -7,6 +7,7 @@ import { GitHubTab } from './GitHubTab';
 
 vi.mock('./GitHubHostCredentialsCard', () => ({ GitHubHostCredentialsCard: () => null }));
 vi.mock('./GitHubHostSecretsCard', () => ({ GitHubHostSecretsCard: () => null }));
+vi.mock('./GitHubApproverAppCard', () => ({ GitHubApproverAppCard: () => null }));
 vi.mock('./GitHubAppManifestCard', () => ({ GitHubAppManifestCard: () => null }));
 
 afterEach(() => vi.unstubAllGlobals());
