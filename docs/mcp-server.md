@@ -123,8 +123,8 @@ context or spec snapshot, traces, a human step's context, fields or options, a r
 description, configuration or credentials, or a link other than the dashboard's and the pull request's.
 
 A ticket id that is outside the characters the submit route accepts is returned as `null`. The few names
-a team member authors (a template, a workflow node, a human step's title) are clipped and stripped of
-control characters, and are still text a person wrote. Characters a person cannot see but a model reads (zero-width and bidirectional-override characters, the Unicode tag block, private-use characters, unpaired surrogates) are removed, and names are clipped by code point.
+a team member authors (a template, a workflow node, a human step's title) and the names the lists and reports return (repository, team, automation and organization names) are clipped and stripped of
+control characters, and are still text people wrote, so an agent treats them as data, not instructions. Characters a person cannot see but a model reads (zero-width and bidirectional-override characters, the Unicode tag block, private-use characters, unpaired surrogates) are removed, and names are clipped by code point.
 
 **The one exception: a run's provenance.** `list_runs`, `get_run` and `wait_for_run` return `trigger`,
 `triggerRefId`, `initiatedBy` (`id`, `name`, `email`), `initiatedByService` (`id`, `name`) and
@@ -144,7 +144,7 @@ that does not exist.
 
 Tools beyond the core eight are grouped into domains (`lib/mcp/domains/*.ts`). A domain declares each
 tool with the one route behind it and the tier of person it is meant for (`user`, `lead`, `admin`), and
-the route's own role gate enforces that tier: the same token reads a team a user belongs to, or every
+the route enforces that tier, through its role gate or in its handler, so the same token reads a team a user belongs to, or every
 team for an administrator, exactly as the dashboard does. Their inputs are strict, they carry
 `readOnlyHint`, and their results follow the same allowlist rule as the core tools.
 
@@ -163,6 +163,11 @@ team for an administrator, exactly as the dashboard does. Their inputs are stric
 | `list_agent_library` | `GET /api/v1/platform/agent-library` | Administrators only. The agents in the library as `id`, `key`, `name`, `scope`, `version`, `isActive`, `isVerified`, `modelSpec`, `createdAt` and `updatedAt`: the latest version of each by default, or every version with `all`. Inputs: `all`, `scope`, `orgId`, `teamId`, `channelId`, `workflowTemplateId`. Prompts, descriptions, tool configuration, connection ids, author emails, skill text and scan warning text are not returned. |
 | `list_agent_versions` | `GET /api/v1/platform/agent-library/:id/versions` | Administrators only. Every version of one agent lineage, newest first, as `id`, `version`, `isActive`, `isVerified`, `modelSpec`, `createdById` (the creating user's id) and `createdAt`. Input: `agentId`. Prompts, descriptions, tool configuration, connection ids, author emails, skill text and scan warning text are not returned. |
 | `list_skills` | `GET /api/v1/platform/skills` | Administrators only. The skills in the library as `id`, `name`, `isBuiltIn`, `isVerified`, `isActive`, `currentRevision`, `usedByCount`, `usedBy` (the agent keys that use it, at most 50), `scanWarningCount` and `externalSource` (`host`, `owner`, `repo`). No inputs. Skill text, descriptions, scan warning text, prompts, tool configuration, connection ids and author emails are not returned. |
+| `get_delivery_report` | `GET /api/v1/reports/delivery` | Runs started, succeeded and with a pull request (`runsWithPr`), `successRate`, pull requests CI-passed and merged, spend, cost per merged pull request, median time to merge and CI fix rounds, in total and by repository, team and template (names clipped), with `truncated` and the window bounds `windowStart` and `windowEnd`. Inputs: `window` (7, 30 or 90), `since` and `until` (`YYYY-MM-DD`), `teamId`. |
+| `get_quality_report` | `GET /api/v1/reports/quality` | Gate pass rates, CI fix loops, `ciSelfHealRate`, merge rate with and without a rejecting review verdict, and per reviewer persona the verdict, approval and severity counts, with `truncated` and the window bounds `windowStart` and `windowEnd`. Finding categories are not returned. Same inputs as `get_delivery_report`. |
+| `get_hitl_report` | `GET /api/v1/reports/hitl` | Human steps by kind and status, how they were resolved, median and 95th percentile wait, `pendingNow`, `oldestPendingAgeMs`, `timedOut`, and autonomy decisions by event and risk class, with `truncated` and the window bounds `windowStart` and `windowEnd`. Approver names are not returned. Same inputs as `get_delivery_report`. |
+| `get_automation_report` | `GET /api/v1/reports/automations` | One row per automation the caller can see: `automationId`, `name` (clipped), `enabled`, `lastFiredAt`, `fires`, `started`, `failedToStart`, `outcomes`, `suppressed` counts by cause, `successfulProducedRuns`, `broken` and `noisy`, with `truncated` and the window bounds `windowStart` and `windowEnd`. Suppression reasons are not returned. Same inputs as `get_delivery_report`. |
+| `get_budget_report` | `GET /api/v1/reports/budget` | For each organization the caller administers (every one for an administrator): `orgId`, `name` (clipped), `mtdUsd` (month-to-date spend), `monthlyBudgetUsd` and `alertThresholdUsd` (the cap and alert threshold), `projectedUsd` (projected month-end spend), `status` (`over`, `projected_over`, `alert`, `ok`, `no_cap`), `daysInMonth`, `elapsedDays`, `lowConfidence`, and the five costliest runs as `id`, `costUsd`, `status` and `startedAt`, with `topRunsTruncated`. The response also carries `truncated` and the window bounds `windowStart` and `windowEnd`. A caller who administers no organization is refused. No inputs. |
 
 A tool's output schema holds plain types only, because a JSON Schema cannot represent a transform: the
 sanitising schemas that read the REST body (`shortName`, `status`, `ticketId` in `projections.ts`) are

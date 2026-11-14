@@ -89,7 +89,11 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get(
     '/delivery',
-    { onRequest: readAnalytics, schema: { querystring: ReportQuery } },
+    {
+      config: { mcpScope: 'read' },
+      onRequest: readAnalytics,
+      schema: { querystring: ReportQuery },
+    },
     async (request, reply) => {
       const user = requireUser(request);
       const range = reportWindow(request.query);
@@ -388,7 +392,11 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get(
     '/quality',
-    { onRequest: readAnalytics, schema: { querystring: ReportQuery } },
+    {
+      config: { mcpScope: 'read' },
+      onRequest: readAnalytics,
+      schema: { querystring: ReportQuery },
+    },
     async (request, reply) => {
       const user = requireUser(request);
       const range = reportWindow(request.query);
@@ -769,7 +777,11 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get(
     '/budget',
-    { onRequest: requireAuth(), schema: { querystring: ReportQuery } },
+    {
+      config: { mcpScope: 'read' },
+      onRequest: requireAuth(),
+      schema: { querystring: ReportQuery },
+    },
     async (request, reply) => {
       const user = requireUser(request);
       const organizations =
@@ -879,7 +891,11 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get(
     '/automations',
-    { onRequest: readAnalytics, schema: { querystring: ReportQuery } },
+    {
+      config: { mcpScope: 'read' },
+      onRequest: readAnalytics,
+      schema: { querystring: ReportQuery },
+    },
     async (request, reply) => {
       const user = requireUser(request);
       const range = reportWindow(request.query);
@@ -1007,7 +1023,11 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get(
     '/hitl',
-    { onRequest: readAnalytics, schema: { querystring: ReportQuery } },
+    {
+      config: { mcpScope: 'read' },
+      onRequest: readAnalytics,
+      schema: { querystring: ReportQuery },
+    },
     async (request, reply) => {
       const user = requireUser(request);
       const range = reportWindow(request.query);
