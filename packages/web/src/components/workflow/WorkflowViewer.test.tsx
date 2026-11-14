@@ -19,7 +19,13 @@ const spec: WorkflowSpec = {
   name: 'test',
   nodes: {
     done: { status: 'SUCCESS', type: 'terminate' },
-    start: { command: 'echo hello', image: 'alpine:3.22', next: 'done', type: 'shell' },
+    start: {
+      command: 'echo hello',
+      image: 'alpine:3.22',
+      next: 'done',
+      onFailure: 'done',
+      type: 'shell',
+    },
   },
   schemaVersion: 1,
 };
@@ -53,6 +59,16 @@ describe('read-only workflow inspection', () => {
     expect(screen.queryByRole('complementary', { name: 'Node details' })).toBeNull();
     expect(spec.nodes.start.type).toBe('shell');
   });
+  it('lists each edge once, under Connections, and not again in the configuration dump', () => {
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true });
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: 'Select graph node' }));
+    expect(screen.getByText('next: done')).toBeTruthy();
+    expect(screen.getByText('onFailure: done')).toBeTruthy();
+    expect(screen.queryByText('on Failure')).toBeNull();
+    expect(screen.queryByText('next')).toBeNull();
+    expect(screen.getByText('command')).toBeTruthy();
+  });
   it.each([true, false])('restores focus after Close and Escape (desktop=%s)', (desktop) => {
     window.matchMedia = vi.fn().mockReturnValue({ matches: desktop });
     render(<Harness />);
@@ -70,5 +86,30 @@ describe('read-only workflow inspection', () => {
     reopened.focus();
     fireEvent.keyDown(reopened, { key: 'Escape' });
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it("keeps a decision option's label and value visible while Connections lists its target", () => {
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true });
+    const decision: WorkflowSpec = {
+      ...spec,
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        start: {
+          onTimeout: 'done',
+          options: [{ label: 'Ship it', next: 'done', value: 'ship' }],
+          timeout: '1h',
+          title: 'Pick',
+          type: 'humanDecision',
+        },
+      },
+    };
+    render(<WorkflowViewer onSelect={() => {}} selectedNodeId="start" spec={decision} />);
+    const details = screen.getByRole('complementary', { name: 'Node details' });
+    expect(details.textContent).toContain('options[0].next: done');
+    const dd = [...details.querySelectorAll('dd')].find((el) =>
+      el.textContent?.includes('Ship it')
+    );
+    expect(dd?.textContent).toContain('"value": "ship"');
+    expect(dd?.textContent).not.toContain('"next"');
   });
 });

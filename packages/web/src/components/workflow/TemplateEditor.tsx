@@ -63,6 +63,12 @@ function EditorInner({
   actions,
 }: Props) {
   const {
+    autoLayout,
+    canRedo,
+    canUndo,
+    handleIssueSelect,
+    redo,
+    undo,
     pendingDelete,
     setPendingDelete,
     confirmDelete,
@@ -92,6 +98,7 @@ function EditorInner({
     outlineVisible,
     paletteOpen,
     paletteRef,
+    rootRef,
     runCheck,
     selectedNode,
     selectedStepMeta,
@@ -115,12 +122,20 @@ function EditorInner({
   });
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col overflow-hidden border-y border-ink-600 bg-ink-900">
+    <div
+      className="flex flex-1 min-h-0 flex-col overflow-hidden border-y border-ink-600 bg-ink-900"
+      ref={rootRef}
+    >
       <PageTour steps={EDITOR_TOUR} />
       <EditorActionBar
         actions={actions}
+        canRedo={canRedo}
+        canUndo={canUndo}
         checkPending={checkResult?.server.state === 'pending'}
+        onAutoLayout={autoLayout}
         onCheck={runCheck}
+        onRedo={redo}
+        onUndo={undo}
         paletteOpen={paletteOpen}
         setPaletteOpen={setPaletteOpen}
         setShowOutline={setOutlineVisible}
@@ -158,7 +173,7 @@ function EditorInner({
         issues={issues}
         issuesRef={issuesRef}
         issuesSummaryRef={issuesSummaryRef}
-        onSelect={onSelect}
+        onSelect={handleIssueSelect}
         serverExtra={serverExtra}
         serverIssues={serverIssues}
         shownErrors={shownErrors}

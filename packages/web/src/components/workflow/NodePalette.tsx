@@ -150,7 +150,7 @@ interface StepEntry {
 
 interface Props {
   steps: StepEntry[];
-  /** Keyboard alternative to drag-and-drop: Enter/Space on an item adds it. */
+  /** Alternative to drag-and-drop: a click or tap, or Enter/Space, on an item adds it. */
   onAdd: (payload: PaletteDragKind) => void;
 }
 
@@ -261,7 +261,7 @@ export function NodePalette({ steps, onAdd }: Props) {
             <HelpTip term="node" />
           </div>
           <p className="mt-0.5 text-xs leading-snug text-paper-500">
-            Drag onto the canvas, or focus and press Enter
+            Click or tap to add, drag onto the canvas, or focus and press Enter
           </p>
         </div>
 
@@ -416,6 +416,7 @@ function PaletteItem({
         )}
         draggable
         onBlur={() => onActivate('focus', null, id)}
+        onClick={() => onAdd(dragPayload)}
         onDragStart={(e) => {
           e.dataTransfer.setData(PALETTE_MIME, JSON.stringify(dragPayload));
           e.dataTransfer.effectAllowed = 'copy';

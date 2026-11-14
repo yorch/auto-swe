@@ -1,6 +1,6 @@
 import type { ValidationIssue, WorkflowSpec } from '@auto-swe/shared/workflow';
 import { formatValidationIssue } from '@auto-swe/shared/workflow';
-import type { RefObject } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import type { ServerWorkflowIssue } from '@/hooks/useValidateWorkflow';
 import { cn, FOCUS_RING } from '@/lib/utils';
@@ -18,6 +18,48 @@ interface IssuesPanelProps {
   onSelect: (id: string | null) => void;
   issuesRef: RefObject<HTMLDetailsElement | null>;
   issuesSummaryRef: RefObject<HTMLElement | null>;
+}
+
+function IssueCode({ issue }: { issue: ValidationIssue }) {
+  return (
+    <>
+      <span
+        className={cn(
+          'font-mono text-xs',
+          issue.severity === 'error' ? 'text-danger-400' : 'text-warning-400'
+        )}
+      >
+        {issue.code}
+      </span>{' '}
+    </>
+  );
+}
+
+/** A finding about a node is a button that selects it; one about the graph as a whole is text. */
+function IssueRow({
+  issue,
+  spec,
+  onSelect,
+  children,
+}: {
+  issue: ValidationIssue;
+  spec: WorkflowSpec;
+  onSelect: (id: string | null) => void;
+  children: ReactNode;
+}) {
+  const nodeId = issue.nodeId && spec.nodes[issue.nodeId] ? issue.nodeId : null;
+  if (!nodeId) {
+    return <span className="text-paper-300">{children}</span>;
+  }
+  return (
+    <button
+      className={cn('rounded-sm text-left text-paper-300 hover:text-paper-100', FOCUS_RING)}
+      onClick={() => onSelect(nodeId)}
+      type="button"
+    >
+      {children}
+    </button>
+  );
 }
 
 /** The collapsible list of lint and server findings under the action bar. */
@@ -78,7 +120,7 @@ export function IssuesPanel({
           </span>
         )}
       </summary>
-      <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto pl-5">
+      <ul className="mt-2 max-h-64 space-y-1 overflow-y-auto pl-5">
         {serverIssues.map((message) => (
           <li className="text-paper-300" key={`server:${message}`}>
             <span className="font-medium text-danger-400">Server:</span> {message}
@@ -86,53 +128,23 @@ export function IssuesPanel({
         ))}
         {issues.map((issue) => (
           <li key={`${issue.code}:${issue.nodeId ?? ''}:${issue.field ?? ''}:${issue.message}`}>
-            <button
-              className={cn(
-                'rounded-sm text-left text-paper-300 hover:text-paper-100 disabled:hover:text-paper-300',
-                FOCUS_RING
-              )}
-              disabled={!issue.nodeId || !spec.nodes[issue.nodeId]}
-              onClick={() => issue.nodeId && onSelect(issue.nodeId)}
-              type="button"
-            >
-              <span
-                className={cn(
-                  'font-mono text-xs',
-                  issue.severity === 'error' ? 'text-danger-400' : 'text-warning-400'
-                )}
-              >
-                {issue.code}
-              </span>{' '}
+            <IssueRow issue={issue} onSelect={onSelect} spec={spec}>
+              <IssueCode issue={issue} />
               {formatValidationIssue(issue)}
-            </button>
+            </IssueRow>
           </li>
         ))}
         {serverExtra.map((issue) => (
           <li
             key={`check:${issue.source}:${issue.code}:${issue.nodeId ?? ''}:${issue.field ?? ''}:${issue.message}`}
           >
-            <button
-              className={cn(
-                'rounded-sm text-left text-paper-300 hover:text-paper-100 disabled:hover:text-paper-300',
-                FOCUS_RING
-              )}
-              disabled={!issue.nodeId || !spec.nodes[issue.nodeId]}
-              onClick={() => issue.nodeId && onSelect(issue.nodeId)}
-              type="button"
-            >
+            <IssueRow issue={issue} onSelect={onSelect} spec={spec}>
               <span className="mr-1 rounded-sm border border-ink-400 px-1 text-2xs font-medium text-paper-300 uppercase">
                 server: {issue.source}
               </span>{' '}
-              <span
-                className={cn(
-                  'font-mono text-xs',
-                  issue.severity === 'error' ? 'text-danger-400' : 'text-warning-400'
-                )}
-              >
-                {issue.code}
-              </span>{' '}
+              <IssueCode issue={issue} />
               {formatValidationIssue(issue)}
-            </button>
+            </IssueRow>
           </li>
         ))}
       </ul>
