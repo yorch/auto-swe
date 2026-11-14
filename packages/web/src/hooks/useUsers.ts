@@ -46,7 +46,7 @@ export interface LookedUpUser {
   name: string | null;
 }
 
-/** Resolve one active user by exact email (`GET /users/lookup`, LEAD+). */
+/** Resolve one active user by exact email (`GET /users/lookup`, a team LEAD or ADMIN). */
 export function lookupUserByEmail(email: string): Promise<LookedUpUser> {
   return api
     .get<{ data: LookedUpUser }>(`/api/v1/users/lookup?email=${encodeURIComponent(email)}`)

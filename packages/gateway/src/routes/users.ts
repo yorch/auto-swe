@@ -119,9 +119,10 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // GET /api/v1/users/lookup?email= — resolve one active user by exact email
-  // (LEAD+). The "add member" pickers on the team and organization pages are
-  // reachable by LEADs, who cannot list every user; an exact-match lookup lets
-  // them add someone they can name without exposing the directory.
+  // (a LEAD or ADMIN of at least one active team, or a platform ADMIN). The "add member"
+  // pickers on the team and organization pages are reachable by team leads, who cannot list
+  // every user; an exact-match lookup lets them add someone they can name without exposing
+  // the directory.
   //
   // It answers "does this address belong to an active user" and nothing more:
   // no platform role (that would tell a LEAD which addresses are platform
@@ -133,10 +134,32 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
     '/lookup',
     {
       config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: { querystring: UserLookupQuery },
     },
     async (request, reply) => {
+      // The platform role asks for nothing here: the people who need this are team leads, whatever
+      // their platform role. Someone who leads no team has no one to add, so answering them would
+      // only make this a directory oracle.
+      const caller = requireUser(request);
+      if (caller.role !== Role.ADMIN) {
+        const leadsATeam = await fastify.prisma.teamMembership.findFirst({
+          select: { teamId: true },
+          where: {
+            role: { in: ['LEAD', 'ADMIN'] },
+            team: { isActive: true },
+            userId: caller.sub,
+          },
+        });
+        if (!leadsATeam) {
+          return sendError(
+            reply,
+            403,
+            'FORBIDDEN',
+            'Requires LEAD membership on an active team to look users up'
+          );
+        }
+      }
       // A case-insensitive `equals` can compile to ILIKE on Postgres, where `_`
       // (legal in an email) is a one-character wildcard — so the candidates are
       // re-checked for an exact, case-folded match here rather than trusting

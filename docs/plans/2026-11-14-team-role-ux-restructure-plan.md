@@ -23,7 +23,7 @@ Conventions for every task:
 - [x] Task 1: Team-scoped team routes use the team role alone — `8183c368`
 - [x] Task 2: Launch routes (epics, PRD runs, campaigns) drop the platform LEAD floor — `3be051fb`
 - [x] Task 3: Repository dependency and onboarding routes drop the platform LEAD floor — `edbbdfa5`
-- [ ] Task 4: Workflow template routes drop the platform LEAD floor
+- [x] Task 4: Workflow template routes drop the platform LEAD floor — `f2c45619`
 - [ ] Task 5: Web permissions use the team role alone, with explained disabled controls
 - [ ] Task 6: Move Analytics, Reports and LLM usage to `/insights/*` with redirects
 - [ ] Task 7: Move Automations and the Teams directory, then reorder the sidebar
@@ -39,6 +39,8 @@ Conventions for every task:
 - [ ] Task 17: Attention section: stale approvals and nudge
 - [ ] Task 18: Budget request UI
 - [ ] Task 19: Docs, upgrade note and full quality gates
+- [ ] Task 20: User lookup is open to any team lead
+- [ ] Task 21: Slack approval needs LEAD on the run's owning team
 
 ## Tasks
 
@@ -329,8 +331,39 @@ invite users (gated by the organization's `trustedInvites`, decision D3), names 
 follow the existing entry format and fixing-commit convention. Update `docs/work-views.md` or other
 docs only where a moved address appears. Run every gate in `CLAUDE.md` §5.
 **Files**: `docs/teams.md`, `docs/upgrade-notes.md`, other `docs/*.md` where a moved address appears
-**Depends on**: Task 1, Task 7, Task 11, Task 13, Task 14, Task 15, Task 18
+**Depends on**: Task 1, Task 7, Task 11, Task 13, Task 14, Task 15, Task 18, Task 20, Task 21
 **Verify**: `yarn install --immutable`, `yarn typecheck`, `yarn biome check <explicit directories>`,
 `yarn test`, `yarn build`, `yarn docs:check`, `yarn invariants:check`,
 `yarn workspace @auto-swe/site build`, the matching `*.pg.test.ts` suites with Postgres up, and the
 three `docker build` commands. Report each gate's result. Report plainly any gate that could not run.
+
+### Task 20: User lookup is open to any team lead
+
+**What**: Added after the Task 3 review, by the user's decision. `GET /api/v1/users/lookup` lowers
+`requiredRole` from `LEAD` to `ENGINEER` and, for a non-`ADMIN` caller, requires LEAD or ADMIN
+membership of at least one active team (403 with the authoring refusal body otherwise). The
+30-per-minute rate limit and the response of `id`, `email` and `name` stay as they are. Update the
+route comment that says "(LEAD+)" and the hook comment in `hooks/useUsers.ts`.
+**Files**: `packages/gateway/src/routes/users.ts`, `packages/gateway/src/routes/users.test.ts`,
+`packages/web/src/hooks/useUsers.ts`
+**Depends on**: none
+**Verify**: `yarn vitest run packages/gateway/src/routes/users.test.ts`. A platform `ENGINEER` who
+leads a team resolves an exact email. A platform `ENGINEER` who leads no team gets 403. A platform
+`ADMIN` who leads no team still resolves. The rate-limit and no-role-in-response tests still pass.
+
+### Task 21: Slack approval needs LEAD on the run's owning team
+
+**What**: Added after the Task 3 review, by the user's decision. In
+`routes/slack/interactive.ts`, the `approve_` action checks `hasRole(user.role, 'LEAD')` on the
+platform role. Replace it: a platform `ADMIN` passes, and anyone else needs LEAD or ADMIN
+membership of an active team that owns the run (the run's repository team, its work-request
+repository team, or its template team). The run lookup that `canControlRun` already makes returns
+those team ids. The refusal message becomes `Only a LEAD or ADMIN of the team that owns the run can
+approve it`. The `retry_ci_` action and the HITL buttons keep their current checks.
+**Files**: `packages/gateway/src/routes/slack/interactive.ts`,
+`packages/gateway/src/routes/slack.test.ts`
+**Depends on**: none
+**Verify**: `yarn vitest run packages/gateway/src/routes/slack.test.ts`. A platform `ENGINEER` who
+leads the run's team approves (200, `humanMergeSignal` sent). A platform `LEAD` who is only a team
+`ENGINEER` gets 403 and no signal. A platform `ADMIN` approves any run they can control.
+

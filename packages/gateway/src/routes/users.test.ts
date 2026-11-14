@@ -63,6 +63,7 @@ async function buildApp() {
     },
     teamMembership: {
       createMany: vi.fn().mockResolvedValue({ count: 1 }),
+      findFirst: vi.fn(),
       findUniqueOrThrow: vi.fn().mockResolvedValue({ id: 'team-member' }),
     },
     user: {
@@ -112,6 +113,8 @@ describe('userRoutes', () => {
     ctx.mockPrisma.configAuditLog.create.mockReset();
     ctx.mockPrisma.team.findUnique.mockReset();
     ctx.mockPrisma.teamMembership.createMany.mockReset().mockResolvedValue({ count: 1 });
+    // By default the caller leads a team, as the lookup requires of anyone who is not an ADMIN.
+    ctx.mockPrisma.teamMembership.findFirst.mockReset().mockResolvedValue({ teamId: 'team-1' });
     ctx.mockPrisma.organizationMembership.createMany.mockReset().mockResolvedValue({ count: 1 });
     ctx.mockPrisma.user.create.mockReset();
     ctx.mockPrisma.user.findFirst.mockReset();
@@ -217,6 +220,7 @@ describe('userRoutes', () => {
       app.setValidatorCompiler(validatorCompiler);
       app.setSerializerCompiler(serializerCompiler);
       app.decorate('prisma', {
+        teamMembership: { findFirst: vi.fn().mockResolvedValue({ teamId: 'team-1' }) },
         user: { findMany: vi.fn().mockResolvedValue([]) },
       } as unknown as never);
       app.decorate('auth', {
@@ -254,15 +258,64 @@ describe('userRoutes', () => {
       expect(res.statusCode).toBe(404);
     });
 
-    it('rejects an ENGINEER and a malformed email', async () => {
+    it('resolves an email for a platform ENGINEER who leads a team', async () => {
       ctx.authState.role = 'ENGINEER';
-      const forbidden = await ctx.app.inject({
+      ctx.mockPrisma.user.findMany.mockResolvedValueOnce([
+        { email: 'a@example.com', id: USER_ID, name: 'Ada' },
+      ]);
+      const res = await ctx.app.inject({
         headers: AUTH_HEADER,
         method: 'GET',
         url: '/api/v1/users/lookup?email=a@example.com',
       });
-      expect(forbidden.statusCode).toBe(403);
+      expect(res.statusCode).toBe(200);
+    });
 
+    it.each(['ENGINEER', 'LEAD'] as const)(
+      'refuses a platform %s who leads no team, and looks nobody up',
+      async (role) => {
+        ctx.authState.role = role;
+        ctx.mockPrisma.teamMembership.findFirst.mockResolvedValue(null);
+        const res = await ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'GET',
+          url: '/api/v1/users/lookup?email=a@example.com',
+        });
+        expect(res.statusCode).toBe(403);
+        expect(ctx.mockPrisma.user.findMany).not.toHaveBeenCalled();
+      }
+    );
+
+    it('asks for LEAD or ADMIN on an active team', async () => {
+      ctx.authState.role = 'ENGINEER';
+      ctx.authState.sub = 'user-9';
+      ctx.mockPrisma.user.findMany.mockResolvedValueOnce([]);
+      await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/users/lookup?email=a@example.com',
+      });
+      expect(ctx.mockPrisma.teamMembership.findFirst).toHaveBeenCalledWith({
+        select: { teamId: true },
+        where: { role: { in: ['LEAD', 'ADMIN'] }, team: { isActive: true }, userId: 'user-9' },
+      });
+    });
+
+    it('lets a platform ADMIN look up without leading any team', async () => {
+      ctx.authState.role = 'ADMIN';
+      ctx.mockPrisma.teamMembership.findFirst.mockResolvedValue(null);
+      ctx.mockPrisma.user.findMany.mockResolvedValueOnce([
+        { email: 'a@example.com', id: USER_ID, name: 'Ada' },
+      ]);
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/users/lookup?email=a@example.com',
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('rejects a malformed email', async () => {
       ctx.authState.role = 'LEAD';
       const bad = await ctx.app.inject({
         headers: AUTH_HEADER,
