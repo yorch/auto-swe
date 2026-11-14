@@ -776,6 +776,13 @@ model Connection {
   /// a dependency string against (P1). Null/empty = match on org/repo identity only.
   packageNames String[] @default([]) @map("package_names")
 
+  /// git_repo only: the `pagerduty_events` connection (a PagerDuty service's Events API v2
+  /// routing key) sent a change event when a pull request from one of this repository's runs
+  /// merges. NULL sends none; deleting that connection clears it.
+  pagerdutyEventsConnectionId String?     @map("pagerduty_events_connection_id") @db.Uuid
+  pagerdutyEventsConnection   Connection? @relation("RepoPagerDutyChangeEvents", fields: [pagerdutyEventsConnectionId], references: [id], onDelete: SetNull)
+  pagerdutyEventsRepositories Connection[] @relation("RepoPagerDutyChangeEvents")
+
   /// Encrypted API token for token-based connection types (Notion, Zendesk,
   /// HubSpot, http_api). Stored as AES-256-GCM ciphertext with nonce and auth tag.
   apiKeyCiphertext Bytes? @map("api_key_ciphertext")

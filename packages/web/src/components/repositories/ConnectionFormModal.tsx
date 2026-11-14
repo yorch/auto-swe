@@ -22,7 +22,7 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
-import { useCreateRepository, useUpdateRepository } from '@/hooks/useRepositories';
+import { useCreateRepository, useRepositories, useUpdateRepository } from '@/hooks/useRepositories';
 import { useRepositoryTeams } from '@/hooks/useRepositoryTeams';
 import { useAdminTeamIds } from '@/hooks/useTeams';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
@@ -117,6 +117,9 @@ export function ConnectionFormModal({
     initial?.prTitleFormat ?? 'inherit'
   );
   const [prTitleTemplate, setPrTitleTemplate] = useState(initial?.prTitleTemplate ?? '');
+  const [pagerdutyEventsConnectionId, setPagerdutyEventsConnectionId] = useState(
+    initial?.pagerdutyEventsConnectionId ?? ''
+  );
 
   // non-git fields (name + type-specific config)
   const [name, setName] = useState(initial?.name ?? '');
@@ -176,6 +179,7 @@ export function ConnectionFormModal({
       setLanguage(initial?.language ?? prefill?.language ?? '');
       setPrTitleFormat(initial?.prTitleFormat ?? 'inherit');
       setPrTitleTemplate(initial?.prTitleTemplate ?? '');
+      setPagerdutyEventsConnectionId(initial?.pagerdutyEventsConnectionId ?? '');
       setName(initial?.name ?? '');
       setConfigJson(initial?.config != null ? JSON.stringify(initial.config, null, 2) : '');
       setApiToken('');
@@ -261,7 +265,7 @@ export function ConnectionFormModal({
           });
         } else {
           await create.mutateAsync({
-            ...(connType === 'pagerduty' && apiToken.trim() ? { apiToken: apiToken.trim() } : {}),
+            ...(takesApiToken && apiToken.trim() ? { apiToken: apiToken.trim() } : {}),
             // The create schema is optional, not nullable: omit a blank config.
             config: parsedConfig ?? undefined,
             description: description.trim() || undefined,
@@ -285,11 +289,14 @@ export function ConnectionFormModal({
             language: language.trim() || null,
             prTitleFormat: prTitleFormat === 'inherit' ? null : prTitleFormat,
             prTitleTemplate: prTitleTemplate.trim() || null,
+            ...(pagerdutyEventsConnectionId !== (initial?.pagerdutyEventsConnectionId ?? '')
+              ? { pagerdutyEventsConnectionId: pagerdutyEventsConnectionId || null }
+              : {}),
             teamId,
           });
         } else {
           await update.mutateAsync({
-            ...(connType === 'pagerduty' && apiToken.trim() ? { apiToken: apiToken.trim() } : {}),
+            ...(takesApiToken && apiToken.trim() ? { apiToken: apiToken.trim() } : {}),
             config: parsedConfig,
             description: description.trim() || null,
             isActive,
@@ -304,6 +311,17 @@ export function ConnectionFormModal({
     }
   }
 
+  const takesApiToken = connType === 'pagerduty' || connType === 'pagerduty_events';
+  const allConnections = useRepositories({ includeInactive: false });
+  const pagerdutyEventsOptions = useMemo(
+    () => [
+      { label: 'None', value: '' },
+      ...(allConnections.data ?? [])
+        .filter((c) => c.type === 'pagerduty_events' && c.team?.id === teamId)
+        .map((c) => ({ label: connectionLabel(c), value: c.id })),
+    ],
+    [allConnections.data, teamId]
+  );
   const secretKeys = useMemo(() => {
     if (connType === 'git_repo') {
       return [];
@@ -478,6 +496,14 @@ export function ConnectionFormModal({
                   onChange={(e) => setPrTitleTemplate(e.target.value)}
                   placeholder="[auto-swe] {{ticketId}}"
                   value={prTitleTemplate}
+                />
+                <Select
+                  hint="When a pull request from one of this repository's runs merges, a change event goes to this PagerDuty service."
+                  id="pagerduty-events-connection"
+                  label="PagerDuty change events"
+                  onChange={setPagerdutyEventsConnectionId}
+                  options={pagerdutyEventsOptions}
+                  value={pagerdutyEventsConnectionId}
                 />
               </div>
             )}
@@ -662,16 +688,26 @@ export function ConnectionFormModal({
               required
               value={teamId}
             />
-            {connType === 'pagerduty' && (
+            {takesApiToken && (
               <Input
                 autoComplete="off"
                 hint={
                   initial?.hasApiToken
                     ? 'A key is saved. Leave blank to keep it, or enter a new one to replace it.'
-                    : 'A PagerDuty REST API key. Stored encrypted and never shown again.'
+                    : connType === 'pagerduty_events'
+                      ? "The integration key of a PagerDuty service's Events API v2 integration. Stored encrypted and never shown again."
+                      : 'A PagerDuty REST API key. Stored encrypted and never shown again.'
                 }
                 id="conn-api-token"
-                label={initial?.hasApiToken ? 'Replace REST API key' : 'REST API key'}
+                label={
+                  connType === 'pagerduty_events'
+                    ? initial?.hasApiToken
+                      ? 'Replace routing key'
+                      : 'Routing key'
+                    : initial?.hasApiToken
+                      ? 'Replace REST API key'
+                      : 'REST API key'
+                }
                 onChange={(e) => {
                   setTouched(true);
                   setApiToken(e.target.value);

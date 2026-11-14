@@ -30,6 +30,7 @@ export type CredentialDestination = string | null;
 /** Origins the platform reaches on a host nothing in the row can move. */
 const NOTION_ORIGIN = 'https://api.notion.com';
 const PAGERDUTY_ORIGIN = 'https://api.pagerduty.com';
+const PAGERDUTY_EVENTS_ORIGIN = 'https://events.pagerduty.com';
 const SLACK_ORIGIN = 'https://slack.com';
 const LINEAR_ORIGIN = 'https://api.linear.app';
 
@@ -78,6 +79,7 @@ const DESTINATIONS: Record<ConnectionType, (config: unknown) => CredentialDestin
   mcp: (config) => originOf(stringField(config, 'url') ?? ''),
   notion: () => NOTION_ORIGIN,
   pagerduty: () => PAGERDUTY_ORIGIN,
+  pagerduty_events: () => PAGERDUTY_EVENTS_ORIGIN,
   slack_workspace: () => SLACK_ORIGIN,
   zendesk: (config) => {
     const subdomain = stringField(config, 'subdomain');

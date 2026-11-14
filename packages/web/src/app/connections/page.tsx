@@ -62,6 +62,7 @@ type ModalMode =
   | { kind: 'test'; repo: RepositorySummary }
   | { kind: 'onboarding-pr'; repo: RepositorySummary }
   | { kind: 'test-pagerduty'; repo: RepositorySummary }
+  | { kind: 'test-pagerduty-events'; repo: RepositorySummary }
   | { kind: 'toggle'; repo: RepositorySummary }
   | { kind: 'import' }
   | null;
@@ -392,6 +393,21 @@ export default function ConnectionsPage() {
                           Test connection
                         </GuardedButton>
                       )}
+                      {r.type === 'pagerduty_events' && (
+                        <GuardedButton
+                          aria-label={`Test connection ${label}`}
+                          blockedReason={
+                            canManageTeam(r.team?.id)
+                              ? null
+                              : repoManageReason(r.team?.name, 'test')
+                          }
+                          onClick={() => setMode({ kind: 'test-pagerduty-events', repo: r })}
+                          size="sm"
+                          variant="ghost"
+                        >
+                          Test connection
+                        </GuardedButton>
+                      )}
                       <GuardedButton
                         aria-label={`Edit ${label}`}
                         blockedReason={
@@ -619,6 +635,15 @@ export default function ConnectionsPage() {
           path={`/api/v1/repositories/${mode.repo.id}/test-pagerduty`}
           subtitle={connectionLabel(mode.repo)}
           title="Test PagerDuty connection"
+        />
+      )}
+
+      {mode?.kind === 'test-pagerduty-events' && (
+        <ProbeModal
+          onClose={() => setMode(null)}
+          path={`/api/v1/repositories/${mode.repo.id}/test-pagerduty-events`}
+          subtitle={connectionLabel(mode.repo)}
+          title="Test PagerDuty change events"
         />
       )}
 

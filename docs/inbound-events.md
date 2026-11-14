@@ -574,8 +574,46 @@ preset and clear **Cancel on**: there is no triage on this endpoint to cancel.
   `internal_write`) ends the run, so no page is published either.
 - The result carries `noted`, `published` and, once a page exists, its `pageUrl`.
 
+## 9. PagerDuty change events on merge
+
+The other direction: when a pull request from one of a repository's runs merges, auto-swe sends a
+change event to a PagerDuty service, so responders see the merge on that service's timeline and on
+its incidents' related changes.
+
+**The connection.** A `pagerduty_events` connection holds one routing key: the integration key of
+an **Events API v2** integration on the PagerDuty service. It is not the REST API key of a
+`pagerduty` connection. The key is write-only, entered in the connection form, stored encrypted and
+never returned. **Test connection** on the connections page sends PagerDuty a test change event
+(`custom_details.test: true`), which does appear on the service's timeline, and reports whether the
+key was accepted (`POST /api/v1/repositories/:id/test-pagerduty-events`, team LEAD).
+
+**The repository setting.** A git repository's **PagerDuty change events** setting
+(`pagerdutyEventsConnectionId`) names the connection. It must be a `pagerduty_events` connection of
+the repository's own team; moving the repository to another team re-checks it. Several repositories
+can name the same connection. Deleting the connection clears the setting.
+
+**What is sent.** After the GitHub webhook records the merge, the gateway posts to
+`https://events.pagerduty.com/v2/change/enqueue`:
+
+| Field | Value |
+|---|---|
+| `payload.summary` | `Merged <org>/<repo>#<number>: <title>`, at most 1,024 characters |
+| `payload.timestamp` | the pull request's merge time |
+| `payload.source` | `auto-swe` |
+| `payload.custom_details` | `repository`, `pull_request` and, for a run with one, `ticket` |
+| `links` | the pull request |
+
+Only a pull request auto-swe tracks sends one, and only once: a duplicate delivery of the merge
+stops before this step. Sending is best-effort, like the Slack merge notice. A PagerDuty error, a
+timeout (5 seconds), an inactive connection or a missing key is logged as a warning and never fails
+the delivery or holds up the merge signal.
+
 ## Limitations
 
+- **Change events are fire-and-forget.** A change event PagerDuty did not accept is not retried
+  or recorded anywhere but the gateway log, and merges made outside auto-swe, or deploys, send none.
+  Only the US Events API (`events.pagerduty.com`) is used. Nothing has been sent to a live
+  PagerDuty account.
 - **Qodo is not an inbound-event sender.** Qodo emits no outbound webhooks, so there is nothing for
   an endpoint to receive; its findings are pulled by the worker after a GitHub App delivery nudges
   it ([pr-feedback.md §8](./pr-feedback.md#8-qodo-findings)).

@@ -22,6 +22,7 @@ describe('connectionTypes', () => {
       'confluence',
       'zendesk',
       'pagerduty',
+      'pagerduty_events',
       'hubspot',
       'slack_workspace',
       'http_api',

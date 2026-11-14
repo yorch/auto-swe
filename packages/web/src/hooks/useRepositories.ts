@@ -104,6 +104,7 @@ export interface UpdateRepoBody {
   setup?: RepoSetup | null;
   prTitleFormat?: 'template' | 'conventional' | null;
   prTitleTemplate?: string | null;
+  pagerdutyEventsConnectionId?: string | null;
   isActive?: boolean;
   language?: string | null;
   teamId?: string;
