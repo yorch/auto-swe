@@ -91,6 +91,42 @@ describe('normalizeTranscriptRecord', () => {
     expect(n?.response.usage).toMatchObject({ inputTokens: 80, outputTokens: 12 });
   });
 
+  it('reads the cached prompt tokens of an OpenAI chat completions call', () => {
+    const n = normalizeTranscriptRecord({
+      ...openaiChatJson,
+      response: {
+        ...openaiChatJson.response,
+        body: {
+          ...openaiChatJson.response.body,
+          usage: {
+            completion_tokens: 12,
+            prompt_tokens: 80,
+            prompt_tokens_details: { cached_tokens: 64 },
+          },
+        },
+      },
+    });
+    expect(n?.response.usage).toEqual({ cacheRead: 64, inputTokens: 80, outputTokens: 12 });
+  });
+
+  it('reads the cached prompt tokens from the usage chunk of a streamed chat call', () => {
+    const n = normalizeTranscriptRecord({
+      ...openaiChatSse,
+      response: {
+        ...openaiChatSse.response,
+        body: [
+          'data: {"id":"c","model":"m","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}',
+          '',
+          'data: {"id":"c","model":"m","choices":[],"usage":{"completion_tokens":2,"prompt_tokens":50,"prompt_tokens_details":{"cached_tokens":40}}}',
+          '',
+          'data: [DONE]',
+          '',
+        ].join('\n'),
+      },
+    });
+    expect(n?.response.usage).toEqual({ cacheRead: 40, inputTokens: 50, outputTokens: 2 });
+  });
+
   it('reassembles a streamed OpenAI chat completions call', () => {
     const n = normalizeTranscriptRecord(openaiChatSse);
     expect(n?.response.content).toEqual([{ text: 'Looks good', type: 'text' }]);
