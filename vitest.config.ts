@@ -689,5 +689,11 @@ export default defineConfig({
     root: __dirname,
     // Lets suites that stub `globalThis.fetch` keep working under the pinned dispatcher.
     setupFiles: ['./vitest.setup.ts'],
+    // CI runs the whole suite under v8 coverage on shared runners, which slows a CPU-bound test
+    // by a factor of ten or more, so vitest's 5 s default failed tests that take well under a
+    // second on a developer machine (the huge-PR brief test failed one run in ten). The limit
+    // only bounds a hung test: a test that finishes returns at once whatever this is. jsdom
+    // suites raise it again to 20 s in vitest.setup.ts.
+    testTimeout: 15_000,
   },
 });
