@@ -34,6 +34,28 @@ describe('AgentRunOutcomeCard', () => {
     expect(link.getAttribute('rel')).toContain('noopener');
   });
 
+  it('names each file operation and its line counts for a screen reader', () => {
+    render(
+      <AgentRunOutcomeCard
+        result={{
+          ...DELIVERED,
+          filesChanged: [
+            { linesAdded: 1, linesRemoved: 0, operation: 'CREATE', path: 'a.md' },
+            { linesAdded: 3, linesRemoved: 1, operation: 'MODIFY', path: 'b.md' },
+            { linesAdded: 0, linesRemoved: 2, operation: 'DELETE', path: 'c.md' },
+          ],
+        }}
+        runId="run-1"
+      />
+    );
+    expect(screen.getByText('added')).toBeTruthy();
+    expect(screen.getByText('modified')).toBeTruthy();
+    expect(screen.getByText('removed')).toBeTruthy();
+    expect(screen.getByText('1 line added')).toBeTruthy();
+    expect(screen.getByText('3 lines added')).toBeTruthy();
+    expect(screen.getByText('2 lines removed')).toBeTruthy();
+  });
+
   it('labels a deliver:none diff as the agent’s own, unverified, and shows no branch or PR', () => {
     render(
       <AgentRunOutcomeCard

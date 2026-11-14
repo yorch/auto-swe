@@ -11,7 +11,7 @@ import {
   type AgentRunOutcome,
   parseAgentRunOutcome,
 } from '@/lib/agentRun';
-import { cn, FOCUS_RING } from '@/lib/utils';
+import { cn, FOCUS_RING, plural } from '@/lib/utils';
 import { ArtifactAwareText } from './ArtifactAwareText';
 import { ReviewPageLink } from './ReviewPageLink';
 
@@ -39,6 +39,12 @@ const OPERATION_LABEL: Record<string, string> = {
   CREATE: 'Added',
   DELETE: 'Deleted',
   MODIFY: 'Modified',
+};
+/** The word a screen reader gets for each operation mark. */
+const OPERATION_WORD: Record<string, string> = {
+  CREATE: 'added',
+  DELETE: 'removed',
+  MODIFY: 'modified',
 };
 
 /** A key/value line of the published block. */
@@ -139,14 +145,22 @@ export function AgentRunOutcomeCard({
               // biome-ignore lint/suspicious/noArrayIndexKey: see above
               <li className="flex items-baseline gap-2 px-2.5 py-1" key={`${i}:${f.path}`}>
                 <span
+                  aria-hidden="true"
                   className="w-3 shrink-0 text-center text-paper-500"
                   title={OPERATION_LABEL[f.operation] ?? 'Modified'}
                 >
                   {OPERATION_MARK[f.operation] ?? '~'}
                 </span>
+                <span className="sr-only">{OPERATION_WORD[f.operation] ?? 'modified'}</span>
                 <span className="min-w-0 break-all text-paper-200">{f.path}</span>
-                <span className="tabular ml-auto shrink-0 text-success-400">+{f.linesAdded}</span>
-                <span className="tabular shrink-0 text-danger-400">−{f.linesRemoved}</span>
+                <span aria-hidden="true" className="tabular ml-auto shrink-0 text-success-400">
+                  +{f.linesAdded}
+                </span>
+                <span className="sr-only">{plural(f.linesAdded, 'line')} added</span>
+                <span aria-hidden="true" className="tabular shrink-0 text-danger-400">
+                  −{f.linesRemoved}
+                </span>
+                <span className="sr-only">{plural(f.linesRemoved, 'line')} removed</span>
               </li>
             ))}
           </ul>

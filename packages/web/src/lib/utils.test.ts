@@ -10,7 +10,14 @@ import {
   formatTotalCost,
   isRecord,
   plural,
+  STATUS_META,
 } from './utils.js';
+
+describe('STATUS_META', () => {
+  it('reads a timed-out status as a failure, the same tone as FAILED', () => {
+    expect(STATUS_META.TIMED_OUT?.dotClass).toBe(STATUS_META.FAILED?.dotClass);
+  });
+});
 
 // These formatters deliberately follow the runtime's default locale, so the
 // assertions compare against reference `Intl` instances built the same way
