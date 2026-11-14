@@ -4,8 +4,9 @@ A campaign applies one planned change to many repositories of one organization: 
 raised to a patched version, or a framework change described in a brief. The platform starts one
 child run per repository, at most a few at a time, and records for each repository what happened:
 a draft pull request opened, nothing to change, a failure with its reason, or a cancellation.
-Humans review and merge every pull request. Nothing in a campaign merges, waits for a merge or
-closes a pull request.
+Humans review and merge every pull request, unless its repository is in `auto` mode, where GitHub
+may merge a qualifying low-risk one once a person has marked it ready
+([pull-request evaluation](./pr-evaluation.md)). The campaign itself never merges, waits for a merge or closes a pull request.
 
 A campaign is deterministic first. When the launch names a **recipe**, a script the platform owns
 and versions makes the change in a sandbox, with no model involved. The agent runs only when there

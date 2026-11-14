@@ -4,7 +4,7 @@ An agent run is an ad-hoc launch of one library agent against one repository: pi
 prompt, and it works in a throwaway checkout. By default nothing leaves that sandbox and you get the
 agent's answer and its diff back. Asked to, the platform publishes the result as a branch or a **draft**
 pull request, and only after deterministic checks and the security gate have passed. Nothing is ever
-merged; a human merges.
+merged by the platform; a human merges it, unless its repository is in `auto` mode, where GitHub may merge a qualifying low-risk one once a person has marked it ready.
 
 It is the way to use a library agent (`contentWriter`, `supportResponder`, a team's own) without
 authoring a workflow around it.

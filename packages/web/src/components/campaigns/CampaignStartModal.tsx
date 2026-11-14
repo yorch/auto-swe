@@ -40,7 +40,7 @@ export function CampaignStartModal({
       onClose={onClose}
       open={open}
       size="lg"
-      subtitle="Apply one planned change to many repositories of one organization. Every result is a draft pull request for a person to review and merge."
+      subtitle="Apply one planned change to many repositories of one organization. Every result is a draft pull request for a person to review and merge, unless its repository is in auto mode, where GitHub may merge a qualifying low-risk one once a person has marked it ready."
       title="Start a campaign"
     >
       {open && <StartForm onClose={onClose} onStarted={onStarted} />}

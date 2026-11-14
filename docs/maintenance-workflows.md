@@ -39,7 +39,7 @@ pattern language, and any other wildcard matches only itself, so a mistyped entr
 
 **Ending.** A run whose diff is empty ends `SUCCESS` with `changed: false` and opens nothing. Otherwise
 it opens a **draft** pull request and ends: there is no CI loop and no approval step inside the run,
-and a person merges.
+and a person merges it, unless its repository is in `auto` mode, where GitHub may merge a qualifying low-risk one once a person has marked it ready.
 
 **Without a template.** The same prompt is the seeded `docsMaintainer` agent, so
 `auto-swe agent run docsMaintainer "<focus>" --repo <org/name> --deliver draft_pr` does one pass on

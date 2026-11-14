@@ -1649,7 +1649,7 @@ Current constraints of the system as built. Deliberate product boundaries are in
 - **The gate does not review executable artifacts.** A committed `.so`, `.dll`, `.dylib`, `.exe`,
   `.jar`, `.class`, `.wasm`, `.node`, `.pyc` or `.dex` (a modified `gradle-wrapper.jar`, say) is
   reduced to its printable strings and passes if those look benign. Such a change reaches a draft
-  pull request that a human merges, but CI runs on the pushed branch first, and the test and build
+  pull request that a human merges (in a repository in `auto` mode, GitHub may merge it once a person has marked it ready and it qualifies as low-risk), but CI runs on the pushed branch first, and the test and build
   code an agent writes executes in CI too. Treat executable artifacts as code: CODEOWNERS or a
   branch rule should send them to a reviewer.
 - **The recorded base is what the unguarded steps now depend on.** A step reports the change against

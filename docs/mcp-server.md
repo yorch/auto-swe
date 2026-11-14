@@ -377,7 +377,8 @@ and needs no restart. None is read only at startup.
   bounds that: writes are off until an admin turns them on, a client holds write only after the user's
   step-up consent, grants expire and can be revoked, an idempotency key is required, the budget tier is
   fixed, the burst limit and the concurrency cap apply, and a person reviews and merges every pull
-  request. Users should not set an MCP client to approve write tools automatically.
+  request, unless its repository is in `auto` mode, where GitHub may merge a qualifying low-risk one.
+  Users should not set an MCP client to approve write tools automatically.
 - The concurrency cap is checked under a lock that only MCP submissions take, so a run started from the
   dashboard or the CLI at the same instant as an MCP submission can exceed the cap, by as many as are
   launched concurrently.

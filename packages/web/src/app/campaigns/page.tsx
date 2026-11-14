@@ -60,7 +60,9 @@ function Campaigns() {
           <p>
             A campaign applies one planned change to many repositories of one organization. Each
             repository gets its own run and ends in a draft pull request, nothing to change, or a
-            failure with its reason. People review and merge every pull request.
+            failure with its reason. People review and merge every pull request, unless its
+            repository is in auto mode, where GitHub may merge a qualifying low-risk one once a
+            person has marked it ready.
           </p>
         }
         subtitle="One change applied across many repositories, with a draft pull request for each."

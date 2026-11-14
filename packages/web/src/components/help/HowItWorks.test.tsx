@@ -19,10 +19,10 @@ describe('HowItWorks', () => {
   it('lists the five lifecycle steps in order', () => {
     render(<HowItWorks />);
     const steps = screen.getAllByRole('listitem').map((li) => li.querySelector('p')?.textContent);
-    expect(steps).toEqual(['Request', 'Run', 'Gate', 'Pull request', 'You merge']);
+    expect(steps).toEqual(['Request', 'Run', 'Gate', 'Pull request', 'You review']);
   });
 
-  it('says plainly that auto-swe never merges', () => {
+  it('says plainly that no built-in step merges a pull request', () => {
     render(<HowItWorks />);
     expect(screen.getAllByText(/merges a pull request/)).toHaveLength(1);
     expect(screen.getByText(/No built-in step or template merges a pull request/)).toBeTruthy();

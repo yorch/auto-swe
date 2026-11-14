@@ -337,7 +337,7 @@ limit, an earlier run or the budget holds it back.
   alert message quoting a log line). Mapped values are capped, the run's description marks their
   provenance, and the template receives them only in the inputs the automation maps. A template
   that changes code from an event should be one the team chose for that, with a repository named
-  deliberately; its pull requests are drafts that a person merges.
+  deliberately; its pull requests are drafts that a person merges, unless its repository is in `auto` mode, where GitHub may merge a qualifying low-risk one once a person has marked it ready.
 - **Loops.** A request carrying `X-AutoSwe-Delivery`, the header that marks the platform's own
   outbound calls, is dropped unrecorded.
 - **Only the authenticated body decides.** Everything a decision reads — type, id, subject, scope,
@@ -351,7 +351,7 @@ limit, an earlier run or the budget holds it back.
 Snyk posts a `project_snapshot/v0` webhook each time it tests a monitored project. With a Snyk
 event endpoint and one automation, a new open-source dependency finding starts the
 [`vulnerability-remediation`](./maintenance-workflows.md#2-vulnerability-remediation) template on
-the repository, which opens a draft pull request that a person merges.
+the repository, which opens a draft pull request that a person merges, unless its repository is in `auto` mode, where GitHub may merge a qualifying low-risk one once a person has marked it ready.
 
 **What was checked.** The signature, the headers and the payload's top-level shape come from
 Snyk's public webhook documentation ("Webhooks" and "Validation and versioning of payloads", under
