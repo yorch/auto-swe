@@ -44,7 +44,7 @@ describe('AdminNav', () => {
     expect(hrefs).toContain('/admin/automations');
     expect(hrefs).not.toContain('/admin/users');
     expect(hrefs).not.toContain('/admin/platform-settings');
-    expect(hrefs).not.toContain('/admin/usage');
+    expect(hrefs).not.toContain('/insights/usage');
     expect(screen.queryByRole('list', { hidden: true, name: 'Security' })).toBeNull();
   });
 

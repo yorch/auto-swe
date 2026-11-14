@@ -17,7 +17,7 @@ export function showsTeamSwitcher(pathname: string): boolean {
       '/library',
       '/knowledge',
       '/admin/automations',
-      '/admin/reports',
+      '/insights/reports',
     ].includes(pathname.replace(/\/$/, '') || '/')
   );
 }
@@ -193,30 +193,6 @@ const ADMIN_PAGES: NavItem[] = [
     section: 'Security',
   },
   {
-    href: '/admin/analytics',
-    icon: 'analytics',
-    label: 'Analytics',
-    minRole: 'ENGINEER',
-    section: 'Spend & insights',
-  },
-  {
-    href: '/admin/reports',
-    icon: 'docs',
-    label: 'Reports',
-    minRole: 'ENGINEER',
-    section: 'Spend & insights',
-  },
-  // Gated on holding a usage scope (a led team, an administered org, or ADMIN), not on
-  // the platform role; the gateway enforces which scopes each may read.
-  {
-    href: '/admin/usage',
-    icon: 'coin',
-    label: 'LLM usage',
-    minRole: 'ENGINEER',
-    needsUsageScope: true,
-    section: 'Spend & insights',
-  },
-  {
     href: '/admin/assistant',
     icon: 'warning',
     label: 'Assistant failures',
@@ -300,6 +276,24 @@ const ADMIN_PAGES: NavItem[] = [
   },
 ];
 
+/**
+ * Pages every role may open, which used to sit in Admin. What each shows is narrowed by the gateway
+ * to the caller's teams and scopes.
+ */
+export const INSIGHTS_PAGES: NavItem[] = [
+  { href: '/insights/analytics', icon: 'analytics', label: 'Analytics', minRole: 'ENGINEER' },
+  { href: '/insights/reports', icon: 'docs', label: 'Reports', minRole: 'ENGINEER' },
+  // Gated on holding a usage scope (a led team, an administered org, or ADMIN), not on
+  // the platform role; the gateway enforces which scopes each may read.
+  {
+    href: '/insights/usage',
+    icon: 'coin',
+    label: 'LLM usage',
+    minRole: 'ENGINEER',
+    needsUsageScope: true,
+  },
+];
+
 export const KNOWLEDGE_PAGES: NavItem[] = [
   { href: '/knowledge', icon: 'repository', label: 'Knowledge', minRole: 'ENGINEER' },
   { href: '/knowledge-bases', icon: 'memory', label: 'Knowledge bases', minRole: 'ENGINEER' },
@@ -331,6 +325,7 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
     label: 'Work',
   },
+  { items: INSIGHTS_PAGES, label: 'Teams and insights' },
   {
     items: [
       { href: '/library', icon: 'templates', label: 'Workflow library', minRole: 'ENGINEER' },

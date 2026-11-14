@@ -8,7 +8,7 @@ export default function TeamReportsPage() {
   return (
     <TeamLinkPanel
       hint="Delivery, cost and quality reports, narrowed to this team."
-      href="/admin/reports"
+      href="/insights/reports"
       icon="docs"
       linkLabel="Open the team's reports"
       slug={team.slug}

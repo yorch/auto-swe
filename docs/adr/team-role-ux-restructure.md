@@ -107,3 +107,11 @@
 - A generation job is readable by any team lead holding its id (D6). Binding the job to its creator is the stronger fix.
 - `checkSettingWrite` in `packages/shared/src/config/permissions.ts` decides team-scope setting writes by a platform role floor plus ADMIN-issued grants, not by the team role. It only narrows what an ADMIN granted, so it widens nothing, and "the team role decides" in this log does not cover settings.
 - The Slack Approve button treats the template's team as an owner of a run (D8). Requiring LEAD on the repository's team when the run has one would be stricter.
+
+## D13 — 2026-11-14 — Task 6: Insights pages move with one-hop redirects, and the group is created early
+
+**Status**: Accepted
+**Decision**: Analytics, Reports and LLM usage moved from `app/admin/` to `app/insights/` with `git mv`. They no longer inherit the Admin layout, so `app/insights/layout.tsx` carries the role guard (every role) and the usage page keeps its own usage-scope layout. The old `/admin/<page>` addresses and the older `/govern/<page>` addresses redirect permanently in one hop through `LEGACY_REDIRECTS`; the `/govern/analytics`, `/govern/reports` and `/govern/usage` rules come before the `/govern/:path*` prefix rule so they do not chain. The sidebar group "Teams and insights" is created in this task, with these three pages, so they stay reachable. The plan assigned the group to Task 7.
+**Reason**: A page that moved out of the Admin layout needs both a guard and a place in the navigation, or it is either unguarded or unreachable. `docs:check` and `legacyRedirects.test.ts` already enforce that every old address maps to a real page.
+**Alternatives considered**: Route groups that keep the `/admin/...` URLs were rejected: they would leave ordinary pages under an address that says Admin, which is what this restructure removes.
+

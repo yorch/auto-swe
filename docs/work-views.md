@@ -344,7 +344,7 @@ window** (no previous window), newest first. It takes the outcomes read's `windo
 `scope`, `teamId`, `repoId` and `templateId`, plus `format`: `csv` (default) or `ndjson`. Visibility is the
 outcomes read's, from the same filter function, so an export reaches no row the summary would not.
 ENGINEER and above may call it. The **Export CSV** button on the pull request outcomes card of
-`/admin/analytics` downloads the CSV for the page's window and the repository chosen on the card,
+`/insights/analytics` downloads the CSV for the page's window and the repository chosen on the card,
 and says so when the file was cut at the row limit.
 
 Columns (CSV header, and the keys of each NDJSON object): `pull_request_id`, `repository_org`,
@@ -515,7 +515,7 @@ reload.
   otherwise, and always null for a service principal. It also carries `ownerTeam` (the team that
   owns the run's repository) and the `canControl` flag of its `review` block, which is `false` for a viewer who sees the run
   through a shared repository without controlling it ([teams.md](./teams.md#seeing-a-run-versus-controlling-it)).
-- **Pull request outcomes** — a card on **Platform analytics** (`/admin/analytics`) for the page's
+- **Pull request outcomes** — a card on **Platform analytics** (`/insights/analytics`) for the page's
   date range: merge rate, median and 95th-percentile time to merge, PRs opened (with merged, closed
   unmerged, open and draft counts), each against the previous window, and the ten repositories with
   the most PRs opened. A banner says when the row cap cut into the window, and when it cut into the
@@ -615,7 +615,7 @@ text with invisible and direction-changing characters made visible, never markup
 - An outcomes read takes at most 10,000 PRs; beyond that the figures cover only the newest ones
   read, and `isTruncated` or `previousComplete` says so.
 - Outcomes are grouped by workflow template, but not by agent. The dashboard card on
-  `/admin/analytics` follows that page's date range and offers a repository filter.
+  `/insights/analytics` follows that page's date range and offers a repository filter.
 - An export that fails after its first byte cannot change its status: the transfer is aborted and a
   client sees a failed download, not a clean short file. Rows already sent are not marked.
 - The export is a snapshot read in batches of 500 by cursor, not a transaction, so a PR whose state

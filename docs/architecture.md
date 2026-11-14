@@ -1345,7 +1345,7 @@ and per template (`computeApprovalLatency()` in `shared/src/workflow/analytics.t
 `requestedAt` to `resolvedAt` and is measured for `RESOLVED` steps only, as `resolved.count`,
 `p50Ms` and `p95Ms`. `TIMED_OUT`, `CANCELLED` and `PENDING` steps are counted separately and are in
 no percentile. It reads at most 10,000 steps, newest first, and sets `isTruncated` when the cap cut
-into the window. `/admin/analytics` renders it as the Approval latency card, and its pull-request
+into the window. `/insights/analytics` renders it as the Approval latency card, and its pull-request
 outcomes card reads `GET /api/v1/pull-requests/outcomes` ([work-views.md](./work-views.md)).
 
 ### Workspace hardening

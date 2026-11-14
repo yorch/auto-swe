@@ -292,7 +292,7 @@ function AnalyticsWorkspace() {
                       Workflow-run spend only.{' '}
                       <Link
                         className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current"
-                        href="/admin/usage"
+                        href="/insights/usage"
                       >
                         See all spend
                       </Link>

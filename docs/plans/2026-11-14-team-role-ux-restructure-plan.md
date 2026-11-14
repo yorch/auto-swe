@@ -25,7 +25,7 @@ Conventions for every task:
 - [x] Task 3: Repository dependency and onboarding routes drop the platform LEAD floor — `47066c4d`
 - [x] Task 4: Workflow template routes drop the platform LEAD floor — `4301d7c8`
 - [x] Task 5: Web permissions use the team role alone, with explained disabled controls — `ec3637d4`
-- [ ] Task 6: Move Analytics, Reports and LLM usage to `/insights/*` with redirects
+- [x] Task 6: Move Analytics, Reports and LLM usage to `/insights/*` with redirects — see git log
 - [ ] Task 7: Move Automations and the Teams directory, then reorder the sidebar
 - [ ] Task 8: Team overview returns a `mine` block
 - [ ] Task 9: "My work" card and Start work links on the team Overview
@@ -132,7 +132,9 @@ control shows the title above.
 `app/insights/{analytics,reports,usage}` with `git mv`. Each moved page keeps an equivalent role
 guard (`RoleLayout`) because it leaves the admin layout. Add permanent redirects (308, query string
 kept) from each old address in `next.config`. Update internal links and the page map entries in
-`lib/navigation.ts`, `GovernanceGuide.tsx` and `lib/auditEntity.ts`. Keep `showsTeamSwitcher()` correct
+`lib/navigation.ts`, `GovernanceGuide.tsx` and `lib/auditEntity.ts`. The moved pages need a home in
+the sidebar, so this task also adds the "Teams and insights" group after Work with these three
+items; Task 7 adds Teams and Automations to it and sets the final order. Keep `showsTeamSwitcher()` correct
 for the new paths.
 **Files**: `packages/web/src/app/admin/{analytics,reports,usage}/` → `packages/web/src/app/insights/`,
 `packages/web/next.config.*`, `packages/web/src/lib/navigation.ts`,

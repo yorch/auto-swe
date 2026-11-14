@@ -38,7 +38,7 @@ describe('team switcher scope', () => {
     '/library',
     '/knowledge',
     '/admin/automations',
-    '/admin/reports',
+    '/insights/reports',
   ])('shows on team-aware route %s', (path) => {
     expect(showsTeamSwitcher(path)).toBe(true);
   });
@@ -199,14 +199,32 @@ describe('visibleNavGroups', () => {
   const hrefsFor = (role: string, scoped?: boolean) =>
     visibleNavGroups(role, scoped).flatMap((g) => flattenNavItems(g.items).map((i) => i.href));
 
-  it('groups the sidebar into Work, Build, Connect, Knowledge and Admin', () => {
+  it('groups the sidebar into Work, Teams and insights, Build, Connect, Knowledge and Admin', () => {
     expect(NAV_GROUPS.map((g) => g.label)).toEqual([
       'Work',
+      'Teams and insights',
       'Build',
       'Connect',
       'Knowledge',
       'Admin',
     ]);
+  });
+
+  it('offers Analytics, Reports and LLM usage in their own group, and not in Admin', () => {
+    const groups = visibleNavGroups('ENGINEER', true);
+    const insights = groups.find((g) => g.label === 'Teams and insights');
+    expect(insights?.items.map((i) => i.href)).toEqual([
+      '/insights/analytics',
+      '/insights/reports',
+      '/insights/usage',
+    ]);
+    const adminHrefs = groups
+      .find((g) => g.label === 'Admin')
+      ?.items[0]?.children?.map((c) => c.href);
+    for (const old of ['/admin/analytics', '/admin/reports', '/admin/usage']) {
+      expect(adminHrefs).not.toContain(old);
+    }
+    expect(adminHrefs).not.toContain('/insights/analytics');
   });
 
   it('shows an ENGINEER only ENGINEER pages', () => {
@@ -236,7 +254,7 @@ describe('visibleNavGroups', () => {
 
   it('offers LLM usage by usage scope, not by platform role', () => {
     const offered = (role: string, scoped?: boolean) =>
-      hrefsFor(role, scoped).includes('/admin/usage');
+      hrefsFor(role, scoped).includes('/insights/usage');
     expect(offered('ENGINEER')).toBe(false);
     expect(offered('ENGINEER', true)).toBe(true);
     // A LEAD who leads no team has no scope, so the page would bounce them.

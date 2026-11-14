@@ -90,13 +90,13 @@ export const GOVERNANCE_GROUPS: GuideGroup[] = [
   {
     links: [
       {
-        href: '/admin/usage',
+        href: '/insights/usage',
         label: 'LLM usage',
         reason:
           'Every LLM and embedding call, attributed to the team and organization whose spend it is.',
       },
       {
-        href: '/admin/analytics',
+        href: '/insights/analytics',
         label: 'Analytics',
         reason: 'Run volume, outcomes, cost and time saved across workflow templates.',
       },
