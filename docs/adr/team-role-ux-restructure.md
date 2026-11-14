@@ -93,3 +93,17 @@
 **Decision**: The campaigns page, the epics page, the epic launch form and the first-run checklist ask `useLeadsATeam()` (a platform ADMIN, or anyone who leads an active team) instead of `useHasRole('LEAD')`. The upgrade note for the whole role change and the living-doc corrections ship in the first pull request, not the second.
 **Reason**: `main` gained these gates after Task 5, under a spelling the earlier searches did not match, and they would have hidden the buttons the gateway now allows. The repository requires the upgrade note in the same change as the behavior it describes, so it cannot wait for the navigation pull request.
 **Alternatives considered**: Asking `useLedTeamIds` directly at each site was rejected: three sites need the same "admin or leads a team" answer.
+
+## D12 — 2026-11-14 — Whole-branch review: shell authoring, and what stays open
+
+**Status**: Accepted
+**Decision**: A team ADMIN can author shell, container and gate-command steps and run repository onboarding without a platform LEAD role. The check that decides it, `isShellAuthor` (team ADMIN or platform ADMIN), is unchanged; only the platform LEAD floor that used to sit in front of it is gone. The upgrade note names this. The spec's criterion 5 now reads: platform LEAD gates `/admin/platform-settings` and no team-scoped route, and the global review presets are platform ADMIN only. Team review presets follow the team role.
+**Reason**: Both follow from the user's decision that the team role alone decides team-scoped actions. A team ADMIN is already the person the product trusts with workspace code on that team.
+**Alternatives considered**: Adding a platform floor to `isShellAuthor` was rejected: it would bring back the two-axis rule for the most sensitive action.
+
+**Open follow-ups (found by the whole-branch review, not built here):**
+- `POST /teams/:id/members/invite` has no rate limit of its own. Each invitation sends a sign-in email, and `409 USER_EXISTS` shows whether an address already has an account. The set of people who can call it grew from platform LEADs who lead a team to every team lead.
+- `GET /users/lookup` refuses an ORG_ADMIN who leads no team, although the organization routes let that person add and invite members. Admitting an ORG_ADMIN of any organization is the likely fix.
+- A generation job is readable by any team lead holding its id (D6). Binding the job to its creator is the stronger fix.
+- `checkSettingWrite` in `packages/shared/src/config/permissions.ts` decides team-scope setting writes by a platform role floor plus ADMIN-issued grants, not by the team role. It only narrows what an ADMIN granted, so it widens nothing, and "the team role decides" in this log does not cover settings.
+- The Slack Approve button treats the template's team as an owner of a run (D8). Requiring LEAD on the repository's team when the run has one would be stricter.

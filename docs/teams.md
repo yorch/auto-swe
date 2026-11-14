@@ -226,9 +226,9 @@ Every action on a team's work asks for the caller's role **in that team**, whate
 role. A platform `ENGINEER` who leads a team manages its members and settings, invites people, edits
 its repositories and templates, and launches epics, PRD runs and campaigns on its repositories. A
 platform `LEAD` who is only an `ENGINEER` in a team has none of that on it. A platform `ADMIN` passes
-every team check. The platform `LEAD` role still gates the pages no team owns: platform settings and
-the global review presets. Organization-scoped pages (the error baselines) decide by organization
-membership. The route test `teamRoleFloor.test.ts` fails when a route that names a team role also asks
+every team check. The platform `LEAD` role still gates the one page no team owns that it opens,
+platform settings. The global review presets are platform `ADMIN` only. Organization-scoped pages
+(the error baselines) decide by organization membership. The route test `teamRoleFloor.test.ts` fails when a route that names a team role also asks
 for a platform role above `ENGINEER`; the two sandbox allowlist routes, which are platform `ADMIN` only
 by design, are the named exceptions.
 
@@ -442,8 +442,10 @@ organization-membership errors stay in the dialog with guidance.
 
 The team space's **Members** tab offers **Add member** and **Invite by email** to platform ADMINs
 and team leads and admins, whatever their platform role. Add-member lists organization members;
-platform ADMINs can choose any active user. Both forms restrict team roles to the caller's own
-role or below. An invitation reports the response's active or waiting-for-approval state. The
+platform ADMINs can choose any active user. A team `LEAD` or `ADMIN`, whatever their platform role,
+can also add someone they can name by exact email through `GET /api/v1/users/lookup` (`403` for
+someone who leads no active team; rate-limited to 30 a minute). Both forms restrict team roles to
+the caller's own role or below. An invitation reports the response's active or waiting-for-approval state. The
 organization's invite form also offers an optional team from that organization and a team role.
 
 An organization's `ORG_ADMIN` creates a team with

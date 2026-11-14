@@ -635,7 +635,7 @@ other decision that started no run.
 | Kind | Configured at | Who |
 |---|---|---|
 | Cron schedule (`ScheduledWorkRequest`) | `/admin/schedules`, linked from the Automations page | ADMIN, or a LEAD of the owning team or a team the repository is shared with |
-| Template webhook URL | the template's page | LEAD+ who may edit the template |
+| Template webhook URL | the template's page | LEAD or ADMIN of the template's team (whatever their platform role), or a platform ADMIN |
 | Issue-tracker transition | `/admin/integrations` → Tracker | ADMIN |
 
 ### 5.1 Signed template webhooks
@@ -661,7 +661,7 @@ X-AutoSwe-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body
 - A refusal is `401 SIGNATURE_INVALID`, with the reason in the message: the header is `missing`,
   `malformed`, `stale`, or does not match (`mismatch`).
 
-On the template's page, under **Webhook trigger → Signing**, a LEAD+ who may edit the template can:
+On the template's page, under **Webhook trigger → Signing**, a LEAD or ADMIN of the template's team, or a platform ADMIN, can:
 
 | Action | Route | Effect |
 |---|---|---|

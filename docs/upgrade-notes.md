@@ -1542,8 +1542,6 @@ address cannot be reached through the proxy.
 
 ---
 
----
-
 ### The team role alone decides team-scoped actions
 
 **Affected.** Every deployment. Two groups of people change: a user whose platform role is `ENGINEER`
@@ -1560,9 +1558,15 @@ dependencies, PagerDuty tests and onboarding, workflow templates (create, edit, 
 review, promote, webhook and signing secrets), epics, PRD runs, campaigns, team review presets, the
 Slack **Approve** button (a `LEAD` or `ADMIN` of a team that owns the run) and the add-member user
 lookup (a `LEAD` or `ADMIN` of any active team). A team `LEAD` can now invite users: an organization
-with `trustedInvites` on approves those accounts at once, any other creates them inactive. The
-platform `LEAD` role still gates platform settings and the global review presets, and the
-organization-scoped error baselines still decide by organization membership. A caller who leads no
+with `trustedInvites` on approves those accounts at once, any other creates them inactive. Each
+invitation sends a sign-in email, and an address that already has an account answers `409`; the
+route has no rate limit of its own. The
+platform `LEAD` role still gates platform settings, the global review presets are platform
+`ADMIN` only, and the organization-scoped error baselines still decide by organization membership.
+A team `ADMIN` can now author shell, container and gate-command steps and run repository
+onboarding without a platform `LEAD` role, because team `ADMIN` was always the check that decided
+it and the platform floor in front of it is gone. The template webhook `canManage` flag in
+`GET /automations` follows write access to the template alone. A caller who leads no
 team can no longer ask `POST /workflow-templates/validate` without naming a team (`403`), and
 `GET /workflow-templates/generate/jobs/:jobId` takes only the `wfauthorjob-` ids the generate route
 mints. Any signed-in caller who holds a UUID can learn from a `404` against a `403` whether a
@@ -1580,7 +1584,7 @@ JOIN team_memberships m ON m.user_id = u.id
 JOIN teams t ON t.id = m.team_id AND t.is_active
 WHERE u.is_active AND u.role = 'ENGINEER' AND m.role IN ('LEAD', 'ADMIN');
 
--- Loses: platform LEAD who leads or administers no active team.
+-- Loses everywhere: platform LEAD who leads or administers no active team.
 SELECT u.email
 FROM users u
 WHERE u.is_active AND u.role = 'LEAD'
@@ -1588,6 +1592,13 @@ WHERE u.is_active AND u.role = 'LEAD'
     SELECT 1 FROM team_memberships m JOIN teams t ON t.id = m.team_id AND t.is_active
     WHERE m.user_id = u.id AND m.role IN ('LEAD', 'ADMIN')
   );
+
+-- Loses on one team: platform LEAD who is only an ENGINEER in a team they belong to.
+SELECT u.email, t.slug
+FROM users u
+JOIN team_memberships m ON m.user_id = u.id AND m.role = 'ENGINEER'
+JOIN teams t ON t.id = m.team_id AND t.is_active
+WHERE u.is_active AND u.role = 'LEAD';
 ```
 
 To keep a person from a power, change their team role. To stop team leads approving invited

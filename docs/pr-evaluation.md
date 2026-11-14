@@ -809,11 +809,11 @@ is the count of all matching open pull requests, not the number ordered. The Pul
 | `PUT /api/v1/integrations/github-approver-app` | ADMIN | Body `{ "appId"?, "appSlug"?, "privateKey"? }`. Checked against GitHub before anything is stored (§16.2). A blank `privateKey` keeps the stored one |
 | `DELETE /api/v1/integrations/github-approver-app` | ADMIN | Removes the App id, slug and key (`204`); the removed slug is kept so its approvals can still be withdrawn |
 
-The two `PUT` routes differ on purpose. `PUT …/pr-evaluation` keeps a platform LEAD floor, because
-a mode change can arm auto-merge. `PUT …/review-routing` has a platform floor of ENGINEER and then
-requires the caller to manage the owning team's repositories (`canManageTeamRepos`: a LEAD or ADMIN
-of the owning team, or a platform ADMIN): routing only orders and labels a queue and can only be made
-stricter, so a team lead whose platform role is ENGINEER may write it.
+Both `PUT` routes take their floor from the owning team: `canManageTeamRepos`, a LEAD or ADMIN of
+the owning team, or a platform ADMIN, whatever the platform role. They differ on what they let a
+team lead write. `PUT …/pr-evaluation` keeps its ADMIN-only values, because a mode change can arm
+auto-merge. `PUT …/review-routing` only orders and labels a queue and can only be made stricter, so
+a team lead may write it within that limit.
 
 A repository you cannot reach answers `404`. The CLI wraps the first two (§14); the approver App
 routes have no CLI command and no admin page, and the in-app assistant may not call them (they are

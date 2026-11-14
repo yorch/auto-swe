@@ -69,8 +69,9 @@ flowchart TD
 - Routes that act on a repository or template resolve the owning team and check the team role. This
   is what `canManageTeamRepos` and `ledTeams` already do. `prdRuns` and the launch helpers move to the
   same helper.
-- `/review-presets` and `/admin/platform-settings` stay behind platform `LEAD`, because no team owns
-  them.
+- `/admin/platform-settings` stays behind platform `LEAD`, because no team owns it. Team review
+  presets (`/review-presets`) follow the team role, and the global review presets stay platform
+  `ADMIN` only.
 - Web: `teamPermissions()` drops the platform-`LEAD` conjunction. `canWriteTeamResource()` keeps its
   `ledTeamIds` test and its platform `ADMIN` bypass. A control the caller cannot use stays visible and
   disabled, with a title that names the missing team role. Team pages show only the team role. The
@@ -160,7 +161,7 @@ Every write above is audited with `writeAuditLog`. Every new route has an entry 
 2. If a user with platform role `LEAD` and team role `ENGINEER` in team T calls a member route for T, then the system shall return HTTP 403 with the message `Requires LEAD role in this team`.
 3. When a platform `ADMIN` who is not a member of T calls a team-scoped route for T, the system shall authorize the request.
 4. If a team `LEAD` grants a team role above their own, then the system shall return HTTP 403 with code `PRIVILEGE_ESCALATION`.
-5. The system shall require platform role `LEAD` for `/review-presets` and `/admin/platform-settings` and for no team-scoped route.
+5. The system shall require platform role `LEAD` for `/admin/platform-settings` and for no team-scoped route, and platform role `ADMIN` for the global review presets.
 6. The route test shall fail when any registered route sets `requiredTeamRole` and a `requiredRole` above `ENGINEER`, except the two sandbox allowlist routes that are platform `ADMIN` only by design.
 7. `teamPermissions('ENGINEER', 'LEAD')` shall return `canManageMembers: true` and `grantableRoles` equal to `['ENGINEER', 'LEAD']`.
 8. `teamPermissions('LEAD', 'ENGINEER')` shall return `canManageMembers: false` and an empty `grantableRoles`.
