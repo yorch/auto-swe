@@ -161,8 +161,8 @@ manage tokens.
 | `GET` / `POST /api/v1/teams/:teamId/service-principals/:id/tokens` | List tokens (prefix, scopes, expiry, last use), mint one |
 | `DELETE /api/v1/teams/:teamId/service-principals/:id/tokens/:tokenId` | Revoke a token |
 
-Every route needs a platform ADMIN, or a platform LEAD who is LEAD or ADMIN on the team — the bar the
-team's members and settings have. Names are unique within a team. Limits are positive:
+Every route needs a platform ADMIN, or LEAD or ADMIN on the team, whatever the platform role — the
+bar the team's members and settings have. Names are unique within a team. Limits are positive:
 `maxRunsPerDay` 1–10,000 (default 50) and `maxInFlight` 1–100 (default 5); disabling is the switch for
 "none".
 

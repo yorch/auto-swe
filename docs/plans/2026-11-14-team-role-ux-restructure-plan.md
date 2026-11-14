@@ -20,11 +20,11 @@ Conventions for every task:
 
 ## Progress
 
-- [x] Task 1: Team-scoped team routes use the team role alone — `8183c368`
-- [x] Task 2: Launch routes (epics, PRD runs, campaigns) drop the platform LEAD floor — `3be051fb`
-- [x] Task 3: Repository dependency and onboarding routes drop the platform LEAD floor — `edbbdfa5`
-- [x] Task 4: Workflow template routes drop the platform LEAD floor — `f2c45619`
-- [x] Task 5: Web permissions use the team role alone, with explained disabled controls — `5e85a1d7`
+- [x] Task 1: Team-scoped team routes use the team role alone — `08643058`
+- [x] Task 2: Launch routes (epics, PRD runs, campaigns) drop the platform LEAD floor — `0c05d457`
+- [x] Task 3: Repository dependency and onboarding routes drop the platform LEAD floor — `10bb2ae1`
+- [x] Task 4: Workflow template routes drop the platform LEAD floor — `fb391e82`
+- [x] Task 5: Web permissions use the team role alone, with explained disabled controls — `5d813188`
 - [ ] Task 6: Move Analytics, Reports and LLM usage to `/insights/*` with redirects
 - [ ] Task 7: Move Automations and the Teams directory, then reorder the sidebar
 - [ ] Task 8: Team overview returns a `mine` block
@@ -39,9 +39,10 @@ Conventions for every task:
 - [ ] Task 17: Attention section: stale approvals and nudge
 - [ ] Task 18: Budget request UI
 - [ ] Task 19: Docs, upgrade note and full quality gates
-- [x] Task 20: User lookup is open to any team lead — `175a01b5`
-- [x] Task 21: Slack approval needs LEAD on the run's owning team — `8615f02d`
-- [x] Task 22: Code review presets and webhook management follow the team role — `a013a11b`
+- [x] Task 20: User lookup is open to any team lead — `8d55d50b`
+- [x] Task 21: Slack approval needs LEAD on the run's owning team — `7dfe31aa`
+- [x] Task 22: Code review presets and webhook management follow the team role — `34dffc20`
+- [x] Task 23: Web launchers show for anyone who leads a team, and the role-change docs and upgrade note
 
 ## Tasks
 
@@ -327,7 +328,7 @@ shows the pending message.
 
 ### Task 19: Docs, upgrade note and full quality gates
 
-**What**: Update `docs/teams.md` (role rule, the "My work" panel, the `mine` block, the Manage tab,
+**What**: The role-change part of this task, the `docs/teams.md` role rule and the `docs/upgrade-notes.md` entry, shipped with the role PR (Task 23). Update `docs/teams.md` (the "My work" panel, the `mine` block, the Manage tab,
 attention actions, and a `## Limitations` entry for nudge reach and approver resolution). Add one
 `docs/upgrade-notes.md` entry that names both affected groups, names that a team `LEAD` may now
 invite users (gated by the organization's `trustedInvites`, decision D3), names the existence-signal widening and the ORG_ADMIN reach (D4, D5), the user lookup now open to any team lead (D7), the Slack approval that now needs LEAD on the run's owning team (D8), and gives a query that lists them;
@@ -385,4 +386,21 @@ now do (Task 4). Remove the imports this leaves unused.
 A platform `ENGINEER` who leads the selected team creates a team review preset (201). A webhook's
 `canManage` is true for a writable template whatever the platform role, and false for one the caller
 may not write.
+
+### Task 23: Web launchers show for anyone who leads a team, and the role-change docs and upgrade note
+
+**What**: Found while preparing the role PR: `main` added web gates that the earlier searches did not
+find, because they use the hook `useHasRole('LEAD')`. The campaigns page, the epics page and the epic
+launch form hid their start button from anyone below platform LEAD, and the first-run checklist
+worded a step by platform LEAD. Add `useLeadsATeam()` (a platform ADMIN, or anyone who leads an
+active team) and use it in all four. Update the living docs that still named a platform LEAD
+requirement (`automations`, `code-review`, `service-principals`, `teams`, `campaigns`,
+`nl-workflow-authoring`), add the "team role decides" section to `docs/teams.md`, and add the upgrade
+note for the whole role change, which the repository requires in the same change.
+**Files**: `packages/web/src/hooks/useTeams.ts`, `packages/web/src/app/campaigns/page.tsx`,
+`packages/web/src/app/epics/page.tsx`, `packages/web/src/components/epics/EpicLaunchForm.tsx`,
+`packages/web/src/components/setup/FirstRunChecklist.tsx`, their tests, and the docs above
+**Depends on**: Task 5
+**Verify**: `yarn vitest run packages/web/src`, `yarn docs:check`. A platform `ENGINEER` who leads a
+team sees **Start a campaign** and **New epic**; someone who leads no team does not.
 

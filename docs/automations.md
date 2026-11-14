@@ -138,8 +138,8 @@ leads to the schedule editor at `/admin/schedules`, which keeps its own page and
 
 - event automations on the repositories the caller can reach, and team automations of the teams
   they belong to (all, for ADMIN). A team automation's row names its team and no repository;
-- template webhook URLs on templates the caller can read. Managing one also needs platform role
-  LEAD, as the webhook routes do, and a webhook's last call is the newest one the caller may see
+- template webhook URLs on templates the caller can read. Managing one needs write access to the
+  template (LEAD or ADMIN of its team), as the webhook routes do, and a webhook's last call is the newest one the caller may see
   (§5), so a global template never shows another team's call;
 - for ADMIN only, the tracker transition hook. Its configuration is not read for anyone else.
 

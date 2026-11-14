@@ -427,8 +427,8 @@ The dashboard has a **Campaigns** list at `/campaigns` and a detail page at `/ca
   it, or to the pull request on its host when the review page is not found. Repositories the viewer
   cannot reach are not listed; a note gives how many there are, and they count in the totals. The
   page refreshes every ten seconds until the campaign is in a final state.
-- **Start.** A **Start a campaign** form (platform `LEAD` and above; the button is not shown to
-  anyone else) takes the fields of `POST /` in §8: name, brief, owning team, an optional recipe
+- **Start.** A **Start a campaign** form (a platform `ADMIN`, or anyone who leads a team; the button is not
+  shown to anyone else) takes the fields of `POST /` in §8: name, brief, owning team, an optional recipe
   with its package and exact version, the repositories, an optional parallelism and an optional
   budget tier. It offers only the teams the caller leads and, for a non-ADMIN, only repositories of
   teams they lead in the owning team's organization. The gateway makes the decision; its refusal is

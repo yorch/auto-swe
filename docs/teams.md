@@ -220,6 +220,18 @@ The Settings tab is hidden from everyone else and its address answers not found.
 the Overview appear is decided by the server from the team role ([§2](#the-view-is-decided-by-the-team-role)),
 never by the tabs.
 
+### The team role decides
+
+Every action on a team's work asks for the caller's role **in that team**, whatever their platform
+role. A platform `ENGINEER` who leads a team manages its members and settings, invites people, edits
+its repositories and templates, and launches epics, PRD runs and campaigns on its repositories. A
+platform `LEAD` who is only an `ENGINEER` in a team has none of that on it. A platform `ADMIN` passes
+every team check. The platform `LEAD` role still gates the pages no team owns: platform settings and
+the global review presets. Organization-scoped pages (the error baselines) decide by organization
+membership. The route test `teamRoleFloor.test.ts` fails when a route that names a team role also asks
+for a platform role above `ENGINEER`; the two sandbox allowlist routes, which are platform `ADMIN` only
+by design, are the named exceptions.
+
 A platform ADMIN may open the space of a team they are not a member of by its address. The overview
 answers for them (`team.myRole` is `null`) and the global pages' `?team=` filter resolves the team
 for them ([§4](#4-the-team-filter-on-global-pages)). That does not put the team in their navigation:
@@ -429,7 +441,7 @@ offers the same action for its admins and platform ADMINs. Name/slug conflicts a
 organization-membership errors stay in the dialog with guidance.
 
 The team space's **Members** tab offers **Add member** and **Invite by email** to platform ADMINs
-and team leads/admins who also hold platform LEAD or above. Add-member lists organization members;
+and team leads and admins, whatever their platform role. Add-member lists organization members;
 platform ADMINs can choose any active user. Both forms restrict team roles to the caller's own
 role or below. An invitation reports the response's active or waiting-for-approval state. The
 organization's invite form also offers an optional team from that organization and a team role.
@@ -462,7 +474,7 @@ if that enrollment transaction fails.
 (`ADMIN`, `LEAD`, or `ENGINEER`, default `ENGINEER`). A team `LEAD` or `ADMIN` can invite, but
 cannot grant a role above their own. Platform ADMIN can invite into any team. The account's
 platform role is `ENGINEER`; the supplied role applies only to the team.
-As with member-add, other inviters also need platform `LEAD` or above.
+Inviting follows the same team-role rule as member-add.
 
 Organization admins can also supply optional `teamId` and `teamRole` on
 `POST /api/v1/platform/organizations/:orgId/members/invite` (including its admin-prefix alias).
