@@ -847,7 +847,17 @@ tool-catalog download hosts. Open policy is unchanged. Restricted policy adds th
 the team allowlist; blocked policy uses only these hosts plus the existing Git/platform access.
 The proxy registration belongs to that workspace and is revoked on destruction. Without the
 egress proxy there is no widening. Worker verification requires the onboarder agent in the
-seeded global template and a seeded version; copying or editing the template does not grant it.
+seeded global template at a seeded version, and the agent definition that resolved must have the
+seed's content: a GLOBAL `repo-onboarder` with no team, organization, channel or template owner
+whose system prompt, tool list, skill refs, MCP binding, runtime, harness profile and model
+inheritance are the seed's (tool keys and skill refs compare as sets), and the node's loop must be
+the default one: a runtime pinned at run start, even by an override since deactivated, refuses.
+Its model, credential and reasoning may differ. Copying or editing
+the template, overriding the agent at team or organization scope, or a global version with a
+different prompt, tools or bindings does not grant it, and a run that is refused keeps its
+normal egress policy (the refusal is logged with the first condition that failed). A workspace
+that was widened runs only that resolved definition: if the agent resolves to another one
+during the run, the node fails without retry, and no MCP server is bound for it.
 
 A deterministic trial provisions a fresh base-branch workspace under the **real run policy**,
 with no setup-only widening. It applies the proposed setup in memory, runs the exact drafted
@@ -1028,6 +1038,21 @@ for whichever provider serves the repository.
 
 ## Limitations
 
+- **The onboarding draft's wider egress is not a strong boundary against a team admin.** The check
+  covers the agent definition (and the run's loop, which must be the default one: a runtime pinned at
+  run start refuses), but the credential the agent's model is called with is resolved by scope, so a
+  team or organization provider credential, with its own `apiBase`, can steer which model drives the
+  draft workspace. The draft already runs repository code under the wider list by design; the check
+  narrows who receives the list. The row is also read live by id while the run's agent comes from a
+  short cache, so a bundle install (ADMIN only) that rewrites the global agent in place is not
+  noticed by an id comparison.
+- **A refused runtime pin can outlast the cause.** If the run-start runtime snapshot skipped the
+  agent (it swallows per-key errors), the first attempt writes a concrete `mastra` pin, so later
+  attempts, revisits and resumes of that run read a run-pinned runtime and lose the wider egress
+  (logged as `runtimePin`). This only narrows, never widens.
+- **A mid-run agent change fails the onboarding run.** If the agent resolves to another definition
+  after the workspace was widened, the node fails without retry (`ONBOARDING_AGENT_CHANGED`) instead
+  of falling back to the team allowlist, so even a harmless override race ends the run.
 - **Bulk import can start many onboarding runs at once.** With `onboarding.autoRunOnConnect`
   enabled, each imported Git repository starts its own run, subject to the creator's permissions
   and normal launch budgets. The import does not impose an additional concurrency limit.
