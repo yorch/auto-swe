@@ -93,8 +93,9 @@ function FirstRunChecklistBody() {
       action: 'Open pull requests',
       body: (
         <>
-          The run opens a pull request on the repository. Review it and merge it yourself: nothing
-          merges it for you.
+          The run opens a pull request on the repository. Review it and merge it yourself. If an
+          admin has put the repository in auto mode, GitHub may merge a low-risk pull request that
+          qualifies once its branch rules pass.
           <HelpTip label="When this step ticks">
             This step ticks when the platform records the merge, which needs the GitHub webhook to
             be set up.
