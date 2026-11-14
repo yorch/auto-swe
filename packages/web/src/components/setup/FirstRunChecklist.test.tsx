@@ -88,7 +88,8 @@ describe('FirstRunChecklist', () => {
     render(<FirstRunChecklist />);
     expect(screen.getByText('0 of 4 done')).toBeTruthy();
     expect(hrefs()).toEqual(['/connections', '/start', '/approvals', '/pull-requests']);
-    expect(screen.getByText(/nothing merges it for you/)).toBeTruthy();
+    expect(screen.getByText(/put the repository in auto mode/)).toBeTruthy();
+    expect(screen.queryByText(/nothing merges it for you/)).toBeNull();
     expect(screen.getByText(/A workflow with no gates never needs this step/)).toBeTruthy();
     expect(screen.queryByText(/not tracked/)).toBeNull();
   });
