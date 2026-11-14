@@ -453,6 +453,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/evidence',
     {
+      config: { mcpScope: 'read' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { params: RunIdParam, response: { 200: EvidenceListResponse } },
     },
@@ -851,6 +852,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/eval-results',
     {
+      config: { mcpScope: 'read' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: {
         params: RunIdParam,
@@ -1005,6 +1007,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/effects',
     {
+      config: { mcpScope: 'read' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: {
         params: RunIdParam,
@@ -1215,6 +1218,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/autonomy-decisions',
     {
+      config: { mcpScope: 'read' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: {
         params: RunIdParam,

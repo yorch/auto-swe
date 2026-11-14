@@ -1,5 +1,6 @@
 import type { McpToolDeps, ToolKit } from '../toolKit.js';
 import { deliveryDomain } from './delivery.js';
+import { runEvidenceDomain } from './runEvidence.js';
 import { teamsDomain } from './teams.js';
 import { workDomain } from './work.js';
 
@@ -29,7 +30,12 @@ export interface McpDomain {
   register(kit: ToolKit, deps: McpToolDeps): void;
 }
 
-export const MCP_DOMAINS: readonly McpDomain[] = [deliveryDomain, teamsDomain, workDomain];
+export const MCP_DOMAINS: readonly McpDomain[] = [
+  deliveryDomain,
+  runEvidenceDomain,
+  teamsDomain,
+  workDomain,
+];
 
 const allTools = MCP_DOMAINS.flatMap((d) => d.tools);
 
