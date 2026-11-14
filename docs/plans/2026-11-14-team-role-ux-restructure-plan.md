@@ -20,11 +20,11 @@ Conventions for every task:
 
 ## Progress
 
-- [x] Task 1: Team-scoped team routes use the team role alone — `08643058`
-- [x] Task 2: Launch routes (epics, PRD runs, campaigns) drop the platform LEAD floor — `0c05d457`
-- [x] Task 3: Repository dependency and onboarding routes drop the platform LEAD floor — `10bb2ae1`
-- [x] Task 4: Workflow template routes drop the platform LEAD floor — `fb391e82`
-- [x] Task 5: Web permissions use the team role alone, with explained disabled controls — `5d813188`
+- [x] Task 1: Team-scoped team routes use the team role alone — `86eba740`
+- [x] Task 2: Launch routes (epics, PRD runs, campaigns) drop the platform LEAD floor — `3341db2d`
+- [x] Task 3: Repository dependency and onboarding routes drop the platform LEAD floor — `47066c4d`
+- [x] Task 4: Workflow template routes drop the platform LEAD floor — `4301d7c8`
+- [x] Task 5: Web permissions use the team role alone, with explained disabled controls — `ec3637d4`
 - [ ] Task 6: Move Analytics, Reports and LLM usage to `/insights/*` with redirects
 - [ ] Task 7: Move Automations and the Teams directory, then reorder the sidebar
 - [ ] Task 8: Team overview returns a `mine` block
@@ -39,10 +39,10 @@ Conventions for every task:
 - [ ] Task 17: Attention section: stale approvals and nudge
 - [ ] Task 18: Budget request UI
 - [ ] Task 19: Docs, upgrade note and full quality gates
-- [x] Task 20: User lookup is open to any team lead — `8d55d50b`
-- [x] Task 21: Slack approval needs LEAD on the run's owning team — `7dfe31aa`
-- [x] Task 22: Code review presets and webhook management follow the team role — `34dffc20`
-- [x] Task 23: Web launchers show for anyone who leads a team, and the role-change docs and upgrade note
+- [x] Task 20: User lookup is open to any team lead — `07817987`
+- [x] Task 21: Slack approval needs LEAD on the run's owning team — `71fbcf7a`
+- [x] Task 22: Code review presets and webhook management follow the team role — `57466a58`
+- [x] Task 23: Web launchers show for anyone who leads a team, and the role-change docs and upgrade note — `1db0d4ca`, `8d085943`; review fixes `ee4274a2`, `29be5836`, `a14f7e89`, `05790253`
 
 ## Tasks
 
@@ -390,8 +390,8 @@ may not write.
 ### Task 23: Web launchers show for anyone who leads a team, and the role-change docs and upgrade note
 
 **What**: Found while preparing the role PR: `main` added web gates that the earlier searches did not
-find, because they use the hook `useHasRole('LEAD')`. The campaigns page, the epics page and the epic
-launch form hid their start button from anyone below platform LEAD, and the first-run checklist
+find, because they use the hook `useHasRole('LEAD')`. The campaigns page, the epics page, the PRD run
+launch form and the epic launch form hid their start button from anyone below platform LEAD, and the first-run checklist
 worded a step by platform LEAD. Add `useLeadsATeam()` (a platform ADMIN, or anyone who leads an
 active team) and use it in all four. Update the living docs that still named a platform LEAD
 requirement (`automations`, `code-review`, `service-principals`, `teams`, `campaigns`,
