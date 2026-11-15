@@ -629,7 +629,12 @@ worker with its tools acting on the container. Which one drives an agent is deci
    its own model does not inherit a runtime.
 3. **The caller's default.** For the implementer family it is the run-pinned
    `workspace.implementerRuntime` setting (`mastra` by default; `claude-code`, `pi`). An agent run's and a
-   generic `agent` node's default is `mastra`, whatever that setting says.
+   workspace `agent` node's default is the run-pinned `workspace.agentRunRuntime` setting (`mastra` by
+   default, same values), which the implementer setting does not affect. An agent run reads it with the
+   repository's owning team, so a team can choose the loop for its repositories' runs, while the agent
+   itself never resolves at that team's scope ([agent-runs.md §5](./agent-runs.md#5-which-agent-at-which-scope)).
+   A loop that cannot drive the resolved agent's model (`claude-code` needs an Anthropic one) fails the
+   run non-retryably before any container is created.
 
 A first-use pin is written as a compare-and-set on the whole map, so two activities pinning
 different agents at once keep both entries and two pinning the same agent agree on the first; it
@@ -647,9 +652,9 @@ Where the runtime applies:
 | Path | Runtime |
 |---|---|
 | `executeImplementation`, `implementerSession` (CI / review / gate fixers), `resolveMergeConflict`, eval replays | resolved as above, default `workspace.implementerRuntime` |
-| `runAgentTask` (agent runs) | resolved as above, default `mastra` |
-| `runAgentNode` with `workspace: true` (an `agent` node in a checkout) | resolved as above, default `mastra` |
-| `runAgentNode` without a workspace | resolved and pinned as above, but always run on Mastra: there is no workspace for the harness to run in. An Agent pinned to the harness gets an `agent.runtime_not_applicable` event on the trace, naming the runtime and where it came from |
+| `runAgentTask` (agent runs) | resolved as above, default `workspace.agentRunRuntime` |
+| `runAgentNode` with `workspace: true` (an `agent` node in a checkout) | resolved as above, default `workspace.agentRunRuntime` |
+| `runAgentNode` without a workspace | resolved and pinned as above, but always run on Mastra: there is no workspace for the harness to run in. An Agent pinned to the harness, or a node whose default setting selects it, gets an `agent.runtime_not_applicable` event on the trace, naming the runtime and where it came from |
 | other `runAgent` callers (channel turns, memory passes, workflow authoring) | always Mastra; the runtime is not resolved |
 
 An Agent bound to a harness profile ([harness-profiles.md](./harness-profiles.md)) gets it on
@@ -969,7 +974,10 @@ turn's signed thinking back, as a provider requires while the model continues wi
 OpenAI model the kept metadata is the Responses item id, and the adapter sends those parts back as
 references to items OpenAI stored, which needs response storage on (§11). Pi's own
 summarising compaction, sessions on disk, settings, extensions, skills and prompt templates are not part of
-this: nothing of Pi's touches the worker's filesystem.
+this. Pi's own file tools run every operation in the container, but two helpers they call touch the
+worker's local filesystem with a metadata lookup only: `read` checks that the path exists
+(`access()`) while resolving it, and `edit` and `write` canonicalise the path (`realpath()`) to key
+their per-file queue. Neither reads or writes file content on the worker.
 
 **Pi's prompt and context.** The system prompt opens with Pi's own (its tool list and guidelines,
 without the paragraph pointing the model at Pi's documentation, which would be on the worker),
@@ -2277,6 +2285,10 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   ([§3.7](#37-runtimes-mastra-and-the-harnesses), *Other harnesses*); Pi runs as a library in the
   worker instead. The verdict rests on what each CLI exposes for that callback; one that gains it
   fits the same seam.
+- **Pi's file tools make stat-only calls on the worker.** `read` runs `access()` on the path it is
+  given and `edit` and `write` run `realpath()` on it, against the worker's own filesystem and not
+  the container's. They look up metadata only, and the path is the container's, so the result is
+  normally "not found" and the path is used as given; no content is read or written there.
 - **Pi runs without its own extras.** The Pi runtime is Pi's agent loop and its `read`, `write`,
   `edit`, `ls` and `find` tools, and nothing else of Pi's: no summarising compaction (the
   conversation is fitted to `workspace.harnessContextTokens` by stubbing old tool output and file

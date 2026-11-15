@@ -1,5 +1,5 @@
-import type { AgentTool } from '@mariozechner/pi-agent-core';
-import type { AssistantMessage, Message } from '@mariozechner/pi-ai';
+import type { AgentTool } from '@earendil-works/pi-agent-core';
+import type { AssistantMessage, Message, TranscriptContext } from '@earendil-works/pi-ai';
 import { wrapLanguageModel } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it } from 'vitest';
@@ -208,7 +208,7 @@ describe('aiSdkStreamFn', () => {
     const history: Message[] = [{ content: 'fix it', role: 'user', timestamp: 0 }];
 
     const first = (await (
-      await streamFn(descriptor, { messages: history, systemPrompt: 'S' })
+      await streamFn(descriptor, { messages: history } as TranscriptContext)
     ).result()) as AssistantMessage;
     history.push(first, {
       content: [{ text: 'contents', type: 'text' }],
@@ -218,7 +218,7 @@ describe('aiSdkStreamFn', () => {
       toolCallId: 'call-1',
       toolName: 'read',
     });
-    await (await streamFn(descriptor, { messages: history, systemPrompt: 'S' })).result();
+    await (await streamFn(descriptor, { messages: history } as TranscriptContext)).result();
 
     expect(calls.map((c) => c.reasoning)).toEqual(['high', 'high']);
     const secondPrompt = (calls[1]?.prompt ?? []) as { role: string; content: unknown }[];

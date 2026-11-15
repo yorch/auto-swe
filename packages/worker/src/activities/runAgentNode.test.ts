@@ -226,11 +226,11 @@ describe('runAgentNode', () => {
       knowledgeBases: undefined,
     });
 
-    // The run's pin decides, under the node's scope, with Mastra as the default.
+    // The run's pin decides, under the node's scope, with workspace.agentRunRuntime as the default.
     expect(vi.mocked(resolveAgentRuntime)).toHaveBeenCalledWith(
       'reviewer',
       { teamId: 'team-1' },
-      'mastra'
+      'agentRunSetting'
     );
     expect(mockedRunAgent).toHaveBeenCalledTimes(1);
     expect(events).toHaveBeenCalledWith({

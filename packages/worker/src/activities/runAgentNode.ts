@@ -156,7 +156,7 @@ async function runAgentNodeImpl(
   try {
     // Pinned on the run like any agent's runtime, so a node and every later
     // resolution of the same agent in this run agree on it.
-    const loop = await resolveAgentRuntime(key, resolveCtx, 'mastra');
+    const loop = await resolveAgentRuntime(key, resolveCtx, 'agentRunSetting');
     if (input.workspace) {
       return await runInCheckout({
         input,

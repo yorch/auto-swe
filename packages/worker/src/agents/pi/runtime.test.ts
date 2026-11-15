@@ -382,7 +382,7 @@ describe('a Pi turn', () => {
 
   it('stops at the turn cap without failing', async () => {
     const loop = { calls: [{ input: { command: 'ls' }, name: 'bash' }] };
-    const { model } = scriptedModel([loop, loop, loop, loop]);
+    const { model, prompts } = scriptedModel([loop, loop, loop, loop]);
     const adapter = adapterFor(model, { maxTurns: 2 });
     const turn = fakeTurn(adapter, fakeContainer().exec);
 
@@ -392,6 +392,8 @@ describe('a Pi turn', () => {
     });
 
     expect(result).toMatchObject({ steps: 2, stoppedReason: 'max_steps' });
+    // The cap ends the run after its second call; the scripted third is never made.
+    expect(prompts).toHaveLength(2);
   });
 
   it('fails with the model error itself, carrying what the turn spent', async () => {
@@ -411,6 +413,42 @@ describe('a Pi turn', () => {
     expect(usageReportOf(failure)?.report).toEqual({
       calls: [{ model: SPEC, usage: { cacheRead: 30, cacheWrite: 0, input: 70, output: 10 } }],
     });
+  });
+
+  it('sends the system prompt on every model call, including after a tool call and on a resumed turn', async () => {
+    const { model, prompts } = scriptedModel([
+      { calls: [{ input: { command: 'ls' }, name: 'bash' }] },
+      { text: 'first' },
+      { text: 'second' },
+    ]);
+    const adapter = adapterFor(model);
+    const container = fakeContainer();
+    const marker = 'SYSTEM-MARKER-7f3a';
+
+    await adapter.runTurn(fakeTurn(adapter, container.exec) as unknown as HarnessTurn, {
+      system: marker,
+      user: 'one',
+    });
+    await adapter.runTurn(fakeTurn(adapter, container.exec) as unknown as HarnessTurn, {
+      system: marker,
+      user: 'two',
+    });
+
+    expect(prompts).toHaveLength(3);
+    const systemTexts = prompts.map((prompt) =>
+      (prompt as { role: string; content: unknown }[])
+        .filter((m) => m.role === 'system')
+        .map((m) => JSON.stringify(m.content))
+        .join('')
+    );
+    // The first call, the call after the tool result, and the first call of the resumed turn.
+    for (const text of systemTexts) {
+      expect(text).toContain(marker);
+    }
+    // Once per call: the session keeps no copy of it to be sent again.
+    for (const prompt of prompts) {
+      expect(JSON.stringify(prompt).split(marker)).toHaveLength(2);
+    }
   });
 
   it('keeps the conversation across turns', async () => {

@@ -144,8 +144,12 @@ connection; otherwise the agent runs without MCP tools and the trace records `mc
 See Limitations: next to a workspace this is an exfiltration channel.
 
 **The loop.** The agent runs on the platform's Mastra loop unless the Agent version sets
-`runtime: claude-code` or `runtime: pi`; the run-wide `workspace.implementerRuntime` setting does not
-apply to agent runs. On the Claude Code harness the agent runs as one harness turn inside its
+`runtime: claude-code` or `runtime: pi`, or the run-pinned `workspace.agentRunRuntime` setting
+selects one (`mastra` by default); the implementer's `workspace.implementerRuntime` setting does not
+apply to agent runs. The setting is read with the repository's owning team, so a team can choose the
+loop for its repositories' runs; it carries only the loop, and the agent itself is still resolved at
+GLOBAL and ORGANIZATION scope only (section 5). A loop that cannot drive the agent's model (`claude-code`
+needs an Anthropic one) fails the run before any container exists. On the Claude Code harness the agent runs as one harness turn inside its
 container, granted the harness tools that stand in for exactly the workspace tools above (`null` →
 `Read`, `Glob`, `Grep`; `[]` → none), behind the same worker-side tool policy as the implementer, and
 with the agent's MCP connection relayed from the worker, as it would bind on the Mastra loop. On Pi
@@ -223,6 +227,10 @@ refused (`AGENT_PIN_SHADOWED`) when the repository's organization has an active 
 because the worker resolves the organization row first and the pin would silently not apply. Launch
 without `@version` to run the override. The
 launch-time agent-version snapshot applies as for any run.
+
+The one thing a team does scope is the loop that drives the run: `workspace.agentRunRuntime` is read with the
+repository's owning team (never the launcher's team) and the run's pinned settings. It carries only an enum, so
+reading it at that scope exposes none of the owning team's agent prompts, skills or MCP connections.
 
 A code list, `NON_LAUNCHABLE_AGENT_KEYS` (`securityReview`, `evalJudge`, `commitToMemory`,
 `validateContext`, `lessonConsolidator`, `workflowAuthor`, `workflowExplainer`,

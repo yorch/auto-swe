@@ -1,13 +1,13 @@
-import type { AgentTool, StreamFn } from '@mariozechner/pi-agent-core';
+import type { AgentTool, StreamFn } from '@earendil-works/pi-agent-core';
 import type {
   AssistantMessage,
-  Context,
   Message,
   Model,
   StopReason,
   ToolCall,
+  TranscriptContext,
   Usage,
-} from '@mariozechner/pi-ai';
+} from '@earendil-works/pi-ai';
 import type {
   ContentPart,
   LanguageModel,
@@ -111,6 +111,31 @@ function withOptions(signature: string | undefined): { providerOptions?: Provide
 }
 
 /**
+ * The system text a transcript carries: Pi's loop declares the prompt as the
+ * transcript's leading `system` message (plus named sections), not as a
+ * separate `systemPrompt`. Tools are bound by the caller, so `toolsAdded` is
+ * ignored here.
+ */
+export function systemTextOf(messages: readonly Message[]): string | undefined {
+  const parts: string[] = [];
+  for (const message of messages) {
+    if (message.role !== 'system') {
+      continue;
+    }
+    const text = textOf(message.content);
+    if (text.length > 0) {
+      parts.push(text);
+    }
+    for (const section of Object.values(message.sections ?? {})) {
+      if (section) {
+        parts.push(section);
+      }
+    }
+  }
+  return parts.length > 0 ? parts.join('\n\n') : undefined;
+}
+
+/**
  * Pi's conversation as AI SDK messages. An assistant turn keeps its parts in
  * the order the model produced them, and each part its provider metadata, so a
  * reasoning part goes back with its signature: with thinking on, a provider
@@ -146,6 +171,8 @@ export function toModelMessages(messages: readonly Message[]): ModelMessage[] {
       if (content.length > 0) {
         out.push({ content, role: 'assistant' });
       }
+    } else if (message.role === 'system') {
+      // Carried to the model call as `system`, not as a conversation message.
     } else {
       const value = textOf(message.content);
       out.push({
@@ -216,6 +243,12 @@ export interface AiSdkStreamOptions {
   model: LanguageModel;
   /** The Agent's `<provider>/<model>` spec, as the message names its model. */
   spec: string;
+  /**
+   * The Agent's system prompt. Pi's loop no longer takes one: a prompt there
+   * is a `system` message in the transcript, which the worker keeps out of the
+   * persisted session, so the call is given it here instead.
+   */
+  system?: string;
   /** Called with each model call's usage once the call is complete. */
   onCall: (call: { id: string; usage: UsageTotals }) => void;
   /** Keeps the activity alive while a call is in flight. */
@@ -241,8 +274,8 @@ export interface AiSdkStreamOptions {
  * just that, as one `done` (or `error`) event.
  */
 export function aiSdkStreamFn(options: AiSdkStreamOptions, tools: () => AgentTool[]): StreamFn {
-  return async (_model, context: Context, callOptions) => {
-    const { createAssistantMessageEventStream } = await import('@mariozechner/pi-ai');
+  return async (_model, context: TranscriptContext, callOptions) => {
+    const { createAssistantMessageEventStream } = await import('@earendil-works/pi-ai');
     const { generateText, jsonSchema, tool } = await import('ai');
     const stream = createAssistantMessageEventStream();
     const descriptor = piModelDescriptor(options.spec);
@@ -279,7 +312,7 @@ export function aiSdkStreamFn(options: AiSdkStreamOptions, tools: () => AgentToo
         abortSignal: callOptions?.signal,
         messages: toModelMessages(context.messages),
         model: options.model,
-        system: context.systemPrompt,
+        system: options.system ?? systemTextOf(context.messages),
         ...(Object.keys(toolSet).length > 0 ? { toolChoice: 'auto' as const, tools: toolSet } : {}),
       });
       const usage = usageTotals(result.usage);

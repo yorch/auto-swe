@@ -42,7 +42,10 @@ const REASONING_OPTIONS: { label: string; value: '' | ReasoningLevel }[] = [
 ];
 
 const RUNTIME_OPTIONS: { label: string; value: '' | ImplementerRuntimeKind }[] = [
-  { label: 'Default (the workspace.implementerRuntime setting; Mastra for agent runs)', value: '' },
+  {
+    label: 'Default (workspace.implementerRuntime; workspace.agentRunRuntime for agent runs)',
+    value: '',
+  },
   { label: 'Mastra tool loop', value: 'mastra' },
   { label: 'Claude Code harness (Anthropic models only)', value: 'claude-code' },
   { label: 'Pi agent loop', value: 'pi' },

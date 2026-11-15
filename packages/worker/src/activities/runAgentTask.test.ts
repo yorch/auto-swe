@@ -45,6 +45,8 @@ const m = vi.hoisted(() => ({
   } as unknown,
   runAgent: vi.fn(),
   runtime: null as string | null,
+  /** `workspace.agentRunRuntime` per owning team (undefined team: the default). */
+  runtimeSetting: {} as Record<string, string>,
   settings: {
     'workspace.agentRunAllowWorkflowChanges': false,
     'workspace.agentRunMaxConcurrentGlobal': 4,
@@ -108,7 +110,18 @@ vi.mock('../lib/temporalClient.js', () => ({
     },
   }),
 }));
-vi.mock('@auto-swe/shared/config', () => ({ resolveSettings: vi.fn(async () => m.settings) }));
+vi.mock('@auto-swe/shared/config', () => ({
+  // Like the real resolver: a run-pinned value wins over the live cascade.
+  resolveSetting: vi.fn(
+    async (key: string, ctx?: { teamId?: string; pinnedSettings?: Record<string, unknown> }) =>
+      ctx?.pinnedSettings && key in ctx.pinnedSettings
+        ? ctx.pinnedSettings[key]
+        : ctx?.teamId
+          ? (m.runtimeSetting[ctx.teamId] ?? 'mastra')
+          : 'mastra'
+  ),
+  resolveSettings: vi.fn(async () => m.settings),
+}));
 // The title policy is covered by prTitle.test.ts; here the resolver keeps the agent run's own title.
 vi.mock('./prTitle.js', () => ({
   resolvePrTitle: m.resolvePrTitle,
@@ -233,6 +246,7 @@ import { __resetReconcileCacheForTests } from '@auto-swe/shared/lib/agentRunAdmi
 import { loadMcpTools } from '../agents/mcpTools.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
+import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import { QUESTIONS, resumeInputFor } from '../lib/pauseResumeFixtures.js';
 import { restoreWorkingTree, snapshotWorkingTree } from '../lib/pauseSnapshot.js';
@@ -297,6 +311,7 @@ beforeEach(() => {
   // A test may replace the implementation; clearAllMocks does not restore it.
   vi.mocked(resolveAgent).mockImplementation(defaultResolveAgent as never);
   m.runtime = null;
+  m.runtimeSetting = {};
   m.mcpConnectionId = null;
   m.modelSpec = 'anthropic/x';
   m.claudeCodeRuntime.mockImplementation(() => ({ runTurn: m.harnessTurn }));
@@ -1070,6 +1085,49 @@ describe('the Claude Code harness, for an agent that asks for it', () => {
         toolName: 'agent.runtime',
       })
     );
+  });
+
+  it('follows the owning team’s workspace.agentRunRuntime for an agent with no runtime of its own', async () => {
+    m.runtime = null;
+    m.runtimeSetting = { 'team-1': 'claude-code' };
+    await runAgentTask({ request: request() });
+    expect(m.claudeCodeRuntime).toHaveBeenCalledTimes(1);
+    // The setting is read with the owning team; the Agent never is (shared-team launch safe).
+    for (const call of vi.mocked(resolveAgent).mock.calls) {
+      expect((call[1] as { teamId?: string } | undefined)?.teamId).toBeUndefined();
+    }
+  });
+
+  it('reads the run-pinned workspace.agentRunRuntime over a later edit of the live setting', async () => {
+    m.runtime = null;
+    m.runtimeSetting = { 'team-1': 'mastra' };
+    vi.mocked(currentRequestContext).mockResolvedValueOnce({
+      agentVersions: { contentWriter: 3 },
+      orgId: 'org-1',
+      pinnedSettings: { 'workspace.agentRunRuntime': 'claude-code' },
+      skillRevisions: { 'skill-1': 4 },
+      teamId: 'team-1',
+      workflowTemplateId: 'tpl-1',
+    });
+    await runAgentTask({ request: request() });
+    expect(m.claudeCodeRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets the Agent’s own runtime win over the setting', async () => {
+    m.runtime = 'claude-code';
+    m.runtimeSetting = { 'team-1': 'pi' };
+    await runAgentTask({ request: request() });
+    expect(m.claudeCodeRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses, non-retryably and before a container, a harness whose model it cannot drive', async () => {
+    m.runtime = null;
+    m.runtimeSetting = { 'team-1': 'claude-code' };
+    m.modelSpec = 'openai/gpt-x';
+    await expect(runAgentTask({ request: request() })).rejects.toMatchObject({
+      type: 'HARNESS_UNSUPPORTED_MODEL',
+    });
+    expect(createWorkspace).not.toHaveBeenCalled();
   });
 
   it('gives the harness the approved profile the agent is bound to', async () => {

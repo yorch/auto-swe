@@ -251,6 +251,7 @@ export async function runAgentTaskCore(
   // Its callers load the row; the stack the run began with is read here, once, for both
   // workspaces below.
   const repo = await withRunDetection(input.repo);
+  // No workflowTemplateId: an agent run's template is the hidden Agent Run one, which carries no overrides.
   const settingsCtx: ResolveCtx = { orgId: baseCtx.orgId, teamId: baseCtx.teamId };
   const settings = await resolveSettings(
     ['workspace.agentRunAllowWorkflowChanges', 'workspace.maxToolOutputChars'],
@@ -273,7 +274,13 @@ export async function runAgentTaskCore(
   // Before any container exists: an unpriced model under a USD cap is refused
   // here rather than after a clone (runAgent checks again before the call).
   await assertModelPricedForUsdCap(resolved.model.spec);
-  const loop = await resolveAgentRuntime(key, agentCtx, 'mastra');
+  // The Agent resolves without the owning team (agentCtx); the loop's setting is an enum with
+  // nothing of the team's to expose, so it reads with the repository's owning team and the
+  // run's pinned settings.
+  const loop = await resolveAgentRuntime(key, agentCtx, 'agentRunSetting', {
+    ...settingsCtx,
+    pinnedSettings: baseCtx.pinnedSettings,
+  });
   const harness =
     loop.runtime === 'mastra'
       ? undefined

@@ -1,4 +1,4 @@
-import type { AgentTool } from '@mariozechner/pi-agent-core';
+import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { describe, expect, it, vi } from 'vitest';
 import type { Workspace } from '../../activities/workspace.js';
 import type { HarnessExec, HarnessExecResult, HarnessTurn } from '../harness/adapter.js';

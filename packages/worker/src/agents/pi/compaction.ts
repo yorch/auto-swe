@@ -1,5 +1,5 @@
-import type { AgentMessage } from '@mariozechner/pi-agent-core';
-import type { AssistantMessage, ToolResultMessage, UserMessage } from '@mariozechner/pi-ai';
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
+import type { AssistantMessage, ToolResultMessage, UserMessage } from '@earendil-works/pi-ai';
 
 /**
  * Characters per token in the estimate. Code, JSON and paths tokenise at about

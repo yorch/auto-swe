@@ -6,8 +6,10 @@ import { stubDialogPrototype } from '@/test/rtl-helpers';
 
 const { state } = vi.hoisted(() => ({
   state: {
+    admin: true,
     params: new URLSearchParams(),
     pending: null as { reject: (e: Error) => void; resolve: (value?: unknown) => void } | null,
+    teamsError: false,
   },
 }));
 
@@ -15,17 +17,33 @@ vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePage
 vi.mock('@/hooks/useUrlFilters', () => ({
   useUrlFilters: () => ({ params: state.params, update: vi.fn() }),
 }));
-vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => true }));
-vi.mock('@/hooks/useTeams', () => ({ useTeams: () => ({ data: [] }) }));
+vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => state.admin }));
+vi.mock('@/hooks/useTemplates', () => ({
+  useWorkflowTemplates: () => ({
+    data: [
+      { id: 'tpl-1', name: 'Fast path', team: { id: 't1', name: 'Payments' } },
+      { id: 'tpl-2', name: 'Platform default', team: null },
+    ],
+    isError: false,
+    refetch: vi.fn(),
+  }),
+}));
+vi.mock('@/hooks/useTeams', () => ({
+  useTeams: () => ({ data: [], isError: state.teamsError, refetch: vi.fn() }),
+}));
 vi.mock('@/hooks/useSlackChannels', () => ({ useSlackChannels: () => ({ data: [] }) }));
 vi.mock('@/hooks/useAdmin', () => ({ useOrganizationDirectory: () => ({ data: [] }) }));
+const selections: unknown[] = [];
 vi.mock('@/hooks/useConfigSettings', () => ({
   useClearConfigSetting: () => ({ mutateAsync: vi.fn() }),
-  useConfigSettings: () => ({
-    data: [{ group: 'workflow', key: 'workflow.x', label: 'X', source: 'GLOBAL' }],
-    isError: false,
-    isLoading: false,
-  }),
+  useConfigSettings: (selection: unknown) => {
+    selections.push(selection);
+    return {
+      data: [{ group: 'workflow', key: 'workflow.x', label: 'X', source: 'GLOBAL' }],
+      isError: false,
+      isLoading: false,
+    };
+  },
   useSetConfigSetting: () => ({
     mutateAsync: () =>
       new Promise<unknown>((resolve, reject) => {
@@ -66,6 +84,8 @@ beforeEach(() => {
   stubDialogPrototype();
   state.params = new URLSearchParams();
   state.pending = null;
+  state.admin = true;
+  state.teamsError = false;
 });
 
 describe('platform settings page', () => {
@@ -131,6 +151,35 @@ describe('platform settings page', () => {
     expect(bar.className).toContain('sticky');
     fireEvent.click(screen.getByText('edit'));
     expect(screen.getByTestId('scope-bar').textContent).toMatch(/1 unsaved change\b/);
+  });
+
+  it('offers a workflow template scope and sends its id with the selection', () => {
+    state.params = new URLSearchParams('scope=WORKFLOW_TEMPLATE&workflowTemplateId=tpl-1');
+    render(<Page />);
+    expect(selections.at(-1)).toEqual({ scope: 'WORKFLOW_TEMPLATE', workflowTemplateId: 'tpl-1' });
+    expect(screen.getByTestId('scope-bar').textContent).toMatch(/Fast path \(template\)/);
+    expect(screen.getByRole('button', { name: /Workflow template/ })).toBeTruthy();
+  });
+
+  it('offers a platform-wide template only to an admin', () => {
+    state.params = new URLSearchParams('scope=WORKFLOW_TEMPLATE');
+    state.admin = false;
+    const lead = render(<Page />);
+    fireEvent.click(screen.getByRole('button', { name: /Show options/ }));
+    expect(screen.getByRole('option', { name: 'Fast path' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'Platform default' })).toBeNull();
+    lead.unmount();
+    state.admin = true;
+    render(<Page />);
+    fireEvent.click(screen.getByRole('button', { name: /Show options/ }));
+    expect(screen.getByRole('option', { name: 'Platform default' })).toBeTruthy();
+  });
+
+  it("does not blame the viewed scope's list for another list's failure", () => {
+    state.params = new URLSearchParams('scope=WORKFLOW_TEMPLATE');
+    state.teamsError = true;
+    render(<Page />);
+    expect(screen.queryByText(/could not be loaded/)).toBeNull();
   });
 
   it('asks before the view changes while a row holds an unsaved draft', () => {
