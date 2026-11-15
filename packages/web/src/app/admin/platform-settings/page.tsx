@@ -95,7 +95,13 @@ export default function GovernSettingsPage() {
     TEAM: teams,
     WORKFLOW_TEMPLATE: templates,
   } as const;
-  const templateChoices = (templates.data ?? []).filter((t) => isAdmin || t.team !== null);
+  // An archived template runs nothing, so a new override there is dead weight; drafts stay
+  // offered so a setting can be prepared before activation. The template already chosen in the
+  // URL stays listed even when archived, so its existing override can still be inspected and
+  // cleared.
+  const templateChoices = (templates.data ?? []).filter(
+    (t) => (isAdmin || t.team !== null) && (t.status !== 'ARCHIVED' || t.id === scopeId)
+  );
 
   // Rows holding an unsaved draft. Reported by each row; a row that unmounts reports clean.
   const [dirtyKeys, setDirtyKeys] = useState<ReadonlySet<string>>(() => new Set());
@@ -304,7 +310,7 @@ export default function GovernSettingsPage() {
         }
       >
         {selection.scope === 'GLOBAL' || selection.scope === 'ORGANIZATION'
-          ? 'A value saved while viewing platform-wide is the live value for every team, channel and template that has no override for that key. Check the view scope before you save: a save made while viewing a team or channel changes only that scope, but one made while viewing an organization reaches every team in it that has no override of its own.'
+          ? 'A value saved while viewing platform-wide is the live value for every team, channel and template that has no override for that key. Check the view scope before you save: a save made while viewing a team, channel or workflow template changes only that scope, but one made while viewing an organization reaches every team in it that has no override of its own.'
           : 'A value saved here is an override at this scope; broader scopes keep their own values. Check the view scope before you save.'}
       </Alert>
 
