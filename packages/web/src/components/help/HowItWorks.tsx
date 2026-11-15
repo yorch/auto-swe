@@ -42,8 +42,8 @@ const STEPS: Step[] = [
     title: 'Pull request',
   },
   {
-    body: 'No built-in step or template merges a pull request. A person reviews it and merges it.',
-    title: 'You merge',
+    body: 'No built-in step or template merges a pull request. A person reviews it and merges it, unless its repository is in auto mode, where GitHub may merge a qualifying low-risk one.',
+    title: 'You review',
   },
 ];
 

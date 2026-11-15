@@ -985,6 +985,97 @@ function promptHash(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }
 
+/** The columns of an `Agent` row that {@link firstDifferenceFromSeed} reads. */
+export interface SeedComparableAgentRow {
+  channelId: string | null;
+  harnessProfile: string | null;
+  inheritsModelFrom: string | null;
+  key: string;
+  mcpConnectionId: string | null;
+  orgId: string | null;
+  runtime: string | null;
+  scope: string;
+  skillRefs: { skill: { name: string }; sortOrder: number }[];
+  systemPrompt: string | null;
+  teamId: string | null;
+  toolKeys: unknown;
+  workflowTemplateId: string | null;
+}
+
+/**
+ * The first way an `Agent` row differs from the seeded definition `seed`, or null when its content
+ * is the seed's: GLOBAL with no owner, the seeded system prompt (or one of its previous hashes),
+ * the same tool keys and skill refs as sets, and no MCP binding, runtime, harness profile or model
+ * inheritance beyond the seed's. The model, credential and reasoning are not compared. Provenance
+ * flags are not read: an edit, a model migration or a bundle install can set or keep them without
+ * the content being the seed's.
+ */
+export function firstDifferenceFromSeed(
+  row: SeedComparableAgentRow | null,
+  seed: SweAgentDef
+): string | null {
+  if (row === null) {
+    return 'resolved agent row not found';
+  }
+  const owners = [
+    ['teamId', row.teamId],
+    ['orgId', row.orgId],
+    ['channelId', row.channelId],
+    ['workflowTemplateId', row.workflowTemplateId],
+  ] as const;
+  if (row.key !== seed.key) {
+    return 'key';
+  }
+  if (row.scope !== 'GLOBAL') {
+    return 'scope';
+  }
+  const owned = owners.find(([, value]) => value !== null);
+  if (owned) {
+    return owned[0];
+  }
+  const previous = PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES[seed.key] ?? [];
+  const promptIsSeed =
+    row.systemPrompt === seed.systemPrompt ||
+    (!!row.systemPrompt && previous.includes(promptHash(row.systemPrompt)));
+  if (!promptIsSeed) {
+    return 'systemPrompt';
+  }
+  if (!sameSet(row.toolKeys, seed.toolKeys ?? null)) {
+    return 'toolKeys';
+  }
+  if (row.mcpConnectionId !== null) {
+    return 'mcpConnectionId';
+  }
+  if (row.runtime !== null) {
+    return 'runtime';
+  }
+  if (row.harnessProfile !== null) {
+    return 'harnessProfile';
+  }
+  if (row.inheritsModelFrom !== (seed.inheritsModelFrom ?? null)) {
+    return 'inheritsModelFrom';
+  }
+  const wanted = (skillsByAgentKey().get(seed.key) ?? []).map((s) => `${s.name}:${s.sortOrder}`);
+  const have = row.skillRefs.map((ref) => `${ref.skill.name}:${ref.sortOrder}`);
+  if (!sameSet(have, wanted)) {
+    return 'skillRefs';
+  }
+  return null;
+}
+
+/** Equality of two string lists as sets (order is not meaningful), `null` equal only to `null`. */
+function sameSet(actual: unknown, expected: readonly string[] | null): boolean {
+  if (expected === null || actual === null) {
+    return expected === actual;
+  }
+  if (!Array.isArray(actual) || actual.length !== expected.length) {
+    return false;
+  }
+  const have = [...actual].map(String).sort();
+  const want = [...expected].sort();
+  return want.every((value, index) => have[index] === value);
+}
+
 type AgentRow = NonNullable<Awaited<ReturnType<PrismaClient['agent']['findFirst']>>>;
 
 /**

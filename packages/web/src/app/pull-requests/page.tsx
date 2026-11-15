@@ -108,7 +108,8 @@ function PullRequests() {
           <>
             <p data-testid="never-merges-note">
               No built-in step or template merges a pull request; you review and merge it on the
-              host.
+              host, unless its repository is in auto mode, where GitHub may merge a qualifying
+              low-risk one.
             </p>
             <p>
               State is the pull request’s state on the host: Open, Draft (open but not yet asking

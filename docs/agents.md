@@ -2139,7 +2139,7 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
 - **The gate does not review executable artifacts.** A committed `.so`, `.dll`, `.dylib`, `.exe`,
   `.jar`, `.class`, `.wasm`, `.node`, `.pyc` or `.dex` (a modified `gradle-wrapper.jar`, say) is
   reduced to its printable strings and passes if those look benign; its behaviour is not examined.
-  Such a change reaches a draft pull request that a human merges, but CI runs on the pushed branch
+  Such a change reaches a draft pull request that a human merges (in a repository in `auto` mode, GitHub may merge it once a person has marked it ready and it qualifies as low-risk), but CI runs on the pushed branch
   before anyone reads it, and the test and build code an agent writes executes in CI as well. Treat
   executable artifacts as code: route them to reviewers with CODEOWNERS or a branch rule, and do not
   rely on a clean gate for them.

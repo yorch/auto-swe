@@ -1609,3 +1609,38 @@ credential rotation.
 and gets `403` on a team they do not lead. A user with platform role `LEAD` and `ENGINEER` in a team
 gets `403` `Requires LEAD role in this team` on that team's member routes.
 
+---
+
+### Onboarding draft egress follows the seeded agent's content (`<fixing commit SHA>`)
+
+**Affected.** Deployments that use the egress proxy under the `restricted` or `blocked` policy
+where `repo-onboarder` was overridden at team, organization, channel or workflow-template scope, or
+where its GLOBAL head version has a different system prompt, tool list, skill refs, MCP connection,
+runtime, harness profile or model inheritance (`inheritsModelFrom`) than the seeded one, or where
+a run started while an override named a non-default runtime. A deployment on the `open` policy is
+unaffected: the draft's added hosts are not applied there.
+
+**What changes.** The wider allowlist for the `repo-onboarding` draft workspace used to follow the
+agent key. It now follows the resolved agent definition: only a GLOBAL `repo-onboarder` with the
+seeded content qualifies (tool keys and skill refs compare as sets), and the run's loop must be the
+default one, so a runtime pinned at run start refuses even after the override that set it is gone. A
+change of model, credential or reasoning alone does not disqualify it. A run that is refused keeps
+its normal egress policy (nothing added from `onboarding.draftEgressHosts`, registries or tool
+downloads), so its package installs can start failing with a refused host, and the worker logs
+`onboarding draft egress refused` with the first condition that differed. A widened workspace also
+runs only the definition it was widened for: if the agent resolves to a different one during the
+run, the node fails without retry. No migration or environment-variable change.
+
+**Actions.** Delete the override, or save a new version of the GLOBAL agent with the seeded
+prompt, tools and bindings (a new version with that content qualifies again), and start a new run
+(a pinned runtime is fixed for the run that recorded it). Otherwise give the draft the hosts
+another way, which depends on the team's egress policy: under `restricted`, add the
+package-registry and download hosts to the team allowlist; under `blocked` the draft keeps git and
+platform access but gets none of the added hosts, and the team list is not used, so change the
+team's policy or restore the seeded definition.
+
+**Verify.** The head GLOBAL version of `repo-onboarder` has the seeded prompt, tools and bindings
+(no MCP connection, runtime, harness profile or model inheritance), and no team, organization,
+channel or workflow-template override exists for it; a new draft run's package install succeeds.
+
+---

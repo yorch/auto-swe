@@ -571,12 +571,14 @@ describe('runAgentNode', () => {
       });
       vi.mocked(createWorkspace).mockResolvedValue(workspace as never);
       vi.mocked(resolveAgent).mockResolvedValue({
+        id: 'agent-row-1',
         model: { apiKey: 'k', spec: 'anthropic/claude-sonnet-5-5', systemPrompt: 'Review.' },
         runtime: null,
         skills: [],
         toolKeys: null,
       } as never);
       mockedResolveSpec.mockResolvedValue({
+        agent: { id: 'agent-row-1', version: 1 },
         agentKey: 'reviewer',
         systemPrompt: 'Review.',
       } as never);
@@ -594,7 +596,10 @@ describe('runAgentNode', () => {
           inputs: { draftEgress: true, onboardingDraft: true },
           workspace: { repoId: 'repo-1', ticketId: 'onboard' },
         });
-        expect(isOnboardingDraftAgent).toHaveBeenCalledWith('repo-onboarder');
+        expect(isOnboardingDraftAgent).toHaveBeenCalledWith('repo-onboarder', 'agent-row-1', {
+          runtime: 'mastra',
+          source: 'default',
+        });
         const options = vi.mocked(createWorkspace).mock.calls[0]?.[6];
         if (verified) {
           expect(options).toHaveProperty('onboardingDraft', true);
@@ -602,6 +607,97 @@ describe('runAgentNode', () => {
           expect(options).not.toHaveProperty('onboardingDraft');
         }
         expect(workspace.destroy).toHaveBeenCalledOnce();
+      }
+    );
+
+    it.each([
+      ['a different agent row', 'team-override-row', false],
+      ['the same agent row', 'agent-row-1', true],
+    ])(
+      'on the Mastra path, a widened onboarding workspace runs only %s',
+      async (_name, specAgentId, runs) => {
+        vi.mocked(resolveAgentRuntime).mockResolvedValueOnce({
+          runtime: 'mastra',
+          source: 'run',
+        });
+        vi.mocked(isOnboardingDraftAgent).mockResolvedValueOnce(true);
+        mockedResolveSpec.mockResolvedValueOnce({
+          agent: { id: specAgentId, version: 1 },
+          agentKey: 'repo-onboarder',
+          systemPrompt: 'Draft.',
+          tools: {},
+        } as never);
+        mockedRunAgent.mockClear();
+        const run = runAgentNode({
+          agentRef: 'repo-onboarder',
+          workspace: { repoId: 'repo-1', ticketId: 'onboard' },
+        });
+        if (runs) {
+          await run;
+          expect(mockedRunAgent).toHaveBeenCalledOnce();
+        } else {
+          await expect(run).rejects.toMatchObject({ type: 'ONBOARDING_AGENT_CHANGED' });
+          expect(mockedRunAgent).not.toHaveBeenCalled();
+        }
+        expect(workspace.destroy).toHaveBeenCalled();
+      }
+    );
+
+    it.each([
+      [true, false],
+      [false, true],
+    ])(
+      'on the Mastra path, binds MCP tools only without the onboarding grant (grant=%s)',
+      async (grant, binds) => {
+        const target = { url: 'https://mcp.example.com/mcp' };
+        vi.mocked(isOnboardingDraftAgent).mockResolvedValueOnce(grant);
+        mockedResolveMcpUrl.mockClear();
+        mockedResolveMcpUrl.mockResolvedValue(target);
+        mockedLoadMcpTools.mockClear();
+        mockedLoadMcpTools.mockResolvedValue({ close: vi.fn(), tools: {} } as never);
+        mockedResolveSpec.mockResolvedValueOnce({
+          agent: { id: 'agent-row-1', version: 1 },
+          agentKey: 'repo-onboarder',
+          systemPrompt: 'Draft.',
+          tools: {},
+        } as never);
+        try {
+          await runAgentNode({
+            agentRef: 'repo-onboarder',
+            workspace: { repoId: 'repo-1', ticketId: 'onboard' },
+          });
+          expect(mockedLoadMcpTools).toHaveBeenCalledTimes(binds ? 1 : 0);
+          expect(mockedResolveMcpUrl).toHaveBeenCalledTimes(binds ? 1 : 0);
+        } finally {
+          mockedResolveMcpUrl.mockResolvedValue(null);
+        }
+      }
+    );
+
+    it.each([
+      [true, null],
+      [false, { url: 'https://mcp.example.com/mcp' }],
+    ])(
+      'on the harness path, hands the harness an MCP target only without the grant (grant=%s)',
+      async (grant, mcp) => {
+        vi.mocked(resolveAgentRuntime).mockResolvedValueOnce({
+          runtime: 'claude-code',
+          source: 'run',
+        });
+        vi.mocked(isOnboardingDraftAgent).mockResolvedValueOnce(grant);
+        mockedResolveMcpUrl.mockClear();
+        mockedResolveMcpUrl.mockResolvedValue({ url: 'https://mcp.example.com/mcp' });
+        harness.build.mockClear();
+        try {
+          await runAgentNode({
+            agentRef: 'repo-onboarder',
+            workspace: { repoId: 'repo-1', ticketId: 'onboard' },
+          });
+          expect(harness.build).toHaveBeenCalledWith(expect.objectContaining({ mcp }));
+          expect(mockedResolveMcpUrl).toHaveBeenCalledTimes(grant ? 0 : 1);
+        } finally {
+          mockedResolveMcpUrl.mockResolvedValue(null);
+        }
       }
     );
 

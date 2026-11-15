@@ -21,7 +21,8 @@ export const DELIVER_OPTIONS: { value: AgentRunDeliver; label: string; descripti
     value: 'branch',
   },
   {
-    description: 'Push a branch and open a draft pull request. Nothing is ever merged for you.',
+    description:
+      'Push a branch and open a draft pull request. The platform never merges it; in an auto-mode repository, GitHub may merge a qualifying low-risk one once a person has marked it ready.',
     label: 'Open a draft pull request',
     value: 'draft_pr',
   },

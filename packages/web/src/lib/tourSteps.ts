@@ -69,7 +69,7 @@ export const TOUR_STEPS: TourStep[] = [
   },
   {
     anchor: 'nav:/pull-requests',
-    body: 'Pull requests the platform opened, with their state on the host, CI and the run behind them. No built-in step or template merges a pull request; you review and merge it on the host.',
+    body: 'Pull requests the platform opened, with their state on the host, CI and the run behind them. No built-in step or template merges a pull request; you review and merge it on the host, unless its repository is in auto mode, where GitHub may merge a qualifying low-risk one.',
     id: 'pull-requests',
     roles: ALL,
     title: navLabel('/pull-requests'),
