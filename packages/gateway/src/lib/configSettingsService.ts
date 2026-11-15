@@ -16,8 +16,10 @@ import {
   type WriteDenial,
 } from '@auto-swe/shared/config';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { advisoryWarnings } from './advisoryWarnings.js';
 import { loadEgressReadiness } from './egressReadiness.js';
 import { isUniqueConstraintError } from './prismaErrors.js';
+import { runtimeSettingWarnings } from './runtimeSettingAdvice.js';
 
 // NOTE ON CACHE SCOPE: `invalidateSettingsCache()` below clears only THIS
 // process's cache. The worker is a separate process and keeps serving its own
@@ -354,10 +356,18 @@ export async function setSetting(
     return target;
   }
   const { columns, existing } = target;
-  const warnings =
-    key === 'workspace.egressPolicy' && parsed.data !== 'open'
+  // Advisory only: the write below happens whatever these say. A failure computing the runtime
+  // advice is logged and dropped; the egress readiness check is not wrapped and may throw.
+  const warnings = [
+    ...(key === 'workspace.egressPolicy' && parsed.data !== 'open'
       ? (await loadEgressReadiness(prisma, { policy: parsed.data, selector })).warnings
-      : [];
+      : []),
+    ...(await advisoryWarnings(
+      'runtime setting',
+      () => runtimeSettingWarnings(prisma, key, parsed.data),
+      []
+    )),
+  ];
 
   if (existing) {
     // updateMany, not update: a concurrent clear may have deleted the row since

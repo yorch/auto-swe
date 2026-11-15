@@ -679,6 +679,14 @@ its own model must be `anthropic/…`, and a version that names none is checked 
 inherits along the platform-wide `inheritsModelFrom` chain (`runtimeSaveError`). Saving a model the
 harness cannot drive on an agent that harness agents inherit from is allowed, and the response lists
 them (`runtimeWarnings`; the library page shows them), because the saved agent is valid on its own.
+Saving `claude-code` as `workspace.agentRunRuntime` or `workspace.implementerRuntime` is likewise
+allowed and answers with `warnings`: the platform-wide active agents that follow that setting (no
+runtime of their own, read along `inheritsModelFrom` only as far as the first row that names a model,
+as the worker resolves it) and resolve to a model that is not `anthropic/…`. For `agentRunRuntime` they
+fail when run as an agent run or `agent` node; for `implementerRuntime` the agents checked are the
+fixed set the implementer turn runner serves (`implementer`, `gateFixer`, `reviewFixer`, `ciFixer`,
+`mergeConflictResolver`). They are listed by key and model, capped at eight with `+N more`. The text
+says scoped overrides of an agent are not checked, whatever scope the setting is written at.
 `pi` has no such rule: its model calls go through the worker's own model binding, so it drives any
 model the Mastra loop can. The column carries a CHECK constraint, and the worker reads an unknown
 value as no opinion, with a warning.
