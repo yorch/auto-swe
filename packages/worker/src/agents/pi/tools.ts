@@ -1,12 +1,12 @@
 import path from 'node:path';
-import type { AgentTool, AgentToolResult } from '@mariozechner/pi-agent-core';
+import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import type {
   EditOperations,
   FindOperations,
   LsOperations,
   ReadOperations,
   WriteOperations,
-} from '@mariozechner/pi-coding-agent';
+} from '@earendil-works/pi-coding-agent';
 import type { Workspace } from '../../activities/workspace.js';
 import { type HarnessExec, type HarnessTurn, WORKSPACE_DIR } from '../harness/adapter.js';
 import { offloadIfLarge, TOOL_OUTPUT_OFFLOAD_DIR } from '../toolOutputOffload.js';
@@ -471,7 +471,7 @@ export async function buildPiTools(options: {
   maxToolOutputChars: number;
   workspace: Workspace;
 }): Promise<AgentTool[]> {
-  const pi = await import('@mariozechner/pi-coding-agent');
+  const pi = await import('@earendil-works/pi-coding-agent');
   const ops = containerOperations(options.holder);
   const build: Record<PiTool, () => AgentTool> = {
     bash: () =>
@@ -481,8 +481,8 @@ export async function buildPiTools(options: {
         parameters: pi.createBashTool(WORKSPACE_DIR).parameters,
         workspace: options.workspace,
       }),
-    edit: () => pi.createEditTool(WORKSPACE_DIR, { operations: ops.edit }),
-    find: () => pi.createFindTool(WORKSPACE_DIR, { operations: ops.find }),
+    edit: () => pi.createEditTool(WORKSPACE_DIR, { operations: ops.edit }) as unknown as AgentTool,
+    find: () => pi.createFindTool(WORKSPACE_DIR, { operations: ops.find }) as unknown as AgentTool,
     grep: () =>
       piGrepTool({
         holder: options.holder,
@@ -490,10 +490,11 @@ export async function buildPiTools(options: {
         parameters: pi.createGrepTool(WORKSPACE_DIR).parameters,
         workspace: options.workspace,
       }),
-    ls: () => pi.createLsTool(WORKSPACE_DIR, { operations: ops.ls }),
+    ls: () => pi.createLsTool(WORKSPACE_DIR, { operations: ops.ls }) as unknown as AgentTool,
     // No image detection: a file is read as text, so no image is resized on the worker.
-    read: () => pi.createReadTool(WORKSPACE_DIR, { operations: ops.read }),
-    write: () => pi.createWriteTool(WORKSPACE_DIR, { operations: ops.write }),
+    read: () => pi.createReadTool(WORKSPACE_DIR, { operations: ops.read }) as unknown as AgentTool,
+    write: () =>
+      pi.createWriteTool(WORKSPACE_DIR, { operations: ops.write }) as unknown as AgentTool,
   };
   return options.granted.map((tool) => build[tool]());
 }

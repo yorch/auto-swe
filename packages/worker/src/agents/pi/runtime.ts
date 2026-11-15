@@ -1,7 +1,7 @@
 import { getSettingDefinition } from '@auto-swe/shared/config';
 import type { ReasoningLevel } from '@auto-swe/shared/types/api';
-import type { AgentMessage, AgentTool } from '@mariozechner/pi-agent-core';
-import type { AssistantMessage, Message, ToolResultMessage } from '@mariozechner/pi-ai';
+import type { AgentMessage, AgentTool } from '@earendil-works/pi-agent-core';
+import type { AssistantMessage, Message, ToolResultMessage } from '@earendil-works/pi-ai';
 import type { LanguageModel } from 'ai';
 import { resolveModel } from '../../lib/models.js';
 import { BROWSER_TOOLS, type BrowserToolset } from '../browserTools.js';
@@ -297,7 +297,13 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
       model ??=
         options.languageModel ??
         resolveModel(access.spec, access.apiKey, access.apiBase ?? undefined, access.reasoning);
-      const { runAgentLoop } = await import('@mariozechner/pi-agent-core');
+      const { runAgentLoop } = await import('@earendil-works/pi-agent-core');
+      const systemPrompt = piSystemPrompt({
+        extraTools: [...open.mcpTools, ...open.browserTools],
+        projectContext: open.projectContext,
+        system,
+        tools,
+      });
       const streamFn = aiSdkStreamFn(
         {
           heartbeat: () => turn.heartbeat(),
@@ -310,16 +316,11 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
             modelError = { error };
           },
           spec: access.spec,
+          system: systemPrompt,
         },
         () => open.agentTools
       );
       const prompt: AgentMessage = { content: user, role: 'user', timestamp: Date.now() };
-      const systemPrompt = piSystemPrompt({
-        extraTools: [...open.mcpTools, ...open.browserTools],
-        projectContext: open.projectContext,
-        system,
-        tools,
-      });
       const budgetTokens =
         options.harnessContextTokens ??
         getSettingDefinition('workspace.harnessContextTokens').defaultValue;
@@ -339,7 +340,6 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
         [prompt],
         {
           messages: open.messages,
-          systemPrompt,
           tools: open.agentTools,
         },
         {
@@ -376,21 +376,21 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
             return verdict.allow ? undefined : { block: true, reason: verdict.reason };
           },
           convertToLlm: (messages) => messages as Message[],
-          model: piModelDescriptor(access.spec),
-          shouldStopAfterTurn: ({ message }) => {
+          finishTurn: ({ message }) => {
             steps += 1;
             const wantsMore = (message as AssistantMessage).content.some(
               (c) => c.type === 'toolCall'
             );
             atTurnCap = wantsMore && steps >= maxTurns;
-            return atTurnCap;
+            return atTurnCap ? { action: 'end' } : undefined;
           },
+          model: piModelDescriptor(access.spec),
           // One call at a time, as the Mastra loop and the trace order them.
           toolExecution: 'sequential',
           // Runs before every model call and receives the loop's live message
           // array, not a copy. Returning a different array shapes what is sent;
           // it is safe only because `compactMessages` never mutates its input.
-          transformContext: async (messages) => {
+          transformContext: async (messages: AgentMessage[]) => {
             const { figures, messages: fitted } = compactor.next(messages);
             if (figures) {
               noteCompaction(figures, true);
@@ -409,6 +409,9 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
       open.messages.push(
         ...added.filter(
           (m) =>
+            // Pi declares tool changes as system messages; the model call is
+            // given the prompt and the worker's tools directly, so none is kept.
+            (m as { role: string }).role !== 'system' &&
             !(
               (m as AssistantMessage).role === 'assistant' &&
               ['error', 'aborted'].includes((m as AssistantMessage).stopReason)

@@ -1,5 +1,5 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import type { AgentTool } from '@mariozechner/pi-agent-core';
+import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { type bindKnowledgeSearch, SEARCH_KNOWLEDGE_INPUT_SCHEMA } from './knowledgeTools.js';
 
 export const KNOWLEDGE_MCP_SERVER = 'knowledge';

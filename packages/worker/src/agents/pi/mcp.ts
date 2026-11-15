@@ -1,4 +1,4 @@
-import type { AgentTool, AgentToolResult } from '@mariozechner/pi-agent-core';
+import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Workspace } from '../../activities/workspace.js';
 import type { McpRelay } from '../harness/mcpRelay.js';

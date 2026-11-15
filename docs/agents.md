@@ -969,7 +969,10 @@ turn's signed thinking back, as a provider requires while the model continues wi
 OpenAI model the kept metadata is the Responses item id, and the adapter sends those parts back as
 references to items OpenAI stored, which needs response storage on (§11). Pi's own
 summarising compaction, sessions on disk, settings, extensions, skills and prompt templates are not part of
-this: nothing of Pi's touches the worker's filesystem.
+this. Pi's own file tools run every operation in the container, but two helpers they call touch the
+worker's local filesystem with a metadata lookup only: `read` checks that the path exists
+(`access()`) while resolving it, and `edit` and `write` canonicalise the path (`realpath()`) to key
+their per-file queue. Neither reads or writes file content on the worker.
 
 **Pi's prompt and context.** The system prompt opens with Pi's own (its tool list and guidelines,
 without the paragraph pointing the model at Pi's documentation, which would be on the worker),
@@ -2277,6 +2280,10 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   ([§3.7](#37-runtimes-mastra-and-the-harnesses), *Other harnesses*); Pi runs as a library in the
   worker instead. The verdict rests on what each CLI exposes for that callback; one that gains it
   fits the same seam.
+- **Pi's file tools make stat-only calls on the worker.** `read` runs `access()` on the path it is
+  given and `edit` and `write` run `realpath()` on it, against the worker's own filesystem and not
+  the container's. They look up metadata only, and the path is the container's, so the result is
+  normally "not found" and the path is used as given; no content is read or written there.
 - **Pi runs without its own extras.** The Pi runtime is Pi's agent loop and its `read`, `write`,
   `edit`, `ls` and `find` tools, and nothing else of Pi's: no summarising compaction (the
   conversation is fitted to `workspace.harnessContextTokens` by stubbing old tool output and file
