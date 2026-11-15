@@ -18,7 +18,7 @@ export const claudeCodeHarness = defineHarness<ClaudeCodeAccess>({
   bindModel(agentKey, model) {
     if (!isAnthropicSpec(model.spec)) {
       throw ApplicationFailure.nonRetryable(
-        `The claude-code runtime needs an Anthropic model, but agent '${agentKey}' resolves to '${model.spec}'. Set the agent's model to anthropic/<model>, or set its runtime (or workspace.implementerRuntime) back to mastra.`,
+        `The claude-code runtime needs an Anthropic model, but agent '${agentKey}' resolves to '${model.spec}'. Set the agent's model to anthropic/<model>, or set its runtime (or the setting that selected it, workspace.implementerRuntime or workspace.agentRunRuntime) back to mastra.`,
         'HARNESS_UNSUPPORTED_MODEL'
       );
     }

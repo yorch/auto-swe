@@ -63,7 +63,7 @@ export interface AgentBaseInput {
   /**
    * The loop that drives this agent where it works in a workspace. null = no
    * opinion (the run-wide `workspace.implementerRuntime` for the implementer
-   * family, Mastra for agent runs). Platform-ADMIN only: the routes enforce it.
+   * family, `workspace.agentRunRuntime` for agent runs). Platform-ADMIN only: the routes enforce it.
    */
   runtime?: ImplementerRuntimeKind | null;
   /**

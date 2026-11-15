@@ -22,11 +22,11 @@ export interface ResolvedAgentRuntime {
 
 /**
  * What an agent with no runtime of its own runs on. The implementer family
- * follows the run-pinned `workspace.implementerRuntime` setting, as it always
- * has; an agent run has never read that setting, so it stays on Mastra unless
- * the Agent itself asks for the harness.
+ * follows the run-pinned `workspace.implementerRuntime` setting; an agent run
+ * and a workspace agent node follow the run-pinned `workspace.agentRunRuntime`
+ * setting (default Mastra).
  */
-export type AgentRuntimeDefault = 'implementerSetting' | 'mastra';
+export type AgentRuntimeDefault = 'implementerSetting' | 'agentRunSetting';
 
 /**
  * The loop that drives `agentKey` in this run.
@@ -52,7 +52,8 @@ export type AgentRuntimeDefault = 'implementerSetting' | 'mastra';
 export async function resolveAgentRuntime(
   agentKey: string,
   ctx: ResolveCtx | undefined,
-  fallback: AgentRuntimeDefault
+  fallback: AgentRuntimeDefault,
+  settingsCtx: ResolveCtx | undefined = ctx
 ): Promise<ResolvedAgentRuntime> {
   const supplied = toImplementerRuntime(ctx?.agentRuntimes?.[agentKey]);
   if (supplied) {
@@ -64,7 +65,7 @@ export async function resolveAgentRuntime(
     if (pinned === 'no-opinion') {
       // The run started with the Agent having no runtime of its own: the default
       // decides, whatever the Agent says now.
-      return { runtime: await defaultRuntime(fallback, ctx), source: 'default' };
+      return { runtime: await defaultRuntime(fallback, settingsCtx), source: 'default' };
     }
     if (pinned) {
       return { runtime: pinned, source: 'run' };
@@ -74,7 +75,7 @@ export async function resolveAgentRuntime(
   const { runtime: own } = await resolveAgent(agentKey, ctx);
   const resolved: ResolvedAgentRuntime = own
     ? { runtime: own, source: 'agent' }
-    : { runtime: await defaultRuntime(fallback, ctx), source: 'default' };
+    : { runtime: await defaultRuntime(fallback, settingsCtx), source: 'default' };
   if (!workflowId) {
     return resolved;
   }
@@ -87,12 +88,12 @@ async function defaultRuntime(
   fallback: AgentRuntimeDefault,
   ctx: ResolveCtx | undefined
 ): Promise<ImplementerRuntimeKind> {
-  if (fallback === 'mastra') {
-    return 'mastra';
-  }
   // The setting's schema is `z.enum(IMPLEMENTER_RUNTIMES)` and the resolver degrades a
   // stored value that fails it, so this only narrows the type.
-  const setting = await resolveSetting('workspace.implementerRuntime', ctx);
+  const setting = await resolveSetting(
+    fallback === 'agentRunSetting' ? 'workspace.agentRunRuntime' : 'workspace.implementerRuntime',
+    ctx
+  );
   return toImplementerRuntime(setting) ?? 'mastra';
 }
 

@@ -1958,6 +1958,24 @@ export const SETTING_DEFINITIONS = {
     schema: positiveInt.min(60).max(AGENT_RUN_MAX_WALL_CLOCK_SECONDS),
     unit: 'seconds',
   }),
+  // Pinned for the same reason as `workspace.implementerRuntime`: the runtime
+  // decides who executes the tool loop and which credential enters the
+  // workspace, so a run that began on one loop must not finish on the other.
+  // It is the one agent-run knob a team may scope: it carries only an enum, so
+  // reading it with the repository's owning team exposes none of that team's
+  // agent configuration (the agent itself still resolves at GLOBAL + ORGANIZATION).
+  'workspace.agentRunRuntime': defineSetting({
+    defaultValue: 'mastra',
+    description:
+      "The default loop that drives an agent run and a workspace agent node of a workflow; an Agent version that sets its own runtime wins over it. The implementer family (the implementer, the CI/review/gate fixers and the merge-conflict resolver) keeps following `workspace.implementerRuntime`. A team override applies to runs on that team's repositories; it selects only the loop and never the agent itself, which an agent run resolves from the global and organization levels. Values and their requirements are those of `workspace.implementerRuntime`: `claude-code` needs an Anthropic model and a model API key inside the container, `pi` runs in the worker. A run whose agent's model the chosen loop cannot drive fails before any container is created.",
+    group: 'workspace',
+    label: 'Agent run runtime',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: true,
+    schema: z.enum(IMPLEMENTER_RUNTIMES),
+  }),
   // Both default to unset (`''` and `0`, as the other registry knobs spell "off": the admin form
   // types a setting by its default, so a `null` would render as the text "null" and save a
   // number as a string): the deployer's `WORKSPACE_MEMORY` / `WORKSPACE_CPUS` stay the value

@@ -629,7 +629,12 @@ worker with its tools acting on the container. Which one drives an agent is deci
    its own model does not inherit a runtime.
 3. **The caller's default.** For the implementer family it is the run-pinned
    `workspace.implementerRuntime` setting (`mastra` by default; `claude-code`, `pi`). An agent run's and a
-   generic `agent` node's default is `mastra`, whatever that setting says.
+   workspace `agent` node's default is the run-pinned `workspace.agentRunRuntime` setting (`mastra` by
+   default, same values), which the implementer setting does not affect. An agent run reads it with the
+   repository's owning team, so a team can choose the loop for its repositories' runs, while the agent
+   itself never resolves at that team's scope ([agent-runs.md §5](./agent-runs.md#5-which-agent-at-which-scope)).
+   A loop that cannot drive the resolved agent's model (`claude-code` needs an Anthropic one) fails the
+   run non-retryably before any container is created.
 
 A first-use pin is written as a compare-and-set on the whole map, so two activities pinning
 different agents at once keep both entries and two pinning the same agent agree on the first; it
@@ -647,9 +652,9 @@ Where the runtime applies:
 | Path | Runtime |
 |---|---|
 | `executeImplementation`, `implementerSession` (CI / review / gate fixers), `resolveMergeConflict`, eval replays | resolved as above, default `workspace.implementerRuntime` |
-| `runAgentTask` (agent runs) | resolved as above, default `mastra` |
-| `runAgentNode` with `workspace: true` (an `agent` node in a checkout) | resolved as above, default `mastra` |
-| `runAgentNode` without a workspace | resolved and pinned as above, but always run on Mastra: there is no workspace for the harness to run in. An Agent pinned to the harness gets an `agent.runtime_not_applicable` event on the trace, naming the runtime and where it came from |
+| `runAgentTask` (agent runs) | resolved as above, default `workspace.agentRunRuntime` |
+| `runAgentNode` with `workspace: true` (an `agent` node in a checkout) | resolved as above, default `workspace.agentRunRuntime` |
+| `runAgentNode` without a workspace | resolved and pinned as above, but always run on Mastra: there is no workspace for the harness to run in. An Agent pinned to the harness, or a node whose default setting selects it, gets an `agent.runtime_not_applicable` event on the trace, naming the runtime and where it came from |
 | other `runAgent` callers (channel turns, memory passes, workflow authoring) | always Mastra; the runtime is not resolved |
 
 An Agent bound to a harness profile ([harness-profiles.md](./harness-profiles.md)) gets it on

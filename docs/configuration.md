@@ -37,7 +37,7 @@ organization because a team on an isolated network may need its own mirror. The 
 (`workspace.agentRunMaxSteps`, `workspace.agentRunMaxWallClockSeconds`,
 `workspace.agentRunMaxConcurrentGlobal`, `workspace.agentRunMaxConcurrentPerTeam` and
 `workspace.agentRunAllowWorkflowChanges`) are registry settings too, all ADMIN-only; see
-[agent-runs.md](./agent-runs.md#6-bounds). Like `workspace.gitHelperImage`, `workspace.memory` and
+[agent-runs.md](./agent-runs.md#6-bounds). `workspace.agentRunRuntime` picks the loop (`mastra`, `claude-code`, `pi`) for agent runs and workspace `agent` nodes, and may be overridden per team, organization or workflow template. Like `workspace.gitHelperImage`, `workspace.memory` and
 `workspace.cpus` put workspace infrastructure in the registry, because one team's runs may need more than the
 deployment's default: memory as a Docker value from `512m` to `64g`, CPUs from `0.5` to `16`. Both are ADMIN-only,
 run-pinned and overridable at workflow template, team and organization scope. They default to unset (an empty string

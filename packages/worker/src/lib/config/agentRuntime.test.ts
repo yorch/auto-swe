@@ -76,12 +76,63 @@ describe('resolveAgentRuntime', () => {
     expect(h.resolveSetting).toHaveBeenCalledWith('workspace.implementerRuntime', ctx);
   });
 
-  it('falls back to Mastra for an agent run, whatever the setting says', async () => {
+  it('falls back to the run-pinned agent-run setting for an agent run, not the implementer one', async () => {
     runRow(null);
-    h.resolveSetting.mockResolvedValue('claude-code');
-    const r = await resolveAgentRuntime('contentWriter', ctx, 'mastra');
+    h.resolveSetting.mockResolvedValue('pi');
+    const r = await resolveAgentRuntime('contentWriter', ctx, 'agentRunSetting');
+    expect(r).toEqual({ runtime: 'pi', source: 'default' });
+    expect(h.resolveSetting).toHaveBeenCalledWith('workspace.agentRunRuntime', ctx);
+    expect(h.resolveSetting).not.toHaveBeenCalledWith('workspace.implementerRuntime', ctx);
+  });
+
+  it('stays on Mastra for an agent run when the setting is at its default', async () => {
+    runRow(null);
+    const r = await resolveAgentRuntime('contentWriter', ctx, 'agentRunSetting');
     expect(r).toEqual({ runtime: 'mastra', source: 'default' });
+  });
+
+  it('reads the setting with its own context while the Agent resolves without the team', async () => {
+    runRow(null);
+    h.resolveSetting.mockResolvedValue('pi');
+    const agentCtx = { orgId: 'org-1' };
+    const settingsCtx = { orgId: 'org-1', pinnedSettings: { x: 1 }, teamId: 'team-1' };
+    const r = await resolveAgentRuntime('contentWriter', agentCtx, 'agentRunSetting', settingsCtx);
+    expect(r.runtime).toBe('pi');
+    expect(h.resolveAgent).toHaveBeenCalledWith('contentWriter', agentCtx);
+    expect(h.resolveSetting).toHaveBeenCalledWith('workspace.agentRunRuntime', settingsCtx);
+  });
+
+  it('lets the Agent’s own runtime win over the agent-run setting', async () => {
+    runRow(null);
+    h.resolveAgent.mockResolvedValue({ runtime: 'mastra' });
+    h.resolveSetting.mockResolvedValue('pi');
+    const r = await resolveAgentRuntime('contentWriter', ctx, 'agentRunSetting');
+    expect(r).toEqual({ runtime: 'mastra', source: 'agent' });
     expect(h.resolveSetting).not.toHaveBeenCalled();
+  });
+
+  it('keeps a pinned runtime after the setting is edited mid-run', async () => {
+    runRow({ contentWriter: 'mastra' });
+    h.resolveSetting.mockResolvedValue('pi');
+    const r = await resolveAgentRuntime('contentWriter', ctx, 'agentRunSetting');
+    expect(r).toEqual({ runtime: 'mastra', source: 'run' });
+  });
+
+  it('reads the setting on a no-opinion pin, from the run-pinned value on a retry', async () => {
+    runRow({ contentWriter: null });
+    // The live cascade now says mastra; only the run's pinned value says pi.
+    h.resolveSetting.mockImplementation(
+      async (key: string, c?: { pinnedSettings?: Record<string, unknown> }) =>
+        c?.pinnedSettings && key in c.pinnedSettings ? c.pinnedSettings[key] : 'mastra'
+    );
+    const settingsCtx = { pinnedSettings: { 'workspace.agentRunRuntime': 'pi' } };
+    const r = await resolveAgentRuntime('contentWriter', {}, 'agentRunSetting', settingsCtx);
+    expect(r).toEqual({ runtime: 'pi', source: 'default' });
+    // Reading with the agent's context instead (no pins) would give the live value.
+    expect(await resolveAgentRuntime('contentWriter', {}, 'agentRunSetting', {})).toEqual({
+      runtime: 'mastra',
+      source: 'default',
+    });
   });
 
   it('keeps a pinned runtime after the agent changes mid-run', async () => {
