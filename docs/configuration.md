@@ -263,7 +263,9 @@ there would be stored and never read, and the effective-config view would report
 
 `resolveEffectiveSettings(ctx)` returns every setting with the tier that supplied it. That is the
 effective-config view behind `/admin/platform-settings`, and the answer to "why is this run behaving that
-way".
+way". The page's scope picker views and edits platform-wide, organization, team, Slack channel and
+workflow-template scope; a key whose definition does not list the chosen scope in `overridableAt` is
+shown read-only there.
 
 ---
 

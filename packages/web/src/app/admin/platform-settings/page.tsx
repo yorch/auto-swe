@@ -27,6 +27,7 @@ import {
 import { useHasRole } from '@/hooks/useHasRole';
 import { useSlackChannels } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
+import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { errMsg } from '@/lib/errors';
@@ -45,13 +46,14 @@ import { cn, FOCUS_RING } from '@/lib/utils';
  * there, instead of only being able to move the platform-wide value.
  */
 
-type ViewScope = 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'CHANNEL';
+type ViewScope = 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'CHANNEL' | 'WORKFLOW_TEMPLATE';
 
 const SCOPE_OPTIONS: { label: string; value: ViewScope }[] = [
   { label: 'Platform-wide', value: 'GLOBAL' },
   { label: 'An organization', value: 'ORGANIZATION' },
   { label: 'A team', value: 'TEAM' },
   { label: 'A Slack channel', value: 'CHANNEL' },
+  { label: 'A workflow template', value: 'WORKFLOW_TEMPLATE' },
 ];
 
 /** The id parameter each narrower scope carries in the URL and in the settings query. */
@@ -59,6 +61,7 @@ const SCOPE_ID_PARAM = {
   CHANNEL: 'channelId',
   ORGANIZATION: 'orgId',
   TEAM: 'teamId',
+  WORKFLOW_TEMPLATE: 'workflowTemplateId',
 } as const;
 
 export default function GovernSettingsPage() {
@@ -67,7 +70,10 @@ export default function GovernSettingsPage() {
   // The viewed scope lives in the URL so a view can be linked to and survives a reload.
   const rawScope = params.get('scope');
   const scope: ViewScope =
-    rawScope === 'ORGANIZATION' || rawScope === 'TEAM' || rawScope === 'CHANNEL'
+    rawScope === 'ORGANIZATION' ||
+    rawScope === 'TEAM' ||
+    rawScope === 'CHANNEL' ||
+    rawScope === 'WORKFLOW_TEMPLATE'
       ? rawScope
       : 'GLOBAL';
   const scopeId = scope === 'GLOBAL' ? '' : (params.get(SCOPE_ID_PARAM[scope]) ?? '');
@@ -78,6 +84,18 @@ export default function GovernSettingsPage() {
   const teams = useTeams();
   const orgs = useOrganizationDirectory();
   const channels = useSlackChannels();
+  const templates = useWorkflowTemplates(null, { enabled: scope === 'WORKFLOW_TEMPLATE' });
+  // A platform-wide template (no team) has no team or organization to authorise a scoped
+  // read against, so the gateway refuses it to anyone below ADMIN: offer only what opens.
+  // The list each narrower scope picks from, so a failed fetch of another scope's list never
+  // blames this one.
+  const listFor = {
+    CHANNEL: channels,
+    ORGANIZATION: orgs,
+    TEAM: teams,
+    WORKFLOW_TEMPLATE: templates,
+  } as const;
+  const templateChoices = (templates.data ?? []).filter((t) => isAdmin || t.team !== null);
 
   // Rows holding an unsaved draft. Reported by each row; a row that unmounts reports clean.
   const [dirtyKeys, setDirtyKeys] = useState<ReadonlySet<string>>(() => new Set());
@@ -107,6 +125,7 @@ export default function GovernSettingsPage() {
       orgId: nextScope === 'ORGANIZATION' ? id : null,
       scope: nextScope === 'GLOBAL' ? null : nextScope,
       teamId: nextScope === 'TEAM' ? id : null,
+      workflowTemplateId: nextScope === 'WORKFLOW_TEMPLATE' ? id : null,
     });
   };
   const showScope = (nextScope: ViewScope, id = '') => {
@@ -227,10 +246,12 @@ export default function GovernSettingsPage() {
         ? (teams.data ?? []).map((t) => ({ id: t.id, name: t.name }))
         : selection.scope === 'ORGANIZATION'
           ? (orgs.data ?? []).map((o) => ({ id: o.id, name: o.name }))
-          : (channels.data ?? []).map((c) => ({
-              id: c.id,
-              name: c.name ? `#${c.name}` : 'Unnamed channel',
-            }));
+          : selection.scope === 'WORKFLOW_TEMPLATE'
+            ? templateChoices.map((t) => ({ id: t.id, name: t.name }))
+            : (channels.data ?? []).map((c) => ({
+                id: c.id,
+                name: c.name ? `#${c.name}` : 'Unnamed channel',
+              }));
     const noun = {
       CHANNEL: 'channel',
       ORGANIZATION: 'organization',
@@ -366,6 +387,15 @@ export default function GovernSettingsPage() {
                   value={scopeId}
                 />
               )}
+              {scope === 'WORKFLOW_TEMPLATE' && (
+                <Combobox
+                  label="Workflow template"
+                  onChange={(id) => showScope('WORKFLOW_TEMPLATE', id)}
+                  options={templateChoices.map((t) => ({ label: t.name, value: t.id }))}
+                  placeholder="Choose a workflow template…"
+                  value={scopeId}
+                />
+              )}
               {scope === 'CHANNEL' && (
                 <Combobox
                   label="Slack channel"
@@ -379,7 +409,7 @@ export default function GovernSettingsPage() {
                 />
               )}
             </div>
-            {scope !== 'GLOBAL' && (teams.isError || orgs.isError || channels.isError) && (
+            {scope !== 'GLOBAL' && listFor[scope].isError && (
               <Alert
                 action={
                   <Button
@@ -387,6 +417,7 @@ export default function GovernSettingsPage() {
                       void teams.refetch();
                       void orgs.refetch();
                       void channels.refetch();
+                      void templates.refetch();
                     }}
                     size="sm"
                   >
@@ -401,7 +432,9 @@ export default function GovernSettingsPage() {
                   ? 'teams'
                   : scope === 'ORGANIZATION'
                     ? 'organizations'
-                    : 'channels'}{' '}
+                    : scope === 'WORKFLOW_TEMPLATE'
+                      ? 'workflow templates'
+                      : 'channels'}{' '}
                 could not be loaded.
               </Alert>
             )}
