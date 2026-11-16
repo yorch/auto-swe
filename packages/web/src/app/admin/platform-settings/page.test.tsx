@@ -10,19 +10,22 @@ const { state } = vi.hoisted(() => ({
     params: new URLSearchParams(),
     pending: null as { reject: (e: Error) => void; resolve: (value?: unknown) => void } | null,
     teamsError: false,
+    update: vi.fn(),
   },
 }));
 
 vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
 vi.mock('@/hooks/useUrlFilters', () => ({
-  useUrlFilters: () => ({ params: state.params, update: vi.fn() }),
+  useUrlFilters: () => ({ params: state.params, update: state.update }),
 }));
 vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => state.admin }));
 vi.mock('@/hooks/useTemplates', () => ({
   useWorkflowTemplates: () => ({
     data: [
-      { id: 'tpl-1', name: 'Fast path', team: { id: 't1', name: 'Payments' } },
-      { id: 'tpl-2', name: 'Platform default', team: null },
+      { id: 'tpl-1', name: 'Fast path', status: 'ACTIVE', team: { id: 't1', name: 'Payments' } },
+      { id: 'tpl-2', name: 'Platform default', status: 'ACTIVE', team: null },
+      { id: 'tpl-3', name: 'Drafty', status: 'DRAFT', team: { id: 't1', name: 'Payments' } },
+      { id: 'tpl-4', name: 'Retired', status: 'ARCHIVED', team: { id: 't1', name: 'Payments' } },
     ],
     isError: false,
     refetch: vi.fn(),
@@ -34,8 +37,19 @@ vi.mock('@/hooks/useTeams', () => ({
 vi.mock('@/hooks/useSlackChannels', () => ({ useSlackChannels: () => ({ data: [] }) }));
 vi.mock('@/hooks/useAdmin', () => ({ useOrganizationDirectory: () => ({ data: [] }) }));
 const selections: unknown[] = [];
+const writeSelections: unknown[] = [];
+const clearSelections: unknown[] = [];
+const clearKeys: string[] = [];
 vi.mock('@/hooks/useConfigSettings', () => ({
-  useClearConfigSetting: () => ({ mutateAsync: vi.fn() }),
+  useClearConfigSetting: (selection: unknown) => {
+    clearSelections.push(selection);
+    return {
+      mutateAsync: (key: string) => {
+        clearKeys.push(key);
+        return Promise.resolve({});
+      },
+    };
+  },
   useConfigSettings: (selection: unknown) => {
     selections.push(selection);
     return {
@@ -44,21 +58,26 @@ vi.mock('@/hooks/useConfigSettings', () => ({
       isLoading: false,
     };
   },
-  useSetConfigSetting: () => ({
-    mutateAsync: () =>
-      new Promise<unknown>((resolve, reject) => {
-        state.pending = { reject, resolve };
-      }),
-  }),
+  useSetConfigSetting: (selection: unknown) => {
+    writeSelections.push(selection);
+    return {
+      mutateAsync: () =>
+        new Promise<unknown>((resolve, reject) => {
+          state.pending = { reject, resolve };
+        }),
+    };
+  },
 }));
 vi.mock('@/components/settings/SettingRow', () => ({
   SettingRow: ({
     onSave,
+    onClear,
     onDirtyChange,
     setting,
     status,
   }: {
     onSave: (v: unknown) => void;
+    onClear?: () => void;
     onDirtyChange?: (key: string, dirty: boolean) => void;
     setting: { key: string };
     status?: { phase: string; warnings?: string[] };
@@ -66,6 +85,9 @@ vi.mock('@/components/settings/SettingRow', () => ({
     <div>
       <button onClick={() => onSave(1)} type="button">
         save
+      </button>
+      <button onClick={() => onClear?.()} type="button">
+        clear
       </button>
       <button onClick={() => onDirtyChange?.(setting.key, true)} type="button">
         edit
@@ -86,6 +108,8 @@ beforeEach(() => {
   state.pending = null;
   state.admin = true;
   state.teamsError = false;
+  state.update = vi.fn();
+  clearKeys.length = 0;
 });
 
 describe('platform settings page', () => {
@@ -108,7 +132,9 @@ describe('platform settings page', () => {
     expect(callout).not.toBeNull();
     expect(heading.closest('[role="status"], [role="alert"]')).toBeNull();
     expect(callout?.textContent).toMatch(/live value for every team, channel and template/);
-    expect(callout?.textContent).toMatch(/team or channel changes only that scope/);
+    expect(callout?.textContent).toMatch(
+      /team, channel or workflow template changes only that scope/
+    );
     expect(callout?.textContent).toMatch(
       /organization reaches every team in it that has no override/
     );
@@ -159,6 +185,60 @@ describe('platform settings page', () => {
     expect(selections.at(-1)).toEqual({ scope: 'WORKFLOW_TEMPLATE', workflowTemplateId: 'tpl-1' });
     expect(screen.getByTestId('scope-bar').textContent).toMatch(/Fast path \(template\)/);
     expect(screen.getByRole('button', { name: /Workflow template/ })).toBeTruthy();
+  });
+
+  it('offers active and draft templates, not archived ones', () => {
+    state.params = new URLSearchParams('scope=WORKFLOW_TEMPLATE');
+    render(<Page />);
+    fireEvent.click(screen.getByRole('button', { name: /Show options/ }));
+    expect(screen.getByRole('option', { name: 'Fast path' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Drafty' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'Retired' })).toBeNull();
+  });
+
+  it('keeps the archived template chosen in the URL so its override can be cleared', () => {
+    state.params = new URLSearchParams('scope=WORKFLOW_TEMPLATE&workflowTemplateId=tpl-4');
+    render(<Page />);
+    expect(screen.getByTestId('scope-bar').textContent).toMatch(/Retired \(template\)/);
+    fireEvent.click(screen.getByRole('button', { name: /Show options/ }));
+    expect(screen.getByRole('option', { name: 'Retired' })).toBeTruthy();
+  });
+
+  it('hands the template selection to the write and clear hooks', async () => {
+    state.params = new URLSearchParams('scope=WORKFLOW_TEMPLATE&workflowTemplateId=tpl-1');
+    render(<Page />);
+    const expected = { scope: 'WORKFLOW_TEMPLATE', workflowTemplateId: 'tpl-1' };
+    expect(writeSelections.at(-1)).toEqual(expected);
+    expect(clearSelections.at(-1)).toEqual(expected);
+    fireEvent.click(screen.getByText('clear'));
+    expect(clearKeys).toEqual(['workflow.x']);
+    await act(async () => {});
+  });
+
+  it.each([
+    ['TEAM', 'A team'],
+    ['GLOBAL', 'Platform-wide'],
+  ])(
+    'drops workflowTemplateId from the URL when switching from a template to %s',
+    (target, label) => {
+      state.params = new URLSearchParams('scope=WORKFLOW_TEMPLATE&workflowTemplateId=tpl-1');
+      render(<Page />);
+      fireEvent.click(screen.getByRole('button', { name: /View settings for/ }));
+      fireEvent.click(screen.getByRole('option', { name: label }));
+      expect(state.update).toHaveBeenCalledTimes(1);
+      const patch = state.update.mock.calls[0]?.[0];
+      expect(patch).toMatchObject({ scope: target === 'GLOBAL' ? null : target });
+      expect(patch.workflowTemplateId).toBeNull();
+    }
+  );
+
+  it('does not offer a platform-wide template to a non-admin even when the URL selects it', () => {
+    state.params = new URLSearchParams('scope=WORKFLOW_TEMPLATE&workflowTemplateId=tpl-2');
+    state.admin = false;
+    render(<Page />);
+    fireEvent.click(screen.getByRole('button', { name: /Show options/ }));
+    expect(screen.getByRole('option', { name: 'Fast path' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'Platform default' })).toBeNull();
   });
 
   it('offers a platform-wide template only to an admin', () => {
