@@ -88,6 +88,7 @@ const binding = (
   harnessProfiles,
   scope: 'GLOBAL',
   teamId: null,
+  version: 4,
   ...over,
 });
 
@@ -328,7 +329,7 @@ describe('several plugins, hooks, enablement and collisions', () => {
       resolveHarnessProfiles(
         'implementer',
         { teamId: 't1' },
-        binding(['alpha'], { scope: 'TEAM', teamId: 't1' })
+        binding(['alpha'], { scope: 'TEAM', teamId: 't1', version: 4 })
       )
     ).rejects.toMatchObject({ nonRetryable: true, type: 'PLUGIN_NOT_ENABLED' });
     expect(h.enabledFind).toHaveBeenCalledWith(
@@ -343,7 +344,7 @@ describe('several plugins, hooks, enablement and collisions', () => {
     const list = await resolveHarnessProfiles(
       'implementer',
       { teamId: 't1' },
-      binding(['alpha'], { scope: 'TEAM', teamId: 't1' })
+      binding(['alpha'], { scope: 'TEAM', teamId: 't1', version: 4 })
     );
     expect(list).toHaveLength(1);
   });
@@ -368,11 +369,11 @@ describe('several plugins, hooks, enablement and collisions', () => {
     }
   );
 
-  const teamBinding = () => binding(['alpha'], { scope: 'TEAM', teamId: 't1' });
+  const teamBinding = () => binding(['alpha'], { scope: 'TEAM', teamId: 't1', version: 4 });
 
   it('keeps a run in flight on a binding it verified after the enablement is removed', async () => {
     rows.alpha = pluginRow('alpha', 'alpha');
-    runRow({ alpha: { verified: ['implementer'], version: 2 } });
+    runRow({ alpha: { verified: ['t1:implementer:4'], version: 2 } });
     h.enabledFind.mockResolvedValue([]);
     const list = await resolveHarnessProfiles('implementer', { teamId: 't1' }, teamBinding());
     expect(list).toHaveLength(1);
@@ -392,9 +393,52 @@ describe('several plugins, hooks, enablement and collisions', () => {
     );
   });
 
+  it('does not exempt a legacy bare-key entry', async () => {
+    rows.alpha = pluginRow('alpha', 'alpha');
+    runRow({ alpha: { verified: ['implementer'], version: 2 } });
+    h.enabledFind.mockResolvedValue([]);
+    await expect(
+      resolveHarnessProfiles('implementer', { teamId: 't1' }, teamBinding())
+    ).rejects.toMatchObject({ type: 'PLUGIN_NOT_ENABLED' });
+  });
+
+  it('does not exempt a different team, or a newer agent version, of a verified key', async () => {
+    rows.alpha = pluginRow('alpha', 'alpha');
+    runRow({ alpha: { verified: ['t1:implementer:4'], version: 2 } });
+    h.enabledFind.mockResolvedValue([]);
+    await expect(
+      resolveHarnessProfiles(
+        'implementer',
+        { teamId: 't2' },
+        binding(['alpha'], { scope: 'TEAM', teamId: 't2' })
+      )
+    ).rejects.toMatchObject({ type: 'PLUGIN_NOT_ENABLED' });
+    await expect(
+      resolveHarnessProfiles(
+        'implementer',
+        { teamId: 't1' },
+        binding(['alpha'], { scope: 'TEAM', teamId: 't1', version: 5 })
+      )
+    ).rejects.toMatchObject({ type: 'PLUGIN_NOT_ENABLED' });
+  });
+
+  it('passes a newer agent version while the enablement is still present, and verifies it', async () => {
+    rows.alpha = pluginRow('alpha', 'alpha');
+    const row = runRow({ alpha: { hooks: true, verified: ['t1:implementer:4'], version: 2 } });
+    h.enabledFind.mockResolvedValue([{ profileId: 'id-alpha' }]);
+    await resolveHarnessProfiles(
+      'implementer',
+      { teamId: 't1' },
+      binding(['alpha'], { scope: 'TEAM', teamId: 't1', version: 5 })
+    );
+    expect(row.harnessProfileVersions).toEqual({
+      alpha: { hooks: true, verified: ['t1:implementer:4', 't1:implementer:5'], version: 2 },
+    });
+  });
+
   it('fails closed for an agent not in the pin’s verified list, even when another is', async () => {
     rows.alpha = pluginRow('alpha', 'alpha');
-    runRow({ alpha: { verified: ['reviewer'], version: 2 } });
+    runRow({ alpha: { verified: ['t1:reviewer:4'], version: 2 } });
     h.enabledFind.mockResolvedValue([]);
     await expect(
       resolveHarnessProfiles('implementer', { teamId: 't1' }, teamBinding())
@@ -408,7 +452,7 @@ describe('several plugins, hooks, enablement and collisions', () => {
     const [p] = await resolveHarnessProfiles('implementer', { teamId: 't1' }, teamBinding());
     expect(p?.version).toBe(1);
     expect(row.harnessProfileVersions).toEqual({
-      alpha: { hooks: true, verified: ['implementer'], version: 1 },
+      alpha: { hooks: true, verified: ['t1:implementer:4'], version: 1 },
     });
     // Enablement removed afterwards: the run's own verified binding keeps working.
     h.enabledFind.mockResolvedValue([]);
@@ -423,7 +467,7 @@ describe('several plugins, hooks, enablement and collisions', () => {
     h.enabledFind.mockResolvedValue([{ profileId: 'id-alpha' }]);
     await resolveHarnessProfiles('implementer', { teamId: 't1' }, teamBinding());
     expect(row.harnessProfileVersions).toEqual({
-      alpha: { hooks: true, verified: ['implementer'], version: 2 },
+      alpha: { hooks: true, verified: ['t1:implementer:4'], version: 2 },
     });
   });
 
@@ -443,7 +487,7 @@ describe('several plugins, hooks, enablement and collisions', () => {
   describe('a workflow id reused by a later execution', () => {
     it('ignores the earlier execution’s pin and resolves fresh (status and enablement checked)', async () => {
       rows.alpha = pluginRow('alpha', 'alpha');
-      const row = runRow({ alpha: { verified: ['implementer'], version: 1 } }, 'exec-0');
+      const row = runRow({ alpha: { verified: ['t1:implementer:4'], version: 1 } }, 'exec-0');
       h.enabledFind.mockResolvedValue([]);
       await expect(
         resolveHarnessProfiles('implementer', { teamId: 't1' }, teamBinding())
@@ -456,7 +500,7 @@ describe('several plugins, hooks, enablement and collisions', () => {
       ).rejects.toMatchObject({ type: 'PROFILE_UNAVAILABLE' });
       expect(h.runUpdateMany).not.toHaveBeenCalled();
       expect(row.harnessProfileVersions).toEqual({
-        alpha: { verified: ['implementer'], version: 1 },
+        alpha: { verified: ['t1:implementer:4'], version: 1 },
       });
     });
 
@@ -470,7 +514,10 @@ describe('several plugins, hooks, enablement and collisions', () => {
 
     it('trusts a map that names this execution even when the row names the first', async () => {
       rows.alpha = pluginRow('alpha', 'alpha');
-      runRow({ __execution: 'exec-1', alpha: { verified: ['implementer'], version: 1 } }, 'exec-0');
+      runRow(
+        { __execution: 'exec-1', alpha: { verified: ['t1:implementer:4'], version: 1 } },
+        'exec-0'
+      );
       h.enabledFind.mockResolvedValue([]);
       const [p] = await resolveHarnessProfiles('implementer', { teamId: 't1' }, teamBinding());
       expect(p?.version).toBe(1);
@@ -595,10 +642,12 @@ describe('pinHarnessProfileVersion', () => {
     const row = runRow({ kit: 1 });
     const v = await pinHarnessProfileVersion('wf-1', 'kit', 9, {
       runId: 'exec-1',
-      verifiedAgentKey: 'implementer',
+      verifiedKey: 't1:implementer:4',
     });
     expect(v).toBe(1);
-    expect(row.harnessProfileVersions).toEqual({ kit: { verified: ['implementer'], version: 1 } });
+    expect(row.harnessProfileVersions).toEqual({
+      kit: { verified: ['t1:implementer:4'], version: 1 },
+    });
   });
 
   it('writes nothing when the pins belong to another execution', async () => {

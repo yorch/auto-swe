@@ -686,7 +686,7 @@ describe('resolveAgent — harness profile', () => {
     );
     expect(
       await resolveAgentProfileBinding('implementer', { agentVersions: { implementer: 3 } })
-    ).toEqual({ harnessProfiles: ['kit', 'ops'], scope: 'TEAM', teamId: 't1' });
+    ).toMatchObject({ harnessProfiles: ['kit', 'ops'], scope: 'TEAM', teamId: 't1' });
     expect(agentFindFirst.mock.calls.at(-1)?.[0].where).toMatchObject({ version: 3 });
     agentFindFirst.mockResolvedValue(null);
     await expect(resolveAgentProfileBinding('nope')).rejects.toThrow(/No active Agent/);

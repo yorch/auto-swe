@@ -512,7 +512,7 @@ export async function resolveAgentRuntimeChoice(
 export async function resolveAgentProfileBinding(
   key: string,
   ctx?: ResolveCtx
-): Promise<Pick<ResolvedAgent, 'harnessProfiles' | 'scope' | 'teamId'>> {
+): Promise<Pick<ResolvedAgent, 'harnessProfiles' | 'scope' | 'teamId' | 'version'>> {
   const agent = await fetchActiveAgent(key, ctx);
   if (!agent) {
     throw new ConfigMissingError(`No active Agent found for key '${key}' at any scope.`);
@@ -521,6 +521,7 @@ export async function resolveAgentProfileBinding(
     harnessProfiles: agent.harnessProfiles,
     scope: agent.scope,
     teamId: agent.teamId ?? null,
+    version: agent.version,
   };
 }
 

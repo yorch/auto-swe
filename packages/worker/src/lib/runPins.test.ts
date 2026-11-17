@@ -47,10 +47,15 @@ describe('snapshotHarnessProfileVersions', () => {
 
   it('pins a team binding only for the plugins the team enabled', async () => {
     h.agentFind.mockResolvedValue([{ key: 'implementer' }]);
-    h.binding.mockResolvedValue({ harnessProfiles: ['a', 'b'], scope: 'TEAM', teamId: 't1' });
+    h.binding.mockResolvedValue({
+      harnessProfiles: ['a', 'b'],
+      scope: 'TEAM',
+      teamId: 't1',
+      version: 4,
+    });
     h.enabledFind.mockResolvedValue([{ profileId: 'id-b' }]);
     expect(await snapshotHarnessProfileVersions({ teamId: 't1' })).toEqual({
-      b: { hooks: false, verified: ['implementer'], version: 1 },
+      b: { hooks: false, verified: ['t1:implementer:4'], version: 1 },
     });
     expect(h.enabledFind).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ teamId: 't1' }) })
@@ -62,12 +67,12 @@ describe('snapshotHarnessProfileVersions', () => {
     h.binding.mockImplementation(async (key: string) =>
       key === 'reviewer'
         ? { harnessProfiles: ['b'], scope: 'GLOBAL', teamId: null }
-        : { harnessProfiles: ['a', 'b'], scope: 'TEAM', teamId: 't1' }
+        : { harnessProfiles: ['a', 'b'], scope: 'TEAM', teamId: 't1', version: 4 }
     );
     h.enabledFind.mockResolvedValue([{ profileId: 'id-b' }]);
     // `b` is platform-wide for reviewer and team-verified for implementer; `a` is not enabled.
     expect(await snapshotHarnessProfileVersions({ teamId: 't1' })).toEqual({
-      b: { hooks: false, verified: ['implementer'], version: 1 },
+      b: { hooks: false, verified: ['t1:implementer:4'], version: 1 },
     });
   });
 
@@ -76,7 +81,7 @@ describe('snapshotHarnessProfileVersions', () => {
     h.binding.mockImplementation(async (key: string) =>
       key === 'reviewer'
         ? { harnessProfiles: ['a'], scope: 'GLOBAL', teamId: null }
-        : { harnessProfiles: ['a'], scope: 'TEAM', teamId: 't1' }
+        : { harnessProfiles: ['a'], scope: 'TEAM', teamId: 't1', version: 4 }
     );
     h.enabledFind.mockResolvedValue([]);
     expect(await snapshotHarnessProfileVersions({ teamId: 't1' })).toEqual({

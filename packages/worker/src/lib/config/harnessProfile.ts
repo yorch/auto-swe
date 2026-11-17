@@ -17,6 +17,7 @@ import {
   type ParsedPin,
   parsePinEntry,
   pinMapOwner,
+  verifiedBindingKey,
 } from './pluginEnablement.js';
 import type { ResolveCtx } from './types.js';
 
@@ -44,7 +45,10 @@ export interface ResolvedHarnessProfile {
 }
 
 /** What {@link resolveHarnessProfiles} needs from the caller's resolution of the agent. */
-export type ProfileBinding = Pick<ResolvedAgent, 'harnessProfiles' | 'scope' | 'teamId'>;
+export type ProfileBinding = Pick<
+  ResolvedAgent,
+  'harnessProfiles' | 'scope' | 'teamId' | 'version'
+>;
 
 /**
  * The approved harness profiles (plugins) `agentKey` runs with, in binding order;
@@ -64,7 +68,7 @@ export type ProfileBinding = Pick<ResolvedAgent, 'harnessProfiles' | 'scope' | '
  * The pin decides the VERSION, not the PERMISSION. A binding on an agent version that
  * is not platform-wide has its team's enablement checked on EVERY resolution, even
  * when another agent's binding pinned the plugin. The one exemption: the run's pin
- * lists the agent key as `verified` (its binding passed the check when the run began,
+ * lists its (team, agent key, agent version) as `verified` (its binding passed the check when the run began,
  * or at that agent's first use), so a run in flight keeps its snapshot if the
  * enablement is removed mid-run, while a binding first seen afterwards fails closed.
  * A pin only counts for the execution it was taken for (the run row's
@@ -116,7 +120,13 @@ async function resolveOne(
     : { pin: undefined, writable: false };
   const needsEnablement = bindingNeedsEnablement(binding.scope);
   // Only a binding this run already verified skips the team's enablement check.
-  const verifiedByPin = needsEnablement && pin?.verified.has(agentKey) === true;
+  // Keyed by team, agent key and agent version: another team, or a newer version of the
+  // agent, is checked again. A legacy bare-key entry matches nothing and re-checks.
+  const verifiedTeamId = needsEnablement ? enablementTeamId(ctx, binding) : undefined;
+  const verifiedKey = verifiedTeamId
+    ? verifiedBindingKey(verifiedTeamId, agentKey, binding.version)
+    : undefined;
+  const verifiedByPin = verifiedKey !== undefined && pin?.verified.has(verifiedKey) === true;
   let version = supplied ?? pin?.version;
   if (version === undefined && profile.status !== 'OK') {
     throw unavailable(agentKey, name, 'it is disabled and this run has not pinned a version');
@@ -138,7 +148,7 @@ async function resolveOne(
       const pinned = await pinHarnessProfile(execution.workflowId, name, profile.latestVersion, {
         hooksEnabled: live,
         runId: execution.runId,
-        verifiedAgentKey: needsEnablement ? agentKey : undefined,
+        verifiedKey: needsEnablement ? verifiedKey : undefined,
       });
       version = pinned.version;
       pinnedHooks = pinned.hooks;
@@ -148,7 +158,7 @@ async function resolveOne(
       const pinned = await pinHarnessProfile(execution.workflowId, name, version, {
         hooksEnabled: live,
         runId: execution.runId,
-        verifiedAgentKey: needsEnablement && !verifiedByPin ? agentKey : undefined,
+        verifiedKey: needsEnablement && !verifiedByPin ? verifiedKey : undefined,
       });
       pinnedHooks = pinned.hooks;
     }
@@ -323,15 +333,15 @@ export async function pinHarnessProfileVersion(
   workflowId: string,
   name: string,
   candidate: number,
-  opts: { runId?: string; verifiedAgentKey?: string; hooksEnabled?: boolean } = {}
+  opts: { runId?: string; verifiedKey?: string; hooksEnabled?: boolean } = {}
 ): Promise<number> {
   return (await pinHarnessProfile(workflowId, name, candidate, opts)).version;
 }
 
 /**
  * Pin `candidate` as the run's version of profile `name` unless one is already
- * pinned, and return the pinned version and hook switch. With `verifiedAgentKey`,
- * also record that agent's binding as having passed the team's enablement check
+ * pinned, and return the pinned version and hook switch. With `verifiedKey` (see `verifiedBindingKey`),
+ * also record that binding as having passed the team's enablement check
  * (added to the entry whether or not the version was already pinned). With
  * `hooksEnabled`, record the hook switch the run starts with, unless the entry
  * already has one. A compare-and-set on the whole map, so two activities pinning
@@ -344,7 +354,7 @@ export async function pinHarnessProfile(
   workflowId: string,
   name: string,
   candidate: number,
-  opts: { runId?: string; verifiedAgentKey?: string; hooksEnabled?: boolean } = {}
+  opts: { runId?: string; verifiedKey?: string; hooksEnabled?: boolean } = {}
 ): Promise<{ version: number; hooks: boolean | undefined }> {
   for (let attempt = 0; attempt < 3; attempt++) {
     const row = await prisma.workflowRun.findUnique({
@@ -362,7 +372,7 @@ export async function pinHarnessProfile(
     }
     const current = asPinMap(row.harnessProfileVersions);
     const existing = parsePinEntry(current?.[name]);
-    const key = opts.verifiedAgentKey;
+    const key = opts.verifiedKey;
     const needsKey = key !== undefined && !existing?.verified.has(key);
     const needsHooks = opts.hooksEnabled !== undefined && existing?.hooks === undefined;
     if (existing && !needsKey && !needsHooks) {

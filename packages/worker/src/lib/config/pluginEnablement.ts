@@ -22,6 +22,16 @@ export function enablementTeamId(
 }
 
 /**
+ * The `verified` entry for a team binding: `<teamId>:<agentKey>:<agentVersion>`. A
+ * verification is bound to the team it was checked for and to the exact agent
+ * version, so a different team, or a version a team admin cuts later, is checked
+ * again. A bare agent key (what older code wrote) matches no such entry.
+ */
+export function verifiedBindingKey(teamId: string, agentKey: string, version: number): string {
+  return `${teamId}:${agentKey}:${version}`;
+}
+
+/**
  * Reserved key in `WorkflowRun.harnessProfileVersions` naming the Temporal
  * execution the pin map was taken for. A workflow id can be started again once
  * its earlier execution closes, and the run row is created once; a map that
@@ -32,9 +42,9 @@ export const PIN_EXECUTION_KEY = '__execution';
 /**
  * One plugin's pin in `WorkflowRun.harnessProfileVersions`. A bare number is the
  * pinned version (what older code wrote, and what a platform-wide binding needs).
- * The object form adds `verified`: the agent keys whose non-platform-wide binding
- * of this plugin passed the team's enablement check when this run began (or at
- * its first use). The pin decides the VERSION; only a verified (agent, plugin)
+ * The object form adds `verified`: the `verifiedBindingKey` entries (team, agent key,
+ * agent version) whose non-platform-wide binding of this plugin passed the team's enablement check when this run began (or at
+ * its first use). The pin decides the VERSION; only a verified (team, agent version, plugin)
  * binding is exempt from re-checking enablement, so removing a team's enablement
  * cannot be bypassed through a version another agent's binding pinned.
  */

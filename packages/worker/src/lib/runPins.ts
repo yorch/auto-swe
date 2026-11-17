@@ -10,6 +10,7 @@ import {
   enablementTeamId,
   type HarnessPinEntry,
   PIN_EXECUTION_KEY,
+  verifiedBindingKey,
 } from './config/pluginEnablement.js';
 import type { ResolveCtx } from './config/types.js';
 
@@ -143,8 +144,8 @@ async function visibleAgentKeys(ctx: ResolveCtx): Promise<string[]> {
  * A key whose resolution fails is left out too, and pins at first use.
  *
  * The pin decides the VERSION, not the PERMISSION. A plugin bound on a narrower
- * agent version is pinned as `{ version, verified: [agentKey…] }` naming the agents
- * whose binding passed the team's enablement check here; at run time only those
+ * agent version is pinned as `{ version, verified: [teamId:agentKey:agentVersion…] }`
+ * naming the bindings that passed the team's enablement check here; at run time only those
  * bindings skip the check, so removing the enablement mid-run keeps the run's own
  * verified bindings working and fails every other one closed. The snapshot also
  * carries the Temporal run id of the execution it was taken for.
@@ -154,7 +155,7 @@ export async function snapshotHarnessProfileVersions(
 ): Promise<Record<string, HarnessPinEntry | string>> {
   const keys = await visibleAgentKeys(ctx);
   const pinnable = new Set<string>();
-  /** Per team, the agent keys bound to a plugin that needs that team's enablement. */
+  /** Per team, the verified binding keys bound to a plugin that needs that team's enablement. */
   const gated = new Map<string, Map<string, Set<string>>>();
   await Promise.all(
     keys.map(async (key) => {
@@ -176,7 +177,7 @@ export async function snapshotHarnessProfileVersions(
         const byName = gated.get(teamId) ?? new Map<string, Set<string>>();
         for (const name of binding.harnessProfiles) {
           const agents = byName.get(name) ?? new Set<string>();
-          agents.add(key);
+          agents.add(verifiedBindingKey(teamId, key, binding.version));
           byName.set(name, agents);
         }
         gated.set(teamId, byName);
@@ -198,7 +199,7 @@ export async function snapshotHarnessProfileVersions(
     where: { name: { in: [...wanted] }, status: 'OK' },
   });
   const allowed = new Set(pinnable);
-  /** Plugin name to the agent keys whose team-side binding passed the enablement check now. */
+  /** Plugin name to the binding keys whose team-side binding passed the enablement check now. */
   const verified = new Map<string, Set<string>>();
   for (const [teamId, byName] of gated) {
     const enabled = await enabledProfileIds(
