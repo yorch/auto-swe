@@ -5,6 +5,7 @@ import {
   type BundleEntities,
   type BundleInstallResult,
   type BundleManifest,
+  type BundlePlugin,
   type BundleScannerPattern,
   BundleSchemaVersionError,
   type BundleSkill,
@@ -18,6 +19,7 @@ import {
   type TrustedKey,
   unsupportedBundleDependencies,
   validateBundleAgents,
+  validateBundlePlugins,
   validateBundleScannerPatterns,
   validateBundleTemplates,
   verifyBundleSignature,
@@ -36,7 +38,30 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { toImplementerRuntime, toReasoningLevel } from '@auto-swe/shared/types/api';
 import { collectAuthoredCode, materializeUses, type WorkflowSpec } from '@auto-swe/shared/workflow';
 
+import {
+  applyPlugins,
+  BundlePluginWarningsError,
+  bindingCollision,
+  bindingOutcome,
+  bindingWarning,
+  decidePlugins,
+  HOOKS_OFF_NOTE,
+  type PluginDecision,
+  type PluginReader,
+  pluginConflicts,
+  projectInstalledPlugins,
+  readBundlePlugins,
+  warningsToAcknowledge,
+} from './pluginBundleInstall.js';
 import { scanSkillAdvisory } from './skillScan.js';
+
+export {
+  BundlePluginCollisionError,
+  BundlePluginFetchError,
+  BundlePluginHashMismatchError,
+  BundlePluginInvalidError,
+  BundlePluginWarningsError,
+} from './pluginBundleInstall.js';
 
 /**
  * Bundle export/install service (P4/WS1+WS2). A bundle is a versioned, secret-free
@@ -56,6 +81,11 @@ export interface ProtectedConflicts {
   skills: string[];
   scannerPatterns: string[];
   templates: string[];
+  /**
+   * Plugin references whose profile name is already approved with different content. Unlike the
+   * rest, `overwriteProtected` does not lift these: a bundle cannot replace an approved snapshot.
+   */
+  plugins?: string[];
 }
 
 function emptyConflicts(): ProtectedConflicts {
@@ -63,7 +93,10 @@ function emptyConflicts(): ProtectedConflicts {
 }
 
 function hasConflicts(c: ProtectedConflicts): boolean {
-  return c.agents.length + c.skills.length + c.scannerPatterns.length + c.templates.length > 0;
+  return (
+    c.agents.length + c.skills.length + c.scannerPatterns.length + c.templates.length > 0 ||
+    (c.plugins?.length ?? 0) > 0
+  );
 }
 
 /**
@@ -91,12 +124,16 @@ export class BundleProtectedContentError extends Error {
         ? `scanner pattern(s) ${conflicts.scannerPatterns.join(', ')}`
         : null,
       conflicts.templates.length > 0 ? `template(s) ${conflicts.templates.join(', ')}` : null,
+      conflicts.plugins?.length ? `plugin(s) ${conflicts.plugins.join(', ')}` : null,
     ].filter((x): x is string => x !== null);
     super(
       `bundle would overwrite protected GLOBAL content: ${parts.join('; ')}. ` +
         'These are platform built-ins or admin-authored; rename the bundle entries ' +
         '(e.g. a namespaced key such as "my-bundle.reviewer") or reinstall with ' +
-        'overwriteProtected to replace them deliberately.'
+        'overwriteProtected to replace them deliberately.' +
+        (conflicts.plugins?.length
+          ? ' A plugin whose name is already approved with different content is never replaced by a bundle; update it from the plugin page.'
+          : '')
     );
     this.conflicts = conflicts;
     this.bundleName = bundleName;
@@ -303,6 +340,13 @@ export interface InstallOptions {
    * reviewer, nor a pattern labelled like a built-in neuter its rule.
    */
   overwriteProtected?: boolean;
+  /**
+   * Acknowledge the approval warnings (structure and scanner findings) of every plugin profile this
+   * install would create. Required when there are any; reused profiles were approved earlier.
+   */
+  acknowledgeWarnings?: boolean;
+  /** Test seam: how a plugin commit is read. Production uses the guarded profile reader. */
+  pluginReader?: PluginReader;
 }
 
 /** Installed-bundle registry (P4/WS3), most-recent first. */
@@ -406,7 +450,11 @@ export async function exportBundle(
     'bundle export selects by origin, not tenant',
     ['Skill'],
     () =>
-      prisma.skill.findMany({ orderBy: { name: 'asc' }, where: { isActive: true, ...originWhere } })
+      prisma.skill.findMany({
+        orderBy: { name: 'asc' },
+        // A plugin's projected skills are derived from its commit and come back with the plugin.
+        where: { isActive: true, pluginProfileId: null, ...originWhere },
+      })
   );
   const skills: BundleSkill[] = skillRows.map((s) => ({
     description: s.description,
@@ -453,7 +501,14 @@ export async function exportBundle(
     });
   }
 
-  const entities: BundleEntities = { agents, scannerPatterns, skills, templates };
+  const plugins = await exportPlugins(prisma, agents);
+  const entities: BundleEntities = {
+    agents,
+    ...(plugins.length > 0 ? { plugins } : {}),
+    scannerPatterns,
+    skills,
+    templates,
+  };
   // Assembly + hashing live in `@auto-swe/shared/bundle` (`buildBundleManifest`)
   // so this and the SDK's `defineBundle` cannot drift over what the v2 hash
   // covers — identity included.
@@ -464,6 +519,79 @@ export async function exportBundle(
     version: opts.version,
     ...(opts.origin !== undefined ? { source: opts.origin } : {}),
   });
+}
+
+/**
+ * The plugin references for the exported agents: every profile an exported GLOBAL agent is bound
+ * to, at its newest approved commit, with the exported agents it is bound on. Hooks and the other
+ * deployment decisions about a profile are not exported; the importing admin makes them.
+ */
+async function exportPlugins(prisma: PrismaClient, agents: BundleAgent[]): Promise<BundlePlugin[]> {
+  const exported = new Set(agents.map((a) => a.key));
+  if (exported.size === 0) {
+    return [];
+  }
+  const bound = await prisma.agent.findMany({
+    orderBy: [{ key: 'asc' }, { version: 'desc' }],
+    select: { harnessProfiles: true, key: true },
+    where: {
+      isActive: true,
+      key: { in: [...exported] },
+      scope: 'GLOBAL',
+      teamId: null,
+      workflowTemplateId: null,
+    },
+  });
+  const seen = new Set<string>();
+  const bindings = new Map<string, string[]>();
+  for (const row of bound) {
+    if (seen.has(row.key)) {
+      continue; // the head version of each key only
+    }
+    seen.add(row.key);
+    for (const name of row.harnessProfiles ?? []) {
+      bindings.set(name, [...(bindings.get(name) ?? []), row.key]);
+    }
+  }
+  if (bindings.size === 0) {
+    return [];
+  }
+  const profiles = await prisma.harnessProfile.findMany({
+    orderBy: { name: 'asc' },
+    select: {
+      host: true,
+      name: true,
+      owner: true,
+      path: true,
+      repo: true,
+      versions: {
+        orderBy: { version: 'desc' },
+        select: { commitSha: true, contentHash: true },
+        take: 1,
+      },
+    },
+    where: { name: { in: [...bindings.keys()] } },
+  });
+  const plugins: BundlePlugin[] = [];
+  for (const p of profiles) {
+    const latest = p.versions[0];
+    if (!latest || !/^[0-9a-f]{40}$/.test(latest.commitSha)) {
+      continue;
+    }
+    plugins.push({
+      bindings: (bindings.get(p.name) ?? []).sort().map((agentKey) => ({ agentKey })),
+      contentHash: latest.contentHash,
+      name: p.name,
+      sha: latest.commitSha,
+      source: {
+        host: p.host,
+        owner: p.owner,
+        ...(p.path !== '' ? { path: p.path } : {}),
+        repo: p.repo,
+      },
+    });
+  }
+  return plugins;
 }
 
 /**
@@ -569,6 +697,13 @@ function validateBundleForInstall(raw: unknown, opts: InstallOptions): Validated
     );
   }
 
+  const pluginErrors = validateBundlePlugins(manifest);
+  if (pluginErrors.length > 0) {
+    throw new BundleIntegrityError(
+      `bundle contains invalid plugin reference(s):\n  - ${pluginErrors.join('\n  - ')}`
+    );
+  }
+
   const templateErrors = validateBundleTemplates(manifest);
   if (templateErrors.length > 0) {
     throw new BundleIntegrityError(
@@ -621,7 +756,12 @@ export async function installBundle(
     );
   }
 
-  const counts = { agents: 0, scannerPatterns: 0, skills: 0, templates: 0 };
+  const counts: BundleInstallResult['counts'] = {
+    agents: 0,
+    scannerPatterns: 0,
+    skills: 0,
+    templates: 0,
+  };
 
   // Skill text is injected into agent prompts, so every bundle skill is scanned
   // like an admin-authored one. Advisory, as for the skill API: findings come
@@ -639,8 +779,19 @@ export async function installBundle(
   }
   warnings.push(...bundleAgentRuntimeWarnings(manifest));
   warnings.push(...bundleContainerImageWarnings(manifest));
+  // Plugin commits are read (network) and hash-checked before any write; a mismatch, an invalid
+  // folder or an unacknowledged warning refuses the install here, with nothing written.
+  const pluginPlans = await readBundlePlugins(manifest.entities.plugins ?? [], opts.pluginReader);
+  const acknowledge = opts.acknowledgeWarnings ?? false;
+  if (!acknowledge) {
+    const early = warningsToAcknowledge(await decidePlugins(prisma, pluginPlans));
+    if (early.length > 0) {
+      throw new BundlePluginWarningsError(early);
+    }
+  }
   let replacedProtected = emptyConflicts();
   let installedBundleId = '';
+  let pluginResult: Awaited<ReturnType<typeof applyPlugins>> = { applied: [], warnings: [] };
 
   // Atomic: seed all entities + record the registry row in one transaction, so a
   // mid-install failure rolls back rather than leaving a half-applied base layer.
@@ -650,8 +801,14 @@ export async function installBundle(
       // First, and inside the transaction: a refusal throws before any write
       // (and would roll one back regardless), naming every conflict at once.
       const conflicts = await findProtectedConflicts(tx, manifest);
+      const pluginDecisions = await decidePlugins(tx, pluginPlans);
+      const refusedPlugins = pluginConflicts(pluginDecisions);
+      if (refusedPlugins.length > 0) {
+        conflicts.plugins = refusedPlugins;
+      }
       if (hasConflicts(conflicts)) {
-        if (!opts.overwriteProtected) {
+        // A plugin conflict is never lifted by overwriteProtected.
+        if (!opts.overwriteProtected || refusedPlugins.length > 0) {
           throw new BundleProtectedContentError(conflicts, manifest.metadata.name);
         }
         replacedProtected = conflicts;
@@ -775,6 +932,15 @@ export async function installBundle(
         counts.templates++;
       }
 
+      // Plugins after the agents they bind to exist; profiles are created with hooks off.
+      if (pluginPlans.length > 0) {
+        pluginResult = await applyPlugins(tx, pluginDecisions, {
+          acknowledgeWarnings: acknowledge,
+          installedById: opts.installedById ?? null,
+        });
+        counts.plugins = pluginResult.applied.length;
+      }
+
       // Record the install in the registry inside the same transaction (one row
       // per bundle name) — a rolled-back install leaves no registry row.
       const registryRow = await tx.installedBundle.upsert({
@@ -802,9 +968,32 @@ export async function installBundle(
     { maxWait: 10_000, timeout: 120_000 }
   );
 
+  // Plugin warnings (structure, scanner findings, hooks off) and the skill projection, which
+  // runs once the profiles are committed.
+  if (pluginResult.applied.length > 0) {
+    warnings.push(...pluginPlans.flatMap((p) => p.warnings));
+    warnings.push(
+      ...pluginResult.applied
+        .filter((a) => a.action === 'create')
+        .map((a) => `plugin '${a.name}' ${HOOKS_OFF_NOTE}`)
+    );
+    warnings.push(...pluginResult.warnings);
+    warnings.push(
+      ...(await projectInstalledPlugins(prisma, pluginResult.applied, opts.installedById ?? null))
+    );
+  }
+
   return {
     counts,
     installedBundleId,
+    ...(pluginResult.applied.length > 0
+      ? {
+          plugins: {
+            created: pluginResult.applied.filter((a) => a.action === 'create').map((a) => a.name),
+            reused: pluginResult.applied.filter((a) => a.action === 'reuse').map((a) => a.name),
+          },
+        }
+      : {}),
     replacedProtected,
     signedBy: trust.signedBy,
     trustState,
@@ -843,6 +1032,25 @@ export interface BundlePreview {
   version: string;
   /** Advisory findings: scanned skill text, harness runtimes, container images. */
   warnings: string[];
+  /** Plugin references: what each would do, with its approval warnings and bindings. */
+  plugins: BundlePreviewPlugin[];
+}
+
+/** What installing one plugin reference would do. */
+export interface BundlePreviewPlugin {
+  /** `create` approves a new profile (hooks off); `reuse` finds it approved; `conflict` refuses. */
+  action: 'create' | 'reuse' | 'conflict';
+  name: string;
+  sha: string;
+  contentHash: string;
+  /** Hooks are off on a created profile; null for a reused one (its switch is not touched). */
+  hooksEnabled: false | null;
+  /** Structure and scanner findings; installing a `create` with any needs an acknowledgement. */
+  warnings: string[];
+  bindings: {
+    agentKey: string;
+    outcome: 'bind' | 'already-bound' | 'agent-missing' | 'wrong-runtime';
+  }[];
 }
 
 /**
@@ -857,6 +1065,10 @@ export async function previewBundle(
 ): Promise<BundlePreview> {
   const { manifest, origin, trust, trustState } = validateBundleForInstall(raw, opts);
   const protectedNow = await findProtectedConflicts(prisma as unknown as InstallTx, manifest);
+  // The same fetch-and-verify an install makes, so a preview cannot pass a hash it would refuse.
+  const pluginPlans = await readBundlePlugins(manifest.entities.plugins ?? [], opts.pluginReader);
+  const pluginDecisions = await decidePlugins(prisma, pluginPlans);
+  const plugins = await previewPlugins(prisma, manifest, pluginDecisions);
 
   const entries = async <T>(
     items: T[],
@@ -930,20 +1142,82 @@ export async function previewBundle(
   }
   warnings.push(...bundleAgentRuntimeWarnings(manifest));
   warnings.push(...bundleContainerImageWarnings(manifest));
+  warnings.push(...pluginPlans.flatMap((p) => p.warnings));
+  for (const p of plugins) {
+    if (p.action === 'create') {
+      warnings.push(`plugin '${p.name}' ${HOOKS_OFF_NOTE}`);
+    }
+    for (const b of p.bindings) {
+      const w = bindingWarning(p.name, b.agentKey, b.outcome);
+      if (w) {
+        warnings.push(w);
+      }
+    }
+  }
+  const conflicting = pluginConflicts(pluginDecisions);
+  const collision = await bindingCollision(prisma, pluginDecisions);
 
   return {
     blockedReason:
       trustState === 'UNVERIFIED' && !opts.allowUnverified
         ? 'This bundle is unverified and this deployment does not allow unverified installs.'
-        : null,
+        : conflicting.length > 0
+          ? `Plugin(s) ${conflicting.join(', ')} are already approved with different content; a bundle never replaces an approved plugin.`
+          : collision
+            ? collision.message
+            : null,
     contentHash: manifest.metadata.contentHash,
     entities: { agents, scannerPatterns, skills, templates },
     installedVersion: installed?.version ?? null,
     name: manifest.metadata.name,
+    plugins,
     signedBy: trust.signedBy,
     source: manifest.metadata.source ?? origin,
     trustState,
     version: manifest.metadata.version,
     warnings,
   };
+}
+
+/** The preview's plugin entries: each decision, with where its bindings would land. */
+async function previewPlugins(
+  prisma: PrismaClient,
+  manifest: BundleManifest,
+  decisions: readonly PluginDecision[]
+): Promise<BundlePreviewPlugin[]> {
+  const bundleAgents = new Map(manifest.entities.agents.map((a) => [a.key, a]));
+  const out: BundlePreviewPlugin[] = [];
+  for (const d of decisions) {
+    const { plugin } = d.plan;
+    const bindings: BundlePreviewPlugin['bindings'] = [];
+    for (const { agentKey } of plugin.bindings) {
+      const head = await prisma.agent.findFirst({
+        orderBy: { version: 'desc' },
+        select: { harnessProfiles: true, runtime: true },
+        where: { key: agentKey, scope: 'GLOBAL', teamId: null, workflowTemplateId: null },
+      });
+      const inBundle = bundleAgents.get(agentKey);
+      // The runtime the agent will have once the bundle's own agent entry is installed.
+      const runtime =
+        inBundle && inBundle.runtime !== undefined ? inBundle.runtime : (head?.runtime ?? null);
+      bindings.push({
+        agentKey,
+        outcome: bindingOutcome({
+          alreadyBound: head?.harnessProfiles.includes(plugin.name) ?? false,
+          exists: head !== null || inBundle !== undefined,
+          runtime,
+        }),
+      });
+    }
+    out.push({
+      action: d.action,
+      bindings,
+      contentHash: plugin.contentHash,
+      hooksEnabled: d.action === 'create' ? false : null,
+      name: plugin.name,
+      sha: plugin.sha,
+      warnings: d.plan.warnings,
+    });
+  }
+  return out;
 }

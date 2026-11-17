@@ -315,6 +315,8 @@ export {
   resolveHumanStep,
   updateDomainState,
 } from './state.js';
+export type { SyncMarketplacesResult } from './syncMarketplaces.js';
+export { syncMarketplaces } from './syncMarketplaces.js';
 export type { SyncRepoAccessInput, SyncRepoAccessResult } from './syncRepoAccess.js';
 export { syncRepoAccess } from './syncRepoAccess.js';
 export type { SyncSkillSourcesResult } from './syncSkillSources.js';

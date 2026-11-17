@@ -16,7 +16,6 @@ import {
   bulkUpdateAgentModels,
   createAgent,
   deactivateAgentLineage,
-  defaultOverrideProfile,
   defaultOverrideRuntime,
   inheritingHarnessWarnings,
   listAgents,
@@ -24,6 +23,7 @@ import {
   modelRequiredError,
   profileSaveError,
   runtimeSaveError,
+  startingOverrideProfiles,
   updateAgent,
   validateAgentScopeRefs,
   validateCredentialRef,
@@ -130,15 +130,6 @@ function runtimeChangeForbidden(
   return actorRole !== 'ADMIN' && requested !== undefined && requested !== current;
 }
 
-/** Same floor and same restate-is-not-a-change rule as {@link runtimeChangeForbidden}. */
-function profileChangeForbidden(
-  actorRole: string,
-  requested: string[] | undefined,
-  current: string[]
-): boolean {
-  return actorRole !== 'ADMIN' && profilesChanged(requested, current);
-}
-
 /** Whether `requested` names a different ordered list than `current` (undefined = keep). */
 function profilesChanged(requested: string[] | undefined, current: string[]): boolean {
   return (
@@ -161,13 +152,6 @@ const RUNTIME_ADMIN_ONLY = {
   error: {
     code: 'FORBIDDEN',
     message: "Only a platform admin can change an agent's runtime.",
-  },
-} as const;
-
-const PROFILE_ADMIN_ONLY = {
-  error: {
-    code: 'PROFILE_ADMIN_ONLY',
-    message: "Only a platform admin can change an agent's harness profile.",
   },
 } as const;
 
@@ -405,14 +389,16 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       if (runtimeError) {
         return reply.status(400).send(runtimeModelMismatch(runtimeError));
       }
-      const harnessProfiles =
+      const starting =
         body.harnessProfiles !== undefined
-          ? body.harnessProfiles
-          : await defaultOverrideProfile(fastify.prisma, body, runtime);
+          ? null
+          : await startingOverrideProfiles(fastify.prisma, body, runtime);
+      const harnessProfiles = body.harnessProfiles ?? starting?.harnessProfiles ?? [];
       const profileError = await profileSaveError(
         fastify.prisma,
         { ...named, harnessProfiles, runtime },
-        body.harnessProfiles !== undefined
+        body.harnessProfiles !== undefined,
+        { current: [], scope: body.scope, teamId: body.teamId }
       );
       if (profileError) {
         return sendError(reply, 400, profileError.code, profileError.message);
@@ -444,6 +430,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
           ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
           ...(credentialWarnings.length > 0 ? { credentialWarnings } : {}),
+          ...(starting?.notes.length ? { profileNotes: starting.notes } : {}),
         });
       } catch (err) {
         if (err instanceof AgentLineageExistsError) {
@@ -489,7 +476,12 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           ...merged,
           harnessProfiles: request.body.harnessProfiles ?? current.harnessProfiles,
         },
-        profilesChanged(request.body.harnessProfiles, current.harnessProfiles)
+        profilesChanged(request.body.harnessProfiles, current.harnessProfiles),
+        {
+          current: current.harnessProfiles,
+          scope: current.scope as AgentScope,
+          teamId: current.teamId,
+        }
       );
       if (profileError) {
         return sendError(reply, 400, profileError.code, profileError.message);
@@ -680,15 +672,6 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       if (runtimeChangeForbidden(actor.role, request.body.runtime, inherited)) {
         return reply.status(403).send(RUNTIME_ADMIN_ONLY);
       }
-      // Likewise the profile: a new override starts on the platform-wide row's.
-      const inheritedProfile = await defaultOverrideProfile(
-        fastify.prisma,
-        { key: request.body.key, scope: 'TEAM' },
-        inherited
-      );
-      if (profileChangeForbidden(actor.role, request.body.harnessProfiles, inheritedProfile)) {
-        return reply.status(403).send(PROFILE_ADMIN_ONLY);
-      }
       const modelError = modelRequiredError(named, true);
       if (modelError) {
         return sendError(reply, 400, 'MODEL_REQUIRED', modelError);
@@ -698,18 +681,22 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       if (runtimeError) {
         return reply.status(400).send(runtimeModelMismatch(runtimeError));
       }
-      const harnessProfiles =
+      // A new override starts on the platform-wide row's profiles that this team has enabled; a
+      // team admin may bind (only) plugins the team has enabled, and remove bindings freely.
+      const starting =
         request.body.harnessProfiles !== undefined
-          ? request.body.harnessProfiles
-          : await defaultOverrideProfile(
+          ? null
+          : await startingOverrideProfiles(
               fastify.prisma,
-              { key: request.body.key, scope: 'TEAM' },
+              { key: request.body.key, scope: 'TEAM', teamId: request.params.id },
               runtime
             );
+      const harnessProfiles = request.body.harnessProfiles ?? starting?.harnessProfiles ?? [];
       const profileError = await profileSaveError(
         fastify.prisma,
         { ...named, harnessProfiles, runtime },
-        request.body.harnessProfiles !== undefined
+        request.body.harnessProfiles !== undefined,
+        { current: [], scope: 'TEAM', teamId: request.params.id }
       );
       if (profileError) {
         return sendError(reply, 400, profileError.code, profileError.message);
@@ -758,6 +745,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
           ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
           ...(credentialWarnings.length > 0 ? { credentialWarnings } : {}),
+          ...(starting?.notes.length ? { profileNotes: starting.notes } : {}),
         });
       } catch (err) {
         if (err instanceof AgentLineageExistsError) {
@@ -792,11 +780,6 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       if (runtimeChangeForbidden(actor.role, request.body.runtime, current.runtime)) {
         return reply.status(403).send(RUNTIME_ADMIN_ONLY);
       }
-      if (
-        profileChangeForbidden(actor.role, request.body.harnessProfiles, current.harnessProfiles)
-      ) {
-        return reply.status(403).send(PROFILE_ADMIN_ONLY);
-      }
       const merged = mergedRuntimeAndModel(current, request.body);
       const modelError = modelRequiredError(merged, writesModel(request.body));
       if (modelError) {
@@ -812,7 +795,12 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           ...merged,
           harnessProfiles: request.body.harnessProfiles ?? current.harnessProfiles,
         },
-        profilesChanged(request.body.harnessProfiles, current.harnessProfiles)
+        profilesChanged(request.body.harnessProfiles, current.harnessProfiles),
+        {
+          current: current.harnessProfiles,
+          scope: current.scope as AgentScope,
+          teamId: current.teamId,
+        }
       );
       if (profileError) {
         return sendError(reply, 400, profileError.code, profileError.message);

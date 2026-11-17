@@ -82,6 +82,8 @@ export async function syncSchedulesOnceConnected(
     .catch(warn('audit activity prune'));
   // One cheap request per tracked source; it only flags. On by default.
   app.temporal.syncSkillSourceSyncSchedule(sweeps.skillSourceSync).catch(warn('skill source sync'));
+  // One cheap request per tracked marketplace; it only flags. On by default.
+  app.temporal.syncMarketplaceSyncSchedule(sweeps.marketplaceSync).catch(warn('marketplace sync'));
   // Regenerates the outcome report (docs/outcome-metrics.md) from run data; it reads and stores one
   // snapshot. On by default.
   app.temporal.syncOutcomeReportSchedule(sweeps.outcomeReport).catch(warn('outcome report'));

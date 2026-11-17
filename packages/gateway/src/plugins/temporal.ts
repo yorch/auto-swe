@@ -84,6 +84,7 @@ export const RUN_REAPER_SCHEDULE_ID = 'auto-swe-run-reaper';
 export const WORKSPACE_REAPER_SCHEDULE_ID = 'auto-swe-workspace-reaper';
 export const AUTOMATION_DECISION_PRUNE_SCHEDULE_ID = 'auto-swe-automation-decision-prune';
 export const SKILL_SOURCE_SYNC_SCHEDULE_ID = 'auto-swe-skill-source-sync';
+export const MARKETPLACE_SYNC_SCHEDULE_ID = 'auto-swe-marketplace-sync';
 export const OUTCOME_REPORT_SCHEDULE_ID = 'auto-swe-outcome-report';
 export const SLACK_CHANNEL_SYNC_SCHEDULE_ID = 'auto-swe-slack-channel-sync';
 export const CALLBACK_DELIVERY_SCHEDULE_ID = 'auto-swe-callback-delivery';
@@ -333,6 +334,15 @@ export interface SkillSourceSyncScheduleConfig {
 }
 
 /**
+ * The marketplace sweep. The workflow reads the tracked marketplaces itself, so the schedule
+ * carries no arguments.
+ */
+export interface MarketplaceSyncScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
+/**
  * The outcome-report regeneration. The workflow reads the run data itself, so the schedule carries
  * no arguments.
  */
@@ -544,6 +554,7 @@ declare module 'fastify' {
       triggerReportDigestTest: (subscriptionId: string) => Promise<void>;
       syncAuditActivityPruneSchedule: (config: AuditActivityPruneScheduleConfig) => Promise<void>;
       syncSkillSourceSyncSchedule: (config: SkillSourceSyncScheduleConfig) => Promise<void>;
+      syncMarketplaceSyncSchedule: (config: MarketplaceSyncScheduleConfig) => Promise<void>;
       syncOutcomeReportSchedule: (config: OutcomeReportScheduleConfig) => Promise<void>;
       syncSlackChannelSyncSchedule: (config: SlackChannelSyncScheduleConfig) => Promise<void>;
       getRepoDependencyScanScheduleStatus: () => Promise<RepoDependencyScanScheduleStatus>;
@@ -752,6 +763,17 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       taskQueue: 'engineering-workflow',
       type: 'startWorkflow' as const,
       workflowType: 'ScheduledSkillSourceSyncWorkflow',
+    };
+  }
+
+  // Marketplace sweep action. The workflow lists the marketplaces itself, so the schedule carries
+  // no arguments.
+  function makeMarketplaceSyncScheduleAction() {
+    return {
+      args: [] as unknown[],
+      taskQueue: 'engineering-workflow',
+      type: 'startWorkflow' as const,
+      workflowType: 'ScheduledMarketplaceSyncWorkflow',
     };
   }
 
@@ -1693,6 +1715,16 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
     async syncKnowledgeBaseSyncSchedule(config: RepoDependencyScanScheduleConfig): Promise<void> {
       await upsertSchedule(KNOWLEDGE_BASE_SYNC_SCHEDULE_ID, {
         action: makeSweepAction('ScheduledKnowledgeBaseSyncWorkflow'),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
+    // ── Marketplace update check (one system-wide Temporal Schedule) ──
+
+    async syncMarketplaceSyncSchedule(config: MarketplaceSyncScheduleConfig): Promise<void> {
+      await upsertSchedule(MARKETPLACE_SYNC_SCHEDULE_ID, {
+        action: makeMarketplaceSyncScheduleAction(),
         cronExpression: config.cronExpression,
         paused: !config.enabled,
       });

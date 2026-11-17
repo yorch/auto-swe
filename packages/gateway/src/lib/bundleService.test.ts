@@ -213,7 +213,7 @@ describe('exportBundle', () => {
     expect(m.entities.agents[1]).not.toHaveProperty('runtime');
   });
 
-  it('never exports the harness profile an agent is bound to', async () => {
+  it('exports a bound harness profile as a plugin reference, never inside the agent', async () => {
     const prisma = {
       agent: {
         findMany: vi.fn().mockResolvedValue([
@@ -233,6 +233,18 @@ describe('exportBundle', () => {
           },
         ]),
       },
+      harnessProfile: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            host: 'github.com',
+            name: 'review-kit',
+            owner: 'acme',
+            path: 'plugins/kit',
+            repo: 'tools',
+            versions: [{ commitSha: 'a'.repeat(40), contentHash: 'b'.repeat(64) }],
+          },
+        ]),
+      },
       scannerPattern: { findMany: vi.fn().mockResolvedValue([]) },
       skill: { findMany: vi.fn().mockResolvedValue([]) },
       workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
@@ -242,6 +254,17 @@ describe('exportBundle', () => {
 
     expect(m.entities.agents[0]).toMatchObject({ key: 'a', runtime: 'claude-code' });
     expect(m.entities.agents[0]).not.toHaveProperty('harnessProfiles');
+    expect(m.entities.plugins).toEqual([
+      {
+        bindings: [{ agentKey: 'a' }],
+        contentHash: 'b'.repeat(64),
+        name: 'review-kit',
+        sha: 'a'.repeat(40),
+        source: { host: 'github.com', owner: 'acme', path: 'plugins/kit', repo: 'tools' },
+      },
+    ]);
+    expect(m.bundleSchemaVersion).toBe(3);
+    expect(m.metadata.contentHash).toBe(computeContentHash(m));
   });
 
   it('carries an agent’s reasoning level when it has one, and no field when it has none', async () => {

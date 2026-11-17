@@ -409,7 +409,12 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
           inheritsModelFrom: source.inheritsModelFrom,
           runtime: toImplementerRuntime(source.runtime),
         },
-        true
+        true,
+        {
+          current: latest.harnessProfiles,
+          scope: anchor.scope as AgentScope,
+          teamId: anchor.teamId,
+        }
       );
       if (profileError) {
         return sendError(reply, 400, profileError.code, profileError.message);
