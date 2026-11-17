@@ -61,8 +61,35 @@ describe('AgentRunPayloadSchema orchestration fields', () => {
     [{ pathScopes: Array.from({ length: 21 }, (_, i) => `d${i}/**`) }],
     [{ pathScopes: ['x'.repeat(201)] }],
     [{ pathScopes: 'src/**' }],
+    [{ pathScopes: [] }],
+    [{ pathScopes: ['../etc/**'] }],
+    [{ pathScopes: ['/abs/x'] }],
+    [{ pathScopes: ['src/ok/**', 'a/**/b'] }],
+    [{ pathScopes: ['src/a b.ts'] }],
+    [{ pathScopes: ['src/a\u{E0041}.ts'] }],
+    [{ pathScopes: [''] }],
+    [{ pathScopes: [42] }],
   ])('rejects %j', (bad) => {
     expect(AgentRunPayloadSchema.safeParse({ agentRef: 'a', ...bad }).success).toBe(false);
+  });
+
+  it('requires scopes for an orchestration child that delivers, whatever the delivery', () => {
+    const base = { agentRef: 'a', orchestrationId: id };
+    for (const deliver of ['branch', 'draft_pr'] as const) {
+      expect(AgentRunPayloadSchema.safeParse({ ...base, deliver }).success).toBe(false);
+      expect(
+        AgentRunPayloadSchema.safeParse({ ...base, deliver, pathScopes: ['src/a/**'] }).success
+      ).toBe(true);
+    }
+    // the default delivery is 'none', so a bare reader child is fine
+    expect(AgentRunPayloadSchema.safeParse(base).success).toBe(true);
+    expect(AgentRunPayloadSchema.safeParse({ ...base, deliver: 'none' }).success).toBe(true);
+  });
+
+  it('leaves a direct run (no orchestration) unrestricted when it delivers', () => {
+    expect(AgentRunPayloadSchema.safeParse({ agentRef: 'a', deliver: 'draft_pr' }).success).toBe(
+      true
+    );
   });
 });
 

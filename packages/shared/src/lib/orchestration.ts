@@ -1,5 +1,25 @@
 import { z } from 'zod';
+import { BUDGET_TIERS } from '../types/workflow.js';
 import { AGENT_REF_RE, AGENT_RUN_DELIVERIES, type AgentRunDelivery } from './agentRun.js';
+import { isSafeGitBranchName } from './gitRef.js';
+import {
+  hasUnsafeChars,
+  isWellFormedScope,
+  PATH_SCOPE_MAX_LENGTH,
+  PATH_SCOPES_MAX,
+  type ParsedScope,
+  type ParseScopeResult,
+  parsePathScope,
+  stripUnsafeChars,
+} from './pathScope.js';
+
+export {
+  PATH_SCOPE_MAX_LENGTH,
+  PATH_SCOPES_MAX,
+  type ParsedScope,
+  type ParseScopeResult,
+  parsePathScope,
+};
 
 /**
  * Orchestrated agent runs: the contracts the gateway, worker and web share.
@@ -69,8 +89,10 @@ export type ApprovalStatusValue = (typeof APPROVAL_STATUSES)[number];
 export const CHILD_STATUSES = ['STARTING', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED'] as const;
 export type ChildStatus = (typeof CHILD_STATUSES)[number];
 
-export const ORCHESTRATION_BUDGET_TIERS = ['STANDARD', 'LARGE', 'EPIC'] as const;
-export const ORCHESTRATION_DELIVERY_DEFAULTS = ['none', 'branch', 'draft_pr'] as const;
+/** The run budget tiers, not a copy: an orchestration's tier is a work request's tier. */
+export const ORCHESTRATION_BUDGET_TIERS = BUDGET_TIERS;
+/** The agent-run deliveries, not a copy: the attach card's default is one of them. */
+export const ORCHESTRATION_DELIVERY_DEFAULTS = AGENT_RUN_DELIVERIES;
 
 /** Coded refusals of a spawn, attach or message. The worker turns each into a SYSTEM message. */
 export const ORCHESTRATION_REFUSAL_CODES = [
@@ -95,138 +117,33 @@ export function isOrchestrationRefusalCode(value: unknown): value is Orchestrati
 
 // ── Path scopes (spec section 4.3) ───────────────────────────────────────────
 
-export const PATH_SCOPE_MAX_LENGTH = 200;
-export const PATH_SCOPES_MAX = 20;
-
-/**
- * A parsed scope. `path` is the directory for `tree` (`src/lib/**` has path `src/lib`), the whole
- * pattern for `dir` (`src/*.ts`), and the file path for `file`.
- */
-export type ParsedScope = { kind: 'tree' | 'dir' | 'file'; path: string };
-
-export type ParseScopeResult = { ok: true; scope: ParsedScope } | { ok: false; reason: string };
-
-/**
- * C0/C1 controls, soft hyphen, bidi controls and zero-width characters: none belongs in a
- * repository path or an attribute a reviewer is meant to read. Done by code point rather than a
- * regular expression so the source carries no literal control characters.
- */
-function isUnsafeCodePoint(c: number, keepWhitespace: boolean): boolean {
-  if (keepWhitespace && (c === 0x0a || c === 0x09)) {
-    return false;
-  }
-  return (
-    c <= 0x1f ||
-    (c >= 0x7f && c <= 0x9f) ||
-    c === 0xad ||
-    (c >= 0x200b && c <= 0x200f) ||
-    (c >= 0x2028 && c <= 0x202e) ||
-    (c >= 0x2060 && c <= 0x206f) ||
-    c === 0xfeff
-  );
-}
-
-function hasUnsafeChars(value: string): boolean {
-  for (let i = 0; i < value.length; i++) {
-    if (isUnsafeCodePoint(value.charCodeAt(i), false)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function stripUnsafeChars(value: string, keepWhitespace: boolean): string {
-  let out = '';
-  for (let i = 0; i < value.length; i++) {
-    if (!isUnsafeCodePoint(value.charCodeAt(i), keepWhitespace)) {
-      out += value[i];
-    }
-  }
-  return out;
-}
-
-const GLOB_CHARS_RE = /[*?[\]{}]/;
-const DIR_GLOB_FILE_RE = /^\*(\.[A-Za-z0-9_-]+)*$/;
-
-function nfc(value: string): string {
-  return value.normalize('NFC');
-}
-
-export function parsePathScope(raw: string): ParseScopeResult {
-  if (typeof raw !== 'string') {
-    return { ok: false, reason: 'scope must be a string' };
-  }
-  if (raw.length === 0) {
-    return { ok: false, reason: 'scope is empty' };
-  }
-  if (raw.length > PATH_SCOPE_MAX_LENGTH) {
-    return { ok: false, reason: `scope is longer than ${PATH_SCOPE_MAX_LENGTH} characters` };
-  }
-  if (hasUnsafeChars(raw)) {
-    return { ok: false, reason: 'scope contains a control character' };
-  }
-  if (raw !== raw.trim()) {
-    return { ok: false, reason: 'scope has leading or trailing whitespace' };
-  }
-  if (raw.includes('\\')) {
-    return { ok: false, reason: 'scope contains a backslash' };
-  }
-  if (raw.startsWith('/')) {
-    return { ok: false, reason: 'scope is an absolute path' };
-  }
-  const scope = nfc(raw);
-  const segments = scope.split('/');
-  if (segments.some((s) => s === '')) {
-    return { ok: false, reason: 'scope has an empty segment or a trailing slash' };
-  }
-  if (segments.some((s) => s === '..')) {
-    return { ok: false, reason: 'scope contains ..' };
-  }
-  if (segments.some((s) => s === '.')) {
-    return { ok: false, reason: 'scope contains a . segment' };
-  }
-  if (/^[A-Za-z]:$/.test(segments[0] ?? '')) {
-    return { ok: false, reason: 'scope looks like a drive path' };
-  }
-
-  const last = segments[segments.length - 1] as string;
-  const parents = segments.slice(0, -1);
-  if (parents.some((s) => GLOB_CHARS_RE.test(s))) {
-    return { ok: false, reason: 'a wildcard is only allowed in the last segment' };
-  }
-
-  if (last === '**') {
-    if (parents.length === 0) {
-      return { ok: false, reason: '** needs a directory in front of it' };
-    }
-    return { ok: true, scope: { kind: 'tree', path: parents.join('/') } };
-  }
-  if (last.includes('**')) {
-    return { ok: false, reason: '** is only allowed as a whole last segment' };
-  }
-  if (GLOB_CHARS_RE.test(last)) {
-    if (!DIR_GLOB_FILE_RE.test(last)) {
-      return { ok: false, reason: 'the only glob form is * or *.ext in the last segment' };
-    }
-    return { ok: true, scope: { kind: 'dir', path: scope } };
-  }
-  return { ok: true, scope: { kind: 'file', path: scope } };
-}
-
+/** Lock files by name; the generic basename rule below catches the ones not listed. */
 const LOCK_FILE_RE =
-  /(^|\/)(yarn\.lock|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|bun\.lockb?|Cargo\.lock|poetry\.lock|uv\.lock|Pipfile\.lock|go\.sum|Gemfile\.lock|composer\.lock)$/;
-const ROOT_PACKAGE_JSON_RE = /^package\.json$/;
-const BARREL_RE = /(^|\/)index\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
+  /(^|\/)(yarn\.lock|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|bun\.lockb?|Cargo\.lock|poetry\.lock|uv\.lock|Pipfile\.lock|go\.sum|Gemfile\.lock|composer\.lock|deno\.lock|flake\.lock|Podfile\.lock|packages\.lock\.json|gradle\.lockfile)$/i;
+/** Any basename that looks like a lock file. Fails closed: a false positive only asks for the owner flag. */
+const GENERIC_LOCK_BASENAME_RE = /\.lock$|\.lockfile$|-lock\.|\.lock\./i;
+const ROOT_PACKAGE_JSON_RE = /^package\.json$/i;
+const BARREL_RE = /(^|\/)(index\.(d\.ts|ts|tsx|mts|cts|js|jsx|mjs|cjs)|__init__\.py|mod\.rs)$/i;
+
+function isLockLikeBasename(path: string): boolean {
+  return GENERIC_LOCK_BASENAME_RE.test(baseOf(path));
+}
 
 /** Files several writers would otherwise collide on. A scope naming one needs the owner flag. */
 export const SHARED_FILE_PATTERNS: readonly RegExp[] = [
   LOCK_FILE_RE,
+  GENERIC_LOCK_BASENAME_RE,
   ROOT_PACKAGE_JSON_RE,
   BARREL_RE,
 ];
 
 export function isSharedFilePath(path: string): boolean {
-  return SHARED_FILE_PATTERNS.some((re) => re.test(path));
+  return (
+    LOCK_FILE_RE.test(path) ||
+    isLockLikeBasename(path) ||
+    ROOT_PACKAGE_JSON_RE.test(path) ||
+    BARREL_RE.test(path)
+  );
 }
 
 /** Names a `dir/*.ext` glob could match that are shared files, for the shared-file rule. */
@@ -235,6 +152,7 @@ const SHARED_PROBE_NAMES = [
   'package-lock.json',
   'npm-shrinkwrap.json',
   'pnpm-lock.yaml',
+  'pnpm-workspace.yaml',
   'bun.lock',
   'bun.lockb',
   'Cargo.lock',
@@ -244,15 +162,23 @@ const SHARED_PROBE_NAMES = [
   'go.sum',
   'Gemfile.lock',
   'composer.lock',
+  'deno.lock',
+  'flake.lock',
+  'Podfile.lock',
+  'packages.lock.json',
+  'gradle.lockfile',
   'package.json',
   'index.ts',
   'index.tsx',
   'index.mts',
   'index.cts',
+  'index.d.ts',
   'index.js',
   'index.jsx',
   'index.mjs',
   'index.cjs',
+  '__init__.py',
+  'mod.rs',
 ];
 
 function dirOf(path: string): string {
@@ -293,47 +219,59 @@ export type ValidateScopesResult =
   | { ok: true; scopes: ParsedScope[] }
   | { ok: false; errors: string[] };
 
+/** A bounded, non-throwing description of a rejected entry. */
+function describeRejected(raw: unknown): string {
+  return typeof raw === 'string' ? JSON.stringify(raw.slice(0, 80)) : `a ${typeof raw} entry`;
+}
+
 /**
- * Parse, deduplicate and check a writer's scopes. `isOwnerOfSharedFiles` is the caller's verdict
- * that no other writer of the orchestration holds a shared file (lock file, root `package.json`,
- * barrel); without it a scope that names one is refused. A scope inside a subtree is not refused
- * here, because the overlap rule already keeps sibling writers' subtrees apart.
+ * Parse, deduplicate and check a writer's scopes. A writer needs at least one, so an empty list is
+ * refused (a caller that wants "no restriction" must not call this). `isOwnerOfSharedFiles` is the
+ * caller's verdict that no other writer of the orchestration holds a shared file (lock file, root
+ * `package.json`, barrel); without it a scope that names one is refused. A scope inside a subtree
+ * is not refused here, because the overlap rule already keeps sibling writers' subtrees apart.
+ * Never throws.
  */
 export function validatePathScopes(
   scopes: readonly string[],
   opts: { isOwnerOfSharedFiles?: boolean } = {}
 ): ValidateScopesResult {
-  if (!Array.isArray(scopes)) {
-    return { errors: ['scopes must be a list'], ok: false };
-  }
-  if (scopes.length > PATH_SCOPES_MAX) {
-    return { errors: [`at most ${PATH_SCOPES_MAX} path scopes are allowed`], ok: false };
-  }
-  const errors: string[] = [];
-  const seen = new Set<string>();
-  const out: ParsedScope[] = [];
-  for (const raw of scopes) {
-    const parsed = parsePathScope(raw);
-    if (!parsed.ok) {
-      errors.push(
-        `${JSON.stringify(typeof raw === 'string' ? raw.slice(0, 80) : raw)}: ${parsed.reason}`
-      );
-      continue;
+  try {
+    if (!Array.isArray(scopes)) {
+      return { errors: ['scopes must be a list'], ok: false };
     }
-    if (!opts.isOwnerOfSharedFiles && scopeNamesSharedFile(parsed.scope)) {
-      errors.push(
-        `${JSON.stringify(parsed.scope.path)}: names a shared file (lock file, root package.json or index barrel) that only one writer may own`
-      );
-      continue;
+    if (scopes.length === 0) {
+      return { errors: ['at least one path scope is required'], ok: false };
     }
-    const key = `${parsed.scope.kind}:${parsed.scope.path}`;
-    if (seen.has(key)) {
-      continue;
+    if (scopes.length > PATH_SCOPES_MAX) {
+      return { errors: [`at most ${PATH_SCOPES_MAX} path scopes are allowed`], ok: false };
     }
-    seen.add(key);
-    out.push(parsed.scope);
+    const errors: string[] = [];
+    const seen = new Set<string>();
+    const out: ParsedScope[] = [];
+    for (const raw of scopes) {
+      const parsed = parsePathScope(raw);
+      if (!parsed.ok) {
+        errors.push(`${describeRejected(raw)}: ${parsed.reason}`);
+        continue;
+      }
+      if (!opts.isOwnerOfSharedFiles && scopeNamesSharedFile(parsed.scope)) {
+        errors.push(
+          `${JSON.stringify(parsed.scope.path)}: names a shared file (lock file, root package.json or index barrel) that only one writer may own`
+        );
+        continue;
+      }
+      const key = `${parsed.scope.kind}:${parsed.scope.path}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      out.push(parsed.scope);
+    }
+    return errors.length > 0 ? { errors, ok: false } : { ok: true, scopes: out };
+  } catch {
+    return { errors: ['scopes could not be read'], ok: false };
   }
-  return errors.length > 0 ? { errors, ok: false } : { ok: true, scopes: out };
 }
 
 function isPrefixDir(prefix: string, dir: string): boolean {
@@ -346,23 +284,16 @@ function suffixOfGlobBase(globBase: string): string {
 
 /**
  * Whether two scopes could cover the same path. Conservative: anything it cannot classify
- * overlaps. Comparison folds case, so two writers cannot be separated by `Src/` and `src/` on a
+ * overlaps, and a malformed scope (not what `parsePathScope` would produce) is unclassifiable.
+ * Comparison folds case, so two writers cannot be separated by `Src/` and `src/` on a
  * case-insensitive checkout (`pathInScopes` stays case-sensitive, which is the stricter side).
  */
 export function pathScopesOverlap(a: ParsedScope, b: ParsedScope): boolean {
-  const kinds = ['tree', 'dir', 'file'];
-  if (
-    !a ||
-    !b ||
-    !kinds.includes(a.kind) ||
-    !kinds.includes(b.kind) ||
-    typeof a.path !== 'string' ||
-    typeof b.path !== 'string'
-  ) {
+  if (!isWellFormedScope(a) || !isWellFormedScope(b)) {
     return true;
   }
-  const pa = nfc(a.path).toLowerCase();
-  const pb = nfc(b.path).toLowerCase();
+  const pa = a.path.toLowerCase();
+  const pb = b.path.toLowerCase();
 
   if (a.kind === 'tree' && b.kind === 'tree') {
     return isPrefixDir(pa, pb) || isPrefixDir(pb, pa);
@@ -412,19 +343,23 @@ export function firstOverlap(
   return null;
 }
 
-/** Normalise a changed-file path for a scope check; `null` when it cannot be trusted. */
+/**
+ * Normalise a changed-file path for a scope check; `null` when it cannot be trusted. A path that
+ * is not already in NFC form is untrusted: comparing it as written could separate it from a scope
+ * that names the same file, so it is out of scope rather than silently folded.
+ */
 function normaliseChangedPath(path: string): string | null {
   if (typeof path !== 'string' || path.length === 0) {
     return null;
   }
-  if (hasUnsafeChars(path) || path.includes('\\')) {
+  if (hasUnsafeChars(path) || path.includes('\\') || path.normalize('NFC') !== path) {
     return null;
   }
   if (path.startsWith('/')) {
     return null;
   }
   const out: string[] = [];
-  for (const seg of nfc(path).split('/')) {
+  for (const seg of path.split('/')) {
     if (seg === '..') {
       return null;
     }
@@ -439,16 +374,16 @@ function normaliseChangedPath(path: string): string | null {
   return out.join('/');
 }
 
-/** Whether a changed path falls inside one of the scopes. Case-sensitive; fails closed. */
+/**
+ * Whether a changed path falls inside one of the scopes. Case-sensitive; fails closed: an
+ * untrusted path, an empty list, or any malformed scope in the list is "not in scope".
+ */
 export function pathInScopes(path: string, scopes: readonly ParsedScope[]): boolean {
   const p = normaliseChangedPath(path);
-  if (p === null) {
+  if (p === null || !Array.isArray(scopes) || !scopes.every(isWellFormedScope)) {
     return false;
   }
   for (const scope of scopes) {
-    if (!scope || typeof scope.path !== 'string') {
-      continue;
-    }
     if (scope.kind === 'tree') {
       if (p.startsWith(`${scope.path}/`)) {
         return true;
@@ -468,26 +403,86 @@ export function pathInScopes(path: string, scopes: readonly ParsedScope[]): bool
 
 // ── MCP read-only classification (spec section 7) ────────────────────────────
 
-/** True only when the tool declares `readOnlyHint: true`. Missing or malformed is a write. */
+/**
+ * True only when the tool declares `readOnlyHint: true` as an own data property. Missing,
+ * inherited, accessor-backed or malformed is a write, and so is anything that throws when read
+ * (a hostile Proxy).
+ */
 export function isReadOnlyMcpTool(annotations: unknown): boolean {
-  if (typeof annotations !== 'object' || annotations === null || Array.isArray(annotations)) {
+  try {
+    if (typeof annotations !== 'object' || annotations === null || Array.isArray(annotations)) {
+      return false;
+    }
+    if (!Object.hasOwn(annotations, 'readOnlyHint')) {
+      return false;
+    }
+    const desc = Object.getOwnPropertyDescriptor(annotations, 'readOnlyHint');
+    return desc !== undefined && 'value' in desc && desc.value === true;
+  } catch {
     return false;
   }
-  return (annotations as { readOnlyHint?: unknown }).readOnlyHint === true;
 }
 
 // ── Intents ──────────────────────────────────────────────────────────────────
 
 const agentRefSchema = z.string().min(1).max(130).regex(AGENT_REF_RE);
 
+/** `key` of a `key` or `key@version` ref, lower-cased and trimmed. */
+function agentRefBase(ref: string): string {
+  return (ref.split('@')[0] ?? '').trim().toLowerCase();
+}
+
+/** The orchestrator may not spawn itself, however the ref is spelled. */
+function isOrchestratorRef(ref: string): boolean {
+  return agentRefBase(ref) === 'orchestrator';
+}
+
+/** Free text a model or a person wrote: no NUL (Postgres rejects it), bidi or other control characters. */
+function isCleanText(value: string): boolean {
+  return !hasUnsafeChars(value, true);
+}
+
+/** First occurrence of each value, compared by `key`. */
+function dedupeBy<T>(values: readonly T[], key: (v: T) => string): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const v of values) {
+    const k = key(v);
+    if (!seen.has(k)) {
+      seen.add(k);
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+/**
+ * What a launch asks for. `teamId` and `repoId` may both be given: `teamId` is the team the
+ * orchestrator's own spend bills, `repoId` the repository attached from the start. The schema
+ * cannot know their relation, so the gateway enforces that `teamId` is the repository's owning team
+ * (or a team the caller may bill) before it accepts the launch.
+ */
 export const OrchestrationLaunchSchema = z
   .object({
-    allowlist: z.array(agentRefSchema).min(1).max(20),
+    allowlist: z
+      .array(agentRefSchema)
+      .min(1)
+      .max(20)
+      .refine((refs) => !refs.some(isOrchestratorRef), {
+        message: 'the orchestrator cannot be on its own allowlist',
+      })
+      .transform((refs) => dedupeBy(refs, (r) => r)),
     budgetTier: z.enum(ORCHESTRATION_BUDGET_TIERS).default('STANDARD'),
-    connectionIds: z.array(z.string().uuid()).max(10).optional(),
+    connectionIds: z
+      .array(z.string().uuid())
+      .max(10)
+      .transform((ids) => dedupeBy(ids, (id) => id.toLowerCase()))
+      .optional(),
     deliveryDefault: z.enum(ORCHESTRATION_DELIVERY_DEFAULTS).default('none'),
     repoId: z.string().uuid().optional(),
-    task: z.string().trim().min(1).max(20_000),
+    task: z.string().trim().min(1).max(20_000).refine(isCleanText, {
+      message: 'task contains a control character',
+    }),
     teamId: z.string().uuid().optional(),
   })
   .refine((v) => v.teamId !== undefined || v.repoId !== undefined, {
@@ -498,13 +493,22 @@ export type OrchestrationLaunch = z.infer<typeof OrchestrationLaunchSchema>;
 
 export const SpawnIntentSchema = z
   .object({
-    agent: agentRefSchema,
+    agent: agentRefSchema.refine((ref) => !isOrchestratorRef(ref), {
+      message: 'the orchestrator cannot spawn itself',
+    }),
     deliver: z.enum(AGENT_RUN_DELIVERIES).optional(),
-    label: z.string().trim().min(1).max(80),
+    label: z
+      .string()
+      .trim()
+      .min(1)
+      .max(80)
+      .refine((v) => !hasUnsafeChars(v), { message: 'label contains a control character' }),
     maxSteps: z.number().int().min(1).max(500).optional(),
     pathScopes: z.array(z.string().max(PATH_SCOPE_MAX_LENGTH)).max(PATH_SCOPES_MAX).optional(),
     role: z.enum(['reader', 'writer']),
-    task: z.string().min(1).max(20_000),
+    task: z.string().trim().min(1).max(20_000).refine(isCleanText, {
+      message: 'task contains a control character',
+    }),
   })
   .superRefine((v, ctx) => {
     const scopes = v.pathScopes ?? [];
@@ -539,12 +543,31 @@ export const SpawnIntentSchema = z
         path: ['pathScopes'],
       });
     }
+    const parsedScopes: ParsedScope[] = [];
     scopes.forEach((raw, i) => {
       const parsed = parsePathScope(raw);
       if (!parsed.ok) {
         ctx.addIssue({ code: 'custom', message: parsed.reason, path: ['pathScopes', i] });
+      } else {
+        parsedScopes.push(parsed.scope);
       }
     });
+    // Identical scopes are tolerated (`validatePathScopes` merges them, and the schema stays free
+    // of transforms because it is also the tool's JSON schema); different scopes of one writer must
+    // be disjoint, so a single intent cannot hide a contradiction from the cross-writer overlap rule.
+    const distinct = dedupeBy(parsedScopes, (s) => `${s.kind}:${s.path}`);
+    for (let i = 0; i < distinct.length; i++) {
+      for (let j = i + 1; j < distinct.length; j++) {
+        if (pathScopesOverlap(distinct[i] as ParsedScope, distinct[j] as ParsedScope)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: "a writer's own path scopes overlap each other",
+            path: ['pathScopes'],
+          });
+          return;
+        }
+      }
+    }
   });
 export type SpawnIntent = z.infer<typeof SpawnIntentSchema>;
 export type SpawnDelivery = AgentRunDelivery;
@@ -568,8 +591,27 @@ export type RequestRepoIntent = z.infer<typeof RequestRepoIntentSchema>;
 
 export const CHILD_RESULT_MAX_CHARS = 20_000;
 
+/** An `https:` URL with no credentials and no control or whitespace characters. */
+function isHttpsUrl(value: string): boolean {
+  if (hasUnsafeChars(value) || /\s/u.test(value)) {
+    return false;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.username === '' && url.password === '';
+  } catch {
+    return false;
+  }
+}
+
 export const ChildResultSchema = z.object({
-  branch: z.string().max(300).optional(),
+  branch: z
+    .string()
+    .max(300)
+    .refine((v) => !hasUnsafeChars(v) && isSafeGitBranchName(v), {
+      message: 'is not a valid branch name',
+    })
+    .optional(),
   costUsd: z.number().min(0),
   filesChanged: z
     .array(
@@ -582,26 +624,51 @@ export const ChildResultSchema = z.object({
     .max(500)
     .default([]),
   gate: z.enum(['passed', 'no_changes', 'not_applicable', 'failed']).optional(),
-  prUrl: z.string().max(1000).optional(),
+  prUrl: z.string().max(1000).refine(isHttpsUrl, { message: 'must be an https URL' }).optional(),
   status: z.enum(['COMPLETED', 'FAILED', 'CANCELLED']),
   stoppedReason: z.string().max(200).optional(),
   summary: z.string().max(CHILD_RESULT_MAX_CHARS),
 });
 export type ChildResult = z.infer<typeof ChildResultSchema>;
 
-function escapeAttr(value: string): string {
-  return stripUnsafeChars(value, false)
-    .slice(0, 120)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+/** `String(value)` that cannot throw (a hostile `toString`, a Symbol). */
+function safeString(value: unknown): string {
+  try {
+    return String(value ?? '');
+  } catch {
+    return '';
+  }
 }
 
 /**
- * The only form in which a child's words reach the orchestrator: a quoted block. Anything that
- * could close or reopen the block is neutralised, so the text cannot step outside it.
+ * Entity for the characters that could open or close markup. EVERY `<`, `>` and `&` is replaced,
+ * so no lookalike spelling of a tag survives: the fence cannot be closed or reopened by any text,
+ * because the text contains no markup at all.
+ */
+const MARKUP_ENTITIES: Readonly<Record<string, string>> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+};
+
+function escapeAttr(value: unknown): string {
+  let out = '';
+  let count = 0;
+  for (const ch of stripUnsafeChars(safeString(value), false)) {
+    if (count++ >= 120) {
+      break;
+    }
+    out += MARKUP_ENTITIES[ch] ?? (ch === '"' ? '&quot;' : ch === "'" ? '&#39;' : ch);
+  }
+  return out;
+}
+
+/**
+ * The only form in which a child's words reach the orchestrator: a quoted block. Every `<`, `>`
+ * and `&` in the text and the attributes is escaped to an entity, so nothing inside can close or
+ * reopen the block (lookalike spellings included), at the price that the model reads angle
+ * brackets as entities. Control, invisible and bidi characters are dropped. Truncation happens
+ * after escaping, whole characters and whole entities at a time. Never throws.
  */
 export function fenceChildResult(input: {
   childId: string;
@@ -609,16 +676,19 @@ export function fenceChildResult(input: {
   status: string;
   text: string;
 }): string {
-  let text = stripUnsafeChars(String(input.text ?? '').replace(/\r\n?/g, '\n'), true)
-    // Any `<` that begins (or nearly begins) a child-result tag, closing or opening.
-    .replace(/<(?=\s*\/?\s*child[-_ ]?result)/gi, '&lt;');
-  if (text.length > CHILD_RESULT_MAX_CHARS) {
-    text = text.slice(0, CHILD_RESULT_MAX_CHARS);
-    const tail = text.charCodeAt(text.length - 1);
-    if (tail >= 0xd800 && tail <= 0xdbff) {
-      text = text.slice(0, -1);
+  const source = stripUnsafeChars(safeString(input?.text).replace(/\r\n?/g, '\n'), true);
+  let text = '';
+  let truncated = false;
+  for (const ch of source) {
+    const piece = MARKUP_ENTITIES[ch] ?? ch;
+    if (text.length + piece.length > CHILD_RESULT_MAX_CHARS) {
+      truncated = true;
+      break;
     }
+    text += piece;
+  }
+  if (truncated) {
     text += '\n[truncated]';
   }
-  return `<child-result id="${escapeAttr(input.childId)}" agent="${escapeAttr(input.agent)}" status="${escapeAttr(input.status)}">\n${text}\n</child-result>`;
+  return `<child-result id="${escapeAttr(input?.childId)}" agent="${escapeAttr(input?.agent)}" status="${escapeAttr(input?.status)}">\n${text}\n</child-result>`;
 }

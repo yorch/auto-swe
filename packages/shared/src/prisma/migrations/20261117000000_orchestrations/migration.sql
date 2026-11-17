@@ -79,6 +79,8 @@ CREATE TABLE "orchestration_approvals" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "orchestration_id" UUID NOT NULL,
     "child_id" UUID,
+    "run_id" UUID,
+    "call_key" TEXT NOT NULL,
     "connection_id" UUID NOT NULL,
     "tool_name" TEXT NOT NULL,
     "arguments_digest" TEXT NOT NULL,
@@ -120,10 +122,19 @@ CREATE INDEX "orchestrations_status_updated_at_idx" ON "orchestrations"("status"
 CREATE INDEX "orchestrations_repo_id_idx" ON "orchestrations"("repo_id");
 
 -- CreateIndex
+CREATE INDEX "orchestrations_org_id_idx" ON "orchestrations"("org_id");
+
+-- CreateIndex
+CREATE INDEX "orchestrations_service_id_idx" ON "orchestrations"("service_id");
+
+-- CreateIndex
 CREATE INDEX "orchestration_children_orchestration_id_created_at_idx" ON "orchestration_children"("orchestration_id", "created_at");
 
 -- CreateIndex
 CREATE INDEX "orchestration_children_run_id_idx" ON "orchestration_children"("run_id");
+
+-- CreateIndex
+CREATE INDEX "orchestration_children_work_request_id_idx" ON "orchestration_children"("work_request_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "orchestration_children_orchestration_id_work_request_id_key" ON "orchestration_children"("orchestration_id", "work_request_id");
@@ -135,13 +146,28 @@ CREATE INDEX "orchestration_messages_orchestration_id_created_at_idx" ON "orches
 CREATE INDEX "orchestration_messages_child_id_idx" ON "orchestration_messages"("child_id");
 
 -- CreateIndex
+CREATE INDEX "orchestration_messages_author_id_idx" ON "orchestration_messages"("author_id");
+
+-- CreateIndex
 CREATE INDEX "orchestration_approvals_orchestration_id_created_at_idx" ON "orchestration_approvals"("orchestration_id", "created_at");
 
 -- CreateIndex
 CREATE INDEX "orchestration_approvals_status_expires_at_idx" ON "orchestration_approvals"("status", "expires_at");
 
 -- CreateIndex
+CREATE INDEX "orchestration_approvals_child_id_idx" ON "orchestration_approvals"("child_id");
+
+-- CreateIndex
+CREATE INDEX "orchestration_approvals_decided_by_id_idx" ON "orchestration_approvals"("decided_by_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "orchestration_approvals_orchestration_id_call_key_key" ON "orchestration_approvals"("orchestration_id", "call_key");
+
+-- CreateIndex
 CREATE INDEX "run_steering_messages_run_id_created_at_idx" ON "run_steering_messages"("run_id", "created_at");
+
+-- CreateIndex
+CREATE INDEX "run_steering_messages_author_id_idx" ON "run_steering_messages"("author_id");
 
 -- CreateIndex
 CREATE INDEX "workflow_runs_orchestration_id_idx" ON "workflow_runs"("orchestration_id");
@@ -219,8 +245,17 @@ ALTER TABLE "orchestration_children" ADD CONSTRAINT "orchestration_children_role
 -- Hand-written: an attached repository always carries the time it was attached.
 ALTER TABLE "orchestrations" ADD CONSTRAINT "orchestrations_repo_attached_check" CHECK ("repo_id" IS NULL OR "repo_attached_at" IS NOT NULL);
 
--- Hand-written: someone launched it, a person or a service principal, never both.
+-- Hand-written: a person and a service principal never both launched it. Neither is allowed,
+-- because deleting the user or the principal nulls its column and the orchestration stays.
 ALTER TABLE "orchestrations" ADD CONSTRAINT "orchestrations_launcher_check" CHECK ("launched_by_id" IS NULL OR "service_id" IS NULL);
 
--- Hand-written: a pending approval has no decision time.
-ALTER TABLE "orchestration_approvals" ADD CONSTRAINT "orchestration_approvals_decided_check" CHECK (("status" = 'PENDING' AND "decided_at" IS NULL) OR ("status" <> 'PENDING'));
+-- Hand-written: a pending approval has no decision time, an approved or denied one has one, and a
+-- decider is only recorded together with the time.
+ALTER TABLE "orchestration_approvals" ADD CONSTRAINT "orchestration_approvals_decided_check" CHECK (("status" = 'PENDING' AND "decided_at" IS NULL) OR ("status" IN ('APPROVED', 'DENIED') AND "decided_at" IS NOT NULL) OR "status" = 'EXPIRED');
+ALTER TABLE "orchestration_approvals" ADD CONSTRAINT "orchestration_approvals_decider_check" CHECK ("decided_by_id" IS NULL OR "decided_at" IS NOT NULL);
+
+-- Hand-written: the call key is bounded, so the unique index over it stays small.
+ALTER TABLE "orchestration_approvals" ADD CONSTRAINT "orchestration_approvals_call_key_check" CHECK (char_length("call_key") BETWEEN 1 AND 200);
+
+-- Hand-written: an orchestration can spawn nothing without an allowlist.
+ALTER TABLE "orchestrations" ADD CONSTRAINT "orchestrations_allowlist_check" CHECK (cardinality("allowlist") >= 1);

@@ -184,11 +184,6 @@ describe('run pinning', () => {
     expect(snapshot).toEqual({
       'memory.lessonHoldoutPercent': 0,
       'memory.lessonRecall': 'on',
-      'orchestration.maxChildren': 12,
-      'orchestration.maxConcurrentChildren': 4,
-      'orchestration.maxTurns': 200,
-      'orchestration.maxWallClockSeconds': 14_400,
-      'orchestration.maxWriterChildren': 4,
       'workflow.fanoutConcurrency': 8,
       'workflow.maxNeedsInputRounds': 5,
       'workflow.maxTransitions': 500,

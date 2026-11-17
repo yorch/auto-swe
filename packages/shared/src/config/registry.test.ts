@@ -760,16 +760,9 @@ describe('orchestration settings', () => {
     }
   });
 
-  it('is off by default and pins exactly the bounds the workflow decides on', () => {
+  it('is off by default and pins nothing, because an orchestration has no run to pin on', () => {
     expect(SETTING_DEFINITIONS['orchestration.enabled'].defaultValue).toBe(false);
-    const pinned = keys.filter((k) => SETTING_DEFINITIONS[k].runPinned).sort();
-    expect(pinned).toEqual([
-      'orchestration.maxChildren',
-      'orchestration.maxConcurrentChildren',
-      'orchestration.maxTurns',
-      'orchestration.maxWallClockSeconds',
-      'orchestration.maxWriterChildren',
-    ]);
+    expect(keys.filter((k) => SETTING_DEFINITIONS[k].runPinned)).toEqual([]);
   });
 
   it('bounds the wall clock at four hours and the approval wait at an hour', () => {

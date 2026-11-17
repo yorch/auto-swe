@@ -5419,6 +5419,8 @@ model Orchestration {
   @@index([launchedById, updatedAt])
   @@index([status, updatedAt])
   @@index([repoId])
+  @@index([orgId])
+  @@index([serviceId])
   @@map("orchestrations")
 }
 
@@ -5451,6 +5453,7 @@ model OrchestrationChild {
   @@unique([orchestrationId, workRequestId])
   @@index([orchestrationId, createdAt])
   @@index([runId])
+  @@index([workRequestId])
   @@map("orchestration_children")
 }
 
@@ -5473,6 +5476,7 @@ model OrchestrationMessage {
 
   @@index([orchestrationId, createdAt])
   @@index([childId])
+  @@index([authorId])
   @@map("orchestration_messages")
 }
 
@@ -5484,6 +5488,13 @@ model OrchestrationApproval {
   orchestration   Orchestration               @relation(fields: [orchestrationId], references: [id], onDelete: Cascade)
   childId         String?                     @map("child_id") @db.Uuid
   child           OrchestrationChild?         @relation(fields: [childId], references: [id], onDelete: SetNull)
+  /// The child's run, when the call came from one. No foreign key: the record of an approval
+  /// outlives the run row.
+  runId           String?                     @map("run_id") @db.Uuid
+  /// Identity of the one call this row decides (run, step and tool call), so a retried activity
+  /// finds its own approval instead of opening a second one. Unique per orchestration; a CHECK in
+  /// the migration bounds its length at 200.
+  callKey         String                      @map("call_key")
   /// The MCP connection the call targets. No foreign key: deleting a connection must not erase
   /// the record of what was approved on it.
   connectionId    String                      @map("connection_id") @db.Uuid
@@ -5499,8 +5510,11 @@ model OrchestrationApproval {
   expiresAt       DateTime                    @map("expires_at") @db.Timestamptz
   createdAt       DateTime                    @default(now()) @map("created_at") @db.Timestamptz
 
+  @@unique([orchestrationId, callKey])
   @@index([orchestrationId, createdAt])
   @@index([status, expiresAt])
+  @@index([childId])
+  @@index([decidedById])
   @@map("orchestration_approvals")
 }
 
@@ -5516,5 +5530,6 @@ model RunSteeringMessage {
   deliveredAt DateTime?   @map("delivered_at") @db.Timestamptz
 
   @@index([runId, createdAt])
+  @@index([authorId])
   @@map("run_steering_messages")
 }

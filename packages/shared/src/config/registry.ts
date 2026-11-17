@@ -898,8 +898,10 @@ export const SETTING_DEFINITIONS = {
   }),
 
   // ── Orchestrated agent runs ────────────────────────────────────────────────
-  // The bounds the orchestration workflow decides on are run-pinned: its isolate cannot read the
-  // database, and a replay must not take a different path because an operator edited a knob.
+  // None of these is run-pinned: an orchestration has no WorkflowRun to pin on. The gateway reads
+  // the bounds once at launch and freezes them into the workflow input (the workflow isolate cannot
+  // read the database, and a replay must not take a different path because an operator edited a
+  // knob), so an edit reaches only orchestrations launched after it.
   'orchestration.enabled': defineSetting({
     defaultValue: false,
     description:
@@ -921,7 +923,7 @@ export const SETTING_DEFINITIONS = {
     overridableAt: [],
     requiredRole: 'ADMIN',
     restartRequired: false,
-    runPinned: true,
+    runPinned: false,
     schema: z.number().int().min(1).max(100),
     unit: 'children',
   }),
@@ -934,7 +936,7 @@ export const SETTING_DEFINITIONS = {
     overridableAt: [],
     requiredRole: 'ADMIN',
     restartRequired: false,
-    runPinned: true,
+    runPinned: false,
     schema: z.number().int().min(1).max(20),
     unit: 'children',
   }),
@@ -947,7 +949,7 @@ export const SETTING_DEFINITIONS = {
     overridableAt: [],
     requiredRole: 'ADMIN',
     restartRequired: false,
-    runPinned: true,
+    runPinned: false,
     schema: z.number().int().min(1).max(2000),
     unit: 'turns',
   }),
@@ -960,7 +962,7 @@ export const SETTING_DEFINITIONS = {
     overridableAt: [],
     requiredRole: 'ADMIN',
     restartRequired: false,
-    runPinned: true,
+    runPinned: false,
     schema: positiveInt.min(60).max(14_400),
     unit: 'seconds',
   }),
@@ -973,7 +975,7 @@ export const SETTING_DEFINITIONS = {
     overridableAt: [],
     requiredRole: 'ADMIN',
     restartRequired: false,
-    runPinned: true,
+    runPinned: false,
     schema: z.number().int().min(0).max(50),
     unit: 'children',
   }),
@@ -2025,6 +2027,7 @@ export const SETTING_DEFINITIONS = {
     schema: z.number().int().min(0).max(100),
     unit: 'runs',
   }),
+
   'workspace.agentRunMaxSteps': defineSetting({
     defaultValue: 50,
     description:
