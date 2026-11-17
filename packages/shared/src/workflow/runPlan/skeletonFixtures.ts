@@ -101,7 +101,7 @@ export function clone<T>(value: T): T {
 
 /**
  * A delivering plan the way the generator writes one: a pre-region (one agent that drafts notes
- * for the implementer) that hands over to the canonical core. Core nodes are the shipped ones.
+ * for the implementer, then validation) that hands over to the canonical core. Core nodes are the shipped ones.
  */
 export function canonicalDeliveringRaw(): RawSpec {
   return {
@@ -111,9 +111,15 @@ export function canonicalDeliveringRaw(): RawSpec {
     nodes: {
       research: {
         agentRef: 'productAnalyst',
-        next: CORE_ENTRY,
+        next: 'validate',
         storeAs: 'context.planNotes',
         type: 'agent',
+      },
+      validate: {
+        next: CORE_ENTRY,
+        onError: 'continue',
+        step: 'validateContext',
+        type: 'step',
       },
       ...(structuredClone(buildCanonicalCore().nodes) as unknown as RawSpec['nodes']),
       implement: {

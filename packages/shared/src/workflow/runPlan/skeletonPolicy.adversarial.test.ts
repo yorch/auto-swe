@@ -502,6 +502,7 @@ describe('skeleton policy: adversarial eval set', () => {
       const raw = outputOnlyRaw();
       raw.nodes.draft = { ...raw.nodes.draft, maxVisits: 3, onExhausted: 'timedOut' };
       raw.nodes.reviewDraft = {
+        contextFrom: 'nodes.draft.output',
         onApprove: 'done',
         onReject: 'draft',
         onTimeout: 'timedOut',

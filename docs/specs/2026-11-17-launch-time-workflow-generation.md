@@ -110,9 +110,26 @@ quality-gate step: CI is the check, as in the template, and a gate step is refus
   `terminate` and the steps `parseAgentOutput` and `retrieveKnowledge`. Never a `signal`, a `fanOut`,
   a step that acts on the repository (`FREE_NODE_TYPE_DENIED`, `FREE_STEP_DENIED`).
 - **What a free node may write.** Under `context.scratch.*`; in the pre-region also
-  `context.planNotes`, `context.ticket` (only from `gatherTicketContext`) and
-  `context.successCriteria` (only from `validateContext`). Anything else is `FREE_WRITE_DENIED`.
-  The core never reads `context.scratch.*`.
+  `context.planNotes`, `context.ticket` (only `nodes.<id>.output.text` of a `gatherTicketContext`
+  step) and `context.successCriteria` (only `nodes.<id>.output.successCriteria` of a
+  `validateContext` step; the whole output, or another field such as `ambiguities`, is refused).
+  Anything else is `FREE_WRITE_DENIED`. The core never reads `context.scratch.*`. A free node may
+  stamp only the statuses `PLANNING` and `VALIDATING_CONTEXT` (`FREE_STATUS_DENIED`): the dashboard,
+  review fixes and PR feedback act on `AWAITING_HUMAN_MERGE`, and the core stamps the others.
+- **Validation is mandatory.** Every path from the entry to `implement` passes a `validateContext`
+  step (`VALIDATE_MISSING`), so the review is judged against criteria the platform extracted. When
+  a generated pre-region runs none, `applySkeletonPolicy` attaches the shipped validate phase
+  ahead of the core.
+- **The post-merge region returns to the lesson.** No post-merge node may end the run `SUCCESS`
+  (a `SUCCESS` terminate, a node with no `next`, or a `SUCCESS` failure route): `POST_ENDS_SUCCESS`.
+  The only road to `done` is through `commitLesson`.
+- **One transition cap.** The interpreter counts every node entry of a run against one cap
+  (`DEFAULT_MAX_TRANSITIONS`), so a pre-region could decide where the core dies. The policy bounds
+  the worst case of pre-region, core and post-merge region together
+  (`TRANSITION_BUDGET_EXCEEDED`): a node on no cycle counts once, a node with `maxVisits` counts
+  `maxVisits + 1`, an unbounded node on a loop counts once plus every entry of the bounded nodes of
+  its loop. The core's share is derived from `buildCanonicalCore()` by the same function, and a
+  test runs the real interpreter over the core to show the bound holds.
 - **The one channel into the core.** The pre-region reaches the implementer only through
   `context.planNotes`, which the guidance slot binds. It cannot reach a review input, the success
   criteria, the ticket or the code result: those inputs are core and bound from fixed paths, and
@@ -139,9 +156,13 @@ core id is never repaired; its mismatch is reported.
 **Output-only plans.** The mandatory nodes are one or more `agent` nodes, a human review of an
 agent's output before the run can end `SUCCESS`, and a terminate. A `humanDecision` never counts as
 the review, because every one of its options is a continuation and it cannot approve or reject; a
-`humanApproval`, or a `humanReview` showing an agent's output, does. No `agent` node may run after
-the last human review on a path that can still end `SUCCESS` (`AGENT_AFTER_REVIEW`), so nothing is
-written after the human looked.
+`humanApproval` whose `contextFrom`, or a `humanReview` whose `contentFrom`, is exactly
+`nodes.<agent>.output` of an agent that precedes it, does (`HUMAN_REVIEW_CONTENT_UNBOUND` for a
+subpath, a scratch path or no path). No `agent` node may run after the last human review on a path
+that can still end `SUCCESS` (`AGENT_AFTER_REVIEW`), so nothing is written after the human looked.
+What the run returns is what was reviewed: a `SUCCESS` terminate's `result` may carry literals, the
+request, and the output of an agent that a review dominating that terminate showed
+(`RESULT_UNREVIEWED` for a hidden agent's output, a scratch path or an expression).
 
 The free ends draw only from a **step allowlist** maintained in code beside the registry. The
 allowlist excludes `runContainerStep` and any authored command, `submitPrdWorkRequests`, `runTool`,
@@ -218,6 +239,20 @@ planned run are marked so `evaluatePullRequest` skips `auto` mode for them. The 
   CI and the human merge still judge the result; the notes cannot touch what they are judged
   against.
 - The canonical core has no quality-gate step, so a delivering plan has none; CI is its check.
+- The transition bound is an over-approximation, so a plan whose real worst case fits can be refused,
+  and it is computed against the default cap. An operator who pins a lower cap through the
+  interpreter bounds can still have a plan that passes the policy die at that lower cap.
+- Validation must run, but the policy does not require that its criteria are copied into
+  `context.successCriteria`; a plan that validates and never copies them is reviewed against none, as
+  a run whose validation found nothing is. The ticket is likewise optional.
+- Only the `result` of a `SUCCESS` terminate in an output-only plan is bound to reviewed output. A
+  `FAILED` or `TIMED_OUT` ending may carry other values, and a human who approves has judged the
+  agent's whole output, not a particular field of it.
+- A free node's status is limited to two words, so a generated plan cannot show progress beyond
+  `PLANNING` and `VALIDATING_CONTEXT`.
+- The implicit context reads in the worker are enumerated by a test that scans its source for the
+  forms in use today (`lookupPath(ctx, '…')`, `ctx.context.<key>`); a read spelled another way is
+  not seen until someone adds it to that list.
 - A plan with an unusual shape is refused rather than adapted: the generator must produce a
   pre-region that ends in one place, and the core's ids are not available for its own nodes.
 - Cost estimates use role defaults and a fan-out guess; unpriced nodes are listed, not costed.

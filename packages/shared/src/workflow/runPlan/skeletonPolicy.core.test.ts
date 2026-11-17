@@ -33,7 +33,7 @@ describe('positive controls', () => {
   it('passes a pre-region feeding the canonical core', () => {
     const report = checkSkeletonPolicy(parse(canonicalDeliveringRaw()), 'delivering');
     expect(report.errors).toEqual([]);
-    expect(report.regions?.pre).toEqual(['research']);
+    expect(report.regions?.pre.sort()).toEqual(['research', 'validate']);
     expect(report.regions?.post).toEqual([]);
     expect(report.regions?.core).toEqual(canonicalCoreIds());
   });
@@ -53,10 +53,10 @@ describe('positive controls', () => {
     );
   });
 
-  it('passes the core alone, entered at implement, and with the guidance slot absent', () => {
+  it('passes the core behind validation alone, with the guidance slot absent', () => {
     const raw = canonicalDeliveringRaw();
     delete raw.nodes.research;
-    raw.entry = 'implement';
+    raw.entry = 'validate';
     raw.nodes.implement = {
       ...raw.nodes.implement,
       inputs: {
@@ -99,7 +99,7 @@ describe('positive controls', () => {
       };
       r.nodes.route = {
         expr: 'context.scratch.skip == true',
-        onFalse: 'implement',
+        onFalse: 'validate',
         onTrue: 'stop',
         type: 'cond',
       };
@@ -323,7 +323,7 @@ describe('the one channel: context.planNotes', () => {
         type: 'agent',
       };
       r.nodes.notes = {
-        next: 'implement',
+        next: 'validate',
         type: 'set',
         values: { 'context.planNotes': { from: 'nodes.research.output' } },
       };

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TICKET_TO_MERGE_SPEC } from '../templates/ticketToMerge.js';
 import { validateSpec } from '../validateSpec.js';
-import { canonicalCoreIds } from './canonicalCore.js';
+import { buildValidatePhase, canonicalCoreIds, VALIDATE_ENTRY } from './canonicalCore.js';
 import {
   canonicalDeliveringRaw,
   clone,
@@ -137,6 +137,7 @@ describe('checkSkeletonPolicy: output-only', () => {
   it('refuses a rejection that still ends SUCCESS', () => {
     const raw = outputOnlyRaw();
     raw.nodes.reviewDraft = {
+      contextFrom: 'nodes.draft.output',
       description: 'approve?',
       onApprove: 'done',
       onReject: 'done',
@@ -179,11 +180,15 @@ describe('applySkeletonPolicy: delivering', () => {
     const result = applySkeletonPolicy(parse(pre()), 'delivering');
     expect(result.report.errors).toEqual([]);
     expect(result.removed).toEqual(['done']);
-    expect(result.injected).toEqual(canonicalCoreIds());
-    expect((result.spec.nodes.research as { next?: string }).next).toBe('implement');
+    // The shipped validate phase goes in ahead of the core: a delivering plan validates.
+    expect(result.injected).toEqual([...Object.keys(buildValidatePhase()), ...canonicalCoreIds()]);
+    expect((result.spec.nodes.research as { next?: string }).next).toBe(VALIDATE_ENTRY);
+    expect((result.spec.nodes.setSuccessCriteria as { next?: string }).next).toBe('implement');
     // The core's own `done` replaced the author's ending.
     expect(result.spec.nodes.done?.type).toBe('terminate');
-    expect(result.report.regions?.pre).toEqual(['research']);
+    expect(result.report.regions?.pre.sort()).toEqual(
+      ['research', ...Object.keys(buildValidatePhase())].sort()
+    );
     expect(validateSpec(result.spec).errors).toEqual([]);
   });
 
@@ -193,7 +198,7 @@ describe('applySkeletonPolicy: delivering', () => {
     const result = applySkeletonPolicy(parse(raw), 'delivering');
     expect(result.report.errors).toEqual([]);
     expect(result.removed).toEqual([]);
-    expect((result.spec.nodes.research as { next?: string }).next).toBe('implement');
+    expect((result.spec.nodes.research as { next?: string }).next).toBe(VALIDATE_ENTRY);
   });
 
   it('binds the guidance slot when the pre-region writes the plan notes', () => {
@@ -211,7 +216,7 @@ describe('applySkeletonPolicy: delivering', () => {
     raw.entry = 'done';
     raw.nodes = { done: { status: 'SUCCESS', type: 'terminate' } };
     const result = applySkeletonPolicy(parse(raw), 'delivering');
-    expect(result.spec.entry).toBe('implement');
+    expect(result.spec.entry).toBe(VALIDATE_ENTRY);
     expect(result.report.errors).toEqual([]);
   });
 

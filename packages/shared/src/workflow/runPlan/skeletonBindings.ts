@@ -287,6 +287,16 @@ export function nodeOutputId(path: string): string | undefined {
   return NODE_OUTPUT_PATH.exec(path)?.[1];
 }
 
+const AGENT_OUTPUT_PATH = /^nodes\.([A-Za-z0-9_-]+)\.output$/;
+
+/**
+ * The node id of exactly `nodes.<id>.output`: the whole answer of a node, which is what a human
+ * review shows. A subpath (`nodes.draft.output.nonexistent`) is not the output and shows nothing.
+ */
+export function wholeOutputId(path: string): string | undefined {
+  return isSafePath(path) ? AGENT_OUTPUT_PATH.exec(path)?.[1] : undefined;
+}
+
 function pathAllowed(path: string, roots: readonly string[]): boolean {
   if (!isSafePath(path)) {
     return false;
@@ -399,6 +409,12 @@ interface Plumbing {
   nodeTypes: ReadonlySet<string>;
   /** When `step` is a source type: the steps whose output may be copied. Absent: any step. */
   steps?: ReadonlySet<string>;
+  /**
+   * The one field of the source's output that fills the path: a copy must be exactly
+   * `nodes.<id>.output.<field>`. Another field of the same step (`ambiguities` for the success
+   * criteria) is not what the template copies, and the whole output (`storeAs`) is not either.
+   */
+  field?: string;
 }
 const stepsOnly = (...steps: string[]): Pick<Plumbing, 'nodeTypes' | 'steps'> => ({
   nodeTypes: new Set(['step']),
@@ -430,8 +446,12 @@ const DERIVED_PATHS: Readonly<Record<string, Plumbing>> = {
   [PLAN_NOTES]: { clearable: true, nodeTypes: new Set(['agent', 'step']) },
   'context.prNumber': { clearable: false, ...stepsOnly('createOrUpdatePullRequest') },
   'context.prUrl': { clearable: false, ...stepsOnly('createOrUpdatePullRequest') },
-  'context.successCriteria': { clearable: false, ...stepsOnly('validateContext') },
-  'context.ticket': { clearable: false, ...stepsOnly('gatherTicketContext') },
+  'context.successCriteria': {
+    clearable: false,
+    field: 'successCriteria',
+    ...stepsOnly('validateContext'),
+  },
+  'context.ticket': { clearable: false, field: 'text', ...stepsOnly('gatherTicketContext') },
 };
 
 function sourceAllowed(plumbing: Plumbing, node: Node): boolean {
@@ -536,6 +556,12 @@ export function writeRefusal(
   }
   const plumbing = DERIVED_PATHS[derivedKey] as Plumbing;
   if (source.kind === 'storeAs') {
+    if (plumbing.field !== undefined) {
+      return {
+        code: 'CONTEXT_WRITE_DENIED',
+        message: `stores a whole node output into '${path}'; it takes only the '${plumbing.field}' field of ${describeSources(plumbing)}, copied with a set node from nodes.<id>.output.${plumbing.field}`,
+      };
+    }
     return sourceAllowed(plumbing, source.node)
       ? undefined
       : {
@@ -562,6 +588,12 @@ export function writeRefusal(
       return {
         code: 'CONTEXT_WRITE_DENIED',
         message: `sets '${path}' from '${from}'; it may only be copied from the output of ${describeSources(plumbing)}`,
+      };
+    }
+    if (plumbing.field !== undefined && from !== `nodes.${id}.output.${plumbing.field}`) {
+      return {
+        code: 'CONTEXT_WRITE_DENIED',
+        message: `sets '${path}' from '${from}'; it takes exactly nodes.<id>.output.${plumbing.field}, the field the platform fills it from`,
       };
     }
     if (dflt !== undefined && ![null, '', []].some((empty) => sameJson(empty, dflt))) {
@@ -593,4 +625,23 @@ const TERMINAL_STATUS_WORDS: ReadonlySet<string> = new Set([
 
 export function isTerminalStatusWord(status: string): boolean {
   return TERMINAL_STATUS_WORDS.has(status.trim().toUpperCase());
+}
+
+/**
+ * The domain statuses a node outside the core may stamp. Readers act on the others: the dashboard's
+ * needs-merge list, review fixes and PR feedback key on `AWAITING_HUMAN_MERGE`, and the core stamps
+ * `IMPLEMENTING`, `IN_REVIEW`, `AWAITING_CI` and `AWAITING_HUMAN_MERGE` itself. A free node that
+ * stamped one would show a run as waiting for a merge it never reached. `canonicalCore.test.ts`
+ * proves this set shares no word with the statuses the canonical core stamps.
+ */
+export const FREE_STATUS_ALLOWLIST: ReadonlySet<string> = new Set([
+  'PLANNING',
+  'VALIDATING_CONTEXT',
+]);
+
+/** Why a free node may not stamp `status`, or `undefined` when it may. */
+export function freeStatusRefusal(status: string): string | undefined {
+  return FREE_STATUS_ALLOWLIST.has(status)
+    ? undefined
+    : `stamps the status '${status}'; outside the core a node may stamp only ${[...FREE_STATUS_ALLOWLIST].map((s) => `'${s}'`).join(' or ')}, because other words are read as the run having reached that stage`;
 }

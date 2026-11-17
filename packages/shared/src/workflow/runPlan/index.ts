@@ -7,6 +7,7 @@ export {
   CORE_MERGE_WAIT,
   canonicalCoreIds,
   PLAN_NOTES_PATH,
+  VALIDATE_ENTRY,
 } from './canonicalCore.js';
 export type { CoreCheck, CoreRegions } from './coreCheck.js';
 export type { RunPlanCostEstimate, RunPlanCostOptions } from './costPreview.js';
@@ -37,3 +38,4 @@ export {
   runPlanNodeTypeRefusal,
   runPlanStepRefusal,
 } from './stepAllowlist.js';
+export { TRANSITION_BUDGET, TRANSITION_MARGIN, worstCaseTransitions } from './transitionBudget.js';

@@ -57,17 +57,27 @@ import { NON_LAUNCHABLE_AGENT_KEYS } from '../../lib/agentRun.js';
 import { isAuthoredCommandNode, isContainerCodeNode } from '../containerCode.js';
 import { collectUseProblems } from '../macros.js';
 import { type Node, nodeEdges, setNodeEdge, type WorkflowSpec } from '../spec.js';
-import { buildCanonicalCore, CORE_ENTRY, CORE_GUIDANCE_SLOT } from './canonicalCore.js';
+import {
+  buildCanonicalCore,
+  buildValidatePhase,
+  CORE_ENTRY,
+  CORE_GUIDANCE_SLOT,
+  VALIDATE_ENTRY,
+} from './canonicalCore.js';
 import { type CoreRegions, checkCanonicalCore, writesPlanNotes } from './coreCheck.js';
 import {
+  bindingKind,
   CODE_CHANGING_STEPS,
+  freeStatusRefusal,
   hasConfigAllowlist,
   inputBindingProblem,
+  isSafePath,
   isTerminalStatusWord,
   nodeOutputId,
   STEP_CONFIG_ALLOWLIST,
   type ValueRule,
   valueMatches,
+  wholeOutputId,
   writeRefusal,
 } from './skeletonBindings.js';
 import {
@@ -650,6 +660,12 @@ function checkNodes(
         id
       );
     }
+    if (mode === 'output-only' && node.type !== 'terminate' && node.status !== undefined) {
+      const refusal = freeStatusRefusal(node.status);
+      if (refusal !== undefined) {
+        add('FREE_STATUS_DENIED', `node '${id}' ${refusal}`, id);
+      }
+    }
     checkWrites(spec, id, node, add);
     if (node.type === 'agent') {
       const key = agentKey(node.agentRef);
@@ -948,31 +964,41 @@ function checkOutputOnly(
   if (agentNodes.length === 0 || humanReviewNodes.length === 0) {
     return;
   }
-  const agentPassed = new Set(agentNodes.map(([id]) => okV(id)));
 
   // Only a review that shows an agent's output and sits after that agent reviews anything. A
   // `humanDecision` cannot say approve or reject (every option is a continuation), so it never
-  // counts as the review.
+  // counts as the review. What a review shows is named exactly (`nodes.<agent>.output`): a
+  // subpath or another path shows the reviewer nothing the agent produced. `reviewed` maps each
+  // effective review to the agent whose output it shows.
   const effective: string[] = [];
+  const reviewed = new Map<string, string>();
+  const named = (id: string, label: string, path: string | undefined): string | undefined => {
+    const source = path === undefined ? undefined : wholeOutputId(path);
+    const sourceNode = source === undefined ? undefined : spec.nodes[source];
+    if (source === undefined || sourceNode?.type !== 'agent') {
+      add(
+        'HUMAN_REVIEW_CONTENT_UNBOUND',
+        `${label} '${id}' shows ${path === undefined ? 'nothing' : `'${path}'`}, which is not exactly an agent node's output (nodes.<agent>.output); the reviewer would see nothing the agent produced`,
+        id
+      );
+      return undefined;
+    }
+    return source;
+  };
   for (const [id, node] of humanReviewNodes) {
-    if (node.type === 'humanReview') {
-      const source = nodeOutputId(node.contentFrom);
-      const sourceNode = source === undefined ? undefined : spec.nodes[source];
-      if (source === undefined || sourceNode?.type !== 'agent') {
-        add(
-          'HUMAN_REVIEW_CONTENT_UNBOUND',
-          `humanReview '${id}' shows '${node.contentFrom}', which is not an agent node's output (nodes.<agent>.output)`,
-          id
-        );
-        continue;
-      }
-      if (pathAvoiding(graph, new Set([okV(source)]), inV(id)) === undefined) {
-        effective.push(id);
-      }
-    } else if (node.type === 'humanApproval') {
-      if (pathAvoiding(graph, agentPassed, inV(id)) === undefined) {
-        effective.push(id);
-      }
+    if (node.type !== 'humanReview' && node.type !== 'humanApproval') {
+      continue;
+    }
+    const source =
+      node.type === 'humanReview'
+        ? named(id, 'humanReview', node.contentFrom)
+        : named(id, 'humanApproval', node.contextFrom);
+    if (
+      source !== undefined &&
+      pathAvoiding(graph, new Set([okV(source)]), inV(id)) === undefined
+    ) {
+      effective.push(id);
+      reviewed.set(id, source);
     }
   }
   if (effective.length === 0) {
@@ -1022,6 +1048,37 @@ function checkOutputOnly(
         `the run can end SUCCESS without a human review of the agent output: ${describePath(path, nodeOfVertex(graph.entry) as string)}`,
         endingNode(terminal)
       );
+    }
+  }
+  // What the run returns is what a human reviewed. A SUCCESS ending's result may carry literals
+  // and the request, and the output of an agent that a review dominating that ending showed:
+  // never a hidden agent's output, a scratch path an agent filled, or an expression.
+  for (const [id, node] of Object.entries(spec.nodes)) {
+    if (node.type !== 'terminate' || node.status !== 'SUCCESS' || !graph.reachable.has(inV(id))) {
+      continue;
+    }
+    const shown = new Set<string>();
+    for (const [reviewId, agentId] of reviewed) {
+      if (pathAvoiding(graph, new Set([okV(reviewId)]), inV(id)) === undefined) {
+        shown.add(agentId);
+      }
+    }
+    for (const [key, binding] of Object.entries(node.result ?? {})) {
+      const kind = bindingKind(binding);
+      const from = kind === 'from' ? (binding as { from: string }).from : undefined;
+      const source = from === undefined ? undefined : nodeOutputId(from);
+      const ok =
+        kind === 'literal' ||
+        (from !== undefined &&
+          isSafePath(from) &&
+          (from.startsWith('request.') || (source !== undefined && shown.has(source))));
+      if (!ok) {
+        add(
+          'RESULT_UNREVIEWED',
+          `terminate '${id}' returns '${key}'${from !== undefined ? ` from '${from}'` : ` as ${kind === 'expr' ? 'an expression' : 'a binding'}`}, which no human review before it showed; a SUCCESS result may carry only literals, the request, or the output of an agent a human reviewed`,
+          id
+        );
+      }
     }
   }
   // A reviewer's rejection or a timeout is not an approval: from the review's own entry, over
@@ -1155,10 +1212,25 @@ export function applySkeletonPolicy(spec: WorkflowSpec, mode: SkeletonMode): Ske
             ? 'the pre-region has no ending to continue from (a SUCCESS terminate, or a step with no next); core not attached'
             : `the pre-region has more than one ending (${leaves.join(', ')}); core not attached`
         );
+      } else if (
+        !Object.values(next.nodes).some((n) => n.type === 'step' && n.step === 'validateContext') &&
+        Object.keys(buildValidatePhase()).some((id) => Object.hasOwn(next.nodes, id))
+      ) {
+        ambiguous.push(
+          'the validate phase cannot be attached: the plan already uses one of its node ids (gatherTicket, setTicket, validate, checkActionable, terminateNotActionable, setSuccessCriteria); core not attached'
+        );
       } else {
         const leaf = leaves[0] as string;
+        // A delivering plan validates: attach the shipped validate phase ahead of the core unless
+        // the author already runs a validateContext step (then the check judges where it sits).
+        const validate = Object.values(next.nodes).some(
+          (n) => n.type === 'step' && n.step === 'validateContext'
+        )
+          ? {}
+          : buildValidatePhase();
+        const handover = Object.keys(validate).length > 0 ? VALIDATE_ENTRY : CORE_ENTRY;
         if (next.nodes[leaf]?.type === 'terminate') {
-          retarget(new Set([leaf]), CORE_ENTRY, { passedOnly: true });
+          retarget(new Set([leaf]), handover, { passedOnly: true });
           const stillUsed = Object.values(next.nodes).some((n) =>
             nodeEdges(n).some(([, to]) => to === leaf)
           );
@@ -1167,7 +1239,10 @@ export function applySkeletonPolicy(spec: WorkflowSpec, mode: SkeletonMode): Ske
             removed.push(leaf);
           }
         } else {
-          next.nodes[leaf] = setNodeEdge(next.nodes[leaf] as Node, 'next', CORE_ENTRY);
+          next.nodes[leaf] = setNodeEdge(next.nodes[leaf] as Node, 'next', handover);
+        }
+        for (const [id, node] of Object.entries(validate)) {
+          add(id, node);
         }
         for (const [id, node] of Object.entries(canonical.nodes)) {
           if (id === CORE_ENTRY && writesPlanNotes(next)) {

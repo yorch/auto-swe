@@ -29,7 +29,7 @@
  */
 
 import { type Node, NodeSchema } from '../spec.js';
-import { ticketToMergeCore } from '../templates/ticketToMerge.js';
+import { ticketToMergeCore, ticketToMergeValidate } from '../templates/ticketToMerge.js';
 import { PLAN_NOTES } from './skeletonBindings.js';
 
 /** The node a pre-region hands over to: the only core node a free node may name. */
@@ -101,6 +101,23 @@ export function buildCanonicalCore(): CanonicalCore {
     throw new Error('the canonical core has no merge wait with an onReceive edge');
   }
   return { entry: CORE_ENTRY, hookTarget: wait.onReceive, nodes };
+}
+
+/** The node the shipped validate phase starts at. */
+export const VALIDATE_ENTRY = 'gatherTicket';
+
+/**
+ * The shipped validate phase of `ticket-to-merge`, as flat free nodes that hand over to
+ * {@link CORE_ENTRY}. Not part of the core: `applySkeletonPolicy` attaches it ahead of the core when
+ * a pre-region runs no `validateContext` step, because a delivering plan must validate.
+ */
+export function buildValidatePhase(): Record<string, Node> {
+  const built = ticketToMergeValidate();
+  const nodes: Record<string, Node> = {};
+  for (const [id, node] of Object.entries(built.nodes)) {
+    nodes[id] = asParsed(stripUse(structuredClone(node)));
+  }
+  return nodes;
 }
 
 /** Key-order-insensitive JSON, for comparing two nodes. */

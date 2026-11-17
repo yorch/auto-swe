@@ -17,8 +17,12 @@
  * Codes: `CORE_MISMATCH` (a core node missing or not equal), `CORE_ENTERED_MIDWAY` (a free node
  * points at a core node other than the entry, or a post node at anything but the hook's return),
  * `FREE_NODE_IN_CORE` (a core node points at a free node other than through the hook),
- * `POST_HOOK_INVALID`, `POST_REGION_ESCAPE`, `FREE_NODE_TYPE_DENIED`, `FREE_STEP_DENIED` and
- * `FREE_WRITE_DENIED`.
+ * `POST_HOOK_INVALID`, `POST_REGION_ESCAPE`, `FREE_NODE_TYPE_DENIED`, `FREE_STEP_DENIED`,
+ * `FREE_WRITE_DENIED`, `FREE_STATUS_DENIED`, `POST_ENDS_SUCCESS` (a post-merge path that ends the
+ * run SUCCESS without the merge lesson), `VALIDATE_MISSING` (a path to the core that skips
+ * `validateContext`, so the review has no criteria the platform extracted) and
+ * `TRANSITION_BUDGET_EXCEEDED` (pre-region, core and post-region together may exceed the
+ * interpreter's transition cap, which would kill the run after the pull request is open).
  *
  * Pure and I/O-free.
  */
@@ -31,8 +35,9 @@ import {
   normalizeCoreNode,
   sameJson,
 } from './canonicalCore.js';
-import { PLAN_NOTES, under } from './skeletonBindings.js';
+import { freeStatusRefusal, PLAN_NOTES, under } from './skeletonBindings.js';
 import { classifyRunPlanStep } from './stepAllowlist.js';
+import { TRANSITION_BUDGET, worstCaseTransitions } from './transitionBudget.js';
 
 export interface CoreIssue {
   code: string;
@@ -97,6 +102,52 @@ function writtenPaths(node: Node): string[] {
     paths.push(storeAs);
   }
   return paths;
+}
+
+/** Whether a node with no `next` ends the run, which the interpreter reads as `SUCCESS`. */
+function endsWithoutNext(node: Node): boolean {
+  switch (node.type) {
+    case 'step':
+    case 'agent':
+    case 'set':
+      return node.next === undefined;
+    default:
+      return false;
+  }
+}
+
+function routesToSuccess(route: unknown): boolean {
+  return (
+    typeof route === 'object' &&
+    route !== null &&
+    (route as { status?: unknown }).status === 'SUCCESS'
+  );
+}
+
+/** Whether `target` is reachable from the plan's entry along a path that enters no `blocked` node. */
+function reachableAvoiding(
+  spec: WorkflowSpec,
+  blocked: ReadonlySet<string>,
+  target: string
+): boolean {
+  if (blocked.has(spec.entry) || !Object.hasOwn(spec.nodes, spec.entry)) {
+    return false;
+  }
+  const seen = new Set<string>([spec.entry]);
+  const stack = [spec.entry];
+  while (stack.length > 0) {
+    const cur = stack.pop() as string;
+    if (cur === target) {
+      return true;
+    }
+    for (const [, to] of nodeEdges(spec.nodes[cur] as Node)) {
+      if (!seen.has(to) && !blocked.has(to) && Object.hasOwn(spec.nodes, to)) {
+        seen.add(to);
+        stack.push(to);
+      }
+    }
+  }
+  return false;
 }
 
 export function checkCanonicalCore(spec: WorkflowSpec): CoreCheck {
@@ -247,6 +298,28 @@ export function checkCanonicalCore(spec: WorkflowSpec): CoreCheck {
         );
       }
     }
+    if (node.type !== 'terminate' && node.status !== undefined) {
+      const refusal = freeStatusRefusal(node.status);
+      if (refusal !== undefined) {
+        add('FREE_STATUS_DENIED', `free node '${id}' ${refusal}`, id);
+      }
+    }
+    if (region === 'post') {
+      // The merge lesson (`commitLesson`) is the core's, and the only road to its `done`. A
+      // post-merge path that ends SUCCESS by itself skips it.
+      if (
+        (node.type === 'terminate' && node.status === 'SUCCESS') ||
+        endsWithoutNext(node) ||
+        ('onFailure' in node && routesToSuccess(node.onFailure)) ||
+        (node.maxVisits !== undefined && routesToSuccess(node.onExhausted))
+      ) {
+        add(
+          'POST_ENDS_SUCCESS',
+          `post-merge node '${id}' can end the run SUCCESS; every post-merge path must return to '${canonical.hookTarget}', which stores the merge lesson, before the run ends`,
+          id
+        );
+      }
+    }
     for (const path of writtenPaths(node)) {
       if (!freeWriteAllowed(path, region)) {
         add(
@@ -260,6 +333,34 @@ export function checkCanonicalCore(spec: WorkflowSpec): CoreCheck {
         );
       }
     }
+  }
+
+  // ── Every road to the core runs validateContext, so the review is judged against criteria the
+  // platform extracted, or against none because validation found none: never against a plan's pick ──
+  if (has(CORE_ENTRY)) {
+    const validators = new Set(
+      Object.entries(spec.nodes)
+        .filter(([, n]) => n.type === 'step' && n.step === 'validateContext')
+        .map(([id]) => id)
+    );
+    if (reachableAvoiding(spec, validators, CORE_ENTRY)) {
+      add(
+        'VALIDATE_MISSING',
+        `the core can be entered without a validateContext step running first; every path to '${CORE_ENTRY}' must pass one, as ticket-to-merge's validate phase does`
+      );
+    }
+  }
+
+  // ── The walk shares one transition cap; the core's share is derived from the core itself ──
+  const coreBound = worstCaseTransitions(canonical.nodes, coreIds);
+  const preBound = worstCaseTransitions(spec.nodes, regions.pre);
+  const postBound = worstCaseTransitions(spec.nodes, regions.post);
+  const total = preBound + coreBound + postBound;
+  if (!(total <= TRANSITION_BUDGET)) {
+    add(
+      'TRANSITION_BUDGET_EXCEEDED',
+      `the plan can take ${Number.isFinite(total) ? total : 'unboundedly many'} node transitions in the worst case (pre-region ${preBound}, core ${coreBound}, post-merge ${postBound}), over the ${TRANSITION_BUDGET} the interpreter allows after a safety margin; a run that hits the cap dies wherever it stands, possibly after the pull request is open. Lower maxVisits on the free nodes`
+    );
   }
 
   return { issues, regions };
