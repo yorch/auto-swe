@@ -1251,7 +1251,6 @@ HTTP URL and confirm success. A raw public-IP TCP connect and
 `egress (allowlist via proxy; network-locked)`. A missing proxy or unprovable strict lock refuses
 the step before author startup.
 
-<<<<<<< HEAD
 ### Organization GitHub connections (`8d4d3a64`)
 
 **Affected.** Deployments applying commit `8d4d3a64` or a descendant that use an existing GitHub
@@ -1281,15 +1280,15 @@ for the self-service flow and its limitations.
 ---
 
 
-=======
-### UN-26. Team spend caps: billing-team scope for repository-less runs, assistant gating, notices
+
+### UN-27. Team spend caps: billing-team scope for repository-less runs, assistant gating, notices
 
 **Affected.** Deployments that run templates, service-principal launches or automations with no
 repository (connection-less runs) while TEAM-scope credentials, agents or settings exist for the
 team the launch is billed to, that set a team monthly budget, or that use the in-app assistant
 with team caps.
 
-**Fix commit.** `<fixing commit SHA>`; migration `20261112160000_team_budget_notices`.
+**Fix commit.** `<fixing commit SHA>`; migration `20261114100000_team_budget_notices`.
 
 **Actions.**
 
@@ -1312,7 +1311,6 @@ team, shows that team's agent and credential in its run trace.
 
 ---
 
->>>>>>> b757e3f2 (fix: align run-start pins with the billing-team scope and fail open on non-budget precheck errors)
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,
