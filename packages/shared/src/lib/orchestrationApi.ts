@@ -77,6 +77,8 @@ export const OrchestrationSummaryDtoSchema = z.object({
   runningChildCount: z.number().int(),
   status: z.enum(ORCHESTRATION_STATUSES),
   teamId: z.string(),
+  /** Name of the named team; null when the viewer cannot read it. */
+  teamName: z.string().nullable().optional(),
   title: z.string(),
   updatedAt: z.string(),
 });
@@ -84,6 +86,16 @@ export type OrchestrationSummaryDto = z.infer<typeof OrchestrationSummaryDtoSche
 
 export const OrchestrationDetailDtoSchema = OrchestrationSummaryDtoSchema.extend({
   allowlist: z.array(z.string()),
+  /** Which team each part bills: the orchestrator's own turns, and children spawned after attach. */
+  billing: z
+    .object({
+      childrenTeamName: z.string().nullable(),
+      orchestratorTeamName: z.string().nullable(),
+    })
+    .nullable()
+    .optional(),
+  /** Remaining budget in USD for the tier, null when uncapped or unknown. */
+  budget: z.object({ remainingUsd: z.number().nullable(), tier: z.string() }).nullable().optional(),
   budgetTier: z.string(),
   /** True for the launcher: the only caller who sees the message box, attach and approvals. */
   canControl: z.boolean(),
@@ -91,11 +103,20 @@ export const OrchestrationDetailDtoSchema = OrchestrationSummaryDtoSchema.extend
   connections: z.array(z.object({ id: z.string(), name: z.string().nullable() })),
   /** Spend of the orchestrator's own turns, of its children, and the sum. */
   cost: z.object({ childrenUsd: z.number(), orchestratorUsd: z.number(), totalUsd: z.number() }),
+  /** The delivery default chosen at launch; applies to writers once a repository is attached. */
+  deliveryDefault: z.enum(['none', 'branch', 'draft_pr']).nullable().optional(),
   launchedByName: z.string().nullable(),
   pendingApprovals: z.array(OrchestrationApprovalDtoSchema),
   /** The one pending repository request, if any. */
   pendingAttach: z
-    .object({ candidateRepoId: z.string().nullable(), messageId: z.string(), reason: z.string() })
+    .object({
+      billingTeamName: z.string().nullable().optional(),
+      candidateRepoId: z.string().nullable(),
+      candidateRepoName: z.string().nullable().optional(),
+      deliveryDefault: z.enum(['none', 'branch', 'draft_pr']).nullable().optional(),
+      messageId: z.string(),
+      reason: z.string(),
+    })
     .nullable(),
   repoAttachedAt: z.string().nullable(),
   teamName: z.string().nullable(),
@@ -159,3 +180,41 @@ export type UserMessageSignal = z.infer<typeof UserMessageSignalSchema>;
 export type ChildFinishedSignal = z.infer<typeof ChildFinishedSignalSchema>;
 export type AttachResolvedSignal = z.infer<typeof AttachResolvedSignalSchema>;
 export type ApprovalResolvedSignal = z.infer<typeof ApprovalResolvedSignalSchema>;
+
+/**
+ * Payloads of the structured transcript messages. The worker writes them, the gateway updates a
+ * resolved attach request, and the dashboard reads them; all three parse with these schemas.
+ */
+export const AttachRequestPayloadSchema = z.object({
+  candidateRepoId: z.string().nullable().optional(),
+  reason: z.string(),
+  repoId: z.string().optional(),
+  /** Set by the gateway once the launcher decides. A request is pending while this is unset. */
+  resolution: z.enum(['ATTACHED', 'DECLINED']).optional(),
+});
+export type AttachRequestPayload = z.infer<typeof AttachRequestPayloadSchema>;
+
+export const ApprovalRequestPayloadSchema = z.object({
+  approvalId: z.string(),
+  argumentsDigest: z.string(),
+  connectionName: z.string().nullable().optional(),
+  expiresAt: z.string(),
+  toolName: z.string(),
+});
+export type ApprovalRequestPayload = z.infer<typeof ApprovalRequestPayloadSchema>;
+
+export const ChildResultPayloadSchema = z.object({
+  childId: z.string(),
+  result: ChildResultSchema.optional(),
+  /** Worker bookkeeping: flipped once an orchestrator turn has read the result. */
+  seen: z.boolean().optional(),
+  status: z.string().optional(),
+});
+export type ChildResultPayload = z.infer<typeof ChildResultPayloadSchema>;
+
+/** `GET /orchestrations/connections?teamId=`: the MCP connections a launcher may put in the set. */
+export const OrchestrationConnectionOptionSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+});
+export type OrchestrationConnectionOption = z.infer<typeof OrchestrationConnectionOptionSchema>;

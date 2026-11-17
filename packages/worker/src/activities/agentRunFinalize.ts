@@ -5,6 +5,11 @@ import {
   AGENT_RUN_MAX_FILE_BYTES,
   AGENT_RUN_MAX_GATED_DIFF_CHARS,
 } from '@auto-swe/shared/lib/agentRun';
+import {
+  type ParsedScope,
+  pathInScopes,
+  validatePathScopes,
+} from '@auto-swe/shared/lib/orchestration';
 import type { CodeSecurityFinding, FileChange } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
@@ -276,11 +281,71 @@ function policyFailure(message: string): ApplicationFailure {
   return ApplicationFailure.nonRetryable(message, 'AGENT_RUN_PUSH_POLICY');
 }
 
+const PATH_SCOPE_MAX_LISTED = 10;
+const PATH_SCOPE_MAX_PATH_CHARS = 200;
+
+function pathScopeFailure(message: string): ApplicationFailure {
+  return ApplicationFailure.nonRetryable(message, 'AGENT_RUN_PATH_OUT_OF_SCOPE');
+}
+
+function displayPath(p: string): string {
+  const clean = p.replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Zl}\p{Zp}]/gu, '?');
+  return JSON.stringify(
+    clean.length > PATH_SCOPE_MAX_PATH_CHARS
+      ? `${clean.slice(0, PATH_SCOPE_MAX_PATH_CHARS)}...`
+      : clean
+  );
+}
+
+/**
+ * The path-scope rule of the push policy. `pathScopes` undefined means "no restriction" unless the
+ * run is `orchestrated`, which must carry valid scopes (defence in depth beside the payload
+ * schema). Scopes are re-parsed here and a list that does not parse fails closed. Every changed
+ * path is judged; the read uses `--no-renames`, so a rename or copy arrives as a delete of the old
+ * path plus an add of the new one and both sides are checked. A mode or type change is a changed
+ * path like any other. A path `pathInScopes` cannot vouch for (non-NFC, control characters,
+ * backslash, `..`) is out of scope.
+ */
+export function enforcePathScopes(
+  changes: readonly RawChange[],
+  pathScopes: unknown,
+  orchestrated: boolean
+): void {
+  if (pathScopes === undefined || pathScopes === null) {
+    if (orchestrated) {
+      throw pathScopeFailure(
+        'This orchestrated run has no path scopes, so what it may change cannot be checked.'
+      );
+    }
+    return;
+  }
+  const scopes: ParsedScope[] | null = Array.isArray(pathScopes)
+    ? (() => {
+        const v = validatePathScopes(pathScopes as string[], { isOwnerOfSharedFiles: true });
+        return v.ok ? v.scopes : null;
+      })()
+    : null;
+  if (scopes === null) {
+    throw pathScopeFailure('The path scopes of this run could not be read, so nothing was pushed.');
+  }
+  const offenders = [
+    ...new Set(changes.filter((c) => !pathInScopes(c.path, scopes)).map((c) => c.path)),
+  ];
+  if (offenders.length === 0) {
+    return;
+  }
+  const listed = offenders.slice(0, PATH_SCOPE_MAX_LISTED).map(displayPath).join(', ');
+  const more = offenders.length > PATH_SCOPE_MAX_LISTED ? ', ...' : '';
+  throw pathScopeFailure(
+    `${offenders.length} changed path(s) are outside the paths this run was assigned: ${listed}${more}`
+  );
+}
+
 /**
  * Judge the commit in the trusted container and, only if it passes, return the
  * proof needed to push it.
  *
- * Order: deterministic policy -> size bound -> advisory code scan -> LLM gate.
+ * Order: deterministic policy -> path scopes -> size bound -> advisory code scan -> LLM gate.
  * Every failure is non-retryable and fails closed:
  *  - policy violation          -> AGENT_RUN_PUSH_POLICY
  *  - diff too large to scan    -> AGENT_RUN_DIFF_TOO_LARGE
@@ -295,6 +360,10 @@ export async function gateTrustedCommit(
     sha: string;
     allowWorkflowChanges: boolean;
     tracer: AgentTracer;
+    /** The run's `pathScopes` as carried by the payload; undefined means unrestricted. */
+    pathScopes?: unknown;
+    /** The run belongs to an orchestration: scopes are mandatory. */
+    orchestrated?: boolean;
   },
   deps: GateDeps = realDeps
 ): Promise<GatedCommit> {
@@ -329,6 +398,7 @@ export async function gateTrustedCommit(
   if (violations.length > 0) {
     throw policyFailure(`Push policy refused this change:\n${formatViolations(violations)}`);
   }
+  enforcePathScopes(changes, args.pathScopes, args.orchestrated === true);
 
   // The same pinned read of the two commits as every other path hands the gate: binaries reduced
   // to their strings, UTF-16 text decoded, and a NUL byte in a file that is not binary refused by

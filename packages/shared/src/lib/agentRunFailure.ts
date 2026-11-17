@@ -36,6 +36,11 @@ const FAILURES: Record<string, Omit<AgentRunFailureView, 'code'>> = {
       'The working tree is too large to copy out of the sandbox. Keep dependency and build output in ignored paths.',
     title: 'Working tree too large',
   },
+  AGENT_RUN_PATH_OUT_OF_SCOPE: {
+    explanation:
+      'This agent tried to change files outside the paths it was assigned. Nothing was pushed, including the files that were in scope. The offending paths are listed in the error as plain text. Re-run with a wider path scope, or ask for a narrower change.',
+    title: 'Changed files outside its assigned paths',
+  },
   AGENT_RUN_PUSH_POLICY: {
     explanation:
       'The change touches something an agent run may never publish (a sensitive file, a binary, a symlink or submodule, an oversized file, or a workflow file). Nothing was pushed, including the files that were allowed.',
