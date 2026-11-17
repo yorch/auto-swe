@@ -53,12 +53,14 @@ const calls: {
   codeTaskRuns: unknown[];
   budgetChecks: string[];
   refines: unknown[];
+  proposals: unknown[];
 } = {
   budgetChecks: [],
   codeTaskRuns: [],
   finalizeRuns: [],
   placeholders: [],
   posts: [],
+  proposals: [],
   refines: [],
   startRuns: [],
   taskRuns: [],
@@ -88,6 +90,12 @@ let codeFromPrivateChannel = false;
 // When true, preparing the general task run throws (a launch failure that is
 // not WorkflowExecutionAlreadyStartedError).
 let taskRunThrows = false;
+// Plan proposal: optional proposeRun intent returned by the turn + what the activity builds.
+let turnProposeRun: { mode: 'delivering' | 'output-only'; agentKey?: string } | undefined;
+let proposalResult: { text: string; blocks?: unknown[] } = {
+  blocks: [{ type: 'actions' }],
+  text: 'I can generate a plan',
+};
 // Refinement: optional refine intent returned by the turn + the activity verdict.
 let turnRefine: { instruction: string } | undefined;
 // Generation: optional generate intent returned by the turn + the activity verdict.
@@ -176,6 +184,10 @@ const fakeActivities = {
   postChannelReply: async (args: PostCall) => {
     calls.posts.push(args);
   },
+  proposeChannelRunPlan: async (input: unknown) => {
+    calls.proposals.push(input);
+    return proposalResult;
+  },
   refineChannelWorkflowDraft: async (input: { channelId: string; instruction: string }) => {
     calls.refines.push(input);
     return refineResult;
@@ -188,6 +200,7 @@ const fakeActivities = {
       card: turnCard,
       delegate: turnDelegate,
       generate: turnGenerate,
+      proposeRun: turnProposeRun,
       refine: turnRefine,
       reply: turnReply,
     };
@@ -248,6 +261,9 @@ beforeEach((ctx: TestContext) => {
   turnCard = undefined;
   turnRefine = undefined;
   turnGenerate = undefined;
+  turnProposeRun = undefined;
+  calls.proposals = [];
+  proposalResult = { blocks: [{ type: 'actions' }], text: 'I can generate a plan' };
   draftResult = { name: 'Drafted Flow', summary: 'does a thing', templateId: 'tpl-1' };
   refineResult = { name: 'My Flow', status: 'refined', summary: 'added a step', version: 2 };
   calls.refines = [];
@@ -437,6 +453,45 @@ describe('ChannelAssistantWorkflow (TestWorkflowEnvironment)', () => {
     expect(calls.taskRuns).toHaveLength(0);
     // The user gets the budget notice instead of the agent's ack.
     expect(calls.updates[0]?.text).toContain('monthly assistant budget');
+  }, 60_000);
+
+  // ── Plan proposal (proposeRun tool) ─────────────────────────────────────────
+
+  it('hands the proposal to fixed code with the invoker message, and delivers its blocks', async () => {
+    turnProposeRun = { mode: 'delivering' };
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-propose'));
+
+    // The activity gets the person's own message and the model's intent, and no other text.
+    expect(calls.proposals).toEqual([
+      {
+        channelId: 'chan-1',
+        intent: { mode: 'delivering' },
+        slackChannelId: 'C123',
+        threadTs: '111.222',
+        userSlackId: 'U999',
+        userText: 'hello',
+      },
+    ]);
+    // The confirmation replaces the placeholder; no task is launched and no budget gate runs.
+    expect(calls.updates[0]).toEqual({
+      blocks: [{ type: 'actions' }],
+      slackChannelId: 'C123',
+      text: 'I can generate a plan',
+      ts: '999.000',
+    });
+    expect(calls.taskRuns).toHaveLength(0);
+    expect(calls.codeTaskRuns).toHaveLength(0);
+  }, 60_000);
+
+  it('delivers the explanation when the proposal offers no button', async () => {
+    turnProposeRun = { mode: 'delivering' };
+    proposalResult = { text: 'I could not tell which repository' };
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-propose-none'));
+
+    expect(calls.updates[0]?.text).toBe('I could not tell which repository');
+    expect(calls.updates[0]?.blocks).toBeUndefined();
   }, 60_000);
 
   // ── Conversational refinement (refineWorkflow tool) ─────────────────────────

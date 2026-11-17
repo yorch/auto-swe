@@ -47,6 +47,9 @@ vi.mock('../lib/slack.js', async (importOriginal) => ({
   fetchSlackChannelIsPrivate: (...a: unknown[]) => fetchSlackChannelIsPrivateMock(...a),
 }));
 
+const startRunPlanMock = vi.hoisted(() => vi.fn());
+vi.mock('../lib/runPlanStart.js', () => ({ startRunPlan: startRunPlanMock }));
+
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolvePublicUrl: vi.fn(() => 'http://localhost:8080'),
   resolveSlackBotTokenForSlackChannel: vi.fn(async () => 'xoxb-test'),
@@ -110,6 +113,10 @@ vi.mock('@auto-swe/shared/lib/repoAccessGate', async (importOriginal) => ({
   resolveRepoAccessGateOrLastKnown: () => repoAccessGate(),
 }));
 
+import {
+  signSlackRunPlanToken,
+  slackRunPlanIntentHash,
+} from '@auto-swe/shared/lib/slackRunPlanToken';
 import { slackRoutes } from './slack.js';
 
 const SIGNING_SECRET = 'test-signing-secret';
@@ -1287,6 +1294,188 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
   });
 });
 
+describe('POST /api/v1/auth/slack/interactive — Generate plan button', () => {
+  const RESPONSE_URL = 'https://hooks.slack.test/respond-plan';
+  const REPO_ID = '11111111-1111-4111-8111-111111111111';
+  const originalFetch = globalThis.fetch;
+  let fetchCalls: Array<{ url: string; body: Record<string, unknown> | null }>;
+
+  beforeEach(() => {
+    fetchCalls = [];
+    startRunPlanMock.mockReset();
+    startRunPlanMock.mockResolvedValue({
+      deduplicated: false,
+      jobId: 'runplan-aabbccdd-0123456789abcdef',
+      ok: true,
+    });
+    globalThis.fetch = (async (url: string | URL, init?: { body?: string }) => {
+      fetchCalls.push({ body: init?.body ? JSON.parse(init.body) : null, url: String(url) });
+      return { json: async () => ({ ok: true, ts: '1.0' }) } as unknown as Response;
+    }) as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function token(over: Record<string, unknown> = {}): string {
+    const intent = 'add rate limiting';
+    return signSlackRunPlanToken(
+      {
+        agentKey: null,
+        channelId: 'C-plan',
+        exp: Date.now() + 60_000,
+        intent,
+        intentHash: slackRunPlanIntentHash(intent),
+        jti: 'cd'.repeat(12),
+        mode: 'delivering',
+        repoId: REPO_ID,
+        slackUserId: 'U1',
+        threadTs: '100.200',
+        ...over,
+      },
+      SIGNING_SECRET
+    );
+  }
+
+  function click(slackId: string, value: string) {
+    const payload = {
+      actions: [{ action_id: 'run_plan_generate', value }],
+      channel: { id: 'C-plan' },
+      message: { thread_ts: '100.200', ts: '100.300' },
+      response_url: RESPONSE_URL,
+      type: 'block_actions',
+      user: { id: slackId },
+    };
+    const body = `payload=${encodeURIComponent(JSON.stringify(payload))}`;
+    const { ts, sig } = signRequest(body);
+    return app.inject({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'x-slack-request-timestamp': ts,
+        'x-slack-signature': sig,
+      },
+      method: 'POST',
+      payload: body,
+      url: '/api/v1/auth/slack/interactive',
+    });
+  }
+
+  const ephemeralTexts = () =>
+    fetchCalls.filter((c) => c.url === RESPONSE_URL).map((c) => String(c.body?.text));
+
+  it('starts generation as the linked platform user and posts a Review plan link', async () => {
+    const res = await click('U1', token());
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      data: { action: 'run_plan_generate', ok: true, reason: 'started' },
+    });
+    expect(startRunPlanMock).toHaveBeenCalledTimes(1);
+    expect(startRunPlanMock.mock.calls[0]?.[2]).toMatchObject({
+      idempotencyKey: `slack-run-plan:${'cd'.repeat(12)}`,
+      intent: 'add rate limiting',
+      repoId: REPO_ID,
+      source: 'slack',
+      user: { role: 'ADMIN', sub: 'u1' },
+    });
+    expect(ephemeralTexts()[0]).toContain('Generating your plan');
+    const post = fetchCalls.find((c) => c.url.includes('chat.postMessage'));
+    expect(JSON.stringify(post?.body)).toContain(
+      'http://localhost:3000/start?mode=plan&job=runplan-aabbccdd-0123456789abcdef'
+    );
+  });
+
+  it('tells an unlinked Slack user to link, privately, and starts nothing', async () => {
+    const res = await click('U-UNLINKED', token({ slackUserId: 'U-UNLINKED' }));
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ data: { ignored: true, reason: 'slack_user_not_linked' } });
+    expect(ephemeralTexts()[0]).toMatch(/link your slack account/i);
+    expect(startRunPlanMock).not.toHaveBeenCalled();
+  });
+
+  it('treats a deactivated user as unlinked', async () => {
+    const res = await click('U-DEACTIVATED', token({ slackUserId: 'U-DEACTIVATED' }));
+    expect(res.json()).toEqual({ data: { ignored: true, reason: 'slack_user_not_linked' } });
+    expect(startRunPlanMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a linked user who is not the creator named in the token', async () => {
+    const res = await click('U-ENGINEER', token());
+    expect(res.json()).toMatchObject({ data: { ok: false, reason: 'not_creator' } });
+    expect(ephemeralTexts()[0]).toContain('Only the person');
+    expect(startRunPlanMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses an expired token and a token signed with another secret', async () => {
+    const expired = await click('U1', token({ exp: Date.now() - 1 }));
+    expect(expired.json()).toMatchObject({ data: { ok: false, reason: 'expired' } });
+    const forged = await click(
+      'U1',
+      signSlackRunPlanToken(
+        {
+          agentKey: null,
+          channelId: 'C-plan',
+          exp: Date.now() + 60_000,
+          intent: 'x',
+          intentHash: slackRunPlanIntentHash('x'),
+          jti: 'ee'.repeat(12),
+          mode: 'delivering',
+          repoId: REPO_ID,
+          slackUserId: 'U1',
+          threadTs: '100.200',
+        },
+        'not-the-signing-secret'
+      )
+    );
+    expect(forged.json()).toMatchObject({ data: { ok: false, reason: 'bad-signature' } });
+    expect(startRunPlanMock).not.toHaveBeenCalled();
+  });
+
+  it('answers a replayed token as already used', async () => {
+    startRunPlanMock.mockResolvedValue({
+      deduplicated: true,
+      jobId: 'runplan-aabbccdd-0123456789abcdef',
+      ok: true,
+    });
+    const res = await click('U1', token());
+    expect(res.json()).toMatchObject({ data: { ok: false, reason: 'already_used' } });
+    expect(ephemeralTexts()[0]).toContain('already used');
+  });
+
+  it('relays the refusal of a user below ENGINEER and starts nothing further', async () => {
+    startRunPlanMock.mockResolvedValue({
+      code: 'FORBIDDEN',
+      message: 'Run plans need the ENGINEER role',
+      ok: false,
+      status: 403,
+    });
+    const res = await click('U1', token());
+    expect(res.json()).toMatchObject({ data: { ok: false, reason: 'FORBIDDEN' } });
+    expect(ephemeralTexts()[0]).toContain('ENGINEER');
+  });
+
+  it('acknowledges the Review plan link button without a linked account', async () => {
+    const payload = {
+      actions: [{ action_id: 'card_link_run_plan_review' }],
+      type: 'block_actions',
+      user: { id: 'U-UNLINKED' },
+    };
+    const body = `payload=${encodeURIComponent(JSON.stringify(payload))}`;
+    const { ts, sig } = signRequest(body);
+    const res = await app.inject({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'x-slack-request-timestamp': ts,
+        'x-slack-signature': sig,
+      },
+      method: 'POST',
+      payload: body,
+      url: '/api/v1/auth/slack/interactive',
+    });
+    expect(res.json()).toEqual({ data: { ignored: true, reason: 'link_button' } });
+  });
+});
+
 describe('POST /api/v1/auth/slack/interactive — shortcuts', () => {
   const originalFetch = globalThis.fetch;
   let fetchCalls: Array<{ url: string; body: unknown }>;
@@ -1375,6 +1564,8 @@ describe('POST /api/v1/auth/slack/interactive — shortcuts', () => {
     expect(res.statusCode).toBe(200);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(state.channelAssistantStarts).toHaveLength(1);
+    // The text is someone else's message, so the turn may never offer a plan from it.
+    expect(state.channelAssistantStarts[0]?.input).toMatchObject({ askedAboutMessage: true });
   });
 
   it('message shortcut on a text-less message (file/image only) starts no turn', async () => {

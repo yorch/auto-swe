@@ -202,6 +202,8 @@ export async function reserveGenerationSlot(
     jobId: string;
     repoId: string;
     mode: string;
+    /** Where the request came from (`slack`); recorded on the audit row. Never intent text. */
+    source?: string;
     now?: Date;
   }
 ): Promise<GenerationReservation> {
@@ -250,6 +252,7 @@ export async function reserveGenerationSlot(
         event: GENERATION_STARTED,
         jobId: args.jobId,
         mode: args.mode,
+        ...(args.source ? { source: args.source } : {}),
         teamId: args.scope.teamId,
       },
       client: tx,

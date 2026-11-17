@@ -63,6 +63,24 @@ export const REFINE_WORKFLOW_TOOL_PROMPT_NOTE = [
 ].join('');
 
 /**
+ * `proposeRun` tool note: when to offer a plan, and what the tool does and does not take. The goal
+ * is never the model's to write, so the note says so; the model's reply stays a one-line pointer.
+ */
+export const PROPOSE_RUN_TOOL_PROMPT_NOTE = [
+  '',
+  'You also have a `proposeRun` tool. Use it when the user asks you to get something done ',
+  'through a deterministic plan or workflow they can review first (e.g. "make a plan to ',
+  'add rate limiting", "plan and do this change"). It does not start anything: fixed code ',
+  'posts a confirmation quoting THEIR OWN message with a "Generate plan" button only they ',
+  'can press, and they approve the plan in the dashboard. You cannot supply or change the ',
+  'goal; pass only `mode` ("delivering" for a change that ends in a reviewed draft pull ',
+  'request, "output-only" with an `agentKey` for a reviewed document or answer) and, if ',
+  'they named a repository, `repoHint`. Your own reply should be one short sentence ',
+  '("Here is a plan proposal — press Generate plan to start."). For a one-off task use ',
+  '`delegateTask`; for a reusable saved workflow use `generateWorkflow`.',
+].join('');
+
+/**
  * Gap H intent gate: appended ONLY for a follow-up continuation turn (a plain thread
  * reply, no re-`@mention`). Tells the agent to stay out of a conversation that isn't
  * directed at it, using the SKIP convention the ambient/reactive paths use so the

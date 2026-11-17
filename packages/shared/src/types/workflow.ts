@@ -34,6 +34,10 @@ export interface ChannelAssistantTurnInput {
   /// teammates talking among themselves), and the workflow suppresses that reply
   /// so the assistant doesn't inject itself into human-to-human conversation.
   followup?: boolean;
+  /// True when `userText` is a message another person wrote (the "Ask auto-swe about this" message
+  /// shortcut), not the invoker's own words. The assistant then has no way to propose a plan,
+  /// because a plan's goal is only ever the invoking person's own message.
+  askedAboutMessage?: boolean;
 }
 
 /**

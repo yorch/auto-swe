@@ -104,13 +104,42 @@ the workflow delivers it as the reply's blocks with the card's text as the notif
   `github.repositoryHosts`), by exact `host[:port]` match and never with embedded credentials. A
   button carries no action: clicking it only opens the URL, and the gateway acknowledges the click
   (`card_link_*`) for linked and unlinked users alike.
-- **An action intent wins.** A card posted in the same turn as `delegateTask`, `generateWorkflow` or
-  `refineWorkflow` is dropped, because the workflow answers those with its own text.
+- **An action intent wins.** A card posted in the same turn as `delegateTask`, `generateWorkflow`,
+  `refineWorkflow` or `proposeRun` is dropped, because the workflow answers those with its own text.
+  When intents co-fire, the more specific one wins: `generateWorkflow`, then `refineWorkflow`, then
+  `proposeRun` (a plan that waits for a human), then `delegateTask` (a task that starts at once).
 - **The ambient digest and a reactive interjection can post one too.** Each turn gets the same tool
   (`lib/channelCard.ts`) and the same validation. An accepted card is posted at channel root with
   its text as the fallback. An explicit `SKIP` wins over a card (and an interjection that skips
   stamps no cooldown), and a card that was refused and never corrected leaves the prose to post as
   before.
+
+**Plan proposals.** The `proposeRun` tool lets the assistant offer to turn a request into a
+[launch-time plan](./specs/2026-11-17-launch-time-workflow-generation.md): a generated workflow the
+person reviews and approves in the dashboard before anything runs. The tool only records an intent,
+like `delegateTask`, and its schema is strict: a mode (`delivering` or `output-only`), an `agentKey`
+for an output-only plan and a repository hint. **It has no field for the goal.** After the turn, fixed
+code does the rest:
+
+- The goal is the invoking person's own message, trimmed with mention tokens removed, and it must pass
+  the same intent rule `POST /run-plans` applies. It is never a model's paraphrase. A turn whose text
+  is another person's message (the "Ask auto-swe about this" shortcut) is not offered the tool.
+- The repository is the one the channel's binding rules resolve (a hint matching the team's repositories
+  and named in the person's own message; otherwise the team's single owned repository). Ambiguous or
+  none posts an explanation and no button. The person must be a linked, active ENGINEER, and the
+  channel's repository-access mode applies exactly as it does to a code task.
+- The assistant posts a confirmation quoting the goal (escaped, so it cannot carry a mention or a
+  link) and naming the repository, with a **Generate plan** button. The button's value is a signed,
+  expiring (15 minutes) token binding the Slack user, channel, thread, goal, repository, mode and
+  agent. Only that person can use it.
+- Clicking it asks the gateway to start generation as the platform user the Slack id links to, through
+  the function `POST /run-plans` calls, so the kill switch, quotas, repository reach and launchable
+  agents are the same; the request is audited with `source: 'slack'`. The clicker gets a private
+  "Generating your plan…" and the thread gets a **Review plan** button linking to the dashboard's
+  `/start?mode=plan&job=<jobId>`. The token is consumed when generation starts (a second click is told
+  it was already used).
+- **Slack never approves a plan or launches a run.** Approval is a dashboard action, and a plan opened
+  from Slack is approved there like any other.
 
 **Injection scanning.** Channel input is scanned advisorily and surfaces as a `CHANNEL_SUSPICIOUS`
 security event in `/admin/security`.
@@ -404,6 +433,7 @@ the per-channel Temporal Schedule is created, retimed, or torn down to match the
 | Run-complete notice | When a team has `slackNotifySuccess` on, a finished run posts a card: the ticket and template, status, duration, cost and an "Open run" link button to the dashboard. Fixed code builds it from the run row (`lib/runCompleteCard.ts`, through the same validator as the assistant's cards, so the link may only point at the dashboard host). If the card cannot be built, the notice is the one-line text it was before |
 | Step-failure and PR-ready notices | A failed step posts a card with the step, the attempt, the error in a code block and an "Open run" button; a ready pull request posts a card with an "Open PR" button. Fixed code builds both (`lib/noticeCards.ts`, same validator). The PR button may point only at the dashboard or an approved repository host, so a pull request on an unlisted host keeps the plain line with its link. A card that cannot be built leaves the one-line text it was before |
 | Task report | A channel task's final in-thread report is a card: a headline, the result text, status, duration and cost, and an "Open run" button (`lib/taskResultCard.ts`). The result is model prose and a card escapes its text, so link syntax in it shows literally (a bare URL still links). If the card cannot be built, the report is the plain text it was before |
+| Plan proposal | A confirmation quoting the person's request with a **Generate plan** button (`run_plan_generate`) that only that person can use, then a **Review plan** link to the dashboard (`lib/channelRunPlanProposal.ts`, gateway `lib/slack/runPlanActions.ts`). It starts generation and never approves |
 | Shortcuts | A global "Run a workflow" picker, and a message shortcut "Ask auto-swe about this" that starts a turn on the message with no account link required |
 
 **Escaping.** Slack reads `<…>` as markup, so `<!channel>` broadcasts, `<@U…>` mentions a person and
@@ -456,9 +486,22 @@ unproven on real traffic, and turn them on one channel at a time.
   `/runs`. A run whose channel row has since been deleted loses the link and is visible to platform
   ADMINs only.
 - **Slack cannot launch a library agent against a repository.** The assistant answers, delegates a
-  task, or generates a workflow; it has no route to an agent run. Adding one is a new feature with
-  its own identity, RBAC, budget and security design (see
+  task, generates a workflow, or proposes a plan; it has no route to an agent run. A proposed
+  output-only plan names a library agent, but it runs only after the person approves it in the
+  dashboard, as a planned run and not an agent run. Launching an agent from Slack is a new feature
+  with its own identity, RBAC, budget and security design (see
   [agent-runs.md §9](./agent-runs.md#9-relation-to-the-channel-assistant)).
+- **A plan proposal quotes the whole goal or none of it.** A request too long for one button value and
+  one message section (about 1,000 characters once signed and escaped) gets a pointer to the dashboard,
+  never a trimmed goal. The goal text travels in the button value, which is the text already quoted.
+- **Nothing in Slack says a plan is ready.** The plan row is created when the dashboard polls the
+  generation job, so the thread carries only the job link. Whoever opens it reviews and approves there.
+- **A plan button is consumed when generation starts.** A click refused before that (a quota, the
+  kill switch, a lost role or permission) consumes nothing and can be retried until the token expires.
+  The checks run again at click time, so a proposal posted to a person who has since lost access is
+  refused privately.
+- **The model's repository hint is checked, not trusted.** It is honoured only when the person's own
+  message contains it; the repository is shown on the confirmation and bound into the token.
 - **Cards are not on every Slack path.** A mention or follow-up turn, the ambient digest, a reactive
   interjection, the run-complete, step-failure and PR-ready notices and a task's final report can
   post one. The open-item nudge, the org-signal flag, error replies and the gateway's thread
@@ -513,9 +556,9 @@ unproven on real traffic, and turn them on one channel at a time.
 | Area | Paths |
 |---|---|
 | Workflows | `workflows/channelAssistant.ts`, `channelScheduledTask.ts`, `channelReactive.ts`, `taskChild.ts` |
-| Activities | `activities/channelAssistant.ts`, `channelReactive.ts`, `channelTask.ts`, `channelTaskPlan.ts`, `channelOpenItems.ts`, `consolidateChannelMemory.ts`, `passiveIngestChannelMemory.ts` |
-| Worker libs | `lib/channelMemory.ts`, `channelPersona.ts`, `channelTurnPrompts.ts`, `channelCard.ts`, `cardLinkHosts.ts`, `slackCard.ts`, `runCompleteCard.ts`, `noticeCards.ts`, `taskResultCard.ts`, `embeddingClustering.ts`, `slackNotify.ts` |
+| Activities | `activities/channelAssistant.ts`, `channelRunPlan.ts`, `channelReactive.ts`, `channelTask.ts`, `channelTaskPlan.ts`, `channelOpenItems.ts`, `consolidateChannelMemory.ts`, `passiveIngestChannelMemory.ts` |
+| Worker libs | `lib/channelMemory.ts`, `channelPersona.ts`, `channelTurnPrompts.ts`, `channelRunPlanProposal.ts`, `channelCard.ts`, `cardLinkHosts.ts`, `slackCard.ts`, `runCompleteCard.ts`, `noticeCards.ts`, `taskResultCard.ts`, `embeddingClustering.ts`, `slackNotify.ts` |
 | Steering | `workflows/runnable.ts` (`steer` handler), `activities/runAgentNode.ts` (`prependSteering`), `shared/workflow/interpreter.ts` (`drainSteering`) |
-| Gateway | `routes/slack.ts` + `routes/slack/events.ts` (events), `lib/slack/` (thread-reply steering, channel provisioning), `routes/slackChannels.ts`, `plugins/temporal.ts` (`startChannelAssistant`) |
+| Gateway | `routes/slack.ts` + `routes/slack/events.ts` (events), `lib/slack/` (thread-reply steering, channel provisioning, `runPlanActions.ts`), `lib/runPlanStart.ts`, `routes/slackChannels.ts`, `plugins/temporal.ts` (`startChannelAssistant`) |
 | Web | `app/admin/slack-channels/`, `app/teams/[id]/page.tsx` (persona card), `hooks/useSlackChannels.ts` |
-| Shared | `lib/channelTask.ts` (`channelTaskWorkflowId`, `CHANNEL_TASK_STEER_SIGNAL`), `lib/syncBuiltins.ts` (`channelAssistant`, `syncChannelTaskTemplate`) |
+| Shared | `lib/slackRunPlanToken.ts` (the plan button's signed token), `lib/channelTask.ts` (`channelTaskWorkflowId`, `CHANNEL_TASK_STEER_SIGNAL`), `lib/syncBuiltins.ts` (`channelAssistant`, `syncChannelTaskTemplate`) |

@@ -268,6 +268,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/runPlanSweep.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/slackRunPlanToken',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/slackRunPlanToken.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/runPlanWorkflows',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/runPlanWorkflows.ts'),
       },

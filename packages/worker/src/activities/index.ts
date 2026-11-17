@@ -55,6 +55,9 @@ export type {
   TouchChannelThreadSessionInput,
 } from './channelRun.js';
 export { finalizeChannelRun, startChannelRun, touchChannelThreadSession } from './channelRun.js';
+// Channel assistant — offer a plan proposal (a signed, single-use Slack button) for a request
+export type { ProposeChannelRunPlanInput, ProposeRunIntent } from './channelRunPlan.js';
+export { proposeChannelRunPlan } from './channelRunPlan.js';
 // Channel assistant (Phase A) — general agentic task launch from a mention
 // Channel assistant (Phase B) — code-task route via the default SWE workflow
 export type {

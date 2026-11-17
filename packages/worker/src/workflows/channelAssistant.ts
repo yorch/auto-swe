@@ -92,6 +92,15 @@ const { createChannelTaskRun, createChannelCodeTaskRun, isChannelOverBudgetForTa
     startToCloseTimeout: T_30S,
   });
 
+// Plan proposal: DB reads (who the person is, which repository the channel means) and a token
+// signature. No LLM call and no plan is created; one attempt is enough and a retry is harmless.
+const { proposeChannelRunPlan } = proxyActivities<
+  Pick<typeof activitiesType, 'proposeChannelRunPlan'>
+>({
+  retry: RETRY_RUN_RECORD,
+  startToCloseTimeout: T_30S,
+});
+
 // Workflow generation: an LLM activity (generate→validate→repair) + a DB write.
 // Generous timeout; one attempt only (the activity has its own internal repair
 // loop, and it is best-effort — it returns null rather than throwing on failure).
@@ -260,7 +269,7 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
   //    when we have its ts, otherwise post a fresh message. On error, do the same
   //    with friendly error text (preserving the graceful-fallback behavior).
   try {
-    const { reply, card, delegate, generate, refine, suppressed } =
+    const { reply, card, delegate, generate, proposeRun, refine, suppressed } =
       await runChannelAssistantTurn(input);
 
     // Gap H intent gate: a follow-up turn decided the latest message wasn't
@@ -333,6 +342,22 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
         text = CHANNEL_WORKFLOW_REFINE_FAILED_TEXT;
       }
       await deliver(input, placeholderTs, text);
+      return 'SUCCESS';
+    }
+
+    // The agent offered to turn the request into a plan. Fixed code builds the confirmation from
+    // the person's own message (the intent carries no goal text) and the message carries a button
+    // only that person can use. Nothing is generated, started or approved here.
+    if (proposeRun) {
+      const proposal = await proposeChannelRunPlan({
+        channelId: input.channelId,
+        intent: proposeRun,
+        slackChannelId: input.slackChannelId,
+        threadTs: input.threadTs,
+        userSlackId: input.userSlackId,
+        userText: input.userText,
+      });
+      await deliver(input, placeholderTs, proposal.text, proposal.blocks);
       return 'SUCCESS';
     }
 

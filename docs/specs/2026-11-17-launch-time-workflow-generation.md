@@ -19,11 +19,16 @@ Made with the product owner:
 8. Canonical core, free ends. For a delivering plan the mandatory region is not described by rules
    over an arbitrary graph; it must equal the shipped `ticket-to-merge` core node for node. The
    generator writes only the nodes before the core and, optionally, after the human merge wait.
+9. Slack creates plans and never approves them. The channel assistant can offer to generate a plan
+   from the invoking person's own message, and that person starts generation with a button; the
+   plan is reviewed and approved in the dashboard, and nothing in Slack approves a plan or launches
+   a run.
 
 Defaults taken after adversarial review (changeable):
 
 - Service principals cannot create or approve plans.
-- A Slack plan is approved only by the user whose message created it, in the same channel.
+- A Slack proposal's button works only for the person whose message it quotes, and only once, for
+  15 minutes.
 - Pull requests opened by a generated plan are excluded from PR-evaluation `auto` mode.
 - Plan creation is rate-limited per user (registry settings).
 
@@ -205,9 +210,16 @@ cap (`runPlans.generationMaxAttempts`, default 3, 1 to 5, resolved by the worker
   the plan preview (outline, cost with unpriced nodes listed, mandatory nodes marked, warnings,
   pinned agent versions) and an Approve button.
 - CLI: `auto-swe plan create|show|approve|reject`, and `run --describe "<goal>" --yes`.
-- Slack: the channel assistant records a plan intent; fixed code creates the plan and posts it with an
-  Approve button that only its creator can use. The channel path requires a linked, active ENGINEER with
-  repository reach, as agent runs do.
+- Slack: the channel assistant's `proposeRun` tool records only a mode, an agent key for an
+  output-only plan and a repository hint; it has no field for the goal. After the turn, fixed code
+  takes the goal verbatim from the invoking person's own message, resolves the repository by the
+  channel's binding rules, requires a linked, active ENGINEER whom the repository access decision
+  admits, and posts a confirmation quoting the goal (escaped) with a **Generate plan** button. The
+  button's value is a signed, expiring token that binds the person, channel, thread, goal,
+  repository, mode and agent. When the person clicks it, the gateway starts generation through the
+  function `POST /run-plans` calls, as the platform user their Slack id links to, with an
+  `Idempotency-Key` derived from the token's id, and replies with a **Review plan** link to
+  `/start?mode=plan&job=<jobId>`. Approval happens only there. No Slack control approves a plan.
 
 ### 8. Obligations
 
@@ -302,3 +314,21 @@ planned run are marked so `evaluatePullRequest` skips `auto` mode for them. The 
   `429` for a request that would have been deduplicated. A start that fails on the gateway's side
   after Temporal may have accepted it keeps its slot unless the job is shown not to exist.
 - A person in more than 50 teams and organizations is limited by the first 50 in a fixed order.
+- Slack starts generation and nothing more. No message announces that a plan is ready: the plan row is
+  created when the job is polled, so the only link Slack can carry is the job's, and the person
+  follows it in the dashboard. A plan nobody opens stays a finished job.
+- A Slack proposal quotes the goal exactly, so a request too long to fit one button value and one
+  message section (about 1,000 characters once signed and escaped) is refused with a pointer to the
+  dashboard rather than trimmed. A message another person wrote (the "Ask auto-swe about this"
+  shortcut) never becomes a goal: the tool is not offered on that turn.
+- The model's repository hint is honoured only when the person's own message contains it; otherwise
+  the channel's default repository rules decide. The person sees the repository on the confirmation
+  before clicking, and the token binds it.
+- A Slack token is consumed when generation starts, through Temporal's one-job-per-id rule on the
+  key derived from it, not by a row in the database. A click refused before the job starts (a quota,
+  the kill switch, a lost permission) consumes nothing, so the person can click again until the
+  token expires. The token carries the goal text in the button value Slack echoes back, which is the
+  text already quoted in the message.
+- A person without a linked account sees the proposal explained rather than a button, and a button
+  clicked after the link or the role was lost is refused privately; both checks run again at click
+  time because a proposal can sit in a thread for 15 minutes.

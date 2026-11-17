@@ -1,17 +1,8 @@
 import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
-import { isLaunchableAgentKey } from '@auto-swe/shared/lib/agentRun';
 import { handLaunchBlock } from '@auto-swe/shared/lib/channelTask';
-import {
-  PLANNED_RUN_TEMPLATE_NAME,
-  plannedRunTicketId,
-  RUN_PLAN_MODES,
-  type RunPlanMode,
-} from '@auto-swe/shared/lib/plannedRun';
-import {
-  runPlanGenerationWorkflowId,
-  runPlanRouteWorkflowId,
-} from '@auto-swe/shared/lib/runPlanWorkflows';
+import { PLANNED_RUN_TEMPLATE_NAME, plannedRunTicketId } from '@auto-swe/shared/lib/plannedRun';
+import { runPlanRouteWorkflowId } from '@auto-swe/shared/lib/runPlanWorkflows';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { BUDGET_TIERS } from '@auto-swe/shared/types/workflow';
 import { RUN_PLAN_INTENT_MAX_CHARS, runPlanIntentIssue } from '@auto-swe/shared/workflow/runPlan';
@@ -20,19 +11,9 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
-import {
-  IdempotencyHeaderSchema,
-  uuidFromIdempotencyKey,
-  workflowIdFromIdempotencyKey,
-} from '../lib/idempotency.js';
-import { launchableAgentKeys } from '../lib/launchableAgents.js';
+import { IdempotencyHeaderSchema } from '../lib/idempotency.js';
 import { paginationQuery } from '../lib/pagination.js';
-import {
-  createRunPlanQuotaPolicy,
-  releaseGenerationSlot,
-  reserveGenerationSlot,
-  reserveRouteSlot,
-} from '../lib/runPlanQuotas.js';
+import { createRunPlanQuotaPolicy, reserveRouteSlot } from '../lib/runPlanQuotas.js';
 import {
   approveAndLaunchPlan,
   authorizeRepository,
@@ -45,10 +26,10 @@ import {
   requireEngineer,
   snapshotPlanSettings,
 } from '../lib/runPlanService.js';
+import { planIdForJob, RunPlanMemoSchema, startRunPlan, user8Of } from '../lib/runPlanStart.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
 import { teamMembershipFilter } from '../lib/templateLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
-import type { RunPlanJobState } from '../plugins/temporal.js';
 
 /**
  * Launch-time workflow generation over HTTP (docs/specs/2026-11-17-launch-time-workflow-generation.md,
@@ -119,29 +100,6 @@ const ApproveBody = z
   .object({ budgetTier: z.enum(BUDGET_TIERS).optional() })
   .strict()
   .nullish();
-
-/** What a generation workflow carries in its memo (see `RunPlanGenerationMemo`). */
-const MemoSchema = z.object({
-  intentHash: z.string(),
-  mode: z.enum(RUN_PLAN_MODES),
-  ownerUserId: z.string(),
-  repoId: z.string().uuid(),
-  teamId: z.string(),
-});
-
-const user8Of = (userId: string) => userId.replace(/-/g, '').slice(0, 8);
-
-/** The plan a job becomes: derived from the job id, so persisting twice finds one row. */
-export function planIdForJob(userId: string, jobId: string): string {
-  return uuidFromIdempotencyKey(`run-plan:${userId}`, jobId);
-}
-
-function intentHash(repoId: string, agent: string | undefined, intent: string): string {
-  return crypto
-    .createHash('sha256')
-    .update(`${repoId}\n${agent ?? ''}\n${intent}`)
-    .digest('hex');
-}
 
 /** What an approval's audit row records of the Idempotency-Key: a digest, never the key. */
 function keyDigest(key: string): string {
@@ -299,6 +257,8 @@ function planView(plan: PlanRow) {
     warnings: warningsOf(plan),
   };
 }
+
+export { planIdForJob };
 
 export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -473,139 +433,27 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
         return reply;
       }
       const user = requireUser(request);
-      if (await refuseNonEngineer(request, reply, user.sub)) {
-        return reply;
+      // The same function the Slack "Generate plan" button calls: one set of checks, quotas and
+      // idempotency rules for both.
+      const started = await startRunPlan(
+        fastify,
+        { gate: request.repoAccessGate, log: request.log },
+        {
+          agent: request.body.agent,
+          idempotencyKey: request.headers['idempotency-key'],
+          intent: request.body.intent,
+          repoId: request.body.repoId,
+          user,
+        }
+      );
+      if (!started.ok) {
+        return sendRefusal(reply, started);
       }
-      const { agent, intent, repoId } = request.body;
-      const idempotencyKey = request.headers['idempotency-key'];
-
-      // Repository reach, GitHub permission, org membership and cap, host allowlist: the launch
-      // decision, the same function the plan service re-runs at creation and approval.
-      const repo = await authorizeRepository(deps(request), { sub: user.sub }, repoId);
-      if (!repo.ok) {
-        return sendRefusal(reply, repo);
-      }
-      const scope = { orgId: repo.repo.orgId, teamId: repo.repo.teamId };
-
-      // The agents the plan may name: the agent-run rules, computed here and never taken from
-      // the client. A library-agent plan must be built on one of them.
-      const agentKeys = await launchableAgentKeys(fastify.prisma, scope.orgId);
-      if (agent !== undefined) {
-        if (!isLaunchableAgentKey(agent)) {
-          return sendError(
-            reply,
-            400,
-            'AGENT_NOT_LAUNCHABLE',
-            `Agent '${agent}' backs a platform mechanism and cannot be launched`
-          );
-        }
-        if (!agentKeys.includes(agent)) {
-          return sendError(
-            reply,
-            404,
-            'AGENT_NOT_FOUND',
-            `No active agent '${agent}' at global or organization scope`
-          );
-        }
-      }
-      const mode: RunPlanMode = agent ? 'output-only' : 'delivering';
-      const hash = intentHash(repoId, agent, intent);
-
-      const jobId = idempotencyKey
-        ? workflowIdFromIdempotencyKey('runplan', user8Of(user.sub), idempotencyKey)
-        : runPlanGenerationWorkflowId(
-            `${user8Of(user.sub)}-${crypto.randomUUID().replace(/-/g, '')}`
-          );
-      const replay = (state: RunPlanJobState) => {
-        const memo = MemoSchema.safeParse('memo' in state ? state.memo : {});
-        // Another person's job under a colliding id is not described to this caller.
-        if (!memo.success || memo.data.ownerUserId !== user.sub) {
-          return sendError(
-            reply,
-            409,
-            'IDEMPOTENCY_KEY_CONFLICT',
-            'This Idempotency-Key cannot be used; send a new one'
-          );
-        }
-        if (memo.data.intentHash !== hash) {
-          return sendError(
-            reply,
-            422,
-            'IDEMPOTENCY_KEY_MISMATCH',
-            'This Idempotency-Key was already used for a different request. Use a new key for a different goal.'
-          );
-        }
-        return reply.status(202).send({ data: { deduplicated: true, jobId } });
-      };
-      const planId = planIdForJob(user.sub, jobId);
-      if (idempotencyKey) {
-        const existing = await fastify.temporal.getRunPlanJob(jobId);
-        if (existing.status !== 'not_found') {
-          return replay(existing);
-        }
-        // The job's history is gone but the plan it made is not: the plan id is a function of the
-        // key, so starting again would hand the caller that old plan (launched, rejected or for
-        // another goal) as if it were the answer to this request.
-        const prior = await fastify.prisma.runPlan.findUnique({
-          select: { id: true },
-          where: { id: planId },
-        });
-        if (prior) {
-          return sendError(
-            reply,
-            422,
-            'IDEMPOTENCY_KEY_MISMATCH',
-            'This Idempotency-Key already produced a plan, so it cannot start another. Use a new key.'
-          );
-        }
-      }
-
-      const reservation = await reserveGenerationSlot(fastify, {
-        jobId,
-        mode,
-        planId,
-        repoId,
-        scope,
-        user,
+      return reply.status(202).send({
+        data: started.deduplicated
+          ? { deduplicated: true, jobId: started.jobId }
+          : { jobId: started.jobId },
       });
-      if (!reservation.ok) {
-        return sendRefusal(reply, reservation);
-      }
-      const { auditId } = reservation;
-      try {
-        const { started } = await fastify.temporal.startRunPlanGeneration(
-          jobId,
-          {
-            ...(agent ? { agentKey: agent } : {}),
-            intent,
-            launchableAgentKeys: agentKeys,
-            mode,
-            orgId: scope.orgId,
-            teamId: scope.teamId,
-          },
-          { intentHash: hash, mode, ownerUserId: user.sub, repoId, teamId: scope.teamId }
-        );
-        if (!started) {
-          // A retry that raced its own first request: this call started nothing, so it gives back
-          // its own row. The request that did start the job holds the row that pays for it.
-          await releaseGenerationSlot(fastify, { auditId, userId: user.sub });
-          return replay(await fastify.temporal.getRunPlanJob(jobId));
-        }
-      } catch (err) {
-        // A start that failed on this side may still have reached Temporal (a timeout after the
-        // server accepted it). Take the row back only once the job is shown not to exist.
-        let startedAnyway = true;
-        try {
-          startedAnyway = (await fastify.temporal.getRunPlanJob(jobId)).status !== 'not_found';
-        } catch {
-          // Cannot prove it did not start: keep the row.
-        }
-        if (!startedAnyway) {
-          await releaseGenerationSlot(fastify, { auditId, userId: user.sub });
-        }
-        throw err;
-      }
-      return reply.status(202).send({ data: { jobId } });
     }
   );
 
@@ -630,7 +478,7 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
       }
       // The memo, not the id, says whose job this is. A job that is not this person's is
       // answered exactly as one that does not exist.
-      const memo = MemoSchema.safeParse(state.memo);
+      const memo = RunPlanMemoSchema.safeParse(state.memo);
       if (!memo.success || memo.data.ownerUserId !== user.sub) {
         return notFound();
       }
