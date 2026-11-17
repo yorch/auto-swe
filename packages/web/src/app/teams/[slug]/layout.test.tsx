@@ -98,6 +98,7 @@ describe('team space layout', () => {
       'Reports',
       'Knowledge',
       'Members',
+      'Manage',
       'Settings',
     ]);
     expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('href')).toBe(
@@ -111,6 +112,19 @@ describe('team space layout', () => {
     await screen.findByRole('heading', { name: 'Payments' });
     expect(screen.queryByRole('link', { name: 'Settings' })).toBeNull();
     expect(screen.getByRole('link', { name: 'Members' })).toBeTruthy();
+  });
+
+  it('offers Manage to a lead, and not to an engineer', async () => {
+    gateway([team('payments', 'Payments', 'ENGINEER')]);
+    renderLayout('payments');
+    await screen.findByRole('heading', { name: 'Payments' });
+    expect(screen.queryByRole('link', { name: 'Manage' })).toBeNull();
+    cleanup();
+    gateway([team('payments', 'Payments', 'LEAD')]);
+    renderLayout('payments');
+    expect((await screen.findByRole('link', { name: 'Manage' })).getAttribute('href')).toBe(
+      '/teams/payments/manage'
+    );
   });
 
   it('offers an ORG_ADMIN of the team’s organization Settings even as a plain engineer', async () => {

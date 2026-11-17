@@ -111,15 +111,15 @@ describe('TeamSettingsPanel sections', () => {
     expect(screen.queryByLabelText('Persona')).toBeNull();
   });
 
-  it('offers a team lead who is not a platform ADMIN neither sandbox nor service principals by rule', async () => {
+  it('offers a team lead who is not a platform ADMIN no sandbox section, and lists no service principals', async () => {
     useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
     mockTeam();
     renderPanel('LEAD');
     await screen.findByRole('tab', { name: 'General' });
     // Allowlists are platform-ADMIN only (teamPermissions), whatever the team role.
     expect(screen.queryByRole('tab', { name: 'Sandbox policy' })).toBeNull();
-    // A platform LEAD who leads the team manages members and so service principals.
-    expect(screen.getByRole('tab', { name: 'Service principals' })).toBeTruthy();
+    // Service principals moved to the Manage tab.
+    expect(screen.queryByRole('tab', { name: 'Service principals' })).toBeNull();
   });
 
   it('offers no member-management section when the team role is below lead', async () => {

@@ -30,10 +30,17 @@ export interface UpdateScheduleBody {
 
 const BASE = '/api/v1/scheduled-work-requests';
 
-export function useSchedules() {
+/** The schedules the caller may see; `teamId` narrows them to the ones that team owns. */
+export function useSchedules(options: { teamId?: string } = {}) {
+  const { teamId } = options;
   return useQuery({
-    queryFn: () => api.get<{ data: ScheduledWorkRequestSummary[] }>(BASE).then((r) => r.data),
-    queryKey: ['scheduled-work-requests'],
+    queryFn: () =>
+      api
+        .get<{ data: ScheduledWorkRequestSummary[] }>(
+          teamId ? `${BASE}?teamId=${encodeURIComponent(teamId)}` : BASE
+        )
+        .then((r) => r.data),
+    queryKey: teamId ? ['scheduled-work-requests', { teamId }] : ['scheduled-work-requests'],
   });
 }
 

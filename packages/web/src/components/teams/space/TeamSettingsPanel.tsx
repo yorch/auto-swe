@@ -9,7 +9,6 @@ import { KnowledgeBaseLinksPanel } from '@/components/knowledgeBases/KnowledgeBa
 import { RepoShareAccess } from '@/components/repositories/RepoShareAccess';
 import { EgressAllowlistEditor } from '@/components/teams/EgressAllowlistEditor';
 import { EventEndpointsCard } from '@/components/teams/EventEndpointsCard';
-import { ServicePrincipalsSection } from '@/components/teams/ServicePrincipalsSection';
 import { ShellAllowlistEditor } from '@/components/teams/ShellAllowlistEditor';
 import { TeamAgentLibrarySection } from '@/components/teams/TeamAgentLibrarySection';
 import { TeamBudgetSection } from '@/components/teams/TeamBudgetSection';
@@ -40,14 +39,7 @@ import { canManageTeamBudget, teamPermissions } from '@/lib/teamPermissions';
 import { hasFullTeamSettings } from '@/lib/teamSpace';
 import { useAuthStore } from '@/stores/authStore';
 
-type SettingsTab =
-  | 'general'
-  | 'budget'
-  | 'service-principals'
-  | 'automation'
-  | 'plugins'
-  | 'secrets'
-  | 'sandbox';
+type SettingsTab = 'general' | 'budget' | 'automation' | 'plugins' | 'secrets' | 'sandbox';
 
 /** Persona text beyond this many characters is probably unintended; shown as a counter, not enforced. */
 const PERSONA_SOFT_LIMIT = 4000;
@@ -68,8 +60,8 @@ function RepoLine({ name, trailing }: { name: string; trailing: React.ReactNode 
 }
 
 /**
- * A team's configuration: its details, repositories, persona, service principals, event
- * endpoints and agents, and sandbox policy. Offered to a team LEAD or ADMIN and to a platform
+ * A team's configuration: its details, repositories, persona, event endpoints and agents, and
+ * sandbox policy. Offered to a team LEAD or ADMIN and to a platform
  * ADMIN; each section still shows only what `teamPermissions` says the caller may change.
  */
 export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
@@ -161,7 +153,6 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: 'general', label: 'General' },
     ...(canManageBudget ? [{ id: 'budget' as const, label: 'Budget' }] : []),
-    ...(canManage ? [{ id: 'service-principals' as const, label: 'Service principals' }] : []),
     { id: 'automation', label: 'Events & agents' },
     { id: 'plugins', label: 'Plugins' },
     ...(canManageTeamSecrets ? [{ id: 'secrets' as const, label: 'Secrets' }] : []),
@@ -176,8 +167,7 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-paper-400">
-          {team.description ||
-            'Repositories, persona, service principals, sandbox allowlists and agent overrides.'}
+          {team.description || 'Repositories, persona, sandbox allowlists and agent overrides.'}
           <span className="mt-1 block font-mono text-xs text-paper-500">{team.slug}</span>
         </p>
         {canManage && (
@@ -380,18 +370,6 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
       {tab === 'budget' && canManageBudget && (
         <div {...tabPanelProps('team-settings', 'budget')}>
           <TeamBudgetSection canManageCredentials={isPlatformAdmin} teamId={id} />
-        </div>
-      )}
-
-      {tab === 'service-principals' && canManage && (
-        <div {...tabPanelProps('team-settings', 'service-principals')}>
-          <ServicePrincipalsSection
-            repositories={[...repositories.filter((r) => r.isActive), ...shared].map((r) => ({
-              id: r.id,
-              label: `${r.organizationName}/${r.repoName}`,
-            }))}
-            teamId={id}
-          />
         </div>
       )}
 

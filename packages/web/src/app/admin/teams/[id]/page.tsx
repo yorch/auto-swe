@@ -12,8 +12,8 @@ import { ApiError } from '@/lib/api';
 import { validateRouteParam } from '@/lib/routeParams';
 import { teamHref } from '@/lib/teamSpace';
 
-/** The sections the old team page kept behind `?tab=`; they live under Settings now. */
-const SETTINGS_TABS = new Set(['service-principals', 'automation', 'sandbox']);
+/** The sections the old team page kept behind `?tab=` that live under Settings now. */
+const SETTINGS_TABS = new Set(['automation', 'sandbox']);
 
 function Frame({ children }: { children: React.ReactNode }) {
   return (
@@ -40,10 +40,13 @@ function TeamRedirect({ id }: { id: string | null }) {
   const team = listed ?? direct.data;
   useEntityTitle(team?.name);
   const tab = params.get('tab') ?? '';
+  // Service principals moved to the Manage tab, which has no sections of its own to name.
   const target = team
-    ? SETTINGS_TABS.has(tab)
-      ? `${teamHref(team.slug, 'settings')}?tab=${encodeURIComponent(tab)}`
-      : teamHref(team.slug)
+    ? tab === 'service-principals'
+      ? teamHref(team.slug, 'manage')
+      : SETTINGS_TABS.has(tab)
+        ? `${teamHref(team.slug, 'settings')}?tab=${encodeURIComponent(tab)}`
+        : teamHref(team.slug)
     : null;
 
   useEffect(() => {

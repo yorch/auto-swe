@@ -84,6 +84,7 @@ export const UI_ROUTE_TEMPLATES: readonly string[] = [
   '/teams/[slug]',
   '/teams/[slug]/automations',
   '/teams/[slug]/knowledge',
+  '/teams/[slug]/manage',
   '/teams/[slug]/members',
   '/teams/[slug]/reports',
   '/teams/[slug]/settings',
