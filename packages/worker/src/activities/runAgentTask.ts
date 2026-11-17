@@ -33,7 +33,6 @@ import { createProvisionTool, grantsProvisionTool } from '../agents/provisionToo
 import { buildWorkspaceTools } from '../agents/workspaceTools.js';
 import {
   currentWorkflowId,
-  currentWorkflowRunId,
   persistActivityTrace,
   startTraceFlushing,
   traceWorkspacePreparation,
@@ -420,6 +419,7 @@ export async function runAgentTaskCore(
       repoId: input.repo.id,
       resolved,
       settingsCtx,
+      ...(input.orchestrated ? { orchestrated: true } : {}),
       ...(input.steeringRunId ? { steeringRunId: input.steeringRunId } : {}),
       tracer,
       workspace: agentWs,
@@ -570,7 +570,11 @@ async function runAgentTaskImpl({
 
   // ── 1. Only the system template may run this, against the repo its ledger row names.
   const run = await prisma.workflowRun.findUnique({
-    select: { template: { select: { name: true, origin: true, teamId: true } }, templateId: true },
+    select: {
+      id: true,
+      template: { select: { name: true, origin: true, teamId: true } },
+      templateId: true,
+    },
     where: { workflowId },
   });
   if (
@@ -628,6 +632,16 @@ async function runAgentTaskImpl({
       throw refuse('A run with no repository names no team to bill', 'NO_CONNECTION');
     }
     repolessTenant = { orgId: billed.billingOrgId ?? undefined, teamId: billed.billingTeamId };
+  }
+  // An orchestration's MCP approval guard is keyed by this run's row id, read with the same query
+  // that proved the template (never a second lookup that could fail on its own). Without it the
+  // guard cannot be built, and an unguarded MCP call is never allowed: fail the run.
+  const orchestrationRunId = payload.orchestrationId ? run.id : undefined;
+  if (payload.orchestrationId && !orchestrationRunId) {
+    throw refuse(
+      'The run of an orchestration child could not be identified, so its MCP calls cannot be guarded',
+      'ORCHESTRATION_RUN_UNKNOWN'
+    );
   }
   if (!TICKET_RE.test(request.externalTicketId)) {
     throw refuse(
@@ -698,7 +712,7 @@ async function runAgentTaskImpl({
       effective,
       key,
       prompt: request.description,
-      ...(payload.orchestrationId ? { steeringRunId: await currentWorkflowRunId() } : {}),
+      runId: orchestrationRunId as string,
       ...(version !== undefined ? { version } : {}),
     });
   }
@@ -722,7 +736,7 @@ async function runAgentTaskImpl({
   const repoRef = toRepoRef(repo);
   const scm = getScmProvider(repoRef);
   // A run an orchestration started takes steering messages at step boundaries (Mastra loop only).
-  const steeringRunId = payload.orchestrationId ? await currentWorkflowRunId() : undefined;
+  const steeringRunId = orchestrationRunId;
   const core = await runAgentTaskCore({
     agentVersions: baseCtx.agentVersions,
     allowPause,
@@ -828,9 +842,16 @@ async function runAgentTaskImpl({
  */
 function guardedMcpTarget(
   target: Awaited<ReturnType<typeof resolveAgentMcpUrl>>,
-  input: Pick<AgentLoopInput, 'deadline' | 'steeringRunId'>,
+  input: Pick<AgentLoopInput, 'deadline' | 'orchestrated' | 'steeringRunId'>,
   tracer: AgentTracer
 ) {
+  if (input.orchestrated && !input.steeringRunId) {
+    // Fail closed: an orchestration's run with no run id has no guard, and no MCP tool is bound.
+    throw refuse(
+      'The run of an orchestration child has no run id, so its MCP calls cannot be guarded',
+      'ORCHESTRATION_RUN_UNKNOWN'
+    );
+  }
   return input.steeringRunId
     ? withMcpApproval(target, {
         expectOrchestrated: true,
@@ -842,6 +863,8 @@ function guardedMcpTarget(
 }
 
 interface AgentLoopInput {
+  /** The run belongs to an orchestration: its MCP target must carry the approval guard. */
+  orchestrated?: boolean;
   /** The agent may stop to ask a person (set only for a runtime that can). */
   allowPause?: true;
   agentCtx: ResolveCtx;

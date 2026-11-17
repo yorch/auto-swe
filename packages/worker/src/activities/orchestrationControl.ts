@@ -2,6 +2,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { logWarn } from '../lib/activityLog.js';
 import {
   completeOrchestrationChild,
+  findUnseenChildResults,
   markChildRunStarted,
   recordChildResult,
 } from '../lib/orchestrationChildren.js';
@@ -63,11 +64,18 @@ export async function beginOrchestrationRun(
     });
   }
   const [turns, load, unseen] = await Promise.all([
+    // Turns are the messages a turn activity wrote with its number (`payload.turn`). Any other
+    // ORCHESTRATOR text (a `messageAgent` the gateway recorded for a child, say) is not a turn.
     prisma.orchestrationMessage.count({
-      where: { kind: 'TEXT', orchestrationId: input.orchestrationId, role: 'ORCHESTRATOR' },
+      where: {
+        kind: 'TEXT',
+        orchestrationId: input.orchestrationId,
+        payload: { gte: 1, path: ['turn'] },
+        role: 'ORCHESTRATOR',
+      },
     }),
     countOrchestrationLoad(input.orchestrationId),
-    unseenChildResults(input.orchestrationId, 0),
+    findUnseenChildResults(input.orchestrationId, 0),
   ]);
   return {
     createdAtMs: orch.createdAt.getTime(),
@@ -77,21 +85,6 @@ export async function beginOrchestrationRun(
     turns,
     unseenChildIds: unseen,
   };
-}
-
-/** Children whose result is recorded but that no orchestrator turn has read, older than `graceMs`. */
-async function unseenChildResults(orchestrationId: string, graceMs: number): Promise<string[]> {
-  const rows = await prisma.orchestrationMessage.findMany({
-    select: { childId: true },
-    where: {
-      childId: { not: null },
-      createdAt: { lt: new Date(Date.now() - graceMs) },
-      kind: 'CHILD_RESULT',
-      orchestrationId,
-      payload: { equals: false, path: ['seen'] },
-    },
-  });
-  return [...new Set(rows.flatMap((r) => (r.childId ? [r.childId] : [])))];
 }
 
 /**
@@ -137,7 +130,7 @@ export async function refreshOrchestrationChildren(
       });
     }
   }
-  for (const id of await unseenChildResults(orchestrationId, SIGNAL_GRACE_MS)) {
+  for (const id of await findUnseenChildResults(orchestrationId, SIGNAL_GRACE_MS)) {
     finished.add(id);
   }
   const load = await countOrchestrationLoad(orchestrationId);
@@ -208,9 +201,17 @@ export async function recordOrchestrationStatus(
 }
 
 /**
+ * Statuses that mean the child (or the whole orchestration) is already out of reach: the token was
+ * revoked because the orchestration ended (401), the child or orchestration is gone (404), or the
+ * child already finished (409). Not failures to act on.
+ */
+const ALREADY_STOPPED_STATUSES = new Set([401, 404, 409]);
+
+/**
  * Cancel every running child through the gateway (best effort, one by one). Pushed branches stay.
- * A child the gateway refuses to cancel is logged; the next backstop pass or the run's own
- * deadline ends it.
+ * The gateway's own end route cancels children itself before it revokes the token, so a 401, 404
+ * or 409 here means the work is already stopped and is logged as such; any other refusal or error
+ * is logged as a failure. Never throws for a child: the workflow's finish must not depend on this.
  */
 export async function cancelOrchestrationChildren(
   input: CancelOrchestrationChildrenInput
@@ -232,6 +233,13 @@ export async function cancelOrchestrationChildren(
       );
       if (res.status >= 200 && res.status < 300) {
         cancelled += 1;
+      } else if (ALREADY_STOPPED_STATUSES.has(res.status)) {
+        logWarn('orchestration child already stopped or the token was revoked', {
+          childId: child.id,
+          status: res.status,
+        });
+      } else {
+        logWarn('orchestration child cancel refused', { childId: child.id, status: res.status });
       }
     } catch (err) {
       logWarn('orchestration child cancel failed', {

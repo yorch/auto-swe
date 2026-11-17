@@ -4,7 +4,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveGatewayInternalUrl: () => 'http://gateway.internal:8080',
 }));
 
-import { createOrchestrationGateway } from './orchestrationGateway.js';
+import { createOrchestrationGateway, MAX_RESPONSE_BYTES } from './orchestrationGateway.js';
 
 function fakeFetch(status: number, body: string) {
   const calls: Array<{ url: URL; init: RequestInit }> = [];
@@ -32,6 +32,23 @@ describe('createOrchestrationGateway', () => {
   it('keeps a non-JSON body as text', async () => {
     const gw = createOrchestrationGateway('t', { fetchImpl: fakeFetch(502, 'bad gateway').impl });
     expect(await gw.post('/api/v1/x', {})).toEqual({ body: 'bad gateway', status: 502 });
+  });
+
+  it('stops reading an oversized body at the cap instead of buffering it', async () => {
+    let pulled = 0;
+    const chunk = new TextEncoder().encode('x'.repeat(10_000));
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(chunk);
+      },
+    });
+    const impl = (async () => new Response(body, { status: 200 })) as unknown as typeof fetch;
+    const gw = createOrchestrationGateway('t', { fetchImpl: impl });
+    const res = await gw.post('/api/v1/x', {});
+    expect((res.body as string).length).toBe(MAX_RESPONSE_BYTES);
+    // An endless stream was cancelled after the cap, not read to the end.
+    expect(pulled).toBeLessThan(10);
   });
 
   it.each(['/other/route', 'http://evil.test/api/v1/x', '/api/v1/../admin', '/api/v1/a?x=1'])(

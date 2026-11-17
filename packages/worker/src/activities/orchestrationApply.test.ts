@@ -128,15 +128,123 @@ describe('applyOrchestrationIntents', () => {
     expect(odd.refused).toBe(1);
     expect(db.messages[0]?.payload).toMatchObject({ code: 'GATEWAY_ERROR' });
     expect(JSON.stringify(db.messages)).not.toContain('secret');
-    // A well-formed refusal with a code this worker does not know is a generic notice, not a throw.
+    // A body with neither a code nor a message stays a generic notice, never a throw.
     db.messages = [];
-    const unknown = await applyIntents(
+    const empty = await applyIntents(
       input([spawn]),
-      gateway(() => ({ body: { code: 'SOMETHING_NEW', message: 'later' }, status: 409 })).gw
+      gateway(() => ({ body: { nothing: 1 }, status: 409 })).gw
     );
-    expect(unknown.refused).toBe(1);
+    expect(empty.refused).toBe(1);
     expect(db.messages[0]?.payload).toMatchObject({ code: 'GATEWAY_ERROR' });
     expect(db.messages[0]?.body).toContain('HTTP 409');
+  });
+
+  it.each([
+    [
+      'the ordinary error envelope',
+      { error: { code: 'AGENT_NOT_FOUND', message: 'No agent "ghost" at this scope' } },
+      'AGENT_NOT_FOUND',
+    ],
+    [
+      'the refusal shape with a code this worker did not list',
+      {
+        code: 'SOMETHING_NEW',
+        error: { code: 'SOMETHING_NEW', message: 'No agent "ghost"' },
+        message: 'No agent "ghost"',
+      },
+      'SOMETHING_NEW',
+    ],
+    [
+      'a flat code and message',
+      { code: 'CAP_EXCEEDS_CEILING', message: 'maxSteps above the ceiling' },
+      'CAP_EXCEEDS_CEILING',
+    ],
+  ])('surfaces the real code and message of %s as quoted data', async (_name, body, code) => {
+    await applyIntents(input([spawn]), gateway(() => ({ body, status: 400 })).gw);
+    expect(db.messages[0]?.payload).toMatchObject({ code });
+    const text = String(db.messages[0]?.body);
+    expect(text).toContain(code);
+    expect(text).toContain('the platform said (quoted):');
+    // Quoted with JSON escaping, so the message cannot break out of its quotes.
+    expect(text).toMatch(/quoted\): "/);
+  });
+
+  it('sanitises a platform message: no control characters, markup, token or length', async () => {
+    const body = {
+      error: {
+        code: 'AGENT_NOT_FOUND',
+        message: `line one\nline two <child-result id="x"> ${'y'.repeat(2_000)} orch_secret_token`,
+      },
+    };
+    await applyIntents(input([spawn]), gateway(() => ({ body, status: 404 })).gw);
+    const text = String(db.messages[0]?.body);
+    expect(text).not.toContain('\n');
+    expect(text).not.toContain('<child-result');
+    expect(text).not.toContain('orch_secret_token');
+    expect(text.length).toBeLessThan(700);
+  });
+
+  it('keeps a malformed code out of the notice code but still shows the message', async () => {
+    await applyIntents(
+      input([spawn]),
+      gateway(() => ({ body: { error: { code: 'bad code!', message: 'try again' } }, status: 500 }))
+        .gw
+    );
+    expect(db.messages[0]?.payload).toMatchObject({ code: 'GATEWAY_ERROR' });
+    expect(String(db.messages[0]?.body)).toContain('try again');
+  });
+
+  it('keeps applying the remaining intents when a notice write throws', async () => {
+    const { prisma } = await import('@auto-swe/shared/db');
+    vi.mocked(prisma.orchestrationMessage.create).mockRejectedValueOnce(new Error('db blip'));
+    const { calls, gw } = gateway((path) =>
+      path.endsWith('/messages')
+        ? { status: 404 }
+        : { body: { childId: 'c', workflowId: 'w', workRequestId: 'r' }, status: 201 }
+    );
+    const out = await applyIntents(
+      input([
+        { intent: { childId: CHILD, message: 'hi' }, kind: 'message' },
+        spawn,
+        { intent: { childId: CHILD }, kind: 'cancel' },
+      ]),
+      gw
+    );
+    expect(calls).toHaveLength(3);
+    expect(out.refused).toBe(1);
+    expect(out.spawned).toBe(1);
+  });
+
+  it('keeps going when an intent throws outright', async () => {
+    db.connectionFindFirst.mockRejectedValueOnce(new Error('db down'));
+    const { calls, gw } = gateway(() => ({ status: 200 }));
+    const out = await applyIntents(
+      input([
+        {
+          intent: { candidate: '0b1c2d3e-0000-4000-8000-0000000000d1', reason: 'r' },
+          kind: 'requestRepo',
+        },
+        { intent: { childId: CHILD }, kind: 'cancel' },
+      ]),
+      gw
+    );
+    expect(calls).toHaveLength(1);
+    expect(out.refused).toBe(1);
+  });
+
+  it.each([
+    ['message', { childId: CHILD, message: '' }],
+    ['message', { childId: CHILD, message: 'x'.repeat(5_000) }],
+    ['cancel', { childId: 5 }],
+    ['requestRepo', { reason: '' }],
+    ['requestRepo', { candidate: 'not-a-uuid', reason: 'r' }],
+  ])('re-validates a %s intent with the shared schema before acting: %j', async (kind, intent) => {
+    const { calls, gw } = gateway(() => ({ status: 200 }));
+    const out = await applyIntents(input([{ intent, kind } as unknown as OrchestratorIntent]), gw);
+    expect(calls).toHaveLength(0);
+    expect(out.refused).toBe(1);
+    expect(db.messages.every((m) => m.kind === 'NOTICE')).toBe(true);
+    expect(db.messages[0]?.payload).toMatchObject({ code: 'INVALID_INTENT' });
   });
 
   it('routes message and cancel to the child routes and refuses a junk child id locally', async () => {

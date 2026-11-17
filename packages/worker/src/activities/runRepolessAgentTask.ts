@@ -12,6 +12,7 @@ import { type AgentTools, resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import type { ModelBackedAgentKey, ResolveCtx } from '../lib/config/types.js';
 import { throwIfActivityCancelled } from '../lib/execUtils.js';
+import { withMcpApproval } from '../lib/mcpApproval.js';
 import { createSteeringPrepareStep } from '../lib/runSteering.js';
 import { assertModelPricedForUsdCap } from '../lib/usdCapGuard.js';
 import { runAgent } from './runAgent.js';
@@ -44,8 +45,12 @@ export interface RepolessAgentInput {
   baseCtx: ResolveCtx;
   effective: { maxSteps: number; maxWallClockSeconds: number };
   prompt: string;
-  /** The run's `WorkflowRun.id`; its undelivered steering messages are drained at step boundaries. */
-  steeringRunId?: string;
+  /**
+   * The run's `WorkflowRun.id`: its undelivered steering messages are drained at step boundaries and
+   * its MCP calls go through the orchestration approval guard. A repo-less run is always an
+   * orchestration child, so it is required.
+   */
+  runId: string;
 }
 
 export async function runRepolessAgent(input: RepolessAgentInput): Promise<RunAgentTaskResult> {
@@ -108,7 +113,14 @@ export async function runRepolessAgent(input: RepolessAgentInput): Promise<RunAg
 
     // MCP per the agent's own configuration, checked against the team the run is billed to (the
     // repository path checks the repository's team).
-    const mcpTarget = await resolveAgentMcpUrl(key, agentCtx, { tenant: settingsCtx, tracer });
+    // Every call goes through the orchestration's approval guard (the connection must be in the
+    // fixed set, a write waits for the launcher, a service principal's writes are denied) and its
+    // results are screened, exactly as on the repository path.
+    const deadline = AbortSignal.timeout(Math.max(1000, effective.maxWallClockSeconds * 1000));
+    const mcpTarget = await withMcpApproval(
+      await resolveAgentMcpUrl(key, agentCtx, { tenant: settingsCtx, tracer }),
+      { expectOrchestrated: true, runId: input.runId, signal: deadline, tracer }
+    );
     let mcpTools: AgentTools | undefined;
     if (mcpTarget) {
       const loaded = await loadMcpTools(mcpTarget, tracer);
@@ -119,13 +131,11 @@ export async function runRepolessAgent(input: RepolessAgentInput): Promise<RunAg
 
     throwIfActivityCancelled();
     const result = await runAgent(spec, prompt, {
-      abortSignal: AbortSignal.timeout(Math.max(1000, effective.maxWallClockSeconds * 1000)),
+      abortSignal: deadline,
       ctx: settingsCtx,
       maxSteps: effective.maxSteps,
       perStepAccounting: true,
-      ...(input.steeringRunId
-        ? { prepareStep: createSteeringPrepareStep(input.steeringRunId, tracer) }
-        : {}),
+      prepareStep: createSteeringPrepareStep(input.runId, tracer),
       selfRecordingTools: boundToolKeys(spec.tools, mcpTools, knowledgeTools),
       spanName: 'llm.agent_run',
       tracer,

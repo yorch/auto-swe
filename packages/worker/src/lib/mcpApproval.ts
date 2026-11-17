@@ -535,8 +535,8 @@ export async function createMcpApprovalGuard(
 
 /**
  * Attaches the run's approval guard to its resolved MCP target, in place (the target's credential
- * properties are not enumerable, so a copy would drop them). A run that belongs to no orchestration
- * returns the target as it was. `run` is the WorkflowRun id; pass `expectOrchestrated` when the
+ * properties are not enumerable, so a copy would drop them) and forces result screening on. A run
+ * that belongs to no orchestration returns the target as it was. `run` is the WorkflowRun id; pass `expectOrchestrated` when the
  * caller already knows the run belongs to one.
  */
 export async function withMcpApproval(
@@ -550,5 +550,7 @@ export async function withMcpApproval(
   if (!guard) {
     return target;
   }
-  return Object.assign(target, { approval: guard });
+  // Result screening is forced on for an orchestration's agents, whatever the connection's own
+  // setting says (spec section 4.2): a result is untrusted data entering a run that can write.
+  return Object.assign(target, { approval: guard, scanResults: true });
 }

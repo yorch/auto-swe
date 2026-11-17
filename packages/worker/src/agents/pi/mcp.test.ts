@@ -13,6 +13,14 @@ vi.mock('../mcpTools.js', async (importOriginal) => ({
   parseMcpServerRef: (ref: string) => new URL(ref),
 }));
 vi.mock('../../lib/activityLog.js', () => ({ auditLog: vi.fn() }));
+// A guarded run's results are screened; the scan itself is covered by mcpScreen.test.ts.
+vi.mock('../../lib/memoryGuard.js', () => ({
+  memoryInjectionMatches: vi.fn(async () => ({
+    incomplete: false,
+    loadFailed: false,
+    matches: [],
+  })),
+}));
 vi.mock('../../lib/effectLedger.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../lib/effectLedger.js')>()),
   recordEffect: vi.fn(),
@@ -102,9 +110,10 @@ describe('piMcpTools: orchestration write approval', () => {
       workspace: {} as Workspace,
     });
 
-    await expect(execute(tools, 'lookup')).resolves.toMatchObject({
-      content: [{ text: 'found', type: 'text' }],
-    });
+    // The read ran, and a guarded run's result arrives screened and fenced.
+    const read = await execute(tools, 'lookup');
+    expect(JSON.stringify(read)).toContain('found');
+    expect(JSON.stringify(read)).toContain('UNTRUSTED MCP OUTPUT');
     await expect(execute(tools, 'wipe')).rejects.toThrow('denied by launcher');
     expect(calls).toEqual(['lookup']);
     await relay?.close();

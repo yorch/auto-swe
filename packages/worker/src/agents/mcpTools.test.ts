@@ -667,6 +667,15 @@ describe('loadMcpTools — result screening', () => {
     vi.mocked(console.log).mockRestore();
   });
 
+  it("screens an orchestration agent's results even when the connection did not opt in", async () => {
+    setup('withheld phrase');
+    screen.mockResolvedValueOnce({ blocked: true, message: 'withheld' });
+    const { tools } = await load(ref, makeTracer(), { approval: guardThat(() => true) });
+    expect(await exec(tools['mcp_rules-search'] ?? {}, {})).toBe('withheld');
+    expect(screen).toHaveBeenCalled();
+    vi.mocked(console.log).mockRestore();
+  });
+
   it('does not screen a connection that has not opted in', async () => {
     setup('raw');
     const tracer = makeTracer();
@@ -682,6 +691,11 @@ describe('loadMcpTools — result screening', () => {
 
 describe('loadMcpTools — orchestration write approval', () => {
   const ref = 'http://mcp-server.example.com:9999/mcp';
+  // A guarded run is always screened; here the screen passes every result through.
+  beforeEach(() => {
+    screen.mockReset();
+    screen.mockImplementation(async (result: unknown) => ({ blocked: false, result }));
+  });
 
   function listed() {
     const read = vi.fn(async () => 'read result');

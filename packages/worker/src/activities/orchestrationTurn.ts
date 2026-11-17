@@ -8,7 +8,8 @@ import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey, ResolveCtx } from '../lib/config/types.js';
 import { markChildResultsSeen, unreadChildIds } from '../lib/orchestrationChildren.js';
 import {
-  fenceFinishedChild,
+  type FinishedChildInput,
+  renderChildResults,
   renderEvents,
   renderStateBlock,
   renderTranscript,
@@ -34,18 +35,49 @@ import { runAgent } from './runAgent.js';
 const AGENT_KEY = 'orchestrator';
 /** Tool steps one turn may take. The tools only record, so a turn is a few steps. */
 const MAX_STEPS = 12;
-/** Messages of the transcript sent with a turn; older ones drop off (the first task is kept). */
+/**
+ * Messages read for a turn's transcript window; older ones drop off (the first task is kept). The
+ * rendered window is further bounded by `TRANSCRIPT_MAX_CHARS` in `orchestrationContext.ts`, so the
+ * whole prompt is bounded (see the prompt budget there).
+ */
 const TRANSCRIPT_MESSAGES = 60;
 const BUDGET_TEXT = 'The orchestrator has reached its spending limit and cannot take another turn.';
 const FAILED_TEXT = 'The orchestrator hit an error on this turn. Send a message to try again.';
+const UNPRICED_TEXT =
+  "The orchestrator's model has no price in the model catalog while a USD budget cap is set, so it cannot take a turn. An admin must add the model to the model catalog or bind a priced model.";
+const PRICE_UNAVAILABLE_TEXT =
+  "The model catalog could not be read, so the orchestrator's model cannot be priced right now. Try again shortly.";
 
 const TERMINAL = new Set(['COMPLETED', 'CANCELLED', 'FAILED']);
 
+/** The failure types in `err` and its cause chain. */
+function failureTypes(err: unknown): Set<string> {
+  const types = new Set<string>();
+  let cur: unknown = err;
+  for (let i = 0; i < 16 && cur instanceof Error; i++) {
+    const type = (cur as { type?: unknown }).type;
+    if (typeof type === 'string') {
+      types.add(type);
+    }
+    types.add(cur.message.slice(0, 40));
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return types;
+}
+
+// The `ApplicationFailure` types `usdCapGuard.ts` throws, spelled here so this module does not
+// import the spend guard's dependency tree; `orchestrationTurn.test.ts` pins both.
 function failureText(err: unknown): { code: string; text: string } {
-  const type = (err as { type?: string } | null)?.type;
-  const message = err instanceof Error ? err.message : '';
-  if (type === 'BUDGET_EXCEEDED' || message.includes('BUDGET_EXCEEDED')) {
+  const types = failureTypes(err);
+  const has = (code: string) => [...types].some((t) => t === code || t.startsWith(`${code}:`));
+  if (has('BUDGET_EXCEEDED') || (err instanceof Error && err.message.includes('BUDGET_EXCEEDED'))) {
     return { code: 'BUDGET_EXCEEDED', text: BUDGET_TEXT };
+  }
+  if (has('MODEL_UNPRICED')) {
+    return { code: 'MODEL_UNPRICED', text: UNPRICED_TEXT };
+  }
+  if (has('MODEL_PRICE_UNAVAILABLE')) {
+    return { code: 'MODEL_PRICE_UNAVAILABLE', text: PRICE_UNAVAILABLE_TEXT };
   }
   return { code: 'TURN_FAILED', text: FAILED_TEXT };
 }
@@ -77,7 +109,7 @@ export async function runOrchestratorTurn(
   try {
     return await withSpendOwner(ownerOfTeam(orch.teamId), async () => {
       try {
-        const message = await buildTurnMessage(input, orch);
+        const { message, shownIds } = await buildTurnMessage(input, orch);
         const spec = await resolveAgentSpec(
           { agentKey: AGENT_KEY as ModelBackedAgentKey, availableTools: {} as AgentTools },
           ctx
@@ -99,15 +131,14 @@ export async function runOrchestratorTurn(
               body: text,
               kind: 'TEXT',
               orchestrationId: orch.id,
-              payload: { turnKey: input.turnKey },
+              // `turn` is what the turn count is recovered from; a gateway-written message to a child
+              // is also ORCHESTRATOR text but carries no `turn`, so it never counts as one.
+              payload: { turn: input.turn, turnKey: input.turnKey },
               role: 'ORCHESTRATOR',
             },
           });
         }
-        await markChildResultsSeen(
-          orch.id,
-          input.events.flatMap((e) => (e.type === 'childFinished' ? [e.childId] : []))
-        );
+        await markChildResultsSeen(orch.id, shownIds);
         await touch(orch.id);
         const load = await countOrchestrationLoad(orch.id);
         return {
@@ -156,7 +187,7 @@ async function touch(orchestrationId: string): Promise<void> {
     .catch(() => undefined);
 }
 
-/** The one user message of the turn: transcript, state, new events, instructions. */
+/** The one user message of the turn: transcript, state, results, new events, instructions. */
 async function buildTurnMessage(
   input: RunOrchestratorTurnInput,
   orch: {
@@ -166,23 +197,32 @@ async function buildTurnMessage(
     repoId: string | null;
     title: string;
   }
-): Promise<string> {
+): Promise<{ message: string; shownIds: string[] }> {
   const [recent, first, children, pendingAttach] = await Promise.all([
     prisma.orchestrationMessage.findMany({
       orderBy: { createdAt: 'desc' },
-      select: { body: true, createdAt: true, id: true, kind: true, payload: true, role: true },
+      select: {
+        body: true,
+        childId: true,
+        createdAt: true,
+        id: true,
+        kind: true,
+        payload: true,
+        role: true,
+      },
       take: TRANSCRIPT_MESSAGES,
       where: { kind: { not: 'CHILD_RESULT' }, orchestrationId: orch.id },
     }),
     prisma.orchestrationMessage.findFirst({
       orderBy: { createdAt: 'asc' },
-      select: { body: true, id: true, kind: true, payload: true, role: true },
+      select: { body: true, childId: true, id: true, kind: true, payload: true, role: true },
       where: { orchestrationId: orch.id, role: 'USER' },
     }),
     prisma.orchestrationChild.findMany({
       orderBy: { createdAt: 'asc' },
       select: {
         agentKey: true,
+        endedAt: true,
         id: true,
         label: true,
         pathScopes: true,
@@ -201,33 +241,25 @@ async function buildTurnMessage(
     rows.unshift(first);
   }
 
-  // Each finished child the events name goes in once, fenced and screened.
-  const fencedByChild = new Map<string, string>();
-  const notices: string[] = [];
-  const finishedIds = input.events.flatMap((e) => (e.type === 'childFinished' ? [e.childId] : []));
-  // A result a turn already read (the signal and the backstop can both report it) is not repeated.
-  const unread = await unreadChildIds(orch.id, finishedIds);
-  for (const e of input.events) {
-    if (e.type !== 'childFinished' || fencedByChild.has(e.childId) || !unread.has(e.childId)) {
-      continue;
-    }
-    const child = children.find((c) => c.id === e.childId);
-    if (!child) {
-      continue;
-    }
-    const fenced = await fenceFinishedChild(child);
-    if (fenced) {
-      fencedByChild.set(child.id, fenced.block);
-      if (fenced.droppedLines > 0 || fenced.withheld) {
-        notices.push(
-          fenced.withheld
-            ? `The result of child ${child.id} was withheld: it could not be screened for prompt injection.`
-            : `${fenced.droppedLines} line(s) of the result of child ${child.id} were removed: they matched a prompt-injection pattern.`
-        );
-      }
-    }
-  }
-  for (const body of notices) {
+  // EVERY finished child's result goes in on every turn: the orchestrator is a fresh single message
+  // each turn, so a result it read once would be gone by the next. `unread` only labels the ones
+  // that are new and decides whose screening notices are written.
+  const finished: FinishedChildInput[] = children
+    .filter((c) => TERMINAL.has(c.status) && c.resultJson !== null)
+    .sort((a, b) => (a.endedAt?.getTime() ?? 0) - (b.endedAt?.getTime() ?? 0))
+    .map((c) => ({
+      agentKey: c.agentKey,
+      id: c.id,
+      label: c.label,
+      resultJson: c.resultJson,
+      status: c.status,
+    }));
+  const unread = await unreadChildIds(
+    orch.id,
+    finished.map((c) => c.id)
+  );
+  const section = await renderChildResults(finished, { unreadIds: unread });
+  for (const body of section.notices) {
     await prisma.orchestrationMessage.create({
       data: {
         body,
@@ -243,8 +275,8 @@ async function buildTurnMessage(
   const repoName = orch.repo
     ? `${orch.repo.organizationName ?? ''}/${orch.repo.repoName ?? ''}`.replace(/^\//, '')
     : undefined;
-  return [
-    renderTranscript(rows),
+  const message = [
+    renderTranscript(rows, { childLabels: new Map(children.map((c) => [c.id, c.label])) }),
     renderStateBlock({
       allowlist: orch.allowlist,
       children: children.map((c) => ({
@@ -260,7 +292,9 @@ async function buildTurnMessage(
         : { state: pendingAttach ? 'requested' : 'none' },
       title: orch.title,
     }),
-    renderEvents({ attachedRepoName: repoName, events: input.events, fencedByChild }),
+    ...(section.text ? [section.text] : []),
+    renderEvents({ attachedRepoName: repoName, events: input.events }),
     TURN_INSTRUCTIONS,
   ].join('\n\n');
+  return { message, shownIds: section.shownIds };
 }

@@ -104,7 +104,12 @@ describe('Epic and channel workflows — history replay', () => {
       ['epic-cancel', 'EpicOrchestratorWorkflow'],
       ['epic-dag', 'EpicOrchestratorWorkflow'],
       ['epic-planned', 'EpicOrchestratorWorkflow'],
+      ['orchestration-cancel', 'OrchestrationWorkflow'],
       ['orchestration-conversation', 'OrchestrationWorkflow'],
+      ['orchestration-handle-cancel', 'OrchestrationWorkflow'],
+      ['orchestration-idle-race', 'OrchestrationWorkflow'],
+      ['orchestration-lifetime', 'OrchestrationWorkflow'],
+      ['orchestration-turn-failures', 'OrchestrationWorkflow'],
     ]);
   });
 
@@ -381,6 +386,86 @@ describe('Epic and channel workflows — history replay', () => {
       expect(typesOf('orchestration-conversation')).toContain(
         EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
       );
+    });
+
+    it('orchestration-cancel held on a running child, then cancelled it on the cancel signal', () => {
+      const activities = activitiesOf('orchestration-cancel');
+      expect(activities.slice(0, 3)).toEqual([
+        'beginOrchestrationRun',
+        'runOrchestratorTurn',
+        'applyOrchestrationIntents',
+      ]);
+      // It held on the backstop (reconciling a running child) until the cancel arrived.
+      expect(activities).toContain('refreshOrchestrationChildren');
+      expect(activities.slice(-2)).toEqual([
+        'cancelOrchestrationChildren',
+        'recordOrchestrationStatus',
+      ]);
+      expect(count('orchestration-cancel', EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED)).toBe(
+        2
+      );
+      expect(typesOf('orchestration-cancel').at(-1)).toBe(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+      );
+    });
+
+    it('orchestration-handle-cancel was cancelled itself and still stopped the children first', () => {
+      const activities = activitiesOf('orchestration-handle-cancel');
+      expect(activities.slice(0, 3)).toEqual([
+        'beginOrchestrationRun',
+        'runOrchestratorTurn',
+        'applyOrchestrationIntents',
+      ]);
+      // It held on the backstop (reconciling a running child) until the cancel arrived.
+      expect(activities).toContain('refreshOrchestrationChildren');
+      expect(activities.slice(-2)).toEqual([
+        'cancelOrchestrationChildren',
+        'recordOrchestrationStatus',
+      ]);
+      expect(typesOf('orchestration-handle-cancel')).toContain(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED
+      );
+      expect(typesOf('orchestration-handle-cancel').at(-1)).toBe(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED
+      );
+    });
+
+    it('orchestration-idle-race answered a message that landed while WAITING was recorded', () => {
+      // WAITING, then ACTIVE again, a second turn, and WAITING once more.
+      expect(activitiesOf('orchestration-idle-race')).toEqual([
+        'beginOrchestrationRun',
+        'runOrchestratorTurn',
+        'recordOrchestrationStatus',
+        'recordOrchestrationStatus',
+        'runOrchestratorTurn',
+        'recordOrchestrationStatus',
+      ]);
+      expect(
+        count('orchestration-idle-race', EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED)
+      ).toBe(2);
+      expect(typesOf('orchestration-idle-race').at(-1)).toBe(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+      );
+    });
+
+    it('orchestration-lifetime ended COMPLETED at the pinned wall clock with the children cancelled', () => {
+      expect(activitiesOf('orchestration-lifetime').slice(-2)).toEqual([
+        'cancelOrchestrationChildren',
+        'recordOrchestrationStatus',
+      ]);
+      expect(typesOf('orchestration-lifetime').at(-1)).toBe(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+      );
+    });
+
+    it('orchestration-turn-failures stopped after three failed turns and waited for a person', () => {
+      const activities = activitiesOf('orchestration-turn-failures');
+      expect(activities.filter((a) => a === 'runOrchestratorTurn')).toHaveLength(4);
+      // The TURNS_FAILING notice is recorded once, between the third and fourth turn.
+      expect(activities.filter((a) => a === 'recordOrchestrationStatus')).toHaveLength(2);
+      expect(
+        count('orchestration-turn-failures', EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED)
+      ).toBe(2);
     });
 
     it('channel-reactive ran its interjection check', () => {

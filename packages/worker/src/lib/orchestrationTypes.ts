@@ -61,6 +61,10 @@ export interface OrchestrationCarried {
   runningChildren: number;
   /** MCP approvals believed to be pending. */
   pendingApprovals: number;
+  /** Consecutive turns that failed; at the cap the workflow waits for a person's event. */
+  failedTurns?: number;
+  /** A cancel arrived and has not been acted on, so a `continueAsNew` cannot lose it. */
+  cancelRequested?: boolean;
 }
 
 export interface OrchestrationWorkflowInput {
@@ -96,6 +100,8 @@ export interface RunOrchestratorTurnInput {
   orchestrationId: string;
   /** Stable for the turn; the idempotency key of the spawns it leads to. */
   turnKey: string;
+  /** The turn's number over the orchestration's whole life; written on the message the turn posts. */
+  turn: number;
   events: OrchestrationEvent[];
 }
 

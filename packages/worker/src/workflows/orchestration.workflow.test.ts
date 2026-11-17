@@ -7,6 +7,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ORCHESTRATION_SIGNALS, orchestrationWorkflowId } from '@auto-swe/shared/lib/orchestration';
+import { ApplicationFailure } from '@temporalio/activity';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
 import type { TestContext } from 'vitest';
@@ -37,6 +38,7 @@ const log = {
   refreshed: 0,
   statuses: [] as { status: string; code?: string }[],
   turnKeys: [] as string[],
+  turnNumbers: [] as number[],
   turns: [] as OrchestrationEvent[][],
 };
 const script = {
@@ -47,9 +49,13 @@ const script = {
   }),
   applyResult: (_n: number): { refused: number; running: number } => ({ refused: 0, running: 0 }),
   begin: { delayMs: 0, proceed: true, running: 0, turns: 0, unseen: [] as string[] },
+  /** Runs inside every status activity; may return a promise to keep the activity in flight. */
+  onStatus: (_n: number, _input: { status: string }): Promise<void> | void => {},
   onTurn: (_n: number, _input: RunOrchestratorTurnInput): void => {},
   turnIntents: (_n: number): OrchestratorIntent[] => [],
   turnRunning: (_n: number): number => 0,
+  /** Throw to make the turn activity fail outright; return a status for a turn that ran. */
+  turnStatus: (_n: number): 'COMPLETE' | 'FAILED' | 'THROW' => 'COMPLETE',
 };
 
 let env: TestWorkflowEnvironment | undefined;
@@ -91,6 +97,7 @@ const fakeActivities = {
   },
   recordOrchestrationStatus: async (input: { status: string; notice?: { code: string } }) => {
     log.statuses.push({ code: input.notice?.code, status: input.status });
+    await script.onStatus(log.statuses.length, input);
   },
   refreshOrchestrationChildren: async () => {
     log.refreshed += 1;
@@ -100,13 +107,18 @@ const fakeActivities = {
   runOrchestratorTurn: async (input: RunOrchestratorTurnInput) => {
     log.turns.push(input.events);
     log.turnKeys.push(input.turnKey);
+    log.turnNumbers.push(input.turn);
     const n = log.turns.length;
     script.onTurn(n, input);
+    const outcome = script.turnStatus(n);
+    if (outcome === 'THROW') {
+      throw ApplicationFailure.nonRetryable('turn lost');
+    }
     return {
-      intents: script.turnIntents(n),
+      intents: outcome === 'FAILED' ? [] : script.turnIntents(n),
       pendingApprovals: 0,
       runningChildren: script.turnRunning(n),
-      status: 'COMPLETE' as const,
+      status: outcome,
     };
   },
 };
@@ -141,6 +153,9 @@ beforeEach((ctx: TestContext) => {
   log.statuses = [];
   log.turns = [];
   log.turnKeys = [];
+  log.turnNumbers = [];
+  script.onStatus = () => {};
+  script.turnStatus = () => 'COMPLETE';
   script.afterRefresh = () => ({ finished: [], running: 0 });
   script.applyResult = () => ({ refused: 0, running: 0 });
   script.begin = { delayMs: 0, proceed: true, running: 0, turns: 0, unseen: [] };
@@ -191,6 +206,11 @@ const spawn: OrchestratorIntent = {
   intent: { agent: 'docsMaintainer', label: 'read docs', role: 'reader', task: 'read' },
   kind: 'spawn',
 };
+
+const sendSignal = (name: string, ...args: unknown[]) =>
+  (env as TestWorkflowEnvironment).client.workflow
+    .getHandle(orchestrationWorkflowId(currentId))
+    .signal(name, ...args);
 
 describe('OrchestrationWorkflow', () => {
   it('is started and signalled by the names the gateway uses', () => {
@@ -372,4 +392,191 @@ describe('OrchestrationWorkflow', () => {
     // The signal sent during turn 50 rode across the continue-as-new.
     expect(log.turns[50]?.[0]).toEqual({ messageId: 'm-50', type: 'userMessage' });
   }, 120_000);
+
+  it('passes each turn its number, carried from the database count', async () => {
+    script.begin.turns = 7;
+    script.onTurn = (n) => {
+      if (n === 1) {
+        void sendSignal(ORCHESTRATION_SIGNALS.userMessage, { messageId: 'again' });
+      }
+    };
+    const handle = await start(input());
+    await handle.result();
+    expect(log.turnNumbers).toEqual([8, 9]);
+  });
+
+  describe('the idle race: a signal that lands while the WAITING status is recorded', () => {
+    it('does not lose the message: flips back to ACTIVE and answers it', async () => {
+      let waitingCalls = 0;
+      script.onStatus = async (_n, status) => {
+        if (status.status === 'WAITING') {
+          waitingCalls += 1;
+          if (waitingCalls === 1) {
+            // The gateway revives the orchestration for this message while the activity is in flight.
+            await sendSignal(ORCHESTRATION_SIGNALS.userMessage, { messageId: 'late' });
+            await new Promise((r) => setTimeout(r, 300));
+          }
+        }
+      };
+      const handle = await start(input());
+      await handle.result();
+      expect(log.turns).toHaveLength(2);
+      expect(log.turns[1]).toEqual([{ messageId: 'late', type: 'userMessage' }]);
+      expect(log.statuses.map((x) => x.status)).toEqual(['WAITING', 'ACTIVE', 'WAITING']);
+    });
+
+    it('honours a cancel that lands there too', async () => {
+      script.onStatus = async (_n, status) => {
+        if (status.status === 'WAITING') {
+          await sendSignal(ORCHESTRATION_SIGNALS.cancel);
+          await new Promise((r) => setTimeout(r, 300));
+        }
+      };
+      const handle = await start(input());
+      await handle.result();
+      expect(log.cancelled).toBe(1);
+      expect(log.statuses.map((x) => x.status)).toEqual(['WAITING', 'ACTIVE', 'CANCELLED']);
+    });
+  });
+
+  it('carries a pending cancel across continue-as-new instead of forgetting it', async () => {
+    script.onTurn = (n) => {
+      if (n < 50) {
+        void sendSignal(ORCHESTRATION_SIGNALS.userMessage, { messageId: `m-${n}` });
+      } else if (n === 50) {
+        // The cancel lands during the 50th turn, the one that triggers the continue-as-new.
+        void sendSignal(ORCHESTRATION_SIGNALS.cancel);
+      }
+    };
+    const handle = await start(input());
+    await handle.result();
+    expect(log.turns).toHaveLength(50);
+    expect(log.cancelled).toBe(1);
+    expect(log.statuses.at(-1)).toMatchObject({ status: 'CANCELLED' });
+    // Not a fresh start, and no further turn answered after the cancel.
+    expect(log.begun).toBe(1);
+  }, 120_000);
+
+  it('cancels its children and ends CANCELLED when the workflow itself is cancelled', async () => {
+    script.turnRunning = () => 1;
+    script.applyResult = () => ({ refused: 0, running: 1 });
+    const handle = await start(input());
+    await (env as TestWorkflowEnvironment).sleep('3 minutes');
+    await handle.cancel();
+    await handle.result().catch(() => undefined);
+    expect(log.cancelled).toBe(1);
+    expect(log.statuses.at(-1)).toMatchObject({ status: 'CANCELLED' });
+  });
+
+  it('completes with LIFETIME_REACHED once the pinned wall clock is spent', async () => {
+    script.turnRunning = () => 1;
+    script.applyResult = () => ({ refused: 0, running: 1 });
+    const handle = await start(input({ pinned: { ...input().pinned, maxWallClockSeconds: 90 } }));
+    await handle.result();
+    expect(log.cancelled).toBe(1);
+    expect(log.statuses.at(-1)).toEqual({ code: 'LIFETIME_REACHED', status: 'COMPLETED' });
+  });
+
+  it('still records CANCELLED when cancelling the children throws', async () => {
+    script.begin.delayMs = 300;
+    script.begin.running = 1;
+    const original = fakeActivities.cancelOrchestrationChildren;
+    fakeActivities.cancelOrchestrationChildren = async () => {
+      log.cancelled += 1;
+      throw ApplicationFailure.nonRetryable('gateway 401');
+    };
+    try {
+      const handle = await start(input());
+      await handle.signal(ORCHESTRATION_SIGNALS.cancel);
+      await handle.result();
+    } finally {
+      fakeActivities.cancelOrchestrationChildren = original;
+    }
+    expect(log.statuses.at(-1)).toMatchObject({ status: 'CANCELLED' });
+  });
+
+  it('answers a message that arrives during a turn as the next turn', async () => {
+    script.onTurn = (n) => {
+      if (n === 1) {
+        void sendSignal(ORCHESTRATION_SIGNALS.userMessage, { messageId: 'during' });
+      }
+    };
+    const handle = await start(input());
+    await handle.result();
+    expect(log.turns).toHaveLength(2);
+    expect(log.turns[1]).toEqual([{ messageId: 'during', type: 'userMessage' }]);
+  });
+
+  it('wakes a held orchestrator for an approval and for a repository decision', async () => {
+    script.turnRunning = (n) => (n < 3 ? 1 : 0);
+    script.applyResult = () => ({ refused: 0, running: 1 });
+    const handle = await start(input());
+    await (env as TestWorkflowEnvironment).sleep('10 seconds');
+    await handle.signal(ORCHESTRATION_SIGNALS.approvalResolved, {
+      approvalId: 'ap-1',
+      status: 'APPROVED',
+    });
+    await (env as TestWorkflowEnvironment).sleep('10 seconds');
+    await handle.signal(ORCHESTRATION_SIGNALS.attachResolved, {
+      accepted: false,
+      messageId: 'a1',
+      repoId: null,
+    });
+    await handle.result();
+    expect(log.turns.map((t) => t.map((e) => e.type))).toEqual([
+      ['userMessage'],
+      ['approvalResolved'],
+      ['attachResolved'],
+    ]);
+  });
+
+  describe('failed turns', () => {
+    it('notes a turn that could not run and carries on', async () => {
+      script.turnStatus = (n) => (n === 1 ? 'THROW' : 'COMPLETE');
+      script.onTurn = (n) => {
+        if (n === 1) {
+          void sendSignal(ORCHESTRATION_SIGNALS.userMessage, { messageId: 'retry' });
+        }
+      };
+      const handle = await start(input());
+      await handle.result();
+      expect(log.statuses[0]).toEqual({ code: 'TURN_LOST', status: 'ACTIVE' });
+      expect(log.turns).toHaveLength(2);
+    });
+
+    it('stops re-running a failing turn from the backstop and waits for a person', async () => {
+      // Children keep running, and the backstop keeps reporting one as finished: without the cap this
+      // would run (and fail) a turn every minute for the orchestration's whole life.
+      script.turnStatus = (n) => (n <= 3 ? 'FAILED' : 'COMPLETE');
+      script.turnRunning = (n) => (n <= 3 ? 1 : 0);
+      script.afterRefresh = () => ({ finished: ['c9'], running: 1 });
+      const handle = await start(input());
+      await (env as TestWorkflowEnvironment).sleep('30 minutes');
+      expect(log.turns).toHaveLength(3);
+      expect(log.statuses.filter((x) => x.code === 'TURNS_FAILING')).toHaveLength(1);
+      const refreshedWhileHeld = log.refreshed;
+      await (env as TestWorkflowEnvironment).sleep('30 minutes');
+      expect(log.turns).toHaveLength(3);
+      expect(log.refreshed).toBe(refreshedWhileHeld);
+      // A person's message ends the wait and starts a turn that sees the unread child as well.
+      await handle.signal(ORCHESTRATION_SIGNALS.userMessage, { messageId: 'help' });
+      await handle.result();
+      expect(log.turns).toHaveLength(4);
+      expect(log.turns[3]?.map((e) => e.type)).toContain('userMessage');
+    });
+  });
+
+  it('counts the cap per run of consecutive failures: a good turn resets it', async () => {
+    script.turnStatus = (n) => (n === 2 ? 'COMPLETE' : 'FAILED');
+    script.turnRunning = () => 1;
+    script.afterRefresh = (n) =>
+      n <= 4 ? { finished: ['c9'], running: 1 } : { finished: [], running: 1 };
+    const handle = await start(input());
+    await (env as TestWorkflowEnvironment).sleep('20 minutes');
+    // fail, ok, fail, fail, fail: the cap is reached on turn 5, not turn 3.
+    expect(log.turns).toHaveLength(5);
+    expect(log.statuses.filter((x) => x.code === 'TURNS_FAILING')).toHaveLength(1);
+    await handle.cancel();
+    await handle.result().catch(() => undefined);
+  });
 });

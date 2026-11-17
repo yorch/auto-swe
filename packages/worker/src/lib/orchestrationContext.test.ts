@@ -171,16 +171,47 @@ describe('transcript and events', () => {
     expect(text).toContain('[platform notice CHILD_LIMIT]');
   });
 
-  it('renders a finished child only as the supplied fenced block', () => {
+  it('renders a finished child event as a pointer, never as the child text', () => {
     const text = renderEvents({
       events: [
         { childId: 'c1', type: 'childFinished' },
         { messageId: 'm', type: 'userMessage' },
       ],
-      fencedByChild: new Map([['c1', '<child-result id="c1">x</child-result>']]),
     });
-    expect(text).toContain('<child-result id="c1">x</child-result>');
+    expect(text).toContain('A child (id=c1) finished; see the results section below');
+    expect(text).not.toContain('<child-result');
     expect(text).toContain('The person sent a message');
+  });
+
+  it('shows a message to a child with its target, and labels author roles', () => {
+    const text = renderTranscript(
+      [
+        { body: 'go', childId: 'c1', kind: 'TEXT', role: 'ORCHESTRATOR' },
+        { body: 'stop', childId: 'c1', kind: 'TEXT', role: 'USER' },
+        { body: 'hi', kind: 'TEXT', role: 'USER' },
+      ],
+      { childLabels: new Map([['c1', 'docs reader']]) }
+    );
+    expect(text).toContain('[you \u2192 agent "docs reader"] go');
+    expect(text).toContain('[person \u2192 agent "docs reader"] stop');
+    expect(text).toContain('[person] hi');
+  });
+
+  it('bounds the transcript by characters, keeping the first row and the newest', () => {
+    const rows = [
+      { body: 'TASK', kind: 'TEXT', role: 'USER' as const },
+      ...Array.from({ length: 20 }, (_, i) => ({
+        body: `m${i} ${'x'.repeat(300)}`,
+        kind: 'TEXT',
+        role: 'USER' as const,
+      })),
+    ];
+    const text = renderTranscript(rows, { maxChars: 1_000 });
+    expect(text).toContain('TASK');
+    expect(text).toContain('[earlier messages omitted]');
+    expect(text).toContain('m19 ');
+    expect(text).not.toContain('m0 ');
+    expect(text.length).toBeLessThan(1_300);
   });
 
   it('builds the result text from the structured fields', () => {

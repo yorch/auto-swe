@@ -61,7 +61,7 @@ vi.mock('../lib/orchestrationChildren.js', () => ({
 import { runOrchestratorTurn } from './orchestrationTurn.js';
 
 const ORCH = '0b1c2d3e-0000-4000-8000-000000000001';
-const base = { orchestrationId: ORCH, turnKey: 'turn-1' };
+const base = { orchestrationId: ORCH, turn: 1, turnKey: 'turn-1' };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -109,7 +109,7 @@ describe('runOrchestratorTurn', () => {
       expect.objectContaining({
         body: 'I asked a reader to look.',
         kind: 'TEXT',
-        payload: { turnKey: 'turn-1' },
+        payload: { turn: 1, turnKey: 'turn-1' },
         role: 'ORCHESTRATOR',
       })
     );
@@ -146,6 +146,32 @@ describe('runOrchestratorTurn', () => {
     await runOrchestratorTurn({ ...base, events: [] });
     expect(m.created).toContainEqual(
       expect.objectContaining({ payload: expect.objectContaining({ code: 'BUDGET_EXCEEDED' }) })
+    );
+  });
+
+  it.each([
+    ['MODEL_UNPRICED', 'MODEL_UNPRICED', /no price in the model catalog/],
+    ['MODEL_PRICE_UNAVAILABLE', 'MODEL_PRICE_UNAVAILABLE', /could not be read/],
+  ])('names a %s failure specifically', async (type, code, text) => {
+    m.runAgent.mockRejectedValueOnce(Object.assign(new Error('refused'), { type }));
+    const out = await runOrchestratorTurn({ ...base, events: [] });
+    expect(out.status).toBe('FAILED');
+    expect(m.created).toContainEqual(
+      expect.objectContaining({
+        body: expect.stringMatching(text),
+        payload: expect.objectContaining({ code }),
+      })
+    );
+  });
+
+  it('finds the specific failure in the cause chain too', async () => {
+    const wrapped = new Error('agent failed', {
+      cause: Object.assign(new Error('x'), { type: 'MODEL_UNPRICED' }),
+    });
+    m.runAgent.mockRejectedValueOnce(wrapped);
+    await runOrchestratorTurn({ ...base, events: [] });
+    expect(m.created).toContainEqual(
+      expect.objectContaining({ payload: expect.objectContaining({ code: 'MODEL_UNPRICED' }) })
     );
   });
 
@@ -192,14 +218,132 @@ describe('runOrchestratorTurn', () => {
       expect(m.seen.has('child-1')).toBe(true);
     });
 
-    it('does not repeat a result a turn already read', async () => {
+    it('shows a result a turn already read again: every finished child is in every turn', async () => {
       m.children = [finished];
       m.seen.add('child-1');
       await runOrchestratorTurn({
         ...base,
+        events: [{ messageId: 'm1', type: 'userMessage' }],
+      });
+      const text = prompt();
+      expect(text).toContain('<child-result id="child-1"');
+      expect(text).toContain('Found it.');
+      // It is not new, so it carries no "new" label and no second screening notice.
+      expect(text).not.toContain('NEW since your last turn');
+      expect(
+        m.created.some((c) => (c.payload as { code?: string })?.code === 'RESULT_SCREENED')
+      ).toBe(false);
+    });
+
+    it('labels a result new only until a turn has read it', async () => {
+      m.children = [finished];
+      await runOrchestratorTurn({
+        ...base,
         events: [{ childId: 'child-1', type: 'childFinished' }],
       });
-      expect(prompt()).not.toContain('<child-result');
+      expect(prompt()).toContain('NEW since your last turn');
+    });
+
+    const done = (n: number, summary: string) => ({
+      ...finished,
+      endedAt: new Date(1_000 * n),
+      id: `child-${n}`,
+      label: `lane ${n}`,
+      resultJson: {
+        branch: `auto/agent-${n}`,
+        costUsd: 0,
+        filesChanged: [],
+        prUrl: `https://github.com/o/r/pull/${n}`,
+        status: 'COMPLETED',
+        summary,
+      },
+    });
+
+    it('caps each result and the total, newest in full and older ones as a digest, never dropped', async () => {
+      // Seven children of 5,000 characters each: per-result cap 4,000, total cap 24,000.
+      m.children = [1, 2, 3, 4, 5, 6, 7].map((n) => done(n, `r${n}-${'z'.repeat(5000)}`));
+      await runOrchestratorTurn({ ...base, events: [{ messageId: 'm1', type: 'userMessage' }] });
+      const text = prompt();
+      const section = text.slice(text.indexOf('## Results of finished children'));
+      const full = [...section.matchAll(/<child-result id="(child-\d)"/g)].map((x) => x[1]);
+      // Newest first by budget: five blocks of ~4,200 characters fit in 24,000, so the two oldest
+      // become digests (in chronological order, before the full ones).
+      expect(full).toEqual(['child-3', 'child-4', 'child-5', 'child-6', 'child-7']);
+      expect(section).toMatch(
+        /- id=child-1 agent=docsMaintainer .*branch=auto\/agent-1 .*pr=https:\/\/github.com\/o\/r\/pull\/1 .*full result is stored/
+      );
+      expect(section.indexOf('id=child-2')).toBeLessThan(
+        section.indexOf('<child-result id="child-3"')
+      );
+      // No single result is shown beyond its cap.
+      expect(text).not.toContain('z'.repeat(4_100));
+      // Every finished child is accounted for, and the whole section stays under the total cap.
+      expect(section.length).toBeLessThan(24_000 + 3_000);
+      for (let n = 1; n <= 7; n++) {
+        expect(section).toContain(`child-${n}`);
+      }
+      expect([...m.seen].sort()).toEqual([
+        'child-1',
+        'child-2',
+        'child-3',
+        'child-4',
+        'child-5',
+        'child-6',
+        'child-7',
+      ]);
+    });
+
+    it('keeps the structured lines of a long result inside its cap', async () => {
+      m.children = [done(1, 'q'.repeat(9_000))];
+      await runOrchestratorTurn({ ...base, events: [] });
+      expect(prompt()).toContain('Pull request: https://github.com/o/r/pull/1');
+      expect(prompt()).toContain('[summary truncated]');
+    });
+
+    it('bounds the transcript, keeping the launcher task and the newest messages', async () => {
+      m.messages = [
+        { body: 'FIRST TASK', createdAt: new Date(0), id: 'm0', kind: 'TEXT', role: 'USER' },
+        ...Array.from({ length: 30 }, (_, i) => ({
+          body: `msg-${i} ${'w'.repeat(3_900)}`,
+          createdAt: new Date(1_000 + i),
+          id: `mm${i}`,
+          kind: 'TEXT',
+          role: i % 2 ? 'ORCHESTRATOR' : 'USER',
+        })),
+      ];
+      await runOrchestratorTurn({ ...base, events: [] });
+      const text = prompt();
+      expect(text).toContain('FIRST TASK');
+      expect(text).toContain('msg-29');
+      expect(text).toContain('[earlier messages omitted]');
+      expect(text).not.toContain('msg-1 ');
+      expect(text.length).toBeLessThan(90_000);
+    });
+
+    it('shows who a message to a child was addressed to', async () => {
+      m.children = [{ ...finished, resultJson: null, status: 'RUNNING' }];
+      m.messages = [
+        ...m.messages,
+        {
+          body: 'use pnpm',
+          childId: 'child-1',
+          createdAt: new Date(),
+          id: 'm2',
+          kind: 'TEXT',
+          role: 'ORCHESTRATOR',
+        },
+        {
+          body: 'stop early',
+          childId: 'child-1',
+          createdAt: new Date(),
+          id: 'm3',
+          kind: 'TEXT',
+          role: 'USER',
+        },
+      ];
+      await runOrchestratorTurn({ ...base, events: [] });
+      expect(prompt()).toContain('[you \u2192 agent "read docs"] use pnpm');
+      expect(prompt()).toContain('[person \u2192 agent "read docs"] stop early');
     });
 
     it('lists the children and the transcript, with the launcher task first', async () => {

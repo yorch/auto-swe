@@ -418,6 +418,79 @@ async function parkSharedSignalBranches(handle: DriveHandle, states: string[]): 
   await waitForEventCount(handle, EventType.EVENT_TYPE_TIMER_STARTED, 2);
 }
 
+// ── OrchestrationWorkflow scenarios ──────────────────────────────────────────
+
+const ORCHESTRATION_ID = '0b1c2d3e-0000-4000-8000-0000000000bb';
+
+const orchestrationInput = (maxWallClockSeconds = 14_400) => ({
+  orchestrationId: ORCHESTRATION_ID,
+  pinned: {
+    maxChildren: 12,
+    maxConcurrentChildren: 4,
+    maxTurns: 200,
+    maxWallClockSeconds,
+    maxWriterChildren: 4,
+  },
+  teamId: 'team-replay',
+  token: 'orch_fixture',
+  userId: 'user-replay',
+});
+
+const SPAWN_INTENT = {
+  intent: { agent: 'docsMaintainer', label: 'read', role: 'reader', task: 'read' },
+  kind: 'spawn',
+};
+
+/**
+ * The activities an orchestration scenario shares: a first turn that spawns a child which stays
+ * running (so the workflow holds on the lost-signal backstop), unless `over` says otherwise.
+ */
+function orchestrationActivities(
+  over: Record<string, (...args: never[]) => unknown> = {},
+  opts: { createdAtMs?: () => number } = {}
+): Record<string, (...args: never[]) => unknown> {
+  let turns = 0;
+  return {
+    applyOrchestrationIntents: async () => ({
+      pendingApprovals: 0,
+      pendingAttach: false,
+      refused: 0,
+      runningChildren: 1,
+      spawned: 1,
+      wait: true,
+    }),
+    // Far enough ahead that the recorder's skipped clock cannot pass the lifetime.
+    beginOrchestrationRun: async () => ({
+      createdAtMs: opts.createdAtMs ? opts.createdAtMs() : Date.now() + 30 * 24 * 3600 * 1000,
+      pendingApprovals: 0,
+      proceed: true,
+      runningChildren: 0,
+      turns: 0,
+      unseenChildIds: [],
+    }),
+    cancelOrchestrationChildren: async () => ({ cancelled: 1 }),
+    recordOrchestrationStatus: async () => {},
+    refreshOrchestrationChildren: async () => ({
+      finishedChildIds: [],
+      pendingApprovals: 0,
+      runningChildren: 1,
+    }),
+    runOrchestratorTurn: async () => {
+      turns += 1;
+      return {
+        intents: turns === 1 ? [SPAWN_INTENT] : [],
+        pendingApprovals: 0,
+        runningChildren: 1,
+        status: 'COMPLETE',
+      };
+    },
+    ...over,
+  };
+}
+
+/** The handle a scenario's activity needs in order to signal mid-activity (set by its drive). */
+const raceRef: { handle?: DriveHandle } = {};
+
 const SCENARIOS: Scenario[] = [
   {
     // Step dispatch, a branch on its output, and an explicit terminate.
@@ -1584,6 +1657,107 @@ const SCENARIOS: Scenario[] = [
       ],
       type: 'OrchestrationWorkflow',
     },
+  },
+  {
+    // A cancel signal while a child runs: the held workflow wakes, cancels the children and ends
+    // CANCELLED.
+    activities: () => orchestrationActivities(),
+    drive: async (handle, _states, env) => {
+      await handle.signal('userMessage', { messageId: 'message-1' });
+      await env.sleep('3 minutes');
+      await handle.signal('cancel');
+    },
+    name: 'orchestration-cancel',
+    workflow: { args: [orchestrationInput()], type: 'OrchestrationWorkflow' },
+  },
+  {
+    // The workflow itself cancelled (handle.cancel()) while it holds: the cancellation is caught,
+    // the children are cancelled and the status recorded, then the cancellation is rethrown.
+    activities: () => orchestrationActivities(),
+    drive: async (handle, _states, env) => {
+      await handle.signal('userMessage', { messageId: 'message-1' });
+      await env.sleep('3 minutes');
+      await handle.cancel();
+    },
+    name: 'orchestration-handle-cancel',
+    workflow: { args: [orchestrationInput()], type: 'OrchestrationWorkflow' },
+  },
+  {
+    // The idle race: a message lands while the WAITING status is being recorded. The workflow flips
+    // back to ACTIVE, answers it, and idles out again.
+    activities: () => {
+      let waiting = 0;
+      return orchestrationActivities({
+        applyOrchestrationIntents: async () => ({
+          pendingApprovals: 0,
+          pendingAttach: false,
+          refused: 0,
+          runningChildren: 0,
+          spawned: 0,
+          wait: false,
+        }),
+        recordOrchestrationStatus: async (input: { status: string }) => {
+          if (input.status === 'WAITING') {
+            waiting += 1;
+            if (waiting === 1) {
+              await raceRef.handle?.signal('userMessage', { messageId: 'late' });
+              await new Promise((resolve) => setTimeout(resolve, 300));
+            }
+          }
+        },
+        runOrchestratorTurn: async () => ({
+          intents: [],
+          pendingApprovals: 0,
+          runningChildren: 0,
+          status: 'COMPLETE',
+        }),
+      } as never);
+    },
+    drive: async (handle) => {
+      raceRef.handle = handle;
+      await handle.signal('userMessage', { messageId: 'message-1' });
+    },
+    name: 'orchestration-idle-race',
+    workflow: { args: [orchestrationInput()], type: 'OrchestrationWorkflow' },
+  },
+  {
+    // The pinned lifetime runs out while a child is still running.
+    activities: () => orchestrationActivities({}, { createdAtMs: () => Date.now() }),
+    drive: async (handle) => {
+      await handle.signal('userMessage', { messageId: 'message-1' });
+    },
+    name: 'orchestration-lifetime',
+    workflow: { args: [orchestrationInput(90)], type: 'OrchestrationWorkflow' },
+  },
+  {
+    // Three failed turns in a row, each re-triggered by the backstop reporting a finished child;
+    // then the workflow waits for a person, whose message starts a turn that succeeds.
+    activities: () => {
+      let turns = 0;
+      return orchestrationActivities({
+        refreshOrchestrationChildren: async () => ({
+          finishedChildIds: ['child-1'],
+          pendingApprovals: 0,
+          runningChildren: 1,
+        }),
+        runOrchestratorTurn: async () => {
+          turns += 1;
+          return {
+            intents: [],
+            pendingApprovals: 0,
+            runningChildren: turns <= 3 ? 1 : 0,
+            status: turns <= 3 ? 'FAILED' : 'COMPLETE',
+          };
+        },
+      } as never);
+    },
+    drive: async (handle, _states, env) => {
+      await handle.signal('userMessage', { messageId: 'message-1' });
+      await env.sleep('30 minutes');
+      await handle.signal('userMessage', { messageId: 'message-2' });
+    },
+    name: 'orchestration-turn-failures',
+    workflow: { args: [orchestrationInput()], type: 'OrchestrationWorkflow' },
   },
 ];
 

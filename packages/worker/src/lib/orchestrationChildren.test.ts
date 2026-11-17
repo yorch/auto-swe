@@ -1,11 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const m = vi.hoisted(() => ({
+  artifactBody: '' as string,
+  artifactFails: false,
+  artifactRow: true,
   childStatus: 'RUNNING',
   created: [] as Array<Record<string, unknown>>,
+  finishedChildren: [] as Array<{ endedAt: Date; id: string; status: string }>,
   known: new Set<string>(),
+  messageRows: [] as Array<{ childId: string; id: string; payload: unknown }>,
+  notices: [] as Array<{ code: string; body: string }>,
   runIdSet: null as string | null,
   signal: vi.fn(),
+  snapshotOverride: null as unknown,
   updates: [] as Array<Record<string, unknown>>,
 }));
 vi.mock('@auto-swe/shared/db', () => ({
@@ -17,6 +24,7 @@ vi.mock('@auto-swe/shared/db', () => ({
             ? { id: 'child-1', status: m.childStatus }
             : null
       ),
+      findMany: vi.fn(async () => m.finishedChildren),
       updateMany: vi.fn(
         async ({
           data,
@@ -42,10 +50,13 @@ vi.mock('@auto-swe/shared/db', () => ({
         m.created.push(data);
         return data;
       }),
+      findMany: vi.fn(async () => m.messageRows),
+      update: vi.fn(async () => ({})),
     },
+    workflowArtifact: { findFirst: vi.fn(async () => (m.artifactRow ? { id: 'art' } : null)) },
     workflowRun: {
       findUnique: vi.fn(async () => ({
-        contextSnapshot: {
+        contextSnapshot: m.snapshotOverride ?? {
           result: {
             branch: 'auto/agent-1',
             filesChanged: [
@@ -69,6 +80,20 @@ vi.mock('@auto-swe/shared/db', () => ({
   },
 }));
 vi.mock('./activityLog.js', () => ({ logWarn: vi.fn() }));
+vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
+  getArtifactStream: vi.fn(async () => {
+    if (m.artifactFails) {
+      throw new Error('store down');
+    }
+    const { Readable } = await import('node:stream');
+    return { ref: {}, sizeBytes: m.artifactBody.length, stream: Readable.from([m.artifactBody]) };
+  }),
+}));
+vi.mock('./orchestrationState.js', () => ({
+  writeNotice: vi.fn(async (_o: string, code: string, body: string) => {
+    m.notices.push({ body, code });
+  }),
+}));
 vi.mock('./temporalClient.js', () => ({
   getTemporalClient: () => ({ workflow: { getHandle: () => ({ signal: m.signal }) } }),
 }));
@@ -77,8 +102,11 @@ import {
   buildChildResult,
   childOrchestrationIdOf,
   completeOrchestrationChild,
+  findUnseenChildResults,
+  markChildResultsSeen,
   markChildRunStarted,
   onOrchestrationRunFinalized,
+  unreadChildIds,
 } from './orchestrationChildren.js';
 
 const ORCH = '0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e';
@@ -89,6 +117,13 @@ beforeEach(() => {
   m.childStatus = 'RUNNING';
   m.created = [];
   m.updates = [];
+  m.artifactBody = '';
+  m.artifactFails = false;
+  m.artifactRow = true;
+  m.finishedChildren = [];
+  m.messageRows = [];
+  m.notices = [];
+  m.snapshotOverride = null;
   m.signal.mockReset();
   m.signal.mockResolvedValue(undefined);
 });
@@ -232,5 +267,117 @@ describe('child lifecycle: run creation to finalization', () => {
       markChildRunStarted({ orchestrationId: 'orch-1', runId: 'run-1', workRequestId: 'wr-1' })
     ).resolves.toBe(false);
     expect(m.childStatus).toBe('COMPLETED');
+  });
+});
+
+const storedSummary = (): string =>
+  (m.updates[0] as { resultJson: { summary: string } }).resultJson.summary;
+const marker = (id: string, bytes: number) => `[stored as artifact ${id} \u2014 ${bytes} bytes]`;
+const ART = '11111111-2222-4333-8444-555555555555';
+
+describe('a result the snapshot spilled to an artifact', () => {
+  const spilled = (text: string) => ({ result: { gate: 'not_applicable', text } });
+
+  it('reads the real 12k-character text back instead of storing the placeholder', async () => {
+    const full = `${'finding. '.repeat(1500)}END`;
+    expect(full.length).toBeGreaterThan(12_000);
+    m.artifactBody = full;
+    m.snapshotOverride = spilled(marker(ART, full.length));
+    await completeOrchestrationChild('run-1');
+    const stored = { summary: storedSummary() };
+    expect(stored.summary).not.toContain('stored as artifact');
+    expect(stored.summary.startsWith('finding. finding.')).toBe(true);
+    expect(stored.summary.length).toBe(full.length);
+  });
+
+  it('bounds the text read back to the result limit', async () => {
+    m.artifactBody = 'x'.repeat(200_000);
+    m.snapshotOverride = spilled(marker(ART, 200_000));
+    await completeOrchestrationChild('run-1');
+    expect(storedSummary().length).toBe(20_000);
+  });
+
+  it.each([
+    [
+      "the artifact is not this run's ready spill",
+      () => {
+        m.artifactRow = false;
+      },
+    ],
+    [
+      'the store cannot be read',
+      () => {
+        m.artifactFails = true;
+      },
+    ],
+  ])('falls back to the placeholder with an explicit note when %s', async (_n, arrange) => {
+    arrange();
+    m.snapshotOverride = spilled(marker(ART, 12_000));
+    await completeOrchestrationChild('run-1');
+    const summary = storedSummary();
+    expect(summary).toContain(`stored as artifact ${ART}`);
+    expect(summary).toContain('could not be read');
+  });
+
+  it('does not touch the store for ordinary text', async () => {
+    m.snapshotOverride = spilled('plain text');
+    await completeOrchestrationChild('run-1');
+    expect(storedSummary()).toBe('plain text');
+  });
+});
+
+describe('a result that breaks the contract', () => {
+  it('still finishes the child, as a FAILED result that names fields and no values', async () => {
+    const built = buildChildResult({
+      costUsd: 1,
+      snapshot: { result: { branch: 'bad..branch name', text: 'fine' } },
+      status: 'SUCCESS',
+    });
+    expect(built.status).toBe('FAILED');
+    expect(built.summary).toContain('branch');
+    expect(built.summary).not.toContain('bad..branch name');
+    expect(built.costUsd).toBe(1);
+  });
+
+  it('completes the child and leaves a notice', async () => {
+    m.snapshotOverride = { result: { branch: 'bad..branch name', text: 'fine' } };
+    const done = await completeOrchestrationChild('run-1');
+    expect(done).toEqual({ childId: 'child-1', orchestrationId: 'orch-1' });
+    expect(m.childStatus).toBe('FAILED');
+    expect(m.notices[0]).toMatchObject({ code: 'CHILD_RESULT_INVALID' });
+  });
+});
+
+describe('the result message is not the only record', () => {
+  it('re-creates a CHILD_RESULT message from the stored result when the write was lost', async () => {
+    m.finishedChildren = [{ endedAt: new Date(0), id: 'c-lost', status: 'COMPLETED' }];
+    m.messageRows = [];
+    await expect(findUnseenChildResults('orch-1', 0)).resolves.toEqual(['c-lost']);
+    expect(m.created).toContainEqual(
+      expect.objectContaining({
+        childId: 'c-lost',
+        kind: 'CHILD_RESULT',
+        payload: { childId: 'c-lost', seen: false, status: 'COMPLETED' },
+      })
+    );
+  });
+
+  it('skips a child whose result a turn has read', async () => {
+    m.finishedChildren = [{ endedAt: new Date(0), id: 'c1', status: 'COMPLETED' }];
+    m.messageRows = [{ childId: 'c1', id: 'm1', payload: { seen: true } }];
+    await expect(findUnseenChildResults('orch-1', 0)).resolves.toEqual([]);
+    expect(m.created).toHaveLength(0);
+  });
+
+  it('counts a child with no message as unread, and marking it seen writes the message', async () => {
+    m.messageRows = [];
+    await expect(unreadChildIds('orch-1', ['c-lost'])).resolves.toEqual(new Set(['c-lost']));
+    await markChildResultsSeen('orch-1', ['c-lost']);
+    expect(m.created).toContainEqual(
+      expect.objectContaining({
+        childId: 'c-lost',
+        payload: expect.objectContaining({ seen: true }),
+      })
+    );
   });
 });

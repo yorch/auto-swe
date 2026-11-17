@@ -24,8 +24,31 @@ export interface OrchestrationGateway {
 }
 
 const REQUEST_TIMEOUT_MS = 30_000;
-/** Longest response read back; a refusal or a created child is tiny. */
-const MAX_RESPONSE_CHARS = 50_000;
+/** Most bytes read back; a refusal or a created child is tiny. The rest is never buffered. */
+export const MAX_RESPONSE_BYTES = 50_000;
+
+/** The response body as text, reading at most `maxBytes` and cancelling the stream past that. */
+async function readCapped(res: Response, maxBytes: number): Promise<string> {
+  if (!res.body) {
+    return '';
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    chunks.push(value);
+    bytes += value.byteLength;
+    if (bytes >= maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      break;
+    }
+  }
+  return Buffer.concat(chunks).subarray(0, maxBytes).toString('utf8');
+}
 
 export function createOrchestrationGateway(
   token: string,
@@ -47,7 +70,7 @@ export function createOrchestrationGateway(
         redirect: 'error',
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
-      const text = (await res.text()).slice(0, MAX_RESPONSE_CHARS);
+      const text = await readCapped(res, MAX_RESPONSE_BYTES);
       let parsed: unknown;
       if (text !== '') {
         try {

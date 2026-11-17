@@ -12,7 +12,8 @@ const m = vi.hoisted(() => ({
   } | null,
   orchUpdates: [] as Array<Record<string, unknown>>,
   runs: new Map<string, { endedAt: Date | null; id: string }>(),
-  unseen: [] as Array<{ childId: string }>,
+  unseen: [] as string[],
+  warn: vi.fn(),
 }));
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
@@ -31,11 +32,10 @@ vi.mock('@auto-swe/shared/db', () => ({
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
     orchestrationMessage: {
-      count: vi.fn(async () => 7),
+      count: vi.fn(async (_args: unknown) => 7),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
         m.notices.push(data);
       }),
-      findMany: vi.fn(async () => m.unseen),
     },
     workflowRun: {
       findFirst: vi.fn(
@@ -45,9 +45,10 @@ vi.mock('@auto-swe/shared/db', () => ({
     },
   },
 }));
-vi.mock('../lib/activityLog.js', () => ({ logWarn: vi.fn() }));
+vi.mock('../lib/activityLog.js', () => ({ logWarn: m.warn }));
 vi.mock('../lib/orchestrationChildren.js', () => ({
   completeOrchestrationChild: m.complete,
+  findUnseenChildResults: vi.fn(async () => m.unseen),
   recordChildResult: vi.fn(async () => null),
 }));
 vi.mock('../lib/orchestrationGateway.js', () => ({
@@ -94,7 +95,7 @@ describe('refreshOrchestrationChildren (the lost-signal backstop)', () => {
   });
 
   it('reports a finished child no turn has read yet', async () => {
-    m.unseen = [{ childId: 'c7' }, { childId: 'c7' }];
+    m.unseen = ['c7'];
     const out = await refreshOrchestrationChildren({ orchestrationId: ORCH });
     expect(out.finishedChildIds).toEqual(['c7']);
   });
@@ -119,7 +120,7 @@ describe('beginOrchestrationRun', () => {
 
   it('reports the start time, turns taken and unread children, and wakes a WAITING one', async () => {
     m.orch = { createdAt: new Date(5_000), status: 'WAITING', teamId: 'team-1' };
-    m.unseen = [{ childId: 'c3' }];
+    m.unseen = ['c3'];
     const out = await beginOrchestrationRun({ orchestrationId: ORCH });
     expect(out).toMatchObject({
       createdAtMs: 5000,
@@ -130,6 +131,15 @@ describe('beginOrchestrationRun', () => {
     expect(m.orchUpdates[0]).toMatchObject({
       data: { status: 'ACTIVE' },
       where: { status: 'WAITING' },
+    });
+  });
+
+  it('counts turns only by the marker a turn activity writes, never by any ORCHESTRATOR text', async () => {
+    const { prisma } = await import('@auto-swe/shared/db');
+    await beginOrchestrationRun({ orchestrationId: ORCH });
+    // A gateway-written messageAgent row (ORCHESTRATOR, TEXT, no payload.turn) is not a turn.
+    expect(vi.mocked(prisma.orchestrationMessage.count).mock.calls[0]?.[0]).toMatchObject({
+      where: { kind: 'TEXT', payload: { gte: 1, path: ['turn'] }, role: 'ORCHESTRATOR' },
     });
   });
 });
@@ -165,6 +175,31 @@ describe('cancelOrchestrationChildren', () => {
     expect(m.gatewayPost).toHaveBeenCalledWith(
       `/api/v1/orchestrations/${ORCH}/children/b/cancel`,
       {}
+    );
+  });
+
+  it.each([401, 404, 409])(
+    'treats a %i as already stopped or revoked: logged, not counted, not thrown',
+    async (status) => {
+      m.children = [child('a', 'w1')];
+      m.gatewayPost.mockResolvedValueOnce({ status });
+      const out = await cancelOrchestrationChildren({ orchestrationId: ORCH, token: 't' });
+      expect(out.cancelled).toBe(0);
+      expect(m.warn).toHaveBeenCalledWith(
+        expect.stringContaining('already stopped'),
+        expect.objectContaining({ childId: 'a', status })
+      );
+    }
+  );
+
+  it('logs any other refusal as a refusal rather than swallowing it', async () => {
+    m.children = [child('a', 'w1')];
+    m.gatewayPost.mockResolvedValueOnce({ status: 500 });
+    const out = await cancelOrchestrationChildren({ orchestrationId: ORCH, token: 't' });
+    expect(out.cancelled).toBe(0);
+    expect(m.warn).toHaveBeenCalledWith(
+      expect.stringContaining('refused'),
+      expect.objectContaining({ status: 500 })
     );
   });
 });

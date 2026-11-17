@@ -310,6 +310,14 @@ describe('openMcpRelay: result screening', () => {
     await relay?.close();
   });
 
+  it("fences an orchestration agent's result although the connection did not opt in", async () => {
+    remote = await remoteServer();
+    const relay = await openMcpRelay({ approval: guardThat(() => true), url: remote.url });
+    const result = await relay?.callTool('echo', { text: 'hi' });
+    expect(JSON.stringify(result)).toContain('BEGIN UNTRUSTED MCP OUTPUT');
+    await relay?.close();
+  });
+
   it('passes a result through unchanged when it does not', async () => {
     remote = await remoteServer();
     const relay = await openMcpRelay({ url: remote.url });
@@ -325,9 +333,8 @@ describe('openMcpRelay: orchestration write approval', () => {
     const approval = guardThat((c) => c.toolName !== 'wipe');
     const relay = await openMcpRelay({ approval, url: remote.url });
 
-    await expect(relay?.callTool('lookup', {})).resolves.toMatchObject({
-      content: [{ text: 'found', type: 'text' }],
-    });
+    // A guarded run's results are screened and fenced.
+    expect(JSON.stringify(await relay?.callTool('lookup', {}))).toContain('found');
     expect(approval.run).toHaveBeenLastCalledWith(
       expect.objectContaining({
         annotations: expect.objectContaining({ readOnlyHint: true }),

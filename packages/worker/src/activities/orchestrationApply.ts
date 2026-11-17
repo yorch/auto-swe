@@ -1,9 +1,11 @@
 import { prisma } from '@auto-swe/shared/db';
-import { SpawnIntentSchema } from '@auto-swe/shared/lib/orchestration';
 import {
-  OrchestrationRefusalSchema,
-  SpawnChildResponseSchema,
-} from '@auto-swe/shared/lib/orchestrationApi';
+  CancelIntentSchema,
+  MessageIntentSchema,
+  RequestRepoIntentSchema,
+  SpawnIntentSchema,
+} from '@auto-swe/shared/lib/orchestration';
+import { SpawnChildResponseSchema } from '@auto-swe/shared/lib/orchestrationApi';
 import { repoMemberWhere } from '@auto-swe/shared/lib/repoMembership';
 import { logWarn } from '../lib/activityLog.js';
 import { redactString } from '../lib/agentTracer.js';
@@ -46,6 +48,46 @@ const LOCAL_CODES = {
   invalidIntent: 'INVALID_INTENT',
 } as const;
 
+/**
+ * The code and message of a gateway error, from either shape it answers with: an orchestration
+ * refusal (`{ code, error: { code, message }, message }`) or the ordinary envelope every other route
+ * uses (`{ error: { code, message } }`, e.g. `AGENT_NOT_FOUND`, `CAP_EXCEEDS_CEILING`). The code is
+ * kept only when it is an upper-case identifier; the message is stripped of control characters and
+ * markup, redacted and length-capped. Null when the body carries neither.
+ */
+export function parseGatewayError(
+  body: unknown,
+  token: string
+): { code: string | null; message: string | null } | null {
+  const record = (v: unknown): Record<string, unknown> | null =>
+    typeof v === 'object' && v !== null && !Array.isArray(v)
+      ? (v as Record<string, unknown>)
+      : null;
+  const top = record(body);
+  if (!top) {
+    return null;
+  }
+  const nested = record(top.error);
+  const pick = (key: 'code' | 'message'): unknown => nested?.[key] ?? top[key];
+  const rawCode = pick('code');
+  const rawMessage = pick('message');
+  const code =
+    typeof rawCode === 'string' && /^[A-Z][A-Z0-9_]{2,63}$/.test(rawCode) ? rawCode : null;
+  const message =
+    typeof rawMessage === 'string'
+      ? redactToken(
+          redactString(
+            rawMessage
+              .replace(/[\p{Cc}<>]+/gu, ' ')
+              .replace(/\s+/g, ' ')
+              .trim()
+          ),
+          token
+        ).slice(0, NOTICE_MESSAGE_CHARS)
+      : null;
+  return code || message ? { code, message: message || null } : null;
+}
+
 export async function applyOrchestrationIntents(
   input: ApplyOrchestrationIntentsInput
 ): Promise<ApplyOrchestrationIntentsResult> {
@@ -67,12 +109,21 @@ export async function applyIntents(
 
   const refuse = async (what: string, code: string, detail?: string) => {
     refused += 1;
-    await writeNotice(
-      orchestrationId,
-      code,
-      `${what} was not done (${code})${detail ? `: ${detail}` : '.'}`,
-      { intent: what.slice(0, 80) }
-    );
+    try {
+      await writeNotice(
+        orchestrationId,
+        code,
+        `${what} was not done (${code})${detail ? `: ${detail}` : '.'}`,
+        { intent: what.slice(0, 80) }
+      );
+    } catch (err) {
+      // The refusal still counts and the remaining intents still run; only the notice is lost.
+      logWarn('orchestration refusal notice not written', {
+        code,
+        error: err instanceof Error ? err.message : String(err),
+        orchestrationId,
+      });
+    }
   };
 
   const call = async (
@@ -102,12 +153,14 @@ export async function applyIntents(
     if (res.status >= 200 && res.status < 300) {
       return true;
     }
-    const refusal = OrchestrationRefusalSchema.safeParse(res.body);
-    if (refusal.success) {
+    const parsed = parseGatewayError(res.body, input.token);
+    if (parsed) {
+      // The real code and message, so the orchestrator can correct itself. The message is quoted
+      // data from the platform, not an instruction.
       await refuse(
         what,
-        refusal.data.code,
-        redactToken(redactString(refusal.data.message), input.token).slice(0, NOTICE_MESSAGE_CHARS)
+        parsed.code ?? LOCAL_CODES.gatewayError,
+        `HTTP ${res.status}${parsed.message ? `; the platform said (quoted): ${JSON.stringify(parsed.message)}` : ''}`
       );
     } else {
       await refuse(what, LOCAL_CODES.gatewayError, `HTTP ${res.status}`);
@@ -115,9 +168,7 @@ export async function applyIntents(
     return false;
   };
 
-  let index = 0;
-  for (const recorded of input.intents) {
-    const i = index++;
+  const applyOne = async (recorded: OrchestratorIntent, i: number): Promise<void> => {
     switch (recorded.kind) {
       case 'spawn': {
         const parsed = SpawnIntentSchema.safeParse(recorded.intent);
@@ -128,7 +179,7 @@ export async function applyIntents(
             LOCAL_CODES.invalidIntent,
             'the request was malformed'
           );
-          break;
+          return;
         }
         const res = await call(`${base}/children`, {
           intent: parsed.data,
@@ -144,32 +195,69 @@ export async function applyIntents(
             'the answer was unreadable'
           );
         }
-        break;
+        return;
       }
       case 'message': {
-        const { childId, message } = recorded.intent;
-        if (!UUID_RE.test(childId)) {
-          await refuse('A message to a child', LOCAL_CODES.invalidIntent, 'unknown child id');
-          break;
+        // Re-validated here: the intent crossed the activity boundary as plain data.
+        const parsed = MessageIntentSchema.safeParse(recorded.intent);
+        if (!parsed.success || !UUID_RE.test(parsed.data.childId)) {
+          await refuse(
+            'A message to a child',
+            LOCAL_CODES.invalidIntent,
+            'unknown child id or malformed message'
+          );
+          return;
         }
         await settle(
           'A message to a child',
-          await call(`${base}/children/${childId}/messages`, { body: message })
+          await call(`${base}/children/${parsed.data.childId}/messages`, {
+            body: parsed.data.message,
+          })
         );
-        break;
+        return;
       }
       case 'cancel': {
-        const { childId } = recorded.intent;
-        if (!UUID_RE.test(childId)) {
+        const parsed = CancelIntentSchema.safeParse(recorded.intent);
+        if (!parsed.success || !UUID_RE.test(parsed.data.childId)) {
           await refuse('A cancel request', LOCAL_CODES.invalidIntent, 'unknown child id');
-          break;
+          return;
         }
-        await settle('A cancel request', await call(`${base}/children/${childId}/cancel`, {}));
-        break;
+        await settle(
+          'A cancel request',
+          await call(`${base}/children/${parsed.data.childId}/cancel`, {})
+        );
+        return;
       }
-      case 'requestRepo':
-        await applyRepoRequest(orchestrationId, recorded, refuse);
-        break;
+      case 'requestRepo': {
+        const parsed = RequestRepoIntentSchema.safeParse(recorded.intent);
+        if (!parsed.success) {
+          await refuse(
+            'The repository request',
+            LOCAL_CODES.invalidIntent,
+            'the request was malformed'
+          );
+          return;
+        }
+        await applyRepoRequest(orchestrationId, { ...recorded, intent: parsed.data }, refuse);
+        return;
+      }
+    }
+  };
+
+  let index = 0;
+  for (const recorded of input.intents) {
+    const i = index++;
+    try {
+      await applyOne(recorded, i);
+    } catch (err) {
+      // One intent failing (a database write, say) must not abort the ones after it.
+      logWarn('orchestration intent could not be applied', {
+        error: redactToken(err instanceof Error ? err.message : String(err), input.token),
+        index: i,
+        kind: recorded.kind,
+        orchestrationId,
+      });
+      refused += 1;
     }
   }
 

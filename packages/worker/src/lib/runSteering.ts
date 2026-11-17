@@ -19,7 +19,11 @@ import type { AgentTracer } from './agentTracer.js';
 const MAX_PER_STEP = 20;
 const MAX_BODY_CHARS = 4000;
 
-export const STEERING_HEADING = '[Steering update from the launcher — incorporate this]:';
+export const STEERING_HEADING = '[Steering messages — incorporate them; each says who it is from]:';
+
+/** Who wrote a steering message, from the row: a person's id, or null for the orchestrator. */
+const FROM_LAUNCHER = '(from the launcher)';
+const FROM_ORCHESTRATOR = '(from the orchestrator, not the launcher)';
 
 export interface DrainedSteering {
   ids: string[];
@@ -27,24 +31,37 @@ export interface DrainedSteering {
   block: string;
 }
 
-/** Take the run's undelivered messages, oldest first, and mark them delivered. Null when none. */
-export async function drainRunSteering(runId: string): Promise<DrainedSteering | null> {
+/**
+ * The run's undelivered messages, oldest first, as the block to inject. Marks nothing: the caller
+ * marks exactly the rows it injected ({@link markSteeringDelivered}). Null when none.
+ */
+export async function readRunSteering(runId: string): Promise<DrainedSteering | null> {
   const rows = await prisma.runSteeringMessage.findMany({
     orderBy: { createdAt: 'asc' },
-    select: { body: true, id: true },
+    select: { authorId: true, body: true, id: true },
     take: MAX_PER_STEP,
     where: { deliveredAt: null, runId },
   });
   if (rows.length === 0) {
     return null;
   }
-  const ids = rows.map((r) => r.id);
+  // A message with an author is the launcher's (only the launcher may steer a child); one with
+  // none was written by the orchestrator's `messageAgent`, which a prompt-injected model can steer.
+  const lines = rows.map(
+    (r) => `- ${r.authorId ? FROM_LAUNCHER : FROM_ORCHESTRATOR} ${r.body.slice(0, MAX_BODY_CHARS)}`
+  );
+  return { block: `${STEERING_HEADING}\n${lines.join('\n')}`, ids: rows.map((r) => r.id) };
+}
+
+/** Mark exactly `ids` delivered (only those still undelivered). */
+export async function markSteeringDelivered(ids: readonly string[]): Promise<void> {
+  if (ids.length === 0) {
+    return;
+  }
   await prisma.runSteeringMessage.updateMany({
     data: { deliveredAt: new Date() },
-    where: { deliveredAt: null, id: { in: ids } },
+    where: { deliveredAt: null, id: { in: [...ids] } },
   });
-  const lines = rows.map((r) => `- ${r.body.slice(0, MAX_BODY_CHARS)}`);
-  return { block: `${STEERING_HEADING}\n${lines.join('\n')}`, ids };
 }
 
 /** The slice of Mastra's `prepareStep` argument this uses. */
@@ -55,13 +72,18 @@ interface PrepareStepArgs {
 /**
  * A `prepareStep` hook for the Mastra loop that injects steering at each step boundary. It never
  * throws: a failed read is logged and the step proceeds unsteered, and the messages stay
- * undelivered for the next boundary.
+ * undelivered for the next boundary. Only the rows actually injected are marked delivered.
  */
 export function createSteeringPrepareStep(runId: string, tracer: AgentTracer) {
   return async (args: PrepareStepArgs) => {
+    // Without a history to append to nothing can be injected, so nothing is read or marked: the
+    // messages stay undelivered (and shown as such) rather than being consumed unseen.
+    if (!args.messageList) {
+      return undefined;
+    }
     let drained: DrainedSteering | null;
     try {
-      drained = await drainRunSteering(runId);
+      drained = await readRunSteering(runId);
     } catch (err) {
       logWarn('steering read failed; continuing without it', {
         error: err instanceof Error ? err.message : String(err),
@@ -69,10 +91,19 @@ export function createSteeringPrepareStep(runId: string, tracer: AgentTracer) {
       });
       return undefined;
     }
-    if (!drained || !args.messageList) {
+    if (!drained) {
       return undefined;
     }
+    // Inject first, mark after: a message is delivered only once it is in the history.
     args.messageList.add({ content: drained.block, role: 'user' }, 'input');
+    try {
+      await markSteeringDelivered(drained.ids);
+    } catch (err) {
+      logWarn('steering delivery could not be recorded', {
+        error: err instanceof Error ? err.message : String(err),
+        runId,
+      });
+    }
     tracer.addActivityEvent({
       name: 'agent.steered',
       outputJson: { count: drained.ids.length, messageIds: drained.ids },

@@ -208,7 +208,7 @@ export async function openMcpRelay(
         result.isError ? 'FAILED' : 'DONE',
         result.isError ? 'tool reported an error' : undefined
       );
-      if (target.scanResults !== true) {
+      if (target.scanResults !== true && target.approval === undefined) {
         return result;
       }
       const screened = await screenMcpResult(result, name, tracer);

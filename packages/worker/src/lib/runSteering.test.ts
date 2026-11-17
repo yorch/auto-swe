@@ -6,7 +6,14 @@ import { z } from 'zod';
 const db = vi.hoisted(() => ({
   fail: false,
   queries: 0,
-  rows: [] as Array<{ body: string; deliveredAt: Date | null; id: string; runId: string }>,
+  rows: [] as Array<{
+    authorId: string | null;
+    body: string;
+    deliveredAt: Date | null;
+    id: string;
+    runId: string;
+  }>,
+  updateFails: false,
 }));
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
@@ -19,6 +26,9 @@ vi.mock('@auto-swe/shared/db', () => ({
         return db.rows.filter((r) => r.runId === where.runId && r.deliveredAt === null);
       }),
       updateMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) => {
+        if (db.updateFails) {
+          throw new Error('db down');
+        }
         for (const r of db.rows) {
           if (where.id.in.includes(r.id)) {
             r.deliveredAt = new Date();
@@ -57,9 +67,15 @@ vi.mock('../lib/costTracking.js', () => ({
 import { runAgent } from '../activities/runAgent.js';
 import { AgentTracer } from './agentTracer.js';
 import type { AgentSpec } from './config/agentSpec.js';
-import { createSteeringPrepareStep, drainRunSteering, STEERING_HEADING } from './runSteering.js';
+import {
+  createSteeringPrepareStep,
+  markSteeringDelivered,
+  readRunSteering,
+  STEERING_HEADING,
+} from './runSteering.js';
 
-const row = (id: string, body: string, runId = 'run-1') => ({
+const row = (id: string, body: string, runId = 'run-1', authorId: string | null = 'user-1') => ({
+  authorId,
   body,
   deliveredAt: null as Date | null,
   id,
@@ -70,20 +86,33 @@ beforeEach(() => {
   db.fail = false;
   db.queries = 0;
   db.rows = [];
+  db.updateFails = false;
 });
 
-describe('drainRunSteering', () => {
+describe('readRunSteering', () => {
   it('returns null and reads once when nothing is waiting', async () => {
-    expect(await drainRunSteering('run-1')).toBeNull();
+    expect(await readRunSteering('run-1')).toBeNull();
     expect(db.queries).toBe(1);
   });
 
-  it('labels the messages, marks them delivered, and does not deliver them twice', async () => {
-    db.rows = [row('a', 'use pnpm'), row('b', 'skip tests'), row('c', 'other run', 'run-2')];
-    const out = await drainRunSteering('run-1');
-    expect(out?.block).toBe(`${STEERING_HEADING}\n- use pnpm\n- skip tests`);
-    expect(db.rows.map((r) => r.deliveredAt !== null)).toEqual([true, true, false]);
-    expect(await drainRunSteering('run-1')).toBeNull();
+  it('labels each message by who wrote it, and marks nothing itself', async () => {
+    db.rows = [
+      row('a', 'use pnpm'),
+      row('b', 'skip tests', 'run-1', null),
+      row('c', 'other run', 'run-2'),
+    ];
+    const out = await readRunSteering('run-1');
+    expect(out?.block).toBe(
+      `${STEERING_HEADING}\n- (from the launcher) use pnpm\n- (from the orchestrator, not the launcher) skip tests`
+    );
+    expect(out?.ids).toEqual(['a', 'b']);
+    expect(db.rows.every((r) => r.deliveredAt === null)).toBe(true);
+  });
+
+  it('marks exactly the ids it is given', async () => {
+    db.rows = [row('a', 'one'), row('b', 'two')];
+    await markSteeringDelivered(['a']);
+    expect(db.rows.map((r) => r.deliveredAt !== null)).toEqual([true, false]);
   });
 });
 
@@ -95,11 +124,33 @@ describe('createSteeringPrepareStep', () => {
     const messageList = { add } as never;
     const result = await createSteeringPrepareStep('run-1', tracer)({ messageList });
     expect(add).toHaveBeenCalledWith(
-      { content: expect.stringContaining('- use pnpm'), role: 'user' },
+      { content: expect.stringContaining('(from the launcher) use pnpm'), role: 'user' },
       'input'
     );
     expect(result).toEqual({ messageList });
     expect(JSON.stringify(tracer)).toContain('agent.steered');
+  });
+
+  it('leaves the messages undelivered when there is no history to append them to', async () => {
+    db.rows = [row('a', 'use pnpm')];
+    const out = await createSteeringPrepareStep('run-1', new AgentTracer())({});
+    expect(out).toBeUndefined();
+    expect(db.rows[0]?.deliveredAt).toBeNull();
+    // Nothing was even read: the rows were never at risk.
+    expect(db.queries).toBe(0);
+  });
+
+  it('injects before it marks: a failed mark still delivers, and is retried next step', async () => {
+    db.rows = [row('a', 'use pnpm')];
+    db.updateFails = true;
+    const add = vi.fn();
+    const out = await createSteeringPrepareStep(
+      'run-1',
+      new AgentTracer()
+    )({ messageList: { add } as never });
+    expect(add).toHaveBeenCalledTimes(1);
+    expect(out).toBeDefined();
+    expect(db.rows[0]?.deliveredAt).toBeNull();
   });
 
   it('lets the step proceed unsteered when the read fails, leaving the messages queued', async () => {
@@ -172,7 +223,8 @@ describe('Mastra loop integration', () => {
     expect(calls).toBe(2);
     expect(prompts[0]).not.toContain('actually use pnpm');
     expect(prompts[1]).toContain('actually use pnpm');
-    expect(prompts[1]).toContain('Steering update');
+    expect(prompts[1]).toContain('Steering messages');
+    expect(prompts[1]).toContain('from the launcher');
     expect(db.rows[0]?.deliveredAt).not.toBeNull();
     // One read per step boundary, and the message was handed over once.
     expect(db.queries).toBe(2);

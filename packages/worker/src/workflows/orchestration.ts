@@ -36,6 +36,8 @@ import { RETRY_RUN_RECORD, RETRY_SINGLE_ATTEMPT, T_2M, T_15M, T_30S } from './pr
  *  - With nothing in flight and no event for {@link IDLE_MS} it completes (status WAITING);
  *    the next message starts it again.
  *  - It `continueAsNew`s every {@link MAX_TURNS_PER_EXECUTION} turns, carrying its queue.
+ *  - After {@link MAX_FAILED_TURNS} failed turns in a row it stops taking turns for machine events
+ *    and waits for a person's.
  *  - The bounds (`maxTurns`, `maxWallClockSeconds`) are read from the run-pinned `input.pinned`
  *    only; the workflow never reads the settings registry, so a replay cannot take another path.
  *  - Turn and apply are single-attempt: a retry would answer the same events twice or start a
@@ -60,6 +62,16 @@ const BACKSTOP_MS = 60_000;
 const MAX_TURNS_PER_EXECUTION = 50;
 /** Consecutive turns that only a refusal triggered; past it the orchestrator waits for a person. */
 const MAX_REFUSAL_STREAK = 3;
+/**
+ * Consecutive failed turns; past it no machine event (the backstop re-reporting a finished child,
+ * say) starts another turn, and the orchestrator waits for a person's event. Without it a turn that
+ * keeps failing would be retried by the backstop every minute or two for the orchestration's life.
+ */
+const MAX_FAILED_TURNS = 3;
+
+/** An event a person caused: it ends a wait that failed turns started. */
+const isHumanEvent = (e: OrchestrationEvent) =>
+  e.type === 'userMessage' || e.type === 'attachResolved' || e.type === 'approvalResolved';
 
 const { runOrchestratorTurn, applyOrchestrationIntents } = proxyActivities<
   Pick<typeof activitiesType, 'runOrchestratorTurn' | 'applyOrchestrationIntents'>
@@ -91,7 +103,8 @@ const { cancelOrchestrationChildren } = proxyActivities<
 export async function OrchestrationWorkflow(input: OrchestrationWorkflowInput): Promise<void> {
   const { orchestrationId, pinned } = input;
   const queue: OrchestrationEvent[] = [...(input.pending ?? [])];
-  let cancelRequested = false;
+  // A cancel that arrived before a `continueAsNew` is carried across it, never forgotten.
+  let cancelRequested = input.carried?.cancelRequested === true;
 
   const push = (event: OrchestrationEvent) => {
     // The same child reported twice (signal and backstop) is one event.
@@ -152,6 +165,25 @@ export async function OrchestrationWorkflow(input: OrchestrationWorkflowInput): 
     });
   };
 
+  /** Count a failed turn; at the cap, say the orchestrator is waiting for a person. */
+  const noteFailedTurn = async () => {
+    state.failedTurns = (state.failedTurns ?? 0) + 1;
+    if (state.failedTurns === MAX_FAILED_TURNS) {
+      try {
+        await recordOrchestrationStatus({
+          notice: {
+            body: 'The orchestrator failed several turns in a row, so it has stopped trying on its own. Send a message to continue.',
+            code: 'TURNS_FAILING',
+          },
+          orchestrationId,
+          status: 'ACTIVE',
+        });
+      } catch {
+        // The notice is lost; the wait for a person still holds.
+      }
+    }
+  };
+
   try {
     for (;;) {
       if (cancelRequested) {
@@ -164,6 +196,22 @@ export async function OrchestrationWorkflow(input: OrchestrationWorkflowInput): 
           code: 'LIFETIME_REACHED',
         });
         return;
+      }
+
+      if ((state.failedTurns ?? 0) >= MAX_FAILED_TURNS) {
+        // Turns keep failing: only a person's event starts another. Machine events are dropped
+        // here (a finished child's result stays unread in the database and is shown with the next
+        // turn), so the backstop cannot loop a failing turn.
+        const human = queue.filter(isHumanEvent);
+        queue.length = 0;
+        queue.push(...human);
+        if (queue.length === 0) {
+          await condition(
+            () => queue.some(isHumanEvent) || cancelRequested,
+            Math.max(1, state.deadlineMs - Date.now())
+          );
+          continue;
+        }
       }
 
       if (queue.length === 0) {
@@ -192,6 +240,12 @@ export async function OrchestrationWorkflow(input: OrchestrationWorkflowInput): 
         // Nothing in flight and nothing said for the idle window: complete; a later message
         // starts the workflow again.
         await recordOrchestrationStatus({ orchestrationId, status: 'WAITING' });
+        if (queue.length > 0 || cancelRequested) {
+          // A signal landed while the status activity ran (the gateway has already revived the
+          // status to ACTIVE for it). Completing now would lose it: flip back and carry on.
+          await recordOrchestrationStatus({ orchestrationId, status: 'ACTIVE' });
+          continue;
+        }
         return;
       }
 
@@ -207,6 +261,9 @@ export async function OrchestrationWorkflow(input: OrchestrationWorkflowInput): 
       if (batch.some((e) => e.type !== 'notices')) {
         state.refusalStreak = 0;
       }
+      if (batch.some(isHumanEvent)) {
+        state.failedTurns = 0;
+      }
       // Unique per turn: the counter is carried through `continueAsNew`, and the epoch (the run id
       // of the fresh start) keeps a restart that re-reads a smaller count from reusing a key.
       // The gateway folds this into the spawn idempotency key, so a repeat would answer an earlier
@@ -216,10 +273,20 @@ export async function OrchestrationWorkflow(input: OrchestrationWorkflowInput): 
 
       let intents: Awaited<ReturnType<typeof runOrchestratorTurn>>['intents'] = [];
       try {
-        const turn = await runOrchestratorTurn({ events: batch, orchestrationId, turnKey });
+        const turn = await runOrchestratorTurn({
+          events: batch,
+          orchestrationId,
+          turn: state.turns,
+          turnKey,
+        });
         intents = turn.intents;
         state.runningChildren = turn.runningChildren;
         state.pendingApprovals = turn.pendingApprovals;
+        if (turn.status === 'FAILED') {
+          await noteFailedTurn();
+        } else {
+          state.failedTurns = 0;
+        }
       } catch (err) {
         // The turn could not run at all (timed out, or the worker died past its heartbeat). The
         // events are not re-queued: a failing turn must not loop. The person sees the notice.
@@ -240,6 +307,7 @@ export async function OrchestrationWorkflow(input: OrchestrationWorkflowInput): 
         } catch {
           // The notice is lost; the next turn proceeds.
         }
+        await noteFailedTurn();
       }
 
       if (intents.length > 0 && !cancelRequested) {
@@ -272,7 +340,7 @@ export async function OrchestrationWorkflow(input: OrchestrationWorkflowInput): 
       ) {
         await continueAsNew<typeof OrchestrationWorkflow>({
           ...input,
-          carried: state,
+          carried: { ...state, cancelRequested },
           pending: queue,
         });
       }

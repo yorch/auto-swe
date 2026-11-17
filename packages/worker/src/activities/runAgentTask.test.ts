@@ -19,6 +19,8 @@ const m = vi.hoisted(() => ({
     gitAuthed: vi.fn(async () => ''),
   },
   applyStored: vi.fn(async () => ''),
+  /** What the MCP approval guard finds for the run (`orchestrationId: null` = not an orchestration). */
+  approvalRows: [] as Array<Record<string, unknown>>,
   assertBudget: vi.fn(async (_label?: string) => {}),
   billed: { billingOrgId: 'org-9', billingTeamId: 'team-9' } as unknown,
   childConfirmed: true,
@@ -42,10 +44,12 @@ const m = vi.hoisted(() => ({
   resolveAgentSpec: vi.fn(),
   resolvePrTitle: vi.fn(async (input: { legacyTitle?: string }) => input.legacyTitle ?? ''),
   run: {
+    id: 'run-1',
     template: { name: 'Agent Run', origin: 'system:agent-run', teamId: null },
     templateId: 'tpl-1',
   } as unknown,
   runAgent: vi.fn(),
+  runLink: { orchestrationId: null } as { orchestrationId: string | null },
   runtime: null as string | null,
   /** `workspace.agentRunRuntime` per owning team (undefined team: the default). */
   runtimeSetting: {} as Record<string, string>,
@@ -72,6 +76,18 @@ const m = vi.hoisted(() => ({
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        orchestrationApproval: {
+          create: async ({ data }: { data: Record<string, unknown> }) => {
+            const row = { ...data, id: 'ap-1', outcome: null, status: 'PENDING' };
+            m.approvalRows.push(row);
+            return row;
+          },
+        },
+        orchestrationMessage: { create: async () => ({}) },
+      })
+    ),
     activeWorkflow: { findFirst: vi.fn(async () => m.ledger), updateMany: m.closeRows },
     connection: {
       findUnique: vi.fn(async () => ({ previewConfig: m.previewConfig })),
@@ -82,9 +98,22 @@ vi.mock('@auto-swe/shared/db', () => ({
         installation: null,
       })),
     },
+    orchestration: {
+      findUnique: vi.fn(async () => ({
+        connectionIds: ['conn-1'],
+        launchedById: 'user-1',
+        teamId: 'team-9',
+      })),
+    },
+    orchestrationApproval: {
+      findUnique: vi.fn(async () => m.approvalRows[0] ?? null),
+      update: vi.fn(async () => ({})),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+    },
     orchestrationChild: {
       findFirst: vi.fn(async () => (m.childConfirmed ? { id: 'child-1' } : null)),
     },
+    orchestrationMessage: { create: vi.fn(async () => ({})) },
     pullRequest: { create: m.prCreate, update: m.prUpdate },
     runInput: { findUnique: vi.fn(async () => m.billed) },
     workflowHumanStep: { findMany: m.waiting },
@@ -97,7 +126,9 @@ vi.mock('@auto-swe/shared/db', () => ({
       findUnique: vi.fn(async (args: { select: Record<string, unknown> }) =>
         'template' in args.select
           ? m.run
-          : { id: 'run-1', templateId: 'template-1', templateVersion: 2 }
+          : 'orchestrationId' in args.select
+            ? m.runLink
+            : { id: 'run-1', templateId: 'template-1', templateVersion: 2 }
       ),
     },
   },
@@ -120,11 +151,13 @@ vi.mock('@auto-swe/shared/config', () => ({
   // Like the real resolver: a run-pinned value wins over the live cascade.
   resolveSetting: vi.fn(
     async (key: string, ctx?: { teamId?: string; pinnedSettings?: Record<string, unknown> }) =>
-      ctx?.pinnedSettings && key in ctx.pinnedSettings
-        ? ctx.pinnedSettings[key]
-        : ctx?.teamId
-          ? (m.runtimeSetting[ctx.teamId] ?? 'mastra')
-          : 'mastra'
+      key === 'orchestration.approvalTimeoutSeconds'
+        ? 600
+        : ctx?.pinnedSettings && key in ctx.pinnedSettings
+          ? ctx.pinnedSettings[key]
+          : ctx?.teamId
+            ? (m.runtimeSetting[ctx.teamId] ?? 'mastra')
+            : 'mastra'
   ),
   resolveSettings: vi.fn(async () => m.settings),
 }));
@@ -303,9 +336,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   egressPolicy.value = 'open';
   m.run = {
+    id: 'run-1',
     template: { name: 'Agent Run', origin: 'system:agent-run', teamId: null },
     templateId: 'tpl-1',
   };
+  m.runLink = { orchestrationId: null };
+  m.approvalRows = [];
   m.ledger = { id: 'ledger-1', repoId: 'repo-1' };
   m.billed = { billingOrgId: 'org-9', billingTeamId: 'team-9' };
   m.childConfirmed = true;
@@ -503,6 +539,24 @@ describe('authority checks (the worker does not trust the gateway)', () => {
     expect(hook(0).prepareStep).toBeUndefined();
   });
 
+  it('fails a repository-bound orchestration child closed when its run id is unknown', async () => {
+    m.run = {
+      template: { name: 'Agent Run', origin: 'system:agent-run', teamId: null },
+      templateId: 'tpl-1',
+    };
+    const f = await failureOf(
+      runAgentTask({
+        request: request({
+          payload: { agentRef: 'contentWriter', deliver: 'none', orchestrationId: ORCH },
+        }),
+      })
+    );
+    expect(f.type).toBe('ORCHESTRATION_RUN_UNKNOWN');
+    expect(f.nonRetryable).toBe(true);
+    expect(loadMcpTools).not.toHaveBeenCalled();
+    expect(createWorkspace).not.toHaveBeenCalled();
+  });
+
   it('only publishes under its own agent-<id> branch names', async () => {
     const f = await failureOf(runAgentTask({ request: request({ externalTicketId: 'JIRA-1' }) }));
     expect(f.type).toBe('AGENT_RUN_INVALID_PAYLOAD');
@@ -567,20 +621,112 @@ describe('a run with no repository (a read-only orchestration child)', () => {
     expect(Object.keys(spec.tools ?? {})).toEqual([]);
   });
 
-  it('binds the agent MCP connection checked against the billed team, not a repository', async () => {
+  /** The target `loadMcpTools` was handed, as the run left it. */
+  const boundTarget = () =>
+    vi.mocked(loadMcpTools).mock.calls[0]?.[0] as unknown as {
+      approval?: {
+        run: (
+          call: { toolName: string; args: unknown; annotations: unknown },
+          exec: () => Promise<unknown>
+        ) => Promise<{ ran: boolean; message?: string }>;
+      };
+      scanResults?: boolean;
+    };
+  const bindMcp = (target: Record<string, unknown> = { url: 'https://mcp.example/x' }) => {
     m.toolKeys = ['mcp'];
-    const tool = { id: 'srv__read' };
-    vi.mocked(resolveAgentMcpUrl).mockResolvedValueOnce({ url: 'https://mcp.example/x' });
+    m.runLink = { orchestrationId: ORCH };
+    vi.mocked(resolveAgentMcpUrl).mockResolvedValueOnce(
+      Object.defineProperty({ ...target }, 'connectionId', {
+        enumerable: false,
+        value: 'conn-1',
+      }) as never
+    );
     vi.mocked(loadMcpTools).mockResolvedValueOnce({
       close: vi.fn(async () => {}),
-      tools: { srv__read: tool },
+      tools: { srv__read: { id: 'srv__read' } },
     } as never);
+  };
+
+  it('binds the agent MCP connection checked against the billed team, behind the approval guard', async () => {
+    bindMcp();
     await runAgentTask({ request: repoless() });
     expect(vi.mocked(resolveAgentMcpUrl).mock.calls[0]?.[2]).toMatchObject({
       tenant: { orgId: 'org-9', teamId: 'team-9' },
     });
     const spec = m.runAgent.mock.calls[0]?.[0] as { tools?: Record<string, unknown> };
     expect(spec.tools).toHaveProperty('srv__read');
+    // The guard is attached, and result screening is forced on although the connection did not ask.
+    expect(boundTarget().approval).toBeDefined();
+    expect(boundTarget().scanResults).toBe(true);
+  });
+
+  it('makes a repo-less child write wait for the launcher before it runs', async () => {
+    vi.useFakeTimers();
+    try {
+      bindMcp();
+      await runAgentTask({ request: repoless() });
+      const exec = vi.fn(async () => 'wrote');
+      const pending = boundTarget().approval?.run(
+        { annotations: undefined, args: { path: 'x' }, toolName: 'wipe' },
+        exec
+      );
+      await vi.advanceTimersByTimeAsync(10);
+      // Not run, and an approval row is waiting for the launcher.
+      expect(exec).not.toHaveBeenCalled();
+      expect(m.approvalRows).toHaveLength(1);
+      expect(m.approvalRows[0]).toMatchObject({ orchestrationId: ORCH, status: 'PENDING' });
+      m.approvalRows[0] = { ...m.approvalRows[0], status: 'DENIED' };
+      await vi.advanceTimersByTimeAsync(2_500);
+      await expect(pending).resolves.toMatchObject({ ran: false });
+      expect(exec).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refuses a call on a connection outside the orchestration set without running it', async () => {
+    bindMcp();
+    vi.mocked(resolveAgentMcpUrl).mockReset();
+    vi.mocked(resolveAgentMcpUrl).mockResolvedValueOnce(
+      Object.defineProperty({ url: 'https://mcp.example/x' }, 'connectionId', {
+        enumerable: false,
+        value: 'conn-OTHER',
+      }) as never
+    );
+    await runAgentTask({ request: repoless() });
+    const exec = vi.fn(async () => 'read');
+    const out = await boundTarget().approval?.run(
+      { annotations: { readOnlyHint: true }, args: {}, toolName: 'lookup' },
+      exec
+    );
+    expect(out).toMatchObject({ ran: false });
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the run row cannot be identified: no MCP tool is bound', async () => {
+    bindMcp();
+    m.run = {
+      template: { name: 'Agent Run', origin: 'system:agent-run', teamId: null },
+      templateId: 'tpl-1',
+    };
+    const f = await failureOf(runAgentTask({ request: repoless() }));
+    expect(f.type).toBe('ORCHESTRATION_RUN_UNKNOWN');
+    expect(f.nonRetryable).toBe(true);
+    expect(loadMcpTools).not.toHaveBeenCalled();
+    expect(m.runAgent).not.toHaveBeenCalled();
+  });
+
+  it('denies every call when the orchestration lookup fails (no raw target)', async () => {
+    bindMcp();
+    vi.mocked(prisma.orchestration.findUnique).mockRejectedValueOnce(new Error('db down'));
+    await runAgentTask({ request: repoless() });
+    const exec = vi.fn(async () => 'read');
+    const out = await boundTarget().approval?.run(
+      { annotations: { readOnlyHint: true }, args: {}, toolName: 'lookup' },
+      exec
+    );
+    expect(out).toMatchObject({ ran: false });
+    expect(exec).not.toHaveBeenCalled();
   });
 
   it('fails a harness-runtime agent before any work, non-retryably', async () => {

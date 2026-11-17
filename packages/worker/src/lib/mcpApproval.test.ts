@@ -165,6 +165,7 @@ import {
   type McpApprovalGuard,
   mcpCallKey,
   redactedArgumentsDigest,
+  withMcpApproval,
 } from './mcpApproval.js';
 
 const CONNECTION = 'conn-1';
@@ -263,6 +264,23 @@ describe('createMcpApprovalGuard', () => {
       ran: false,
     });
     expect(exec).not.toHaveBeenCalled();
+  });
+});
+
+describe('withMcpApproval', () => {
+  it('forces result screening on and attaches the guard, whatever the connection says', async () => {
+    const target = { url: 'https://mcp.example/x' };
+    const out = await withMcpApproval(target, { runId: 'run-1' });
+    expect(out?.approval).toBeDefined();
+    expect(out?.scanResults).toBe(true);
+  });
+
+  it('leaves a run that belongs to no orchestration untouched', async () => {
+    h.state.runOrchestrationId = null;
+    const target = { url: 'https://mcp.example/x' };
+    const out = await withMcpApproval(target, { runId: 'run-1' });
+    expect(out?.approval).toBeUndefined();
+    expect(out?.scanResults).toBeUndefined();
   });
 });
 

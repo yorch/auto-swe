@@ -417,7 +417,8 @@ export async function loadMcpTools(
         url.toString(),
         callTimeoutMs,
         tracer,
-        target.scanResults === true,
+        // An orchestration's agents (the ones that carry an approval guard) are always screened.
+        target.scanResults === true || target.approval !== undefined,
         target.bearerToken,
         target.approval
       );

@@ -1,12 +1,15 @@
 import { prisma } from '@auto-swe/shared/db';
+import { getArtifactStream } from '@auto-swe/shared/lib/artifactStore';
 import {
   CHILD_RESULT_MAX_CHARS,
   type ChildResult,
   ChildResultSchema,
   orchestrationWorkflowId,
 } from '@auto-swe/shared/lib/orchestration';
+import { CONTEXT_OVERFLOW_KIND } from '../activities/contextOverflow.js';
 import { logWarn } from './activityLog.js';
 import { redactString } from './agentTracer.js';
+import { writeNotice } from './orchestrationState.js';
 import { getTemporalClient } from './temporalClient.js';
 
 /**
@@ -60,21 +63,44 @@ function nonNegInt(value: unknown): number {
 const GATE_FAILURE_RE = /gate|PATH_OUT_OF_SCOPE|security/i;
 
 /**
+ * The text of a run's result, when the run's context snapshot replaced it with an artifact
+ * placeholder (a string over the snapshot's inline limit is stored as an artifact): the text read
+ * back, or the placeholder with the fact that it could not be read.
+ */
+export type ResolvedResultText = { text: string } | { unreadable: string };
+
+export interface BuiltChildResult {
+  result: ChildResult;
+  /** Field paths of the run output that did not match the result contract; empty when it did. */
+  issues: string[];
+}
+
+/**
  * The result of a finished agent run. `snapshot` is the run's context snapshot (its `result` is
  * the terminate node's output); `failure` is the error of its failed step. Redacted and truncated.
+ * Never throws: output that does not match the contract becomes a FAILED result that says so.
  */
-export function buildChildResult(input: {
+export function buildChildResultWithIssues(input: {
   status: RunStatus;
   snapshot: unknown;
   costUsd: number;
   failure?: string | null;
-}): ChildResult {
+  resolvedText?: ResolvedResultText;
+}): BuiltChildResult {
   const status = childStatus(input.status);
   const result = asRecord(asRecord(input.snapshot)?.result) ?? {};
   const snapshotError = str(asRecord(input.snapshot)?.error, 2000);
   const failure = input.failure ?? snapshotError;
+  const costUsd = Number.isFinite(input.costUsd) && input.costUsd > 0 ? input.costUsd : 0;
 
-  const text = str(result.text, CHILD_RESULT_MAX_CHARS);
+  const placeholder = str(result.text, CHILD_RESULT_MAX_CHARS);
+  const resolved = input.resolvedText;
+  const text =
+    resolved && 'text' in resolved
+      ? str(resolved.text, CHILD_RESULT_MAX_CHARS)
+      : resolved
+        ? `${resolved.unreadable} (the full text is stored as an artifact on the run but could not be read here)`
+        : placeholder;
   const summarySource =
     text ??
     (status === 'COMPLETED'
@@ -101,9 +127,9 @@ export function buildChildResult(input: {
         : undefined;
 
   const stopped = result.stoppedReason;
-  return ChildResultSchema.parse({
+  const parsed = ChildResultSchema.safeParse({
     branch: str(result.branch, 300),
-    costUsd: Number.isFinite(input.costUsd) && input.costUsd > 0 ? input.costUsd : 0,
+    costUsd,
     filesChanged,
     gate,
     prUrl: httpsUrl(result.prUrl),
@@ -111,6 +137,94 @@ export function buildChildResult(input: {
     stoppedReason: stopped === 'max_steps' || stopped === 'wall_clock' ? stopped : undefined,
     summary: redactString(summarySource).slice(0, CHILD_RESULT_MAX_CHARS),
   });
+  if (parsed.success) {
+    return { issues: [], result: parsed.data };
+  }
+  // The run's output broke the contract (a branch name the schema refuses, say). The child still
+  // finishes: a FAILED result that names the fields, never the values.
+  const issues = [
+    ...new Set(
+      parsed.error.issues.map(
+        (i) =>
+          i.path
+            .map(String)
+            .join('.')
+            .replace(/[^\w.]/g, '?') || '(root)'
+      )
+    ),
+  ].slice(0, 10);
+  return {
+    issues,
+    result: {
+      costUsd,
+      filesChanged: [],
+      status: 'FAILED',
+      summary: `The run finished, but its result did not match the result contract and was dropped (fields: ${issues.join(', ')}).`,
+    },
+  };
+}
+
+export function buildChildResult(
+  input: Parameters<typeof buildChildResultWithIssues>[0]
+): ChildResult {
+  return buildChildResultWithIssues(input).result;
+}
+
+const SPILL_MARKER_RE =
+  /^\[stored as artifact ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) \u2014 (\d+) bytes\]$/i;
+/** Bytes read back from a spilled result; enough for {@link CHILD_RESULT_MAX_CHARS} of any script. */
+const SPILL_READ_MAX_BYTES = CHILD_RESULT_MAX_CHARS * 4;
+
+/**
+ * When the run's `result.text` is the placeholder of a value its context snapshot spilled to an
+ * artifact, the text read back from the artifact store (bounded), else a note that it could not be
+ * read. Undefined when the text is not a placeholder. Only an artifact of THIS run, of the spill
+ * kind and ready, is ever read — the check the gateway's "View full text" route makes — and a read
+ * failure never fails the child.
+ */
+export async function resolveSpilledResultText(
+  runId: string,
+  snapshot: unknown
+): Promise<ResolvedResultText | undefined> {
+  const text = asRecord(asRecord(snapshot)?.result)?.text;
+  if (typeof text !== 'string') {
+    return undefined;
+  }
+  const marker = SPILL_MARKER_RE.exec(text.trim());
+  if (!marker) {
+    return undefined;
+  }
+  const placeholder = text.trim().slice(0, 200);
+  try {
+    const artifact = await prisma.workflowArtifact.findFirst({
+      select: { id: true },
+      where: { id: marker[1], kind: CONTEXT_OVERFLOW_KIND, runId, status: 'ready' },
+    });
+    if (!artifact) {
+      return { unreadable: placeholder };
+    }
+    const { stream } = await getArtifactStream(artifact.id);
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    for await (const chunk of stream) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+      chunks.push(buf);
+      bytes += buf.byteLength;
+      if (bytes >= SPILL_READ_MAX_BYTES) {
+        break;
+      }
+    }
+    stream.destroy();
+    return {
+      text: Buffer.concat(chunks).subarray(0, SPILL_READ_MAX_BYTES).toString('utf8'),
+    };
+  } catch (err) {
+    logWarn('orchestration child result artifact could not be read', {
+      error: err instanceof Error ? err.message : String(err),
+      runId,
+    });
+    return { unreadable: placeholder };
+  }
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -197,18 +311,27 @@ export async function completeOrchestrationChild(runId: string): Promise<Complet
   if (!child || !['STARTING', 'RUNNING'].includes(child.status)) {
     return null;
   }
-  const result = buildChildResult({
+  const built = buildChildResultWithIssues({
     costUsd: run.costUsdAccrued,
     failure: run.steps[0]?.error ? redactString(run.steps[0].error) : null,
+    resolvedText: await resolveSpilledResultText(run.id, run.contextSnapshot),
     snapshot: run.contextSnapshot,
     status: run.status,
   });
-  return await recordChildResult({
+  const done = await recordChildResult({
     childId: child.id,
     orchestrationId: run.orchestrationId,
-    result,
+    result: built.result,
     runId: run.id,
   });
+  if (done && built.issues.length > 0) {
+    await writeNotice(
+      run.orchestrationId,
+      'CHILD_RESULT_INVALID',
+      `The result of child ${child.id} did not match the result contract (fields: ${built.issues.join(', ')}) and was replaced by a failure.`
+    ).catch(() => undefined);
+  }
+  return done;
 }
 
 /** Store `result` on the child and leave its `CHILD_RESULT` message, once. */
@@ -287,7 +410,32 @@ export async function onOrchestrationRunFinalized(runId: string): Promise<void> 
   }
 }
 
-/** Which of `childIds` still have a result no orchestrator turn has read. */
+/** The CHILD_RESULT message of each of `childIds`, newest first per child. */
+async function resultMessages(
+  orchestrationId: string,
+  childIds: readonly string[]
+): Promise<Map<string, { id: string; payload: Record<string, unknown>; seen: boolean }>> {
+  const rows = await prisma.orchestrationMessage.findMany({
+    orderBy: { createdAt: 'desc' },
+    select: { childId: true, id: true, payload: true },
+    where: { childId: { in: [...childIds] }, kind: 'CHILD_RESULT', orchestrationId },
+  });
+  const out = new Map<string, { id: string; payload: Record<string, unknown>; seen: boolean }>();
+  for (const row of rows) {
+    if (!row.childId || out.has(row.childId)) {
+      continue;
+    }
+    const payload = asRecord(row.payload) ?? {};
+    out.set(row.childId, { id: row.id, payload, seen: payload.seen === true });
+  }
+  return out;
+}
+
+/**
+ * Which of `childIds` still have a result no orchestrator turn has read. A child with no
+ * `CHILD_RESULT` message at all (the write failed) is unread: the stored result, not the message
+ * row, is what exists.
+ */
 export async function unreadChildIds(
   orchestrationId: string,
   childIds: readonly string[]
@@ -295,19 +443,14 @@ export async function unreadChildIds(
   if (childIds.length === 0) {
     return new Set();
   }
-  const rows = await prisma.orchestrationMessage.findMany({
-    select: { childId: true },
-    where: {
-      childId: { in: [...childIds] },
-      kind: 'CHILD_RESULT',
-      orchestrationId,
-      payload: { equals: false, path: ['seen'] },
-    },
-  });
-  return new Set(rows.flatMap((r) => (r.childId ? [r.childId] : [])));
+  const messages = await resultMessages(orchestrationId, childIds);
+  return new Set(childIds.filter((id) => messages.get(id)?.seen !== true));
 }
 
-/** Mark the children's results read, once a turn that carried them has completed. */
+/**
+ * Mark the children's results read, once a turn that carried them has completed. A child whose
+ * message was never written gets one (already seen), so the page and the backstop agree.
+ */
 export async function markChildResultsSeen(
   orchestrationId: string,
   childIds: readonly string[]
@@ -315,20 +458,93 @@ export async function markChildResultsSeen(
   if (childIds.length === 0) {
     return;
   }
-  const rows = await prisma.orchestrationMessage.findMany({
-    select: { childId: true, id: true, payload: true },
-    where: {
-      childId: { in: [...childIds] },
+  const messages = await resultMessages(orchestrationId, childIds);
+  for (const childId of new Set(childIds)) {
+    const existing = messages.get(childId);
+    if (existing?.seen) {
+      continue;
+    }
+    if (existing) {
+      await prisma.orchestrationMessage.update({
+        data: { payload: { ...existing.payload, seen: true } },
+        where: { id: existing.id },
+      });
+      continue;
+    }
+    await createResultMessage(orchestrationId, childId, null, true);
+  }
+}
+
+/** Write a child's `CHILD_RESULT` message. The status comes from the stored result when given. */
+async function createResultMessage(
+  orchestrationId: string,
+  childId: string,
+  status: string | null,
+  seen: boolean
+): Promise<void> {
+  const stored =
+    status ??
+    (
+      await prisma.orchestrationChild.findFirst({
+        select: { status: true },
+        where: { id: childId, orchestrationId },
+      })
+    )?.status ??
+    'FAILED';
+  await prisma.orchestrationMessage.create({
+    data: {
+      body: `A child finished (${stored.toLowerCase()}).`,
+      childId,
       kind: 'CHILD_RESULT',
       orchestrationId,
-      payload: { equals: false, path: ['seen'] },
+      payload: { childId, seen, status: stored },
+      role: 'SYSTEM',
     },
   });
-  for (const row of rows) {
-    const payload = asRecord(row.payload) ?? {};
-    await prisma.orchestrationMessage.update({
-      data: { payload: { ...payload, seen: true } },
-      where: { id: row.id },
-    });
+}
+
+/**
+ * Finished children (a terminal status is written together with `resultJson`) whose result no
+ * orchestrator turn has read, older than `graceMs`. Keyed on the child, not on the message row: a child whose
+ * `CHILD_RESULT` message was never written is found here and its message is re-created from the
+ * stored result, so the page and the next turn see it.
+ */
+export async function findUnseenChildResults(
+  orchestrationId: string,
+  graceMs: number
+): Promise<string[]> {
+  const finished = await prisma.orchestrationChild.findMany({
+    select: { endedAt: true, id: true, status: true },
+    where: {
+      endedAt: { lt: new Date(Date.now() - graceMs) },
+      orchestrationId,
+      status: { in: ['COMPLETED', 'FAILED', 'CANCELLED'] },
+    },
+  });
+  if (finished.length === 0) {
+    return [];
   }
+  const messages = await resultMessages(
+    orchestrationId,
+    finished.map((c) => c.id)
+  );
+  const unseen: string[] = [];
+  for (const child of finished) {
+    const message = messages.get(child.id);
+    if (message?.seen) {
+      continue;
+    }
+    if (!message) {
+      try {
+        await createResultMessage(orchestrationId, child.id, child.status, false);
+      } catch (err) {
+        logWarn('orchestration child result message not re-created', {
+          childId: child.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    unseen.push(child.id);
+  }
+  return unseen;
 }
