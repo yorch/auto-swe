@@ -294,6 +294,12 @@ describe('GET /api/v1/me/summary', () => {
     workRequestId: `wr-${id}`,
   });
 
+  /** An assignment to `assigneeId` whose team the caller (ME) still belongs to. */
+  const held = (assigneeId: string) => ({
+    assigneeId,
+    team: { memberships: [{ userId: ME }] },
+  });
+
   it('includes failed latest attempts only when the caller launched them', async () => {
     ctx.prisma.workflowRun.findMany.mockResolvedValueOnce([
       attempt('mine', 'FAILED', ME),
@@ -306,9 +312,9 @@ describe('GET /api/v1/me/summary', () => {
 
   it('lists a failure a lead assigned to the caller as theirs, and once when they also launched it', async () => {
     ctx.prisma.workflowRun.findMany.mockResolvedValueOnce([
-      { ...attempt('assigned', 'FAILED', 'ex-member'), failureAssignment: { assigneeId: ME } },
-      { ...attempt('other', 'FAILED', 'ex-member'), failureAssignment: { assigneeId: 'erin' } },
-      { ...attempt('both', 'FAILED', ME), failureAssignment: { assigneeId: ME } },
+      { ...attempt('assigned', 'FAILED', 'ex-member'), failureAssignment: held(ME) },
+      { ...attempt('other', 'FAILED', 'ex-member'), failureAssignment: held('erin') },
+      { ...attempt('both', 'FAILED', ME), failureAssignment: held(ME) },
     ]);
     const body = await get();
     expect(body.needsYou.items.map((i) => [i.key, i.kind]).sort()).toEqual([
@@ -317,7 +323,21 @@ describe('GET /api/v1/me/summary', () => {
     ]);
     expect(body.needsYou.total).toBe(2);
     const where = JSON.stringify(ctx.prisma.workflowRun.findMany.mock.calls[0][0].where);
-    expect(where).toContain(`"failureAssignment":{"assigneeId":"${ME}"}`);
+    expect(where).toContain(
+      `"failureAssignment":{"assigneeId":"${ME}","team":{"memberships":{"some":{"userId":"${ME}"}}}}`
+    );
+  });
+
+  it('drops a failure assigned to the caller once they have left the assigning team', async () => {
+    ctx.prisma.workflowRun.findMany.mockResolvedValueOnce([
+      {
+        ...attempt('removed', 'FAILED', 'ex-member'),
+        failureAssignment: { assigneeId: ME, team: { memberships: [] } },
+      },
+    ]);
+    const body = await get();
+    expect(body.needsYou.items).toEqual([]);
+    expect(body.needsYou.total).toBe(0);
   });
 
   it("lists a failed attempt the caller launched even when another launcher's sorts first", async () => {

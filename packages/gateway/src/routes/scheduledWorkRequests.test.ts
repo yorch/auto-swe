@@ -83,6 +83,8 @@ describe('/api/v1/scheduled-work-requests', () => {
   let repoActive = true;
   /** Teams the repo is shared with, and the caller's role in each (null = not a member). */
   let sharedTeams: Array<{ teamId: string; role: string | null }> = [];
+  /** Whether the `teamId` filter names a team the caller belongs to. */
+  let callerInFilterTeam = true;
 
   const syncCalls: WorkRequestScheduleInput[] = [];
   const triggeredIds: string[] = [];
@@ -276,6 +278,9 @@ describe('/api/v1/scheduled-work-requests', () => {
           return { count: 1 };
         },
       },
+      team: {
+        findFirst: async () => (callerInFilterTeam ? { id: 'team-filter' } : null),
+      },
       teamMembership: {
         findUnique: async () => (membershipRole ? { role: membershipRole } : null),
       },
@@ -369,6 +374,7 @@ describe('/api/v1/scheduled-work-requests', () => {
     updateManyWheres.length = 0;
     lastUpdateData = {};
     sharedTeams = [];
+    callerInFilterTeam = true;
     syncCalls.length = 0;
     triggeredIds.length = 0;
     deletedScheduleIds.length = 0;
@@ -1474,6 +1480,29 @@ describe('/api/v1/scheduled-work-requests', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(listWheres.at(-1)).toMatchObject({ repository: expect.anything(), teamId });
+  });
+
+  it('answers 404 TEAM_NOT_FOUND for a ?teamId the caller is not a member of, and lists nothing', async () => {
+    callerInFilterTeam = false;
+    listWheres.length = 0;
+    const res = await inject({
+      method: 'GET',
+      token: 'eng-token',
+      url: '/api/v1/scheduled-work-requests?teamId=22222222-2222-4222-8222-222222222222',
+    });
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.payload).code).toBe('TEAM_NOT_FOUND');
+    expect(listWheres).toHaveLength(0);
+  });
+
+  it('lets a platform ADMIN filter by any team without a membership lookup', async () => {
+    callerInFilterTeam = false;
+    const res = await inject({
+      method: 'GET',
+      token: 'admin-token',
+      url: '/api/v1/scheduled-work-requests?teamId=22222222-2222-4222-8222-222222222222',
+    });
+    expect(res.statusCode).toBe(200);
   });
 
   it('does not filter by team without ?teamId', async () => {

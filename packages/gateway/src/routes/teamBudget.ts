@@ -87,18 +87,26 @@ export const teamBudgetRoutes: FastifyPluginAsync = async (fastify) => {
         ...(budgetAlertThresholdPercent !== undefined ? { budgetAlertThresholdPercent } : {}),
         ...(monthlyBudgetUsdCents !== undefined ? { monthlyBudgetUsdCents } : {}),
       };
-      const updated = await fastify.prisma.team.update({
-        data,
-        select: { budgetAlertThresholdPercent: true, id: true, monthlyBudgetUsdCents: true },
-        where: { id: access.team.id },
-      });
-      if (monthlyBudgetUsdCents !== undefined) {
-        // A saved cap, raised or cleared, answers any request waiting on it.
-        await fastify.prisma.teamBudgetRequest.updateMany({
-          data: { resolvedAt: new Date() },
-          where: { resolvedAt: null, teamId: access.team.id },
+      // A request filed after the update began asks about the new cap, so it is not resolved.
+      const began = new Date();
+      const updated = await fastify.prisma.$transaction(async (tx) => {
+        const saved = await tx.team.update({
+          data,
+          select: { budgetAlertThresholdPercent: true, id: true, monthlyBudgetUsdCents: true },
+          where: { id: access.team.id },
         });
-      }
+        if (
+          monthlyBudgetUsdCents !== undefined &&
+          monthlyBudgetUsdCents !== access.team.monthlyBudgetUsdCents
+        ) {
+          // A changed cap, raised or cleared, answers the requests waiting on it.
+          await tx.teamBudgetRequest.updateMany({
+            data: { resolvedAt: began },
+            where: { createdAt: { lte: began }, resolvedAt: null, teamId: access.team.id },
+          });
+        }
+        return saved;
+      });
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor: user,

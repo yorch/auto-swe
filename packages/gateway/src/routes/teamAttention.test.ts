@@ -49,7 +49,9 @@ const runRow = (overrides: Record<string, unknown> = {}) => ({
 });
 
 interface Fixture {
+  assigneeIsActive?: boolean;
   assigneeIsMember?: boolean;
+  auditError?: Error;
   createError?: Error;
   runs?: unknown[];
   teamRole: 'ADMIN' | 'LEAD' | 'ENGINEER';
@@ -61,7 +63,14 @@ async function build(fx: Fixture) {
   app.setSerializerCompiler(serializerCompiler);
   const prisma = {
     $transaction: vi.fn(),
-    configAuditLog: { create: vi.fn().mockResolvedValue({}) },
+    configAuditLog: {
+      create: vi.fn(async () => {
+        if (fx.auditError) {
+          throw fx.auditError;
+        }
+        return {};
+      }),
+    },
     failureAssignment: {
       create: vi.fn(async () => {
         if (fx.createError) {
@@ -69,6 +78,7 @@ async function build(fx: Fixture) {
         }
         return { createdAt: new Date('2026-06-03T12:00:00Z'), id: 'fa-1' };
       }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     teamMembership: {
       findMany: vi.fn().mockResolvedValue([{ userId: ME }, { userId: ASSIGNEE }]),
@@ -77,7 +87,9 @@ async function build(fx: Fixture) {
         if (userId === ME) {
           return { role: fx.teamRole };
         }
-        return userId === ASSIGNEE && fx.assigneeIsMember !== false ? { role: 'ENGINEER' } : null;
+        return userId === ASSIGNEE && fx.assigneeIsMember !== false
+          ? { role: 'ENGINEER', user: { isActive: fx.assigneeIsActive !== false } }
+          : null;
       }),
     },
     workflowRun: { findMany: vi.fn().mockResolvedValue(fx.runs ?? []), update: vi.fn() },
@@ -120,7 +132,11 @@ const unownedRuns = () => [
   }),
   // A current member's failure, an already assigned one and a success are not in the list.
   runRow({ id: 'mine', launchedById: ME, workRequestId: 'wr-3' }),
-  runRow({ failureAssignment: { id: 'fa-0' }, id: 'taken', workRequestId: 'wr-4' }),
+  runRow({
+    failureAssignment: { assigneeId: ASSIGNEE, id: 'fa-0', teamId: TEAM },
+    id: 'taken',
+    workRequestId: 'wr-4',
+  }),
   runRow({ id: RUN_OK, status: 'SUCCESS', workRequestId: 'wr-5' }),
 ];
 
@@ -132,6 +148,7 @@ describe('GET /api/v1/teams/:id/attention/failures', () => {
       {
         failedAt: '2026-06-02T12:00:00.000Z',
         formerLauncherName: null,
+        launchedByAutomation: true,
         repoName: 'acme/api',
         requestId: 'wr-2',
         runId: RUN_B,
@@ -140,12 +157,41 @@ describe('GET /api/v1/teams/:id/attention/failures', () => {
       {
         failedAt: '2026-06-02T10:00:00.000Z',
         formerLauncherName: 'Ada',
+        launchedByAutomation: false,
         repoName: 'acme/api',
         requestId: 'wr-1',
         runId: RUN_A,
         title: 'Add endpoint',
       },
     ]);
+  });
+
+  it('reads only the runs the team owns, and only its active members', async () => {
+    const { prisma } = await call({ runs: unownedRuns(), teamRole: 'LEAD' }, 'GET');
+    const { where } = prisma.workflowRun.findMany.mock.calls[0][0];
+    expect(where.AND).toContainEqual({ attributedTeamId: TEAM });
+    expect(JSON.stringify(where.AND)).not.toContain(`"template":{"teamId":"${TEAM}"}`);
+    expect(JSON.stringify(where.AND)).not.toContain(`{"teamId":"${TEAM}"},{"shares"`);
+    expect(prisma.teamMembership.findMany).toHaveBeenCalledWith({
+      select: { userId: true },
+      where: { teamId: TEAM, user: { isActive: true } },
+    });
+  });
+
+  it('lists a run whose assignee has left the team, and hides one whose assignee is a member', async () => {
+    const runs = [
+      runRow({
+        failureAssignment: { assigneeId: EX_MEMBER, id: 'fa-old', teamId: TEAM },
+        id: RUN_A,
+      }),
+      runRow({
+        failureAssignment: { assigneeId: ASSIGNEE, id: 'fa-ok', teamId: TEAM },
+        id: RUN_B,
+        workRequestId: 'wr-2',
+      }),
+    ];
+    const { res } = await call({ runs, teamRole: 'LEAD' }, 'GET');
+    expect(res.json().data.map((f: { runId: string }) => f.runId)).toEqual([RUN_A]);
   });
 
   it('answers 403 to a team ENGINEER and reads no work', async () => {
@@ -180,11 +226,13 @@ describe('POST /api/v1/teams/:id/failure-assignments', () => {
     });
     expect(prisma.workflowRun.update).not.toHaveBeenCalled();
     expect(prisma.configAuditLog.create).toHaveBeenCalledTimes(1);
-    expect(prisma.configAuditLog.create.mock.calls[0][0].data).toMatchObject({
-      action: 'CREATE',
-      actorId: ME,
-      entityId: 'fa-1',
-      entityType: 'FailureAssignment',
+    expect(prisma.configAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'CREATE',
+        actorId: ME,
+        entityId: 'fa-1',
+        entityType: 'FailureAssignment',
+      }),
     });
   });
 
@@ -201,8 +249,47 @@ describe('POST /api/v1/teams/:id/failure-assignments', () => {
     }
   });
 
-  it('answers 409 when the run is already assigned', async () => {
-    const runs = [runRow({ failureAssignment: { id: 'fa-0' }, id: RUN_A })];
+  it('replaces a lapsed assignment in the same transaction, with one audit row', async () => {
+    const runs = [
+      runRow({
+        failureAssignment: { assigneeId: EX_MEMBER, id: 'fa-old', teamId: TEAM },
+        id: RUN_A,
+      }),
+    ];
+    const { prisma, res } = await call({ runs, teamRole: 'LEAD' }, 'POST', {
+      assigneeId: ASSIGNEE,
+      runId: RUN_A,
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(prisma.failureAssignment.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'fa-old', teamId: TEAM },
+    });
+    expect(prisma.failureAssignment.create).toHaveBeenCalledTimes(1);
+    expect(prisma.configAuditLog.create).toHaveBeenCalledTimes(1);
+    expect(prisma.configAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'CREATE',
+        beforeJson: { assigneeId: EX_MEMBER },
+        entityType: 'FailureAssignment',
+      }),
+    });
+  });
+
+  it('answers 422 for an assignee whose user is deactivated', async () => {
+    const { prisma, res } = await call(
+      { assigneeIsActive: false, runs: unownedRuns(), teamRole: 'LEAD' },
+      'POST',
+      { assigneeId: ASSIGNEE, runId: RUN_A }
+    );
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error.code).toBe('ASSIGNEE_NOT_MEMBER');
+    expect(prisma.failureAssignment.create).not.toHaveBeenCalled();
+  });
+
+  it('answers 409 when the run is already assigned to an active member', async () => {
+    const runs = [
+      runRow({ failureAssignment: { assigneeId: ASSIGNEE, id: 'fa-0', teamId: TEAM }, id: RUN_A }),
+    ];
     const { res } = await call({ runs, teamRole: 'LEAD' }, 'POST', {
       assigneeId: ASSIGNEE,
       runId: RUN_A,

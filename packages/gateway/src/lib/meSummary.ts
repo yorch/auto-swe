@@ -116,7 +116,17 @@ function deskAttemptWhere(
           OR: [
             { requestedById: user.sub },
             { workflowRuns: { some: { launchedById: user.sub } } },
-            { workflowRuns: { some: { failureAssignment: { assigneeId: user.sub } } } },
+            {
+              workflowRuns: {
+                some: {
+                  // An assignment lapses once the assignee leaves the team that made it.
+                  failureAssignment: {
+                    assigneeId: user.sub,
+                    team: { memberships: { some: { userId: user.sub } } },
+                  },
+                },
+              },
+            },
           ],
         },
       },
@@ -251,7 +261,14 @@ export async function loadDeskEntries({
         ...RUN_TEAM_SELECT,
         _count: { select: { humanSteps: { where: { status: 'PENDING' } } } },
         endedAt: true,
-        failureAssignment: { select: { assigneeId: true } },
+        failureAssignment: {
+          select: {
+            assigneeId: true,
+            team: {
+              select: { memberships: { select: { userId: true }, where: { userId: user.sub } } },
+            },
+          },
+        },
         id: true,
         launchedById: true,
         startedAt: true,
@@ -320,11 +337,12 @@ export async function loadDeskEntries({
     for (const failedId of group.failedRunIds) {
       const failed = rows.get(failedId);
       // A failure is theirs to act on when they launched the attempt, or a lead assigned it to
-      // them (the assignment never rewrites the launcher).
-      if (
-        failed &&
-        (failed.launchedById === user.sub || failed.failureAssignment?.assigneeId === user.sub)
-      ) {
+      // them while they are still on the assigning team (the assignment never rewrites the
+      // launcher).
+      const assigned =
+        failed?.failureAssignment?.assigneeId === user.sub &&
+        failed.failureAssignment.team.memberships.length > 0;
+      if (failed && (failed.launchedById === user.sub || assigned)) {
         entries.push({
           item: {
             ...placement(failed),

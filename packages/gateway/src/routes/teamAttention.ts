@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
-import { loadUnownedFailures } from '../lib/teamAttention.js';
+import { loadUnownedFailureEntries, loadUnownedFailures } from '../lib/teamAttention.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const LIST_LIMIT = 100;
@@ -48,30 +48,39 @@ export const teamAttentionRoutes: FastifyPluginAsync = async (fastify) => {
       const { assigneeId, runId } = request.body;
 
       const membership = await fastify.prisma.teamMembership.findUnique({
+        select: { user: { select: { isActive: true } } },
         where: { userId_teamId: { teamId, userId: assigneeId } },
       });
-      if (!membership) {
+      if (!membership?.user.isActive) {
         return sendError(
           reply,
           422,
           'ASSIGNEE_NOT_MEMBER',
-          'The assignee is not a member of this team'
+          'The assignee is not an active member of this team'
         );
       }
       const notUnowned = () =>
         sendError(reply, 409, 'NOT_UNOWNED_FAILURE', 'This run is not an unowned failure');
-      const unowned = await loadUnownedFailures(
+      const unowned = await loadUnownedFailureEntries(
         { gate: request.repoAccessGate, prisma: fastify.prisma, user },
         teamId,
         Date.now()
       );
-      if (!unowned.some((failure) => failure.runId === runId)) {
+      const target = unowned.find((entry) => entry.failure.runId === runId);
+      if (!target) {
         return notUnowned();
       }
+      const stale = target.staleAssignment;
 
       let assignedAt: Date;
       try {
         assignedAt = await fastify.prisma.$transaction(async (tx) => {
+          if (stale) {
+            // The old assignee is gone: replace the lapsed assignment with this one.
+            await tx.failureAssignment.deleteMany({
+              where: { id: stale.id, teamId: stale.teamId },
+            });
+          }
           const created = await tx.failureAssignment.create({
             data: { assignedById: user.sub, assigneeId, teamId, workflowRunId: runId },
           });
@@ -79,6 +88,7 @@ export const teamAttentionRoutes: FastifyPluginAsync = async (fastify) => {
             action: 'CREATE',
             actor: user,
             after: { assigneeId, runId, teamId },
+            ...(stale ? { before: { assigneeId: stale.assigneeId } } : {}),
             client: tx,
             entityId: created.id,
             entityType: 'FailureAssignment',

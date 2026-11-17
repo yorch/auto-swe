@@ -81,6 +81,7 @@ describe('human step routes', () => {
   let membershipRow: Record<string, unknown> | null = null;
   const updateManyCalls: UpdateManyCall[] = [];
   const findManyCalls: Array<Record<string, unknown>> = [];
+  const membershipCalls: Array<Record<string, unknown>> = [];
   const countCalls: Array<Record<string, unknown>> = [];
   let listTotal: number | null = null;
   let signalError: Error | null = null;
@@ -110,7 +111,10 @@ describe('human step routes', () => {
         create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
       },
       teamMembership: {
-        findFirst: async () => membershipRow,
+        findMany: async (args: Record<string, unknown>) => {
+          membershipCalls.push(args);
+          return membershipRow ? [membershipRow] : [];
+        },
       },
       workflowHumanStep: {
         count: async (args: Record<string, unknown>) => {
@@ -171,6 +175,7 @@ describe('human step routes', () => {
     vi.mocked(app.prisma.configAuditLog.create).mockClear();
     updateManyCalls.length = 0;
     findManyCalls.length = 0;
+    membershipCalls.length = 0;
     countCalls.length = 0;
     listTotal = null;
     signalError = null;
@@ -265,6 +270,81 @@ describe('human step routes', () => {
       const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/human-steps' });
       const data = JSON.parse(res.payload).data as Array<{ hasSlackThread: boolean }>;
       expect(data.map((d) => d.hasSlackThread)).toEqual([false]);
+    });
+  });
+
+  describe('GET / canNudge', () => {
+    const other = '00000000-0000-4000-8000-0000000000b1';
+    const SLACK = { channel: 'C1', text: 'h', ts: '1700000000.000100' };
+    const overdue = new Date('2026-06-02T00:00:00Z');
+    const owned = (teamId: string) => ({
+      ...(pendingStep().run as Record<string, unknown>),
+      connection: { team: { id: teamId, name: 'T', slug: 't' } },
+      template: null,
+    });
+    const get = async () => {
+      const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/human-steps' });
+      return JSON.parse(res.payload).data as Array<{
+        canNudge: boolean;
+        id: string;
+        lastNudgedAt: string | null;
+      }>;
+    };
+
+    it('is true only for an overdue pending step with a Slack thread that a lead of the owning team may nudge, from one membership query', async () => {
+      membershipRow = { teamId: 'team-1' };
+      const nudged = new Date('2026-06-03T00:00:00Z');
+      listRows = [
+        pendingStep({
+          lastNudgedAt: nudged,
+          run: owned('team-1'),
+          slackMessage: SLACK,
+          timeoutAt: overdue,
+        }),
+        pendingStep({ id: other, run: owned('team-1'), slackMessage: null, timeoutAt: overdue }),
+        pendingStep({
+          id: '00000000-0000-4000-8000-0000000000b2',
+          run: owned('team-1'),
+          slackMessage: SLACK,
+          timeoutAt: new Date(Date.now() + 3_600_000),
+        }),
+        pendingStep({
+          id: '00000000-0000-4000-8000-0000000000b3',
+          run: owned('team-9'),
+          slackMessage: SLACK,
+          timeoutAt: overdue,
+        }),
+        pendingStep({
+          id: '00000000-0000-4000-8000-0000000000b4',
+          run: owned('team-1'),
+          slackMessage: SLACK,
+          status: 'RESOLVED',
+          timeoutAt: overdue,
+        }),
+      ];
+      const data = await get();
+      expect(data.map((d) => d.canNudge)).toEqual([true, false, false, false, false]);
+      expect(data[0]?.lastNudgedAt).toBe(nudged.toISOString());
+      expect(data[1]?.lastNudgedAt).toBeNull();
+      expect(membershipCalls).toHaveLength(1);
+    });
+
+    it('is false for an engineer of the owning team', async () => {
+      membershipRow = null;
+      listRows = [pendingStep({ run: owned('team-1'), slackMessage: SLACK, timeoutAt: overdue })];
+      expect((await get()).map((d) => d.canNudge)).toEqual([false]);
+    });
+
+    it('counts a template owner as an owning team, as the nudge route does', async () => {
+      membershipRow = { teamId: 'team-t' };
+      listRows = [
+        pendingStep({
+          run: { ...owned('team-1'), template: { teamId: 'team-t' } },
+          slackMessage: SLACK,
+          timeoutAt: overdue,
+        }),
+      ];
+      expect((await get()).map((d) => d.canNudge)).toEqual([true]);
     });
   });
 
@@ -944,7 +1024,7 @@ describe('human step routes', () => {
         ...overrides,
         run: {
           ...(pendingStep().run as Record<string, unknown>),
-          connection: { teamId: 'team-1' },
+          connection: { team: { id: 'team-1' } },
           template: null,
         },
       });
@@ -1031,23 +1111,23 @@ describe('human step routes', () => {
     });
 
     it('looks for a LEAD or ADMIN membership of an active owning team', async () => {
-      const seen: Array<Record<string, unknown>> = [];
-      const original = app.prisma.teamMembership.findFirst;
-      app.prisma.teamMembership.findFirst = (async (args: Record<string, unknown>) => {
-        seen.push(args);
-        return membershipRow;
-      }) as never;
-      try {
-        await post();
-      } finally {
-        app.prisma.teamMembership.findFirst = original;
-      }
-      expect(seen[0]?.where).toEqual({
+      await post();
+      expect(membershipCalls[0]?.where).toEqual({
         role: { in: ['LEAD', 'ADMIN'] },
         team: { isActive: true },
         teamId: { in: ['team-1'] },
         userId: USER_ID,
       });
+    });
+
+    it('still answers 200 and logs when the audit write fails after the post', async () => {
+      vi.mocked(app.prisma.configAuditLog.create).mockRejectedValueOnce(new Error('db down'));
+      const errorLog = vi.spyOn(app.log, 'error');
+      const res = await post();
+      expect(res.statusCode).toBe(200);
+      expect(postSlack).toHaveBeenCalledTimes(1);
+      expect(errorLog).toHaveBeenCalled();
+      errorLog.mockRestore();
     });
 
     it('is 404 for a step the caller cannot see', async () => {

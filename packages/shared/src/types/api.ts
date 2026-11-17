@@ -223,7 +223,8 @@ export interface WorkflowDetail extends WorkflowSummary {
 export interface TeamMember {
   id: string;
   role: string;
-  user: { id: string; email: string; role: string };
+  /** `isActive` is false for a deactivated account, whose membership is kept. Absent on older payloads. */
+  user: { id: string; email: string; role: string; isActive?: boolean };
 }
 
 /** Shape returned by GET /api/v1/teams (list) */
@@ -1331,6 +1332,14 @@ export interface HumanStepSummary {
    * is never returned. Absent on payloads that predate it.
    */
   hasSlackThread?: boolean;
+  /**
+   * Whether the caller may nudge this step now: it is pending, overdue and has a Slack thread, and
+   * the caller leads a team that owns the run (or is a platform ADMIN). The stale-approvals list is
+   * wider than the set a caller may nudge, because it includes work shared to the caller's team.
+   */
+  canNudge?: boolean;
+  /** When the step was last nudged, ISO 8601; null when never. */
+  lastNudgedAt?: string | null;
   /** Every recorded answer with its optional comment, oldest first. */
   responses?: HumanStepResponse[];
   run: {
@@ -2389,8 +2398,10 @@ export interface TeamAttentionFailure {
   repoName: string;
   /** When the attempt ended, ISO 8601. */
   failedAt: string;
-  /** Display name of the former launcher; null when the account is gone. */
+  /** Display name of the former launcher; null when the account is gone or there was none. */
   formerLauncherName: string | null;
+  /** True when no person launched it: a schedule, webhook or other automation. */
+  launchedByAutomation: boolean;
 }
 
 /** Body of `POST /api/v1/teams/:id/failure-assignments`. */

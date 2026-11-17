@@ -57,20 +57,24 @@ export const teamBudgetRequestRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       try {
-        const created = await fastify.prisma.teamBudgetRequest.create({
-          data: {
-            reason: request.body.reason,
-            requestedById: user.sub,
-            teamId: request.params.id,
-          },
-          select: REQUEST_SELECT,
-        });
-        await writeAuditLog(fastify, {
-          action: 'CREATE',
-          actor: user,
-          after: { reasonLength: request.body.reason.length },
-          entityId: created.id,
-          entityType: 'TeamBudgetRequest',
+        const created = await fastify.prisma.$transaction(async (tx) => {
+          const row = await tx.teamBudgetRequest.create({
+            data: {
+              reason: request.body.reason,
+              requestedById: user.sub,
+              teamId: request.params.id,
+            },
+            select: REQUEST_SELECT,
+          });
+          await writeAuditLog(fastify, {
+            action: 'CREATE',
+            actor: user,
+            after: { reasonLength: request.body.reason.length },
+            client: tx,
+            entityId: row.id,
+            entityType: 'TeamBudgetRequest',
+          });
+          return row;
         });
         return reply.status(201).send({ data: summary(created) });
       } catch (e) {

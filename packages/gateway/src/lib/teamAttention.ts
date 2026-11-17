@@ -1,8 +1,13 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import type { TeamAttentionFailure } from '@auto-swe/shared/types/api';
-import { attemptWindowTerm, deskRunTerms, requestTitle, teamDeskScope } from './meSummary.js';
+import { attemptWindowTerm, deskRunTerms, requestTitle } from './meSummary.js';
 import { groupRequestExecutions } from './requestExecutions.js';
-import { RUN_TEAM_SELECT, repositoryLabel, repositoryOfRun } from './runTeamScope.js';
+import {
+  RUN_TEAM_SELECT,
+  repositoryLabel,
+  repositoryOfRun,
+  runMetricsTeamScope,
+} from './runTeamScope.js';
 import type { VisibilityActor } from './runVisibility.js';
 import type { MaybeGate } from './tenantScope.js';
 
@@ -12,17 +17,24 @@ interface AttentionDeps {
   user: VisibilityActor;
 }
 
+/** An unowned failure, with the assignment that lapsed on it (its assignee is gone), if any. */
+export interface UnownedFailure {
+  failure: TeamAttentionFailure;
+  staleAssignment: { assigneeId: string; id: string; teamId: string } | null;
+}
+
 /**
- * The unowned failures of a team's work: failed latest attempts, within the desk window and as
- * visible to the caller, whose launcher is no longer a member of the team (or is unknown) and
- * which no lead has assigned yet. Newest first. The overview's count and the attention list both
- * read this, so they cannot disagree.
+ * The unowned failures of the runs a team OWNS: failed latest attempts, within the desk window
+ * and as visible to the caller, whose launcher is unknown or no longer an active member of the
+ * team, and which no active member has been assigned. An assignment lapses with its assignee's
+ * membership. Newest first. The overview's count and the attention list both read this, so they
+ * cannot disagree.
  */
-export async function loadUnownedFailures(
+export async function loadUnownedFailureEntries(
   deps: AttentionDeps,
   teamId: string,
   now: number
-): Promise<TeamAttentionFailure[]> {
+): Promise<UnownedFailure[]> {
   const { gate, prisma, user } = deps;
   const [attempts, members] = await Promise.all([
     prisma.workflowRun.findMany({
@@ -32,7 +44,7 @@ export async function loadUnownedFailures(
         ...RUN_TEAM_SELECT,
         _count: { select: { humanSteps: { where: { status: 'PENDING' } } } },
         endedAt: true,
-        failureAssignment: { select: { id: true } },
+        failureAssignment: { select: { assigneeId: true, id: true, teamId: true } },
         id: true,
         launchedBy: { select: { name: true } },
         launchedById: true,
@@ -50,36 +62,61 @@ export async function loadUnownedFailures(
         workRequestId: true,
       },
       where: {
-        AND: [...deskRunTerms(user, gate, teamDeskScope(teamId)), attemptWindowTerm(now)],
+        AND: [
+          // Owner-attributed: a repository merely shared to the team is not its work to own.
+          ...deskRunTerms(user, gate, { run: runMetricsTeamScope(teamId), step: {} }),
+          attemptWindowTerm(now),
+        ],
       },
     }),
-    prisma.teamMembership.findMany({ select: { userId: true }, where: { teamId } }),
+    // A deactivated user keeps their membership rows, so only active ones count.
+    prisma.teamMembership.findMany({
+      select: { userId: true },
+      where: { teamId, user: { isActive: true } },
+    }),
   ]);
   const memberIds = new Set(members.map((m) => m.userId));
   const rows = new Map(attempts.map((run) => [run.id, run]));
-  const failures: { at: number; failure: TeamAttentionFailure }[] = [];
+  const failures: { at: number; entry: UnownedFailure }[] = [];
   for (const group of groupRequestExecutions(attempts)) {
     for (const failedId of group.failedRunIds) {
       const run = rows.get(failedId);
-      if (!run || run.failureAssignment) {
+      if (!run) {
         continue;
       }
-      if (run.launchedById && memberIds.has(run.launchedById)) {
+      const assignment = run.failureAssignment;
+      const assignmentHolds =
+        assignment !== null && assignment.teamId === teamId && memberIds.has(assignment.assigneeId);
+      if (assignmentHolds || (run.launchedById && memberIds.has(run.launchedById))) {
         continue;
       }
       const at = (run.endedAt ?? run.startedAt).getTime();
       failures.push({
         at,
-        failure: {
-          failedAt: new Date(at).toISOString(),
-          formerLauncherName: run.launchedBy?.name ?? null,
-          repoName: repositoryLabel(repositoryOfRun(run)) ?? '',
-          requestId: run.workRequestId,
-          runId: run.id,
-          title: requestTitle(run.workRequest),
+        entry: {
+          failure: {
+            failedAt: new Date(at).toISOString(),
+            formerLauncherName: run.launchedBy?.name ?? null,
+            launchedByAutomation: run.launchedById === null,
+            repoName: repositoryLabel(repositoryOfRun(run)) ?? '',
+            requestId: run.workRequestId,
+            runId: run.id,
+            title: requestTitle(run.workRequest),
+          },
+          staleAssignment: assignment,
         },
       });
     }
   }
-  return failures.sort((a, b) => b.at - a.at).map((entry) => entry.failure);
+  return failures.sort((a, b) => b.at - a.at).map((item) => item.entry);
+}
+
+/** The failures of {@link loadUnownedFailureEntries}, without the lapsed-assignment detail. */
+export async function loadUnownedFailures(
+  deps: AttentionDeps,
+  teamId: string,
+  now: number
+): Promise<TeamAttentionFailure[]> {
+  const entries = await loadUnownedFailureEntries(deps, teamId, now);
+  return entries.map((entry) => entry.failure);
 }

@@ -44,6 +44,16 @@ function build(opts: Opts = {}) {
   });
   const findMany = vi.fn(async (_args: unknown) => rows.filter((r) => r.resolvedAt === null));
   const prisma = {
+    // A rolled-back transaction leaves no row behind, as in Postgres.
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => {
+      const kept = rows.length;
+      try {
+        return await fn(prisma);
+      } catch (err) {
+        rows.length = kept;
+        throw err;
+      }
+    }),
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     organizationMembership: {
       findUnique: vi.fn(async () => (opts.orgRole ? { role: opts.orgRole } : null)),
@@ -139,6 +149,18 @@ describe('POST /teams/:id/budget-requests', () => {
     expect(arg).toContain('TeamBudgetRequest');
     expect(arg).toContain('CREATE');
     expect(arg).not.toContain('secret-ish');
+  });
+});
+
+describe('POST /teams/:id/budget-requests atomicity', () => {
+  it('leaves no request behind when the audit write fails', async () => {
+    const { app, prisma, rows } = build({ teamRole: 'LEAD' });
+    await app.ready();
+    prisma.configAuditLog.create.mockRejectedValueOnce(new Error('audit down'));
+    const res = await post(app, { reason: 'need more' });
+    expect(res.statusCode).toBe(500);
+    expect(rows).toHaveLength(0);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 });
 

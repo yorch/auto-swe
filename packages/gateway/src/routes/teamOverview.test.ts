@@ -37,6 +37,7 @@ const runRow = (overrides: Record<string, unknown> = {}) => ({
   _count: { humanSteps: 0 },
   connection: repository,
   endedAt: new Date('2026-06-02T10:00:00Z'),
+  failureAssignment: null,
   id: 'run-1',
   launchedBy: { name: 'Ada' },
   launchedById: ME,
@@ -315,11 +316,27 @@ describe('GET /api/v1/teams/:id/overview', () => {
       unowned: [
         runRow({ id: 'gone', launchedById: 'ex-member', status: 'FAILED', workRequestId: 'w1' }),
         runRow({
-          failureAssignment: { id: 'fa-1' },
+          failureAssignment: { assigneeId: ME, id: 'fa-1', teamId: TEAM },
           id: 'taken',
           launchedById: 'ex-member',
           status: 'FAILED',
           workRequestId: 'w2',
+        }),
+      ],
+    });
+    expect(res.json().data.lead.unownedFailures).toBe(1);
+  });
+
+  it('counts a failure whose assignee has left the team as unowned again', async () => {
+    const { res } = await get({
+      teamRole: 'LEAD',
+      unowned: [
+        runRow({
+          failureAssignment: { assigneeId: 'ex-member', id: 'fa-1', teamId: TEAM },
+          id: 'lapsed',
+          launchedById: 'ex-member',
+          status: 'FAILED',
+          workRequestId: 'w1',
         }),
       ],
     });
@@ -659,9 +676,12 @@ describe('GET /api/v1/teams/:id/overview', () => {
     it('counts a failure assigned to the caller, whoever launched it, in mine and needsYou', async () => {
       const assigned = {
         ...failed('f3', 'ex-member'),
-        failureAssignment: { assigneeId: ME },
+        failureAssignment: { assigneeId: ME, team: { memberships: [{ userId: ME }] } },
       };
-      const elsewhere = { ...failed('f4', 'ex-member'), failureAssignment: { assigneeId: OTHER } };
+      const elsewhere = {
+        ...failed('f4', 'ex-member'),
+        failureAssignment: { assigneeId: OTHER, team: { memberships: [{ userId: ME }] } },
+      };
       const { res } = await get({ attempts: [assigned, elsewhere], teamRole: 'ENGINEER' });
       const { data } = res.json();
       expect(data.mine.failed).toBe(1);

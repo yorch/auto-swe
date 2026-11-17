@@ -17,6 +17,7 @@ import { auditContextData } from '../lib/auditContext.js';
 import { sendError } from '../lib/httpErrors.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
+import { assertTeamParam } from '../lib/teamParam.js';
 import {
   isTemporalUnavailable,
   sendTemporalUnavailable,
@@ -716,6 +717,9 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
     async (request) => {
       const user = requireUser(request);
       const { teamId } = request.query;
+      if (teamId) {
+        await assertTeamParam(fastify.prisma, user, teamId);
+      }
       // A schedule is visible through the repository it runs on (owner or shared
       // team), not through its own team: the owner sees every team's schedules on
       // its repository, so the scope is the repository relation.
