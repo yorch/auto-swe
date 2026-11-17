@@ -3,7 +3,7 @@ import {
   isTrackerReadInScope,
   repoTrackerScope,
   TRACKER_READ_OUT_OF_SCOPE,
-  type TrackerLaunchTeam,
+  type TrackerLaunchScope,
   type TrackerScopeRepo,
 } from '@auto-swe/shared/lib/trackerSync';
 import { type FetchedTicket, fetchTicket } from './issueTrackerClient.js';
@@ -17,14 +17,14 @@ export type TicketReadRepo = TrackerScopeRepo & { organizationName: string; repo
  * Is this ticket id one a tracker READ may fetch for this repository? The GitHub tracker's token
  * reads any repository it can see, so the id must name the selected repository on the tracker's
  * host or one the operator listed. Jira and Linear ids are gated by the project-key allowlist,
- * resolved at the repository's team, or at the launching template's (`launchTeam`) when the
- * request targets no repository. Never throws.
+ * resolved at the repository's team, or, when the request targets no repository, at the launching
+ * template's team or the launcher's teams (`launchTeam`). Never throws.
  */
 export async function isTicketReadInScope(
   tracker: { baseUrl?: string | null; provider: string | null },
   ticketId: string,
   repo: TicketReadRepo | null,
-  launchTeam?: TrackerLaunchTeam | null
+  launchTeam?: TrackerLaunchScope
 ): Promise<boolean> {
   return isTrackerReadInScope(
     tracker,
@@ -44,8 +44,8 @@ export type TicketLookup =
 
 /** Options for {@link lookupTrackerTicket}. */
 export interface TicketLookupOptions {
-  /** The launching template's team, for a request with no repository (see `repoTrackerScope`). */
-  launchTeam?: TrackerLaunchTeam | null;
+  /** The launching template's team, or the launcher's teams, for a request with no repository (see `repoTrackerScope`). */
+  launchTeam?: TrackerLaunchScope;
   /** Retries per request for providers that retry (Jira). */
   maxRetries?: number;
   /**

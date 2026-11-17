@@ -33,7 +33,10 @@ export async function resolveLaunchBrief(opts: {
   try {
     const repo = opts.connection;
     const lookupOpts = {
-      ...(opts.launchTeam ? { launchTeam: opts.launchTeam } : {}),
+      // An empty list (a launcher with no team) is the same as none: GLOBAL only.
+      ...(opts.launchTeam && !(Array.isArray(opts.launchTeam) && opts.launchTeam.length === 0)
+        ? { launchTeam: opts.launchTeam }
+        : {}),
       ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
       ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
     };

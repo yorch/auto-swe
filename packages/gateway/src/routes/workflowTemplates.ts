@@ -13,6 +13,7 @@ import {
 import { CallbackRequestSchema } from '@auto-swe/shared/lib/runCallbacks';
 import { findUnauditedNodes, recordShellAudit } from '@auto-swe/shared/lib/shellAudit';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import type { TrackerLaunchTeam } from '@auto-swe/shared/lib/trackerSync';
 import {
   getWorkspaceProviderMetadata,
   isWorkspaceProviderType,
@@ -2662,11 +2663,39 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
               where: { id: connectionId, type: 'git_repo' },
             })
           : null;
+        // A launch with no git repository reads the project-key allowlist at the template's team
+        // and organization. A global template has none, so a person's own active teams apply (the
+        // worker resolves the same run through `currentRunLauncherId`, which names users only):
+        // each team's list overrides GLOBAL where it sets one, and a person with no team resolves
+        // at GLOBAL. A service principal has no launcher on the run, so its connection-less launch
+        // with no template team resolves at GLOBAL only, here and in the worker alike, never at
+        // the principal's own team. A lookup that fails refuses the brief.
+        let launchTeam: TrackerLaunchTeam | TrackerLaunchTeam[] | null = null;
+        if (tpl.teamId) {
+          launchTeam = { orgId: tpl.team?.orgId ?? null, teamId: tpl.teamId };
+        } else if (!repo && caller.kind === 'user') {
+          try {
+            const memberships = await fastify.prisma.teamMembership.findMany({
+              select: { team: { select: { orgId: true } }, teamId: true },
+              where: {
+                team: { isActive: true, organization: { isActive: true } },
+                userId: caller.user.sub,
+              },
+            });
+            launchTeam = memberships.map((m) => ({ orgId: m.team.orgId, teamId: m.teamId }));
+          } catch (err) {
+            request.log.warn({ err }, 'Launcher team lookup failed');
+            return sendError(
+              reply,
+              400,
+              'DESCRIPTION_REQUIRED',
+              'A description is required: the ticket could not be read from the issue tracker'
+            );
+          }
+        }
         const resolved = await resolveLaunchBrief({
           connection: repo,
-          // A launch with no git repository reads the project-key allowlist at the template's
-          // team and organization; a global template has none, so only GLOBAL applies.
-          launchTeam: tpl.teamId ? { orgId: tpl.team?.orgId ?? null, teamId: tpl.teamId } : null,
+          launchTeam,
           log: request.log,
           ticketId: ticketIdInput,
         });
