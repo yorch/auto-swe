@@ -1783,7 +1783,8 @@ authorized without it does not.
 
 ### Plugins: the agent binding becomes a list, and hooks and team enablement are per plugin (`e062295`)
 
-**Affected.** Any deployment that upgrades across migration `20261117000000_plugins`. In a deployment
+**Affected.** Any deployment that upgrades across migrations `20261117000000_plugins` and
+`20261117000001_plugin_skill_deactivation` (the second one is part of commit `691837b`). In a deployment
 that ran earlier code with an agent bound to a harness profile, every such binding is converted in
 place and the actions below apply to it.
 
@@ -1794,7 +1795,14 @@ agent row fails on the missing column; older code that selects only some columns
 so an agent it runs has no plugins. The migration also adds the hook switch
 (`harness_profiles.hooks_enabled`, default true, so each existing profile keeps hooks on as it was
 approved), the profile tracking columns, the `marketplace_sources` and `plugin_enablements` tables, and
-the projection columns on `skills`.
+the projection columns on `skills`. The second migration adds one nullable column,
+`skills.plugin_deactivated_at`, with no backfill. A disable stamps the rows it switches off with it, and
+a re-enable reactivates only the stamped rows.
+
+Runs in flight when the upgraded code starts keep their pins. A pin written by earlier code lists agent
+keys under `verified`, which exempts nothing under the upgraded code, so each team-scoped binding of such
+a run is checked against enablement on its next resolution. A team that still has the plugin enabled is
+unaffected.
 
 The migration creates no team enablements. A team-scoped agent bound to a plugin therefore fails its
 runs with `PLUGIN_NOT_ENABLED` until a team admin enables that plugin for the team. A platform-wide
@@ -1802,7 +1810,8 @@ binding needs no enablement.
 
 Skills projected from a plugin are managed by that plugin from the upgraded gateway onward: their text
 changes only by accepting a plugin version, the skill API refuses a hand edit with
-`SKILL_PLUGIN_MANAGED`, and disabling the plugin deactivates them.
+`SKILL_PLUGIN_MANAGED`, and disabling the plugin deactivates them. Re-enabling reactivates the rows a
+disable stamped.
 
 **Actions.**
 

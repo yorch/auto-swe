@@ -1180,8 +1180,12 @@ omits `provisioning` and acts on the container through `turn.exec`.
 **Harness profiles (plugins).** On the `claude-code` runtime an Agent version can also bind a list of
 approved harness profiles (`Agent.harnessProfiles`, their names in binding order). A platform-wide
 version is set by a platform ADMIN; a team override by a team ADMIN, limited to profiles the team has
-enabled; the runtime itself stays ADMIN-only. The list is not inherited along `inheritsModelFrom`, is
-pinned per run in `WorkflowRun.harnessProfileVersions`, and fails closed when it cannot be resolved.
+enabled; the runtime itself stays ADMIN-only. An override created without a `harnessProfiles` list starts
+with the platform-wide row's profiles, on the `claude-code` runtime only: a TEAM override carries only
+those its team has enabled. The create response lists the carried names in `profileCarried` and the
+ones left out in `profileNotes`. A list sent with the request, even an empty one, is used as given. The
+list is not inherited along `inheritsModelFrom`, is pinned per run in
+`WorkflowRun.harnessProfileVersions`, and fails closed when it cannot be resolved.
 Saves refuse with `PROFILE_RUNTIME_MISMATCH`, `PROFILE_DUPLICATE`, `PROFILE_NOT_FOUND`,
 `PROFILE_DISABLED`, `PROFILE_NAME_COLLISION` or `PROFILE_NOT_ENABLED`. See
 [harness-profiles.md §8](./harness-profiles.md#8-binding-plugins-to-an-agent).
@@ -1680,7 +1684,7 @@ GLOBAL             →  (always falls back to this; may carry no skill refs)
 
 `skillsToPromptSuffix(skills)` joins prompt texts with double-newline; returns `undefined` for an empty array. Used by reviewer and planner sub-agents (which receive skill fragments directly in the system prompt rather than via the L1 menu).
 
-**Plugin-projected skills.** A skill projected from a plugin (`Skill.pluginProfileId` set; [harness-profiles.md §13](./harness-profiles.md#13-skill-projection-for-other-runtimes)) follows its plugin. No agent version can add one of a disabled plugin, and a TEAM-scoped version cannot add one whose plugin the team has not enabled. At run time, such a skill is dropped from the prompt with an `agent.plugin_skill_excluded` event when its plugin is disabled, or when it is on a TEAM-scoped version the team has not enabled the plugin for. Its text changes only by accepting a plugin version.
+**Plugin-projected skills.** A skill projected from a plugin (`Skill.pluginProfileId` set; [harness-profiles.md §13](./harness-profiles.md#13-skill-projection-for-other-runtimes)) follows its plugin. No agent version can add one of a disabled plugin, and a TEAM-scoped version cannot add one whose plugin the team has not enabled. At run time, such a skill is dropped from the prompt with an `agent.plugin_skill_excluded` event when its plugin is disabled, or when it is on a TEAM-scoped version the team has not enabled the plugin for. Its text changes only by accepting a plugin version. Disabling the plugin deactivates it, and re-enabling reactivates the rows that disable switched off ([harness-profiles.md §13](./harness-profiles.md#13-skill-projection-for-other-runtimes)).
 
 ### 6.4 Custom Skill Security Scanning
 
@@ -2134,7 +2138,7 @@ template override is never badged, because it may use a different model or crede
 | `DELETE` | `/api/v1/platform/agent-library/:id` | `ADMIN` | Delete / deactivate an Agent override |
 | `POST` | `/api/v1/platform/agent-library/bulk-model/preview` | `ADMIN` | Preview a bulk model set or remap; writes nothing |
 | `POST` | `/api/v1/platform/agent-library/bulk-model` | `ADMIN` | Apply a bulk model set or remap |
-| `GET` | `/api/v1/teams/:id/agent-library/options` | Team member | Agent keys, names and models an override may inherit from (GLOBAL plus the team's own); no prompts or tools |
+| `GET` | `/api/v1/teams/:id/agent-library/options` | Team member | Agent keys, names, models and `harnessProfiles` (the plugin names the row binds, names only) an override may inherit from (GLOBAL plus the team's own); no prompts or tools |
 | `GET` | `/api/v1/teams/:id/agent-library` | Team `ADMIN` | List TEAM-scope Agent overrides |
 | `POST` | `/api/v1/teams/:id/agent-library` | Team `ADMIN` | Create a TEAM-scope Agent override |
 | `PUT` | `/api/v1/teams/:id/agent-library/:agentId` | Team `ADMIN` | Update a TEAM-scope Agent override |

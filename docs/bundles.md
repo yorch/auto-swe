@@ -189,7 +189,9 @@ requires the computed content hash to equal the bundle's. All of that happens be
   not a valid profile (or names a different profile) answers `400 BUNDLE_PLUGIN_INVALID`; a refused
   or failed fetch answers `BUNDLE_PLUGIN_FETCH_FAILED` with a fixed message. Nothing is written.
 - A profile of that name is created with `hooksEnabled: false` and its first version approved by the
-  installing admin. Only a platform admin switches hooks on, separately. The profile's `ref` is
+  installing admin. Only a platform admin switches hooks on, separately, and that switch needs the
+  latest version the admin reviewed ([harness-profiles.md §7](./harness-profiles.md#7-the-hook-switch)).
+  The profile's `ref` is
   `HEAD`, so its update check follows the repository's default branch.
 - A profile of that name that already holds a version with the same content hash is reused, and its
   hook switch is not touched. A name approved with different content answers

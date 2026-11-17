@@ -179,26 +179,48 @@ model asking for it:
 One module (`packages/shared/src/lib/harnessProfile/hookSources.ts`) lists these sources for the
 approval warnings and scan, the hook diff and the switch, so all three cover the same sources.
 
+A plugin's root-level `SKILL.md` is a skill, so its frontmatter is a source too. Each `skills` and
+`commands` ref in `plugin.json` names a path inside the plugin folder. `.`, `./` and
+`${CLAUDE_PLUGIN_ROOT}` (with or without a trailing slash) name the plugin root. A ref that leaves the
+folder, or that matches no file in the snapshot, is an unreadable source.
+
+Frontmatter is located as the harness loader locates it: after one byte-order mark is stripped, an
+opener `---` followed by whitespace and a line break (JavaScript `\s`, which includes form feed,
+vertical tab, NBSP, U+2028 and U+3000). A file is unreadable, never "no hooks", when its YAML does not
+parse, when a key at any depth is the YAML merge key `<<`, or when the loader reads a `hooks` key the
+module does not. Where the loader's closing `---` is not on a line of its own, the file is unreadable
+only if the loader's text names `hooks`, a backslash or `<<`; otherwise the closing line is used. A
+file with no closing line is read as having no frontmatter, unless the loader's text names `hooks`, a
+backslash or `<<`, in which case it is unreadable.
+
 - **Decided at approval.** The approval request must send `hooksEnabled` explicitly: a folder
   approval, a marketplace entry approval (both have no default) and a bundle install (which always
-  creates the profile with hooks off) all answer with the choice made.
+  creates the profile with hooks off) all answer with the choice made. Choosing hooks on at approval
+  needs the same "reviewed" confirmation as the switch (section 16).
 - **Changed by a platform ADMIN only.** `PATCH /harness-profiles/:name` with `hooksEnabled` sets
   it, is audited with the before and after values, and cuts no version. The stored snapshot and its
-  content hash are unchanged, so an upstream check never sees a change from the switch alone.
+  content hash are unchanged, so an upstream check never sees a change from the switch alone. Turning
+  hooks on needs `expectedVersion`, the latest version the admin reviewed: the route answers
+  `400 HOOKS_EXPECTED_VERSION_REQUIRED` without it, and `409 HOOKS_VERSION_STALE` with
+  `details.latestVersion` when the profile has a later version. The version check and the switch
+  write are one compare-and-set in one transaction, so a version accepted in between also answers 409.
+  Turning hooks off needs no version.
 - **Applied when the plugin is written into the container, never in the snapshot.** With the switch
   off, the worker leaves out of each plugin every auto-run source above: `hooks/hooks.json`,
-  `monitors/monitors.json`, `.lsp.json`, and each file a `plugin.json` key names. `plugin.json` is
-  written again without its `hooks`, `monitors`, `experimental.monitors` and `lspServers` keys and
-  nothing else changed; each skill and command `.md` is written again without its `hooks` key, its
-  body byte for byte. Scripts and executable files are still written. The dashboard says so beside
-  the switch.
-- **A source that cannot be left out cleanly is refused.** With the switch off, a plugin the worker
-  cannot rewrite with certainty fails the run without retry with `PROFILE_HOOKS_UNREADABLE`: a
-  named path that leaves the plugin folder, or names a file that is not in the snapshot or is not
-  valid UTF-8 JSON; a `plugin.json` that is missing, not valid JSON or not a JSON object; a plugin
-  directory that is not a safe relative path; or frontmatter that cannot be parsed or cannot be
-  edited without changing another key or the body. The plugin is not run; the run is not run
-  without it.
+  `monitors/monitors.json` and `.lsp.json`, whatever they hold, and each file a `plugin.json` key
+  names. `plugin.json` is written again without its `hooks`, `monitors`, `experimental.monitors` and
+  `lspServers` keys and nothing else changed; each skill and command `.md` is written again without its
+  `hooks` key, its body byte for byte. Scripts and executable files are still written. The dashboard
+  says so beside the switch.
+- **Unreadable sources.** A source the scan cannot read is kept with its reason. The reason appears on
+  the source in the dashboard, in the hook diff (`unreadable` on the source or on a changed source), and
+  as a `hooks-not-scanned` warning at approval. With the switch off, a plugin the worker cannot rewrite
+  with certainty is refused without retry with `PROFILE_HOOKS_UNREADABLE`: a named path that leaves the
+  plugin folder, or names a file that is not in the snapshot or is not valid UTF-8 JSON; a `plugin.json`
+  that is missing, not valid JSON or not a JSON object; a plugin directory that is not a safe relative
+  path; a skill or command ref that matches no file; or frontmatter that is unreadable, or cannot be
+  edited without changing another key or the body. The plugin is not run. An unreadable default file
+  (`hooks/hooks.json`, `monitors/monitors.json`, `.lsp.json`) is not a refusal, because it is left out.
 - **The effective switch is the pinned value AND the live value.** A run takes the switch it
   pinned when it started (section 8), and the worker also reads the platform switch on each
   resolution. So a run never gains hooks: turning them on reaches only runs that start afterwards.
@@ -272,8 +294,10 @@ before handing the files out.
 
 **Run pin.** `WorkflowRun.harnessProfileVersions` maps each profile name to what the run was given:
 a bare version number, or `{ version, hooks, verified }`. `hooks` is the platform switch at the pin.
-`verified` lists the agent keys whose TEAM-scoped binding of the plugin passed the enablement check
-(section 12). A reserved `__execution` key names the Temporal run id the map was taken for; a map
+`verified` lists the bindings whose TEAM-scoped binding of the plugin passed the enablement check
+(section 12), each as `<teamId>:<agentKey>:<agentVersion>`. A verification therefore covers one team,
+one agent and one agent version. An entry in the bare agent-key form matches no binding, so it exempts
+nothing and its bindings are checked again. A reserved `__execution` key names the Temporal run id the map was taken for; a map
 that names another execution is ignored, so a reused workflow id never inherits an earlier run's pins
 or verified bindings.
 
@@ -541,7 +565,7 @@ only an enabled plugin can be bound on a TEAM-scoped agent of that team.
 
 | Method and path | Who | Purpose |
 |---|---|---|
-| `GET /api/v1/teams/:teamId/plugins` | Any team member | Approved, non-disabled plugins with `enabled`, `enabledAt`, `hooksEnabled` and `latestVersion`. |
+| `GET /api/v1/teams/:teamId/plugins` | Any team member | Approved plugins with `enabled`, `enabledAt`, `hooksEnabled`, `latestVersion` and `status`. A DISABLED plugin is listed only when this team holds an enablement for it, so the team admin can withdraw it. |
 | `PUT /api/v1/teams/:teamId/plugins/:name` | Team ADMIN (a platform ADMIN passes) | Enable one plugin for the team. Idempotent. `TEAM_INACTIVE` for an inactive team; `HARNESS_PROFILE_DISABLED` for a disabled profile. |
 | `DELETE /api/v1/teams/:teamId/plugins/:name` | Team ADMIN | Disable one plugin for the team. `NOT_FOUND` when it was not enabled. The response lists `strandedAgents`. |
 
@@ -552,8 +576,9 @@ binding is written by a platform ADMIN and needs no enablement, at save or at ru
 - A TEAM-scoped binding needs its team's enablement at save (`PROFILE_NOT_ENABLED`) and at every
   resolution of that binding (`PLUGIN_NOT_ENABLED`), not only at the run's first use. The pin decides
   the version; it does not decide the permission.
-- A binding the run has verified is the exception. The run's pin lists that agent key under
-  `verified` when its binding passed the check at run start or at its first use. Removing the
+- A binding the run has verified is the exception. The run's pin lists that binding, keyed by team,
+  agent key and agent version, under `verified` when it passed the check at run start or at its first
+  use. Removing the
   enablement during the run does not stop that binding for that run, its retries included. A binding
   first seen after the removal fails closed.
 - Removing an enablement changes no agent. `DELETE` answers with `strandedAgents`: the team's
@@ -589,8 +614,11 @@ are usable elsewhere, each `skills/<dir>/SKILL.md` of each plugin is projected i
 - **Revisions.** A change to a skill's text or description cuts a further `SkillRevision`; an unchanged one
   does not. Runs keep the revisions they pinned.
 - **Disable and enable.** Disabling a plugin deactivates its projected skills in the same transaction.
-  Re-enabling reactivates the rows at the profile's latest version; a row left at an older
-  version stays inactive.
+  Each row the disable switches off is stamped with `Skill.pluginDeactivatedAt`. Re-enabling
+  reactivates exactly the stamped rows, whatever version they were projected from. A row the disable
+  did not touch keeps its state. Projection reads the profile's status under a row share lock, so a
+  row written while the plugin is disabled is born inactive and stamped, and a disable that lands
+  during a projection waits for it and then deactivates the row.
 - **Writes refused.** An update, a rename, a verify, a delete, a revision restore, or a bundle install
   that would replace a projected skill answers `409 SKILL_PLUGIN_MANAGED`. Its text, name and state
   change only by accepting a plugin version (or disabling the plugin).
@@ -624,7 +652,7 @@ guarded fetcher and requires the computed content hash to equal the bundle's:
   `400 BUNDLE_PLUGIN_FETCH_FAILED`. Nothing is written in any of these cases.
 - A profile created by the install has `hooksEnabled: false`, its first version approved by the
   installing admin, and `ref: HEAD`, so its update check follows the default branch. Only a platform
-  ADMIN switches hooks on, separately.
+  ADMIN switches hooks on, separately, against the latest version the admin reviewed (section 7).
 - A profile of that name with the same content hash is reused and its switch is not touched. A name
   approved with different content answers `409 PROTECTED_CONTENT_OVERWRITE`, and `overwriteProtected`
   does not lift it.
@@ -654,10 +682,10 @@ assistant for writes; list and get are readable.
 | `POST /preview` | Body `{ host?, owner, repo, path?, ref }`. Reads, validates and scans; writes nothing. Returns the manifest, files (path, size, mode), warnings, `sha`, `contentHash`, `warningsHash`, and name conflicts. With `{ file, sha }`, returns that one file's text for review (`binary: true` and `text: null` for non-text, cut at 200,000 characters with `truncated: true`). |
 | `POST /` | Body `{ ..., sha, contentHash, warningsHash, hooksEnabled, acknowledgeWarnings? }`. Creates the profile and version 1 at the previewed commit and returns the skill `projection`. `409 SHA_MOVED`, `409 PREVIEW_STALE`, `409 WARNINGS_UNACKNOWLEDGED`, `409 HARNESS_PROFILE_NAME_EXISTS`, `422 HARNESS_PROFILE_INVALID`. |
 | `GET /` | Profiles with their latest version and tracking state (no file lists, no content). |
-| `GET /:name` | One profile with every version and its file list, `boundAgents` (each with `stranded`) and `enabledTeams`. |
+| `GET /:name` | One profile with every version and its file list, `boundAgents` (each with `stranded`), `enabledTeams` and `autoRunSources`: every auto-run source (section 7) of the latest version, with its `path`, `kind`, `commands` and `unreadable` reason. |
 | `POST /:name/preview-update` | Body `{ sha?, file? }`. Reads the profile's stored source again (or the named commit) and reports `matchesVersion`, `hookChanges` and `hooksEnabled`. The manifest name must equal `:name`. |
 | `POST /:name/accept` | Body `{ sha, contentHash, warningsHash, acknowledgeWarnings?, acknowledgeHookChanges? }`. Adds the next version and returns the skill `projection`. `409 PREVIEW_STALE`, `409 HARNESS_PROFILE_NO_CHANGE`, `409 HARNESS_PROFILE_DISABLED`, `409 HOOK_CHANGES_UNACKNOWLEDGED` (with `hookChanges`), `409 HARNESS_PROFILE_CHANGED` when another accept or a switch change won the race. |
-| `PATCH /:name` | Body `{ status?: 'OK' \| 'DISABLED', hooksEnabled?: boolean }`; at least one. The hook switch is set here and cuts no version. Disabling a profile also deactivates its projected skills (section 13). |
+| `PATCH /:name` | Body `{ status?: 'OK' \| 'DISABLED', hooksEnabled?: boolean, expectedVersion?: number }`; at least one. The hook switch is set here and cuts no version. `hooksEnabled: true` needs `expectedVersion`, the latest version the admin reviewed: `400 HOOKS_EXPECTED_VERSION_REQUIRED` without it, `409 HOOKS_VERSION_STALE` (with `details.latestVersion`) when the profile has moved on (section 7). Disabling a profile also deactivates its projected skills (section 13). |
 | `POST /:name/check` | Resolves the ref on request and records the result (the sweep's check). `409 HARNESS_PROFILE_DISABLED`. Returns `recorded: false` when the profile changed under the check. |
 | `GET /:name/enablements` | The teams that enabled the profile. |
 
@@ -696,8 +724,11 @@ second at `?tab=marketplaces`.
   owner, repository, path, ref, or a pasted GitHub link), then shows the manifest, the commit, the
   validation result, the warnings and every file, which can be opened at that commit. Approval asks
   for the hook choice (on or off) and is disabled while the name collides and, when the preview has
-  warnings, until they are acknowledged. **Details** shows the source, every version with its files
-  and the warnings acknowledged at approval, the hook switch, the teams that enabled the plugin and
+  warnings, until they are acknowledged. Choosing hooks on needs a "reviewed" box before approval; the
+  hook files are read in the preview's file list. The marketplace entry approval has the same choice
+  and box. **Details** shows the source, every version with its files and the warnings acknowledged at
+  approval, the hook switch (turning it on lists the latest version's hook sources, with the same
+  "reviewed" box, and sends that version), the teams that enabled the plugin and
   the agents bound to it (stranded ones marked), **Check for update** (preview-update, with the hook
   diff), and disable or re-enable.
 - **Marketplaces.** Add a marketplace (preview, then add at the previewed commit), see its catalog at
@@ -734,7 +765,13 @@ warnings only.
   hooks and sub-agents; monitors and LSP servers are skipped on those runtimes too, but the event does
   not name them.
 - **A binding verified by a run keeps working for that run after its team's enablement is removed.**
-  The exemption covers the run's retries too. A binding first seen after the removal fails closed.
+  The exemption covers the run's retries too, and only for that team, agent key and agent version. A
+  binding first seen after the removal fails closed.
+- **The frontmatter scan reads only the markdown files it locates.** It reads a `hooks` key from
+  `skills/**/SKILL.md`, `commands/**/*.md`, a root `SKILL.md` and the `.md` files a `skills` or
+  `commands` ref names. A `.md` file outside those places is not read, so a `hooks` key in it is not a
+  source, the hook switch does not remove it, and it is not scanned. Whether the harness loads such a
+  file as a skill or command is not checked by the module.
 - **Approving a marketplace entry does not project its skills.** Folder approval, an accepted update and
   a bundle install do.
 - **Projected skills are not removed upstream.** A skill that disappears from the plugin stays installed
