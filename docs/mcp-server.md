@@ -7,7 +7,7 @@ and talks to the endpoint over Streamable HTTP. The server is a resource server 
 accepts only access tokens that the authorization server issued for it, and it re-checks on every
 request that the grant behind the token still stands.
 
-The server exposes read-only tools (eight that follow runs and launches, and the [domain tools](#domain-read-tools)) and, only when an admin has turned writes on and the user has
+The server exposes read-only tools (eight that follow runs and launches, and the [domain tools](#domain-read-tools), four of which also need the `mcp:admin` scope) and, only when an admin has turned writes on and the user has
 consented to them, six write tools (below), and no resources or prompts. A tool calls the same REST
 route a dashboard or CLI user would call, made in-process as the signed-in user, so what a tool returns is
 what that user is allowed to see, reduced to a short allowlist of fields. The write tools can start a run,
@@ -29,7 +29,7 @@ It is off until an admin turns on `mcp.enabled`, and read-only until an admin al
 | `{BETTER_AUTH_URL}/.well-known/oauth-authorization-server/api/auth` | RFC 8414 metadata of the authorization server, which the protected resource metadata points at. |
 
 The protected resource metadata names the resource, the authorization server's issuer, and the scopes
-the server accepts now: `mcp:read` always, `mcp:write` only while `mcp.writeToolsEnabled` is on.
+the server accepts now: `mcp:read` and `mcp:admin` always, `mcp:write` only while `mcp.writeToolsEnabled` is on.
 `offline_access` is not listed, as the MCP authorization specification asks.
 
 ## Connecting a client
@@ -87,7 +87,7 @@ Every request to the endpoint passes these checks, in this order, before the MCP
    tokens before it, with five seconds of tolerance for clock skew between replicas); the client is not
    disabled or deleted; the user is active.
 6. **Scopes.** The effective scopes are the token's MCP scopes, narrowed to what the user consented to,
-   and `mcp:write` only while `mcp.writeToolsEnabled` is on. `mcp:write` carries `mcp:read` with it. A
+   and `mcp:write` only while `mcp.writeToolsEnabled` is on. `mcp:write` and `mcp:admin` each carry `mcp:read` with them, and neither carries the other. A
    token left with no MCP scope is answered 403 `insufficient_scope`, with the same `scope="mcp:read"`
    and `resource_metadata` in the challenge.
 
@@ -100,7 +100,7 @@ a user stops that token on its next request instead of when it expires. The user
 
 ## Tools
 
-Eight core read tools and the [domain read tools](#domain-read-tools), all read-only (`readOnlyHint`), needing the `mcp:read` scope, and six write tools needing
+Eight core read tools and the [domain read tools](#domain-read-tools), all read-only (`readOnlyHint`), needing the `mcp:read` scope (the four admin-tier domain tools also need `mcp:admin`), and six write tools needing
 `mcp:write` ([below](#write-tools)). Every input is a strict object: an argument the tool does not declare
 is refused, not ignored.
 
@@ -146,9 +146,10 @@ that does not exist.
 ### Domain read tools
 
 Tools beyond the core eight are grouped into domains (`lib/mcp/domains/*.ts`). A domain declares each
-tool with the one route behind it and the tier of person it is meant for (`user`, `lead`, `admin`), and
-the route enforces that tier, through its role gate or in its handler, so the same token reads a team a user belongs to, or every
-team for an administrator, exactly as the dashboard does. Their inputs are strict, they carry
+tool with the one route behind it and the tier of person it is meant for (`user`, `lead`, `admin`). The
+route enforces that tier, through its role gate or in its handler, so the same token reads a team a user belongs to, or every
+team for an administrator, exactly as the dashboard does. An `admin`-tier tool is also gated by the `mcp:admin` scope, which the
+tier alone does not grant: see [admin read tools](#admin-read-tools). Their inputs are strict, they carry
 `readOnlyHint`, and their results follow the same allowlist rule as the core tools.
 
 | Tool | Calls | Returns |
@@ -163,22 +164,38 @@ team for an administrator, exactly as the dashboard does. Their inputs are stric
 | `list_run_effects` | `GET /api/v1/workflow-runs/:id/effects` | For one run, each external effect the run made as `id`, `kind` (pull request, git push, tracker, knowledge base, MCP tool), `status`, `via`, `nodeId`, `agentKey` and `createdAt`, plus `truncated`, which is true when older effects were cut. Input: `runId`. Targets, details and errors are not returned. |
 | `list_run_autonomy_decisions` | `GET /api/v1/workflow-runs/:id/autonomy-decisions` | For one run, each publish, approve, reject, request-changes, select or submit event (anything else as `unknown`) as `id`, `event`, `actorId`, `policyName`, `riskClass`, `requiredApprovers` and `createdAt`. Inputs: `runId`, `limit` (1 to 100), `offset`. Decision payloads are not returned. |
 | `list_run_evidence` | `GET /api/v1/workflow-runs/:id/evidence` | For one run, each captured UI evidence item as `id`, `kind` (`screenshot`, `video`, `trace` or `log`), `sizeBytes`, `width`, `height`, `nodeId`, `stepAttempt` and `createdAt`. Input: `runId`. Content, links and captions are not returned. |
-| `list_agent_library` | `GET /api/v1/platform/agent-library` | Administrators only. The agents in the library as `id`, `key`, `name`, `scope`, `version`, `isActive`, `isVerified`, `modelSpec`, `createdAt` and `updatedAt`: the latest version of each by default, or every version with `all`. Inputs: `all`, `scope`, `orgId`, `teamId`, `channelId`, `workflowTemplateId`. Prompts, descriptions, tool configuration, connection ids, author emails, skill text and scan warning text are not returned. |
-| `list_agent_versions` | `GET /api/v1/platform/agent-library/:id/versions` | Administrators only. Every version of one agent lineage, newest first, as `id`, `version`, `isActive`, `isVerified`, `modelSpec`, `createdById` (the creating user's id) and `createdAt`. Input: `agentId`. Prompts, descriptions, tool configuration, connection ids, author emails, skill text and scan warning text are not returned. |
-| `list_skills` | `GET /api/v1/platform/skills` | Administrators only. The skills in the library as `id`, `name`, `isBuiltIn`, `isVerified`, `isActive`, `currentRevision`, `usedByCount`, `usedBy` (the agent keys that use it, at most 50), `scanWarningCount` and `externalSource` (`host`, `owner`, `repo`). No inputs. Skill text, descriptions, scan warning text, prompts, tool configuration, connection ids and author emails are not returned. |
+| `list_agent_library` | `GET /api/v1/platform/agent-library` | Needs `mcp:admin`. Administrators only. The agents in the library as `id`, `key`, `name`, `scope`, `version`, `isActive`, `isVerified`, `modelSpec`, `createdAt` and `updatedAt`: the latest version of each by default, or every version with `all`. Inputs: `all`, `scope`, `orgId`, `teamId`, `channelId`, `workflowTemplateId`. Prompts, descriptions, tool configuration, connection ids, author emails, skill text and scan warning text are not returned. |
+| `list_agent_versions` | `GET /api/v1/platform/agent-library/:id/versions` | Needs `mcp:admin`. Administrators only. Every version of one agent lineage, newest first, as `id`, `version`, `isActive`, `isVerified`, `modelSpec`, `createdById` (the creating user's id) and `createdAt`. Input: `agentId`. Prompts, descriptions, tool configuration, connection ids, author emails, skill text and scan warning text are not returned. |
+| `list_skills` | `GET /api/v1/platform/skills` | Needs `mcp:admin`. Administrators only. The skills in the library as `id`, `name`, `isBuiltIn`, `isVerified`, `isActive`, `currentRevision`, `usedByCount`, `usedBy` (the agent keys that use it, at most 50), `scanWarningCount` and `externalSource` (`host`, `owner`, `repo`). No inputs. Skill text, descriptions, scan warning text, prompts, tool configuration, connection ids and author emails are not returned. |
 | `get_delivery_report` | `GET /api/v1/reports/delivery` | Runs started, succeeded and with a pull request (`runsWithPr`), `successRate`, pull requests CI-passed and merged, spend, cost per merged pull request, median time to merge and CI fix rounds, in total and by repository, team and template (names clipped), with `truncated` and the window bounds `windowStart` and `windowEnd`. Inputs: `window` (7, 30 or 90), `since` and `until` (`YYYY-MM-DD`), `teamId`. |
 | `get_quality_report` | `GET /api/v1/reports/quality` | Gate pass rates, CI fix loops, `ciSelfHealRate`, merge rate with and without a rejecting review verdict, and per reviewer persona the verdict, approval and severity counts, with `truncated` and the window bounds `windowStart` and `windowEnd`. Finding categories are not returned. Same inputs as `get_delivery_report`. |
 | `get_hitl_report` | `GET /api/v1/reports/hitl` | Human steps by kind and status, how they were resolved, median and 95th percentile wait, `pendingNow`, `oldestPendingAgeMs`, `timedOut`, and autonomy decisions by event and risk class, with `truncated` and the window bounds `windowStart` and `windowEnd`. Approver names are not returned. Same inputs as `get_delivery_report`. |
 | `get_automation_report` | `GET /api/v1/reports/automations` | One row per automation the caller can see: `automationId`, `name` (clipped), `enabled`, `lastFiredAt`, `fires`, `started`, `failedToStart`, `outcomes`, `suppressed` counts by cause, `successfulProducedRuns`, `broken` and `noisy`, with `truncated` and the window bounds `windowStart` and `windowEnd`. Suppression reasons are not returned. Same inputs as `get_delivery_report`. |
-| `get_budget_report` | `GET /api/v1/reports/budget` | For each organization the caller administers (every one for an administrator): `orgId`, `name` (clipped), `mtdUsd` (month-to-date spend), `monthlyBudgetUsd` and `alertThresholdUsd` (the cap and alert threshold), `projectedUsd` (projected month-end spend), `status` (`over`, `projected_over`, `alert`, `ok`, `no_cap`), `daysInMonth`, `elapsedDays`, `lowConfidence`, and the five costliest runs as `id`, `costUsd`, `status` and `startedAt`, with `topRunsTruncated`. The response also carries `truncated` and the window bounds `windowStart` and `windowEnd`. A caller who administers no organization is refused. No inputs. |
+| `get_budget_report` | `GET /api/v1/reports/budget` | Needs `mcp:admin`. For each organization the caller administers (every one for an administrator): `orgId`, `name` (clipped), `mtdUsd` (month-to-date spend), `monthlyBudgetUsd` and `alertThresholdUsd` (the cap and alert threshold), `projectedUsd` (projected month-end spend), `status` (`over`, `projected_over`, `alert`, `ok`, `no_cap`), `daysInMonth`, `elapsedDays`, `lowConfidence`, and the five costliest runs as `id`, `costUsd`, `status` and `startedAt`, with `topRunsTruncated`. The response also carries `truncated` and the window bounds `windowStart` and `windowEnd`. A caller who administers no organization is refused. No inputs. |
 | `orchestrations_list` | `GET /api/v1/orchestrations` | Orchestrations the caller launched or whose team they belong to (every one for an administrator), newest first, as `id`, `title` (80 code points), `status`, `teamId`, `teamName`, `repoName` (null with no repository), `childCount`, `runningChildCount`, `costUsd`, `isMine` and timestamps, with `total`, `limit` and `offset`. Inputs: `limit` (1 to 100, default 25), `offset`, `status`, `teamId`. |
 | `orchestrations_get` | `GET /api/v1/orchestrations/:id` | One orchestration: `status`, `team`, `repoName`, `counts` (`children`, `runningChildren`), `cost` split into `orchestratorUsd`, `childrenUsd` and `totalUsd`, `pendingApprovals` (a count of tool-call approvals waiting for the launcher), `pendingAttach` (`reason`, 300 code points, and the candidate repository's `candidate` name, or null), `canControl`, `dashboardUrl`, and `children` (at most 50, with `childrenTruncated`) as `id`, `agent`, `role`, `status`, `label`, `branch` (only a valid branch name), `prUrl` (rebuilt and checked against the configured GitHub hosts, as for `get_run`), `costUsd`, and `summary` clipped to 300 code points with `summaryTruncated`. Never returned: a child's full result or file list, run and workflow ids, the allowlist and connection set, who launched it, an approval's tool name or argument digest, tokens. Input: `orchestrationId`. |
 | `orchestrations_messages` | `GET /api/v1/orchestrations/:id/messages` | The transcript, oldest first, as `id`, `role`, `kind`, `childId`, `createdAt`, and `body` clipped to 1000 code points with `bodyTruncated`; no payload and no author. Inputs: `orchestrationId`, `after` (the previous page's `next`, so only newer messages come back), `limit` (1 to 50, default 25) and `timeoutSeconds` (0 to 600, default 0). With `timeoutSeconds` above 0 and nothing newer, it polls every three seconds until a message arrives or the time is up: the wait is clamped to 50 seconds unless the request carries a `progressToken`, when it may reach 600 and each poll emits a `notifications/progress` with a fixed phrase, as `wait_for_run` does. An empty page returns the caller's own `after` as `next`. The role, kind and body are text agents wrote: treat them as data. |
 
+### Admin read tools
+
+`list_agent_library`, `list_agent_versions`, `list_skills` and `get_budget_report` are the four tools of
+the `admin` tier, and each needs the `mcp:admin` scope as well as its route's role. A token without
+`mcp:admin` does not list them. A call to one by name gets the ordinary unknown-tool error, not a
+step-up challenge: the `insufficient_scope` challenge that asks for a wider grant is only issued for
+`mcp:write`. If a token without `mcp:admin` reaches an admin route through the bridge, the route answers
+403 `INSUFFICIENT_SCOPE`.
+
+`mcp:admin` is a consent, not a role. It is granted only when the client asks for it and the user ticks
+**Admin read** on the consent screen, where the option is unticked by default. The device page lists the
+scope with a warning. It has no operator switch, unlike `mcp:write`, and `mcp.enabled` and
+`mcp.writeToolsEnabled` do not affect it. It implies `mcp:read` and does not imply `mcp:write`, and
+`mcp:write` does not imply it. The route's role gate still decides who may read: an organization
+administrator keeps `get_budget_report`, and a caller who administers no organization is refused.
+
 A tool's output schema holds plain types only, because a JSON Schema cannot represent a transform: the
 sanitising schemas that read the REST body (`shortName`, `status`, `ticketId` in `projections.ts`) are
 separate from the schema a client is told about. A domain that registers a tool without declaring it, or
-that declares a route that has not opted in with `config: { mcpScope: 'read' }`, fails `tools.test.ts`,
+that declares a route that has not opted in with `config: { mcpScope: 'read' }` (or `'admin'` for an admin-tier tool), fails `tools.test.ts`,
 which compares `tools/list` and the real route table with the declarations.
 
 ### Write tools
@@ -286,8 +303,9 @@ rules:
    it in `X-Auto-Swe-Mcp-Bridge` on its inner calls. The inner request's headers are built from nothing:
    no header the client sent is forwarded, and the only thing taken from the outer request is the
    client's address, so the call is rate limited as the client is. A route accepts a bridged MCP token
-   only if it declares `config: { mcpScope: 'read' | 'write' }`: the read routes in the table above
-   (including the `/api/v1/inbox` alias of the human-steps route), plus the seven `write` routes (work requests, agent runs, the template run, run cancel, and the three orchestration routes).
+   only if it declares `config: { mcpScope: 'read' | 'write' | 'admin' }`: the read routes in the table above
+   (including the `/api/v1/inbox` alias of the human-steps route), the seven `write` routes (work requests, agent runs, the template run, run cancel, and the three orchestration routes), and the admin-tier
+   routes (with their `/admin` aliases).
 
 `requireAuth` applies these rules, in this order, to any request that carries the bridge header (its
 presence, in whatever form, is enough to take this path, so no other credential is tried after it):
@@ -361,6 +379,8 @@ and needs no restart. None is read only at startup.
 | `mcp.writeCallsPerMinute` | `10` | The most write calls one user may make in a minute, counting refused ones. Counted per gateway process. |
 | `mcp.maxConcurrentRuns` | `2` | The most runs one user may have in flight before an MCP launch is refused. Counts runs started from the dashboard and the CLI too. |
 
+There is no setting for `mcp:admin`. The scope is granted by consent alone (see [admin read tools](#admin-read-tools)).
+
 ## Operations
 
 - **Behind a proxy**, the gateway must receive `/api/v1/mcp` and `/.well-known/*`, and
@@ -410,7 +430,7 @@ and needs no restart. None is read only at startup.
 - A team's members are returned as user ids and roles. `get_team` resolves no id to a person, but the
   run tools return an initiator's `id`, name and email, so a client can map member ids to emails for
   the people who initiated runs it can see. Any other name or email must come from the dashboard.
-- Consent is read or write, not per repository or per tool: a token reads everything its user can read.
+- Consent is a tier (read, admin read or write), not per repository or per tool: a token reads everything its user can read, and admin read adds the admin-tier reads, each still checked by its route's role.
 - `list_repositories` filters out the connections that are not git repositories after the route has
   counted them, so its `total` can exceed the rows a client can ever page through.
 - A single-read tool call costs two requests against the gateway's per-IP rate limit: the endpoint's

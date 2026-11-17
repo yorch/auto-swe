@@ -322,7 +322,7 @@ gateway starts:
 | Issuer (`iss`) | `{BETTER_AUTH_URL}/api/auth` |
 | Discovery (RFC 8414) | `{BETTER_AUTH_URL}/.well-known/oauth-authorization-server/api/auth` |
 | Resource (RFC 8707) and token audience (`aud`) | `{BETTER_AUTH_URL}/api/v1/mcp` |
-| Scopes | `mcp:read`, `mcp:write` (implies read), `offline_access` |
+| Scopes | `mcp:read`, `mcp:admin` (implies read), `mcp:write` (implies read), `offline_access` |
 | Client registration | Dynamic (RFC 7591), anonymous, public clients only, PKCE `S256` required |
 | Grants | `authorization_code`, `refresh_token`, and `urn:ietf:params:oauth:grant-type:device_code` |
 | Access token | JWT (`typ: at+jwt`, `EdDSA`), 10 minutes |

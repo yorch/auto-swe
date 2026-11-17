@@ -16,7 +16,8 @@ per-user concurrency cap remain in effect. See [MCP write guards](./mcp-server.m
 Interactive clients discover the authorization server from the endpoint's OAuth challenge, use dynamic
 client registration and PKCE, and open a browser for the user's sign-in and consent. Headless clients
 can instead use [device authorization](#headless-ssh-and-ci-clients). Read tools need
-`mcp:read`; launching and cancelling need `mcp:write`. `offline_access` requests rotating refresh
+`mcp:read`, and the four admin-tier tools also need `mcp:admin` (offered as "Admin read" at consent);
+launching and cancelling need `mcp:write`. `offline_access` requests rotating refresh
 tokens. A personal access token (`ats_*`) is not an MCP token. Keep credentials out of tracked
 configuration, prompts and logs. If write tools are absent, check administrator switches first,
 then re-authenticate with write consent; re-authentication cannot override policy.
