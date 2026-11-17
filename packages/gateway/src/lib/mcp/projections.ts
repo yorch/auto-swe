@@ -347,6 +347,7 @@ export const runOutput = z.object({
         'AGENT_RUN_CONCURRENCY_EXCEEDED',
         'AGENT_RUN_DIFF_TOO_LARGE',
         'AGENT_RUN_EXPORT_TOO_LARGE',
+        'AGENT_RUN_PATH_OUT_OF_SCOPE',
         'AGENT_RUN_PUSH_POLICY',
         'AGENT_RUNS_DISABLED',
         'BUDGET_EXCEEDED',

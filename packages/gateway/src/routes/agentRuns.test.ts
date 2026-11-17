@@ -764,6 +764,26 @@ describe('POST /api/v1/agent-runs/:id/rerun', () => {
     await app.close();
   });
 
+  it('refuses to re-run a child of an orchestration (the rebuilt payload would drop its scopes)', async () => {
+    const { app, started } = await build({
+      ...prevRun,
+      payload: {
+        ...prevRun.payload,
+        orchestrationId: 'cccccccc-1111-4111-8111-cccccccccccc',
+        pathScopes: ['src/**'],
+      },
+    });
+    const res = await app.inject({
+      headers: { authorization: 'Bearer t' },
+      method: 'POST',
+      url: `/api/v1/agent-runs/${PREV_RUN}/rerun`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('ORCHESTRATION_CHILD_NO_RERUN');
+    expect(started).toHaveLength(0);
+    await app.close();
+  });
+
   it('keeps the request identity while allocating a fresh branch for each retry', async () => {
     const { app, started } = await build(prevRun);
     for (let i = 0; i < 2; i++) {

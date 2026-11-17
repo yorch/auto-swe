@@ -20,6 +20,7 @@ import {
   type OnboardingPrInput,
   type OnboardingPrResult,
 } from '@auto-swe/shared/lib/onboardingPr';
+import { orchestrationWorkflowId } from '@auto-swe/shared/lib/orchestration';
 import {
   PR_EVALUATION_WORKFLOW_TYPE,
   type PrEvaluationInput,
@@ -59,6 +60,10 @@ import {
 } from '@temporalio/client';
 import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
+import {
+  ORCHESTRATION_WORKFLOW_TYPE,
+  type OrchestrationWorkflowInput,
+} from '../lib/orchestrationInput.js';
 import { TemporalUnavailableError } from '../lib/temporalErrors.js';
 import { getErrorName } from './auth.js';
 
@@ -404,6 +409,15 @@ declare module 'fastify' {
       sendAssistantTurn: (
         input: AssistantConversationInput,
         turn: AssistantTurnRequest
+      ) => Promise<void>;
+      /**
+       * Signal an orchestration's workflow, starting it first when it is not running (an idle
+       * orchestration completes after a while). `input` is used only when it starts.
+       */
+      signalWithStartOrchestration: (
+        orchestrationId: string,
+        input: OrchestrationWorkflowInput,
+        signal: { name: string; payload: unknown }
       ) => Promise<void>;
       /**
        * Name an in-app assistant conversation now (its user reset the title to automatic). A
@@ -1311,6 +1325,16 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
         }
         return 'not-running';
       }
+    },
+
+    async signalWithStartOrchestration(orchestrationId, input, signal) {
+      await client.workflow.signalWithStart(ORCHESTRATION_WORKFLOW_TYPE, {
+        args: [input],
+        signal: signal.name,
+        signalArgs: [signal.payload],
+        taskQueue: 'engineering-workflow',
+        workflowId: orchestrationWorkflowId(orchestrationId),
+      });
     },
 
     async signalWorkflow(

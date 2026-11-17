@@ -40,7 +40,14 @@ export interface HitlActor {
 }
 
 export type HitlResolvedVia = 'web' | 'api_token' | 'mcp' | 'assistant' | 'slack';
-export type HitlAuthMethod = 'session' | 'jwt' | 'pat' | 'mcp' | 'assistant' | 'service';
+export type HitlAuthMethod =
+  | 'session'
+  | 'jwt'
+  | 'pat'
+  | 'mcp'
+  | 'assistant'
+  | 'orchestration'
+  | 'service';
 
 export function resolvedViaForAuthMethod(
   method: HitlAuthMethod | undefined
@@ -55,6 +62,7 @@ export function resolvedViaForAuthMethod(
       return 'mcp';
     case 'assistant':
       return 'assistant';
+    case 'orchestration':
     case 'service':
       return null;
     default:

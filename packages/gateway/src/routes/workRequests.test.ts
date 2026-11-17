@@ -279,6 +279,7 @@ describe('POST /api/v1/work-requests', () => {
       replaceEvalLessons: async () => 0,
       sendAssistantTurn: async () => {},
       signalCampaignCancel: async () => 'signalled' as const,
+      signalWithStartOrchestration: async () => {},
       signalWorkflow: async () => {},
       startCampaignWorkflow: async () => {},
       startChannelAssistant: async () => {},

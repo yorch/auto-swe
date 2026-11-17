@@ -69,6 +69,8 @@ export const UI_ROUTE_TEMPLATES: readonly string[] = [
   '/mcp',
   '/models',
   '/oauth/consent',
+  '/orchestrations',
+  '/orchestrations/[id]',
   '/pull-requests',
   '/pull-requests/[id]',
   '/requests',

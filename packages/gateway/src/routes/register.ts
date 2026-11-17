@@ -35,6 +35,7 @@ import { mcpConnectionRoutes } from './mcpConnections.js';
 import { meRoutes } from './me.js';
 import { modelCatalogRoutes } from './modelCatalog.js';
 import { modelConfigRoutes } from './modelConfig.js';
+import { orchestrationRoutes } from './orchestrations.js';
 import { organizationGithubRoutes } from './organizationGithub.js';
 import { organizationRoutes } from './organizations.js';
 import { orgBudgetRoutes } from './orgBudget.js';
@@ -93,6 +94,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   // ── Protected routes ──
   await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });
   await app.register(agentRunRoutes, { prefix: '/api/v1/agent-runs' });
+  await app.register(orchestrationRoutes, { prefix: '/api/v1/orchestrations' });
   await app.register(codeReviewRoutes, { prefix: '/api/v1' });
   await app.register(scheduledWorkRequestRoutes, { prefix: '/api/v1/scheduled-work-requests' });
   await app.register(workflowRoutes, { prefix: '/api/v1/workflows' });
