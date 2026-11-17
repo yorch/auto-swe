@@ -106,10 +106,20 @@ export async function runOrchestratorTurn(
   const collector = new IntentCollector();
   const tracer = new AgentTracer();
 
+  // The durable count of turns: one hidden marker per turn, written BEFORE the model runs, so a
+  // tool-only turn, a failed one and one whose worker died all count toward `maxTurns` after a
+  // restart. The dashboard and the transcript hide it (`hidden`).
+  await writeTurnMarker(orch.id, input).catch((err) => {
+    logError('[orchestratorTurn] turn marker not written', {
+      err: err instanceof Error ? err.message : String(err),
+      orchestrationId: orch.id,
+    });
+  });
+
   try {
     return await withSpendOwner(ownerOfTeam(orch.teamId), async () => {
       try {
-        const { message, shownIds } = await buildTurnMessage(input, orch);
+        const { deferredIds, message, shownIds } = await buildTurnMessage(input, orch);
         const spec = await resolveAgentSpec(
           { agentKey: AGENT_KEY as ModelBackedAgentKey, availableTools: {} as AgentTools },
           ctx
@@ -142,6 +152,7 @@ export async function runOrchestratorTurn(
         await touch(orch.id);
         const load = await countOrchestrationLoad(orch.id);
         return {
+          ...(deferredIds.length > 0 ? { deferredChildIds: deferredIds } : {}),
           intents: collector.intents,
           pendingApprovals: load.pendingApprovals,
           runningChildren: load.runningChildren,
@@ -181,6 +192,35 @@ export async function runOrchestratorTurn(
   }
 }
 
+/**
+ * The turn's durable marker: a SYSTEM NOTICE with no body and `payload.marker`/`payload.hidden`,
+ * which {@link beginOrchestrationRun} counts. Hidden from the transcript the model reads; the
+ * dashboard filters rows whose payload says `hidden`.
+ */
+async function writeTurnMarker(
+  orchestrationId: string,
+  input: RunOrchestratorTurnInput
+): Promise<void> {
+  await prisma.orchestrationMessage.create({
+    data: {
+      body: '',
+      kind: 'NOTICE',
+      orchestrationId,
+      payload: { hidden: true, marker: true, turn: input.turn, turnKey: input.turnKey },
+      role: 'SYSTEM',
+    },
+  });
+}
+
+function isHiddenRow(payload: unknown): boolean {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    !Array.isArray(payload) &&
+    (payload as { hidden?: unknown }).hidden === true
+  );
+}
+
 async function touch(orchestrationId: string): Promise<void> {
   await prisma.orchestration
     .update({ data: { updatedAt: new Date() }, where: { id: orchestrationId } })
@@ -197,7 +237,7 @@ async function buildTurnMessage(
     repoId: string | null;
     title: string;
   }
-): Promise<{ message: string; shownIds: string[] }> {
+): Promise<{ deferredIds: string[]; message: string; shownIds: string[] }> {
   const [recent, first, children, pendingAttach] = await Promise.all([
     prisma.orchestrationMessage.findMany({
       orderBy: { createdAt: 'desc' },
@@ -210,7 +250,8 @@ async function buildTurnMessage(
         payload: true,
         role: true,
       },
-      take: TRANSCRIPT_MESSAGES,
+      // Turn markers (hidden) are one per turn: read a wider window, filter them out below.
+      take: TRANSCRIPT_MESSAGES * 2,
       where: { kind: { not: 'CHILD_RESULT' }, orchestrationId: orch.id },
     }),
     prisma.orchestrationMessage.findFirst({
@@ -235,9 +276,10 @@ async function buildTurnMessage(
     hasPendingAttach(orch.id),
   ]);
 
-  const rows: TranscriptRow[] = [...recent].reverse();
+  const visible = recent.filter((r) => !isHiddenRow(r.payload)).slice(0, TRANSCRIPT_MESSAGES);
+  const rows: TranscriptRow[] = [...visible].reverse();
   // The launcher's task is always shown, even when a long conversation pushed it out of the window.
-  if (first && !recent.some((r) => r.id === first.id)) {
+  if (first && !visible.some((r) => r.id === first.id)) {
     rows.unshift(first);
   }
 
@@ -259,13 +301,29 @@ async function buildTurnMessage(
     finished.map((c) => c.id)
   );
   const section = await renderChildResults(finished, { unreadIds: unread });
-  for (const body of section.notices) {
+  for (const { body, childId } of section.notices) {
+    // Once per child: a retried turn (the result is still unread) must not repeat the notice. One
+    // that already exists is in the transcript read above.
+    const exists = await prisma.orchestrationMessage.findFirst({
+      select: { id: true },
+      where: {
+        AND: [
+          { payload: { equals: 'RESULT_SCREENED', path: ['code'] } },
+          { payload: { equals: childId, path: ['childId'] } },
+        ],
+        kind: 'NOTICE',
+        orchestrationId: orch.id,
+      },
+    });
+    if (exists) {
+      continue;
+    }
     await prisma.orchestrationMessage.create({
       data: {
         body,
         kind: 'NOTICE',
         orchestrationId: orch.id,
-        payload: { code: 'RESULT_SCREENED', turnKey: input.turnKey },
+        payload: { childId, code: 'RESULT_SCREENED', turnKey: input.turnKey },
         role: 'SYSTEM',
       },
     });
@@ -296,5 +354,5 @@ async function buildTurnMessage(
     renderEvents({ attachedRepoName: repoName, events: input.events }),
     TURN_INSTRUCTIONS,
   ].join('\n\n');
-  return { message, shownIds: section.shownIds };
+  return { deferredIds: section.deferredIds, message, shownIds: section.shownIds };
 }

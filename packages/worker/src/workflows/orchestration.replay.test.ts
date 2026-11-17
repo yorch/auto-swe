@@ -106,6 +106,8 @@ describe('Epic and channel workflows — history replay', () => {
       ['epic-planned', 'EpicOrchestratorWorkflow'],
       ['orchestration-cancel', 'OrchestrationWorkflow'],
       ['orchestration-conversation', 'OrchestrationWorkflow'],
+      ['orchestration-deferred-results', 'OrchestrationWorkflow'],
+      ['orchestration-failed-turns-reset', 'OrchestrationWorkflow'],
       ['orchestration-handle-cancel', 'OrchestrationWorkflow'],
       ['orchestration-idle-race', 'OrchestrationWorkflow'],
       ['orchestration-lifetime', 'OrchestrationWorkflow'],
@@ -466,6 +468,38 @@ describe('Epic and channel workflows — history replay', () => {
       expect(
         count('orchestration-turn-failures', EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED)
       ).toBe(2);
+    });
+
+    it('orchestration-failed-turns-reset let a person end the failure wait and then took a machine-driven turn', () => {
+      const activities = activitiesOf('orchestration-failed-turns-reset');
+      // Failed turns 1-3, the person's turn 4 (failed again), and turn 5 started by the backstop's
+      // report: only possible because the person's message reset the failed-turn count.
+      expect(activities.filter((a) => a === 'runOrchestratorTurn')).toHaveLength(5);
+      // TURNS_FAILING once (third failure), then the final WAITING.
+      expect(activities.filter((a) => a === 'recordOrchestrationStatus')).toHaveLength(2);
+      const refreshAfterPerson = activities
+        .slice(activities.lastIndexOf('runOrchestratorTurn') - 2)
+        .filter((a) => a === 'refreshOrchestrationChildren');
+      expect(refreshAfterPerson.length).toBeGreaterThan(0);
+      expect(
+        count('orchestration-failed-turns-reset', EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED)
+      ).toBe(2);
+      expect(typesOf('orchestration-failed-turns-reset').at(-1)).toBe(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+      );
+    });
+
+    it('orchestration-deferred-results woke itself for a deferred result with nothing running', () => {
+      expect(activitiesOf('orchestration-deferred-results')).toEqual([
+        'beginOrchestrationRun',
+        'runOrchestratorTurn',
+        'runOrchestratorTurn',
+        'recordOrchestrationStatus',
+      ]);
+      // One signal only: the second turn was started by the workflow, not by the backstop.
+      expect(
+        count('orchestration-deferred-results', EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED)
+      ).toBe(1);
     });
 
     it('channel-reactive ran its interjection check', () => {

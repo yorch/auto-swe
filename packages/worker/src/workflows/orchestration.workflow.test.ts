@@ -52,6 +52,8 @@ const script = {
   /** Runs inside every status activity; may return a promise to keep the activity in flight. */
   onStatus: (_n: number, _input: { status: string }): Promise<void> | void => {},
   onTurn: (_n: number, _input: RunOrchestratorTurnInput): void => {},
+  /** Finished children a turn reports as deferred (still unread). */
+  turnDeferred: (_n: number): string[] | undefined => undefined,
   turnIntents: (_n: number): OrchestratorIntent[] => [],
   turnRunning: (_n: number): number => 0,
   /** Throw to make the turn activity fail outright; return a status for a turn that ran. */
@@ -117,6 +119,7 @@ const fakeActivities = {
     return {
       intents: outcome === 'FAILED' ? [] : script.turnIntents(n),
       pendingApprovals: 0,
+      ...(script.turnDeferred(n) ? { deferredChildIds: script.turnDeferred(n) } : {}),
       runningChildren: script.turnRunning(n),
       status: outcome,
     };
@@ -162,6 +165,7 @@ beforeEach((ctx: TestContext) => {
   script.onTurn = () => {};
   script.turnIntents = () => [];
   script.turnRunning = () => 0;
+  script.turnDeferred = () => undefined;
 });
 
 afterAll(async () => {
@@ -267,6 +271,28 @@ describe('OrchestrationWorkflow', () => {
     expect(log.turns).toHaveLength(2);
     expect(log.turns[1]).toEqual([{ childId: 'c1', type: 'childFinished' }]);
     expect(log.statuses.at(-1)).toMatchObject({ status: 'WAITING' });
+  });
+
+  it('wakes the orchestrator for results a turn deferred, even with nothing running', async () => {
+    // Nothing is in flight, so no backstop would run: the workflow reports the deferred ones itself.
+    script.turnDeferred = (n) => (n === 1 ? ['c6', 'c7'] : n === 2 ? ['c7'] : undefined);
+    const handle = await start(input());
+    await handle.result();
+    expect(log.turns).toHaveLength(3);
+    expect(log.turns[1]).toEqual([
+      { childId: 'c6', type: 'childFinished' },
+      { childId: 'c7', type: 'childFinished' },
+    ]);
+    expect(log.turns[2]).toEqual([{ childId: 'c7', type: 'childFinished' }]);
+    expect(log.statuses.at(-1)).toMatchObject({ status: 'WAITING' });
+  });
+
+  it('does not wake itself for deferred results after a failed turn', async () => {
+    script.turnStatus = (n) => (n === 1 ? 'FAILED' : 'COMPLETE');
+    script.turnDeferred = () => ['c6'];
+    const handle = await start(input());
+    await handle.result();
+    expect(log.turns).toHaveLength(1);
   });
 
   it('reconciles a lost childFinished signal with the polling backstop', async () => {

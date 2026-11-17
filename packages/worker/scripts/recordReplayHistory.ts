@@ -1759,6 +1759,62 @@ const SCENARIOS: Scenario[] = [
     name: 'orchestration-turn-failures',
     workflow: { args: [orchestrationInput()], type: 'OrchestrationWorkflow' },
   },
+  {
+    // Three failed turns stop the machine-driven turns; a person's message resets the count, so
+    // when the turn it starts also fails (1 of 3, not a 4th) the backstop's next report still
+    // starts a turn, which succeeds. Without the reset the fourth failure would leave the
+    // workflow waiting for a person and the fifth turn would never be scheduled.
+    activities: () => {
+      let turns = 0;
+      return orchestrationActivities({
+        refreshOrchestrationChildren: async () => ({
+          finishedChildIds: ['child-1'],
+          pendingApprovals: 0,
+          runningChildren: 1,
+        }),
+        runOrchestratorTurn: async () => {
+          turns += 1;
+          return {
+            intents: [],
+            pendingApprovals: 0,
+            runningChildren: turns <= 4 ? 1 : 0,
+            status: turns <= 4 ? 'FAILED' : 'COMPLETE',
+          };
+        },
+      } as never);
+    },
+    drive: async (handle, _states, env) => {
+      await handle.signal('userMessage', { messageId: 'message-1' });
+      await env.sleep('30 minutes');
+      await handle.signal('userMessage', { messageId: 'message-2' });
+    },
+    name: 'orchestration-failed-turns-reset',
+    workflow: { args: [orchestrationInput()], type: 'OrchestrationWorkflow' },
+  },
+  {
+    // A turn that deferred an unread result (nothing running, so no backstop) is followed at once
+    // by a turn for it; the second defers nothing and the workflow idles out.
+    activities: () => {
+      let turns = 0;
+      return orchestrationActivities({
+        runOrchestratorTurn: async () => {
+          turns += 1;
+          return {
+            ...(turns === 1 ? { deferredChildIds: ['child-6', 'child-7'] } : {}),
+            intents: [],
+            pendingApprovals: 0,
+            runningChildren: 0,
+            status: 'COMPLETE',
+          };
+        },
+      } as never);
+    },
+    drive: async (handle) => {
+      await handle.signal('userMessage', { messageId: 'message-1' });
+    },
+    name: 'orchestration-deferred-results',
+    workflow: { args: [orchestrationInput()], type: 'OrchestrationWorkflow' },
+  },
 ];
 
 /**

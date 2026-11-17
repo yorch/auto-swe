@@ -31,8 +31,26 @@ vi.mock('@auto-swe/shared/db', () => ({
         m.created.push(data);
         return data;
       }),
-      findFirst: vi.fn(async ({ where }: { where: { role?: string } }) =>
-        where.role === 'USER' ? m.messages.find((x) => x.role === 'USER') : null
+      findFirst: vi.fn(
+        async ({
+          where,
+        }: {
+          where: { AND?: Array<{ payload: { equals: string } }>; kind?: string; role?: string };
+        }) => {
+          if (where.role === 'USER') {
+            return m.messages.find((x) => x.role === 'USER');
+          }
+          if (where.kind === 'NOTICE' && where.AND) {
+            const [code, childId] = where.AND.map((a) => a.payload.equals);
+            return (
+              m.created.find((c) => {
+                const p = c.payload as { childId?: string; code?: string };
+                return c.kind === 'NOTICE' && p.code === code && p.childId === childId;
+              }) ?? null
+            );
+          }
+          return null;
+        }
       ),
       findMany: vi.fn(async () => [...m.messages].reverse()),
     },
@@ -259,22 +277,22 @@ describe('runOrchestratorTurn', () => {
       },
     });
 
-    it('caps each result and the total, newest in full and older ones as a digest, never dropped', async () => {
+    it('caps each result and the total, unread in full oldest first and the rest deferred, never dropped', async () => {
       // Seven children of 5,000 characters each: per-result cap 4,000, total cap 24,000.
       m.children = [1, 2, 3, 4, 5, 6, 7].map((n) => done(n, `r${n}-${'z'.repeat(5000)}`));
-      await runOrchestratorTurn({ ...base, events: [{ messageId: 'm1', type: 'userMessage' }] });
+      const out = await runOrchestratorTurn({
+        ...base,
+        events: [{ messageId: 'm1', type: 'userMessage' }],
+      });
       const text = prompt();
       const section = text.slice(text.indexOf('## Results of finished children'));
       const full = [...section.matchAll(/<child-result id="(child-\d)"/g)].map((x) => x[1]);
-      // Newest first by budget: five blocks of ~4,200 characters fit in 24,000, so the two oldest
-      // become digests (in chronological order, before the full ones).
-      expect(full).toEqual(['child-3', 'child-4', 'child-5', 'child-6', 'child-7']);
+      // Oldest unread first: five blocks of ~4,200 characters fit in 24,000.
+      expect(full).toEqual(['child-1', 'child-2', 'child-3', 'child-4', 'child-5']);
       expect(section).toMatch(
-        /- id=child-1 agent=docsMaintainer .*branch=auto\/agent-1 .*pr=https:\/\/github.com\/o\/r\/pull\/1 .*full result is stored/
+        /- id=child-6 agent=docsMaintainer .*branch=auto\/agent-6 .*pr=https:\/\/github.com\/o\/r\/pull\/6 .*will be shown in full next turn/
       );
-      expect(section.indexOf('id=child-2')).toBeLessThan(
-        section.indexOf('<child-result id="child-3"')
-      );
+      expect(section).not.toContain('full result is stored');
       // No single result is shown beyond its cap.
       expect(text).not.toContain('z'.repeat(4_100));
       // Every finished child is accounted for, and the whole section stays under the total cap.
@@ -282,15 +300,33 @@ describe('runOrchestratorTurn', () => {
       for (let n = 1; n <= 7; n++) {
         expect(section).toContain(`child-${n}`);
       }
-      expect([...m.seen].sort()).toEqual([
-        'child-1',
-        'child-2',
-        'child-3',
-        'child-4',
-        'child-5',
-        'child-6',
-        'child-7',
-      ]);
+      // Only the ones shown in full are marked read; the deferred two come back in full next turn.
+      expect([...m.seen].sort()).toEqual(['child-1', 'child-2', 'child-3', 'child-4', 'child-5']);
+      expect(out.deferredChildIds).toEqual(['child-6', 'child-7']);
+    });
+
+    it('shows eight unread results of 3,900 characters across turns, none lost', async () => {
+      m.children = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => done(n, `r${n}-${'q'.repeat(3_900)}`));
+      const first = await runOrchestratorTurn({ ...base, events: [] });
+      expect([...m.seen].sort()).toEqual(['child-1', 'child-2', 'child-3', 'child-4', 'child-5']);
+      expect(first.deferredChildIds).toEqual(['child-6', 'child-7', 'child-8']);
+      const second = await runOrchestratorTurn({ ...base, events: [] });
+      const text = m.runAgent.mock.calls[1]?.[1] as string;
+      const section = text.slice(text.indexOf('## Results of finished children'));
+      for (const n of [6, 7, 8]) {
+        expect(section).toContain(`<child-result id="child-${n}"`);
+      }
+      expect(section).toMatch(/id=child-1 .*shown earlier in full/);
+      expect(m.seen.size).toBe(8);
+      expect(second.deferredChildIds).toBeUndefined();
+    });
+
+    it('does not mark a result read when the turn fails after it was only digested', async () => {
+      m.children = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => done(n, `r${n}-${'q'.repeat(3_900)}`));
+      m.runAgent.mockRejectedValueOnce(new Error('boom'));
+      const out = await runOrchestratorTurn({ ...base, events: [] });
+      expect(out.status).toBe('FAILED');
+      expect(m.seen.size).toBe(0);
     });
 
     it('keeps the structured lines of a long result inside its cap', async () => {
@@ -353,6 +389,86 @@ describe('runOrchestratorTurn', () => {
       expect(text).toContain('[person] investigate the docs');
       expect(text).toContain('id=child-1 agent=docsMaintainer role=reader status=COMPLETED');
       expect(text).toContain('Spawnable agents (allowlist): docsMaintainer');
+    });
+
+    it('writes the screening notice once per child, however often the turn is retried', async () => {
+      m.children = [finished];
+      await runOrchestratorTurn({ ...base, events: [] });
+      // A failed turn leaves the result unread; the retry screens it again.
+      m.seen.clear();
+      await runOrchestratorTurn({ ...base, events: [] });
+      await runOrchestratorTurn({ ...base, events: [] });
+      const notices = m.created.filter(
+        (c) => (c.payload as { code?: string })?.code === 'RESULT_SCREENED'
+      );
+      expect(notices).toHaveLength(1);
+      expect(notices[0]?.payload).toMatchObject({ childId: 'child-1', code: 'RESULT_SCREENED' });
+    });
+
+    it('never shows a turn marker to the model', async () => {
+      m.messages = [
+        ...m.messages,
+        {
+          body: '',
+          createdAt: new Date(),
+          id: 'mk',
+          kind: 'NOTICE',
+          payload: { hidden: true, marker: true, turn: 1 },
+          role: 'SYSTEM',
+        },
+      ];
+      await runOrchestratorTurn({ ...base, events: [] });
+      expect(prompt()).not.toContain('[platform notice]');
+      expect(prompt()).toContain('[person] investigate the docs');
+    });
+  });
+
+  describe('the durable turn marker', () => {
+    const markers = () =>
+      m.created.filter((c) => (c.payload as { marker?: boolean })?.marker === true);
+
+    it('is written for a turn that wrote text', async () => {
+      await runOrchestratorTurn({ ...base, events: [] });
+      expect(markers()).toEqual([
+        expect.objectContaining({
+          body: '',
+          kind: 'NOTICE',
+          payload: { hidden: true, marker: true, turn: 1, turnKey: 'turn-1' },
+          role: 'SYSTEM',
+        }),
+      ]);
+    });
+
+    it('is written for a tool-only turn that wrote no text', async () => {
+      m.runAgent.mockImplementationOnce(
+        async (spec: { tools: Record<string, { execute: (i: unknown) => Promise<unknown> }> }) => {
+          await spec.tools.requestRepo?.execute({ reason: 'need code' });
+          return { text: '' };
+        }
+      );
+      await runOrchestratorTurn({ ...base, events: [] });
+      expect(m.created.some((c) => c.kind === 'TEXT')).toBe(false);
+      expect(markers()).toHaveLength(1);
+    });
+
+    it('is written for a failed turn too, and before the model ran', async () => {
+      let markedBeforeModel = false;
+      m.runAgent.mockImplementationOnce(async () => {
+        markedBeforeModel = markers().length === 1;
+        throw new Error('boom');
+      });
+      const out = await runOrchestratorTurn({ ...base, events: [], turn: 4, turnKey: 'turn-4' });
+      expect(out.status).toBe('FAILED');
+      expect(markedBeforeModel).toBe(true);
+      expect(markers()).toEqual([
+        expect.objectContaining({ payload: expect.objectContaining({ turn: 4 }) }),
+      ]);
+    });
+
+    it('is not written for an orchestration that is over', async () => {
+      m.orch = { ...(m.orch as object), status: 'COMPLETED' };
+      await runOrchestratorTurn({ ...base, events: [] });
+      expect(markers()).toHaveLength(0);
     });
   });
 });

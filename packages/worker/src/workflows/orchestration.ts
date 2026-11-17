@@ -286,6 +286,12 @@ export async function OrchestrationWorkflow(input: OrchestrationWorkflowInput): 
           await noteFailedTurn();
         } else {
           state.failedTurns = 0;
+          // Results that did not fit this turn are still unread: wake the orchestrator for them
+          // now, rather than leaving them for a backstop that only runs while a child is in flight.
+          // A recorded history has no such field, so replay takes the same path as before.
+          for (const childId of turn.deferredChildIds ?? []) {
+            push({ childId, type: 'childFinished' });
+          }
         }
       } catch (err) {
         // The turn could not run at all (timed out, or the worker died past its heartbeat). The

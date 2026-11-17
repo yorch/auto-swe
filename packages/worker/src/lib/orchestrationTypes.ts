@@ -110,6 +110,11 @@ export interface RunOrchestratorTurnResult {
   intents: OrchestratorIntent[];
   runningChildren: number;
   pendingApprovals: number;
+  /**
+   * Finished children whose result did not fit this turn and stays unread. The workflow reports
+   * each as a `childFinished` event so the next turn shows it in full. Absent in older histories.
+   */
+  deferredChildIds?: string[];
 }
 
 export interface ApplyOrchestrationIntentsInput {

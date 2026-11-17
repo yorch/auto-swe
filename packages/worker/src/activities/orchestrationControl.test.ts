@@ -4,6 +4,8 @@ const m = vi.hoisted(() => ({
   children: [] as Array<Record<string, unknown>>,
   complete: vi.fn(),
   gatewayPost: vi.fn(),
+  ledger: [] as Array<Record<string, unknown>>,
+  markerCount: 7,
   notices: [] as Array<Record<string, unknown>>,
   orch: { createdAt: new Date(1_000_000), status: 'ACTIVE', teamId: 'team-1' } as {
     createdAt: Date;
@@ -12,12 +14,20 @@ const m = vi.hoisted(() => ({
   } | null,
   orchUpdates: [] as Array<Record<string, unknown>>,
   runs: new Map<string, { endedAt: Date | null; id: string }>(),
+  textTurnCount: 0,
   unseen: [] as string[],
+  unseenGrace: [] as number[],
   warn: vi.fn(),
 }));
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
-    activeWorkflow: { findMany: vi.fn(async () => []) },
+    activeWorkflow: {
+      findMany: vi.fn(async () => []),
+      updateMany: vi.fn(async (args: Record<string, unknown>) => {
+        m.ledger.push(args);
+        return { count: 1 };
+      }),
+    },
     orchestration: {
       findUnique: vi.fn(async () => m.orch),
       updateMany: vi.fn(async (args: Record<string, unknown>) => {
@@ -32,7 +42,9 @@ vi.mock('@auto-swe/shared/db', () => ({
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
     orchestrationMessage: {
-      count: vi.fn(async (_args: unknown) => 7),
+      count: vi.fn(async (args: { where: { kind: string } }) =>
+        args.where.kind === 'NOTICE' ? m.markerCount : m.textTurnCount
+      ),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
         m.notices.push(data);
       }),
@@ -48,7 +60,10 @@ vi.mock('@auto-swe/shared/db', () => ({
 vi.mock('../lib/activityLog.js', () => ({ logWarn: m.warn }));
 vi.mock('../lib/orchestrationChildren.js', () => ({
   completeOrchestrationChild: m.complete,
-  findUnseenChildResults: vi.fn(async () => m.unseen),
+  findUnseenChildResults: vi.fn(async (_o: string, grace: number) => {
+    m.unseenGrace.push(grace);
+    return m.unseen;
+  }),
   recordChildResult: vi.fn(async () => null),
 }));
 vi.mock('../lib/orchestrationGateway.js', () => ({
@@ -78,6 +93,10 @@ beforeEach(() => {
   m.orchUpdates = [];
   m.runs = new Map();
   m.unseen = [];
+  m.unseenGrace = [];
+  m.ledger = [];
+  m.markerCount = 7;
+  m.textTurnCount = 0;
   m.notices = [];
   m.complete.mockReset();
 });
@@ -98,6 +117,15 @@ describe('refreshOrchestrationChildren (the lost-signal backstop)', () => {
     m.unseen = ['c7'];
     const out = await refreshOrchestrationChildren({ orchestrationId: ORCH });
     expect(out.finishedChildIds).toEqual(['c7']);
+  });
+
+  it('re-reports a result a turn deferred (still unread) once the signal grace has passed', async () => {
+    // A deferred result is unread, so the same lookup that finds a lost signal finds it; the
+    // workflow also reports it itself right after the turn that deferred it.
+    m.unseen = ['c6', 'c7', 'c8'];
+    const out = await refreshOrchestrationChildren({ orchestrationId: ORCH });
+    expect(out.finishedChildIds).toEqual(['c6', 'c7', 'c8']);
+    expect(m.unseenGrace).toEqual([90_000]);
   });
 
   it('keeps going when one child cannot be reconciled', async () => {
@@ -134,13 +162,34 @@ describe('beginOrchestrationRun', () => {
     });
   });
 
-  it('counts turns only by the marker a turn activity writes, never by any ORCHESTRATOR text', async () => {
+  it('counts every turn by its marker, tool-only and failed ones included', async () => {
     const { prisma } = await import('@auto-swe/shared/db');
-    await beginOrchestrationRun({ orchestrationId: ORCH });
-    // A gateway-written messageAgent row (ORCHESTRATOR, TEXT, no payload.turn) is not a turn.
-    expect(vi.mocked(prisma.orchestrationMessage.count).mock.calls[0]?.[0]).toMatchObject({
-      where: { kind: 'TEXT', payload: { gte: 1, path: ['turn'] }, role: 'ORCHESTRATOR' },
+    m.markerCount = 9;
+    const out = await beginOrchestrationRun({ orchestrationId: ORCH });
+    expect(out.turns).toBe(9);
+    // The marker is a hidden SYSTEM NOTICE; a gateway-written messageAgent row (ORCHESTRATOR, TEXT,
+    // no payload.turn) is not a turn.
+    const wheres = vi
+      .mocked(prisma.orchestrationMessage.count)
+      .mock.calls.map((c) => (c[0] as { where: unknown }).where);
+    expect(wheres).toContainEqual({
+      kind: 'NOTICE',
+      orchestrationId: ORCH,
+      payload: { equals: true, path: ['marker'] },
+      role: 'SYSTEM',
     });
+    expect(wheres).toContainEqual(
+      expect.objectContaining({ kind: 'TEXT', payload: { gte: 1, path: ['turn'] } })
+    );
+  });
+
+  it('still counts turns recorded before markers existed, without counting a turn twice', async () => {
+    m.markerCount = 3;
+    m.textTurnCount = 12;
+    expect((await beginOrchestrationRun({ orchestrationId: ORCH })).turns).toBe(12);
+    m.markerCount = 15;
+    m.textTurnCount = 5;
+    expect((await beginOrchestrationRun({ orchestrationId: ORCH })).turns).toBe(15);
   });
 });
 
@@ -163,6 +212,74 @@ describe('recordOrchestrationStatus', () => {
   it('WAITING does not end it', async () => {
     await recordOrchestrationStatus({ orchestrationId: ORCH, status: 'WAITING' });
     expect((m.orchUpdates[0] as { data: Record<string, unknown> }).data.endedAt).toBeUndefined();
+  });
+});
+
+describe('the orchestrator ledger row (the in-flight cap of the launcher)', () => {
+  const NOT_TERMINAL = { notIn: ['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED'] };
+  const WF = `orch-${ORCH}`;
+
+  it('closes it as COMPLETED when the orchestration idles out or completes', async () => {
+    await recordOrchestrationStatus({ orchestrationId: ORCH, status: 'WAITING' });
+    await recordOrchestrationStatus({ orchestrationId: ORCH, status: 'COMPLETED' });
+    expect(m.ledger).toEqual([
+      {
+        data: { currentStatus: 'COMPLETED' },
+        where: { currentStatus: NOT_TERMINAL, temporalWorkflowId: WF },
+      },
+      {
+        data: { currentStatus: 'COMPLETED' },
+        where: { currentStatus: NOT_TERMINAL, temporalWorkflowId: WF },
+      },
+    ]);
+  });
+
+  it('closes it as CANCELLED or FAILED, never overwriting a terminal status', async () => {
+    await recordOrchestrationStatus({ orchestrationId: ORCH, status: 'CANCELLED' });
+    await recordOrchestrationStatus({ orchestrationId: ORCH, status: 'FAILED' });
+    expect(m.ledger.map((l) => (l.data as { currentStatus: string }).currentStatus)).toEqual([
+      'CANCELLED',
+      'FAILED',
+    ]);
+    // Conditional on non-terminal: a CANCELLED row the gateway wrote is left as it is.
+    expect(
+      m.ledger.every(
+        (l) =>
+          JSON.stringify((l.where as { currentStatus: unknown }).currentStatus) ===
+          JSON.stringify(NOT_TERMINAL)
+      )
+    ).toBe(true);
+  });
+
+  it('reopens only a row it closed as COMPLETED, when the orchestration is not over', async () => {
+    await recordOrchestrationStatus({ orchestrationId: ORCH, status: 'ACTIVE' });
+    expect(m.ledger).toEqual([
+      {
+        data: { currentStatus: 'IMPLEMENTING' },
+        where: { currentStatus: 'COMPLETED', temporalWorkflowId: WF },
+      },
+    ]);
+    m.ledger = [];
+    m.orch = { createdAt: new Date(), status: 'CANCELLED', teamId: 'team-1' };
+    await recordOrchestrationStatus({ orchestrationId: ORCH, status: 'ACTIVE' });
+    expect(m.ledger).toEqual([]);
+  });
+
+  it('is put back in flight when the workflow restarts', async () => {
+    m.orch = { createdAt: new Date(5_000), status: 'WAITING', teamId: 'team-1' };
+    await beginOrchestrationRun({ orchestrationId: ORCH });
+    expect(m.ledger).toEqual([
+      {
+        data: { currentStatus: 'IMPLEMENTING' },
+        where: { currentStatus: 'COMPLETED', temporalWorkflowId: WF },
+      },
+    ]);
+  });
+
+  it('is not reopened for an orchestration that is over', async () => {
+    m.orch = { createdAt: new Date(), status: 'CANCELLED', teamId: 'team-1' };
+    await beginOrchestrationRun({ orchestrationId: ORCH });
+    expect(m.ledger).toEqual([]);
   });
 });
 

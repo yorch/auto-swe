@@ -10,6 +10,7 @@ import { createOrchestrationGateway } from '../lib/orchestrationGateway.js';
 import {
   countOrchestrationLoad,
   RUNNING_CHILD_STATUSES,
+  syncOrchestrationLedger,
   writeNotice,
 } from '../lib/orchestrationState.js';
 import type {
@@ -63,9 +64,26 @@ export async function beginOrchestrationRun(
       where: { id: input.orchestrationId, status: 'WAITING', teamId: orch.teamId },
     });
   }
-  const [turns, load, unseen] = await Promise.all([
-    // Turns are the messages a turn activity wrote with its number (`payload.turn`). Any other
-    // ORCHESTRATOR text (a `messageAgent` the gateway recorded for a child, say) is not a turn.
+  // A restart (or a wake from WAITING) puts the orchestrator's ledger row back in flight.
+  await syncOrchestrationLedger(input.orchestrationId, 'ACTIVE').catch((err) => {
+    logWarn('orchestration ledger not reopened', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+  const [markedTurns, textTurns, load, unseen] = await Promise.all([
+    // Every turn writes a hidden marker (SYSTEM NOTICE, `payload.marker`) before the model runs,
+    // whatever the turn goes on to do, so tool-only and failed turns count.
+    prisma.orchestrationMessage.count({
+      where: {
+        kind: 'NOTICE',
+        orchestrationId: input.orchestrationId,
+        payload: { equals: true, path: ['marker'] },
+        role: 'SYSTEM',
+      },
+    }),
+    // Turns taken before markers existed are the messages a turn wrote with its number
+    // (`payload.turn`). Any other ORCHESTRATOR text (a `messageAgent` the gateway recorded for a
+    // child, say) is not a turn.
     prisma.orchestrationMessage.count({
       where: {
         kind: 'TEXT',
@@ -77,6 +95,8 @@ export async function beginOrchestrationRun(
     countOrchestrationLoad(input.orchestrationId),
     findUnseenChildResults(input.orchestrationId, 0),
   ]);
+  // A turn since markers began is in both counts, so the sum would count it twice: take the larger.
+  const turns = Math.max(markedTurns, textTurns);
   return {
     createdAtMs: orch.createdAt.getTime(),
     pendingApprovals: load.pendingApprovals,
@@ -185,7 +205,7 @@ export async function recordOrchestrationStatus(
 ): Promise<void> {
   const ending = input.status !== 'ACTIVE' && input.status !== 'WAITING';
   const row = await prisma.orchestration.findUnique({
-    select: { teamId: true },
+    select: { status: true, teamId: true },
     where: { id: input.orchestrationId },
   });
   if (!row) {
@@ -194,6 +214,15 @@ export async function recordOrchestrationStatus(
   await prisma.orchestration.updateMany({
     data: { ...(ending ? { endedAt: new Date() } : {}), status: input.status },
     where: { id: input.orchestrationId, status: { notIn: [...TERMINAL] }, teamId: row.teamId },
+  });
+  await syncOrchestrationLedger(
+    input.orchestrationId,
+    input.status,
+    (TERMINAL as readonly string[]).includes(row.status)
+  ).catch((err) => {
+    logWarn('orchestration ledger not updated', {
+      error: err instanceof Error ? err.message : String(err),
+    });
   });
   if (input.notice) {
     await writeNotice(input.orchestrationId, input.notice.code, input.notice.body);
