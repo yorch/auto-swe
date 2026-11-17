@@ -4,6 +4,7 @@ import {
   CHANNEL_ASSISTANT_TEMPLATE_NAME,
   CHANNEL_TASK_TEMPLATE_NAME,
 } from '../../packages/shared/src/lib/channelTask.ts';
+import { PLANNED_RUN_TEMPLATE_NAME } from '../../packages/shared/src/lib/plannedRun.ts';
 import {
   WORKFLOW_CATALOG,
   WORKFLOW_GROUPS,
@@ -27,6 +28,7 @@ describe('workflow presentation catalog', () => {
     const names = [
       ...BUILTIN_TEMPLATES.map((template) => template.name),
       AGENT_RUN_TEMPLATE_NAME,
+      PLANNED_RUN_TEMPLATE_NAME,
       CHANNEL_ASSISTANT_TEMPLATE_NAME,
       CHANNEL_TASK_TEMPLATE_NAME,
     ];

@@ -98,7 +98,29 @@ export const MAX_PLAN_TTL_MS = 24 * 3_600_000;
 export const LAUNCH_WINDOW_MS = 10 * 60_000;
 /** Largest serialized spec a plan may carry. */
 export const MAX_PLAN_SPEC_BYTES = 512 * 1024;
+
 export { DEFAULT_PLAN_RETENTION_MS } from '@auto-swe/shared/lib/runPlanSweep';
+
+/** The deepest nesting a plan spec may have: the canonicalizer's own limit (`stableStringify`). */
+export const MAX_PLAN_SPEC_DEPTH = 100;
+
+/** Whether `root` nests objects or arrays deeper than `limit`, without recursing. */
+function nestsDeeperThan(root: unknown, limit: number): boolean {
+  const stack: Array<[unknown, number]> = [[root, 0]];
+  while (stack.length > 0) {
+    const [value, depth] = stack.pop() as [unknown, number];
+    if (value === null || typeof value !== 'object') {
+      continue;
+    }
+    if (depth > limit) {
+      return true;
+    }
+    for (const child of Object.values(value)) {
+      stack.push([child, depth + 1]);
+    }
+  }
+  return false;
+}
 
 export interface PlanRefusal {
   ok: false;
@@ -309,6 +331,13 @@ export async function authorizeRepository(
  * {@link MAX_PLAN_SPEC_BYTES}, is refused with a code instead of surfacing as a thrown error.
  */
 function serializeSpec(raw: unknown): { ok: true; stored: unknown; hash: string } | PlanRefusal {
+  // Depth is measured first, and iteratively, so the answer never depends on how large this
+  // process's stack is: a spec nested far past the limit overflows `JSON.stringify` on one
+  // machine and serializes into a very large string on another, and it must be the same
+  // refusal on both.
+  if (nestsDeeperThan(raw, MAX_PLAN_SPEC_DEPTH)) {
+    return refuse(422, 'PLAN_SPEC_TOO_DEEP', 'The generated spec is nested too deeply');
+  }
   let json: string;
   try {
     json = JSON.stringify(raw) ?? '';
