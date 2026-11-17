@@ -78,6 +78,11 @@ export interface ResolvedModelConfig {
   /** Base URL override from the resolved credential. */
   apiBase?: string;
   /**
+   * Scope of the credential row `apiKey` came from (a pin's own scope, or the cascade tier that
+   * answered). Absent means unknown, which a trust decision must read as untrusted.
+   */
+  credentialScope?: 'TEAM' | 'ORGANIZATION' | 'GLOBAL';
+  /**
    * The credential came from a broader scope than the run asked for, so the
    * entry caching this config uses the short fall-through TTL.
    */

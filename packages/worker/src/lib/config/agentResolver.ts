@@ -277,6 +277,7 @@ async function resolveModelForAgent(
       apiBase: cred.apiBase,
       apiKey: cred.apiKey,
       credentialFellThrough: cred.fellThrough,
+      credentialScope: cred.scope,
       reasoning,
       scope: agent.scope,
       spec,
@@ -299,12 +300,22 @@ async function credentialForModel(
   source: AgentRow,
   provider: string,
   ctx?: ResolveCtx
-): Promise<{ apiBase?: string; apiKey: string; fellThrough: boolean }> {
+): Promise<{
+  apiBase?: string;
+  apiKey: string;
+  fellThrough: boolean;
+  scope: 'TEAM' | 'ORGANIZATION' | 'GLOBAL';
+}> {
   const pinned = agent.credentialId ?? source.credentialId;
   if (pinned) {
     const result = await resolvePinnedCredential(pinned, provider, ctx);
     if (result.ok) {
-      return { apiBase: result.apiBase, apiKey: result.apiKey, fellThrough: false };
+      return {
+        apiBase: result.apiBase,
+        apiKey: result.apiKey,
+        fellThrough: false,
+        scope: result.scope,
+      };
     }
     logWarn('agent credential pin not usable; using the provider credential cascade', {
       agentKey: agent.key,

@@ -48,9 +48,12 @@ vi.mock('./resolver.js', () => ({
     }
   },
   resolvePinnedCredential: vi.fn(),
-  resolveProviderCredential: vi
-    .fn()
-    .mockResolvedValue({ apiBase: undefined, apiKey: 'sk-cred', fellThrough: false }),
+  resolveProviderCredential: vi.fn().mockResolvedValue({
+    apiBase: undefined,
+    apiKey: 'sk-cred',
+    fellThrough: false,
+    scope: 'GLOBAL',
+  }),
 }));
 
 import {
@@ -113,6 +116,7 @@ beforeEach(() => {
     apiBase: undefined,
     apiKey: 'sk-cred',
     fellThrough: false,
+    scope: 'GLOBAL',
   });
 });
 
@@ -132,6 +136,7 @@ describe('resolveAgent — reads from the Agent entity', () => {
       apiBase: undefined,
       apiKey: 'sk-cred',
       credentialFellThrough: false,
+      credentialScope: 'GLOBAL',
       reasoning: null,
       scope: 'GLOBAL',
       spec: 'anthropic/claude-opus-4-8',
@@ -191,6 +196,24 @@ describe('resolveAgent — model inheritance', () => {
   });
 });
 
+describe('resolveAgent — credential scope', () => {
+  it.each(['TEAM', 'ORGANIZATION', 'GLOBAL'] as const)(
+    'carries the %s scope of the cascade credential into the model',
+    async (scope) => {
+      agentFindFirst.mockResolvedValue(agentRow());
+      mockedResolveCred.mockResolvedValue({
+        apiBase: 'https://team.example.com',
+        apiKey: 'sk-x',
+        fellThrough: false,
+        scope,
+      });
+      const r = await resolveAgent('reviewer');
+      expect(r.model.credentialScope).toBe(scope);
+      expect(r.model.apiBase).toBe('https://team.example.com');
+    }
+  );
+});
+
 describe('resolveAgent — pinned credential', () => {
   it('calls the model with the pinned credential instead of the provider cascade', async () => {
     agentFindFirst.mockResolvedValue(
@@ -200,6 +223,7 @@ describe('resolveAgent — pinned credential', () => {
       apiBase: 'https://openrouter.ai/api/v1',
       apiKey: 'sk-pinned',
       ok: true,
+      scope: 'TEAM',
     });
     const ctx = { teamId: 't-1' };
 
@@ -207,6 +231,7 @@ describe('resolveAgent — pinned credential', () => {
 
     expect(r.model.apiKey).toBe('sk-pinned');
     expect(r.model.apiBase).toBe('https://openrouter.ai/api/v1');
+    expect(r.model.credentialScope).toBe('TEAM');
     expect(mockedPinnedCred).toHaveBeenCalledWith('cred-pin', 'openrouter', ctx);
     expect(mockedResolveCred).not.toHaveBeenCalled();
   });
@@ -218,7 +243,7 @@ describe('resolveAgent — pinned credential', () => {
         ? agentRow({ inheritsModelFrom: 'reviewer', key: 'securityReviewer', modelSpec: null })
         : agentRow({ credentialId: 'cred-parent', key: 'reviewer' })
     );
-    mockedPinnedCred.mockResolvedValue({ apiKey: 'sk-parent', ok: true });
+    mockedPinnedCred.mockResolvedValue({ apiKey: 'sk-parent', ok: true, scope: 'GLOBAL' });
 
     const r = await resolveAgent('securityReviewer');
 
@@ -238,7 +263,7 @@ describe('resolveAgent — pinned credential', () => {
           })
         : agentRow({ credentialId: 'cred-parent', key: 'reviewer' })
     );
-    mockedPinnedCred.mockResolvedValue({ apiKey: 'sk-own', ok: true });
+    mockedPinnedCred.mockResolvedValue({ apiKey: 'sk-own', ok: true, scope: 'GLOBAL' });
 
     await resolveAgent('securityReviewer');
 
@@ -547,6 +572,7 @@ describe('resolveAgent — cross-scope fall-through is cached briefly', () => {
       apiBase: undefined,
       apiKey: 'sk-global',
       fellThrough: true,
+      scope: 'GLOBAL',
     });
     // biome-ignore lint/suspicious/noExplicitAny: arg inspection
     agentFindFirst.mockImplementation(async (args: any) =>

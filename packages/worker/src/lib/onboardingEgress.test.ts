@@ -45,6 +45,7 @@ const seeded = {
   workflowTemplateId: null,
 };
 const loop = { runtime: 'mastra', source: 'default' };
+const globalCredential = { scope: 'GLOBAL' } as const;
 const run = {
   template: { kind: null, name: 'repo-onboarding', origin: 'swe-starter', teamId: null },
   templateId: 'template-1',
@@ -71,7 +72,9 @@ describe('onboarding draft authority', () => {
       templateVersion: 1,
     });
     m.version.mockResolvedValue({ createdBy: null, generatedBy: null });
-    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop)).toBe(true);
+    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop, globalCredential)).toBe(
+      true
+    );
     expect(m.version).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { templateId_version: { templateId: 'template-1', version: 1 } },
@@ -79,7 +82,9 @@ describe('onboarding draft authority', () => {
     );
   });
   it('verifies this exact execution and its seeded template version', async () => {
-    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop)).toBe(true);
+    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop, globalCredential)).toBe(
+      true
+    );
     expect(m.run).toHaveBeenCalledWith(expect.objectContaining({ where: { workflowId: 'wf-1' } }));
     expect(m.version).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -88,7 +93,7 @@ describe('onboarding draft authority', () => {
     );
   });
   it('does not query provenance for another agent', async () => {
-    expect(await isOnboardingDraftAgent('reviewer', 'agent-1', loop)).toBe(false);
+    expect(await isOnboardingDraftAgent('reviewer', 'agent-1', loop, globalCredential)).toBe(false);
     expect(m.run).not.toHaveBeenCalled();
   });
   it.each([
@@ -99,7 +104,9 @@ describe('onboarding draft authority', () => {
     { ...run, template: { ...run.template, origin: null } },
   ])('refuses an unverified or non-builtin run: %j', async (row) => {
     m.run.mockResolvedValue(row);
-    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop)).toBe(false);
+    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop, globalCredential)).toBe(
+      false
+    );
     expect(m.version).not.toHaveBeenCalled();
   });
   it.each([
@@ -108,23 +115,29 @@ describe('onboarding draft authority', () => {
     { createdBy: null, generatedBy: 'workflow-author' },
   ])('refuses an absent or authored version: %j', async (version) => {
     m.version.mockResolvedValue(version);
-    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop)).toBe(false);
+    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop, globalCredential)).toBe(
+      false
+    );
   });
   it('refuses activity calls without a verified workflow execution', async () => {
     m.info.mockImplementation(() => {
       throw new Error('outside activity');
     });
-    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop)).toBe(false);
+    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop, globalCredential)).toBe(
+      false
+    );
     expect(m.run).not.toHaveBeenCalled();
   });
   it('propagates database errors instead of granting on incomplete evidence', async () => {
     m.run.mockRejectedValue(new Error('unavailable'));
-    await expect(isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop)).rejects.toThrow(
-      'unavailable'
-    );
+    await expect(
+      isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop, globalCredential)
+    ).rejects.toThrow('unavailable');
   });
   it('looks the resolved row up by id', async () => {
-    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop)).toBe(true);
+    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop, globalCredential)).toBe(
+      true
+    );
     expect(m.agent).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'agent-1' } }));
     expect(m.warn).not.toHaveBeenCalled();
   });
@@ -135,11 +148,15 @@ describe('onboarding draft authority', () => {
       modelSpec: 'openai/gpt-6.1-sol',
       reasoning: 'high',
     });
-    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop)).toBe(true);
+    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop, globalCredential)).toBe(
+      true
+    );
   });
   it('qualifies on a user-written version whose content is the seed', async () => {
     m.agent.mockResolvedValue({ ...seeded, createdById: 'user-1', isVerified: false });
-    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop)).toBe(true);
+    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop, globalCredential)).toBe(
+      true
+    );
   });
   it.each([
     ['key', { key: 'reviewer' }],
@@ -163,7 +180,9 @@ describe('onboarding draft authority', () => {
     ['skillRefs', { skillRefs: [{ skill: { name: 'extra' }, sortOrder: 0 }] }],
   ])('refuses a row that differs only in %s', async (condition, patch) => {
     m.agent.mockResolvedValue({ ...seeded, ...patch });
-    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop)).toBe(false);
+    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop, globalCredential)).toBe(
+      false
+    );
     expect(m.warn).toHaveBeenCalledOnce();
     expect(m.warn.mock.calls[0]?.[1]).toMatchObject({ agentId: 'agent-1' });
     expect(String(m.warn.mock.calls[0]?.[1]?.condition)).toBe(condition.split(' ')[0]);
@@ -175,14 +194,18 @@ describe('onboarding draft authority', () => {
     hashes['repo-onboarder'] = [hash];
     try {
       m.agent.mockResolvedValue({ ...seeded, systemPrompt: previous });
-      expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop)).toBe(true);
+      expect(
+        await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop, globalCredential)
+      ).toBe(true);
     } finally {
       delete hashes['repo-onboarder'];
     }
   });
   it('qualifies when the tool keys are the same set in another order', async () => {
     m.agent.mockResolvedValue({ ...seeded, toolKeys: [...seeded.toolKeys].reverse() });
-    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop)).toBe(true);
+    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop, globalCredential)).toBe(
+      true
+    );
   });
   it.each([
     ['a run-pinned non-default runtime', { runtime: 'pi', source: 'run' }],
@@ -190,19 +213,65 @@ describe('onboarding draft authority', () => {
     ['an agent-chosen runtime', { runtime: 'claude-code', source: 'agent' }],
     ['a default that is not mastra', { runtime: 'pi', source: 'default' }],
   ])('refuses %s with its own logged condition, before reading the row', async (_n, pinned) => {
-    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', pinned)).toBe(false);
+    expect(
+      await isOnboardingDraftAgent('repo-onboarder', 'agent-1', pinned, globalCredential)
+    ).toBe(false);
     expect(m.agent).not.toHaveBeenCalled();
     expect(m.warn.mock.calls[0]?.[1]).toMatchObject({ condition: 'runtimePin' });
   });
+  it.each([
+    ['GLOBAL, no custom endpoint', { scope: 'GLOBAL' }],
+    [
+      'GLOBAL, with a custom endpoint',
+      { apiBase: 'https://proxy.example.com/v1', scope: 'GLOBAL' },
+    ],
+    ['TEAM, no custom endpoint', { scope: 'TEAM' }],
+    ['ORGANIZATION, no custom endpoint', { scope: 'ORGANIZATION' }],
+  ] as const)('grants for a %s credential', async (_n, credential) => {
+    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop, credential)).toBe(true);
+    expect(m.warn).not.toHaveBeenCalled();
+  });
+  it.each([
+    [
+      'a TEAM credential with a custom endpoint',
+      { apiBase: 'https://evil.example.com', scope: 'TEAM' },
+    ],
+    [
+      'an ORGANIZATION credential with a custom endpoint',
+      { apiBase: 'https://evil.example.com', scope: 'ORGANIZATION' },
+    ],
+    ['a credential with no scope', {}],
+    ['a credential with no scope and a custom endpoint', { apiBase: 'https://x.example.com' }],
+  ] as const)(
+    'refuses %s with its own logged condition, before reading the row',
+    async (_n, credential) => {
+      expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop, credential)).toBe(
+        false
+      );
+      expect(m.agent).not.toHaveBeenCalled();
+      expect(m.warn).toHaveBeenCalledOnce();
+      expect(m.warn.mock.calls[0]?.[1]).toMatchObject({
+        agentId: 'agent-1',
+        condition: 'credentialScope',
+      });
+    }
+  );
+  it('does not log a credential refusal for a run that is not an onboarding draft', async () => {
+    m.run.mockResolvedValue(null);
+    expect(await isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop, {})).toBe(false);
+    expect(m.warn).not.toHaveBeenCalled();
+  });
   it('refuses a resolved row that cannot be found', async () => {
     m.agent.mockResolvedValue(null);
-    expect(await isOnboardingDraftAgent('repo-onboarder', 'gone', loop)).toBe(false);
+    expect(await isOnboardingDraftAgent('repo-onboarder', 'gone', loop, globalCredential)).toBe(
+      false
+    );
     expect(m.warn).toHaveBeenCalledOnce();
   });
   it('propagates an agent lookup failure instead of granting', async () => {
     m.agent.mockRejectedValue(new Error('agent lookup unavailable'));
-    await expect(isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop)).rejects.toThrow(
-      'agent lookup unavailable'
-    );
+    await expect(
+      isOnboardingDraftAgent('repo-onboarder', 'agent-1', loop, globalCredential)
+    ).rejects.toThrow('agent lookup unavailable');
   });
 });

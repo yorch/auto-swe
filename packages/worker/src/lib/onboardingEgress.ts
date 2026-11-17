@@ -9,6 +9,13 @@ interface ResolvedLoop {
   source: string;
 }
 
+/** Where the resolved model's credential came from (`ResolvedModelConfig`). */
+interface ModelCredential {
+  apiBase?: string;
+  /** Absent means unknown, which is refused. */
+  scope?: 'TEAM' | 'ORGANIZATION' | 'GLOBAL';
+}
+
 /**
  * Agent keys alone are not authority: team and organization admins can override their
  * definitions, and any version can be edited. The exception holds only when
@@ -20,20 +27,28 @@ interface ResolvedLoop {
  *   `firstDifferenceFromSeed` judges it: GLOBAL with no owner, the seeded prompt, tools and
  *   skills, and no MCP binding, runtime, harness profile or model inheritance. A pinned older
  *   version or a `key@version` ref resolves to another row and is judged the same way; an absent
- *   row fails.
+ *   row fails; and
+ * - the credential the agent's model is called with is not one a team could point at a server of
+ *   its own (`credentialScope`): its row is GLOBAL, or it is TEAM or ORGANIZATION with no custom
+ *   `apiBase` (a team's own vendor key used against the provider's default endpoint cannot steer
+ *   the model elsewhere). A custom `apiBase` on a non-GLOBAL credential, or an unknown scope,
+ *   refuses. The credential is resolved by scope (a team credential wins over the global one) or
+ *   pinned on the agent, so without this a team admin could make the model that drives the
+ *   widened workspace their own server's.
  * A refusal for a run that is otherwise an onboarding draft is logged.
  *
- * Not covered: the credential the agent's model is called with is resolved by scope (a team or
- * organization provider credential, with its own `apiBase`, wins over the global one), so a team
- * admin can steer which model drives the widened workspace without touching the agent; the check
- * narrows who gets the wider list and is not a strong boundary against a team admin. And the row
- * is read here, live by id, while the run's agent comes from a ~30 s cache: a bundle install
- * (ADMIN only) that rewrites the GLOBAL head in place is not noticed by an id comparison.
+ * Not covered: the model id and reasoning level may still vary (an ADMIN-edited GLOBAL row). A
+ * TEAM or ORGANIZATION credential with no `apiBase` supplies only the key: its owner does not
+ * choose the endpoint or the model, but does control the vendor account the call is billed to
+ * and governed by (retention, limits, organisation policies). The row is read here,
+ * live by id, while the run's agent comes from a ~30 s cache: a bundle install (ADMIN only) that
+ * rewrites the GLOBAL head in place is not noticed by an id comparison.
  */
 export async function isOnboardingDraftAgent(
   agentKey: string,
   agentId: string,
-  loop: ResolvedLoop
+  loop: ResolvedLoop,
+  credential: ModelCredential
 ): Promise<boolean> {
   if (agentKey !== 'repo-onboarder') {
     return false;
@@ -79,6 +94,10 @@ export async function isOnboardingDraftAgent(
     refuse(agentId, 'runtimePin');
     return false;
   }
+  if (!credentialTrusted(credential)) {
+    refuse(agentId, 'credentialScope');
+    return false;
+  }
   const seed = SWE_AGENTS.find((def) => def.key === agentKey);
   const agent = await prisma.agent.findUnique({
     select: {
@@ -106,11 +125,28 @@ export async function isOnboardingDraftAgent(
   return true;
 }
 
+/**
+ * A GLOBAL credential is the operator's. A TEAM or ORGANIZATION one is trusted only against the
+ * provider's default endpoint: with a custom `apiBase` its owner picks the server the model
+ * call goes to. A scope that is missing or not recognised is not trusted.
+ */
+export function credentialTrusted(credential: ModelCredential): boolean {
+  if (credential.scope === 'GLOBAL') {
+    return true;
+  }
+  if (credential.scope === 'TEAM' || credential.scope === 'ORGANIZATION') {
+    return !credential.apiBase;
+  }
+  return false;
+}
+
 function refuse(agentId: string, condition: string): void {
   logWarn(
     condition === 'runtimePin'
       ? "onboarding draft egress refused: the node's runtime is not the default one"
-      : 'onboarding draft egress refused: the resolved agent is not the seeded definition',
+      : condition === 'credentialScope'
+        ? "onboarding draft egress refused: the model's credential is not global and names its own endpoint, or its scope is unknown"
+        : 'onboarding draft egress refused: the resolved agent is not the seeded definition',
     { agentId, condition }
   );
 }

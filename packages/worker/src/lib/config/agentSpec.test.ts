@@ -92,6 +92,23 @@ describe('resolveAgentSpec — role path', () => {
     expect(resolveModel).toHaveBeenCalledWith('openrouter/foo', 'k2', 'https://base', 'low');
   });
 
+  it('carries the credential scope and endpoint the model was bound with', async () => {
+    mockedResolveAgent.mockResolvedValue(
+      resolvedAgent({
+        model: {
+          apiBase: 'https://team.example.com',
+          apiKey: 'k',
+          credentialScope: 'TEAM',
+          scope: 'GLOBAL',
+          spec: 'anthropic/claude-x',
+          systemPrompt: undefined,
+        },
+      })
+    );
+    const spec = await resolveAgentSpec({ agentKey: 'validateContext' });
+    expect(spec.modelCredential).toEqual({ apiBase: 'https://team.example.com', scope: 'TEAM' });
+  });
+
   it('carries the resolved Agent row id and version, and null for an inline agent', async () => {
     mockedResolveAgent.mockResolvedValue(resolvedAgent({ id: 'row-7', version: 7 }));
     expect((await resolveAgentSpec({ agentKey: 'reviewer', basePrompt: 'B' })).agent).toEqual({
