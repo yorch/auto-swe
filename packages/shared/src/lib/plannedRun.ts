@@ -68,3 +68,47 @@ export const PLANNED_RUN_SPEC = {
   },
   schemaVersion: 1,
 } as const;
+
+/** The key of an `agentRef` (`<key>` or `<key>@<version>`). */
+function agentRefKey(ref: string): string {
+  const at = ref.lastIndexOf('@');
+  return at === -1 ? ref : ref.slice(0, at);
+}
+
+/**
+ * Whether a plan's mode, its library agent and its spec agree, as a reason when they do not.
+ *
+ * `output-only` is exactly the library-agent plan: it names the agent it is built on, and the spec
+ * has an `agent` node running it. A `delivering` plan is the implementer path and names none.
+ * Admission (agent-run concurrency) is keyed on the mode, so a plan whose mode and agent disagree
+ * could otherwise take the engineering path's lack of limits while carrying an agent, or the
+ * reverse. Checked at creation, at approval, at launch (mode and key only) and by the worker.
+ */
+export function runPlanConsistencyIssue(
+  plan: { mode: string; agentKey: string | null | undefined },
+  spec?: { nodes?: Record<string, unknown> }
+): string | null {
+  if (plan.mode === 'delivering') {
+    return plan.agentKey ? 'a delivering plan is not built on a library agent' : null;
+  }
+  if (plan.mode !== 'output-only') {
+    return 'unknown plan mode';
+  }
+  if (!plan.agentKey) {
+    return 'an output-only plan must name the library agent it is built on';
+  }
+  if (spec) {
+    const runsIt = Object.values(spec.nodes ?? {}).some((node) => {
+      const n = node as { type?: unknown; agentRef?: unknown };
+      return (
+        n.type === 'agent' &&
+        typeof n.agentRef === 'string' &&
+        agentRefKey(n.agentRef) === plan.agentKey
+      );
+    });
+    if (!runsIt) {
+      return `the plan names agent '${plan.agentKey}' but no agent node of the spec runs it`;
+    }
+  }
+  return null;
+}

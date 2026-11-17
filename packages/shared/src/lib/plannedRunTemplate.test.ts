@@ -254,15 +254,17 @@ describe('run plan agent pins', () => {
     expect(agentPinDrift('not an object', {})).toEqual([]);
   });
 
-  it('lists the agent keys a spec names, without version suffixes', () => {
+  it('lists the agent refs a spec names as written, and the agents its steps resolve', () => {
     expect(
       specAgentKeys({
         nodes: {
           a: { agentRef: 'planner', type: 'agent' },
           b: { agentRef: 'writer@3', type: 'agent' },
           c: { step: 'runTests', type: 'step' },
+          d: { step: 'validateContext', type: 'step' },
         },
       })
-    ).toEqual(['planner', 'writer']);
+      // `writer@3` keeps its version: the pin must check the version the node runs.
+    ).toEqual(['planner', 'validateContext', 'writer@3']);
   });
 });

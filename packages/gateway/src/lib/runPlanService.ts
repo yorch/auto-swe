@@ -17,6 +17,7 @@ import {
   plannedRunTicketId,
   RUN_PLAN_MODES,
   type RunPlanMode,
+  runPlanConsistencyIssue,
 } from '@auto-swe/shared/lib/plannedRun';
 import type { RepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
 import {
@@ -65,10 +66,36 @@ import { launchTrackedWorkflow } from './workflowLaunch.js';
  *
  * The worker repeats the checks that matter when it creates the run (`createWorkflowRun`): this
  * layer exists for good errors and to stop a doomed launch early, not to be the authority.
+ *
+ * **Nothing calls this module yet.** The plan routes, the quota policy and a scheduled sweep that
+ * calls {@link expirePlans} arrive with the gateway routes of the next phase. Until they do, no
+ * plan can be created, no PENDING plan is ever moved to EXPIRED by time, and no expired or
+ * rejected row is deleted; that phase must call `expirePlans` on a schedule (an `APPROVED` plan
+ * that was never launched is expired by the same pass, using the same `expiresAt` the launch
+ * window below extends).
+ *
+ * **Library-agent plans are bounded by concurrency, the budget and the transition cap, not by the
+ * agent-run step and wall-clock ceilings.** `workspace.agentRunMaxSteps` and
+ * `workspace.agentRunMaxWallClockSeconds` are applied by `runAgentTask` to the one agent that task
+ * runs. An `agent` node of a spec has no step or wall-clock field to clamp (its retry and timeout
+ * fields are parsed and ignored), so there is nothing to compare against those ceilings at
+ * creation or approval; the run takes the agent-run concurrency admission, the team's budget
+ * and the interpreter's transition cap instead.
  */
 
 /** How long a plan may sit unapproved before it expires. */
 export const DEFAULT_PLAN_TTL_MS = 30 * 60_000;
+/** The shortest and longest unapproved lifetime a caller may ask for; anything else is clamped. */
+export const MIN_PLAN_TTL_MS = 60_000;
+export const MAX_PLAN_TTL_MS = 24 * 3_600_000;
+/**
+ * How long after approval the worker may still pin the plan. Approval pushes `expiresAt` out to at
+ * least this far, so a plan approved a second before its expiry is not refused by the worker after
+ * the gateway reported success; it is not a way to keep a plan alive indefinitely.
+ */
+export const LAUNCH_WINDOW_MS = 10 * 60_000;
+/** Largest serialized spec a plan may carry. */
+export const MAX_PLAN_SPEC_BYTES = 512 * 1024;
 /** How long an expired or rejected plan is kept before the sweeper deletes it. */
 export const DEFAULT_PLAN_RETENTION_MS = 7 * 24 * 3_600_000;
 
@@ -275,6 +302,72 @@ async function authorizeRepository(
   return { ok: true, repo: { id: repo.id, orgId: repo.team.orgId, teamId: repo.teamId } };
 }
 
+/**
+ * The spec as stored (a JSON round-trip) and its hash, or a refusal. Measured before anything
+ * parses it: a spec nested deeper than the canonicalizer allows, or larger than
+ * {@link MAX_PLAN_SPEC_BYTES}, is refused with a code instead of surfacing as a thrown error.
+ */
+function serializeSpec(raw: unknown): { ok: true; stored: unknown; hash: string } | PlanRefusal {
+  let json: string;
+  try {
+    json = JSON.stringify(raw) ?? '';
+  } catch (err) {
+    // A stack overflow is nesting; anything else (a cycle, a BigInt) is not a spec at all.
+    return err instanceof RangeError
+      ? refuse(422, 'PLAN_SPEC_TOO_DEEP', 'The generated spec is nested too deeply')
+      : refuse(422, 'PLAN_SPEC_INVALID', 'The generated spec cannot be serialized');
+  }
+  if (json.length === 0) {
+    return refuse(422, 'PLAN_SPEC_INVALID', 'The generated spec is empty');
+  }
+  if (Buffer.byteLength(json, 'utf8') > MAX_PLAN_SPEC_BYTES) {
+    return refuse(
+      422,
+      'PLAN_SPEC_TOO_LARGE',
+      `The generated spec is larger than ${MAX_PLAN_SPEC_BYTES} bytes`
+    );
+  }
+  try {
+    const stored = JSON.parse(json) as unknown;
+    return { hash: hashRunPlanSpec(stored), ok: true, stored };
+  } catch {
+    return refuse(422, 'PLAN_SPEC_TOO_DEEP', 'The generated spec is nested too deeply');
+  }
+}
+
+/** The hash of a stored spec, or `null` when it cannot be canonicalized. */
+function storedHash(raw: unknown): string | null {
+  try {
+    return hashRunPlanSpec(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Agents a plan relies on whose pin differs from what they resolve to now for the run's scope
+ * (including the Planned Run template's own tier), or that no longer resolve at all.
+ */
+async function agentDrift(
+  deps: Pick<RunPlanServiceDeps, 'prisma'>,
+  plan: { agentPins: unknown },
+  spec: WorkflowSpec,
+  repo: { orgId: string | null; teamId: string },
+  plannedRunTemplateId: string
+): Promise<string[]> {
+  const named = specAgentKeys(spec);
+  const recorded =
+    plan.agentPins && typeof plan.agentPins === 'object' && !Array.isArray(plan.agentPins)
+      ? Object.keys(plan.agentPins as Record<string, unknown>)
+      : [];
+  const current = await resolveRunPlanAgentPins(deps.prisma, [...recorded, ...named], {
+    orgId: repo.orgId,
+    teamId: repo.teamId,
+    workflowTemplateId: plannedRunTemplateId,
+  });
+  return agentPinDrift(plan.agentPins, current, named);
+}
+
 // ───────────────────────────── create ─────────────────────────────
 
 export interface CreatePlanInput {
@@ -320,9 +413,20 @@ export async function createPlanRecord(
   if (!repository.ok) {
     return repository;
   }
-  const spec = parseStoredSpec(input.spec);
+  const serialized = serializeSpec(input.spec);
+  if (!serialized.ok) {
+    return serialized;
+  }
+  const spec = parseStoredSpec(serialized.stored);
   if (!spec) {
     return refuse(422, 'PLAN_SPEC_INVALID', 'The generated spec does not parse');
+  }
+  const mismatch = runPlanConsistencyIssue(
+    { agentKey: input.agentKey ?? null, mode: input.mode },
+    spec
+  );
+  if (mismatch) {
+    return refuse(422, 'PLAN_AGENT_MISMATCH', `The plan is inconsistent: ${mismatch}`);
   }
   const skeletonReport = checkSkeletonPolicy(spec, input.mode);
   if (!skeletonReport.ok) {
@@ -340,6 +444,25 @@ export async function createPlanRecord(
       `The plan fails validation (${validationReport.errors.map((e) => e.code).join(', ')})`
     );
   }
+  // The pins the generator recorded must be what the agents resolve to right now, parents and
+  // step-reached agents included: a plan stored with a thinner pin set than it relies on would
+  // approve against agents nobody looked at.
+  const template = await loadPlannedRunTemplate(deps);
+  if (!template?.activeVersion) {
+    return refuse(
+      503,
+      'PLANNED_RUN_TEMPLATE_MISSING',
+      'The Planned Run system template is not installed; run the database seed'
+    );
+  }
+  const drift = await agentDrift(deps, input, spec, repository.repo, template.id);
+  if (drift.length > 0) {
+    return refuse(
+      409,
+      'PLAN_AGENTS_CHANGED',
+      `The recorded agent versions do not match the current ones: ${drift.join(', ')}`
+    );
+  }
   const quota = await (deps.quotas ?? NO_PLAN_QUOTAS).checkCreate({
     teamId: repository.repo.teamId,
     userId: input.owner.sub,
@@ -349,9 +472,10 @@ export async function createPlanRecord(
   }
 
   const now = nowOf(deps);
-  const expiresAt = new Date(now.getTime() + (input.ttlMs ?? DEFAULT_PLAN_TTL_MS));
-  // Hash what will be stored, read back through JSON, so the stored column hashes the same.
-  const stored = JSON.parse(JSON.stringify(spec)) as unknown;
+  const ttl = Number.isFinite(input.ttlMs) ? (input.ttlMs as number) : DEFAULT_PLAN_TTL_MS;
+  const expiresAt = new Date(
+    now.getTime() + Math.min(Math.max(ttl, MIN_PLAN_TTL_MS), MAX_PLAN_TTL_MS)
+  );
   const row = await deps.prisma.runPlan.create({
     data: {
       agentKey: input.agentKey ?? null,
@@ -368,8 +492,8 @@ export async function createPlanRecord(
       routerCandidates: input.routerCandidates as object,
       settingsSnapshot: input.settingsSnapshot as object,
       skeletonReport: JSON.parse(JSON.stringify(skeletonReport)) as object,
-      spec: stored as object,
-      specHash: hashRunPlanSpec(stored),
+      spec: serialized.stored as object,
+      specHash: serialized.hash,
       status: 'PENDING',
       teamId: repository.repo.teamId,
       validationReport: JSON.parse(JSON.stringify(validationReport)) as object,
@@ -423,12 +547,20 @@ async function verifyPlanForApproval(
     return refuse(409, 'PLAN_MODE_INVALID', 'The plan has an unknown mode');
   }
 
-  if (hashRunPlanSpec(plan.spec) !== plan.specHash) {
+  const hash = storedHash(plan.spec);
+  if (hash === null) {
+    return refuse(409, 'PLAN_SPEC_TOO_DEEP', 'The stored spec is nested too deeply');
+  }
+  if (hash !== plan.specHash) {
     return refuse(409, 'PLAN_TAMPERED', 'The stored plan no longer matches its recorded hash');
   }
   const spec = parseStoredSpec(plan.spec);
   if (!spec) {
     return refuse(409, 'PLAN_SPEC_INVALID', 'The stored spec does not parse');
+  }
+  const mismatch = runPlanConsistencyIssue(plan, spec);
+  if (mismatch) {
+    return refuse(409, 'PLAN_AGENT_MISMATCH', `The plan is inconsistent: ${mismatch}`);
   }
   const policy = checkSkeletonPolicy(spec, plan.mode);
   if (!policy.ok) {
@@ -467,30 +599,20 @@ async function verifyPlanForApproval(
     );
   }
 
-  const named = specAgentKeys(spec);
-  const recorded =
-    plan.agentPins && typeof plan.agentPins === 'object' && !Array.isArray(plan.agentPins)
-      ? Object.keys(plan.agentPins as Record<string, unknown>)
-      : [];
-  const current = await resolveRunPlanAgentPins(deps.prisma, [...recorded, ...named], {
-    orgId: repository.repo.orgId,
-    teamId: repository.repo.teamId,
-  });
-  const drift = agentPinDrift(plan.agentPins, current, named);
-  if (drift.length > 0) {
-    return refuse(
-      409,
-      'PLAN_AGENTS_CHANGED',
-      `These agents changed since the plan was made: ${drift.join(', ')}. Create a new plan.`
-    );
-  }
-
   const template = await loadPlannedRunTemplate(deps);
   if (!template?.activeVersion) {
     return refuse(
       503,
       'PLANNED_RUN_TEMPLATE_MISSING',
       'The Planned Run system template is not installed; run the database seed'
+    );
+  }
+  const drift = await agentDrift(deps, plan, spec, repository.repo, template.id);
+  if (drift.length > 0) {
+    return refuse(
+      409,
+      'PLAN_AGENTS_CHANGED',
+      `These agents changed since the plan was made: ${drift.join(', ')}. Create a new plan.`
     );
   }
   const settings = await snapshotPlanSettings({
@@ -523,10 +645,14 @@ async function flipToApproved(
   plan: PlanRow,
   actor: PlanActor
 ): Promise<boolean> {
+  const now = nowOf(deps);
+  // Approval grants a bounded launch window: a plan approved a moment before its expiry must still
+  // be pinnable by the worker once the gateway has reported success.
+  const expiresAt = new Date(Math.max(plan.expiresAt.getTime(), now.getTime() + LAUNCH_WINDOW_MS));
   const result = await deps.prisma.runPlan.updateMany({
-    data: { approvedAt: nowOf(deps), approvedById: actor.sub, status: 'APPROVED' },
+    data: { approvedAt: now, approvedById: actor.sub, expiresAt, status: 'APPROVED' },
     where: {
-      expiresAt: { gt: nowOf(deps) },
+      expiresAt: { gt: now },
       id: plan.id,
       ownerUserId: actor.sub,
       status: 'PENDING',
@@ -736,7 +862,13 @@ export async function launchApprovedPlan(
       'The Planned Run system template is not installed; run the database seed'
     );
   }
-  if (plan.agentKey) {
+  const mismatch = runPlanConsistencyIssue(plan);
+  if (mismatch) {
+    return refuse(409, 'PLAN_AGENT_MISMATCH', `The plan is inconsistent: ${mismatch}`);
+  }
+  // Keyed on the mode, not on whether an agent key is set: the mode is what the worker and the
+  // skeleton policy enforce, and approval has already checked the two agree.
+  if (plan.mode === 'output-only') {
     const admitted = await admitLibraryAgentPlan(deps, repository.repo, template.id);
     if (admitted) {
       return admitted;

@@ -2967,7 +2967,8 @@ describe('createWorkflowRun: a run of the Planned Run template', () => {
         runConnectionId: 'repo-1',
         workflowId: 'plan-run-1',
       }),
-      expect.any(Object)
+      // The template's own id is the WORKFLOW_TEMPLATE tier of the agent pin cascade.
+      expect.objectContaining({ workflowTemplateId: 'tpl-planned' })
     );
   });
 
@@ -2996,6 +2997,54 @@ describe('createWorkflowRun: a run of the Planned Run template', () => {
   it('refuses when another execution already claimed the plan: the run row is rolled back with it', async () => {
     claimPlan.mockResolvedValue({ count: 0 } as never);
     await expect(createWorkflowRun(input)).rejects.toThrow(/PLAN_ALREADY_LAUNCHED/);
+  });
+
+  describe('the ledger row of a refused launch', () => {
+    const retired = () =>
+      vi
+        .mocked(prisma.activeWorkflow.updateMany)
+        .mock.calls.filter(
+          ([a]) => (a as { data?: { currentStatus?: string } }).data?.currentStatus === 'FAILED'
+        );
+    const refusal = () =>
+      Object.assign(new Error('PLAN_NOT_APPROVED: the plan is PENDING'), {
+        type: 'PLANNED_RUN_REFUSED',
+      });
+
+    beforeEach(() => {
+      vi.mocked(prisma.activeWorkflow.updateMany).mockClear();
+    });
+
+    it('is retired from IMPLEMENTING as well as STARTING when the pin refuses', async () => {
+      loadApprovedPlan.mockRejectedValue(refusal());
+      await expect(createWorkflowRun(input)).rejects.toThrow(/PLAN_NOT_APPROVED/);
+      expect(retired()).toHaveLength(1);
+      expect(retired()[0]?.[0]).toEqual({
+        data: { currentStatus: 'FAILED' },
+        where: {
+          currentStatus: { in: ['STARTING', 'IMPLEMENTING'] },
+          temporalWorkflowId: 'plan-run-1',
+          workRequestId: 'wr-1',
+        },
+      });
+    });
+
+    it('is retired when the claim is lost to a duplicate launch', async () => {
+      claimPlan.mockResolvedValue({ count: 0 } as never);
+      await expect(createWorkflowRun(input)).rejects.toThrow(/PLAN_ALREADY_LAUNCHED/);
+      expect(retired()).toHaveLength(1);
+    });
+
+    it('is left alone by an error Temporal will retry', async () => {
+      loadApprovedPlan.mockRejectedValue(new Error('connection reset'));
+      await expect(createWorkflowRun(input)).rejects.toThrow(/connection reset/);
+      expect(retired()).toHaveLength(0);
+    });
+
+    it('is not touched when the plan is pinned', async () => {
+      await createWorkflowRun(input);
+      expect(retired()).toHaveLength(0);
+    });
   });
 
   it('does not claim again on a Temporal retry of the attempt that did', async () => {

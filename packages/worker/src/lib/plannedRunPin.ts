@@ -1,10 +1,20 @@
+import { Role } from '@auto-swe/shared';
+import { roleMeets } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
+import type { AccessLog } from '@auto-swe/shared/lib/accessActor';
 import {
   PLANNED_RUN_TEMPLATE_NAME,
   PlannedRunPayloadSchema,
   RUN_PLAN_MODES,
   type RunPlanMode,
+  runPlanConsistencyIssue,
 } from '@auto-swe/shared/lib/plannedRun';
+import {
+  decideRepoAccess,
+  REPO_ACCESS_REFUSAL_MESSAGE,
+} from '@auto-swe/shared/lib/repoAccessDecision';
+import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
+import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import {
   agentPinDrift,
   resolveRunPlanAgentPins,
@@ -18,7 +28,7 @@ import {
   validateSpec,
 } from '@auto-swe/shared/workflow';
 import { checkSkeletonPolicy, hashRunPlanSpec } from '@auto-swe/shared/workflow/runPlan';
-import { ApplicationFailure } from '@temporalio/activity';
+import { ApplicationFailure, log } from '@temporalio/activity';
 
 /**
  * Pinning an approved run plan as a run's spec.
@@ -56,6 +66,8 @@ export interface PlannedRunPinInput {
 export interface PlannedRunScope {
   teamId?: string | null | undefined;
   orgId?: string | null | undefined;
+  /** The Planned Run template's id: the WORKFLOW_TEMPLATE tier of the agent cascade. */
+  workflowTemplateId?: string | null | undefined;
 }
 
 export interface PinnedPlan {
@@ -71,14 +83,120 @@ export interface PinnedPlan {
   claimedByRunId: string | null;
 }
 
-type Db = Pick<typeof prisma, 'runPlan' | 'workflowRun' | 'agent'>;
+type Db = Pick<
+  typeof prisma,
+  'runPlan' | 'workflowRun' | 'agent' | 'user' | 'connection' | 'organizationMembership'
+>;
+
+const ACCESS_LOG: AccessLog = {
+  warn: (obj, msg) => {
+    try {
+      log.warn(msg ?? 'repo access', obj as Record<string, unknown>);
+    } catch {
+      // Outside an activity context there is no logger; the verdict is what matters.
+    }
+  },
+};
+
+/** The decision the launcher gets for the repository now. Overridable so a suite need not mock GitHub. */
+export type LauncherAccessCheck = (
+  db: Db,
+  launcherId: string,
+  connectionId: string
+) => Promise<void>;
+
+/**
+ * Re-take the launch decision for the person the run acts as: the approval is days or minutes old,
+ * and a person who was deactivated, demoted below ENGINEER, removed from the repository's teams or
+ * org, or lost GitHub access since is refused here. Same shared decision the gateway and a
+ * scheduled fire take (`decideRepoAccess`), so the three cannot disagree about what "may launch"
+ * means.
+ */
+export const assertLauncherStillAuthorized: LauncherAccessCheck = async (
+  db,
+  launcherId,
+  connectionId
+) => {
+  const user = await db.user.findUnique({
+    select: { id: true, isActive: true, role: true },
+    where: { id: launcherId },
+  });
+  if (!user?.isActive) {
+    throw refuse('PLAN_LAUNCHER_INACTIVE', 'the person who approved the plan is no longer active');
+  }
+  if (!roleMeets(user.role as Role, Role.ENGINEER)) {
+    throw refuse('PLAN_LAUNCHER_ROLE', 'the person who approved the plan no longer has the role');
+  }
+  const repo = await db.connection.findUnique({
+    select: {
+      githubApiUrl: true,
+      githubUrl: true,
+      id: true,
+      installation: { select: { host: true, installationId: true, isActive: true } },
+      isActive: true,
+      organizationName: true,
+      repoName: true,
+      scmProvider: true,
+      shares: {
+        select: {
+          ...repoMembersSelect({ userId: true }, { userId: user.id }).shares.select,
+          teamId: true,
+        },
+      },
+      team: {
+        select: {
+          isActive: true,
+          memberships: { select: { userId: true }, where: { userId: user.id } },
+          organization: { select: { isActive: true } },
+          orgId: true,
+        },
+      },
+      teamId: true,
+      type: true,
+    },
+    where: { id: connectionId },
+  });
+  if (!repo?.isActive || !repo.team.isActive || !repo.team.organization.isActive) {
+    throw refuse('PLAN_REPOSITORY_INACTIVE', 'the repository, team or organization is not active');
+  }
+  // Fail closed on an unreadable gate: nobody is here to retry.
+  const gate = await resolveRepoAccessGateOrLastKnown();
+  if (!gate) {
+    throw refuse('PLAN_ACCESS_UNREADABLE', 'the repository access policy could not be read');
+  }
+  const verdict = await decideRepoAccess(
+    db as never,
+    { role: user.role as Role, sub: user.id },
+    repo,
+    gate,
+    ACCESS_LOG,
+    'start-new-work',
+    'caller'
+  );
+  if (!verdict.allowed) {
+    throw refuse(
+      'PLAN_LAUNCHER_ACCESS_LOST',
+      REPO_ACCESS_REFUSAL_MESSAGE[verdict.reason] ?? 'the launcher cannot use the repository'
+    );
+  }
+  if (user.role !== Role.ADMIN) {
+    const membership = await db.organizationMembership.findUnique({
+      select: { userId: true },
+      where: { userId_orgId: { orgId: repo.team.orgId, userId: user.id } },
+    });
+    if (!membership) {
+      throw refuse('PLAN_LAUNCHER_ACCESS_LOST', 'the launcher left the repository organization');
+    }
+  }
+};
 
 /** Load and verify the plan a Planned Run launch names. Throws a non-retryable refusal. */
 export async function loadApprovedPlan(
   input: PlannedRunPinInput,
   scope: PlannedRunScope,
   now: Date = new Date(),
-  db: Db = prisma
+  db: Db = prisma,
+  checkLauncher: LauncherAccessCheck = assertLauncherStillAuthorized
 ): Promise<PinnedPlan> {
   const payload = PlannedRunPayloadSchema.safeParse(input.payload);
   if (!payload.success) {
@@ -128,7 +246,13 @@ export async function loadApprovedPlan(
   if (!isRetry && plan.expiresAt.getTime() <= now.getTime()) {
     throw refuse('PLAN_EXPIRED', 'the plan has expired');
   }
-  if (hashRunPlanSpec(plan.spec) !== plan.specHash) {
+  let hash: string;
+  try {
+    hash = hashRunPlanSpec(plan.spec);
+  } catch {
+    throw refuse('PLAN_SPEC_TOO_DEEP', 'the stored spec is nested too deeply');
+  }
+  if (hash !== plan.specHash) {
     throw refuse('PLAN_SPEC_TAMPERED', 'the stored spec does not match the approved hash');
   }
   const mode = (RUN_PLAN_MODES as readonly string[]).includes(plan.mode)
@@ -145,6 +269,11 @@ export async function loadApprovedPlan(
     throw refuse('PLAN_SPEC_INVALID', 'the stored spec does not parse');
   }
 
+  const mismatch = runPlanConsistencyIssue(plan, spec);
+  if (mismatch) {
+    throw refuse('PLAN_AGENT_MISMATCH', mismatch.replace(/'[^']*'/g, "'…'"));
+  }
+
   if (isRetry) {
     return {
       claimedByRunId: existing?.id ?? null,
@@ -154,6 +283,11 @@ export async function loadApprovedPlan(
       teamId: plan.teamId,
     };
   }
+
+  // The person the run acts as must still be allowed to start it: access can be taken away between
+  // approval and launch. (A retry of an attempt that already claimed returned above: the run it
+  // would pin has started.)
+  await checkLauncher(db, input.launchedById, plan.connectionId);
 
   // Re-checked at pin time, not trusted from approval: the rules may have tightened since, and the
   // stored reports are the generator's word, not this process's.

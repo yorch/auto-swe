@@ -258,3 +258,14 @@ planned run are marked so `evaluatePullRequest` skips `auto` mode for them. The 
 - Cost estimates use role defaults and a fan-out guess; unpriced nodes are listed, not costed.
 - A plan is approved against agent versions and settings at that moment; a change afterwards makes the
   plan unapprovable and the user must regenerate it.
+- A library-agent plan takes the agent-run concurrency admission but not the agent-run step and
+  wall-clock ceilings: an `agent` node has no step or wall-clock field, so the ceilings
+  (`workspace.agentRunMaxSteps`, `workspace.agentRunMaxWallClockSeconds`), which `runAgentTask`
+  clamps for its one agent, have nothing to bound in a generated spec. Such a run is bounded by the
+  team's budget, the transition cap and the activity timeouts.
+- Agent pins cover the agents a plan's nodes name or its steps resolve (`RUN_PLAN_STEP_AGENTS`, kept
+  complete by a test over the step allowlist and a scan of the activities' agent literals), and the
+  parent a persona inherits its model from. An agent chosen at run time from data, rather than named
+  in source or in the spec, is not seen by that scan.
+- Approval extends a plan's expiry to at least ten minutes ahead so the worker can still pin it; a
+  plan approved but never launched stays launchable for that window.

@@ -46,7 +46,11 @@ import {
   approvePlan,
   createPlanRecord,
   expirePlans,
+  LAUNCH_WINDOW_MS,
   launchApprovedPlan,
+  MAX_PLAN_SPEC_BYTES,
+  MAX_PLAN_TTL_MS,
+  MIN_PLAN_TTL_MS,
   type RunPlanLaunchDeps,
   type RunPlanQuotaPolicy,
   rejectPlan,
@@ -95,7 +99,13 @@ function planRow(over: Record<string, unknown> = {}): PlanRow {
 /** An in-memory `runPlan` table whose `updateMany` honours the `where` it is given. */
 function fakePrisma(
   initial: PlanRow | null,
-  opts: { user?: unknown; repo?: Record<string, unknown>; agents?: Record<string, unknown> } = {}
+  opts: {
+    user?: unknown;
+    repo?: Record<string, unknown>;
+    agents?: Record<string, unknown>;
+    /** Versioned rows; when given they answer lookups (with the `version` filter) instead. */
+    agentRows?: Array<{ key: string; scope: string; version: number }>;
+  } = {}
 ) {
   const table: { plan: PlanRow | null } = { plan: initial ? { ...initial } : null };
   const updates: Array<{ data: Record<string, unknown>; where: Record<string, unknown> }> = [];
@@ -118,15 +128,28 @@ function fakePrisma(
     });
   const prisma = {
     agent: {
-      findFirst: vi.fn(async ({ where }: { where: { key: string; scope: string } }) => {
-        const table2 = opts.agents ?? { implementer: 'GLOBAL:3' };
-        const pin = table2[where.key] as string | undefined;
-        if (!pin) {
-          return null;
+      findFirst: vi.fn(
+        async ({ where }: { where: { key: string; scope: string; version?: number } }) => {
+          if (opts.agentRows) {
+            const hit = opts.agentRows
+              .filter(
+                (r) =>
+                  r.key === where.key &&
+                  r.scope === where.scope &&
+                  (where.version === undefined || r.version === where.version)
+              )
+              .sort((a, b) => b.version - a.version)[0];
+            return hit ?? null;
+          }
+          const table2 = opts.agents ?? { implementer: 'GLOBAL:3' };
+          const pin = table2[where.key] as string | undefined;
+          if (!pin) {
+            return null;
+          }
+          const [scope, version] = pin.split(':');
+          return where.scope === scope ? { scope, version: Number(version) } : null;
         }
-        const [scope, version] = pin.split(':');
-        return where.scope === scope ? { scope, version: Number(version) } : null;
-      }),
+      ),
     },
     connection: {
       findUnique: vi.fn(async () =>
@@ -344,7 +367,13 @@ describe('approvePlan', () => {
       status: 'APPROVED',
     });
     expect(prisma.runPlan.updateMany).toHaveBeenCalledWith({
-      data: { approvedAt: NOW, approvedById: OWNER.sub, status: 'APPROVED' },
+      data: {
+        approvedAt: NOW,
+        approvedById: OWNER.sub,
+        // The plan expired in a minute; approval grants the launch window instead.
+        expiresAt: new Date(NOW.getTime() + LAUNCH_WINDOW_MS),
+        status: 'APPROVED',
+      },
       where: expect.objectContaining({
         id: PLAN_ID,
         ownerUserId: OWNER.sub,
@@ -630,7 +659,9 @@ describe('launchApprovedPlan', () => {
   });
 
   it('gives an output-only plan no work branch', async () => {
-    const { prisma } = fakePrisma(planRow({ ...approved(), mode: 'output-only' }));
+    const { prisma } = fakePrisma(
+      planRow({ ...approved(), agentKey: 'docsMaintainer', mode: 'output-only' })
+    );
     await launchApprovedPlan(deps(prisma), OWNER, PLAN_ID);
     const rows = m.launch.mock.calls[0]?.[1] as { activeWorkflow: Record<string, unknown> };
     expect(rows.activeWorkflow.assignedBranch).toBeNull();
@@ -738,5 +769,312 @@ describe('approveAndLaunchPlan', () => {
     const { prisma, table } = fakePrisma(planRow());
     await approveAndLaunchPlan(deps(prisma), OWNER, PLAN_ID);
     expect(table.plan?.status).toBe('LAUNCHED');
+  });
+});
+
+// ───────────────────── review fixes: agents, mode, window, bounds ─────────────────────
+
+const AGENT_SPEC = {
+  description: '',
+  entry: 'ask',
+  name: 'library plan',
+  nodes: {
+    a: { status: 'SUCCESS', type: 'terminate' },
+    ask: { agentRef: 'docsMaintainer', next: 'a', type: 'agent' },
+  },
+  schemaVersion: 1,
+};
+const STEP_SPEC = {
+  description: '',
+  entry: 'impl',
+  name: 'core as steps',
+  nodes: {
+    a: { status: 'SUCCESS', type: 'terminate' },
+    impl: { next: 'a', step: 'executeImplementation', type: 'step' },
+  },
+  schemaVersion: 1,
+};
+
+describe('createPlanRecord: mode, agent and spec must agree', () => {
+  const agents = {
+    docsMaintainer: 'GLOBAL:1',
+    implementer: 'GLOBAL:3',
+    securityReview: 'GLOBAL:2',
+  };
+
+  it('stores an output-only plan whose spec runs the named agent', async () => {
+    const { prisma, table } = fakePrisma(null, { agents });
+    const result = await createPlanRecord(
+      deps(prisma),
+      createInput({
+        agentKey: 'docsMaintainer',
+        agentPins: { docsMaintainer: 'GLOBAL:1' },
+        mode: 'output-only',
+        spec: AGENT_SPEC,
+      })
+    );
+    expect(result).toMatchObject({ ok: true });
+    expect(table.plan).toMatchObject({ agentKey: 'docsMaintainer', mode: 'output-only' });
+  });
+
+  it.each([
+    [
+      'an output-only plan with no agent key',
+      { agentKey: null, mode: 'output-only', spec: AGENT_SPEC },
+    ],
+    ['a delivering plan that names an agent', { agentKey: 'docsMaintainer', mode: 'delivering' }],
+    [
+      'an agent key the spec never runs',
+      { agentKey: 'someoneElse', mode: 'output-only', spec: AGENT_SPEC },
+    ],
+  ])('refuses %s and stores nothing', async (_name, over) => {
+    const { prisma, table } = fakePrisma(null, { agents });
+    expect(
+      await createPlanRecord(deps(prisma), createInput({ agentPins: {}, ...over }))
+    ).toMatchObject({ code: 'PLAN_AGENT_MISMATCH', ok: false });
+    expect(table.plan).toBeNull();
+  });
+});
+
+describe('createPlanRecord: agent pins cover what the plan runs', () => {
+  const agents = { implementer: 'GLOBAL:3', securityReview: 'GLOBAL:2' };
+
+  it('refuses pins that omit an agent a step node reaches (the post-diff security gate)', async () => {
+    const { prisma, table } = fakePrisma(null, { agents });
+    const result = await createPlanRecord(
+      deps(prisma),
+      createInput({ agentPins: { implementer: 'GLOBAL:3' }, spec: STEP_SPEC })
+    );
+    expect(result).toMatchObject({ code: 'PLAN_AGENTS_CHANGED', ok: false });
+    expect((result as { message: string }).message).toContain('securityReview');
+    expect(table.plan).toBeNull();
+  });
+
+  it('stores a plan whose pins name every agent its steps reach', async () => {
+    const { prisma } = fakePrisma(null, { agents });
+    expect(
+      await createPlanRecord(
+        deps(prisma),
+        createInput({
+          agentPins: { implementer: 'GLOBAL:3', securityReview: 'GLOBAL:2' },
+          spec: STEP_SPEC,
+        })
+      )
+    ).toMatchObject({ ok: true });
+  });
+
+  it('refuses a recorded pin for an agent that no longer resolves', async () => {
+    const { prisma } = fakePrisma(null, { agents: {} });
+    expect(await createPlanRecord(deps(prisma), createInput())).toMatchObject({
+      code: 'PLAN_AGENTS_CHANGED',
+    });
+  });
+});
+
+describe('createPlanRecord: lifetime and size bounds', () => {
+  it('clamps the requested lifetime to one minute .. 24 hours, and defaults a non-number', async () => {
+    const expiry = async (ttlMs: unknown) => {
+      const { prisma, table } = fakePrisma(null);
+      await createPlanRecord(deps(prisma), createInput({ ttlMs }));
+      return ((table.plan as PlanRow).expiresAt as Date).getTime() - NOW.getTime();
+    };
+    expect(MIN_PLAN_TTL_MS).toBe(60_000);
+    expect(MAX_PLAN_TTL_MS).toBe(24 * 3_600_000);
+    expect(await expiry(1)).toBe(MIN_PLAN_TTL_MS);
+    expect(await expiry(-5)).toBe(MIN_PLAN_TTL_MS);
+    expect(await expiry(Number.MAX_SAFE_INTEGER)).toBe(MAX_PLAN_TTL_MS);
+    expect(await expiry(10 * 60_000)).toBe(10 * 60_000);
+    expect(await expiry(Number.NaN)).toBe(30 * 60_000);
+    expect(await expiry(undefined)).toBe(30 * 60_000);
+  });
+
+  it('answers a spec nested past the canonicalizer with PLAN_SPEC_TOO_DEEP, not a throw', async () => {
+    let deep: unknown = 'x';
+    for (let i = 0; i < 150; i++) {
+      deep = { n: deep };
+    }
+    const { prisma, table } = fakePrisma(null);
+    expect(await createPlanRecord(deps(prisma), createInput({ spec: deep }))).toMatchObject({
+      code: 'PLAN_SPEC_TOO_DEEP',
+      ok: false,
+      status: 422,
+    });
+    expect(table.plan).toBeNull();
+  });
+
+  it('answers a spec nested far past the JSON serializer with PLAN_SPEC_TOO_DEEP', async () => {
+    let deep: unknown = 'x';
+    for (let i = 0; i < 200_000; i++) {
+      deep = { n: deep };
+    }
+    const { prisma } = fakePrisma(null);
+    expect(await createPlanRecord(deps(prisma), createInput({ spec: deep }))).toMatchObject({
+      code: 'PLAN_SPEC_TOO_DEEP',
+    });
+  });
+
+  it('refuses a spec larger than the serialized cap', async () => {
+    const big = { ...SPEC, description: 'x'.repeat(MAX_PLAN_SPEC_BYTES) };
+    const { prisma, table } = fakePrisma(null);
+    expect(await createPlanRecord(deps(prisma), createInput({ spec: big }))).toMatchObject({
+      code: 'PLAN_SPEC_TOO_LARGE',
+      ok: false,
+    });
+    expect(table.plan).toBeNull();
+  });
+
+  it('refuses a stored spec that is nested too deeply at approval, with a code', async () => {
+    let deep: unknown = 'x';
+    for (let i = 0; i < 150; i++) {
+      deep = { n: deep };
+    }
+    const { prisma } = fakePrisma(planRow({ spec: deep }));
+    expect(await approvePlan(deps(prisma), OWNER, PLAN_ID)).toMatchObject({
+      code: 'PLAN_SPEC_TOO_DEEP',
+    });
+  });
+});
+
+describe('approvePlan: agent coverage, consistency and the launch window', () => {
+  it('refuses when a step-reached agent moved after the plan was made', async () => {
+    const row = planRow({
+      agentPins: { implementer: 'GLOBAL:3', securityReview: 'GLOBAL:2' },
+      spec: STEP_SPEC,
+      specHash: hashRunPlanSpec(STEP_SPEC),
+    });
+    const ok = fakePrisma(row, { agents: { implementer: 'GLOBAL:3', securityReview: 'GLOBAL:2' } });
+    expect(await approvePlan(deps(ok.prisma), OWNER, PLAN_ID)).toMatchObject({ ok: true });
+    const moved = fakePrisma(row, {
+      agents: { implementer: 'GLOBAL:3', securityReview: 'TEAM:1' },
+    });
+    expect(await approvePlan(deps(moved.prisma), OWNER, PLAN_ID)).toMatchObject({
+      code: 'PLAN_AGENTS_CHANGED',
+    });
+    expect(moved.table.plan?.status).toBe('PENDING');
+  });
+
+  it('counts a Planned Run template-scoped override as drift, and looks that tier up', async () => {
+    const { prisma, table } = fakePrisma(planRow(), {
+      agents: { implementer: 'WORKFLOW_TEMPLATE:1' },
+    });
+    expect(await approvePlan(deps(prisma), OWNER, PLAN_ID)).toMatchObject({
+      code: 'PLAN_AGENTS_CHANGED',
+    });
+    expect(table.plan?.status).toBe('PENDING');
+    expect(prisma.agent.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          scope: 'WORKFLOW_TEMPLATE',
+          workflowTemplateId: 'tpl-planned',
+        }),
+      })
+    );
+  });
+
+  it('pins the version a key@N node references: a newer latest is fine, a gone version is drift', async () => {
+    const spec = {
+      ...AGENT_SPEC,
+      nodes: {
+        ...AGENT_SPEC.nodes,
+        ask: { agentRef: 'docsMaintainer@2', next: 'a', type: 'agent' },
+      },
+    };
+    const row = planRow({
+      agentKey: 'docsMaintainer',
+      agentPins: { 'docsMaintainer@2': 'GLOBAL:2' },
+      mode: 'output-only',
+      spec,
+      specHash: hashRunPlanSpec(spec),
+    });
+    const latestMoved = fakePrisma(row, {
+      agentRows: [
+        { key: 'docsMaintainer', scope: 'GLOBAL', version: 2 },
+        { key: 'docsMaintainer', scope: 'GLOBAL', version: 5 },
+      ],
+    });
+    expect(await approvePlan(deps(latestMoved.prisma), OWNER, PLAN_ID)).toMatchObject({ ok: true });
+    const gone = fakePrisma(row, {
+      agentRows: [{ key: 'docsMaintainer', scope: 'GLOBAL', version: 5 }],
+    });
+    expect(await approvePlan(deps(gone.prisma), OWNER, PLAN_ID)).toMatchObject({
+      code: 'PLAN_AGENTS_CHANGED',
+    });
+  });
+
+  it.each([
+    ['an output-only plan with no agent key', { agentKey: null, mode: 'output-only' }],
+    ['a delivering plan carrying an agent key', { agentKey: 'docsMaintainer', mode: 'delivering' }],
+  ])('refuses %s, and flips nothing', async (_name, over) => {
+    const spec = AGENT_SPEC;
+    const { prisma, table } = fakePrisma(
+      planRow({ agentPins: {}, spec, specHash: hashRunPlanSpec(spec), ...over }),
+      { agents: { docsMaintainer: 'GLOBAL:1' } }
+    );
+    expect(await approvePlan(deps(prisma), OWNER, PLAN_ID)).toMatchObject({
+      code: 'PLAN_AGENT_MISMATCH',
+    });
+    expect(table.plan?.status).toBe('PENDING');
+  });
+
+  it('grants a ten-minute launch window to a plan approved a moment before it expires', async () => {
+    expect(LAUNCH_WINDOW_MS).toBe(10 * 60_000);
+    const { prisma, table } = fakePrisma(planRow({ expiresAt: new Date(NOW.getTime() + 1_000) }));
+    expect(await approvePlan(deps(prisma), OWNER, PLAN_ID)).toMatchObject({ ok: true });
+    expect(((table.plan as PlanRow).expiresAt as Date).getTime()).toBe(
+      NOW.getTime() + LAUNCH_WINDOW_MS
+    );
+    // The worker's expiry test (`expiresAt <= now`) now passes for nine minutes, and the sweeper,
+    // which reads the same field, leaves the approved plan alone until the window has run out.
+    const later = new Date(NOW.getTime() + 5 * 60_000);
+    await expirePlans({ now: () => later, prisma: prisma as never });
+    expect(table.plan?.status).toBe('APPROVED');
+    const after = new Date(NOW.getTime() + LAUNCH_WINDOW_MS + 1);
+    await expirePlans({ now: () => after, prisma: prisma as never });
+    expect(table.plan?.status).toBe('EXPIRED');
+  });
+
+  it('never shortens a lifetime that already outlasts the window', async () => {
+    const far = new Date(NOW.getTime() + 3_600_000);
+    const { prisma, table } = fakePrisma(planRow({ expiresAt: far }));
+    await approvePlan(deps(prisma), OWNER, PLAN_ID);
+    expect(table.plan?.expiresAt).toEqual(far);
+  });
+});
+
+describe('launchApprovedPlan: admission follows the mode', () => {
+  const approvedRow = (over: Record<string, unknown>) =>
+    planRow({ approvedAt: NOW, approvedById: OWNER.sub, status: 'APPROVED', ...over });
+  const full = () => {
+    m.slots.value = [
+      { launchedAt: NOW, teamId: 'team-1', workflowId: 'w1' },
+      { launchedAt: NOW, teamId: 'team-1', workflowId: 'w2' },
+    ];
+  };
+
+  it('takes agent-run admission for an output-only plan whatever the key says', async () => {
+    full();
+    // A null key used to skip admission; it is now an inconsistent plan and is refused outright.
+    const { prisma } = fakePrisma(approvedRow({ agentKey: null, mode: 'output-only' }));
+    expect(await launchApprovedPlan(deps(prisma), OWNER, PLAN_ID)).toMatchObject({
+      code: 'PLAN_AGENT_MISMATCH',
+    });
+    expect(m.launch).not.toHaveBeenCalled();
+  });
+
+  it('does not let a delivering plan carry an agent key past admission', async () => {
+    full();
+    const { prisma } = fakePrisma(approvedRow({ agentKey: 'docsMaintainer', mode: 'delivering' }));
+    expect(await launchApprovedPlan(deps(prisma), OWNER, PLAN_ID)).toMatchObject({
+      code: 'PLAN_AGENT_MISMATCH',
+    });
+    expect(m.launch).not.toHaveBeenCalled();
+  });
+
+  it('holds an output-only plan to the agent-run concurrency limit', async () => {
+    full();
+    const { prisma } = fakePrisma(approvedRow({ agentKey: 'docsMaintainer', mode: 'output-only' }));
+    expect(await launchApprovedPlan(deps(prisma), OWNER, PLAN_ID)).toMatchObject({
+      code: 'AGENT_RUN_CONCURRENCY_EXCEEDED',
+    });
   });
 });

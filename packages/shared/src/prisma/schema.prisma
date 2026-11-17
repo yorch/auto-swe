@@ -5703,5 +5703,6 @@ model RunPlan {
   @@index([status, expiresAt])
   @@index([teamId])
   @@index([connectionId])
+  @@index([launchedWorkflowRunId])
   @@map("run_plans")
 }

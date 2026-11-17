@@ -3,6 +3,18 @@ import { hashRunPlanSpec } from '@auto-swe/shared/workflow/runPlan';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const policy = vi.hoisted(() => ({ errors: [] as Array<{ code: string }>, ok: true }));
+const access = vi.hoisted(() => ({
+  gate: { value: { mode: 'off' } as unknown },
+  verdict: { value: { allowed: true, reason: 'permitted' } as unknown },
+}));
+vi.mock('@auto-swe/shared/lib/repoAccessDecision', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/lib/repoAccessDecision')>()),
+  decideRepoAccess: vi.fn(async () => access.verdict.value),
+}));
+vi.mock('@auto-swe/shared/lib/repoAccessGate', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/lib/repoAccessGate')>()),
+  resolveRepoAccessGateOrLastKnown: vi.fn(async () => access.gate.value),
+}));
 vi.mock('@auto-swe/shared/workflow/runPlan', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@auto-swe/shared/workflow/runPlan')>()),
   // The policy itself is covered by its own suites; here only that the pin consults it, with the
@@ -15,10 +27,12 @@ vi.mock('@temporalio/activity', () => ({
     nonRetryable: (message: string, type?: string, details?: unknown) =>
       Object.assign(new Error(message), { details, nonRetryable: true, type }),
   },
+  log: { warn: () => undefined },
 }));
 
 import { checkSkeletonPolicy } from '@auto-swe/shared/workflow/runPlan';
 import {
+  assertLauncherStillAuthorized,
   claimPlanWithRun,
   loadApprovedPlan,
   PLANNED_RUN_REFUSAL_TYPE,
@@ -56,16 +70,66 @@ function planRow(over: Record<string, unknown> = {}) {
   };
 }
 
-function dbWith(plan: Record<string, unknown> | null, opts: { existingRun?: string } = {}) {
+interface DbOpts {
+  existingRun?: string;
+  user?: unknown;
+  repo?: unknown;
+  orgMember?: boolean;
+  /** Extra agent rows the stand-in knows, as `key@scope:version`-style entries. */
+  agents?: Array<{ key: string; scope: string; version: number; workflowTemplateId?: string }>;
+}
+
+function dbWith(plan: Record<string, unknown> | null, opts: DbOpts = {}) {
+  const agents = [{ key: 'implementer', scope: 'GLOBAL', version: 3 }, ...(opts.agents ?? [])];
   return {
     agent: {
-      findFirst: vi.fn(async ({ where }: { where: { key: string; scope: string } }) =>
-        where.key === 'implementer' && where.scope === 'GLOBAL'
-          ? { scope: 'GLOBAL', version: 3 }
-          : null
+      findFirst: vi.fn(
+        async ({
+          where,
+        }: {
+          where: { key: string; scope: string; version?: number; workflowTemplateId?: string };
+        }) => {
+          const hit = agents
+            .filter(
+              (a) =>
+                a.key === where.key &&
+                a.scope === where.scope &&
+                (where.version === undefined || a.version === where.version) &&
+                (where.workflowTemplateId === undefined ||
+                  a.workflowTemplateId === where.workflowTemplateId)
+            )
+            .sort((x, y) => y.version - x.version)[0];
+          return hit ? { ...hit, inheritsModelFrom: null, modelSpec: 'a/b' } : null;
+        }
       ),
     },
+    connection: {
+      findUnique: vi.fn(async () =>
+        opts.repo === undefined
+          ? {
+              id: REPO,
+              isActive: true,
+              shares: [],
+              team: {
+                isActive: true,
+                memberships: [{ userId: USER }],
+                organization: { isActive: true },
+                orgId: 'org-1',
+              },
+              teamId: 'team-1',
+            }
+          : opts.repo
+      ),
+    },
+    organizationMembership: {
+      findUnique: vi.fn(async () => (opts.orgMember === false ? null : { userId: USER })),
+    },
     runPlan: { findUnique: vi.fn(async () => plan) },
+    user: {
+      findUnique: vi.fn(async () =>
+        opts.user === undefined ? { id: USER, isActive: true, role: 'ENGINEER' } : opts.user
+      ),
+    },
     workflowRun: {
       findUnique: vi.fn(async () => (opts.existingRun ? { id: opts.existingRun } : null)),
     },
@@ -94,6 +158,8 @@ async function codeOf(promise: Promise<unknown>): Promise<string> {
 }
 
 beforeEach(() => {
+  access.gate.value = { mode: 'off' };
+  access.verdict.value = { allowed: true, reason: 'permitted' };
   policy.ok = true;
   policy.errors = [];
   vi.mocked(checkSkeletonPolicy).mockClear();
@@ -303,6 +369,193 @@ describe('loadApprovedPlan', () => {
           )
         )
       ).toBe('PLAN_SPEC_TAMPERED');
+    });
+  });
+});
+
+describe('loadApprovedPlan: what the plan runs and who runs it', () => {
+  const specWith = (nodes: Record<string, unknown>, entry: string) => ({
+    ...SPEC,
+    entry,
+    nodes: { done: { status: 'SUCCESS', type: 'terminate' }, ...nodes },
+  });
+  const withSpec = (spec: Record<string, unknown>, over: Record<string, unknown> = {}) =>
+    planRow({ spec, specHash: hashRunPlanSpec(spec), ...over });
+
+  it('pins the agents a step node resolves: a core of steps drifts when a step-reached agent moves', async () => {
+    const spec = specWith(
+      { impl: { next: 'done', step: 'executeImplementation', type: 'step' } },
+      'impl'
+    );
+    // The plan recorded only the implementer, but the step also runs the post-diff security gate.
+    expect(
+      await codeOf(
+        loadApprovedPlan(
+          input(),
+          scope,
+          NOW,
+          dbWith(withSpec(spec, { agentPins: { implementer: 'GLOBAL:3' } })),
+          vi.fn()
+        )
+      )
+    ).toBe('PLAN_AGENT_DRIFT');
+    // With the gate agent present and recorded, the same plan pins.
+    const pinned = await loadApprovedPlan(
+      input(),
+      scope,
+      NOW,
+      dbWith(
+        withSpec(spec, { agentPins: { implementer: 'GLOBAL:3', securityReview: 'GLOBAL:2' } }),
+        { agents: [{ key: 'securityReview', scope: 'GLOBAL', version: 2 }] }
+      ),
+      vi.fn()
+    );
+    expect(pinned.planId).toBe(PLAN_ID);
+  });
+
+  it('counts a template-scoped override of a pinned agent as drift', async () => {
+    expect(
+      await codeOf(
+        loadApprovedPlan(
+          input(),
+          { ...scope, workflowTemplateId: 'tpl-planned' },
+          NOW,
+          dbWith(planRow(), {
+            agents: [
+              {
+                key: 'implementer',
+                scope: 'WORKFLOW_TEMPLATE',
+                version: 1,
+                workflowTemplateId: 'tpl-planned',
+              },
+            ],
+          }),
+          vi.fn()
+        )
+      )
+    ).toBe('PLAN_AGENT_DRIFT');
+  });
+
+  it('pins the version a key@N node references and refuses when that version is gone', async () => {
+    const spec = specWith({ ask: { agentRef: 'writer@2', next: 'done', type: 'agent' } }, 'ask');
+    const row = withSpec(spec, {
+      agentKey: 'writer',
+      agentPins: { 'writer@2': 'GLOBAL:2' },
+      mode: 'output-only',
+    });
+    const there = dbWith(row, {
+      agents: [
+        { key: 'writer', scope: 'GLOBAL', version: 2 },
+        { key: 'writer', scope: 'GLOBAL', version: 4 },
+      ],
+    });
+    expect((await loadApprovedPlan(input(), scope, NOW, there, vi.fn())).planId).toBe(PLAN_ID);
+    const gone = dbWith(row, { agents: [{ key: 'writer', scope: 'GLOBAL', version: 4 }] });
+    expect(await codeOf(loadApprovedPlan(input(), scope, NOW, gone, vi.fn()))).toBe(
+      'PLAN_AGENT_DRIFT'
+    );
+  });
+
+  it.each([
+    ['an output-only plan that names no agent', { agentKey: null, mode: 'output-only' }],
+    ['a delivering plan that names an agent', { agentKey: 'writer', mode: 'delivering' }],
+    [
+      'an output-only plan whose spec does not run its agent',
+      { agentKey: 'other', mode: 'output-only' },
+    ],
+  ])('refuses %s', async (_name, over) => {
+    const spec = specWith({ ask: { agentRef: 'writer', next: 'done', type: 'agent' } }, 'ask');
+    expect(
+      await codeOf(
+        loadApprovedPlan(
+          input(),
+          scope,
+          NOW,
+          dbWith(withSpec(spec, { agentPins: {}, ...over }), {
+            agents: [{ key: 'writer', scope: 'GLOBAL', version: 1 }],
+          }),
+          vi.fn()
+        )
+      )
+    ).toBe('PLAN_AGENT_MISMATCH');
+  });
+
+  it('answers a spec nested past the canonicalizer with a code, not an error', async () => {
+    let deep: unknown = 'x';
+    for (let i = 0; i < 150; i++) {
+      deep = { n: deep };
+    }
+    expect(
+      await codeOf(loadApprovedPlan(input(), scope, NOW, dbWith(planRow({ spec: deep })), vi.fn()))
+    ).toBe('PLAN_SPEC_TOO_DEEP');
+  });
+
+  describe('the launcher is judged again at pin time', () => {
+    const run = (opts: DbOpts) =>
+      codeOf(loadApprovedPlan(input(), scope, NOW, dbWith(planRow(), opts)));
+
+    it('pins for a launcher who still has access (the real check, stubbed GitHub gate)', async () => {
+      expect((await loadApprovedPlan(input(), scope, NOW, dbWith(planRow()))).planId).toBe(PLAN_ID);
+    });
+
+    it('refuses a deactivated launcher', async () => {
+      expect(await run({ user: { id: USER, isActive: false, role: 'ENGINEER' } })).toBe(
+        'PLAN_LAUNCHER_INACTIVE'
+      );
+      expect(await run({ user: null })).toBe('PLAN_LAUNCHER_INACTIVE');
+    });
+
+    it('refuses a launcher demoted below ENGINEER', async () => {
+      expect(await run({ user: { id: USER, isActive: true, role: 'VIEWER' } })).toBe(
+        'PLAN_LAUNCHER_ROLE'
+      );
+    });
+
+    it('refuses when the shared repository decision no longer allows the launcher', async () => {
+      access.verdict.value = { allowed: false, reason: 'not-a-team-member' };
+      expect(await run({})).toBe('PLAN_LAUNCHER_ACCESS_LOST');
+    });
+
+    it('refuses a launcher who left the organization, and an inactive repository or team', async () => {
+      expect(await run({ orgMember: false })).toBe('PLAN_LAUNCHER_ACCESS_LOST');
+      expect(await run({ repo: null })).toBe('PLAN_REPOSITORY_INACTIVE');
+      expect(
+        await run({
+          repo: {
+            id: REPO,
+            isActive: true,
+            shares: [],
+            team: {
+              isActive: false,
+              memberships: [],
+              organization: { isActive: true },
+              orgId: 'o',
+            },
+          },
+        })
+      ).toBe('PLAN_REPOSITORY_INACTIVE');
+    });
+
+    it('fails closed when the access policy cannot be read', async () => {
+      access.gate.value = null;
+      expect(await run({})).toBe('PLAN_ACCESS_UNREADABLE');
+    });
+
+    it('does not ask again on a Temporal retry of the attempt that already claimed', async () => {
+      const claimed = planRow({ launchedWorkflowRunId: 'run-1', status: 'LAUNCHED' });
+      const pinned = await loadApprovedPlan(
+        input(),
+        scope,
+        NOW,
+        dbWith(claimed, { existingRun: 'run-1', user: null })
+      );
+      expect(pinned.claimedByRunId).toBe('run-1');
+    });
+
+    it('exposes the check on its own', async () => {
+      await expect(
+        assertLauncherStillAuthorized(dbWith(null, { user: null }), USER, REPO)
+      ).rejects.toMatchObject({ type: PLANNED_RUN_REFUSAL_TYPE });
     });
   });
 });

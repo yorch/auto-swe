@@ -62,7 +62,12 @@ import {
   markChildRunStarted,
   onOrchestrationRunFinalized,
 } from '../lib/orchestrationChildren.js';
-import { claimPlanWithRun, loadApprovedPlan, type PinnedPlan } from '../lib/plannedRunPin.js';
+import {
+  claimPlanWithRun,
+  loadApprovedPlan,
+  type PinnedPlan,
+  PLANNED_RUN_REFUSAL_TYPE,
+} from '../lib/plannedRunPin.js';
 import { pinDetectionsOnRun } from '../lib/runDetection.js';
 import { currentRunLauncherId } from '../lib/runLauncher.js';
 import {
@@ -747,10 +752,16 @@ export async function createWorkflowRun(
   // marker no bundle or API write can set, and it must sit on a template with no owning team.
   let pinnedPlan: PinnedPlan | null = null;
   if (version.template?.origin === PLANNED_RUN_TEMPLATE_ORIGIN && !version.template.team) {
-    pinnedPlan = await loadApprovedPlan(input, {
-      orgId: settingsCtx.orgId,
-      teamId: settingsCtx.teamId,
-    });
+    try {
+      pinnedPlan = await loadApprovedPlan(input, {
+        orgId: settingsCtx.orgId,
+        teamId: settingsCtx.teamId,
+        workflowTemplateId: input.templateId,
+      });
+    } catch (err) {
+      await retireRefusedPlannedLaunch(input, err);
+      throw err;
+    }
     spec = pinnedPlan.spec;
   }
   const pinnedSettings = narrowPinnedEgressPolicy(
@@ -888,7 +899,11 @@ export async function createWorkflowRun(
       await claimPlanWithRun<Awaited<ReturnType<typeof prisma.workflowRun.upsert>>>(
         pinnedPlan,
         runUpsert
-      )
+      ).catch(async (err: unknown) => {
+        // The loser of a duplicate launch throws a refusal; its ledger row has no run to belong to.
+        await retireRefusedPlannedLaunch(input, err);
+        throw err;
+      })
     : input.workRequestId && input.workflowId.startsWith('sched-')
       ? await prisma.$transaction(async (tx) => {
           const existing = await tx.workflowRun.findUnique({
@@ -1946,6 +1961,37 @@ export async function retireFailedLaunch(input: {
     data: { currentStatus: 'FAILED' },
     where: {
       currentStatus: 'STARTING',
+      temporalWorkflowId: input.workflowId,
+      workRequestId: input.workRequestId,
+    },
+  });
+}
+
+/**
+ * Retire the ledger row of a Planned Run launch the pin refused (an unapproved, expired, tampered
+ * or already-launched plan, or a launcher who lost access).
+ *
+ * The gateway writes that row as `IMPLEMENTING` in the same transaction as the work request, so
+ * `retireFailedLaunch` (which retires only `STARTING`) leaves it behind: a nonterminal row that
+ * counts as live work for the repository and, for a library-agent plan, as an agent-run
+ * concurrency slot, until a reconciler notices the workflow is gone. Only a refusal retires it
+ * (`PLANNED_RUN_REFUSED`): any other error is retried by Temporal and the row must survive that.
+ * Scoped to the row naming this execution's workflow id and work request.
+ */
+export async function retireRefusedPlannedLaunch(
+  input: { workflowId: string; workRequestId?: string | null },
+  err: unknown
+): Promise<void> {
+  if ((err as { type?: unknown } | null)?.type !== PLANNED_RUN_REFUSAL_TYPE) {
+    return;
+  }
+  if (!input.workRequestId) {
+    return;
+  }
+  await prisma.activeWorkflow.updateMany({
+    data: { currentStatus: 'FAILED' },
+    where: {
+      currentStatus: { in: ['STARTING', 'IMPLEMENTING'] },
       temporalWorkflowId: input.workflowId,
       workRequestId: input.workRequestId,
     },
