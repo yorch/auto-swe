@@ -284,7 +284,7 @@ interface ChildRow {
 export function childView(
   row: ChildRow,
   undelivered: number,
-  opts: { redactRepo?: boolean } = {}
+  opts: { ordinal?: number; redactRepo?: boolean } = {}
 ): OrchestrationChildDto {
   const parsed = ChildResultSchema.safeParse(row.resultJson);
   const result = opts.redactRepo ? null : parsed.success ? parsed.data : null;
@@ -300,7 +300,9 @@ export function childView(
     createdAt: row.createdAt.toISOString(),
     finishedAt: row.endedAt ? row.endedAt.toISOString() : null,
     id: row.id,
-    label: row.label,
+    // The orchestrator wrote the label after it read the child's full result, so for a viewer who
+    // cannot reach the repository it is replaced by one that only counts.
+    label: opts.redactRepo && opts.ordinal ? `Agent ${opts.ordinal}` : row.label,
     // File paths of the repository: only to someone who can reach it.
     pathScopes: opts.redactRepo ? [] : row.pathScopes,
     prUrl: result?.prUrl ?? null,
@@ -494,8 +496,9 @@ export async function buildDetail(
     };
   }
 
-  const childViews = children.map((c) =>
+  const childViews = children.map((c, index) =>
     childView(c as unknown as ChildRow, c.runId ? (undelivered.get(c.runId) ?? 0) : 0, {
+      ordinal: index + 1,
       redactRepo: !sees,
     })
   );

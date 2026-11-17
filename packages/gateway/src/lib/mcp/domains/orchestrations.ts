@@ -323,10 +323,12 @@ export const orchestrationsDomain: McpDomain = {
           const deadline =
             Date.now() + Math.min(args.timeoutSeconds, maxWaitSeconds(progressToken)) * 1000;
           let progress = 0;
+          // Advances past a page that held only hidden marker rows, so the wait does not re-read it.
+          let cursor = args.after;
           while (!signal.aborted) {
             const response = await get(
               `/api/v1/orchestrations/${args.orchestrationId}/messages`,
-              query({ after: args.after, limit: args.limit })
+              query({ after: cursor, limit: args.limit })
             );
             signal.throwIfAborted();
             if (response.status !== 200) {
@@ -363,9 +365,15 @@ export const orchestrationsDomain: McpDomain = {
                     };
                   }),
                   // An empty page has no cursor: keep reading from the one the caller holds.
-                  next: cursorOut(parsed.data.next) ?? args.after ?? null,
+                  next: cursorOut(parsed.data.next) ?? cursor ?? null,
                 })
               );
+            }
+            const advanced = cursorOut(parsed.data.next);
+            if (advanced !== null && advanced !== cursor) {
+              cursor = advanced;
+              // A page of hidden rows only: real ones may follow it, so read on without waiting.
+              continue;
             }
             await delay(Math.max(0, Math.min(POLL_MS, deadline - Date.now())), undefined, {
               signal,

@@ -1256,6 +1256,21 @@ describe('orchestration routes', () => {
       });
     });
 
+    it('does not reopen the ledger row when a cancel lands between the signal and the reopen', async () => {
+      // The signal wakes the workflow; a concurrent /cancel flips the orchestration before the
+      // reopen reads its status under the row lock.
+      temporal.signalWithStartOrchestration.mockImplementation((async () => {
+        state.orch = orchRow({ repoId: null, status: 'CANCELLED' });
+      }) as never);
+      expect((await attach()).statusCode).toBe(200);
+      const reopened = (
+        prisma.activeWorkflow.updateMany.mock.calls as unknown as Array<
+          [{ data: { currentStatus: string } }]
+        >
+      ).filter((c) => c[0].data.currentStatus === 'IMPLEMENTING');
+      expect(reopened).toHaveLength(0);
+    });
+
     it('marks the request resolved with the time, which is what ends its pending state', async () => {
       await attach();
       expect(prisma.orchestrationMessage.update).toHaveBeenCalledWith({
@@ -1370,7 +1385,8 @@ describe('orchestration routes', () => {
         return {};
       }) as never);
       await attach();
-      expect(order).toEqual(['lock', 'cas', 'resolve']);
+      // The last lock is the ledger reopen after the signal, in its own transaction.
+      expect(order).toEqual(['lock', 'cas', 'resolve', 'lock']);
     });
 
     it('keeps the attach when the workflow cannot be told and a writer already runs on it', async () => {
@@ -1826,10 +1842,14 @@ describe('orchestration routes', () => {
         expect(dto.billing?.childrenTeamName).toBeNull();
         expect(dto.billing?.orchestratorTeamName).toBe('Payments');
         expect(dto.children[0]?.pathScopes).toEqual([]);
-        expect(dto.children[0]?.label).toBe('look');
+        // The label was written after the orchestrator read the child's full result.
+        expect(dto.children[0]?.label).toBe('Agent 1');
         const stream = await firstEvents(person(OTHER_USER_ID), /event: status/);
         expect(stream).not.toContain('src/secret/**');
+        expect(stream).not.toContain('"label":"look"');
+        expect(stream).toContain('"label":"Agent 1"');
         const seen = await detail(person());
+        expect(seen.children[0]?.label).toBe('look');
         expect(seen.billing?.childrenTeamName).toBe('Platform');
         expect(seen.children[0]?.pathScopes).toEqual(['src/secret/**']);
       });
@@ -2218,11 +2238,155 @@ describe('orchestration routes', () => {
       );
     });
 
-    it('still takes a bridged message while WAITING', async () => {
-      state.orch = orchRow({ status: 'WAITING' });
-      expect(
-        (await call('POST', `/${ORCH}/messages`, person(), { body: 'wake' }, bridged)).statusCode
-      ).toBe(201);
+    describe('a bridged message that restarts a WAITING orchestration', () => {
+      const send = () => call('POST', `/${ORCH}/messages`, person(), { body: 'wake' }, bridged);
+      const ledger = () =>
+        (
+          prisma.activeWorkflow.updateMany.mock.calls as unknown as Array<
+            [{ data: { currentStatus: string }; where: Record<string, unknown> }]
+          >
+        ).map((c) => c[0]);
+      // The parked row (COMPLETED) exists; the cap guard counts `inFlight` other runs.
+      const parkedWith = (inFlight: number) =>
+        prisma.activeWorkflow.count.mockImplementation((async (a: {
+          where: { currentStatus: unknown };
+        }) => (a.where.currentStatus === 'COMPLETED' ? 1 : inFlight)) as never);
+
+      beforeEach(() => {
+        state.orch = orchRow({ status: 'WAITING' });
+      });
+
+      it('is refused at the cap, under the per-user lock, and leaves the ledger row COMPLETED', async () => {
+        parkedWith(5);
+        const res = await send();
+        expect(res.statusCode).toBe(429);
+        expect(res.json().error.code).toBe('MCP_RUN_CAP_REACHED');
+        expect(prisma.$transaction).toHaveBeenCalled();
+        expect(prisma.$executeRaw).toHaveBeenCalled();
+        expect(ledger()).toHaveLength(0);
+        expect(prisma.orchestrationMessage.create).not.toHaveBeenCalled();
+        expect(temporal.signalWithStartOrchestration).not.toHaveBeenCalled();
+        expect(prisma.activeWorkflow.count).toHaveBeenCalledWith({
+          where: expect.objectContaining({ workRequest: { requestedById: USER_ID } }),
+        });
+      });
+
+      it('takes the message under the cap, reopening the row before the signal is sent', async () => {
+        parkedWith(4);
+        const order: string[] = [];
+        prisma.activeWorkflow.updateMany.mockImplementation((async () => {
+          order.push('reopen');
+          return { count: 1 };
+        }) as never);
+        temporal.signalWithStartOrchestration.mockImplementation((async () => {
+          order.push('signal');
+        }) as never);
+        const res = await send();
+        expect(res.statusCode).toBe(201);
+        expect(order).toEqual(['reopen', 'signal']);
+        expect(prisma.activeWorkflow.updateMany).toHaveBeenCalledWith({
+          data: { currentStatus: 'IMPLEMENTING' },
+          where: {
+            currentStatus: 'COMPLETED',
+            temporalWorkflowId: `orch-${ORCH}`,
+            workRequestId: 'wr',
+          },
+        });
+      });
+
+      it('puts the row back to COMPLETED, and drops the message, when the signal fails', async () => {
+        parkedWith(0);
+        temporal.signalWithStartOrchestration.mockRejectedValue(new Error('down'));
+        expect((await send()).statusCode).toBe(500);
+        expect(ledger().map((c) => c.data.currentStatus)).toEqual(['IMPLEMENTING', 'COMPLETED']);
+        expect(ledger()[1]?.where.currentStatus).toBe('IMPLEMENTING');
+        expect(prisma.orchestrationMessage.deleteMany).toHaveBeenCalled();
+      });
+
+      it('applies no cap to a message that finds the row still running', async () => {
+        prisma.activeWorkflow.count.mockResolvedValue(0 as never);
+        expect((await send()).statusCode).toBe(201);
+        // Nothing parked: the cap guard (and its per-user lock) never ran.
+        expect(prisma.$executeRaw).not.toHaveBeenCalled();
+      });
+
+      it('leaves a direct caller uncapped', async () => {
+        parkedWith(50);
+        const res = await call('POST', `/${ORCH}/messages`, person(), { body: 'wake' });
+        expect(res.statusCode).toBe(201);
+        expect(prisma.$executeRaw).not.toHaveBeenCalled();
+        expect(ledger()[0]?.data.currentStatus).toBe('IMPLEMENTING');
+      });
+
+      it('is refused, and nothing is reopened, when a cancel flipped the status after the first read', async () => {
+        parkedWith(0);
+        // The route's read sees WAITING; by the time the row is locked the status is CANCELLED.
+        prisma.orchestration.findFirst
+          .mockResolvedValueOnce(orchRow({ status: 'WAITING' }) as never)
+          .mockResolvedValueOnce({ status: 'CANCELLED' } as never);
+        const res = await send();
+        expect(res.statusCode).toBe(409);
+        expect(res.json().error.code).toBe('ORCHESTRATION_NOT_ACTIVE');
+        expect(ledger()).toHaveLength(0);
+        expect(prisma.orchestrationMessage.create).not.toHaveBeenCalled();
+        expect(temporal.signalWithStartOrchestration).not.toHaveBeenCalled();
+      });
+
+      it('does not undo a cancel that landed after the signal failed', async () => {
+        parkedWith(0);
+        temporal.signalWithStartOrchestration.mockImplementation((async () => {
+          throw new Error('down');
+        }) as never);
+        await send();
+        // The undo only matches a row still IMPLEMENTING, so a row /cancel closed is left alone.
+        expect(ledger().at(-1)?.where.currentStatus).toBe('IMPLEMENTING');
+      });
+    });
+
+    describe('the MCP delivery ceiling on an orchestration launched another way', () => {
+      const send = (headers: Record<string, string> = bridged) =>
+        call('POST', `/${ORCH}/messages`, person(), { body: 'steer' }, headers);
+      const sendChild = (headers: Record<string, string> = bridged) =>
+        call('POST', `/${ORCH}/children/${CHILD}/messages`, person(), { body: 'steer' }, headers);
+
+      beforeEach(() => {
+        state.children = [{ id: CHILD, runId: 'run-1', status: 'RUNNING' }];
+      });
+
+      it('refuses a bridged message to an orchestration whose default the allowlist excludes', async () => {
+        state.orch = orchRow({ deliveryDefault: 'draft_pr' });
+        for (const res of [await send(), await sendChild()]) {
+          expect(res.statusCode).toBe(403);
+          expect(res.json().error.code).toBe('MCP_DELIVER_MODE_NOT_ALLOWED');
+          expect(res.json().error.message).toContain('not allowed through MCP');
+        }
+        expect(prisma.orchestrationMessage.create).not.toHaveBeenCalled();
+        expect(prisma.runSteeringMessage.create).not.toHaveBeenCalled();
+        expect(temporal.signalWithStartOrchestration).not.toHaveBeenCalled();
+      });
+
+      it('uses the live setting, ranks a null default as none, and lets a default within the ceiling through', async () => {
+        state.orch = orchRow({ deliveryDefault: 'branch' });
+        expect((await send()).statusCode).toBe(201);
+        expect((await sendChild()).statusCode).toBe(201);
+        state.orch = orchRow({ deliveryDefault: null });
+        expect((await send()).statusCode).toBe(201);
+        cfg.settings['mcp.agentRunAllowedDeliverModes'] = ['none'];
+        state.orch = orchRow({ deliveryDefault: 'branch' });
+        expect((await send()).statusCode).toBe(403);
+        cfg.settings['mcp.agentRunAllowedDeliverModes'] = ['none', 'branch', 'draft_pr'];
+        state.orch = orchRow({ deliveryDefault: 'draft_pr' });
+        expect((await send()).statusCode).toBe(201);
+      });
+
+      it('leaves a direct caller and every read alone', async () => {
+        state.orch = orchRow({ deliveryDefault: 'draft_pr' });
+        expect((await send({})).statusCode).toBe(201);
+        expect((await sendChild({})).statusCode).toBe(201);
+        expect(
+          (await call('GET', `/${ORCH}/messages`, person(), undefined, bridged)).statusCode
+        ).toBe(200);
+      });
     });
 
     // ── Spawn under the MCP launch policy ───────────────────────────────────
@@ -2357,11 +2521,16 @@ describe('orchestration routes', () => {
         expect(ledgerCalls()).toHaveLength(1);
       });
 
-      it('is not reopened when the workflow could not be told about the restart', async () => {
+      it('is put back to COMPLETED when the workflow could not be told about the restart', async () => {
         state.orch = orchRow({ status: 'COMPLETED' });
         temporal.signalWithStartOrchestration.mockRejectedValue(new Error('down'));
         await call('POST', `/${ORCH}/messages`, person(), { body: 'again' });
-        expect(ledgerCalls()).toHaveLength(0);
+        expect(ledgerCalls().map((c) => c[0].data.currentStatus)).toEqual([
+          'IMPLEMENTING',
+          'COMPLETED',
+        ]);
+        // The undo is a compare-and-set on IMPLEMENTING, so a cancel in between is not undone.
+        expect(ledgerCalls()[1]?.[0].where.currentStatus).toBe('IMPLEMENTING');
       });
     });
   });

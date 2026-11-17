@@ -562,6 +562,26 @@ describe('the orchestration tools', () => {
       expect([...out.pendingAttach.reason].length).toBe(300);
     });
 
+    it('serves the label the route sends, which the route neutralises for a viewer who cannot reach the repository', async () => {
+      const s = await setup();
+      const [first, second] = detailRow.children;
+      s.reads.detail.body = {
+        data: {
+          ...detailRow,
+          children: [
+            { ...first, label: 'Agent 1' },
+            { ...second, label: 'Agent 2' },
+          ],
+        },
+      };
+      const { json } = await s.callTool(s.readToken, 'orchestrations_get', {
+        orchestrationId: ORCH,
+      });
+      expect(json.result.structuredContent.children.map((c: { label: string }) => c.label)).toEqual(
+        ['Agent 1', 'Agent 2']
+      );
+    });
+
     it('returns at most 50 children and says when it cut', async () => {
       const s = await setup();
       const base = detailRow.children[1];
@@ -698,6 +718,32 @@ describe('the orchestration tools', () => {
       expect(Date.now() - started).toBeGreaterThanOrEqual(900);
       expect(s.seenQueries.length).toBeGreaterThanOrEqual(2);
     });
+
+    it('moves past a page of hidden rows while waiting instead of re-reading it until the deadline', async () => {
+      const s = await setup();
+      // Page 1 (no cursor) holds only a hidden marker row: no data, but a cursor past it.
+      // Page 2 (from that cursor) has the real message.
+      s.reads.messages.body = {
+        get data() {
+          return s.seenQueries.at(-1)?.after === 'AAAA' ? [messageRow({ body: 'real' })] : [];
+        },
+        get next() {
+          return s.seenQueries.at(-1)?.after === 'AAAA' ? 'BBBB' : 'AAAA';
+        },
+      };
+      const started = Date.now();
+      const { json } = await s.callTool(s.readToken, 'orchestrations_messages', {
+        limit: 1,
+        orchestrationId: ORCH,
+        timeoutSeconds: 30,
+      });
+      const out = json.result.structuredContent;
+      expect(out.messages.map((m: { body: string }) => m.body)).toEqual(['real']);
+      expect(out.next).toBe('BBBB');
+      expect(s.seenQueries.map((q) => q.after)).toEqual([undefined, 'AAAA']);
+      // Immediately, not after a poll interval.
+      expect(Date.now() - started).toBeLessThan(2500);
+    }, 15_000);
 
     it('returns as soon as a message arrives while waiting', async () => {
       const s = await setup();

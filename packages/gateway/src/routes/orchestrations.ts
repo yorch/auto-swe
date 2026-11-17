@@ -255,25 +255,161 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     }
   }
 
+  /**
+   * Wake the orchestration's ledger row after a signal (attach and decline). Conditional on the
+   * orchestration's CURRENT status, read under its row lock in the same transaction: a cancel that
+   * landed since the caller's read leaves the row closed, so a cancelled orchestration never holds
+   * a concurrency slot.
+   */
   async function reopenLedger(
     request: FastifyRequest,
-    row: { id: string; workRequestId: string | null }
+    row: { id: string; teamId: string; workRequestId: string | null }
   ): Promise<void> {
     if (!row.workRequestId) {
       return;
     }
+    const workRequestId = row.workRequestId;
     try {
-      await prisma.activeWorkflow.updateMany({
-        data: { currentStatus: 'IMPLEMENTING' },
-        where: {
-          currentStatus: 'COMPLETED',
-          temporalWorkflowId: orchestrationWorkflowId(row.id),
-          workRequestId: row.workRequestId,
-        },
+      await prisma.$transaction(async (tx) => {
+        // CLAUDE.md §7 exception: the orchestration's row lock, so a concurrent cancel is ordered.
+        await tx.$queryRaw`SELECT id FROM orchestrations WHERE id = ${row.id}::uuid FOR UPDATE`;
+        const current = await tx.orchestration.findFirst({
+          select: { status: true },
+          where: { id: row.id, teamId: row.teamId },
+        });
+        if (!current || !ORCHESTRATION_LIVE_STATUSES.includes(current.status as never)) {
+          return;
+        }
+        await tx.activeWorkflow.updateMany({
+          data: { currentStatus: 'IMPLEMENTING' },
+          where: {
+            currentStatus: 'COMPLETED',
+            temporalWorkflowId: orchestrationWorkflowId(row.id),
+            workRequestId,
+          },
+        });
       });
     } catch (err) {
       request.log.error({ err, orchestrationId: row.id }, 'orchestrator ledger row not reopened');
     }
+  }
+
+  type Wake =
+    | { kind: 'ok'; reopened: boolean; revived: boolean }
+    | { kind: 'ended' }
+    | { kind: 'capped' };
+
+  /**
+   * Prepare a message that will start (or restart) the orchestrator's workflow, in ONE transaction
+   * under the orchestration's row lock: re-read its status, revive a COMPLETED one for a direct
+   * caller, and reopen the parked ledger row (COMPLETED to IMPLEMENTING). For a bridged caller the
+   * launcher's `mcp.maxConcurrentRuns` cap is applied first, under the per-user advisory lock the
+   * launch path takes (`runCapGuard`): over the cap nothing is written. The signal is sent only
+   * after this commits, and `undoWake` puts back what it changed if the signal fails.
+   */
+  async function prepareWake(
+    row: { id: string; teamId: string; workRequestId: string | null },
+    opts: { cap: { cap: number; userId: string } | null; revive: boolean }
+  ): Promise<Wake> {
+    return prisma.$transaction(async (tx) => {
+      // CLAUDE.md §7 exception: the orchestration's row lock, so a concurrent cancel is ordered.
+      await tx.$queryRaw`SELECT id FROM orchestrations WHERE id = ${row.id}::uuid FOR UPDATE`;
+      const current = await tx.orchestration.findFirst({
+        select: { status: true },
+        where: { id: row.id, teamId: row.teamId },
+      });
+      const live = !!current && ORCHESTRATION_LIVE_STATUSES.includes(current.status as never);
+      const reviving = opts.revive && current?.status === 'COMPLETED';
+      if (!live && !reviving) {
+        return { kind: 'ended' } as const;
+      }
+      let reopened = false;
+      if (row.workRequestId) {
+        const parked = {
+          currentStatus: 'COMPLETED',
+          temporalWorkflowId: orchestrationWorkflowId(row.id),
+          workRequestId: row.workRequestId,
+        };
+        if (opts.cap && (await tx.activeWorkflow.count({ where: parked })) > 0) {
+          // A new execution is about to start: it counts as in flight, so the cap applies.
+          if (await runCapGuard(opts.cap.userId, opts.cap.cap)(tx)) {
+            return { kind: 'capped' } as const;
+          }
+        }
+        const { count } = await tx.activeWorkflow.updateMany({
+          data: { currentStatus: 'IMPLEMENTING' },
+          where: parked,
+        });
+        reopened = count > 0;
+      }
+      let revived = false;
+      if (reviving) {
+        const { count } = await tx.orchestration.updateMany({
+          data: { endedAt: null, status: 'ACTIVE' },
+          where: { id: row.id, status: 'COMPLETED', teamId: row.teamId },
+        });
+        revived = count === 1;
+      }
+      return { kind: 'ok', reopened, revived } as const;
+    });
+  }
+
+  /** Put back what `prepareWake` changed, each step a compare-and-set so a cancel is never undone. */
+  async function undoWake(
+    request: FastifyRequest,
+    row: { id: string; teamId: string; workRequestId: string | null },
+    wake: { reopened: boolean; revived: boolean }
+  ): Promise<void> {
+    try {
+      if (wake.revived) {
+        await prisma.orchestration.updateMany({
+          data: { endedAt: new Date(), status: 'COMPLETED' },
+          where: { id: row.id, status: 'ACTIVE', teamId: row.teamId },
+        });
+      }
+      if (wake.reopened && row.workRequestId) {
+        await prisma.activeWorkflow.updateMany({
+          data: { currentStatus: 'COMPLETED' },
+          where: {
+            currentStatus: 'IMPLEMENTING',
+            temporalWorkflowId: orchestrationWorkflowId(row.id),
+            workRequestId: row.workRequestId,
+          },
+        });
+      }
+    } catch (err) {
+      request.log.error({ err, orchestrationId: row.id }, 'orchestration wake not undone');
+    }
+  }
+
+  /**
+   * Sends the refusal and answers true. (Not the reply itself: an async function that returns a
+   * Fastify reply resolves it, not hands it back.) A bridged message steers an orchestration only when its delivery default is no broader than
+   * the highest mode `mcp.agentRunAllowedDeliverModes` allows now (order none, branch, draft_pr; a
+   * null default is none). Reads are not affected.
+   */
+  async function mcpDeliveryRefusal(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    deliveryDefault: string | null
+  ): Promise<boolean> {
+    if (!request.mcpBridge) {
+      return false;
+    }
+    const modes = (await resolveSettings(['mcp.agentRunAllowedDeliverModes']))[
+      'mcp.agentRunAllowedDeliverModes'
+    ];
+    const highest = Math.max(-1, ...modes.map((m) => DELIVER_RANK.indexOf(m)));
+    if (Math.max(0, DELIVER_RANK.indexOf(deliveryDefault ?? 'none')) > highest) {
+      sendError(
+        reply,
+        403,
+        'MCP_DELIVER_MODE_NOT_ALLOWED',
+        "This orchestration's delivery default is not allowed through MCP"
+      );
+      return true;
+    }
+    return false;
   }
 
   /** Whether the kill switch is on; 503 when it cannot be read (fail closed). */
@@ -1191,8 +1327,9 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
                 })
               : [];
             const undelivered = new Map(steering.map((g) => [g.runId, g._count._all]));
-            for (const c of children) {
+            for (const [index, c] of children.entries()) {
               const view = childView(c as never, c.runId ? (undelivered.get(c.runId) ?? 0) : 0, {
+                ordinal: index + 1,
                 redactRepo: !sees,
               });
               const serialized = JSON.stringify(view);
@@ -1261,6 +1398,27 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       if (!on) {
         return sendError(reply, 403, 'ORCHESTRATION_DISABLED', 'Orchestrated runs are turned off');
       }
+      if (await mcpDeliveryRefusal(request, reply, row.deliveryDefault)) {
+        return reply;
+      }
+      // A signal to a WAITING (or revived COMPLETED) orchestration starts a new execution; for a
+      // bridged caller that counts against the launcher's cap, checked in the same transaction
+      // that reopens the ledger row, before anything is sent.
+      const wake = await prepareWake(row, {
+        cap: request.mcpBridge
+          ? {
+              cap: (await resolveSettings(['mcp.maxConcurrentRuns']))['mcp.maxConcurrentRuns'],
+              userId: user.sub,
+            }
+          : null,
+        revive: !request.mcpBridge,
+      });
+      if (wake.kind === 'capped') {
+        return sendRunCapRefusal(reply);
+      }
+      if (wake.kind === 'ended') {
+        return refusal(reply, 409, 'ORCHESTRATION_NOT_ACTIVE', 'This orchestration has ended');
+      }
       const message = await prisma.orchestrationMessage.create({
         data: {
           authorId: user.sub,
@@ -1270,30 +1428,15 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
           role: 'USER',
         },
       });
-      let revived = false;
-      if (row.status === 'COMPLETED') {
-        const { count } = await prisma.orchestration.updateMany({
-          data: { endedAt: null, status: 'ACTIVE' },
-          where: { id: row.id, status: 'COMPLETED', teamId: row.teamId },
-        });
-        revived = count === 1;
-      }
       try {
         await fastify.temporal.signalWithStartOrchestration(row.id, await workflowInput(row), {
           name: ORCHESTRATION_SIGNALS.userMessage,
           payload: { messageId: message.id },
         });
-        // A revived (or waking) orchestration counts as in flight again.
-        await reopenLedger(request, row);
       } catch (err) {
         // Undo, so the person can send it again: the orchestrator never saw it.
         await prisma.orchestrationMessage.deleteMany({ where: { id: message.id } });
-        if (revived) {
-          await prisma.orchestration.updateMany({
-            data: { endedAt: new Date(), status: 'COMPLETED' },
-            where: { id: row.id, teamId: row.teamId },
-          });
-        }
+        await undoWake(request, row, wake);
         if (isTemporalUnavailable(err)) {
           return sendTemporalUnavailable(reply);
         }
@@ -1325,7 +1468,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       const byOrchestrator = request.orchestration !== undefined;
       const orch = byOrchestrator
         ? await prisma.orchestration.findFirst({
-            select: { id: true, status: true, teamId: true },
+            select: { deliveryDefault: true, id: true, status: true, teamId: true },
             where: { id: request.params.id },
           })
         : await launcherOwned(request, reply, request.params.id);
@@ -1336,6 +1479,9 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       }
       if (!ORCHESTRATION_LIVE_STATUSES.includes(orch.status as never)) {
         return refusal(reply, 409, 'ORCHESTRATION_NOT_ACTIVE', 'This orchestration has ended');
+      }
+      if (await mcpDeliveryRefusal(request, reply, orch.deliveryDefault)) {
+        return reply;
       }
       const child = await prisma.orchestrationChild.findFirst({
         select: { id: true, runId: true, status: true },

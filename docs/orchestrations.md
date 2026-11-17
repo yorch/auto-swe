@@ -212,7 +212,7 @@ every turn writes a hidden marker row before the model runs, so tool-only and fa
 worker restart. A restarted workflow resumes from history and reports any finished child no turn has read.
 
 A message from the launcher to a `COMPLETED` orchestration revives it on the dashboard or the CLI (through
-MCP the same message is refused with `409`; restarting is not an MCP act), but the lifetime and the turn limit are measured from
+MCP the same message is refused with `409`; reviving an ended orchestration is not an MCP act), but the lifetime and the turn limit are measured from
 launch, so one that ended on a limit ends again as soon as the message is taken up. A `CANCELLED` or
 `FAILED` orchestration takes no message.
 
@@ -557,7 +557,22 @@ Children of an MCP-launched orchestration count against the launcher's `mcp.maxC
 idle (`WAITING`) or ended orchestration is not an in-flight run for that cap or any other. A bridged
 launch refuses `connectionIds`, so an MCP-launched orchestration has no MCP connection set. Three of the
 seven routes that declare the MCP write scope across the platform are orchestration routes (launch,
-message, child message). A message through MCP to a `COMPLETED` orchestration is refused (`409`).
+message, child message). A message through MCP to a `COMPLETED` orchestration is refused (`409`). A message
+through MCP to a `WAITING` orchestration starts its workflow again, so it takes the same cap as a launch: in
+one transaction under the launcher's per-user lock the orchestrator's ledger row is reopened and the
+launcher's runs in flight are counted, and at `mcp.maxConcurrentRuns` the message is refused (`429`
+`MCP_RUN_CAP_REACHED`) with the row left closed; the signal is sent only after the transaction commits, and a
+failed signal puts the row back. The reopen also re-reads the orchestration's status under its row lock, so
+a concurrent cancel never leaves a cancelled orchestration holding a slot. Dashboard and CLI messages carry
+no cap.
+
+A message through MCP, to the orchestrator or to a child, is also held to the live
+`mcp.agentRunAllowedDeliverModes`, whichever way the orchestration was launched: when its `deliveryDefault`
+(none if unset) ranks above the highest mode that setting allows (order `none`, `branch`, `draft_pr`), the
+message is refused with `403` `MCP_DELIVER_MODE_NOT_ALLOWED`. Reads are unaffected.
+
+For a viewer who cannot reach the attached repository, an agent's label is shown as `Agent <n>` (its
+creation order), because the orchestrator wrote it after reading the agent's full result.
 
 **No MCP tool attaches or declines a repository, approves or denies a write, or cancels or ends an
 orchestration.** Those are the launcher's acts on the dashboard and the CLI (`attach`, `decline`,
@@ -652,8 +667,9 @@ has no workflow run to pin on; the gateway freezes the bounds into the workflow 
   MCP connection. Their writers' delivery is held to `mcp.agentRunAllowedDeliverModes` and the launch's
   `deliveryDefault`, but a writer is still possible once the launcher confirms a repository in the
   dashboard and holds push permission on it.
-- **`deliveryDefault` is a ceiling only for MCP-launched orchestrations.** Elsewhere it is shown on the
-  attach card and is not applied to a writer or told to the orchestrator.
+- **`deliveryDefault` bounds a writer's delivery only for MCP-launched orchestrations.** Elsewhere it is
+  shown on the attach card and is not applied to a writer or told to the orchestrator. An MCP message to
+  any orchestration is additionally refused when its default is outside `mcp.agentRunAllowedDeliverModes`.
 - **MCP audit rows keep a digest of short messages.** The audit record of an MCP write keeps a digest of
   the body, which is guessable for a very short message.
 - **A notice may reach a viewer who cannot see the repository, on a repository-bound launch.** The
