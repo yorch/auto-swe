@@ -72,7 +72,7 @@ mcp login [--url <base>] [--write]  Approve a device code in a browser; no REST 
 mcp token|header [--url <base>]     Print an MCP token or Authorization JSON, refreshing if needed
 mcp logout [--url <base>]          Revoke the refresh token and delete local MCP credentials
 
-run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--budget=<tier>]
+run --ticket=<id> [--description=<text>] (--repo=<org/name>|--repo-id=<uuid>) [--budget=<tier>]
     [--idempotency-key=<key>] [--acknowledge-unchanged]
     [--egress-policy=open|restricted|blocked]
                                      Submit a work request and start a run on the default template;
@@ -80,6 +80,9 @@ run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--b
                                      already started instead of a second one; a request identical to
                                      one that stopped as not actionable in the last 24 hours is
                                      refused unless --acknowledge-unchanged is passed.
+                                     --description is optional when the ticket can be read from the
+                                     issue tracker; otherwise the server refuses with
+                                     DESCRIPTION_REQUIRED.
 
 agent run <key[@version]> "<prompt>" --repo=<org/name> [--deliver=none|branch|draft_pr]
           [--base=<branch>] [--max-steps=N] [--timeout=SECONDS] [--wait]

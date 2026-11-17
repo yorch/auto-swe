@@ -40,6 +40,21 @@ export function withAcknowledgeHint(err: unknown): unknown {
   );
 }
 
+/** An advisory notice the gateway attaches to a successful launch (`data.warnings[]`). */
+export interface LaunchWarning {
+  code: string;
+  message: string;
+}
+
+/** Print a launch response's advisory warnings to stderr; the launch itself already succeeded. */
+export function printLaunchWarnings(warnings: LaunchWarning[] | undefined): void {
+  for (const warning of warnings ?? []) {
+    if (typeof warning?.message === 'string' && warning.message !== '') {
+      process.stderr.write(`Warning: ${warning.message}\n`);
+    }
+  }
+}
+
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 /**

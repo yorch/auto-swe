@@ -44,10 +44,87 @@ describe('runWorkRequestsCommand', () => {
     expect(stderrWrites.join('')).toContain('--ticket');
   });
 
-  it('errors when --description is missing', async () => {
+  it('does not require --description: the server builds the brief from the ticket', async () => {
+    const reposPayload = JSON.stringify({
+      data: [{ id: 'repo-1', isActive: true, organizationName: 'org', repoName: 'repo' }],
+    });
+    const wrPayload = JSON.stringify({
+      data: { workflowIds: ['wf-1'], workRequestId: 'wr-1' },
+    });
+    const bodies: Record<string, unknown>[] = [];
+    globalThis.fetch = vi.fn().mockImplementation((url: string, init?: { body?: string }) => {
+      if ((url as string).includes('/repositories')) {
+        return Promise.resolve({ ok: true, status: 200, text: async () => reposPayload });
+      }
+      if (init?.body) {
+        bodies.push(JSON.parse(init.body) as Record<string, unknown>);
+      }
+      return Promise.resolve({ ok: true, status: 200, text: async () => wrPayload });
+    }) as unknown as typeof fetch;
+
     const code = await runWorkRequestsCommand(['--ticket=T-1', '--repo=org/repo'], ENV);
+    expect(code).toBe(0);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).not.toHaveProperty('description');
+    expect(bodies[0]).toMatchObject({ externalTicketId: 'T-1', repoIds: ['repo-1'] });
+  });
+
+  it('still requires --ticket when --description is omitted', async () => {
+    const code = await runWorkRequestsCommand(['--repo=org/repo'], ENV);
     expect(code).toBe(1);
-    expect(stderrWrites.join('')).toContain('--description');
+    expect(stderrWrites.join('')).toContain('--ticket');
+  });
+
+  it('prints the response warnings to stderr and still succeeds', async () => {
+    const reposPayload = JSON.stringify({
+      data: [{ id: 'repo-1', isActive: true, organizationName: 'org', repoName: 'repo' }],
+    });
+    const wrPayload = JSON.stringify({
+      data: {
+        warnings: [{ code: 'DESCRIPTION_INJECTION_SUSPECTED', message: 'Looks odd.' }],
+        workflowIds: ['wf-1'],
+        workRequestId: 'wr-1',
+      },
+    });
+    globalThis.fetch = vi.fn().mockImplementation((url: string) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: async () => ((url as string).includes('/repositories') ? reposPayload : wrPayload),
+      })
+    ) as unknown as typeof fetch;
+
+    const code = await runWorkRequestsCommand(
+      ['--ticket=T-1', '--description=do it', '--repo=org/repo'],
+      ENV
+    );
+    expect(code).toBe(0);
+    expect(stderrWrites.join('')).toContain('Warning: Looks odd.');
+    expect(stdoutWrites.join('')).toContain('Work request submitted.');
+  });
+
+  it('sends the description in the body when it is given', async () => {
+    const reposPayload = JSON.stringify({
+      data: [{ id: 'repo-1', isActive: true, organizationName: 'org', repoName: 'repo' }],
+    });
+    const wrPayload = JSON.stringify({ data: { workflowIds: ['wf-1'], workRequestId: 'wr-1' } });
+    const bodies: Record<string, unknown>[] = [];
+    globalThis.fetch = vi.fn().mockImplementation((url: string, init?: { body?: string }) => {
+      if ((url as string).includes('/repositories')) {
+        return Promise.resolve({ ok: true, status: 200, text: async () => reposPayload });
+      }
+      if (init?.body) {
+        bodies.push(JSON.parse(init.body) as Record<string, unknown>);
+      }
+      return Promise.resolve({ ok: true, status: 200, text: async () => wrPayload });
+    }) as unknown as typeof fetch;
+
+    const code = await runWorkRequestsCommand(
+      ['--ticket=T-1', '--description=do it', '--repo=org/repo'],
+      ENV
+    );
+    expect(code).toBe(0);
+    expect(bodies[0]).toMatchObject({ description: 'do it' });
   });
 
   it('errors when --repo is missing', async () => {

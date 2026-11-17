@@ -28,8 +28,10 @@ COMMANDS
   mcp token|header [--url <base>]     Print an MCP token or Authorization JSON; refresh when needed
   mcp logout [--url <base>]          Revoke the refresh token and remove saved MCP credentials
 
-  run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--budget=<tier>]
-                                       Submit a work request and start a run on the default template
+  run --ticket=<id> [--description=<text>] (--repo=<org/name>|--repo-id=<uuid>) [--budget=<tier>]
+                                       Submit a work request and start a run on the default template;
+                                       --description is optional when the ticket can be read from the
+                                       issue tracker (the server builds the brief from it)
 
   agent run <key[@version]> "<prompt>" --repo=<org/name> [--deliver=none|branch|draft_pr]
             [--base=<branch>] [--max-steps=N] [--timeout=SECONDS] [--wait]

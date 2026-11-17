@@ -409,14 +409,19 @@ export function useRunTemplate(templateId: string) {
         submission.current = { body: serialized, key: randomId() };
       }
       return api
-        .fetch<{ data: { temporalWorkflowId: string; workflowId: string; workRequestId: string } }>(
-          `/api/v1/workflow-templates/${templateId}/runs`,
-          {
-            body: serialized,
-            headers: { 'Idempotency-Key': submission.current.key },
-            method: 'POST',
-          }
-        )
+        .fetch<{
+          data: {
+            temporalWorkflowId: string;
+            /** Advisory notices about a typed description; the run was started regardless. */
+            warnings?: { code: string; message: string }[];
+            workflowId: string;
+            workRequestId: string;
+          };
+        }>(`/api/v1/workflow-templates/${templateId}/runs`, {
+          body: serialized,
+          headers: { 'Idempotency-Key': submission.current.key },
+          method: 'POST',
+        })
         .then((r) => r.data);
     },
     onSuccess: () => {

@@ -1,20 +1,28 @@
 import { EGRESS_POLICIES } from '@auto-swe/shared/lib/egressPolicy';
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { BUDGET_TIERS } from '@auto-swe/shared/types/workflow';
-import { apiRequest, apiRequestFull, runWithExitCodes, withAcknowledgeHint } from '../lib/api.js';
+import {
+  apiRequest,
+  apiRequestFull,
+  type LaunchWarning,
+  printLaunchWarnings,
+  runWithExitCodes,
+  withAcknowledgeHint,
+} from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 import { missingValue, parseFlags } from '../lib/flags.js';
 
 const SUB_HELP = `auto-swe run — submit a work request
 
-  run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--budget=<tier>]
+  run --ticket=<id> [--description=<text>] (--repo=<org/name>|--repo-id=<uuid>) [--budget=<tier>]
       [--egress-policy=<policy>] [--idempotency-key=<key>] [--acknowledge-unchanged]
 
   FLAGS
     --ticket=<id>           External ticket ID (e.g. JIRA-123, GH-42)
     --repo=<org/name>       Target repository in "org/name" format
     --repo-id=<uuid>        Target repository UUID (bypasses name-resolution lookup)
-    --description=<text>    What the agent should implement
+    --description=<text>    What the agent should implement (optional when the ticket can be
+                            read from the issue tracker; the server builds the brief from it)
     --budget=STANDARD|LARGE|EPIC
                             Budget tier for the run (default: STANDARD)
     --egress-policy=open|restricted|blocked
@@ -41,6 +49,8 @@ interface WorkRequestResponse {
   workflowIds: string[];
   /** Present (true) when an `Idempotency-Key` replay returned an earlier submission. */
   deduplicated?: boolean;
+  /** Advisory notices about the submission; the run was started regardless. */
+  warnings?: LaunchWarning[];
 }
 
 /** Page size for the repository lookup — the list endpoint's maximum. */
@@ -128,10 +138,6 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     process.stderr.write('Missing required flag: --ticket=<id>\n');
     return 1;
   }
-  if (!flags.description) {
-    process.stderr.write('Missing required flag: --description=<text>\n');
-    return 1;
-  }
   if (!flags.repo && !flags['repo-id']) {
     process.stderr.write('Missing required flag: --repo=<org/name> or --repo-id=<uuid>\n');
     return 1;
@@ -185,7 +191,7 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     ...(flags['acknowledge-unchanged'] ? { acknowledgeUnchanged: true } : {}),
     budgetTier: budget,
     ...(egressPolicy !== undefined ? { egressPolicy } : {}),
-    description: flags.description,
+    ...(flags.description ? { description: flags.description } : {}),
     externalTicketId: flags.ticket,
     repoIds: [resolvedRepoId],
   };
@@ -199,6 +205,7 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     throw withAcknowledgeHint(err);
   });
 
+  printLaunchWarnings(result.warnings);
   process.stdout.write(
     result.deduplicated
       ? `Work request already submitted with this idempotency key; nothing new started.\n`
