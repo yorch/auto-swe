@@ -7,6 +7,7 @@ import {
 } from 'node:crypto';
 import { z } from 'zod';
 import { AGENT_RUN_TEMPLATE_NAME, isReservedTemplateOrigin } from '../lib/agentRun.js';
+import { ProfileNameSchema } from '../lib/harnessProfile/manifest.js';
 import { inputSchemaProblems } from '../lib/inputSchema.js';
 import { parseProviderModelSpec } from '../lib/modelSpec.js';
 import {
@@ -48,13 +49,23 @@ import { formatValidationIssue, validateSpec } from '../workflow/validateSpec.js
  *   cannot be self-referential (`metadata.contentHash`, `metadata.signature`,
  *   `metadata.signedBy`). Identity is therefore signed.
  *
+ * - **v3** — adds `entities.plugins`: references to Claude Code plugins (a profile name, the
+ *   source coordinates, an exact commit, the expected profile `contentHash` and agent bindings by
+ *   key). The hash rule is unchanged; the entries are part of `entities`, so they are signed. The
+ *   plugin's bytes never travel: install reads the commit and refuses a content hash that differs.
+ *
  * **v1 bundles are rejected, not silently re-interpreted.** {@link parseBundle}
- * throws {@link BundleSchemaVersionError} for any non-current schema version, so a
+ * throws {@link BundleSchemaVersionError} for any schema version it does not accept, so a
  * v1 bundle can never verify under the v2 rules (its hash would simply mismatch,
  * but failing early gives an actionable error instead of "content hash mismatch").
- * Publishers must re-emit and re-sign with a current toolchain.
+ * Publishers must re-emit and re-sign with a current toolchain. **v2 bundles are still
+ * accepted** (they carry no plugins and hash exactly as they were signed); every bundle this
+ * build writes is v3.
  */
-export const BUNDLE_SCHEMA_VERSION = 2 as const;
+export const BUNDLE_SCHEMA_VERSION = 3 as const;
+
+/** The schema versions {@link parseBundle} accepts. */
+export const ACCEPTED_BUNDLE_SCHEMA_VERSIONS: readonly number[] = [2, 3];
 
 export { SCANNER_PATTERN_TYPES } from '../lib/scannerPatternTypes.js';
 
@@ -182,8 +193,38 @@ export const BundleTemplateSchema = z.object({
   }),
 });
 
+/** Where a plugin's commit is read from. `host` defaults to github.com, `path` to the repository root. */
+export const BundlePluginSourceSchema = z.object({
+  host: z.string().min(1).max(253).optional(),
+  owner: z.string().min(1).max(100),
+  path: z.string().max(1000).optional(),
+  repo: z.string().min(1).max(100),
+});
+
+/**
+ * A plugin the bundle installs by reference: the bytes never travel. Install reads `source` at the
+ * exact commit `sha` with the guarded fetcher and requires the folder's profile content hash to
+ * equal `contentHash`. `bindings` append the plugin to the named GLOBAL agents.
+ *
+ * `bindings` is required (an empty list is explicit) and nothing here has a default: the parsed
+ * value is what the content hash covers, and a default would hash differently from the bytes the
+ * author signed.
+ */
+export const BundlePluginSchema = z.object({
+  bindings: z.array(z.object({ agentKey: z.string().min(1).max(200) })),
+  /** sha256 of the profile snapshot (`computeContentHash` of the harness profile), 64 hex digits. */
+  contentHash: z.string().regex(/^[0-9a-f]{64}$/),
+  /** The profile name (`profile.json` `name`). */
+  name: ProfileNameSchema,
+  /** The 40-hex commit the folder is read at. */
+  sha: z.string().regex(/^[0-9a-f]{40}$/),
+  source: BundlePluginSourceSchema,
+});
+
 export const BundleEntitiesSchema = z.object({
   agents: z.array(BundleAgentSchema).default([]),
+  // Optional with no default: a v2 bundle (no plugins) must hash as it was signed.
+  plugins: z.array(BundlePluginSchema).optional(),
   scannerPatterns: z.array(BundleScannerPatternSchema).default([]),
   skills: z.array(BundleSkillSchema).default([]),
   templates: z.array(BundleTemplateSchema).default([]),
@@ -212,7 +253,7 @@ export const BundleMetadataSchema = z.object({
 });
 
 export const BundleManifestSchema = z.object({
-  bundleSchemaVersion: z.literal(BUNDLE_SCHEMA_VERSION),
+  bundleSchemaVersion: z.union([z.literal(2), z.literal(3)]),
   dependencies: z.array(BundleDependencySchema).default([]),
   entities: BundleEntitiesSchema,
   metadata: BundleMetadataSchema,
@@ -220,6 +261,8 @@ export const BundleManifestSchema = z.object({
 
 export type BundleSkill = z.infer<typeof BundleSkillSchema>;
 export type BundleAgent = z.infer<typeof BundleAgentSchema>;
+export type BundlePlugin = z.infer<typeof BundlePluginSchema>;
+export type BundlePluginSource = z.infer<typeof BundlePluginSourceSchema>;
 export type BundleScannerPattern = z.infer<typeof BundleScannerPatternSchema>;
 export type BundleTemplate = z.infer<typeof BundleTemplateSchema>;
 export type BundleEntities = z.infer<typeof BundleEntitiesSchema>;
@@ -247,6 +290,8 @@ export interface BundleInstallCounts {
   skills: number;
   scannerPatterns: number;
   templates: number;
+  /** Present only when the bundle carries plugins. */
+  plugins?: number;
 }
 
 /** What an install tells its caller (the gateway adds audit-only fields beside these). */
@@ -256,6 +301,8 @@ export interface BundleInstallResult {
   trustState: BundleTrustState;
   signedBy: string | null;
   warnings: string[];
+  /** Plugins the install created a profile for, and ones it found already approved. */
+  plugins?: { created: string[]; reused: string[] };
 }
 
 /** Thrown when a manifest declares a bundle schema version this build cannot trust. */
@@ -325,7 +372,9 @@ export interface BuildBundleManifestInput {
  * JSON round-trip (`stableStringify` drops undefined keys for the same reason).
  */
 export function buildBundleManifest(input: BuildBundleManifestInput): BundleManifest {
-  const { entities } = input;
+  // An empty plugin list is absent, so a bundle of no plugins has one spelling (and one hash).
+  const { plugins, ...rest } = input.entities;
+  const entities: BundleEntities = plugins && plugins.length > 0 ? { ...rest, plugins } : rest;
   const dependencies = input.dependencies ?? [];
   const metadata = {
     createdAt: input.createdAt ?? new Date().toISOString(),
@@ -357,14 +406,21 @@ export function buildBundleManifest(input: BuildBundleManifestInput): BundleMani
  */
 export function parseBundle(input: unknown): BundleManifest {
   const declared = (input as { bundleSchemaVersion?: unknown } | null)?.bundleSchemaVersion;
-  if (typeof declared === 'number' && declared !== BUNDLE_SCHEMA_VERSION) {
+  if (typeof declared === 'number' && !ACCEPTED_BUNDLE_SCHEMA_VERSIONS.includes(declared)) {
     throw new BundleSchemaVersionError(
-      `unsupported bundleSchemaVersion ${declared} (this deployment requires ${BUNDLE_SCHEMA_VERSION}). ` +
+      `unsupported bundleSchemaVersion ${declared} (this deployment accepts ${ACCEPTED_BUNDLE_SCHEMA_VERSIONS.join(' and ')}). ` +
         'Schema v1 signed only entities+dependencies, leaving metadata.name/version unsigned; ' +
         'such bundles are not accepted. Re-export and re-sign the bundle with a current toolchain.'
     );
   }
-  return BundleManifestSchema.parse(input);
+  const manifest = BundleManifestSchema.parse(input);
+  if (manifest.bundleSchemaVersion < 3 && manifest.entities.plugins !== undefined) {
+    throw new BundleSchemaVersionError(
+      `bundleSchemaVersion ${manifest.bundleSchemaVersion} cannot carry plugins; plugin references need schema 3. ` +
+        'Re-export and re-sign the bundle with a current toolchain.'
+    );
+  }
+  return manifest;
 }
 
 /**
@@ -457,6 +513,58 @@ export function validateBundleAgents(manifest: BundleManifest): string[] {
     const issue = runtimeModelError(a.runtime, a.modelSpec);
     if (issue) {
       errors.push(`agent '${a.key}': ${issue}`);
+    }
+  }
+  return errors;
+}
+
+const OWNER_REPO_RE = /^[A-Za-z0-9_.-]{1,100}$/;
+
+/** Why a plugin's source coordinates cannot name a repository folder; null when they can. */
+function pluginSourceProblem(src: BundlePluginSource): string | null {
+  if (!OWNER_REPO_RE.test(src.owner) || src.owner === '.' || src.owner === '..') {
+    return 'source.owner is not a valid owner name';
+  }
+  if (!OWNER_REPO_RE.test(src.repo) || src.repo === '.' || src.repo === '..') {
+    return 'source.repo is not a valid repository name';
+  }
+  const path = (src.path ?? '').trim().replace(/\/+$/, '');
+  if (
+    path !== '' &&
+    (path.startsWith('/') ||
+      path.includes('\\') ||
+      path.split('/').some((seg) => seg === '' || seg === '.' || seg === '..'))
+  ) {
+    return 'source.path is not a safe relative directory';
+  }
+  return null;
+}
+
+/**
+ * Check the plugin references: unique names (case-insensitively, as profile names are) and no
+ * agent bound twice by one plugin, with a usable source. A binding's `agentKey` may name an agent
+ * the bundle carries or one already installed, so it is not required to be in the bundle. Pure
+ * and synchronous, shared with the SDK. One message per problem; empty means all are acceptable.
+ */
+export function validateBundlePlugins(manifest: BundleManifest): string[] {
+  const errors: string[] = [];
+  const seen = new Set<string>();
+  for (const p of manifest.entities.plugins ?? []) {
+    const key = p.name.toLowerCase();
+    if (seen.has(key)) {
+      errors.push(`plugin '${p.name}': listed more than once`);
+    }
+    seen.add(key);
+    const problem = pluginSourceProblem(p.source);
+    if (problem) {
+      errors.push(`plugin '${p.name}': ${problem}`);
+    }
+    const keys = new Set<string>();
+    for (const b of p.bindings) {
+      if (keys.has(b.agentKey)) {
+        errors.push(`plugin '${p.name}': agent '${b.agentKey}' is bound twice`);
+      }
+      keys.add(b.agentKey);
     }
   }
   return errors;

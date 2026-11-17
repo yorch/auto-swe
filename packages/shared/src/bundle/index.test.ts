@@ -14,6 +14,7 @@ import {
   parseBundle,
   signContentHash,
   validateBundleAgents,
+  validateBundlePlugins,
   validateBundleScannerPatterns,
   validateBundleTemplates,
   verifyBundleSignature,
@@ -178,13 +179,33 @@ describe('buildBundleManifest', () => {
     version: '1.0.0',
   };
 
-  it('reproduces the content hash existing signed bundles were signed over', () => {
-    expect(buildBundleManifest(goldenInput).metadata.contentHash).toBe(GOLDEN_CONTENT_HASH);
+  it('reproduces the content hash existing signed v2 bundles were signed over', () => {
+    expect(
+      computeContentHash({
+        bundleSchemaVersion: 2,
+        dependencies: goldenInput.dependencies,
+        entities: goldenInput.entities,
+        metadata: {
+          createdAt: goldenInput.createdAt,
+          description: goldenInput.description,
+          name: goldenInput.name,
+          source: goldenInput.source,
+          version: goldenInput.version,
+        },
+      })
+    ).toBe(GOLDEN_CONTENT_HASH);
   });
 
-  it('an existing manifest carrying that hash still verifies', () => {
+  it('builds a v3 manifest whose hash differs from the v2 one only by the version', () => {
+    const built = buildBundleManifest(goldenInput);
+    expect(built.bundleSchemaVersion).toBe(3);
+    expect(built.metadata.contentHash).not.toBe(GOLDEN_CONTENT_HASH);
+    expect(verifyContentHash(built).ok).toBe(true);
+  });
+
+  it('an existing v2 manifest carrying that hash still verifies', () => {
     const onDisk = {
-      bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+      bundleSchemaVersion: 2,
       dependencies: goldenInput.dependencies,
       entities: goldenInput.entities,
       metadata: {
@@ -625,5 +646,99 @@ describe('bundleContainerImageWarnings', () => {
         withTemplate({ sh: { next: 'done', step: 'runLint', type: 'step' } })
       )
     ).toEqual([]);
+  });
+});
+
+describe('schema v3 plugin references', () => {
+  const sha = 'a'.repeat(40);
+  const plugin = {
+    bindings: [{ agentKey: 'implementer' }],
+    contentHash: 'b'.repeat(64),
+    name: 'acme-pack',
+    sha,
+    source: { owner: 'acme', path: 'plugins/pack', repo: 'tools' },
+  };
+  const withPlugins = (plugins: unknown[]) =>
+    buildBundleManifest({
+      entities: { ...emptyEntities, plugins } as BundleEntities,
+      name: 'b',
+      version: '1',
+    });
+
+  it('builds, hashes and round-trips a bundle that carries plugins', () => {
+    const m = withPlugins([plugin]);
+    expect(m.bundleSchemaVersion).toBe(3);
+    expect(m.entities.plugins).toEqual([plugin]);
+    const parsed = parseBundle(JSON.parse(JSON.stringify(m)));
+    expect(verifyContentHash(parsed).ok).toBe(true);
+    expect(validateBundlePlugins(parsed)).toEqual([]);
+  });
+
+  it('puts the plugin entries inside the content hash', () => {
+    const a = withPlugins([plugin]);
+    const b = withPlugins([{ ...plugin, sha: 'c'.repeat(40) }]);
+    expect(a.metadata.contentHash).not.toBe(b.metadata.contentHash);
+  });
+
+  it('writes an empty plugin list as no list, so there is one spelling', () => {
+    const empty = withPlugins([]);
+    expect('plugins' in empty.entities).toBe(false);
+    expect(empty.metadata.contentHash).toBe(
+      buildBundleManifest({ entities: emptyEntities, name: 'b', version: '1' }).metadata.contentHash
+    );
+  });
+
+  it('refuses a malformed commit, content hash or name', () => {
+    for (const bad of [
+      { ...plugin, sha: 'abc' },
+      { ...plugin, sha: 'A'.repeat(40) },
+      { ...plugin, contentHash: 'b'.repeat(63) },
+      { ...plugin, name: 'has space' },
+      { ...plugin, bindings: undefined },
+    ]) {
+      expect(() => parseBundle(JSON.parse(JSON.stringify(withPlugins([bad]))))).toThrow();
+    }
+  });
+
+  it('still parses a v2 bundle, which has no plugins, with the hash it was signed over', () => {
+    const entities = { ...emptyEntities };
+    const meta = metadata();
+    const v2 = {
+      bundleSchemaVersion: 2,
+      dependencies: [],
+      entities,
+      metadata: {
+        ...meta,
+        contentHash: computeContentHash({
+          bundleSchemaVersion: 2,
+          dependencies: [],
+          entities,
+          metadata: meta,
+        }),
+      },
+    };
+    const parsed = parseBundle(JSON.parse(JSON.stringify(v2)));
+    expect(parsed.entities.plugins).toBeUndefined();
+    expect(verifyContentHash(parsed).ok).toBe(true);
+  });
+
+  it('refuses plugins on a v2 bundle', () => {
+    const m = { ...withPlugins([plugin]), bundleSchemaVersion: 2 };
+    expect(() => parseBundle(m)).toThrow(BundleSchemaVersionError);
+  });
+
+  it('reports duplicate plugins, duplicate bindings and unsafe sources', () => {
+    const m = withPlugins([
+      { ...plugin, bindings: [{ agentKey: 'x' }, { agentKey: 'x' }] },
+      { ...plugin, name: 'ACME-pack', source: { owner: 'acme', path: '../x', repo: 'tools' } },
+    ]);
+    const errors = validateBundlePlugins(parseBundle(JSON.parse(JSON.stringify(m))));
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "plugin 'acme-pack': agent 'x' is bound twice",
+        "plugin 'ACME-pack': listed more than once",
+        "plugin 'ACME-pack': source.path is not a safe relative directory",
+      ])
+    );
   });
 });

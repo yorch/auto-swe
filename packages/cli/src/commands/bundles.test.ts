@@ -112,6 +112,17 @@ describe('runBundlesCommand (gateway-backed)', () => {
     });
   });
 
+  it('parseInstallArgs reads --acknowledge-warnings in either position', () => {
+    expect(parseInstallArgs(['--acknowledge-warnings', 'b.json'])).toEqual({
+      acknowledgeWarnings: true,
+      overwriteProtected: false,
+      positional: ['b.json'],
+    });
+    expect(parseInstallArgs(['--overwrite-protected', '--acknowledge-warnings', 'b.json'])).toEqual(
+      { acknowledgeWarnings: true, overwriteProtected: true, positional: ['b.json'] }
+    );
+  });
+
   it('export requires both name and version', async () => {
     const code = await runBundlesCommand(['export', 'onlyname'], ENV);
     expect(code).toBe(1);

@@ -92,11 +92,12 @@ COMMANDS
   bundles list                         List installed bundles (admin token)
   bundles export <name> <version> [--origin=TAG] [-o <path>]
                                        Export GLOBAL content to a bundle file
-  bundles install <path> [--overwrite-protected]
+  bundles install <path> [--overwrite-protected] [--acknowledge-warnings]
                                        Install a bundle from a file; a bundle agent that would
                                        replace a built-in or admin-authored one is refused unless
-                                       --overwrite-protected is passed
-  bundles install-from-url <url> [--overwrite-protected]
+                                       --overwrite-protected is passed; plugin warnings need
+                                       --acknowledge-warnings
+  bundles install-from-url <url> [--overwrite-protected] [--acknowledge-warnings]
                                        Install a bundle from a URL
 
   pr-policy init [--dir <path>] [--force]

@@ -61,6 +61,7 @@
     "./lib/memoryForget": "./dist/lib/memoryForget.js",
     "./lib/skillSource": "./dist/lib/skillSource/index.js",
     "./lib/harnessProfile": "./dist/lib/harnessProfile/index.js",
+    "./lib/marketplace": "./dist/lib/marketplace/index.js",
     "./lib/needsInput": "./dist/lib/needsInput.js",
     "./lib/needsInputAsk": "./dist/lib/needsInputAsk.js",
     "./lib/skillSourceSync": "./dist/lib/skillSourceSync.js",

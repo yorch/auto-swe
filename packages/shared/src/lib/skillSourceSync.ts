@@ -183,3 +183,173 @@ export async function sweepSkillSources(
   }
   return out;
 }
+
+// ── Harness profiles ──
+//
+// A harness profile tracks its ref the same way a skill source does: one request resolves the
+// ref to a commit, and the answer lands in the profile's own bookkeeping columns. Nothing about
+// the stored snapshot changes; an admin reads the diff and accepts.
+
+export interface ProfileCheckInput {
+  id: string;
+  host: string;
+  owner: string;
+  path: string;
+  ref: string;
+  repo: string;
+  /** The commit of the profile's latest version. */
+  pinnedSha: string;
+  /** The profile's `latestVersion` when the input was read; an accept in between drops the write. */
+  latestVersion: number;
+}
+
+export interface ProfileCheckResult {
+  id: string;
+  status: SourceCheckResult['status'];
+  latestSha: string | null;
+  error: string | null;
+  code: string | null;
+  recorded: boolean;
+}
+
+/**
+ * Resolve a profile's ref and record `latestSha`, `trackStatus`, `lastError` and `lastCheckedAt`.
+ * A rate-limit answer only moves `lastCheckedAt`. Every stored string is a sha, a status or a
+ * fixed string from `SKILL_SOURCE_ERRORS`.
+ */
+export async function checkHarnessProfile(
+  prisma: PrismaClient,
+  profile: ProfileCheckInput,
+  deps?: SkillSourceDeps
+): Promise<ProfileCheckResult> {
+  let latestSha: string | null = null;
+  let failure: SkillSourceError | null = null;
+  try {
+    latestSha = await resolveSourceSha(profile, deps);
+  } catch (err) {
+    failure = err instanceof SkillSourceError ? err : new SkillSourceError('NETWORK');
+  }
+  const rateLimited = failure?.code === 'RATE_LIMIT_LOW' || failure?.code === 'RATE_LIMITED';
+  const status = rateLimited
+    ? 'SKIPPED'
+    : failure
+      ? 'ERROR'
+      : latestSha === profile.pinnedSha
+        ? 'OK'
+        : 'UPDATE_AVAILABLE';
+  const error = failure ? safeSourceErrorMessage(failure) : null;
+  let recorded = true;
+  try {
+    await prisma.harnessProfile.update({
+      data: rateLimited
+        ? { lastCheckedAt: new Date() }
+        : {
+            lastCheckedAt: new Date(),
+            lastError: error,
+            ...(latestSha === null ? {} : { latestSha }),
+            trackStatus: status as 'OK' | 'UPDATE_AVAILABLE' | 'ERROR',
+          },
+      where: { id: profile.id, latestVersion: profile.latestVersion, status: { not: 'DISABLED' } },
+    });
+  } catch (err) {
+    if ((err as { code?: unknown } | null)?.code !== 'P2025') {
+      throw err;
+    }
+    recorded = false;
+  }
+  return { code: failure?.code ?? null, error, id: profile.id, latestSha, recorded, status };
+}
+
+export interface ProfileSweepResult {
+  checked: number;
+  ok: number;
+  updateAvailable: number;
+  errors: number;
+  skipped: number;
+  profiles: Array<{ id: string; status: ProfileCheckResult['status']; error: string | null }>;
+}
+
+/**
+ * Check every profile that is not disabled, one at a time, like {@link sweepSkillSources}: one
+ * request each, a failing profile never stops the others, and a host whose rate limit runs low
+ * keeps the rest of its profiles for the next run.
+ */
+export async function sweepHarnessProfiles(
+  prisma: PrismaClient,
+  deps?: SkillSourceDeps
+): Promise<ProfileSweepResult> {
+  const rows = await prisma.harnessProfile.findMany({
+    orderBy: [{ host: 'asc' }, { lastCheckedAt: { nulls: 'first', sort: 'asc' } }],
+    select: {
+      host: true,
+      id: true,
+      latestVersion: true,
+      owner: true,
+      path: true,
+      ref: true,
+      repo: true,
+      versions: { select: { commitSha: true, version: true } },
+    },
+    where: { status: { not: 'DISABLED' } },
+  });
+  const out: ProfileSweepResult = {
+    checked: 0,
+    errors: 0,
+    ok: 0,
+    profiles: [],
+    skipped: 0,
+    updateAvailable: 0,
+  };
+  const limitedHosts = new Set<string>();
+  for (const row of rows) {
+    const pinned = row.versions.find((v) => v.version === row.latestVersion);
+    if (!pinned || limitedHosts.has(row.host)) {
+      out.skipped++;
+      continue;
+    }
+    let result: ProfileCheckResult;
+    try {
+      result = await checkHarnessProfile(
+        prisma,
+        {
+          host: row.host,
+          id: row.id,
+          latestVersion: row.latestVersion,
+          owner: row.owner,
+          path: row.path,
+          pinnedSha: pinned.commitSha,
+          ref: row.ref,
+          repo: row.repo,
+        },
+        deps
+      );
+    } catch {
+      result = {
+        code: 'NETWORK',
+        error: SKILL_SOURCE_ERRORS.NETWORK,
+        id: row.id,
+        latestSha: null,
+        recorded: false,
+        status: 'ERROR',
+      };
+    }
+    if (result.code === 'RATE_LIMIT_LOW' || result.code === 'RATE_LIMITED') {
+      limitedHosts.add(row.host);
+    }
+    if (result.status === 'SKIPPED') {
+      out.skipped++;
+      out.profiles.push({ error: result.error, id: result.id, status: result.status });
+      continue;
+    }
+    out.checked++;
+    if (result.status === 'OK') {
+      out.ok++;
+    } else if (result.status === 'UPDATE_AVAILABLE') {
+      out.updateAvailable++;
+    } else {
+      out.errors++;
+    }
+    out.profiles.push({ error: result.error, id: result.id, status: result.status });
+  }
+  return out;
+}
