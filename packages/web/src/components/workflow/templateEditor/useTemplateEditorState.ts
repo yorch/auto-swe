@@ -8,6 +8,7 @@ import {
   useNodesInitialized,
   useNodesState,
   useReactFlow,
+  useStore,
 } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTokens } from '@/hooks/useTokens';
@@ -15,16 +16,32 @@ import { useValidateWorkflow } from '@/hooks/useValidateWorkflow';
 import { ApiError } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
 import { schemaIssues } from '@/lib/specSchemaIssues';
+import { NODE_HEIGHT, NODE_WIDTH } from '@/lib/workflowLayout';
 import { adjacentNodeId, type NavDirection } from '../dagKeyboardNav';
 import { type DagNodeData, handlePortsFor } from '../dagNode';
 import { useFitFlow } from '../fitFlow';
 import { makeDefaultNodeFor } from '../makeDefaultNode';
 import { PALETTE_MIME, type PaletteDragKind, PaletteDragSchema } from '../NodePalette';
 import { deleteNodeFromSpec, renameNodeInSpec, setSpecEdge } from '../specEdits';
-import { specToFlow } from '../specToFlow';
+import { FIT_VIEW_OPTIONS, specToFlow } from '../specToFlow';
 import { type CheckSnapshot, newServerIssues, type ServerCheck } from './checkHelpers';
+import { type Box, palettePlacement } from './nodePlacement';
 import { focusFirst, overlayMode, rememberTrigger, restoreTrigger } from './overlayFocus';
+import { EMPTY_HISTORY, recordEdit, redoStep, type SpecHistory, undoStep } from './specHistory';
 import type { TemplateEditorProps } from './types';
+
+/** How many nodes' last positions the editor remembers for undo. */
+const MAX_REMEMBERED_POSITIONS = 500;
+
+/** Whether an element is on screen: no ancestor, itself included, is `display: none`. */
+function isRendered(el: HTMLElement): boolean {
+  for (let n: HTMLElement | null = el; n; n = n.parentElement) {
+    if (getComputedStyle(n).display === 'none') {
+      return false;
+    }
+  }
+  return true;
+}
 
 /**
  * All of the editor's state, effects and handlers. Must run inside a `ReactFlowProvider`
@@ -42,6 +59,7 @@ export function useTemplateEditorState({
   baseVersion,
 }: TemplateEditorProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   // The outline is a rail beside the canvas, not a replacement for it, so the
   // canvas (and where the author has dragged things) stays mounted.
   const [showOutline, setShowOutline] = useState(true);
@@ -51,7 +69,8 @@ export function useTemplateEditorState({
   const outlineRef = useRef<HTMLElement>(null);
   const inspectorRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
-  const { screenToFlowPosition } = useReactFlow();
+  const flow = useReactFlow();
+  const { screenToFlowPosition } = flow;
 
   const stepRegistryByName = useMemo(
     () => new Map(stepRegistry.map((s) => [s.name, s])),
@@ -123,6 +142,14 @@ export function useTemplateEditorState({
     [spec]
   );
   const seededStructure = useRef(structureSig);
+  // Where the author put each node, for the ids a structural change keeps; a node new to the
+  // graph takes the spot recorded here (dropped, added from the palette, renamed) or else the
+  // layout's.
+  const nodesRef = useRef<RFNode<DagNodeData>[]>([]);
+  const placements = useRef(new Map<string, { x: number; y: number }>());
+  // Where each node last was, kept after it leaves the graph so an undone delete or rename brings
+  // it back where the author had it rather than at the layout's spot. Bounded: the oldest go first.
+  const lastPositions = useRef(new Map<string, { x: number; y: number }>());
   // biome-ignore lint/correctness/useExhaustiveDependencies: deliberate — reseed flow state only when the spec changes, not on every node-drag.
   useEffect(() => {
     if (seededStructure.current === structureSig) {
@@ -138,7 +165,21 @@ export function useTemplateEditorState({
       );
     } else {
       seededStructure.current = structureSig;
-      setNodes(initial.nodes);
+      // Keep every surviving node where it is: re-running the layout on each connect or add
+      // threw away the author's arrangement. Only a node new to the graph is auto-placed.
+      const known = new Map(nodesRef.current.map((n) => [n.id, n]));
+      const spots = placements.current;
+      placements.current = new Map();
+      setNodes(
+        initial.nodes.map((n) => {
+          const old = known.get(n.id);
+          if (old) {
+            return { ...old, ariaLabel: n.ariaLabel, data: n.data };
+          }
+          const spot = spots.get(n.id) ?? lastPositions.current.get(n.id);
+          return spot ? { ...n, position: spot } : n;
+        })
+      );
     }
     setEdges(initial.edges);
   }, [specSig]);
@@ -240,15 +281,44 @@ export function useTemplateEditorState({
         }
       });
   }, [lint, spec, templateId, teamId, baseVersion, validateAsync, openIssuesPanel]);
+  // The rejection was about the spec that was saved; once the author edits, it describes
+  // something that no longer exists, so it goes (a new rejection brings its own).
+  const errorSeen = useRef<{ error: string | null | undefined; spec: WorkflowSpec }>({
+    error: serverError,
+    spec,
+  });
+  useEffect(() => {
+    if (errorSeen.current.error !== serverError) {
+      errorSeen.current = { error: serverError, spec };
+    }
+  }, [serverError, spec]);
   const serverIssues = useMemo(
     () =>
-      (serverError ?? '')
-        .split(/\n|; /)
-        .map((m) => m.trim())
-        .filter(Boolean),
-    [serverError]
+      // A rejection not yet recorded is new, so it belongs to the current spec.
+      errorSeen.current.error === serverError && errorSeen.current.spec !== spec
+        ? []
+        : (serverError ?? '')
+            .split(/\n|; /)
+            .map((m) => m.trim())
+            .filter(Boolean),
+    [serverError, spec]
   );
 
+  nodesRef.current = nodes;
+  useEffect(() => {
+    const seen = lastPositions.current;
+    for (const n of nodes) {
+      seen.delete(n.id);
+      seen.set(n.id, n.position);
+    }
+    while (seen.size > MAX_REMEMBERED_POSITIONS) {
+      const oldest = seen.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      seen.delete(oldest);
+    }
+  }, [nodes]);
   const nodesWithSelection = useMemo(
     () => nodes.map((n) => ({ ...n, selected: n.id === selectedNodeId })),
     [nodes, selectedNodeId]
@@ -291,9 +361,7 @@ export function useTemplateEditorState({
    *  added node will render at that position for this session because we'll
    *  seed an override in the local React Flow state. */
   const addNodeAt = useCallback(
-    (payload: PaletteDragKind, screen: { x: number; y: number }) => {
-      const pos = screenToFlowPosition(screen);
-
+    (payload: PaletteDragKind, pos: { x: number; y: number }) => {
       const existingIds = Object.keys(spec.nodes);
       const baseName =
         payload.kind === 'step'
@@ -308,20 +376,16 @@ export function useTemplateEditorState({
       }
 
       const newNode: SpecNode = makeDefaultNodeFor(payload);
+      // The structural resync above reads this, so the node lands where it was dropped.
+      placements.current.set(newId, pos);
       onChange({
         ...spec,
         nodes: { ...spec.nodes, [newId]: newNode },
       });
       onSelect(newId);
-
-      // Override the layout-assigned position for the new node so it lands
-      // where the user dropped it. This is session-local: a structural spec
-      // change resets via the effect above.
-      requestAnimationFrame(() => {
-        setNodes((prev) => prev.map((n) => (n.id === newId ? { ...n, position: pos } : n)));
-      });
+      return newId;
     },
-    [spec, onChange, onSelect, screenToFlowPosition, setNodes]
+    [spec, onChange, onSelect]
   );
 
   /** Drop-from-palette → new node at the cursor position. */
@@ -336,22 +400,90 @@ export function useTemplateEditorState({
       if (!parsed.success) {
         return;
       }
-      addNodeAt(parsed.data, { x: event.clientX, y: event.clientY });
+      addNodeAt(parsed.data, screenToFlowPosition({ x: event.clientX, y: event.clientY }));
     },
-    [addNodeAt]
+    [addNodeAt, screenToFlowPosition]
   );
 
-  /** Keyboard add from the palette → new node at the centre of the canvas. */
+  // Below lg the canvas is hidden behind the palette drawer, so a node added from it is brought
+  // into view once the canvas is back and measured.
+  const flowWidth = useStore((st) => st.width);
+  const pendingReveal = useRef<string | null>(null);
+  /** Centre the viewport on a node, keeping the current zoom within the readable range. */
+  const centerOnNode = useCallback(
+    (id: string) => {
+      const n = flow.getNode(id);
+      if (!n) {
+        return false;
+      }
+      const zoom = Math.min(
+        Math.max(flow.getZoom(), FIT_VIEW_OPTIONS.minZoom),
+        FIT_VIEW_OPTIONS.maxZoom
+      );
+      void flow.setCenter(
+        n.position.x + (n.measured?.width ?? NODE_WIDTH) / 2,
+        n.position.y + (n.measured?.height ?? NODE_HEIGHT) / 2,
+        { zoom }
+      );
+      return true;
+    },
+    [flow]
+  );
+  useEffect(() => {
+    const id = pendingReveal.current;
+    if (id && flowWidth > 0 && nodes.some((n) => n.id === id && n.measured?.width)) {
+      pendingReveal.current = null;
+      centerOnNode(id);
+    }
+  }, [nodes, flowWidth, centerOnNode]);
+
+  /** An issue's node: select it and bring it into view. */
+  const handleIssueSelect = useCallback(
+    (id: string | null) => {
+      onSelect(id);
+      if (id) {
+        centerOnNode(id);
+      }
+    },
+    [onSelect, centerOnNode]
+  );
+  /** Click, tap or keyboard add from the palette → a new node beside the selection, else at the
+   *  centre of the canvas. */
   const handlePaletteAdd = useCallback(
     (payload: PaletteDragKind) => {
-      const rect = canvasRef.current?.getBoundingClientRect();
-      if (!rect) {
-        return;
-      }
-      addNodeAt(payload, { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+      const boxOf = (n: RFNode<DagNodeData>): Box => ({
+        height: n.measured?.height ?? NODE_HEIGHT,
+        width: n.measured?.width ?? NODE_WIDTH,
+        x: n.position.x,
+        y: n.position.y,
+      });
+      const current = nodesRef.current;
+      const selected = current.find((n) => n.id === selectedNodeId);
+      const { width, height } = canvasRef.current?.getBoundingClientRect() ?? {
+        height: 0,
+        width: 0,
+      };
+      const { x, y, zoom } = flow.getViewport();
+      const viewCenter =
+        width > 0 && height > 0
+          ? { x: (width / 2 - x) / zoom, y: (height / 2 - y) / zoom }
+          : undefined;
+      const spot = palettePlacement({
+        nodes: current.map(boxOf),
+        ...(selected ? { selected: boxOf(selected) } : {}),
+        ...(viewCenter ? { viewCenter } : {}),
+      });
+      pendingReveal.current = addNodeAt(payload, spot);
     },
-    [addNodeAt]
+    [addNodeAt, flow, selectedNodeId]
   );
+
+  /** Re-run the layout for every node, discarding hand placement. */
+  const autoLayout = useCallback(() => {
+    const fresh = new Map(initial.nodes.map((n) => [n.id, n.position]));
+    setNodes((prev) => prev.map((n) => ({ ...n, position: fresh.get(n.id) ?? n.position })));
+    requestAnimationFrame(() => fit());
+  }, [initial.nodes, setNodes, fit]);
 
   const handleDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();
@@ -392,6 +524,88 @@ export function useTemplateEditorState({
     [onEdgesChange, edges, spec, onChange]
   );
 
+  // Undo / redo over spec snapshots. Every spec change that did not come from here is recorded by
+  // watching the prop, so the inspector, the canvas and the JSON-free editing paths are all
+  // covered without each one having to remember to ask.
+  const [history, setHistory] = useState<SpecHistory>(EMPTY_HISTORY);
+  const prevSpec = useRef(spec);
+  const appliedSpec = useRef<WorkflowSpec | null>(null);
+  useEffect(() => {
+    const before = prevSpec.current;
+    prevSpec.current = spec;
+    if (before === spec) {
+      return;
+    }
+    if (appliedSpec.current === spec) {
+      appliedSpec.current = null;
+      return;
+    }
+    setHistory((h) => recordEdit(h, before, spec, Date.now()));
+  }, [spec]);
+  const applyHistoryStep = useCallback(
+    (step: { history: SpecHistory; spec: WorkflowSpec } | null) => {
+      if (!step) {
+        return;
+      }
+      appliedSpec.current = step.spec;
+      setHistory(step.history);
+      onChange(step.spec);
+      if (selectedNodeId && !step.spec.nodes[selectedNodeId]) {
+        onSelect(null);
+      }
+    },
+    [onChange, onSelect, selectedNodeId]
+  );
+  const undo = useCallback(
+    () => applyHistoryStep(undoStep(history, spec)),
+    [applyHistoryStep, history, spec]
+  );
+  const redo = useCallback(
+    () => applyHistoryStep(redoStep(history, spec)),
+    [applyHistoryStep, history, spec]
+  );
+  // Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z. A text control keeps its own native undo (an editor-wide one
+  // would rewrite the spec under the author's cursor), and the shortcut belongs to the editor
+  // alone: a key pressed in an open dialog or anywhere else on the page (the editor stays mounted
+  // behind other tabs) must not change a draft the author cannot see.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (
+        e.key.toLowerCase() !== 'z' ||
+        !(e.metaKey || e.ctrlKey) ||
+        e.altKey ||
+        e.isComposing ||
+        e.defaultPrevented
+      ) {
+        return;
+      }
+      const root = rootRef.current;
+      const target = e.target;
+      if (!root || !(target instanceof HTMLElement) || document.querySelector('dialog[open]')) {
+        return;
+      }
+      if (!root.contains(target) && !(target === document.body && isRendered(root))) {
+        return;
+      }
+      if (
+        target.closest(
+          'input, textarea, select, [contenteditable]:not([contenteditable="false"])'
+        ) ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+      e.preventDefault();
+      if (e.shiftKey) {
+        redo();
+      } else {
+        undo();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [undo, redo]);
+
   const handleDeleteNode = useCallback(() => {
     if (!selectedNodeId || selectedNodeId === spec.entry) {
       return;
@@ -411,9 +625,10 @@ export function useTemplateEditorState({
     }
     setPendingDelete(null);
   };
+  // A removal is one step of the history, so undoing it is just an undo.
   const undoDelete = () => {
     if (removed && spec === removed.after) {
-      onChange(removed.before);
+      undo();
       setRemoved(null);
     }
   };
@@ -573,6 +788,10 @@ export function useTemplateEditorState({
       if (next === spec) {
         return;
       }
+      const spot = nodesRef.current.find((n) => n.id === oldId)?.position;
+      if (spot) {
+        placements.current.set(newId, spot);
+      }
       onChange(next);
       onSelect(newId);
     },
@@ -588,6 +807,9 @@ export function useTemplateEditorState({
     selectedNode && selectedNode.type === 'step' ? stepRegistryByName.get(selectedNode.step) : null;
 
   return {
+    autoLayout,
+    canRedo: history.future.length > 0,
+    canUndo: history.past.length > 0,
     canUndoDelete: removed !== null && spec === removed.after,
     canvasRef,
     checkResult,
@@ -600,6 +822,7 @@ export function useTemplateEditorState({
     handleDragOver,
     handleDrop,
     handleEdgesChange,
+    handleIssueSelect,
     handleOverlayKeyDown,
     handlePaletteAdd,
     handleRename,
@@ -615,6 +838,8 @@ export function useTemplateEditorState({
     paletteOpen,
     paletteRef,
     pendingDelete,
+    redo,
+    rootRef,
     runCheck,
     selectedNode,
     selectedStepMeta,
@@ -625,6 +850,7 @@ export function useTemplateEditorState({
     setPendingDelete,
     shownErrors,
     shownWarnings,
+    undo,
     undoDelete,
     wrapperRef,
   };

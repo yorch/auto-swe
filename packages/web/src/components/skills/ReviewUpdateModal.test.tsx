@@ -12,10 +12,15 @@ const { accept, readFull, refetch, state } = vi.hoisted(() => ({
   accept: vi.fn(),
   readFull: vi.fn(),
   refetch: vi.fn(),
-  state: { diff: undefined as unknown, error: null as unknown, loading: false },
+  state: {
+    acceptPending: false,
+    diff: undefined as unknown,
+    error: null as unknown,
+    loading: false,
+  },
 }));
 vi.mock('@/hooks/useSkillSources', () => ({
-  useAcceptUpdate: () => ({ isPending: false, mutateAsync: accept }),
+  useAcceptUpdate: () => ({ isPending: state.acceptPending, mutateAsync: accept }),
   useReadIncomingSkill: () => ({ isPending: false, mutateAsync: readFull }),
   useSourceDiff: () => ({
     data: state.diff,
@@ -102,6 +107,7 @@ beforeEach(() => {
   state.diff = diff();
   state.error = null;
   state.loading = false;
+  state.acceptPending = false;
   accept.mockResolvedValue(accepted());
 });
 
@@ -353,5 +359,33 @@ describe('skills in the source that are not installed', () => {
     show();
     expect(screen.getByText(/In the source at bbbbbbb, not installed: fresh/)).toBeTruthy();
     expect(screen.queryByLabelText('Install fresh')).toBeNull();
+  });
+});
+
+describe('closing and retrying', () => {
+  const pressEscape = () => {
+    const dialog = document.querySelector('dialog') as HTMLDialogElement;
+    const event = new Event('cancel', { cancelable: true });
+    dialog.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+
+  it('cannot be dismissed while an accept is in flight, and can be otherwise', () => {
+    state.diff = diff({ changed: [changed('a')] });
+    state.acceptPending = true;
+    const { unmount } = show();
+    expect(pressEscape()).toBe(true);
+    unmount();
+    state.acceptPending = false;
+    show();
+    expect(pressEscape()).toBe(false);
+  });
+
+  it('offers Retry when the diff failed to load', () => {
+    state.diff = undefined;
+    state.error = new Error('boom');
+    show();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(refetch).toHaveBeenCalled();
   });
 });

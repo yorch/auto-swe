@@ -24,8 +24,10 @@ const skill = (over: Partial<Skill>): Skill => ({
   ...over,
 });
 
-const { state, verify } = vi.hoisted(() => ({
-  state: { admin: true, skills: [] as unknown[] },
+const { effectiveness, state, update, verify } = vi.hoisted(() => ({
+  effectiveness: vi.fn(),
+  state: { admin: true, skills: [] as unknown[], updatePending: false },
+  update: vi.fn(),
   verify: vi.fn(),
 }));
 vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
@@ -38,14 +40,23 @@ vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => state.admin }));
 vi.mock('@/hooks/useSkills', () => ({
   useCreateSkill: () => ({ isPending: false, mutateAsync: vi.fn() }),
   useDeleteSkill: () => ({ isPending: false, mutateAsync: vi.fn() }),
-  useSkillEffectiveness: () => ({
-    data: { baselineSuccessRate: null, perSkill: [], totalRuns: 0, windowDays: 30 },
-    error: null,
-    isError: false,
-    isLoading: false,
-  }),
+  useSkillEffectiveness: () => {
+    effectiveness();
+    return {
+      data: {
+        baselineSuccessRate: null,
+        caveat: 'correlational',
+        perSkill: [],
+        totalRuns: 0,
+        windowDays: 30,
+      },
+      error: null,
+      isError: false,
+      isLoading: false,
+    };
+  },
   useSkills: () => ({ data: state.skills, error: null, isError: false, isLoading: false }),
-  useUpdateSkill: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useUpdateSkill: () => ({ isPending: state.updatePending, mutateAsync: update }),
   useVerifySkill: () => ({ isPending: false, mutateAsync: verify }),
 }));
 vi.mock('@/components/skills/SkillHistory', () => ({
@@ -85,6 +96,7 @@ beforeAll(() => {
 beforeEach(() => {
   vi.clearAllMocks();
   state.admin = true;
+  state.updatePending = false;
   verify.mockResolvedValue({});
   state.skills = [
     skill({
@@ -202,6 +214,45 @@ describe('Skills studio page', () => {
     render(<StudioSkillsPage />);
     expect(screen.getByText('na⟨U+200B⟩me')).toBeTruthy();
     expect(screen.getByText('a⟨U+202E⟩b')).toBeTruthy();
+  });
+
+  it('titles the page with the navigation label', () => {
+    render(<StudioSkillsPage />);
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Skills');
+  });
+
+  it('cannot dismiss the detail modal while a save is in flight', () => {
+    state.updatePending = true;
+    render(<StudioSkillsPage />);
+    open('imported');
+    const event = new Event('cancel', { cancelable: true });
+    (document.querySelector('dialog[open]') as HTMLDialogElement).dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('keeps the deactivate dialog open and shows the failure inline', async () => {
+    state.skills = [skill({ id: 'used', name: 'used', usedBy: ['implementer'], usedByCount: 1 })];
+    update.mockRejectedValueOnce(new Error('could not deactivate'));
+    render(<StudioSkillsPage />);
+    fireEvent.click(screen.getByRole('switch', { name: 'Active: used' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Deactivate' }));
+    expect(await screen.findByText('could not deactivate')).toBeTruthy();
+    expect(screen.getByText('Deactivate "used"?')).toBeTruthy();
+  });
+
+  it('loads effectiveness only once its section is opened, and shows the full caveat sentence for the correlational code', () => {
+    render(<StudioSkillsPage />);
+    expect(effectiveness).not.toHaveBeenCalled();
+    const details = document.querySelector('details') as HTMLDetailsElement;
+    details.open = true;
+    fireEvent(details, new Event('toggle'));
+    expect(effectiveness).toHaveBeenCalled();
+    expect(
+      screen.getByText(
+        /Correlational: skills are assigned per team and template, so a difference may reflect the team or workload rather than the skill\./
+      )
+    ).toBeTruthy();
+    expect(screen.queryByText('correlational')).toBeNull();
   });
 
   it('shows the External sources tab to an admin only', () => {

@@ -4,10 +4,12 @@ import { toImplementerRuntime, toReasoningLevel } from '@auto-swe/shared/types/a
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { advisoryWarnings } from '../lib/advisoryWarnings.js';
 import {
   AgentInactiveError,
   type AgentScope,
   AgentVersionConflictError,
+  inheritingHarnessWarnings,
   modelRequiredError,
   profileSaveError,
   updateAgent,
@@ -485,6 +487,15 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
         throw err;
       }
       const { agent, catalogWarnings, credentialWarnings, scanWarnings } = saved;
+      // A restored model can strand harness agents that inherit it: say so, refuse nothing.
+      const runtimeWarnings =
+        source.modelSpec !== latest.modelSpec
+          ? await advisoryWarnings(
+              'harness inheritance',
+              () => inheritingHarnessWarnings(fastify.prisma, agent.key, agent.modelSpec),
+              []
+            )
+          : [];
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,
@@ -498,6 +509,7 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
         ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
         ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
         ...(credentialWarnings.length > 0 ? { credentialWarnings } : {}),
+        ...(runtimeWarnings.length > 0 ? { runtimeWarnings } : {}),
         ...(inactiveSkills.length > 0
           ? {
               skillWarnings: inactiveSkills.map(

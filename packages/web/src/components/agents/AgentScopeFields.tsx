@@ -16,6 +16,7 @@ interface Named {
  */
 export function AgentScopeFields({
   channels,
+  excludeGlobal = false,
   form,
   onChange,
   orgs,
@@ -23,6 +24,8 @@ export function AgentScopeFields({
   templates,
 }: {
   channels: Named[];
+  /** Hide the platform-wide scope, e.g. while the key belongs to an existing platform agent. */
+  excludeGlobal?: boolean;
   form: CreateAgentBody;
   onChange: (next: CreateAgentBody) => void;
   orgs: Named[];
@@ -45,7 +48,10 @@ export function AgentScopeFields({
         hint={scopeHint(form.scope)}
         label="Where it applies"
         onChange={(v) => setScope(v as AgentScope)}
-        options={SCOPE_ORDER.map((s) => ({ label: scopeLabel(s), value: s }))}
+        options={SCOPE_ORDER.filter((s) => !(excludeGlobal && s === 'GLOBAL')).map((s) => ({
+          label: scopeLabel(s),
+          value: s,
+        }))}
         value={form.scope}
       />
       {form.scope === 'ORGANIZATION' && (

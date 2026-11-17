@@ -180,7 +180,7 @@ describe('Check workflow', () => {
       teamId: 'team-1',
       templateId: 'tpl-1',
     });
-    expect(screen.getByRole('button', { name: /server: save/ }).textContent).toMatch(
+    expect(screen.getByText(/server: save/).closest('li')?.textContent).toMatch(
       /STALE_BASE_VERSION.*version 4/
     );
     expect(screen.getByRole('status').textContent).toMatch(/^0 errors, 1 warning\./);
@@ -257,7 +257,7 @@ describe('Check workflow', () => {
     expect(props.onSelect).toHaveBeenCalledWith('a');
   });
 
-  it('disables a server finding that names no node, or one that is gone', async () => {
+  it('shows a server finding that names no node, or one that is gone, as plain text', async () => {
     validate.mockResolvedValue({
       issues: [
         {
@@ -272,9 +272,9 @@ describe('Check workflow', () => {
     });
     const { props } = renderEditor(GOOD);
     await check();
-    const items = screen.getAllByRole('button', { name: /server: / }) as HTMLButtonElement[];
+    expect(screen.queryByRole('button', { name: /server: / })).toBeNull();
+    const items = screen.getAllByText(/server: /);
     expect(items).toHaveLength(2);
-    expect(items.every((b) => b.disabled)).toBe(true);
     fireEvent.click(items[0] as HTMLElement);
     expect(props.onSelect).not.toHaveBeenCalled();
     expect(screen.getByRole('status').textContent).toMatch(/^1 error, 1 warning\./);
@@ -368,7 +368,7 @@ describe('Check workflow', () => {
     });
     renderEditor(GOOD);
     await check();
-    expect(screen.getAllByRole('button', { name: /server: / })).toHaveLength(2);
+    expect(screen.getAllByText(/server: /)).toHaveLength(2);
   });
 
   it('keeps client findings and says plainly that the server check could not run', async () => {

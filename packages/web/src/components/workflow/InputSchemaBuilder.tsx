@@ -5,7 +5,7 @@ import type {
   InputSchema,
   InputSchemaProperty,
 } from '@auto-swe/shared/lib/inputSchema';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
@@ -37,6 +37,8 @@ interface FieldDraft {
   /** Not editable here; carried through so opening a schema and saving it does not drop them. */
   maxLength?: number;
   pattern?: string;
+  /** Not editable here; a non-string enum is carried through so saving another field keeps it. */
+  carriedEnum?: (string | number)[];
 }
 
 function fieldToProperty(draft: FieldDraft): InputSchemaProperty {
@@ -47,11 +49,14 @@ function fieldToProperty(draft: FieldDraft): InputSchemaProperty {
   if (draft.type === 'string' && draft.format === 'uuid') {
     prop.format = 'uuid';
   }
-  if (draft.type !== 'boolean' && draft.type !== 'array' && draft.enumValues.trim()) {
+  if (draft.type === 'string' && draft.enumValues.trim()) {
     prop.enum = draft.enumValues
       .split(',')
       .map((v) => v.trim())
       .filter(Boolean);
+  }
+  if (draft.type !== 'string' && draft.carriedEnum !== undefined) {
+    prop.enum = draft.carriedEnum;
   }
   if (draft.type === 'string' && draft.maxLength !== undefined) {
     prop.maxLength = draft.maxLength;
@@ -79,6 +84,7 @@ function propertyToDraft(key: string, prop: InputSchemaProperty, required: boole
     key,
     ...(prop.maxLength !== undefined ? { maxLength: prop.maxLength } : {}),
     ...(prop.pattern !== undefined ? { pattern: prop.pattern } : {}),
+    ...(prop.type !== 'string' && prop.enum !== undefined ? { carriedEnum: prop.enum } : {}),
     required,
     type: prop.type,
   };
@@ -103,12 +109,31 @@ function toSchema(fields: FieldDraft[]): InputSchema | null {
   return { properties, type: 'object', ...(required.length ? { required } : {}) };
 }
 
+/** The first reason these rows cannot be saved as a schema, or null when they can. */
+function fieldsProblem(fields: FieldDraft[]): string | null {
+  const seen = new Set<string>();
+  for (const f of fields) {
+    const k = f.key.trim();
+    if (!k) {
+      return 'Every field needs a key.';
+    }
+    if (seen.has(k)) {
+      return `Field keys must be unique ("${k}" is used twice).`;
+    }
+    seen.add(k);
+  }
+  return null;
+}
+
 export function InputSchemaBuilder({
   value,
   onChange,
+  onProblemChange,
 }: {
   value: InputSchema | null | undefined;
   onChange: (schema: InputSchema | null) => void;
+  /** Called with the reason the rows cannot be saved (blank or duplicate key), or null. */
+  onProblemChange?: (problem: string | null) => void;
 }) {
   const [fields, setFields] = useState<FieldDraft[]>(() => {
     const s = value ?? { properties: {}, required: [], type: 'object' as const };
@@ -132,6 +157,11 @@ export function InputSchemaBuilder({
     }
     return dupes;
   }, [fields]);
+
+  const problem = useMemo(() => fieldsProblem(fields), [fields]);
+  useEffect(() => {
+    onProblemChange?.(problem);
+  }, [problem, onProblemChange]);
 
   function update(next: FieldDraft[]) {
     setFields(next);
@@ -204,9 +234,11 @@ export function InputSchemaBuilder({
           <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[1fr_10rem_auto]">
             <Input
               className="font-mono text-sm"
-              hint={
+              error={
                 !f.key.trim()
-                  ? 'Key required — this field will not be saved'
+                  ? onProblemChange
+                    ? 'Key required'
+                    : 'Key required — this field will not be saved'
                   : duplicateKeys.has(f.key.trim())
                     ? 'Duplicate key — overwrites another field'
                     : undefined
@@ -221,7 +253,11 @@ export function InputSchemaBuilder({
               label="Type"
               onChange={(v) => {
                 if (FIELD_TYPES.some((t) => t.value === v)) {
-                  updateField(i, { type: v as InputFieldType });
+                  // Allowed values only exist for strings; drop them rather than keep a hidden set.
+                  updateField(i, {
+                    type: v as InputFieldType,
+                    ...(v !== 'string' ? { enumValues: '' } : {}),
+                  });
                 }
               }}
               options={FIELD_TYPES.map(({ label, value: v }) => ({ label, value: v }))}

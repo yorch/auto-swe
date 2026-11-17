@@ -138,7 +138,11 @@ export function AgentRunForm({
   };
   const errors: AgentRunFormErrors = validateAgentRunForm(effective, limits.data);
   const disabledByPlatform = limits.data !== undefined && !limits.data.enabled;
-  const canSubmit = !launch.isPending && !disabledByPlatform;
+  // Limits are the ceilings the server checks the caps against: no launch until they have loaded.
+  const canSubmit = !launch.isPending && limits.isSuccess && !disabledByPlatform;
+  const promptChars = values.prompt.length;
+  const promptCount = `${promptChars.toLocaleString('en-US')} / ${AGENT_RUN_MAX_PROMPT_CHARS.toLocaleString('en-US')}`;
+  const promptOver = promptChars > AGENT_RUN_MAX_PROMPT_CHARS;
 
   const set = <K extends keyof AgentRunFormValues>(key: K, value: AgentRunFormValues[K]) => {
     setValues((v) => ({ ...v, [key]: value }));
@@ -192,7 +196,7 @@ export function AgentRunForm({
               value: DELIVER_OPTIONS.find((o) => o.value === launched.effective.deliver)?.label,
             },
             { label: 'Step limit', value: launched.effective.maxSteps },
-            { label: 'Time limit', value: `${launched.effective.maxWallClockSeconds} s` },
+            { label: 'Time limit', value: `${launched.effective.maxWallClockSeconds} seconds` },
           ]}
         />
         <div className="flex flex-wrap items-center gap-3 border-t border-ink-600 pt-4">
@@ -328,6 +332,18 @@ export function AgentRunForm({
           {repoId ? ' for this repository’s team or the platform' : ''}.
         </Alert>
       )}
+      {limits.isError && (
+        <Alert
+          action={
+            <Button onClick={() => void limits.refetch()} size="sm">
+              Retry
+            </Button>
+          }
+          title="Could not load the run limits"
+        >
+          Launching is unavailable until the platform limits load.
+        </Alert>
+      )}
       {launchError && <LaunchErrorAlert view={launchError} />}
       {clearedRepo && !values.repoId && (
         <Alert title="Repository cleared" variant="warning">
@@ -396,8 +412,12 @@ export function AgentRunForm({
       )}
 
       <Textarea
-        error={show('prompt')}
-        hint={`${values.prompt.length.toLocaleString('en-US')} / ${AGENT_RUN_MAX_PROMPT_CHARS.toLocaleString('en-US')}`}
+        error={
+          promptOver
+            ? `${promptCount}. Shorten the prompt to ${AGENT_RUN_MAX_PROMPT_CHARS.toLocaleString('en-US')} characters or fewer.`
+            : show('prompt')
+        }
+        hint={promptCount}
         label="Prompt"
         onChange={(e) => set('prompt', e.target.value)}
         placeholder="What should the agent do?"

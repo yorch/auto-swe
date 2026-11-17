@@ -3,6 +3,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AGENT_RUN_MAX_PROMPT_CHARS } from '@/lib/agentRun';
 import { withQuery } from '@/test/rtl-helpers';
 import { AgentRunForm } from './AgentRunForm';
 
@@ -46,6 +47,8 @@ interface Stub {
   /** Read per request: the owner's budget has run out for `repo-1`. */
   overBudget?: boolean;
   limits?: unknown;
+  /** The limits request fails, as a gateway outage would. */
+  limitsFail?: boolean;
   launch?: () => Response;
 }
 
@@ -104,6 +107,9 @@ function stubGateway(stub: Stub = {}) {
       return json({ data: { dropped: [], refusedExclusions: [], selected: [] } });
     }
     if (method === 'GET' && path === '/api/v1/agent-runs/limits') {
+      if (stub.limitsFail) {
+        return json({ error: { code: 'INTERNAL', message: 'down' } }, 500);
+      }
       return json({ data: stub.limits ?? LIMITS });
     }
     if (method === 'GET' && path === '/api/v1/workflow-runs') {
@@ -256,6 +262,25 @@ describe('AgentRunForm', { timeout: 30_000 }, () => {
     expect((screen.getByRole('combobox', { name: /agent/i }) as HTMLInputElement).disabled).toBe(
       true
     );
+  });
+
+  it('says the limits could not load, offers a retry, and keeps Run disabled', async () => {
+    stubGateway({ limitsFail: true });
+    render(withQuery(<AgentRunForm />));
+    expect(await screen.findByText('Could not load the run limits')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    expect((screen.getByRole('button', { name: /run agent/i }) as HTMLButtonElement).disabled).toBe(
+      true
+    );
+  });
+
+  it('shows the prompt counter in the error tone and marks the field invalid over the limit', async () => {
+    stubGateway();
+    render(withQuery(<AgentRunForm />));
+    await fill('x'.repeat(AGENT_RUN_MAX_PROMPT_CHARS + 1));
+    const message = await screen.findByText(/Shorten the prompt/);
+    expect(message.className).toContain('text-danger-400');
+    expect(screen.getByLabelText(/prompt/i).getAttribute('aria-invalid')).toBe('true');
   });
 
   it('refuses a cap above the ceiling client-side and sends nothing', async () => {

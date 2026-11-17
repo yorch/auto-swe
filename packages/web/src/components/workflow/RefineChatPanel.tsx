@@ -53,10 +53,14 @@ export function RefineChatPanel({
   const [input, setInput] = useState('');
   const nextId = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Bumped each time the panel closes: a refinement answering for an earlier open must not land
+  // in the transcript of the next one, even if the panel has been reopened by then.
+  const generation = useRef(0);
 
   // Reset the transcript when the panel closes so the next open starts fresh.
   useEffect(() => {
     if (!open) {
+      generation.current += 1;
       setMessages([]);
       setInput('');
     }
@@ -82,10 +86,14 @@ export function RefineChatPanel({
     }
     setInput('');
     append({ role: 'user', text: prompt });
+    const startedIn = generation.current;
     try {
       const res = await refine.mutateAsync(prompt);
       const version = res.data.version;
       onSaved?.(version);
+      if (generation.current !== startedIn) {
+        return;
+      }
       const summary = res.summary?.trim();
       append({
         role: 'assistant',
@@ -94,6 +102,9 @@ export function RefineChatPanel({
         warnings: res.warnings,
       });
     } catch (err) {
+      if (generation.current !== startedIn) {
+        return;
+      }
       append({
         isError: true,
         role: 'assistant',
@@ -104,6 +115,7 @@ export function RefineChatPanel({
 
   return (
     <Modal
+      dismissible={!refine.isPending}
       onClose={onClose}
       open={open}
       size="lg"
@@ -200,6 +212,10 @@ export function RefineChatPanel({
           rows={3}
           value={input}
         />
+
+        <p className="text-xs text-paper-500">
+          Each message saves a new version. Wait for a reply before closing.
+        </p>
 
         <ModalFooter
           cancelLabel="Close"

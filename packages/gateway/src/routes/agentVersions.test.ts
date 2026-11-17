@@ -204,6 +204,64 @@ describe('POST /agent-library/:id/restore', () => {
     expect(prisma.agent.create).not.toHaveBeenCalled();
   });
 
+  it('returns runtimeWarnings when the restored model strands a harness heir', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agent.findFirst
+      .mockResolvedValueOnce(row(1, { modelSpec: 'openai/gpt-6.1-sol' }))
+      .mockResolvedValueOnce(row(2, { modelSpec: 'anthropic/model-2' }))
+      .mockResolvedValueOnce({ isActive: true, version: 2 });
+    prisma.agent.findUniqueOrThrow.mockResolvedValue({
+      ...row(3, { modelSpec: 'openai/gpt-6.1-sol' }),
+      skillRefs: [],
+    });
+    prisma.agent.findMany.mockImplementation(
+      async ({ where }: { where: { inheritsModelFrom?: { in: string[] } } }) =>
+        where.inheritsModelFrom?.in.includes('reviewer')
+          ? [{ key: 'ciFixer', runtime: 'claude-code', scope: 'TEAM' }]
+          : []
+    );
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { versionId: V1 },
+      url: `/api/v1/platform/agent-library/${ID}/restore`,
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().runtimeWarnings).toEqual([
+      expect.stringContaining("agent 'ciFixer' (TEAM) runs on claude-code"),
+    ]);
+  });
+
+  it('returns no runtimeWarnings when the restored model is unchanged', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agent.findFirst
+      .mockResolvedValueOnce(row(1, { modelSpec: 'openai/gpt-6.1-sol' }))
+      .mockResolvedValueOnce(row(2, { modelSpec: 'openai/gpt-6.1-sol' }))
+      .mockResolvedValueOnce({ isActive: true, version: 2 });
+    prisma.agent.findUniqueOrThrow.mockResolvedValue({
+      ...row(3, { modelSpec: 'openai/gpt-6.1-sol' }),
+      skillRefs: [],
+    });
+    prisma.agent.findMany.mockResolvedValue([
+      { key: 'ciFixer', runtime: 'claude-code', scope: 'TEAM' },
+    ]);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { versionId: V1 },
+      url: `/api/v1/platform/agent-library/${ID}/restore`,
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().runtimeWarnings).toBeUndefined();
+    // The heir lookup is never reached: an unchanged model strands nobody.
+    expect(
+      prisma.agent.findMany.mock.calls.filter((call) => {
+        const args: { where?: { inheritsModelFrom?: unknown } } | undefined = call[0];
+        return args?.where?.inheritsModelFrom !== undefined;
+      })
+    ).toHaveLength(0);
+  });
+
   it('keeps verification when the prompt is unchanged', async () => {
     const { app, prisma } = await buildApp();
     prisma.agent.findFirst

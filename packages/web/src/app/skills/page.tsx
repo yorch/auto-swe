@@ -43,6 +43,7 @@ import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { ApiError } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
+import { navLabel } from '@/lib/navigation';
 import { originLabel } from '@/lib/originLabel';
 import { cn, FOCUS_RING, formatCost, formatDate, formatPercent } from '@/lib/utils';
 import { visibleOrNull, visibleText } from '@/lib/visibleText';
@@ -231,6 +232,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
         title="Discard unsaved changes?"
       />
       <Modal
+        dismissible={!(update.isPending || verify.isPending)}
         onClose={() => {
           if (formDirty && !update.isPending) {
             setDiscardOpen(true);
@@ -358,7 +360,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
                 </Alert>
               )}
             </div>
-            <div className="flex items-center justify-between border-t border-ink-600 pt-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-ink-600 pt-4">
               <div className="space-y-0.5 text-xs text-paper-500">
                 <div>Created {formatDate(sk.createdAt)}</div>
                 <div>Updated {formatDate(sk.updatedAt)}</div>
@@ -420,7 +422,10 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
   }
 
   function requestClose() {
-    if (dirty && !savedWarnings && !create.isPending) {
+    if (create.isPending) {
+      return;
+    }
+    if (dirty && !savedWarnings) {
       setDiscardOpen(true);
       return;
     }
@@ -473,7 +478,7 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
         open={discardOpen}
         title="Discard this skill?"
       />
-      <Modal onClose={requestClose} open={open} title="New skill">
+      <Modal dismissible={!create.isPending} onClose={requestClose} open={open} title="New skill">
         <form className="space-y-4" onSubmit={handleSubmit}>
           <Input
             error={nameTaken ? 'A skill with this name already exists.' : undefined}
@@ -551,6 +556,9 @@ const EFFECTIVENESS_SORT = {
   'success-rate': (s: EffectivenessRow) => s.successRate,
 };
 
+const CORRELATIONAL_CAVEAT =
+  'Correlational: skills are assigned per team and template, so a difference may reflect the team or workload rather than the skill.';
+
 function EffectivenessCard() {
   const { onSortChange, sort, sortRows } = useDataTableSort(EFFECTIVENESS_SORT);
   const {
@@ -572,8 +580,8 @@ function EffectivenessCard() {
           {formatPercent(data?.baselineSuccessRate ?? null)}
         </span>{' '}
         success across <span className="text-paper-200 tabular-nums">{data?.totalRuns ?? 0}</span>{' '}
-        runs. Correlational: skills are assigned per team and template, so a difference may reflect
-        the team or workload rather than the skill.
+        runs.{' '}
+        {!data?.caveat || data.caveat === 'correlational' ? CORRELATIONAL_CAVEAT : data.caveat}
       </p>
       <QueryBoundary
         error={loadError}
@@ -662,6 +670,8 @@ function StudioSkillsContent() {
   const update = useUpdateSkill();
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
+  // The effectiveness query runs only once the collapsed section has been opened.
+  const [effectivenessOpened, setEffectivenessOpened] = useState(false);
 
   // Search and filter live in the address bar, so a filtered list can be shared and survives a reload.
   const { params, update: updateUrl } = useUrlFilters();
@@ -691,15 +701,22 @@ function StudioSkillsContent() {
     void handleToggleActive(skill);
   }
 
-  async function handleToggleActive(skill: Skill) {
+  // Rejects on failure, so a confirmation dialog can stay open and show the error inline.
+  async function toggleActive(skill: Skill) {
     setToggleError(null);
     setTogglingId(skill.id);
     try {
       await update.mutateAsync({ id: skill.id, isActive: !skill.isActive });
-    } catch (err) {
-      setToggleError(errMsg(err, `Failed to update "${skill.name}"`));
     } finally {
       setTogglingId(null);
+    }
+  }
+
+  async function handleToggleActive(skill: Skill) {
+    try {
+      await toggleActive(skill);
+    } catch (err) {
+      setToggleError(errMsg(err, `Failed to update "${skill.name}"`));
     }
   }
 
@@ -724,7 +741,7 @@ function StudioSkillsContent() {
             Reusable instructions added to an agent&apos;s system prompt <HelpTip term="skill" />.
           </>
         }
-        title="Skill library"
+        title={navLabel('/skills')}
       />
 
       {isAdmin && (
@@ -937,7 +954,14 @@ function StudioSkillsContent() {
       )}
 
       {tab === 'skills' && (
-        <details className="group rounded-xl border border-ink-500/70 bg-ink-900/30">
+        <details
+          className="group rounded-xl border border-ink-500/70 bg-ink-900/30"
+          onToggle={(e) => {
+            if (e.currentTarget.open) {
+              setEffectivenessOpened(true);
+            }
+          }}
+        >
           <summary
             className={cn(
               'flex cursor-pointer list-none items-center gap-3 rounded-xl px-5 py-4 text-sm font-semibold text-paper-100 [&::-webkit-details-marker]:hidden',
@@ -951,7 +975,7 @@ function StudioSkillsContent() {
             />
             Skill effectiveness
           </summary>
-          <EffectivenessCard />
+          {effectivenessOpened && <EffectivenessCard />}
         </details>
       )}
 
@@ -963,7 +987,7 @@ function StudioSkillsContent() {
         onClose={() => setDeactivateTarget(null)}
         onConfirm={async () => {
           if (deactivateTarget) {
-            await handleToggleActive(deactivateTarget);
+            await toggleActive(deactivateTarget);
           }
         }}
         open={deactivateTarget !== null}

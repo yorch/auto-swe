@@ -13,7 +13,10 @@ interface VersionsCardProps {
   onSelectVersion: (version: number) => void;
 }
 
-/** The right rail's version list; clicking a version selects it (or asks first when dirty). */
+/**
+ * The version list; clicking a version selects it (or asks first when dirty), and the Definition
+ * tab then shows it read-only, which the selected row says.
+ */
 export function VersionsCard({
   template,
   effectiveVersion,
@@ -40,6 +43,7 @@ export function VersionsCard({
                   needsReview={!!v.generatedBy && !v.reviewedAt}
                 />
                 {v.generatedBy && <span className="text-xs text-paper-500">AI-generated</span>}
+                {selected && <span className="text-xs text-accent-400">Shown in Definition</span>}
               </span>
               <span className="shrink-0 text-xs text-paper-500" title={formatDate(v.createdAt)}>
                 {formatRelativeTime(v.createdAt)}

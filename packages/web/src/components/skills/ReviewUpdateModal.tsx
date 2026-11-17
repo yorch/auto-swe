@@ -156,9 +156,16 @@ function ChangedSkill({
   );
 }
 
-function ReviewBody({ onClose, sourceId }: { onClose: () => void; sourceId: string }) {
+function ReviewBody({
+  accept,
+  onClose,
+  sourceId,
+}: {
+  accept: ReturnType<typeof useAcceptUpdate>;
+  onClose: () => void;
+  sourceId: string;
+}) {
   const diffQuery = useSourceDiff(sourceId);
-  const accept = useAcceptUpdate();
   const readFull = useReadIncomingSkill();
   // Only what the admin changed is stored; everything else derives from the diff.
   const [picks, setPicks] = useState<Record<string, boolean>>({});
@@ -247,7 +254,14 @@ function ReviewBody({ onClose, sourceId }: { onClose: () => void; sourceId: stri
   if (!diff) {
     return (
       <div className="space-y-4">
-        <Alert>{errMsg(diffQuery.error, 'Failed to load the diff')}</Alert>
+        <Alert>
+          {errMsg(diffQuery.error, 'Failed to load the diff')}
+          <div className="mt-2">
+            <Button disabled={diffQuery.isFetching} onClick={() => diffQuery.refetch()} size="sm">
+              Retry
+            </Button>
+          </div>
+        </Alert>
         <ModalFooter cancelLabel="Close" onCancel={onClose} />
       </div>
     );
@@ -384,10 +398,21 @@ export function ReviewUpdateModal({
   onClose: () => void;
   sourceId: string | null;
 }) {
+  // Owned here, above the keyed body, so the modal can refuse to close while an accept runs and
+  // the per-skill outcome is never unmounted before it is read.
+  const accept = useAcceptUpdate();
   return (
-    <Modal onClose={onClose} open={sourceId !== null} size="lg" title="Review update">
+    <Modal
+      dismissible={!accept.isPending}
+      onClose={onClose}
+      open={sourceId !== null}
+      size="lg"
+      title="Review update"
+    >
       {/* Keyed by source so a second review never inherits the first one's selections. */}
-      {sourceId !== null && <ReviewBody key={sourceId} onClose={onClose} sourceId={sourceId} />}
+      {sourceId !== null && (
+        <ReviewBody accept={accept} key={sourceId} onClose={onClose} sourceId={sourceId} />
+      )}
     </Modal>
   );
 }

@@ -97,6 +97,8 @@ export function AgentFormFields({
   credentials,
   disabled = false,
   harnessProfiles,
+  keyLocked = false,
+  keyNote,
   mcpConnections,
   mode,
   onChange,
@@ -118,6 +120,10 @@ export function AgentFormFields({
    * editable; without it a bound profile is shown read-only.
    */
   harnessProfiles?: Array<{ name: string; status: 'OK' | 'DISABLED' }>;
+  /** Create only: the key is fixed, because the agent overrides the platform agent of that key. */
+  keyLocked?: boolean;
+  /** Create only: an extra line under the key hint. */
+  keyNote?: string;
   mcpConnections: McpConnectionRow[];
   mode: 'create' | 'edit';
   onChange: (patch: Partial<AgentFormValue>) => void;
@@ -190,10 +196,15 @@ export function AgentFormFields({
                   ? 'Use letters, digits, dot, dash or underscore only.'
                   : undefined
               }
-              hint={copy.key?.hint ?? AGENT_KEY_HINT}
+              hint={
+                keyLocked
+                  ? 'Fixed: this overrides the platform-wide agent with this key.'
+                  : [copy.key?.hint ?? AGENT_KEY_HINT, keyNote].filter(Boolean).join(' ')
+              }
               label="Key"
               onChange={(e) => onChange({ key: e.target.value })}
               placeholder={copy.key?.placeholder}
+              readOnly={keyLocked}
               required
               value={value.key ?? ''}
             />
@@ -328,7 +339,7 @@ export function AgentFormFields({
         options={[
           { label: 'None', value: '' },
           ...mcpConnections.map((c) => ({
-            label: `${c.name} — ${c.config?.url}`,
+            label: `${c.name ?? 'Unnamed server'}${c.config?.url ? ` — ${c.config.url}` : ''}`,
             value: c.id,
           })),
         ]}

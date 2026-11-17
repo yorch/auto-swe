@@ -25,6 +25,31 @@ export function WorkflowViewer({
   const inspector = useRef<HTMLElement>(null);
   const inspectorTrigger = useRef<HTMLElement | null>(null);
   const node = selectedNodeId ? spec.nodes[selectedNodeId] : undefined;
+  // Fields already shown above: the header, and every top-level field the Connections list
+  // reads. An edge field nested in an array (`options[0].next`) hides only that edge: the rest of
+  // the entry (a decision option's label and value) is not shown anywhere else.
+  const edgeFields = node ? nodeEdges(node).map(([field]) => field) : [];
+  const hiddenFields = new Set([
+    'type',
+    'title',
+    ...edgeFields.filter((field) => !field.includes('[')),
+  ]);
+  const shownValue = (field: string, value: unknown): unknown => {
+    if (!Array.isArray(value)) {
+      return value;
+    }
+    return value.map((item, i) => {
+      if (
+        typeof item !== 'object' ||
+        item === null ||
+        !edgeFields.includes(`${field}[${i}].next`)
+      ) {
+        return item;
+      }
+      const { next: _next, ...rest } = item as Record<string, unknown>;
+      return rest;
+    });
+  };
   useEffect(() => {
     if (selectedNodeId) {
       const active = document.activeElement;
@@ -125,21 +150,7 @@ export function WorkflowViewer({
               <div>
                 <dl className="space-y-3">
                   {Object.entries(node)
-                    .filter(
-                      ([field]) =>
-                        ![
-                          'type',
-                          'title',
-                          'next',
-                          'onFail',
-                          'onTimeout',
-                          'onError',
-                          'onTrue',
-                          'onFalse',
-                          'join',
-                          'subgraph',
-                        ].includes(field)
-                    )
+                    .filter(([field]) => !hiddenFields.has(field))
                     .map(([field, value]) => (
                       <div key={field}>
                         <dt className="mb-1 text-xs font-medium text-paper-500">
@@ -147,7 +158,7 @@ export function WorkflowViewer({
                         </dt>
                         <dd className="whitespace-pre-wrap break-words font-mono text-xs text-paper-200">
                           {typeof value === 'object'
-                            ? JSON.stringify(value, null, 2)
+                            ? JSON.stringify(shownValue(field, value), null, 2)
                             : String(value)}
                         </dd>
                       </div>

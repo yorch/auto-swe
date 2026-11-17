@@ -4,14 +4,16 @@ import type { StepMetadata } from '@auto-swe/shared/workflow';
 import { useState } from 'react';
 import { PageHelp } from '@/components/help/PageHelp';
 import { KnowledgeBaseLinksPanel } from '@/components/knowledgeBases/KnowledgeBaseLinksSection';
+import { PAGE_CONTAINER_CLASS } from '@/components/layout/PageContainer';
 import { Alert } from '@/components/ui/Alert';
-import { Button } from '@/components/ui/Button';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonDetail } from '@/components/ui/LoadingState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
+import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { Textarea } from '@/components/ui/Textarea';
 import {
   CONTAINER_AUTHORING_RULE,
@@ -20,8 +22,9 @@ import {
 import { PromoteVersionModal } from '@/components/workflow/PromoteVersionModal';
 import { RefineChatPanel } from '@/components/workflow/RefineChatPanel';
 import { TemplateEditor } from '@/components/workflow/TemplateEditor';
-import { TemplateNotFound, TemplateSubNav } from '@/components/workflow/templateNav';
+import { TemplateNotFound } from '@/components/workflow/templateNav';
 import { WorkflowViewer } from '@/components/workflow/WorkflowViewer';
+import { errMsg } from '@/lib/errors';
 import { cn } from '@/lib/utils';
 import { EditMetadataModal } from './_components/EditMetadataModal';
 import { EditorActions } from './_components/EditorActions';
@@ -33,7 +36,7 @@ import { LintErrorsAlert } from './_components/LintErrorsAlert';
 import { ObservedCard } from './_components/ObservedCard';
 import { TemplateHeader } from './_components/TemplateHeader';
 import { TriggersCard } from './_components/TriggersCard';
-import { useWorkflowDetailState } from './_components/useWorkflowDetailState';
+import { ACTION_ERROR_TITLES, useWorkflowDetailState } from './_components/useWorkflowDetailState';
 import { VersionsCard } from './_components/VersionsCard';
 import { WebhookCard } from './_components/WebhookCard';
 
@@ -41,20 +44,35 @@ interface PageProps {
   params: Promise<{ id: string }>;
 }
 
+type Section = 'definition' | 'settings' | 'versions';
+
+const SECTION_TABS: { id: Section; label: string }[] = [
+  { id: 'definition', label: 'Definition' },
+  { id: 'settings', label: 'Settings' },
+  { id: 'versions', label: 'Versions' },
+];
+
+const TABS_ID = 'workflow-workspace';
+
 /** The shell gives a full-screen route no padding or scroll; the states without an editor want both. */
 function PagePad({ children }: { children: React.ReactNode }) {
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-[1280px] px-4 pt-6 pb-16 md:px-10 md:pt-10">{children}</div>
+      <div className={PAGE_CONTAINER_CLASS}>{children}</div>
     </div>
   );
 }
 
 export default function TemplateDetailPage({ params }: PageProps) {
-  const [section, setSection] = useState('definition');
+  const [section, setSection] = useState<Section>('definition');
+  // Settings and Versions mount on first visit (their queries fire then), and stay mounted after:
+  // a webhook token or secret shown once lives in Settings.
+  const [visited, setVisited] = useState<ReadonlySet<Section>>(new Set<Section>(['definition']));
   const {
+    actionError,
     analytics,
     baseVersion,
+    cancelConfirmOpen,
     canManage,
     canPromote,
     commitSave,
@@ -95,11 +113,16 @@ export default function TemplateDetailPage({ params }: PageProps) {
     promoteReason,
     promoteVariant,
     refetch,
+    refetchStepRegistry,
+    refetchVersion,
     refineOpen,
+    requestCancel,
     reviewVersion,
     saveError,
+    saveWarnings,
     selectedNeedsReview,
     selectedNodeId,
+    setCancelConfirmOpen,
     setEditMetaOpen,
     setEditSchemaOpen,
     setExplainOpen,
@@ -112,8 +135,14 @@ export default function TemplateDetailPage({ params }: PageProps) {
     setSelectedNodeId,
     setSelectedVersion,
     stepRegistry,
+    stepRegistryError,
+    stepRegistryFetching,
+    stepRegistryIsError,
     template,
     versionDetail,
+    versionError,
+    versionFetching,
+    versionIsError,
     visualSpec,
   } = useWorkflowDetailState(params);
 
@@ -156,7 +185,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
       isDirty={isDirty}
       jsonInvalid={jsonInvalid}
       mode={mode}
-      onCancel={handleCancel}
+      onCancel={requestCancel}
       onPromote={() => setPromoteOpen(true)}
       onReview={handleReview}
       onSave={handleSave}
@@ -169,6 +198,25 @@ export default function TemplateDetailPage({ params }: PageProps) {
       setMode={setMode}
     />
   );
+
+  // Stands in for the definition while the selected version loads, or says why it did not.
+  const versionPlaceholder =
+    effectiveVersion === null ? (
+      <EmptyState icon="warning" title="This workflow has no version yet." />
+    ) : versionIsError ? (
+      <Alert
+        action={
+          <Button disabled={versionFetching} onClick={() => void refetchVersion()} size="sm">
+            {versionFetching ? 'Retrying…' : 'Retry'}
+          </Button>
+        }
+        title={`Could not load v${effectiveVersion}`}
+      >
+        {errMsg(versionError, 'request failed')}
+      </Alert>
+    ) : (
+      <SkeletonDetail label="the definition" />
+    );
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -206,18 +254,17 @@ export default function TemplateDetailPage({ params }: PageProps) {
           template={template}
         />
 
-        <nav aria-label="Workflow workspace" className="flex flex-wrap items-center gap-2">
-          {['definition', 'settings', 'versions'].map((tab) => (
-            <Button
-              aria-pressed={section === tab}
-              key={tab}
-              onClick={() => setSection(tab)}
-              size="sm"
-              variant={section === tab ? 'secondary' : 'ghost'}
-            >
-              {tab === 'definition' ? 'Definition' : tab === 'settings' ? 'Settings' : 'Versions'}
-            </Button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <TabBar
+            active={section}
+            ariaLabel="Workflow workspace"
+            idPrefix={TABS_ID}
+            onChange={(next) => {
+              setSection(next);
+              setVisited((prev) => (prev.has(next) ? prev : new Set(prev).add(next)));
+            }}
+            tabs={SECTION_TABS}
+          />
           <div className="ml-auto min-w-0 max-w-[180px]">
             <Select
               aria-label="Viewed version"
@@ -237,10 +284,25 @@ export default function TemplateDetailPage({ params }: PageProps) {
               value={String(effectiveVersion ?? '')}
             />
           </div>
-          <span className="text-xs text-paper-500">
-            {isDirty ? 'Unsaved changes' : mode === 'edit' ? 'Editing draft' : 'Read only'}
+          <span className="text-xs text-paper-500" role="status">
+            {isDirty
+              ? 'Unsaved changes'
+              : mode === 'edit' || (mode === 'json' && canManage)
+                ? `Editing v${effectiveVersion} — saves as a new version`
+                : 'Read only'}
           </span>
-        </nav>
+          <nav aria-label="Workflow reports" className="flex flex-wrap items-center gap-1">
+            <ButtonLink href={`/library/${id}/analytics`} size="sm" variant="ghost">
+              Analytics
+            </ButtonLink>
+            <ButtonLink href={`/library/${id}/runs`} size="sm" variant="ghost">
+              Run history
+            </ButtonLink>
+            <ButtonLink href={`/library/${id}/diff`} size="sm" variant="ghost">
+              Compare versions
+            </ButtonLink>
+          </nav>
+        </div>
         <PageHelp>
           <p>
             Saving creates a new immutable version. Promote changes the active version used by new
@@ -248,9 +310,19 @@ export default function TemplateDetailPage({ params }: PageProps) {
             selection is available in read-only mode.
           </p>
         </PageHelp>
-        {saveError && mode !== 'edit' && (
-          <Alert className="whitespace-pre-line" title="Could not save">
-            {saveError}
+        {/* The visual editor lists a refused save as its own issues; everything else shows here. */}
+        {actionError && !(mode === 'edit' && actionError.source === 'rejected') && (
+          <Alert className="whitespace-pre-line" title={ACTION_ERROR_TITLES[actionError.source]}>
+            {actionError.message}
+          </Alert>
+        )}
+        {saveWarnings.length > 0 && (
+          <Alert title="Saved with warnings" variant="warning">
+            <ul className="list-disc space-y-0.5 pl-4 text-xs">
+              {saveWarnings.map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
           </Alert>
         )}
 
@@ -258,166 +330,212 @@ export default function TemplateDetailPage({ params }: PageProps) {
         {mode !== 'edit' && lintErrors.length > 0 && <LintErrorsAlert lintErrors={lintErrors} />}
       </div>
 
-      {/* Edit mode: full-bleed canvas */}
-      {mode === 'edit' && editorSpec && stepRegistry && (
-        <div
-          className={cn('min-h-0 flex-1 flex-col', section === 'definition' ? 'flex' : 'hidden')}
-        >
-          <TemplateEditor
-            actions={editorActions}
-            baseVersion={baseVersion}
-            costEstimateExclusions={costExclusions}
-            costEstimateUsd={costEstimate?.totalUsd}
-            observedCostUsd={analytics?.avgCostPerRun ?? null}
-            onChange={handleSpecChange}
-            onSelect={setSelectedNodeId}
-            parseError={null}
-            selectedNodeId={selectedNodeId}
-            serverError={saveError}
-            spec={editorSpec}
-            stepRegistry={stepRegistry as StepMetadata[]}
-            teamId={template?.team?.id}
-            templateId={id}
-          />
-        </div>
-      )}
-
-      {mode !== 'edit' && (
-        <section
-          className={cn('min-h-0 flex-1 flex-col', section === 'definition' ? 'flex' : 'hidden')}
-        >
-          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-4 py-2">
-            <h2 className="text-sm font-semibold text-paper-100">
-              {mode === 'json' ? 'Raw JSON' : 'Definition'}{' '}
-              <span className="ml-2 font-normal text-paper-500">
-                v{effectiveVersion}
-                {isActiveVersion ? ' · active' : ' · not active'}
-              </span>
-            </h2>
-            <div className="flex flex-wrap items-center gap-2">{editorActions}</div>
-          </div>
-          {mode === 'view' && visualSpec && (
-            <WorkflowViewer
-              onSelect={setSelectedNodeId}
-              selectedNodeId={selectedNodeId}
-              spec={visualSpec}
-            />
-          )}
-          {mode === 'view' && !visualSpec && (
-            <Card variant="inset">
-              {versionDetail ? (
-                <EmptyState
-                  hint="Switch to JSON to inspect the stored definition."
-                  icon="warning"
-                  title="This version cannot be drawn"
-                />
-              ) : (
-                <SkeletonDetail label="the definition" />
-              )}
-            </Card>
-          )}
-          {mode === 'json' && (
-            <div className="min-h-0 flex-1 overflow-auto px-4 pb-4">
-              {jsonParsed?.ok === false && (
-                <div id="spec-json-error">
-                  <Alert title="The JSON does not parse">{jsonParsed.error}</Alert>
-                </div>
-              )}
-              <Textarea
-                aria-describedby={jsonParsed?.ok === false ? 'spec-json-error' : undefined}
-                aria-invalid={jsonParsed?.ok === false ? true : undefined}
-                aria-label="Raw JSON"
-                className="h-full min-h-64 p-4 font-mono text-xs leading-relaxed"
-                compact
-                id="spec-json"
-                onChange={(e) => handleJsonChange(e.target.value)}
-                readOnly={!canManage}
-                spellCheck={false}
-                value={editorJson}
+      <div
+        {...tabPanelProps(TABS_ID, 'definition')}
+        className={cn('min-h-0 flex-1 flex-col', section === 'definition' ? 'flex' : 'hidden')}
+      >
+        {/* Edit mode: full-bleed canvas */}
+        {mode === 'edit' &&
+          (editorSpec && stepRegistry ? (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <TemplateEditor
+                actions={editorActions}
+                baseVersion={baseVersion}
+                costEstimateExclusions={costExclusions}
+                costEstimateUsd={costEstimate?.totalUsd}
+                observedCostUsd={analytics?.avgCostPerRun ?? null}
+                onChange={handleSpecChange}
+                onSelect={setSelectedNodeId}
+                parseError={null}
+                selectedNodeId={selectedNodeId}
+                serverError={saveError}
+                spec={editorSpec}
+                stepRegistry={stepRegistry as StepMetadata[]}
+                teamId={template?.team?.id}
+                templateId={id}
               />
             </div>
-          )}
-        </section>
-      )}
-      {section !== 'definition' && (
-        <section
-          aria-label={section === 'settings' ? 'Workflow settings' : 'Workflow versions'}
-          className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6"
-        >
-          <div className="mb-5">
-            <TemplateSubNav active="editor" templateId={id} />
-          </div>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {section === 'versions' ? (
-              <div>
-                {' '}
-                <VersionsCard
-                  effectiveVersion={effectiveVersion}
-                  isDirty={isDirty}
-                  onAskDiscard={setPendingVersion}
-                  onSelectVersion={setSelectedVersion}
-                  template={template}
+          ) : (
+            <div className="space-y-3 px-4 py-2">
+              <div className="flex flex-wrap items-center gap-2">{editorActions}</div>
+              {!editorSpec ? (
+                versionDetail ? (
+                  <EmptyState
+                    hint="Its stored definition does not parse. Cancel, then switch to JSON to inspect it."
+                    icon="warning"
+                    title="This version cannot be edited visually"
+                  />
+                ) : (
+                  versionPlaceholder
+                )
+              ) : stepRegistryIsError ? (
+                <Alert
+                  action={
+                    <Button
+                      disabled={stepRegistryFetching}
+                      onClick={() => void refetchStepRegistry()}
+                      size="sm"
+                    >
+                      {stepRegistryFetching ? 'Retrying…' : 'Retry'}
+                    </Button>
+                  }
+                  title="Could not load the step catalog"
+                >
+                  {errMsg(stepRegistryError, 'request failed')}
+                </Alert>
+              ) : (
+                <SkeletonDetail label="the step catalog" />
+              )}
+            </div>
+          ))}
+
+        {mode !== 'edit' && (
+          <section className="flex min-h-0 flex-1 flex-col">
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-4 py-2">
+              <h2 className="text-sm font-semibold text-paper-100">
+                {mode === 'json' ? 'Raw JSON' : 'Definition'}{' '}
+                <span className="ml-2 font-normal text-paper-500">
+                  v{effectiveVersion}
+                  {isActiveVersion ? ' · active' : ' · not active'}
+                </span>
+              </h2>
+              <div className="flex flex-wrap items-center gap-2">{editorActions}</div>
+            </div>
+            {mode === 'view' && visualSpec && versionDetail && (
+              <WorkflowViewer
+                onSelect={setSelectedNodeId}
+                selectedNodeId={selectedNodeId}
+                spec={visualSpec}
+              />
+            )}
+            {mode === 'view' && !(visualSpec && versionDetail) && (
+              <Card variant="inset">
+                {versionDetail ? (
+                  <EmptyState
+                    hint="Switch to JSON to inspect the stored definition."
+                    icon="warning"
+                    title="This version cannot be drawn"
+                  />
+                ) : (
+                  versionPlaceholder
+                )}
+              </Card>
+            )}
+            {mode === 'json' && (
+              <div className="min-h-0 flex-1 overflow-auto px-4 pb-4">
+                {jsonParsed?.ok === false && (
+                  <div id="spec-json-error">
+                    <Alert title="The JSON does not parse">{jsonParsed.error}</Alert>
+                  </div>
+                )}
+                <Textarea
+                  aria-describedby={jsonParsed?.ok === false ? 'spec-json-error' : undefined}
+                  aria-invalid={jsonParsed?.ok === false ? true : undefined}
+                  aria-label="Raw JSON"
+                  className="h-full min-h-64 p-4 font-mono text-xs leading-relaxed"
+                  compact
+                  id="spec-json"
+                  onChange={(e) => handleJsonChange(e.target.value)}
+                  readOnly={!canManage}
+                  spellCheck={false}
+                  value={editorJson}
                 />
               </div>
-            ) : (
-              <>
-                <Card variant="inset">
-                  <h2 className="mb-2 text-sm font-semibold text-paper-100">Description</h2>
-                  <p className="whitespace-pre-wrap break-words text-sm text-paper-400">
-                    {template.description || 'No description provided.'}
-                  </p>
-                </Card>
-                <KnowledgeBaseLinksPanel
-                  canManage={canManage}
-                  global={!template.team}
-                  target={{ scope: 'TEMPLATE', templateId: id }}
-                  teamId={template.team?.id}
-                />
-                {/* Observed analytics summary */}
-                {analytics && analytics.totalRuns > 0 && (
-                  <ObservedCard
-                    analytics={analytics}
-                    estimatedHumanTimeSavedMinutes={template.estimatedHumanTimeSavedMinutes}
-                    templateId={id}
-                  />
-                )}
-
-                {/* Run schema */}
-                <LaunchInputsCard
-                  canManage={canManage}
-                  inputSchema={inputSchema}
-                  onEdit={() => setEditSchemaOpen(true)}
-                />
-
-                {/* A/B experiment config */}
-                {template.versions.length > 1 && (
-                  <ExperimentCard
-                    activeVersion={template.activeVersion}
-                    experimentSplit={template.experimentSplit ?? null}
-                    experimentVersion={template.experimentVersion ?? null}
-                    templateId={id}
-                    versions={template.versions}
-                  />
-                )}
-
-                {/* What starts this template */}
-                <TriggersCard
-                  template={{
-                    id: template.id,
-                    name: template.name,
-                    status: template.status,
-                    team: template.team,
-                  }}
-                  webhookConfigured={template.webhookConfigured}
-                />
-
-                {/* Webhook trigger */}
-                <WebhookCard canManage={canManage} template={template} />
-              </>
             )}
+          </section>
+        )}
+      </div>
+
+      {/* Kept mounted while another tab shows: a webhook token or secret shown once lives here. */}
+      <div
+        {...tabPanelProps(TABS_ID, 'settings')}
+        className={cn(
+          'min-h-0 flex-1 overflow-y-auto p-4 md:p-6',
+          section !== 'settings' && 'hidden'
+        )}
+      >
+        {visited.has('settings') && (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <Card variant="inset">
+              <h2 className="mb-2 text-sm font-semibold text-paper-100">Description</h2>
+              <p className="whitespace-pre-wrap break-words text-sm text-paper-400">
+                {template.description || 'No description provided.'}
+              </p>
+            </Card>
+            <KnowledgeBaseLinksPanel
+              canManage={canManage}
+              global={!template.team}
+              target={{ scope: 'TEMPLATE', templateId: id }}
+              teamId={template.team?.id}
+            />
+            {/* Observed analytics summary */}
+            {analytics && analytics.totalRuns > 0 && (
+              <ObservedCard
+                analytics={analytics}
+                estimatedHumanTimeSavedMinutes={template.estimatedHumanTimeSavedMinutes}
+                templateId={id}
+              />
+            )}
+
+            {/* Run schema */}
+            <LaunchInputsCard
+              canManage={canManage}
+              inputSchema={inputSchema}
+              onEdit={() => setEditSchemaOpen(true)}
+            />
+
+            {/* A/B experiment config */}
+            {template.versions.length > 1 && (
+              <ExperimentCard
+                activeVersion={template.activeVersion}
+                experimentSplit={template.experimentSplit ?? null}
+                experimentVersion={template.experimentVersion ?? null}
+                key={`${template.activeVersion}-${template.experimentVersion}-${template.experimentSplit}`}
+                templateId={id}
+                versions={template.versions}
+              />
+            )}
+
+            {/* What starts this template */}
+            <TriggersCard
+              template={{
+                id: template.id,
+                name: template.name,
+                status: template.status,
+                team: template.team,
+              }}
+              webhookConfigured={template.webhookConfigured}
+              webhookSigned={template.webhookSigning.configured}
+            />
+
+            {/* Webhook trigger */}
+            <WebhookCard canManage={canManage} template={template} />
           </div>
-        </section>
-      )}
+        )}
+      </div>
+
+      <div
+        {...tabPanelProps(TABS_ID, 'versions')}
+        className={cn(
+          'min-h-0 flex-1 overflow-y-auto p-4 md:p-6',
+          section !== 'versions' && 'hidden'
+        )}
+      >
+        {visited.has('versions') && (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <VersionsCard
+              effectiveVersion={effectiveVersion}
+              isDirty={isDirty}
+              onAskDiscard={setPendingVersion}
+              onSelectVersion={(v) => {
+                setMode('view');
+                setSelectedVersion(v);
+              }}
+              template={template}
+            />
+          </div>
+        )}
+      </div>
 
       <EditMetadataModal
         initialDescription={template.description ?? ''}
@@ -446,6 +564,16 @@ export default function TemplateDetailPage({ params }: PageProps) {
           version={effectiveVersion}
         />
       )}
+
+      <ConfirmModal
+        confirmLabel="Discard changes"
+        dangerous
+        message="You have unsaved edits to this version. Cancelling discards them."
+        onClose={() => setCancelConfirmOpen(false)}
+        onConfirm={handleCancel}
+        open={cancelConfirmOpen}
+        title="Discard your edits?"
+      />
 
       <ConfirmModal
         confirmLabel="Discard changes"

@@ -37,6 +37,7 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('@/hooks/useSkillSources', () => ({
   useCheckSource: () => ({ isPending: false, mutateAsync: check }),
   useDeleteSource: () => ({ isPending: false, mutateAsync: remove }),
+  useInstallIntoSource: () => ({ isPending: false, mutateAsync: vi.fn() }),
   usePatchSource: () => ({ isPending: false, mutateAsync: patch }),
   useSkillSources: () => ({ data: state.rows, error: null, isError: false, isLoading: false }),
 }));

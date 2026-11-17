@@ -18,6 +18,18 @@ describe('NodePalette help', () => {
   });
 });
 
+describe('NodePalette add', () => {
+  it('adds on a click or tap, not only on drag or Enter', () => {
+    const onAdd = vi.fn();
+    render(<NodePalette onAdd={onAdd} steps={[]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add Signal node' }));
+    expect(onAdd).toHaveBeenCalledTimes(1);
+    expect(onAdd.mock.calls[0]?.[0]).toMatchObject({ kind: 'primitive', nodeType: 'signal' });
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Add Signal node' }), { key: 'Enter' });
+    expect(onAdd).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('NodePalette per-type help', () => {
   it('adds no per-item help buttons: the only tab stops are the items, group toggles, one tip and the filter', () => {
     const { container } = render(<NodePalette onAdd={vi.fn()} steps={[]} />);

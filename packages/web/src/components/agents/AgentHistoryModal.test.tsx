@@ -134,4 +134,44 @@ describe('AgentHistoryModal', () => {
     expect(await screen.findByText(/Model catalog: No price for acme\/x\./)).toBeTruthy();
     expect(screen.getByText(/Credentials: No credential for acme\./)).toBeTruthy();
   });
+
+  it('marks the selected version and names its changes button after its text', async () => {
+    setupFetchMock({
+      'GET /api/v1/platform/agent-library/v2/version-stats': () => ({ data: null }),
+      'GET /api/v1/platform/agent-library/v2/versions': () => ({
+        data: [version(2), version(1)],
+      }),
+    });
+    render(withQuery(<AgentHistoryModal agent={AGENT} onClose={vi.fn()} scopeTarget="Payments" />));
+    const latest = await screen.findByRole('button', { name: 'Show changes for version 2' });
+    expect(latest.getAttribute('aria-pressed')).toBe('true');
+    expect(latest.closest('tr')?.getAttribute('aria-current')).toBe('true');
+    const older = screen.getByRole('button', { name: 'Show changes for version 1' });
+    expect(older.getAttribute('aria-pressed')).toBe('false');
+    expect(older.closest('tr')?.getAttribute('aria-current')).toBeNull();
+    fireEvent.click(older);
+    expect(older.getAttribute('aria-pressed')).toBe('true');
+    expect(
+      screen.getByRole('heading', { name: 'History of Reviewer · Platform-wide: Payments' })
+    ).toBeTruthy();
+  });
+
+  it('shows the runtime warnings a restore returns', async () => {
+    setupFetchMock({
+      'GET /api/v1/platform/agent-library/v2/version-stats': () => ({ data: null }),
+      'GET /api/v1/platform/agent-library/v2/versions': () => ({
+        data: [version(2), version(1)],
+      }),
+      'POST /api/v1/platform/agent-library/v2/restore': () => ({
+        data: version(3),
+        runtimeWarnings: ['harness-agent cannot run on acme/x.'],
+      }),
+    });
+    render(withQuery(<AgentHistoryModal agent={AGENT} onClose={vi.fn()} />));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Restore version 1 as a new version' })
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Restore as new version' }));
+    expect(await screen.findByText(/harness-agent cannot run on acme\/x\./)).toBeTruthy();
+  });
 });

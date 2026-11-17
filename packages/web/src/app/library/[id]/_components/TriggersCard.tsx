@@ -56,9 +56,12 @@ function startsTemplate(row: AutomationSummary, template: TriggersTemplate): boo
 export function TriggersCard({
   template,
   webhookConfigured,
+  webhookSigned,
 }: {
   template: TriggersTemplate;
   webhookConfigured: boolean;
+  /** The webhook has a signing secret (`template.webhookSigning.configured`). */
+  webhookSigned: boolean;
 }) {
   const all = useAllAutomations();
   const schedules = useSchedules();
@@ -131,7 +134,11 @@ export function TriggersCard({
                     <Badge tone="neutral" variant="outline">
                       Webhook
                     </Badge>
-                    <span>Signed webhook URL exists</span>
+                    <span>
+                      {webhookSigned
+                        ? 'Signed webhook URL exists'
+                        : 'Webhook URL exists (unsigned)'}
+                    </span>
                   </div>
                   <p className="mt-1 text-xs text-paper-500">
                     Managed in the Webhook trigger card.

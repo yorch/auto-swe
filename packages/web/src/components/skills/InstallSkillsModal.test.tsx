@@ -13,25 +13,34 @@ const { install, readFull, refetch, refetchSources, state, useDiff } = vi.hoiste
   readFull: vi.fn(),
   refetch: vi.fn(),
   refetchSources: vi.fn(),
-  state: { diff: undefined as unknown, pinned: 'a'.repeat(40) },
+  state: {
+    diff: undefined as unknown,
+    installPending: false,
+    pinned: 'a'.repeat(40),
+    sourcesError: false,
+  },
   useDiff: vi.fn(),
 }));
 vi.mock('@/hooks/useSkillSources', () => ({
-  useInstallIntoSource: () => ({ isPending: false, mutateAsync: install }),
+  useInstallIntoSource: () => ({ isPending: state.installPending, mutateAsync: install }),
   useReadIncomingSkill: () => ({ isPending: false, mutateAsync: readFull }),
   useSkillSources: () => ({
-    data: [
-      {
-        host: 'github.com',
-        id: 'src-1',
-        latestSha: 'b'.repeat(40),
-        owner: 'acme',
-        path: 'skills',
-        pinnedSha: state.pinned,
-        repo: 'pack',
-        status: 'UPDATE_AVAILABLE',
-      },
-    ],
+    data: state.sourcesError
+      ? undefined
+      : [
+          {
+            host: 'github.com',
+            id: 'src-1',
+            latestSha: 'b'.repeat(40),
+            owner: 'acme',
+            path: 'skills',
+            pinnedSha: state.pinned,
+            repo: 'pack',
+            status: 'UPDATE_AVAILABLE',
+          },
+        ],
+    error: state.sourcesError ? new Error('sources down') : null,
+    isError: state.sourcesError,
     isLoading: false,
     refetch: refetchSources,
   }),
@@ -98,6 +107,8 @@ const show = () => render(<InstallSkillsModal onClose={() => {}} sourceId="src-1
 beforeEach(() => {
   vi.clearAllMocks();
   state.pinned = PINNED;
+  state.installPending = false;
+  state.sourcesError = false;
   refetchSources.mockResolvedValue(undefined);
   readFull.mockImplementation(async ({ name, sha }: { name: string; sha: string }) =>
     incoming(name, sha)
@@ -234,5 +245,44 @@ describe('InstallSkillsModal', () => {
     await waitFor(() =>
       expect(install).toHaveBeenLastCalledWith({ id: 'src-1', sha: NEW_PIN, skills: ['fresh'] })
     );
+  });
+});
+
+describe('closing and retrying', () => {
+  const pressEscape = () => {
+    const dialog = document.querySelector('dialog') as HTMLDialogElement;
+    const event = new Event('cancel', { cancelable: true });
+    dialog.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+
+  it('cannot be dismissed while an install is in flight, and can be otherwise', () => {
+    state.installPending = true;
+    const { unmount } = show();
+    expect(pressEscape()).toBe(true);
+    const footerClose = screen
+      .getAllByRole('button', { name: 'Close' })
+      .find((b) => b.textContent === 'Close') as HTMLButtonElement;
+    expect(footerClose.disabled).toBe(true);
+    unmount();
+    state.installPending = false;
+    show();
+    expect(pressEscape()).toBe(false);
+  });
+
+  it('says a failed sources query failed, with Retry, not that the source is gone', () => {
+    state.sourcesError = true;
+    show();
+    expect(screen.getByText(/sources down/)).toBeTruthy();
+    expect(screen.queryByText('This source no longer exists.')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(refetchSources).toHaveBeenCalled();
+  });
+
+  it('offers Retry when the diff failed to load', () => {
+    state.diff = undefined;
+    show();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(refetch).toHaveBeenCalled();
   });
 });

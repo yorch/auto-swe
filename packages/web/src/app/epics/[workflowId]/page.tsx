@@ -68,7 +68,6 @@ export default function EpicDetailPage({ params }: PageProps) {
     if (error) {
       return (
         <div className="space-y-6">
-          <BackToEpics />
           <Alert
             action={
               <Button onClick={() => void refetch()} size="sm">
@@ -94,7 +93,6 @@ export default function EpicDetailPage({ params }: PageProps) {
   const percent = epic.children.length ? Math.round((done / epic.children.length) * 100) : 0;
   return (
     <div className="space-y-6">
-      <BackToEpics />
       <PageHeader
         actions={
           epic.workRequestId && (
@@ -267,15 +265,6 @@ export default function EpicDetailPage({ params }: PageProps) {
         </Card>
       </div>
     </div>
-  );
-}
-
-function BackToEpics() {
-  return (
-    <ButtonLink className="-ml-3" href="/epics" size="sm" variant="ghost">
-      <Icon name="arrowLeft" size={14} />
-      Epics
-    </ButtonLink>
   );
 }
 
