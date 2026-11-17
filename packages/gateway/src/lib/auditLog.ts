@@ -48,6 +48,7 @@ export type AuditEntityType =
   | 'ReportDigestSubscription'
   | 'ReviewPreset'
   | 'ReviewPresetAttachment'
+  | 'RunPlan'
   | 'ScannerPattern'
   | 'ScheduledWorkRequest'
   | 'ServicePrincipal'

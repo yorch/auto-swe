@@ -323,6 +323,8 @@ export {
   resolveHumanStep,
   updateDomainState,
 } from './state.js';
+export type { SweepRunPlansResult } from './sweepRunPlans.js';
+export { sweepRunPlans } from './sweepRunPlans.js';
 export type { SyncMarketplacesResult } from './syncMarketplaces.js';
 export { syncMarketplaces } from './syncMarketplaces.js';
 export type { SyncRepoAccessInput, SyncRepoAccessResult } from './syncRepoAccess.js';

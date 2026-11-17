@@ -1503,6 +1503,62 @@ export const SETTING_DEFINITIONS = {
     schema: z.boolean(),
   }),
 
+  // ── Run plans ──────────────────────────────────────────────────────────────
+  // Launch-time workflow generation: the kill switch and the per-user limits on
+  // generating, routing and holding plans. All ADMIN-only; the limits cost a
+  // model call each, so they are an abuse and spend control, not a preference.
+  'runPlans.createPerUserPerHour': defineSetting({
+    defaultValue: 10,
+    description:
+      'Most plan generations one person may start in an hour (counted when the job starts, whether or not it produces a plan). 0 stops everyone from generating plans.',
+    group: 'runPlans',
+    label: 'Plans per user per hour',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(0).max(1000),
+    unit: 'plans',
+  }),
+  'runPlans.enabled': defineSetting({
+    defaultValue: true,
+    description:
+      'Whether people may describe a goal and have the platform generate a plan for it. Off, no plan can be generated, routed or approved; plans already launched keep running.',
+    group: 'runPlans',
+    label: 'Run plans enabled',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'runPlans.maxPendingPerUser': defineSetting({
+    defaultValue: 5,
+    description:
+      'Most plans one person may hold waiting for approval (PENDING) at once. Reject or let one expire to make room.',
+    group: 'runPlans',
+    label: 'Pending plans per user',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(100),
+    unit: 'plans',
+  }),
+  'runPlans.routePerUserPerHour': defineSetting({
+    defaultValue: 30,
+    description:
+      'Most template-ranking requests one person may make in an hour. 0 stops everyone from ranking templates, so only "generate new" remains.',
+    group: 'runPlans',
+    label: 'Template rankings per user per hour',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(0).max(10000),
+    unit: 'requests',
+  }),
+
   // ── Skills ─────────────────────────────────────────────────────────────────
   'skills.import.blockOnScanWarnings': defineSetting({
     defaultValue: true,

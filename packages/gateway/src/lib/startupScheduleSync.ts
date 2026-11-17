@@ -80,6 +80,9 @@ export async function syncSchedulesOnceConnected(
   app.temporal
     .syncAuditActivityPruneSchedule(sweeps.auditActivityPrune)
     .catch(warn('audit activity prune'));
+  // Expires run plans nobody approved in time and deletes old expired and rejected ones. Hygiene
+  // only (approval refuses an expired plan itself). On by default.
+  app.temporal.syncRunPlanSweepSchedule(sweeps.runPlanSweep).catch(warn('run plan sweep'));
   // One cheap request per tracked source; it only flags. On by default.
   app.temporal.syncSkillSourceSyncSchedule(sweeps.skillSourceSync).catch(warn('skill source sync'));
   // One cheap request per tracked marketplace; it only flags. On by default.

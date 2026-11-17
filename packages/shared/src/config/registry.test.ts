@@ -801,3 +801,40 @@ describe('github.trackerAllowedProjectKeys', () => {
     expect(def.schema.safeParse(many(101)).success).toBe(false);
   });
 });
+
+describe('run plan settings', () => {
+  const keys = [
+    'runPlans.createPerUserPerHour',
+    'runPlans.enabled',
+    'runPlans.maxPendingPerUser',
+    'runPlans.routePerUserPerHour',
+  ] as const;
+
+  it('are ADMIN-only, live, unpinned and overridable per team and organization', () => {
+    for (const key of keys) {
+      expect(SETTING_DEFINITIONS[key], key).toMatchObject({
+        group: 'runPlans',
+        overridableAt: ['TEAM', 'ORGANIZATION'],
+        requiredRole: 'ADMIN',
+        restartRequired: false,
+        runPinned: false,
+      });
+    }
+  });
+
+  it('default to the documented limits and bound what an admin may enter', () => {
+    expect(SETTING_DEFINITIONS['runPlans.enabled'].defaultValue).toBe(true);
+    expect(SETTING_DEFINITIONS['runPlans.createPerUserPerHour'].defaultValue).toBe(10);
+    expect(SETTING_DEFINITIONS['runPlans.maxPendingPerUser'].defaultValue).toBe(5);
+    expect(SETTING_DEFINITIONS['runPlans.routePerUserPerHour'].defaultValue).toBe(30);
+    const perHour = SETTING_DEFINITIONS['runPlans.createPerUserPerHour'].schema;
+    expect(perHour.safeParse(0).success).toBe(true);
+    expect(perHour.safeParse(-1).success).toBe(false);
+    expect(perHour.safeParse(1.5).success).toBe(false);
+    expect(perHour.safeParse(1_000_000).success).toBe(false);
+    // A cap of zero pending plans would make every generation unusable; use the kill switch.
+    expect(SETTING_DEFINITIONS['runPlans.maxPendingPerUser'].schema.safeParse(0).success).toBe(
+      false
+    );
+  });
+});

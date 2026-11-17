@@ -26,9 +26,9 @@ import {
   resolveRunPlanAgentPins,
   specAgentKeys,
 } from '@auto-swe/shared/lib/runPlanAgentPins';
+import { type ExpirePlansResult, expireRunPlans } from '@auto-swe/shared/lib/runPlanSweep';
 import { stableStringify } from '@auto-swe/shared/lib/stableJson';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
-import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { generateBranchName } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import {
@@ -67,12 +67,10 @@ import { launchTrackedWorkflow } from './workflowLaunch.js';
  * The worker repeats the checks that matter when it creates the run (`createWorkflowRun`): this
  * layer exists for good errors and to stop a doomed launch early, not to be the authority.
  *
- * **Nothing calls this module yet.** The plan routes, the quota policy and a scheduled sweep that
- * calls {@link expirePlans} arrive with the gateway routes of the next phase. Until they do, no
- * plan can be created, no PENDING plan is ever moved to EXPIRED by time, and no expired or
- * rejected row is deleted; that phase must call `expirePlans` on a schedule (an `APPROVED` plan
- * that was never launched is expired by the same pass, using the same `expiresAt` the launch
- * window below extends).
+ * The plan routes (`routes/runPlans.ts`) call this module, the quota policy is
+ * `runPlanQuotas.ts`, and the scheduled sweep runs in the worker (`ScheduledRunPlanSweepWorkflow`,
+ * the same `expireRunPlans` as {@link expirePlans}). An `APPROVED` plan that was never launched is
+ * expired by the same pass, using the same `expiresAt` the launch window below extends.
  *
  * **Library-agent plans are bounded by concurrency, the budget and the transition cap, not by the
  * agent-run step and wall-clock ceilings.** `workspace.agentRunMaxSteps` and
@@ -96,8 +94,7 @@ export const MAX_PLAN_TTL_MS = 24 * 3_600_000;
 export const LAUNCH_WINDOW_MS = 10 * 60_000;
 /** Largest serialized spec a plan may carry. */
 export const MAX_PLAN_SPEC_BYTES = 512 * 1024;
-/** How long an expired or rejected plan is kept before the sweeper deletes it. */
-export const DEFAULT_PLAN_RETENTION_MS = 7 * 24 * 3_600_000;
+export { DEFAULT_PLAN_RETENTION_MS } from '@auto-swe/shared/lib/runPlanSweep';
 
 export interface PlanRefusal {
   ok: false;
@@ -106,7 +103,7 @@ export interface PlanRefusal {
   message: string;
 }
 
-const refuse = (status: number, code: string, message: string): PlanRefusal => ({
+export const refuse = (status: number, code: string, message: string): PlanRefusal => ({
   code,
   message,
   ok: false,
@@ -182,7 +179,7 @@ function captureReply(): { reply: FastifyReply; refusal: () => PlanRefusal } {
 }
 
 /** The user row behind an actor: active and at least an ENGINEER. */
-async function requireEngineer(
+export async function requireEngineer(
   deps: RunPlanServiceDeps,
   actor: PlanActor
 ): Promise<{ ok: true; role: Role } | PlanRefusal> {
@@ -242,7 +239,7 @@ export async function loadPlannedRunTemplate(deps: Pick<RunPlanServiceDeps, 'pri
 }
 
 /** The repository, reachable by the actor and fit for a plan: the launch decision, reused. */
-async function authorizeRepository(
+export async function authorizeRepository(
   deps: RunPlanServiceDeps,
   actor: PlanActor,
   connectionId: string
@@ -371,6 +368,12 @@ async function agentDrift(
 // ───────────────────────────── create ─────────────────────────────
 
 export interface CreatePlanInput {
+  /**
+   * The plan's id, when the caller derives it (the job route derives it from the generation job's
+   * id so a repeated persist finds the same row). A duplicate id is a unique-constraint error the
+   * caller handles; absent, the database generates one.
+   */
+  id?: string;
   owner: PlanActor;
   connectionId: string;
   /** The library agent a library-agent plan is built on; null for an engineering plan. */
@@ -485,6 +488,7 @@ export async function createPlanRecord(
       costEstimate: input.costEstimate as object,
       createdAt: now,
       expiresAt,
+      ...(input.id ? { id: input.id } : {}),
       intent: input.intent,
       mode: input.mode,
       model: input.model,
@@ -719,40 +723,17 @@ export async function rejectPlan(
   return { ok: true };
 }
 
-export interface ExpirePlansResult {
-  expired: number;
-  deleted: number;
-}
+export type { ExpirePlansResult } from '@auto-swe/shared/lib/runPlanSweep';
 
 /**
- * The sweeper: PENDING and APPROVED-but-unlaunched plans past their expiry become EXPIRED, and
- * EXPIRED or REJECTED plans older than the retention window are deleted. Cross-tenant by nature,
- * so both writes are marked `runUnscoped`. LAUNCHED plans are never touched: a run names them.
+ * The sweeper's logic lives in shared (`expireRunPlans`) because the scheduled sweep runs in the
+ * worker; the gateway keeps this name for its tests and for any in-process caller.
  */
 export async function expirePlans(
   deps: Pick<RunPlanServiceDeps, 'prisma' | 'now'>,
   opts: { retentionMs?: number } = {}
 ): Promise<ExpirePlansResult> {
-  const now = (deps.now ?? (() => new Date()))();
-  const cutoff = new Date(now.getTime() - (opts.retentionMs ?? DEFAULT_PLAN_RETENTION_MS));
-  const expired = await runUnscoped(
-    'the plan sweeper expires stale plans of every team',
-    ['RunPlan'],
-    () =>
-      deps.prisma.runPlan.updateMany({
-        data: { status: 'EXPIRED' },
-        where: { expiresAt: { lte: now }, status: { in: ['PENDING', 'APPROVED'] } },
-      })
-  );
-  const deleted = await runUnscoped(
-    'the plan sweeper deletes old expired and rejected plans of every team',
-    ['RunPlan'],
-    () =>
-      deps.prisma.runPlan.deleteMany({
-        where: { createdAt: { lt: cutoff }, status: { in: ['EXPIRED', 'REJECTED'] } },
-      })
-  );
-  return { deleted: deleted.count, expired: expired.count };
+  return expireRunPlans(deps.prisma, nowOf(deps), opts);
 }
 
 // ───────────────────────────── launch ─────────────────────────────

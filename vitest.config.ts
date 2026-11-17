@@ -260,6 +260,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/runPlanAgentPins.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/runPlanSweep',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/runPlanSweep.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/runPlanWorkflows',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/runPlanWorkflows.ts'),
       },

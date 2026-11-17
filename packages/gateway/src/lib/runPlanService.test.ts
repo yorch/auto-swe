@@ -176,6 +176,9 @@ function fakePrisma(
       findFirst: vi.fn(async ({ where }: { where: Record<string, unknown> }) =>
         table.plan && matches(table.plan, where) ? { id: table.plan.id } : null
       ),
+      findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) =>
+        table.plan && matches(table.plan, where) ? [{ id: table.plan.id }] : []
+      ),
       findUnique: vi.fn(async () => (table.plan ? { ...table.plan } : null)),
       updateMany: vi.fn(
         async ({
@@ -583,16 +586,21 @@ describe('rejectPlan', () => {
 
 describe('expirePlans', () => {
   it('expires stale pending and approved plans and deletes old expired and rejected ones', async () => {
-    const { prisma } = fakePrisma(planRow());
-    prisma.runPlan.updateMany.mockResolvedValueOnce({ count: 3 });
+    const { prisma, table } = fakePrisma(planRow({ expiresAt: new Date(NOW.getTime() - 1) }));
     const result = await expirePlans(
       { now: () => NOW, prisma: prisma as never },
       { retentionMs: 1000 }
     );
-    expect(result).toEqual({ deleted: 2, expired: 3 });
+    // The ids come back so the sweep can write one audit row per expired plan.
+    expect(result).toEqual({ deleted: 2, expired: 1, expiredIds: [PLAN_ID] });
+    expect(table.plan?.status).toBe('EXPIRED');
     expect(prisma.runPlan.updateMany).toHaveBeenCalledWith({
       data: { status: 'EXPIRED' },
-      where: { expiresAt: { lte: NOW }, status: { in: ['PENDING', 'APPROVED'] } },
+      where: {
+        expiresAt: { lte: NOW },
+        id: { in: [PLAN_ID] },
+        status: { in: ['PENDING', 'APPROVED'] },
+      },
     });
     expect(prisma.runPlan.deleteMany).toHaveBeenCalledWith({
       where: {
@@ -600,6 +608,13 @@ describe('expirePlans', () => {
         status: { in: ['EXPIRED', 'REJECTED'] },
       },
     });
+  });
+
+  it('expires nothing, and writes nothing, when no plan is due', async () => {
+    const { prisma } = fakePrisma(planRow());
+    const result = await expirePlans({ now: () => NOW, prisma: prisma as never });
+    expect(result).toMatchObject({ expired: 0, expiredIds: [] });
+    expect(prisma.runPlan.updateMany).not.toHaveBeenCalled();
   });
 
   it('never touches a LAUNCHED plan', async () => {
