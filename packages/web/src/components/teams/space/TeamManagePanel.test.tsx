@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, within } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import { TeamManagePanel } from './TeamManagePanel';
 
 vi.mock('@/components/teams/ServicePrincipalsSection', () => ({
@@ -11,6 +11,7 @@ vi.mock('@/components/teams/ServicePrincipalsSection', () => ({
   ),
 }));
 
+beforeEach(stubDialogPrototype);
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -30,13 +31,16 @@ const team = {
   slug: 'payments',
 };
 
-function gateway() {
-  setupFetchMock({
+function gateway(extra: Record<string, () => unknown> = {}) {
+  return setupFetchMock({
     'GET /api/v1/automations': () => ({ data: [] }),
+    'GET /api/v1/human-steps': () => ({ data: [] }),
     'GET /api/v1/scheduled-work-requests': () => ({ data: [] }),
+    [`GET /api/v1/teams/${TEAM_ID}/attention/failures`]: () => ({ data: [] }),
     [`GET /api/v1/teams/${TEAM_ID}`]: () => ({
       data: {
         id: TEAM_ID,
+        memberships: [],
         repositories: [
           { id: 'r1', isActive: true, organizationName: 'acme', repoName: 'api' },
           { id: 'r2', isActive: false, organizationName: 'acme', repoName: 'old' },
@@ -56,16 +60,18 @@ function gateway() {
     [`GET /api/v1/teams/${TEAM_ID}/overview`]: () => ({
       data: {
         budget: { percentUsed: 40, scope: 'team', state: 'ok' },
+        lead: { openPullRequests: 0, staleApprovals: 0, unownedFailures: 0 },
       },
     }),
+    ...extra,
   });
 }
 
 describe('TeamManagePanel', () => {
-  it('shows Repositories, Schedules, Automations, Budget and Service principals to a lead', async () => {
+  it('shows Attention, Repositories, Schedules, Automations, Budget and Service principals to a lead', async () => {
     gateway();
     render(withQuery(<TeamManagePanel canManageBudget={false} team={team} />));
-    for (const name of ['Repositories', 'Schedules', 'Automations', 'Budget']) {
+    for (const name of ['Attention', 'Repositories', 'Schedules', 'Automations', 'Budget']) {
       expect(await screen.findByRole('heading', { name })).toBeTruthy();
     }
     // Owned and shared repositories, with the view-only mark on a share that cannot launch.
@@ -95,5 +101,41 @@ describe('TeamManagePanel', () => {
     ).toBeTruthy();
     expect(within(budget).queryByRole('link')).toBeNull();
     expect(within(budget).getByRole('progressbar')).toBeTruthy();
+  });
+
+  it('puts Attention first, above Repositories', async () => {
+    gateway();
+    render(withQuery(<TeamManagePanel canManageBudget={false} team={team} />));
+    await screen.findByRole('heading', { name: 'Attention' });
+    const headings = screen
+      .getAllByRole('heading', { level: 3 })
+      .map((h) => h.textContent)
+      .filter((t) => t === 'Attention' || t === 'Repositories');
+    expect(headings).toEqual(['Attention', 'Repositories']);
+  });
+
+  it('lets a lead who cannot edit the cap request a change', async () => {
+    const spy = gateway({
+      [`POST /api/v1/teams/${TEAM_ID}/budget-requests`]: () => ({ data: { id: 'b1' } }),
+    });
+    render(withQuery(<TeamManagePanel canManageBudget={false} team={team} />));
+    const budget = await screen.findByTestId('manage-budget');
+    fireEvent.click(await within(budget).findByRole('button', { name: 'Request a change' }));
+    fireEvent.change(await screen.findByLabelText('Reason'), {
+      target: { value: 'Launch month' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }));
+    expect(await screen.findByText('Request sent.')).toBeTruthy();
+    expect(bodyOf(spy, `/api/v1/teams/${TEAM_ID}/budget-requests`)).toEqual({
+      reason: 'Launch month',
+    });
+  });
+
+  it('offers no request to a caller who may edit the cap', async () => {
+    gateway();
+    render(withQuery(<TeamManagePanel canManageBudget team={team} />));
+    const budget = await screen.findByTestId('manage-budget');
+    await within(budget).findByRole('progressbar');
+    expect(screen.queryByRole('button', { name: 'Request a change' })).toBeNull();
   });
 });

@@ -226,6 +226,39 @@ describe('TeamSettingsPanel budget and sharing', () => {
     expect(screen.queryByRole('link', { name: 'Model configuration' })).toBeNull();
   });
 
+  it('lists the pending budget requests above the editor for a caller who may edit the cap', async () => {
+    mock({
+      [`GET /api/v1/teams/${TEAM_ID}/budget-requests`]: () => ({
+        data: [
+          {
+            createdAt: '2026-11-15T10:00:00.000Z',
+            id: 'b1',
+            reason: 'Launch month needs more headroom',
+            requestedBy: { id: 'u1', name: 'Dana Lead' },
+          },
+        ],
+      }),
+    });
+    resetNavigation('tab=budget', '/teams/payments/settings');
+    renderPanel('ADMIN');
+    const requests = await screen.findByTestId('budget-requests');
+    expect(within(requests).getByText('Launch month needs more headroom')).toBeTruthy();
+    expect(within(requests).getByText(/Dana Lead/)).toBeTruthy();
+    const section = await screen.findByTestId('team-budget-section');
+    expect(
+      requests.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it('renders nothing for the budget requests when there are none', async () => {
+    mock({ [`GET /api/v1/teams/${TEAM_ID}/budget-requests`]: () => ({ data: [] }) });
+    resetNavigation('tab=budget', '/teams/payments/settings');
+    renderPanel('ADMIN');
+    await screen.findByTestId('team-budget-section');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByTestId('budget-requests')).toBeNull();
+  });
+
   it('lets the owning team set who may launch on each shared repository', async () => {
     const owned = {
       id: 'r1',

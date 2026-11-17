@@ -24,11 +24,13 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { Textarea } from '@/components/ui/Textarea';
 import { useUserOrgs } from '@/hooks/useAdmin';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { useRepositories } from '@/hooks/useRepositories';
+import { useTeamBudgetRequests } from '@/hooks/useTeamBudgetRequests';
 import { useTeam, useUpdateTeam } from '@/hooks/useTeams';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { api } from '@/lib/api';
@@ -56,6 +58,34 @@ function RepoLine({ name, trailing }: { name: string; trailing: React.ReactNode 
       </span>
       <span className="shrink-0">{trailing}</span>
     </li>
+  );
+}
+
+/**
+ * The requests a lead has made to change the team's cap, for a caller who can act on them. Shows
+ * nothing until they load, and nothing when none are pending.
+ */
+function PendingBudgetRequests({ teamId }: { teamId: string }) {
+  const { data } = useTeamBudgetRequests(teamId);
+  if (!data || data.length === 0) {
+    return null;
+  }
+  return (
+    <Card data-testid="budget-requests">
+      <CardHeader className="mb-2">
+        <CardTitle>Pending requests</CardTitle>
+      </CardHeader>
+      <ul className="divide-y divide-ink-600">
+        {data.map((r) => (
+          <li className="py-2.5" key={r.id}>
+            <p className="text-sm text-paper-100">{r.reason}</p>
+            <p className="text-xs text-paper-500">
+              {r.requestedBy.name ?? 'A team member'} · <RelativeTime value={r.createdAt} />
+            </p>
+          </li>
+        ))}
+      </ul>
+    </Card>
   );
 }
 
@@ -125,7 +155,8 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
 
   if (!fullSettings && (userOrgs.isLoading || budgetOnly)) {
     return budgetOnly ? (
-      <div {...tabPanelProps('team-settings', 'budget')}>
+      <div className="space-y-6" {...tabPanelProps('team-settings', 'budget')}>
+        <PendingBudgetRequests teamId={id} />
         <TeamBudgetSection canManageCredentials={false} teamId={id} />
       </div>
     ) : null;
@@ -368,7 +399,8 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
       )}
 
       {tab === 'budget' && canManageBudget && (
-        <div {...tabPanelProps('team-settings', 'budget')}>
+        <div className="space-y-6" {...tabPanelProps('team-settings', 'budget')}>
+          <PendingBudgetRequests teamId={id} />
           <TeamBudgetSection canManageCredentials={isPlatformAdmin} teamId={id} />
         </div>
       )}

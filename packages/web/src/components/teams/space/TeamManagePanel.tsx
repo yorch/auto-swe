@@ -2,11 +2,15 @@
 
 import type { TeamSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
+import { useState } from 'react';
 import { BudgetMeter } from '@/components/teams/BudgetMeter';
 import { ServicePrincipalsSection } from '@/components/teams/ServicePrincipalsSection';
+import { TeamAttentionSection } from '@/components/teams/space/TeamAttentionSection';
 import { TeamAutomationsSection } from '@/components/teams/space/TeamAutomationsSection';
+import { TeamBudgetRequestDialog } from '@/components/teams/space/TeamBudgetRequestDialog';
 import { TeamSchedulesSection } from '@/components/teams/space/TeamSchedulesSection';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
@@ -95,6 +99,7 @@ function TeamBudgetPanel({
   team: TeamSummary;
 }) {
   const { data, error, isError, isFetching, isLoading, refetch } = useTeamOverview(team.id);
+  const [requesting, setRequesting] = useState(false);
   return (
     <Card data-testid="manage-budget">
       <CardHeader className="mb-2">
@@ -122,11 +127,21 @@ function TeamBudgetPanel({
           <p className="text-sm text-paper-400">No budget limit applies to this team.</p>
         )}
         {!canManageBudget && (
-          <p className="mt-3 text-sm text-paper-400">
-            Ask a team or organization admin to change it.
-          </p>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-paper-400">Ask a team or organization admin to change it.</p>
+            <Button onClick={() => setRequesting(true)} size="sm" variant="secondary">
+              Request a change
+            </Button>
+          </div>
         )}
       </QueryBoundary>
+      {!canManageBudget && (
+        <TeamBudgetRequestDialog
+          onClose={() => setRequesting(false)}
+          open={requesting}
+          teamId={team.id}
+        />
+      )}
     </Card>
   );
 }
@@ -170,6 +185,7 @@ export function TeamManagePanel({
 }) {
   return (
     <div className="space-y-6">
+      <TeamAttentionSection team={team} />
       <TeamRepositoriesSection team={team} />
       <TeamSchedulesSection team={team} />
       <TeamAutomationsSection team={team} />
