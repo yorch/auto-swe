@@ -1,7 +1,7 @@
 /**
  * Adversarial eval set for the skeleton policy: specs a hostile or confused generator could emit,
  * each of which tries to keep the look of a mandatory skeleton while disabling what it does. Every
- * one must be REFUSED by `checkSkeletonPolicy` with the code named, and the positive controls must
+ * one must be REFUSED by `checkGraphPolicy` with the code named, and the positive controls must
  * pass, so a policy that refuses everything cannot pass this file.
  */
 
@@ -14,7 +14,7 @@ import {
   parse,
   type RawSpec,
 } from './skeletonFixtures.js';
-import { checkSkeletonPolicy, type SkeletonMode } from './skeletonPolicy.js';
+import { checkGraphPolicy, type SkeletonMode } from './skeletonPolicy.js';
 import { RUN_PLAN_DENIED_STEPS } from './stepAllowlist.js';
 
 interface Hostile {
@@ -462,7 +462,7 @@ describe('skeleton policy: adversarial eval set', () => {
 
   it.each(HOSTILE)('refuses: $name', ({ build, expect: code, mode }) => {
     const spec = parse(clone(build()));
-    const report = checkSkeletonPolicy(spec, mode ?? 'delivering');
+    const report = checkGraphPolicy(spec, mode ?? 'delivering');
     expect(report.ok, JSON.stringify(report.errors, null, 1)).toBe(false);
     expect(report.errors.map((e) => e.code)).toContain(code);
   });
@@ -471,17 +471,17 @@ describe('skeleton policy: adversarial eval set', () => {
     const raw = deliveringRaw();
     raw.nodes.extra = { next: 'review', step, type: 'step' };
     raw.nodes.implement = { ...raw.nodes.implement, next: 'extra' };
-    const report = checkSkeletonPolicy(parse(raw), 'delivering');
+    const report = checkGraphPolicy(parse(raw), 'delivering');
     expect(report.ok).toBe(false);
     expect(report.errors.some((e) => e.nodeId === 'extra')).toBe(true);
   });
 
   describe('positive controls', () => {
     it('delivering plan', () => {
-      expect(checkSkeletonPolicy(parse(deliveringRaw()), 'delivering').errors).toEqual([]);
+      expect(checkGraphPolicy(parse(deliveringRaw()), 'delivering').errors).toEqual([]);
     });
     it('delivering plan with a quality gate', () => {
-      expect(checkSkeletonPolicy(parse(deliveringWithGatesRaw()), 'delivering').errors).toEqual([]);
+      expect(checkGraphPolicy(parse(deliveringWithGatesRaw()), 'delivering').errors).toEqual([]);
     });
     it('delivering plan with a bounded retry, a free-middle agent and allowlisted config', () => {
       const raw = deliveringWithGatesRaw();
@@ -493,10 +493,10 @@ describe('skeleton policy: adversarial eval set', () => {
       raw.nodes.openPR = { ...raw.nodes.openPR, config: { draft: true } };
       raw.nodes.research = { agentRef: 'productAnalyst', next: 'implement', type: 'agent' };
       raw.entry = 'research';
-      expect(checkSkeletonPolicy(parse(raw), 'delivering').errors).toEqual([]);
+      expect(checkGraphPolicy(parse(raw), 'delivering').errors).toEqual([]);
     });
     it('output-only plan', () => {
-      expect(checkSkeletonPolicy(parse(outputOnlyRaw()), 'output-only').errors).toEqual([]);
+      expect(checkGraphPolicy(parse(outputOnlyRaw()), 'output-only').errors).toEqual([]);
     });
     it('output-only plan with a humanApproval that loops back to the agent on rejection', () => {
       const raw = outputOnlyRaw();
@@ -509,7 +509,7 @@ describe('skeleton policy: adversarial eval set', () => {
         title: 'Approve the draft',
         type: 'humanApproval',
       };
-      expect(checkSkeletonPolicy(parse(raw), 'output-only').errors).toEqual([]);
+      expect(checkGraphPolicy(parse(raw), 'output-only').errors).toEqual([]);
     });
   });
 });

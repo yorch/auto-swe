@@ -44,14 +44,31 @@ export const TICKET_TO_MERGE_SPEC: WorkflowSpec = {
  * The ticket-to-merge node graph, as a function of where the CI loop goes when CI passes.
  * `ticket-to-merge` hands off to the merge wait; a template that checks something between green CI
  * and the merge wait passes its own first node and adds the nodes it needs beside the result.
+ *
+ * It is the validate phase ({@link ticketToMergeValidate}) followed by the core
+ * ({@link ticketToMergeCore}); the split lets the generated-plan policy build the core alone.
  */
 export function ticketToMergeNodes(passed: string, options: { uiVerify?: boolean } = {}): Authored {
+  return authored(ticketToMergeValidate(), ticketToMergeCore(passed, options));
+}
+
+/** The validate phase: gather the ticket, validate it, keep the criteria, hand over to `implement`. */
+export function ticketToMergeValidate(): Authored {
+  return macro('validate', 'validatePhase@1', {
+    next: 'implement',
+    stopIfNotActionable: true,
+    ticketContext: true,
+  });
+}
+
+/**
+ * Everything from `implement` to the end of the run: implementation, the review loop, the pull
+ * request, the CI loop, the lessons and the human merge wait. The generated-run-plan policy
+ * (`runPlan/canonicalCore.ts`) builds its canonical core from this function, so the shipped
+ * template and the pinned core cannot drift apart.
+ */
+export function ticketToMergeCore(passed: string, options: { uiVerify?: boolean } = {}): Authored {
   return authored(
-    macro('validate', 'validatePhase@1', {
-      next: 'implement',
-      stopIfNotActionable: true,
-      ticketContext: true,
-    }),
     {
       implement: {
         group: 'implement',

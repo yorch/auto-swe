@@ -4,6 +4,7 @@
  */
 
 import { parseWorkflowSpec, SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
+import { buildCanonicalCore, CORE_ENTRY } from './canonicalCore.js';
 
 export type RawSpec = {
   entry: string;
@@ -96,4 +97,37 @@ export function parse(raw: RawSpec): WorkflowSpec {
 
 export function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+/**
+ * A delivering plan the way the generator writes one: a pre-region (one agent that drafts notes
+ * for the implementer) that hands over to the canonical core. Core nodes are the shipped ones.
+ */
+export function canonicalDeliveringRaw(): RawSpec {
+  return {
+    description: 'fixture',
+    entry: 'research',
+    name: 'fixture-canonical',
+    nodes: {
+      research: {
+        agentRef: 'productAnalyst',
+        next: CORE_ENTRY,
+        storeAs: 'context.planNotes',
+        type: 'agent',
+      },
+      ...(structuredClone(buildCanonicalCore().nodes) as unknown as RawSpec['nodes']),
+      implement: {
+        ...(structuredClone(buildCanonicalCore().nodes.implement) as unknown as Record<
+          string,
+          unknown
+        >),
+        inputs: {
+          guidance: { from: 'context.planNotes' },
+          successCriteria: { default: [], from: 'context.successCriteria' },
+          ticket: { from: 'context.ticket' },
+        },
+      },
+    },
+    schemaVersion: SPEC_SCHEMA_VERSION,
+  };
 }

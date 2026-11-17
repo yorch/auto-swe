@@ -186,6 +186,9 @@ export interface InputRule {
   defaults?: readonly unknown[];
 }
 
+/** The notes the pre-region leaves for the implementer: the one pre-region-to-core channel. */
+export const PLAN_NOTES = 'context.planNotes';
+
 const CODE_RESULT_PATH = 'context.currentCodeResult';
 const codeResultInput: InputRule = { from: [CODE_RESULT_PATH] };
 const branchInput: InputRule = { from: [`${CODE_RESULT_PATH}.branch`] };
@@ -224,7 +227,8 @@ export const STEP_INPUT_ALLOWLIST: Readonly<Record<string, Readonly<Record<strin
     previousCodeResult: codeResultInput,
   },
   executeImplementation: {
-    guidance: { from: [NODE_OUTPUT] },
+    // The one channel from the pre-region to the implementer: `context.planNotes` and nothing else.
+    guidance: { from: [PLAN_NOTES] },
     successCriteria: { defaults: [[]], from: ['context.successCriteria'] },
     ticket: { defaults: [''], from: ['context.ticket'] },
   },
@@ -259,7 +263,8 @@ export const STEP_INPUT_ALLOWLIST: Readonly<Record<string, Readonly<Record<strin
   runTypecheck: { branch: branchInput },
   runVulnScan: { branch: branchInput },
   uiVerify: { branch: branchInput },
-  validateContext: { ticket: { defaults: [''], from: ['context.ticket', NODE_OUTPUT] } },
+  // The platform's own digest only: text an agent wrote must not become the ticket validation reads.
+  validateContext: { ticket: { defaults: [''], from: ['context.ticket'] } },
   waitForCiByPolling: {
     deadlineSec: { from: [NODE_OUTPUT] },
     graceSec: { from: [NODE_OUTPUT] },
@@ -390,26 +395,70 @@ const SCRATCH_PREFIX = 'context.scratch';
 interface Plumbing {
   /** A literal `null` or `''` may reset it. */
   clearable: boolean;
+  /** The node types whose output may be copied into it. */
+  nodeTypes: ReadonlySet<string>;
+  /** When `step` is a source type: the steps whose output may be copied. Absent: any step. */
+  steps?: ReadonlySet<string>;
 }
+const stepsOnly = (...steps: string[]): Pick<Plumbing, 'nodeTypes' | 'steps'> => ({
+  nodeTypes: new Set(['step']),
+  steps: new Set(steps),
+});
+const GATE_STEP_NAMES = [
+  'runBuild',
+  'runLint',
+  'runQualityGates',
+  'runTests',
+  'runTypecheck',
+  'runVulnScan',
+];
+/**
+ * Each path takes the output of the one kind of node that fills it in the shipped graph. An agent
+ * is a source only for the plan notes: text an agent wrote must never become the success criteria
+ * the review is judged against, the ticket, a rejection summary or CI logs the fix steps are told.
+ */
 const DERIVED_PATHS: Readonly<Record<string, Plumbing>> = {
-  'context.ciResultPayload': { clearable: true },
-  'context.lastCILogs': { clearable: true },
-  'context.lastGateOutput': { clearable: true },
-  'context.lastRejectionSummary': { clearable: true },
-  'context.lastReviewFingerprint': { clearable: true },
-  'context.prNumber': { clearable: false },
-  'context.prUrl': { clearable: false },
-  'context.successCriteria': { clearable: false },
-  'context.ticket': { clearable: false },
+  'context.ciResultPayload': {
+    clearable: true,
+    nodeTypes: new Set(['signal', 'step']),
+    steps: new Set(['waitForCiByPolling']),
+  },
+  'context.lastCILogs': { clearable: true, ...stepsOnly('fetchCILogs') },
+  'context.lastGateOutput': { clearable: true, ...stepsOnly(...GATE_STEP_NAMES) },
+  'context.lastRejectionSummary': { clearable: true, ...stepsOnly('runReviewNetwork') },
+  'context.lastReviewFingerprint': { clearable: true, ...stepsOnly('runReviewNetwork') },
+  [PLAN_NOTES]: { clearable: true, nodeTypes: new Set(['agent', 'step']) },
+  'context.prNumber': { clearable: false, ...stepsOnly('createOrUpdatePullRequest') },
+  'context.prUrl': { clearable: false, ...stepsOnly('createOrUpdatePullRequest') },
+  'context.successCriteria': { clearable: false, ...stepsOnly('validateContext') },
+  'context.ticket': { clearable: false, ...stepsOnly('gatherTicketContext') },
 };
+
+function sourceAllowed(plumbing: Plumbing, node: Node): boolean {
+  if (!plumbing.nodeTypes.has(node.type)) {
+    return false;
+  }
+  return node.type !== 'step' || plumbing.steps === undefined || plumbing.steps.has(node.step);
+}
 /** Loop counters: only a `cond` reads them, never a skeleton input. */
 const COUNTER_PATHS: readonly string[] = ['context.ciRetries'];
 
-/** Node types whose output may be copied into a derived path: the platform and agents, not people. */
-const DERIVABLE_SOURCES: ReadonlySet<string> = new Set(['agent', 'signal', 'step']);
-
-function under(path: string, root: string): boolean {
+export function under(path: string, root: string): boolean {
   return path === root || path.startsWith(`${root}.`);
+}
+
+function describeNode(node: Node): string {
+  return node.type === 'step'
+    ? `the output of the ${node.step} step`
+    : `a ${node.type} node's answer`;
+}
+
+function describeSources(plumbing: Plumbing): string {
+  const types = [...plumbing.nodeTypes];
+  const steps = plumbing.steps === undefined ? '' : ` (${[...plumbing.steps].join(', ')})`;
+  return types.length === 1 && types[0] === 'step'
+    ? `a ${[...(plumbing.steps ?? [])].join(' or ') || 'step'} step`
+    : `a ${types.join(' or ')} node${steps}`;
 }
 
 export type WriteSource = { kind: 'set'; binding: Binding } | { kind: 'storeAs'; node: Node };
@@ -487,11 +536,11 @@ export function writeRefusal(
   }
   const plumbing = DERIVED_PATHS[derivedKey] as Plumbing;
   if (source.kind === 'storeAs') {
-    return DERIVABLE_SOURCES.has(source.node.type)
+    return sourceAllowed(plumbing, source.node)
       ? undefined
       : {
           code: 'CONTEXT_WRITE_DENIED',
-          message: `stores a ${source.node.type} node's answer into '${path}'; only a step, an agent or a signal may fill it`,
+          message: `stores ${describeNode(source.node)} into '${path}', which only ${describeSources(plumbing)} may fill`,
         };
   }
   const b = source.binding;
@@ -509,10 +558,10 @@ export function writeRefusal(
     const { from, default: dflt } = b as { from: string; default?: unknown };
     const id = isSafePath(from) ? nodeOutputId(from) : undefined;
     const node = id === undefined ? undefined : spec.nodes[id];
-    if (node === undefined || !DERIVABLE_SOURCES.has(node.type)) {
+    if (node === undefined || !sourceAllowed(plumbing, node)) {
       return {
         code: 'CONTEXT_WRITE_DENIED',
-        message: `sets '${path}' from '${from}'; it may only be copied from the output of a step, an agent or a signal node`,
+        message: `sets '${path}' from '${from}'; it may only be copied from the output of ${describeSources(plumbing)}`,
       };
     }
     if (dflt !== undefined && ![null, '', []].some((empty) => sameJson(empty, dflt))) {

@@ -57,6 +57,8 @@ import { NON_LAUNCHABLE_AGENT_KEYS } from '../../lib/agentRun.js';
 import { isAuthoredCommandNode, isContainerCodeNode } from '../containerCode.js';
 import { collectUseProblems } from '../macros.js';
 import { type Node, nodeEdges, setNodeEdge, type WorkflowSpec } from '../spec.js';
+import { buildCanonicalCore, CORE_ENTRY, CORE_GUIDANCE_SLOT } from './canonicalCore.js';
+import { type CoreRegions, checkCanonicalCore, writesPlanNotes } from './coreCheck.js';
 import {
   CODE_CHANGING_STEPS,
   hasConfigAllowlist,
@@ -109,6 +111,11 @@ export interface SkeletonReport {
    * `agent` and `humanReview`), for a preview that marks them.
    */
   mandatory: Record<string, string[]>;
+  /**
+   * Delivering plans: where each node sits, for a preview that marks the pinned core and shows the
+   * generator's pre-region and post-merge nodes as free. Absent in an output-only plan.
+   */
+  regions?: CoreRegions;
 }
 
 /** The signal the human merge wait listens on. */
@@ -480,7 +487,40 @@ function agentKey(agentRef: string): string {
 
 // ── The check ──
 
+/** A node id a generated plan may use: no '.', '[' or ']', which the context writer splits on. */
+export const NODE_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+const RESERVED_NODE_IDS: ReadonlySet<string> = new Set(['constructor', 'prototype']);
+
+/**
+ * The full policy. For a delivering plan: the structural layer ({@link checkGraphPolicy}) AND the
+ * canonical-core layer (`coreCheck.ts`): the core must equal the shipped one, and the free ends
+ * must stay in their regions. An output-only plan has no core, so it is the structural layer.
+ */
 export function checkSkeletonPolicy(spec: WorkflowSpec, mode: SkeletonMode): SkeletonReport {
+  const graph = checkGraphPolicy(spec, mode);
+  if (mode !== 'delivering') {
+    return graph;
+  }
+  const core = checkCanonicalCore(spec);
+  const extra: SkeletonIssue[] = core.issues.map((i) => ({
+    code: i.code,
+    message: i.message,
+    severity: 'error',
+    ...(i.nodeId !== undefined ? { nodeId: i.nodeId } : {}),
+  }));
+  return {
+    ...buildReport(mode, [...graph.issues, ...extra], graph.mandatory),
+    regions: core.regions,
+  };
+}
+
+/**
+ * The structural layer: allowlists for steps, nodes, config and inputs, write rules, failure
+ * policy, dominance over the graph, code-after-check, verdicts and loops. It runs over every node
+ * of a plan, free and core alike. Exported for the tests that exercise it on graphs that are not the
+ * canonical core; a caller that decides whether a plan may run uses {@link checkSkeletonPolicy}.
+ */
+export function checkGraphPolicy(spec: WorkflowSpec, mode: SkeletonMode): SkeletonReport {
   const issues: SkeletonIssue[] = [];
   const add = (
     code: string,
@@ -577,6 +617,13 @@ function checkNodes(
   add: Add
 ): void {
   for (const [id, node] of nodes) {
+    if (!NODE_ID_PATTERN.test(id) || RESERVED_NODE_IDS.has(id)) {
+      add(
+        'NODE_ID_INVALID',
+        `node id '${id}' is not a plain identifier (letters, digits, '_' and '-', starting with a letter); a '.' or bracket in an id lets a node write another node's output`,
+        id
+      );
+    }
     if (isContainerCodeNode(node)) {
       add('CONTAINER_CODE', `node '${id}' runs container code, which a generated plan may not`, id);
     } else {
@@ -832,16 +879,15 @@ function checkDelivering(
       break;
     }
     const verdict = new RegExp(
-      `^\\s*nodes\\.${escapeRegExp(reviewId)}\\.output\\.approved\\s*==\\s*(true|false)\\s*$`
+      `^\\s*nodes\\.${escapeRegExp(reviewId)}\\.output\\.approved\\s*==\\s*true\\s*$`
     );
     const approvedEdges = new Set<string>();
     for (const [condId, cond] of Object.entries(spec.nodes)) {
       if (cond.type !== 'cond') {
         continue;
       }
-      const m = verdict.exec(cond.expr);
-      if (m) {
-        approvedEdges.add(`${okV(condId)}|${m[1] === 'true' ? 'onTrue' : 'onFalse'}`);
+      if (verdict.test(cond.expr)) {
+        approvedEdges.add(`${okV(condId)}|onTrue`);
       }
     }
     const isApprovedEdge = (e: Edge): boolean => approvedEdges.has(`${e.from}|${e.field}`);
@@ -940,6 +986,34 @@ function checkOutputOnly(
     return;
   }
   const blocked = new Set(effective.map(okV));
+
+  // Nothing an agent writes after the last human review may reach SUCCESS unreviewed: an agent
+  // reachable once a review has passed, from which SUCCESS is reachable without passing another.
+  const afterReview = new Set<string>();
+  const queue = [...blocked];
+  while (queue.length > 0) {
+    for (const e of graph.adj.get(queue.pop() as string) ?? []) {
+      if (!afterReview.has(e.to)) {
+        afterReview.add(e.to);
+        queue.push(e.to);
+      }
+    }
+  }
+  for (const [agentId] of agentNodes) {
+    if (!afterReview.has(inV(agentId))) {
+      continue;
+    }
+    const lateSuccess = reachableSuccess.find(
+      (terminal) => pathAvoiding(graph, blocked, terminal, inV(agentId)) !== undefined
+    );
+    if (lateSuccess !== undefined) {
+      add(
+        'AGENT_AFTER_REVIEW',
+        `agent '${agentId}' runs after a human review and the run can end SUCCESS without another review of its output`,
+        agentId
+      );
+    }
+  }
   for (const terminal of reachableSuccess) {
     const path = pathAvoiding(graph, blocked, terminal);
     if (path) {
@@ -985,15 +1059,6 @@ const FORBIDDEN_CONFIG_KEYS: ReadonlySet<string> = new Set([
 
 // ── Injection ──
 
-export interface SkeletonApplyResult {
-  /** The spec with any plainly missing mandatory nodes inserted. The input is not modified. */
-  spec: WorkflowSpec;
-  /** Ids of the nodes this call added. Empty when the spec already had every mandatory stage. */
-  injected: string[];
-  /** The check, run on the resulting spec, plus any `AMBIGUOUS_ANCHOR` the insertion declined. */
-  report: SkeletonReport;
-}
-
 function freshId(taken: ReadonlySet<string>, base: string): string {
   if (!taken.has(base)) {
     return base;
@@ -1005,42 +1070,51 @@ function freshId(taken: ReadonlySet<string>, base: string): string {
   return `${base}${n}`;
 }
 
+export interface SkeletonApplyResult {
+  /** The spec with the canonical core attached when there was none. The input is not modified. */
+  spec: WorkflowSpec;
+  /** Ids of the nodes this call added. Empty when the spec already had a core. */
+  injected: string[];
+  /** Ids of the nodes this call removed: the author's own SUCCESS ending, replaced by the core's. */
+  removed: string[];
+  /** The check, run on the resulting spec, plus any `AMBIGUOUS_ANCHOR` the insertion declined. */
+  report: SkeletonReport;
+}
+
 /**
- * Generation-time half of the policy: insert the mandatory nodes that are plainly missing, then
- * run {@link checkSkeletonPolicy}. NEVER call it at approval or before pinning: an approved plan is
+ * Generation-time half of the policy: attach the canonical core when the spec has none, then run
+ * {@link checkSkeletonPolicy}. NEVER call it at approval or before pinning: an approved plan is
  * checked, not rewritten.
  *
- * Insertion is deliberately small. It adds, for a `delivering` plan, an implementation node at the
- * entry, and a review (with its approval `cond` and a failing end), a pull request step and a merge
- * wait immediately before the node set that follows them, or before the `SUCCESS` ending when
- * nothing follows. It does not add quality gates, does not touch a node that exists, and does not
- * invent an agent or a terminate. When an insertion point is ambiguous (several nodes of the stage
- * that should follow, or more than one `SUCCESS` ending to put the stage in front of) it adds
- * nothing, because merging the author's distinct endings would rewrite their graph, and the report
- * carries an `AMBIGUOUS_ANCHOR` error beside the gap. For an `output-only` plan it adds one human
- * review before the `SUCCESS` ending when the plan has an agent and a single such ending. Whatever
- * it cannot place stays missing, and the report says so.
+ * A `delivering` spec the generator wrote is a pre-region. If it has no node with a core id, the
+ * core is attached after the pre-region's sole leaf: the one `SUCCESS` terminate (every ordinary
+ * edge into it is pointed at the core entry and the terminate is dropped, because the core ends
+ * the run itself), or the one dispatch or `set` node with no `next` (which gets `next` = the core
+ * entry). More than one leaf, or none, adds nothing and reports `AMBIGUOUS_ANCHOR`: choosing for
+ * the author would rewrite their graph. The implementation's guidance slot is bound to
+ * `context.planNotes` when the pre-region writes it.
+ *
+ * A spec with any core id is never repaired: a partial or edited core is reported as
+ * `CORE_MISMATCH` by the check. For an `output-only` plan it adds one human review before the
+ * `SUCCESS` ending when the plan has an agent and a single such ending.
  */
 export function applySkeletonPolicy(spec: WorkflowSpec, mode: SkeletonMode): SkeletonApplyResult {
   const next: WorkflowSpec = structuredClone(spec);
   const injected: string[] = [];
+  const removed: string[] = [];
   const ambiguous: string[] = [];
   const taken = () => new Set(Object.keys(next.nodes));
 
-  const stageIds = (stage: DeliveringStage): string[] =>
-    Object.entries(next.nodes)
-      .filter(([, n]) => stageOf(n) === stage)
-      .map(([id]) => id);
-
-  /** Point every edge into `anchors` at `head`. */
-  const retarget = (anchors: ReadonlySet<string>, head: string, exclude: ReadonlySet<string>) => {
+  /** Point every edge in `fields`' complement into `anchors` at `head`; failure routes stay put. */
+  const retarget = (
+    anchors: ReadonlySet<string>,
+    head: string,
+    opts: { passedOnly?: boolean } = {}
+  ) => {
     for (const [id, node] of Object.entries(next.nodes)) {
-      if (exclude.has(id)) {
-        continue;
-      }
       let updated: Node = node;
       for (const [field, target] of nodeEdges(node)) {
-        if (anchors.has(target)) {
+        if (anchors.has(target) && !(opts.passedOnly && NOT_PASSED_FIELDS.has(field))) {
           updated = setNodeEdge(updated, field, head);
         }
       }
@@ -1051,153 +1125,78 @@ export function applySkeletonPolicy(spec: WorkflowSpec, mode: SkeletonMode): Ske
     }
   };
 
-  const successAnchors = (): Set<string> =>
-    new Set(
-      Object.entries(next.nodes)
-        .filter(([, n]) => n.type === 'terminate' && n.status === 'SUCCESS')
-        .map(([id]) => id)
-    );
+  const successAnchors = (): string[] =>
+    Object.entries(next.nodes)
+      .filter(([, n]) => n.type === 'terminate' && n.status === 'SUCCESS')
+      .map(([id]) => id);
 
   const add = (id: string, node: Node): void => {
     next.nodes[id] = node;
     injected.push(id);
   };
 
-  /**
-   * Give a plan whose steps simply stop (no `next`, no terminate) an explicit `SUCCESS` ending, so
-   * there is a place to insert before. A plan with its own ending is left alone.
-   */
-  const ensureSuccessEnding = (): void => {
-    if (successAnchors().size > 0) {
-      return;
-    }
-    const open = Object.entries(next.nodes).filter(([, n]) => endsWithoutNext(n));
-    if (open.length === 0) {
-      return;
-    }
-    const done = freshId(taken(), 'done');
-    add(done, { status: 'SUCCESS', title: 'Done', type: 'terminate' });
-    for (const [id, node] of open) {
-      next.nodes[id] = setNodeEdge(node, 'next', done);
-    }
-  };
-
   if (mode === 'delivering') {
-    ensureSuccessEnding();
-    if (stageIds('implementation').length === 0) {
-      const id = freshId(taken(), 'implement');
-      add(id, {
-        group: 'implement',
-        next: next.entry,
-        status: 'IMPLEMENTING',
-        step: IMPLEMENTATION_STEP,
-        storeAs: 'context.currentCodeResult',
-        title: 'Implement the request',
-        type: 'step',
-      });
-      next.entry = id;
-    }
-
-    const later: Record<'review' | 'pullRequest' | 'mergeWait', DeliveringStage[]> = {
-      mergeWait: [],
-      pullRequest: ['mergeWait'],
-      review: ['qualityGates', 'pullRequest', 'mergeWait'],
-    };
-    for (const stage of ['review', 'pullRequest', 'mergeWait'] as const) {
-      if (stageIds(stage).length > 0) {
-        continue;
-      }
-      // Anchor: the nodes of the first later stage that exists, else the SUCCESS ending.
-      let anchors: Set<string> | undefined;
-      for (const l of later[stage]) {
-        const found = stageIds(l);
-        if (found.length > 0) {
-          anchors = new Set(found);
-          break;
-        }
-      }
-      const useSuccess = anchors === undefined;
-      const anchorSet = anchors ?? successAnchors();
-      if (anchorSet.size === 0) {
-        continue;
-      }
-      if (anchorSet.size !== 1) {
+    const canonical = buildCanonicalCore();
+    const open = Object.entries(next.nodes)
+      .filter(([, n]) => endsWithoutNext(n))
+      .map(([id]) => id);
+    const leaves = [...successAnchors(), ...open];
+    // The author's own SUCCESS ending is often called `done`, which is a core id; it is the node the
+    // core replaces, so it does not count as a core node being present.
+    const soleLeaf = leaves.length === 1 ? (leaves[0] as string) : undefined;
+    const anyCore = Object.keys(canonical.nodes).some(
+      (id) =>
+        Object.hasOwn(next.nodes, id) && !(id === soleLeaf && next.nodes[id]?.type === 'terminate')
+    );
+    if (!anyCore) {
+      if (leaves.length !== 1) {
         ambiguous.push(
-          `${stage}: ${useSuccess ? 'more than one SUCCESS ending' : 'more than one node of the stage that follows'} (${[...anchorSet].join(', ')}); not inserted`
+          leaves.length === 0
+            ? 'the pre-region has no ending to continue from (a SUCCESS terminate, or a step with no next); core not attached'
+            : `the pre-region has more than one ending (${leaves.join(', ')}); core not attached`
         );
-        continue;
-      }
-      const target = [...anchorSet][0] as string;
-      const names = taken();
-      if (stage === 'review') {
-        const review = freshId(names, 'review');
-        names.add(review);
-        const check = freshId(names, 'checkApproval');
-        names.add(check);
-        const failed = freshId(names, 'terminateReviewFailed');
-        retarget(anchorSet, review, new Set());
-        add(review, {
-          group: 'review',
-          inputs: { codeResult: { from: 'context.currentCodeResult' } },
-          next: check,
-          status: 'IN_REVIEW',
-          step: REVIEW_STEP,
-          title: 'Review the change',
-          type: 'step',
-        });
-        add(check, {
-          expr: `nodes.${review}.output.approved == true`,
-          group: 'review',
-          onFalse: failed,
-          onTrue: target,
-          type: 'cond',
-        });
-        add(failed, {
-          group: 'review',
-          result: { message: { literal: 'The review rejected the change.' } },
-          status: 'FAILED',
-          type: 'terminate',
-        });
-      } else if (stage === 'pullRequest') {
-        const pr = freshId(names, 'openPR');
-        retarget(anchorSet, pr, new Set());
-        add(pr, {
-          group: 'pull request',
-          inputs: { codeResult: { from: 'context.currentCodeResult' } },
-          next: target,
-          status: 'AWAITING_CI',
-          step: PULL_REQUEST_STEP,
-          title: 'Open the pull request',
-          type: 'step',
-        });
       } else {
-        const wait = freshId(names, 'waitForHumanMerge');
-        names.add(wait);
-        const timedOut = freshId(names, 'terminateMergeTimedOut');
-        retarget(anchorSet, wait, new Set());
-        add(wait, {
-          group: 'human merge',
-          name: MERGE_WAIT_SIGNAL,
-          onReceive: target,
-          onTimeout: timedOut,
-          status: 'AWAITING_HUMAN_MERGE',
-          timeout: '7d',
-          title: 'Wait for a person to merge',
-          type: 'signal',
-        });
-        add(timedOut, {
-          group: 'human merge',
-          result: {},
-          status: 'TIMED_OUT',
-          type: 'terminate',
-        });
+        const leaf = leaves[0] as string;
+        if (next.nodes[leaf]?.type === 'terminate') {
+          retarget(new Set([leaf]), CORE_ENTRY, { passedOnly: true });
+          const stillUsed = Object.values(next.nodes).some((n) =>
+            nodeEdges(n).some(([, to]) => to === leaf)
+          );
+          if (!stillUsed) {
+            delete next.nodes[leaf];
+            removed.push(leaf);
+          }
+        } else {
+          next.nodes[leaf] = setNodeEdge(next.nodes[leaf] as Node, 'next', CORE_ENTRY);
+        }
+        for (const [id, node] of Object.entries(canonical.nodes)) {
+          if (id === CORE_ENTRY && writesPlanNotes(next)) {
+            const inputs = (node as { inputs?: Record<string, unknown> }).inputs ?? {};
+            add(id, {
+              ...node,
+              inputs: { ...inputs, [CORE_GUIDANCE_SLOT.key]: { ...CORE_GUIDANCE_SLOT.binding } },
+            } as Node);
+          } else {
+            add(id, node);
+          }
+        }
       }
     }
   } else {
     const agents = Object.entries(next.nodes).filter(([, n]) => n.type === 'agent');
     const hasHuman = Object.values(next.nodes).some(isHumanReviewType);
-    ensureSuccessEnding();
-    const endings = successAnchors();
+    // A plan whose steps simply stop gets an explicit SUCCESS ending, so there is a place to insert.
+    if (successAnchors().length === 0) {
+      const open = Object.entries(next.nodes).filter(([, n]) => endsWithoutNext(n));
+      if (open.length > 0) {
+        const done = freshId(taken(), 'done');
+        add(done, { status: 'SUCCESS', title: 'Done', type: 'terminate' });
+        for (const [id, node] of open) {
+          next.nodes[id] = setNodeEdge(node, 'next', done);
+        }
+      }
+    }
+    const endings = new Set(successAnchors());
     if (agents.length > 0 && !hasHuman && endings.size > 1) {
       ambiguous.push(
         `humanReview: more than one SUCCESS ending (${[...endings].join(', ')}); not inserted`
@@ -1210,7 +1209,7 @@ export function applySkeletonPolicy(spec: WorkflowSpec, mode: SkeletonMode): Ske
       const timedOut = freshId(names, 'terminateReviewTimedOut');
       const target = [...endings][0] as string;
       const lastAgent = agents.at(-1) as [string, Node];
-      retarget(endings, review, new Set());
+      retarget(endings, review);
       add(review, {
         contentFrom: `nodes.${lastAgent[0]}.output`,
         onSubmit: target,
@@ -1225,7 +1224,7 @@ export function applySkeletonPolicy(spec: WorkflowSpec, mode: SkeletonMode): Ske
 
   const checked = checkSkeletonPolicy(next, mode);
   if (ambiguous.length === 0) {
-    return { injected, report: checked, spec: next };
+    return { injected, removed, report: checked, spec: next };
   }
   const extra: SkeletonIssue[] = ambiguous.map((message) => ({
     code: 'AMBIGUOUS_ANCHOR',
@@ -1234,7 +1233,11 @@ export function applySkeletonPolicy(spec: WorkflowSpec, mode: SkeletonMode): Ske
   }));
   return {
     injected,
-    report: buildReport(mode, [...checked.issues, ...extra], checked.mandatory),
+    removed,
+    report: {
+      ...buildReport(mode, [...checked.issues, ...extra], checked.mandatory),
+      ...(checked.regions !== undefined ? { regions: checked.regions } : {}),
+    },
     spec: next,
   };
 }

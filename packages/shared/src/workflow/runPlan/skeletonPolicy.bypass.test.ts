@@ -16,12 +16,12 @@ import {
   parse,
   type RawSpec,
 } from './skeletonFixtures.js';
-import { applySkeletonPolicy, checkSkeletonPolicy, type SkeletonMode } from './skeletonPolicy.js';
+import { applySkeletonPolicy, checkGraphPolicy, type SkeletonMode } from './skeletonPolicy.js';
 
 type Edit = (raw: RawSpec) => void;
 
 function codesOf(raw: RawSpec, mode: SkeletonMode = 'delivering'): string[] {
-  return checkSkeletonPolicy(parse(clone(raw)), mode).errors.map((e) => e.code);
+  return checkGraphPolicy(parse(clone(raw)), mode).errors.map((e) => e.code);
 }
 
 function delivering(edit: Edit): RawSpec {
@@ -32,6 +32,19 @@ function delivering(edit: Edit): RawSpec {
 
 function gated(edit: Edit): RawSpec {
   const raw = deliveringWithGatesRaw();
+  edit(raw);
+  return raw;
+}
+
+/** A pre-region only, as the generator writes it: no core yet. */
+function pre(edit: Edit): RawSpec {
+  const raw: RawSpec = {
+    description: 'fixture',
+    entry: 'research',
+    name: 'fixture-pre',
+    nodes: { research: { agentRef: 'productAnalyst', type: 'agent' } },
+    schemaVersion: deliveringRaw().schemaVersion,
+  };
   edit(raw);
   return raw;
 }
@@ -495,17 +508,43 @@ describe('finding 4: a plan cannot forge the state the skeleton reads', () => {
 
   it('accepts scratch writes and the platform plumbing', () => {
     const raw = delivering((r) => {
+      r.nodes.gather = { next: 'note', step: 'gatherTicketContext', type: 'step' };
       r.nodes.note = {
         next: 'review',
         type: 'set',
         values: {
           'context.scratch.note': { literal: 'anything' },
-          'context.ticket': { default: '', from: 'nodes.implement.output.text' },
+          'context.ticket': { default: '', from: 'nodes.gather.output.text' },
         },
       };
-      r.nodes.implement = { ...r.nodes.implement, next: 'note' };
+      r.nodes.implement = { ...r.nodes.implement, next: 'gather' };
     });
     expect(codesOf(raw)).toEqual([]);
+  });
+
+  it('refuses an agent, or the wrong step, as the source of a derived path', () => {
+    for (const [path, step] of [
+      ['context.successCriteria', 'productAnalyst'],
+      ['context.ticket', 'productAnalyst'],
+      ['context.lastRejectionSummary', 'productAnalyst'],
+      ['context.lastCILogs', 'productAnalyst'],
+    ] as const) {
+      const viaAgent = delivering((r) => {
+        r.nodes.research = { agentRef: step, next: 'implement', storeAs: path, type: 'agent' };
+        r.entry = 'research';
+      });
+      expect(codesOf(viaAgent), path).toContain('CONTEXT_WRITE_DENIED');
+    }
+    const wrongStep = delivering((r) => {
+      r.nodes.parse = { next: 'copy', step: 'parseAgentOutput', type: 'step' };
+      r.nodes.copy = {
+        next: 'review',
+        type: 'set',
+        values: { 'context.ticket': { from: 'nodes.parse.output.text' } },
+      };
+      r.nodes.implement = { ...r.nodes.implement, next: 'parse' };
+    });
+    expect(codesOf(wrongStep)).toContain('CONTEXT_WRITE_DENIED');
   });
 });
 
@@ -716,7 +755,24 @@ describe('finding 8: a plan routes prompt text, it does not author it', () => {
     );
   });
 
-  it('accepts guidance read from a node the plan ran', () => {
+  it('accepts guidance read from the plan notes, the one pre-region channel', () => {
+    const raw = delivering((r) => {
+      r.nodes.research = {
+        agentRef: 'productAnalyst',
+        next: 'implement',
+        storeAs: 'context.planNotes',
+        type: 'agent',
+      };
+      r.nodes.implement = {
+        ...r.nodes.implement,
+        inputs: { guidance: { from: 'context.planNotes' } },
+      };
+      r.entry = 'research';
+    });
+    expect(codesOf(raw)).toEqual([]);
+  });
+
+  it('refuses guidance read straight from a node output', () => {
     const raw = delivering((r) => {
       r.nodes.research = { agentRef: 'productAnalyst', next: 'implement', type: 'agent' };
       r.nodes.implement = {
@@ -725,7 +781,7 @@ describe('finding 8: a plan routes prompt text, it does not author it', () => {
       };
       r.entry = 'research';
     });
-    expect(codesOf(raw)).toEqual([]);
+    expect(codesOf(raw)).toContain('INPUT_SOURCE_NOT_ALLOWED');
   });
 });
 
@@ -865,19 +921,9 @@ describe('finding 11: the run ledger status is not the plan to write', () => {
 });
 
 describe("finding 12: injection never merges the author's endings", () => {
-  it('declines to place a stage before two SUCCESS endings and says so', () => {
-    const raw = delivering((r) => {
-      for (const id of [
-        'review',
-        'checkApproval',
-        'openPR',
-        'waitForHumanMerge',
-        'terminateMergeTimedOut',
-        'terminateReviewFailed',
-      ]) {
-        delete r.nodes[id];
-      }
-      r.nodes.implement = { ...r.nodes.implement, next: 'route' };
+  it('declines to attach the core after two SUCCESS endings and says so', () => {
+    const raw = pre((r) => {
+      r.nodes.research = { agentRef: 'productAnalyst', next: 'route', type: 'agent' };
       r.nodes.route = {
         expr: 'context.scratch.fast == true',
         onFalse: 'doneB',
@@ -886,7 +932,6 @@ describe("finding 12: injection never merges the author's endings", () => {
       };
       r.nodes.doneA = { status: 'SUCCESS', type: 'terminate' };
       r.nodes.doneB = { status: 'SUCCESS', title: 'Other', type: 'terminate' };
-      delete r.nodes.done;
     });
     const spec = parse(raw);
     const result = applySkeletonPolicy(spec, 'delivering');
@@ -894,7 +939,7 @@ describe("finding 12: injection never merges the author's endings", () => {
     expect(result.spec).toEqual(spec);
     expect(result.report.ok).toBe(false);
     expect(result.report.errors.map((e) => e.code)).toContain('AMBIGUOUS_ANCHOR');
-    expect(result.report.errors.map((e) => e.code)).toContain('MISSING_MANDATORY');
+    expect(result.report.errors.map((e) => e.code)).toContain('CORE_MISMATCH');
   });
 
   it('declines to add a human review before two SUCCESS endings in an output-only plan', () => {

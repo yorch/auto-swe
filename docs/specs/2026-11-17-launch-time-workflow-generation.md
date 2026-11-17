@@ -12,10 +12,13 @@ Made with the product owner:
 2. Scope: repo-bound runs for engineering and for any launchable library agent.
 3. Entry points: dashboard `/start`, REST API + CLI, Slack channel assistant.
 4. Routing: a router ranks existing templates; the user chooses between them and "generate new".
-5. Freedom: a policy-pinned mandatory skeleton, a free middle composed from a filtered catalog.
-   No shell, container, MCP or authored-command nodes.
+5. Freedom: a mandatory core and free ends (see Decision 8). No shell, container, MCP or
+   authored-command nodes.
 6. Library-agent plans (anything other than the implementer path) are output-only in v1.
 7. An approved plan runs through one hidden system template, not through per-plan templates.
+8. Canonical core, free ends. For a delivering plan the mandatory region is not described by rules
+   over an arbitrary graph; it must equal the shipped `ticket-to-merge` core node for node. The
+   generator writes only the nodes before the core and, optionally, after the human merge wait.
 
 Defaults taken after adversarial review (changeable):
 
@@ -77,35 +80,75 @@ Planned runs charge the owning team's budget and concurrency like any run, and a
 agent-run admission (`wouldAdmitNewRun`) and step/wall-clock ceilings when the plan is built on a
 library agent, so a generated spec cannot exceed what an agent run could.
 
-### 3. Skeleton policy (pins behaviour, not presence)
+### 3. Skeleton policy (a canonical core and free ends)
 
-`applySkeletonPolicy(spec, mode)` in shared runs at generation, and its **check** half runs again at
-approval and in the worker before pinning. It never silently rewrites an approved spec.
+`applySkeletonPolicy(spec, mode)` in shared runs at generation, and its **check** half
+(`checkSkeletonPolicy`) runs again at approval and in the worker before pinning. It never silently
+rewrites an approved spec.
 
-For a delivering (implementer) plan, the mandatory nodes are `executeImplementation`,
-`runReviewNetwork`, the quality-gate step, `createOrUpdatePullRequest` and the human merge wait. The
-policy requires, for each:
+**Delivering plans.** The mandatory region is the **canonical core**: the part of `ticket-to-merge`
+from `implement` to the end of the run, i.e. the implementation (with the preview check), the review
+loop, the pull request, the CI loop, the failure lessons, the human merge wait and the merge lesson.
+`buildCanonicalCore()` constructs it with the template's own builders (`ticketToMergeCore`), so the
+shipped template and the pinned core cannot drift; a test proves the two equal. The core contains no
+quality-gate step: CI is the check, as in the template, and a gate step is refused outside the core.
 
-- the node's config contains only allowlisted keys with allowlisted values: no `systemPrompt`,
-  `tools`, `allowedPaths` or `testIntegrity` override, no authored `command`;
-- `onFail` is `block` (or a bounded retry), never `warn`, and no `onFailure` or `onExhausted` edge from
-  it leads past a later mandatory node;
-- ordering by dominance: implementation dominates review, review dominates quality gates, they dominate
-  the PR step, and the PR step dominates the merge wait, on every path to a `SUCCESS` terminal;
-- no `cond` edge may bypass a mandatory node, and its verdict outputs feed the successor routing the
-  skeleton declares.
+- **Core nodes are exact.** Every core id is reserved. A node with a core id must deep-equal its
+  canonical node (id, type, step, config, inputs, edges, status and presentation), after the spec
+  parser's defaults. Nothing is repaired: a missing or edited core node is `CORE_MISMATCH`.
+- **Two mutable points, both named.** The hook edge `waitForHumanMerge.onReceive` is `commitLesson`
+  in the core and may name a post-region node. The guidance slot `implement.inputs.guidance` is
+  absent in the template and may be exactly `{ from: 'context.planNotes' }`.
+- **Free ends.** The **pre-region** is every free node reachable from the entry without passing a
+  core node; it hands over by pointing at `implement`, the one core node a free node may name. In
+  `ticket-to-merge` it is the validate phase. The **post-region** is every other free node, reached
+  through the hook; it may point back only at `commitLesson`. An edge from a free node to any other
+  core node is `CORE_ENTERED_MIDWAY`, an edge from a core node to a free node other than the hook is
+  `FREE_NODE_IN_CORE`, a plan that starts inside the core is `CORE_ENTERED_MIDWAY`.
+- **What a free node may be.** Pre-region: `agent`, `cond`, `set`, `terminate`, the human nodes, and
+  steps of the free class (reads, planning, parsing). Post-region: `agent`, `cond`, `set`,
+  `terminate` and the steps `parseAgentOutput` and `retrieveKnowledge`. Never a `signal`, a `fanOut`,
+  a step that acts on the repository (`FREE_NODE_TYPE_DENIED`, `FREE_STEP_DENIED`).
+- **What a free node may write.** Under `context.scratch.*`; in the pre-region also
+  `context.planNotes`, `context.ticket` (only from `gatherTicketContext`) and
+  `context.successCriteria` (only from `validateContext`). Anything else is `FREE_WRITE_DENIED`.
+  The core never reads `context.scratch.*`.
+- **The one channel into the core.** The pre-region reaches the implementer only through
+  `context.planNotes`, which the guidance slot binds. It cannot reach a review input, the success
+  criteria, the ticket or the code result: those inputs are core and bound from fixed paths, and
+  an agent is not a source for any context path except the plan notes.
+- **Node ids** match `^[A-Za-z][A-Za-z0-9_-]{0,63}$` and are not `constructor` or `prototype`
+  (`NODE_ID_INVALID`): the interpreter splits a write path on `.`, so an id with a dot could write
+  another node's output. The restriction is in the policy, not in `validateSpec`, because existing
+  team templates may legitimately use other ids.
 
-For an output-only library-agent plan the mandatory nodes are one or more `agent` nodes, a human
-review node before any step with an external effect, and a terminate node.
+The structural checks stay on and run over free nodes and core alike, so a defect in the core
+comparison is not the only line: allowlisted step config and input bindings, write rules (a derived
+path takes only the output of the step that fills it in the template: never an agent), failure
+policy (`onFail` is never `warn`, `onError` is never `continue` on a stage or fix node), ordering by
+dominance, code not changing after a check, the review verdict (a cond on
+`nodes.<id>.output.approved == true` is the only approving route), merge-wait timeout never ending
+`SUCCESS`, and bounded loops.
 
-The free middle draws only from a **step allowlist** maintained in code beside the registry. The
-allowlist excludes: `runContainerStep` and any authored command, `submitPrdWorkRequests`, `runTool`,
+**Injection.** When the spec has no node with a core id, `applySkeletonPolicy` attaches the core
+after the pre-region's sole leaf: the one `SUCCESS` terminate (ordinary edges into it are pointed at
+`implement` and it is dropped, because the core ends the run itself) or the one step with no
+`next`. Several leaves, or none, attach nothing and report `AMBIGUOUS_ANCHOR`. A spec that has any
+core id is never repaired; its mismatch is reported.
+
+**Output-only plans.** The mandatory nodes are one or more `agent` nodes, a human review of an
+agent's output before the run can end `SUCCESS`, and a terminate. A `humanDecision` never counts as
+the review, because every one of its options is a continuation and it cannot approve or reject; a
+`humanApproval`, or a `humanReview` showing an agent's output, does. No `agent` node may run after
+the last human review on a path that can still end `SUCCESS` (`AGENT_AFTER_REVIEW`), so nothing is
+written after the human looked.
+
+The free ends draw only from a **step allowlist** maintained in code beside the registry. The
+allowlist excludes `runContainerStep` and any authored command, `submitPrdWorkRequests`, `runTool`,
 `postTicketComment`, `createTrackerItems`, `publishOutcome`, `writeOutcome`, `mergeBranches`,
 `applyRecipe`, and every step that pushes or posts. `agent` nodes may not name an agent on
 `NON_LAUNCHABLE_AGENT_KEYS` or one outside the requester's launchable set; `validateSpec` gains a
-`NON_LAUNCHABLE_AGENT` error for it. The skeleton's mandatory sequence is taken from the
-`ticket-to-merge` built-in via the `validatePhase@1`, `reviewLoop@1`, `openPullRequest@1` and
-`ciLoop@1` macros, so the pinned shape is the same one the platform already ships.
+`NON_LAUNCHABLE_AGENT` error for it.
 
 ### 4. Generation
 
@@ -166,8 +209,17 @@ planned run are marked so `evaluatePullRequest` skips `auto` mode for them. The 
 
 ## Limitations
 
-- The skeleton policy pins the shape and configuration of the mandatory nodes; it does not judge
-  whether the free middle is a sensible way to do the task.
+- The policy pins the core exactly; it does not judge whether the pre-region or post-region is a
+  sensible way to do the task.
+- Text an agent writes in the pre-region can become the implementer's guidance through
+  `context.planNotes`. This is the one channel from free nodes into the core, and the policy cannot
+  judge what the text says. The implementer receives it under the requester-guidance heading, and a
+  prompt-injected ticket or knowledge-base page can steer the drafting agent. The review network,
+  CI and the human merge still judge the result; the notes cannot touch what they are judged
+  against.
+- The canonical core has no quality-gate step, so a delivering plan has none; CI is its check.
+- A plan with an unusual shape is refused rather than adapted: the generator must produce a
+  pre-region that ends in one place, and the core's ids are not available for its own nodes.
 - Cost estimates use role defaults and a fan-out guess; unpriced nodes are listed, not costed.
 - A plan is approved against agent versions and settings at that moment; a change afterwards makes the
   plan unapprovable and the user must regenerate it.
