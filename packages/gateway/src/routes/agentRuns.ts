@@ -38,7 +38,11 @@ import { requireAuth, requireCaller, requireUser } from '../plugins/auth.js';
 const MIN_WALL_CLOCK_SECONDS = 60;
 const MAX_STEPS_HARD = 500;
 
-const RepoContextQuery = z.object({ repoId: z.string().uuid().optional() });
+const RepoContextQuery = z.object({
+  repoId: z.string().uuid().optional(),
+  /** A repo-less launch: the team whose ORGANIZATION agents apply. Ignored when `repoId` is given. */
+  teamId: z.string().uuid().optional(),
+});
 
 const RerunParams = z.object({ workRequestId: z.string().uuid() });
 
@@ -104,6 +108,22 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
           return;
         }
         orgId = repo.orgId;
+      } else if (request.query.teamId) {
+        // A repo-less orchestration resolves agents for its named team's organization, as the
+        // launch does: the caller must belong to the team (an ADMIN need not).
+        const user = requireUser(request);
+        const team = await fastify.prisma.team.findFirst({
+          select: {
+            isActive: true,
+            memberships: { select: { userId: true }, where: { userId: user.sub } },
+            orgId: true,
+          },
+          where: { id: request.query.teamId },
+        });
+        if (!team?.isActive || (team.memberships.length === 0 && user.role !== Role.ADMIN)) {
+          return error(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
+        }
+        orgId = team.orgId;
       }
       const rows = await runUnscoped(
         'an agent run resolves its agent at GLOBAL and ORGANIZATION scope only',

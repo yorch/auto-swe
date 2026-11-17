@@ -45,7 +45,13 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 }));
 
 import { __resetReconcileCacheForTests } from '@auto-swe/shared/lib/agentRunAdmission';
+import {
+  agentRunWorkflowId,
+  createAgentRunLauncher,
+  type OrchestrationChildSeam,
+} from '../lib/agentRunLaunch.js';
 import { resetMcpWriteRateLimit } from '../lib/mcpWriteGuard.js';
+import { requireAuth, requireCaller } from '../plugins/auth.js';
 import { agentRunRoutes } from './agentRuns.js';
 
 const USER = 'user-1';
@@ -73,6 +79,8 @@ interface State {
   orgOverBudget: boolean;
   mcpInFlight: number;
   replayWorkRequestId: string | null;
+  /** Runs inside the fake `startRunnableWorkflow`, to interleave with the start. */
+  onStart: (() => void) | null;
 }
 
 describe('POST /api/v1/agent-runs', () => {
@@ -99,6 +107,7 @@ describe('POST /api/v1/agent-runs', () => {
       inFlight: [],
       installationActive: true,
       mcpInFlight: 0,
+      onStart: null,
       orgOverBudget: false,
       ownerMembers: [USER],
       prevRun: null,
@@ -246,6 +255,7 @@ describe('POST /api/v1/agent-runs', () => {
       },
       startRunnableWorkflow: async (id: string, input: Record<string, unknown>) => {
         events.push('start');
+        s.onStart?.();
         if (s.startFails) {
           throw new Error('temporal down');
         }
@@ -253,10 +263,42 @@ describe('POST /api/v1/agent-runs', () => {
       },
     } as unknown as never);
     app.register(agentRunRoutes, { prefix: '/api/v1/agent-runs' });
+    // A stand-in for the orchestration child route: the REAL launcher, driven with the
+    // orchestration seam the route would pass.
+    app.post(
+      '/__orchestration-child',
+      { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
+      async (request, reply) =>
+        createAgentRunLauncher(app)(request, reply, {
+          agent: 'contentWriter',
+          budgetTier: 'STANDARD',
+          caller: requireCaller(request),
+          deliver: 'none',
+          idempotencyKey: 'orch:turn-1',
+          ...((request.body as { maxSteps?: number }).maxSteps
+            ? { maxSteps: (request.body as { maxSteps: number }).maxSteps }
+            : {}),
+          orchestration: seam,
+          prompt: 'look around',
+          repoId: REPO,
+        })
+    );
     await app.ready();
   });
 
   afterEach(() => app.close());
+
+  const seam: OrchestrationChildSeam = {
+    afterStart: async () => seamRefusal,
+    existing: async () => null,
+    inTransaction: async () => {},
+    onStartFailed: async () => {},
+    orchestrationId: '00000000-0000-4000-8000-0000000000f1',
+    parentWorkflowId: 'orch-00000000-0000-4000-8000-0000000000f1',
+    pathScopes: [],
+    respond: (launched) => ({ data: launched }),
+  };
+  let seamRefusal: { code: string; message: string; status?: number } | null = null;
 
   const post = (payload: Record<string, unknown>, headers: Record<string, string> = {}) =>
     app.inject({
@@ -652,6 +694,60 @@ describe('POST /api/v1/agent-runs', () => {
       expect(a).not.toBe(c);
       // `agent-<repo8>-<user8>-<digest>`: the caller is part of the scope.
       expect(a).toMatch(/^agent-aaaaaaaa-user1-?/);
+    });
+  });
+
+  describe('as an orchestration child (the seam)', () => {
+    const child = (payload: Record<string, unknown> = {}) =>
+      app.inject({
+        headers: { authorization: 'Bearer t' },
+        method: 'POST',
+        payload,
+        url: '/__orchestration-child',
+      });
+
+    beforeEach(() => {
+      seamRefusal = null;
+    });
+
+    it('lowers an over-ceiling maxSteps to the ceiling and says so, where a direct launch refuses', async () => {
+      const res = await child({ maxSteps: 500 });
+      expect(res.statusCode).toBe(201);
+      expect(res.json().data.clamped).toEqual({ maxSteps: 50 });
+      const req = started[0]?.input.request as { payload: { maxSteps: number } };
+      expect(req.payload.maxSteps).toBe(50);
+      const direct = await post({ maxSteps: 500 });
+      expect(direct.statusCode).toBe(400);
+      expect(direct.json().error.code).toBe('CAP_EXCEEDS_CEILING');
+    });
+
+    it('does not report a clamp for a value within the ceiling', async () => {
+      const res = await child({ maxSteps: 20 });
+      expect(res.json().data.clamped).toBeUndefined();
+      const req = started[0]?.input.request as { payload: { maxSteps: number } } | undefined;
+      expect(req?.payload.maxSteps).toBe(20);
+    });
+
+    it('derives the child workflow id the spawn route looks up', async () => {
+      await child({});
+      expect(started[0]?.id).toBe(
+        agentRunWorkflowId(REPO, { kind: 'user', user: { sub: USER } } as never, 'orch:turn-1')
+      );
+    });
+
+    it('refuses with the late refusal once the workflow has started, instead of a success', async () => {
+      seamRefusal = {
+        code: 'ORCHESTRATION_NOT_ACTIVE',
+        message: 'This orchestration ended while the agent was starting; it was cancelled',
+        status: 409,
+      };
+      const res = await child({});
+      expect(events).toContain('start');
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({
+        code: 'ORCHESTRATION_NOT_ACTIVE',
+        error: { code: 'ORCHESTRATION_NOT_ACTIVE' },
+      });
     });
   });
 });

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Role } from '@auto-swe/shared';
+import { type Prisma, Role } from '@auto-swe/shared';
 import { resolveSetting, resolveSettings } from '@auto-swe/shared/config';
 import {
   AGENT_RUN_MAX_PROMPT_CHARS,
@@ -28,6 +28,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
+  agentRunWorkflowId,
   agentScopeBranches,
   authorizeAgentRunRepo,
   createAgentRunLauncher,
@@ -41,6 +42,7 @@ import type { OrchestrationWorkflowInput } from '../lib/orchestrationInput.js';
 import {
   buildDetail,
   CHILD_LIVE_STATUSES,
+  canSeeRepoData,
   checkSpawnBounds,
   childView,
   decodeCursor,
@@ -48,10 +50,13 @@ import {
   messageView,
   ORCHESTRATION_LIVE_STATUSES,
   parseStoredScopes,
+  reachableRepoIds,
+  redactMessage,
   refusal,
   resolvePins,
   storedPins,
   summaryView,
+  type Viewer,
 } from '../lib/orchestrationService.js';
 import { orchestrationTokenTtlSeconds } from '../lib/orchestrationToken.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
@@ -106,6 +111,60 @@ const STREAM_MAX_MS = 16 * 60 * 1000;
 const MAX_STREAMS_PER_USER = 4;
 const openStreams = new Map<string, number>();
 
+/**
+ * Every refusal of the spawn route in one envelope the worker can parse: `{ code, message,
+ * error: { code, message } }` (plus `error.details` when the refusal had any). The launch
+ * pipeline answers in the gateway's `{ error }` shape for ordinary errors and in this one for
+ * orchestration refusals; this makes the code and a readable message present either way.
+ */
+function normalizeRefusalBody(statusCode: number, payload: unknown): unknown {
+  if (statusCode < 400 || typeof payload !== 'string') {
+    return payload;
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(payload);
+  } catch {
+    return payload;
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return payload;
+  }
+  const b = body as Record<string, unknown>;
+  const e = b.error && typeof b.error === 'object' ? (b.error as Record<string, unknown>) : null;
+  const pick = (...vals: unknown[]) => vals.find((v): v is string => typeof v === 'string' && !!v);
+  const code = pick(e?.code, b.code) ?? `HTTP_${statusCode}`;
+  const message =
+    pick(e?.message, b.message, typeof b.error === 'string' ? b.error : undefined) ??
+    `The agent could not be started (${code})`;
+  return JSON.stringify({
+    code,
+    error: { ...(e ?? {}), code, message },
+    message,
+  });
+}
+
+/**
+ * Whether a stored writer holds a shared file (lock file, root package.json, barrel). Judged one
+ * scope at a time: a scope names one exactly when it is refused without the owner flag, and a
+ * stored scope that no longer parses is treated as one (fail closed). Never over the
+ * concatenation of several writers' scopes, which hits the 20-scope cap and refuses on size.
+ */
+function holdsSharedFile(writer: { pathScopes: string[] }): boolean {
+  return writer.pathScopes.some((scope) => !validatePathScopes([scope]).ok);
+}
+
+/** Thrown inside the attach-request transaction to refuse the resolution and roll it back. */
+class ResolveRefusal extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string
+  ) {
+    super(message);
+  }
+}
+
 /** Thrown inside the ledger transaction to refuse a spawn and roll the launch back. */
 class SpawnRefusal extends Error {
   constructor(
@@ -141,7 +200,11 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       await writeAuditLog(fastify, {
         action: action === 'launch' ? 'CREATE' : 'UPDATE',
         actor: request.user ?? null,
-        after: { action, ...after },
+        after: {
+          action,
+          ...after,
+          ...(request.principal ? { serviceId: request.principal.servicePrincipalId } : {}),
+        },
         entityId,
         entityType: 'Orchestration',
       });
@@ -166,11 +229,12 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     budgetTier: true,
     connectionIds: true,
     createdAt: true,
+    deliveryDefault: true,
     id: true,
     launchedBy: { select: { name: true } },
     launchedById: true,
     orgId: true,
-    repo: { select: { organizationName: true, repoName: true } },
+    repo: { select: { organizationName: true, repoName: true, team: { select: { name: true } } } },
     repoAttachedAt: true,
     repoId: true,
     serviceId: true,
@@ -180,7 +244,12 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     title: true,
     updatedAt: true,
     workRequest: {
-      select: { activeWorkflows: { select: { costUsdAccrued: true } }, payload: true },
+      select: {
+        activeWorkflows: {
+          select: { costUsdAccrued: true, tokensInputUsed: true, tokensOutputUsed: true },
+        },
+        payload: true,
+      },
     },
     workRequestId: true,
   } as const;
@@ -204,6 +273,11 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         },
       })
     );
+  }
+
+  function viewerOf(request: FastifyRequest): Viewer {
+    const user = requireUser(request);
+    return { admin: user.role === Role.ADMIN, sub: user.sub };
   }
 
   /** The orchestration if the caller is its launcher (a person's session, PAT or token). */
@@ -262,6 +336,26 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     }
   }
 
+  /** The child an earlier attempt launched under this deterministic workflow id, as the spawn body. */
+  async function findChildByWorkflow(
+    orchestrationId: string,
+    workflowId: string
+  ): Promise<{ data: { childId: string; workflowId: string; workRequestId: string } } | null> {
+    const wf = await prisma.activeWorkflow.findUnique({
+      select: { workRequestId: true },
+      where: { temporalWorkflowId: workflowId },
+    });
+    const child = wf?.workRequestId
+      ? await prisma.orchestrationChild.findFirst({
+          select: { id: true },
+          where: { orchestrationId, workRequestId: wf.workRequestId },
+        })
+      : null;
+    return child && wf?.workRequestId
+      ? { data: { childId: child.id, workflowId, workRequestId: wf.workRequestId } }
+      : null;
+  }
+
   async function cancelRun(workflowId: string): Promise<void> {
     try {
       await fastify.temporal.cancelWorkflow(workflowId);
@@ -270,6 +364,37 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         throw err;
       }
     }
+  }
+
+  /**
+   * Cancel every child of the orchestration that has not finished, by its workflow. Returns the
+   * ids it tried and how many cancels failed. Run more than once around a status change: a spawn
+   * that was between its ledger write and its workflow start is not visible to the first sweep as
+   * a workflow, and the spawn's own post-start re-check covers it.
+   */
+  async function cancelLiveChildren(
+    request: FastifyRequest,
+    orchestrationId: string
+  ): Promise<{ failed: number; ids: string[] }> {
+    const children = await prisma.orchestrationChild.findMany({
+      select: {
+        id: true,
+        workRequest: { select: { activeWorkflows: { select: { temporalWorkflowId: true } } } },
+      },
+      where: { orchestrationId, status: { in: [...CHILD_LIVE_STATUSES] } },
+    });
+    let failed = 0;
+    for (const child of children) {
+      for (const wf of child.workRequest.activeWorkflows) {
+        try {
+          await cancelRun(wf.temporalWorkflowId);
+        } catch (err) {
+          failed += 1;
+          request.log.error({ childId: child.id, err }, 'child cancel failed');
+        }
+      }
+    }
+    return { failed, ids: children.map((c) => c.id) };
   }
 
   // ── Launch ────────────────────────────────────────────────────────────────
@@ -617,6 +742,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
                 repoAttachedAt: true,
                 repoId: true,
                 status: true,
+                team: { select: { name: true } },
                 teamId: true,
                 title: true,
                 updatedAt: true,
@@ -630,6 +756,13 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
           ])
       );
       const ids = rows.map((r) => r.id);
+      // The repository's name is shown only to those who can reach the repository.
+      const viewer = viewerOf(request);
+      const reachable = await reachableRepoIds(
+        prisma,
+        viewer,
+        rows.filter((r) => r.repoId && r.launchedById !== viewer.sub).map((r) => r.repoId as string)
+      );
       const children = ids.length
         ? await prisma.orchestrationChild.findMany({
             select: { costUsd: true, orchestrationId: true, status: true },
@@ -639,15 +772,54 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       const data = rows.map((r) => {
         const mine = children.filter((c) => c.orchestrationId === r.id);
         const own = r.workRequest?.activeWorkflows.reduce((s, w) => s + w.costUsdAccrued, 0) ?? 0;
-        return summaryView(r, {
-          childCount: mine.length,
-          costUsd: mine.reduce((s, c) => s + c.costUsd, 0) + own,
-          runningChildCount: mine.filter((c) =>
-            (CHILD_LIVE_STATUSES as readonly string[]).includes(c.status)
-          ).length,
-        });
+        return summaryView(
+          r,
+          {
+            childCount: mine.length,
+            costUsd: mine.reduce((s, c) => s + c.costUsd, 0) + own,
+            runningChildCount: mine.filter((c) =>
+              (CHILD_LIVE_STATUSES as readonly string[]).includes(c.status)
+            ).length,
+          },
+          {
+            redactRepo:
+              !!r.repoId && r.launchedById !== viewer.sub && !reachable.has(r.repoId as string),
+          }
+        );
       });
       return { data, limit, offset, total };
+    }
+  );
+
+  // The MCP connections a launcher may put in an orchestration's set: the active ones the named
+  // team owns, by name only (never a URL or a secret). Declared before `/:id` so it is not read
+  // as an id.
+  app.get(
+    '/connections',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { querystring: z.object({ teamId: z.uuid() }) },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const { teamId } = request.query;
+      const team = await prisma.team.findFirst({
+        select: {
+          id: true,
+          isActive: true,
+          memberships: { select: { userId: true }, where: { userId: user.sub } },
+        },
+        where: { id: teamId },
+      });
+      if (!team?.isActive || (team.memberships.length === 0 && user.role !== Role.ADMIN)) {
+        return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
+      }
+      const rows = await prisma.connection.findMany({
+        orderBy: { name: 'asc' },
+        select: { id: true, name: true },
+        where: { isActive: true, teamId, type: 'mcp' },
+      });
+      return { data: rows.map((r) => ({ id: r.id, name: r.name })) };
     }
   );
 
@@ -660,7 +832,10 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       if (!row) {
         return sendError(reply, 404, 'NOT_FOUND', 'Orchestration not found');
       }
-      const detail = await buildDetail(prisma, row, row.launchedById === user.sub);
+      const detail = await buildDetail(prisma, row, {
+        canControl: row.launchedById === user.sub,
+        viewer: viewerOf(request),
+      });
       return { data: detail };
     }
   );
@@ -697,7 +872,11 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
       const last = rows[rows.length - 1];
-      return { data: rows.map(messageView), next: last ? encodeCursor(last) : null };
+      const sees = await canSeeRepoData(prisma, viewerOf(request), row);
+      return {
+        data: rows.map((m) => (sees ? messageView(m) : redactMessage(messageView(m)))),
+        next: last ? encodeCursor(last) : null,
+      };
     }
   );
 
@@ -724,6 +903,8 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       openStreams.set(user.sub, openCount + 1);
       const orchestrationId = row.id;
       const teamId = row.teamId;
+      const viewer = viewerOf(request);
+      const launchedById = row.launchedById;
 
       reply.hijack();
       const res = reply.raw;
@@ -799,8 +980,21 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
                   : {}),
               },
             });
+            // The repository may be attached while the stream is open: ask each poll.
+            const live = await prisma.orchestration.findFirst({
+              select: { repoId: true, status: true },
+              where: { id: orchestrationId, teamId },
+            });
+            if (!live) {
+              finish();
+              return;
+            }
+            const sees = await canSeeRepoData(prisma, viewer, {
+              launchedById,
+              repoId: live.repoId,
+            });
             for (const m of messages) {
-              write('message', messageView(m));
+              write('message', sees ? messageView(m) : redactMessage(messageView(m)));
               cursor = { createdAt: m.createdAt, id: m.id };
             }
             const children = await prisma.orchestrationChild.findMany({
@@ -814,25 +1008,28 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
               orderBy: { createdAt: 'asc' },
               where: { orchestrationId },
             });
+            const runIds = children.map((c) => c.runId).filter((id): id is string => !!id);
+            const steering = runIds.length
+              ? await prisma.runSteeringMessage.groupBy({
+                  _count: { _all: true },
+                  by: ['runId'],
+                  where: { deliveredAt: null, runId: { in: runIds } },
+                })
+              : [];
+            const undelivered = new Map(steering.map((g) => [g.runId, g._count._all]));
             for (const c of children) {
-              const view = childView(c as never, 0);
+              const view = childView(c as never, c.runId ? (undelivered.get(c.runId) ?? 0) : 0, {
+                redactRepo: !sees,
+              });
               const serialized = JSON.stringify(view);
               if (lastChild.get(c.id) !== serialized) {
                 lastChild.set(c.id, serialized);
                 write('child', view);
               }
             }
-            const current = await prisma.orchestration.findFirst({
-              select: { status: true },
-              where: { id: orchestrationId, teamId },
-            });
-            if (!current) {
-              finish();
-              return;
-            }
-            if (current.status !== lastStatus) {
-              lastStatus = current.status;
-              write('status', { status: current.status });
+            if (live.status !== lastStatus) {
+              lastStatus = live.status;
+              write('status', { status: live.status });
             }
             if (Date.now() - lastBeat >= STREAM_HEARTBEAT_MS && !res.writableEnded) {
               res.write(': ping\n\n');
@@ -1003,6 +1200,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     {
       config: { orchestrationToken: 'caller' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onSend: async (_request, reply, payload) => normalizeRefusalBody(reply.statusCode, payload),
       schema: { body: SpawnBody, headers: IdempotencyHeaderSchema, params: IdParams },
     },
     async (request, reply) => {
@@ -1047,8 +1245,17 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 404, 'NOT_FOUND', 'Orchestration not found');
       }
 
+      // One audit entry per refusal, however it was reached.
+      let audited = false;
       const refuse = async (code: string, message: string) => {
-        await audit(request, orch.id, 'refusal', { agent: intent.agent, code, role: intent.role });
+        if (!audited) {
+          audited = true;
+          await audit(request, orch.id, 'refusal', {
+            agent: intent.agent,
+            code,
+            role: intent.role,
+          });
+        }
         return refusal(reply, 409, code, message);
       };
 
@@ -1062,6 +1269,24 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       }
       if (!on) {
         return refuse('ORCHESTRATION_NOT_ACTIVE', 'Orchestrated runs are turned off');
+      }
+
+      // A retried spawn (the same turn key) is answered with the child its first attempt started,
+      // before any width or scope check: those would count that very child against the retry.
+      // The id is the one the launch derives; a child started before a repository was attached
+      // was keyed on the named team, so both are tried.
+      const spawnKey = `${orch.id}:${request.body.turnKey}`;
+      for (const scopeId of new Set([orch.repoId, orch.teamId])) {
+        if (!scopeId) {
+          continue;
+        }
+        const replayed = await findChildByWorkflow(
+          orch.id,
+          agentRunWorkflowId(scopeId, caller, spawnKey)
+        );
+        if (replayed) {
+          return reply.status(200).send(replayed);
+        }
       }
 
       // 2. Allowlist: the exact reference the launcher approved, and still launchable.
@@ -1118,14 +1343,15 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         (c) => c.role === 'WRITER' && (CHILD_LIVE_STATUSES as readonly string[]).includes(c.status)
       );
       let candidate: ParsedScope[] = [];
+      let namesSharedFile = false;
       if (writer) {
-        const sharedTaken = !validatePathScopes(liveWriters.flatMap((w) => w.pathScopes)).ok;
         const syntax = validatePathScopes(scopesIn, { isOwnerOfSharedFiles: true });
         if (!syntax.ok) {
           return refuse('ROLE_RULE_VIOLATED', `Invalid path scopes: ${syntax.errors.join('; ')}`);
         }
         candidate = syntax.scopes;
-        if (sharedTaken && !validatePathScopes(scopesIn).ok) {
+        namesSharedFile = !validatePathScopes(scopesIn).ok;
+        if (namesSharedFile && liveWriters.some(holdsSharedFile)) {
           return refuse('SCOPE_OVERLAP', 'Another running writer already owns the shared files');
         }
       }
@@ -1190,6 +1416,35 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         idempotencyKey: `${orch.id}:${request.body.turnKey}`,
         ...(intent.maxSteps ? { maxSteps: intent.maxSteps } : {}),
         orchestration: {
+          afterStart: async ({ temporalWorkflowId, workRequestId }) => {
+            // A cancel or end between the child row and the workflow start swept a workflow that
+            // did not exist yet. Look again now that it does.
+            const now = await prisma.orchestration.findFirst({
+              select: { status: true },
+              where: { id: orch.id, teamId: orch.teamId },
+            });
+            if (now && ORCHESTRATION_LIVE_STATUSES.includes(now.status as never)) {
+              return null;
+            }
+            try {
+              await cancelRun(temporalWorkflowId);
+            } catch (err) {
+              request.log.error({ err, temporalWorkflowId }, 'late child cancel failed');
+            }
+            await prisma.orchestrationChild.updateMany({
+              data: { endedAt: new Date(), status: 'CANCELLED' },
+              where: {
+                orchestrationId: orch.id,
+                status: { in: [...CHILD_LIVE_STATUSES] },
+                workRequestId,
+              },
+            });
+            return {
+              code: 'ORCHESTRATION_NOT_ACTIVE',
+              message: 'This orchestration ended while the agent was starting; it was cancelled',
+              status: 409,
+            };
+          },
           checkRepo: async (repo) => {
             if (!writer) {
               return null;
@@ -1211,32 +1466,26 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
             }
             return null;
           },
-          existing: async (workflowId) => {
-            const wf = await prisma.activeWorkflow.findUnique({
-              select: { workRequestId: true },
-              where: { temporalWorkflowId: workflowId },
-            });
-            const child = wf?.workRequestId
-              ? await prisma.orchestrationChild.findFirst({
-                  select: { id: true },
-                  where: { orchestrationId: orch.id, workRequestId: wf.workRequestId },
-                })
-              : null;
-            return child && wf?.workRequestId
-              ? { data: { childId: child.id, workflowId, workRequestId: wf.workRequestId } }
-              : null;
-          },
+          existing: (workflowId) => findChildByWorkflow(orch.id, workflowId),
           inTransaction: async (tx, ids) => {
             // CLAUDE.md §7 exception: serialize concurrent spawns of one orchestration so the
             // width and scope checks below see each other's children; Prisma cannot express
             // SELECT … FOR UPDATE.
             await tx.$queryRaw`SELECT id FROM orchestrations WHERE id = ${orch.id}::uuid FOR UPDATE`;
             const current = await tx.orchestration.findFirst({
-              select: { status: true },
+              select: { repoId: true, status: true },
               where: { id: orch.id, teamId: orch.teamId },
             });
             if (!current || !ORCHESTRATION_LIVE_STATUSES.includes(current.status as never)) {
               throw new SpawnRefusal('ORCHESTRATION_NOT_ACTIVE', 'This orchestration has ended');
+            }
+            // The repository this launch was authorized against must still be the attached one (a
+            // failed attach can be rolled back under this same lock).
+            if ((writer || orch.repoId) && current.repoId !== orch.repoId) {
+              throw new SpawnRefusal(
+                'REPO_REQUIRED',
+                "The orchestration's repository changed while the agent was starting; try again"
+              );
             }
             const now = await loadChildren(tx as never);
             const again = checkSpawnBounds(now, pins, {
@@ -1251,6 +1500,12 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
               (c) =>
                 c.role === 'WRITER' && (CHILD_LIVE_STATUSES as readonly string[]).includes(c.status)
             );
+            if (writer && namesSharedFile && writers.some(holdsSharedFile)) {
+              throw new SpawnRefusal(
+                'SCOPE_OVERLAP',
+                'Another running writer already owns the shared files'
+              );
+            }
             if (writer && overlapOf(writers) !== null) {
               throw new SpawnRefusal('SCOPE_OVERLAP', 'Those paths overlap a running writer');
             }
@@ -1271,7 +1526,13 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
             await writeAuditLog(fastify, {
               action: 'UPDATE',
               actor: request.user ?? null,
-              after: { action: 'spawn', agent: intent.agent, childId, role: intent.role },
+              after: {
+                action: 'spawn',
+                agent: intent.agent,
+                childId,
+                role: intent.role,
+                ...(request.principal ? { serviceId: request.principal.servicePrincipalId } : {}),
+              },
               client: tx as never,
               entityId: orch.id,
               entityType: 'Orchestration',
@@ -1285,8 +1546,14 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
           orchestrationId: orch.id,
           parentWorkflowId: orchestrationWorkflowId(orch.id),
           pathScopes: writer ? scopesIn : [],
-          respond: ({ temporalWorkflowId, workRequestId }) => ({
-            data: { childId, workflowId: temporalWorkflowId, workRequestId },
+          respond: ({ clamped, temporalWorkflowId, workRequestId }) => ({
+            data: {
+              childId,
+              ...(clamped ? { clamped } : {}),
+              workflowId: temporalWorkflowId,
+              workRequestId,
+            },
+            ...(clamped ? { clamped } : {}),
           }),
           ...(repoless ? { repoless } : {}),
         },
@@ -1298,7 +1565,8 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         }
         throw err;
       });
-      if (reply.statusCode >= 400) {
+      if (reply.statusCode >= 400 && !audited) {
+        audited = true;
         await audit(request, orch.id, 'refusal', {
           agent: intent.agent,
           status: reply.statusCode,
@@ -1379,6 +1647,42 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     return msg && isAttachRequestPending(payload) ? { msg, payload } : null;
   }
 
+  /**
+   * Resolve the pending ATTACH_REQUEST exactly once. Attach and decline both go through here: the
+   * message row is locked, its payload re-read under the lock, and `resolve` runs only if it is
+   * still pending, so of two concurrent resolutions exactly one wins and the other is refused.
+   * `resolve` writes in the same transaction (attach sets the repository there).
+   */
+  async function resolveAttachRequest<T>(
+    messageId: string,
+    resolve: (tx: Prisma.TransactionClient, current: Record<string, unknown>) => Promise<T>
+  ): Promise<{ previous: Record<string, unknown>; value: T }> {
+    return prisma.$transaction(async (tx) => {
+      // CLAUDE.md §7 exception: serialize the two resolutions of one attach request;
+      // Prisma cannot express SELECT … FOR UPDATE.
+      await tx.$queryRaw`SELECT id FROM orchestration_messages WHERE id = ${messageId}::uuid FOR UPDATE`;
+      const fresh = await tx.orchestrationMessage.findFirst({ where: { id: messageId } });
+      const previous = (fresh?.payload ?? {}) as Record<string, unknown>;
+      if (!fresh || !isAttachRequestPending(previous)) {
+        throw new ResolveRefusal(
+          409,
+          'NO_PENDING_ATTACH',
+          'That repository request was already resolved'
+        );
+      }
+      return { previous, value: await resolve(tx, previous) };
+    });
+  }
+
+  function sendResolveRefusal(reply: FastifyReply, err: unknown) {
+    if (err instanceof ResolveRefusal) {
+      return err.code === 'REPO_ALREADY_ATTACHED'
+        ? refusal(reply, err.status, err.code, err.message)
+        : sendError(reply, err.status, err.code, err.message);
+    }
+    return null;
+  }
+
   app.post(
     '/:id/attach',
     {
@@ -1415,48 +1719,96 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         return reply;
       }
       const attachedAt = new Date();
-      // Compare-and-set: of two concurrent attaches exactly one matches `repoId: null`.
-      const { count } = await prisma.orchestration.updateMany({
-        data: { repoAttachedAt: attachedAt, repoId: repo.id },
-        where: {
-          id: row.id,
-          repoId: null,
-          status: { in: [...ORCHESTRATION_LIVE_STATUSES] },
-          teamId: row.teamId,
-        },
-      });
-      if (count !== 1) {
-        return refusal(reply, 409, 'REPO_ALREADY_ATTACHED', 'A repository is already attached');
+      let previous: Record<string, unknown>;
+      try {
+        // One transaction: the request is still pending, `repoId` is still null (the
+        // compare-and-set that lets exactly one attach match), and the request is marked resolved.
+        ({ previous } = await resolveAttachRequest(pending.msg.id, async (tx, current) => {
+          const { count } = await tx.orchestration.updateMany({
+            data: { repoAttachedAt: attachedAt, repoId: repo.id },
+            where: {
+              id: row.id,
+              repoId: null,
+              status: { in: [...ORCHESTRATION_LIVE_STATUSES] },
+              teamId: row.teamId,
+            },
+          });
+          if (count !== 1) {
+            throw new ResolveRefusal(
+              409,
+              'REPO_ALREADY_ATTACHED',
+              'A repository is already attached'
+            );
+          }
+          await tx.orchestrationMessage.update({
+            data: {
+              payload: {
+                ...current,
+                repoId: repo.id,
+                resolution: 'ATTACHED',
+                resolvedAt: attachedAt.toISOString(),
+              },
+            },
+            where: { id: pending.msg.id },
+          });
+        }));
+      } catch (err) {
+        const sent = sendResolveRefusal(reply, err);
+        if (sent) {
+          return sent;
+        }
+        throw err;
       }
       try {
-        await prisma.orchestrationMessage.update({
-          data: {
-            payload: {
-              ...pending.payload,
-              repoId: repo.id,
-              resolution: 'ATTACHED',
-              resolvedAt: attachedAt.toISOString(),
-            },
-          },
-          where: { id: pending.msg.id },
-        });
         await fastify.temporal.signalWithStartOrchestration(row.id, await workflowInput(row), {
           name: ORCHESTRATION_SIGNALS.attachResolved,
           payload: { accepted: true, messageId: pending.msg.id, repoId: repo.id },
         });
       } catch (err) {
-        // The workflow never learned of it: undo, so the person can try again.
-        await prisma.orchestration.updateMany({
-          data: { repoAttachedAt: null, repoId: null },
-          where: { id: row.id, repoId: repo.id, teamId: row.teamId },
+        // The workflow never learned of it. Undo, so the person can try again, unless a writer
+        // has already been started against the repository in the meantime: then the attach
+        // stands (a rollback would leave a writer on a repository the orchestration no longer
+        // has). Under the orchestration's row lock, the same one a spawn takes.
+        const undone = await prisma.$transaction(async (tx) => {
+          // CLAUDE.md §7 exception: the same row lock a spawn holds while it writes its child.
+          await tx.$queryRaw`SELECT id FROM orchestrations WHERE id = ${row.id}::uuid FOR UPDATE`;
+          const writers = await tx.orchestrationChild.count({
+            where: { orchestrationId: row.id, role: 'WRITER' },
+          });
+          if (writers > 0) {
+            return false;
+          }
+          await tx.orchestration.updateMany({
+            data: { repoAttachedAt: null, repoId: null },
+            where: { id: row.id, repoId: repo.id, teamId: row.teamId },
+          });
+          await tx.orchestrationMessage.update({
+            data: { payload: previous as never },
+            where: { id: pending.msg.id },
+          });
+          return true;
         });
-        await prisma.orchestrationMessage
-          .update({ data: { payload: pending.payload as never }, where: { id: pending.msg.id } })
-          .catch(() => undefined);
-        if (isTemporalUnavailable(err)) {
-          return sendTemporalUnavailable(reply);
+        if (undone) {
+          if (isTemporalUnavailable(err)) {
+            return sendTemporalUnavailable(reply);
+          }
+          throw err;
         }
-        throw err;
+        request.log.error(
+          { err, orchestrationId: row.id },
+          'attach stands but the workflow was not signalled: a writer already runs on it'
+        );
+        await audit(request, row.id, 'attach', {
+          accepted: true,
+          repoId: repo.id,
+          signalled: false,
+        });
+        return sendError(
+          reply,
+          502,
+          'ATTACH_SIGNAL_FAILED',
+          'The repository is attached, but the orchestrator could not be told yet; it will see the repository on its next refresh'
+        );
       }
       await audit(request, row.id, 'attach', { accepted: true, repoId: repo.id });
       return {
@@ -1489,24 +1841,48 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
           'There is no repository request to decline'
         );
       }
-      await prisma.orchestrationMessage.update({
-        data: {
-          payload: {
-            ...pending.payload,
-            resolution: 'DECLINED',
-            resolvedAt: new Date().toISOString(),
-          },
-        },
-        where: { id: pending.msg.id },
-      });
+      let previous: Record<string, unknown>;
+      try {
+        ({ previous } = await resolveAttachRequest(pending.msg.id, async (tx, current) => {
+          await tx.orchestrationMessage.update({
+            data: {
+              payload: {
+                ...current,
+                resolution: 'DECLINED',
+                resolvedAt: new Date().toISOString(),
+              },
+            },
+            where: { id: pending.msg.id },
+          });
+        }));
+      } catch (err) {
+        const sent = sendResolveRefusal(reply, err);
+        if (sent) {
+          return sent;
+        }
+        throw err;
+      }
       try {
         await fastify.temporal.signalWithStartOrchestration(row.id, await workflowInput(row), {
           name: ORCHESTRATION_SIGNALS.attachResolved,
           payload: { accepted: false, messageId: pending.msg.id, repoId: null },
         });
       } catch (err) {
-        await prisma.orchestrationMessage
-          .update({ data: { payload: pending.payload as never }, where: { id: pending.msg.id } })
+        // Reopen the request so the person can decide again, unless it was resolved since.
+        await prisma
+          .$transaction(async (tx) => {
+            // CLAUDE.md §7 exception: the same lock the resolution takes.
+            await tx.$queryRaw`SELECT id FROM orchestration_messages WHERE id = ${pending.msg.id}::uuid FOR UPDATE`;
+            const fresh = await tx.orchestrationMessage.findFirst({
+              where: { id: pending.msg.id },
+            });
+            if ((fresh?.payload as Record<string, unknown> | null)?.resolution === 'DECLINED') {
+              await tx.orchestrationMessage.update({
+                data: { payload: previous as never },
+                where: { id: pending.msg.id },
+              });
+            }
+          })
           .catch(() => undefined);
         if (isTemporalUnavailable(err)) {
           return sendTemporalUnavailable(reply);
@@ -1531,6 +1907,9 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       const row = await launcherOwned(request, reply, request.params.id);
       if (!row) {
         return reply;
+      }
+      if (!ORCHESTRATION_LIVE_STATUSES.includes(row.status as never)) {
+        return refusal(reply, 409, 'ORCHESTRATION_NOT_ACTIVE', 'This orchestration has ended');
       }
       const approval = await prisma.orchestrationApproval.findFirst({
         select: { id: true },
@@ -1592,36 +1971,33 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       if (count !== 1) {
         return refusal(reply, 409, 'ORCHESTRATION_NOT_ACTIVE', 'This orchestration has ended');
       }
-      const children = await prisma.orchestrationChild.findMany({
-        select: {
-          id: true,
-          workRequest: { select: { activeWorkflows: { select: { temporalWorkflowId: true } } } },
-        },
-        where: { orchestrationId: row.id, status: { in: [...CHILD_LIVE_STATUSES] } },
-      });
-      let failed = 0;
-      for (const child of children) {
-        for (const wf of child.workRequest.activeWorkflows) {
-          try {
-            await cancelRun(wf.temporalWorkflowId);
-          } catch (err) {
-            failed += 1;
-            request.log.error({ childId: child.id, err }, 'child cancel failed');
-          }
-        }
-      }
+      const first = await cancelLiveChildren(request, row.id);
+      let failed = first.failed;
+      let orchestratorFailed = 0;
       try {
         await cancelRun(orchestrationWorkflowId(row.id));
       } catch (err) {
-        failed += 1;
+        orchestratorFailed = 1;
         request.log.error({ err }, 'orchestrator cancel failed');
       }
+      // A second sweep: a spawn that was between its child row and its workflow start when the
+      // first one ran has started by now (and cancels itself, see `afterStart`, if it did not
+      // notice), and a child the first sweep could not reach is tried again.
+      const second = await cancelLiveChildren(request, row.id);
+      failed += second.failed;
+      const children = new Set([...first.ids, ...second.ids]);
       await audit(request, row.id, 'cancel', {
-        children: children.length,
-        failed,
+        children: children.size,
+        failed: failed + orchestratorFailed,
         scope: 'orchestration',
       });
-      return { data: { childrenCancelled: children.length - failed, failed, status: 'CANCELLED' } };
+      return {
+        data: {
+          childrenCancelled: Math.max(0, children.size - second.failed),
+          failed: failed + orchestratorFailed,
+          status: 'CANCELLED',
+        },
+      };
     }
   );
 
@@ -1633,6 +2009,12 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       if (!row) {
         return reply;
       }
+      if (!ORCHESTRATION_LIVE_STATUSES.includes(row.status as never)) {
+        return refusal(reply, 409, 'ORCHESTRATION_NOT_ACTIVE', 'This orchestration has ended');
+      }
+      // Children first, while the orchestration token is still valid: flipping the status revokes
+      // it, and the worker's own cancel calls would then be refused with 401.
+      const first = await cancelLiveChildren(request, row.id);
       const { count } = await prisma.orchestration.updateMany({
         data: { endedAt: new Date(), status: 'COMPLETED' },
         where: { id: row.id, status: { in: [...ORCHESTRATION_LIVE_STATUSES] }, teamId: row.teamId },
@@ -1640,12 +2022,19 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       if (count !== 1) {
         return refusal(reply, 409, 'ORCHESTRATION_NOT_ACTIVE', 'This orchestration has ended');
       }
+      // A spawn that was between its child row and its workflow start is caught by this sweep or
+      // by its own re-check after the start.
+      const second = await cancelLiveChildren(request, row.id);
       try {
         await signalIfRunning(request, row.id, ORCHESTRATION_SIGNALS.cancel, { reason: 'ended' });
       } catch (err) {
         request.log.warn({ err }, 'the orchestration ended but its workflow was not signalled');
       }
-      await audit(request, row.id, 'cancel', { scope: 'end' });
+      await audit(request, row.id, 'cancel', {
+        children: new Set([...first.ids, ...second.ids]).size,
+        failed: first.failed + second.failed,
+        scope: 'end',
+      });
       return { data: { status: 'COMPLETED' } };
     }
   );

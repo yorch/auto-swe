@@ -114,6 +114,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/orchestrations/:id': 'read',
   'GET /api/v1/orchestrations/:id/events': { never: 'stream' },
   'GET /api/v1/orchestrations/:id/messages': 'read',
+  'GET /api/v1/orchestrations/connections': 'read',
   'GET /api/v1/organizations/:orgId/github/installations': 'read',
   'GET /api/v1/platform/access-tokens': { never: 'secret' },
   'GET /api/v1/platform/activity': { never: 'userActivity' },

@@ -1341,6 +1341,29 @@ async function admitOrchestrationToken(
     if (!sp || sp.disabledAt || !sp.team.isActive) {
       return { code: 'TOKEN_INVALID', message: 'The launching principal is disabled', status: 401 };
     }
+    // Re-checked at every admission: the orchestration token carries no scope of its own, so the
+    // principal must still hold a live token with `runs:agent` (a revoked or expired one, or one
+    // whose scope was dropped, ends the orchestration's authority to act).
+    const holdsScope = await prisma.apiToken
+      .findFirst({
+        select: { id: true },
+        where: {
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+          revokedAt: null,
+          scopes: { has: 'runs:agent' },
+          servicePrincipalId: claims.serviceId,
+        },
+      })
+      .catch((err: unknown) => {
+        throw new TokenUserLookupError(err);
+      });
+    if (!holdsScope) {
+      return {
+        code: 'TOKEN_INVALID',
+        message: 'The launching principal no longer holds the runs:agent scope',
+        status: 401,
+      };
+    }
     return {
       principal: {
         connectionIds: sp.connectionIds,

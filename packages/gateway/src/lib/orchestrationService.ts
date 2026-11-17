@@ -19,6 +19,8 @@ import type {
   OrchestrationMessageDto,
   OrchestrationSummaryDto,
 } from '@auto-swe/shared/lib/orchestrationApi';
+import { repoMemberWhere } from '@auto-swe/shared/lib/repoMembership';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import type { OrchestrationPins } from './orchestrationInput.js';
@@ -84,14 +86,88 @@ export function encodeCursor(row: { createdAt: Date; id: string }): string {
   return Buffer.from(`${row.createdAt.toISOString()}|${row.id}`).toString('base64url');
 }
 
+const CURSOR_ID = z.uuid();
+
+/** The id half must be a UUID: it is compared with a `@db.Uuid` column, where text is a 500. */
 export function decodeCursor(cursor: string): { createdAt: Date; id: string } | null {
   try {
     const [iso, id] = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
     const createdAt = new Date(iso ?? '');
-    return id && !Number.isNaN(createdAt.getTime()) ? { createdAt, id } : null;
+    return id && CURSOR_ID.safeParse(id).success && !Number.isNaN(createdAt.getTime())
+      ? { createdAt, id }
+      : null;
   } catch {
     return null;
   }
+}
+
+// ── Who may see repository-derived data ──────────────────────────────────────
+
+/**
+ * The person asking. A repository attached to an orchestration may belong to a team other than
+ * the one the orchestration names, so seeing the orchestration is not seeing the repository.
+ */
+export interface Viewer {
+  admin: boolean;
+  sub: string;
+}
+
+/**
+ * Which of `repoIds` the viewer may see the contents of: all of them for an ADMIN, otherwise the
+ * ones they are a member of (owning team or a shared team). The launcher is handled by the caller
+ * (their own orchestration), not here.
+ */
+export async function reachableRepoIds(
+  prisma: Db,
+  viewer: Viewer,
+  repoIds: string[]
+): Promise<Set<string>> {
+  const ids = [...new Set(repoIds)];
+  if (ids.length === 0) {
+    return new Set();
+  }
+  if (viewer.admin) {
+    return new Set(ids);
+  }
+  const rows = await prisma.connection.findMany({
+    select: { id: true },
+    where: { id: { in: ids }, ...repoMemberWhere({ userId: viewer.sub }) },
+  });
+  return new Set(rows.map((r) => r.id));
+}
+
+/** Whether the viewer sees repository-derived data of an orchestration (children's results, ...). */
+export async function canSeeRepoData(
+  prisma: Db,
+  viewer: Viewer,
+  row: { launchedById: string | null; repoId: string | null }
+): Promise<boolean> {
+  if (!row.repoId || viewer.admin || row.launchedById === viewer.sub) {
+    return true;
+  }
+  return (await reachableRepoIds(prisma, viewer, [row.repoId])).has(row.repoId);
+}
+
+export const WITHHELD_RESULT = 'The result is withheld: it may contain repository content.';
+
+/**
+ * A transcript message as a viewer who cannot reach the repository sees it: a child's result is
+ * withheld, and nothing else in the message names repository content. (Free text of the
+ * orchestrator and the launcher is the conversation, which the named team may read.)
+ */
+export function redactMessage(m: OrchestrationMessageDto): OrchestrationMessageDto {
+  if (m.kind !== 'CHILD_RESULT') {
+    return m;
+  }
+  const status = m.payload && typeof m.payload.status === 'string' ? m.payload.status : undefined;
+  return {
+    ...m,
+    body: WITHHELD_RESULT,
+    payload: {
+      childId: m.childId ?? (m.payload?.childId as string | undefined) ?? null,
+      ...(status ? { status } : {}),
+    },
+  };
 }
 
 // ── Views ───────────────────────────────────────────────────────────────────
@@ -172,12 +248,18 @@ interface ChildRow {
   workRequestId: string;
 }
 
-export function childView(row: ChildRow, undelivered: number): OrchestrationChildDto {
+export function childView(
+  row: ChildRow,
+  undelivered: number,
+  opts: { redactRepo?: boolean } = {}
+): OrchestrationChildDto {
   const parsed = ChildResultSchema.safeParse(row.resultJson);
-  const result = parsed.success ? parsed.data : null;
+  const result = opts.redactRepo ? null : parsed.success ? parsed.data : null;
   const ledger = row.workRequest?.activeWorkflows ?? [];
   const accrued = ledger.reduce((sum, w) => sum + (w.costUsdAccrued ?? 0), 0);
-  const branch = result?.branch ?? ledger.find((w) => w.assignedBranch)?.assignedBranch ?? null;
+  const branch = opts.redactRepo
+    ? null
+    : (result?.branch ?? ledger.find((w) => w.assignedBranch)?.assignedBranch ?? null);
   return {
     agentKey: row.agentKey,
     branch,
@@ -213,8 +295,10 @@ interface OrchestrationRow {
 export function summaryView(
   row: OrchestrationRow & {
     repo?: { organizationName: string | null; repoName: string | null } | null;
+    team?: { name: string } | null;
   },
-  counts: { childCount: number; costUsd: number; runningChildCount: number }
+  counts: { childCount: number; costUsd: number; runningChildCount: number },
+  opts: { redactRepo?: boolean } = {}
 ): OrchestrationSummaryDto {
   return {
     childCount: counts.childCount,
@@ -223,14 +307,16 @@ export function summaryView(
     id: row.id,
     launchedById: row.launchedById,
     repoId: row.repoId,
-    repoName: row.repo
-      ? row.repo.organizationName && row.repo.repoName
-        ? `${row.repo.organizationName}/${row.repo.repoName}`
-        : null
-      : null,
+    repoName:
+      row.repo && !opts.redactRepo
+        ? row.repo.organizationName && row.repo.repoName
+          ? `${row.repo.organizationName}/${row.repo.repoName}`
+          : null
+        : null,
     runningChildCount: counts.runningChildCount,
     status: isOneOf(ORCHESTRATION_STATUSES, row.status, 'FAILED'),
     teamId: row.teamId,
+    teamName: row.team?.name ?? null,
     title: row.title,
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -245,18 +331,63 @@ const CHILD_INCLUDE = {
 } as const;
 
 /** Everything `GET /:id` returns. `canControl` is decided by the caller. */
+export interface DetailRow extends OrchestrationRow {
+  allowlist: string[];
+  connectionIds: string[];
+  deliveryDefault?: string | null;
+  launchedBy: { name: string | null } | null;
+  repo: {
+    organizationName: string | null;
+    repoName: string | null;
+    team?: { name: string } | null;
+  } | null;
+  team: { name: string };
+  workRequest: {
+    activeWorkflows: Array<{
+      costUsdAccrued: number;
+      tokensInputUsed?: bigint | number | null;
+      tokensOutputUsed?: bigint | number | null;
+    }>;
+  } | null;
+}
+
+const DELIVERY_DEFAULTS = ['none', 'branch', 'draft_pr'] as const;
+
+/**
+ * What is left of the orchestrator's own tier budget, in USD, when the tier has a token cap and
+ * the orchestrator has spent some of it: the spend so far scaled by the unused share of the
+ * binding cap (an estimate at the price per token seen so far). Null when there is no cap, no
+ * spend yet, or the defaults cannot be read.
+ */
+async function remainingBudgetUsd(
+  tier: string,
+  ledger: NonNullable<DetailRow['workRequest']>['activeWorkflows']
+): Promise<number | null> {
+  try {
+    const cap = (await resolveWorkflowDefaults()).budgetTiers?.[tier];
+    if (!cap || cap.inputTokens <= 0 || cap.outputTokens <= 0) {
+      return null;
+    }
+    const usedIn = ledger.reduce((s, w) => s + Number(w.tokensInputUsed ?? 0), 0);
+    const usedOut = ledger.reduce((s, w) => s + Number(w.tokensOutputUsed ?? 0), 0);
+    const spent = ledger.reduce((s, w) => s + w.costUsdAccrued, 0);
+    const used = Math.max(usedIn / cap.inputTokens, usedOut / cap.outputTokens);
+    if (!(used > 0) || !(spent > 0)) {
+      return null;
+    }
+    return used >= 1 ? 0 : (spent / used) * (1 - used);
+  } catch {
+    return null;
+  }
+}
+
 export async function buildDetail(
   prisma: Db,
-  row: OrchestrationRow & {
-    allowlist: string[];
-    connectionIds: string[];
-    launchedBy: { name: string | null } | null;
-    repo: { organizationName: string | null; repoName: string | null } | null;
-    team: { name: string };
-    workRequest: { activeWorkflows: Array<{ costUsdAccrued: number }> } | null;
-  },
-  canControl: boolean
+  row: DetailRow,
+  ctx: { canControl: boolean; viewer: Viewer }
 ): Promise<OrchestrationDetailDto> {
+  const { canControl, viewer } = ctx;
+  const sees = await canSeeRepoData(prisma, viewer, row);
   const children = await prisma.orchestrationChild.findMany({
     include: CHILD_INCLUDE,
     orderBy: { createdAt: 'asc' },
@@ -293,39 +424,78 @@ export async function buildDetail(
         where: { kind: 'ATTACH_REQUEST', orchestrationId: row.id },
       });
   const attachPayload = (attachMsg?.payload ?? {}) as Record<string, unknown>;
-  const pendingAttach =
-    attachMsg && isAttachRequestPending(attachPayload)
-      ? {
-          candidateRepoId:
-            typeof attachPayload.candidateRepoId === 'string'
-              ? attachPayload.candidateRepoId
-              : typeof attachPayload.candidate === 'string'
-                ? attachPayload.candidate
-                : null,
-          messageId: attachMsg.id,
-          reason: typeof attachPayload.reason === 'string' ? attachPayload.reason : attachMsg.body,
-        }
+  const deliveryDefault = (DELIVERY_DEFAULTS as readonly string[]).includes(
+    row.deliveryDefault ?? ''
+  )
+    ? (row.deliveryDefault as (typeof DELIVERY_DEFAULTS)[number])
+    : null;
+  let pendingAttach: OrchestrationDetailDto['pendingAttach'] = null;
+  if (attachMsg && isAttachRequestPending(attachPayload)) {
+    const candidateRepoId =
+      typeof attachPayload.candidateRepoId === 'string'
+        ? attachPayload.candidateRepoId
+        : typeof attachPayload.candidate === 'string'
+          ? attachPayload.candidate
+          : null;
+    // The candidate's name and billing team only to someone who can reach that repository.
+    const candidate = candidateRepoId
+      ? await prisma.connection.findFirst({
+          select: { organizationName: true, repoName: true, team: { select: { name: true } } },
+          where: {
+            id: candidateRepoId,
+            ...(viewer.admin ? {} : repoMemberWhere({ userId: viewer.sub })),
+          },
+        })
       : null;
+    pendingAttach = {
+      billingTeamName: candidate?.team.name ?? null,
+      candidateRepoId,
+      candidateRepoName:
+        candidate?.organizationName && candidate.repoName
+          ? `${candidate.organizationName}/${candidate.repoName}`
+          : null,
+      deliveryDefault,
+      messageId: attachMsg.id,
+      reason: typeof attachPayload.reason === 'string' ? attachPayload.reason : attachMsg.body,
+    };
+  }
 
   const childViews = children.map((c) =>
-    childView(c as unknown as ChildRow, c.runId ? (undelivered.get(c.runId) ?? 0) : 0)
+    childView(c as unknown as ChildRow, c.runId ? (undelivered.get(c.runId) ?? 0) : 0, {
+      redactRepo: !sees,
+    })
   );
   const childrenUsd = childViews.reduce((s, c) => s + c.costUsd, 0);
-  const orchestratorUsd =
-    row.workRequest?.activeWorkflows.reduce((s, w) => s + w.costUsdAccrued, 0) ?? 0;
+  const ledger = row.workRequest?.activeWorkflows ?? [];
+  const orchestratorUsd = ledger.reduce((s, w) => s + w.costUsdAccrued, 0);
   return {
-    ...summaryView(row, {
-      childCount: childViews.length,
-      costUsd: childrenUsd + orchestratorUsd,
-      runningChildCount: childViews.filter((c) => c.status === 'STARTING' || c.status === 'RUNNING')
-        .length,
-    }),
+    ...summaryView(
+      row,
+      {
+        childCount: childViews.length,
+        costUsd: childrenUsd + orchestratorUsd,
+        runningChildCount: childViews.filter(
+          (c) => c.status === 'STARTING' || c.status === 'RUNNING'
+        ).length,
+      },
+      { redactRepo: !sees }
+    ),
     allowlist: row.allowlist,
+    billing: {
+      // Children spawned after an attach bill the repository's owning team; before it, the named team.
+      childrenTeamName: row.repo?.team?.name ?? row.team.name,
+      orchestratorTeamName: row.team.name,
+    },
+    budget: {
+      remainingUsd: await remainingBudgetUsd(row.budgetTier, ledger),
+      tier: row.budgetTier,
+    },
     budgetTier: row.budgetTier,
     canControl,
     children: childViews,
     connections: row.connectionIds.map((id) => ({ id, name: names.get(id) ?? null })),
     cost: { childrenUsd, orchestratorUsd, totalUsd: childrenUsd + orchestratorUsd },
+    deliveryDefault,
     launchedByName: row.launchedBy?.name ?? null,
     pendingApprovals: approvals.map((a) => approvalView(a, names)),
     pendingAttach,

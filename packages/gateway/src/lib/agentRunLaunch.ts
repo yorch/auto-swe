@@ -106,6 +106,23 @@ export function splitRef(ref: string): { key: string; version: number | undefine
     : { key: ref.slice(0, at), version: Number(ref.slice(at + 1)) };
 }
 
+/**
+ * The deterministic workflow id of an agent run launched with an `Idempotency-Key`. One definition
+ * for the launch and for the orchestration spawn route's own replay lookup, so the lookup cannot
+ * drift from the id the launch derives.
+ */
+export function agentRunWorkflowId(
+  scopeId: string,
+  caller: RouteCaller,
+  idempotencyKey: string
+): string {
+  return workflowIdFromIdempotencyKey(
+    'agent',
+    `${scopeId.replace(/-/g, '').slice(0, 8)}-${idempotencyCallerScope(caller)}`,
+    idempotencyKey
+  );
+}
+
 function error(reply: FastifyReply, status: number, code: string, message: string) {
   return sendError(reply, status, code, message);
 }
@@ -160,8 +177,24 @@ export interface OrchestrationChildSeam {
   existing: (temporalWorkflowId: string) => Promise<Record<string, unknown> | null>;
   /** Removes the child row when the workflow never started, ahead of the ledger compensation. */
   onStartFailed: (workRequestId: string) => Promise<void>;
-  /** The success body, in place of the agent-run launch response. */
-  respond: (launched: { temporalWorkflowId: string; workRequestId: string }) => unknown;
+  /**
+   * Runs once the workflow has started. A refusal means the orchestration ended while the start
+   * was in flight: the hook has cancelled the just-started workflow and marked the child, and the
+   * launch answers with the refusal instead of a success.
+   */
+  afterStart?: (launched: {
+    temporalWorkflowId: string;
+    workRequestId: string;
+  }) => Promise<SeamRefusal | null>;
+  /**
+   * The success body, in place of the agent-run launch response. `clamped` is set when the
+   * requested `maxSteps` was above the platform ceiling and was lowered to it.
+   */
+  respond: (launched: {
+    clamped?: { maxSteps: number };
+    temporalWorkflowId: string;
+    workRequestId: string;
+  }) => unknown;
 }
 
 export interface LaunchInput {
@@ -412,12 +445,20 @@ export function createAgentRunLauncher(fastify: FastifyInstance) {
       maxSteps: settings['workspace.agentRunMaxSteps'],
       maxWallClockSeconds: settings['workspace.agentRunMaxWallClockSeconds'],
     };
-    if (input.maxSteps !== undefined && input.maxSteps > ceilings.maxSteps) {
+    // An orchestrator that asks for more steps than the ceiling allows gets the ceiling, and the
+    // response says so; a direct launch still refuses.
+    let maxSteps = input.maxSteps;
+    let clamped: { maxSteps: number } | undefined;
+    if (orch && maxSteps !== undefined && maxSteps > ceilings.maxSteps) {
+      clamped = { maxSteps: ceilings.maxSteps };
+      maxSteps = ceilings.maxSteps;
+    }
+    if (maxSteps !== undefined && maxSteps > ceilings.maxSteps) {
       return error(
         reply,
         400,
         'CAP_EXCEEDS_CEILING',
-        `maxSteps ${input.maxSteps} is above the platform ceiling of ${ceilings.maxSteps}`
+        `maxSteps ${maxSteps} is above the platform ceiling of ${ceilings.maxSteps}`
       );
     }
     if (
@@ -464,9 +505,8 @@ export function createAgentRunLauncher(fastify: FastifyInstance) {
     const requestPayload = JSON.stringify(AgentRunReplayInput.parse(input));
     // The key's scope: the repository, or for a repo-less child the named team.
     const scope8 = (repo?.id ?? target.teamId).replace(/-/g, '').slice(0, 8);
-    const caller8 = idempotencyCallerScope(caller);
     const temporalWorkflowId = input.idempotencyKey
-      ? workflowIdFromIdempotencyKey('agent', `${scope8}-${caller8}`, input.idempotencyKey)
+      ? agentRunWorkflowId(repo?.id ?? target.teamId, caller, input.idempotencyKey)
       : `agent-${scope8}-${crypto.randomUUID().replace(/-/g, '')}`;
     const replay = async () => {
       if (orch) {
@@ -586,7 +626,7 @@ export function createAgentRunLauncher(fastify: FastifyInstance) {
       ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
       deliver: input.deliver,
       ...(egressPolicy ? { egressPolicy } : {}),
-      maxSteps: input.maxSteps,
+      maxSteps,
       maxWallClockSeconds: input.maxWallClockSeconds,
       ...(orch
         ? {
@@ -752,7 +792,15 @@ export function createAgentRunLauncher(fastify: FastifyInstance) {
       return error(reply, 409, 'RUN_CONFLICT', 'A run with this idempotency key already exists');
     }
     if (orch) {
-      return reply.status(201).send(orch.respond({ temporalWorkflowId, workRequestId }));
+      if (orch.afterStart) {
+        const late = await orch.afterStart({ temporalWorkflowId, workRequestId });
+        if (late) {
+          return refuse(late.status ?? 409, late.code, late.message);
+        }
+      }
+      return reply
+        .status(201)
+        .send(orch.respond({ ...(clamped ? { clamped } : {}), temporalWorkflowId, workRequestId }));
     }
     return reply.status(201).send({
       data: {
