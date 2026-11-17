@@ -1783,8 +1783,8 @@ authorized without it does not.
 
 ### Plugins: the agent binding becomes a list, and hooks and team enablement are per plugin (`e062295`)
 
-**Affected.** Any deployment that upgrades across migrations `20261117000000_plugins` and
-`20261117000001_plugin_skill_deactivation` (the second one is part of commit `691837b`). In a deployment
+**Affected.** Any deployment that upgrades across migrations `20261117200000_plugins` and
+`20261117200001_plugin_skill_deactivation` (the second one is part of commit `691837b`). In a deployment
 that ran earlier code with an agent bound to a harness profile, every such binding is converted in
 place and the actions below apply to it.
 
