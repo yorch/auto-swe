@@ -188,9 +188,31 @@ Required schema fields precede optional fields, preserving declared order within
 The outer sections carry the step numbers; Details and Review identify the form's current state.
 Setup warnings and mode guidance expand from compact disclosures without losing their details.
 
-A git-repository workflow without an input schema collects a required Repository and
-multi-line Description, plus an optional Ticket ID. Task name labels the request; Description
-is the agent's brief. Other workspace providers keep their own inputs. Free-text schema fields
+A git-repository workflow without an input schema collects a required Repository, a Task name,
+a multi-line Description and a Ticket ID. Only the Repository is required; the other three follow
+these rules:
+
+- **Task name** is display only. The run list shows it. When it is absent the title falls back to
+  the first line of the Description, then to the Ticket ID. It never determines the Ticket ID.
+- **Ticket ID** names the run's branch and workflow ID and, when an issue tracker is configured,
+  selects the ticket the run reads. An absent or empty Ticket ID makes the run synthetic: it reads
+  no tracker context and posts no ticket comments. A Task name that looks like a ticket ID is not
+  used as one.
+- **Description** is the agent's brief. It may be left empty when a Ticket ID is given and the
+  ticket can be read, and only for a workflow whose input schema declares a string `description`.
+  The server then builds the brief from the ticket after the launch is authorized: its first line
+  is `Ticket <id>`, and the title and body sit inside a `<ticket>` fence as data, with every angle
+  bracket in them neutralised. A request with no Task name and no Description is titled with that
+  first line. If the ticket cannot be read, the tracker is unreachable, or the brief does not
+  satisfy the schema's rules for `description`, the launch is refused with
+  `DESCRIPTION_REQUIRED`. Text typed in Description wins over the ticket. The agent
+  also receives the ticket as fenced context, and on a conflict it follows the Description and
+  records the conflict in its implementation notes.
+- **Fetch title** beside the Ticket ID calls `GET /api/v1/tickets/preview` with the ticket ID and
+  the connection ID. It shows the ticket's title, status and URL, and nothing else from the ticket.
+  It answers `503 TRACKER_UNAVAILABLE` when the tracker could not be read.
+
+Other workspace providers keep their own inputs. Free-text schema fields
 named description, brief, instructions, message or prdContent use multi-line inputs unless
 they declare fixed choices.
 
@@ -291,3 +313,15 @@ Guided paths build on those pieces:
   it is logged and the first search tries again. The server needs the docs on disk beside it. If
   the text search fails, the reader keeps filtering by title and summary and says the text search
   is unavailable.
+
+## Limitations
+
+- **Fetch title and ticket reads are not scoped per project on Jira and Linear.** Those trackers have
+  no per-project scope, so any launcher who can reach a repository can read the title of any ticket
+  that the platform's tracker credential can see, through **Fetch title**.
+- **A launch without a repository reads any Jira or Linear ticket into the run, and the preview
+  needs a reachable repository.** With no repository there is no scope to check the ticket against,
+  so the brief can hold any ticket the platform's tracker credential can see. **Fetch title** is
+  offered only once a repository is chosen.
+- **Typed Description text is not scanned for prompt injection.** It reaches the agent as the brief
+  in the user message, unchanged, as any launcher's text does.
