@@ -171,6 +171,7 @@ jobs:
           LIVE_GITHUB_REVIEW: '1'
           LIVE_KNOWLEDGE_PGVECTOR: '1'
           LIVE_MCP_OAUTH: '1'
+          LIVE_RUN_PLAN: '1'
         run: |
           rc=0
           yarn workspace @auto-swe/shared build
@@ -191,6 +192,9 @@ jobs:
           echo "::endgroup::"
           echo "::group::evals"
           yarn test packages/worker/src/live/evals.live.test.ts || rc=1
+          echo "::endgroup::"
+          echo "::group::run plan generation"
+          yarn test packages/worker/src/live/runPlanGeneration.live.test.ts || rc=1
           echo "::endgroup::"
           echo "::group::end to end"
           yarn test packages/worker/src/live/endToEnd.live.test.ts || rc=1

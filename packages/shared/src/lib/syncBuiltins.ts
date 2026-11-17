@@ -38,6 +38,7 @@ import {
   PRODUCT_ANALYST_PROMPT,
   REPO_ONBOARDER_PROMPT,
   REVIEW_FIX_SYSTEM_PROMPT,
+  RUN_PLAN_ROUTER_PROMPT,
   SECURITY_AUDITOR_PROMPT,
   SECURITY_REVIEW_PROMPT,
   SUPPORT_RESPONDER_PROMPT,
@@ -986,6 +987,16 @@ export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     modelSpec: 'anthropic/claude-haiku-4-5-20251001',
     name: 'PR Titler',
     systemPrompt: PR_TITLER_PROMPT,
+  },
+  {
+    // Launch-time generation: ranks the templates a requester may launch for a stated goal. Its
+    // output is intersected with the supplied ids by the activity, so template text can only
+    // reorder. Resolved on demand (not in MODEL_BACKED_AGENT_KEYS), so it never gates worker boot.
+    description: 'Ranks launchable workflow templates for a stated goal. No tools.',
+    key: 'runPlanRouter',
+    modelSpec: 'anthropic/claude-haiku-4-5-20251001',
+    name: 'Run Plan Router',
+    systemPrompt: RUN_PLAN_ROUTER_PROMPT,
   },
 ];
 

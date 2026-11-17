@@ -1,3 +1,13 @@
+export type { RunPlanCatalogInput } from './authoring.js';
+export {
+  buildRunPlanRepairMessage,
+  buildRunPlanRequestMessage,
+  launchableCatalogAgents,
+  RUN_PLAN_INTENT_MAX_CHARS,
+  RUN_PLAN_NODE_TYPES,
+  renderRunPlanCatalog,
+  wrapRunPlanIntent,
+} from './authoring.js';
 export type { CanonicalCore } from './canonicalCore.js';
 export {
   buildCanonicalCore,

@@ -33,6 +33,8 @@ export { RepoDependencyScanOneWorkflow } from './repoDependencyScanOne.js';
 export { RepoSetupFileProposalWorkflow } from './repoSetupFileProposal.js';
 export { reviewFixRetryWorkflow } from './reviewFixRetry.js';
 export { RunnableWorkflow } from './runnable.js';
+export { RunPlanGenerationWorkflow } from './runPlanGeneration.js';
+export { RunPlanRouteWorkflow } from './runPlanRoute.js';
 export { ScheduledAgentTraceRollupWorkflow } from './scheduledAgentTraceRollup.js';
 export { ScheduledAgentTranscriptPruneWorkflow } from './scheduledAgentTranscriptPrune.js';
 export { ScheduledAuditActivityPruneWorkflow } from './scheduledAuditActivityPrune.js';

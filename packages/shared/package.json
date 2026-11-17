@@ -51,6 +51,7 @@
     "./lib/agentRun": "./dist/lib/agentRun.js",
     "./lib/plannedRun": "./dist/lib/plannedRun.js",
     "./lib/runPlanAgentPins": "./dist/lib/runPlanAgentPins.js",
+    "./lib/runPlanWorkflows": "./dist/lib/runPlanWorkflows.js",
     "./lib/agentRunAdmission": "./dist/lib/agentRunAdmission.js",
     "./lib/orchestration": "./dist/lib/orchestration.js",
     "./lib/orchestrationApi": "./dist/lib/orchestrationApi.js",
