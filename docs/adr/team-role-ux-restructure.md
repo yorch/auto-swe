@@ -129,3 +129,10 @@
 **Reason**: Deriving from the desk makes it impossible for the team page and the desk to disagree. Re-attesting the explorer would claim a review nobody did.
 **Alternatives considered**: A separate count query was rejected as a second definition of the same thing. Running `explorer:review` was rejected for the reason above.
 
+
+## D16 — 2026-11-16 — Tasks 12 to 15: one migration, and the contract is written first
+
+**Status**: Accepted
+**Decision**: The three schema changes of Tasks 12, 14 and 15 (`failure_assignments`, `workflow_human_steps.last_nudged_at`, `team_budget_requests`) ship as one migration, `20261116000000_team_attention`, written before the implementation. It carries two hand-written statements Prisma cannot express: a partial unique index that allows one pending budget request per team, and a `CHECK` that a reason is 1 to 500 characters. `FailureAssignment` and `TeamBudgetRequest` are in the tenant guard's list, so every mass query on them must carry a team filter. The API types the three features share are in `packages/shared/src/types/api.ts`.
+**Reason**: The three features are built in parallel against one schema, so a single migration generated up front avoids three migrations racing for a timestamp and lets every implementer start from generated client types. `yarn migrations:check` confirms it applies and matches `schema.prisma`.
+**Alternatives considered**: Three migrations, one per task, as the plan said, were rejected for the reason above.

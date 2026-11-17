@@ -2371,3 +2371,53 @@ export interface HarnessProfilePreview {
   hooksEnabled?: boolean;
   hookChanges?: HarnessProfileHookChanges;
 }
+
+/**
+ * One failure on a team's work whose launcher is no longer a member of the team and that nobody
+ * has been assigned yet, as a lead sees it in the Manage tab. `GET /api/v1/teams/:id/attention/failures`.
+ */
+export interface TeamAttentionFailure {
+  runId: string;
+  requestId: string | null;
+  title: string;
+  /** `organization/repository`. */
+  repoName: string;
+  /** When the attempt ended, ISO 8601. */
+  failedAt: string;
+  /** Display name of the former launcher; null when the account is gone. */
+  formerLauncherName: string | null;
+}
+
+/** Body of `POST /api/v1/teams/:id/failure-assignments`. */
+export interface CreateFailureAssignmentBody {
+  runId: string;
+  assigneeId: string;
+}
+
+/** The `data` of a created failure assignment (201). `WorkflowRun.launchedById` is never changed. */
+export interface FailureAssignmentResult {
+  runId: string;
+  assigneeId: string;
+  /** ISO 8601. */
+  assignedAt: string;
+}
+
+/** The `data` of `POST /api/v1/human-steps/:id/nudge` (200). */
+export interface HumanStepNudgeResult {
+  /** ISO 8601. */
+  nudgedAt: string;
+}
+
+/** A pending request that an admin change a team's monthly cap. It carries no amount. */
+export interface TeamBudgetRequestSummary {
+  id: string;
+  reason: string;
+  requestedBy: { id: string; name: string | null };
+  /** ISO 8601. */
+  createdAt: string;
+}
+
+/** Body of `POST /api/v1/teams/:id/budget-requests`: a reason of 1 to 500 characters. */
+export interface CreateTeamBudgetRequestBody {
+  reason: string;
+}
