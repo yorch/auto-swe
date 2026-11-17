@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { MCP_SCOPE_ADMIN } from '../mcpOAuth.js';
 import type { BridgeResponse, McpBridge, McpCaller } from './bridge.js';
 
 /**
@@ -190,7 +191,17 @@ export interface ToolKit {
   ) => void;
 }
 
-export function createToolKit(server: McpServer, deps: McpToolDeps, caller: McpCaller): ToolKit {
+/**
+ * `adminTools` names the tools the manifest declares as the admin tier (`domains/index.ts`): the
+ * kit registers one only for a caller holding `mcp:admin`, so without it the tool is absent from
+ * `tools/list`.
+ */
+export function createToolKit(
+  server: McpServer,
+  deps: McpToolDeps,
+  caller: McpCaller,
+  adminTools: readonly string[] = []
+): ToolKit {
   const { app, bridge } = deps;
   const get = (path: string, params?: URLSearchParams) => bridge.get(app, caller, path, params);
 
@@ -209,6 +220,9 @@ export function createToolKit(server: McpServer, deps: McpToolDeps, caller: McpC
       args: z.infer<z.ZodObject<Shape>>
     ) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>
   ) {
+    if (adminTools.includes(name) && !caller.scopes.includes(MCP_SCOPE_ADMIN)) {
+      return;
+    }
     server.registerTool(
       name,
       {

@@ -6,6 +6,7 @@ import {
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { mcpBridgePlugin } from '../lib/mcp/bridge.js';
+import { DOMAIN_ADMIN_ROUTES } from '../lib/mcp/domains/index.js';
 import { createMcpTokenVerifier } from '../lib/mcpTokenVerifier.js';
 import authPlugin, { requireAuth } from '../plugins/auth.js';
 import { mcpRoutes } from '../routes/mcp.js';
@@ -57,7 +58,7 @@ export async function buildMcpTestApp(
     user: { findUnique: async () => ({ isActive: true, role: 'ENGINEER', slackId: null }) },
   } as never);
   await app.register(authPlugin);
-  const verifier = createMcpTokenVerifier(fakeVerifierDeps([key]));
+  const verifier = createMcpTokenVerifier(fakeVerifierDeps([key], { admin: true }));
   await app.register(mcpBridgePlugin, { verifier });
   await app.register(mcpRoutes, {
     allowedOriginHostnames: [],
@@ -73,7 +74,7 @@ export async function buildMcpTestApp(
   for (const [signature, stub] of Object.entries(routes)) {
     const [method, path] = signature.split(' ') as [string, string];
     app.route({
-      config: { mcpScope: 'read' },
+      config: { mcpScope: DOMAIN_ADMIN_ROUTES.includes(signature) ? 'admin' : 'read' },
       handler: async (_request, reply) => {
         if (stub.status && stub.status !== 200) {
           return reply.status(stub.status).send({
@@ -95,7 +96,8 @@ export async function buildMcpTestApp(
   }
   await app.ready();
 
-  const token = await mintToken({ key });
+  // Domain tests exercise projections, and the admin tier's tools exist only with `mcp:admin`.
+  const token = await mintToken({ claims: { scope: 'mcp:read mcp:admin' }, key });
   let seq = 0;
   async function callTool(name: string, args: Record<string, unknown> = {}) {
     const res = await app.inject({

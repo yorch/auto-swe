@@ -18,7 +18,7 @@ import fp from 'fastify-plugin';
 import jwt from 'jsonwebtoken';
 import { type AssistantAccess, assistantAccess } from '../lib/assistantPolicy.js';
 import { MCP_BRIDGE_HEADER } from '../lib/mcp/bridge.js';
-import { MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../lib/mcpOAuth.js';
+import { MCP_SCOPE_ADMIN, MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../lib/mcpOAuth.js';
 import {
   ORCHESTRATION_TOKEN_AUDIENCE,
   ORCHESTRATION_TOKEN_PREFIX,
@@ -153,9 +153,10 @@ declare module 'fastify' {
     activity?: 'read' | 'export';
     /**
      * Opt a route in to MCP tool calls. A bridged call is refused on a route that does not
-     * declare this, and on one that declares `read` when the token has no `mcp:read`.
+     * declare this, and on one whose scope the token does not hold (`read` needs `mcp:read`,
+     * `write` needs `mcp:write`, `admin` needs `mcp:admin`: the admin-tier read tools).
      */
-    mcpScope?: 'read' | 'write';
+    mcpScope?: 'read' | 'write' | 'admin';
     /**
      * Opt a route in to service principal tokens: the scopes a service token must carry to call
      * it. A route that does not declare this answers a service token with 401
@@ -917,7 +918,7 @@ async function authenticateBridgedCall(
     return { code: 'FORBIDDEN', message: 'Invalid bridge credentials', status: 403 };
   }
   const mcpScope = request.routeOptions.config.mcpScope;
-  if (mcpScope !== 'read' && mcpScope !== 'write') {
+  if (mcpScope !== 'read' && mcpScope !== 'write' && mcpScope !== 'admin') {
     return { code: 'FORBIDDEN', message: 'This route is not available to MCP', status: 403 };
   }
   const authHeader = request.headers.authorization;
@@ -937,7 +938,12 @@ async function authenticateBridgedCall(
   ) {
     return { code: 'TOKEN_INVALID', message: 'Invalid token', status: 401 };
   }
-  const needed = mcpScope === 'write' ? MCP_SCOPE_WRITE : MCP_SCOPE_READ;
+  const needed =
+    mcpScope === 'write'
+      ? MCP_SCOPE_WRITE
+      : mcpScope === 'admin'
+        ? MCP_SCOPE_ADMIN
+        : MCP_SCOPE_READ;
   if (!authInfo.scopes.includes(needed)) {
     return {
       code: 'INSUFFICIENT_SCOPE',

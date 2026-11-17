@@ -221,7 +221,9 @@ export function DeviceScreen({ search }: { search: string }) {
                 <div className="p-4">
                   <div className="label-mono mb-2.5">It will be able to</div>
                   <ul className="space-y-3 text-sm leading-relaxed text-paper-300">
-                    {(scopes.includes('mcp:read') || scopes.includes('mcp:write')) && (
+                    {(scopes.includes('mcp:read') ||
+                      scopes.includes('mcp:write') ||
+                      scopes.includes('mcp:admin')) && (
                       <li className="flex gap-2.5">
                         <Icon className="mt-0.5 text-success-400" name="check" size={15} />
                         <span>
@@ -236,6 +238,15 @@ export function DeviceScreen({ search }: { search: string }) {
                         <span>
                           <span className="font-semibold text-paper-100">Write</span>: launch and
                           cancel work as you.
+                        </span>
+                      </li>
+                    )}
+                    {scopes.includes('mcp:admin') && (
+                      <li className="flex gap-2.5">
+                        <Icon className="mt-0.5 text-warning-400" name="alert" size={15} />
+                        <span>
+                          <span className="font-semibold text-paper-100">Admin read</span>: see the
+                          agent library, skills and budget reports.
                         </span>
                       </li>
                     )}
@@ -259,6 +270,12 @@ export function DeviceScreen({ search }: { search: string }) {
                 <Alert title="Write access requested" variant="warning">
                   This app can launch and cancel work as you, using your identity and credentials.
                   Templates may push branches or open pull requests.
+                </Alert>
+              )}
+              {scopes.includes('mcp:admin') && (
+                <Alert title="Admin read access requested" variant="warning">
+                  This app can read the agent library, skills and budget reports, as far as your own
+                  role allows.
                 </Alert>
               )}
               <p className="text-sm leading-relaxed text-paper-500">

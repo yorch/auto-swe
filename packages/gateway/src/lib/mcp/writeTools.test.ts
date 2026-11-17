@@ -19,7 +19,7 @@ import {
 } from '../../test/mcpTokens.js';
 import { createMcpTokenVerifier } from '../mcpTokenVerifier.js';
 import { mcpBridgePlugin } from './bridge.js';
-import { DOMAIN_TOOL_NAMES } from './domains/index.js';
+import { NON_ADMIN_TOOL_NAMES } from './domains/index.js';
 
 vi.mock('@auto-swe/shared/lib/repoAccessGate', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -347,7 +347,7 @@ describe('the write tools', () => {
           'start_template_run',
           'submit_work_request',
           'wait_for_run',
-          ...DOMAIN_TOOL_NAMES,
+          ...NON_ADMIN_TOOL_NAMES,
         ].sort()
       );
     });
@@ -360,12 +360,12 @@ describe('the write tools', () => {
 
     it('lists no write tool when the user consented to read only, whatever the token says', async () => {
       const s = await setup({ consentScopes: ['mcp:read', 'offline_access'] });
-      expect(await toolNames(s, s.writeToken)).toHaveLength(8 + DOMAIN_TOOL_NAMES.length);
+      expect(await toolNames(s, s.writeToken)).toHaveLength(8 + NON_ADMIN_TOOL_NAMES.length);
     });
 
     it('lists no write tool while writes are disabled, even for a token that carries mcp:write', async () => {
       const s = await setup({ writeToolsEnabled: false });
-      expect(await toolNames(s, s.writeToken)).toHaveLength(8 + DOMAIN_TOOL_NAMES.length);
+      expect(await toolNames(s, s.writeToken)).toHaveLength(8 + NON_ADMIN_TOOL_NAMES.length);
     });
 
     it('describes both tools with the right annotations and strict inputs', async () => {

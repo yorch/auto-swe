@@ -14,7 +14,7 @@ vi.mock('./betterAuth.js', () => ({
 import { ipRateLimitKey } from '../plugins/auth.js';
 import { registerBetterAuthRoutes } from './betterAuthHandler.js';
 import { registerFormBodyParser } from './formBody.js';
-import { mcpIssuanceRefusal } from './mcpOAuth.js';
+import { MCP_SCOPES, mcpIssuanceRefusal } from './mcpOAuth.js';
 import {
   type McpGateSettings,
   type McpOAuthGateOptions,
@@ -386,6 +386,12 @@ describe('mcpOAuthGate: authorize', () => {
     expect((await h.app.inject({ method: 'GET', url })).statusCode).toBe(200);
   });
 
+  it('lets mcp:admin through while writes are off: it has no operator switch', async () => {
+    const h = await makeApp();
+    const url = `/api/auth/oauth2/authorize?${authorizeQuery({ scope: 'mcp:read mcp:admin offline_access' })}`;
+    expect((await h.app.inject({ method: 'GET', url })).statusCode).toBe(200);
+  });
+
   it('asks for a scope while writes are off, since an absent one means the client registered scopes', async () => {
     const h = await makeApp();
     const url = `/api/auth/oauth2/authorize?${authorizeQuery({ scope: null })}`;
@@ -725,6 +731,25 @@ describe('mcpIssuanceRefusal', () => {
     expect(
       mcpIssuanceRefusal({ isActive: true }, ['mcp:write'], { ...on, writeToolsEnabled: true })
     ).toBeNull();
+  });
+});
+
+describe('the mcp:admin scope', () => {
+  const off = { enabled: true, writeToolsEnabled: false };
+
+  it('is issued with no operator switch, while writes are off', () => {
+    expect(mcpIssuanceRefusal({ isActive: true }, ['mcp:read', 'mcp:admin'], off)).toBeNull();
+    expect(mcpIssuanceRefusal({ isActive: true }, ['mcp:admin'], off)).toBeNull();
+  });
+
+  it('does not unlock write: asking for both while writes are off is still refused', () => {
+    expect(mcpIssuanceRefusal({ isActive: true }, ['mcp:admin', 'mcp:write'], off)).toBeTruthy();
+  });
+
+  it('is a scope the server knows, and an unknown one is not', () => {
+    expect(MCP_SCOPES).toContain('mcp:admin');
+    expect(MCP_SCOPES).toEqual(['mcp:read', 'mcp:write', 'mcp:admin', 'offline_access']);
+    expect(MCP_SCOPES as readonly string[]).not.toContain('mcp:root');
   });
 });
 

@@ -3,6 +3,7 @@ import { signedOAuthQuery } from './oauthQuery';
 /** What an MCP client may be granted; the same names the gateway's OAuth server uses. */
 export const MCP_SCOPE_READ = 'mcp:read';
 export const MCP_SCOPE_WRITE = 'mcp:write';
+export const MCP_SCOPE_ADMIN = 'mcp:admin';
 export const MCP_SCOPE_OFFLINE = 'offline_access';
 
 /** How long a connection survives without being used (the gateway's refresh-token lifetime). */
@@ -80,7 +81,14 @@ export function resumeUrl(value: unknown): string | null {
   }
 }
 
-/** The scopes to grant: everything requested, except write unless the user allowed it. */
-export function grantedScopes(requested: readonly string[], allowWrite: boolean): string[] {
-  return requested.filter((scope) => scope !== MCP_SCOPE_WRITE || allowWrite);
+/** The scopes to grant: everything requested, except write and admin unless the user allowed each. */
+export function grantedScopes(
+  requested: readonly string[],
+  allowWrite: boolean,
+  allowAdmin: boolean
+): string[] {
+  return requested.filter(
+    (scope) =>
+      (scope !== MCP_SCOPE_WRITE || allowWrite) && (scope !== MCP_SCOPE_ADMIN || allowAdmin)
+  );
 }

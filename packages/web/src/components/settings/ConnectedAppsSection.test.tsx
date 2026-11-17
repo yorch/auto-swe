@@ -35,6 +35,19 @@ describe('ConnectedAppsSection', () => {
     expect(screen.getAllByText('127.0.0.1:33333')).toHaveLength(2);
     expect(screen.getAllByText('Unverified')).toHaveLength(2);
     expect(screen.getByText('Can write')).toBeTruthy();
+    expect(screen.queryByText('Admin read')).toBeNull();
+  });
+
+  it('marks an app that holds the admin scope', async () => {
+    setupFetchMock({
+      '/api/v1/me/mcp-grants': () => ({
+        data: [grant({ scopes: ['mcp:read', 'mcp:admin'] })],
+        mcp: { enabled: true, writeToolsEnabled: false },
+      }),
+    });
+    render(withQuery(<ConnectedAppsSection />));
+    expect(await screen.findByText('Admin read')).toBeTruthy();
+    expect(screen.queryByText('Can write')).toBeNull();
   });
 
   it('disconnects an app after confirmation', async () => {

@@ -1,6 +1,8 @@
 import './mcpDeviceFlow.pg.js';
 import crypto from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import http from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { invalidateSettingsCache } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
@@ -750,7 +752,12 @@ describe.skipIf(!enabled)('OAuth authorization server against Postgres', () => {
       const resource = await prisma.oauthResource.findUniqueOrThrow({
         where: { identifier: MCP_RESOURCE },
       });
-      expect(resource.allowedScopes).toEqual(['mcp:read', 'mcp:write', 'offline_access']);
+      expect(resource.allowedScopes).toEqual([
+        'mcp:read',
+        'mcp:write',
+        'mcp:admin',
+        'offline_access',
+      ]);
       expect(resource.disabled).toBeFalsy();
     });
   });
@@ -1001,7 +1008,59 @@ describe.skipIf(!enabled)('OAuth authorization server against Postgres', () => {
       const row = await prisma.oauthResource.findUniqueOrThrow({
         where: { identifier: MCP_RESOURCE },
       });
-      expect(row.allowedScopes).toEqual(['mcp:read', 'mcp:write', 'offline_access']);
+      expect(row.allowedScopes).toEqual(['mcp:read', 'mcp:write', 'mcp:admin', 'offline_access']);
+    });
+  });
+
+  describe('the admin scope migration', () => {
+    const migrationSql = readFileSync(
+      fileURLToPath(
+        new URL(
+          '../../../shared/src/prisma/migrations/20261117100000_oauth_clients_grant_admin_scope/migration.sql',
+          import.meta.url
+        )
+      ),
+      'utf8'
+    );
+    const scopesOf = async (clientId: string) =>
+      (await prisma.oauthClient.findUniqueOrThrow({ where: { clientId } })).scopes;
+
+    it('appends mcp:admin to clients registered before it existed, once, and leaves narrower clients alone', async () => {
+      const suffix = crypto.randomBytes(4).toString('hex');
+      const old = `legacy-full-${suffix}`;
+      const narrow = `legacy-read-${suffix}`;
+      const current = `current-${suffix}`;
+      await prisma.oauthClient.createMany({
+        data: [
+          [old, ['mcp:read', 'mcp:write', 'offline_access']],
+          [narrow, ['mcp:read', 'offline_access']],
+          [current, ['mcp:read', 'mcp:write', 'mcp:admin', 'offline_access']],
+        ].map(([clientId, scopes]) => ({
+          clientId: clientId as string,
+          contacts: [],
+          grantTypes: ['authorization_code'],
+          postLogoutRedirectUris: [],
+          redirectUris: [REDIRECT],
+          responseTypes: ['code'],
+          scopes: scopes as string[],
+        })),
+      });
+
+      // CLAUDE.md §7 exception: the committed migration is data-only SQL, run verbatim.
+      await prisma.$executeRawUnsafe(migrationSql);
+      expect(await scopesOf(old)).toEqual(['mcp:read', 'mcp:write', 'offline_access', 'mcp:admin']);
+      expect(await scopesOf(narrow)).toEqual(['mcp:read', 'offline_access']);
+      expect(await scopesOf(current)).toEqual([
+        'mcp:read',
+        'mcp:write',
+        'mcp:admin',
+        'offline_access',
+      ]);
+
+      // Idempotent: a second run changes nothing.
+      await prisma.$executeRawUnsafe(migrationSql);
+      expect(await scopesOf(old)).toEqual(['mcp:read', 'mcp:write', 'offline_access', 'mcp:admin']);
+      await prisma.oauthClient.deleteMany({ where: { clientId: { in: [old, narrow, current] } } });
     });
   });
 

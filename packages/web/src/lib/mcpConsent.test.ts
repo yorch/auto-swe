@@ -74,7 +74,15 @@ describe('resumeUrl', () => {
 describe('grantedScopes', () => {
   it('drops write unless allowed and keeps the rest', () => {
     const asked = ['mcp:read', 'mcp:write', 'offline_access'];
-    expect(grantedScopes(asked, false)).toEqual(['mcp:read', 'offline_access']);
-    expect(grantedScopes(asked, true)).toEqual(asked);
+    expect(grantedScopes(asked, false, false)).toEqual(['mcp:read', 'offline_access']);
+    expect(grantedScopes(asked, true, false)).toEqual(asked);
+  });
+
+  it('drops admin unless allowed, independently of write', () => {
+    const asked = ['mcp:read', 'mcp:write', 'mcp:admin', 'offline_access'];
+    expect(grantedScopes(asked, false, false)).toEqual(['mcp:read', 'offline_access']);
+    expect(grantedScopes(asked, false, true)).toEqual(['mcp:read', 'mcp:admin', 'offline_access']);
+    expect(grantedScopes(asked, true, false)).toEqual(['mcp:read', 'mcp:write', 'offline_access']);
+    expect(grantedScopes(asked, true, true)).toEqual(asked);
   });
 });

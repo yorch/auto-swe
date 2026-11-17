@@ -314,6 +314,54 @@ describe('mcp token verifier', () => {
       expect(r.info?.scopes).toEqual(['mcp:read', 'mcp:write']);
     });
 
+    it('treats admin as read, and neither carries write', async () => {
+      const admin = await run(
+        await mintToken({ claims: { scope: 'mcp:admin' }, key }),
+        fakeVerifierDeps([key], { admin: true, writeToolsEnabled: true })
+      );
+      expect(admin.info?.scopes).toEqual(['mcp:read', 'mcp:admin']);
+      const write = await run(
+        await mintToken({ claims: { scope: 'mcp:write' }, key }),
+        fakeVerifierDeps([key], { writeToolsEnabled: true })
+      );
+      expect(write.info?.scopes).not.toContain('mcp:admin');
+      const all = await run(
+        await mintToken({ claims: { scope: 'mcp:read mcp:write mcp:admin' }, key }),
+        fakeVerifierDeps([key], { admin: true, writeToolsEnabled: true })
+      );
+      expect(all.info?.scopes).toEqual(['mcp:read', 'mcp:write', 'mcp:admin']);
+    });
+
+    it('has no operator switch for admin: it survives writes being off, and write does not', async () => {
+      const r = await run(
+        await mintToken({ claims: { scope: 'mcp:read mcp:write mcp:admin' }, key }),
+        fakeVerifierDeps([key], { admin: true, writeToolsEnabled: false })
+      );
+      expect(r.info?.scopes).toEqual(['mcp:read', 'mcp:admin']);
+    });
+
+    it('drops admin when the user did not consent to it, even if the token claims it', async () => {
+      const grant = {
+        clientActive: true,
+        consentId: 'c',
+        consentScopes: ['mcp:read', 'mcp:write'],
+        consentUpdatedAt: new Date(0),
+      };
+      const r = await run(
+        await mintToken({ claims: { scope: 'mcp:read mcp:write mcp:admin' }, key }),
+        fakeVerifierDeps([key], { grant, writeToolsEnabled: true })
+      );
+      expect(r.info?.scopes).toEqual(['mcp:read', 'mcp:write']);
+    });
+
+    it('does not depend on the platform role: a non-ADMIN consenting user holds admin', async () => {
+      const r = await run(
+        await mintToken({ claims: { scope: 'mcp:admin' }, key }),
+        fakeVerifierDeps([key], { admin: true, user: { isActive: true, role: 'ENGINEER' } })
+      );
+      expect(r.info?.scopes).toEqual(['mcp:read', 'mcp:admin']);
+    });
+
     it('drops what the user did not consent to', async () => {
       const grant = {
         clientActive: true,

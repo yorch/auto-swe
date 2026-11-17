@@ -1754,3 +1754,29 @@ install is still refused, the worker log for that run should show no `credential
 `onboarding draft egress refused`.
 
 ---
+
+### MCP admin read tools need the `mcp:admin` scope (`<fixing commit SHA>`)
+
+**Affected.** Deployments where users connected MCP clients (a coding agent or an editor) that use the
+admin-tier tools `list_agent_library`, `list_agent_versions`, `list_skills` or `get_budget_report`.
+Those clients hold a consent that predates the fix, and it does not include `mcp:admin`.
+
+**What changes.** The four tools need the `mcp:admin` scope. A consent without it leaves them out of
+`tools/list` for that client, and nothing errors: the client stops offering the tools, and a call to
+one by name gets the ordinary unknown-tool error. The other MCP tools are unaffected. A data
+migration appends `mcp:admin` to the scopes stored on each registered OAuth client that holds both
+`mcp:read` and `mcp:write`, so an app registered before the fix can ask for it; a client registered
+for less is left alone. Consent is the only switch: there is no operator setting
+that turns the scope on, and each route's role check still decides who may read the data.
+
+**Actions.** Each affected user re-authorizes the client and ticks **Admin read** on the consent
+screen; the option is unticked by default. A client only asks for the scope if its authorization
+request names it, so a client configured with a fixed scope list (for example
+`codex mcp login auto-swe --scopes …`) must add `mcp:admin` to that list. A device-flow client must
+request `mcp:admin` too, and the user approves it on `/device`, where the scope is listed with a
+warning. No server-side change is needed beyond applying the migration (`yarn db:deploy`).
+
+**Verify.** A client re-authorized with **Admin read** lists `list_skills` in `tools/list`; a client
+authorized without it does not.
+
+---

@@ -12,6 +12,7 @@ import {
   MCP_CONSENT_SKEW_SECONDS,
   MCP_JWKS_CACHE_TTL_MS,
   MCP_JWKS_MIN_REFRESH_MS,
+  MCP_SCOPE_ADMIN,
   MCP_SCOPE_READ,
   MCP_SCOPE_WRITE,
 } from './mcpOAuth.js';
@@ -210,7 +211,9 @@ export function createMcpTokenVerifier(deps: McpVerifierDeps): OAuthTokenVerifie
         return reject(deps, 'malformed-claims');
       }
       const tokenScopes = new Set(
-        (scopeClaim ?? '').split(' ').filter((s) => s === MCP_SCOPE_READ || s === MCP_SCOPE_WRITE)
+        (scopeClaim ?? '')
+          .split(' ')
+          .filter((s) => s === MCP_SCOPE_READ || s === MCP_SCOPE_WRITE || s === MCP_SCOPE_ADMIN)
       );
 
       // 5. Database state, per call. Revoking a consent, deactivating the user and disabling the
@@ -235,14 +238,23 @@ export function createMcpTokenVerifier(deps: McpVerifierDeps): OAuthTokenVerifie
       }
 
       // 6. Effective scopes: what the token says, what the user consented to, and what the
-      // operator currently allows. `mcp:write` carries `mcp:read` with it.
+      // operator currently allows. `mcp:write` and `mcp:admin` each carry `mcp:read` with them,
+      // and neither carries the other. `mcp:admin` is not role-based and has no operator switch:
+      // it is held on the token and the consent alone, and the route's role gate decides who may call.
       const consented = new Set(grant.consentScopes);
       const granted = [...tokenScopes].filter(
         (s) => consented.has(s) && (s !== MCP_SCOPE_WRITE || writeEnabled)
       );
-      const scopes = granted.includes(MCP_SCOPE_WRITE)
-        ? [MCP_SCOPE_READ, MCP_SCOPE_WRITE]
-        : granted;
+      const write = granted.includes(MCP_SCOPE_WRITE);
+      const admin = granted.includes(MCP_SCOPE_ADMIN);
+      const scopes =
+        write || admin
+          ? [
+              MCP_SCOPE_READ,
+              ...(write ? [MCP_SCOPE_WRITE] : []),
+              ...(admin ? [MCP_SCOPE_ADMIN] : []),
+            ]
+          : granted;
 
       return {
         clientId,
