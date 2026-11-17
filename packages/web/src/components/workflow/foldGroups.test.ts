@@ -266,3 +266,23 @@ describe('foldGroups on the seeded ticket-to-merge template', () => {
     expect(fold.spec.nodes.checkApproval).toBeDefined();
   });
 });
+
+describe('foldGroups card ids', () => {
+  it('does not overwrite a real node that is named like the card', () => {
+    const clash = foldedGroupId('g');
+    const withClash = spec(
+      {
+        [clash]: { status: 'SUCCESS', type: 'terminate' },
+        a: { group: 'g', next: 'b', step: 'x', type: 'step' },
+        b: { group: 'g', next: clash, step: 'x', type: 'step' },
+      },
+      'a'
+    );
+    const fold = foldGroups(withClash, new Set(['g']));
+    expect(fold.spec.nodes[clash]).toMatchObject({ type: 'terminate' });
+    const [cardId] = Object.keys(fold.folded);
+    expect(cardId).not.toBe(clash);
+    expect(isFoldedGroupNode(fold.spec.nodes[cardId as string] as never)).toBe(true);
+    expectClosed(fold);
+  });
+});

@@ -10,7 +10,7 @@ import {
   useReactFlow,
   useStore,
 } from '@xyflow/react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useTokens } from '@/hooks/useTokens';
 import { useValidateWorkflow } from '@/hooks/useValidateWorkflow';
 import { ApiError } from '@/lib/api';
@@ -186,10 +186,12 @@ export function useTemplateEditorState({
 
   // Live lint. The save path is advisory and the run-start path hard-gates, so
   // an author only found out a spec was broken after saving it. Pure and cheap.
+  // Trails the keystroke: it walks the whole spec (schema parse, macro expansion, reachability).
+  const lintedSpec = useDeferredValue(spec);
   const lint = useMemo(() => {
-    const report = validateSpec(spec);
-    return { errors: [...schemaIssues(spec), ...report.errors], warnings: report.warnings };
-  }, [spec]);
+    const report = validateSpec(lintedSpec);
+    return { errors: [...schemaIssues(lintedSpec), ...report.errors], warnings: report.warnings };
+  }, [lintedSpec]);
   const issues = useMemo(() => [...lint.errors, ...lint.warnings], [lint]);
   // "Check workflow": a snapshot of the live lint at the click, tied to the spec it was taken on so
   // an edit makes the result stale (and hides it) instead of leaving a wrong "no problems". The
@@ -234,7 +236,16 @@ export function useTemplateEditorState({
     checkInFlight.current = spec;
     seqRef.current += 1;
     const seq = seqRef.current;
-    const clientIssues = [...lint.errors, ...lint.warnings];
+    // The live lint trails the spec while typing; a check is a snapshot of this very spec, so
+    // when the two differ the issues are recomputed here instead of read stale.
+    const current =
+      lintedSpec === spec
+        ? lint
+        : (() => {
+            const report = validateSpec(spec);
+            return { errors: [...schemaIssues(spec), ...report.errors], warnings: report.warnings };
+          })();
+    const clientIssues = [...current.errors, ...current.warnings];
     setChecked({ seq, server: { state: 'pending' }, spec });
     if (clientIssues.length > 0) {
       openIssuesPanel();
@@ -280,7 +291,7 @@ export function useTemplateEditorState({
           }
         }
       });
-  }, [lint, spec, templateId, teamId, baseVersion, validateAsync, openIssuesPanel]);
+  }, [lint, lintedSpec, spec, templateId, teamId, baseVersion, validateAsync, openIssuesPanel]);
   // The rejection was about the spec that was saved; once the author edits, it describes
   // something that no longer exists, so it goes (a new rejection brings its own).
   const errorSeen = useRef<{ error: string | null | undefined; spec: WorkflowSpec }>({

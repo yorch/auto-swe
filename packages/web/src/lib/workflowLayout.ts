@@ -114,9 +114,46 @@ export function layoutSpec(
     }
   }
 
-  // Build the dagre graph. Left-to-right layered layout matches the original
-  // visual convention; node-/edge-sep are tuned to leave room for our 220×88
-  // node cards plus the smoothstep edges from React Flow.
+  // dagre sees only the node ids and the (from, to) pairs. Editing a field inside a node,
+  // a run's status changing or a diff marker appearing leaves both alone, so the positions
+  // are reused instead of running the layered layout again on every keystroke or poll.
+  const key = JSON.stringify([nodeIds, allEdges.map((e) => [e.from, e.to])]);
+  let placed = layoutCache.get(key);
+  if (placed) {
+    // Refresh recency: the cache evicts the least recently used shape.
+    layoutCache.delete(key);
+  } else {
+    placed = computePositions(nodeIds, allEdges);
+    if (layoutCache.size >= LAYOUT_CACHE_SIZE) {
+      layoutCache.delete(layoutCache.keys().next().value as string);
+    }
+  }
+  layoutCache.set(key, placed);
+
+  const nodes: LayoutNode[] = nodeIds.map((id, i) => ({
+    id,
+    indexInRank: 0,
+    node: spec.nodes[id] as Node,
+    rank: 0,
+    x: placed.xs[i] as number,
+    y: placed.ys[i] as number,
+  }));
+
+  return { edges: allEdges, height: placed.height, nodes, width: placed.width };
+}
+
+interface Placement {
+  xs: number[];
+  ys: number[];
+  width: number;
+  height: number;
+}
+
+/** Layouts kept by graph shape; a handful covers flipping between versions or a diff's two sides. */
+const LAYOUT_CACHE_SIZE = 8;
+const layoutCache = new Map<string, Placement>();
+
+function computePositions(nodeIds: string[], allEdges: LayoutEdge[]): Placement {
   const g = new dagre.graphlib.Graph();
   g.setGraph({
     edgesep: 24,
@@ -143,7 +180,9 @@ export function layoutSpec(
 
   let maxX = 0;
   let maxY = 0;
-  const nodes: LayoutNode[] = nodeIds.map((id) => {
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const id of nodeIds) {
     const n = g.node(id);
     // dagre returns the *centre* of the node; React Flow expects the top-left
     // corner. Convert here so the rest of the app can keep treating positions
@@ -152,22 +191,10 @@ export function layoutSpec(
     const y = n.y - NODE_HEIGHT / 2;
     maxX = Math.max(maxX, x + NODE_WIDTH);
     maxY = Math.max(maxY, y + NODE_HEIGHT);
-    return {
-      id,
-      indexInRank: 0,
-      node: spec.nodes[id] as Node,
-      rank: 0,
-      x,
-      y,
-    };
-  });
-
-  return {
-    edges: allEdges,
-    height: Math.max(0, maxY),
-    nodes,
-    width: Math.max(0, maxX),
-  };
+    xs.push(x);
+    ys.push(y);
+  }
+  return { height: Math.max(0, maxY), width: Math.max(0, maxX), xs, ys };
 }
 
 export type DiffKind = 'added' | 'removed' | 'changed';

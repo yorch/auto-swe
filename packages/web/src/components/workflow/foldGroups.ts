@@ -37,10 +37,10 @@ import { nodeDisplayName, nodeGroupOf, nodeUseOf } from './nodeDisplay';
 /** The `step` name of a synthetic card. Never a registered step; never run. */
 export const GROUP_STEP = '__group__';
 
-/** Id of the synthetic card for a group label. Not a valid saved node id on purpose. */
+/** Base id of the synthetic card for a group label; {@link freshCardId} makes it unique. */
 export const foldedGroupId = (group: string): string => `group:${group}`;
 
-/** Id of the synthetic card for a macro use. Not a valid saved node id on purpose. */
+/** Base id of the synthetic card for a macro use; {@link freshCardId} makes it unique. */
 export const foldedUseId = (useId: string): string => `use:${useId}`;
 
 /**
@@ -160,6 +160,17 @@ export function foldGroups(
   keep: ReadonlySet<string> = new Set()
 ): GroupFold {
   const holdsKept = (ids: string[]) => ids.some((id) => keep.has(id));
+  // Node ids are free-form, so a real node may already be called `group:x`. A card that
+  // took its id would overwrite that node in the display spec, so cards step aside.
+  const cardIds = new Set<string>();
+  const freshCardId = (base: string): string => {
+    let id = base;
+    while (id in spec.nodes || cardIds.has(id)) {
+      id += '#';
+    }
+    cardIds.add(id);
+    return id;
+  };
   const membersBy = (
     labelOf: (n: SpecNode) => string | undefined,
     label: string,
@@ -185,7 +196,7 @@ export function foldGroups(
     }
     useUnits.push({
       group: useId,
-      id: foldedUseId(useId),
+      id: freshCardId(foldedUseId(useId)),
       key: macroUseFoldKey(useId),
       kind: 'use',
       memberIds,
@@ -209,7 +220,7 @@ export function foldGroups(
     }
     groupUnits.push({
       group,
-      id: foldedGroupId(group),
+      id: freshCardId(foldedGroupId(group)),
       key: group,
       kind: 'group',
       memberIds,
