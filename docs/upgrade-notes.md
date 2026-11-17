@@ -1798,4 +1798,20 @@ list does not restrict Jira or Linear writes. No migration and no environment-va
 **Verify.** `GET /api/v1/tickets/preview` for a ticket outside the list answers as not found, and for a
 ticket inside it returns the ticket.
 
+### Jira or Linear deployments that set `github.trackerAllowedProjectKeys` (`<fixing-commit-sha>`)
+
+**Affected.** Deployments whose tracker is Jira or Linear and that set `github.trackerAllowedProjectKeys`
+at any scope. An empty list is unaffected.
+
+**What changes.** The list now also gates Jira and Linear writes: a run's lifecycle comment or status
+transition, and the worker's ticket comment, is skipped for a ticket whose project is not listed, and
+the run continues. A connection-less launch with no team on its template also resolves the list at the
+launcher's teams. A deployment that relied on writes to out-of-list tickets stops getting them.
+
+**Actions.** Add to `github.trackerAllowedProjectKeys` every Jira project key or Linear team key whose
+tickets runs should keep commenting on and moving. No migration and no environment-variable change.
+
+**Verify.** A run on a ticket inside the list receives its lifecycle comment. A run on a ticket outside
+it posts no comment and logs `Tracker sync skipped`.
+
 ---
