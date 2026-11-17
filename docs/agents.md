@@ -569,6 +569,10 @@ built-in tools.
   `/repositories`, Slack picker, epics, scheduled requests) and rejected by the shared
   `isGitRepoConnection` guard (`@auto-swe/shared/lib/connectionGuards`) on the submit paths.
 
+For a run an [orchestration](./orchestrations.md) started, every MCP call that does not declare
+`readOnlyHint: true` waits for the launcher's approval before it runs; a denial, a timeout or a failure to
+reach the launcher is a refusal. A run that no orchestration started gets no such guard.
+
 ### 3.6 Large Tool Output Offload
 
 `bash`, `readFile`, and `listDirectory` bound how much of a tool's output reaches the model.
@@ -2553,7 +2557,9 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   after the persona was saved (the parent's save lists the personas it strands, but does not refuse).
   A new override inherits the platform-wide runtime only when it is created; a later change to the
   platform-wide row's runtime does not reach existing overrides.
-- **The harness gets no sub-agent, web or plugin tool.** Its worker-owned tools include optional
+- **Without a harness profile, the harness gets no sub-agent, web or plugin tool.** A profile can grant
+  `Agent` and `Skill` under the limits in [harness-profiles.md](./harness-profiles.md); nothing else is
+  granted. Its worker-owned tools include optional
   browser tools and knowledge search, plus the Agent's own MCP connection relayed from the worker;
   a repository's `.mcp.json` and the harness's own MCP settings
   are ignored (`strictMcpConfig`). A relayed MCP tool is allowed by name and runs in the worker; like

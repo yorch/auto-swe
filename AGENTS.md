@@ -628,7 +628,7 @@ Full reference: [`docs/agents.md`](./docs/agents.md).
 All multi-agent fan-out in this codebase is **workflow-driven with structured results**: the
 interpreter (not an LLM) decides to run the review network or a channel-assistant composite run,
 and each sub-agent it spawns returns a typed result (`CodeResult`, `ReviewVerdict`, `Subtask[]`)
-that fixed code consumes. The one place a model's choice starts work is the channel assistant:
+that fixed code consumes. One place a model's choice starts work is the channel assistant:
 its `delegateTask`, `generateWorkflow` and `refineWorkflow` tools only **record an intent**, and
 after the turn fixed workflow code validates it and applies it — a thread-bound child run started
 with `startChild` under `REJECT_DUPLICATE` (one task per thread), or a draft template. The child's
@@ -641,6 +641,14 @@ stateless and returns exactly one structured final result to its caller.** Its t
 and intermediate reasoning are never spliced into the parent's context — only the one result
 crosses the boundary. Getting this wrong is cheap to avoid up front and expensive to retrofit once
 callers depend on seeing a sub-agent's raw transcript.
+
+Orchestrated agent runs ([`docs/orchestrations.md`](./docs/orchestrations.md)) are the other mechanism
+where a model's choice starts agent runs. The orchestrator's tools only record intents; fixed gateway
+code validates them and applies them as the launcher. Each sub-agent is an ordinary agent run that
+returns exactly one structured result, and only that result, fenced and screened, enters the
+orchestrator's context. A message from the launcher, a person, to a running sub-agent is a
+human-originated steer, not a splice of a sub-agent transcript into its parent. The standing constraint
+above is about agent-to-parent leakage, not human-to-child steering.
 
 ### Runtime Security Scanners
 

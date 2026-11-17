@@ -281,7 +281,8 @@ keeps the orchestration repo-less; `approve` and `deny` decide one MCP write, wh
 approved and returns an error to the agent if denied or expired.
 
 **Steering.** `say` messages the orchestrator, and `steer` queues a message for one running child.
-A child on a harness runtime takes the message at its next turn, not mid-turn. `cancel-agent` stops
+A child on a harness runtime (Claude Code or Pi) cannot take a message mid-run: the message stays
+queued and undelivered, and `show` counts it as such. `cancel-agent` stops
 one child, `cancel` stops the whole orchestration with its running children, and `end` completes it.
 Pushed branches stay in place when either is cancelled.
 

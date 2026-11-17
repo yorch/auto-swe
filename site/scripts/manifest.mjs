@@ -117,6 +117,7 @@ export const SIDEBAR = [
       'docs/autonomy-policies',
       'docs/evals',
       'docs/agent-runs',
+      'docs/orchestrations',
       'docs/automations',
       'docs/run-callbacks',
       'docs/inbound-events',
