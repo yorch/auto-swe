@@ -1,0 +1,840 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1" name="viewport" >
+<title>Islo vs auto-swe — platform comparison (Nov 2026)</title>
+<meta content="Point-in-time comparison of Islo (islo.dev) and auto-swe, with a Kubernetes-backend deep dive." name="description" >
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #14181f; --muted: #535d6b; --line: #dfe3ea;
+    --accent: #3451c7; --accent-soft: #e7ecff;
+    --islo: #b53b09; --islo-soft: #fff0e8;
+    --asw: #0b6e80; --asw-soft: #e3f6f9;
+    --parity: #5f3dc4; --parity-soft: #efe9ff;
+    --differs: #495057; --differs-soft: #eceff3;
+    --ok: #237032; --ok-soft: #e6f4ea; --warn: #8a5300; --warn-soft: #fff4dc; --bad: #b02525; --bad-soft: #ffe8e8;
+    --mark: #ffe08a;
+    --radius: 12px; --shadow: 0 1px 2px rgba(16,24,40,.06), 0 4px 14px rgba(16,24,40,.05);
+    --nav-h: 52px; --bar-h: 0px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1116; --panel: #161b22; --ink: #e6eaf0; --muted: #a0aabb; --line: #2a313c;
+      --accent: #8da2ff; --accent-soft: #1d2540;
+      --islo: #ff9966; --islo-soft: #34211a;
+      --asw: #5fd0e3; --asw-soft: #12292e;
+      --parity: #b79cff; --parity-soft: #2a2145;
+      --differs: #b0b8c4; --differs-soft: #222934;
+      --ok: #6fd283; --ok-soft: #15301d; --warn: #f0b24a; --warn-soft: #33290f; --bad: #ff8b8b; --bad-soft: #3a1a1a;
+      --mark: #5c4a12;
+      --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-padding-top: calc(var(--nav-h) + 16px); }
+  @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+  body { margin: 0;
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink);background: var(--bg); }
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  code { padding: .1em .35em; font: .88em ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; background: var(--differs-soft);border-radius: 5px; }
+  kbd { padding: 0 .4em; font: .8rem ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; }
+  mark { color: var(--ink); background: var(--mark); border-radius: 3px; }
+  .wrap { max-width: 1120px; padding: 0 20px; margin: 0 auto; }
+  .sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; white-space: nowrap; border: 0; clip-path: inset(50%); }
+  html:not(.js) .needs-js { display: none; }
+  .vi { display: inline-block; min-width: 1em; margin-right: .3em; text-align: center; }
+
+  /* Side identity: Islo = orange circle, auto-swe = teal square */
+  .mk-i::before, .mk-a::before { display: inline-block; margin-right: .35em; font-size: .85em; }
+  .mk-i::before { color: var(--islo); content: "●" / ""; }
+  .mk-a::before { color: var(--asw); content: "■" / ""; }
+
+  nav.top { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 90%, transparent);border-bottom: 1px solid var(--line);
+    backdrop-filter: blur(8px); }
+  nav.top .wrap { display: flex; gap: 4px; align-items: center; padding-top: 10px; padding-bottom: 10px; overflow-x: auto; scrollbar-width: none; }
+  nav.top strong { margin-right: 10px; white-space: nowrap; }
+  nav.top a { padding: 5px 11px; font-size: .92rem; color: var(--muted); white-space: nowrap; text-decoration: none; border-radius: 999px; }
+  nav.top a:hover { color: var(--accent); background: var(--accent-soft); }
+  nav.top a[aria-current] { font-weight: 600; color: var(--accent); background: var(--accent-soft); }
+
+  header.hero { padding: 44px 0 20px; }
+  .eyebrow { font-size: .85rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+  h1 { margin: .3em 0 .35em; font-size: clamp(1.9rem, 4vw, 2.8rem); line-height: 1.15; }
+  h1 .vs { font-weight: 400; color: var(--muted); }
+  h1 .i { color: var(--islo); } h1 .a { color: var(--asw); }
+  .lede { max-width: 760px; margin: 0; font-size: 1.08rem; color: var(--muted); }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .pill { padding: 3px 10px; font-size: .8rem; color: var(--differs); background: var(--differs-soft); border: 1px solid var(--line); border-radius: 999px; }
+
+  .strip { max-width: 760px; padding: 14px 16px; margin-top: 22px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .strip-h { margin-bottom: 8px; font-size: .8rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .bar { display: flex; gap: 3px; height: 10px; }
+  .seg { min-width: 6px; border-radius: 3px; }
+  .s-islo { background: var(--islo); } .s-parity { background: var(--parity); }
+  .s-differs { background: var(--differs); } .s-autoswe { background: var(--asw); }
+  .keys { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 10px; font-size: .92rem; }
+  .key { color: var(--ink); text-decoration: none; }
+  .key:hover { text-decoration: underline; }
+
+  section { padding: 26px 0; }
+  h2 { margin: 0 0 6px; font-size: 1.55rem; }
+  h2 + p.sub { margin: 0 0 18px; color: var(--muted); }
+  h3 { margin: 0 0 8px; font-size: 1.1rem; }
+  .sub3 { margin-top: 28px; }
+
+  .grid { display: grid; gap: 16px; }
+  .g3 { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .g2 { grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); }
+  .card { padding: 18px 20px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .card p { margin: .35em 0 0; }
+  .card.takeaway { border-top: 4px solid var(--accent); }
+  .card.takeaway .n { font-size: .8rem; font-weight: 700; color: var(--accent); letter-spacing: .06em; }
+
+  /* Verdict cues: colour plus a glyph (circle = Islo, square = auto-swe, = comparable, ≠ different) */
+  .c-islo, .gh-islo { color: var(--islo); } .c-autoswe, .gh-autoswe { color: var(--asw); }
+  .c-parity, .gh-parity { color: var(--parity); } .c-differs, .gh-differs { color: var(--differs); }
+
+  table.lim { width: 100%; overflow: hidden; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+  table.lim th, table.lim td { padding: 10px 14px; font-size: .93rem; vertical-align: top; text-align: left; border-bottom: 1px solid var(--line); }
+  table.lim th { font-size: .78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; background: var(--differs-soft); }
+
+  table.glance { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+  table.glance th, table.glance td { padding: 10px 12px; font-size: .9rem; vertical-align: top; text-align: left; border-bottom: 1px solid var(--line); }
+  table.glance thead th { font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; background: var(--differs-soft); }
+  table.glance thead th:first-child { color: var(--muted); }
+  table.glance tbody th { width: 17%; font-weight: 600; }
+  table.glance td { width: 20.75%; }
+  table.glance td + td, table.glance th + td, table.glance th + th { border-left: 1px solid var(--line); }
+  table.glance tr:last-child > * { border-bottom: 0; }
+  .glance-list { padding: 0; margin: 0; list-style: none; }
+  .glance-list li + li { margin-top: 4px; }
+  table.glance td a { color: var(--ink); text-decoration-color: color-mix(in srgb, var(--ink) 35%, transparent); text-underline-offset: 2px; }
+  table.glance td a:hover { color: var(--accent); }
+  table.glance .none { color: var(--muted); }
+  .ml { display: none; }
+
+  .empty { padding: 28px; color: var(--muted); text-align: center; background: var(--panel); border: 1px dashed var(--line); border-radius: var(--radius); }
+  .empty p { margin: 0 0 6px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 12px; font-size: .88rem; color: var(--muted); }
+
+  .scorecard { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .score { padding: 10px 14px; font: inherit; color: inherit; text-align: left; cursor: pointer; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+  .score:hover { border-color: var(--accent); }
+  .score[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: -1px; background: var(--accent-soft); border-color: var(--accent); }
+  .score .num { font-size: 1.7rem; font-weight: 700; line-height: 1.1; }
+  .score .lbl { font-size: .85rem; color: var(--muted); }
+  .score.islo .num, .score.islo .vi { color: var(--islo); } .score.autoswe .num, .score.autoswe .vi { color: var(--asw); }
+  .score.parity .num, .score.parity .vi { color: var(--parity); } .score.differs .num, .score.differs .vi { color: var(--differs); }
+
+  .concept { display: grid; grid-template-columns: 1fr 28px 1fr; gap: 8px; align-items: center; padding: 10px 0; border-bottom: 1px dashed var(--line); }
+  .concept:last-child { border-bottom: 0; }
+  .concept .arrow { color: var(--muted); text-align: center; }
+  .concept .l b { color: var(--islo); } .concept .r b { color: var(--asw); }
+  .concept small { display: block; font-size: .85rem; color: var(--muted); }
+  .colhead { display: grid; grid-template-columns: 1fr 28px 1fr; gap: 8px; padding-bottom: 6px; font-size: .78rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; border-bottom: 1px solid var(--line); }
+
+  .toolbar { position: sticky; top: var(--nav-h); z-index: 10; display: grid; gap: 8px; padding: 10px 0; margin-bottom: 14px; background: var(--bg); border-bottom: 1px solid var(--line); }
+  .tb-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+  .search { position: relative; display: flex; flex: 1 1 260px; }
+  .search input { flex: 1; min-width: 0; padding: 9px 38px 9px 12px; font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .search input::placeholder { color: var(--muted); opacity: 1; }
+  .search kbd { position: absolute; top: 50%; right: 10px; pointer-events: none; transform: translateY(-50%); }
+  .search input:focus + kbd { display: none; }
+  @media (hover: none) { .search kbd { display: none; } }
+  .fs { min-width: 0; padding: 0; margin: 0; border: 0; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { padding: 4px 12px; font: inherit; font-size: .88rem; color: var(--muted); cursor: pointer; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; }
+  .chip:hover { border-color: var(--accent); }
+  .chip[aria-pressed="true"] { font-weight: 600; color: var(--accent); background: var(--accent-soft); border-color: var(--accent); }
+  .linkbtn { padding: 4px 6px; font: inherit; font-size: .92rem; color: var(--accent); cursor: pointer; background: none; border: 0; border-radius: 6px; }
+  .linkbtn:hover { text-decoration: underline; }
+  #count { margin-left: auto; font-size: .9rem; color: var(--muted); white-space: nowrap; }
+
+  .cmp { margin-bottom: 12px; overflow: hidden;
+    scroll-margin-top: calc(var(--bar-h) + 8px); background: var(--panel); border: 1px solid var(--line); border-left-width: 4px; border-radius: var(--radius); box-shadow: var(--shadow); }
+  .cmp:focus { outline: none; }
+  .cmp:target { box-shadow: 0 0 0 2px var(--accent); }
+  .vb-islo { border-left-color: var(--islo); } .vb-autoswe { border-left-color: var(--asw); }
+  .vb-parity { border-left-color: var(--parity); } .vb-differs { border-left-color: var(--differs); }
+  .cmp > header { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  .cmp .cat { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+  .cmp h3 { margin: 0; font-size: 1.05rem; }
+  .anchor { padding: 0 4px; font-weight: 600; color: var(--muted); text-decoration: none; border-radius: 4px; }
+  .anchor:hover { color: var(--accent); }
+  .verdict { padding: 3px 10px; margin-left: auto; font-size: .8rem; font-weight: 700; white-space: nowrap; border-radius: 999px; }
+  .v-islo { color: var(--islo); background: var(--islo-soft); }
+  .v-autoswe { color: var(--asw); background: var(--asw-soft); }
+  .v-parity { color: var(--parity); background: var(--parity-soft); }
+  .v-differs { color: var(--differs); background: var(--differs-soft); }
+  .sides { display: grid; grid-template-columns: 1fr 1fr; }
+  .side { padding: 12px 16px; }
+  .side.i { background: color-mix(in srgb, var(--islo-soft) 40%, var(--panel)); }
+  .side.a { background: color-mix(in srgb, var(--asw-soft) 40%, var(--panel)); }
+  .side + .side { border-left: 1px solid var(--line); }
+  .side .who { margin-bottom: 4px; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+  .side.i .who { color: var(--islo); } .side.a .who { color: var(--asw); }
+  .side p { margin: 0; font-size: .95rem; }
+  .cmp details { font-size: .92rem; border-top: 1px solid var(--line); }
+  .cmp summary { padding: 8px 16px; font-weight: 600; color: var(--accent); cursor: pointer; }
+  .cmp summary:hover { background: var(--accent-soft); }
+  .cmp details[open] summary { padding-bottom: 2px; }
+  .cmp details p { padding: 0 16px 12px; margin: .3em 0 0; color: var(--muted); }
+  .tag { padding: 1px 7px; margin-left: 6px; font-size: .7rem; font-weight: 700; vertical-align: 1px; white-space: nowrap; border-radius: 6px; }
+  .tag::before { margin-right: .3em; }
+  .t-doc { color: var(--ok); background: var(--ok-soft); }
+  .t-doc::before { content: "✓" / ""; }
+  .t-mkt { color: var(--warn); background: var(--warn-soft); }
+  .t-mkt::before { content: "?" / ""; }
+  .t-none { color: var(--bad); background: var(--bad-soft); }
+  .t-none::before { content: "∅" / ""; }
+  .legend .tag { margin-left: 0; }
+
+  .ladder { display: grid; gap: 10px; counter-reset: step; }
+  .rung { display: grid; grid-template-columns: 38px 1fr auto; gap: 12px; align-items: start; padding: 12px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+  .rung::before { display: grid; place-items: center; width: 30px; height: 30px; font-weight: 700; color: var(--accent); content: counter(step); counter-increment: step; background: var(--accent-soft); border-radius: 50%; }
+  .rung > div > p { margin: 2px 0 0; font-size: .93rem; color: var(--muted); }
+  .rung .st { padding: 3px 10px; font-size: .75rem; font-weight: 700; white-space: nowrap; border-radius: 999px; }
+  .st::before { margin-right: .35em; }
+  .st.def { color: var(--ok); background: var(--ok-soft); }
+  .st.def::before { content: "✓" / ""; }
+  .st.opt { color: var(--warn); background: var(--warn-soft); }
+  .st.opt::before { content: "○" / ""; }
+  .st.no { color: var(--bad); background: var(--bad-soft); }
+  .st.no::before { content: "✕" / ""; }
+
+  .flow { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; margin: 12px 0 6px; }
+  .node { padding: 6px 12px; font-size: .9rem; background: var(--differs-soft); border: 1px solid var(--line); border-radius: 10px; }
+  .node.key { font-weight: 600; color: var(--asw); background: var(--asw-soft); border: 2px solid var(--asw); }
+  .node.bad { color: var(--bad); background: var(--bad-soft); border: 1px dashed var(--bad); }
+  .flow .ar { font-weight: 700; color: var(--muted); }
+
+  table.lim td + td { color: var(--muted); }
+  table.lim td:first-child { width: 45%; font-weight: 500; }
+  table.lim tr:last-child td { border-bottom: 0; }
+
+  .opps { counter-reset: o; }
+  .opp { position: relative; padding-left: 52px; }
+  .opp::before { position: absolute; top: 16px; left: 16px; display: grid; place-items: center; width: 26px; height: 26px; font-size: .9rem; font-weight: 700; color: var(--accent); content: counter(o); counter-increment: o; background: var(--accent-soft); border-radius: 8px; }
+  .effort { display: inline-block; margin-top: 8px; font-size: .8rem; color: var(--muted); }
+
+  .note { padding: 12px 16px; font-size: .94rem; background: var(--warn-soft); border-left: 4px solid var(--warn); border-radius: 0 var(--radius) var(--radius) 0; }
+  footer { padding: 30px 0 60px; font-size: .9rem; color: var(--muted); border-top: 1px solid var(--line); }
+  footer ul { padding-left: 1.1em; }
+
+  @media (max-width: 760px) {
+    nav.top strong { display: none; }
+    .scorecard { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+    .score { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding: 6px 4px; text-align: center; }
+    .score[data-v="all"] { flex-direction: row; grid-column: 1 / -1; gap: 8px; align-items: baseline; justify-content: center; }
+    .score .num { font-size: 1.3rem; }
+    .score .lbl { font-size: .74rem; line-height: 1.25; }
+    .score .lbl .vi { display: block; margin: 0 auto; }
+    .toolbar { gap: 6px; padding: 6px 0; }
+    .chips { flex-wrap: nowrap; padding-bottom: 2px; overflow-x: auto; scrollbar-width: thin; }
+    .chip { white-space: nowrap; }
+    .sides { grid-template-columns: 1fr; }
+    .side + .side { border-top: 1px solid var(--line); border-left: 0; }
+    .verdict { margin-left: 0; }
+    .cmp .verdict { order: 2; }
+    .cmp .anchor { order: 3; margin-left: auto; }
+    .cmp h3 { flex-basis: 100%; order: 4; }
+    table.glance, table.glance tbody, table.glance tr, table.glance th, table.glance td,
+    table.lim, table.lim tbody, table.lim tr, table.lim td { display: block; width: auto; }
+    table.glance thead, table.lim thead { display: none; }
+    table.glance tr, table.lim tr { padding: 6px 0; border-bottom: 1px solid var(--line); }
+    table.glance tr:last-child, table.lim tr:last-child { border-bottom: 0; }
+    table.glance th, table.glance td, table.lim td { padding: 4px 14px; border: 0; }
+    table.glance td + td, table.glance th + td { border-left: 0; }
+    table.lim td:first-child { width: auto; }
+    table.glance tbody th { width: auto; padding-top: 10px; font-size: 1rem; }
+    table.glance .none { display: none; }
+    .glance-list { display: flex; flex-wrap: wrap; gap: 2px 16px; margin-bottom: 4px; }
+    .glance-list li + li { margin-top: 0; }
+    .ml { display: block; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+    .rung { grid-template-columns: 30px 1fr; }
+    .rung { row-gap: 6px; }
+    .rung::before { grid-row: 1 / span 2; }
+    .rung .st { grid-row: 1; grid-column: 2; justify-self: start; }
+    .rung > div { grid-row: 2; grid-column: 2; }
+    .concept, .colhead { grid-template-columns: 1fr 18px 1fr; }
+  }
+
+  @media print {
+    :root {
+      --bg: #fff; --panel: #fff; --ink: #000; --muted: #333; --line: #bbb;
+      --accent: #1d3a9e; --accent-soft: #eef1fb; --islo: #a3360a; --islo-soft: #fff4ee; --asw: #075866; --asw-soft: #eef8fa;
+      --parity: #4a2ea3; --parity-soft: #f4f0ff; --differs: #333; --differs-soft: #f2f2f2;
+      --ok: #1b5e28; --ok-soft: #eef7f0; --warn: #6b4100; --warn-soft: #fff8e8; --bad: #8f1d1d; --bad-soft: #fff0f0; --mark: transparent;
+      --shadow: none;
+    }
+    nav.top, .scorecard, .toolbar .tb-row > :not(#count), .toolbar .fs, .anchor { display: none; }
+    .toolbar { position: static; padding: 0; border: 0; }
+    body { color: #000; background: #fff; }
+    .cmp, .card, .rung, table.glance tr, table.lim tr { box-shadow: none; break-inside: avoid; }
+    .cmp summary { padding-bottom: 0; }
+    a { color: inherit; }
+  }
+</style>
+</head>
+<body>
+
+<nav aria-label="Sections" class="top" >
+  <div class="wrap">
+    <strong>Islo vs auto-swe</strong>
+    <a href="#summary">Summary</a>
+    <a href="#model">Concept map</a>
+    <a href="#compare">Comparison</a>
+    <a href="#k8s">Kubernetes deep dive</a>
+    <a href="#opportunities">Opportunities</a>
+    <a href="#evidence">Evidence &amp; sources</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Point-in-time research · read 2026-11-17</div>
+    <h1><span class="i">Islo</span> <span class="vs">vs</span> <span class="a">auto-swe</span></h1>
+    <p class="lede">Islo (islo.dev) sells a governed sandbox-and-pipeline platform for AI software work. auto-swe is a durable,
+      governed multi-agent workflow platform. This page compares what each offers, with auto-swe viewed as it runs in production:
+      on <strong>Kubernetes</strong>, not just Docker.</p>
+    <div class="meta">
+      <span class="pill">Islo side: public marketing site + docs.islo.dev only</span>
+      <span class="pill">auto-swe side: this repository's own docs</span>
+      <span class="pill">Not a hands-on trial of either product</span>
+    </div>
+    <div class="strip needs-js">
+      <div class="strip-h" id="strip-h">Verdicts across the comparison rows (unweighted)</div>
+      <div aria-hidden="true" class="bar" id="strip-bar"></div>
+      <div class="keys" id="strip-keys"></div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section id="summary">
+  <h2>Summary</h2>
+  <p class="sub">The two overlap in intent but start from opposite ends.</p>
+  <div class="grid g3">
+    <div class="card takeaway"><div class="n">1 · DIFFERENT CENTRE OF GRAVITY</div>
+      <h3>Sandbox-first vs orchestration-first</h3>
+      <p>Islo leads with the isolated machine and an egress gateway as the product. auto-swe leads with durable, replayable
+        orchestration, review, memory and governance, and treats isolation as a hardening layer beneath it.</p></div>
+    <div class="card takeaway"><div class="n">2 · ISOLATION IS CONFIG, NOT DEFAULT</div>
+      <h3>Pods by default; VMs by choice</h3>
+      <p>On Kubernetes an auto-swe workspace is a hardened pod sharing the node kernel. A Kata RuntimeClass gives VM-per-pod,
+        which is roughly Islo's headline claim, but it is opt-in and verified by name only.</p></div>
+    <div class="card takeaway"><div class="n">3 · THE REAL GAP IS CAPABILITY</div>
+      <h3>What the Kubernetes backend cannot do</h3>
+      <p>Shell and container steps are unavailable there, workspaces have no persistence or snapshots, and the worker is a single
+        replica. Egress is host-level only, with no path or method rules and no generic credential injection.</p></div>
+  </div>
+  <div class="needs-js">
+    <h3 class="sub3">Where each side leads</h3>
+    <table class="glance" id="glance"></table>
+  </div>
+</section>
+
+<section id="model">
+  <h2>Concept map</h2>
+  <p class="sub">Islo's vocabulary on the left, the closest auto-swe construct on the right. Matches are approximate.</p>
+  <div class="card">
+    <div class="colhead"><span class="mk-i">Islo</span><span></span><span class="mk-a">auto-swe</span></div>
+    <div class="concept"><div class="l"><b>Factory</b><small>workspace holding Agents, Machines, Lines</small></div><div class="arrow">→</div>
+      <div class="r"><b>Team / organization scope</b><small>config cascade: template → channel → team → org → global</small></div></div>
+    <div class="concept"><div class="l"><b>Line</b><small>pipeline of agent, script and decision stages</small></div><div class="arrow">→</div>
+      <div class="r"><b>Workflow template</b><small>versioned JSON DAG run by a Temporal interpreter</small></div></div>
+    <div class="concept"><div class="l"><b>Agent</b><small>prompt or script + an assigned Machine</small></div><div class="arrow">→</div>
+      <div class="r"><b>Agent + skills + tools</b><small>versioned rows; identity is a free-form string</small></div></div>
+    <div class="concept"><div class="l"><b>Machine</b><small>persistent microVM, own kernel, snapshots</small></div><div class="arrow">→</div>
+      <div class="r"><b>Workspace</b><small>ephemeral Docker container or Kubernetes pod</small></div></div>
+    <div class="concept"><div class="l"><b>Gateway</b><small>egress policy, credential injection, request logs</small></div><div class="arrow">→</div>
+      <div class="r"><b>Model, registry &amp; egress proxies</b><small>run on the worker; NetworkPolicy enforces the path</small></div></div>
+    <div class="concept"><div class="l"><b>Decision stage</b><small>retry / merge / page / ask a human</small></div><div class="arrow">→</div>
+      <div class="r"><b>HITL nodes + autonomy policies</b><small>nothing merges by default</small></div></div>
+  </div>
+</section>
+
+<section id="compare">
+  <h2>Side-by-side comparison</h2>
+  <p class="sub">Filter by area, by who is ahead, or search. Open “Why” for the reasoning and the evidence behind each row.</p>
+
+  <div class="legend">
+    <span><span class="tag t-doc">DOCUMENTED</span> stated with mechanics in docs</span>
+    <span><span class="tag t-mkt">CLAIM</span> marketing statement, unverified</span>
+    <span><span class="tag t-none">NOT FOUND</span> absent from what was read</span>
+  </div>
+
+  <fieldset class="fs needs-js">
+    <legend class="sr">Filter by verdict</legend>
+    <div class="scorecard" id="scorecard"></div>
+  </fieldset>
+
+  <div class="toolbar needs-js" id="toolbar">
+    <div class="tb-row">
+      <div class="search">
+        <input aria-keyshortcuts="/" aria-label="Search comparison" id="q" placeholder="Search (e.g. egress, memory, SAML)…" type="search" >
+        <kbd aria-hidden="true" title="Press / to search">/</kbd>
+      </div>
+      <span aria-live="polite" id="count" ></span>
+      <button aria-controls="list" class="linkbtn" id="expand" type="button">Expand all</button>
+      <button class="linkbtn" id="reset" type="button">Reset</button>
+    </div>
+    <fieldset class="fs">
+      <legend class="sr">Filter by area</legend>
+      <div class="chips" id="cats"></div>
+    </fieldset>
+  </div>
+
+  <div id="list"><noscript><div class="empty">This comparison is rendered with JavaScript. Enable it to browse the rows.</div></noscript></div>
+</section>
+
+<section id="k8s">
+  <h2>Kubernetes deep dive</h2>
+  <p class="sub">What auto-swe's production substrate actually gives and withholds. Applies when <code>WORKSPACE_BACKEND=kubernetes</code>.</p>
+
+  <h3>Isolation ladder</h3>
+  <div class="ladder">
+    <div class="rung"><div><strong>Hardened pod</strong><p>PodSecurity <code>restricted</code>, non-root with explicit UID, all capabilities dropped, no privilege escalation,
+      <code>RuntimeDefault</code> seccomp, no service-account token, no host namespaces or paths, Guaranteed QoS, kubelet-enforced
+      <code>activeDeadlineSeconds</code> (default 24 h).</p></div><span class="st def">DEFAULT</span></div>
+    <div class="rung"><div><strong>NetworkPolicy + admission policy</strong><p>Default-deny ingress; egress only to DNS, the worker's proxy ports and the public internet (never metadata or private ranges).
+      The worker proves enforcement at boot with a probe pod and refuses to start otherwise. A ValidatingAdmissionPolicy hardens the namespace on Kubernetes 1.30+.</p></div><span class="st def">DEFAULT</span></div>
+    <div class="rung"><div><strong>Restricted / blocked egress lock</strong><p>The pod is relabelled onto a narrow policy and the worker proves the lock from inside the pod with TCP connect checks. <code>restricted</code> adds a host allowlist through the egress proxy.</p></div><span class="st def">POLICY</span></div>
+    <div class="rung"><div><strong>Sandboxed runtime (Kata, VM-per-pod)</strong><p>Selected with <code>K8S_WORKSPACE_RUNTIME_CLASS</code>; <code>K8S_REQUIRE_RUNTIME_CLASS=true</code> makes the worker refuse to start without it. Needs KVM or nested virtualization on the nodes.
+      The check validates the returned RuntimeClass <em>name</em>, not that the handler is really a VM.</p></div><span class="st opt">OPT-IN</span></div>
+    <div class="rung"><div><strong>Per-workspace snapshots / persistence</strong><p>The working tree is an <code>emptyDir</code> that dies with the pod. The only “pause” is <code>SIGSTOP</code>, used to quiesce for copy-out.</p></div><span class="st no">NOT AVAILABLE</span></div>
+  </div>
+
+  <h3 class="sub3">Where credentials do and do not go</h3>
+  <div class="grid g2">
+    <div class="card">
+      <h3>Kept out of the workspace pod</h3>
+      <div class="flow"><span class="node">Agent in pod</span><span class="ar">→</span><span class="node key">model proxy (worker)</span><span class="ar">→</span><span class="node">provider API</span></div>
+      <p>The model proxy is mandatory on this backend; the worker refuses to boot without it, so the provider key never enters a pod.</p>
+      <div class="flow"><span class="node">npm / pip / Go / Maven</span><span class="ar">→</span><span class="node key">registry proxy</span><span class="ar">→</span><span class="node">upstream</span></div>
+      <p>Each workspace gets a per-workspace token; in <code>lockfile</code> mode only committed <code>name@version</code> pairs resolve.</p>
+      <p>Git credentials ride exec <strong>stdin</strong> and a per-pod <code>Secret</code> with an <code>ownerReference</code>; none appear in argv or the apiserver audit log.</p>
+    </div>
+    <div class="card">
+      <h3>What the proxy cannot do</h3>
+      <div class="flow"><span class="node">Agent in pod</span><span class="ar">→</span><span class="node key">egress proxy</span><span class="ar">→</span><span class="node">allowlisted host</span></div>
+      <p>Host-level allow/deny only (exact host or <code>*.domain</code>). <code>CONNECT</code> tunnels are not TLS-intercepted.</p>
+      <div class="flow"><span class="node bad"><span aria-hidden="true">✕ </span>no path / method rules</span><span class="node bad"><span aria-hidden="true">✕ </span>no intent judge</span><span class="node bad"><span aria-hidden="true">✕ </span>no generic credential injection</span></div>
+      <p>Each proxied request or tunnel is recorded as a metadata row (host, port, bytes, blocked flag, no bodies) in the database. There is no SIEM export.</p>
+    </div>
+  </div>
+
+  <h3 class="sub3">Limits specific to the Kubernetes backend</h3>
+  <table class="lim">
+    <thead><tr><th>Limit</th><th>Consequence</th></tr></thead>
+    <tbody>
+      <tr><td>Shell steps, container steps and shared-volume sidecars are unavailable (<code>WORKSPACE_BACKEND_UNSUPPORTED</code>)</td>
+        <td>Templates that rely on them cannot run. Preview-service sidecars do work. This is the closest analogue to Islo's script stages, and it is missing.</td></tr>
+      <tr><td>Worker must be a single replica; proxies hold per-workspace state in memory</td><td>Caps horizontal scale and makes the worker a restart-sensitive component.</td></tr>
+      <tr><td>Service sidecars have a fixed 512 MiB / 1 CPU / 4 GiB ephemeral storage</td><td>A heavier service is killed, and exceeding storage evicts the whole pod, workspace included.</td></tr>
+      <tr><td>No per-pod PID cap; relies on the node pool's <code>podPidsLimit</code></td><td>An operator must set it on the node pool.</td></tr>
+      <tr><td>Runtime and network gates run only at worker boot</td><td>Changes to the CNI, RuntimeClass or admission policy after boot are not re-verified until restart.</td></tr>
+      <tr><td>Per-pod egress policy is address-based (<code>/32</code>, <code>/128</code>)</td><td>A host whose addresses change mid-run becomes unreachable.</td></tr>
+      <tr><td>DNS stays open to kube-dns in a locked pod</td><td>A low-bandwidth exfiltration channel unless a restrictive DNS server is added outside the manifest.</td></tr>
+      <tr><td>The worker holds <code>create</code> on NetworkPolicies</td><td>Additive policies mean a stolen worker token could open egress for a pod. A ValidatingAdmissionPolicy mitigates this on Kubernetes 1.30+ only.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="opportunities">
+  <h2>Opportunities</h2>
+  <p class="sub">Where closing a gap would change the comparison most. These are directions, not commitments.</p>
+  <div class="grid opps">
+    <div class="card opp"><h3>Make VM isolation the verified default</h3>
+      <p>Provision Kata nodes, set a RuntimeClass, and enforce it with <code>K8S_REQUIRE_RUNTIME_CLASS=true</code>. Strengthen the check from a name match to proof the handler is a VM.</p>
+      <span class="effort">Mostly cluster work · needs KVM-capable nodes</span></div>
+    <div class="card opp"><h3>A request-aware egress gateway</h3>
+      <p>A TLS-terminating proxy built on the existing egress proxy would add path and method rules and generic credential injection, and would let outbound calls be exported to a SIEM.</p>
+      <span class="effort">New component · security-sensitive</span></div>
+    <div class="card opp"><h3>Close the non-agent-step gap</h3>
+      <p>Give shell and container steps a Kubernetes implementation, so templates are portable across both backends.</p>
+      <span class="effort">Driver work · shared-volume semantics are the hard part</span></div>
+    <div class="card opp"><h3>Persistent, warm environments</h3>
+      <p>Snapshotting a prepared workspace (dependencies, database state) would remove repeated setup, which is the strongest part of Islo's pitch.</p>
+      <span class="effort">Design needed · interacts with the security model</span></div>
+    <div class="card opp"><h3>Enterprise sign-in and audit export</h3>
+      <p>SAML and SCIM, and SIEM-friendly audit export, are listed gaps in the repository's own enterprise-readiness map.</p>
+      <span class="effort">Scoped issues already described in <code>docs/enterprise-readiness.md</code></span></div>
+  </div>
+</section>
+
+<section id="evidence">
+  <h2>Evidence &amp; caveats</h2>
+  <div class="note">
+    <strong>Treat the Islo column as “as stated”.</strong> It comes from Islo's marketing site and docs overview, not from running the product.
+    Certification badges (SOC 2 Type II), customer counts, dashboard numbers and funding were not independently verified. The auto-swe column
+    comes from this repository's documentation and describes intended behaviour; its own docs state that the unit suite runs against mocked
+    Docker, Temporal and LLM calls, and that gates such as the runtime and network checks run at worker boot only.
+  </div>
+  <div class="grid g2" style="margin-top:16px">
+    <div class="card"><h3>Not found for Islo</h3>
+      <ul>
+        <li>Whether the core platform is open source</li>
+        <li>Any agent-memory feature (only environment snapshots are mentioned)</li>
+        <li>A self-hosted option outside the customer's own VPC</li>
+        <li>The hypervisor behind “microVM”, and API or SDK endpoint details</li>
+        <li>Anything on durable execution or replay semantics</li>
+      </ul></div>
+    <div class="card"><h3>Sources</h3>
+      <ul>
+        <li>Islo: <a href="https://islo.dev/">islo.dev</a>, <a href="https://islo.dev/pricing/">pricing</a>, <a href="https://islo.dev/security/">security</a>,
+          <a href="https://islo.dev/gateway/">gateway</a>, <a href="https://islo.dev/machines/">machines</a>, <a href="https://islo.dev/lines/">lines</a>,
+          <a href="https://islo.dev/integrations/">integrations</a>, <a href="https://islo.dev/blog/">blog</a>, <a href="https://docs.islo.dev/overview">docs overview</a></li>
+        <li>auto-swe: <code>docs/product-overview.md</code>, <code>docs/architecture.md</code> (Kubernetes backend, Limitations),
+          <code>docs/deployment.md</code> (Kubernetes), <code>docs/run-activity.md</code> (egress proxy and policy),
+          <code>docs/enterprise-readiness.md</code>, <code>docs/agent-runs.md</code></li>
+      </ul></div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">Frozen research snapshot. Where this page and the code or living docs disagree, the code wins.
+    Islo plan figures at read time: Engineer $20/mo (1 seat), Team $200/mo (10 seats, 50 concurrent Lines), Enterprise custom.</div>
+</footer>
+
+<script>
+(() => {
+  var CATS = ['Orchestration', 'Agents', 'Governance', 'Isolation', 'Network & credentials', 'Operations'];
+  var VERDICTS = {autoswe: 'auto-swe ahead', differs: 'Different approach', 
+    islo: 'Islo ahead', parity: 'Comparable' 
+  };
+  var DOC = '<span class="tag t-doc">DOCUMENTED</span>';
+  var MKT = '<span class="tag t-mkt">CLAIM</span>';
+  var NONE = '<span class="tag t-none">NOT FOUND</span>';
+
+  var ROWS = [
+    { 
+      a: 'Versioned JSON workflow DAGs interpreted by a pure interpreter on Temporal. Autonomous SWE is seeded content, not privileged code.',cat: 'Orchestration', 
+      i: `Factories containing Lines, Agents and Machines. A Line chains agent, script and decision stages. ${DOC}`,title: 'Core abstraction', v: 'differs',
+      why: 'Both model work as a pipeline of stages. Islo emphasises per-stage machines; auto-swe emphasises a replayable engine with agents as data.' },
+    { 
+      a: 'Temporal: runs survive crashes, wait days for human or CI signals, and replay deterministically. Replay fixtures guard workflow changes.',cat: 'Orchestration', 
+      i: `Machines persist and “work continues after you disconnect”. No workflow-durability or replay semantics described. ${NONE}`,title: 'Durable execution and replay', v: 'autoswe',
+      why: 'Persistent machines are not the same as a durable workflow history. Islo may have this; nothing read says so.' },
+    { 
+      a: 'Webhooks (signed, per-template), schedules, CI failures, PR feedback, Jira status changes, Slack channels, epics and PRDs.',cat: 'Orchestration', 
+      i: `Linear label, Slack mention, GitHub event, schedule, manual, or your own agent. ${DOC}`,title: 'Triggers', v: 'parity',
+      why: 'Comparable coverage. auto-swe has more automation-specific triggers (CI-failure and PR-feedback loops).' },
+    { 
+      a: 'HITL approval nodes and autonomy policies. Nothing merges by default; opt-in auto-merge is behind four admin switches.',cat: 'Orchestration', 
+      i: `Decision stage can ask a human to approve; you can watch, steer or stop a run; “you still own the merge”. ${DOC}`,title: 'Human-in-the-loop', v: 'parity',
+      why: 'Both keep a human on the merge. auto-swe documents a stricter, layered opt-in for any automated merge.' },
+    { 
+      a: 'Shell and container steps exist on the Docker backend but are unavailable on the Kubernetes backend.',cat: 'Orchestration', 
+      i: `A script is a first-class stage type, each in its own Machine. ${DOC}`,title: 'Script / non-agent stages', v: 'islo',
+      why: 'On the production substrate this is a real capability gap. Templates using these steps cannot run on Kubernetes.' },
+    { 
+      a: 'Runtimes are mastra (default), claude-code and pi. Multi-provider models configured in the database, including OpenAI-compatible endpoints.',cat: 'Agents', 
+      i: `Claude Code, Codex, Cursor or your own harness per stage. Your keys, or Islo inference via Databricks. ${DOC}`,title: 'Harness and model support', v: 'islo',
+      why: 'No first-class Codex or Cursor runtime was found in the auto-swe docs.' },
+    { 
+      a: 'Three parallel reviewers (security, domain logic, performance), all must approve, plus a post-diff security gate that fails on CRITICAL findings.',cat: 'Agents', 
+      i: `A review stage can use an agent such as Cursor. No review-network concept. ${MKT}`,title: 'Multi-agent review', v: 'autoswe',
+      why: 'auto-swe builds review into the engine as typed verdicts that fixed code routes on.' },
+    { 
+      a: 'pgvector semantic memory, lesson consolidation, and a guard that scans memory content before write and recall.',cat: 'Agents', 
+      i: `Only environment snapshots are mentioned. No agent memory. ${NONE}`,title: 'Memory and learning', v: 'autoswe',
+      why: 'Snapshots preserve environment state, not lessons. They are different things.' },
+    { 
+      a: 'Eval harness with a judge, health gates on flake rate and kappa, and two-arm A/B experiments per template.',cat: 'Agents', 
+      i: `“Score agent runs in sealed Machines.” ${MKT}`,title: 'Evals', v: 'parity',
+      why: 'Both do evals. Only auto-swe describes the gating mechanics.' },
+    { 
+      a: 'Natural-language workflow authoring, a UI editor, an SDK and CLI for signed bundles, and an MCP server.',cat: 'Agents', 
+      i: `Describe a Line in plain English from Claude Code or Cursor via an MCP server, in-app chat, or templates. ${DOC}`,title: 'Authoring', v: 'parity',
+      why: 'Comparable. auto-swe adds signed, versioned bundles as a distribution unit.' },
+    { 
+      a: 'Budget tiers per run, per-call cost tracking, and an admin-editable model price catalog; unknown models are recorded at zero cost and flagged.',cat: 'Governance', 
+      i: `“Set spend limits per line.” Plan usage limits. No further detail. ${MKT}`,title: 'Cost control', v: 'autoswe',
+      why: 'Islo may be equally capable; only auto-swe documents the mechanism.' },
+    { 
+      a: 'A setting registry resolved through template → channel → team → org → global, with run-pinned settings and permission grants stored as data.',cat: 'Governance', 
+      i: `Gateway profiles scope credentials and APIs per team, workflow or Machine. ${DOC}`,title: 'Scoped configuration and permissions', v: 'autoswe',
+      why: 'auto-swe covers far more than credentials: runtime knobs, budgets, egress policy and more.' },
+    { 
+      a: 'OIDC and better-auth sessions. No SAML or SCIM, and no SOC 2 report held.',cat: 'Governance', 
+      i: `Enterprise plan lists SAML, SCIM, SSO, sub-organizations and data residency / ZDR. ${DOC}`,title: 'Enterprise sign-in and provisioning', v: 'islo',
+      why: 'auto-swe states these gaps itself in its enterprise-readiness map.' },
+    { 
+      a: 'Audit log, run provenance, and per-request metadata rows for proxied traffic. No SIEM-friendly export yet.',cat: 'Governance', 
+      i: `Per-request gateway logs of allowed and denied calls, exportable to a SIEM or warehouse. ${DOC}`,title: 'Audit and SIEM export', v: 'islo',
+      why: 'The data exists in auto-swe; the export path is the gap.' },
+    { 
+      a: 'No source file may call an immediate-merge API (an invariant check enforces it). The only path is opt-in auto-merge via the host\'s own branch protection.',cat: 'Governance', 
+      i: `You own the merge; a decision stage may merge or ask for approval. ${DOC}`,title: 'Merge safety', v: 'autoswe',
+      why: 'The constraint is enforced in CI, not left to convention.' },
+    { 
+      a: 'Kubernetes: hardened pod on the node kernel. Docker: hardened container. Both share the kernel unless a sandbox runtime is selected.',cat: 'Isolation', 
+      i: `One microVM per Machine with its own kernel; contrasted with containers that share the host kernel. ${DOC}`,title: 'Default isolation', v: 'islo',
+      why: 'This is Islo\'s headline. The hypervisor behind it was not named on the pages read.' },
+    { 
+      a: 'Optional Kata via a Kubernetes RuntimeClass (or the Docker runtime). Needs KVM; the check validates the class name, not the handler.',cat: 'Isolation', 
+      i: 'Default for every Machine.',title: 'VM isolation option', v: 'parity',
+      why: 'Reachable with configuration, but not the verified default. Kata steps share one VM with their sidecars.' },
+    { 
+      a: 'Ephemeral. The working tree is an emptyDir (or container volume) that dies with the workspace.',cat: 'Isolation', 
+      i: `Persistent Machines, your own images, and snapshots that capture warm state including database state. ${DOC}`,title: 'Persistence and snapshots', v: 'islo',
+      why: 'Warm environments are where Islo is clearly ahead.' },
+    { 
+      a: 'NetworkPolicy plus admission policy; the worker proves enforcement at boot with a probe pod and refuses to start if it cannot.',cat: 'Network & credentials', 
+      i: `Enforced at the gateway. ${DOC}`,title: 'Network enforcement', v: 'parity',
+      why: 'Different layers, comparable intent. auto-swe\'s boot proof is a notable strength.' },
+    { 
+      a: 'Host-level allowlist (exact or wildcard) through a forward proxy. CONNECT tunnels are not TLS-intercepted, so paths and methods are invisible.',cat: 'Network & credentials', 
+      i: `Host, path and method rules; deny-by-default; optional LLM judge of request intent; response filtering. ${DOC}`,title: 'Egress rule granularity', v: 'islo',
+      why: 'Gateway-style, request-aware control is the largest security-feature gap.' },
+    { 
+      a: 'Model, registry and git credentials never enter the pod (model and registry proxies, stdin and per-pod Secret). No generic injection for arbitrary APIs.',cat: 'Network & credentials', 
+      i: `Agents see placeholder keys; the gateway swaps in the real key on egress, for any API. ${DOC}`,title: 'Credential handling', v: 'islo',
+      why: 'auto-swe already follows the placeholder pattern for its three most important credentials. The gap is generality.' },
+    { 
+      a: 'Kubernetes backend needs a single worker replica because proxy state is in memory.',cat: 'Operations', 
+      i: `50 concurrent Lines on Team, unlimited on Enterprise (plan terms). ${MKT}`,title: 'Scaling', v: 'islo',
+      why: 'Plan limits are not a measured throughput. The single-replica limit is a documented architectural constraint.' },
+    { 
+      a: 'Self-hosted only: the whole platform in your cluster via a Helm chart, against an external Postgres and Temporal that you operate.',cat: 'Operations', 
+      i: `Islo cloud, or BYOC with the control plane and Machines in your VPC. ${DOC}`,title: 'Deployment', v: 'differs',
+      why: 'auto-swe is inherently “bring your own cloud”, but you run every component. Islo offers a managed option.' },
+    { 
+      a: 'An internal, self-hosted team platform. Not a no-code tool, not a personal coding assistant.',cat: 'Operations', 
+      i: `Commercial SaaS with seat pricing; part of Incredibuild. ${DOC}`,title: 'Product model', v: 'differs',
+      why: 'The comparison is of capabilities, not of commercial models.' }
+  ];
+
+  const ORDER = ['islo', 'parity', 'differs', 'autoswe'];
+  const ICON = { autoswe: '■', differs: '≠', islo: '●', parity: '=' };
+  const DEFAULT = () => ({ cat: 'All', q: '', v: 'all' });
+  let state = DEFAULT();
+  const open = new Set();
+  const $ = (id) => document.getElementById(id);
+  const amp = (s) => s.replace('&', '&amp;');
+  const escHtml = (s) => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+  const plain = (s) => s.replace(/<[^>]+>/g, ' ').toLowerCase();
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const vi = (v) => `<span aria-hidden="true" class="vi">${ICON[v]}</span>`;
+
+  document.documentElement.classList.add('js');
+  ROWS.forEach((r) => {
+    r.id = `row-${r.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+  });
+
+  function counts() {
+    const c = { autoswe: 0, differs: 0, islo: 0, parity: 0 };
+    ROWS.forEach((r) => { c[r.v]++; });
+    return c;
+  }
+
+  function terms() { return state.q ? state.q.toLowerCase().split(/\s+/) : []; }
+
+  function renderOverview() {
+    const c = counts();
+    $('strip-h').textContent = `Verdicts across the ${ROWS.length} comparison rows (unweighted)`;
+    $('strip-bar').innerHTML = ORDER.map((k) => `<span class="seg s-${k}" style="flex-grow:${c[k]}"></span>`).join('');
+    $('strip-keys').innerHTML = ORDER.map((k) =>
+      `<a class="key c-${k}" href="#compare:v=${k}">${vi(k)}<b>${c[k]}</b> <span>${VERDICTS[k]}</span></a>`).join('');
+    const head = `<caption class="sr">Comparison rows by area and verdict. Each name links to its row.</caption><thead><tr><th scope="col">Area</th>${
+      ORDER.map((k) => `<th class="gh-${k}" scope="col">${vi(k)} ${VERDICTS[k]}</th>`).join('')}</tr></thead>`;
+    const body = CATS.map((cat) => `<tr><th scope="row">${amp(cat)}</th>${ORDER.map((k) => {
+      const hits = ROWS.filter((r) => r.cat === cat && r.v === k);
+      if (!hits.length) { return '<td class="none"><span aria-hidden="true">–</span><span class="sr">none</span></td>'; }
+      return `<td><span aria-hidden="true" class="ml c-${k}">${vi(k)} ${VERDICTS[k]}</span><ul class="glance-list">${
+        hits.map((r) => `<li><a href="#${r.id}">${r.title}</a></li>`).join('')}</ul></td>`;
+    }).join('')}</tr>`).join('');
+    $('glance').innerHTML = `${head}<tbody>${body}</tbody>`;
+  }
+
+  function renderScore() {
+    const c = counts();
+    const parts = [`<button type="button" class="score" data-v="all" aria-pressed="${state.v === 'all'}"><div class="num">${ROWS.length}</div><div class="lbl">All rows</div></button>`];
+    ORDER.forEach((k) => {
+      parts.push(`<button type="button" class="score ${k}" data-v="${k}" aria-pressed="${state.v === k}"><div class="num">${c[k]}</div><div class="lbl">${vi(k)}${VERDICTS[k]}</div></button>`);
+    });
+    $('scorecard').innerHTML = parts.join('');
+  }
+
+  function renderCats() {
+    const all = ['All'].concat(CATS);
+    $('cats').innerHTML = all.map((c) => `<button type="button" class="chip" data-cat="${c}" aria-pressed="${state.cat === c}">${amp(c)}</button>`).join('');
+  }
+
+  function matches(r) {
+    if (state.cat !== 'All' && r.cat !== state.cat) { return false; }
+    if (state.v !== 'all' && r.v !== state.v) { return false; }
+    if (!state.q) { return true; }
+    const hay = plain(`${r.title} ${r.cat} ${r.i} ${r.a} ${r.why}`);
+    return terms().every((t) => hay.indexOf(t) !== -1);
+  }
+
+  function highlight(root, ts) {
+    if (!ts.length) { return; }
+    const re = new RegExp(`(${ts.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi');
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) {
+      if (!walker.currentNode.parentElement.closest('.tag, .verdict, .who, .anchor, summary')) { nodes.push(walker.currentNode); }
+    }
+    nodes.forEach((n) => {
+      const parts = n.nodeValue.split(re);
+      if (parts.length < 2) { return; }
+      const frag = document.createDocumentFragment();
+      parts.forEach((p, idx) => {
+        if (!p) { return; }
+        if (idx % 2) { const m = document.createElement('mark'); m.textContent = p; frag.appendChild(m); } else { frag.appendChild(document.createTextNode(p)); }
+      });
+      n.parentNode.replaceChild(frag, n);
+    });
+  }
+
+  function describe() {
+    const bits = [];
+    if (state.q) { bits.push(`“${escHtml(state.q)}”`); }
+    if (state.cat !== 'All') { bits.push(`in ${amp(state.cat)}`); }
+    if (state.v !== 'all') { bits.push(`marked ${VERDICTS[state.v]}`); }
+    return bits.join(' ');
+  }
+
+  function syncExpand(rows) {
+    const all = rows.length > 0 && rows.every((r) => open.has(r.id));
+    $('expand').textContent = all ? 'Collapse all' : 'Expand all';
+    $('expand').disabled = !rows.length;
+  }
+
+  function renderList() {
+    const rows = ROWS.filter(matches);
+    const ts = terms();
+    $('count').textContent = `${rows.length} of ${ROWS.length} rows${state.v === 'all' ? '' : ` · ${VERDICTS[state.v]}`}`;
+    syncExpand(rows);
+    if (!rows.length) {
+      $('list').innerHTML = `<div class="empty"><p>No rows match ${describe()}.</p><button class="linkbtn" data-reset type="button">Clear all filters</button></div>`;
+      return;
+    }
+    $('list').innerHTML = rows.map((r) => {
+      const whyHit = ts.length > 0 && ts.some((t) => plain(r.why).indexOf(t) !== -1);
+      return `<article class="cmp vb-${r.v}" id="${r.id}" tabindex="-1"><header><span class="cat">${amp(r.cat)}</span><h3>${r.title}</h3>` +
+        `<a aria-label="Link to this row: ${r.title}" class="anchor" href="#${r.id}">#</a>` +
+        `<span class="verdict v-${r.v}">${vi(r.v)}${VERDICTS[r.v]}</span></header>` +
+        `<div class="sides"><div class="side i"><div class="who mk-i">Islo</div><p>${r.i}</p></div>` +
+        `<div class="side a"><div class="who mk-a">auto-swe</div><p>${r.a}</p></div></div>` +
+        `<details data-id="${r.id}"${open.has(r.id) ? ' open' : whyHit ? ' open data-auto' : ''}><summary>Why this verdict</summary><p>${r.why}</p></details></article>`;
+    }).join('');
+    highlight($('list'), ts);
+  }
+
+  function render() { renderScore(); renderCats(); renderList(); }
+
+  function writeHash() {
+    const p = new URLSearchParams();
+    if (state.v !== 'all') { p.set('v', state.v); }
+    if (state.cat !== 'All') { p.set('area', state.cat); }
+    if (state.q) { p.set('q', state.q); }
+    const s = p.toString();
+    history.replaceState(null, '', s ? `#compare:${s}` : '#compare');
+  }
+
+  function go(el) { el.scrollIntoView({ behavior: reduceMotion.matches ? 'auto' : 'smooth', block: 'start' }); }
+
+  function applyHash() {
+    const h = location.hash.slice(1);
+    if (h.indexOf('compare:') === 0) {
+      const p = new URLSearchParams(h.slice(8));
+      const v = p.get('v'), cat = p.get('area');
+      state = { cat: CATS.indexOf(cat) !== -1 ? cat : 'All', q: (p.get('q') || '').trim().slice(0, 80), v: ORDER.indexOf(v) !== -1 ? v : 'all' };
+      $('q').value = state.q;
+      render();
+      go($('compare'));
+    } else if (h.indexOf('row-') === 0) {
+      const r = ROWS.find((x) => x.id === h);
+      if (!r) { return; }
+      if (!matches(r)) { state = DEFAULT(); $('q').value = ''; }
+      open.add(r.id);
+      render();
+      go($(r.id));
+      $(r.id).focus({ preventScroll: true });
+    }
+  }
+
+  function update(fn) { fn(); render(); writeHash(); }
+
+  $('scorecard').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-v]'); if (!b) { return; }
+    update(() => { state.v = (state.v === b.dataset.v) ? 'all' : b.dataset.v; });
+  });
+  $('cats').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-cat]'); if (!b) { return; }
+    update(() => { state.cat = b.dataset.cat; });
+  });
+  $('q').addEventListener('input', (e) => { state.q = e.target.value.trim(); renderList(); writeHash(); });
+  const reset = () => update(() => { state = DEFAULT(); $('q').value = ''; });
+  $('reset').addEventListener('click', reset);
+  $('list').addEventListener('click', (e) => { if (e.target.closest('[data-reset]')) { reset(); $('q').focus(); } });
+  $('list').addEventListener('toggle', (e) => {
+    const id = e.target.dataset?.id; if (!id) { return; }
+    if (!e.target.open) { open.delete(id); e.target.removeAttribute('data-auto'); } else if (!e.target.hasAttribute('data-auto')) { open.add(id); }
+    syncExpand(ROWS.filter(matches));
+  }, true);
+  $('expand').addEventListener('click', () => {
+    const rows = ROWS.filter(matches);
+    const all = rows.every((r) => open.has(r.id));
+    rows.forEach((r) => { if (all) { open.delete(r.id); } else { open.add(r.id); } });
+    renderList();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) { return; }
+    if (e.target.closest?.('input, textarea, select, [contenteditable]')) { return; }
+    e.preventDefault();
+    const box = $('compare').getBoundingClientRect();
+    $('q').focus({ preventScroll: true });
+    $('q').select();
+    if (box.bottom < 120 || box.top > window.innerHeight) { go($('compare')); }
+  });
+
+  const nav = document.querySelector('nav.top');
+  const setBars = () => {
+    document.documentElement.style.setProperty('--nav-h', `${nav.offsetHeight}px`);
+    document.documentElement.style.setProperty('--bar-h', `${$('toolbar').offsetHeight}px`);
+  };
+  const ro = new ResizeObserver(setBars);
+  ro.observe(nav);
+  ro.observe($('toolbar'));
+
+  const links = Array.prototype.slice.call(nav.querySelectorAll('a'));
+  const spy = new IntersectionObserver((entries) => {
+    entries.forEach((en) => {
+      if (!en.isIntersecting) { return; }
+      links.forEach((a) => {
+        if (a.hash === `#${en.target.id}`) {
+          a.setAttribute('aria-current', 'location');
+          const bar = a.parentElement;
+          if (a.offsetLeft < bar.scrollLeft || a.offsetLeft + a.offsetWidth > bar.scrollLeft + bar.clientWidth) { bar.scrollLeft = a.offsetLeft - 16; }
+        } else { a.removeAttribute('aria-current'); }
+      });
+    });
+  }, { rootMargin: '-40% 0px -55% 0px' });
+  links.forEach((a) => { const s = document.getElementById(a.hash.slice(1)); if (s) { spy.observe(s); } });
+
+  let printOpened = [];
+  window.addEventListener('beforeprint', () => {
+    printOpened = Array.prototype.slice.call(document.querySelectorAll('details:not([open])'));
+    printOpened.forEach((d) => { d.open = true; });
+  });
+  window.addEventListener('afterprint', () => { printOpened.forEach((d) => { d.open = false; }); printOpened = []; });
+  window.addEventListener('hashchange', applyHash);
+
+  renderOverview();
+  render();
+  applyHash();
+})();
+</script>
+</body>
+</html>
