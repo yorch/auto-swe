@@ -13,6 +13,7 @@ import { AgentScopeFields } from '@/components/agents/AgentScopeFields';
 import { broaderFallbacks } from '@/components/agents/agentFallback';
 import { BulkModelModal } from '@/components/agents/BulkModelModal';
 import { ModelSaveWarnings } from '@/components/agents/ModelSaveWarnings';
+import { ProfileNotes } from '@/components/agents/ProfileNotes';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
@@ -63,6 +64,7 @@ import {
   toolKeysLabel,
 } from '@/lib/agentDisplay';
 import { buildAgentUpdate } from '@/lib/agentEditPatch';
+import { describeAgentSaveError } from '@/lib/agentSaveError';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { navLabel } from '@/lib/navigation';
@@ -169,6 +171,8 @@ interface SavedNotice {
   credentialWarnings: string[];
   /** Harness agents that inherit the newly saved model and cannot run on it. */
   runtimeWarnings: string[];
+  /** Plugins left out of a new team override because the team has not enabled them. */
+  profileNotes: string[];
 }
 
 const ATTENTION_FILTERS = ['deactivated', 'noCredential', 'unverified'] as const;
@@ -256,12 +260,21 @@ function AgentLibraryContent() {
     const catalogWarnings = res.catalogWarnings ?? [];
     const credentialWarnings = res.credentialWarnings ?? [];
     const runtimeWarnings = res.runtimeWarnings ?? [];
+    const profileNotes = res.profileNotes ?? [];
     setSaved(
       scanWarnings.length > 0 ||
         catalogWarnings.length > 0 ||
         credentialWarnings.length > 0 ||
-        runtimeWarnings.length > 0
-        ? { catalogWarnings, credentialWarnings, runtimeWarnings, scanWarnings, title }
+        runtimeWarnings.length > 0 ||
+        profileNotes.length > 0
+        ? {
+            catalogWarnings,
+            credentialWarnings,
+            profileNotes,
+            runtimeWarnings,
+            scanWarnings,
+            title,
+          }
         : null
     );
   }
@@ -275,7 +288,7 @@ function AgentLibraryContent() {
       finishSave('Agent created', res);
       closeCreate();
     } catch (e) {
-      setCreateError(errMsg(e, 'Create failed'));
+      setCreateError(describeAgentSaveError(e, 'Create failed'));
     }
   }
 
@@ -298,7 +311,7 @@ function AgentLibraryContent() {
       finishSave('New version saved', res);
       closeEdit();
     } catch (e) {
-      setEditError(errMsg(e, 'Update failed'));
+      setEditError(describeAgentSaveError(e, 'Update failed'));
     }
   }
 
@@ -769,6 +782,7 @@ function AgentLibraryContent() {
                 </ul>
               </Alert>
             )}
+            <ProfileNotes notes={saved.profileNotes} />
             <ModelSaveWarnings
               catalogWarnings={saved.catalogWarnings}
               credentialWarnings={saved.credentialWarnings}

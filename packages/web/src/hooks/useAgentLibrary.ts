@@ -128,7 +128,7 @@ export interface CreateAgentBody {
   credentialId?: string | null;
   /** Platform-admin only. */
   runtime?: ImplementerRuntimeKind | null;
-  /** Platform-admin only; the name of an approved, enabled harness profile. */
+  /** The plugins to bind, in order. Platform admins: any enabled plugin; team admins: those their team enabled, on a team override. */
   harnessProfiles?: string[];
   reasoning?: ReasoningLevel | null;
 }
@@ -151,6 +151,8 @@ export interface AgentSaveWarnings {
   credentialWarnings?: string[];
   /** Harness agents that inherit a newly saved model and cannot run on it. */
   runtimeWarnings?: string[];
+  /** A new team override only: plugins left out of its starting value because the team has not enabled them. */
+  profileNotes?: string[];
 }
 
 /** A create / update / restore response. */

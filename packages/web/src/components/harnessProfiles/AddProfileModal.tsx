@@ -10,12 +10,15 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import {
   type HarnessProfileLocation,
   type HarnessProfilePreview,
+  type ProjectionResult as Projection,
   useCreateProfile,
   usePreviewProfile,
   useReviewProfileFile,
 } from '@/hooks/useHarnessProfiles';
 import { visibleText } from '@/lib/visibleText';
+import { HooksChoice } from './HooksChoice';
 import { ProfilePreview } from './ProfilePreview';
+import { ProjectionResult } from './ProjectionResult';
 import {
   describeProfileError,
   keyed,
@@ -47,6 +50,11 @@ export function AddProfileModal({ open, onClose }: { open: boolean; onClose: () 
   const [previewed, setPreviewed] = useState<HarnessProfilePreview | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
   const [error, setError] = useState<ProfileError | null>(null);
+  // Off is pre-selected and shown; what is sent is whatever the radio holds, never a server default.
+  const [hooksEnabled, setHooksEnabled] = useState(false);
+  const [created, setCreated] = useState<{ name: string; projection: Projection | null } | null>(
+    null
+  );
 
   const location = (): HarnessProfileLocation => ({
     host: form.host.trim(),
@@ -62,6 +70,8 @@ export function AddProfileModal({ open, onClose }: { open: boolean; onClose: () 
     setPreviewed(null);
     setAcknowledged(false);
     setError(null);
+    setHooksEnabled(false);
+    setCreated(null);
     onClose();
   }
 
@@ -90,16 +100,17 @@ export function AddProfileModal({ open, onClose }: { open: boolean; onClose: () 
     }
     setError(null);
     try {
-      await create.mutateAsync({
+      const res = await create.mutateAsync({
         ...location(),
         acknowledgeWarnings: acknowledged,
         contentHash: previewed.contentHash,
+        hooksEnabled,
         sha: previewed.sha,
         warningsHash: previewed.warningsHash,
       });
-      close();
+      setCreated({ name: res.data.name, projection: res.projection });
     } catch (err) {
-      setError(describeProfileError(err, 'Failed to approve the profile'));
+      setError(describeProfileError(err, 'Failed to approve the plugin'));
     }
   }
 
@@ -125,6 +136,21 @@ export function AddProfileModal({ open, onClose }: { open: boolean; onClose: () 
     </Alert>
   );
 
+  if (created) {
+    return (
+      <Modal onClose={close} open={open} title="Plugin approved">
+        <div className="space-y-4">
+          <Alert announce={false} variant="success">
+            “{visibleText(created.name)}” was approved with hooks {hooksEnabled ? 'on' : 'off'}. A
+            team enables it before its agents can use it.
+          </Alert>
+          <ProjectionResult projection={created.projection} />
+          <ModalFooter cancelLabel="Close" onCancel={close} />
+        </div>
+      </Modal>
+    );
+  }
+
   if (previewed) {
     const conflicts = previewed.conflicts;
     const needsAck = previewed.warnings.length > 0;
@@ -134,7 +160,7 @@ export function AddProfileModal({ open, onClose }: { open: boolean; onClose: () 
         open={open}
         size="lg"
         subtitle={`${locationLabel(previewed.source)} @ ${shortSha(previewed.sha)}`}
-        title="Review profile"
+        title="Review plugin"
       >
         <div className="space-y-4">
           <p className="text-xs text-paper-500">
@@ -158,6 +184,7 @@ export function AddProfileModal({ open, onClose }: { open: boolean; onClose: () 
               already exists. Names are compared case-insensitively and cannot be reused.
             </Alert>
           )}
+          <HooksChoice name="add-profile-hooks" onChange={setHooksEnabled} value={hooksEnabled} />
           {needsAck && (
             <Checkbox
               checked={acknowledged}
@@ -175,7 +202,7 @@ export function AddProfileModal({ open, onClose }: { open: boolean; onClose: () 
             }}
             onSubmit={runCreate}
             pendingLabel="Approving…"
-            submitLabel="Approve profile"
+            submitLabel="Approve plugin"
           >
             <span className="text-xs text-paper-500">Cancel goes back to the form</span>
           </ModalFooter>
@@ -185,7 +212,7 @@ export function AddProfileModal({ open, onClose }: { open: boolean; onClose: () 
   }
 
   return (
-    <Modal onClose={close} open={open} title="Add harness profile">
+    <Modal onClose={close} open={open} title="Add plugin from a folder">
       <form className="space-y-4" onSubmit={runPreview}>
         <Input
           hint="Paste a link to the repository or to the folder that holds profile.json"

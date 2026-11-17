@@ -2,6 +2,7 @@
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '@/lib/api';
 
 const idle = { isPending: false, mutateAsync: vi.fn() };
 const createMutation = { isPending: false, mutateAsync: vi.fn() };
@@ -25,6 +26,14 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => false }));
 vi.mock('@/hooks/useMcpConnections', () => ({ useMcpConnections: () => ({ data: [] }) }));
 vi.mock('@/components/modelConfig/ModelSpecPicker', () => ({ ModelSpecPicker: () => null }));
+vi.mock('@/hooks/useTeamPlugins', () => ({
+  useTeamPlugins: () => ({
+    data: [
+      { enabled: true, name: 'team-kit' },
+      { enabled: false, name: 'not-yet-kit' },
+    ],
+  }),
+}));
 vi.mock('@/hooks/useSkills', () => ({ useTeamSkills: () => ({ data: [] }) }));
 
 const { TeamAgentLibrarySection } = await import('./TeamAgentLibrarySection');
@@ -64,6 +73,42 @@ describe('TeamAgentLibrarySection', () => {
     expect(screen.getByText(/Credentials: No credential for acme\./)).toBeTruthy();
     expect(screen.getByText(/harnessAgent \(inherits from reviewer\)/)).toBeTruthy();
     expect(screen.getByText(/agents on the Claude Code harness inherit this model/)).toBeTruthy();
+  });
+
+  it('offers a team admin only the plugins the team enabled', () => {
+    render(<TeamAgentLibrarySection teamId="t-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'New override' }));
+    const box = screen.getByRole('combobox', { name: 'Add plugin' });
+    act(() => box.focus());
+    fireEvent.change(box, { target: { value: 'kit' } });
+    expect(screen.getByRole('option', { name: 'team-kit' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'not-yet-kit' })).toBeNull();
+  });
+
+  it('says which plugins an override left out of its starting value', async () => {
+    createMutation.mutateAsync.mockResolvedValueOnce({
+      data: {},
+      profileNotes: ["Plugin 'other-kit' was not carried over: this team has not enabled it."],
+    });
+    render(<TeamAgentLibrarySection teamId="t-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'New override' }));
+    fireEvent.change(screen.getByLabelText(/^Key/), { target: { value: 'reviewer' } });
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Reviewer' } });
+    fireEvent.click(screen.getByRole('button', { name: /^(Create|Save)/ }));
+    expect(await screen.findByText(/'other-kit' was not carried over/)).toBeTruthy();
+  });
+
+  it('explains a plugin binding the team has not enabled', async () => {
+    createMutation.mutateAsync.mockRejectedValueOnce(
+      new ApiError("Not enabled for this team: 'x-kit'.", 400, 'PROFILE_NOT_ENABLED')
+    );
+    render(<TeamAgentLibrarySection teamId="t-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'New override' }));
+    fireEvent.change(screen.getByLabelText(/^Key/), { target: { value: 'reviewer' } });
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Reviewer' } });
+    fireEvent.click(screen.getByRole('button', { name: /^(Create|Save)/ }));
+    expect(await screen.findByText(/A plugin is not enabled for this team/)).toBeTruthy();
+    expect(screen.getByText(/'x-kit'/)).toBeTruthy();
   });
 
   it('says a blank prompt falls back to the built-in default, not the platform-wide prompt', () => {

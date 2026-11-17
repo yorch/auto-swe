@@ -26,6 +26,7 @@ export const HELP_LINKS = {
   mcpServer: { slug: 'mcp-server' },
   modelConfiguration: { slug: 'model-configuration' },
   platformSettingsCascade: { anchor: '2-resolution-order', slug: 'configuration' },
+  plugins: { slug: 'harness-profiles' },
   reporting: { slug: 'reporting' },
   scannerWriteToolChain: { anchor: '34-write-tool-security-chain', slug: 'agents' },
   skills: { anchor: '6-skills', slug: 'agents' },

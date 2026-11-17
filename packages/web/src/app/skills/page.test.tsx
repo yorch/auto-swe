@@ -106,6 +106,7 @@ beforeEach(() => {
       name: 'imported',
     }),
     skill({ id: 'verified', isVerified: true, name: 'trusted' }),
+    skill({ id: 'projected', name: 'review-kit:lint', pluginProfileId: 'p1', pluginVersion: 2 }),
   ];
 });
 
@@ -119,6 +120,19 @@ describe('Skills studio page', () => {
     expect(within(row).getByText('Unverified')).toBeTruthy();
     expect(within(row).getByText('Rev 4')).toBeTruthy();
     expect(within(rowOf('trusted')).getByText('Verified')).toBeTruthy();
+  });
+
+  it('badges a plugin skill and disables editing it, saying why', () => {
+    render(<StudioSkillsPage />);
+    expect(within(rowOf('review-kit:lint')).getByText('plugin: review-kit')).toBeTruthy();
+    expect(within(rowOf('imported')).queryByText(/^plugin:/)).toBeNull();
+    fireEvent.click(
+      within(rowOf('review-kit:lint')).getByRole('button', { name: 'review-kit:lint' })
+    );
+    expect((screen.getByRole('button', { name: 'Edit' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId('plugin-skill-read-only').textContent).toMatch(
+      /accepts a new version of the plugin/
+    );
   });
 
   it('says what skills are and where to attach them', () => {

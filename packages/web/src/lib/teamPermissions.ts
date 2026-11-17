@@ -16,6 +16,8 @@ export interface TeamPermissions {
   canManageCallbacks: boolean;
   /** The team's secrets and their repository grants — team ADMIN, or platform ADMIN. */
   canManageTeamSecrets: boolean;
+  /** Enable or disable approved plugins for the team — team ADMIN, or platform ADMIN. */
+  canManageTeamPlugins: boolean;
 }
 
 /**
@@ -29,6 +31,7 @@ export interface TeamPermissions {
  *  - The allowlist PUTs require platform ADMIN.
  *  - The team agent library requires team ADMIN (platform ADMIN bypasses).
  *  - Team secrets require team ADMIN (platform ADMIN bypasses).
+ *  - Plugin enablement requires team ADMIN (platform ADMIN bypasses); any member may read.
  *  - Run-callback endpoints require team LEAD (platform ADMIN bypasses).
  */
 export function teamPermissions(
@@ -45,6 +48,7 @@ export function teamPermissions(
     canManageCallbacks: platformAdmin || hasRole(teamRole, 'LEAD'),
     canManageMembers,
     canManageTeamAgents: platformAdmin || hasRole(teamRole, 'ADMIN'),
+    canManageTeamPlugins: platformAdmin || hasRole(teamRole, 'ADMIN'),
     canManageTeamSecrets: platformAdmin || hasRole(teamRole, 'ADMIN'),
     grantableRoles,
   };

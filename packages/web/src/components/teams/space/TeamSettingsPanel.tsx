@@ -15,6 +15,7 @@ import { TeamAgentLibrarySection } from '@/components/teams/TeamAgentLibrarySect
 import { TeamBudgetSection } from '@/components/teams/TeamBudgetSection';
 import { TeamCallbackEndpointsSection } from '@/components/teams/TeamCallbackEndpointsSection';
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
+import { TeamPluginsSection } from '@/components/teams/TeamPluginsSection';
 import { TeamSecretsPanel } from '@/components/teams/TeamSecretsPanel';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -44,6 +45,7 @@ type SettingsTab =
   | 'budget'
   | 'service-principals'
   | 'automation'
+  | 'plugins'
   | 'secrets'
   | 'sandbox';
 
@@ -78,6 +80,7 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
     canManageMembers: canManage,
     canEditAllowlists,
     canManageTeamAgents,
+    canManageTeamPlugins,
     canManageCallbacks,
     canManageTeamSecrets,
   } = teamPermissions(platformRole, summary.myRole);
@@ -160,6 +163,7 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
     ...(canManageBudget ? [{ id: 'budget' as const, label: 'Budget' }] : []),
     ...(canManage ? [{ id: 'service-principals' as const, label: 'Service principals' }] : []),
     { id: 'automation', label: 'Events & agents' },
+    { id: 'plugins', label: 'Plugins' },
     ...(canManageTeamSecrets ? [{ id: 'secrets' as const, label: 'Secrets' }] : []),
     ...(canEditAllowlists ? [{ id: 'sandbox' as const, label: 'Sandbox policy' }] : []),
   ];
@@ -403,6 +407,12 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
           {canManageCallbacks && (
             <TeamCallbackEndpointsSection isPlatformAdmin={isPlatformAdmin} teamId={id} />
           )}
+        </div>
+      )}
+
+      {tab === 'plugins' && (
+        <div {...tabPanelProps('team-settings', 'plugins')}>
+          <TeamPluginsSection canManage={canManageTeamPlugins} teamId={id} />
         </div>
       )}
 

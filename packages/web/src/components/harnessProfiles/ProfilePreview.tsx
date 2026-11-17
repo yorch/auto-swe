@@ -21,7 +21,8 @@ export function ProfilePreview({
   preview,
 }: {
   preview: HarnessProfilePreview;
-  onReadFile: (path: string) => Promise<ReviewedFile>;
+  /** Reads one file's text; without it the files are listed but cannot be opened. */
+  onReadFile?: (path: string) => Promise<ReviewedFile>;
 }) {
   const [reading, setReading] = useState<string | null>(null);
   const [read, setRead] = useState<Record<string, ReviewedFile>>({});
@@ -29,6 +30,9 @@ export function ProfilePreview({
   const { manifest } = preview;
 
   async function readFile(path: string) {
+    if (!onReadFile) {
+      return;
+    }
     setReading(path);
     setReadErrors((cur) => ({ ...cur, [path]: '' }));
     try {
@@ -123,14 +127,16 @@ export function ProfilePreview({
                     )}
                   </Td>
                   <Td className="py-2 align-top">
-                    <Button
-                      aria-label={`Read ${label}`}
-                      disabled={reading === f.path}
-                      onClick={() => readFile(f.path)}
-                      size="sm"
-                    >
-                      {reading === f.path ? 'Reading…' : file ? 'Read again' : 'Read'}
-                    </Button>
+                    {onReadFile && (
+                      <Button
+                        aria-label={`Read ${label}`}
+                        disabled={reading === f.path}
+                        onClick={() => readFile(f.path)}
+                        size="sm"
+                      >
+                        {reading === f.path ? 'Reading…' : file ? 'Read again' : 'Read'}
+                      </Button>
+                    )}
                     {readErrors[f.path] && (
                       <div className="mt-1 text-xs text-danger-400">{readErrors[f.path]}</div>
                     )}
