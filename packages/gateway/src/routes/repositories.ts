@@ -11,6 +11,7 @@ import { originOf, repositoryHostsAllowed } from '@auto-swe/shared/lib/connectio
 // mocks the barrel to avoid instantiating the Prisma client still gets the real one.
 import {
   connectionConfigProblem,
+  HttpApiConnectionConfigSchema,
   isConnectionType,
   parsePagerDutyConnectionConfig,
 } from '@auto-swe/shared/lib/connectionTypes';
@@ -45,6 +46,7 @@ import {
   RepoSetupSecretNameSchema,
 } from '@auto-swe/shared/lib/repoSetup';
 import { SetupBlockerKindSchema, setupBlockerRemedy } from '@auto-swe/shared/lib/setupBlocker';
+import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { ToolKeySchema } from '@auto-swe/shared/lib/toolCatalog';
@@ -126,6 +128,30 @@ const GitRefSchema = z
 
 /** A repository's gate commands in a request body; see `normaliseGateCommands`. */
 const GateCommandsSchema = RepoGateCommandsSchema.nullable().optional();
+
+/**
+ * The problem with an `http_api` connection's config, or null when it is usable.
+ *
+ * The shape comes from the shared strict schema, which the worker applies again before it sends
+ * anything; the SSRF text check is the early refusal. There is no private-network opt-in for
+ * this type, so a private address is refused outright (`allowPrivate` is never set).
+ */
+function httpApiConfigProblem(
+  config: unknown
+): { code: 'BASE_URL_REFUSED' | 'INVALID_CONFIG'; message: string } | null {
+  const parsed = HttpApiConnectionConfigSchema.safeParse(config);
+  if (!parsed.success) {
+    const detail = parsed.error.issues
+      .map((issue) => `${issue.path.length > 0 ? `${issue.path.join('.')}: ` : ''}${issue.message}`)
+      .join('; ');
+    return { code: 'INVALID_CONFIG', message: `Invalid http_api config — ${detail}` };
+  }
+  const safety = checkProbeUrl(parsed.data.baseUrl, { allowPrivate: false });
+  if (!safety.ok) {
+    return { code: 'BASE_URL_REFUSED', message: safety.reason };
+  }
+  return null;
+}
 
 const CreateRepoSchema = z.object({
   apiToken: z.string().optional(),
@@ -1017,6 +1043,13 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       );
     }
 
+    if (type === 'http_api' && config != null) {
+      const problem = httpApiConfigProblem(config);
+      if (problem) {
+        throw new RepositoryCreateError(400, problem.code, problem.message);
+      }
+    }
+
     const createConfigProblem = connectionConfigProblem(type ?? 'git_repo', config);
     if (createConfigProblem) {
       throw new RepositoryCreateError(400, 'VALIDATION_ERROR', createConfigProblem);
@@ -1622,6 +1655,13 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             ? 'This installation is linked to a different organization than the target team.'
             : `GitHub did not confirm that you can read ${repo.organizationName}/${repo.repoName}: you have no access, it does not exist, or the platform's GitHub credential cannot see it. Ask a platform admin to onboard it.`
         );
+      }
+
+      if (repo.type === 'http_api' && config != null) {
+        const problem = httpApiConfigProblem(config);
+        if (problem) {
+          return sendError(reply, 400, problem.code, problem.message);
+        }
       }
 
       const updateConfigProblem = connectionConfigProblem(repo.type, config);

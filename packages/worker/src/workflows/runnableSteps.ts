@@ -39,6 +39,7 @@ import {
   gateActivities,
   gateBatchActivities,
   genericActivities,
+  genericConnectorActivities,
   githubActivities,
   knowledgeActivities,
   mcpNodeActivities,
@@ -1153,7 +1154,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   [
     'readSource',
     ({ inputs, ctx, step }) =>
-      genericActivities.readSource({
+      genericConnectorActivities.readSource({
         connectionId: resolveConnectionId(step, ctx, inputs),
         query:
           inputs.pageId !== undefined
@@ -1225,7 +1226,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       if (typeof inputs.public === 'boolean' && typeof data === 'object' && data != null) {
         data = { ...(data as object), public: inputs.public };
       }
-      return genericActivities.writeOutcome({
+      return genericConnectorActivities.writeOutcome({
         connectionId: resolveConnectionId(step, ctx, inputs),
         data,
         nodeId: dispatchKey,
@@ -1280,7 +1281,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   [
     'runTool',
     ({ inputs, ctx, step, dispatchKey }) =>
-      genericActivities.runTool({
+      genericConnectorActivities.runTool({
         connectionId: resolveConnectionId(step, ctx, inputs),
         inputs: inputs.inputs,
         nodeId: dispatchKey,

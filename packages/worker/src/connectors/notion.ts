@@ -1,4 +1,5 @@
 import { ApplicationFailure } from '@temporalio/activity';
+import { notSent } from '../lib/externalWrite.js';
 import { capturingFetch } from '../lib/httpCapture.js';
 
 const NOTION_API_BASE = 'https://api.notion.com/v1';
@@ -36,6 +37,20 @@ function notionHeaders(apiToken: string) {
     'Content-Type': 'application/json',
     'Notion-Version': NOTION_VERSION,
   };
+}
+
+const NOTION_ID_RE =
+  /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+/**
+ * A Notion page or block id, refused before any request when it is anything else. The id goes
+ * into the request path, so `../users` would otherwise read another endpoint with the token.
+ */
+function notionId(value: string): string {
+  if (typeof value !== 'string' || !NOTION_ID_RE.test(value)) {
+    throw notSent('Notion page id must be a 32-character hex id, with or without dashes');
+  }
+  return value;
 }
 
 async function notionFetch<T>(
@@ -85,6 +100,7 @@ export async function readNotionPage(
   connection: NotionConnectionLike,
   pageId: string
 ): Promise<NotionPageContent> {
+  notionId(pageId);
   const [page, blocks] = await Promise.all([
     notionFetch<NotionPage>(connection, `/pages/${pageId}`),
     notionFetch<{ results: NotionBlock[] }>(connection, `/blocks/${pageId}/children?page_size=100`),
@@ -100,6 +116,7 @@ export async function appendNotionBlocks(
   pageId: string,
   blocks: NotionBlock[]
 ): Promise<{ pageId: string; appended: number }> {
+  notionId(pageId);
   await notionFetch<{ results: NotionBlock[] }>(connection, `/blocks/${pageId}/children`, {
     body: JSON.stringify({ children: blocks }),
     method: 'PATCH',
@@ -124,6 +141,10 @@ export async function createNotionPage(
     : { page_id: options.pageId };
   if (!parent.database_id && !parent.page_id) {
     throw ApplicationFailure.nonRetryable('createNotionPage requires databaseId or pageId');
+  }
+  // The parent page id is only used (and so only checked) when no database is named.
+  if (!options.databaseId) {
+    notionId(options.pageId as string);
   }
 
   const properties = { ...(options.properties ?? {}) };

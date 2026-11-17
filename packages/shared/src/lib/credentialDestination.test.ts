@@ -42,11 +42,19 @@ describe('credentialDestination', () => {
     );
   });
 
+  it('binds http_api to its base URL origin and hubspot to its fixed host', () => {
+    expect(credentialDestination('http_api', { baseUrl: 'https://x.example/v1/' })).toBe(
+      'https://x.example'
+    );
+    expect(credentialDestination('http_api', {})).toBeNull();
+    expect(credentialDestination('hubspot', {})).toBe('https://api.hubapi.com');
+    expect(credentialDestination('hubspot', { baseUrl: 'https://evil.example' })).toBe(
+      'https://api.hubapi.com'
+    );
+  });
+
   it('reports no destination for a type whose secret is never sent', () => {
-    // A placeholder handler makes no request, and a repository's credential lives in
-    // the platform/user credential rows, not in this one.
-    expect(credentialDestination('http_api', { baseUrl: 'https://x.example' })).toBeNull();
-    expect(credentialDestination('hubspot', {})).toBeNull();
+    // A repository's credential lives in the platform/user credential rows, not in this one.
     expect(credentialDestination('git_repo', {})).toBeNull();
   });
 
