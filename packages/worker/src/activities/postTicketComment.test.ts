@@ -428,7 +428,7 @@ describe('postTicketComment on the GitHub tracker', () => {
 describe('postTicketComment on Jira and Linear project keys', () => {
   const listFor = (byTeam: Record<string, string[]>) =>
     mocks.resolveSetting.mockImplementation(async (key: string, ctx: { teamId?: string }) =>
-      key === 'github.trackerAllowedProjectKeys' ? (byTeam[ctx.teamId ?? ''] ?? []) : []
+      key === 'tracker.allowedProjectKeys' ? (byTeam[ctx.teamId ?? ''] ?? []) : []
     );
   const run = (externalTicketId: string) =>
     mocks.findRunInput.mockResolvedValue({

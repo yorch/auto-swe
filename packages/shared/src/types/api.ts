@@ -1265,6 +1265,13 @@ export interface WorkflowRunDetail extends WorkflowRunSummary {
    */
   implementerRuntime?: string | null;
   /**
+   * The ticket tracker the deployment is configured for, reported only when the run's recorded
+   * tracker write-back failure is `out_of_scope` (the one class whose wording differs by
+   * provider). It is the provider configured when the run is read, not when the write was
+   * skipped. Absent or null when it does not apply or is unknown.
+   */
+  trackerProvider?: 'github' | 'jira' | 'linear' | null;
+  /**
    * The runtime the run pinned for each agent that has its own
    * (`{ agentKey: 'mastra' | 'claude-code' | 'pi' }`): at run start, or the first time
    * the run resolved an agent created later. An agent's own runtime wins over

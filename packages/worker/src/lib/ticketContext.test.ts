@@ -501,7 +501,7 @@ describe('loadTicket', () => {
       mocks.workflowRunFind.mockRejectedValue(new Error('db down'));
       mocks.launcher.mockRejectedValue(new Error('db down'));
       mocks.resolveSetting.mockImplementation(async (key: string, ctx: { teamId?: string }) =>
-        key === 'github.trackerAllowedProjectKeys' && ctx.teamId === 'team-r' ? ['PAY'] : []
+        key === 'tracker.allowedProjectKeys' && ctx.teamId === 'team-r' ? ['PAY'] : []
       );
       mocks.runInputFind.mockResolvedValue(run('PAY-7', { teamId: 'team-r' }));
       expect((await loadTicket({ workRequestId: 'wr-1' }))?.source).toBe('tracker');
@@ -517,7 +517,7 @@ describe('loadTicket', () => {
           template: { team: { orgId: 'org-9' }, teamId: 'team-9' },
         });
         mocks.resolveSetting.mockImplementation(async (key: string, ctx: { teamId?: string }) =>
-          key === 'github.trackerAllowedProjectKeys' && ctx.teamId === 'team-9' ? ['PAY'] : []
+          key === 'tracker.allowedProjectKeys' && ctx.teamId === 'team-9' ? ['PAY'] : []
         );
       });
 
@@ -525,7 +525,7 @@ describe('loadTicket', () => {
         mocks.runInputFind.mockResolvedValue(run('ENG-7', null));
         expect(await loadTicket({ workRequestId: 'wr-1' })).toBeNull();
         expect(mocks.readIssue).not.toHaveBeenCalled();
-        expect(mocks.resolveSetting).toHaveBeenCalledWith('github.trackerAllowedProjectKeys', {
+        expect(mocks.resolveSetting).toHaveBeenCalledWith('tracker.allowedProjectKeys', {
           orgId: 'org-9',
           teamId: 'team-9',
         });

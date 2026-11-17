@@ -53,7 +53,7 @@ export interface TrackerRepoScope {
   instanceBaseUrl: string;
   repos: ReadonlyArray<TrackerScopeRepo>;
   /**
-   * Jira project keys / Linear team keys of `github.trackerAllowedProjectKeys`, the union of the
+   * Jira project keys / Linear team keys of `tracker.allowedProjectKeys`, the union of the
    * non-empty lists across the targeted repositories' contexts. Empty: unrestricted.
    */
   allowedProjectKeys: string[];
@@ -158,7 +158,7 @@ async function resolveProjectKeyScope(
   repos: ReadonlyArray<TrackerScopeRepo | undefined>,
   launchTeam?: TrackerLaunchSource
 ): Promise<{ allowedProjectKeys: string[]; projectKeysUnreadable?: true }> {
-  const definition = SETTING_DEFINITIONS['github.trackerAllowedProjectKeys'];
+  const definition = SETTING_DEFINITIONS['tracker.allowedProjectKeys'];
   try {
     const ctxs = new Map<string, SettingResolveCtx>();
     // The launch's own contexts are loaded lazily, and only when some targeted repository names
@@ -190,12 +190,12 @@ async function resolveProjectKeyScope(
           ...(ctx.teamId && definition.overridableAt.includes('TEAM') ? ['TEAM' as const] : []),
         ];
         for (const scope of scopes) {
-          const stored = overrideAt('github.trackerAllowedProjectKeys', scope);
+          const stored = overrideAt('tracker.allowedProjectKeys', scope);
           if (stored !== undefined && !definition.schema.safeParse(stored).success) {
             throw new Error('unreadable');
           }
         }
-        const value: unknown = await resolveSetting('github.trackerAllowedProjectKeys', ctx);
+        const value: unknown = await resolveSetting('tracker.allowedProjectKeys', ctx);
         if (!Array.isArray(value) || value.some((v) => typeof v !== 'string')) {
           throw new Error('unreadable');
         }
@@ -314,7 +314,7 @@ export async function repoTrackerScope(
  * names its own `owner/repo`, and the platform's token reads any repository it can see, so the id
  * must name a repository the request or run targets, on the tracker's host, or one the operator
  * listed in `github.trackerIssueRepositories`. Jira and Linear ids name no repository; they are
- * gated by `github.trackerAllowedProjectKeys` (empty: unrestricted, else the id's project key must
+ * gated by `tracker.allowedProjectKeys` (empty: unrestricted, else the id's project key must
  * be listed, case-insensitively, and an unparseable id is refused). Other providers are not gated.
  * A failed scope load refuses, so this never throws; the caller asks before any network call.
  */
@@ -359,7 +359,7 @@ export function isProjectKeyAllowed(
 /**
  * May a tracker WRITE (a comment or a status transition) touch this ticket? The same decision as
  * {@link isTrackerReadInScope} with no default repository, which a write never resolves a bare
- * number against: Jira and Linear by `github.trackerAllowedProjectKeys` (same key parsing, union
+ * number against: Jira and Linear by `tracker.allowedProjectKeys` (same key parsing, union
  * rule and fail-closed handling), GitHub by the repositories the run targets. A named wrapper so
  * a write path reads as a write path; there is one rule, and a change to it changes both.
  */
