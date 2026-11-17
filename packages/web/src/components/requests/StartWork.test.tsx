@@ -414,6 +414,7 @@ describe('StartWork', () => {
       'Pick a workflow',
       'Run an agent',
       'Orchestrate agents',
+      'Describe the goal',
     ]);
   });
 
@@ -453,6 +454,14 @@ describe('StartWork', () => {
     const chooser = within(screen.getByTestId('mode-hint'));
     expect(chooser.queryByRole('button', { name: /orchestrate/i })).toBeNull();
     expect(chooser.getByText(/Requires engineer or above/)).toBeTruthy();
+  });
+
+  it('offers the describe-the-goal mode without fetching plans until it is chosen', async () => {
+    auth.role = 'ENGINEER';
+    const spy = gateway();
+    render(withQuery(<StartWork />));
+    expect(screen.getByRole('radio', { name: /describe the goal/i })).toBeTruthy();
+    expect(spy.mock.calls.some(([u]) => String(u).includes('/run-plans'))).toBe(false);
   });
 
   it('describes the chooser rows from the mode table', () => {

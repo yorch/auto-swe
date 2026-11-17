@@ -2,7 +2,7 @@
 
 import { Button } from '@/components/ui/Button';
 
-export type WorkMode = 'workflow' | 'agent' | 'orchestrate' | 'epic' | 'prd';
+export type WorkMode = 'workflow' | 'agent' | 'orchestrate' | 'epic' | 'prd' | 'plan';
 
 export interface ModeChoice {
   mode: WorkMode;
@@ -44,6 +44,11 @@ export function modeChoices(
           note: 'Requires engineer or above.',
           question: 'The task needs several agents, and you want to steer them as they work.',
         },
+    {
+      action: 'Describe the goal',
+      mode: 'plan',
+      question: 'You know the outcome you want but not which workflow fits.',
+    },
     canStartEpic
       ? {
           action: 'Run an epic',

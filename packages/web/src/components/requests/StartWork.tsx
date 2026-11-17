@@ -19,6 +19,7 @@ import {
   workflowPickerSections,
 } from '@/components/requests/workflowPicker';
 import { workflowGuide } from '@/components/requests/workflowProcess';
+import { RunPlanLauncher } from '@/components/runPlans/RunPlanLauncher';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -38,7 +39,7 @@ import { hasRole } from '@/lib/roles';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
-type Mode = 'workflow' | 'agent' | 'epic' | 'prd' | 'orchestrate';
+type Mode = 'workflow' | 'agent' | 'epic' | 'prd' | 'orchestrate' | 'plan';
 
 interface ModeOption {
   value: Mode;
@@ -73,6 +74,14 @@ const GUIDE: Record<Exclude<Mode, 'workflow'>, { title: string; points: string[]
       'Only you can message it, attach a repository or approve calls. Teammates can watch.',
     ],
     title: 'Orchestrating agents',
+  },
+  plan: {
+    points: [
+      'Existing workflows that fit your goal are suggested first.',
+      'Otherwise a plan is generated: platform-enforced steps plus steps written for this request.',
+      'You review the exact plan, its cost estimate and warnings, then approve it. Nothing runs before that.',
+    ],
+    title: 'Describing the goal',
   },
   prd: {
     points: [
@@ -237,7 +246,13 @@ export function StartWork({
   initialMode = 'workflow',
   initialTemplateId = '',
   initialTeamSlug = '',
+  initialJobId,
+  initialPlanId,
 }: {
+  /** Resume a plan generation job (`?job=`, a link from Slack). */
+  initialJobId?: string;
+  /** Open an existing plan's preview (`?plan=`). */
+  initialPlanId?: string;
   initialMode?: Mode;
   /** A workflow to preselect, from the library's Run button. */
   initialTemplateId?: string;
@@ -271,6 +286,10 @@ export function StartWork({
       setOrchestrateOpened(true);
     }
   };
+  const [planSeen, setPlanSeen] = useState(initialMode === 'plan');
+  if (mode === 'plan' && !planSeen) {
+    setPlanSeen(true);
+  }
   const [visited, setVisited] = useState<string[]>(initialTemplateId ? [initialTemplateId] : []);
   const [chosenTemplateId, setTemplateId] = useState(initialTemplateId);
   // With a `?team=` slug the templates wait for the team list, and stay unloaded when it failed,
@@ -337,6 +356,12 @@ export function StartWork({
       icon: 'branch',
       label: 'Orchestrate agents',
       value: 'orchestrate',
+    },
+    {
+      description: 'Say what you want; review a generated plan first.',
+      icon: 'chat',
+      label: 'Describe the goal',
+      value: 'plan',
     },
     {
       description: canStartEpic ? 'Coordinated work across repositories.' : epic.reason,
@@ -501,6 +526,19 @@ export function StartWork({
               <Step number={detailsStep} title="Describe the task">
                 {orchestrateOpened && canOrchestrate && <OrchestrateForm />}
               </Step>
+            </div>
+            {/* Mounted on first visit and then kept (hidden), so a goal typed or a job being
+                polled survives a switch of mode; nothing is fetched until the mode is chosen. */}
+            <div hidden={mode !== 'plan'}>
+              {planSeen && (
+                <Step number={detailsStep} title="Describe the goal">
+                  <RunPlanLauncher
+                    initialJobId={initialJobId ?? null}
+                    initialPlanId={initialPlanId ?? null}
+                    onLaunched={onLaunched}
+                  />
+                </Step>
+              )}
             </div>
             <div hidden={mode !== 'epic'}>
               <Step number={detailsStep} title="Describe the epic">
