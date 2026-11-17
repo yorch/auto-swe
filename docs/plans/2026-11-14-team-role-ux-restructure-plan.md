@@ -28,17 +28,17 @@ Conventions for every task:
 - [x] Task 6: Move Analytics, Reports and LLM usage to `/insights/*` with redirects — `c810c18a`
 - [x] Task 7: Move Automations and the Teams directory, then reorder the sidebar — `193532bc`; follow-ups `fix(gateway)` allowlist and `docs(site)` explorer locators
 - [x] Task 8: Team overview returns a `mine` block — `7f84e290`
-- [ ] Task 9: "My work" card and Start work links on the team Overview
-- [ ] Task 10: Manage tab with Repositories, Budget and Service principals
-- [ ] Task 11: Manage tab Schedules and Automations sections
-- [ ] Task 12: Unowned failures list and `FailureAssignment` storage
-- [ ] Task 13: Assign a failure and show it on the assignee's desk
-- [ ] Task 14: Nudge a stale approval
-- [ ] Task 15: Budget change requests
-- [ ] Task 16: Attention section: failures and assignment
-- [ ] Task 17: Attention section: stale approvals and nudge
-- [ ] Task 18: Budget request UI
-- [ ] Task 19: Docs, upgrade note and full quality gates
+- [x] Task 9: "My work" card and Start work links on the team Overview — `7e7e1d43`
+- [x] Task 10: Manage tab with Repositories, Budget and Service principals — `b5b0a127`
+- [x] Task 11: Manage tab Schedules and Automations sections — `b5b0a127`
+- [x] Task 12: Unowned failures list and `FailureAssignment` storage — `6df422e3`, `16fb39f1`; review fixes `983a3946`, `0a2ee044`, `11f0dc7a`
+- [x] Task 13: Assign a failure and show it on the assignee's desk — `16fb39f1`
+- [x] Task 14: Nudge a stale approval — `b7edc9d3`, `36b33f72`
+- [x] Task 15: Budget change requests — `5c9c1891`; review fixes `983a3946`, `0a2ee044`, `11f0dc7a`
+- [x] Task 16: Attention section: failures and assignment — `976633c2`; review fixes `983a3946`, `0a2ee044`, `11f0dc7a`
+- [x] Task 17: Attention section: stale approvals and nudge — `976633c2`
+- [x] Task 18: Budget request UI — `976633c2`
+- [x] Task 19: Docs, upgrade note and full quality gates — `22cb7e08`
 - [x] Task 20: User lookup is open to any team lead — `07817987`
 - [x] Task 21: Slack approval needs LEAD on the run's owning team — `71fbcf7a`
 - [x] Task 22: Code review presets and webhook management follow the team role — `57466a58`

@@ -1925,8 +1925,11 @@ setting shows the same project keys or team keys the old setting held.
 **Fix commit.** Identified before its SHA is assigned by the migration
 `20261116000000_team_attention`; compare the source when commit ancestry is unavailable.
 
-**Actions.** Run `yarn db:deploy` before starting the updated gateway. The migration creates the
-tables `failure_assignments` and `team_budget_requests`, and adds the nullable column
+**Actions.** Apply the migration before starting the updated gateway or worker. The gateway image's
+entrypoint runs `prisma migrate deploy` before it starts, and the Helm migrate Job runs it before any
+new pod of the release starts, so those deployments apply it automatically. Only an operator who runs
+migrations by hand needs to run `yarn db:deploy`. The migration creates the tables
+`failure_assignments` and `team_budget_requests`, and adds the nullable column
 `workflow_human_steps.last_nudged_at`. `team_budget_requests` carries a partial unique index that
 allows one pending request per team, and a `CHECK` that a reason is 1 to 500 characters. The
 migration changes no existing row and leaves the HNSW indexes alone. Starting the gateway before it

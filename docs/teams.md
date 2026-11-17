@@ -120,16 +120,25 @@ role of LEAD does not raise anything for a non-member: only the platform ADMIN i
 not run. The `activity` feed names a launcher by display name only. The feed's name is the run's credential launcher (`launchedById`), so it can differ from a run's initiator. Run lists are different: a run's
 initiator is shown with name and email to anyone who can see the run ([run-provenance.md](./run-provenance.md)).
 
-The **My work** card sits above the team numbers on the overview and shows `mine`: running, failed
-and PRs awaiting merge, each linking to the caller's filtered list. The lead panel follows it for a
-lead or admin.
+The **My work** card sits above the team numbers on the overview and shows `mine`, with the same rules
+as the personal desk ([§1](#what-needs-you-contains)):
+
+- **Running**: requests whose latest attempt the caller launched and that are running. Queued
+  requests are not counted.
+- **Failed**: failed attempts in the last 30 days that the caller launched or a lead assigned to them.
+- **PRs awaiting merge**: the caller's requests whose pull request awaits a human merge.
+
+Each figure links to a browsable list filtered by who requested the work, so the number and the list
+can differ ([Limitations](#limitations)). The lead panel follows the card for a lead or admin.
 
 Definitions:
 
-- **Unowned failure.** A request on the team's work (last 30 days, as visible to the caller) whose
-  latest attempt failed or timed out, whose launcher is no longer a member of the team or is
-  unknown, and which no lead has assigned ([Manage](#manage)). A multi-repository request counts each
-  failed repository.
+- **Unowned failure.** A failed or timed-out latest attempt, within the last 30 days and visible to
+  the caller, on a run that belongs to a repository or template the team **owns**. A repository only
+  shared to the team does not count. The failure is unowned when its launcher is unknown, is not an
+  active member of the team, or the run was launched by automation. It stops being unowned when a
+  lead assigns it to an active member of the team ([Manage](#manage)). A multi-repository request
+  counts each failed repository.
 - **Stale approval.** A pending human step on a run the caller may see whose deadline has passed:
   `GET /api/v1/human-steps?overdue=true&teamId=<team>`.
 - **Open pull requests.** Open pull requests on repositories the team owns or that are shared to it,
@@ -237,7 +246,7 @@ Manage holds the work that a lead acts on and the sections that edit the team's 
 |---|---|
 | Attention | Unowned failures, stale approvals and open pull requests, each with the action it takes |
 | Repositories | The team's owned and shared repositories, with shares and launch permission |
-| Schedules, Automations | The team's own, editable here, narrowed to the team |
+| Schedules, Automations | Read-only lists of the team's schedules and automations, each with an **Open** link. Schedules open the unfiltered schedules page; automations open `/automations?team=<slug>` |
 | Budget | The meter, and **Request a change** for a lead who cannot edit the cap |
 | Service principals | The team's machine identities, moved here from Settings ([service-principals.md](./service-principals.md#6-managing-principals-and-tokens)) |
 
@@ -251,10 +260,16 @@ Manage holds the work that a lead acts on and the sections that edit the team's 
   never changes `WorkflowRun.launchedById`: that field is the key a per-user GitHub credential is
   resolved by, so later work on the request keeps running under the same credential, and the
   assignee does not inherit the former launcher's. The assignee sees the failure as their own
-  `failed_run` item in the desk and in `mine.failed`, and it leaves the team's unowned count.
+  `failed_run` item in the desk and in `mine.failed`, and it leaves the team's unowned count. An
+  assignment counts only while the assignee is still an active member of the team. When the assignee
+  leaves the team or is deactivated, the assignment lapses: the failure is unowned again and a lead
+  can assign it to another member.
 - **Stale approvals.** The lead lists overdue pending steps with
-  `GET /api/v1/human-steps?overdue=true&teamId=<team>`. Each row says whether the step has a Slack
-  thread (`hasSlackThread`), which is what a nudge needs.
+  `GET /api/v1/human-steps?overdue=true&teamId=<team>`, which includes work shared to the team as
+  well as work it owns. Each row says whether the step has a Slack thread (`hasSlackThread`). The
+  **Nudge** button appears only where the server's `canNudge` is true: the step is pending, overdue
+  and has a Slack thread, and the caller is a `LEAD` or `ADMIN` of an active team that owns the run,
+  or a platform ADMIN.
 - **Open pull requests.** The count links to the team's open pull requests.
 
 **The nudge.** `POST /api/v1/human-steps/:id/nudge` posts a reminder for one overdue step. The
@@ -271,14 +286,18 @@ announced in Slack; otherwise the answer is `409 NUDGE_UNAVAILABLE`.
   and carries only the step title, escaped, and the date the step was requested.
 - The response is `{ data: { nudgedAt } }`. The action is audited as an update of the step.
 
-**Budget requests.** A team `LEAD` (or `ADMIN`) who cannot edit the cap asks for a change with
-`POST /api/v1/teams/:id/budget-requests` and `{ reason }`. The reason is 1 to 500 characters after
+**Budget requests.** A team `LEAD` who is not an organization admin sees **Request a change** on the
+Budget section and asks for a change with `POST /api/v1/teams/:id/budget-requests` and `{ reason }`. The reason is 1 to 500 characters after
 trimming. A request carries no amount. A team has one pending request at a time; a second one
 answers `409 REQUEST_PENDING`. The request is audited with the reason's length, not the reason.
 The team ADMIN, an ORG_ADMIN of the organization and a platform ADMIN list the pending requests
-with `GET /api/v1/teams/:id/budget-requests`, oldest first, and see them in Settings, Budget. Saving
-the cap with `PATCH /api/v1/teams/:id/budget`, set or cleared, resolves every pending request of the
-team.
+with `GET /api/v1/teams/:id/budget-requests`, oldest first, and see them in Settings, Budget. Nobody
+is notified of a request. A `PATCH /api/v1/teams/:id/budget` whose body names
+`monthlyBudgetUsdCents` resolves every pending request in the same transaction, whether it raises,
+clears or keeps the cap. A threshold-only save leaves them pending. An admin who declines a request
+dismisses it with `POST /api/v1/teams/:id/budget-requests/:requestId/dismiss`, which needs the same
+permission as saving the cap, answers `404 BUDGET_REQUEST_NOT_FOUND` for a request that is not
+pending in that team, and is audited.
 
 **Other sections.** Repositories use the existing repository routes. Schedules use
 `GET /api/v1/scheduled-work-requests?teamId=<team>`, which narrows the list to the schedules the team
@@ -704,6 +723,11 @@ in the approval queue. See [invited users](./oauth-setup.md#invited-users) for t
   launcher left the team or is unknown (a run launched by automation or a deleted account). An
   assignment records who takes it over and moves no credential. A failure older than 30 days is not
   read.
+- **My work numbers and their links can differ.** The figures follow the desk's rules (launched or
+  assigned, requested by the caller), while the links open lists filtered by who requested the work.
+  A matching list filter for the My work counts does not exist, so a link cannot show the figure's rows.
+- **The Start work link cannot name a repository.** It carries the team only (`/start?team=<slug>`),
+  so a repository's own Start work link cannot preselect it.
 - **The nudge reaches only the thread's followers.** It is a plain thread reply, so it notifies the
   people following that thread, not the approvers by name and not the channel. A step whose
   announcement was not posted to Slack cannot be nudged at all. No in-app reminder exists.
