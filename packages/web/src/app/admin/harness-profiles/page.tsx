@@ -1,1 +1,1 @@
-export { HarnessProfilesView as default } from '@/components/harnessProfiles/HarnessProfilesView';
+export { PluginsPage as default } from '@/components/harnessProfiles/PluginsPage';

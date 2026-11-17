@@ -1524,6 +1524,8 @@ export interface ScheduledSweepsConfig {
   knowledgeBaseSync: SweepSchedule;
   /// Asks each tracked skill source which commit its ref names now; only flags, never updates.
   skillSourceSync: SweepSchedule;
+  /// Asks each tracked plugin marketplace which commit its ref names now; only flags, never moves a pin.
+  marketplaceSync: SweepSchedule;
   /// Regenerates the outcome report from run data and stores one snapshot (docs/outcome-metrics.md).
   outcomeReport: SweepSchedule;
   /// Re-checks each Slack channel's privacy and records who is in each private one.
@@ -1584,6 +1586,9 @@ function envCron(name: string, fallback: string): string {
 ///   SKILL_SOURCE_SYNC_ENABLED     default true — one cheap request per source, and
 ///                                 it only flags: it never changes a skill
 ///   SKILL_SOURCE_SYNC_CRON        default `41 5 * * *`
+///   MARKETPLACE_SYNC_ENABLED      default true — one cheap request per tracked marketplace, and
+///                                 it only flags: it never moves a pin or changes a profile
+///   MARKETPLACE_SYNC_CRON         default `53 5 * * *`
 ///   OUTCOME_REPORT_ENABLED        default true — it reads run data and stores one snapshot
 ///   OUTCOME_REPORT_CRON           default `37 2 * * 1`
 ///   SLACK_CHANNEL_SYNC_ENABLED    default false — it needs the bot's `channels:read` and
@@ -1638,6 +1643,10 @@ export function resolveScheduledSweeps(): ScheduledSweepsConfig {
     knowledgeBaseSync: {
       cronExpression: envCron('KNOWLEDGE_BASE_SYNC_CRON', '*/30 * * * *'),
       enabled: envFlag('KNOWLEDGE_BASE_SYNC_ENABLED', true),
+    },
+    marketplaceSync: {
+      cronExpression: envCron('MARKETPLACE_SYNC_CRON', '53 5 * * *'),
+      enabled: envFlag('MARKETPLACE_SYNC_ENABLED', true),
     },
     modelDiscovery: {
       cronExpression: envCron('MODEL_DISCOVERY_CRON', '17 3 * * *'),
@@ -1719,6 +1728,8 @@ export function validateScheduledSweepsEnv(): string[] {
   );
   check('SKILL_SOURCE_SYNC_ENABLED', flag, "'true' or 'false'");
   check('SKILL_SOURCE_SYNC_CRON', cron, 'a five-field cron expression such as "41 5 * * *"');
+  check('MARKETPLACE_SYNC_ENABLED', flag, "'true' or 'false'");
+  check('MARKETPLACE_SYNC_CRON', cron, 'a five-field cron expression such as "53 5 * * *"');
   check('OUTCOME_REPORT_ENABLED', flag, "'true' or 'false'");
   check('OUTCOME_REPORT_CRON', cron, 'a five-field cron expression such as "37 2 * * 1"');
   check('CALLBACK_DELIVERY_ENABLED', flag, "'true' or 'false'");

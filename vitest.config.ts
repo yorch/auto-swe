@@ -328,6 +328,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/harnessProfile/index.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/marketplace',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/marketplace/index.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/skillSource',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/skillSource/index.ts'),
       },

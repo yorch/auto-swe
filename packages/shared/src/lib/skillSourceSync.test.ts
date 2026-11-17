@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '../index.js';
 import type { SkillSourceDeps } from './skillSource/index.js';
-import { checkSkillSource, sweepSkillSources } from './skillSourceSync.js';
+import {
+  checkHarnessProfile,
+  checkSkillSource,
+  sweepHarnessProfiles,
+  sweepSkillSources,
+} from './skillSourceSync.js';
 
 const SHA = 'a'.repeat(40);
 const NEW = 'b'.repeat(40);
@@ -265,5 +270,139 @@ describe('sweepSkillSources', () => {
     const result = await sweepSkillSources(f.prisma, f.deps);
     expect(JSON.stringify(result)).not.toContain(TOKEN);
     expect(Object.keys(result.sources[0] ?? {}).sort()).toEqual(['error', 'id', 'status']);
+  });
+});
+
+type ProfileRow = {
+  id: string;
+  host: string;
+  owner: string;
+  repo: string;
+  path: string;
+  ref: string;
+  status: string;
+  latestVersion: number;
+  versions: Array<{ version: number; commitSha: string }>;
+  latestSha: string | null;
+  lastError: string | null;
+  lastCheckedAt: Date | null;
+  trackStatus: string;
+};
+
+const profile = (id: string, over: Partial<ProfileRow> = {}): ProfileRow => ({
+  host: 'github.com',
+  id,
+  lastCheckedAt: null,
+  lastError: null,
+  latestSha: SHA,
+  latestVersion: 2,
+  owner: id,
+  path: 'p',
+  ref: 'main',
+  repo: 'profiles',
+  status: 'OK',
+  trackStatus: 'OK',
+  versions: [
+    { commitSha: 'c'.repeat(40), version: 1 },
+    { commitSha: SHA, version: 2 },
+  ],
+  ...over,
+});
+
+function fakeProfiles(
+  rows: ProfileRow[],
+  replies: Record<string, () => Response | Promise<Response>>
+) {
+  const base = fake([], replies);
+  const prisma = {
+    harnessProfile: {
+      findMany: vi.fn(async ({ where }: { where: { status: { not: string } } }) =>
+        rows.filter((r) => r.status !== where.status.not).map((r) => ({ ...r }))
+      ),
+      update: vi.fn(
+        async (args: { data: Record<string, unknown>; where: Record<string, unknown> }) => {
+          const r = rows.find((x) => x.id === args.where.id);
+          if (!r || r.latestVersion !== args.where.latestVersion || r.status === 'DISABLED') {
+            throw Object.assign(new Error('no row'), { code: 'P2025' });
+          }
+          Object.assign(r, args.data);
+          return { ...r };
+        }
+      ),
+    },
+  };
+  return { deps: base.deps, prisma: prisma as unknown as PrismaClient, rows };
+}
+
+describe('checkHarnessProfile', () => {
+  const input = (r: ProfileRow) => ({ ...r, pinnedSha: SHA });
+
+  it('records OK, UPDATE_AVAILABLE and the new sha on the profile row only', async () => {
+    const f = fakeProfiles([profile('a')], { a: commit(SHA) });
+    const same = await checkHarnessProfile(f.prisma, input(f.rows[0] as ProfileRow), f.deps);
+    expect(same).toMatchObject({ error: null, recorded: true, status: 'OK' });
+    const moved = fakeProfiles([profile('a')], { a: commit(NEW) });
+    await checkHarnessProfile(moved.prisma, input(moved.rows[0] as ProfileRow), moved.deps);
+    expect(moved.rows[0]).toMatchObject({
+      lastError: null,
+      latestSha: NEW,
+      trackStatus: 'UPDATE_AVAILABLE',
+    });
+    expect(moved.rows[0]?.lastCheckedAt).toBeInstanceOf(Date);
+  });
+
+  it('records ERROR with a fixed string, never upstream text, and keeps the last sha', async () => {
+    const f = fakeProfiles([profile('a')], {
+      a: () => new Response(`Bearer ${TOKEN}`, { status: 502 }),
+    });
+    const result = await checkHarnessProfile(f.prisma, input(f.rows[0] as ProfileRow), f.deps);
+    expect(result.status).toBe('ERROR');
+    expect(JSON.stringify(f.rows[0])).not.toContain(TOKEN);
+    expect(f.rows[0]).toMatchObject({ latestSha: SHA, trackStatus: 'ERROR' });
+    expect(typeof f.rows[0]?.lastError).toBe('string');
+  });
+
+  it('drops the write when a newer version was accepted while the host was asked', async () => {
+    const f = fakeProfiles([profile('a')], { a: commit(NEW) });
+    const stale = { ...input(f.rows[0] as ProfileRow), latestVersion: 1 };
+    const result = await checkHarnessProfile(f.prisma, stale, f.deps);
+    expect(result).toMatchObject({ recorded: false, status: 'UPDATE_AVAILABLE' });
+    expect(f.rows[0]?.trackStatus).toBe('OK');
+  });
+});
+
+describe('sweepHarnessProfiles', () => {
+  it('checks every profile that is not disabled against its latest version commit', async () => {
+    const f = fakeProfiles([profile('a'), profile('b'), profile('c', { status: 'DISABLED' })], {
+      a: commit(SHA),
+      b: commit(NEW),
+    });
+    const result = await sweepHarnessProfiles(f.prisma, f.deps);
+    expect(result).toMatchObject({ checked: 2, errors: 0, ok: 1, skipped: 0, updateAvailable: 1 });
+    expect(f.rows[1]).toMatchObject({ latestSha: NEW, trackStatus: 'UPDATE_AVAILABLE' });
+    expect(f.rows[2]?.lastCheckedAt).toBeNull();
+    expect(Object.keys(result.profiles[0] ?? {}).sort()).toEqual(['error', 'id', 'status']);
+  });
+
+  it('leaves the rest of a host for the next run once its rate limit runs low', async () => {
+    const f = fakeProfiles([profile('a'), profile('b')], {
+      a: commit(NEW, { 'x-ratelimit-limit': '5000', 'x-ratelimit-remaining': '10' }),
+      b: commit(NEW),
+    });
+    const result = await sweepHarnessProfiles(f.prisma, f.deps);
+    expect(result).toMatchObject({ checked: 0, skipped: 2 });
+    expect(f.rows.map((r) => r.trackStatus)).toEqual(['OK', 'OK']);
+    expect(f.rows[0]?.latestSha).toBe(SHA);
+  });
+
+  it('survives a profile whose row cannot be written', async () => {
+    const f = fakeProfiles([profile('a'), profile('b')], { a: commit(SHA), b: commit(NEW) });
+    (f.prisma.harnessProfile.update as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('db down: secret')
+    );
+    const result = await sweepHarnessProfiles(f.prisma, f.deps);
+    expect(result.errors).toBe(1);
+    expect(JSON.stringify(result)).not.toContain('secret');
+    expect(f.rows[1]?.trackStatus).toBe('UPDATE_AVAILABLE');
   });
 });

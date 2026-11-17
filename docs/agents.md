@@ -662,15 +662,17 @@ Where the runtime applies:
 | `runAgentNode` without a workspace | resolved and pinned as above, but always run on Mastra: there is no workspace for the harness to run in. An Agent pinned to the harness, or a node whose default setting selects it, gets an `agent.runtime_not_applicable` event on the trace, naming the runtime and where it came from |
 | other `runAgent` callers (channel turns, memory passes, workflow authoring) | always Mastra; the runtime is not resolved |
 
-An Agent bound to a harness profile ([harness-profiles.md](./harness-profiles.md)) gets it on
-`claude-code` only: the implementer family, agent runs and `agent` nodes with a workspace resolve the
-approved snapshot, write it into the container under `/workspace/.harness/profiles/`, load its plugins,
-append its instructions to the system prompt behind a provenance line, add its `Skill` and `Agent`
-tools (a `Skill` only for what the profile declares, an `Agent` only in the foreground on the
-session's model), and stop stray processes and rewrite the profile directory from the snapshot
-before every turn (defence in depth: the container's own report of its files is never trusted). On any other loop the run proceeds
-without the profile and an `agent.profile_not_applicable` event says so; a profile that cannot be
-resolved fails a Claude Code run closed.
+An Agent bound to one or more harness profiles (plugins, [harness-profiles.md](./harness-profiles.md))
+gets them on `claude-code` only: the implementer family, agent runs and `agent` nodes with a workspace
+resolve each approved snapshot, write it into the container under `/workspace/.harness/profiles/`, load
+its plugins in binding order, append each profile's instructions to the system prompt behind its own
+provenance line, add the union of their `Skill` and `Agent` tools (a `Skill` only for what a profile's
+own plugins declare, an `Agent` only in the foreground on the session's model), and stop stray processes
+and rewrite the profile directories from the snapshots before every turn (defence in depth: the
+container's own report of its files is never trusted). A profile's hook configuration is left out of the
+container when its platform-wide hook switch is off: every auto-run source (hooks, skill and command frontmatter hooks, monitors and LSP servers), with the run keeping the switch it pinned at its start. On any other loop the run proceeds without the
+profiles and an `agent.profile_not_applicable` event says so; a profile that cannot be resolved fails a
+Claude Code run closed.
 
 Both the setting and the `runtime` column are ADMIN-only because they decide what runs inside the
 trust boundary and which credential enters the workspace. A team admin's edit of a TEAM agent keeps
@@ -1175,10 +1177,18 @@ unit tests, and a `*.docker.test.ts` named on the `docker-tests` job in `ci.yml`
 must honestly declare `enforcesPerCallPolicyInWorker`. A harness whose loop can run in the worker
 omits `provisioning` and acts on the container through `turn.exec`.
 
-**Harness profiles.** On the `claude-code` runtime an Agent version can also name an approved
-harness profile (`Agent.harnessProfile`): ADMIN-only to set, not inherited along
-`inheritsModelFrom`, pinned per run in `WorkflowRun.harnessProfileVersions`, and fail-closed when it
-cannot be resolved. See [harness-profiles.md §8](./harness-profiles.md#8-binding-a-profile-to-an-agent).
+**Harness profiles (plugins).** On the `claude-code` runtime an Agent version can also bind a list of
+approved harness profiles (`Agent.harnessProfiles`, their names in binding order). A platform-wide
+version is set by a platform ADMIN; a team override by a team ADMIN, limited to profiles the team has
+enabled; the runtime itself stays ADMIN-only. An override created without a `harnessProfiles` list starts
+with the platform-wide row's profiles, on the `claude-code` runtime only: a TEAM override carries only
+those its team has enabled. The create response lists the carried names in `profileCarried` and the
+ones left out in `profileNotes`. A list sent with the request, even an empty one, is used as given. The
+list is not inherited along `inheritsModelFrom`, is pinned per run in
+`WorkflowRun.harnessProfileVersions`, and fails closed when it cannot be resolved.
+Saves refuse with `PROFILE_RUNTIME_MISMATCH`, `PROFILE_DUPLICATE`, `PROFILE_NOT_FOUND`,
+`PROFILE_DISABLED`, `PROFILE_NAME_COLLISION` or `PROFILE_NOT_ENABLED`. See
+[harness-profiles.md §8](./harness-profiles.md#8-binding-plugins-to-an-agent).
 
 **Asking a human.** A Claude Code run can stop to ask a person. The question tool (`AskUserQuestion`)
 is offered to the harness, and allowed by the policy, only when the runtime is built with
@@ -1676,6 +1686,8 @@ GLOBAL             →  (always falls back to this; may carry no skill refs)
 
 `skillsToPromptSuffix(skills)` joins prompt texts with double-newline; returns `undefined` for an empty array. Used by reviewer and planner sub-agents (which receive skill fragments directly in the system prompt rather than via the L1 menu).
 
+**Plugin-projected skills.** A skill projected from a plugin (`Skill.pluginProfileId` set; [harness-profiles.md §13](./harness-profiles.md#13-skill-projection-for-other-runtimes)) follows its plugin. No agent version can add one of a disabled plugin, and a TEAM-scoped version cannot add one whose plugin the team has not enabled. At run time, such a skill is dropped from the prompt with an `agent.plugin_skill_excluded` event when its plugin is disabled, or when it is on a TEAM-scoped version the team has not enabled the plugin for. Its text changes only by accepting a plugin version. Disabling the plugin deactivates it, and re-enabling reactivates the rows that disable switched off ([harness-profiles.md §13](./harness-profiles.md#13-skill-projection-for-other-runtimes)).
+
 ### 6.4 Custom Skill Security Scanning
 
 Custom skills' `promptText` is scanned by `scanSkillContent(text)` in `packages/shared/src/lib/skillScanner.ts`:
@@ -2128,7 +2140,7 @@ template override is never badged, because it may use a different model or crede
 | `DELETE` | `/api/v1/platform/agent-library/:id` | `ADMIN` | Delete / deactivate an Agent override |
 | `POST` | `/api/v1/platform/agent-library/bulk-model/preview` | `ADMIN` | Preview a bulk model set or remap; writes nothing |
 | `POST` | `/api/v1/platform/agent-library/bulk-model` | `ADMIN` | Apply a bulk model set or remap |
-| `GET` | `/api/v1/teams/:id/agent-library/options` | Team member | Agent keys, names and models an override may inherit from (GLOBAL plus the team's own); no prompts or tools |
+| `GET` | `/api/v1/teams/:id/agent-library/options` | Team member | Agent keys, names, models and `harnessProfiles` (the plugin names the row binds, names only) an override may inherit from (GLOBAL plus the team's own); no prompts or tools |
 | `GET` | `/api/v1/teams/:id/agent-library` | Team `ADMIN` | List TEAM-scope Agent overrides |
 | `POST` | `/api/v1/teams/:id/agent-library` | Team `ADMIN` | Create a TEAM-scope Agent override |
 | `PUT` | `/api/v1/teams/:id/agent-library/:agentId` | Team `ADMIN` | Update a TEAM-scope Agent override |
@@ -2146,8 +2158,10 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
 | `Skill` | `skills` | Skill definitions (name, promptText, isBuiltIn, isVerified, isActive, scope, currentRevision) |
 | `SkillRevision` | `skill_revisions` | Immutable history of a skill's text and description; what a run's `skillRevisions` pin reads |
 | `SkillSource` | `skill_sources` | An external GitHub / GitHub Enterprise folder skills were imported from: location, ref, pinned commit, script mode, scope (§6.6) |
-| `HarnessProfile` | `harness_profiles` | An admin-approved Claude Code plugin profile read from a repository folder; global, never deleted ([harness-profiles.md](./harness-profiles.md)) |
+| `HarnessProfile` | `harness_profiles` | An admin-approved Claude Code plugin profile, read from a repository folder or approved from a marketplace entry; carries its hook switch and tracking state; global, never deleted ([harness-profiles.md](./harness-profiles.md)) |
 | `HarnessProfileVersion` | `harness_profile_versions` | One immutable, content-hashed snapshot of a profile at an exact commit |
+| `MarketplaceSource` | `marketplace_sources` | A tracked plugin marketplace (`.claude-plugin/marketplace.json`), pinned to the commit its catalog was read at ([harness-profiles.md §11](./harness-profiles.md#11-marketplaces)) |
+| `PluginEnablement` | `plugin_enablements` | A team's enablement of one approved profile; a TEAM-scoped binding on that team's agents needs one ([harness-profiles.md §12](./harness-profiles.md#12-team-enablement)) |
 | `Agent` | `agents` | Single source of truth per key/scope: model spec, system prompt, credential pin, tool keys, skill refs, runtime, reasoning level (versioned) |
 | `AgentSkillRef` | `agent_skill_refs` | Join from an `Agent` to a `Skill` with `sortOrder` |
 | `ProviderCredential` | `provider_credentials` | AES-256-GCM encrypted API keys per provider per scope |
@@ -2595,8 +2609,8 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   after the persona was saved (the parent's save lists the personas it strands, but does not refuse).
   A new override inherits the platform-wide runtime only when it is created; a later change to the
   platform-wide row's runtime does not reach existing overrides.
-- **Without a harness profile, the harness gets no sub-agent, web or plugin tool.** A profile can grant
-  `Agent` and `Skill` under the limits in [harness-profiles.md](./harness-profiles.md); nothing else is
+- **The harness gets no web tool, and a sub-agent or `Skill` tool only when a bound plugin profile
+  grants it,** under the limits in [harness-profiles.md](./harness-profiles.md); nothing else is
   granted. Its worker-owned tools include optional
   browser tools and knowledge search, plus the Agent's own MCP connection relayed from the worker;
   a repository's `.mcp.json` and the harness's own MCP settings

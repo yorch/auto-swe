@@ -1,6 +1,9 @@
+import type { PrismaClient } from '@auto-swe/shared';
 import {
   type ProfileFile,
   type ProfileScanners,
+  type ProjectPluginSkillsInput,
+  type ProjectPluginSkillsResult,
   readProfileFolder,
   scanProfile,
   type ValidatedProfile,
@@ -12,10 +15,13 @@ import {
   type SkillSourceDeps,
   type SourceLocation,
 } from '@auto-swe/shared/lib/skillSource';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type {
+  HarnessProfileBoundAgent,
   HarnessProfileFileEntry,
   HarnessProfileManifestDto,
   HarnessProfilePreview,
+  HarnessProfileProjectionWarnings,
   HarnessProfileVersionDto,
 } from '@auto-swe/shared/types/api';
 
@@ -196,4 +202,145 @@ export function versionDto(row: VersionRow): HarnessProfileVersionDto {
     version: row.version,
     warnings: row.scanWarnings as string[],
   };
+}
+
+/** The seam for skill projection: production passes `projectPluginSkills`. */
+export type ProjectPluginSkills = (
+  db: PrismaClient,
+  input: ProjectPluginSkillsInput
+) => Promise<ProjectPluginSkillsResult>;
+
+/**
+ * Project a profile version's skills for runtimes other than `claude-code`. The approval has
+ * already happened, so a failure here never throws: it is logged by name only (never the error's
+ * text) and comes back as `failed: true`, and anything the projection refused is returned as it
+ * is so the admin sees it.
+ */
+export async function projectProfileSkills(
+  project: ProjectPluginSkills,
+  db: PrismaClient,
+  input: ProjectPluginSkillsInput,
+  log: { warn: (obj: object, msg: string) => void }
+): Promise<HarnessProfileProjectionWarnings> {
+  try {
+    const result = await project(db, input);
+    return {
+      created: result.created,
+      failed: false,
+      refused: result.refused,
+      updated: result.updated,
+    };
+  } catch (err) {
+    log.warn(
+      { errorName: err instanceof Error ? err.name : 'Error', profile: input.profileName },
+      'plugin skill projection failed; the approval stands'
+    );
+    return { created: [], failed: true, refused: [], updated: [] };
+  }
+}
+
+const MAX_BOUND_AGENT_LINEAGES = 500;
+
+/**
+ * The agents (the newest version of each lineage) that name a profile, across every scope, with
+ * whether a TEAM agent is stranded: its team has no enablement, so its new runs fail closed.
+ * Admin-wide on purpose, so both reads state their reach.
+ */
+export async function boundAgentsForProfile(
+  prisma: PrismaClient,
+  profile: { id: string; name: string; status?: string },
+  opts: { teamId?: string } = {}
+): Promise<HarnessProfileBoundAgent[]> {
+  const rows = await runUnscoped(
+    'admin lists the agents bound to a plugin at every scope',
+    ['Agent'],
+    () =>
+      prisma.agent.findMany({
+        orderBy: { version: 'desc' },
+        select: {
+          channelId: true,
+          key: true,
+          orgId: true,
+          scope: true,
+          teamId: true,
+          version: true,
+          workflowTemplateId: true,
+        },
+        take: MAX_BOUND_AGENT_LINEAGES * 4,
+        where: {
+          harnessProfiles: { has: profile.name },
+          isActive: true,
+          ...(opts.teamId ? { scope: 'TEAM' as const, teamId: opts.teamId } : {}),
+        },
+      })
+  );
+  // The highest version of each lineage that names the profile.
+  const lineages = new Map<string, (typeof rows)[number]>();
+  for (const r of rows) {
+    const id = [r.key, r.scope, r.teamId, r.orgId, r.channelId, r.workflowTemplateId].join(':');
+    if (!lineages.has(id)) {
+      lineages.set(id, r);
+    }
+  }
+  const candidates = [...lineages.values()].slice(0, MAX_BOUND_AGENT_LINEAGES);
+  if (candidates.length === 0) {
+    return [];
+  }
+  // A lineage with a newer version than the one that names the profile has moved on from it.
+  const newer = await runUnscoped(
+    'admin checks whether a bound agent lineage has a newer version',
+    ['Agent'],
+    () =>
+      prisma.agent.findMany({
+        select: {
+          channelId: true,
+          key: true,
+          orgId: true,
+          scope: true,
+          teamId: true,
+          workflowTemplateId: true,
+        },
+        where: {
+          OR: candidates.map((c) => ({
+            channelId: c.channelId,
+            key: c.key,
+            orgId: c.orgId,
+            scope: c.scope,
+            teamId: c.teamId,
+            version: { gt: c.version },
+            workflowTemplateId: c.workflowTemplateId,
+          })),
+        },
+      })
+  );
+  const moved = new Set(
+    newer.map((r) =>
+      [r.key, r.scope, r.teamId, r.orgId, r.channelId, r.workflowTemplateId].join(':')
+    )
+  );
+  const current = candidates.filter(
+    (c) =>
+      !moved.has([c.key, c.scope, c.teamId, c.orgId, c.channelId, c.workflowTemplateId].join(':'))
+  );
+  const enabledTeams = new Set(
+    (
+      await runUnscoped('admin lists the teams that enabled a plugin', ['PluginEnablement'], () =>
+        prisma.pluginEnablement.findMany({
+          select: { teamId: true },
+          where: { profileId: profile.id },
+        })
+      )
+    ).map((e) => e.teamId)
+  );
+  const disabled = profile.status !== undefined && profile.status !== 'OK';
+  return current
+    .map((c) => ({
+      key: c.key,
+      scope: c.scope,
+      stranded:
+        disabled || (c.scope === 'TEAM' && (c.teamId === null || !enabledTeams.has(c.teamId))),
+      teamId: c.teamId,
+      version: c.version,
+    }))
+    .sort((a, b) => a.key.localeCompare(b.key) || a.scope.localeCompare(b.scope));
 }

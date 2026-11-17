@@ -19,7 +19,7 @@ function row(version: number, over: Record<string, unknown> = {}) {
     createdById: 'u1',
     credentialId: null,
     description: null,
-    harnessProfile: null,
+    harnessProfiles: [],
     id: version === 1 ? V1 : V2,
     inheritsModelFrom: null,
     isActive: true,
@@ -52,7 +52,10 @@ function newMockPrisma() {
       findUnique: vi.fn().mockResolvedValue(row(2)),
       findUniqueOrThrow: vi.fn().mockResolvedValue({ ...row(3), skillRefs: [] }),
     },
-    agentSkillRef: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    agentSkillRef: {
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     connection: { findUnique: vi.fn() },
     harnessProfile: { findUnique: vi.fn().mockResolvedValue({ status: 'OK' }) },
@@ -173,7 +176,7 @@ describe('POST /agent-library/:id/restore', () => {
   it('restores the harness profile the chosen version was bound to', async () => {
     const { app, prisma } = await buildApp();
     prisma.agent.findFirst
-      .mockResolvedValueOnce(row(1, { harnessProfile: 'review-kit', runtime: 'claude-code' }))
+      .mockResolvedValueOnce(row(1, { harnessProfiles: ['review-kit'], runtime: 'claude-code' }))
       .mockResolvedValueOnce(row(2))
       .mockResolvedValueOnce({ isActive: true, version: 2 });
     const res = await app.inject({
@@ -183,14 +186,14 @@ describe('POST /agent-library/:id/restore', () => {
       url: `/api/v1/platform/agent-library/${ID}/restore`,
     });
     expect(res.statusCode).toBe(201);
-    expect(prisma.agent.create.mock.calls[0][0].data.harnessProfile).toBe('review-kit');
+    expect(prisma.agent.create.mock.calls[0][0].data.harnessProfiles).toEqual(['review-kit']);
   });
 
   it('refuses to restore a profile that has been disabled since', async () => {
     const { app, prisma } = await buildApp();
     prisma.harnessProfile.findUnique.mockResolvedValue({ status: 'DISABLED' });
     prisma.agent.findFirst
-      .mockResolvedValueOnce(row(1, { harnessProfile: 'review-kit', runtime: 'claude-code' }))
+      .mockResolvedValueOnce(row(1, { harnessProfiles: ['review-kit'], runtime: 'claude-code' }))
       .mockResolvedValueOnce(row(2))
       .mockResolvedValueOnce({ isActive: true, version: 2 });
     const res = await app.inject({
@@ -342,6 +345,26 @@ describe('POST /agent-library/:id/restore', () => {
     });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe('AGENT_INACTIVE');
+    expect(prisma.agent.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses to restore a version whose added skill belongs to a disabled plugin', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agent.findFirst
+      .mockResolvedValueOnce(row(1, { skillRefs: [{ skillId: SKILL, sortOrder: 0 }] }))
+      .mockResolvedValueOnce(row(2)) // latest
+      .mockResolvedValueOnce({ isActive: true, version: 2 }); // maxVersion
+    prisma.skill.findMany.mockResolvedValue([
+      { name: 'kit:review', pluginProfile: { id: 'p1', name: 'kit', status: 'DISABLED' } },
+    ]);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { versionId: V1 },
+      url: `/api/v1/platform/agent-library/${ID}/restore`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('SKILL_PLUGIN_DISABLED');
     expect(prisma.agent.create).not.toHaveBeenCalled();
   });
 

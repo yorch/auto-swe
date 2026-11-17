@@ -31,7 +31,7 @@ if (!seed) {
 }
 const seeded = {
   channelId: null,
-  harnessProfile: null,
+  harnessProfiles: [],
   inheritsModelFrom: null,
   key: 'repo-onboarder',
   mcpConnectionId: null,
@@ -175,7 +175,7 @@ describe('onboarding draft authority', () => {
     ['toolKeys', { toolKeys: (seed.toolKeys ?? []).slice(1) }],
     ['mcpConnectionId', { mcpConnectionId: 'mcp-1' }],
     ['runtime', { runtime: 'claude-code' }],
-    ['harnessProfile', { harnessProfile: 'profile' }],
+    ['harnessProfiles', { harnessProfiles: ['profile'] }],
     ['inheritsModelFrom', { inheritsModelFrom: 'implementer' }],
     ['skillRefs', { skillRefs: [{ skill: { name: 'extra' }, sortOrder: 0 }] }],
   ])('refuses a row that differs only in %s', async (condition, patch) => {

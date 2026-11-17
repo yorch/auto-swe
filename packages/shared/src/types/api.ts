@@ -2252,20 +2252,89 @@ export interface HarnessProfileVersionDto {
   createdAt: string;
 }
 
+export type HarnessProfileTrackStatus = 'OK' | 'UPDATE_AVAILABLE' | 'ERROR';
+
 export interface HarnessProfileSummary extends HarnessProfileSource {
   id: string;
   name: string;
   description: string;
   status: HarnessProfileStatus;
   latestVersion: number;
+  /** Whether the plugin's hook configs are written into the run container; set by a platform ADMIN. */
+  hooksEnabled: boolean;
+  /** Newest commit the ref resolved to at the last check; null until one ran. */
+  latestSha: string | null;
+  lastCheckedAt: string | null;
+  /** A fixed string, never upstream text. */
+  lastError: string | null;
+  trackStatus: HarnessProfileTrackStatus;
+  /** The marketplace this profile was approved from; null for a profile added by folder. */
+  marketplaceSourceId: string | null;
+  marketplaceEntry: string | null;
   /** The latest version without its file list. */
   latest: Omit<HarnessProfileVersionDto, 'files' | 'manifest'> | null;
   createdAt: string;
   updatedAt: string;
 }
 
+/** An agent version (the lineage's newest) that names a profile. */
+export interface HarnessProfileBoundAgent {
+  key: string;
+  scope: 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'CHANNEL' | 'WORKFLOW_TEMPLATE';
+  teamId: string | null;
+  version: number;
+  /**
+   * Its new runs fail closed: a TEAM agent whose team has no enablement, or any binding of a
+   * disabled profile.
+   */
+  stranded: boolean;
+}
+
+/** The plugin a projected skill belongs to (`GET /api/v1/platform/skills`); null on other skills. */
+export interface SkillPluginRef {
+  profileId: string;
+  name: string;
+  version: number | null;
+}
+
 export interface HarnessProfileDetail extends HarnessProfileSummary {
   versions: HarnessProfileVersionDto[];
+  /** Present on `GET /:name`: the agents bound to this profile. */
+  boundAgents?: HarnessProfileBoundAgent[];
+  /** Present on `GET /:name`: how many teams have enabled it. */
+  enabledTeams?: number;
+  /** Present on `GET /:name`: the auto-run command sources of the LATEST version (what hooks on would arm). */
+  autoRunSources?: { path: string; kind: string; commands: string[]; unreadable: string | null }[];
+}
+
+/** Create and accept answer `{ data, projection }`: projection problems never undo the approval. */
+export interface HarnessProfileProjectionWarnings {
+  /** True when projecting the plugin skills failed outright (logged server-side). */
+  failed: boolean;
+  created: string[];
+  updated: string[];
+  refused: Array<{ name: string; reason: string }>;
+}
+
+/** One hook source (a hooks file, or the inline `hooks` of plugin.json) in a hooks diff. */
+export interface HarnessProfileHookSource {
+  path: string;
+  commands: string[];
+  /** Why the commands could not be read (a fixed short reason, never file text); null when they were. */
+  unreadable?: string | null;
+}
+
+/** What an update does to the plugin's hook files, against the previous version. */
+export interface HarnessProfileHookChanges {
+  added: HarnessProfileHookSource[];
+  removed: HarnessProfileHookSource[];
+  changed: Array<{
+    path: string;
+    addedCommands: string[];
+    removedCommands: string[];
+    /** Why the new version of the source could not be read; null when it could. */
+    unreadable?: string | null;
+  }>;
 }
 
 /** `POST /harness-profiles/preview` and `/:name/preview-update`: nothing is written. */
@@ -2285,4 +2354,7 @@ export interface HarnessProfilePreview {
   conflicts: Array<{ name: string; status: HarnessProfileStatus }>;
   /** For an update: the version the content already matches, if any. */
   matchesVersion: number | null;
+  /** For an update: the profile's hook switch and the hook files the update changes. */
+  hooksEnabled?: boolean;
+  hookChanges?: HarnessProfileHookChanges;
 }

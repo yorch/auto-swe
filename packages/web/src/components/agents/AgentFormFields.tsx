@@ -12,8 +12,8 @@ import type { SkillRefInput } from '@/hooks/useAgentLibrary';
 import type { McpConnectionRow } from '@/hooks/useMcpConnections';
 import type { ProviderCredentialRow } from '@/hooks/useModelConfig';
 import type { SkillOption } from '@/hooks/useSkills';
-import { visibleText } from '@/lib/visibleText';
 import { SkillRefEditor, ToolKeysEditor } from './AgentEditorFields';
+import { PluginListEditor, type PluginOption } from './PluginListEditor';
 
 /** The editable fields of an Agent, shared by the create and edit forms. */
 export interface AgentFormValue {
@@ -28,8 +28,8 @@ export interface AgentFormValue {
   mcpConnectionId?: string | null;
   credentialId?: string | null;
   runtime?: ImplementerRuntimeKind | null;
-  /** The approved profile (by name). Editable only where `harnessProfiles` is passed (platform admin). */
-  harnessProfile?: string | null;
+  /** The bound plugins (by name, in order). Editable only where the form is given plugin options. */
+  harnessProfiles?: string[];
   reasoning?: ReasoningLevel | null;
 }
 
@@ -116,10 +116,11 @@ export function AgentFormFields({
   /** Every field read-only, for an agent that is deactivated. */
   disabled?: boolean;
   /**
-   * The approved harness profiles a platform admin can bind. Passing it makes the binding
-   * editable; without it a bound profile is shown read-only.
+   * The plugins this caller may bind: every approved one for a platform admin, only those the
+   * team has enabled for a team admin. Passing it makes the list editable; without it a bound
+   * list is shown read-only.
    */
-  harnessProfiles?: Array<{ name: string; status: 'OK' | 'DISABLED' }>;
+  harnessProfiles?: PluginOption[];
   /** Create only: the key is fixed, because the agent overrides the platform agent of that key. */
   keyLocked?: boolean;
   /** Create only: an extra line under the key hint. */
@@ -357,29 +358,17 @@ export function AgentFormFields({
           value={value.runtime ?? ''}
         />
       )}
-      {showRuntime && harnessProfiles && (
-        <Combobox
-          hint="Plugins and instructions the Claude Code harness loads for this agent. Needs the Claude Code runtime, and is not inherited: bind each agent that should have one."
-          label={optional('Harness profile')}
-          onChange={(v) => onChange({ harnessProfile: v || null })}
-          options={[
-            { label: 'None', value: '' },
-            ...harnessProfiles
-              // A disabled profile cannot be newly bound; one already bound stays visible.
-              .filter((p) => p.status === 'OK' || p.name === value.harnessProfile)
-              .map((p) => ({
-                label:
-                  p.status === 'OK' ? visibleText(p.name) : `${visibleText(p.name)} (disabled)`,
-                value: p.name,
-              })),
-          ]}
-          value={value.harnessProfile ?? ''}
-        />
-      )}
-      {showRuntime && !harnessProfiles && value.harnessProfile && (
-        <p className="text-xs text-paper-500">
-          Harness profile: <code>{value.harnessProfile}</code> (changed by a platform admin)
-        </p>
+      {(harnessProfiles || (value.harnessProfiles?.length ?? 0) > 0) && (
+        <FieldWrapper
+          hint="Claude Code plugins this agent loads, in order: their instructions are appended in list order and their tools are combined. Needs the Claude Code runtime, is not inherited, and two plugins that hold a plugin of the same name cannot be bound together."
+          label={optional('Plugins')}
+        >
+          <PluginListEditor
+            onChange={(next) => onChange({ harnessProfiles: next })}
+            options={harnessProfiles}
+            value={value.harnessProfiles ?? []}
+          />
+        </FieldWrapper>
       )}
       {credentials && (
         <Combobox

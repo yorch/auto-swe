@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { safeDisplayPath } from '../skillSource/display.js';
+import { type AutoRunKind, autoRunSourcesOf } from './hookSources.js';
 import { manifestIssues, type ProfileManifest, ProfileManifestSchema } from './manifest.js';
 import { collisionKey, unsafeProfilePath } from './paths.js';
 import {
@@ -236,6 +237,22 @@ function profileWarnings(
     warnings.push(
       `hooks run commands inside the run container (${listed(hookFiles.map((f) => f.path))})`
     );
+  }
+  const autoRun = autoRunSourcesOf(files, { plugins: pluginDirs });
+  const pathsOf = (kind: AutoRunKind) =>
+    listed([...new Set(autoRun.filter((s) => s.kind === kind).map((s) => s.path))]);
+  if (autoRun.some((s) => s.kind === 'frontmatter-hooks')) {
+    warnings.push(
+      `skills or commands declare hooks in their frontmatter, which run commands inside the run container (${pathsOf('frontmatter-hooks')})`
+    );
+  }
+  if (autoRun.some((s) => s.kind === 'monitors')) {
+    warnings.push(
+      `monitors run background commands inside the run container (${pathsOf('monitors')})`
+    );
+  }
+  if (autoRun.some((s) => s.kind === 'lsp')) {
+    warnings.push(`LSP servers launch commands inside the run container (${pathsOf('lsp')})`);
   }
   const scripts = pluginFiles.filter((f) => isScriptPath(f.path));
   if (scripts.length > 0) {

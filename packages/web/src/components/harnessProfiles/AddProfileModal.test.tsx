@@ -55,12 +55,12 @@ async function openAndPreview() {
   fireEvent.change(screen.getByLabelText(/^Repository/), { target: { value: 'pack' } });
   fireEvent.change(screen.getByLabelText(/^Path/), { target: { value: 'kit' } });
   fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
-  await screen.findByText('Review profile');
+  await screen.findByText('Review plugin');
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  create.mockResolvedValue({});
+  create.mockResolvedValue({ data: { name: 'review-kit' }, projection: null });
 });
 
 describe('AddProfileModal', () => {
@@ -74,11 +74,12 @@ describe('AddProfileModal', () => {
       ref: 'main',
       repo: 'pack',
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Approve profile' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Approve plugin' }));
     await waitFor(() =>
       expect(create).toHaveBeenCalledWith({
         acknowledgeWarnings: false,
         contentHash: CONTENT,
+        hooksEnabled: false,
         host: 'github.com',
         owner: 'acme',
         path: 'kit',
@@ -93,7 +94,7 @@ describe('AddProfileModal', () => {
   it('will not approve warnings until they are acknowledged, and then says so', async () => {
     previewFn.mockResolvedValue(preview({ warnings: ['hooks are present'] }));
     await openAndPreview();
-    const approve = screen.getByRole('button', { name: 'Approve profile' }) as HTMLButtonElement;
+    const approve = screen.getByRole('button', { name: 'Approve plugin' }) as HTMLButtonElement;
     expect(approve.disabled).toBe(true);
     fireEvent.click(screen.getByRole('checkbox'));
     expect(approve.disabled).toBe(false);
@@ -108,7 +109,7 @@ describe('AddProfileModal', () => {
     await openAndPreview();
     expect(screen.getByText(/already exists/)).toBeTruthy();
     expect(
-      (screen.getByRole('button', { name: 'Approve profile' }) as HTMLButtonElement).disabled
+      (screen.getByRole('button', { name: 'Approve plugin' }) as HTMLButtonElement).disabled
     ).toBe(true);
   });
 
@@ -148,7 +149,7 @@ describe('AddProfileModal', () => {
       new ApiError('The content or the warnings differ', 409, 'PREVIEW_STALE')
     );
     await openAndPreview();
-    fireEvent.click(screen.getByRole('button', { name: 'Approve profile' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Approve plugin' }));
     expect(
       await screen.findByText(/differ from the preview|The content or the warnings/)
     ).toBeTruthy();
@@ -167,5 +168,53 @@ describe('AddProfileModal', () => {
     fireEvent.change(screen.getByLabelText(/^Repository/), { target: { value: 'pack' } });
     fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
     expect(await screen.findByText('profile.json: unknown key "x"')).toBeTruthy();
+  });
+
+  it('sends the explicit hook choice, defaulting to off but visibly selected', async () => {
+    previewFn.mockResolvedValue(preview());
+    await openAndPreview();
+    const off = screen.getByRole('radio', { name: /Hooks off/ }) as HTMLInputElement;
+    const on = screen.getByRole('radio', { name: /Hooks on/ }) as HTMLInputElement;
+    expect(off.checked).toBe(true);
+    fireEvent.click(on);
+    // Hooks on needs the same confirmation as the switch before approving.
+    expect(
+      (screen.getByRole('button', { name: 'Approve plugin' }) as HTMLButtonElement).disabled
+    ).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'I have reviewed these hook sources' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Approve plugin' }));
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({ hooksEnabled: true }))
+    );
+  });
+
+  it('clears the hook confirmation when the choice goes back to off', async () => {
+    previewFn.mockResolvedValue(preview());
+    await openAndPreview();
+    fireEvent.click(screen.getByRole('radio', { name: /Hooks on/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'I have reviewed these hook sources' }));
+    fireEvent.click(screen.getByRole('radio', { name: /Hooks off/ }));
+    fireEvent.click(screen.getByRole('radio', { name: /Hooks on/ }));
+    expect(
+      (screen.getByRole('button', { name: 'Approve plugin' }) as HTMLButtonElement).disabled
+    ).toBe(true);
+  });
+
+  it('reports the projected skills after approval', async () => {
+    previewFn.mockResolvedValue(preview());
+    create.mockResolvedValue({
+      data: { name: 'review-kit' },
+      projection: {
+        created: ['review-kit:lint'],
+        failed: false,
+        refused: [{ name: 'review-kit:fmt', reason: 'hand edited' }],
+        updated: [],
+      },
+    });
+    await openAndPreview();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve plugin' }));
+    expect(await screen.findByText('Plugin approved')).toBeTruthy();
+    expect(screen.getByText('review-kit:lint')).toBeTruthy();
+    expect(screen.getByText('review-kit:fmt: hand edited')).toBeTruthy();
   });
 });

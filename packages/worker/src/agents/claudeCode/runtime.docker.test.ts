@@ -227,13 +227,15 @@ async function makeRuntime(
     },
     loadProjectSettings: true,
     maxTurns: 8,
+    // A direct property, not a conditional spread: a spread escapes the excess-property
+    // check, so a renamed option would silently run the suite with no profile at all.
+    profiles: overrides.profile ? [overrides.profile] : [],
     tracer: {
       addActivityEvent: (e: { name: string; outputJson: unknown }) => events.push(e),
       addToolCall: (c: Record<string, unknown>) => toolCalls.push(c),
     } as unknown as AgentTracer,
     workspace: ws.workspace as never,
     ...(overrides.allowPause ? { allowPause: true } : {}),
-    ...(overrides.profile ? { profile: overrides.profile } : {}),
     ...(overrides.modelProxy ? { modelProxy: overrides.modelProxy } : {}),
     ...(overrides.mcp ? { mcp: overrides.mcp } : {}),
   });
@@ -274,6 +276,9 @@ function kitProfile(): ResolvedHarnessProfile {
     commitSha: 'c0ffee'.padEnd(40, '1'),
     contentHash: createHash('sha256').update('kit').digest('hex'),
     files,
+    hooksEnabled: true,
+    hooksLive: true,
+    hooksPinned: true,
     manifest: {
       description: 'Kit',
       instructions: 'INSTRUCTIONS.md',

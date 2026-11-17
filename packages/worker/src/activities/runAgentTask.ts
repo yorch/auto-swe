@@ -328,7 +328,7 @@ export async function runAgentTaskCore(
   // Claude Code runs with the profile the Agent is bound to (or fails closed
   // without it, before any container exists); any other loop notes that the
   // profile was not applied.
-  const profile = await resolveProfileForRuntime({
+  const profiles = await resolveProfileForRuntime({
     agentKey: key,
     ctx: agentCtx,
     resolved,
@@ -425,7 +425,7 @@ export async function runAgentTaskCore(
       key,
       maxSteps: Math.max(1, effective.maxSteps - used.steps),
       maxToolOutputChars: settings['workspace.maxToolOutputChars'],
-      profile,
+      profiles,
       prompt: resume ? resumeMessage(resume, prompt) : prompt,
       repoId: input.repo.id,
       resolved,
@@ -887,8 +887,8 @@ interface AgentLoopInput {
   key: string;
   maxSteps: number;
   maxToolOutputChars: number;
-  /** The approved harness profile, for a Claude Code run. */
-  profile?: ResolvedHarnessProfile;
+  /** The approved harness profiles (plugins), for a Claude Code run. */
+  profiles?: ResolvedHarnessProfile[];
   prompt: string;
   resolved: ResolvedAgent;
   settingsCtx: ResolveCtx;
@@ -1070,7 +1070,7 @@ async function runOnHarness(
           tracer
         ),
     ...(input.allowPause ? { allowPause: true } : {}),
-    ...(input.profile ? { profile: input.profile } : {}),
+    ...(input.profiles ? { profiles: input.profiles } : {}),
     tracer,
     workspace: input.workspace,
   });

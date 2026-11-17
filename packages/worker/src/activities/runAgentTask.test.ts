@@ -1509,13 +1509,13 @@ describe('the Claude Code harness, for an agent that asks for it', () => {
   });
 
   it('gives the harness the approved profile the agent is bound to', async () => {
-    const profile = { contentHash: 'a'.repeat(64), name: 'demo', version: 2 };
-    m.profileFor.mockResolvedValue(profile);
+    const profiles = [{ contentHash: 'a'.repeat(64), name: 'demo', version: 2 }];
+    m.profileFor.mockResolvedValue(profiles);
     await runAgentTask({ request: request() });
     expect(m.profileFor).toHaveBeenCalledWith(
       expect.objectContaining({ agentKey: 'contentWriter', runtime: 'claude-code' })
     );
-    expect(m.claudeCodeRuntime.mock.calls[0]?.[0].profile).toBe(profile);
+    expect(m.claudeCodeRuntime.mock.calls[0]?.[0].profiles).toBe(profiles);
   });
 
   it('fails closed, before any container, when the profile cannot be resolved', async () => {

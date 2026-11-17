@@ -1419,6 +1419,7 @@ model Team {
   autonomyPolicies      AutonomyPolicy[]
   skills                Skill[]
   skillSources          SkillSource[]
+  pluginEnablements     PluginEnablement[]
   ownedKnowledgeItems   KnowledgeItem[]         @relation("KnowledgeOwnerTeam")
   originKnowledgeItems  KnowledgeItem[]         @relation("KnowledgeOriginTeam")
   knowledgeGrants       KnowledgeItemTeamGrant[]
@@ -1867,6 +1868,8 @@ model User {
   scheduledWorkRequests ScheduledWorkRequest[]   @relation("ScheduleCreator")
   skillRevisions        SkillRevision[]          @relation("SkillRevisionCreator")
   skillSources          SkillSource[]            @relation("SkillSourceCreator")
+  marketplaceSources    MarketplaceSource[]      @relation("MarketplaceSourceCreator")
+  pluginEnablementsGiven PluginEnablement[]      @relation("PluginEnablementEnabler")
   harnessProfileVersions HarnessProfileVersion[] @relation("HarnessProfileApprover")
   schedulesActingAs     ScheduledWorkRequest[]   @relation("ScheduleActsAs")
   automations           Automation[]             @relation("AutomationCreator")
@@ -4426,6 +4429,15 @@ model Skill {
   /// The skill's folder inside the source repository (relative to the repo root).
   sourcePath String?      @map("source_path")
 
+  /// Set on a skill projected from a plugin (`<plugin>:<skill>`); null for ordinary skills.
+  /// Deleting the profile detaches the row.
+  pluginProfileId String?         @map("plugin_profile_id") @db.Uuid
+  pluginProfile   HarnessProfile? @relation("PluginProjectedSkills", fields: [pluginProfileId], references: [id], onDelete: SetNull)
+  /// The plugin version the projection was derived from.
+  pluginVersion   Int?            @map("plugin_version")
+  /// Set when disabling the plugin deactivated this projected row; re-enabling reactivates exactly these.
+  pluginDeactivatedAt DateTime? @map("plugin_deactivated_at") @db.Timestamptz
+
   agentSkillRefs AgentSkillRef[]
   revisions      SkillRevision[]
 
@@ -4434,6 +4446,7 @@ model Skill {
   @@index([teamId])
   @@index([orgId])
   @@index([sourceId])
+  @@index([pluginProfileId])
   @@map("skills")
 }
 
@@ -4550,11 +4563,28 @@ model HarnessProfile {
   status        HarnessProfileStatus @default(OK)
   /// Highest `HarnessProfileVersion.version`.
   latestVersion Int                  @default(1) @map("latest_version")
+  /// Whether the plugin's hook configs are written into the run container. Decided by a
+  /// platform ADMIN; applied at materialization, never in the stored snapshot.
+  hooksEnabled  Boolean              @default(true) @map("hooks_enabled")
+  /// Newest commit the ref resolved to at the last check; null until one ran.
+  latestSha     String?              @map("latest_sha")
+  lastCheckedAt DateTime?            @map("last_checked_at") @db.Timestamptz
+  /// A fixed error string, never provider or fetch text.
+  lastError     String?              @map("last_error")
+  trackStatus   HarnessProfileTrackStatus @default(OK) @map("track_status")
+  /// The marketplace this profile was approved from; null for a profile added by folder.
+  marketplaceSourceId String?            @map("marketplace_source_id") @db.Uuid
+  marketplaceSource   MarketplaceSource? @relation(fields: [marketplaceSourceId], references: [id], onDelete: SetNull)
+  /// The entry name inside that marketplace.
+  marketplaceEntry    String?            @map("marketplace_entry")
   createdAt     DateTime             @default(now()) @map("created_at") @db.Timestamptz
   updatedAt     DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  versions HarnessProfileVersion[]
+  versions        HarnessProfileVersion[]
+  enablements     PluginEnablement[]
+  projectedSkills Skill[]                 @relation("PluginProjectedSkills")
 
+  @@index([marketplaceSourceId])
   @@map("harness_profiles")
 }
 
@@ -4583,6 +4613,69 @@ model HarnessProfileVersion {
   @@unique([profileId, version])
   @@index([approvedById])
   @@map("harness_profile_versions")
+}
+
+enum HarnessProfileTrackStatus {
+  OK
+  UPDATE_AVAILABLE
+  ERROR
+}
+
+enum MarketplaceSourceStatus {
+  OK
+  UPDATE_AVAILABLE
+  ERROR
+  DISABLED
+}
+
+/// A tracked Claude Code `marketplace.json` repository whose entries an ADMIN can approve as
+/// harness profiles. GLOBAL only.
+model MarketplaceSource {
+  id            String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Lowercased `host[:port]`, e.g. `github.com`.
+  host          String
+  /// Lowercased: GitHub compares owner and repository names case-insensitively.
+  owner         String
+  repo          String
+  /// Folder holding `.claude-plugin/marketplace.json`; empty for the repository root.
+  path          String                  @default("")
+  /// The branch or tag as the admin gave it.
+  ref           String
+  /// The commit the catalog was read from.
+  pinnedSha     String                  @map("pinned_sha")
+  /// Newest commit the ref resolved to at the last check; null until one ran.
+  latestSha     String?                 @map("latest_sha")
+  lastCheckedAt DateTime?               @map("last_checked_at") @db.Timestamptz
+  /// A fixed error string, never provider or fetch text.
+  lastError     String?                 @map("last_error")
+  status        MarketplaceSourceStatus @default(OK)
+  createdById   String?                 @map("created_by_id") @db.Uuid
+  createdBy     User?                   @relation("MarketplaceSourceCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime                @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  profiles HarnessProfile[]
+
+  @@unique([host, owner, repo, path])
+  @@index([createdById])
+  @@map("marketplace_sources")
+}
+
+/// A team's permission to bind an approved plugin on its agent overrides.
+model PluginEnablement {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  profileId   String         @map("profile_id") @db.Uuid
+  profile     HarnessProfile @relation(fields: [profileId], references: [id], onDelete: Restrict)
+  teamId      String         @map("team_id") @db.Uuid
+  team        Team           @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  enabledById String?        @map("enabled_by_id") @db.Uuid
+  enabledBy   User?          @relation("PluginEnablementEnabler", fields: [enabledById], references: [id], onDelete: SetNull)
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([profileId, teamId])
+  @@index([teamId])
+  @@index([enabledById])
+  @@map("plugin_enablements")
 }
 
 enum ScannerPatternType {
@@ -4660,11 +4753,11 @@ model Agent {
   // follows the run-pinned `workspace.implementerRuntime` setting and agent runs
   // use Mastra. A persona that inherits its model inherits this too.
   runtime            String?
-  // The NAME of the approved harness profile (`HarnessProfile.name`) this version runs
-  // with; only meaningful on the 'claude-code' runtime. Not inherited along
-  // `inheritsModelFrom`. No foreign key: profiles are never deleted and names are
+  // The NAMES of the approved harness profiles (plugins, `HarnessProfile.name`) this version
+  // runs with, in binding order; only meaningful on the 'claude-code' runtime. Not inherited
+  // along `inheritsModelFrom`. No foreign key: profiles are never deleted and names are
   // stable, and a name that stops resolving fails the run closed. ADMIN-only to set.
-  harnessProfile     String?     @map("harness_profile")
+  harnessProfiles    String[]    @default([]) @map("harness_profiles")
   // How hard the model reasons before it answers: 'off', 'low', 'medium' or 'high'
   // (CHECK constraint). null = no opinion: the model's own default. Mapped onto each provider's
   // own option (Anthropic extended thinking, OpenAI reasoning effort, Google thinking

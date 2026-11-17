@@ -22,6 +22,9 @@ export interface Skill {
   scanWarnings: string[];
   /** Set for a skill imported from an external repository; `sha` is the commit its current text came from. */
   externalSource: { host: string; owner: string; repo: string; sha: string | null } | null;
+  /** Set on a skill projected from a plugin; the namespaced name `<plugin>:<skill>` is the other signal. */
+  pluginProfileId?: string | null;
+  pluginVersion?: number | null;
   createdAt: string;
   updatedAt: string;
 }

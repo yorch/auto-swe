@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { lockAgentLineage } from '@auto-swe/shared/lib/agentLineageLock';
+import { unpackFiles } from '@auto-swe/shared/lib/harnessProfile';
 import {
   isAnthropicSpec,
   normalizeModelSpec,
@@ -16,6 +17,7 @@ import {
 import { advisoryWarnings } from './advisoryWarnings.js';
 import { BUILTIN_PROVIDERS } from './credentialService.js';
 import { catalogWarnings } from './modelCatalogService.js';
+import { pluginNamesOf } from './pluginSnapshot.js';
 import { isUniqueConstraintError } from './prismaErrors.js';
 import { scanSkillAdvisory } from './skillScan.js';
 
@@ -67,12 +69,11 @@ export interface AgentBaseInput {
    */
   runtime?: ImplementerRuntimeKind | null;
   /**
-   * The approved harness profile (by name) this version runs with on the
-   * `claude-code` runtime. undefined = keep, null = none. Set on the version
-   * itself: never inherited along `inheritsModelFrom`. Platform-ADMIN only: the
-   * routes enforce it.
+   * The approved harness profiles (plugins, by name, in binding order) this version runs with
+   * on the `claude-code` runtime. undefined = keep, [] = none. Set on the version itself:
+   * never inherited along `inheritsModelFrom`. Platform-ADMIN only: the routes enforce it.
    */
-  harnessProfile?: string | null;
+  harnessProfiles?: string[];
   /**
    * How hard the model reasons before it answers. null = no opinion: the
    * provider's default, or the parent's level for a persona that inherits its
@@ -247,30 +248,56 @@ async function effectiveRuntime(
 }
 
 export interface ProfileSaveError {
-  code: 'PROFILE_RUNTIME_MISMATCH' | 'PROFILE_NOT_FOUND' | 'PROFILE_DISABLED';
+  code:
+    | 'PROFILE_RUNTIME_MISMATCH'
+    | 'PROFILE_NOT_FOUND'
+    | 'PROFILE_DISABLED'
+    | 'PROFILE_DUPLICATE'
+    | 'PROFILE_NAME_COLLISION'
+    | 'PROFILE_NOT_ENABLED';
   message: string;
 }
 
+/** Where a version is being saved, for the team enablement rule. */
+export interface ProfileSaveContext {
+  scope?: AgentScope;
+  teamId?: string | null;
+  /** The list the lineage carries now; names already on it are not re-checked for enablement. */
+  current?: readonly string[];
+}
+
 /**
- * Why a version may not be saved with this harness profile, or `null`. A profile
- * is only applied by the `claude-code` runtime, so the version's effective runtime
- * must be that one; and when the profile is being set or changed (`changed`) it
- * must exist and be OK. A profile a version already carries is not re-litigated
- * for its status when someone edits another field: a disabled profile fails the
- * run closed, which is the signal, and must not lock the rest of the agent.
+ * Why a version may not be saved with these harness profiles, or `null`. Profiles are only applied
+ * by the `claude-code` runtime, so the version's effective runtime must be that one; a name may be
+ * listed once; and when the list is being set or changed (`changed`) every profile must exist and be
+ * OK, no two may hold a plugin of the same name, and a TEAM override may add only profiles the team
+ * has enabled (a name it already carries, or one it removes, is never re-checked: removal is free
+ * and a revoked enablement is signalled by the run failing closed). A profile a version already
+ * carries is not re-litigated for its status when someone edits another field: a disabled profile
+ * fails the run closed, which is the signal, and must not lock the rest of the agent.
  */
 export async function profileSaveError(
-  prisma: AgentReader & Pick<PrismaClient, 'harnessProfile'>,
+  prisma: AgentReader &
+    Pick<PrismaClient, 'harnessProfile'> &
+    Partial<Pick<PrismaClient, 'harnessProfileVersion' | 'pluginEnablement'>>,
   version: {
-    harnessProfile: string | null;
+    harnessProfiles: string[];
     inheritsModelFrom: string | null;
     runtime: string | null;
   },
-  changed: boolean
+  changed: boolean,
+  ctx: ProfileSaveContext = {}
 ): Promise<ProfileSaveError | null> {
-  const name = version.harnessProfile;
-  if (!name) {
+  const names = version.harnessProfiles;
+  if (names.length === 0) {
     return null;
+  }
+  const duplicate = names.find((n, i) => names.indexOf(n) !== i);
+  if (duplicate !== undefined) {
+    return {
+      code: 'PROFILE_DUPLICATE',
+      message: `Harness profile '${duplicate}' is listed more than once.`,
+    };
   }
   const runtime = await effectiveRuntime(prisma, version);
   if (runtime !== 'claude-code') {
@@ -282,38 +309,142 @@ export async function profileSaveError(
   if (!changed) {
     return null;
   }
-  const profile = await prisma.harnessProfile.findUnique({
-    select: { status: true },
-    where: { name },
-  });
-  if (!profile) {
-    return { code: 'PROFILE_NOT_FOUND', message: `No harness profile named '${name}'.` };
+  const found: { id: string; latestVersion: number; name: string }[] = [];
+  for (const name of names) {
+    const profile = await prisma.harnessProfile.findUnique({
+      select: { id: true, latestVersion: true, status: true },
+      where: { name },
+    });
+    if (!profile) {
+      return { code: 'PROFILE_NOT_FOUND', message: `No harness profile named '${name}'.` };
+    }
+    if (profile.status !== 'OK') {
+      return { code: 'PROFILE_DISABLED', message: `Harness profile '${name}' is disabled.` };
+    }
+    found.push({ id: profile.id, latestVersion: profile.latestVersion, name });
   }
-  if (profile.status !== 'OK') {
-    return { code: 'PROFILE_DISABLED', message: `Harness profile '${name}' is disabled.` };
+  const collision = await profileNameCollision(prisma, found);
+  if (collision) {
+    return collision;
+  }
+  // Enablement is a TEAM-only rule: it is how a team admin is allowed to bind a plugin. The other
+  // scopes (platform-wide, organization, channel, workflow template) are written by a platform
+  // ADMIN, who has already approved the plugin, so they need none.
+  if (ctx.scope === 'TEAM' && ctx.teamId && prisma.pluginEnablement) {
+    const carried = new Set(ctx.current ?? []);
+    const added = found.filter((f) => !carried.has(f.name));
+    if (added.length > 0) {
+      const enabled = await prisma.pluginEnablement.findMany({
+        select: { profileId: true },
+        where: { profileId: { in: added.map((a) => a.id) }, teamId: ctx.teamId },
+      });
+      const have = new Set(enabled.map((e) => e.profileId));
+      const missing = added.filter((a) => !have.has(a.id)).map((a) => a.name);
+      if (missing.length > 0) {
+        return {
+          code: 'PROFILE_NOT_ENABLED',
+          message: `Not enabled for this team: ${missing.map((m) => `'${m}'`).join(', ')}. A team admin enables a plugin before an agent can use it.`,
+        };
+      }
+    }
   }
   return null;
 }
 
 /**
- * The profile a new scoped override starts with when its writer names none: the
- * platform-wide row's, like the runtime — only while the override still resolves
- * to the harness, since a profile is meaningless elsewhere.
+ * Two profiles that each hold a plugin of the same name cannot be bound together: the harness
+ * knows plugins by name. Computed from each profile's latest snapshot, read afresh every time.
+ */
+async function profileNameCollision(
+  prisma: Partial<Pick<PrismaClient, 'harnessProfileVersion'>>,
+  profiles: { id: string; latestVersion: number; name: string }[]
+): Promise<ProfileSaveError | null> {
+  if (profiles.length < 2 || !prisma.harnessProfileVersion) {
+    return null;
+  }
+  const rows = await prisma.harnessProfileVersion.findMany({
+    select: { files: true, manifest: true, profileId: true },
+    where: { OR: profiles.map((p) => ({ profileId: p.id, version: p.latestVersion })) },
+  });
+  const owner = new Map<string, string>();
+  for (const p of profiles) {
+    const row = rows.find((r) => r.profileId === p.id);
+    if (!row) {
+      continue;
+    }
+    let names: string[];
+    try {
+      names = pluginNamesOf(unpackFiles(row.files), row.manifest as { plugins?: string[] });
+    } catch {
+      // An unreadable snapshot fails the run closed where it is applied.
+      continue;
+    }
+    for (const plugin of new Set(names)) {
+      const other = owner.get(plugin);
+      if (other !== undefined && other !== p.name) {
+        return {
+          code: 'PROFILE_NAME_COLLISION',
+          message: `Harness profiles '${other}' and '${p.name}' both hold a plugin named '${plugin}'; bind only one of them.`,
+        };
+      }
+      owner.set(plugin, p.name);
+    }
+  }
+  return null;
+}
+
+/**
+ * The profiles a new scoped override starts with when its writer names none: the platform-wide
+ * row's, like the runtime — only while the override still resolves to the harness, since a profile
+ * is meaningless elsewhere.
  */
 export async function defaultOverrideProfile(
   prisma: AgentReader,
   key: Pick<AgentScopeKey, 'key' | 'scope'>,
   runtime: string | null
-): Promise<string | null> {
+): Promise<string[]> {
   if (key.scope === 'GLOBAL' || runtime !== 'claude-code') {
-    return null;
+    return [];
   }
   const global = await prisma.agent.findFirst({
     orderBy: { version: 'desc' },
-    select: { harnessProfile: true },
+    select: { harnessProfiles: true },
     where: { isActive: true, key: key.key, scope: 'GLOBAL' },
   });
-  return global?.harnessProfile ?? null;
+  return global?.harnessProfiles ?? [];
+}
+
+/**
+ * {@link defaultOverrideProfile} for a new TEAM override: the platform-wide row's profiles the
+ * team has not enabled are left out of the starting value (the worker would fail the override's
+ * runs closed on them), and `notes` says so for the response.
+ */
+export async function startingOverrideProfiles(
+  prisma: AgentReader & Pick<PrismaClient, 'pluginEnablement' | 'harnessProfile'>,
+  key: Pick<AgentScopeKey, 'key' | 'scope'> & { teamId?: string | null },
+  runtime: string | null
+): Promise<{ carried: string[]; harnessProfiles: string[]; notes: string[] }> {
+  const inherited = await defaultOverrideProfile(prisma, key, runtime);
+  if (key.scope !== 'TEAM' || !key.teamId || inherited.length === 0) {
+    return { carried: inherited, harnessProfiles: inherited, notes: [] };
+  }
+  const enabled = await prisma.pluginEnablement.findMany({
+    select: { profile: { select: { name: true } } },
+    where: { profile: { name: { in: inherited } }, teamId: key.teamId },
+  });
+  const have = new Set(enabled.map((e) => e.profile.name));
+  const dropped = inherited.filter((n) => !have.has(n));
+  const carried = inherited.filter((n) => have.has(n));
+  return {
+    carried,
+    harnessProfiles: carried,
+    notes:
+      dropped.length > 0
+        ? [
+            `Not carried over from the platform-wide agent because the team has not enabled them: ${dropped.map((d) => `'${d}'`).join(', ')}.`,
+          ]
+        : [],
+  };
 }
 
 /**
@@ -691,7 +822,7 @@ export async function createAgent(
           createdById: actorId,
           credentialId: base.credentialId ?? null,
           description: base.description ?? null,
-          harnessProfile: base.harnessProfile ?? null,
+          harnessProfiles: base.harnessProfiles ?? [],
           inheritsModelFrom: base.inheritsModelFrom ?? null,
           isActive: true,
           isBuiltIn: false,
@@ -818,7 +949,7 @@ export async function updateAgent(
           createdById: actorId,
           credentialId: pick(base.credentialId, current.credentialId),
           description: pick(base.description, current.description),
-          harnessProfile: pick(base.harnessProfile, current.harnessProfile),
+          harnessProfiles: base.harnessProfiles ?? current.harnessProfiles,
           inheritsModelFrom: pick(base.inheritsModelFrom, current.inheritsModelFrom),
           // Active, because the guard above admits only a lineage that is already active or a
           // deliberate reactivation: no version decides its lineage's activation.
@@ -1263,7 +1394,7 @@ export async function bulkUpdateAgentModels(
           modelSpec: target,
           // A profile only means something on the harness: leaving it behind would make the
           // version unsavable (PROFILE_RUNTIME_MISMATCH) and fail its runs closed.
-          ...(change.runtimeChange ? { harnessProfile: null, runtime: 'mastra' as const } : {}),
+          ...(change.runtimeChange ? { harnessProfiles: [], runtime: 'mastra' as const } : {}),
           ...(change.credentialCleared ? { credentialId: null } : {}),
         };
         const saved = await updateAgent(prisma, head, base, actorId);

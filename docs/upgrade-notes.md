@@ -1815,3 +1815,56 @@ tickets runs should keep commenting on and moving. No migration and no environme
 it posts no comment and logs `Tracker sync skipped`.
 
 ---
+
+### Plugins: the agent binding becomes a list, and hooks and team enablement are per plugin (`b03322e`)
+
+**Affected.** Any deployment that upgrades across migrations `20261117200000_plugins` and
+`20261117200001_plugin_skill_deactivation`. In a deployment that ran earlier code with an agent bound
+to a harness profile, every such binding is converted in place and the actions below apply to it.
+
+**What changes.** `agents.harness_profile` (one profile name) is replaced in place by
+`agents.harness_profiles` (a list of names): a bound name becomes a one-element list, an unbound agent
+an empty list, and the old column is dropped. There is no fallback to it. Older code that reads a whole
+agent row fails on the missing column; older code that selects only some columns sees no plugin list,
+so an agent it runs has no plugins. The migration also adds the hook switch
+(`harness_profiles.hooks_enabled`, default true, so each existing profile keeps hooks on as it was
+approved), the profile tracking columns, the `marketplace_sources` and `plugin_enablements` tables, and
+the projection columns on `skills`. The second migration adds one nullable column,
+`skills.plugin_deactivated_at`, with no backfill. A disable stamps the rows it switches off with it, and
+a re-enable reactivates only the stamped rows.
+
+Runs in flight when the upgraded code starts keep their pins. A pin written by earlier code lists agent
+keys under `verified`, which exempts nothing under the upgraded code, so each team-scoped binding of such
+a run is checked against enablement on its next resolution. A team that still has the plugin enabled is
+unaffected.
+
+The migration creates no team enablements. A team-scoped agent bound to a plugin therefore fails its
+runs with `PLUGIN_NOT_ENABLED` until a team admin enables that plugin for the team. A platform-wide
+binding needs no enablement.
+
+Skills projected from a plugin are managed by that plugin from the upgraded gateway onward: their text
+changes only by accepting a plugin version, the skill API refuses a hand edit with
+`SKILL_PLUGIN_MANAGED`, and disabling the plugin deactivates them. Re-enabling reactivates the rows a
+disable stamped.
+
+**Actions.**
+
+1. Upgrade the gateway and the worker together, in one deployment step. Do not run old and new code
+   side by side against the migrated database.
+2. Existing profiles stay hooks ON: the upgrade switches none of them off. Review each approved plugin's
+   hook switch on the Plugins page (`/admin/harness-profiles`) and switch hooks off where they should
+   not run. With hooks off, the worker also omits a plugin's frontmatter hooks, monitors and LSP
+   servers, not only `hooks/hooks.json` and the hooks of `plugin.json`.
+3. For each team with a team-scoped agent bound to a plugin, a team admin enables that plugin in the
+   team's Plugins section, or with `PUT /api/v1/teams/:teamId/plugins/:name`. Until then those runs fail
+   closed. The plugin's details list the bound agents, with the stranded ones marked.
+4. Optional environment variables, read at gateway startup: `MARKETPLACE_SYNC_ENABLED` (default `true`)
+   and `MARKETPLACE_SYNC_CRON` (default `53 5 * * *`, UTC) for the marketplace check. Profile update checks
+   run on the skill-source schedule (`SKILL_SOURCE_SYNC_ENABLED`, `SKILL_SOURCE_SYNC_CRON`), so turning
+   that sync off stops them as well.
+
+**Verify.** The agent library shows each agent bound before the upgrade with the same profile name in its
+list. A run of a team-scoped agent bound to a plugin completes once the plugin is enabled for that team,
+and its `agent.plugin_hooks` event records the hook switch the run used.
+
+---

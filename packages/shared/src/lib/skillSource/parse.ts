@@ -56,10 +56,12 @@ function splitFrontmatter(text: string): { front: string; body: string } | null 
  * text. Every failure is a fixed per-skill string, never the parser's message
  * (which quotes the offending text).
  *
+ * `opts.defaultName` stands in for a frontmatter with no `name` key at all.
+ *
  * The description is flattened to one line: it is shown in the skill menu, where
  * a newline would let imported text start a menu entry or a heading of its own.
  */
-export function parseSkillMd(text: string): ParsedSkillMd {
+export function parseSkillMd(text: string, opts: { defaultName?: string } = {}): ParsedSkillMd {
   const parts = splitFrontmatter(text);
   if (!parts) {
     return { error: 'SKILL.md has no YAML frontmatter', ok: false };
@@ -77,7 +79,10 @@ export function parseSkillMd(text: string): ParsedSkillMd {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     return { error: 'frontmatter is not a mapping', ok: false };
   }
-  const { name, description } = data as Record<string, unknown>;
+  const { description } = data as Record<string, unknown>;
+  // A frontmatter without a `name` takes the caller's default (a plugin skill's directory name);
+  // a `name` that is present is still checked as before.
+  const name = (data as Record<string, unknown>).name ?? opts.defaultName;
   if (typeof name !== 'string' || !NAME_RE.test(name.trim())) {
     return {
       error: 'frontmatter name is missing or invalid (letters, digits, space . _ -, up to 200)',

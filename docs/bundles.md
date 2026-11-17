@@ -16,19 +16,20 @@ Only secret-free, deployment-portable library content is exported:
 | `Skill` | Name, description, prompt text, `origin`, `isVerified` |
 | `ScannerPattern` | Label, type, pattern, flags (safe subset only), `origin` |
 | `WorkflowTemplate` | Active version's `WorkflowSpec`, `name`, `description`, `inputSchema`, `origin` |
+| Plugin reference | A Claude Code plugin by reference: profile name, source coordinates, exact commit, expected content hash and the agents it is bound to. The plugin's files never travel; an export writes one for each harness profile an exported GLOBAL agent is bound to |
 
 Connection **instances** (URLs, credentials, team bindings, `mcpConnectionId`) are **never**
 exported. A bundle only *declares* the connection types its templates require through
 `dependencies`, so an installer can re-wire them to local `Connection` rows.
 
-## Manifest format (v2)
+## Manifest format (v3)
 
 `packages/shared/src/bundle/index.ts` owns the schema and the hashing rules. The manifest looks
 like:
 
 ```json
 {
-  "bundleSchemaVersion": 2,
+  "bundleSchemaVersion": 3,
   "metadata": {
     "name": "acme-support-pack",
     "version": "1.0.0",
@@ -37,7 +38,7 @@ like:
     "signature": "base64-ed25519",
     "signedBy": "acme-release-key"
   },
-  "entities": { "agents": [], "skills": [], "scannerPatterns": [], "templates": [] },
+  "entities": { "agents": [], "skills": [], "scannerPatterns": [], "templates": [], "plugins": [] },
   "dependencies": [{ "connectionType": "git_repo" }, { "connectionType": "mcp" }]
 }
 ```
@@ -46,7 +47,31 @@ The `contentHash` is a sha256 over the canonicalized manifest **minus** `metadat
 `metadata.signature`, and `metadata.signedBy`. Because the hash covers `metadata.name`,
 `metadata.version`, `createdAt`, `source`, and `description`, a bundle's identity is bound to its
 content: relabeling or re-versioning a signed bundle invalidates the hash and the signature.
-Schema v1 bundles (which signed only entities and dependencies) are rejected outright.
+Schema v1 bundles (which signed only entities and dependencies) are rejected outright. Schema v2
+bundles are still accepted: they carry no `plugins`, and they hash exactly as they were signed.
+Every bundle the platform or the SDK writes is v3. `entities.plugins` is left out of the manifest
+when empty, so a bundle with no plugins has one spelling and one hash; a v2 bundle that carries
+`plugins` is refused.
+
+### Plugin references
+
+`entities.plugins` lists Claude Code plugins to install by reference:
+
+```json
+{
+  "name": "acme-pack",
+  "source": { "host": "github.com", "owner": "acme", "repo": "tools", "path": "plugins/pack" },
+  "sha": "<40-hex commit>",
+  "contentHash": "<64-hex profile content hash>",
+  "bindings": [{ "agentKey": "implementer" }]
+}
+```
+
+`name` is the harness profile name (`profile.json`). `host` defaults to `github.com` and `path` to the
+repository root. `sha` is the exact commit the folder is read at and `contentHash` the profile content
+hash that read must reproduce ([harness-profiles.md](./harness-profiles.md)). `bindings` name GLOBAL
+agents by key; a key may name an agent the bundle carries or one already installed. The hash covers
+these entries, so a signature binds the commit and the expected content.
 
 ## Trust model
 
@@ -71,7 +96,8 @@ against.
 
 ## Authoring a bundle
 
-Use `@auto-swe/sdk` in scripts or the `auto-swe bundle` CLI subcommand (no token required):
+Use `@auto-swe/sdk` (`definePlugin` writes a plugin reference; `validateBundle` checks its shape: a
+40-hex commit, a 64-hex content hash, unique names, no agent bound twice) in scripts or the `auto-swe bundle` CLI subcommand (no token required):
 
 ```typescript
 import { defineAgent, defineBundle, signBundle, validateBundle } from '@auto-swe/sdk';
@@ -150,13 +176,58 @@ On install the gateway:
 6. Strips deployment-local IDs and re-establishes `Agent`/`Skill`/template ownership in the target
    deployment.
 7. Records the result as an `InstalledBundle` row, marking it `VERIFIED` or `UNVERIFIED`.
+8. Installs plugin references (see below), after the bundle's agents exist and before the
+   registry row is written.
+
+### Installing plugin references
+
+For each plugin the gateway reads the folder at the pinned `sha` with the guarded fetcher (host
+policy, SSRF guard, no redirect left unchecked), validates and scans it as an approval does, and
+requires the computed content hash to equal the bundle's. All of that happens before any write:
+
+- A hash that differs answers `400 BUNDLE_PLUGIN_HASH_MISMATCH` naming the plugin; a folder that is
+  not a valid profile (or names a different profile) answers `400 BUNDLE_PLUGIN_INVALID`; a refused
+  or failed fetch answers `BUNDLE_PLUGIN_FETCH_FAILED` with a fixed message. Nothing is written.
+- A profile of that name is created with `hooksEnabled: false` and its first version approved by the
+  installing admin. Only a platform admin switches hooks on, separately, and that switch needs the
+  latest version the admin reviewed ([harness-profiles.md §7](./harness-profiles.md#7-the-hook-switch)).
+  The profile's `ref` is
+  `HEAD`, so its update check follows the repository's default branch.
+- A profile of that name that already holds a version with the same content hash is reused, and its
+  hook switch is not touched. A name approved with different content answers
+  `409 PROTECTED_CONTENT_OVERWRITE` with the name under `conflicts.plugins`; `overwriteProtected`
+  does not lift it, because a bundle cannot replace an approved snapshot.
+- The approval warnings (structure and scanner findings) of every profile the install would create
+  come back in `warnings`, and the install answers `409 WARNINGS_UNACKNOWLEDGED` with them until the
+  request carries `acknowledgeWarnings: true` (CLI: `--acknowledge-warnings`). A reused profile was
+  approved earlier and needs no acknowledgement.
+- Each binding cuts a new version of the named GLOBAL agent with the plugin name appended to
+  `harnessProfiles`; older versions are never changed. It applies only when the agent runs on the
+  `claude-code` runtime (the bundle's own agent entry counts); an agent that is missing, on another
+  runtime, or already bound is reported in `warnings` or skipped. A binding that would give the agent
+  two plugins of one name, or name one profile twice, fails the install with `PROFILE_NAME_COLLISION`
+  or `PROFILE_DUPLICATE`, and the whole install is rolled back.
+- A reused profile is bound at its latest version. When the bundle's referenced version is not the
+  latest, the install warns with both numbers and projects no skills for that plugin.
+- After the transaction commits, the plugin's skills are projected into `<plugin>:<skill>` rows for
+  runtimes other than `claude-code` ([harness-profiles.md §13](./harness-profiles.md#13-skill-projection-for-other-runtimes)).
+  The outcome, including every skill refused by `skills.import.blockOnScanWarnings` or a hand edit, is
+  part of `warnings`; a projection failure never undoes the install. A bundle that names a projected
+  skill as a plain GLOBAL skill is refused with `409 SKILL_PLUGIN_MANAGED`, and one whose agent
+  references a skill of a disabled plugin with `400 SKILL_PLUGIN_DISABLED`; nothing is installed.
+
+The response carries `plugins: { bound, created, reused }` and `counts.plugins` when the bundle has
+plugin references. `bound` lists each plugin with the `boundVersion` its agents run.
 
 ### Previewing before install
 
 `POST /api/v1/platform/bundles/preview` (a `bundle` inline, or a `url` to fetch) runs the same
 checks as an install through one shared validation, and returns the bundle's trust state and
 signer, the version already installed under its name, each entry it would create or replace (with a
-flag on every entry that replaces protected content), the advisory scan findings in its skills, and
+flag on every entry that replaces protected content), the advisory scan findings in its skills, the
+`plugins` it would create (hooks off), reuse or refuse as a conflict (each with its approval warnings
+and the outcome of every binding; the preview reads the pinned commits, so it fails on a hash
+mismatch as an install does), and
 a `blockedReason` when this deployment would refuse it (an unverified bundle while unverified
 installs are off). It writes nothing. The Bundles page always previews first; the install
 dialog needs a ticked box to replace protected content, and an unverified bundle needs a second
@@ -223,6 +294,17 @@ separately.
   choice, so only an explicit `null` clears it on re-install, and a new agent starts with none. An
   export writes each field only for an agent that has a value, so a bundle of agents with none
   hashes as it did before the fields existed.
+- **A bundle's plugin references pin a commit, not a ref.** An installed profile tracks `HEAD`, so a
+  bundle gives no way to follow a tag or branch. The bytes are read from the source host at install
+  time, so an install needs that host to be reachable and approved
+  (`github.repositoryHosts`).
+- **Plugins are exported only for bound agents.** An export writes a plugin reference for each
+  profile that the head version of an exported GLOBAL agent is bound to, at its newest approved
+  commit; a profile no exported agent uses is not exported, and neither are enablements or hook
+  switches. A plugin's projected skills are left out of the export's `skills`; they come back from the
+  plugin.
+- **A reused older plugin version is not the one that runs.** A bundle that references a version older
+  than the profile's latest binds the agents to the latest version and says so in `warnings`.
 - **Skill/tool bindings are resolved at install time, not at export.** If a bundle references a tool
   or skill key that does not exist in the target, the install succeeds but the agent may fail when
   the workflow reaches that node.

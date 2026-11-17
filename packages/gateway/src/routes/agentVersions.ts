@@ -19,6 +19,7 @@ import {
 import { writeAuditLog } from '../lib/auditLog.js';
 import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/dateWindow.js';
 import { sendError } from '../lib/httpErrors.js';
+import { skillAttachError } from '../lib/pluginSkillPolicy.js';
 import { coveredRollupDays, planWindow, timeWhere } from '../lib/usageWindows.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -405,14 +406,27 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
       const profileError = await profileSaveError(
         fastify.prisma,
         {
-          harnessProfile: source.harnessProfile,
+          harnessProfiles: source.harnessProfiles,
           inheritsModelFrom: source.inheritsModelFrom,
           runtime: toImplementerRuntime(source.runtime),
         },
-        true
+        true,
+        {
+          current: latest.harnessProfiles,
+          scope: anchor.scope as AgentScope,
+          teamId: anchor.teamId,
+        }
       );
       if (profileError) {
         return sendError(reply, 400, profileError.code, profileError.message);
+      }
+      const skillError = await skillAttachError(fastify.prisma, source.skillRefs, {
+        currentAgentId: latest.id,
+        scope: anchor.scope,
+        teamId: anchor.teamId,
+      });
+      if (skillError) {
+        return sendError(reply, 400, skillError.code, skillError.message);
       }
       // The same reference check an edit gets: the connection may have been deactivated or
       // belong to another team since that version was current.
@@ -454,7 +468,7 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
           {
             credentialId: source.credentialId,
             description: source.description,
-            harnessProfile: source.harnessProfile,
+            harnessProfiles: source.harnessProfiles,
             inheritsModelFrom: source.inheritsModelFrom,
             mcpConnectionId: source.mcpConnectionId,
             modelSpec: source.modelSpec,

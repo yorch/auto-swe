@@ -13,6 +13,7 @@ import { AgentScopeFields } from '@/components/agents/AgentScopeFields';
 import { broaderFallbacks } from '@/components/agents/agentFallback';
 import { BulkModelModal } from '@/components/agents/BulkModelModal';
 import { ModelSaveWarnings } from '@/components/agents/ModelSaveWarnings';
+import { ProfileNotes } from '@/components/agents/ProfileNotes';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
@@ -63,6 +64,7 @@ import {
   toolKeysLabel,
 } from '@/lib/agentDisplay';
 import { buildAgentUpdate } from '@/lib/agentEditPatch';
+import { describeAgentSaveError } from '@/lib/agentSaveError';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { navLabel } from '@/lib/navigation';
@@ -169,6 +171,10 @@ interface SavedNotice {
   credentialWarnings: string[];
   /** Harness agents that inherit the newly saved model and cannot run on it. */
   runtimeWarnings: string[];
+  /** Plugins left out of a new team override because the team has not enabled them. */
+  profileNotes: string[];
+  /** Plugins a create inherited from the platform agent of the same key. */
+  profileCarried: string[];
 }
 
 const ATTENTION_FILTERS = ['deactivated', 'noCredential', 'unverified'] as const;
@@ -256,12 +262,24 @@ function AgentLibraryContent() {
     const catalogWarnings = res.catalogWarnings ?? [];
     const credentialWarnings = res.credentialWarnings ?? [];
     const runtimeWarnings = res.runtimeWarnings ?? [];
+    const profileNotes = res.profileNotes ?? [];
+    const profileCarried = res.profileCarried ?? [];
     setSaved(
       scanWarnings.length > 0 ||
         catalogWarnings.length > 0 ||
         credentialWarnings.length > 0 ||
-        runtimeWarnings.length > 0
-        ? { catalogWarnings, credentialWarnings, runtimeWarnings, scanWarnings, title }
+        runtimeWarnings.length > 0 ||
+        profileNotes.length > 0 ||
+        profileCarried.length > 0
+        ? {
+            catalogWarnings,
+            credentialWarnings,
+            profileCarried,
+            profileNotes,
+            runtimeWarnings,
+            scanWarnings,
+            title,
+          }
         : null
     );
   }
@@ -270,12 +288,15 @@ function AgentLibraryContent() {
     setCreateError(null);
     try {
       const res = await createAgent.mutateAsync(
-        cleanAgentPayload({ ...createForm }) as CreateAgentBody
+        cleanAgentPayload({
+          ...createForm,
+          harnessProfiles: createProfiles,
+        }) as CreateAgentBody
       );
       finishSave('Agent created', res);
       closeCreate();
     } catch (e) {
-      setCreateError(errMsg(e, 'Create failed'));
+      setCreateError(describeAgentSaveError(e, 'Create failed'));
     }
   }
 
@@ -298,9 +319,24 @@ function AgentLibraryContent() {
       finishSave('New version saved', res);
       closeEdit();
     } catch (e) {
-      setEditError(errMsg(e, 'Update failed'));
+      setEditError(describeAgentSaveError(e, 'Update failed'));
     }
   }
+
+  // An explicit plugin list is always sent. Until the person edits it, it starts as the platform
+  // agent of the same key's list (what the server used to inherit silently), limited to plugins
+  // that are enabled, so what the form shows is what gets bound.
+  const enabledPlugins = new Set(
+    (harnessProfiles ?? []).filter((p) => p.status === 'OK').map((p) => p.name)
+  );
+  const createProfiles =
+    createForm.harnessProfiles ??
+    (createForm.scope === 'GLOBAL'
+      ? []
+      : (
+          (agents ?? []).find((a) => a.scope === 'GLOBAL' && a.key === createForm.key)
+            ?.harnessProfiles ?? []
+        ).filter((n) => enabledPlugins.has(n)));
 
   const createDirty = JSON.stringify(createForm) !== JSON.stringify(createBaseline);
   const editDirty =
@@ -489,7 +525,7 @@ function AgentLibraryContent() {
       ...EMPTY_CREATE,
       credentialId: a.credentialId,
       description: a.description ?? '',
-      harnessProfile: a.harnessProfile,
+      harnessProfiles: a.harnessProfiles,
       inheritsModelFrom: a.inheritsModelFrom ?? '',
       key: a.key,
       mcpConnectionId: a.mcpConnectionId,
@@ -769,6 +805,7 @@ function AgentLibraryContent() {
                 </ul>
               </Alert>
             )}
+            <ProfileNotes carried={saved.profileCarried} notes={saved.profileNotes} />
             <ModelSaveWarnings
               catalogWarnings={saved.catalogWarnings}
               credentialWarnings={saved.credentialWarnings}
@@ -950,7 +987,7 @@ function AgentLibraryContent() {
           skillEmptyHint="No skills available."
           skills={skills ?? []}
           toolKeysInheritHint="Agent inherits all available tools"
-          value={createForm}
+          value={{ ...createForm, harnessProfiles: createProfiles }}
         />
         {createError && <Alert variant="error">{createError}</Alert>}
         <ModalFooter

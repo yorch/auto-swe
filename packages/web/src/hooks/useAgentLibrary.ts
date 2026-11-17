@@ -30,8 +30,8 @@ export interface AgentRow {
   credentialId: string | null;
   /** The loop that drives the agent in a workspace; null = no opinion. */
   runtime?: ImplementerRuntimeKind | null;
-  /** The approved harness profile (by name) the version runs with; null = none. */
-  harnessProfile?: string | null;
+  /** The approved harness profiles (by name, in binding order) the version runs with; [] = none. */
+  harnessProfiles?: string[];
   /** How hard the model reasons; null = no opinion (provider default, or the parent's). */
   reasoning?: ReasoningLevel | null;
   origin: string | null;
@@ -128,8 +128,8 @@ export interface CreateAgentBody {
   credentialId?: string | null;
   /** Platform-admin only. */
   runtime?: ImplementerRuntimeKind | null;
-  /** Platform-admin only; the name of an approved, enabled harness profile. */
-  harnessProfile?: string | null;
+  /** The plugins to bind, in order. Platform admins: any enabled plugin; team admins: those their team enabled, on a team override. */
+  harnessProfiles?: string[];
   reasoning?: ReasoningLevel | null;
 }
 
@@ -151,6 +151,10 @@ export interface AgentSaveWarnings {
   credentialWarnings?: string[];
   /** Harness agents that inherit a newly saved model and cannot run on it. */
   runtimeWarnings?: string[];
+  /** A new team override only: plugins left out of its starting value because the team has not enabled them. */
+  profileNotes?: string[];
+  /** A create that sent no list: plugins inherited from the platform agent of the same key. */
+  profileCarried?: string[];
 }
 
 /** A create / update / restore response. */
@@ -245,9 +249,15 @@ export function useTeamAgentOptions(teamId: string) {
   return useQuery({
     queryFn: () =>
       api
-        .get<{ data: { key: string; name: string; modelSpec: string | null }[] }>(
-          `/api/v1/teams/${teamId}/agent-library/options`
-        )
+        .get<{
+          data: {
+            key: string;
+            name: string;
+            modelSpec: string | null;
+            /** The platform agent's bound plugins, when the gateway sends them. */
+            harnessProfiles?: string[];
+          }[];
+        }>(`/api/v1/teams/${teamId}/agent-library/options`)
         .then((r) => r.data),
     queryKey: ['team-agent-options', teamId],
   });

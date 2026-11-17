@@ -31,7 +31,7 @@ type ResolvedAgent = Awaited<ReturnType<typeof resolveAgent>>;
 
 function resolvedAgent(overrides: Partial<ResolvedAgent> = {}): ResolvedAgent {
   return {
-    harnessProfile: null,
+    harnessProfiles: [],
     id: 'agent-row-1',
     isVerified: true,
     key: 'validateContext',
@@ -45,7 +45,9 @@ function resolvedAgent(overrides: Partial<ResolvedAgent> = {}): ResolvedAgent {
     },
     origin: null,
     runtime: null,
+    scope: 'GLOBAL',
     skills: [],
+    teamId: null,
     toolKeys: null,
     version: 1,
     ...overrides,

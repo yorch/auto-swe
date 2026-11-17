@@ -33,14 +33,14 @@ describe('buildAgentUpdate', () => {
     });
   });
 
-  it('sends the harness profile only when it changed, and clears it with null', () => {
-    const bound: AgentRow = { ...BASE, harnessProfile: 'review-kit', runtime: 'claude-code' };
+  it('sends the harness profile only when it changed, and clears it with an empty list', () => {
+    const bound: AgentRow = { ...BASE, harnessProfiles: ['review-kit'], runtime: 'claude-code' };
     expect(buildAgentUpdate(bound, { ...bound, name: 'R2' })).toEqual({ name: 'R2' });
-    expect(buildAgentUpdate(bound, { ...bound, harnessProfile: 'other-kit' })).toEqual({
-      harnessProfile: 'other-kit',
+    expect(buildAgentUpdate(bound, { ...bound, harnessProfiles: ['other-kit'] })).toEqual({
+      harnessProfiles: ['other-kit'],
     });
-    expect(buildAgentUpdate(bound, { ...bound, harnessProfile: null })).toEqual({
-      harnessProfile: null,
+    expect(buildAgentUpdate(bound, { ...bound, harnessProfiles: [] })).toEqual({
+      harnessProfiles: [],
     });
   });
 

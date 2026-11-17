@@ -7,6 +7,11 @@ import { resolveBundleBodyLimit, resolveMaxBundleBytes } from '../lib/bundleLimi
 import {
   BundleDependencyError,
   BundleIntegrityError,
+  BundlePluginCollisionError,
+  BundlePluginFetchError,
+  BundlePluginHashMismatchError,
+  BundlePluginInvalidError,
+  BundlePluginWarningsError,
   BundleProtectedContentError,
   exportBundle,
   type InstallResult,
@@ -14,9 +19,12 @@ import {
   listInstalledBundles,
   previewBundle,
   SkillChangedError,
+  SkillPluginDisabledError,
+  SkillPluginManagedError,
 } from '../lib/bundleService.js';
 import { resolveBundleAllowUnverified, resolveBundleTrustedKeys } from '../lib/bundleTrust.js';
 import { sendError } from '../lib/httpErrors.js';
+import type { PluginReader } from '../lib/pluginBundleInstall.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -38,6 +46,11 @@ const ExportBody = z.object({
  * by default; without it such an install is refused with 409.
  */
 const InstallBody = z.object({
+  /**
+   * Acknowledge the approval warnings of the plugin profiles the bundle would create. Required
+   * when there are any; the install answers `409 WARNINGS_UNACKNOWLEDGED` with them otherwise.
+   */
+  acknowledgeWarnings: z.boolean().optional(),
   bundle: z.unknown(),
   /**
    * The content hash the admin reviewed in a preview (the Studio file upload sends it). The install
@@ -47,6 +60,7 @@ const InstallBody = z.object({
   overwriteProtected: z.boolean().optional(),
 });
 const InstallFromUrlBody = z.object({
+  acknowledgeWarnings: z.boolean().optional(),
   /**
    * The content hash the admin reviewed in a preview. The install refuses when the URL now
    * serves different content, so what is installed is what was shown.
@@ -87,6 +101,45 @@ async function registryIdFor(fastify: FastifyInstance, name: string): Promise<st
   return row?.id ?? null;
 }
 
+export interface BundleRouteOptions {
+  /** Test seam: how a plugin commit is read. Production uses the guarded profile reader. */
+  pluginReader?: PluginReader;
+}
+
+/** Plugin-reference failures as their responses; null for any other error. */
+function pluginErrorReply(err: unknown, reply: FastifyReply): FastifyReply | null {
+  if (err instanceof BundlePluginCollisionError) {
+    return sendError(reply, 400, err.code, err.message);
+  }
+  if (err instanceof BundlePluginHashMismatchError) {
+    return sendError(reply, 400, 'BUNDLE_PLUGIN_HASH_MISMATCH', err.message, {
+      plugin: err.pluginName,
+    });
+  }
+  if (err instanceof BundlePluginInvalidError) {
+    return sendError(reply, 400, 'BUNDLE_PLUGIN_INVALID', err.message, {
+      errors: err.errors,
+      plugin: err.pluginName,
+    });
+  }
+  if (err instanceof BundlePluginFetchError) {
+    const client = ['HOST_BLOCKED', 'HOST_NOT_APPROVED', 'INVALID_SOURCE', 'NOT_FOUND'];
+    return sendError(
+      reply,
+      client.includes(err.code) ? 400 : 502,
+      'BUNDLE_PLUGIN_FETCH_FAILED',
+      err.message,
+      { plugin: err.pluginName, reason: err.code }
+    );
+  }
+  if (err instanceof BundlePluginWarningsError) {
+    return sendError(reply, 409, 'WARNINGS_UNACKNOWLEDGED', err.message, {
+      warnings: err.warnings,
+    });
+  }
+  return null;
+}
+
 /** Run an install, audit it, and map bundle errors to 400. Shared by both install routes. */
 async function runInstall(
   fastify: FastifyInstance,
@@ -94,13 +147,16 @@ async function runInstall(
   raw: unknown,
   reply: FastifyReply,
   source: string,
-  overwriteProtected: boolean
+  overwriteProtected: boolean,
+  extra: { acknowledgeWarnings: boolean; pluginReader?: PluginReader }
 ): Promise<FastifyReply> {
   try {
     const result: InstallResult = await installBundle(fastify.prisma, raw, {
+      acknowledgeWarnings: extra.acknowledgeWarnings,
       allowUnverified: resolveBundleAllowUnverified(),
       installedById: actor.sub,
       overwriteProtected,
+      pluginReader: extra.pluginReader,
       trustedKeys: resolveBundleTrustedKeys(),
     });
     await writeAuditLog(fastify, {
@@ -109,6 +165,8 @@ async function runInstall(
       after: {
         counts: result.counts,
         overwriteProtected,
+        // Profiles this install approved (hooks off) and ones it found already approved.
+        ...(result.plugins ? { plugins: result.plugins } : {}),
         // What a forced install actually replaced, by key — the flag alone says
         // only that it was allowed to.
         replacedProtected: result.replacedProtected,
@@ -149,6 +207,10 @@ async function runInstall(
         },
       });
     }
+    const pluginReply = pluginErrorReply(err, reply);
+    if (pluginReply) {
+      return pluginReply;
+    }
     if (err instanceof BundleIntegrityError || err instanceof BundleDependencyError) {
       return sendError(reply, 400, 'INVALID_BUNDLE', err.message);
     }
@@ -161,6 +223,22 @@ async function runInstall(
         'A skill changed while the bundle installed; nothing was installed. Retry.'
       );
     }
+    if (err instanceof SkillPluginManagedError) {
+      return sendError(
+        reply,
+        409,
+        'SKILL_PLUGIN_MANAGED',
+        'The bundle names a skill that a plugin projects; nothing was installed.'
+      );
+    }
+    if (err instanceof SkillPluginDisabledError) {
+      return sendError(
+        reply,
+        400,
+        'SKILL_PLUGIN_DISABLED',
+        'An agent in the bundle references a skill of a disabled plugin; nothing was installed.'
+      );
+    }
     if (err instanceof z.ZodError) {
       return sendError(reply, 400, 'INVALID_BUNDLE', 'bundle failed schema validation');
     }
@@ -168,7 +246,7 @@ async function runInstall(
   }
 }
 
-export const bundleRoutes: FastifyPluginAsync = async (fastify) => {
+export const bundleRoutes: FastifyPluginAsync<BundleRouteOptions> = async (fastify, options) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
 
@@ -212,10 +290,15 @@ export const bundleRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         const data = await previewBundle(fastify.prisma, raw, {
           allowUnverified: resolveBundleAllowUnverified(),
+          pluginReader: options.pluginReader,
           trustedKeys: resolveBundleTrustedKeys(),
         });
         return reply.send({ data });
       } catch (err) {
+        const pluginReply = pluginErrorReply(err, reply);
+        if (pluginReply) {
+          return pluginReply;
+        }
         if (err instanceof BundleIntegrityError || err instanceof BundleDependencyError) {
           return sendError(reply, 400, 'INVALID_BUNDLE', err.message);
         }
@@ -246,7 +329,11 @@ export const bundleRoutes: FastifyPluginAsync = async (fastify) => {
         bundle,
         reply,
         'inline',
-        request.body.overwriteProtected ?? false
+        request.body.overwriteProtected ?? false,
+        {
+          acknowledgeWarnings: request.body.acknowledgeWarnings ?? false,
+          pluginReader: options.pluginReader,
+        }
       );
     }
   );
@@ -282,7 +369,11 @@ export const bundleRoutes: FastifyPluginAsync = async (fastify) => {
         raw,
         reply,
         url,
-        request.body.overwriteProtected ?? false
+        request.body.overwriteProtected ?? false,
+        {
+          acknowledgeWarnings: request.body.acknowledgeWarnings ?? false,
+          pluginReader: options.pluginReader,
+        }
       );
     }
   );

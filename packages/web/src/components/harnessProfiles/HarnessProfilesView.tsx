@@ -5,35 +5,52 @@ import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
   type HarnessProfileSummary,
+  useCheckProfile,
   useHarnessProfiles,
   usePatchProfile,
+  useProfileUsage,
 } from '@/hooks/useHarnessProfiles';
 import { errMsg } from '@/lib/errors';
-import { HELP_LINKS } from '@/lib/helpLinks';
 import { formatDate } from '@/lib/utils';
 import { visibleText } from '@/lib/visibleText';
 import { AddProfileModal } from './AddProfileModal';
+import { HooksBadge } from './HooksBadge';
 import { ProfileDetailModal } from './ProfileDetailModal';
-import { locationLabel, shortSha } from './profileDisplay';
+import { locationLabel, shortSha, TRACK_LABEL, TRACK_TONE } from './profileDisplay';
 
-const COLUMNS: DataTableColumn<HarnessProfileSummary>[] = [
+type Usage = ReturnType<typeof useProfileUsage>;
+
+const columns = (usage: Usage): DataTableColumn<HarnessProfileSummary>[] => [
   {
     cell: (p) => <span className="font-medium">{visibleText(p.name)}</span>,
-    header: 'Profile',
+    header: 'Plugin',
     id: 'name',
     primary: true,
     secondary: (p) => visibleText(p.description),
   },
   {
-    cell: (p) => <span className="font-mono text-xs break-all">{locationLabel(p)}</span>,
+    cell: (p) =>
+      p.marketplaceSourceId ? (
+        <div>
+          <Badge tone="accent2">Marketplace</Badge>
+          <div className="mt-1 font-mono text-xs break-all">
+            {visibleText(p.marketplaceEntry ?? '')}
+          </div>
+        </div>
+      ) : (
+        <div>
+          <Badge tone="neutral">Folder</Badge>
+          <div className="mt-1 font-mono text-xs break-all">{locationLabel(p)}</div>
+        </div>
+      ),
     header: 'Source',
     id: 'source',
     secondary: (p) => <>ref {visibleText(p.ref)}</>,
@@ -56,6 +73,51 @@ const COLUMNS: DataTableColumn<HarnessProfileSummary>[] = [
     id: 'latest',
   },
   {
+    cell: (p) => <HooksBadge enabled={p.hooksEnabled} />,
+    header: 'Hooks',
+    id: 'hooks',
+  },
+  {
+    cell: (p) => (
+      <>
+        <Badge dot tone={TRACK_TONE[p.trackStatus]}>
+          {TRACK_LABEL[p.trackStatus]}
+        </Badge>
+        <div className="mt-1 text-xs text-paper-500" title={p.lastCheckedAt ?? undefined}>
+          {p.lastCheckedAt ? `Checked ${formatDate(p.lastCheckedAt)}` : 'Never checked'}
+        </div>
+        {p.lastError && (
+          <div className="mt-0.5 text-xs text-danger-400">{visibleText(p.lastError)}</div>
+        )}
+      </>
+    ),
+    header: 'Tracking',
+    id: 'tracking',
+  },
+  {
+    align: 'right',
+    cell: (p) => (
+      <span className="tabular-nums text-paper-300">{usage.get(p.name)?.enabledTeams ?? '…'}</span>
+    ),
+    header: 'Teams',
+    id: 'teams',
+  },
+  {
+    align: 'right',
+    cell: (p) => {
+      const n = usage.get(p.name)?.stranded;
+      return n ? (
+        <Badge dot tone="danger">
+          {n} stranded
+        </Badge>
+      ) : (
+        <span className="tabular-nums text-paper-500">{n === undefined ? '…' : '0'}</span>
+      );
+    },
+    header: 'Stranded agents',
+    id: 'stranded',
+  },
+  {
     cell: (p) => (
       <>
         <Badge dot tone={p.status === 'OK' ? 'success' : 'muted'}>
@@ -70,13 +132,14 @@ const COLUMNS: DataTableColumn<HarnessProfileSummary>[] = [
 ];
 
 /**
- * ADMIN page for harness profiles: approved bundles of Claude Code plugins and instructions read
- * from a repository at an exact commit. Profiles are never deleted (an agent may name one), only
- * disabled.
+ * The Plugins tab (ADMIN): approved Claude Code plugins read from a repository at an exact commit,
+ * from a folder or a marketplace. Plugins are never deleted (an agent may name one), only disabled.
  */
 export function HarnessProfilesView() {
   const { data: profiles, isLoading, isError, isFetching, error, refetch } = useHarnessProfiles();
   const patch = usePatchProfile();
+  const checkProfile = useCheckProfile();
+  const usage = useProfileUsage((profiles ?? []).map((p) => p.name));
   const [addOpen, setAddOpen] = useState(false);
   const [detail, setDetail] = useState<string | null>(null);
   const [disableTarget, setDisableTarget] = useState<HarnessProfileSummary | null>(null);
@@ -87,93 +150,119 @@ export function HarnessProfilesView() {
     try {
       await patch.mutateAsync({ name: p.name, status: 'OK' });
     } catch (err) {
-      setNotice(errMsg(err, 'Failed to enable the profile'));
+      setNotice(errMsg(err, 'Failed to enable the plugin'));
+    }
+  }
+
+  async function checkNow(p: HarnessProfileSummary) {
+    setNotice(null);
+    try {
+      const r = await checkProfile.mutateAsync(p.name);
+      if (!r.recorded) {
+        setNotice('Not recorded: the plugin changed while it was being checked. Check again.');
+      } else if (r.check.error) {
+        setNotice(visibleText(r.check.error));
+      }
+    } catch (err) {
+      setNotice(errMsg(err, 'Failed to check the plugin'));
     }
   }
 
   const addButton = (
     <Button onClick={() => setAddOpen(true)} variant="primary">
       <Icon name="plus" size={14} />
-      Add profile
+      Add from folder
     </Button>
   );
 
   return (
     <>
-      <PageHeader
-        actions={profiles && profiles.length > 0 ? addButton : undefined}
-        help="A profile's hooks and scripts run commands inside the run container, so approving one is a platform decision. You read the exact commit, its warnings and its files before approving; the stored snapshot is what runs, even if the repository later changes."
-        learnMore={HELP_LINKS.harnessProfiles}
-        subtitle="Approved bundles of Claude Code plugins and instructions, bound to agents by name."
-        title="Harness profiles"
-      />
-      {notice && (
-        <Alert className="mb-4" variant="error">
-          {notice}
-        </Alert>
-      )}
-      <QueryBoundary
-        error={error}
-        isError={isError}
-        isFetching={isFetching}
-        isLoading={isLoading}
-        label="harness profiles"
-        onRetry={() => void refetch()}
-        rows={3}
-      >
-        {!profiles?.length ? (
-          <EmptyState
-            action={
-              <Button onClick={() => setAddOpen(true)} size="sm" variant="primary">
-                Add profile
-              </Button>
-            }
-            bordered
-            hint="Point at a folder of a GitHub repository that holds profile.json to review and approve it."
-            icon="github"
-            title="No harness profiles yet"
-          />
-        ) : (
-          <DataTable
-            actions={(p) => (
-              <>
-                <Button onClick={() => setDetail(p.name)} size="sm">
-                  Details
-                </Button>
-                <ActionMenu
-                  items={[
-                    p.status === 'OK'
-                      ? {
-                          icon: 'close',
-                          id: 'disable',
-                          label: 'Disable',
-                          onAction: () => setDisableTarget(p),
-                        }
-                      : {
-                          disabled: patch.isPending,
-                          icon: 'check',
-                          id: 'enable',
-                          label: 'Enable',
-                          onAction: () => void enable(p),
-                        },
-                  ]}
-                  label={`More actions for ${visibleText(p.name)}`}
-                />
-              </>
-            )}
-            columns={COLUMNS}
-            density="compact"
-            getRowId={(p) => p.id}
-            revealActions={false}
-            rows={profiles}
-          />
+      <Card className="p-4 sm:p-6">
+        <CardHeader>
+          <CardTitle>Approved plugins</CardTitle>
+          {profiles && profiles.length > 0 && addButton}
+        </CardHeader>
+        <p className="-mt-2 mb-4 max-w-3xl text-sm leading-relaxed text-paper-400">
+          A plugin's hooks and scripts run commands inside the run container, so approving one is a
+          platform decision. You read the exact commit, its warnings and its files before approving;
+          the stored snapshot is what runs, even if the repository later changes. Teams enable the
+          plugins you approve before their agents can bind them.
+        </p>
+        {notice && (
+          <Alert className="mb-4" variant="error">
+            {notice}
+          </Alert>
         )}
-      </QueryBoundary>
+        <QueryBoundary
+          error={error}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={isLoading}
+          label="plugins"
+          onRetry={() => void refetch()}
+          rows={3}
+        >
+          {!profiles?.length ? (
+            <EmptyState
+              action={
+                <Button onClick={() => setAddOpen(true)} size="sm" variant="primary">
+                  Add from folder
+                </Button>
+              }
+              bordered
+              hint="Approve a plugin from a marketplace (Marketplaces tab), or point at a folder of a GitHub repository that holds profile.json."
+              icon="github"
+              title="No plugins yet"
+            />
+          ) : (
+            <DataTable
+              actions={(p) => (
+                <>
+                  <Button onClick={() => setDetail(p.name)} size="sm">
+                    Details
+                  </Button>
+                  <ActionMenu
+                    items={[
+                      {
+                        disabled: checkProfile.isPending || p.status !== 'OK',
+                        icon: 'refresh',
+                        id: 'check',
+                        label: 'Check now',
+                        onAction: () => void checkNow(p),
+                      },
+                      p.status === 'OK'
+                        ? {
+                            icon: 'close',
+                            id: 'disable',
+                            label: 'Disable',
+                            onAction: () => setDisableTarget(p),
+                          }
+                        : {
+                            disabled: patch.isPending,
+                            icon: 'check',
+                            id: 'enable',
+                            label: 'Enable',
+                            onAction: () => void enable(p),
+                          },
+                    ]}
+                    label={`More actions for ${visibleText(p.name)}`}
+                  />
+                </>
+              )}
+              columns={columns(usage)}
+              density="compact"
+              getRowId={(p) => p.id}
+              revealActions={false}
+              rows={profiles}
+            />
+          )}
+        </QueryBoundary>
+      </Card>
 
       <AddProfileModal onClose={() => setAddOpen(false)} open={addOpen} />
       <ProfileDetailModal name={detail} onClose={() => setDetail(null)} />
       <ConfirmModal
-        confirmLabel="Disable profile"
+        confirmLabel="Disable plugin"
         dangerous
         message="A disabled profile takes no new version and cannot be newly bound to an agent. Runs that already pinned a version keep using it; cancel those runs to stop them. Agents already bound to it fail closed on new runs."
         onClose={() => setDisableTarget(null)}

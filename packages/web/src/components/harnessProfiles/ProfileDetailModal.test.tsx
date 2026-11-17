@@ -12,12 +12,15 @@ const { accept, checkFn, readFn, state } = vi.hoisted(() => ({
   accept: vi.fn(),
   checkFn: vi.fn(),
   readFn: vi.fn(),
-  state: { detail: null as unknown },
+  state: { detail: null as unknown, enablements: [] as unknown[] },
 }));
 vi.mock('@/hooks/useHarnessProfiles', () => ({
   useAcceptProfileVersion: () => ({ isPending: false, mutateAsync: accept }),
+  useCheckProfile: () => ({ isPending: false, mutateAsync: vi.fn() }),
   useHarnessProfile: () => ({ data: state.detail, error: null, isError: false, isLoading: false }),
+  usePatchProfile: () => ({ isPending: false, mutateAsync: vi.fn() }),
   usePreviewProfileUpdate: () => ({ isPending: false, mutateAsync: checkFn }),
+  useProfileEnablements: () => ({ data: state.enablements }),
   useReviewUpdateFile: () => ({ isPending: false, mutateAsync: readFn }),
 }));
 
@@ -36,16 +39,23 @@ beforeAll(() => {
 const detail = (over: Partial<HarnessProfileDetail> = {}): HarnessProfileDetail => ({
   createdAt: '2026-10-01T00:00:00Z',
   description: 'Review kit',
+  hooksEnabled: false,
   host: 'github.com',
   id: 'p1',
+  lastCheckedAt: null,
+  lastError: null,
   latest: null,
+  latestSha: null,
   latestVersion: 1,
+  marketplaceEntry: null,
+  marketplaceSourceId: null,
   name: 'review-kit',
   owner: 'acme',
   path: 'kit',
   ref: 'main',
   repo: 'pack',
   status: 'OK',
+  trackStatus: 'OK',
   updatedAt: '2026-10-01T00:00:00Z',
   versions: [
     {
@@ -81,7 +91,8 @@ const preview = (over: Partial<HarnessProfilePreview> = {}): HarnessProfilePrevi
 beforeEach(() => {
   vi.clearAllMocks();
   state.detail = detail();
-  accept.mockResolvedValue({ version: 2 });
+  state.enablements = [];
+  accept.mockResolvedValue({ data: { version: 2 }, projection: null });
 });
 
 describe('ProfileDetailModal', () => {
@@ -141,5 +152,82 @@ describe('ProfileDetailModal', () => {
     expect(
       (screen.getByRole('button', { name: 'Accept as version 2' }) as HTMLButtonElement).disabled
     ).toBe(true);
+  });
+
+  it('requires reviewing hook changes on a hooks-on plugin, and sends the acknowledgement', async () => {
+    state.detail = detail({ hooksEnabled: true });
+    checkFn.mockResolvedValue(
+      preview({
+        hookChanges: {
+          added: [],
+          changed: [
+            { addedCommands: ['curl evil‮'], path: 'hooks/hooks.json', removedCommands: ['lint'] },
+          ],
+          removed: [],
+        },
+        hooksEnabled: true,
+      })
+    );
+    render(<ProfileDetailModal name="review-kit" onClose={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Check for update' }));
+    const accepting = (await screen.findByRole('button', {
+      name: 'Accept as version 2',
+    })) as HTMLButtonElement;
+    expect(screen.getByText('curl evil⟨U+202E⟩')).toBeTruthy();
+    expect(accepting.disabled).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'I have reviewed the hook changes' }));
+    expect(accepting.disabled).toBe(false);
+    fireEvent.click(accepting);
+    await waitFor(() =>
+      expect(accept).toHaveBeenCalledWith(
+        expect.objectContaining({ acknowledgeHookChanges: true, name: 'review-kit' })
+      )
+    );
+  });
+
+  it('asks no hook acknowledgement when hooks are off', async () => {
+    state.detail = detail({ hooksEnabled: false });
+    checkFn.mockResolvedValue(
+      preview({
+        hookChanges: {
+          added: [{ commands: ['run'], path: 'hooks/hooks.json' }],
+          changed: [],
+          removed: [],
+        },
+        hooksEnabled: false,
+      })
+    );
+    render(<ProfileDetailModal name="review-kit" onClose={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Check for update' }));
+    const accepting = (await screen.findByRole('button', {
+      name: 'Accept as version 2',
+    })) as HTMLButtonElement;
+    expect(screen.queryByRole('checkbox', { name: /reviewed the hook changes/ })).toBeNull();
+    expect(accepting.disabled).toBe(false);
+  });
+
+  it('shows the hook switch, bound agents with the stranded flagged, and enabled teams', () => {
+    state.detail = detail({
+      boundAgents: [
+        { key: 'reviewer', scope: 'GLOBAL', stranded: false, teamId: null, version: 3 },
+        { key: 'fixer', scope: 'TEAM', stranded: true, teamId: 't1', version: 1 },
+      ],
+      enabledTeams: 1,
+      hooksEnabled: true,
+    });
+    state.enablements = [
+      {
+        enabledAt: '2026-10-02T00:00:00Z',
+        enabledById: 'u1',
+        teamId: 't2',
+        teamName: 'Payments',
+        teamSlug: 'payments',
+      },
+    ];
+    render(<ProfileDetailModal name="review-kit" onClose={() => {}} />);
+    expect(screen.getByRole('switch', { name: 'Hooks for review-kit' })).toBeTruthy();
+    expect(screen.getByText('Stranded')).toBeTruthy();
+    expect(screen.getByText('fixer')).toBeTruthy();
+    expect(screen.getByText(/Payments/)).toBeTruthy();
   });
 });

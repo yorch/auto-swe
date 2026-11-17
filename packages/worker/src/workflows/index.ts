@@ -43,6 +43,7 @@ export {
 } from './scheduledCallbackDelivery.js';
 export { ScheduledConsolidationWorkflow } from './scheduledConsolidation.js';
 export { ScheduledEvalWorkflow } from './scheduledEval.js';
+export { ScheduledMarketplaceSyncWorkflow } from './scheduledMarketplaceSync.js';
 export { ScheduledModelDiscoveryWorkflow } from './scheduledModelDiscovery.js';
 export { ScheduledOutcomeReportWorkflow } from './scheduledOutcomeReport.js';
 export { ScheduledRepoAccessSyncWorkflow } from './scheduledRepoAccessSync.js';

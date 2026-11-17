@@ -8,6 +8,7 @@ import {
   type AgentFormValue,
 } from '@/components/agents/AgentFormFields';
 import { ModelSaveWarnings } from '@/components/agents/ModelSaveWarnings';
+import { ProfileNotes } from '@/components/agents/ProfileNotes';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -34,9 +35,10 @@ import {
 import { useHasRole } from '@/hooks/useHasRole';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { useTeamSkills } from '@/hooks/useSkills';
+import { useTeamPlugins } from '@/hooks/useTeamPlugins';
 import { modelLabel } from '@/lib/agentDisplay';
 import { buildAgentUpdate } from '@/lib/agentEditPatch';
-import { errMsg } from '@/lib/errors';
+import { describeAgentSaveError } from '@/lib/agentSaveError';
 import { scanWarningLead } from '@/lib/scanWarnings';
 
 const EMPTY: CreateTeamAgentBody = {
@@ -97,9 +99,21 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   const { data: mcpConnections } = useMcpConnections({ enabled: isPlatformAdmin });
   const { data: skills } = useTeamSkills(teamId);
   const { data: parentAgents } = useTeamAgentOptions(teamId);
-
+  // A team admin may bind only the plugins the team has enabled.
+  const { data: teamPlugins } = useTeamPlugins(teamId);
+  const pluginOptions = (teamPlugins ?? [])
+    .filter((p) => p.enabled)
+    .map((p) => ({ name: p.name, status: p.status ?? ('OK' as const) }));
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState<CreateTeamAgentBody>(EMPTY);
+  // What the override starts with: the platform agent of the key, limited to the plugins the team
+  // has enabled (and the platform has not disabled). An explicit list is always sent, so what
+  // the form shows is what gets bound.
+  const enabledOk = new Set(pluginOptions.filter((p) => p.status === 'OK').map((p) => p.name));
+  const inheritedProfiles = (
+    parentAgents?.find((a) => a.key === form.key)?.harnessProfiles ?? []
+  ).filter((n) => enabledOk.has(n));
+  const createProfiles = form.harnessProfiles ?? inheritedProfiles;
   const [editing, setEditing] = useState<AgentRow | null>(null);
   // The row as it was when the edit opened, so a save sends only what changed.
   const [editingOriginal, setEditingOriginal] = useState<AgentRow | null>(null);
@@ -113,18 +127,22 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
     (saveWarnings.scanWarnings?.length ?? 0) > 0 ||
     (saveWarnings.catalogWarnings?.length ?? 0) > 0 ||
     (saveWarnings.credentialWarnings?.length ?? 0) > 0 ||
-    (saveWarnings.runtimeWarnings?.length ?? 0) > 0;
+    (saveWarnings.runtimeWarnings?.length ?? 0) > 0 ||
+    (saveWarnings.profileNotes?.length ?? 0) > 0 ||
+    (saveWarnings.profileCarried?.length ?? 0) > 0;
 
   async function submitCreate() {
     setCreateError(null);
     try {
       setSaveWarnings(
-        await createAgent.mutateAsync(cleanAgentPayload({ ...form }) as CreateTeamAgentBody)
+        await createAgent.mutateAsync(
+          cleanAgentPayload({ ...form, harnessProfiles: createProfiles }) as CreateTeamAgentBody
+        )
       );
       setCreateOpen(false);
       setForm(EMPTY);
     } catch (e) {
-      setCreateError(errMsg(e, 'Create failed'));
+      setCreateError(describeAgentSaveError(e, 'Create failed'));
     }
   }
 
@@ -149,7 +167,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
       setSaveWarnings(res);
       setEditing(null);
     } catch (e) {
-      setEditError(errMsg(e, 'Update failed'));
+      setEditError(describeAgentSaveError(e, 'Update failed'));
     }
   }
 
@@ -208,6 +226,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
               {saveWarnings.scanWarnings?.join('; ')}
             </Alert>
           )}
+          <ProfileNotes carried={saveWarnings.profileCarried} notes={saveWarnings.profileNotes} />
           <ModelSaveWarnings
             catalogWarnings={saveWarnings.catalogWarnings}
             credentialWarnings={saveWarnings.credentialWarnings}
@@ -323,12 +342,13 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
       >
         <AgentFormFields
           copy={CREATE_COPY}
+          harnessProfiles={pluginOptions}
           mcpConnections={mcpConnections ?? []}
           mode="create"
           onChange={(patch) => setForm({ ...form, ...patch })}
           parentAgents={parentAgents}
           skills={skills ?? []}
-          value={form}
+          value={{ ...form, harnessProfiles: createProfiles }}
         />
         {createError && <Alert variant="error">{createError}</Alert>}
         <ModalFooter
@@ -353,6 +373,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
           <>
             <AgentFormFields
               copy={EDIT_COPY}
+              harnessProfiles={pluginOptions}
               mcpConnections={mcpConnections ?? []}
               mode="edit"
               onChange={patchEditing}

@@ -213,13 +213,13 @@ describe('exportBundle', () => {
     expect(m.entities.agents[1]).not.toHaveProperty('runtime');
   });
 
-  it('never exports the harness profile an agent is bound to', async () => {
+  it('exports a bound harness profile as a plugin reference, never inside the agent', async () => {
     const prisma = {
       agent: {
         findMany: vi.fn().mockResolvedValue([
           {
             description: null,
-            harnessProfile: 'review-kit',
+            harnessProfiles: ['review-kit'],
             inheritsModelFrom: null,
             isVerified: false,
             key: 'a',
@@ -233,6 +233,18 @@ describe('exportBundle', () => {
           },
         ]),
       },
+      harnessProfile: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            host: 'github.com',
+            name: 'review-kit',
+            owner: 'acme',
+            path: 'plugins/kit',
+            repo: 'tools',
+            versions: [{ commitSha: 'a'.repeat(40), contentHash: 'b'.repeat(64) }],
+          },
+        ]),
+      },
       scannerPattern: { findMany: vi.fn().mockResolvedValue([]) },
       skill: { findMany: vi.fn().mockResolvedValue([]) },
       workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
@@ -241,7 +253,18 @@ describe('exportBundle', () => {
     const m = await exportBundle(prisma, { name: 'x', version: '1.0.0' });
 
     expect(m.entities.agents[0]).toMatchObject({ key: 'a', runtime: 'claude-code' });
-    expect(m.entities.agents[0]).not.toHaveProperty('harnessProfile');
+    expect(m.entities.agents[0]).not.toHaveProperty('harnessProfiles');
+    expect(m.entities.plugins).toEqual([
+      {
+        bindings: [{ agentKey: 'a' }],
+        contentHash: 'b'.repeat(64),
+        name: 'review-kit',
+        sha: 'a'.repeat(40),
+        source: { host: 'github.com', owner: 'acme', path: 'plugins/kit', repo: 'tools' },
+      },
+    ]);
+    expect(m.bundleSchemaVersion).toBe(3);
+    expect(m.metadata.contentHash).toBe(computeContentHash(m));
   });
 
   it('carries an agent’s reasoning level when it has one, and no field when it has none', async () => {
@@ -789,12 +812,12 @@ describe('installBundle', () => {
       await installBundle(asArg(), agentManifest({ runtime: 'claude-code' }), {
         allowUnverified: true,
       });
-      expect(prisma.agent.update.mock.calls[0]?.[0].data).not.toHaveProperty('harnessProfile');
+      expect(prisma.agent.update.mock.calls[0]?.[0].data).not.toHaveProperty('harnessProfiles');
     });
 
     it('creates a new agent with no profile', async () => {
       await installBundle(asArg(), agentManifest({}), { allowUnverified: true });
-      expect(prisma.agent.create.mock.calls[0]?.[0].data).not.toHaveProperty('harnessProfile');
+      expect(prisma.agent.create.mock.calls[0]?.[0].data).not.toHaveProperty('harnessProfiles');
     });
 
     it('clears it when the bundle says null', async () => {

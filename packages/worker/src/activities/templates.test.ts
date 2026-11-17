@@ -93,13 +93,15 @@ const { resolveAgentRuntimeChoice } = vi.hoisted(() => ({
     key === 'implementer' ? 'claude-code' : key === 'broken' ? Promise.reject(new Error('x')) : null
   ),
 }));
-const { resolveAgentProfileName } = vi.hoisted(() => ({
-  resolveAgentProfileName: vi.fn(async (key: string) =>
-    key === 'implementer' ? 'kit' : key === 'reviewer' ? 'gone' : null
-  ),
+const { resolveAgentProfileBinding } = vi.hoisted(() => ({
+  resolveAgentProfileBinding: vi.fn(async (key: string) => ({
+    harnessProfiles: key === 'implementer' ? ['kit'] : key === 'reviewer' ? ['gone'] : [],
+    scope: 'GLOBAL',
+    teamId: null,
+  })),
 }));
 vi.mock('../lib/config/agentResolver.js', () => ({
-  resolveAgentProfileName,
+  resolveAgentProfileBinding,
   resolveAgentRuntimeChoice,
 }));
 
@@ -975,19 +977,58 @@ describe('createWorkflowRun', () => {
       .mockResolvedValueOnce([{ key: 'implementer' }, { key: 'reviewer' }, { key: 'x' }] as never);
     // `gone` is bound by reviewer but disabled/missing, so the OK-only lookup omits it.
     const findProfiles = vi.mocked(prisma.harnessProfile.findMany);
-    findProfiles.mockResolvedValueOnce([{ latestVersion: 4, name: 'kit' }] as never);
+    findProfiles.mockResolvedValueOnce([
+      { hooksEnabled: true, latestVersion: 4, name: 'kit' },
+    ] as never);
 
     await createWorkflowRun({ templateId: 'tpl-1', templateVersion: 1, workflowId: 'wf-1' });
 
-    expect(lastRunCreate().harnessProfileVersions).toEqual({ kit: 4 });
+    expect(lastRunCreate().harnessProfileVersions).toEqual({
+      __execution: 'temporal-run-1',
+      kit: { hooks: true, version: 4 },
+    });
     expect(findProfiles).toHaveBeenCalledWith({
-      select: { latestVersion: true, name: true },
+      select: { hooksEnabled: true, id: true, latestVersion: true, name: true },
       where: { name: { in: ['kit', 'gone'] }, status: 'OK' },
     });
-    expect(resolveAgentProfileName).toHaveBeenCalledWith(
+    expect(resolveAgentProfileBinding).toHaveBeenCalledWith(
       'implementer',
       expect.objectContaining({ agentVersions: { implementer: 1 }, workflowTemplateId: 'tpl-1' })
     );
+  });
+
+  describe('plugin pins of a reused workflow id', () => {
+    const pinRewrites = () =>
+      updateManyRuns.mock.calls
+        .map((c) => c[0] as { data: Record<string, unknown>; where: Record<string, unknown> })
+        .filter((a) => 'harnessProfileVersions' in a.data);
+    const create = async (stored: Record<string, unknown>) => {
+      findVersion.mockResolvedValue({ spec: validSpec, template: { origin: null } } as never);
+      upsertRun.mockResolvedValueOnce({ id: 'run-1', pinnedSettings: {}, ...stored } as never);
+      updateManyRuns.mockClear();
+      await createWorkflowRun({ templateId: 'tpl-1', templateVersion: 1, workflowId: 'wf-1' });
+    };
+
+    it('replaces the earlier execution’s pins with this execution’s own snapshot', async () => {
+      const earlier = { __execution: 'temporal-run-0', kit: 1 };
+      await create({ harnessProfileVersions: earlier, temporalRunId: 'temporal-run-0' });
+      const [write] = pinRewrites();
+      expect(write?.data.harnessProfileVersions).toMatchObject({ __execution: 'temporal-run-1' });
+      expect(write?.where).toEqual({ harnessProfileVersions: { equals: earlier }, id: 'run-1' });
+    });
+
+    it('treats a map written before the execution was embedded as the row’s first execution', async () => {
+      await create({ harnessProfileVersions: { kit: 1 }, temporalRunId: 'temporal-run-0' });
+      expect(pinRewrites()).toHaveLength(1);
+    });
+
+    it('leaves the pins alone on a retry of the same execution', async () => {
+      await create({
+        harnessProfileVersions: { __execution: 'temporal-run-1', kit: 1 },
+        temporalRunId: 'temporal-run-0',
+      });
+      expect(pinRewrites()).toHaveLength(0);
+    });
   });
 
   it('takes no profile snapshot for an agent run, which pins at first use', async () => {
@@ -995,10 +1036,10 @@ describe('createWorkflowRun', () => {
       spec: validSpec,
       template: { origin: 'system:agent-run' },
     } as never);
-    resolveAgentProfileName.mockClear();
+    resolveAgentProfileBinding.mockClear();
     await createWorkflowRun({ templateId: 'tpl-1', templateVersion: 1, workflowId: 'wf-1' });
     expect(lastRunCreate()).not.toHaveProperty('harnessProfileVersions');
-    expect(resolveAgentProfileName).not.toHaveBeenCalled();
+    expect(resolveAgentProfileBinding).not.toHaveBeenCalled();
   });
 
   it('takes no runtime snapshot for an agent run, which pins its one agent itself', async () => {

@@ -148,7 +148,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
       url: `/api/v1/platform${url}`,
     });
   const revisionsOf = (id: string) => revisions.filter((r) => r.skillId === id);
-  return { audit, call, executeRaw, prisma, revisionsOf, skills };
+  return { app, audit, call, executeRaw, prisma, revisionsOf, skills };
 }
 
 describe('GET /skills — external source badge', () => {
@@ -545,5 +545,74 @@ describe('GET /skills usage and scan findings', () => {
     expect(row.scanWarnings).toEqual(['looks like an instruction override']);
     expect(row).not.toHaveProperty('agentSkillRefs');
     expect(row).not.toHaveProperty('revisions');
+  });
+});
+
+describe('skills projected from a plugin', () => {
+  const PLUGIN_SKILL = '00000000-0000-4000-a000-0000000000e1';
+  const withProjected = async () => {
+    const t = await buildApp();
+    t.skills.push({
+      currentRevision: 1,
+      description: 'd',
+      id: PLUGIN_SKILL,
+      isActive: true,
+      isBuiltIn: false,
+      isVerified: false,
+      name: 'kit:review',
+      pluginProfileId: 'profile-1',
+      pluginVersion: 2,
+      promptText: 'text',
+    });
+    return t;
+  };
+
+  it.each([
+    ['PUT', { promptText: 'edited' }],
+    ['PUT', { name: 'renamed' }],
+    ['PUT', { isActive: false }],
+    ['POST:verify', { revision: 1 }],
+    ['DELETE', undefined],
+  ] as const)('refuses %s with 409 SKILL_PLUGIN_MANAGED and writes nothing', async (kind, body) => {
+    const t = await withProjected();
+    const res =
+      kind === 'PUT'
+        ? await t.call('PUT', `/skills/${PLUGIN_SKILL}`, body)
+        : kind === 'DELETE'
+          ? await t.app.inject({
+              headers: { authorization: 'Bearer token' },
+              method: 'DELETE',
+              url: `/api/v1/platform/skills/${PLUGIN_SKILL}`,
+            })
+          : await t.call('POST', `/skills/${PLUGIN_SKILL}/verify`, body);
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('SKILL_PLUGIN_MANAGED');
+    expect(res.json().error.message).toContain('plugin version');
+    expect(t.prisma.skill.update).not.toHaveBeenCalled();
+    expect(t.prisma.skill.delete).not.toHaveBeenCalled();
+  });
+
+  it('marks the plugin on the list and leaves it null on other skills', async () => {
+    const { call, prisma } = await buildApp();
+    const row = (id: string, over: Record<string, unknown>) => ({
+      _count: { agentSkillRefs: 0 },
+      agentSkillRefs: [],
+      currentRevision: 1,
+      id,
+      pluginProfile: null,
+      pluginVersion: null,
+      revisions: [],
+      source: null,
+      sourceId: null,
+      ...over,
+    });
+    (prisma.skill as unknown as { findMany: unknown }).findMany = vi.fn(async () => [
+      row('p', { pluginProfile: { id: 'profile-1', name: 'kit' }, pluginVersion: 3 }),
+      row('c', {}),
+    ]);
+    const [projected, custom] = (await call('GET', '/skills')).json().data;
+    expect(projected.plugin).toEqual({ name: 'kit', profileId: 'profile-1', version: 3 });
+    expect(projected).not.toHaveProperty('pluginProfile');
+    expect(custom.plugin).toBeNull();
   });
 });

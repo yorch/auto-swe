@@ -33,7 +33,7 @@ describe('AgentFormFields', () => {
     expect(screen.getByRole('combobox', { name: 'Model spec' })).toBeTruthy();
   });
 
-  it('shows a bound harness profile read-only beside the runtime', () => {
+  it('shows bound plugins read-only when the caller cannot change them', () => {
     render(
       <AgentFormFields
         mcpConnections={[]}
@@ -41,33 +41,53 @@ describe('AgentFormFields', () => {
         onChange={vi.fn()}
         showRuntime
         skills={[]}
-        value={{ ...VALUE, harnessProfile: 'review-kit', runtime: 'claude-code' }}
+        value={{ ...VALUE, harnessProfiles: ['review-kit'], runtime: 'claude-code' }}
       />
     );
 
     expect(screen.getByText('review-kit')).toBeTruthy();
-    expect(screen.queryByRole('textbox', { name: /profile/i })).toBeNull();
+    expect(screen.queryByTestId('plugin-list')).toBeNull();
   });
 
-  it('lets an admin bind an enabled profile and clear it', () => {
+  it('lets an admin build an ordered plugin list from the enabled plugins', () => {
     const onChange = vi.fn();
     render(
       <AgentFormFields
         harnessProfiles={[
           { name: 'review-kit', status: 'OK' },
           { name: 'old-kit', status: 'DISABLED' },
+          { name: 'docs-kit', status: 'OK' },
         ]}
         mcpConnections={[]}
         mode="edit"
         onChange={onChange}
         showRuntime
         skills={[]}
-        value={{ ...VALUE, harnessProfile: 'review-kit', runtime: 'claude-code' }}
+        value={{ ...VALUE, harnessProfiles: ['review-kit', 'old-kit'], runtime: 'claude-code' }}
       />
     );
 
-    const box = screen.getByRole('combobox', { name: 'Harness profile' });
-    expect((box as HTMLInputElement).value).toBe('review-kit');
+    expect(screen.getByText('review-kit')).toBeTruthy();
+    expect(screen.getByText('disabled')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Move old-kit up' }));
+    expect(onChange).toHaveBeenLastCalledWith({ harnessProfiles: ['old-kit', 'review-kit'] });
+    fireEvent.click(screen.getByRole('button', { name: 'Remove review-kit' }));
+    expect(onChange).toHaveBeenLastCalledWith({ harnessProfiles: ['old-kit'] });
+  });
+
+  it('offers a team admin the plugin list without the runtime picker', () => {
+    render(
+      <AgentFormFields
+        harnessProfiles={[{ name: 'team-kit', status: 'OK' }]}
+        mcpConnections={[]}
+        mode="edit"
+        onChange={vi.fn()}
+        skills={[]}
+        value={VALUE}
+      />
+    );
+    expect(screen.getByTestId('plugin-list')).toBeTruthy();
+    expect(screen.queryByRole('combobox', { name: /^Runtime/ })).toBeNull();
   });
 
   it('edit mode has no key field and plain labels', () => {

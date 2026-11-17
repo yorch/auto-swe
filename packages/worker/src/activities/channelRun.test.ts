@@ -8,6 +8,7 @@ vi.mock('@auto-swe/shared/db', () => {
     agentTrace: { aggregate: vi.fn() },
     channelThreadSession: { deleteMany: vi.fn(), upsert: vi.fn() },
     harnessProfile: { findMany: vi.fn() },
+    pluginEnablement: { findMany: vi.fn() },
     skill: { findMany: vi.fn() },
     slackChannel: { findUnique: vi.fn() },
     user: { findFirst: vi.fn() },
@@ -68,6 +69,7 @@ beforeEach(() => {
   p.agent.findFirst.mockResolvedValue(null);
   p.skill.findMany.mockResolvedValue([]);
   p.harnessProfile.findMany.mockResolvedValue([]);
+  p.pluginEnablement.findMany.mockResolvedValue([]);
   p.user.findFirst.mockReset();
   p.user.findFirst.mockResolvedValue(null);
 });
@@ -189,30 +191,66 @@ describe('startChannelRun', () => {
     });
   });
 
-  it('pins the profile version behind each bound agent at the turn’s scope', async () => {
+  it('pins the profile version behind each bound agent at the turn’s scope, with no enablement lookup for a channel override', async () => {
     p.agent.findMany.mockResolvedValue([{ key: 'channelAssistant', version: 3 }]);
     p.agent.findFirst.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
       where.scope === 'CHANNEL'
         ? {
-            harnessProfile: 'kit',
+            harnessProfiles: ['kit'],
             inheritsModelFrom: null,
             key: 'channelAssistant',
             modelSpec: 'a/m',
             runtime: 'claude-code',
+            scope: 'CHANNEL',
+            teamId: null,
             version: 1,
           }
         : null
     );
-    p.harnessProfile.findMany.mockResolvedValue([{ latestVersion: 3, name: 'kit' }]);
+    p.harnessProfile.findMany.mockResolvedValue([
+      { hooksEnabled: true, id: 'pk', latestVersion: 3, name: 'kit' },
+    ]);
+    // A channel override is written by a platform ADMIN: no team enablement is consulted.
+    p.pluginEnablement.findMany.mockResolvedValue([]);
 
     await startChannelRun({ channelId: 'chan-1', kind: 'mention', label: 'C1', workflowId: 'w' });
 
     const data = p.workflowRun.create.mock.calls[0][0].data;
-    expect(data.harnessProfileVersions).toEqual({ kit: 3 });
+    expect(data.harnessProfileVersions).toEqual({
+      kit: { hooks: true, version: 3 },
+    });
     expect(p.harnessProfile.findMany.mock.calls[0][0].where).toEqual({
       name: { in: ['kit'] },
       status: 'OK',
     });
+    expect(p.pluginEnablement.findMany).not.toHaveBeenCalled();
+  });
+
+  it('does not pin a team override’s plugin that the team has not enabled', async () => {
+    p.agent.findMany.mockResolvedValue([{ key: 'channelAssistant', version: 3 }]);
+    p.agent.findFirst.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+      where.scope === 'TEAM'
+        ? {
+            harnessProfiles: ['kit'],
+            inheritsModelFrom: null,
+            key: 'channelAssistant',
+            modelSpec: 'a/m',
+            runtime: 'claude-code',
+            scope: 'TEAM',
+            teamId: 'team-1',
+            version: 1,
+          }
+        : null
+    );
+    p.harnessProfile.findMany.mockResolvedValue([
+      { hooksEnabled: true, id: 'pk', latestVersion: 3, name: 'kit' },
+    ]);
+    p.pluginEnablement.findMany.mockResolvedValue([]);
+
+    await startChannelRun({ channelId: 'chan-1', kind: 'mention', label: 'C1', workflowId: 'w' });
+
+    const data = p.workflowRun.create.mock.calls[0][0].data;
+    expect(data.harnessProfileVersions).toEqual({});
   });
 
   it('pins each agent’s runtime at the turn’s scope, channel overrides included', async () => {

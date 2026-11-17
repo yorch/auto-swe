@@ -5,6 +5,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
+import { skillPluginManaged } from '../lib/pluginSkillPolicy.js';
 import { updateSkill } from '../lib/skillLibraryService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -60,6 +61,9 @@ export const skillRevisionRoutes: FastifyPluginAsync = async (fastify) => {
       const existing = await fastify.prisma.skill.findUnique({ where: { id: request.params.id } });
       if (!existing) {
         return sendError(reply, 404, 'NOT_FOUND', 'Skill not found');
+      }
+      if (existing.pluginProfileId) {
+        return skillPluginManaged(reply);
       }
       if (existing.isBuiltIn) {
         return sendError(

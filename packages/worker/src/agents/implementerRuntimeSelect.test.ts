@@ -128,8 +128,8 @@ describe('buildImplementerTurnRunner', () => {
 
   it('hands the harness the approved profile for the agent, resolved with the runtime', async () => {
     h.resolveAgentRuntime.mockResolvedValue({ runtime: 'claude-code', source: 'agent' });
-    const profile = { contentHash: 'b'.repeat(64), name: 'demo', version: 3 };
-    h.profileFor.mockResolvedValue(profile);
+    const profiles = [{ contentHash: 'b'.repeat(64), name: 'demo', version: 3 }];
+    h.profileFor.mockResolvedValue(profiles);
     const given = input({ agentKey: 'ciFixer' });
     await buildImplementerTurnRunner(given);
     expect(h.profileFor).toHaveBeenCalledWith({
@@ -138,7 +138,7 @@ describe('buildImplementerTurnRunner', () => {
       runtime: 'claude-code',
       tracer: given.tracer,
     });
-    expect(h.claudeCodeRuntime.mock.calls[0]?.[0]).toMatchObject({ profile });
+    expect(h.claudeCodeRuntime.mock.calls[0]?.[0]).toMatchObject({ profiles });
   });
 
   it('lets a failed profile resolution stop the session before it builds anything', async () => {

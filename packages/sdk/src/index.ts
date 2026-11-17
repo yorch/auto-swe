@@ -11,6 +11,7 @@ import {
   type BundleDependency,
   type BundleEntities,
   type BundleManifest,
+  type BundlePlugin,
   type BundleScannerPattern,
   type BundleSkill,
   type BundleTemplate,
@@ -19,6 +20,7 @@ import {
   signContentHash,
   unsupportedBundleDependencies,
   validateBundleAgents,
+  validateBundlePlugins,
   validateBundleScannerPatterns,
   verifyContentHash,
 } from '@auto-swe/shared/bundle';
@@ -38,6 +40,16 @@ export const defineSkill = (s: BundleSkill): BundleSkill => s;
 export const defineScannerPattern = (p: BundleScannerPattern): BundleScannerPattern => p;
 export const defineTemplate = (t: BundleTemplate): BundleTemplate => t;
 
+/**
+ * A Claude Code plugin the bundle installs by reference: the folder at `source`, read at the exact
+ * commit `sha`, whose harness-profile `contentHash` the installer must reproduce. `name` is the
+ * profile name (`profile.json`), `bindings` the GLOBAL agents (by key) the plugin is appended to.
+ * Nothing is fetched here; the installing deployment reads the commit and refuses a mismatch.
+ */
+export const definePlugin = (
+  p: Omit<BundlePlugin, 'bindings'> & { bindings?: BundlePlugin['bindings'] }
+): BundlePlugin => ({ ...p, bindings: p.bindings ?? [] });
+
 /** Build a `containerStep` workflow node (coded capability) for embedding in a template spec. */
 export const defineContainerStep = (node: Omit<ContainerStepNode, 'type'>): ContainerStepNode => ({
   ...node,
@@ -53,6 +65,7 @@ export interface DefineBundleInput {
   skills?: BundleSkill[];
   scannerPatterns?: BundleScannerPattern[];
   templates?: BundleTemplate[];
+  plugins?: BundlePlugin[];
   dependencies?: BundleDependency[];
 }
 
@@ -66,6 +79,8 @@ export function defineBundle(input: DefineBundleInput): BundleManifest {
     scannerPatterns: input.scannerPatterns ?? [],
     skills: input.skills ?? [],
     templates: input.templates ?? [],
+    // Left out when empty, so a bundle of no plugins has one spelling and one hash.
+    ...(input.plugins && input.plugins.length > 0 ? { plugins: input.plugins } : {}),
   };
   // Assembly + hashing live in `@auto-swe/shared/bundle` so the SDK and the
   // gateway's `exportBundle` cannot drift over what the v2 hash covers.
@@ -145,6 +160,11 @@ export function validateBundle(manifest: unknown): ValidateBundleResult {
   const agentErrors = validateBundleAgents(bundle);
   if (agentErrors.length > 0) {
     return { errors: agentErrors, ok: false };
+  }
+  // Same plugin-reference gate as install (names, bindings, source coordinates).
+  const pluginErrors = validateBundlePlugins(bundle);
+  if (pluginErrors.length > 0) {
+    return { errors: pluginErrors, ok: false };
   }
   // The server refuses a dependency on a connection type it cannot run.
   const unsupported = unsupportedBundleDependencies(bundle);

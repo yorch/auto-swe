@@ -19,13 +19,16 @@ const SUB_HELP = `auto-swe bundles — distribute library bundles (admin)
   bundles list                              List installed bundles
   bundles export <name> <version> [--origin=TAG] [-o <path>]
                                             Export GLOBAL content to a bundle file (or stdout)
-  bundles install <path> [--overwrite-protected]
+  bundles install <path> [--overwrite-protected] [--acknowledge-warnings]
                                             Install a bundle from a local file
-  bundles install-from-url <url> [--overwrite-protected]
+  bundles install-from-url <url> [--overwrite-protected] [--acknowledge-warnings]
                                             Fetch + install a bundle from an http(s) URL
 
   An install that would replace a built-in or admin-authored GLOBAL agent with
   the same key is refused; --overwrite-protected replaces it deliberately.
+  A bundle that references plugins reads each pinned commit and approves the
+  plugin with hooks off; the plugin's warnings are printed and the install needs
+  --acknowledge-warnings once you have read them.
 `;
 
 export async function runBundlesCommand(args: string[], env: CliEnv): Promise<number> {
@@ -110,7 +113,7 @@ async function cmdExport(args: string[], env: CliEnv): Promise<number> {
 }
 
 async function cmdInstall(args: string[], env: CliEnv): Promise<number> {
-  const { positional, overwriteProtected } = parseInstallArgs(args);
+  const { positional, overwriteProtected, acknowledgeWarnings } = parseInstallArgs(args);
   const path = positional[0];
   if (!path) {
     process.stderr.write('Usage: bundles install <path>\n');
@@ -129,14 +132,14 @@ async function cmdInstall(args: string[], env: CliEnv): Promise<number> {
     env,
     'POST',
     '/api/v1/platform/bundles/install',
-    { bundle, overwriteProtected }
+    { bundle, overwriteProtected, ...(acknowledgeWarnings ? { acknowledgeWarnings } : {}) }
   );
   printInstall(result);
   return 0;
 }
 
 async function cmdInstallFromUrl(args: string[], env: CliEnv): Promise<number> {
-  const { positional, overwriteProtected } = parseInstallArgs(args);
+  const { positional, overwriteProtected, acknowledgeWarnings } = parseInstallArgs(args);
   const url = positional[0];
   if (!url) {
     process.stderr.write('Usage: bundles install-from-url <url>\n');
@@ -146,27 +149,37 @@ async function cmdInstallFromUrl(args: string[], env: CliEnv): Promise<number> {
     env,
     'POST',
     '/api/v1/platform/bundles/install-from-url',
-    { overwriteProtected, url }
+    { overwriteProtected, url, ...(acknowledgeWarnings ? { acknowledgeWarnings } : {}) }
   );
   printInstall(result);
   return 0;
 }
 
 /**
- * `--overwrite-protected` is a boolean, but parseFlags binds the next bare word
- * to it — `install --overwrite-protected b.json` would swallow the path. Hand
- * that word back as the positional it is.
+ * `--overwrite-protected` and `--acknowledge-warnings` are booleans, but parseFlags binds the next
+ * bare word to them — `install --overwrite-protected b.json` would swallow the path. Hand that
+ * word back as the positional it is.
  */
 export function parseInstallArgs(args: string[]): {
   positional: string[];
   overwriteProtected: boolean;
+  acknowledgeWarnings?: true;
 } {
   const { positional, flags } = parseFlags(args);
-  const raw = flags['overwrite-protected'];
-  if (raw !== undefined && raw !== FLAG_PRESENT) {
-    positional.unshift(raw);
-  }
-  return { overwriteProtected: raw !== undefined, positional };
+  const present = (name: string): boolean => {
+    const raw = flags[name];
+    if (raw !== undefined && raw !== FLAG_PRESENT) {
+      positional.unshift(raw);
+    }
+    return raw !== undefined;
+  };
+  const overwriteProtected = present('overwrite-protected');
+  const acknowledgeWarnings = present('acknowledge-warnings');
+  return {
+    ...(acknowledgeWarnings ? { acknowledgeWarnings: true as const } : {}),
+    overwriteProtected,
+    positional,
+  };
 }
 
 function printInstall(r: BundleInstallResult): void {

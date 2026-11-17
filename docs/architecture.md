@@ -956,6 +956,7 @@ erDiagram
 | Agent transcripts | `AgentTranscript`, `AgentTranscriptPart`, `TranscriptAccessLog` | One transcript per activity attempt, its gzipped NDJSON parts (each a `WorkflowArtifact` with a sha256), and the audit trail of who read, exported, verified or held them. See [transcripts.md](./transcripts.md) |
 | Memory | `MemoryItem`, `LessonFlag` | pgvector semantic memory, 1536-dim with an HNSW index; `scope` partitions domains (`swe-lessons`, `channel-memory`); `entityType`/`entityId` are written alongside the repo and channel columns, but every reader filters on `repo_id`, `channel_id`, `team_id` or `org_id`; a `LessonFlag` is one reader's report that a repository lesson is wrong |
 | Agent config | `Agent`, `AgentSkillRef`, `Skill`, `SkillRevision`, `SkillSource` | Versioned agents scoped GLOBAL / ORGANIZATION / TEAM / CHANNEL / WORKFLOW_TEMPLATE, joined to skills via `AgentSkillRef` |
+| Plugins | `HarnessProfile`, `HarnessProfileVersion`, `MarketplaceSource`, `PluginEnablement` | Approved Claude Code plugins as immutable, content-hashed profiles with a hook switch and update tracking; tracked plugin marketplaces; team enablement. An `Agent` binds a list of profile names (`Agent.harnessProfiles`). See [harness-profiles.md](./harness-profiles.md) |
 | Model config | `ProviderCredential`, `EmbeddingConfig`, `ConfigAuditLog` | Encrypted keys, embedding singleton, config audit trail |
 | System config | `GitHubConfig`, `SlackConfig`, `WorkflowDefaults`, `IssueTrackerConfig`, `KnowledgeBaseConfig`, `FigmaConfig` | Singletons (`id='default'`) with encrypted secrets and env-var fallback. Sign-in credentials (Google, Okta, GitHub OAuth) and artifact storage are environment-only; workspace sizing is an environment default that the `workspace.memory` and `workspace.cpus` settings override per team, organization or template — see [configuration.md](./configuration.md) |
 | Per-host webhook secrets | `GitHubHostWebhookSecret` | One GitHub Enterprise host's encrypted webhook secret, keyed by lowercase `host[:port]` and used only for deliveries naming that host in `X-GitHub-Enterprise-Host`. Platform infrastructure, not tenant-scoped. See [repositories.md](./repositories.md) |
@@ -1445,6 +1446,14 @@ sit on this seam, and so does the ephemeral shell/container-step sandbox:
   `secretEnv`. These are platform-authored scripts, kept on a separate method so that no flag on a shared spec can drop
   the lockdown from an author command.
 - `createVolume` and `removeVolume` manage the step volumes.
+
+**Plugin checks.** Two sweeps read plugin sources and record what they find; neither installs anything.
+The `auto-swe-skill-source-sync` Temporal Schedule (`SKILL_SOURCE_SYNC_ENABLED`, `SKILL_SOURCE_SYNC_CRON`)
+runs the skill-source check and then, in the same activity, the check of every non-disabled approved
+harness profile's ref. The `auto-swe-marketplace-sync` Temporal Schedule (`MARKETPLACE_SYNC_ENABLED`, `MARKETPLACE_SYNC_CRON`)
+starts `ScheduledMarketplaceSyncWorkflow`, whose one activity (`syncMarketplaces`) asks each tracked
+marketplace which commit its ref names. Each records `latestSha`, the tracking status and the time of its
+check; the admin accepts an update by hand ([harness-profiles.md §10–11](./harness-profiles.md#10-update-tracking)).
 
 **Orphaned workspaces.** A workspace is removed in its activity's `finally`, so a worker that is
 killed or crashes first would leave its container or pod behind. The

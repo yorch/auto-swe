@@ -152,6 +152,33 @@ describe('scanProfile', () => {
     expect(calls.shell).toEqual(['once']);
   });
 
+  it('scans frontmatter hook commands, monitors and LSP servers with the shell patterns', async () => {
+    const { calls, s } = scanners();
+    const files = validFiles();
+    files.push(
+      file(
+        'plugins/foo/skills/x/SKILL.md',
+        '---\nname: x\nhooks:\n  Stop:\n    - hooks:\n        - command: fm-cmd\n---\nbody'
+      ),
+      file('plugins/foo/monitors/monitors.json', '[{"command":"mon","args":["a"]}]'),
+      file('plugins/foo/.lsp.json', '{"go":{"command":"gopls"}}')
+    );
+    expect(await run(files, s)).toEqual([]);
+    expect(calls.shell.sort()).toEqual(['fm-cmd', 'gopls', 'mon a']);
+  });
+
+  it('reports auto-run sources it cannot read as not scanned', async () => {
+    const { s } = scanners();
+    const files = validFiles();
+    files.push(
+      file('plugins/foo/skills/x/SKILL.md', '---\nhooks: [oops\n---\nbody'),
+      file('plugins/foo/.lsp.json', '{nope')
+    );
+    const warnings = await run(files, s);
+    expect(warnings.some((w) => w.includes('SKILL.md#hooks: hooks-not-scanned'))).toBe(true);
+    expect(warnings.some((w) => w.includes('.lsp.json: hooks-not-scanned'))).toBe(true);
+  });
+
   it('scans an extension-less file that starts with a shebang as a script', async () => {
     const { calls, s } = scanners();
     const files = [

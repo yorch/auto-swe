@@ -12,6 +12,7 @@ import { asyncLocalStorage } from '@temporalio/activity';
 import { persistActivityTrace } from '../activityContext.js';
 import { logWarn } from '../activityLog.js';
 import { AgentTracer } from '../agentTracer.js';
+import { bindingNeedsEnablement, enabledProfileIds, enablementTeamId } from './pluginEnablement.js';
 import {
   ConfigMissingError,
   resolvePinnedCredential,
@@ -47,12 +48,19 @@ export interface ResolvedAgent {
    */
   runtime: ImplementerRuntimeKind | null;
   /**
-   * The NAME of the harness profile this version is bound to (`Agent.harnessProfile`),
-   * or null. Read from the resolved version ITSELF: unlike the runtime it is not
+   * The NAMES of the harness profiles this version is bound to (`Agent.harnessProfiles`),
+   * in binding order; empty when none. Read from the resolved version ITSELF: unlike the runtime it is not
    * inherited along `inheritsModelFrom`, so a persona never silently picks up its
    * parent's instructions and plugins. See `resolveHarnessProfile`.
    */
-  harnessProfile: string | null;
+  harnessProfiles: string[];
+  /**
+   * The scope of the resolved Agent row. A plugin binding on a version that is not
+   * GLOBAL needs the run's team to have enabled the plugin (`PluginEnablement`).
+   */
+  scope: ResolvedModelConfig['scope'];
+  /** The owning team of a TEAM-scoped row; null otherwise. */
+  teamId: string | null;
 }
 
 export type AgentRow = NonNullable<Awaited<ReturnType<typeof fetchActiveAgent>>>;
@@ -142,7 +150,11 @@ function cascadeWheres(key: string, ctx?: ResolveCtx) {
  * falls back to the live text rather than failing the run.
  */
 export async function skillsFromAgent(agent: AgentRow, ctx?: ResolveCtx): Promise<ResolvedSkill[]> {
-  const refs = agent.skillRefs.filter((ref) => ref.skill.isActive);
+  const refs = await withoutUnavailablePluginSkills(
+    agent,
+    agent.skillRefs.filter((ref) => ref.skill.isActive),
+    ctx
+  );
   const stale = refs.filter((ref) => {
     const pinned = ctx?.skillRevisions?.[ref.skill.id];
     return pinned !== undefined && pinned !== ref.skill.currentRevision;
@@ -185,6 +197,84 @@ export async function skillsFromAgent(agent: AgentRow, ctx?: ResolveCtx): Promis
       sortOrder: ref.sortOrder,
     };
   });
+}
+
+/** Fixed reasons on `agent.plugin_skill_excluded`; never free text. */
+export const PLUGIN_SKILL_EXCLUDED_DISABLED = 'plugin is disabled';
+export const PLUGIN_SKILL_EXCLUDED_NOT_ENABLED = 'plugin is not enabled for the run’s team';
+
+/**
+ * Drops from `refs` a skill projected from a plugin (`Skill.pluginProfileId`) when
+ * the plugin is no longer usable: its profile is not OK, or the agent version is
+ * TEAM-scoped and the team has no `PluginEnablement` for it (no team to check
+ * fails closed). An agent version that is not TEAM-scoped was written by a
+ * platform ADMIN and needs no enablement (`bindingNeedsEnablement`); the profile
+ * status still applies. Skills are advisory text, so an exclusion is an
+ * `agent.plugin_skill_excluded` event, never a failure. Nothing is cached here
+ * beyond the resolver's own config-cache window.
+ */
+async function withoutUnavailablePluginSkills(
+  agent: AgentRow,
+  refs: AgentRow['skillRefs'],
+  ctx?: ResolveCtx
+): Promise<AgentRow['skillRefs']> {
+  const projected = refs.filter((ref) => ref.skill.pluginProfileId);
+  if (projected.length === 0) {
+    return refs;
+  }
+  const ids = [...new Set(projected.map((ref) => ref.skill.pluginProfileId as string))];
+  const profiles = await prisma.harnessProfile.findMany({
+    select: { id: true, status: true },
+    where: { id: { in: ids } },
+  });
+  const usable = new Set(profiles.filter((p) => p.status === 'OK').map((p) => p.id));
+  let enabled: Set<string> | undefined;
+  if (bindingNeedsEnablement(agent.scope)) {
+    const teamId = enablementTeamId(ctx, agent);
+    enabled = teamId ? await enabledProfileIds([...usable], teamId) : new Set();
+  }
+  const excluded: Array<{ skill: string; reason: string }> = [];
+  const kept = refs.filter((ref) => {
+    const profileId = ref.skill.pluginProfileId;
+    if (!profileId) {
+      return true;
+    }
+    if (!usable.has(profileId)) {
+      excluded.push({ reason: PLUGIN_SKILL_EXCLUDED_DISABLED, skill: ref.skill.name });
+      return false;
+    }
+    if (enabled && !enabled.has(profileId)) {
+      excluded.push({ reason: PLUGIN_SKILL_EXCLUDED_NOT_ENABLED, skill: ref.skill.name });
+      return false;
+    }
+    return true;
+  });
+  if (excluded.length > 0) {
+    await reportExcludedPluginSkills(agent.key, excluded);
+  }
+  return kept;
+}
+
+/** One `agent.plugin_skill_excluded` event per skill; inside an activity only; never throws. */
+async function reportExcludedPluginSkills(
+  agentKey: string,
+  excluded: Array<{ skill: string; reason: string }>
+): Promise<void> {
+  if (!asyncLocalStorage.getStore()) {
+    return;
+  }
+  try {
+    const tracer = new AgentTracer();
+    for (const { skill, reason } of excluded) {
+      tracer.addActivityEvent({
+        name: 'agent.plugin_skill_excluded',
+        outputJson: { agentKey, reason, skill },
+      });
+    }
+    await persistActivityTrace(tracer, 'skillResolver');
+  } catch {
+    // Observability must never fail a resolution.
+  }
 }
 
 /**
@@ -413,20 +503,26 @@ export async function resolveAgentRuntimeChoice(
 }
 
 /**
- * The harness profile name the resolved version of `key` is bound to, or null —
- * the profile part of {@link resolveAgent}, through the same cascade and version
- * pin, without binding a model or decrypting a credential. For the run-start
- * snapshot. Throws `ConfigMissingError` when no active row exists.
+ * The harness profile names the resolved version of `key` is bound to, in binding
+ * order, with the row's scope and team — the profile part of {@link resolveAgent},
+ * through the same cascade and version pin, without binding a model or decrypting
+ * a credential. For the run-start snapshot. Throws `ConfigMissingError` when no
+ * active row exists.
  */
-export async function resolveAgentProfileName(
+export async function resolveAgentProfileBinding(
   key: string,
   ctx?: ResolveCtx
-): Promise<string | null> {
+): Promise<Pick<ResolvedAgent, 'harnessProfiles' | 'scope' | 'teamId' | 'version'>> {
   const agent = await fetchActiveAgent(key, ctx);
   if (!agent) {
     throw new ConfigMissingError(`No active Agent found for key '${key}' at any scope.`);
   }
-  return agent.harnessProfile ?? null;
+  return {
+    harnessProfiles: agent.harnessProfiles,
+    scope: agent.scope,
+    teamId: agent.teamId ?? null,
+    version: agent.version,
+  };
 }
 
 /**
@@ -558,7 +654,7 @@ async function resolveAgentUncached(key: string, ctx?: ResolveCtx): Promise<Reso
   const { model, runtime } = await resolveModelForAgent(agent, ctx);
 
   return {
-    harnessProfile: agent.harnessProfile ?? null,
+    harnessProfiles: agent.harnessProfiles,
     id: agent.id,
     isVerified: agent.isVerified,
     key,
@@ -566,7 +662,9 @@ async function resolveAgentUncached(key: string, ctx?: ResolveCtx): Promise<Reso
     model,
     origin: agent.origin ?? null,
     runtime,
+    scope: agent.scope,
     skills: await skillsFromAgent(agent, ctx),
+    teamId: agent.teamId ?? null,
     toolKeys: parseToolKeys(agent.toolKeys),
     version: agent.version,
   };

@@ -1,4 +1,5 @@
 import { safeDisplayPath } from '../skillSource/display.js';
+import { autoRunSourcesOf } from './hookSources.js';
 import type { ProfileManifest } from './manifest.js';
 import { unsafeProfilePath } from './paths.js';
 import { defaultScanners, type ProfileScanners, type ScanOutcome } from './scanners.js';
@@ -75,8 +76,8 @@ export async function scanProfile(
   let commands = 0;
   const byPath = new Map(files.map((f) => [f.path, f]));
   /** Scan the commands of one parsed hooks document; false once the per-profile cap is hit. */
-  const scanHookCommands = async (label: string, doc: unknown): Promise<void> => {
-    for (const command of hookCommands(doc)) {
+  const scanCommandList = async (label: string, list: readonly string[]): Promise<void> => {
+    for (const command of list) {
       if (++commands > MAX_HOOK_COMMANDS) {
         warnings.push(
           `${safeDisplayPath(label)}: hook commands beyond ${MAX_HOOK_COMMANDS} not scanned`
@@ -86,6 +87,8 @@ export async function scanProfile(
       report(`${label} (hook command)`, 'shell', await scanners.shell(command));
     }
   };
+  const scanHookCommands = (label: string, doc: unknown) =>
+    scanCommandList(label, hookCommands(doc));
   const notScanned = (label: string, reason: string) =>
     warnings.push(`${safeDisplayPath(label)}: ${HOOKS_NOT_SCANNED}: ${reason}`);
   const hookDocScanned = new Set<string>();
@@ -152,6 +155,18 @@ export async function scanProfile(
       hookDocScanned.add(target);
       await scanHookCommands(target, refDoc);
     }
+  }
+
+  // Frontmatter hooks, monitors and LSP servers: auto-run commands the loop above does not read.
+  const autoRun = autoRunSourcesOf(files, { plugins: [...pluginDirs] }).filter(
+    (s) => s.kind === 'frontmatter-hooks' || s.kind === 'monitors' || s.kind === 'lsp'
+  );
+  for (const source of autoRun) {
+    if (source.unreadable !== undefined) {
+      notScanned(source.path, source.unreadable);
+      continue;
+    }
+    await scanCommandList(source.path, source.commands);
   }
   return [...new Set(warnings)];
 }

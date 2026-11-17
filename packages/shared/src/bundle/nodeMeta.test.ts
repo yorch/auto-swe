@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BUNDLE_SCHEMA_VERSION,
   type BundleEntities,
   computeContentHash,
   parseBundle,
@@ -29,16 +28,19 @@ const entitiesWith = (spec: unknown) =>
 
 const metadata = { createdAt: '2026-01-01T00:00:00.000Z', name: 'acme-starter', version: '1.0.0' };
 
+// The pinned hash was signed over a v2 manifest, and v2 manifests still verify.
+const V2 = 2;
+
 const manifestFor = (spec: unknown) => {
   const entities = entitiesWith(spec);
   return {
-    bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+    bundleSchemaVersion: V2,
     dependencies: [],
     entities,
     metadata: {
       ...metadata,
       contentHash: computeContentHash({
-        bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+        bundleSchemaVersion: V2,
         dependencies: [],
         entities,
         metadata,

@@ -45,6 +45,7 @@ import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { navLabel } from '@/lib/navigation';
 import { originLabel } from '@/lib/originLabel';
+import { isPluginSkill, PLUGIN_SKILL_READ_ONLY, splitPluginSkillName } from '@/lib/pluginSkill';
 import { cn, FOCUS_RING, formatCost, formatDate, formatPercent } from '@/lib/utils';
 import { visibleOrNull, visibleText } from '@/lib/visibleText';
 
@@ -67,6 +68,19 @@ function ExternalBadge({ source }: { source: Skill['externalSource'] }) {
       tone="accent2"
     >
       {visibleText(`external: ${source.owner}/${source.repo}@${shortSha(source.sha)}`)}
+    </Badge>
+  );
+}
+
+/** `plugin: name` for a skill projected from a plugin (read-only; the plugin owns its text). */
+function PluginBadge({ skill }: { skill: Skill }) {
+  if (!isPluginSkill(skill)) {
+    return null;
+  }
+  const parts = splitPluginSkillName(skill.name);
+  return (
+    <Badge title={PLUGIN_SKILL_READ_ONLY} tone="accent">
+      {visibleText(parts ? `plugin: ${parts.plugin}` : 'plugin')}
     </Badge>
   );
 }
@@ -208,6 +222,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
     }
   }
 
+  const pluginOwned = isPluginSkill(sk);
   const title = editing ? `Edit "${visibleText(sk.name)}"` : visibleText(sk.name);
 
   function closeModal() {
@@ -317,6 +332,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
               origin={sk.origin}
             >
               <ExternalBadge source={sk.externalSource} />
+              <PluginBadge skill={sk} />
               <Badge tone="neutral">
                 used by {sk.usedByCount} agent{sk.usedByCount !== 1 ? 's' : ''}
               </Badge>
@@ -369,11 +385,21 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
                 <Button onClick={() => setShowHistory((v) => !v)} variant="ghost">
                   {showHistory ? 'Hide history' : 'History'}
                 </Button>
-                <Button onClick={startEdit} variant="secondary">
+                <Button
+                  disabled={pluginOwned}
+                  onClick={startEdit}
+                  title={pluginOwned ? PLUGIN_SKILL_READ_ONLY : undefined}
+                  variant="secondary"
+                >
                   Edit
                 </Button>
               </div>
             </div>
+            {pluginOwned && (
+              <p className="text-xs text-paper-500" data-testid="plugin-skill-read-only">
+                {PLUGIN_SKILL_READ_ONLY}
+              </p>
+            )}
             {showHistory && (
               <SkillHistory
                 onRestored={(restored, warnings) =>
@@ -621,13 +647,14 @@ const SKILL_SORT = {
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
-type SkillFilter = 'all' | 'builtIn' | 'custom' | 'external' | 'unverified' | 'inactive';
+type SkillFilter = 'all' | 'builtIn' | 'custom' | 'external' | 'plugin' | 'unverified' | 'inactive';
 
 const SKILL_FILTERS: { label: string; value: SkillFilter }[] = [
   { label: 'All skills', value: 'all' },
   { label: 'Built-in', value: 'builtIn' },
   { label: 'Custom', value: 'custom' },
   { label: 'Imported', value: 'external' },
+  { label: 'From plugins', value: 'plugin' },
   { label: 'Unverified', value: 'unverified' },
   { label: 'Inactive', value: 'inactive' },
 ];
@@ -637,9 +664,11 @@ function matchesFilter(skill: Skill, filter: SkillFilter): boolean {
     case 'builtIn':
       return skill.isBuiltIn;
     case 'custom':
-      return !(skill.isBuiltIn || skill.externalSource);
+      return !(skill.isBuiltIn || skill.externalSource || isPluginSkill(skill));
     case 'external':
       return Boolean(skill.externalSource);
+    case 'plugin':
+      return isPluginSkill(skill);
     case 'unverified':
       return !(skill.isVerified || skill.isBuiltIn);
     case 'inactive':
@@ -878,9 +907,13 @@ function StudioSkillsContent() {
                           {skill.isBuiltIn && <Badge tone="neutral">Built-in</Badge>}
                           {skill.origin && <OriginBadge origin={skill.origin} />}
                           <ExternalBadge source={skill.externalSource} />
-                          {!(skill.isBuiltIn || skill.origin || skill.externalSource) && (
-                            <span className="text-xs text-paper-400">Custom</span>
-                          )}
+                          <PluginBadge skill={skill} />
+                          {!(
+                            skill.isBuiltIn ||
+                            skill.origin ||
+                            skill.externalSource ||
+                            isPluginSkill(skill)
+                          ) && <span className="text-xs text-paper-400">Custom</span>}
                         </div>
                       ),
                       header: 'Source',

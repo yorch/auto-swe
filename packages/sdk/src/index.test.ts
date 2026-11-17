@@ -6,8 +6,10 @@ import {
 } from '@auto-swe/shared/bundle';
 import { describe, expect, it } from 'vitest';
 import {
+  defineAgent,
   defineBundle,
   defineContainerStep,
+  definePlugin,
   defineScannerPattern,
   defineSkill,
   signBundle,
@@ -234,6 +236,85 @@ describe('validateBundle', () => {
     if (!res.ok) {
       expect(res.errors[0]).toMatch(/unsupported bundleSchemaVersion 1/);
     }
+  });
+});
+
+describe('definePlugin and plugin validation', () => {
+  const ref = {
+    contentHash: 'b'.repeat(64),
+    name: 'acme-pack',
+    sha: 'a'.repeat(40),
+    source: { owner: 'acme', path: 'plugins/pack', repo: 'tools' },
+  };
+
+  it('defaults bindings to an empty list and builds a valid v3 bundle', () => {
+    const plugin = definePlugin(ref);
+    expect(plugin.bindings).toEqual([]);
+    const bundle = defineBundle({
+      agents: [defineAgent({ key: 'acme.impl', name: 'Impl' })],
+      name: 'b',
+      plugins: [definePlugin({ ...ref, bindings: [{ agentKey: 'acme.impl' }] })],
+      version: '1',
+    });
+    expect(bundle.bundleSchemaVersion).toBe(3);
+    expect(validateBundle(bundle).ok).toBe(true);
+  });
+
+  it('leaves the plugins key out of a bundle that has none', () => {
+    expect('plugins' in defineBundle({ name: 'b', plugins: [], version: '1' }).entities).toBe(
+      false
+    );
+  });
+
+  it('rejects a short commit, a bad content hash and duplicate names', () => {
+    const bad = (over: object) =>
+      validateBundle(
+        defineBundle({ name: 'b', plugins: [definePlugin({ ...ref, ...over })], version: '1' })
+      );
+    expect(bad({ sha: 'abc123' }).ok).toBe(false);
+    expect(bad({ contentHash: 'xyz' }).ok).toBe(false);
+    const dup = validateBundle(
+      defineBundle({
+        name: 'b',
+        plugins: [definePlugin(ref), definePlugin({ ...ref, name: 'ACME-PACK' })],
+        version: '1',
+      })
+    );
+    expect(dup.ok).toBe(false);
+    if (!dup.ok) {
+      expect(dup.errors.join()).toMatch(/listed more than once/);
+    }
+  });
+
+  it('accepts a binding to an agent that is not in the bundle', () => {
+    const res = validateBundle(
+      defineBundle({
+        name: 'b',
+        plugins: [definePlugin({ ...ref, bindings: [{ agentKey: 'implementer' }] })],
+        version: '1',
+      })
+    );
+    expect(res.ok).toBe(true);
+  });
+
+  it('still validates a v2 bundle', () => {
+    const v2Meta = { createdAt: 'now', name: 'old', version: '1' };
+    const entities = { agents: [], scannerPatterns: [], skills: [], templates: [] };
+    const v2 = {
+      bundleSchemaVersion: 2,
+      dependencies: [],
+      entities,
+      metadata: {
+        ...v2Meta,
+        contentHash: computeContentHash({
+          bundleSchemaVersion: 2,
+          dependencies: [],
+          entities,
+          metadata: v2Meta,
+        }),
+      },
+    };
+    expect(validateBundle(v2).ok).toBe(true);
   });
 });
 

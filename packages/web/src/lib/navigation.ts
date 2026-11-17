@@ -146,7 +146,7 @@ const ADMIN_PAGES: NavItem[] = [
   {
     href: '/admin/harness-profiles',
     icon: 'package',
-    label: 'Harness profiles',
+    label: 'Plugins',
     minRole: 'ADMIN',
     section: 'Security',
   },

@@ -8,6 +8,9 @@ import type { ResolvedHarnessProfile } from '../../lib/config/harnessProfile.js'
 import { shellQuote } from '../../lib/shellQuote.js';
 import { workspaceBackend } from '../../lib/workspaceBackend/index.js';
 import { HARNESS_DIR } from '../harness/adapter.js';
+import { filesToMaterialize, manifestRel, profilePluginNames } from './pluginFiles.js';
+
+export { filesToMaterialize, profilePluginNames } from './pluginFiles.js';
 
 /** Where approved profiles are materialized in the container, outside the checkout. */
 export const PROFILES_DIR = `${HARNESS_DIR}/profiles`;
@@ -34,12 +37,6 @@ export function profileShortSha(profile: Pick<ResolvedHarnessProfile, 'commitSha
 /** Where `profile` lives in the container. */
 export function profileContainerDir(profile: Pick<ResolvedHarnessProfile, 'contentHash'>): string {
   return `${PROFILES_DIR}/${profileShortHash(profile)}`;
-}
-
-/** A manifest path in the spelling the snapshot stores it under; null when it is unsafe. */
-function manifestRel(raw: string): string | null {
-  const rel = raw.replace(/^(?:\.\/)+/, '').replace(/\/+$/, '');
-  return unsafeProfilePath(rel) === null ? rel : null;
 }
 
 /** The plugin directories the SDK loads, as paths inside the container. */
@@ -100,10 +97,25 @@ export function profileInstructions(profile: ResolvedHarnessProfile): string {
   return `${mark}\n${text.trimEnd()}`;
 }
 
-/** `system` with the profile's instructions appended; `system` itself when there are none. */
-export function withProfileInstructions(system: string, profile: ResolvedHarnessProfile): string {
-  const instructions = profileInstructions(profile);
-  return instructions ? `${system}\n\n${instructions}` : system;
+/**
+ * `system` with the instructions of every profile appended, in list order, each
+ * behind its own provenance line; `system` itself when there are none.
+ */
+export function withProfileInstructions(
+  system: string,
+  profiles: ResolvedHarnessProfile | readonly ResolvedHarnessProfile[]
+): string {
+  const list = Array.isArray(profiles) ? profiles : [profiles as ResolvedHarnessProfile];
+  const blocks = list.map((profile) => profileInstructions(profile)).filter((text) => text !== '');
+  return blocks.length > 0 ? `${system}\n\n${blocks.join('\n\n')}` : system;
+}
+
+/** The built-in tools the profiles grant, as the union of their manifests' `tools`, in first-seen order. */
+export function profileToolGrants(
+  profiles: readonly ResolvedHarnessProfile[]
+): string[] | undefined {
+  const granted = [...new Set(profiles.flatMap((profile) => profile.manifest.tools ?? []))];
+  return granted.length > 0 ? granted : undefined;
 }
 
 const byBytes = (a: string, b: string) => Buffer.compare(Buffer.from(a), Buffer.from(b));
@@ -181,18 +193,20 @@ function tarEntry(
  */
 export function buildProfileTar(profile: ResolvedHarnessProfile): Buffer {
   const parts: Buffer[] = [];
-  for (const file of profile.files) {
+  // What is written is the snapshot after the hook switch: the decision is part of the archive.
+  const files = filesToMaterialize(profile);
+  for (const file of files) {
     if (unsafeProfilePath(file.path) !== null) {
       throw integrity(profile, 'a file path would leave the profile directory');
     }
   }
-  for (const dir of directoriesOf(profile.files.map((f) => f.path))) {
+  for (const dir of directoriesOf(files.map((f) => f.path))) {
     if (dir !== '.') {
       parts.push(tarEntry(profile, `${dir.slice(2)}/`, 0o755, null));
     }
   }
   const seen = new Set<string>();
-  for (const file of [...profile.files].sort((a, b) => byBytes(a.path, b.path))) {
+  for (const file of [...files].sort((a, b) => byBytes(a.path, b.path))) {
     if (seen.has(file.path)) {
       throw integrity(profile, 'a file path appears twice');
     }
@@ -223,25 +237,26 @@ function frontMatterName(bytes: Buffer): string | undefined {
  * listed: a repository's own `.claude/commands/<name>.md` or skill could take
  * it. Computed from the stored snapshot, on the worker.
  */
-export function profileSkillNames(profile: ResolvedHarnessProfile): Set<string> {
+export function profileSkillNames(
+  profiles: ResolvedHarnessProfile | readonly ResolvedHarnessProfile[]
+): Set<string> {
   const names = new Set<string>();
+  const list = Array.isArray(profiles) ? profiles : [profiles as ResolvedHarnessProfile];
+  for (const profile of list) {
+    addProfileSkillNames(profile, names);
+  }
+  return names;
+}
+
+function addProfileSkillNames(profile: ResolvedHarnessProfile, names: Set<string>): void {
+  const plugins = profilePluginNames(profile);
+  let index = 0;
   for (const raw of profile.manifest.plugins ?? []) {
     const rel = manifestRel(raw);
     if (rel === null) {
       continue;
     }
-    let plugin = rel.split('/').at(-1) ?? rel;
-    const manifest = profile.files.find((f) => f.path === `${rel}/.claude-plugin/plugin.json`);
-    if (manifest) {
-      try {
-        const parsed = JSON.parse(manifest.bytes.toString('utf8')) as { name?: unknown };
-        if (typeof parsed.name === 'string' && parsed.name !== '') {
-          plugin = parsed.name;
-        }
-      } catch {
-        /* the directory's name stands */
-      }
-    }
+    const plugin = plugins[index++] ?? rel;
     for (const file of profile.files) {
       if (!file.path.startsWith(`${rel}/`) || !file.path.endsWith('.md')) {
         continue;
@@ -261,7 +276,6 @@ export function profileSkillNames(profile: ResolvedHarnessProfile): Set<string> 
       }
     }
   }
-  return names;
 }
 
 /** What {@link profileMaterializer} reports back. */
@@ -326,16 +340,12 @@ function physicalPathScript(dir: string): string {
  */
 export function profileMaterializer(
   workspace: Workspace,
-  profile: ResolvedHarnessProfile
+  profiles: ResolvedHarnessProfile | readonly ResolvedHarnessProfile[]
 ): ProfileMaterializer {
-  const dir = profileContainerDir(profile);
+  const list = Array.isArray(profiles) ? profiles : [profiles as ResolvedHarnessProfile];
 
-  async function install(): Promise<void> {
-    if (!/^[0-9a-f]{12,}$/.test(profile.contentHash)) {
-      throw integrity(profile, 'its content hash is malformed');
-    }
-    const archive = buildProfileTar(profile);
-    await workspace.killStrays?.();
+  async function installOne(profile: ResolvedHarnessProfile, archive: Buffer): Promise<void> {
+    const dir = profileContainerDir(profile);
     const prepared = await workspace.execCapture(prepareScript(dir), {
       timeoutMs: SCRIPT_TIMEOUT_MS,
     });
@@ -362,6 +372,20 @@ export function profileMaterializer(
     });
     if (physical.exitCode !== 0) {
       throw integrity(profile, 'its directory does not resolve to its own path in the workspace');
+    }
+  }
+
+  async function install(): Promise<void> {
+    // Every archive is built (and every refusal raised) before the container is touched.
+    const archives = list.map((profile) => {
+      if (!/^[0-9a-f]{12,}$/.test(profile.contentHash)) {
+        throw integrity(profile, 'its content hash is malformed');
+      }
+      return buildProfileTar(profile);
+    });
+    await workspace.killStrays?.();
+    for (const [i, profile] of list.entries()) {
+      await installOne(profile, archives[i] as Buffer);
     }
   }
 

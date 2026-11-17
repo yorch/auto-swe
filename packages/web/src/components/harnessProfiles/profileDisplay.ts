@@ -1,3 +1,7 @@
+import type {
+  HarnessProfileHookChanges,
+  HarnessProfileTrackStatus,
+} from '@/hooks/useHarnessProfiles';
 import { ApiError } from '@/lib/api';
 import { isRecord } from '@/lib/utils';
 import { visibleText } from '@/lib/visibleText';
@@ -29,6 +33,52 @@ export const keyed = (xs: readonly string[]) =>
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.flatMap((x) => (typeof x === 'string' ? [x] : [])) : [];
 
+export const TRACK_LABEL: Record<HarnessProfileTrackStatus, string> = {
+  ERROR: 'Check failed',
+  OK: 'Up to date',
+  UPDATE_AVAILABLE: 'Update available',
+};
+
+export const TRACK_TONE = {
+  ERROR: 'danger',
+  OK: 'success',
+  UPDATE_AVAILABLE: 'warning',
+} as const satisfies Record<HarnessProfileTrackStatus, string>;
+
+/** Whether an update touches any hook file. */
+export const hasHookChanges = (c: HarnessProfileHookChanges | undefined | null): boolean =>
+  !!c && (c.added.length > 0 || c.removed.length > 0 || c.changed.length > 0);
+
+const unreadableOf = (x: Record<string, unknown>) =>
+  typeof x.unreadable === 'string' ? { unreadable: x.unreadable } : {};
+
+/** Reads a `hookChanges` object off an error's details, tolerating any other shape. */
+function readHookChanges(d: unknown): HarnessProfileHookChanges | null {
+  if (!isRecord(d) || !isRecord(d.hookChanges)) {
+    return null;
+  }
+  const h = d.hookChanges;
+  const list = (v: unknown) => (Array.isArray(v) ? v.filter(isRecord) : []);
+  return {
+    added: list(h.added).map((x) => ({
+      commands: strings(x.commands),
+      path: String(x.path ?? ''),
+      ...unreadableOf(x),
+    })),
+    changed: list(h.changed).map((x) => ({
+      addedCommands: strings(x.addedCommands),
+      path: String(x.path ?? ''),
+      removedCommands: strings(x.removedCommands),
+      ...unreadableOf(x),
+    })),
+    removed: list(h.removed).map((x) => ({
+      commands: strings(x.commands),
+      path: String(x.path ?? ''),
+      ...unreadableOf(x),
+    })),
+  };
+}
+
 export interface ProfileError {
   code: string | null;
   message: string;
@@ -36,6 +86,9 @@ export interface ProfileError {
   lines: string[];
   /** The preview is out of date (moved ref, changed content or warnings): preview again. */
   stale: boolean;
+  /** An accept needs `acknowledgeHookChanges`; the hook diff it refused over, if the server sent one. */
+  hooksUnacknowledged: boolean;
+  hookChanges: HarnessProfileHookChanges | null;
 }
 
 /** What to tell the admin about a failed call; the reasons may carry repository text. */
@@ -43,6 +96,8 @@ export function describeProfileError(err: unknown, fallback: string): ProfileErr
   if (!(err instanceof ApiError)) {
     return {
       code: null,
+      hookChanges: null,
+      hooksUnacknowledged: false,
       lines: [],
       message: err instanceof Error ? err.message : fallback,
       stale: false,
@@ -52,8 +107,13 @@ export function describeProfileError(err: unknown, fallback: string): ProfileErr
   const raw = isRecord(d) ? strings(d.errors) : strings(d);
   return {
     code: err.code,
+    hookChanges: readHookChanges(d),
+    hooksUnacknowledged: err.code === 'HOOK_CHANGES_UNACKNOWLEDGED',
     lines: raw.map((l) => visibleText(l)),
     message: visibleText(err.message),
-    stale: err.code === 'PREVIEW_STALE' || err.code === 'SHA_MOVED',
+    stale:
+      err.code === 'PREVIEW_STALE' ||
+      err.code === 'SHA_MOVED' ||
+      err.code === 'MARKETPLACE_SHA_MOVED',
   };
 }
