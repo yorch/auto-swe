@@ -27,7 +27,8 @@ vi.mock('@auto-swe/shared/lib/repoAccessGate', () => ({
  */
 describe('requireAuth and the MCP bridge', () => {
   let key: TestKey;
-  const state: NonNullable<Parameters<typeof fakeVerifierDeps>[1]> = {};
+  // The admin routes are exercised with an admin token, so the user consents to admin here.
+  const state: NonNullable<Parameters<typeof fakeVerifierDeps>[1]> = { admin: true };
   let defaultGrant: McpGrant | null | undefined;
 
   async function build() {
@@ -73,6 +74,11 @@ describe('requireAuth and the MCP bridge', () => {
       async (request) => probe(request)
     );
     app.get(
+      '/probe/admin',
+      { config: { mcpScope: 'admin' }, onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
+      async (request) => probe(request)
+    );
+    app.get(
       '/probe/lead-only',
       { config: { mcpScope: 'read' }, onRequest: requireAuth({ requiredRole: 'LEAD' }) },
       async (request) => probe(request)
@@ -90,11 +96,13 @@ describe('requireAuth and the MCP bridge', () => {
   let leak: { secret?: string };
   let readToken: string;
   let writeToken: string;
+  let adminToken: string;
 
   beforeAll(async () => {
     key = await makeSigningKey('bridge-key');
     readToken = await mintToken({ key });
     writeToken = await mintToken({ claims: { scope: 'mcp:read mcp:write' }, key });
+    adminToken = await mintToken({ claims: { scope: 'mcp:read mcp:admin' }, key });
     ({ app, leak } = await build());
     // Observe one genuine bridged call, so the secret can be replayed.
     const res = await app.mcpBridge?.get(
@@ -247,6 +255,33 @@ describe('requireAuth and the MCP bridge', () => {
       expect((await bridged('/probe/write', writeToken, secret(), 'POST')).statusCode).toBe(403);
       // Read survives: the token's read scope and the consent both stand.
       expect((await bridged('/probe/read', writeToken)).statusCode).toBe(200);
+    });
+
+    it('refuses a read or write token on an admin route with 403 INSUFFICIENT_SCOPE', async () => {
+      for (const token of [readToken, writeToken]) {
+        const res = await bridged('/probe/admin', token);
+        expect(res.statusCode).toBe(403);
+        expect(res.json().error.code).toBe('INSUFFICIENT_SCOPE');
+        expect(res.json().error.message).toContain('mcp:admin');
+      }
+    });
+
+    it('lets an admin token read on read and admin routes, and refuses it on a write route', async () => {
+      expect((await bridged('/probe/admin', adminToken)).statusCode).toBe(200);
+      expect((await bridged('/probe/read', adminToken)).statusCode).toBe(200);
+      const res = await bridged('/probe/write', adminToken, secret(), 'POST');
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('INSUFFICIENT_SCOPE');
+    });
+
+    it('refuses an admin token whose user consented to read only', async () => {
+      state.grant = {
+        clientActive: true,
+        consentId: 'consent-1',
+        consentScopes: ['mcp:read'],
+        consentUpdatedAt: new Date(Date.now() - 60_000),
+      };
+      expect((await bridged('/probe/admin', adminToken)).statusCode).toBe(403);
     });
 
     it('narrows the token to what the user consented to', async () => {

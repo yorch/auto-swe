@@ -99,7 +99,7 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get(
     '/agent-library/:id/versions',
-    { config: { mcpScope: 'read' }, onRequest: adminOnly, schema: { params: IdParams } },
+    { config: { mcpScope: 'admin' }, onRequest: adminOnly, schema: { params: IdParams } },
     async (request, reply) => {
       const agent = await fastify.prisma.agent.findUnique({ where: { id: request.params.id } });
       if (!agent) {

@@ -24,7 +24,14 @@ import {
 } from '../../test/mcpTokens.js';
 import { createMcpTokenVerifier } from '../mcpTokenVerifier.js';
 import { MCP_BRIDGE_HEADER, mcpBridgePlugin } from './bridge.js';
-import { DOMAIN_READ_ROUTES, DOMAIN_TOOL_NAMES } from './domains/index.js';
+import {
+  ADMIN_TOOL_NAMES,
+  DOMAIN_ADMIN_ROUTES,
+  DOMAIN_READ_ROUTES,
+  DOMAIN_TOOL_NAMES,
+  MCP_DOMAINS,
+  NON_ADMIN_TOOL_NAMES,
+} from './domains/index.js';
 import { TRIGGER_REF_ID_MAX } from './projections.js';
 import { registerReadTools } from './tools.js';
 
@@ -307,6 +314,26 @@ async function build(options: {
         }
         return route.body ?? body();
       }
+    );
+  }
+  // The real admin routes, as they declare themselves: reachable only with `mcp:admin`.
+  for (const signature of DOMAIN_ADMIN_ROUTES) {
+    const [method, path] = signature.split(' ') as [string, string];
+    if (method !== 'GET') {
+      continue;
+    }
+    app.get(
+      path,
+      {
+        config: { mcpScope: 'admin' },
+        onRequest: [
+          async (request) => {
+            seen.urls.push(request.url);
+          },
+          requireAuth({ requiredRole: 'ENGINEER' }),
+        ],
+      },
+      async () => ({ data: [] })
     );
   }
   await app.ready();
@@ -669,6 +696,147 @@ describe('the read tools', () => {
     expect(s.seen.urls).toEqual([]);
   });
 
+  describe('the admin tier', () => {
+    const listWith = async (s: Awaited<ReturnType<typeof setup>>, token: string) => {
+      const res = await s.app.inject({
+        headers: {
+          accept: 'application/json, text/event-stream',
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          'mcp-method': 'tools/list',
+          'mcp-protocol-version': '2026-07-28',
+        },
+        method: 'POST',
+        payload: JSON.stringify({
+          id: 1,
+          jsonrpc: '2.0',
+          method: 'tools/list',
+          params: { _meta: modernMeta },
+        }),
+        remoteAddress: '198.51.100.7',
+        url: '/api/v1/mcp',
+      });
+      return (
+        JSON.parse(res.body).result.tools as Array<{
+          name: string;
+          annotations: Record<string, unknown>;
+          inputSchema: { additionalProperties?: boolean };
+        }>
+      ).sort((a, b) => a.name.localeCompare(b.name));
+    };
+
+    it('declares the four admin tools, and the manifest tier is what splits the lists', () => {
+      expect([...ADMIN_TOOL_NAMES].sort()).toEqual([
+        'get_budget_report',
+        'list_agent_library',
+        'list_agent_versions',
+        'list_skills',
+      ]);
+      expect([...NON_ADMIN_TOOL_NAMES, ...ADMIN_TOOL_NAMES].sort()).toEqual([...DOMAIN_TOOL_NAMES]);
+      for (const name of ADMIN_TOOL_NAMES) {
+        expect(NON_ADMIN_TOOL_NAMES).not.toContain(name);
+      }
+    });
+
+    it('hides every admin tool from a read token, and keeps the user and lead tools', async () => {
+      const s = await setup();
+      const names = (await listWith(s, s.token)).map((t) => t.name);
+      for (const name of ADMIN_TOOL_NAMES) {
+        expect(names).not.toContain(name);
+      }
+      for (const name of NON_ADMIN_TOOL_NAMES) {
+        expect(names).toContain(name);
+      }
+    });
+
+    it('hides them from a write token too: mcp:write does not carry mcp:admin', async () => {
+      const s = await setup();
+      const writeToken = await mintToken({ claims: { scope: 'mcp:read mcp:write' }, key });
+      const names = (await listWith(s, writeToken)).map((t) => t.name);
+      for (const name of ADMIN_TOOL_NAMES) {
+        expect(names).not.toContain(name);
+      }
+    });
+
+    it('refuses a direct call to each admin tool from a read token, and calls no route', async () => {
+      const s = await setup();
+      for (const name of ADMIN_TOOL_NAMES) {
+        const { json } = await s.callTool(name);
+        const refused = json.error !== undefined || json.result?.isError === true;
+        expect(refused, name).toBe(true);
+        expect(JSON.stringify(json), name).not.toContain('"structuredContent"');
+      }
+      expect(s.seen.urls).toEqual([]);
+    });
+
+    it('answers 403 INSUFFICIENT_SCOPE to a bridged read of each real admin route with a read token', async () => {
+      const s = await setup();
+      for (const signature of DOMAIN_ADMIN_ROUTES) {
+        const [method, path] = signature.split(' ') as [string, string];
+        if (method !== 'GET') {
+          continue;
+        }
+        const res = await s.bridge.get(
+          s.app,
+          { clientIp: '198.51.100.7', scopes: ['mcp:read'], token: s.token, userId: TEST_USER },
+          path.replace(/:[A-Za-z]+/g, '11111111-1111-4111-8111-111111111111')
+        );
+        expect(res.status, signature).toBe(403);
+        expect(JSON.stringify(res.body), signature).toContain('INSUFFICIENT_SCOPE');
+      }
+    });
+
+    it('hides them when the user consented to read only, whatever the token claims', async () => {
+      const s = await setup({
+        deps: (d) => {
+          d.state.grant = {
+            clientActive: true,
+            consentId: 'c',
+            consentScopes: ['mcp:read'],
+            consentUpdatedAt: new Date(Date.now() - 60_000),
+          };
+        },
+      });
+      const adminToken = await mintToken({ claims: { scope: 'mcp:read mcp:admin' }, key });
+      const names = (await listWith(s, adminToken)).map((t) => t.name);
+      for (const name of ADMIN_TOOL_NAMES) {
+        expect(names).not.toContain(name);
+      }
+    });
+
+    it('lists them, read-only and strict, for an admin token that carries mcp:read with it', async () => {
+      const s = await setup({
+        deps: (d) => {
+          d.state.grant = {
+            clientActive: true,
+            consentId: 'c',
+            consentScopes: ['mcp:read', 'mcp:admin'],
+            consentUpdatedAt: new Date(Date.now() - 60_000),
+          };
+        },
+      });
+      const onlyAdmin = await mintToken({ claims: { scope: 'mcp:admin' }, key });
+      const tools = await listWith(s, onlyAdmin);
+      expect(tools.map((t) => t.name).sort()).toEqual(
+        [
+          'get_run',
+          'list_agents',
+          'list_pending_human_steps',
+          'list_repositories',
+          'list_runs',
+          'list_templates',
+          'list_work_requests',
+          'wait_for_run',
+          ...DOMAIN_TOOL_NAMES,
+        ].sort()
+      );
+      for (const t of tools.filter((x) => ADMIN_TOOL_NAMES.includes(x.name))) {
+        expect(t.annotations, t.name).toMatchObject({ destructiveHint: false, readOnlyHint: true });
+        expect(t.inputSchema.additionalProperties, t.name).toBe(false);
+      }
+    });
+  });
+
   it('lists exactly the original eight read tools and the declared domain tools, each read-only with a strict input', async () => {
     const { app, token } = await setup();
     const res = await app.inject({
@@ -709,7 +877,8 @@ describe('the read tools', () => {
       'wait_for_run',
     ]);
     // Every tool a domain declares exists beside the original eight, read-only and strict.
-    expect(tools.map((t) => t.name).sort()).toEqual([...CORE, ...DOMAIN_TOOL_NAMES].sort());
+    // A plain read token sees the user and lead tiers only: the admin tier needs `mcp:admin`.
+    expect(tools.map((t) => t.name).sort()).toEqual([...CORE, ...NON_ADMIN_TOOL_NAMES].sort());
     for (const t of tools.filter((x) => DOMAIN_TOOL_NAMES.includes(x.name))) {
       expect(t.annotations, t.name).toMatchObject({
         destructiveHint: false,
@@ -1449,8 +1618,23 @@ describe('which routes an MCP token may reach', () => {
           `${route} read`,
           `${route.replace(/^GET /, 'HEAD ')} read`,
         ]),
+        // The routes of the admin-tier tools opt in with `admin`, never `read`.
+        ...DOMAIN_ADMIN_ROUTES.flatMap((route) => [
+          `${route} admin`,
+          `${route.replace(/^GET /, 'HEAD ')} admin`,
+        ]),
       ].sort()
     );
+    // The same walk in both directions, from the manifest: an admin-tier tool's routes are
+    // declared `admin`, and no route of a user or lead tool is.
+    const adminSeen = new Set(seen.filter((x) => x.endsWith(' admin')).map((x) => x.split(' ')[1]));
+    for (const domain of MCP_DOMAINS) {
+      for (const tool of domain.tools) {
+        for (const path of [tool.route, ...(tool.aliasRoutes ?? [])].map((r) => r.split(' ')[1])) {
+          expect(adminSeen.has(path), `${tool.name} ${path}`).toBe(tool.tier === 'admin');
+        }
+      }
+    }
     // Imports (and transforms) every route plugin: ~2 s alone, over the 5 s default under a loaded full-suite run.
   }, 30_000);
 });

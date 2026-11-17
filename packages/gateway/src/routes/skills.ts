@@ -112,7 +112,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/skills',
     {
-      config: { mcpScope: 'read' },
+      config: { mcpScope: 'admin' },
       onRequest: adminOnly,
       schema: { querystring: ListSkillsQuery },
     },

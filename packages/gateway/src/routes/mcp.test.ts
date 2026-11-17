@@ -10,7 +10,7 @@ import { SignJWT } from 'jose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { mcpBridgePlugin } from '../lib/mcp/bridge.js';
-import { DOMAIN_TOOL_NAMES } from '../lib/mcp/domains/index.js';
+import { NON_ADMIN_TOOL_NAMES } from '../lib/mcp/domains/index.js';
 import { createMcpTokenVerifier, type McpTokenRejection } from '../lib/mcpTokenVerifier.js';
 import {
   fakeVerifierDeps,
@@ -46,7 +46,7 @@ const READ_TOOLS = [
   'list_templates',
   'list_work_requests',
   'wait_for_run',
-  ...DOMAIN_TOOL_NAMES,
+  ...NON_ADMIN_TOOL_NAMES,
 ].sort();
 const toolNames = (result: { tools: Array<{ name: string }> }) =>
   result.tools.map((t) => t.name).sort();
@@ -530,21 +530,21 @@ describe('MCP endpoint', () => {
   });
 
   describe('protected resource metadata', () => {
-    it('names the resource, the issuer and only the read scope while writes are off', async () => {
+    it('names the resource, the issuer and the read and admin scopes while writes are off', async () => {
       const res = await app.inject({ method: 'GET', url: PRM_PATH });
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({
         authorization_servers: [TEST_ISSUER],
         resource: TEST_RESOURCE,
         resource_name: 'auto-swe MCP',
-        scopes_supported: ['mcp:read'],
+        scopes_supported: ['mcp:read', 'mcp:admin'],
       });
     });
 
     it('advertises mcp:write only while writes are enabled, and never offline_access', async () => {
       settings.writeToolsEnabled = true;
       const res = await app.inject({ method: 'GET', url: PRM_PATH });
-      expect(res.json().scopes_supported).toEqual(['mcp:read', 'mcp:write']);
+      expect(res.json().scopes_supported).toEqual(['mcp:read', 'mcp:write', 'mcp:admin']);
     });
 
     it('is also served at the root, and needs no credential', async () => {

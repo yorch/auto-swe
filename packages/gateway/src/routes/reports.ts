@@ -778,7 +778,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/budget',
     {
-      config: { mcpScope: 'read' },
+      config: { mcpScope: 'admin' },
       onRequest: requireAuth(),
       schema: { querystring: ReportQuery },
     },

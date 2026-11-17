@@ -7,11 +7,21 @@
  * (`mcp.enabled`, `mcp.writeToolsEnabled`) are read per request by the gate.
  */
 
-/** The only scopes the server knows. `mcp:write` implies `mcp:read`. */
+/**
+ * The only scopes the server knows. `mcp:write` and `mcp:admin` each imply `mcp:read`, and neither
+ * implies the other. `mcp:admin` opens the admin-tier read tools; it is not tied to a platform
+ * role (the route's own role gate decides who may call) and has no operator switch.
+ */
 export const MCP_SCOPE_READ = 'mcp:read';
 export const MCP_SCOPE_WRITE = 'mcp:write';
+export const MCP_SCOPE_ADMIN = 'mcp:admin';
 export const MCP_SCOPE_OFFLINE = 'offline_access';
-export const MCP_SCOPES = [MCP_SCOPE_READ, MCP_SCOPE_WRITE, MCP_SCOPE_OFFLINE] as const;
+export const MCP_SCOPES = [
+  MCP_SCOPE_READ,
+  MCP_SCOPE_WRITE,
+  MCP_SCOPE_ADMIN,
+  MCP_SCOPE_OFFLINE,
+] as const;
 
 /** Short-lived on purpose: revocation also bites at the resource server, but this bounds a leak. */
 export const MCP_ACCESS_TOKEN_TTL_SECONDS = 600;

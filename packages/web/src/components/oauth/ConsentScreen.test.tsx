@@ -161,6 +161,46 @@ describe('ConsentScreen', () => {
     expect(query.get('client_id')).toBe('c1');
   });
 
+  it('offers admin as a separate, unticked choice even while writes are off, and sends it only when ticked', async () => {
+    const spy = mockGateway({ writeToolsEnabled: false });
+    render(withQuery(<ConsentScreen search={signed('mcp:read mcp:admin offline_access')} />));
+
+    const box = (await screen.findByRole('checkbox')) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    expect(screen.getByText(/agent library, skills and budget reports/i)).toBeTruthy();
+    await waitFor(() => expect(approve().hasAttribute('disabled')).toBe(false));
+
+    fireEvent.click(approve());
+    await waitFor(() => expect(assign).toHaveBeenCalled());
+    expect(bodyOf(spy, '/api/auth/oauth2/consent')).toMatchObject({
+      accept: true,
+      scope: 'mcp:read offline_access',
+    });
+
+    assign.mockReset();
+    fireEvent.click(box);
+    fireEvent.click(approve());
+    await waitFor(() => expect(assign).toHaveBeenCalled());
+    const bodies = spy.mock.calls
+      .filter(([u]) => String(u).includes('/api/auth/oauth2/consent'))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)) as { scope: string });
+    expect(bodies.at(-1)?.scope).toBe('mcp:read mcp:admin offline_access');
+  });
+
+  it('keeps write and admin independent when both are asked for', async () => {
+    const spy = mockGateway({ writeToolsEnabled: true });
+    render(
+      withQuery(<ConsentScreen search={signed('mcp:read mcp:write mcp:admin offline_access')} />)
+    );
+    await waitFor(() => expect(screen.getAllByRole('checkbox')).toHaveLength(2));
+    fireEvent.click(screen.getByRole('checkbox', { name: /^admin read/i }));
+    fireEvent.click(approve());
+    await waitFor(() => expect(assign).toHaveBeenCalled());
+    expect(bodyOf(spy, '/api/auth/oauth2/consent')).toMatchObject({
+      scope: 'mcp:read mcp:admin offline_access',
+    });
+  });
+
   it('sends a denial, and follows the redirect the server answers with', async () => {
     const spy = mockGateway();
     render(withQuery(<ConsentScreen search={signed('mcp:read')} />));
@@ -188,6 +228,28 @@ describe('ConsentScreen', () => {
     expect(await screen.findByText('Nothing to approve')).toBeTruthy();
     expect(screen.getByText(/Write access was requested but is turned off/)).toBeTruthy();
     await waitFor(() => expect(approve().hasAttribute('disabled')).toBe(true));
+  });
+
+  it('tells the user to tick Admin read when admin is all the app asked for', async () => {
+    mockGateway();
+    render(withQuery(<ConsentScreen search={signed('mcp:admin offline_access')} />));
+
+    expect(await screen.findByText('Nothing to approve')).toBeTruthy();
+    expect(screen.getByText(/Tick Admin read to allow it/)).toBeTruthy();
+    expect(screen.queryByText(/not available on this deployment/)).toBeNull();
+    await waitFor(() => expect(approve().hasAttribute('disabled')).toBe(true));
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /Admin read/ }));
+    await waitFor(() => expect(approve().hasAttribute('disabled')).toBe(false));
+    expect(screen.queryByText('Nothing to approve')).toBeNull();
+  });
+
+  it('keeps the unavailable-access wording when nothing asked for can be granted', async () => {
+    mockGateway();
+    render(withQuery(<ConsentScreen search={signed('offline_access')} />));
+
+    expect(await screen.findByText('Nothing to approve')).toBeTruthy();
+    expect(screen.getByText(/not available on this deployment/)).toBeTruthy();
   });
 
   it('says so, and decides nothing, when opened without a request', async () => {

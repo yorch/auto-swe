@@ -67,6 +67,9 @@ export function fakeVerifierDeps(
     jwksFetches?: { count: number };
     /** Every `(userId, clientId)` the verifier asked the consent lookup about. */
     grantLookups?: Array<[string, string]>;
+    /** Adds `mcp:admin` to the default consent. Off by default, so a test that mints an admin
+     * token proves the consent intersection, not a fixture that grants everything. */
+    admin?: boolean;
   } = {}
 ): McpVerifierDeps & { state: typeof state; setKeys: (next: TestKey[]) => void } {
   let current = keys;
@@ -75,7 +78,12 @@ export function fakeVerifierDeps(
       ? {
           clientActive: true,
           consentId: 'consent-1',
-          consentScopes: ['mcp:read', 'mcp:write', 'offline_access'],
+          consentScopes: [
+            'mcp:read',
+            'mcp:write',
+            ...(state.admin ? ['mcp:admin'] : []),
+            'offline_access',
+          ],
           consentUpdatedAt: new Date(Date.now() - 60_000),
         }
       : state.grant;

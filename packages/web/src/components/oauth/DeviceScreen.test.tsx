@@ -11,12 +11,15 @@ const SESSION = {
   user: { id: 'u1', isActive: true, role: 'ENGINEER' },
 };
 
-function mockGateway(status: 'pending' | 'approved' | 'denied' = 'pending') {
+function mockGateway(
+  status: 'pending' | 'approved' | 'denied' = 'pending',
+  scope = 'mcp:read mcp:write offline_access'
+) {
   return setupFetchMock({
     '/api/auth/device': () => ({
       client_id: 'c1',
       resource: 'https://auto.test/api/v1/mcp',
-      scope: 'mcp:read mcp:write offline_access',
+      scope,
       status,
     }),
     '/api/auth/get-session': () => SESSION,
@@ -43,6 +46,14 @@ describe('DeviceScreen', () => {
       expect.stringContaining('/api/auth/device'),
       expect.anything()
     );
+  });
+
+  it('names admin access and warns about it when the code asks for mcp:admin', async () => {
+    mockGateway('pending', 'mcp:read mcp:admin offline_access');
+    render(withQuery(<DeviceScreen search="user_code=ABC-123" />));
+    expect(await screen.findByText('Admin read access requested')).toBeTruthy();
+    expect(screen.getAllByText(/agent library, skills and budget reports/i)).toHaveLength(2);
+    expect(screen.queryByText('Write access requested')).toBeNull();
   });
 
   it('shows the exact requested access, warning and resource, then approves all scopes', async () => {

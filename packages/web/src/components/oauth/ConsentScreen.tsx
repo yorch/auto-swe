@@ -18,6 +18,7 @@ import {
   describeRedirect,
   grantedScopes,
   MCP_CONNECTION_DAYS,
+  MCP_SCOPE_ADMIN,
   MCP_SCOPE_OFFLINE,
   MCP_SCOPE_READ,
   MCP_SCOPE_WRITE,
@@ -98,6 +99,7 @@ function ConsentDecision({ search }: { search: string }) {
   const client = useOAuthClientName(request?.clientId);
   const decide = useConsentDecision();
   const [allowWrite, setAllowWrite] = useState(false);
+  const [allowAdmin, setAllowAdmin] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!request) {
@@ -115,17 +117,23 @@ function ConsentDecision({ search }: { search: string }) {
   }
 
   const redirect = describeRedirect(request.redirectUri);
-  const wantsRead =
-    request.scopes.includes(MCP_SCOPE_READ) || request.scopes.includes(MCP_SCOPE_WRITE);
+  const wantsRead = [MCP_SCOPE_READ, MCP_SCOPE_WRITE, MCP_SCOPE_ADMIN].some((s) =>
+    request.scopes.includes(s)
+  );
+  // Admin has no operator switch, so it is offered whenever the app asked for it.
+  const adminOffered = request.scopes.includes(MCP_SCOPE_ADMIN);
   // Offered only while the operator allows writes: the server refuses the scope otherwise.
   const writeOffered =
     request.scopes.includes(MCP_SCOPE_WRITE) && grants.data?.mcp.writeToolsEnabled === true;
   const offline = request.scopes.includes(MCP_SCOPE_OFFLINE);
   const scope = grantedScopes(
     request.scopes.filter((s) => s !== MCP_SCOPE_WRITE || writeOffered),
-    allowWrite
+    allowWrite,
+    allowAdmin
   );
-  const grantsAnything = scope.some((s) => s === MCP_SCOPE_READ || s === MCP_SCOPE_WRITE);
+  const grantsAnything = scope.some(
+    (s) => s === MCP_SCOPE_READ || s === MCP_SCOPE_WRITE || s === MCP_SCOPE_ADMIN
+  );
   const disabled = grants.data?.mcp.enabled === false;
   // What the app may do depends on the operator's settings; approving before they load
   // could grant a different set than the one shown.
@@ -175,8 +183,9 @@ function ConsentDecision({ search }: { search: string }) {
         )}
         {nothingToGrant && (
           <Alert title="Nothing to approve" variant="warning">
-            This app asked only for access that is not available on this deployment, so approving
-            would grant nothing. Deny this request.
+            {adminOffered
+              ? 'This app asked only for admin access, and Admin read is not ticked, so approving would grant nothing. Tick Admin read to allow it, or deny this request.'
+              : 'This app asked only for access that is not available on this deployment, so approving would grant nothing. Deny this request.'}
           </Alert>
         )}
         {client.isError && (
@@ -252,6 +261,21 @@ function ConsentDecision({ search }: { search: string }) {
                     </>
                   }
                   onChange={(e) => setAllowWrite(e.target.checked)}
+                />
+              </li>
+            )}
+            {adminOffered && (
+              <li>
+                <Checkbox
+                  checked={allowAdmin}
+                  hint="Only for an app you trust with platform administration data. What it can actually read still follows your own role: it cannot see anything you could not open yourself."
+                  label={
+                    <>
+                      <span className="font-semibold text-paper-100">Admin read</span>: see the
+                      agent library, skills and budget reports.
+                    </>
+                  }
+                  onChange={(e) => setAllowAdmin(e.target.checked)}
                 />
               </li>
             )}

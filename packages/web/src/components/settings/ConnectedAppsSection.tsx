@@ -8,7 +8,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { type McpGrant, useMcpGrants, useRevokeMcpGrant } from '@/hooks/useMcpGrants';
-import { describeRedirect, MCP_SCOPE_WRITE } from '@/lib/mcpConsent';
+import { describeRedirect, MCP_SCOPE_ADMIN, MCP_SCOPE_WRITE } from '@/lib/mcpConsent';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 import { SettingsListRow, SettingsSection } from './SettingsSection';
 
@@ -59,6 +59,7 @@ export function ConnectedAppsSection() {
             <ul className="divide-y divide-ink-600">
               {grants.map((grant) => {
                 const canWrite = grant.scopes.includes(MCP_SCOPE_WRITE);
+                const canAdmin = grant.scopes.includes(MCP_SCOPE_ADMIN);
                 return (
                   <SettingsListRow
                     action={
@@ -93,6 +94,11 @@ export function ConnectedAppsSection() {
                         {canWrite && (
                           <Badge tone="accent" variant="outline">
                             Can write
+                          </Badge>
+                        )}
+                        {canAdmin && (
+                          <Badge tone="accent" variant="outline">
+                            Admin read
                           </Badge>
                         )}
                       </>

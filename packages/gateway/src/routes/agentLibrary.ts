@@ -298,7 +298,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/agent-library',
     {
-      config: { mcpScope: 'read' },
+      config: { mcpScope: 'admin' },
       onRequest: adminOnly,
       schema: { querystring: ListQuery },
     },

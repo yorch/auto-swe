@@ -5,8 +5,8 @@ import { type AuthInfo, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../mcpOAuth.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../ticketId.js';
-import { callerFromAuthInfo, type McpCaller } from './bridge.js';
-import { MCP_DOMAINS } from './domains/index.js';
+import { type BridgeResponse, callerFromAuthInfo, type McpCaller } from './bridge.js';
+import { ADMIN_TOOL_NAMES, MCP_DOMAINS } from './domains/index.js';
 import { registerOrchestrationWriteTools } from './orchestrationWriteTools.js';
 import {
   agentRunLimits,
@@ -64,7 +64,7 @@ export type { McpToolDeps } from './toolKit.js';
 /** Register the read tools on `server` for `caller`. */
 export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: McpCaller) {
   const { app } = deps;
-  const kit = createToolKit(server, deps, caller);
+  const kit = createToolKit(server, deps, caller, ADMIN_TOOL_NAMES);
   const { get, origin, readTool } = kit;
 
   /** The hosts a PR link may be on. If they cannot be read the run is still returned, without its result. */

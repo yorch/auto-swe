@@ -18,7 +18,7 @@ import { fromNodeHeaders } from 'better-auth/node';
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { withClientIp } from '../lib/mcp/bridge.js';
 import { createMcpToolServer, WRITE_TOOL_NAMES } from '../lib/mcp/tools.js';
-import { MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../lib/mcpOAuth.js';
+import { MCP_SCOPE_ADMIN, MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../lib/mcpOAuth.js';
 
 /**
  * The MCP endpoint: a stateless Streamable HTTP server that is an OAuth 2.1 resource server.
@@ -49,9 +49,14 @@ export interface McpRouteOptions {
   getGitHubHosts: () => Promise<readonly string[]>;
 }
 
-/** The scopes this server will accept now: write is advertised only while writes are enabled. */
+/**
+ * The scopes this server will accept now: write is advertised only while writes are enabled;
+ * admin has no switch, so it is always advertised.
+ */
 function supportedScopes(writeToolsEnabled: boolean): string[] {
-  return writeToolsEnabled ? [MCP_SCOPE_READ, MCP_SCOPE_WRITE] : [MCP_SCOPE_READ];
+  return writeToolsEnabled
+    ? [MCP_SCOPE_READ, MCP_SCOPE_WRITE, MCP_SCOPE_ADMIN]
+    : [MCP_SCOPE_READ, MCP_SCOPE_ADMIN];
 }
 
 /** Whether a JSON-RPC body (one message or a batch) calls a tool that needs `mcp:write`. */

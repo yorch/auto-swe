@@ -10,7 +10,7 @@ import { getAuth, initAuth, MCP_RESOURCE } from '../lib/betterAuth.js';
 import { createBetterAuthHandler, registerBetterAuthRoutes } from '../lib/betterAuthHandler.js';
 import { registerFormBodyParser } from '../lib/formBody.js';
 import { mcpBridgePlugin } from '../lib/mcp/bridge.js';
-import { DOMAIN_TOOL_NAMES } from '../lib/mcp/domains/index.js';
+import { NON_ADMIN_TOOL_NAMES } from '../lib/mcp/domains/index.js';
 import { MCP_CONSENT_SKEW_SECONDS } from '../lib/mcpOAuth.js';
 import { mcpOAuthGate } from '../lib/mcpOAuthGate.js';
 import { mcpOAuthGateOptions } from '../lib/mcpOAuthGateOptions.js';
@@ -294,7 +294,7 @@ describe.skipIf(!enabled)('MCP endpoint against Postgres', () => {
         'list_templates',
         'list_work_requests',
         'wait_for_run',
-        ...DOMAIN_TOOL_NAMES,
+        ...NON_ADMIN_TOOL_NAMES,
       ].sort()
     );
   });
