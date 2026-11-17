@@ -67,9 +67,16 @@ function pluginDirOf(raw: string): string | null {
   return unsafeProfilePath(rel) === null ? rel : null;
 }
 
-/** `ref` (a path named inside plugin.json) as a path inside `dir`; null when it leaves it. */
+/**
+ * `ref` (a path named inside plugin.json) as a path inside `dir`; null when it leaves it. `.`, `./`
+ * and `${CLAUDE_PLUGIN_ROOT}` (with or without a trailing slash) name the plugin root itself.
+ */
 function resolveInside(dir: string, ref: string): string | null {
-  const rel = ref.replace(/^(\.\/|\$\{CLAUDE_PLUGIN_ROOT\}\/)/, '').replace(/\/+$/, '');
+  const trimmed = ref.replace(/\/+$/, '');
+  if (trimmed === '.' || /^\$\{CLAUDE_PLUGIN_ROOT\}$/.test(trimmed)) {
+    return dir;
+  }
+  const rel = trimmed.replace(/^(\.\/|\$\{CLAUDE_PLUGIN_ROOT\}\/)/, '');
   return unsafeProfilePath(rel) === null ? `${dir}/${rel}` : null;
 }
 
@@ -212,6 +219,9 @@ function markdownCandidates(
   for (const f of files) {
     if (f.path.startsWith(`${dir}/skills/`) && isSkillFile(f.path)) {
       paths.add(f.path);
+    } else if (f.path.startsWith(`${dir}/`) && /^skill\.md$/i.test(f.path.slice(dir.length + 1))) {
+      // A plugin with no `skills/` folder and no `skills` key is itself a skill: its root SKILL.md.
+      paths.add(f.path);
     } else if (f.path.startsWith(`${dir}/commands/`) && isMarkdown(f.path)) {
       paths.add(f.path);
     }
@@ -223,7 +233,11 @@ function markdownCandidates(
         unresolved.push({ key, ref, why: 'a path points outside the plugin folder' });
         continue;
       }
+      let matched = false;
       for (const f of files) {
+        if (f.path === target || f.path.startsWith(`${target}/`)) {
+          matched = true;
+        }
         if (f.path === target && isMarkdown(f.path)) {
           paths.add(f.path);
         } else if (f.path.startsWith(`${target}/`) && isMarkdown(f.path)) {
@@ -231,6 +245,9 @@ function markdownCandidates(
             paths.add(f.path);
           }
         }
+      }
+      if (!matched) {
+        unresolved.push({ key, ref, why: 'the named path matches no file in the snapshot' });
       }
     }
   }
@@ -268,13 +285,96 @@ function parseDocument(front: string): ReturnType<typeof parseYaml> | null {
   return aliased || isAlias(doc.contents) ? null : doc;
 }
 
-const OPENER = /^---[ \t]*(?:\r\n|\n|\r)/;
+/** The harness's own opener and frontmatter pattern (after one BOM is stripped), as it spells them. */
+const LOADER_OPENER = /^---\s*\n/;
+const LOADER_FRONTMATTER = /^---\s*\n([\s\S]*?)---\s*\n?/;
+/** Text in the loader's reading that makes a disagreement with ours matter. */
+const RISKY_TEXT = /hooks|\\|<</i;
+
+/** Whether any key of `doc`, at any depth, is a YAML merge key. */
+function hasMergeKey(doc: ReturnType<typeof parseYaml>): boolean {
+  let found = false;
+  visit(doc, {
+    Pair(_key, pair) {
+      if (isScalar(pair.key) && pair.key.value === '<<') {
+        found = true;
+        return visit.BREAK;
+      }
+      return undefined;
+    },
+  });
+  return found;
+}
+
+/** The harness's retry text for YAML it could not parse: values quoted, leading tabs as spaces. */
+function retryVariant(front: string): string {
+  const quoted = front
+    .split('\n')
+    .map((line) => {
+      const m = /^([a-zA-Z_-]+):\s+(\S.*)$/.exec(line);
+      if (!m) {
+        return line;
+      }
+      const key = m[1] as string;
+      const value = m[2] as string;
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        return line;
+      }
+      if (value.startsWith('[') && value.endsWith(']')) {
+        try {
+          if (Array.isArray(parseYaml(value, { merge: true }).toJS())) {
+            return line;
+          }
+        } catch {
+          // fall through to the quoting test
+        }
+      }
+      if (/[{}[\]*&#!|>%@`]|: /.test(value)) {
+        return `${key}: "${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
+      }
+      return line;
+    })
+    .join('\n');
+  return quoted.replace(/^\t+/gm, (tabs) => '  '.repeat(tabs.length));
+}
 
 /**
- * Locate and parse a markdown file's YAML frontmatter. Tolerates a BOM and CRLF. A file that
- * opens with a fence but whose frontmatter cannot be told apart from what the loader will read is
- * `unreadable`, never "no frontmatter": the loader's own pattern ends at the first `---` anywhere,
- * so a difference between that reading and ours that mentions hooks is refused.
+ * Whether the harness's own reading of `front` could find a top-level `hooks` key: parsed with YAML
+ * merge keys ON, both as written and as its quote-and-retab retry text. Only called on text that has
+ * no alias (so nothing here can expand).
+ */
+function harnessSeesHooks(front: string): boolean {
+  for (const text of [front, retryVariant(front)]) {
+    try {
+      const doc = parseYaml(text, { merge: true, uniqueKeys: false });
+      if (doc.errors.length > 0) {
+        continue;
+      }
+      const value = doc.toJS() as unknown;
+      if (
+        value !== null &&
+        typeof value === 'object' &&
+        !Array.isArray(value) &&
+        Object.hasOwn(value, 'hooks')
+      ) {
+        return true;
+      }
+    } catch {
+      // a text that does not parse shows the harness nothing
+    }
+  }
+  return false;
+}
+
+/**
+ * Locate and parse a markdown file's YAML frontmatter exactly where the loader does: after one BOM,
+ * `^---\s*\n`, up to the first `---` anywhere. Tolerates CRLF. A file whose frontmatter we cannot
+ * establish identically to the loader (a closing fence line that is not where the loader stops), or
+ * that uses a merge key, or in which the loader's YAML reading shows a `hooks` key ours does not, is
+ * `unreadable`, never "no frontmatter".
  */
 function readFrontmatter(bytes: Buffer): Frontmatter {
   const text = utf8(bytes, true);
@@ -282,45 +382,50 @@ function readFrontmatter(bytes: Buffer): Frontmatter {
     return { digest: sha256(bytes), kind: 'unreadable', why: 'not valid UTF-8' };
   }
   const bom = text.charCodeAt(0) === 0xfeff ? 1 : 0;
-  const opener = OPENER.exec(text.slice(bom));
-  if (!opener) {
+  const body = text.slice(bom);
+  const opener = LOADER_OPENER.exec(body);
+  const loader = LOADER_FRONTMATTER.exec(body)?.[1];
+  if (!opener || loader === undefined) {
+    // The loader finds no frontmatter, so it attaches no hooks.
     return { kind: 'none' };
   }
   const start = bom + opener[0].length;
-  const loader = /^---\s*\n([\s\S]*?)---/.exec(text.slice(bom))?.[1];
+  const loaderEnd = start + loader.length;
   const closing = /^---[ \t]*(?:\r\n|\n|\r|$)/gm;
   closing.lastIndex = start;
   let match = closing.exec(text);
-  while (match && match.index < start) {
+  while (match && !(text[match.index - 1] === '\n' || text[match.index - 1] === '\r')) {
     match = closing.exec(text);
   }
-  const digestOf = (s: string) => sha256(s);
-  if (!match) {
-    if (loader !== undefined && /hooks/i.test(loader)) {
+  if (!match || match.index !== loaderEnd) {
+    if (RISKY_TEXT.test(loader)) {
       return {
-        digest: digestOf(loader),
+        digest: sha256(loader),
         kind: 'unreadable',
-        why: 'its frontmatter has no closing fence line but names hooks',
+        why: match
+          ? 'its frontmatter is read differently by the loader'
+          : 'its frontmatter has no closing fence line but may name hooks',
       };
     }
-    return { kind: 'none' };
+    if (!match) {
+      return { kind: 'none' };
+    }
   }
-  const end = match.index;
+  const end = (match as RegExpExecArray).index;
   const front = text.slice(start, end);
-  const norm = (s: string) => s.replace(/\r\n?/g, '\n');
-  if (loader !== undefined && norm(loader) !== norm(front) && /hooks/i.test(loader)) {
-    return {
-      digest: digestOf(front),
-      kind: 'unreadable',
-      why: 'its frontmatter is read differently by the loader',
-    };
-  }
   const doc = parseDocument(front);
   if (!doc || doc.errors.length > 0) {
     return {
-      digest: digestOf(front),
+      digest: sha256(front),
       kind: 'unreadable',
       why: 'its frontmatter is not valid YAML',
+    };
+  }
+  if (hasMergeKey(doc)) {
+    return {
+      digest: sha256(front),
+      kind: 'unreadable',
+      why: 'its frontmatter uses a YAML merge key',
     };
   }
   const pairs: Pair[] = [];
@@ -330,6 +435,13 @@ function readFrontmatter(bytes: Buffer): Frontmatter {
         pairs.push(p);
       }
     }
+  }
+  if (pairs.length === 0 && harnessSeesHooks(front)) {
+    return {
+      digest: sha256(front),
+      kind: 'unreadable',
+      why: 'its frontmatter is read differently by the loader',
+    };
   }
   return { doc, end, kind: 'ok', pairs, start, text };
 }

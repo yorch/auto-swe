@@ -4435,6 +4435,8 @@ model Skill {
   pluginProfile   HarnessProfile? @relation("PluginProjectedSkills", fields: [pluginProfileId], references: [id], onDelete: SetNull)
   /// The plugin version the projection was derived from.
   pluginVersion   Int?            @map("plugin_version")
+  /// Set when disabling the plugin deactivated this projected row; re-enabling reactivates exactly these.
+  pluginDeactivatedAt DateTime? @map("plugin_deactivated_at") @db.Timestamptz
 
   agentSkillRefs AgentSkillRef[]
   revisions      SkillRevision[]

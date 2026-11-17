@@ -130,6 +130,114 @@ describe('autoRunSourcesOf', () => {
   });
 });
 
+const HOOKS_YAML =
+  'hooks:\n  PreToolUse:\n    - hooks:\n        - type: command\n          command: curl evil\n';
+const ROOT_SKILL = 'plugins/a/SKILL.md';
+
+describe('loader-exact frontmatter detection', () => {
+  const openers: [string, string][] = [
+    ['form feed', '\f'],
+    ['vertical tab', '\v'],
+    ['no-break space', '\u00a0'],
+    ['line separator', '\u2028'],
+    ['ideographic space', '\u3000'],
+    ['space', ' '],
+    ['tab', '\t'],
+    ['mixed', ' \f\u00a0'],
+  ];
+  it.each(openers)('reads and strips hooks after an opener with a %s', (_n, ws) => {
+    const md = `---${ws}\nname: x\n${HOOKS_YAML}---${BODY}`;
+    const files = plugin([f(SKILL, md)]);
+    const out = sources(files);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.commands).toEqual(['curl evil']);
+    expect(out[0]?.unreadable).toBeUndefined();
+    const stripped = text(stripAutoRunSources(files, manifest), SKILL);
+    expect(stripped).toBe(`---${ws}\nname: x\n---${BODY}`);
+  });
+
+  it('reads the same with a BOM, and with the hooks key alone', () => {
+    const md = `\ufeff---\f\n${HOOKS_YAML}---${BODY}`;
+    const files = plugin([f(SKILL, md)]);
+    expect(sources(files)[0]?.commands).toEqual(['curl evil']);
+    expect(text(stripAutoRunSources(files, manifest), SKILL)).toBe(`\ufeff---\f\n---${BODY}`);
+  });
+
+  it('does not strip a second BOM into frontmatter, as the loader does not', () => {
+    expect(sources(plugin([f(SKILL, `\ufeff\ufeff---\n${HOOKS_YAML}---\nb`)]))).toEqual([]);
+  });
+
+  it('treats a closing fence the loader reads differently as unreadable when it names hooks', () => {
+    // The loader stops at the first `---` anywhere; our fence line is later.
+    const md = `---\nhooks:\n  Stop: []\nname: a---b\n---\nb`;
+    const files = plugin([f(SKILL, md)]);
+    expect(sources(files)).toMatchObject([{ unreadable: expect.any(String) }]);
+    expect(() => stripAutoRunSources(files, manifest)).toThrow(AutoRunSourceError);
+  });
+});
+
+describe('YAML merge keys', () => {
+  const direct = `---\nname: a\n<<: {hooks: {Stop: [{hooks: [{type: command, command: merge-cmd}]}]}}\n---\nb`;
+  const list = `---\nname: a\n<<: [{hooks: {Stop: [{hooks: [{type: command, command: merge-cmd}]}]}}]\n---\nb`;
+  const nested = `---\nname: a\nx:\n  <<: {y: 1}\n---\nb`;
+  it.each([
+    ['direct', direct],
+    ['list', list],
+    ['nested', nested],
+  ])('%s merge key is unreadable and refused by strip', (_n, md) => {
+    const files = plugin([f(SKILL, md)]);
+    expect(sources(files)).toMatchObject([
+      { kind: 'frontmatter-hooks', unreadable: expect.any(String) },
+    ]);
+    expect(() => stripAutoRunSources(files, manifest)).toThrow(AutoRunSourceError);
+  });
+});
+
+describe('root SKILL.md and root references', () => {
+  const md = `---\nname: s\n${HOOKS_YAML}---${BODY}`;
+  const want = `---\nname: s\n---${BODY}`;
+  it('reads and strips <plugin>/SKILL.md without any manifest key', () => {
+    const files = plugin([f(ROOT_SKILL, md)]);
+    expect(sources(files).map((s) => s.path)).toEqual([`${ROOT_SKILL}#hooks`]);
+    expect(text(stripAutoRunSources(files, manifest), ROOT_SKILL)).toBe(want);
+  });
+
+  it.each([['${CLAUDE_PLUGIN_ROOT}'], ['${CLAUDE_PLUGIN_ROOT}/'], ['./'], ['.'], ['./.']])(
+    'skills ref %s names the plugin root',
+    (ref) => {
+      const files = plugin(
+        [f(ROOT_SKILL, md), f('plugins/a/deep/x/SKILL.md', md)],
+        JSON.stringify({ skills: [ref] })
+      );
+      if (ref === './.') {
+        // Not a spelling it can resolve: refused, not ignored.
+        expect(sources(files).some((s) => s.unreadable !== undefined)).toBe(true);
+        expect(() => stripAutoRunSources(files, manifest)).toThrow(AutoRunSourceError);
+        return;
+      }
+      expect(sources(files).map((s) => s.path)).toEqual([
+        `${ROOT_SKILL}#hooks`,
+        'plugins/a/deep/x/SKILL.md#hooks',
+      ]);
+      const out = stripAutoRunSources(files, manifest);
+      expect(text(out, ROOT_SKILL)).toBe(want);
+      expect(text(out, 'plugins/a/deep/x/SKILL.md')).toBe(want);
+    }
+  );
+
+  it('reads root-level command files named by a root commands ref', () => {
+    const files = plugin([f('plugins/a/x.md', md)], '{"commands":"."}');
+    expect(sources(files).map((s) => s.path)).toEqual(['plugins/a/x.md#hooks']);
+    expect(text(stripAutoRunSources(files, manifest), 'plugins/a/x.md')).toBe(want);
+  });
+
+  it('reports a skills or commands ref that matches no file, instead of dropping it', () => {
+    const files = plugin([], '{"skills":["./nope"]}');
+    expect(sources(files)).toMatchObject([{ unreadable: expect.any(String) }]);
+    expect(() => stripAutoRunSources(files, manifest)).toThrow(AutoRunSourceError);
+  });
+});
+
 describe('stripAutoRunSources', () => {
   it('drops hooks, monitors and LSP files and rewrites plugin.json without those keys', () => {
     const files = plugin(

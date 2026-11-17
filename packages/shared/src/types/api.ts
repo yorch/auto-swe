@@ -2303,6 +2303,8 @@ export interface HarnessProfileDetail extends HarnessProfileSummary {
   boundAgents?: HarnessProfileBoundAgent[];
   /** Present on `GET /:name`: how many teams have enabled it. */
   enabledTeams?: number;
+  /** Present on `GET /:name`: the auto-run command sources of the LATEST version (what hooks on would arm). */
+  autoRunSources?: { path: string; kind: string; commands: string[]; unreadable: string | null }[];
 }
 
 /** Create and accept answer `{ data, projection }`: projection problems never undo the approval. */
@@ -2318,13 +2320,21 @@ export interface HarnessProfileProjectionWarnings {
 export interface HarnessProfileHookSource {
   path: string;
   commands: string[];
+  /** Why the commands could not be read (a fixed short reason, never file text); null when they were. */
+  unreadable?: string | null;
 }
 
 /** What an update does to the plugin's hook files, against the previous version. */
 export interface HarnessProfileHookChanges {
   added: HarnessProfileHookSource[];
   removed: HarnessProfileHookSource[];
-  changed: Array<{ path: string; addedCommands: string[]; removedCommands: string[] }>;
+  changed: Array<{
+    path: string;
+    addedCommands: string[];
+    removedCommands: string[];
+    /** Why the new version of the source could not be read; null when it could. */
+    unreadable?: string | null;
+  }>;
 }
 
 /** `POST /harness-profiles/preview` and `/:name/preview-update`: nothing is written. */

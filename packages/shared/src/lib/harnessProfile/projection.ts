@@ -206,6 +206,36 @@ type Db = PrismaClient | Prisma.TransactionClient;
 const lockSkillNames = (tx: Prisma.TransactionClient) =>
   tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('skill-name-allocation', 0))`;
 
+// CLAUDE.md §7 exception: a row lock Prisma cannot express (`FOR SHARE` on the profile row).
+async function profileStatusLocked(
+  tx: Prisma.TransactionClient,
+  profileId: string
+): Promise<string | null> {
+  const rows = await tx.$queryRaw<{ status: string }[]>`
+    SELECT status::text AS status FROM harness_profiles WHERE id = ${profileId}::uuid FOR SHARE`;
+  return rows[0]?.status ?? null;
+}
+
+/**
+ * What a write to an existing row adds while the plugin is DISABLED: the row goes inactive and is
+ * marked as switched off by the disable, so a re-enable restores it. A row a disable already
+ * marked keeps its original timestamp; nothing is added while the plugin is enabled.
+ */
+function deactivationOf(
+  existing: { isActive: boolean; pluginDeactivatedAt?: Date | null },
+  deactivation: { isActive?: boolean; pluginDeactivatedAt?: Date }
+): { isActive?: boolean; pluginDeactivatedAt?: Date } {
+  if (deactivation.pluginDeactivatedAt === undefined) {
+    return {};
+  }
+  return existing.isActive === false && existing.pluginDeactivatedAt
+    ? {}
+    : {
+        isActive: false,
+        pluginDeactivatedAt: existing.pluginDeactivatedAt ?? deactivation.pluginDeactivatedAt,
+      };
+}
+
 async function inTransaction<T>(
   db: Db,
   fn: (tx: Prisma.TransactionClient) => Promise<T>
@@ -264,6 +294,10 @@ export async function projectPluginSkills(
   const createdById = input.createdById ?? null;
   await inTransaction(db, async (tx) => {
     await lockSkillNames(tx);
+    // The profile's status as of this write, read under a share lock: a disable that lands
+    // meanwhile waits for this transaction, then deactivates the rows written here too.
+    const disabled = (await profileStatusLocked(tx, input.profileId)) === 'DISABLED';
+    const deactivation = disabled ? { isActive: false, pluginDeactivatedAt: new Date() } : {};
     for (const c of writable) {
       const content = { description: c.description, promptText: c.promptText };
       const meta = {
@@ -283,6 +317,7 @@ export async function projectPluginSkills(
             isBuiltIn: false,
             isVerified: false,
             name: c.name,
+            ...deactivation,
             pluginProfileId: input.profileId,
             pluginVersion: input.version,
             scope: 'GLOBAL',
@@ -320,7 +355,7 @@ export async function projectPluginSkills(
       if (skillContentHash(existing) === skillContentHash(content)) {
         if (existing.pluginVersion !== input.version) {
           await tx.skill.update({
-            data: { pluginVersion: input.version },
+            data: { pluginVersion: input.version, ...deactivationOf(existing, deactivation) },
             where: { id: existing.id },
           });
         }
@@ -329,7 +364,12 @@ export async function projectPluginSkills(
       const next = nextRevision(existing, content, meta);
       try {
         await tx.skill.update({
-          data: { ...next.data, isVerified: false, pluginVersion: input.version },
+          data: {
+            ...next.data,
+            ...deactivationOf(existing, deactivation),
+            isVerified: false,
+            pluginVersion: input.version,
+          },
           where: next.where,
         });
       } catch (err) {

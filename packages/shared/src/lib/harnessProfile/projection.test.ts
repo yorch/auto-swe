@@ -52,11 +52,18 @@ interface Row {
   currentRevision: number;
   pluginProfileId: string | null;
   pluginVersion: number | null;
+  isActive?: boolean;
+  pluginDeactivatedAt?: Date | null;
 }
 
-function fakeDb(rows: Row[] = [], projected: Record<string, { contentHash: string } | null> = {}) {
+function fakeDb(
+  rows: Row[] = [],
+  projected: Record<string, { contentHash: string } | null> = {},
+  status = 'OK'
+) {
   const tx = {
     $executeRaw: vi.fn().mockResolvedValue(1),
+    $queryRaw: vi.fn().mockResolvedValue([{ status }]),
     skill: {
       create: vi.fn().mockResolvedValue({}),
       findFirst: vi.fn(
@@ -257,6 +264,40 @@ describe('projectPluginSkills', () => {
       data: { pluginVersion: 2 },
       where: { id: 's1' },
     });
+  });
+
+  it('creates a row inactive and marked when the plugin is DISABLED at write time', async () => {
+    const { db, tx } = fakeDb([], {}, 'DISABLED');
+    await projectPluginSkills(db, { ...INPUT, files: files() });
+    const data = tx.skill.create.mock.calls[0]?.[0].data;
+    expect(data.isActive).toBe(false);
+    expect(data.pluginDeactivatedAt).toBeInstanceOf(Date);
+  });
+
+  it('creates an active row (no marker) while the plugin is OK', async () => {
+    const { db, tx } = fakeDb();
+    await projectPluginSkills(db, { ...INPUT, files: files() });
+    const data = tx.skill.create.mock.calls[0]?.[0].data;
+    expect(data.isActive).toBeUndefined();
+    expect(data.pluginDeactivatedAt).toBeUndefined();
+  });
+
+  it('keeps an updated row inactive and marked when the plugin is DISABLED', async () => {
+    const row: Row = {
+      currentRevision: 1,
+      description: 'Reviews code',
+      id: 's1',
+      isActive: true,
+      name: 'acme:code-review',
+      pluginProfileId: 'p1',
+      pluginVersion: 1,
+      promptText: 'Old.',
+    };
+    const { db, tx } = fakeDb([row], { s1: { contentHash: skillContentHash(row) } }, 'DISABLED');
+    await projectPluginSkills(db, { ...INPUT, files: files(), version: 2 });
+    const data = tx.skill.update.mock.calls[0]?.[0].data;
+    expect(data.isActive).toBe(false);
+    expect(data.pluginDeactivatedAt).toBeInstanceOf(Date);
   });
 
   it('refuses a name held by an ordinary skill or another plugin', async () => {
