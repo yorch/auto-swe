@@ -46,14 +46,15 @@ describe('hookChangesBetween', () => {
         addedCommands: ['echo two'],
         path: 'plugins/a/hooks/hooks.json',
         removedCommands: ['echo one'],
+        unreadable: null,
       },
     ]);
     const none = plugin();
     expect(hookChangesBetween(prev, none).removed).toEqual([
-      { commands: ['echo one'], path: 'plugins/a/hooks/hooks.json' },
+      { commands: ['echo one'], path: 'plugins/a/hooks/hooks.json', unreadable: null },
     ]);
     expect(hookChangesBetween(none, prev).added).toEqual([
-      { commands: ['echo one'], path: 'plugins/a/hooks/hooks.json' },
+      { commands: ['echo one'], path: 'plugins/a/hooks/hooks.json', unreadable: null },
     ]);
   });
 
@@ -66,6 +67,7 @@ describe('hookChangesBetween', () => {
         addedCommands: ['b'],
         path: 'plugins/a/.claude-plugin/plugin.json#hooks',
         removedCommands: ['a'],
+        unreadable: null,
       },
     ]);
     const named = (command: string) =>
@@ -88,11 +90,18 @@ describe('hookChangesBetween', () => {
     const clean = plugin([f(skill, '---\nname: x\n---\nbody')]);
     const hooked = plugin([f(skill, md('curl evil'))]);
     const added = hookChangesBetween(clean, hooked);
-    expect(added.added).toEqual([{ commands: ['curl evil'], path: `${skill}#hooks` }]);
+    expect(added.added).toEqual([
+      { commands: ['curl evil'], path: `${skill}#hooks`, unreadable: null },
+    ]);
     expect(hasHookChanges(added)).toBe(true);
     expect(hookChangesBetween(hooked, clean).removed).toHaveLength(1);
     expect(hookChangesBetween(hooked, plugin([f(skill, md('echo ok'))])).changed).toEqual([
-      { addedCommands: ['echo ok'], path: `${skill}#hooks`, removedCommands: ['curl evil'] },
+      {
+        addedCommands: ['echo ok'],
+        path: `${skill}#hooks`,
+        removedCommands: ['curl evil'],
+        unreadable: null,
+      },
     ]);
   });
 
@@ -103,8 +112,8 @@ describe('hookChangesBetween', () => {
     ]);
     const changes = hookChangesBetween(plugin(), next);
     expect(changes.added).toEqual([
-      { commands: ['gopls'], path: 'plugins/a/.lsp.json' },
-      { commands: ['watch x'], path: 'plugins/a/monitors/monitors.json' },
+      { commands: ['gopls'], path: 'plugins/a/.lsp.json', unreadable: null },
+      { commands: ['watch x'], path: 'plugins/a/monitors/monitors.json', unreadable: null },
     ]);
     const inline = plugin(
       [],
@@ -114,5 +123,24 @@ describe('hookChangesBetween', () => {
       'plugins/a/.claude-plugin/plugin.json#lspServers',
       'plugins/a/.claude-plugin/plugin.json#monitors',
     ]);
+  });
+
+  it('carries why a source could not be read, and counts a change in readability', () => {
+    const skill = 'plugins/a/skills/x/SKILL.md';
+    const merged = plugin([f(skill, '---\nname: x\n<<: {hooks: {Stop: []}}\n---\nbody')]);
+    const added = hookChangesBetween(plugin(), merged);
+    expect(added.added).toEqual([
+      { commands: [], path: `${skill}#hooks`, unreadable: expect.any(String) },
+    ]);
+    const missing = hookChangesBetween(plugin(), plugin([], '{"skills":["./nope"]}'));
+    expect(missing.added[0]?.unreadable).toEqual(expect.any(String));
+    // Readable -> unreadable at the same path is a change, whatever the commands.
+    const ok = plugin([f(skill, '---\nname: x\nhooks: {Stop: []}\n---\nbody')]);
+    const bad = plugin([f(skill, '---\nname: x\nhooks: {Stop: []}\n<<: {a: 1}\n---\nbody')]);
+    const diff = hookChangesBetween(ok, bad);
+    expect(diff.changed).toEqual([
+      expect.objectContaining({ path: `${skill}#hooks`, unreadable: expect.any(String) }),
+    ]);
+    expect(hasHookChanges(diff)).toBe(true);
   });
 });

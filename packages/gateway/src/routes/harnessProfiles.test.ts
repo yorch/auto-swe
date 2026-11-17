@@ -166,7 +166,7 @@ async function buildApp(
           (x) =>
             x.id === where.id &&
             x.latestVersion === where.latestVersion &&
-            x.status === where.status &&
+            (where.status === undefined || x.status === where.status) &&
             (where.hooksEnabled === undefined || x.hooksEnabled === where.hooksEnabled)
         );
         if (!p) {
@@ -246,17 +246,22 @@ async function buildApp(
           data,
           where,
         }: {
-          data: { isActive: boolean };
-          where: { isActive: boolean; pluginProfileId: string; pluginVersion?: number };
+          data: { isActive: boolean; pluginDeactivatedAt: Date | null };
+          where: {
+            isActive?: boolean;
+            pluginDeactivatedAt?: { not: null };
+            pluginProfileId: string;
+          };
         }) => {
           const hit = skills.filter(
             (x) =>
               x.pluginProfileId === where.pluginProfileId &&
-              x.isActive === where.isActive &&
-              (where.pluginVersion === undefined || x.pluginVersion === where.pluginVersion)
+              (where.isActive === undefined || x.isActive === where.isActive) &&
+              (where.pluginDeactivatedAt === undefined || x.pluginDeactivatedAt != null)
           );
           for (const x of hit) {
             x.isActive = data.isActive;
+            x.pluginDeactivatedAt = data.pluginDeactivatedAt;
           }
           return { count: hit.length };
         }
@@ -721,32 +726,38 @@ describe('harness profile routes', () => {
     });
   });
   describe('projected skills follow the plugin', () => {
-    it('deactivates them on disable and reactivates the current-version rows on re-enable, keeping enablements', async () => {
+    it('deactivates active rows on disable and reactivates exactly those on re-enable, whatever their version, keeping enablements', async () => {
       await t.create();
       const profileId = t.state.profiles[0]?.id as string;
       const projected = (name: string, pluginVersion: number, isActive = true) =>
         ({ id: name, isActive, name, pluginProfileId: profileId, pluginVersion }) as Row;
       t.skills.push(
         projected('demo:a', 1),
-        projected('demo:b', 1),
-        projected('demo:gone', 0, false),
+        projected('demo:old', 0), // left at an older version, active before the disable
+        projected('demo:gone', 0, false), // never touched by a disable: stays off
         { id: 'other', isActive: true, name: 'plain', pluginProfileId: 'someone-else' } as Row
       );
       t.enablements.push({ teamId: 'team-2' } as never);
       const off = await t.call('PATCH', '/demo', { status: 'DISABLED' });
       expect(off.statusCode).toBe(200);
       expect(t.skills.map((x) => x.isActive)).toEqual([false, false, false, true]);
+      expect(t.skills.map((x) => x.pluginDeactivatedAt != null)).toEqual([
+        true,
+        true,
+        false,
+        false,
+      ]);
       expect(t.state.audit.at(-1)).toMatchObject({
         afterJson: { projectedSkills: { deactivated: 2 }, status: 'DISABLED' },
       });
       // A hook-only change touches no skill.
       t.prisma.skill.updateMany.mockClear();
-      await t.call('PATCH', '/demo', { hooksEnabled: true });
+      await t.call('PATCH', '/demo', { expectedVersion: 1, hooksEnabled: true });
       expect(t.prisma.skill.updateMany).not.toHaveBeenCalled();
       const on = await t.call('PATCH', '/demo', { status: 'OK' });
       expect(on.statusCode).toBe(200);
-      // Only the rows of the profile's latest version come back; the stale one stays off.
       expect(t.skills.map((x) => x.isActive)).toEqual([true, true, false, true]);
+      expect(t.skills.map((x) => x.pluginDeactivatedAt ?? null)).toEqual([null, null, null, null]);
       expect(t.state.audit.at(-1)).toMatchObject({
         afterJson: { projectedSkills: { activated: 2 }, status: 'OK' },
       });
@@ -876,9 +887,52 @@ describe('harness profile routes', () => {
       });
       expect(t.state.versions).toHaveLength(1);
       expect((t.state.profiles[0] as Row).latestVersion).toBe(1);
-      const on = await t.call('PATCH', '/demo', { hooksEnabled: true });
+      const on = await t.call('PATCH', '/demo', { expectedVersion: 1, hooksEnabled: true });
       expect(on.json().data.hooksEnabled).toBe(true);
       expect((await t.call('PATCH', '/demo', {})).statusCode).toBe(400);
+    });
+
+    it('turning hooks on needs the reviewed version: 400 without it, 409 when stale', async () => {
+      await t.create({ hooksEnabled: false });
+      const missing = await t.call('PATCH', '/demo', { hooksEnabled: true });
+      expect(missing.statusCode).toBe(400);
+      expect(missing.json().error.code).toBe('HOOKS_EXPECTED_VERSION_REQUIRED');
+      const stale = await t.call('PATCH', '/demo', { expectedVersion: 7, hooksEnabled: true });
+      expect(stale.statusCode).toBe(409);
+      expect(stale.json().error).toMatchObject({
+        code: 'HOOKS_VERSION_STALE',
+        details: { latestVersion: 1 },
+      });
+      expect((t.state.profiles[0] as Row).hooksEnabled).toBe(false);
+      const ok = await t.call('PATCH', '/demo', { expectedVersion: 1, hooksEnabled: true });
+      expect(ok.statusCode).toBe(200);
+      expect(t.state.audit.at(-1)).toMatchObject({ afterJson: { expectedVersion: 1 } });
+      // Turning off needs none.
+      expect((await t.call('PATCH', '/demo', { hooksEnabled: false })).statusCode).toBe(200);
+    });
+
+    it('answers 409 HOOKS_VERSION_STALE when the version moves inside the transaction', async () => {
+      await t.create({ hooksEnabled: false });
+      const real = t.prisma.$transaction.getMockImplementation() as (
+        cb: (tx: unknown) => Promise<unknown>
+      ) => Promise<unknown>;
+      t.prisma.$transaction.mockImplementationOnce(async (cb) => {
+        (t.state.profiles[0] as Row).latestVersion = 2;
+        return real(cb);
+      });
+      const res = await t.call('PATCH', '/demo', { expectedVersion: 1, hooksEnabled: true });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error).toMatchObject({
+        code: 'HOOKS_VERSION_STALE',
+        details: { latestVersion: 2 },
+      });
+      expect((t.state.profiles[0] as Row).hooksEnabled).toBe(false);
+    });
+
+    it('lists the auto-run sources of the latest version on GET /:name', async () => {
+      await t.create({ hooksEnabled: false });
+      const detail = (await t.call('GET', '/demo')).json().data;
+      expect(Array.isArray(detail.autoRunSources)).toBe(true);
     });
 
     it('never turns hooks on by accepting an update', async () => {
@@ -898,7 +952,7 @@ describe('harness profile routes', () => {
       expect(refused.statusCode).toBe(409);
       expect(refused.json().error.code).toBe('HOOK_CHANGES_UNACKNOWLEDGED');
       expect(refused.json().error.details.hookChanges.added).toEqual([
-        { commands: [], path: 'plugins/a/hooks/hooks.json' },
+        { commands: [], path: 'plugins/a/hooks/hooks.json', unreadable: null },
       ]);
       expect(t.state.versions).toHaveLength(1);
       const ok = await t.accept({ acknowledgeHookChanges: true, acknowledgeWarnings: true });
@@ -942,6 +996,7 @@ describe('harness profile routes', () => {
             addedCommands: ['echo two'],
             path: 'plugins/a/hooks/hooks.json',
             removedCommands: ['echo one'],
+            unreadable: null,
           },
         ],
         removed: [],
@@ -1157,6 +1212,7 @@ describe('harness profile routes', () => {
           addedCommands: ['echo two'],
           path: 'plugins/mk/hooks/hooks.json',
           removedCommands: ['echo one'],
+          unreadable: null,
         },
       ]);
       const refused = await acceptMk();

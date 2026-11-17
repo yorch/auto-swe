@@ -438,6 +438,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
           ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
           ...(credentialWarnings.length > 0 ? { credentialWarnings } : {}),
+          ...(starting ? { profileCarried: starting.carried } : {}),
           ...(starting?.notes.length ? { profileNotes: starting.notes } : {}),
         });
       } catch (err) {
@@ -640,7 +641,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
     async (request) => {
       const rows = await fastify.prisma.agent.findMany({
         orderBy: [{ key: 'asc' }, { version: 'desc' }],
-        select: { key: true, modelSpec: true, name: true, scope: true },
+        select: { harnessProfiles: true, key: true, modelSpec: true, name: true, scope: true },
         where: {
           isActive: true,
           OR: [{ scope: 'GLOBAL' }, { scope: 'TEAM', teamId: request.params.id }],
@@ -655,7 +656,14 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
       return {
-        data: [...byKey.values()].map(({ key, modelSpec, name }) => ({ key, modelSpec, name })),
+        // `harnessProfiles` is the plugin names the listed row binds (names only), so a team
+        // admin's create form shows what a new override would carry over from the platform row.
+        data: [...byKey.values()].map(({ harnessProfiles, key, modelSpec, name }) => ({
+          harnessProfiles,
+          key,
+          modelSpec,
+          name,
+        })),
       };
     }
   );
@@ -768,6 +776,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           ...(scanWarnings.length > 0 ? { scanWarnings } : {}),
           ...(catalogWarnings.length > 0 ? { catalogWarnings } : {}),
           ...(credentialWarnings.length > 0 ? { credentialWarnings } : {}),
+          ...(starting ? { profileCarried: starting.carried } : {}),
           ...(starting?.notes.length ? { profileNotes: starting.notes } : {}),
         });
       } catch (err) {

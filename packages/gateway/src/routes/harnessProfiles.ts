@@ -1,4 +1,5 @@
 import {
+  autoRunSourcesOf,
   type ProfileFile,
   packFiles,
   projectPluginSkills,
@@ -111,10 +112,19 @@ const AcceptBody = z.object({
 
 const PatchBody = z
   .object({
+    /**
+     * Turning hooks ON needs `expectedVersion` (the profile's latest version the admin reviewed);
+     * the route answers 400 HOOKS_EXPECTED_VERSION_REQUIRED without it and 409 HOOKS_VERSION_STALE
+     * when the profile has moved on.
+     */
+    expectedVersion: z.number().int().positive().optional(),
     hooksEnabled: z.boolean().optional(),
     status: z.enum(['DISABLED', 'OK']).optional(),
   })
   .refine((b) => b.status !== undefined || b.hooksEnabled !== undefined, 'nothing to change');
+
+/** Thrown inside the PATCH transaction when the profile moved past the version the admin reviewed. */
+class HooksVersionStale extends Error {}
 
 const PROFILE_SELECT = {
   createdAt: true,
@@ -490,8 +500,39 @@ export const harnessProfileRoutes: FastifyPluginAsync<HarnessProfileRouteOptions
           fastify.prisma.pluginEnablement.count({ where: { profileId: row.id } })
         ),
       ]);
+      // The auto-run sources of the LATEST version: what turning hooks on would arm.
+      let autoRunSources: HarnessProfileDetail['autoRunSources'] = [];
+      const latestRow = await fastify.prisma.harnessProfileVersion.findUnique({
+        select: { files: true, manifest: true },
+        where: { profileId_version: { profileId: row.id, version: row.latestVersion } },
+      });
+      if (latestRow) {
+        try {
+          autoRunSources = autoRunSourcesOf(
+            unpackFiles(latestRow.files),
+            latestRow.manifest as { plugins?: string[] }
+          )
+            .map((a) => ({
+              commands: a.commands,
+              kind: a.kind,
+              path: a.path,
+              unreadable: a.unreadable ?? null,
+            }))
+            .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+        } catch {
+          autoRunSources = [
+            {
+              commands: [],
+              kind: 'hooks-file',
+              path: '(snapshot)',
+              unreadable: 'unreadable snapshot',
+            },
+          ];
+        }
+      }
       const detail: HarnessProfileDetail = {
         ...summaryOf(rest, dtos.find((v) => v.version === row.latestVersion) ?? null),
+        autoRunSources,
         boundAgents,
         enabledTeams,
         versions: dtos,
@@ -719,50 +760,98 @@ export const harnessProfileRoutes: FastifyPluginAsync<HarnessProfileRouteOptions
       if (!existing) {
         return notFound(reply);
       }
-      const { hooksEnabled, status } = request.body;
-      const updated = await fastify.prisma.$transaction(async (tx) => {
-        // The hook switch lives on the profile row, not in a version: no new version is cut and
-        // the stored snapshot (and so the upstream content hash) is untouched.
-        const row = await tx.harnessProfile.update({
-          data: {
-            ...(status === undefined ? {} : { status }),
-            ...(hooksEnabled === undefined ? {} : { hooksEnabled }),
-          },
-          select: PROFILE_SELECT,
-          where: { id: existing.id },
+      const { expectedVersion, hooksEnabled, status } = request.body;
+      if (hooksEnabled === true) {
+        if (expectedVersion === undefined) {
+          return sendError(
+            reply,
+            400,
+            'HOOKS_EXPECTED_VERSION_REQUIRED',
+            'Turning hooks on needs expectedVersion: the latest version you reviewed'
+          );
+        }
+        if (expectedVersion !== existing.latestVersion) {
+          return sendError(
+            reply,
+            409,
+            'HOOKS_VERSION_STALE',
+            'The plugin has a newer version than the one you reviewed; review it and try again',
+            { latestVersion: existing.latestVersion }
+          );
+        }
+      }
+      let updated: ProfileRow;
+      try {
+        updated = await fastify.prisma.$transaction(async (tx) => {
+          if (hooksEnabled === true) {
+            // Compare-and-set: a version accepted since the check above makes this miss.
+            const held = await tx.harnessProfile.updateMany({
+              data: { hooksEnabled: true },
+              where: { id: existing.id, latestVersion: expectedVersion ?? existing.latestVersion },
+            });
+            if (held.count !== 1) {
+              throw new HooksVersionStale();
+            }
+          }
+          // The hook switch lives on the profile row, not in a version: no new version is cut and
+          // the stored snapshot (and so the upstream content hash) is untouched.
+          const row = await tx.harnessProfile.update({
+            data: {
+              ...(status === undefined ? {} : { status }),
+              ...(hooksEnabled === undefined ? {} : { hooksEnabled }),
+            },
+            select: PROFILE_SELECT,
+            where: { id: existing.id },
+          });
+          // Projected skills follow the plugin: off while it is DISABLED, back on with it. Team
+          // enablement rows are untouched, so re-enabling restores team access.
+          const skillsToggled =
+            status !== undefined && status !== existing.status
+              ? await setProjectedSkillsActive(tx, row, status === 'OK')
+              : null;
+          await writeAuditLog(fastify, {
+            action: 'UPDATE',
+            actor,
+            after: {
+              hooksEnabled: row.hooksEnabled,
+              name: row.name,
+              status: row.status,
+              ...(hooksEnabled === true ? { expectedVersion } : {}),
+              ...(skillsToggled === null
+                ? {}
+                : {
+                    projectedSkills: {
+                      [status === 'OK' ? 'activated' : 'deactivated']: skillsToggled,
+                    },
+                  }),
+            },
+            before: {
+              hooksEnabled: existing.hooksEnabled,
+              name: existing.name,
+              status: existing.status,
+            },
+            client: tx,
+            entityId: existing.id,
+            entityType: 'HarnessProfile',
+          });
+          return row;
         });
-        // Projected skills follow the plugin: off while it is DISABLED, back on with it. Team
-        // enablement rows are untouched, so re-enabling restores team access.
-        const skillsToggled =
-          status !== undefined && status !== existing.status
-            ? await setProjectedSkillsActive(tx, row, status === 'OK')
-            : null;
-        await writeAuditLog(fastify, {
-          action: 'UPDATE',
-          actor,
-          after: {
-            hooksEnabled: row.hooksEnabled,
-            name: row.name,
-            status: row.status,
-            ...(skillsToggled === null
-              ? {}
-              : {
-                  projectedSkills: {
-                    [status === 'OK' ? 'activated' : 'deactivated']: skillsToggled,
-                  },
-                }),
-          },
-          before: {
-            hooksEnabled: existing.hooksEnabled,
-            name: existing.name,
-            status: existing.status,
-          },
-          client: tx,
-          entityId: existing.id,
-          entityType: 'HarnessProfile',
-        });
-        return row;
-      });
+      } catch (err) {
+        if (err instanceof HooksVersionStale) {
+          const fresh = await fastify.prisma.harnessProfile.findUnique({
+            select: { latestVersion: true },
+            where: { id: existing.id },
+          });
+          return sendError(
+            reply,
+            409,
+            'HOOKS_VERSION_STALE',
+            'The plugin has a newer version than the one you reviewed; review it and try again',
+            { latestVersion: fresh?.latestVersion ?? existing.latestVersion }
+          );
+        }
+        throw err;
+      }
       const latest = await fastify.prisma.harnessProfileVersion.findUnique({
         select: VERSION_SELECT,
         where: { profileId_version: { profileId: updated.id, version: updated.latestVersion } },

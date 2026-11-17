@@ -5,7 +5,7 @@
  * team, and only an enabled plugin can be bound on that team's agent overrides. Role is the team
  * role alone (a platform ADMIN passes it): there is no platform LEAD floor on top.
  *
- *   GET    /api/v1/teams/:teamId/plugins         Approved, non-disabled plugins with an `enabled` flag (any team member)
+ *   GET    /api/v1/teams/:teamId/plugins         Approved plugins with an `enabled` flag and a `status` (any team member); a DISABLED plugin is listed only when the team holds an enablement for it, which DELETE can still withdraw
  *   PUT    /api/v1/teams/:teamId/plugins/:name   Enable one (team ADMIN); idempotent
  *   DELETE /api/v1/teams/:teamId/plugins/:name   Disable one (team ADMIN); answers with the team's stranded agents
  *
@@ -43,23 +43,24 @@ export const pluginEnablementRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: teamMember, schema: { params: TeamParams } },
     async (request) => {
       const { teamId } = request.params;
-      const [profiles, enabled] = await Promise.all([
-        fastify.prisma.harnessProfile.findMany({
-          orderBy: { name: 'asc' },
-          select: {
-            description: true,
-            hooksEnabled: true,
-            id: true,
-            latestVersion: true,
-            name: true,
-          },
-          where: { status: 'OK' },
-        }),
-        fastify.prisma.pluginEnablement.findMany({
-          select: { createdAt: true, profileId: true },
-          where: { teamId },
-        }),
-      ]);
+      const enabled = await fastify.prisma.pluginEnablement.findMany({
+        select: { createdAt: true, profileId: true },
+        where: { teamId },
+      });
+      // Enabled plugins plus, so a team admin can still withdraw an enablement, the DISABLED
+      // plugins this team holds one for.
+      const profiles = await fastify.prisma.harnessProfile.findMany({
+        orderBy: { name: 'asc' },
+        select: {
+          description: true,
+          hooksEnabled: true,
+          id: true,
+          latestVersion: true,
+          name: true,
+          status: true,
+        },
+        where: { OR: [{ status: 'OK' }, { id: { in: enabled.map((e) => e.profileId) } }] },
+      });
       const since = new Map(enabled.map((e) => [e.profileId, e.createdAt]));
       return {
         data: profiles.map((p) => ({
@@ -69,6 +70,7 @@ export const pluginEnablementRoutes: FastifyPluginAsync = async (fastify) => {
           hooksEnabled: p.hooksEnabled,
           latestVersion: p.latestVersion,
           name: p.name,
+          status: p.status,
         })),
       };
     }

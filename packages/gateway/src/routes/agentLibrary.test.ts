@@ -969,12 +969,30 @@ describe('agent credential pin', () => {
 });
 
 describe('GET /api/v1/teams/:id/agent-library/options', () => {
-  it('lets any team member list keys, names and models only', async () => {
+  it('lets any team member list keys, names, models and bound plugin names only', async () => {
     const { app, mockPrisma } = await buildTeamApp('ENGINEER');
     mockPrisma.agent.findMany.mockResolvedValue([
-      { key: 'reviewer', modelSpec: 'anthropic/a', name: 'Reviewer', scope: 'GLOBAL' },
-      { key: 'reviewer', modelSpec: 'anthropic/b', name: 'Team reviewer', scope: 'TEAM' },
-      { key: 'planner', modelSpec: null, name: 'Planner', scope: 'GLOBAL' },
+      {
+        harnessProfiles: ['acme-pack'],
+        key: 'reviewer',
+        modelSpec: 'anthropic/a',
+        name: 'Reviewer',
+        scope: 'GLOBAL',
+      },
+      {
+        harnessProfiles: [],
+        key: 'reviewer',
+        modelSpec: 'anthropic/b',
+        name: 'Team reviewer',
+        scope: 'TEAM',
+      },
+      {
+        harnessProfiles: ['a', 'b'],
+        key: 'planner',
+        modelSpec: null,
+        name: 'Planner',
+        scope: 'GLOBAL',
+      },
     ]);
     const res = await app.inject({
       headers: AUTH,
@@ -983,11 +1001,17 @@ describe('GET /api/v1/teams/:id/agent-library/options', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().data).toEqual([
-      { key: 'reviewer', modelSpec: 'anthropic/b', name: 'Team reviewer' },
-      { key: 'planner', modelSpec: null, name: 'Planner' },
+      { harnessProfiles: [], key: 'reviewer', modelSpec: 'anthropic/b', name: 'Team reviewer' },
+      { harnessProfiles: ['a', 'b'], key: 'planner', modelSpec: null, name: 'Planner' },
     ]);
     const arg = mockPrisma.agent.findMany.mock.calls[0][0];
-    expect(arg.select).toEqual({ key: true, modelSpec: true, name: true, scope: true });
+    expect(arg.select).toEqual({
+      harnessProfiles: true,
+      key: true,
+      modelSpec: true,
+      name: true,
+      scope: true,
+    });
     expect(arg.where.OR).toContainEqual({ scope: 'TEAM', teamId: TEAM });
     await app.close();
   });
@@ -2034,6 +2058,28 @@ describe('agent harness profile', () => {
     expect(res.statusCode).toBe(201);
     expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.harnessProfiles).toEqual([PROFILE]);
     expect(res.json().profileNotes).toEqual([expect.stringContaining("'other-kit'")]);
+    expect(res.json().profileCarried).toEqual([PROFILE]);
+    await app.close();
+  });
+
+  it('uses an explicit empty harnessProfiles as given: no inheritance, no profileCarried', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findFirst.mockImplementation(
+      async ({ where }: { where: { key?: string; scope?: string } }) =>
+        where.scope === 'GLOBAL' && where.key === 'implementer'
+          ? { harnessProfiles: [PROFILE], runtime: 'claude-code' }
+          : null
+    );
+    mockPrisma.agent.create.mockResolvedValue({ id: 'new-1', version: 1 });
+    const res = await app.inject({
+      body: { harnessProfiles: [], key: 'implementer', modelSpec: OPUS, name: 'Team implementer' },
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/teams/${TEAM}/agent-library`,
+    });
+    expect(res.statusCode).toBe(201);
+    expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.harnessProfiles).toEqual([]);
+    expect(res.json().profileCarried).toBeUndefined();
     await app.close();
   });
 

@@ -69,11 +69,25 @@ describe('pluginEnablementRoutes', () => {
     ctx.app.inject({ headers: AUTH, method, url: `/api/v1/teams${url}` });
 
   describe('GET /:teamId/plugins', () => {
-    it('lists approved, non-disabled plugins with the team flag, for any team member', async () => {
+    it('lists approved plugins, plus disabled ones the team holds an enablement for, with status, for any team member', async () => {
       asMember('ENGINEER');
       ctx.prisma.harnessProfile.findMany.mockResolvedValue([
-        { description: 'A', hooksEnabled: true, id: PROFILE_ID, latestVersion: 2, name: 'a-kit' },
-        { description: 'B', hooksEnabled: false, id: 'p2', latestVersion: 1, name: 'b-kit' },
+        {
+          description: 'A',
+          hooksEnabled: true,
+          id: PROFILE_ID,
+          latestVersion: 2,
+          name: 'a-kit',
+          status: 'OK',
+        },
+        {
+          description: 'B',
+          hooksEnabled: false,
+          id: 'p2',
+          latestVersion: 1,
+          name: 'b-kit',
+          status: 'DISABLED',
+        },
       ]);
       ctx.prisma.pluginEnablement.findMany.mockResolvedValue([
         { createdAt: since, profileId: PROFILE_ID },
@@ -88,6 +102,7 @@ describe('pluginEnablementRoutes', () => {
           hooksEnabled: true,
           latestVersion: 2,
           name: 'a-kit',
+          status: 'OK',
         },
         {
           description: 'B',
@@ -96,9 +111,12 @@ describe('pluginEnablementRoutes', () => {
           hooksEnabled: false,
           latestVersion: 1,
           name: 'b-kit',
+          status: 'DISABLED',
         },
       ]);
-      expect(ctx.prisma.harnessProfile.findMany.mock.calls[0]?.[0].where).toEqual({ status: 'OK' });
+      expect(ctx.prisma.harnessProfile.findMany.mock.calls[0]?.[0].where).toEqual({
+        OR: [{ status: 'OK' }, { id: { in: [PROFILE_ID] } }],
+      });
       expect(ctx.prisma.pluginEnablement.findMany.mock.calls[0]?.[0].where).toEqual({
         teamId: TEAM,
       });
@@ -204,6 +222,18 @@ describe('pluginEnablementRoutes', () => {
         action: 'DELETE',
         entityType: 'PluginEnablement',
       });
+    });
+
+    it('withdraws an enablement for a DISABLED plugin', async () => {
+      asMember('ADMIN');
+      ctx.prisma.harnessProfile.findUnique.mockResolvedValue({
+        id: PROFILE_ID,
+        status: 'DISABLED',
+      });
+      ctx.prisma.pluginEnablement.deleteMany.mockResolvedValue({ count: 1 });
+      const res = await call('DELETE', `/${TEAM}/plugins/a-kit`);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.enabled).toBe(false);
     });
 
     it('is allowed with nothing bound, 404 when it was not enabled, refused for a plain member', async () => {

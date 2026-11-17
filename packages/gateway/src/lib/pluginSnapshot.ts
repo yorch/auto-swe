@@ -61,6 +61,7 @@ interface HookSource {
   path: string;
   digest: string;
   commands: string[];
+  unreadable: string | null;
 }
 
 /**
@@ -77,7 +78,12 @@ export function hookSourcesOf(
 ): Map<string, HookSource> {
   const out = new Map<string, HookSource>();
   for (const s of autoRunSourcesOf(files, manifest)) {
-    out.set(s.path, { commands: s.commands, digest: s.digest, path: s.path });
+    out.set(s.path, {
+      commands: s.commands,
+      digest: s.digest,
+      path: s.path,
+      unreadable: s.unreadable ?? null,
+    });
   }
   return out;
 }
@@ -88,6 +94,7 @@ const bySource = (a: { path: string }, b: { path: string }) =>
 const toDto = (s: HookSource): HarnessProfileHookSource => ({
   commands: s.commands,
   path: s.path,
+  unreadable: s.unreadable,
 });
 
 /** What moving from `prev` to `next` does to the hook files. */
@@ -102,11 +109,12 @@ export function diffHooks(
     const p = prev.get(path);
     if (!p) {
       added.push(toDto(n));
-    } else if (p.digest !== n.digest) {
+    } else if (p.digest !== n.digest || p.unreadable !== n.unreadable) {
       changed.push({
         addedCommands: n.commands.filter((c) => !p.commands.includes(c)),
         path,
         removedCommands: p.commands.filter((c) => !n.commands.includes(c)),
+        unreadable: n.unreadable,
       });
     }
   }

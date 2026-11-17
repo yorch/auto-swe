@@ -423,10 +423,10 @@ export async function startingOverrideProfiles(
   prisma: AgentReader & Pick<PrismaClient, 'pluginEnablement' | 'harnessProfile'>,
   key: Pick<AgentScopeKey, 'key' | 'scope'> & { teamId?: string | null },
   runtime: string | null
-): Promise<{ harnessProfiles: string[]; notes: string[] }> {
+): Promise<{ carried: string[]; harnessProfiles: string[]; notes: string[] }> {
   const inherited = await defaultOverrideProfile(prisma, key, runtime);
   if (key.scope !== 'TEAM' || !key.teamId || inherited.length === 0) {
-    return { harnessProfiles: inherited, notes: [] };
+    return { carried: inherited, harnessProfiles: inherited, notes: [] };
   }
   const enabled = await prisma.pluginEnablement.findMany({
     select: { profile: { select: { name: true } } },
@@ -434,8 +434,10 @@ export async function startingOverrideProfiles(
   });
   const have = new Set(enabled.map((e) => e.profile.name));
   const dropped = inherited.filter((n) => !have.has(n));
+  const carried = inherited.filter((n) => have.has(n));
   return {
-    harnessProfiles: inherited.filter((n) => have.has(n)),
+    carried,
+    harnessProfiles: carried,
     notes:
       dropped.length > 0
         ? [

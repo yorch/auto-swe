@@ -19,23 +19,28 @@ export function skillPluginManaged(reply: FastifyReply): FastifyReply {
   return sendError(reply, 409, 'SKILL_PLUGIN_MANAGED', SKILL_PLUGIN_MANAGED_MESSAGE);
 }
 
-/** Make the projected skills of a profile inactive (disable) or active again (re-enable). */
+/**
+ * Make the projected skills of a profile inactive (disable) or active again (re-enable).
+ *
+ * A disable switches off the rows that are ACTIVE and stamps them `pluginDeactivatedAt`; a
+ * re-enable reactivates exactly the stamped rows, whatever version they were projected from.
+ * Rows a disable never touched keep their state.
+ */
 export async function setProjectedSkillsActive(
   tx: Prisma.TransactionClient,
-  profile: { id: string; latestVersion: number },
+  profile: { id: string },
   active: boolean
 ): Promise<number> {
-  // Nothing can deactivate a projected skill by hand (every skill write refuses it), so every
-  // inactive row of the profile at its latest version was deactivated by a disable. A row left
-  // at an older version is not part of the current projection and stays off.
   const { count } = await runUnscoped(
     'a plugin status change toggles the skills projected from it',
     ['Skill'],
     () =>
       tx.skill.updateMany({
-        data: { isActive: active },
+        data: active
+          ? { isActive: true, pluginDeactivatedAt: null }
+          : { isActive: false, pluginDeactivatedAt: new Date() },
         where: active
-          ? { isActive: false, pluginProfileId: profile.id, pluginVersion: profile.latestVersion }
+          ? { pluginDeactivatedAt: { not: null }, pluginProfileId: profile.id }
           : { isActive: true, pluginProfileId: profile.id },
       })
   );
