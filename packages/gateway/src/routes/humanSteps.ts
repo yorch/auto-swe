@@ -1,4 +1,5 @@
 import type { Prisma } from '@auto-swe/shared';
+import { resolveSlackBotTokenForSlackChannel } from '@auto-swe/shared/lib/systemConfig';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -16,9 +17,11 @@ import {
   humanStepMineScope,
   humanStepTeamScope,
 } from '../lib/humanStepFilters.js';
+import { NUDGE_INTERVAL_MS, nudgeSlackMessage, nudgeText } from '../lib/humanStepNudge.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { ownerTeamOfRun, RUN_OWNER_TEAM_SELECT } from '../lib/runTeamScope.js';
 import { buildWorkflowHumanStepVisibilityFilter } from '../lib/runVisibility.js';
+import { postSlackMessage } from '../lib/slack.js';
 import { assertTeamParam } from '../lib/teamParam.js';
 import { sendTemporalUnavailable } from '../lib/temporalErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -153,6 +156,8 @@ const HumanStepDetailSchema = z.object({
   timeoutAt: z.string().nullable(),
   title: z.string(),
 });
+
+const NudgeResponseSchema = z.object({ data: z.object({ nudgedAt: z.string() }) });
 
 const StepListResponseSchema = z.object({
   data: z.array(HumanStepListItemSchema),
@@ -747,6 +752,144 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           status: result.status,
         },
       };
+    }
+  );
+
+  // Remind the approvers of an overdue step with one reply in the thread of its Slack announcement.
+  app.post(
+    '/:id/nudge',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: {
+        params: StepIdParam,
+        response: {
+          200: NudgeResponseSchema,
+          403: ErrorResponseSchema,
+          404: ErrorResponseSchema,
+          409: ErrorResponseSchema,
+          429: ErrorResponseSchema,
+          502: ErrorResponseSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const step = await fastify.prisma.workflowHumanStep.findFirst({
+        select: {
+          lastNudgedAt: true,
+          requestedAt: true,
+          run: {
+            select: {
+              connection: { select: { teamId: true } },
+              template: { select: { teamId: true } },
+              workRequest: { select: { connection: { select: { teamId: true } } } },
+            },
+          },
+          slackMessage: true,
+          status: true,
+          timeoutAt: true,
+          title: true,
+        },
+        where: {
+          id: request.params.id,
+          ...buildWorkflowHumanStepVisibilityFilter(user, request.repoAccessGate),
+        },
+      });
+      if (!step) {
+        return sendError(reply, 404, 'NOT_FOUND', 'Human step not found');
+      }
+      // Only a LEAD or ADMIN of a team that owns the run may nudge; checked after visibility, so
+      // a refusal tells the caller nothing about a step they cannot see.
+      if (user.role !== 'ADMIN') {
+        const ownerTeamIds = [
+          ...new Set(
+            [
+              step.run?.connection?.teamId,
+              step.run?.workRequest?.connection?.teamId,
+              step.run?.template?.teamId,
+            ].filter((id): id is string => typeof id === 'string')
+          ),
+        ];
+        const leads = await fastify.prisma.teamMembership.findFirst({
+          select: { teamId: true },
+          where: {
+            role: { in: ['LEAD', 'ADMIN'] },
+            team: { isActive: true },
+            teamId: { in: ownerTeamIds },
+            userId: user.sub,
+          },
+        });
+        if (!leads) {
+          return sendError(
+            reply,
+            403,
+            'FORBIDDEN',
+            'Only a LEAD or ADMIN of the team that owns the run can nudge its approvers'
+          );
+        }
+      }
+      const message = nudgeSlackMessage(step.slackMessage);
+      const now = new Date();
+      if (
+        step.status !== 'PENDING' ||
+        !step.timeoutAt ||
+        step.timeoutAt.getTime() >= now.getTime() ||
+        !message
+      ) {
+        return sendError(
+          reply,
+          409,
+          'NUDGE_UNAVAILABLE',
+          'Only an overdue, pending step announced in Slack can be nudged'
+        );
+      }
+      const token = await resolveSlackBotTokenForSlackChannel(message.channel);
+      if (!token) {
+        return sendError(reply, 502, 'SLACK_POST_FAILED', 'The reminder could not be posted');
+      }
+      // Claim the slot before posting, so two concurrent calls cannot both post.
+      const claimed = await fastify.prisma.workflowHumanStep.updateMany({
+        data: { lastNudgedAt: now },
+        where: {
+          id: request.params.id,
+          OR: [
+            { lastNudgedAt: null },
+            { lastNudgedAt: { lt: new Date(now.getTime() - NUDGE_INTERVAL_MS) } },
+          ],
+          status: 'PENDING',
+        },
+      });
+      if (claimed.count === 0) {
+        return sendError(
+          reply,
+          429,
+          'NUDGE_RATE_LIMITED',
+          'This step was nudged within the last four hours'
+        );
+      }
+      const posted = await postSlackMessage(
+        {
+          channel: message.channel,
+          text: nudgeText(step.title, step.requestedAt),
+          threadTs: message.ts,
+        },
+        token
+      );
+      if (!posted) {
+        await fastify.prisma.workflowHumanStep.updateMany({
+          data: { lastNudgedAt: step.lastNudgedAt },
+          where: { id: request.params.id, lastNudgedAt: now },
+        });
+        return sendError(reply, 502, 'SLACK_POST_FAILED', 'The reminder could not be posted');
+      }
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: { nudged: true },
+        entityId: request.params.id,
+        entityType: 'WorkflowHumanStep',
+      });
+      return { data: { nudgedAt: now.toISOString() } };
     }
   );
 };

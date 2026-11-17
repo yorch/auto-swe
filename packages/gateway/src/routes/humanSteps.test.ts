@@ -9,7 +9,19 @@ const DB_NULL = vi.hoisted(() => ({ __sentinel: 'Prisma.DbNull' }));
 vi.mock('@auto-swe/shared', () => ({ Prisma: { DbNull: DB_NULL } }));
 
 const syncSlack = vi.hoisted(() => vi.fn(async () => undefined));
-vi.mock('../lib/hitlSlackSync.js', () => ({ syncSlackHumanStepOutcome: syncSlack }));
+vi.mock('../lib/hitlSlackSync.js', () => ({
+  escapeSlackMrkdwn: (text: string) =>
+    text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
+  syncSlackHumanStepOutcome: syncSlack,
+}));
+
+const postSlack = vi.hoisted(() => vi.fn(async (): Promise<string | null> => '1700000000.000200'));
+vi.mock('../lib/slack.js', () => ({ postSlackMessage: postSlack }));
+
+const botToken = vi.hoisted(() => vi.fn(async (): Promise<string | null> => 'xoxb-test'));
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveSlackBotTokenForSlackChannel: botToken,
+}));
 
 import {
   buildWorkflowRunControlFilter,
@@ -66,6 +78,7 @@ describe('human step routes', () => {
   const answerableCalls: Array<Record<string, unknown>> = [];
   let stepRow: Record<string, unknown> | null = null;
   let updateManyCount = 1;
+  let membershipRow: Record<string, unknown> | null = null;
   const updateManyCalls: UpdateManyCall[] = [];
   const findManyCalls: Array<Record<string, unknown>> = [];
   const countCalls: Array<Record<string, unknown>> = [];
@@ -95,6 +108,9 @@ describe('human step routes', () => {
       },
       configAuditLog: {
         create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
+      },
+      teamMembership: {
+        findFirst: async () => membershipRow,
       },
       workflowHumanStep: {
         count: async (args: Record<string, unknown>) => {
@@ -148,6 +164,11 @@ describe('human step routes', () => {
     listRows = [];
     stepRow = null;
     updateManyCount = 1;
+    membershipRow = null;
+    postSlack.mockClear();
+    postSlack.mockResolvedValue('1700000000.000200');
+    botToken.mockResolvedValue('xoxb-test');
+    vi.mocked(app.prisma.configAuditLog.create).mockClear();
     updateManyCalls.length = 0;
     findManyCalls.length = 0;
     countCalls.length = 0;
@@ -881,6 +902,159 @@ describe('human step routes', () => {
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.payload).error.code).toBe('ALREADY_RESOLVED');
       expect(signalCalls).toHaveLength(0);
+    });
+  });
+
+  describe('POST /:id/nudge', () => {
+    const url = `/api/v1/human-steps/${STEP_ID}/nudge`;
+    const SLACK_MESSAGE = { channel: 'C123', text: 'header', ts: '1700000000.000100' };
+    const overdueStep = (overrides: Record<string, unknown> = {}) =>
+      pendingStep({
+        lastNudgedAt: null,
+        slackMessage: SLACK_MESSAGE,
+        timeoutAt: new Date('2026-06-02T00:00:00Z'),
+        ...overrides,
+        run: {
+          ...(pendingStep().run as Record<string, unknown>),
+          connection: { teamId: 'team-1' },
+          template: null,
+        },
+      });
+    const post = () => app.inject({ headers: AUTH, method: 'POST', url });
+
+    beforeEach(() => {
+      stepRow = overdueStep();
+      membershipRow = { teamId: 'team-1' };
+    });
+
+    it('posts one thread reply to the stored message and records the nudge', async () => {
+      const res = await post();
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).data.nudgedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(postSlack).toHaveBeenCalledTimes(1);
+      expect(postSlack).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: 'C123', threadTs: '1700000000.000100' }),
+        'xoxb-test'
+      );
+      expect(updateManyCalls).toHaveLength(1);
+      expect(updateManyCalls[0]?.data).toHaveProperty('lastNudgedAt');
+      expect(updateManyCalls[0]?.where).toMatchObject({ id: STEP_ID });
+    });
+
+    it('writes an audit row for the step', async () => {
+      await post();
+      expect(app.prisma.configAuditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: 'UPDATE',
+            entityId: STEP_ID,
+            entityType: 'WorkflowHumanStep',
+          }),
+        })
+      );
+    });
+
+    it('is 429 and posts nothing when a nudge was sent in the last four hours', async () => {
+      updateManyCount = 0;
+      const res = await post();
+      expect(res.statusCode).toBe(429);
+      expect(JSON.parse(res.payload).error.code).toBe('NUDGE_RATE_LIMITED');
+      expect(postSlack).not.toHaveBeenCalled();
+    });
+
+    it('claims the slot only when lastNudgedAt is null or older than four hours', async () => {
+      await post();
+      const where = updateManyCalls[0]?.where as {
+        OR: [{ lastNudgedAt: null }, { lastNudgedAt: { lt: Date } }];
+      };
+      expect(where.OR[0]).toEqual({ lastNudgedAt: null });
+      const cutoff = where.OR[1].lastNudgedAt.lt;
+      expect(Date.now() - cutoff.getTime()).toBeGreaterThan(4 * 3_600_000 - 5_000);
+      expect(Date.now() - cutoff.getTime()).toBeLessThan(4 * 3_600_000 + 5_000);
+    });
+
+    it('is 409 NUDGE_UNAVAILABLE without a stored Slack message', async () => {
+      stepRow = overdueStep({ slackMessage: null });
+      const res = await post();
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('NUDGE_UNAVAILABLE');
+      expect(postSlack).not.toHaveBeenCalled();
+      expect(updateManyCalls).toHaveLength(0);
+    });
+
+    it.each([
+      ['not overdue', { timeoutAt: new Date(Date.now() + 3_600_000) }],
+      ['without a timeout', { timeoutAt: null }],
+      ['not pending', { status: 'RESOLVED' }],
+    ])('is 409 NUDGE_UNAVAILABLE for a step that is %s', async (_name, overrides) => {
+      stepRow = overdueStep(overrides);
+      const res = await post();
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('NUDGE_UNAVAILABLE');
+      expect(postSlack).not.toHaveBeenCalled();
+    });
+
+    it('is 403 for a caller who is only an ENGINEER of the owning team', async () => {
+      membershipRow = null;
+      const res = await post();
+      expect(res.statusCode).toBe(403);
+      expect(postSlack).not.toHaveBeenCalled();
+      expect(updateManyCalls).toHaveLength(0);
+    });
+
+    it('looks for a LEAD or ADMIN membership of an active owning team', async () => {
+      const seen: Array<Record<string, unknown>> = [];
+      const original = app.prisma.teamMembership.findFirst;
+      app.prisma.teamMembership.findFirst = (async (args: Record<string, unknown>) => {
+        seen.push(args);
+        return membershipRow;
+      }) as never;
+      try {
+        await post();
+      } finally {
+        app.prisma.teamMembership.findFirst = original;
+      }
+      expect(seen[0]?.where).toEqual({
+        role: { in: ['LEAD', 'ADMIN'] },
+        team: { isActive: true },
+        teamId: { in: ['team-1'] },
+        userId: USER_ID,
+      });
+    });
+
+    it('is 404 for a step the caller cannot see', async () => {
+      stepRow = null;
+      const res = await post();
+      expect(res.statusCode).toBe(404);
+      expect(postSlack).not.toHaveBeenCalled();
+    });
+
+    it('carries no broadcast mention and escapes the title', async () => {
+      stepRow = overdueStep({ title: 'Ship <!channel> & <!here> <!everyone>' });
+      await post();
+      const text = (postSlack.mock.calls[0] as unknown as [{ text: string }])[0].text;
+      expect(text).not.toMatch(/<!(channel|here|everyone)>/);
+      expect(text).toContain('Ship &lt;!channel&gt; &amp; &lt;!here&gt; &lt;!everyone&gt;');
+    });
+
+    it('restores the previous lastNudgedAt and answers 502 when posting fails', async () => {
+      const previous = new Date(Date.now() - 5 * 3_600_000);
+      stepRow = overdueStep({ lastNudgedAt: previous });
+      postSlack.mockResolvedValue(null);
+      const res = await post();
+      expect(res.statusCode).toBe(502);
+      expect(JSON.parse(res.payload).error.code).toBe('SLACK_POST_FAILED');
+      expect(updateManyCalls).toHaveLength(2);
+      expect(updateManyCalls[1]?.data).toEqual({ lastNudgedAt: previous });
+      expect(app.prisma.configAuditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('answers 502 when no bot token resolves', async () => {
+      botToken.mockResolvedValue(null);
+      const res = await post();
+      expect(res.statusCode).toBe(502);
+      expect(postSlack).not.toHaveBeenCalled();
+      expect(updateManyCalls).toHaveLength(0);
     });
   });
 });
