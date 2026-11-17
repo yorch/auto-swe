@@ -44,6 +44,7 @@ function build(opts: Opts = {}) {
     monthlyBudgetUsdCents: teamCap,
     ...data,
   }));
+  const resolvePending = vi.fn(async () => ({ count: 1 }));
   const prisma = {
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     organization: {
@@ -69,11 +70,12 @@ function build(opts: Opts = {}) {
       findUnique: vi.fn(async () => (opts.unknownTeam ? null : row)),
       update,
     },
+    teamBudgetRequest: { updateMany: resolvePending },
     teamSpendUsd: { [TEAM]: opts.teamSpentUsd ?? 0 },
   };
   const app = makeAuthedApp({ prisma, role: opts.platformRole ?? 'ENGINEER', sub: USER });
   app.register(teamBudgetRoutes, { prefix: PREFIX });
-  return { app, prisma, update };
+  return { app, prisma, resolvePending, update };
 }
 
 afterEach(() => vi.clearAllMocks());
@@ -170,6 +172,33 @@ describe('PATCH /teams/:id/budget', () => {
     );
     expect(res.json().data).toMatchObject({ monthlyBudgetUsdCents: 2500 });
     expect(prisma.configAuditLog.create).toHaveBeenCalled();
+  });
+
+  it('resolves the pending budget requests when the cap is set or cleared', async () => {
+    const set = build({ teamRole: 'ADMIN' });
+    await set.app.ready();
+    await patch(set.app, { monthlyBudgetUsdCents: 2500 });
+    expect(set.resolvePending).toHaveBeenCalledWith({
+      data: { resolvedAt: expect.any(Date) },
+      where: { resolvedAt: null, teamId: TEAM },
+    });
+
+    const cleared = build({ teamCap: 100, teamRole: 'ADMIN' });
+    await cleared.app.ready();
+    await patch(cleared.app, { monthlyBudgetUsdCents: null });
+    expect(cleared.resolvePending).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves pending requests alone when only the threshold changes or the save is refused', async () => {
+    const threshold = build({ teamRole: 'ADMIN' });
+    await threshold.app.ready();
+    await patch(threshold.app, { budgetAlertThresholdPercent: 70 });
+    expect(threshold.resolvePending).not.toHaveBeenCalled();
+
+    const refused = build({ teamRole: 'LEAD' });
+    await refused.app.ready();
+    await patch(refused.app, { monthlyBudgetUsdCents: 100 });
+    expect(refused.resolvePending).not.toHaveBeenCalled();
   });
 
   it('clears with null and leaves an omitted key alone', async () => {
