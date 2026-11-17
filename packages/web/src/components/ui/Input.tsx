@@ -7,6 +7,7 @@ import { FieldWrapper, fieldDescribedBy } from './FieldWrapper';
 type InputProps = InputHTMLAttributes<HTMLInputElement> & {
   label?: string;
   hint?: string;
+  hintTone?: 'warning';
   error?: string;
   /** Dense rails and inline editors: `h-8`, `13px` text. */
   compact?: boolean;
@@ -17,6 +18,7 @@ type InputProps = InputHTMLAttributes<HTMLInputElement> & {
 export function Input({
   label,
   hint,
+  hintTone,
   error,
   className,
   compact = false,
@@ -30,7 +32,14 @@ export function Input({
   const generatedId = useId();
   const inputId = id ?? props.name ?? generatedId;
   return (
-    <FieldWrapper error={error} hint={hint} id={inputId} label={label} required={required}>
+    <FieldWrapper
+      error={error}
+      hint={hint}
+      hintTone={hintTone}
+      id={inputId}
+      label={label}
+      required={required}
+    >
       <div className="relative">
         {prefix && (
           <span

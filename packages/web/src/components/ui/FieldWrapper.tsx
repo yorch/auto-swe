@@ -4,6 +4,8 @@ interface FieldWrapperProps {
   id?: string;
   label?: string;
   hint?: string;
+  /** `warning` styles the hint as a caution; the text itself is unchanged. */
+  hintTone?: 'warning';
   error?: string;
   /** Shows the `*` marker. The native `required` attribute stays on the control itself. */
   required?: boolean;
@@ -40,7 +42,15 @@ export function RequiredMark() {
   );
 }
 
-export function FieldWrapper({ id, label, hint, error, required, children }: FieldWrapperProps) {
+export function FieldWrapper({
+  id,
+  label,
+  hint,
+  hintTone,
+  error,
+  required,
+  children,
+}: FieldWrapperProps) {
   return (
     <div className="space-y-1.5">
       {label && (
@@ -51,7 +61,10 @@ export function FieldWrapper({ id, label, hint, error, required, children }: Fie
       )}
       {children}
       {hint && !error && (
-        <p className="text-xs text-paper-500" id={id ? `${id}-hint` : undefined}>
+        <p
+          className={hintTone === 'warning' ? 'text-xs text-warning-400' : 'text-xs text-paper-500'}
+          id={id ? `${id}-hint` : undefined}
+        >
           {hint}
         </p>
       )}

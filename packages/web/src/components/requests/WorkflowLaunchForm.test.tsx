@@ -277,7 +277,7 @@ describe('workflow launch', () => {
     const launched = vi.fn();
     render(withQuery(<WorkflowLaunchForm onLaunched={launched} template={template} />));
     fireEvent.click(screen.getByRole('button', { name: 'Review workflow' }));
-    expect(screen.getByText('Name this task before continuing')).toBeTruthy();
+    expect(screen.getByText('This field is required')).toBeTruthy();
     expect(bodies).toEqual([]);
     fireEvent.change(screen.getByLabelText(/Task name/), {
       target: { value: 'Summarize the release' },
@@ -461,5 +461,168 @@ describe('workflow launch with a provider that needs a connection', () => {
     expect(bodies).toEqual([
       { label: 'Triage', payload: { connectionId: 'conn-1', description: 'Look' } },
     ]);
+  });
+});
+
+describe('workflow launch task name and ticket', () => {
+  const ticketTemplate = {
+    ...template,
+    inputSchema: {
+      properties: {
+        connectionId: { connectionType: 'git_repo', type: 'connection' },
+        description: { type: 'string' },
+        ticketId: { type: 'string' },
+      },
+      required: ['connectionId', 'description'],
+      type: 'object',
+    },
+  } as WorkflowTemplateSummary;
+  const repoId = '11111111-1111-4111-8111-111111111111';
+
+  function ticketGateway(preview: unknown) {
+    const bodies: unknown[] = [];
+    setupFetchMock({
+      'GET /api/v1/repositories': () => ({
+        data: [{ id: repoId, organizationName: 'acme', repoName: 'api', type: 'git_repo' }],
+      }),
+      'GET /api/v1/tickets/preview': () => ({ data: preview }),
+      'GET /api/v1/workflow-templates/template-1': () => ({
+        data: { ...ticketTemplate, activeVersionSpec: null },
+      }),
+      'POST /api/v1/workflow-templates/template-1/runs': (body) => {
+        bodies.push(body);
+        return { data: { workRequestId: 'request-1' } };
+      },
+    });
+    return bodies;
+  }
+  async function pickRepo() {
+    const picker = await screen.findByRole('combobox', { name: /Repository|Connection/ });
+    act(() => picker.focus());
+    fireEvent.change(picker, { target: { value: 'acme' } });
+    fireEvent.click(screen.getByRole('option', { name: 'acme/api' }));
+  }
+
+  it('launches without a task name and omits the label', async () => {
+    const bodies = gateway();
+    render(withQuery(<WorkflowLaunchForm onLaunched={vi.fn()} template={template} />));
+    fireEvent.change(screen.getByLabelText(/Description/), { target: { value: 'Brief' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Review workflow' }));
+    expect(await screen.findByRole('button', { name: 'Launch workflow' })).toBeTruthy();
+    expect(screen.queryByText('Task')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Launch workflow' }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toEqual({ payload: { description: 'Brief' } });
+  });
+
+  it('makes the description optional once a valid ticket id is given', async () => {
+    const bodies = ticketGateway({});
+    render(withQuery(<WorkflowLaunchForm onLaunched={vi.fn()} template={ticketTemplate} />));
+    await pickRepo();
+    expect(screen.getByText(/Without a Ticket ID the run gets no tracker context/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Review workflow' }));
+    expect(screen.getByText('This field is required')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Ticket ID'), { target: { value: 'PAY-1' } });
+    expect(screen.getByText(/Optional when a Ticket ID is given/)).toBeTruthy();
+    expect(screen.getByText(/Names the branch and, when an issue tracker/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Review workflow' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Launch workflow' }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toEqual({
+      payload: { connectionId: repoId, description: '', ticketId: 'PAY-1' },
+    });
+  });
+
+  it('validates the ticket id on a custom schema and strips an empty one', async () => {
+    const bodies = ticketGateway({});
+    render(withQuery(<WorkflowLaunchForm onLaunched={vi.fn()} template={ticketTemplate} />));
+    await pickRepo();
+    fireEvent.change(screen.getByLabelText(/Description/), { target: { value: 'Brief' } });
+    fireEvent.change(screen.getByLabelText('Ticket ID'), { target: { value: 'bad..id' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Review workflow' }));
+    expect(screen.getByText(/Enter a valid ticket ID/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Ticket ID'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Review workflow' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Launch workflow' }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect((bodies[0] as { payload: object }).payload).not.toHaveProperty('ticketId');
+  });
+
+  it('fetches a title, shows it as text, and only sets the name on request', async () => {
+    ticketGateway({
+      configured: true,
+      found: true,
+      status: 'Open',
+      title: '<b>Fix login</b>',
+      url: null,
+    });
+    render(withQuery(<WorkflowLaunchForm onLaunched={vi.fn()} template={ticketTemplate} />));
+    expect(screen.queryByRole('button', { name: 'Fetch title' })).toBeNull();
+    await pickRepo();
+    const fetchButton = screen.getByRole('button', { name: 'Fetch title' }) as HTMLButtonElement;
+    expect(fetchButton.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Ticket ID'), { target: { value: 'PAY-1' } });
+    expect(fetchButton.disabled).toBe(false);
+    fireEvent.click(fetchButton);
+    expect(await screen.findByText('<b>Fix login</b> · Open')).toBeTruthy();
+    expect((screen.getByLabelText(/Task name/) as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText(/Description/) as HTMLTextAreaElement).value).toBe('');
+    fireEvent.click(screen.getByRole('button', { name: 'Use as task name' }));
+    expect((screen.getByLabelText(/Task name/) as HTMLInputElement).value).toBe('<b>Fix login</b>');
+  });
+
+  it.each([
+    [
+      { configured: false, found: false, status: null, title: null, url: null },
+      /No issue tracker is configured/,
+    ],
+    [{ configured: true, found: false, status: null, title: null, url: null }, /couldn't be read/],
+  ])('explains a preview that has no title', async (preview, message) => {
+    ticketGateway(preview);
+    render(withQuery(<WorkflowLaunchForm onLaunched={vi.fn()} template={ticketTemplate} />));
+    await pickRepo();
+    fireEvent.change(screen.getByLabelText('Ticket ID'), { target: { value: 'PAY-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch title' }));
+    expect(await screen.findByText(message)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Use as task name' })).toBeNull();
+  });
+
+  it('requires the description again when the tracker is not configured', async () => {
+    ticketGateway({ configured: false, found: false, status: null, title: null, url: null });
+    render(withQuery(<WorkflowLaunchForm onLaunched={vi.fn()} template={ticketTemplate} />));
+    await pickRepo();
+    fireEvent.change(screen.getByLabelText('Ticket ID'), { target: { value: 'PAY-1' } });
+    expect(screen.getByText(/Optional when a Ticket ID is given/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch title' }));
+    expect(await screen.findByText(/No issue tracker is configured/)).toBeTruthy();
+    expect(screen.queryByText(/Optional when a Ticket ID is given/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Review workflow' }));
+    expect(screen.getByText('This field is required')).toBeTruthy();
+  });
+
+  it('says the tracker could not be reached, and drops that once the ticket id changes', async () => {
+    ticketGateway({});
+    const ok = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).includes('/tickets/preview')
+        ? new Response(JSON.stringify({ error: { code: 'TRACKER_UNAVAILABLE', message: 'x' } }), {
+            headers: { 'content-type': 'application/json' },
+            status: 503,
+          })
+        : ok(input, init)
+    );
+    render(withQuery(<WorkflowLaunchForm onLaunched={vi.fn()} template={ticketTemplate} />));
+    await pickRepo();
+    fireEvent.change(screen.getByLabelText('Ticket ID'), { target: { value: 'PAY-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch title' }));
+    expect(await screen.findByText("Couldn't reach the issue tracker. Try again.")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Ticket ID'), { target: { value: 'PAY-2' } });
+    expect(screen.queryByText("Couldn't reach the issue tracker. Try again.")).toBeNull();
+  });
+
+  it('describes the task name default as description first, then the ticket', async () => {
+    ticketGateway({});
+    render(withQuery(<WorkflowLaunchForm onLaunched={vi.fn()} template={ticketTemplate} />));
+    expect(await screen.findByText(/first line of the description, or the ticket/)).toBeTruthy();
   });
 });

@@ -1,7 +1,6 @@
 'use client';
 
 import { DEFAULT_BRIEF_INPUT_SCHEMA, isInputSchema } from '@auto-swe/shared/lib/inputSchema';
-import { isValidTicketId } from '@auto-swe/shared/lib/ticketId';
 import { workflowPresentation } from '@auto-swe/shared/lib/workflowCatalog';
 import {
   getWorkspaceProviderMetadata,
@@ -32,6 +31,7 @@ import {
 } from '@/hooks/useKnowledgeBases';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useRunTemplate } from '@/hooks/useTemplates';
+import { type TicketPreview, useTicketPreview } from '@/hooks/useTicketPreview';
 import {
   describeLaunchError,
   egressPolicyFor,
@@ -40,13 +40,79 @@ import {
   type NetworkAccess,
   parseNetworkAccess,
 } from '@/lib/agentRun';
+import { ApiError } from '@/lib/api';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
 import { pickSampleField, WORKFLOW_SAMPLE } from '@/lib/sampleTasks';
+import {
+  applyTicketErrors,
+  DESCRIPTION_HINT_WITH_TICKET,
+  submitPayload,
+  TASK_NAME_HINT,
+  TRACKER_UNREACHABLE,
+  ticketFieldState,
+} from '@/lib/ticketField';
 import { humanizeWorkflowKey, workflowFieldLabel } from '@/lib/workflowLabels';
 
 function hasText(value: unknown) {
   return typeof value === 'string' && value.trim() !== '';
+}
+
+/** The "Fetch title" action and its result. The title comes from the tracker: plain text only. */
+function TicketTitleLookup({
+  canFetch,
+  isPending,
+  errorMessage,
+  onFetch,
+  onUseAsName,
+  result,
+}: {
+  canFetch: boolean;
+  isPending: boolean;
+  /** Set when the lookup for the current ticket and repository failed. */
+  errorMessage: string | null;
+  onFetch: () => void;
+  onUseAsName: (title: string) => void;
+  result: TicketPreview | null;
+}) {
+  const title = result?.title?.trim() ? result.title.trim() : null;
+  return (
+    <div className="space-y-1.5 text-xs">
+      <Button
+        disabled={!canFetch || isPending}
+        onClick={onFetch}
+        size="sm"
+        type="button"
+        variant="secondary"
+      >
+        {isPending ? 'Fetching…' : 'Fetch title'}
+      </Button>
+      <div aria-live="polite" className="space-y-1.5">
+        {errorMessage && !result && <p className="text-warning-400">{errorMessage}</p>}
+        {result?.configured === false && (
+          <p className="text-paper-500">
+            No issue tracker is configured, so this ID is only a label for the branch and run.
+          </p>
+        )}
+        {result?.configured && !result.found && (
+          <p className="text-warning-400">
+            That ticket couldn't be read (not found, or outside this repository's scope).
+          </p>
+        )}
+        {result?.configured && result.found && title && (
+          <div className="flex flex-wrap items-center gap-3 text-paper-300">
+            <span>
+              {title}
+              {result.status ? ` · ${result.status}` : ''}
+            </span>
+            <Button onClick={() => onUseAsName(title)} size="sm" type="button" variant="ghost">
+              Use as task name
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function WorkflowLaunchForm({
@@ -84,15 +150,24 @@ export function WorkflowLaunchForm({
   const failure = launch.isError ? describeLaunchError(launch.error) : null;
   const unchanged = failure?.runAnyway ? failure : null;
   const sampleField = pickSampleField(schema);
-  const errors = schema ? validatePayload(schema, payload) : {};
-  if (
-    schema === DEFAULT_BRIEF_INPUT_SCHEMA &&
-    typeof payload.ticketId === 'string' &&
-    payload.ticketId !== '' &&
-    !isValidTicketId(payload.ticketId)
-  ) {
-    errors.ticketId = 'Enter a valid ticket ID (letters, digits, ".", "_", "#", "/" and "-")';
-  }
+  const preview = useTicketPreview();
+  const [previewKey, setPreviewKey] = useState('');
+  const ticketIdValue = typeof payload.ticketId === 'string' ? payload.ticketId : '';
+  const currentPreviewKey = `${referenceRepoId}\n${ticketIdValue}`;
+  // A preview answers only for the ticket and repository it was asked about.
+  const previewIsCurrent = previewKey === currentPreviewKey;
+  const previewResult = previewIsCurrent ? (preview.data ?? null) : null;
+  const previewErrorMessage =
+    previewIsCurrent && preview.isError
+      ? preview.error instanceof ApiError && preview.error.status === 503
+        ? TRACKER_UNREACHABLE
+        : 'Could not look up that ticket. Try again.'
+      : null;
+  const trackerConfigured = previewResult ? previewResult.configured : null;
+  const ticket = ticketFieldState(schema, payload, trackerConfigured);
+  const errors = schema
+    ? applyTicketErrors(schema, payload, validatePayload(schema, payload), trackerConfigured)
+    : {};
   const required = new Set(schema?.required ?? []);
   // A workspace provider can need a target connection the input schema never asks for; the
   // launch is refused without one, so the form has to collect it.
@@ -129,7 +204,7 @@ export function WorkflowLaunchForm({
   }
   function reviewInputs() {
     setAttempted(true);
-    if (!Object.keys(errors).length && !connectionError && label.trim()) {
+    if (!Object.keys(errors).length && !connectionError) {
       setReview(true);
     }
   }
@@ -140,11 +215,8 @@ export function WorkflowLaunchForm({
     lock.current = true;
     try {
       const result = await launch.mutateAsync({
-        label: label.trim(),
-        payload:
-          schema === DEFAULT_BRIEF_INPUT_SCHEMA && payload.ticketId === ''
-            ? Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'ticketId'))
-            : payload,
+        ...(label.trim() ? { label: label.trim() } : {}),
+        payload: submitPayload(schema, payload),
         ...knowledgeBaseOverrideBody(references),
         ...egressPolicyFor(networkAccess),
         ...(acknowledgeUnchanged ? { acknowledgeUnchanged } : {}),
@@ -187,7 +259,7 @@ export function WorkflowLaunchForm({
         <>
           <ReviewList
             items={[
-              { label: 'Task', value: label },
+              ...(label.trim() ? [{ label: 'Task', value: label.trim() }] : []),
               ...(references.add?.length || references.exclude?.length
                 ? [
                     {
@@ -253,28 +325,50 @@ export function WorkflowLaunchForm({
             />
           )}
           <Input
-            error={attempted && !label.trim() ? 'Name this task before continuing' : undefined}
-            hint="A short name to find this request later."
+            hint={TASK_NAME_HINT}
             id={taskNameId}
             label="Task name"
             maxLength={200}
             onChange={(event) => setLabel(event.target.value)}
-            required
             value={label}
           />
           {schema &&
             Object.entries(schema.properties)
               .sort(([a], [b]) => Number(required.has(b)) - Number(required.has(a)))
               .map(([key, prop]) => (
-                <SchemaFieldInput
-                  error={attempted ? errors[key] : undefined}
-                  key={key}
-                  name={key}
-                  onChange={(value) => setPayload((prev) => ({ ...prev, [key]: value }))}
-                  prop={prop}
-                  required={required.has(key)}
-                  value={payload[key]}
-                />
+                <div className="space-y-2" key={key}>
+                  <SchemaFieldInput
+                    error={attempted ? errors[key] : undefined}
+                    hint={
+                      key === 'ticketId' && ticket.ticketHint
+                        ? ticket.ticketHint.text
+                        : key === 'description' && ticket.descriptionOptional
+                          ? DESCRIPTION_HINT_WITH_TICKET
+                          : undefined
+                    }
+                    hintTone={key === 'ticketId' ? ticket.ticketHint?.tone : undefined}
+                    name={key}
+                    onChange={(value) => setPayload((prev) => ({ ...prev, [key]: value }))}
+                    prop={prop}
+                    required={
+                      required.has(key) && !(key === 'description' && ticket.descriptionOptional)
+                    }
+                    value={payload[key]}
+                  />
+                  {key === 'ticketId' && ticket.hasTicket && referenceRepoId && (
+                    <TicketTitleLookup
+                      canFetch={ticket.ticketValid}
+                      errorMessage={previewErrorMessage}
+                      isPending={preview.isPending}
+                      onFetch={() => {
+                        setPreviewKey(currentPreviewKey);
+                        preview.mutate({ connectionId: referenceRepoId, ticketId: ticketIdValue });
+                      }}
+                      onUseAsName={(title) => setLabel(title.slice(0, 200))}
+                      result={previewResult}
+                    />
+                  )}
+                </div>
               ))}
           {needsConnection && (
             <ConnectionPicker
