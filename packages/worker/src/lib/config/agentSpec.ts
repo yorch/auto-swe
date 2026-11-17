@@ -29,6 +29,15 @@ export interface AgentSpec {
    * rows of its LLM calls. `null` for an inline agent, which is not an `Agent` row.
    */
   agent: { id: string; version: number } | null;
+  /**
+   * Where the bound model's credential came from: the scope of its row and any custom `apiBase`.
+   * Absent for an inline agent. A scope that is absent is unknown, and a trust decision reads it
+   * as untrusted.
+   */
+  modelCredential?: {
+    apiBase?: string;
+    scope?: 'TEAM' | 'ORGANIZATION' | 'GLOBAL';
+  };
   /** Bound language model, ready to hand to a Mastra `Agent`. */
   model: LanguageModel;
   /** Fully composed system prompt: base prompt followed by the skill suffix. */
@@ -184,6 +193,7 @@ export async function resolveAgentSpec(
       agent.model.apiBase,
       agent.model.reasoning
     ),
+    modelCredential: { apiBase: agent.model.apiBase, scope: agent.model.credentialScope },
     modelSpec: agent.model.spec,
     outputSchema,
     skills: agent.skills,

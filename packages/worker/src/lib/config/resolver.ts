@@ -27,7 +27,12 @@ export class ConfigMissingError extends Error {
 export async function resolveProviderCredential(
   provider: string,
   ctx?: ResolveCtx
-): Promise<{ apiBase?: string; apiKey: string; fellThrough: boolean }> {
+): Promise<{
+  apiBase?: string;
+  apiKey: string;
+  fellThrough: boolean;
+  scope: 'TEAM' | 'ORGANIZATION' | 'GLOBAL';
+}> {
   const cacheKey = `cred:${provider}:${ctx?.teamId ?? ''}:${ctx?.orgId ?? ''}`;
   // A narrower-scope request that landed on a broader row (a TEAM request on
   // ORG or GLOBAL, an ORG request on GLOBAL) is the common case for team runs,
@@ -44,6 +49,7 @@ export async function resolveProviderCredential(
     apiBase: resolved.apiBase,
     apiKey: resolved.apiKey,
     fellThrough: fellThrough(ctx, resolved._scope),
+    scope: resolved._scope,
   };
 }
 
@@ -100,7 +106,7 @@ async function resolveProviderCredentialUncached(
 export type PinnedCredentialMiss = 'missing' | 'provider-mismatch' | 'out-of-scope';
 
 export type PinnedCredentialResult =
-  | { ok: true; apiBase?: string; apiKey: string }
+  | { ok: true; apiBase?: string; apiKey: string; scope: 'TEAM' | 'ORGANIZATION' | 'GLOBAL' }
   | { ok: false; reason: PinnedCredentialMiss };
 
 /// The credential an Agent pins by id, if it may be used for this call. A pin
@@ -128,10 +134,13 @@ export async function resolvePinnedCredential(
     row.scope === 'GLOBAL' ||
     (row.scope === 'ORGANIZATION' && Boolean(ctx?.orgId) && row.orgId === ctx?.orgId) ||
     (row.scope === 'TEAM' && Boolean(ctx?.teamId) && row.teamId === ctx?.teamId);
-  if (!reachable) {
+  if (
+    !reachable ||
+    (row.scope !== 'GLOBAL' && row.scope !== 'ORGANIZATION' && row.scope !== 'TEAM')
+  ) {
     return { ok: false, reason: 'out-of-scope' };
   }
-  return { ok: true, ...decryptRow(row) };
+  return { ok: true, ...decryptRow(row), scope: row.scope };
 }
 
 /// Embedding-model spec + credential. The system has exactly one embedding

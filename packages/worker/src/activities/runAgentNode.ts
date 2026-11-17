@@ -33,7 +33,7 @@ import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
-import { isOnboardingDraftAgent } from '../lib/onboardingEgress.js';
+import { credentialTrusted, isOnboardingDraftAgent } from '../lib/onboardingEgress.js';
 import {
   checkSurfaceState,
   cloneCredentialSecrets,
@@ -322,7 +322,10 @@ async function runInCheckout(args: {
 
   // Decided once, from this resolution. The seeded definition binds no MCP server, and every
   // later resolution of the key must be this same row, or the activity stops (below).
-  const onboardingDraft = await isOnboardingDraftAgent(key, resolved.id, loop);
+  const onboardingDraft = await isOnboardingDraftAgent(key, resolved.id, loop, {
+    apiBase: resolved.model.apiBase,
+    scope: resolved.model.credentialScope,
+  });
   const repo = await withRunDetection(
     await prisma.connection.findUniqueOrThrow({
       include: { installation: { select: { host: true, installationId: true } } },
@@ -527,12 +530,18 @@ async function runInCheckout(args: {
     },
     resolveCtx
   );
-  if (onboardingDraft && spec.agent?.id !== resolved.id) {
-    // An override created after the workspace was widened would otherwise run inside it. Failing
+  if (
+    onboardingDraft &&
+    (spec.agent?.id !== resolved.id || !credentialTrusted(spec.modelCredential ?? {}))
+  ) {
+    // An override created after the workspace was widened would otherwise run inside it, and so
+    // would a credential that names its own endpoint added after it. The credential may change
+    // between the two resolutions as long as it is still a trusted one (`spec.modelCredential` and
+    // `spec.model` are built from the same resolved model). Failing
     // is non-retryable by design, a safe-fail trade-off: even a harmless mid-run override race
     // fails the whole onboarding run instead of falling back to the team allowlist.
     throw ApplicationFailure.nonRetryable(
-      `Agent '${key}' resolved to a different definition after its workspace was widened for ` +
+      `Agent '${key}' resolved to a different definition, or a credential that is not trusted, after its workspace was widened for ` +
         'onboarding; refusing to run it there.',
       'ONBOARDING_AGENT_CHANGED'
     );

@@ -1644,3 +1644,39 @@ team's policy or restore the seeded definition.
 channel or workflow-template override exists for it; a new draft run's package install succeeds.
 
 ---
+
+### Onboarding draft egress requires a trusted model credential (`<fixing commit SHA>`)
+
+**Affected.** Deployments that use the egress proxy under the `restricted` or `blocked` policy
+where the provider credential the `repo-onboarder` model resolves to is TEAM or ORGANIZATION scope
+and carries a custom `apiBase`. The credential is the one pinned on the agent (`Agent.credentialId`)
+when one is set and usable for the run; a pin that is missing, belongs to another provider or is out
+of scope falls back to the cascade with a warning. Otherwise it is the first match of the TEAM, then
+ORGANIZATION, then GLOBAL cascade. A
+deployment on the `open` policy is unaffected: the draft's added hosts are not applied there.
+
+**What changes.** The wider allowlist for the `repo-onboarding` draft workspace now also depends on
+the model's credential. It is granted only when that credential is GLOBAL scope, or TEAM or
+ORGANIZATION scope with no custom `apiBase`, because a team-scoped endpoint could point the model
+at a server the team controls. A non-GLOBAL credential with a custom `apiBase` refuses the grant,
+and the worker logs `onboarding draft egress refused: the model's credential is not global and names
+its own endpoint, or its scope is unknown` with the condition `credentialScope`. The run then keeps its normal egress
+policy, so its package installs can start failing with a refused host. A custom provider at TEAM or
+ORGANIZATION scope no longer qualifies; the same provider at GLOBAL scope does. This tightens the
+earlier entry's statement that a change of credential alone does not disqualify a draft run: a
+credential now disqualifies it unless it is GLOBAL scope, or TEAM or ORGANIZATION scope with no
+custom `apiBase`; a model or reasoning change alone still does not. If the credential's scope or `apiBase` changes between the check and a later resolution in the
+run, the draft node fails without retry (`ONBOARDING_AGENT_CHANGED`). No migration or
+environment-variable change.
+
+**Actions.** Under `restricted`, add the package-registry and download hosts the draft needs to the
+team allowlist, move the credential to GLOBAL scope, or drop its `apiBase` if it only restated the
+provider default. Under `blocked` the team list is not used, so change the team's policy, move the credential to
+GLOBAL scope, or drop its `apiBase` if it only restated the provider default. Then start a new run.
+
+**Verify.** In `/models`, the credential for that provider at the team's scope has no custom
+`apiBase` (or it lives at GLOBAL scope), and a new draft run's package install succeeds. If an
+install is still refused, the worker log for that run should show no `credentialScope` refusal from
+`onboarding draft egress refused`.
+
+---

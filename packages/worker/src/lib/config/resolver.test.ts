@@ -173,6 +173,20 @@ describe('provider-credential cache', () => {
     }
   });
 
+  it.each([
+    ['TEAM', { orgId: 'o1', teamId: 't1' }, 'TEAM'],
+    ['ORGANIZATION', { orgId: 'o1', teamId: 't1' }, 'ORGANIZATION'],
+    ['GLOBAL', { orgId: 'o1', teamId: 't1' }, 'GLOBAL'],
+    ['GLOBAL', undefined, 'GLOBAL'],
+  ] as const)('reports the scope of the row that answered (%s)', async (answers, ctx, expected) => {
+    credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) =>
+      args.where.scope === answers ? credRow(`sk-${answers}`) : null
+    );
+    const r = await resolveProviderCredential('anthropic', ctx);
+    expect(r.scope).toBe(expected);
+    expect(r.apiKey).toBe(`sk-${answers}`);
+  });
+
   it('reports whether the credential fell through to a broader scope', async () => {
     credFindFirstMock.mockImplementation(async (args: { where: { scope: string } }) =>
       args.where.scope === 'TEAM' ? credRow('sk-team') : credRow('sk-global')
@@ -238,6 +252,7 @@ describe('resolvePinnedCredential', () => {
       apiBase: 'https://openrouter.ai/api/v1',
       apiKey: 'sk-pinned',
       ok: true,
+      scope: 'GLOBAL',
     });
     expect(credFindUniqueMock).toHaveBeenCalledWith({ where: { id: 'cred-pin' } });
   });
@@ -266,9 +281,9 @@ describe('resolvePinnedCredential', () => {
 
   it('honours a TEAM credential only for a run of that team', async () => {
     credFindUniqueMock.mockResolvedValue(pinnedRow({ scope: 'TEAM', teamId: 't-1' }));
-    expect((await resolvePinnedCredential('cred-pin', 'openrouter', { teamId: 't-1' })).ok).toBe(
-      true
-    );
+    expect(
+      await resolvePinnedCredential('cred-pin', 'openrouter', { teamId: 't-1' })
+    ).toMatchObject({ ok: true, scope: 'TEAM' });
     _resetConfigCacheForTests();
     await expect(
       resolvePinnedCredential('cred-pin', 'openrouter', { teamId: 't-2' })
@@ -282,8 +297,8 @@ describe('resolvePinnedCredential', () => {
 
   it('honours an ORGANIZATION credential only for a run in that org', async () => {
     credFindUniqueMock.mockResolvedValue(pinnedRow({ orgId: 'o-1', scope: 'ORGANIZATION' }));
-    expect((await resolvePinnedCredential('cred-pin', 'openrouter', { orgId: 'o-1' })).ok).toBe(
-      true
+    expect(await resolvePinnedCredential('cred-pin', 'openrouter', { orgId: 'o-1' })).toMatchObject(
+      { ok: true, scope: 'ORGANIZATION' }
     );
     _resetConfigCacheForTests();
     await expect(

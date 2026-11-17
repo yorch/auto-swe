@@ -6,7 +6,10 @@ import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
 vi.mock('../lib/runKnowledgeBases.js', () => ({
   loadRunKnowledgeBases: vi.fn(async () => ({ checkouts: [], snapshotIds: [] })),
 }));
-vi.mock('../lib/onboardingEgress.js', () => ({ isOnboardingDraftAgent: vi.fn(async () => false) }));
+vi.mock('../lib/onboardingEgress.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/onboardingEgress.js')>()),
+  isOnboardingDraftAgent: vi.fn(async () => false),
+}));
 vi.mock('../lib/knowledgeBaseSearch.js', () => ({
   searchRunKnowledge: vi.fn(async () => ({ injectionDropped: 0, mode: 'text', results: [] })),
 }));
@@ -580,6 +583,7 @@ describe('runAgentNode', () => {
       mockedResolveSpec.mockResolvedValue({
         agent: { id: 'agent-row-1', version: 1 },
         agentKey: 'reviewer',
+        modelCredential: { scope: 'GLOBAL' },
         systemPrompt: 'Review.',
       } as never);
       harness.build.mockReturnValue({ close: harness.close, runTurn: vi.fn() });
@@ -596,10 +600,12 @@ describe('runAgentNode', () => {
           inputs: { draftEgress: true, onboardingDraft: true },
           workspace: { repoId: 'repo-1', ticketId: 'onboard' },
         });
-        expect(isOnboardingDraftAgent).toHaveBeenCalledWith('repo-onboarder', 'agent-row-1', {
-          runtime: 'mastra',
-          source: 'default',
-        });
+        expect(isOnboardingDraftAgent).toHaveBeenCalledWith(
+          'repo-onboarder',
+          'agent-row-1',
+          { runtime: 'mastra', source: 'default' },
+          { apiBase: undefined, scope: undefined }
+        );
         const options = vi.mocked(createWorkspace).mock.calls[0]?.[6];
         if (verified) {
           expect(options).toHaveProperty('onboardingDraft', true);
@@ -624,6 +630,7 @@ describe('runAgentNode', () => {
         mockedResolveSpec.mockResolvedValueOnce({
           agent: { id: specAgentId, version: 1 },
           agentKey: 'repo-onboarder',
+          modelCredential: { scope: 'GLOBAL' },
           systemPrompt: 'Draft.',
           tools: {},
         } as never);
@@ -644,6 +651,73 @@ describe('runAgentNode', () => {
     );
 
     it.each([
+      ['the same credential', { apiBase: undefined, scope: 'GLOBAL' }, true],
+      ['a changed scope that is still trusted (TEAM, no endpoint)', { scope: 'TEAM' }, true],
+      [
+        'a changed scope that is still trusted (ORGANIZATION, no endpoint)',
+        { scope: 'ORGANIZATION' },
+        true,
+      ],
+      [
+        'a GLOBAL credential with its own endpoint',
+        { apiBase: 'https://gw.example.com', scope: 'GLOBAL' },
+        true,
+      ],
+      [
+        'a TEAM credential with a custom endpoint',
+        { apiBase: 'https://evil.example.com', scope: 'TEAM' },
+        false,
+      ],
+      [
+        'an ORGANIZATION credential with a custom endpoint',
+        { apiBase: 'https://evil.example.com', scope: 'ORGANIZATION' },
+        false,
+      ],
+      ['no credential scope', { apiBase: undefined, scope: undefined }, false],
+      ['no credential information', undefined, false],
+    ] as const)(
+      'on the Mastra path, a widened onboarding workspace runs with %s only when it is trusted',
+      async (_name, specCredential, runs) => {
+        vi.mocked(resolveAgentRuntime).mockResolvedValueOnce({
+          runtime: 'mastra',
+          source: 'run',
+        });
+        vi.mocked(resolveAgent).mockResolvedValueOnce({
+          id: 'agent-row-1',
+          model: { apiBase: undefined, credentialScope: 'GLOBAL' },
+          toolKeys: [],
+        } as never);
+        vi.mocked(isOnboardingDraftAgent).mockResolvedValueOnce(true);
+        mockedResolveSpec.mockResolvedValueOnce({
+          agent: { id: 'agent-row-1', version: 1 },
+          agentKey: 'repo-onboarder',
+          modelCredential: specCredential,
+          systemPrompt: 'Draft.',
+          tools: {},
+        } as never);
+        mockedRunAgent.mockClear();
+        const run = runAgentNode({
+          agentRef: 'repo-onboarder',
+          workspace: { repoId: 'repo-1', ticketId: 'onboard' },
+        });
+        if (runs) {
+          await run;
+          expect(mockedRunAgent).toHaveBeenCalledOnce();
+        } else {
+          await expect(run).rejects.toMatchObject({ type: 'ONBOARDING_AGENT_CHANGED' });
+          expect(mockedRunAgent).not.toHaveBeenCalled();
+        }
+        expect(vi.mocked(isOnboardingDraftAgent)).toHaveBeenLastCalledWith(
+          'repo-onboarder',
+          'agent-row-1',
+          expect.anything(),
+          { apiBase: undefined, scope: 'GLOBAL' }
+        );
+        expect(workspace.destroy).toHaveBeenCalled();
+      }
+    );
+
+    it.each([
       [true, false],
       [false, true],
     ])(
@@ -658,6 +732,7 @@ describe('runAgentNode', () => {
         mockedResolveSpec.mockResolvedValueOnce({
           agent: { id: 'agent-row-1', version: 1 },
           agentKey: 'repo-onboarder',
+          modelCredential: { scope: 'GLOBAL' },
           systemPrompt: 'Draft.',
           tools: {},
         } as never);

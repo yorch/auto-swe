@@ -852,12 +852,25 @@ seed's content: a GLOBAL `repo-onboarder` with no team, organization, channel or
 whose system prompt, tool list, skill refs, MCP binding, runtime, harness profile and model
 inheritance are the seed's (tool keys and skill refs compare as sets), and the node's loop must be
 the default one: a runtime pinned at run start, even by an override since deactivated, refuses.
-Its model, credential and reasoning may differ. Copying or editing
+Its model and reasoning may differ; its credential may differ only within the credential rule
+below. Copying or editing
 the template, overriding the agent at team or organization scope, or a global version with a
 different prompt, tools or bindings does not grant it, and a run that is refused keeps its
 normal egress policy (the refusal is logged with the first condition that failed). A workspace
 that was widened runs only that resolved definition: if the agent resolves to another one
 during the run, the node fails without retry, and no MCP server is bound for it.
+
+The credential rule covers the provider credential the agent's model is called with. It is the
+credential pinned on the agent (`Agent.credentialId`) when one is set and usable for the run; a pin
+that is missing, belongs to another provider or is out of scope falls back to the cascade with a
+warning. Otherwise the TEAM, then ORGANIZATION, then GLOBAL credential the cascade resolves is used. The grant applies when that
+credential is GLOBAL scope, or TEAM or ORGANIZATION scope with no custom `apiBase`. A non-GLOBAL
+credential with a custom `apiBase` refuses the grant, logged with its own condition, because a team
+admin could otherwise point the model at a server the team controls. A built-in provider at its
+default endpoint therefore qualifies at any scope, while a custom provider (an openai-compatible
+one, which needs an `apiBase`) qualifies at GLOBAL scope but not at TEAM or ORGANIZATION scope. If
+the credential's scope or `apiBase` changes between the check and a later resolution in the run,
+the draft node fails without retry, as `ONBOARDING_AGENT_CHANGED` does for a changed agent.
 
 A deterministic trial provisions a fresh base-branch workspace under the **real run policy**,
 with no setup-only widening. It applies the proposed setup in memory, runs the exact drafted
@@ -1039,20 +1052,19 @@ for whichever provider serves the repository.
 ## Limitations
 
 - **The onboarding draft's wider egress is not a strong boundary against a team admin.** The check
-  covers the agent definition (and the run's loop, which must be the default one: a runtime pinned at
-  run start refuses), but the credential the agent's model is called with is resolved by scope, so a
-  team or organization provider credential, with its own `apiBase`, can steer which model drives the
-  draft workspace. The draft already runs repository code under the wider list by design; the check
-  narrows who receives the list. The row is also read live by id while the run's agent comes from a
+  covers the agent definition, the run's loop (which must be the default one: a runtime pinned at
+  run start refuses) and the model's credential under the credential rule. The draft already runs
+  repository code under the wider list by design; the check narrows who receives the list. The row is also read live by id while the run's agent comes from a
   short cache, so a bundle install (ADMIN only) that rewrites the global agent in place is not
   noticed by an id comparison.
 - **A refused runtime pin can outlast the cause.** If the run-start runtime snapshot skipped the
   agent (it swallows per-key errors), the first attempt writes a concrete `mastra` pin, so later
   attempts, revisits and resumes of that run read a run-pinned runtime and lose the wider egress
   (logged as `runtimePin`). This only narrows, never widens.
-- **A mid-run agent change fails the onboarding run.** If the agent resolves to another definition
-  after the workspace was widened, the node fails without retry (`ONBOARDING_AGENT_CHANGED`) instead
-  of falling back to the team allowlist, so even a harmless override race ends the run.
+- **A mid-run agent or credential change fails the onboarding run.** If the agent resolves to another
+  definition, or the model's credential changes scope or `apiBase`, after the workspace was widened,
+  the node fails without retry (`ONBOARDING_AGENT_CHANGED`) instead of falling back to the team
+  allowlist, so even a harmless override race ends the run.
 - **Bulk import can start many onboarding runs at once.** With `onboarding.autoRunOnConnect`
   enabled, each imported Git repository starts its own run, subject to the creator's permissions
   and normal launch budgets. The import does not impose an additional concurrency limit.

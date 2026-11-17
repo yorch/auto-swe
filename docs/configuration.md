@@ -601,10 +601,13 @@ download hosts. Entries are plain hostnames, not URLs, wildcard patterns or host
 Widening applies only to workspace nodes using `repo-onboarder` in an execution-verified seeded
 version of the global `repo-onboarding` template, and only when the agent definition that
 resolved has the seed's content: GLOBAL scope with no owner, and the seeded system prompt, tool
-list (as sets), skill refs, MCP binding, runtime, harness profile and model inheritance (model,
-credential and reasoning may differ), and the node's loop is the default one (a runtime pinned at
+list (as sets), skill refs, MCP binding, runtime, harness profile and model inheritance (model and
+reasoning may differ), and the node's loop is the default one (a runtime pinned at
 run start refuses). A team, organization, channel or template override, or a
-global version with a different prompt, tools or bindings, does not widen. A restricted draft
+global version with a different prompt, tools or bindings, does not widen. The model's credential
+must be GLOBAL scope, or TEAM or ORGANIZATION scope with no custom `apiBase`; a non-GLOBAL credential
+with a custom `apiBase` refuses the widening, so a custom openai-compatible provider qualifies at
+GLOBAL scope only. A restricted draft
 retains the team allowlist;
 a blocked draft does not add the team allowlist. Existing Git/platform access is preserved.
 The egress proxy is required; without it the worker warns and retains normal policy enforcement.
@@ -654,9 +657,7 @@ to enabling `uiValidation.prInlineImages`. The public bucket policy is operator-
 ## Limitations
 
 - The onboarding draft's wider egress list is not a strong boundary against a team admin: the
-  credential the agent's model is called with is resolved by scope (a team or organization provider
-  credential and its `apiBase` win over the global one) and is not part of the agent check, and the
-  draft workspace runs repository code under the wider list by design. The check narrows who
+  draft workspace runs repository code under the wider list by design, and the check narrows who
   receives the list. See [Onboarding agent](./repositories.md#onboarding-agent).
 - Egress allowlists, including the platform baseline, are read live through the settings cache,
   not frozen per run. Template-code audit snapshots include baseline and team entries at sign-off;
