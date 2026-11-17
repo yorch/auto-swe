@@ -8,6 +8,7 @@ import { runConnectionsCommand } from './commands/connections.js';
 import { runEvalsCommand } from './commands/evals.js';
 import { runMcpCommand } from './commands/mcp.js';
 import { runOrchestrateCommand } from './commands/orchestrate.js';
+import { runPlanCommand } from './commands/plan.js';
 import { runPrPolicyCommand } from './commands/prPolicy.js';
 import { runReposCommand, runReposSetupInit } from './commands/repos.js';
 import { runRunsCommand } from './commands/runs.js';
@@ -46,6 +47,21 @@ COMMANDS
   orchestrate attach|decline|approve|deny
                                        Human decisions: the launcher attaches a repository or
                                        decides an MCP write
+  plan route "<goal>" --repo=<org/name>
+                                       Rank the templates you may launch for a goal
+  plan create "<goal>" --repo=<org/name> [--agent=<key>] [--wait] [--timeout=SECONDS]
+                                       Generate a plan for a goal (exit 2 with the error code if
+                                       generation fails); nothing runs until it is approved
+  plan wait <jobId>                    Poll a generation job to its plan id
+  plan show <planId> [--json]          Print the plan outline (the spec only with --json)
+  plan list [--status=S] [--limit=N]   List your plans
+  plan approve <planId> [--budget-tier=T] [--yes]
+                                       Approve the stored plan and start its run; asks first on
+                                       a terminal, refuses non-interactively without --yes
+  plan reject <planId>                 Reject a pending plan
+  plan run "<goal>" --repo=<org/name> [--agent=<key>] --yes
+                                       Create, wait, show and approve in one step (without --yes
+                                       it stops after printing the plan)
 
   workflows list                       List workflow templates visible to you
   workflows show <name> [--version=N]  Print one template's active (or given) spec (JSON)
@@ -176,6 +192,9 @@ async function main(argv: string[]): Promise<number> {
   }
   if (cmd === 'orchestrate') {
     return await runOrchestrateCommand(rest, env);
+  }
+  if (cmd === 'plan') {
+    return await runPlanCommand(rest, env);
   }
   if (cmd === 'workflows') {
     return await runWorkflowsCommand(rest, env);
