@@ -9,6 +9,12 @@ export {
   type ProfileTool,
 } from './manifest.js';
 export { collisionKey, unsafeProfilePath } from './paths.js';
+export {
+  type ProjectionFile,
+  type ProjectPluginSkillsInput,
+  type ProjectPluginSkillsResult,
+  projectPluginSkills,
+} from './projection.js';
 export { HOOKS_NOT_SCANNED, SCAN_INCOMPLETE, scanProfile } from './scan.js';
 export { defaultScanners, type ProfileScanners, type ScanOutcome } from './scanners.js';
 export { packFiles, unpackAndVerify, unpackFiles } from './snapshot.js';
