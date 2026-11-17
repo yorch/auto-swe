@@ -3,7 +3,8 @@
  *
  * A generated plan is a mandatory skeleton plus a free middle. The policy pins the skeleton's
  * BEHAVIOUR, not its presence: a node named `runReviewNetwork` proves nothing when it carries a
- * replacement `systemPrompt`, warns instead of blocking, or can be routed around. It has two halves:
+ * replacement `systemPrompt`, warns instead of blocking, is fed a different change than the one the
+ * pull request ships, or can be routed around. It has two halves:
  *
  * - {@link checkSkeletonPolicy} is pure and read-only. It runs at generation (as the repair loop's
  *   hard gate), again at approval, and again in the worker before the spec is pinned. It never
@@ -15,25 +16,35 @@
  * What the check enforces, for a `delivering` plan (mandatory stages: implementation, review,
  * pull request, human merge wait, and quality gates when the plan has any):
  *
- * - **Configuration.** Every use of a skeleton-tier step carries only allowlisted `config` keys with
- *   allowlisted value types, no override of `systemPrompt`, `tools`, `allowedPaths`, `testIntegrity`
- *   in `config` or `inputs`, and no authored command or container code anywhere in the plan.
- * - **Failure policy.** A stage node's `onFail` is `block` or a bounded retry, never `warn`, and its
- *   `onError` is never `continue`.
- * - **Ordering by dominance.** Every path from the entry to a node of a later stage passes through a
- *   node of the earlier stage (implementation, then review, then gates, then the pull request, then
- *   the merge wait), and every path to a `SUCCESS` ending passes through the merge wait. "Passes
- *   through a node of the stage" is a cut over all of the stage's nodes, which equals dominance
- *   when the stage has one node. A path that uses an `onFailure`, `onExhausted` or `cond` edge to
- *   get around a stage is reported as such, with the path. A node that ends the run by having no
- *   `next` is a `SUCCESS` ending too, because the interpreter treats it as one.
+ * - **Configuration and inputs.** Every use of a free or skeleton step carries only allowlisted
+ *   `config` keys with allowlisted values, and only allowlisted `inputs` keys, each bound with a
+ *   `from` path to a source the platform wrote (`skeletonBindings.ts`). No `literal` or `expr`
+ *   reaches a security-relevant input. No authored command or container code anywhere.
+ * - **Writes.** A `set` node or a `storeAs` writes only under `context.`; the platform's own
+ *   plumbing paths take only a node's output, and `context.currentCodeResult` only an
+ *   implementation or fix step's. `nodes.*` is never written, so a plan cannot answer its own cond.
+ * - **Failure policy.** A stage or fix node's `onFail` is `block` or a bounded retry, never `warn`,
+ *   and its `onError` is never `continue`.
+ * - **Ordering by dominance.** The graph is modelled the way the interpreter walks it: every node
+ *   is an entry vertex and a PASSED vertex, and `next`, `onTrue`, `onApprove`, `onReceive` leave
+ *   from PASSED while `onFailure`, `onExhausted` (the node does NOT run on that entry), `onTimeout`,
+ *   `onReject` and a `warn`/`continue` fall-through leave from entry. Every path from the entry to a
+ *   node of a later stage passes through the PASSED vertex of a node of the earlier stage
+ *   (implementation, then review, then gates, then the pull request, then the merge wait), and
+ *   every path to a `SUCCESS` ending passes through the merge wait having RECEIVED its signal: a
+ *   timeout, an exhaustion or a failure route out of the wait cannot end SUCCESS.
+ * - **Code does not change after a check.** From every node that changes code (the implementation
+ *   and the three fix steps) no path reaches the pull request, the merge wait or a SUCCESS ending
+ *   without passing a re-review, and a re-gate when the plan has gates. A gate fix needs only the
+ *   re-gate.
  * - **Verdicts.** A review node's rejection cannot reach the pull request: its only way on is the
  *   approving branch of a `cond` on `nodes.<id>.output.approved`.
  * - **Loops.** Every cycle contains a node with `maxVisits` and `onExhausted`.
  *
- * For an `output-only` (library-agent) plan: at least one `agent` node, a human review node
- * (`humanReview`, `humanApproval` or `humanDecision`) after an agent node on every path to
- * `SUCCESS`, and a reachable `terminate`.
+ * For an `output-only` (library-agent) plan: at least one `agent` node, a human review after an
+ * agent on every path to `SUCCESS` (a `humanApproval`, or a `humanReview` whose content is that
+ * agent's output; a `humanDecision` cannot say approve or reject, so it never counts), and a
+ * reachable `terminate`.
  *
  * The flat `nodes` are the only thing read. Macro metadata (`uses`, a node's `use` tag) is never
  * trusted to say what a node is; it is only checked for drift against its expansion.
@@ -46,6 +57,17 @@ import { NON_LAUNCHABLE_AGENT_KEYS } from '../../lib/agentRun.js';
 import { isAuthoredCommandNode, isContainerCodeNode } from '../containerCode.js';
 import { collectUseProblems } from '../macros.js';
 import { type Node, nodeEdges, setNodeEdge, type WorkflowSpec } from '../spec.js';
+import {
+  CODE_CHANGING_STEPS,
+  hasConfigAllowlist,
+  inputBindingProblem,
+  isTerminalStatusWord,
+  nodeOutputId,
+  STEP_CONFIG_ALLOWLIST,
+  type ValueRule,
+  valueMatches,
+  writeRefusal,
+} from './skeletonBindings.js';
 import {
   classifyRunPlanStep,
   runPlanNodeTypeRefusal,
@@ -95,6 +117,7 @@ export const MERGE_WAIT_SIGNAL = 'humanMergeSignal';
 const IMPLEMENTATION_STEP = 'executeImplementation';
 const REVIEW_STEP = 'runReviewNetwork';
 const PULL_REQUEST_STEP = 'createOrUpdatePullRequest';
+const GATE_FIX_STEP = 'executeGateFixImplementation';
 const GATE_STEPS: ReadonlySet<string> = new Set([
   'runBuild',
   'runLint',
@@ -104,51 +127,18 @@ const GATE_STEPS: ReadonlySet<string> = new Set([
   'runVulnScan',
 ]);
 
-/** Keys that override how an agent or gate behaves; never allowed in `config` or `inputs`. */
-const FORBIDDEN_OVERRIDE_KEYS: ReadonlySet<string> = new Set([
-  'agentRef',
-  'allowedPaths',
-  'command',
-  'image',
-  'skills',
-  'systemPrompt',
-  'testIntegrity',
-  'tools',
-]);
-
-type ValueRule = 'boolean' | 'number' | readonly string[];
-
-/** Allowlisted `config` keys, and the value each may take, per skeleton-tier step. */
-const SKELETON_CONFIG_ALLOWLIST: Readonly<Record<string, Readonly<Record<string, ValueRule>>>> = {
-  awaitQodoReview: {
-    minActionLevel: ['action_required', 'remediation_recommended', 'informational'],
-    waitSeconds: 'number',
-  },
-  commitToMemory: {},
-  createOrUpdatePullRequest: { draft: 'boolean' },
-  executeCIFixImplementation: { knowledgeBases: 'boolean' },
-  executeGateFixImplementation: { knowledgeBases: 'boolean' },
-  executeImplementation: { crossRepoContext: 'boolean', knowledgeBases: 'boolean' },
-  executeReviewFixImplementation: { knowledgeBases: 'boolean' },
-  fetchCILogs: {},
-  resolveCiWaitConfig: {},
-  runBuild: { timeoutMs: 'number' },
-  runLint: { timeoutMs: 'number' },
-  runQualityGates: { gates: [], isolation: ['shared', 'per-gate'], stopOnFailure: 'boolean' },
-  runReviewNetwork: { crossRepoContext: 'boolean' },
-  runTests: { protectTests: 'boolean', timeoutMs: 'number' },
-  runTypecheck: { timeoutMs: 'number' },
-  runVulnScan: { timeoutMs: 'number' },
-  uiVerify: {
-    failOnConsoleErrors: 'boolean',
-    mode: ['smoke', 'e2e', 'both'],
-    recordVideo: 'boolean',
-    timeoutMs: 'number',
-  },
-  waitForCiByPolling: { deadlineSec: 'number', graceSec: 'number', intervalSec: 'number' },
-};
-
 // ── Graph model ──
+//
+// Every node is two vertices. `in:<id>` is "the walk entered the node"; `ok:<id>` is "the node ran
+// and passed". The interpreter routes from one or the other:
+//
+// - `next`, `onTrue`/`onFalse`, `onReceive`, `onApprove`, `onSubmit`, a decision option: from `ok:`.
+// - `onFailure`, `onExhausted` (the entry that exceeds `maxVisits` is routed WITHOUT running the
+//   node), `onTimeout`, `onReject`, `onRequestChanges`, and the fall-through of `onFail: warn` or
+//   `onError: continue` (the node failed and the walk goes on): from `in:`.
+//
+// "Passes through a stage" is then a cut over the stage's `ok:` vertices. A route out of a node by
+// failure, exhaustion or timeout skips its `ok:` vertex, so it does not count as having passed.
 
 interface Edge {
   from: string;
@@ -156,8 +146,35 @@ interface Edge {
   field: string;
 }
 
-/** A node that ends the run when it has no `next`: the interpreter reads "no next" as `SUCCESS`. */
-function endsWithoutNext(node: Node): boolean {
+const inV = (id: string): string => `in:${id}`;
+const okV = (id: string): string => `ok:${id}`;
+const nodeOfVertex = (v: string): string | undefined =>
+  v.startsWith('in:') || v.startsWith('ok:') ? v.slice(3) : undefined;
+
+/** Edge fields that leave a node without it having passed. */
+const NOT_PASSED_FIELDS: ReadonlySet<string> = new Set([
+  'join',
+  'onExhausted',
+  'onFailure',
+  'onReject',
+  'onRequestChanges',
+  'onTimeout',
+  'subgraph',
+]);
+
+/** Edge fields that are a failure, exhaustion, timeout or rejection route. */
+const FAILURE_FIELDS: ReadonlySet<string> = new Set([
+  'next (onError: continue)',
+  'next (onFail: warn)',
+  'onExhausted',
+  'onFailure',
+  'onReject',
+  'onRequestChanges',
+  'onTimeout',
+]);
+
+/** Node types dispatched as an activity: they carry `onFail` and `onError`. */
+function isDispatchNode(node: Node): boolean {
   switch (node.type) {
     case 'step':
     case 'agent':
@@ -165,11 +182,17 @@ function endsWithoutNext(node: Node): boolean {
     case 'eval':
     case 'shell':
     case 'containerStep':
-    case 'set':
-      return node.next === undefined;
+      return true;
     default:
       return false;
   }
+}
+
+/** A node that ends the run when it has no `next`: the interpreter reads "no next" as `SUCCESS`. */
+function endsWithoutNext(node: Node): boolean {
+  return (
+    (isDispatchNode(node) || node.type === 'set') && (node as { next?: string }).next === undefined
+  );
 }
 
 function routesToSuccess(route: unknown): boolean {
@@ -183,51 +206,87 @@ function routesToSuccess(route: unknown): boolean {
 interface Graph {
   entry: string;
   adj: Map<string, Edge[]>;
-  /** Real `SUCCESS` terminate nodes plus the virtual endings below. */
+  /** The same graph with a node's two vertices merged, for cycle detection. */
+  nodeAdj: Map<string, Set<string>>;
+  /** Real `SUCCESS` terminate vertices plus the virtual endings below. */
   successTerminals: Set<string>;
-  /** Every node reachable from the entry, virtual endings included. */
+  /** Every vertex reachable from the entry, virtual endings included. */
   reachable: Set<string>;
   /** Virtual endings: `success@<node>:<field>`. */
   virtual: Set<string>;
 }
 
-function successVirtualId(nodeId: string, field: string): string {
-  return `success@${nodeId}:${field}`;
-}
-
 function buildGraph(spec: WorkflowSpec): Graph {
   const adj = new Map<string, Edge[]>();
+  const nodeAdj = new Map<string, Set<string>>();
   const successTerminals = new Set<string>();
   const virtual = new Set<string>();
+  const push = (edge: Edge): void => {
+    const list = adj.get(edge.from) ?? [];
+    list.push(edge);
+    adj.set(edge.from, list);
+    const a = nodeOfVertex(edge.from);
+    const b = nodeOfVertex(edge.to);
+    if (a !== undefined && b !== undefined && a !== b) {
+      const set = nodeAdj.get(a) ?? new Set<string>();
+      set.add(b);
+      nodeAdj.set(a, set);
+    } else if (a !== undefined && a === b && edge.field !== 'ok') {
+      const set = nodeAdj.get(a) ?? new Set<string>();
+      set.add(b);
+      nodeAdj.set(a, set);
+    }
+  };
   for (const [id, node] of Object.entries(spec.nodes)) {
-    const edges: Edge[] = [];
+    push({ field: 'ok', from: inV(id), to: okV(id) });
     for (const [field, to] of nodeEdges(node)) {
       if (Object.hasOwn(spec.nodes, to)) {
-        edges.push({ field, from: id, to });
+        push({
+          field,
+          from: NOT_PASSED_FIELDS.has(field) ? inV(id) : okV(id),
+          to: inV(to),
+        });
       }
     }
-    const addVirtual = (field: string): void => {
-      const v = successVirtualId(id, field);
+    const addVirtual = (from: string, field: string): void => {
+      const v = `success@${id}:${field}`;
       virtual.add(v);
       successTerminals.add(v);
-      edges.push({ field, from: id, to: v });
+      push({ field, from, to: v });
     };
     if (node.type === 'terminate' && node.status === 'SUCCESS') {
-      successTerminals.add(id);
+      successTerminals.add(inV(id));
     }
     if ('onFailure' in node && routesToSuccess(node.onFailure)) {
-      addVirtual('onFailure');
+      addVirtual(inV(id), 'onFailure');
     }
     if (node.maxVisits !== undefined && routesToSuccess(node.onExhausted)) {
-      addVirtual('onExhausted');
+      addVirtual(inV(id), 'onExhausted');
     }
     if (endsWithoutNext(node)) {
-      addVirtual('next (no next: the run ends SUCCESS)');
+      addVirtual(okV(id), 'next (no next: the run ends SUCCESS)');
     }
-    adj.set(id, edges);
+    // A failure the node's own policy swallows: the walk goes on as if it had passed.
+    if (isDispatchNode(node)) {
+      const failOn = node as { onFail?: unknown; onError?: unknown; next?: string };
+      const swallow: string[] = [];
+      if (failOn.onFail === 'warn') {
+        swallow.push('next (onFail: warn)');
+      }
+      if (failOn.onError === 'continue') {
+        swallow.push('next (onError: continue)');
+      }
+      for (const field of swallow) {
+        if (failOn.next !== undefined && Object.hasOwn(spec.nodes, failOn.next)) {
+          push({ field, from: inV(id), to: inV(failOn.next) });
+        } else if (failOn.next === undefined) {
+          addVirtual(inV(id), field);
+        }
+      }
+    }
   }
   const reachable = new Set<string>();
-  const stack: string[] = Object.hasOwn(spec.nodes, spec.entry) ? [spec.entry] : [];
+  const stack: string[] = Object.hasOwn(spec.nodes, spec.entry) ? [inV(spec.entry)] : [];
   while (stack.length > 0) {
     const cur = stack.pop() as string;
     if (reachable.has(cur)) {
@@ -238,12 +297,12 @@ function buildGraph(spec: WorkflowSpec): Graph {
       stack.push(e.to);
     }
   }
-  return { adj, entry: spec.entry, reachable, successTerminals, virtual };
+  return { adj, entry: inV(spec.entry), nodeAdj, reachable, successTerminals, virtual };
 }
 
 /**
- * A path from the entry to `target` that avoids every node in `blocked`, or `undefined` when the
- * blocked set cuts every path. `from` starts the search somewhere other than the entry.
+ * A path from `start` (default: the entry) to `target` that avoids every vertex in `blocked`, or
+ * `undefined` when the blocked set cuts every path.
  */
 function pathAvoiding(
   graph: Graph,
@@ -285,10 +344,13 @@ function pathAvoiding(
   return undefined;
 }
 
-function describePath(path: Edge[], entry: string): string {
-  const parts = [entry];
+function describePath(path: Edge[], start: string): string {
+  const parts = [start];
   for (const e of path) {
-    const to = e.to.startsWith('success@') ? 'SUCCESS' : e.to;
+    if (e.to.startsWith('ok:')) {
+      continue;
+    }
+    const to = e.to.startsWith('success@') ? 'SUCCESS' : (nodeOfVertex(e.to) ?? e.to);
     parts.push(`${to} (${e.field})`);
   }
   return parts.join(' -> ');
@@ -297,8 +359,8 @@ function describePath(path: Edge[], entry: string): string {
 /**
  * Which kind of edge a bypass path leans on. The skip edge is the first edge `u -> v` on the path
  * where `u` can still reach the blocked stage and `v` no longer can: that is where the path leaves
- * the legitimate flow. A failure route or a `cond` there names the bypass; any other edge, or none
- * (the stage was never on the way), reports the fallback code.
+ * the legitimate flow. A failure, exhaustion or timeout route there, or a `cond`, names the bypass;
+ * any other edge, or none (the stage was never on the way), reports the fallback code.
  */
 function bypassCode(
   path: Edge[],
@@ -327,13 +389,14 @@ function bypassCode(
   if (skip === undefined) {
     return fallback;
   }
-  if (skip.field === 'onFailure' || skip.field === 'onExhausted') {
+  if (FAILURE_FIELDS.has(skip.field)) {
     return 'FAILURE_ROUTE_BYPASS';
   }
-  return spec.nodes[skip.from]?.type === 'cond' ? 'COND_BYPASS' : fallback;
+  const from = nodeOfVertex(skip.from);
+  return from !== undefined && spec.nodes[from]?.type === 'cond' ? 'COND_BYPASS' : fallback;
 }
 
-/** True when some cycle in the reachable graph contains no bounded node. */
+/** A node on a cycle in which no node sets both `maxVisits` and `onExhausted`, if there is one. */
 function findUnboundedCycleNode(spec: WorkflowSpec, graph: Graph): string | undefined {
   const bounded = (id: string): boolean => {
     const n = spec.nodes[id];
@@ -346,16 +409,16 @@ function findUnboundedCycleNode(spec: WorkflowSpec, graph: Graph): string | unde
       return;
     }
     color.set(id, 1);
-    for (const e of graph.adj.get(id) ?? []) {
-      if (bounded(e.to) || graph.virtual.has(e.to)) {
+    for (const to of graph.nodeAdj.get(id) ?? []) {
+      if (bounded(to)) {
         continue;
       }
-      if (color.get(e.to) === 1) {
-        found = e.to;
+      if (color.get(to) === 1) {
+        found = to;
         return;
       }
-      if (!color.has(e.to)) {
-        visit(e.to);
+      if (!color.has(to)) {
+        visit(to);
         if (found !== undefined) {
           return;
         }
@@ -363,8 +426,8 @@ function findUnboundedCycleNode(spec: WorkflowSpec, graph: Graph): string | unde
     }
     color.set(id, 2);
   };
-  for (const id of graph.reachable) {
-    if (!graph.virtual.has(id)) {
+  for (const id of Object.keys(spec.nodes)) {
+    if (graph.reachable.has(inV(id))) {
       visit(id);
     }
     if (found !== undefined) {
@@ -400,6 +463,11 @@ function stageOf(node: Node): DeliveringStage | undefined {
   return GATE_STEPS.has(step) ? 'qualityGates' : undefined;
 }
 
+/** Whether a node changes the code in the run's checkout. */
+function changesCode(node: Node): boolean {
+  return node.type === 'step' && CODE_CHANGING_STEPS.has(node.step);
+}
+
 function isHumanReviewType(node: Node): boolean {
   return (
     node.type === 'humanReview' || node.type === 'humanApproval' || node.type === 'humanDecision'
@@ -408,27 +476,6 @@ function isHumanReviewType(node: Node): boolean {
 
 function agentKey(agentRef: string): string {
   return agentRef.split('@')[0] ?? agentRef;
-}
-
-function valueMatches(rule: ValueRule, value: unknown): boolean {
-  if (rule === 'boolean') {
-    return typeof value === 'boolean';
-  }
-  if (rule === 'number') {
-    return typeof value === 'number' && Number.isFinite(value);
-  }
-  if (rule.length === 0) {
-    // `gates`: a list of gate names or `{ gate }` objects; a `command` is refused separately.
-    return (
-      Array.isArray(value) &&
-      value.every(
-        (g) =>
-          typeof g === 'string' ||
-          (typeof g === 'object' && g !== null && !Array.isArray(g) && !('command' in g))
-      )
-    );
-  }
-  return typeof value === 'string' && rule.includes(value);
 }
 
 // ── The check ──
@@ -450,28 +497,25 @@ export function checkSkeletonPolicy(spec: WorkflowSpec, mode: SkeletonMode): Ske
   }
 
   const nodes = Object.entries(spec.nodes);
-  checkNodes(mode, nodes, add);
+  checkNodes(spec, mode, nodes, add);
 
   const graph = buildGraph(spec);
+  const isReachable = (id: string): boolean => graph.reachable.has(inV(id));
   const stages = new Map<DeliveringStage, string[]>();
   for (const stage of DELIVERING_STAGES) {
     stages.set(stage, []);
   }
   for (const [id, node] of nodes) {
     const stage = stageOf(node);
-    if (stage !== undefined && graph.reachable.has(id)) {
+    if (stage !== undefined && isReachable(id)) {
       (stages.get(stage) as string[]).push(id);
     }
   }
-  const agentNodes = nodes.filter(([id, n]) => n.type === 'agent' && graph.reachable.has(id));
-  const humanReviewNodes = nodes.filter(
-    ([id, n]) => isHumanReviewType(n) && graph.reachable.has(id)
-  );
+  const agentNodes = nodes.filter(([id, n]) => n.type === 'agent' && isReachable(id));
+  const humanReviewNodes = nodes.filter(([id, n]) => isHumanReviewType(n) && isReachable(id));
 
   // Termination and loops hold for both modes.
-  const reachableTerminates = nodes.filter(
-    ([id, n]) => n.type === 'terminate' && graph.reachable.has(id)
-  );
+  const reachableTerminates = nodes.filter(([id, n]) => n.type === 'terminate' && isReachable(id));
   if (reachableTerminates.length === 0 && graph.successTerminals.size === 0) {
     add('NO_TERMINATE', 'no terminate node is reachable from the entry node');
   } else if (![...graph.successTerminals].some((t) => graph.reachable.has(t))) {
@@ -503,6 +547,14 @@ export function checkSkeletonPolicy(spec: WorkflowSpec, mode: SkeletonMode): Ske
     checkOutputOnly(spec, graph, agentNodes, humanReviewNodes, reachableSuccess, add);
   }
 
+  return buildReport(mode, issues, mandatory);
+}
+
+function buildReport(
+  mode: SkeletonMode,
+  issues: SkeletonIssue[],
+  mandatory: Record<string, string[]>
+): SkeletonReport {
   const errors = issues.filter((i) => i.severity === 'error');
   const warnings = issues.filter((i) => i.severity === 'warning');
   return { errors, issues, mandatory, mode, ok: errors.length === 0, warnings };
@@ -510,7 +562,20 @@ export function checkSkeletonPolicy(spec: WorkflowSpec, mode: SkeletonMode): Ske
 
 type Add = (code: string, message: string, nodeId?: string, severity?: SkeletonSeverity) => void;
 
-function checkNodes(mode: SkeletonMode, nodes: Array<[string, Node]>, add: Add): void {
+/** The vertex of a success ending, as the node it belongs to. */
+function endingNode(terminal: string): string | undefined {
+  if (terminal.startsWith('success@')) {
+    return terminal.slice('success@'.length).split(':')[0];
+  }
+  return nodeOfVertex(terminal);
+}
+
+function checkNodes(
+  spec: WorkflowSpec,
+  mode: SkeletonMode,
+  nodes: Array<[string, Node]>,
+  add: Add
+): void {
   for (const [id, node] of nodes) {
     if (isContainerCodeNode(node)) {
       add('CONTAINER_CODE', `node '${id}' runs container code, which a generated plan may not`, id);
@@ -527,6 +592,18 @@ function checkNodes(mode: SkeletonMode, nodes: Array<[string, Node]>, add: Add):
         id
       );
     }
+    if (
+      node.type !== 'terminate' &&
+      node.status !== undefined &&
+      isTerminalStatusWord(node.status)
+    ) {
+      add(
+        'STATUS_TERMINAL',
+        `node '${id}' stamps the status '${node.status}', the vocabulary that ends a run`,
+        id
+      );
+    }
+    checkWrites(spec, id, node, add);
     if (node.type === 'agent') {
       const key = agentKey(node.agentRef);
       if (NON_LAUNCHABLE_AGENT_KEYS.has(key)) {
@@ -539,9 +616,8 @@ function checkNodes(mode: SkeletonMode, nodes: Array<[string, Node]>, add: Add):
       if (node.systemPrompt !== undefined) {
         add(
           'AGENT_SYSTEM_PROMPT',
-          `agent node '${id}' replaces the agent's system prompt`,
-          id,
-          mode === 'output-only' ? 'error' : 'warning'
+          `agent node '${id}' replaces the agent's system prompt, which a generated plan may not`,
+          id
         );
       }
       if (mode === 'output-only') {
@@ -569,21 +645,21 @@ function checkNodes(mode: SkeletonMode, nodes: Array<[string, Node]>, add: Add):
         id
       );
     }
-    if (cls === 'skeleton') {
-      checkSkeletonStepConfig(id, node, add);
+    if (cls === 'skeleton' || cls === 'free') {
+      checkStepBindings(id, node, add);
     }
-    if (stageOf(node) !== undefined) {
+    if (stageOf(node) !== undefined || changesCode(node)) {
       if (node.onFail === 'warn') {
         add(
           'ONFAIL_WARN',
-          `node '${id}' (${node.step}) continues after a failure (onFail: warn); a mandatory node must block`,
+          `node '${id}' (${node.step}) continues after a failure (onFail: warn); a mandatory or code-changing node must block`,
           id
         );
       }
       if (node.onError === 'continue') {
         add(
           'ONERROR_CONTINUE',
-          `node '${id}' (${node.step}) swallows errors (onError: continue); a mandatory node must fail the run`,
+          `node '${id}' (${node.step}) swallows errors (onError: continue); a mandatory or code-changing node must fail the run`,
           id
         );
       }
@@ -591,14 +667,31 @@ function checkNodes(mode: SkeletonMode, nodes: Array<[string, Node]>, add: Add):
   }
 }
 
-function checkSkeletonStepConfig(
-  id: string,
-  node: Extract<Node, { type: 'step' }>,
-  add: Add
-): void {
-  const allowed = SKELETON_CONFIG_ALLOWLIST[node.step] ?? {};
+/** Every context write the node makes: a `set`'s values, and any `storeAs`. */
+function checkWrites(spec: WorkflowSpec, id: string, node: Node, add: Add): void {
+  if (node.type === 'set') {
+    for (const [path, binding] of Object.entries(node.values)) {
+      const problem = writeRefusal(path, { binding, kind: 'set' }, spec);
+      if (problem) {
+        add(problem.code, `set node '${id}' ${problem.message}`, id);
+      }
+    }
+  }
+  const storeAs = 'storeAs' in node ? node.storeAs : undefined;
+  if (storeAs !== undefined) {
+    const problem = writeRefusal(storeAs, { kind: 'storeAs', node }, spec);
+    if (problem) {
+      add(problem.code, `node '${id}' ${problem.message}`, id);
+    }
+  }
+}
+
+function checkStepBindings(id: string, node: Extract<Node, { type: 'step' }>, add: Add): void {
+  const allowed: Readonly<Record<string, ValueRule>> = hasConfigAllowlist(node.step)
+    ? (STEP_CONFIG_ALLOWLIST[node.step] as Readonly<Record<string, ValueRule>>)
+    : {};
   for (const [key, value] of Object.entries(node.config ?? {})) {
-    if (FORBIDDEN_OVERRIDE_KEYS.has(key)) {
+    if (FORBIDDEN_CONFIG_KEYS.has(key)) {
       add(
         'OVERRIDE_FORBIDDEN',
         `node '${id}' (${node.step}) sets config '${key}', which overrides the platform's behaviour`,
@@ -614,13 +707,17 @@ function checkSkeletonStepConfig(
       );
     }
   }
-  for (const key of Object.keys(node.inputs ?? {})) {
-    if (FORBIDDEN_OVERRIDE_KEYS.has(key)) {
-      add(
-        'OVERRIDE_FORBIDDEN',
-        `node '${id}' (${node.step}) binds input '${key}', which overrides the platform's behaviour`,
-        id
-      );
+  if (node.step === 'runQualityGates' && !Object.hasOwn(node.config ?? {}, 'gates')) {
+    add(
+      'QUALITY_GATES_EMPTY',
+      `node '${id}' (runQualityGates) names no gates, so it verifies nothing`,
+      id
+    );
+  }
+  for (const [key, binding] of Object.entries(node.inputs ?? {})) {
+    const problem = inputBindingProblem(node.step, key, binding);
+    if (problem) {
+      add(problem.code, `node '${id}' (${node.step}) ${problem.message}`, id);
     }
   }
 }
@@ -633,6 +730,8 @@ function checkDelivering(
   add: Add
 ): void {
   const ids = (s: DeliveringStage): string[] => stages.get(s) as string[];
+  /** The PASSED vertices of a stage: a path through one of them has passed the stage. */
+  const passed = (s: DeliveringStage): Set<string> => new Set(ids(s).map(okV));
   const required: Array<[DeliveringStage, string]> = [
     ['implementation', 'an executeImplementation node'],
     ['review', 'a runReviewNetwork node'],
@@ -658,13 +757,13 @@ function checkDelivering(
   for (let i = 1; i < present.length; i++) {
     const earlier = present[i - 1] as DeliveringStage;
     const later = present[i] as DeliveringStage;
-    const blocked = new Set(ids(earlier));
+    const blocked = passed(earlier);
     for (const node of ids(later)) {
-      const path = pathAvoiding(graph, blocked, node);
+      const path = pathAvoiding(graph, blocked, inV(node));
       if (path) {
         add(
           bypassCode(path, graph, blocked, spec, 'ORDER_VIOLATION'),
-          `node '${node}' (${later}) can run without passing ${earlier}: ${describePath(path, graph.entry)}`,
+          `node '${node}' (${later}) can run without passing ${earlier}: ${describePath(path, nodeOfVertex(graph.entry) as string)}`,
           node
         );
       }
@@ -674,24 +773,62 @@ function checkDelivering(
   // The last mandatory stage present must lie on every path to SUCCESS.
   const last = present.at(-1);
   if (last !== undefined) {
-    const blocked = new Set(ids(last));
+    const blocked = passed(last);
     for (const terminal of reachableSuccess) {
       const path = pathAvoiding(graph, blocked, terminal);
       if (path) {
-        const nodeId = terminal.startsWith('success@') ? terminal.slice(8).split(':')[0] : terminal;
         add(
           bypassCode(path, graph, blocked, spec, 'SUCCESS_BYPASS'),
-          `the run can end SUCCESS without passing ${last}: ${describePath(path, graph.entry)}`,
-          nodeId
+          `the run can end SUCCESS without passing ${last}: ${describePath(path, nodeOfVertex(graph.entry) as string)}`,
+          endingNode(terminal)
         );
       }
     }
   }
 
+  // Code that changes after a check has not been checked. From every node that changes code, the
+  // pull request, the merge wait and SUCCESS lie behind a re-review (and a re-gate when there are
+  // gates). A gate fix is the exception that proves the rule: it is re-gated, not re-reviewed.
+  const hasGates = ids('qualityGates').length > 0;
+  const downstream = [
+    ...ids('pullRequest').map(inV),
+    ...ids('mergeWait').map(inV),
+    ...reachableSuccess,
+  ];
+  for (const [id, node] of Object.entries(spec.nodes)) {
+    if (!changesCode(node) || !graph.reachable.has(inV(id))) {
+      continue;
+    }
+    const gateFix = stepName(node) === GATE_FIX_STEP && hasGates;
+    const needs: Array<[Set<string>, string, string]> = [];
+    if (!gateFix) {
+      needs.push([passed('review'), 'review', 'CODE_CHANGED_AFTER_REVIEW']);
+    }
+    if (hasGates) {
+      needs.push([passed('qualityGates'), 'quality gates', 'CODE_CHANGED_AFTER_GATES']);
+    }
+    for (const [blocked, label, code] of needs) {
+      if (blocked.size === 0) {
+        continue;
+      }
+      for (const target of downstream) {
+        const path = pathAvoiding(graph, blocked, target, inV(id));
+        if (path) {
+          add(
+            code,
+            `'${id}' (${stepName(node)}) changes code, and ${target.startsWith('success@') ? 'the run can end SUCCESS' : `'${nodeOfVertex(target)}' can run`} without passing ${label} again: ${describePath(path, id)}`,
+            id
+          );
+          break;
+        }
+      }
+    }
+  }
+
   // A review's rejection must not reach the pull request.
-  const downstream = new Set([...ids('pullRequest'), ...ids('mergeWait')]);
+  const reviewDownstream = new Set([...ids('pullRequest'), ...ids('mergeWait')]);
   for (const reviewId of ids('review')) {
-    if (downstream.size === 0) {
+    if (reviewDownstream.size === 0) {
       break;
     }
     const verdict = new RegExp(
@@ -704,49 +841,39 @@ function checkDelivering(
       }
       const m = verdict.exec(cond.expr);
       if (m) {
-        approvedEdges.add(`${condId}|${m[1] === 'true' ? 'onTrue' : 'onFalse'}`);
+        approvedEdges.add(`${okV(condId)}|${m[1] === 'true' ? 'onTrue' : 'onFalse'}`);
       }
     }
-    const blocked = new Set([reviewId]);
-    for (const target of downstream) {
-      // Search from the review's own successors, never re-entering it, never crossing an approval.
-      const viaSuccessor = (graph.adj.get(reviewId) ?? [])
-        .filter((e) => !approvedEdges.has(`${e.from}|${e.field}`))
-        .map((e) => e.to);
-      let leak: Edge[] | undefined;
+    const isApprovedEdge = (e: Edge): boolean => approvedEdges.has(`${e.from}|${e.field}`);
+    // Search from the review's own successors, never re-entering it, never crossing an approval.
+    const blocked = new Set([inV(reviewId)]);
+    const viaSuccessor = (graph.adj.get(okV(reviewId)) ?? [])
+      .filter((e) => e.field !== 'ok' && !isApprovedEdge(e))
+      .map((e) => e.to);
+    outer: for (const target of reviewDownstream) {
       for (const start of viaSuccessor) {
-        const tail = pathAvoiding(graph, blocked, target, start, (e) =>
-          approvedEdges.has(`${e.from}|${e.field}`)
-        );
-        if (tail) {
-          leak = tail;
-          break;
+        if (pathAvoiding(graph, blocked, inV(target), start, isApprovedEdge)) {
+          add(
+            'REVIEW_VERDICT_IGNORED',
+            `a rejection from review '${reviewId}' can reach '${target}'; route on a cond \`nodes.${reviewId}.output.approved == true\` and send the rejection back for a fix or to a failing end`,
+            reviewId
+          );
+          break outer;
         }
-      }
-      if (leak) {
-        add(
-          'REVIEW_VERDICT_IGNORED',
-          `a rejection from review '${reviewId}' can reach '${target}'; route on a cond \`nodes.${reviewId}.output.approved == true\` and send the rejection back for a fix or to a failing end`,
-          reviewId
-        );
-        break;
       }
     }
   }
 
-  // A merge wait that times out has not merged.
+  // A merge wait that times out, or runs out of visits, has not merged. Searched from the wait's
+  // own entry, over everything but its received signal.
+  const waits = passed('mergeWait');
   for (const waitId of ids('mergeWait')) {
-    const wait = spec.nodes[waitId];
-    if (wait?.type !== 'signal') {
-      continue;
-    }
-    const blocked = new Set([waitId]);
     for (const terminal of reachableSuccess) {
-      const path = pathAvoiding(graph, blocked, terminal, wait.onTimeout);
+      const path = pathAvoiding(graph, waits, terminal, inV(waitId));
       if (path) {
         add(
           'MERGE_TIMEOUT_SUCCEEDS',
-          `merge wait '${waitId}' times out into a SUCCESS ending: ${describePath(path, wait.onTimeout)}`,
+          `merge wait '${waitId}' can end the run SUCCESS without receiving its signal (timeout, exhaustion or failure route): ${describePath(path, waitId)}`,
           waitId
         );
         break;
@@ -775,53 +902,66 @@ function checkOutputOnly(
   if (agentNodes.length === 0 || humanReviewNodes.length === 0) {
     return;
   }
-  const agents = new Set(agentNodes.map(([id]) => id));
-  // Only a review that sits after an agent reviews anything.
-  const effective = humanReviewNodes
-    .map(([id]) => id)
-    .filter((id) => pathAvoiding(graph, agents, id) === undefined);
+  const agentPassed = new Set(agentNodes.map(([id]) => okV(id)));
+
+  // Only a review that shows an agent's output and sits after that agent reviews anything. A
+  // `humanDecision` cannot say approve or reject (every option is a continuation), so it never
+  // counts as the review.
+  const effective: string[] = [];
+  for (const [id, node] of humanReviewNodes) {
+    if (node.type === 'humanReview') {
+      const source = nodeOutputId(node.contentFrom);
+      const sourceNode = source === undefined ? undefined : spec.nodes[source];
+      if (source === undefined || sourceNode?.type !== 'agent') {
+        add(
+          'HUMAN_REVIEW_CONTENT_UNBOUND',
+          `humanReview '${id}' shows '${node.contentFrom}', which is not an agent node's output (nodes.<agent>.output)`,
+          id
+        );
+        continue;
+      }
+      if (pathAvoiding(graph, new Set([okV(source)]), inV(id)) === undefined) {
+        effective.push(id);
+      }
+    } else if (node.type === 'humanApproval') {
+      if (pathAvoiding(graph, agentPassed, inV(id)) === undefined) {
+        effective.push(id);
+      }
+    }
+  }
   if (effective.length === 0) {
+    const onlyDecisions = humanReviewNodes.every(([, n]) => n.type === 'humanDecision');
     add(
-      'HUMAN_REVIEW_BEFORE_AGENT',
-      'no human review node follows an agent node on every path; the reviewer would see nothing the agent produced'
+      onlyDecisions ? 'HUMAN_DECISION_NOT_REVIEW' : 'HUMAN_REVIEW_BEFORE_AGENT',
+      onlyDecisions
+        ? 'a humanDecision treats every option as a continuation and cannot approve or reject; use a humanApproval or a humanReview of the agent output'
+        : 'no human review node follows an agent node on every path and shows its output; the reviewer would see nothing the agent produced'
     );
     return;
   }
-  const blocked = new Set(effective);
+  const blocked = new Set(effective.map(okV));
   for (const terminal of reachableSuccess) {
     const path = pathAvoiding(graph, blocked, terminal);
     if (path) {
-      const nodeId = terminal.startsWith('success@') ? terminal.slice(8).split(':')[0] : terminal;
       add(
         bypassCode(path, graph, blocked, spec, 'SUCCESS_BYPASS'),
-        `the run can end SUCCESS without a human review of the agent output: ${describePath(path, graph.entry)}`,
-        nodeId
+        `the run can end SUCCESS without a human review of the agent output: ${describePath(path, nodeOfVertex(graph.entry) as string)}`,
+        endingNode(terminal)
       );
     }
   }
-  // A reviewer's rejection or a timeout is not an approval.
+  // A reviewer's rejection or a timeout is not an approval: from the review's own entry, over
+  // everything but its approving answer, no SUCCESS ending may be reached.
   for (const id of effective) {
-    const node = spec.nodes[id] as Node;
-    const nonApproving: string[] = [];
-    if (node.type === 'humanApproval') {
-      nonApproving.push(node.onReject, node.onTimeout);
-      if (node.onRequestChanges) {
-        nonApproving.push(node.onRequestChanges);
-      }
-    } else if (node.type === 'humanReview' || node.type === 'humanDecision') {
-      nonApproving.push(node.onTimeout);
-    }
-    for (const start of nonApproving) {
-      for (const terminal of reachableSuccess) {
-        const path = pathAvoiding(graph, new Set([id]), terminal, start);
-        if (path) {
-          add(
-            'HUMAN_REJECTION_SUCCEEDS',
-            `a rejection or timeout at '${id}' can end the run SUCCESS: ${describePath(path, start)}`,
-            id
-          );
-          return;
-        }
+    for (const terminal of reachableSuccess) {
+      const path = pathAvoiding(graph, blocked, terminal, inV(id));
+      if (path) {
+        add(
+          'HUMAN_REJECTION_SUCCEEDS',
+          `a rejection or timeout at '${id}' can end the run SUCCESS: ${describePath(path, id)}`,
+          id
+        );
+        return;
       }
     }
   }
@@ -831,6 +971,18 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** `config` keys that override a node's behaviour: reported by name, not as merely unlisted. */
+const FORBIDDEN_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  'agentRef',
+  'allowedPaths',
+  'command',
+  'image',
+  'skills',
+  'systemPrompt',
+  'testIntegrity',
+  'tools',
+]);
+
 // ── Injection ──
 
 export interface SkeletonApplyResult {
@@ -838,7 +990,7 @@ export interface SkeletonApplyResult {
   spec: WorkflowSpec;
   /** Ids of the nodes this call added. Empty when the spec already had every mandatory stage. */
   injected: string[];
-  /** The check, run on the resulting spec. */
+  /** The check, run on the resulting spec, plus any `AMBIGUOUS_ANCHOR` the insertion declined. */
   report: SkeletonReport;
 }
 
@@ -863,13 +1015,16 @@ function freshId(taken: ReadonlySet<string>, base: string): string {
  * wait immediately before the node set that follows them, or before the `SUCCESS` ending when
  * nothing follows. It does not add quality gates, does not touch a node that exists, and does not
  * invent an agent or a terminate. When an insertion point is ambiguous (several nodes of the stage
- * that should follow) it adds nothing and leaves the check to report the gap. For an `output-only`
- * plan it adds one human review before the `SUCCESS` ending when the plan has an agent and a single
- * such ending. Whatever it cannot place stays missing, and the report says so.
+ * that should follow, or more than one `SUCCESS` ending to put the stage in front of) it adds
+ * nothing, because merging the author's distinct endings would rewrite their graph, and the report
+ * carries an `AMBIGUOUS_ANCHOR` error beside the gap. For an `output-only` plan it adds one human
+ * review before the `SUCCESS` ending when the plan has an agent and a single such ending. Whatever
+ * it cannot place stays missing, and the report says so.
  */
 export function applySkeletonPolicy(spec: WorkflowSpec, mode: SkeletonMode): SkeletonApplyResult {
   const next: WorkflowSpec = structuredClone(spec);
   const injected: string[] = [];
+  const ambiguous: string[] = [];
   const taken = () => new Set(Object.keys(next.nodes));
 
   const stageIds = (stage: DeliveringStage): string[] =>
@@ -963,7 +1118,13 @@ export function applySkeletonPolicy(spec: WorkflowSpec, mode: SkeletonMode): Ske
       }
       const useSuccess = anchors === undefined;
       const anchorSet = anchors ?? successAnchors();
-      if (anchorSet.size === 0 || (!useSuccess && anchorSet.size !== 1)) {
+      if (anchorSet.size === 0) {
+        continue;
+      }
+      if (anchorSet.size !== 1) {
+        ambiguous.push(
+          `${stage}: ${useSuccess ? 'more than one SUCCESS ending' : 'more than one node of the stage that follows'} (${[...anchorSet].join(', ')}); not inserted`
+        );
         continue;
       }
       const target = [...anchorSet][0] as string;
@@ -1037,6 +1198,11 @@ export function applySkeletonPolicy(spec: WorkflowSpec, mode: SkeletonMode): Ske
     const hasHuman = Object.values(next.nodes).some(isHumanReviewType);
     ensureSuccessEnding();
     const endings = successAnchors();
+    if (agents.length > 0 && !hasHuman && endings.size > 1) {
+      ambiguous.push(
+        `humanReview: more than one SUCCESS ending (${[...endings].join(', ')}); not inserted`
+      );
+    }
     if (agents.length > 0 && !hasHuman && endings.size === 1) {
       const names = taken();
       const review = freshId(names, 'humanReviewOutput');
@@ -1057,5 +1223,18 @@ export function applySkeletonPolicy(spec: WorkflowSpec, mode: SkeletonMode): Ske
     }
   }
 
-  return { injected, report: checkSkeletonPolicy(next, mode), spec: next };
+  const checked = checkSkeletonPolicy(next, mode);
+  if (ambiguous.length === 0) {
+    return { injected, report: checked, spec: next };
+  }
+  const extra: SkeletonIssue[] = ambiguous.map((message) => ({
+    code: 'AMBIGUOUS_ANCHOR',
+    message: `the mandatory stage cannot be placed without rewriting the plan's endings: ${message}`,
+    severity: 'error',
+  }));
+  return {
+    injected,
+    report: buildReport(mode, [...checked.issues, ...extra], checked.mandatory),
+    spec: next,
+  };
 }

@@ -31,7 +31,6 @@ export const RUN_PLAN_FREE_STEPS: ReadonlySet<string> = new Set([
   'parseAgentOutput',
   'planDecomposition',
   'retrieveKnowledge',
-  'updateDomainState',
   'validateContext',
 ]);
 
@@ -99,6 +98,8 @@ export const RUN_PLAN_DENIED_STEPS: Readonly<Record<string, string>> = {
   runTool: 'runs a connection tool, which may write outside the platform',
   submitPrdWorkRequests: 'starts new runs',
   triageCiFailure: 'automation-only: reads a failed CI run by id',
+  updateDomainState:
+    'writes the run ledger status (ActiveWorkflow.currentStatus) from an authored value, so a plan could report itself complete',
   verifyCiFix: 'automation-only: runs a reproduction command from a triage result',
   writeOutcome: 'writes an outcome to a connection (external write)',
 };
@@ -106,6 +107,9 @@ export const RUN_PLAN_DENIED_STEPS: Readonly<Record<string, string>> = {
 /** Node types a generated plan may never contain: they run authored code or call out. */
 export const RUN_PLAN_DENIED_NODE_TYPES: Readonly<Record<string, string>> = {
   containerStep: 'runs an authored container',
+  eval: 'scores with a gate scorer that clones and runs a branch, and its aggregate can be routed on in place of a real gate',
+  fanOut:
+    'runs its subgraph in sealed branch contexts where a failed or skipped mandatory node does not stop the run',
   mcp: 'calls an MCP tool, which the run treats as a mutation',
   shell: 'runs an authored shell command in a container',
 };
