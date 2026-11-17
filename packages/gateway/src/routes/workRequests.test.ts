@@ -67,7 +67,7 @@ vi.mock('@auto-swe/shared/config', async (importOriginal) => {
     // No stored rows: the project-key check reads them to refuse a malformed one.
     resolveEffectiveSettings: async () => ({ overrideAt: () => undefined, settings: [] }),
     resolveSetting: async (...args: Parameters<typeof original.resolveSetting>) => {
-      if (args[0] === 'github.trackerAllowedProjectKeys') {
+      if (args[0] === 'tracker.allowedProjectKeys') {
         return [];
       }
       if (args[0] !== 'github.trackerIssueRepositories') {

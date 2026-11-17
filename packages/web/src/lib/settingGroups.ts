@@ -18,6 +18,7 @@ export const GROUP_TITLES: Record<string, string> = {
   repoDependency: 'Repo dependency graph',
   review: 'Code reviews',
   skills: 'Skill imports',
+  tracker: 'Issue tracker',
   uiValidation: 'UI validation',
   workflow: 'Workflow interpreter',
   workspace: 'Agent workspace',
@@ -52,6 +53,8 @@ export const GROUP_BLURBS: Record<string, string> = {
   review:
     'Whether finished workflow and agent runs may receive manual or automatically attached code reviews.',
   skills: 'How skills imported from external repositories are screened and fetched.',
+  tracker:
+    'Which Jira projects and Linear teams runs may read tickets from and write to. Overridable per team and organization.',
   uiValidation:
     'How much browser evidence a run may keep (screenshots, video, traces), for how long, and whether screenshots are copied into pull request bodies.',
   workflow:

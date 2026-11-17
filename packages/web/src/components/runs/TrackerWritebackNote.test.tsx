@@ -62,6 +62,50 @@ describe('TrackerWritebackNote', () => {
     expect(screen.getByText(/outside what the operator allows this run to touch/i)).toBeTruthy();
   });
 
+  describe('out_of_scope wording by tracker provider', () => {
+    const NEUTRAL = /outside what the operator allows this run to touch/i;
+
+    it.each([
+      ['github', /the ticket is in a repository this run does not target/i],
+      ['jira', /the ticket's Jira project is not one the operator allows for this run/i],
+      ['linear', /the ticket's Linear team is not one the operator allows for this run/i],
+    ])('names the cause for %s', (provider, expected) => {
+      render(
+        <TrackerWritebackNote
+          contextSnapshot={snapshot('out_of_scope', 'workflow_completed')}
+          trackerProvider={provider}
+        />
+      );
+      expect(screen.getByText(expected)).toBeTruthy();
+      expect(screen.queryByText(NEUTRAL)).toBeNull();
+      expect(screen.queryByText(/may not have been moved/i)).toBeNull();
+    });
+
+    it.each([
+      ['no provider', undefined],
+      ['a null provider', null],
+      ['an unrecognised provider', '<b>other</b>'],
+    ])('keeps the neutral wording for %s', (_label, provider) => {
+      render(
+        <TrackerWritebackNote
+          contextSnapshot={snapshot('out_of_scope', 'workflow_completed')}
+          trackerProvider={provider}
+        />
+      );
+      expect(screen.getByText(NEUTRAL)).toBeTruthy();
+    });
+
+    it('leaves every other class unchanged whatever the provider', () => {
+      render(
+        <TrackerWritebackNote
+          contextSnapshot={snapshot('forbidden', 'workflow_completed')}
+          trackerProvider="jira"
+        />
+      );
+      expect(screen.getByText(/access was refused/i)).toBeTruthy();
+    });
+  });
+
   it('does not hedge about the status for out_of_scope: nothing was written', () => {
     render(
       <TrackerWritebackNote contextSnapshot={snapshot('out_of_scope', 'workflow_completed')} />

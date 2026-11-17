@@ -45,7 +45,7 @@ vi.mock('@auto-swe/shared/config', async (importOriginal) => {
         ? { overrideAt: () => undefined, settings: [] }
         : original.resolveEffectiveSettings(...args),
     resolveSetting: async (...args: Parameters<typeof original.resolveSetting>) => {
-      if (args[0] === 'github.trackerAllowedProjectKeys' && tracker.config) {
+      if (args[0] === 'tracker.allowedProjectKeys' && tracker.config) {
         tracker.keysCtx.push(args[1]);
         return tracker.keysByTeam[args[1]?.teamId ?? ''] ?? [];
       }

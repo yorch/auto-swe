@@ -5,8 +5,10 @@ import {
   CHANNEL_ASSISTANT_TEMPLATE_NAME,
   CHANNEL_TASK_TEMPLATE_NAME,
 } from '@auto-swe/shared/lib/channelTask';
+import { readTrackerWriteback } from '@auto-swe/shared/lib/integrations/ticketFailure';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
 import { reviewRunMetadata } from '@auto-swe/shared/lib/reviewLaunch';
+import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { EvalResultDto, RunEffectDto, RunEvidenceDto } from '@auto-swe/shared/types/api';
 import { WORKFLOW_RUN_STATUSES } from '@auto-swe/shared/types/api';
@@ -204,6 +206,24 @@ export function pinnedImplementerRuntime(pinned: unknown): string | null {
   }
   const value = (pinned as Record<string, unknown>)['workspace.implementerRuntime'];
   return typeof value === 'string' ? value : null;
+}
+
+/**
+ * The configured tracker provider, for a run whose recorded write-back failure is `out_of_scope`
+ * (the only class the run page words per provider); null otherwise or when the config cannot be
+ * read. Nothing is looked up for any other run.
+ */
+export async function trackerProviderForWriteback(
+  snapshot: unknown
+): Promise<'github' | 'jira' | 'linear' | null> {
+  if (readTrackerWriteback(snapshot)?.failure !== 'out_of_scope') {
+    return null;
+  }
+  try {
+    return (await resolveIssueTrackerConfig()).provider;
+  } catch {
+    return null;
+  }
 }
 
 /** The egress policy a run pinned at start (`workspace.egressPolicy`); null when none was pinned. */
@@ -1214,6 +1234,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           traces: newestInOrder(traces).map((t) => projectTrace(t, fullTraces)),
           // The newest `MAX_TRACES_PER_READ` traces only, oldest first.
           tracesTruncated: traces.length > MAX_TRACES_PER_READ,
+          trackerProvider: await trackerProviderForWriteback(run.contextSnapshot),
           workflowId: run.workflowId,
           workRequest: projectWorkRequest(run.workRequest),
         },
