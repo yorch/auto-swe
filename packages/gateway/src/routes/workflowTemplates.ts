@@ -5,10 +5,15 @@ import { Prisma } from '@auto-swe/shared';
 import { resolveSettings } from '@auto-swe/shared/config';
 import { isSystemManagedTemplate } from '@auto-swe/shared/lib/channelTask';
 import { egressPolicySchema } from '@auto-swe/shared/lib/egressPolicy';
-import { inputSchemaProblems, isInputSchema } from '@auto-swe/shared/lib/inputSchema';
+import {
+  inputSchemaProblems,
+  isInputSchema,
+  validateInputPayload,
+} from '@auto-swe/shared/lib/inputSchema';
 import { CallbackRequestSchema } from '@auto-swe/shared/lib/runCallbacks';
 import { findUnauditedNodes, recordShellAudit } from '@auto-swe/shared/lib/shellAudit';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { buildTicketBrief } from '@auto-swe/shared/lib/ticketBrief';
 import {
   getWorkspaceProviderMetadata,
   isWorkspaceProviderType,
@@ -119,6 +124,7 @@ import {
 } from '../lib/templateWebhookSigning.js';
 import { memberOrgs } from '../lib/tenantScope.js';
 import { isValidTicketId } from '../lib/ticketId.js';
+import { lookupTrackerTicket } from '../lib/ticketLookup.js';
 import { launchTrackedTemplateRun } from '../lib/trackedTemplateLaunch.js';
 import { refuseUnchangedRerun } from '../lib/unchangedRerun.js';
 import { planWindow } from '../lib/usageWindows.js';
@@ -278,6 +284,18 @@ async function authorizeServingVersion(
     record: (tx) =>
       recordShellAudit(tx, version.id, teamId, user.sub, missing, team?.egressAllowlist ?? []),
   };
+}
+
+/** Stands in for the description while the schema is checked and the ticket has not been read. */
+const TICKET_BRIEF_PLACEHOLDER = '(read from the ticket)';
+
+/** Only a template whose input schema declares a string `description` takes a ticket-built brief. */
+function declaresStringDescription(inputSchema: unknown): boolean {
+  if (!isInputSchema(inputSchema)) {
+    return false;
+  }
+  const prop = inputSchema.properties.description;
+  return typeof prop === 'object' && prop !== null && prop.type === 'string';
 }
 
 const TemplateIdParam = z.object({ id: z.string().uuid() });
@@ -2422,9 +2440,39 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         return previous.reply;
       }
 
-      const payload = request.body.payload ?? {};
+      const submittedPayload = request.body.payload ?? {};
+      // The payload the run is launched with. It differs from what the caller submitted only when
+      // the description is built from the ticket below; `requestPayload` above is the submitted
+      // request and is never touched, so a replayed request still compares byte-identical.
+      let payload: Record<string, unknown> = submittedPayload;
 
-      if (!inputsSatisfySchema(reply, tpl.inputSchema, payload)) {
+      // An empty `ticketId` is an unset field (a form submits one), not an invalid id.
+      const ticketIdInput =
+        typeof submittedPayload.ticketId === 'string' && submittedPayload.ticketId !== ''
+          ? submittedPayload.ticketId
+          : null;
+      // No description but a valid ticket: the brief is built from the tracker after the
+      // repository is authorized. A schema that requires a description sees a placeholder.
+      const needsTicketBrief =
+        declaresStringDescription(tpl.inputSchema) &&
+        ticketIdInput !== null &&
+        isValidTicketId(ticketIdInput) &&
+        !(
+          typeof submittedPayload.description === 'string' &&
+          submittedPayload.description.trim() !== ''
+        );
+
+      if (
+        !inputsSatisfySchema(
+          reply,
+          tpl.inputSchema,
+          needsTicketBrief
+            ? { ...submittedPayload, description: TICKET_BRIEF_PLACEHOLDER }
+            : submittedPayload,
+          // The brief is checked against the description rules once it is built.
+          needsTicketBrief ? { deferField: 'description' } : undefined
+        )
+      ) {
         return;
       }
 
@@ -2433,7 +2481,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // these fields get sensible defaults; the worker reads the full payload from
       // RunInput.payload for anything beyond the base fields.
       const connectionId = typeof payload.connectionId === 'string' ? payload.connectionId : null;
-      const description =
+      let description =
         typeof payload.description === 'string' ? payload.description : (request.body.label ?? '');
       const workRequestId = crypto.randomUUID();
       const budgetTier: BudgetTier = BUDGET_TIERS.find((t) => t === payload.budget) ?? 'STANDARD';
@@ -2445,9 +2493,9 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       //
       // It also becomes the branch name (`<prefix>/<ticketId>`) and part of the
       // Temporal workflow id in the worker, so an explicit `ticketId` must be a
-      // valid ticket id. A free-text label is only used when it happens to be
-      // one; otherwise the work-request id stands in.
-      if (typeof payload.ticketId === 'string' && !isValidTicketId(payload.ticketId)) {
+      // valid ticket id. The label (the task name) is free text and never a ticket id;
+      // without a `ticketId` the work-request id stands in.
+      if (ticketIdInput !== null && !isValidTicketId(ticketIdInput)) {
         return sendError(
           reply,
           400,
@@ -2455,13 +2503,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           'payload.ticketId may only contain letters, digits, ".", "_", "#", "/" and "-", and must be a valid git ref component'
         );
       }
-      const label = request.body.label;
-      const externalTicketId =
-        typeof payload.ticketId === 'string'
-          ? payload.ticketId
-          : label && isValidTicketId(label)
-            ? label
-            : workRequestId;
+      const externalTicketId = ticketIdInput ?? workRequestId;
 
       const split = tpl.experimentSplit ?? 0;
       const resolvedVersion =
@@ -2602,6 +2644,54 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (!callback.ok) {
         return sendCallbackRefusal(reply, callback);
+      }
+      // Every refusal and authorization above has passed, so the tracker is read only for a launch
+      // that will go ahead. After this the description is final: the unchanged-rerun check below
+      // and the run itself see the brief.
+      if (needsTicketBrief && ticketIdInput !== null) {
+        const repo = connectionId
+          ? await fastify.prisma.connection.findFirst({
+              select: {
+                githubApiUrl: true,
+                githubUrl: true,
+                organizationName: true,
+                repoName: true,
+                team: { select: { orgId: true } },
+                teamId: true,
+              },
+              where: { id: connectionId, type: 'git_repo' },
+            })
+          : null;
+        const found = await lookupTrackerTicket(
+          ticketIdInput,
+          repo?.organizationName && repo.repoName
+            ? { ...repo, organizationName: repo.organizationName, repoName: repo.repoName }
+            : null,
+          request.log
+        );
+        if (found.state !== 'found') {
+          return sendError(
+            reply,
+            400,
+            'DESCRIPTION_REQUIRED',
+            'A description is required: the ticket could not be read from the issue tracker'
+          );
+        }
+        const brief = buildTicketBrief(ticketIdInput, found.ticket);
+        const finalPayload = { ...submittedPayload, description: brief };
+        if (
+          isInputSchema(tpl.inputSchema) &&
+          !validateInputPayload(tpl.inputSchema, finalPayload).ok
+        ) {
+          return sendError(
+            reply,
+            400,
+            'DESCRIPTION_REQUIRED',
+            "A description is required: the ticket-derived brief doesn't satisfy this workflow's description rules, so type a description"
+          );
+        }
+        description = brief;
+        payload = finalPayload;
       }
       // An identical request that stopped as not actionable would stop again. After the
       // key-derived id exists: a replayed key of such a run is the ordinary RUN_CONFLICT, not this.

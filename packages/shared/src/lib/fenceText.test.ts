@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { neutraliseFenceText } from './fenceText.js';
 
 describe('neutraliseFenceText', () => {
+  it('defuses zero-width-character variants of a closing tag', () => {
+    const out = neutraliseFenceText('<\u200b/ticket\u200b> and ＜/ticket＞ and < /ticket>');
+    expect(out).not.toMatch(/[<>＜＞]/);
+  });
+
   it('leaves ordinary text byte-identical', () => {
     const text = 'Add GET /health returning 200.\nLine two: "quoted", 100% done & ready ‹ok›';
     expect(neutraliseFenceText(text)).toBe(text);

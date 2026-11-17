@@ -1429,6 +1429,19 @@ The boot check defaults on. Only explicit `K8S_REQUIRE_ADMISSION_POLICY=false` (
 `workspaces.requireAdmissionPolicy=false`) skips it with a warning for local development.
 That opt-out does not remove chart-rendered admission rules. See
 [Kubernetes Helm](./kubernetes-helm.md#limitations) for remaining limits.
+
+## Template runs take the ticket ID only from `payload.ticketId`
+
+**Fixed by:** `<fixing-commit-sha>`.
+
+**Affected:** API and CLI callers of `POST /api/v1/workflow-templates/:id/runs` that relied on the
+launch `label` being used as the ticket ID when `payload.ticketId` was omitted. The label no longer
+supplies the ticket ID.
+
+**Action:** send `payload.ticketId` explicitly. A run launched without it is synthetic: it reads no
+tracker context and posts no ticket comments, and its branch and workflow ID are built from the
+platform-generated ID rather than the ticket's.
+
 ## Limitations
 
 - **A SHA identifies code, not your deployed image.** The comparison in §1 holds only if your

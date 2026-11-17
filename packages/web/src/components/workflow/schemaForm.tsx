@@ -99,6 +99,8 @@ export function SchemaFieldInput({
   onChange,
   required,
   error,
+  hint: hintOverride,
+  hintTone,
 }: {
   name: string;
   prop: InputSchemaProperty;
@@ -106,12 +108,17 @@ export function SchemaFieldInput({
   onChange: (v: unknown) => void;
   required?: boolean;
   error?: string;
+  /** Replaces the schema's own description as the helper text. */
+  hint?: string;
+  /** `warning` styles the helper text as a caution (plain string and textarea fields). */
+  hintTone?: 'warning';
 }) {
   const fieldId = useId();
   // A template's schema is team-authored JSON: read each keyword only when it has the type
   // it is rendered as, so a malformed one degrades to the plain field instead of a crash.
   const base = workflowFieldLabel(name, prop);
-  const hint = typeof prop.description === 'string' ? prop.description : undefined;
+  const hint =
+    hintOverride ?? (typeof prop.description === 'string' ? prop.description : undefined);
   const options = Array.isArray(prop.enum) ? prop.enum : undefined;
 
   if (prop.type === 'connection') {
@@ -258,6 +265,7 @@ export function SchemaFieldInput({
       <Textarea
         error={error}
         hint={hint}
+        hintTone={hintTone}
         id={fieldId}
         label={base}
         maxLength={prop.maxLength}
@@ -274,6 +282,7 @@ export function SchemaFieldInput({
     <Input
       error={error}
       hint={prop.format === 'uuid' ? `${hint ?? ''} (UUID)`.trim() : hint}
+      hintTone={hintTone}
       id={fieldId}
       label={base}
       onChange={(e) => onChange(e.target.value)}

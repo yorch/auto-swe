@@ -7,6 +7,7 @@ import { FieldWrapper, fieldDescribedBy } from './FieldWrapper';
 type TextareaProps = TextareaHTMLAttributes<HTMLTextAreaElement> & {
   label?: string;
   hint?: string;
+  hintTone?: 'warning';
   error?: string;
   /** Drops the 9rem minimum so `rows` sets the height, with tighter padding. */
   compact?: boolean;
@@ -17,6 +18,7 @@ type TextareaProps = TextareaHTMLAttributes<HTMLTextAreaElement> & {
 export function Textarea({
   label,
   hint,
+  hintTone,
   error,
   className,
   compact = false,
@@ -30,7 +32,14 @@ export function Textarea({
   const generatedId = useId();
   const inputId = id ?? props.name ?? generatedId;
   return (
-    <FieldWrapper error={error} hint={hint} id={inputId} label={label} required={required}>
+    <FieldWrapper
+      error={error}
+      hint={hint}
+      hintTone={hintTone}
+      id={inputId}
+      label={label}
+      required={required}
+    >
       <textarea
         aria-describedby={fieldDescribedBy(inputId, hint, error)}
         aria-invalid={error ? true : undefined}

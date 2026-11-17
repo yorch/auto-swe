@@ -18,11 +18,7 @@ import {
   resolveKnowledgeBaseConfig,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
-import {
-  isTrackerReadInScope,
-  repoTrackerScope,
-  TRACKER_READ_OUT_OF_SCOPE,
-} from '@auto-swe/shared/lib/trackerSync';
+import { TRACKER_READ_OUT_OF_SCOPE } from '@auto-swe/shared/lib/trackerSync';
 import {
   generateBranchName,
   generateWorkflowId,
@@ -65,6 +61,7 @@ import {
 } from '../lib/templateLaunch.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
+import { isTicketReadInScope } from '../lib/ticketLookup.js';
 import { refuseUnchangedRerun } from '../lib/unchangedRerun.js';
 import { allocateWorkflowId, launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -144,14 +141,7 @@ async function enrichWithTicketData(
     // organization). Refused before any network call and treated as a ticket that was not found:
     // nothing is fetched or stored.
     const defaultRepo = { owner: args.repo.organizationName, repo: args.repo.repoName };
-    if (
-      !(await isTrackerReadInScope(
-        tracker,
-        args.externalTicketId,
-        () => repoTrackerScope([args.repo]),
-        defaultRepo
-      ))
-    ) {
+    if (!(await isTicketReadInScope(tracker, args.externalTicketId, args.repo))) {
       fastify.log.warn({ workRequestId: args.workRequestId }, TRACKER_READ_OUT_OF_SCOPE);
       return '';
     }

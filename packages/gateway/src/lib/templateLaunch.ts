@@ -69,7 +69,8 @@ export function sendTemplateNotLaunchable(reply: FastifyReply) {
 export function inputsSatisfySchema(
   reply: FastifyReply,
   inputSchema: unknown,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  opts?: { deferField?: string }
 ): boolean {
   if (!inputSchema || !isInputSchema(inputSchema)) {
     return true;
@@ -78,11 +79,18 @@ export function inputsSatisfySchema(
   if (result.ok) {
     return true;
   }
+  // A field whose value is built later is checked then; its errors are not this refusal's.
+  const errors = opts?.deferField
+    ? result.errors.filter((e) => !e.startsWith(`'${opts.deferField}'`))
+    : result.errors;
+  if (errors.length === 0) {
+    return true;
+  }
   reply.status(400).send({
     error: {
       code: 'INVALID_INPUT',
-      details: result.errors,
-      message: `Run input does not satisfy the template's input schema: ${result.errors.join('; ')}`,
+      details: errors,
+      message: `Run input does not satisfy the template's input schema: ${errors.join('; ')}`,
     },
   });
   return false;
