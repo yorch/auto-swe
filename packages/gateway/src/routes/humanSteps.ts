@@ -105,6 +105,8 @@ const HumanStepListItemSchema = z.object({
   currentApprovers: z.number().int().min(0),
   description: z.string().nullable(),
   fields: z.unknown().nullable(),
+  /** Whether the step's Slack announcement can be replied to; the message itself is never returned. */
+  hasSlackThread: z.boolean(),
   id: z.string().uuid(),
   kind: z.string(),
   /**
@@ -456,6 +458,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           currentApprovers: s._count.humanApprovals,
           description: s.description,
           fields: s.fields,
+          hasSlackThread: nudgeSlackMessage(s.slackMessage) !== null,
           id: s.id,
           kind: s.kind,
           myResponse: myResponseOf(s, user.sub),

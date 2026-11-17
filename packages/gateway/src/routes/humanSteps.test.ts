@@ -240,6 +240,34 @@ describe('human step routes', () => {
     });
   });
 
+  describe('GET / hasSlackThread', () => {
+    const other = '00000000-0000-4000-8000-0000000000a2';
+
+    it('says whether the step has a Slack thread to reply in, and never returns the message', async () => {
+      listRows = [
+        pendingStep({
+          slackMessage: { channel: 'C1', text: 'secret text', ts: '1700000000.000100' },
+        }),
+        pendingStep({ id: other, slackMessage: null }),
+      ];
+      const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/human-steps' });
+      const data = JSON.parse(res.payload).data as Array<{ hasSlackThread: boolean; id: string }>;
+      expect(data.map((d) => [d.id, d.hasSlackThread])).toEqual([
+        [STEP_ID, true],
+        [other, false],
+      ]);
+      expect(res.payload).not.toContain('slackMessage');
+      expect(res.payload).not.toContain('secret text');
+    });
+
+    it('is false for a stored message that names no channel or timestamp', async () => {
+      listRows = [pendingStep({ slackMessage: { channel: '', ts: '1.2' } })];
+      const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/human-steps' });
+      const data = JSON.parse(res.payload).data as Array<{ hasSlackThread: boolean }>;
+      expect(data.map((d) => d.hasSlackThread)).toEqual([false]);
+    });
+  });
+
   describe('GET / canAnswer', () => {
     const other = '00000000-0000-4000-8000-0000000000a1';
 

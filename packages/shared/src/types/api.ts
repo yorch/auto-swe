@@ -1326,6 +1326,11 @@ export interface HumanStepSummary {
    * team the repository is shared to can see a step they cannot answer. Absent on payloads that predate it.
    */
   canAnswer?: boolean;
+  /**
+   * Whether the step's Slack announcement can be replied to, which a nudge needs. The stored message
+   * is never returned. Absent on payloads that predate it.
+   */
+  hasSlackThread?: boolean;
   /** Every recorded answer with its optional comment, oldest first. */
   responses?: HumanStepResponse[];
   run: {
