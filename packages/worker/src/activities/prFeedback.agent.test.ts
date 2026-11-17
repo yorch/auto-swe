@@ -219,6 +219,19 @@ describe('runAgentPrFeedbackTask — a scoped writer’s follow-up', () => {
     expect(args).not.toHaveProperty('orchestrationId');
     expect(args).not.toHaveProperty('orchestrated');
     expect(args).not.toHaveProperty('steeringRunId');
+    // Without the guard an orchestration child's run had, its follow-up binds no MCP at all.
+    expect(args.withholdMcp).toBe(true);
+  });
+
+  it('does not withhold MCP from a plain agent run’s follow-up', async () => {
+    base();
+    originalWith({ pathScopes: ['docs/**'] });
+    await runAgentPrFeedbackTask({ gather: gather(), request: request() });
+    const args = vi.mocked(runAgentTaskCore).mock.calls.at(-1)?.[0] as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(args).not.toHaveProperty('withholdMcp');
   });
 
   it('leaves a direct agent run’s follow-up unscoped', async () => {

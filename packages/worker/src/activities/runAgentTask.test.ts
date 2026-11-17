@@ -290,7 +290,7 @@ import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import { QUESTIONS, resumeInputFor } from '../lib/pauseResumeFixtures.js';
 import { restoreWorkingTree, snapshotWorkingTree } from '../lib/pauseSnapshot.js';
 import { DraftPullRequestUnsupportedError } from '../lib/scm/types.js';
-import { runAgentTask } from './runAgentTask.js';
+import { runAgentTask, runAgentTaskCore } from './runAgentTask.js';
 import { createWorkspace } from './workspace.js';
 
 const request = (over: Record<string, unknown> = {}) =>
@@ -1889,5 +1889,65 @@ describe('ask and resume', () => {
     expect(f).toMatchObject({ nonRetryable: true, type: 'NEEDS_INPUT_RESTORE_FAILED' });
     expect(createWorkspace).not.toHaveBeenCalled();
     expect(m.harnessTurn).not.toHaveBeenCalled();
+  });
+});
+
+describe('withholdMcp (the follow-up of an orchestration child)', () => {
+  const MCP = { url: 'https://mcp.example/mcp' };
+  const core = (over: Record<string, unknown> = {}) =>
+    runAgentTaskCore({
+      allowWorkflowChanges: false,
+      baseBranch: 'main',
+      baseCtx: { orgId: 'org-1', teamId: 'team-1' },
+      branch: 'auto/prfb-9-777',
+      commitMessage: 'auto: follow-up',
+      deliver: 'push',
+      effective: { maxSteps: 10, maxWallClockSeconds: 600 },
+      key: 'contentWriter',
+      prompt: 'fix it',
+      repo: { id: 'repo-1', teamId: 'team-1' },
+      ...over,
+    } as never);
+  const withheld = () =>
+    traceEvents().filter((e) => e.toolName === 'agent.mcp_withheld') as unknown as Array<{
+      outputJson: unknown;
+    }>;
+
+  describe.each([['mastra'], ['claude-code']])('on the %s loop', (runtime) => {
+    beforeEach(() => {
+      m.runtime = runtime;
+      m.toolKeys = ['mcp'];
+      vi.mocked(resolveAgentMcpUrl).mockResolvedValue(MCP as never);
+      vi.mocked(loadMcpTools).mockResolvedValue({
+        close: vi.fn(async () => {}),
+        tools: { srv__write: { id: 'srv__write' } },
+      } as never);
+    });
+
+    it('binds no MCP tool and records the withholding once', async () => {
+      await core({ withholdMcp: true });
+      expect(loadMcpTools).not.toHaveBeenCalled();
+      expect(resolveAgentMcpUrl).not.toHaveBeenCalled();
+      if (runtime === 'mastra') {
+        const spec = m.runAgent.mock.calls[0]?.[0] as { tools?: Record<string, unknown> };
+        expect(spec.tools ?? {}).not.toHaveProperty('srv__write');
+      } else {
+        expect(m.claudeCodeRuntime.mock.calls[0]?.[0].mcp ?? null).toBeNull();
+      }
+      expect(withheld()).toHaveLength(1);
+      expect(withheld()[0]?.outputJson).toEqual({ reason: 'orchestration_followup' });
+    });
+
+    it('still binds the agent’s MCP connection without the flag', async () => {
+      await core();
+      expect(withheld()).toHaveLength(0);
+      if (runtime === 'mastra') {
+        expect(loadMcpTools).toHaveBeenCalledTimes(1);
+        const spec = m.runAgent.mock.calls[0]?.[0] as { tools?: Record<string, unknown> };
+        expect(spec.tools).toHaveProperty('srv__write');
+      } else {
+        expect(m.claudeCodeRuntime.mock.calls[0]?.[0]).toMatchObject({ mcp: MCP });
+      }
+    });
   });
 });

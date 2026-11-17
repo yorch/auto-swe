@@ -196,6 +196,11 @@ export interface AgentTaskCoreInput extends PauseOptions {
   pathScopes?: readonly string[];
   /** The run is an orchestration child: scopes are mandatory for a delivering one. */
   orchestrated?: boolean;
+  /**
+   * Bind no MCP tool on either loop and record `agent.mcp_withheld`. For a run that has no
+   * approval guard of its own but continues an orchestration child's work (its PR follow-up).
+   */
+  withholdMcp?: boolean;
   /** `push` delivers through the fresh trusted container; `none` reports the agent's own diff. */
   deliver: 'push' | 'none';
   /** Whether the gate lets the agent touch workflow files. */
@@ -389,6 +394,12 @@ export async function runAgentTaskCore(
         source: loop.source,
       },
     });
+    if (input.withholdMcp) {
+      tracer.addActivityEvent({
+        name: 'agent.mcp_withheld',
+        outputJson: { reason: 'orchestration_followup' },
+      });
+    }
     // The paused run's tree goes back into the agent's container before its first turn;
     // delivery still judges it from a fresh container, as for any run.
     if (resume) {
@@ -420,6 +431,7 @@ export async function runAgentTaskCore(
       resolved,
       settingsCtx,
       ...(input.orchestrated ? { orchestrated: true } : {}),
+      ...(input.withholdMcp ? { withholdMcp: true } : {}),
       ...(input.steeringRunId ? { steeringRunId: input.steeringRunId } : {}),
       tracer,
       workspace: agentWs,
@@ -865,6 +877,8 @@ function guardedMcpTarget(
 interface AgentLoopInput {
   /** The run belongs to an orchestration: its MCP target must carry the approval guard. */
   orchestrated?: boolean;
+  /** Bind no MCP tool (a follow-up of an orchestration child, which has no approval guard). */
+  withholdMcp?: boolean;
   /** The agent may stop to ask a person (set only for a runtime that can). */
   allowPause?: true;
   agentCtx: ResolveCtx;
@@ -974,11 +988,13 @@ async function runOnMastra(
   // MCP per the agent's own configuration (a known exfiltration channel next
   // to a workspace; documented in docs/agent-runs.md). The agent resolves with
   // no team, so the connection is checked against the repository's team.
-  const mcpTarget = await guardedMcpTarget(
-    await resolveAgentMcpUrl(key, agentCtx, { tenant: input.settingsCtx, tracer }),
-    input,
-    tracer
-  );
+  const mcpTarget = input.withholdMcp
+    ? null
+    : await guardedMcpTarget(
+        await resolveAgentMcpUrl(key, agentCtx, { tenant: input.settingsCtx, tracer }),
+        input,
+        tracer
+      );
   let mcpTools: AgentTools | undefined;
   if (mcpTarget) {
     const loaded = await loadMcpTools(mcpTarget, tracer);
@@ -1046,11 +1062,13 @@ async function runOnHarness(
     loadProjectSettings: true,
     maxTurns: input.maxSteps,
     // The connection the Mastra loop would bind, relayed from the worker.
-    mcp: await guardedMcpTarget(
-      await resolveAgentMcpUrl(key, agentCtx, { tenant: input.settingsCtx, tracer }),
-      input,
-      tracer
-    ),
+    mcp: input.withholdMcp
+      ? null
+      : await guardedMcpTarget(
+          await resolveAgentMcpUrl(key, agentCtx, { tenant: input.settingsCtx, tracer }),
+          input,
+          tracer
+        ),
     ...(input.allowPause ? { allowPause: true } : {}),
     ...(input.profile ? { profile: input.profile } : {}),
     tracer,
