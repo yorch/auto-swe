@@ -12271,7 +12271,7 @@
       "before": 8,
       "id": "agentRunBase",
       "lines": 12,
-      "path": "packages/gateway/src/routes/agentRuns.ts",
+      "path": "packages/gateway/src/lib/agentRunLaunch.ts",
       "title": "An agent run refuses a platform work branch with INVALID_BASE_BRANCH"
     },
     {
@@ -15335,7 +15335,7 @@
       "before": 2,
       "id": "agentRunMcpGuard",
       "lines": 18,
-      "path": "packages/gateway/src/routes/agentRuns.ts",
+      "path": "packages/gateway/src/lib/agentRunLaunch.ts",
       "title": "A bridged agent-run launch passes the MCP write guards, then the delivery-mode allowlist"
     },
     {
@@ -15351,7 +15351,7 @@
       "before": 6,
       "id": "agentRunMcpReplay",
       "lines": 40,
-      "path": "packages/gateway/src/routes/agentRuns.ts",
+      "path": "packages/gateway/src/lib/agentRunLaunch.ts",
       "title": "A bridged retry by the same user with the same key and inputs replays its work request"
     },
     {
@@ -15359,15 +15359,15 @@
       "before": 1,
       "id": "agentRunMcpRace",
       "lines": 13,
-      "path": "packages/gateway/src/routes/agentRuns.ts",
+      "path": "packages/gateway/src/lib/agentRunLaunch.ts",
       "title": "A launch that loses the insert replays the winner, else the MCP cap refusal, else 409 RUN_CONFLICT"
     },
     {
-      "anchor": ": { guard: mcpWrite.launchGuard }),",
+      "anchor": ": { guard: orch?.guard ?? mcpWrite.launchGuard }),",
       "before": 7,
       "id": "agentRunMcpCapGuard",
       "lines": 8,
-      "path": "packages/gateway/src/routes/agentRuns.ts",
+      "path": "packages/gateway/src/lib/agentRunLaunch.ts",
       "title": "A user’s launch carries the MCP run-cap guard; it is absent unless the call is bridged"
     },
     {
@@ -15375,7 +15375,7 @@
       "before": 2,
       "id": "agentRunLaunchedBy",
       "lines": 3,
-      "path": "packages/gateway/src/routes/agentRuns.ts",
+      "path": "packages/gateway/src/lib/agentRunLaunch.ts",
       "title": "A person’s agent run acts as its launcher"
     },
     {
@@ -16281,9 +16281,9 @@
       "title": "A tracker HTTP status maps to a closed failure class; 404 is not_found whichever its cause"
     },
     {
-      "anchor": "  'prTitler',\n]);",
+      "anchor": "  'prTitler',\n  'orchestrator',\n]);",
       "id": "prTitleNonLaunchable",
-      "lines": 2,
+      "lines": 3,
       "path": "packages/shared/src/lib/agentRun.ts",
       "title": "prTitler is in the set of agents an Agent Run cannot launch"
     },
