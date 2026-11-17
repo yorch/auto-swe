@@ -36,8 +36,10 @@ function RunsList() {
   const { data: templates = [] } = useWorkflowTemplates();
   const q = (params.get('q') ?? '').slice(0, 200);
   const scope = params.get('scope') === 'MINE' ? 'MINE' : 'ALL';
-  const [searchDraft, setSearchDraft] = useDebouncedUrlSearch(q, (value) =>
-    update({ offset: null, q: value.trim() || null })
+  const [searchDraft, setSearchDraft] = useDebouncedUrlSearch(
+    q,
+    (value) => update({ offset: null, q: value || null }),
+    { normalize: (value) => value.trim() }
   );
   const teamFilter = useTeamParam();
   const { data, error, isError, isFetching, isLoading, refetch } = useRunsSearch(

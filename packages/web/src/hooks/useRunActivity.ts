@@ -7,7 +7,7 @@ import type {
   WorkflowHttpCallDetail,
 } from '@auto-swe/shared/types/api';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { api } from '@/lib/api';
 
 function activityUrl(runId: string, filters: RunActivityFilters, suffix = '', cursor?: string) {
@@ -27,6 +27,8 @@ export function mergeActivity(...lists: RunActivityItem[][]): RunActivityItem[] 
     a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0
   );
 }
+/** Newest live-tail rows kept; older ones are already in the paged list. */
+const TAIL_CAP = 500;
 interface Tail {
   data: RunActivityItem[];
   cursor?: string;
@@ -56,7 +58,7 @@ export function useRunActivity(runId: string, filters: RunActivityFilters, live:
       );
       return {
         cursor: page.nextCursor ?? undefined,
-        data: mergeActivity(previous?.data ?? [], page.data),
+        data: mergeActivity(previous?.data ?? [], page.data).slice(-TAIL_CAP),
         since: page.nextCursor ? since : watermark,
       };
     },
@@ -73,11 +75,15 @@ export function useRunActivity(runId: string, filters: RunActivityFilters, live:
     }
     wasLive.current = live;
   }, [live, refetchPages, refetchTail]);
+  const pageData = pages.data?.pages;
+  const tailData = tail.data?.data;
+  // Memoized: the merge sorts every row, and the host re-renders on every poll and tick.
+  const data = useMemo(
+    () => mergeActivity(...(pageData?.map((page) => page.data) ?? []), tailData ?? []),
+    [pageData, tailData]
+  );
   return {
-    data: mergeActivity(
-      ...(pages.data?.pages.map((page) => page.data) ?? []),
-      tail.data?.data ?? []
-    ),
+    data,
     error: pages.error ?? tail.error,
     fetchNextPage: pages.fetchNextPage,
     hasNextPage: pages.hasNextPage,

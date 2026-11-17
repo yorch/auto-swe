@@ -132,19 +132,22 @@ export function useReviewAttachment(teamId?: string) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['review-presets'] }),
   });
 }
+const MAX_REPOSITORY_PAGES = 50;
 export function useReviewRepositories(teamId?: string) {
   return useQuery({
     queryFn: async () => {
       const rows: RepositorySummary[] = [];
-      for (;;) {
+      // Bounded so a server that ignores `offset` cannot keep this loop paging forever.
+      for (let pageNo = 0; pageNo < MAX_REPOSITORY_PAGES; pageNo++) {
         const page = await api.get<ListPage<RepositorySummary>>(
           `/api/v1/repositories?includeInactive=true&limit=200&offset=${rows.length}`
         );
         rows.push(...page.data);
         if (!page.data.length || rows.length >= page.meta.total) {
-          return rows.filter((r) => r.type === 'git_repo' && (!teamId || r.team?.id === teamId));
+          break;
         }
       }
+      return rows.filter((r) => r.type === 'git_repo' && (!teamId || r.team?.id === teamId));
     },
     queryKey: ['review-repositories', teamId],
   });

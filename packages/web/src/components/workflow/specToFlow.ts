@@ -190,7 +190,9 @@ export function specToFlow(
     const label = EDGE_LABEL[e.kind];
     return {
       animated: opts.statuses?.byNodeId[e.from]?.status === 'RUNNING',
-      id: `${e.from}-${e.port}-${e.to}`,
+      // Node ids are free-form (they may contain `-`), so a joined string is ambiguous:
+      // `a`→`x-next-y` and `a-next-x`→`y` would share an id. Encoding the tuple cannot.
+      id: JSON.stringify([e.from, e.port, e.to]),
       ...(label && {
         label,
         labelBgPadding: [4, 2] as [number, number],

@@ -6,7 +6,7 @@ import {
   parseWorkflowSpec,
   validateSpec,
 } from '@auto-swe/shared/workflow';
-import { use, useCallback, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CONTAINER_AUTHORING_RULE,
   describeAuthoredCode,
@@ -207,27 +207,43 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
       return JSON.stringify(versionDetail.spec);
     }
   }, [versionDetail]);
+  // Serialized once per change, not on every render: the whole spec is stringified for the
+  // comparison and a large one is rendered on each keystroke.
+  const editorSpecJson = useMemo(
+    () => (mode === 'edit' && editorSpec !== null ? JSON.stringify(editorSpec) : null),
+    [mode, editorSpec]
+  );
+  const baselinePrettyJson = useMemo(
+    () => (mode === 'json' && versionDetail ? JSON.stringify(versionDetail.spec, null, 2) : null),
+    [mode, versionDetail]
+  );
   const isDirty =
-    (mode === 'edit' &&
-      editorSpec !== null &&
-      baselineSpecJson !== null &&
-      JSON.stringify(editorSpec) !== baselineSpecJson) ||
-    (mode === 'json' &&
-      versionDetail !== undefined &&
-      editorJson !== JSON.stringify(versionDetail.spec, null, 2));
+    (editorSpecJson !== null && baselineSpecJson !== null && editorSpecJson !== baselineSpecJson) ||
+    (baselinePrettyJson !== null && editorJson !== baselinePrettyJson);
 
   // Reload, close, an outside link and any in-app link click ask before losing the draft.
   useUnsavedChangesGuard(isDirty);
 
+  // The handler and this memo parse the same text; remember the last parse so each
+  // keystroke in the JSON view costs one JSON.parse plus schema check, not two.
+  const lastParse = useRef<{ text: string; result: ReturnType<typeof tryParseSpec> } | null>(null);
+  const parseSpecText = useCallback((text: string) => {
+    if (lastParse.current?.text !== text) {
+      lastParse.current = { result: tryParseSpec(text), text };
+    }
+    return lastParse.current.result;
+  }, []);
   const jsonParsed = useMemo(
-    () => (mode === 'json' && editorJson ? tryParseSpec(editorJson) : null),
-    [mode, editorJson]
+    () => (mode === 'json' && editorJson ? parseSpecText(editorJson) : null),
+    [mode, editorJson, parseSpecText]
   );
   const visualSpec: WorkflowSpec | null =
     mode === 'json' ? (jsonParsed?.ok ? jsonParsed.spec : null) : editorSpec;
 
   // The selected version's own lint, dirty or not: a draft saved with errors keeps them, and
   // promoting or activating it stays blocked until they are fixed.
+  // Synchronous on purpose: this gates promote and activate, so it must never describe an
+  // earlier spec than the one on screen.
   const lintErrors = useMemo(
     () => (visualSpec ? [...schemaIssues(visualSpec), ...validateSpec(visualSpec).errors] : []),
     [visualSpec]
@@ -241,15 +257,18 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
   // Each role at the price of the model its GLOBAL agent runs today; a role
   // the catalog cannot price keeps the estimator's built-in default.
   const { data: rolePrices } = useRolePricing();
+  // The estimate is informational, so it trails the keystroke rather than blocking it.
+  const deferredSpec = useDeferredValue(visualSpec);
+  const costSpec = visualSpec ? deferredSpec : null;
   const costEstimate = useMemo(() => {
-    if (!visualSpec || !stepRegistryByName) {
+    if (!costSpec || !stepRegistryByName) {
       return null;
     }
-    return estimateSpecCost(visualSpec, {
+    return estimateSpecCost(costSpec, {
       pricing: rolePrices ? estimatorPricing(rolePrices) : undefined,
       stepLookup: (name) => stepRegistryByName.get(name),
     });
-  }, [visualSpec, stepRegistryByName, rolePrices]);
+  }, [costSpec, stepRegistryByName, rolePrices]);
 
   // The estimate's caveat (container runtime, external calls, unpriced steps,
   // retries) travels with the number, so a partial sum never reads as the whole
@@ -379,7 +398,7 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
   const handleJsonChange = (text: string) => {
     clearStaleSaveFeedback();
     setEditorJson(text);
-    const parsed = tryParseSpec(text);
+    const parsed = parseSpecText(text);
     if (parsed.ok) {
       setEditorSpec(parsed.spec);
     }

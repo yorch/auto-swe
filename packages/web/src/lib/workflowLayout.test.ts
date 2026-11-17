@@ -207,3 +207,56 @@ describe('humanDecision option ports', () => {
     expect(new Set(edges.map((e) => e.id)).size).toBe(edges.length);
   });
 });
+
+describe('layoutSpec reuse', () => {
+  const chain = (extra: Record<string, unknown> = {}) =>
+    spec({
+      entry: 'a',
+      nodes: {
+        a: { next: 'b', step: 'x', type: 'step', ...extra },
+        b: { status: 'SUCCESS', type: 'terminate' },
+      },
+    });
+
+  it('places a node the same after an edit that leaves the graph shape alone', () => {
+    const before = layoutSpec(chain());
+    const after = layoutSpec(chain({ title: 'Renamed' }));
+    expect(after.nodes.map((n) => [n.id, n.x, n.y])).toEqual(
+      before.nodes.map((n) => [n.id, n.x, n.y])
+    );
+    expect(after.nodes[0]?.node).toMatchObject({ title: 'Renamed' });
+  });
+
+  it('lays out again when an edge changes', () => {
+    const before = layoutSpec(chain());
+    const rewired = layoutSpec(
+      spec({
+        entry: 'a',
+        nodes: {
+          a: { next: 'c', step: 'x', type: 'step' },
+          b: { status: 'SUCCESS', type: 'terminate' },
+          c: { next: 'b', step: 'x', type: 'step' },
+        },
+      })
+    );
+    expect(rewired.nodes).toHaveLength(3);
+    expect(rewired.width).toBeGreaterThan(before.width);
+  });
+
+  it('gives edges distinct ids when node ids that contain a dash would join alike', () => {
+    const { edges } = specToFlow(
+      spec({
+        entry: 'a',
+        nodes: {
+          a: { next: 'x-next-y', step: 'x', type: 'step' },
+          'a-next-x': { next: 'y', step: 'x', type: 'step' },
+          'x-next-y': { status: 'SUCCESS', type: 'terminate' },
+          y: { status: 'SUCCESS', type: 'terminate' },
+        },
+      }),
+      {}
+    );
+    expect(edges).toHaveLength(2);
+    expect(new Set(edges.map((e) => e.id)).size).toBe(2);
+  });
+});

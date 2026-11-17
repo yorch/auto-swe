@@ -31,6 +31,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
+  memo,
   type KeyboardEvent as ReactKeyboardEvent,
   useCallback,
   useEffect,
@@ -508,10 +509,12 @@ function InnerDag({
   );
 }
 
-export function WorkflowDag(props: Props) {
+// Memoized: the run page re-renders every second while a run is live, and the graph
+// serializes its whole spec several times per render.
+export const WorkflowDag = memo(function WorkflowDag(props: Props) {
   return (
     <ReactFlowProvider>
       <InnerDag {...props} />
     </ReactFlowProvider>
   );
-}
+});

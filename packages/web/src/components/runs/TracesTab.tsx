@@ -1,7 +1,16 @@
 'use client';
 
 import type { AgentTraceRecord } from '@auto-swe/shared/types/api';
-import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import {
+  memo,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -607,7 +616,7 @@ interface TraceSection {
   groups: TraceGroup[];
 }
 
-export function TracesTab({
+export const TracesTab = memo(function TracesTab({
   traces,
   filterNodeId,
   linker,
@@ -951,4 +960,4 @@ export function TracesTab({
       <div ref={endRef} />
     </div>
   );
-}
+});

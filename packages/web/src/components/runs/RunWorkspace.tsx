@@ -1,7 +1,16 @@
 'use client';
 
-import { isTerminalWorkflowRunStatus } from '@auto-swe/shared/types/api';
-import { Activity, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type AgentTraceRecord, isTerminalWorkflowRunStatus } from '@auto-swe/shared/types/api';
+import {
+  Activity,
+  type ReactNode,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
@@ -99,7 +108,10 @@ export function RunWorkspace({
   const time = runTimeWindow(run, now, !monitoringPaused);
   const snapshot = monitoringPaused && !isTerminalWorkflowRunStatus(run.status);
   const currentMs = Math.min(replayMs ?? time.duration, time.duration);
-  const cutoff = replayMs === null ? null : time.start + currentMs;
+  const liveCutoff = replayMs === null ? null : time.start + currentMs;
+  // Playback ticks and slider drags are urgent; re-deriving every step, trace row and graph
+  // overlay from them is not, so it yields to input instead of blocking the tab.
+  const cutoff = useDeferredValue(liveCutoff);
   const steps = useMemo(
     () => (cutoff === null ? run.steps : stepsAtTime(run.steps, cutoff)),
     [run.steps, cutoff]
@@ -116,9 +128,30 @@ export function RunWorkspace({
   const selectedRows = new Set(selectedStep ? [selectedStep.id] : matching.map((step) => step.id));
   const selectedSpecId = selectedNodeId ? specNodeIdOfRecording(selectedNodeId, linker) : null;
   const selectedNode = selectedSpecId ? spec?.nodes[selectedSpecId] : null;
-  const eventTraces = selectedStep
-    ? visibleTraces.filter((t) => traceBelongsToStep(t, selectedStep, linker))
-    : visibleTraces;
+  // Memoized: the clock re-renders this component every second while a run is live, and a
+  // fresh array each time would defeat every memo inside the trace list.
+  const eventTraces = useMemo(
+    () =>
+      selectedStep
+        ? visibleTraces.filter((t) => traceBelongsToStep(t, selectedStep, linker))
+        : visibleTraces,
+    [selectedStep, visibleTraces, linker]
+  );
+  // The Transcript view lists every step. Bucket the traces once per change instead of
+  // filtering the whole run for each step on every render (steps x traces).
+  const tracesByStep = useMemo(() => {
+    const buckets = new Map<string, AgentTraceRecord[]>();
+    if (!transcriptVisited) {
+      return buckets;
+    }
+    for (const step of steps) {
+      buckets.set(
+        step.id,
+        visibleTraces.filter((t) => traceBelongsToStep(t, step, linker))
+      );
+    }
+    return buckets;
+  }, [transcriptVisited, steps, visibleTraces, linker]);
   const phases = useMemo(() => (spec ? phasesOf(spec) : []), [spec]);
   const activeSteps =
     cutoff === null
@@ -203,11 +236,16 @@ export function RunWorkspace({
       pane.current.scrollTop = 0;
     }
   }
+  // Stable handlers let the memoized trace list and graph skip the 1 s clock re-render.
+  const selectRef = useRef(select);
+  selectRef.current = select;
+  const clearSelection = useCallback(() => selectRef.current(null), []);
+  const selectNode = useCallback((id: string | null) => selectRef.current(id), []);
   const events = (
     <TracesTab
       filterNodeId={selectedNodeId}
       linker={linker}
-      onClearFilter={() => select(null)}
+      onClearFilter={clearSelection}
       runStartedAt={run.startedAt}
       traces={eventTraces}
       windowed={run.tracesTruncated === true}
@@ -392,7 +430,7 @@ export function RunWorkspace({
                 <WorkflowDag
                   height="100%"
                   narrowScrollSafe
-                  onSelect={(id) => select(id)}
+                  onSelect={selectNode}
                   selectedNodeId={selectedSpecId}
                   spec={spec}
                   statuses={overlay}
@@ -439,18 +477,7 @@ export function RunWorkspace({
                       {selectedStep.error}
                     </pre>
                   )}
-                  <details>
-                    <summary className={cn('cursor-pointer text-xs text-paper-400', FOCUS_RING)}>
-                      Inputs and outputs
-                    </summary>
-                    <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-xs text-paper-300">
-                      {JSON.stringify(
-                        { inputs: selectedStep.inputs, outputs: selectedStep.outputs },
-                        null,
-                        2
-                      )}
-                    </pre>
-                  </details>
+                  <StepInputsOutputs step={selectedStep} />
                 </div>
               )}
             </div>
@@ -542,9 +569,9 @@ export function RunWorkspace({
                       <TracesTab
                         filterNodeId={step.nodeId}
                         linker={linker}
-                        onClearFilter={() => select(null)}
+                        onClearFilter={clearSelection}
                         runStartedAt={run.startedAt}
-                        traces={visibleTraces.filter((t) => traceBelongsToStep(t, step, linker))}
+                        traces={tracesByStep.get(step.id) ?? NO_TRACES}
                         windowed={run.tracesTruncated === true}
                       />
                     </section>
@@ -690,5 +717,39 @@ export function RunWorkspace({
         </footer>
       </section>
     </div>
+  );
+}
+
+const NO_TRACES: AgentTraceRecord[] = [];
+/** Longest input/output dump drawn inline; a spilled context value can be megabytes. */
+const STEP_IO_MAX_CHARS = 100_000;
+
+/** Serializes only while open, so a closed block costs nothing on the run's 1 s clock. */
+function StepInputsOutputs({
+  step,
+}: {
+  step: { inputs?: unknown; outputs?: unknown; id: string };
+}) {
+  const [open, setOpen] = useState(false);
+  const text = useMemo(() => {
+    if (!open) {
+      return '';
+    }
+    const full = JSON.stringify({ inputs: step.inputs, outputs: step.outputs }, null, 2) ?? '';
+    return full.length > STEP_IO_MAX_CHARS
+      ? `${full.slice(0, STEP_IO_MAX_CHARS)}\n… truncated (${full.length - STEP_IO_MAX_CHARS} more characters)`
+      : full;
+  }, [open, step.inputs, step.outputs]);
+  return (
+    <details onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary className={cn('cursor-pointer text-xs text-paper-400', FOCUS_RING)}>
+        Inputs and outputs
+      </summary>
+      {open && (
+        <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-xs text-paper-300">
+          {text}
+        </pre>
+      )}
+    </details>
   );
 }
