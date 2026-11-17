@@ -670,7 +670,7 @@ provenance line, add the union of their `Skill` and `Agent` tools (a `Skill` onl
 own plugins declare, an `Agent` only in the foreground on the session's model), and stop stray processes
 and rewrite the profile directories from the snapshots before every turn (defence in depth: the
 container's own report of its files is never trusted). A profile's hook configuration is left out of the
-container when its platform-wide hook switch is off. On any other loop the run proceeds without the
+container when its platform-wide hook switch is off: every auto-run source (hooks, skill and command frontmatter hooks, monitors and LSP servers), with the run keeping the switch it pinned at its start. On any other loop the run proceeds without the
 profiles and an `agent.profile_not_applicable` event says so; a profile that cannot be resolved fails a
 Claude Code run closed.
 
@@ -1680,6 +1680,8 @@ GLOBAL             →  (always falls back to this; may carry no skill refs)
 
 `skillsToPromptSuffix(skills)` joins prompt texts with double-newline; returns `undefined` for an empty array. Used by reviewer and planner sub-agents (which receive skill fragments directly in the system prompt rather than via the L1 menu).
 
+**Plugin-projected skills.** A skill projected from a plugin (`Skill.pluginProfileId` set; [harness-profiles.md §13](./harness-profiles.md#13-skill-projection-for-other-runtimes)) follows its plugin. No agent version can add one of a disabled plugin, and a TEAM-scoped version cannot add one whose plugin the team has not enabled. At run time, such a skill is dropped from the prompt with an `agent.plugin_skill_excluded` event when its plugin is disabled, or when it is on a TEAM-scoped version the team has not enabled the plugin for. Its text changes only by accepting a plugin version.
+
 ### 6.4 Custom Skill Security Scanning
 
 Custom skills' `promptText` is scanned by `scanSkillContent(text)` in `packages/shared/src/lib/skillScanner.ts`:
@@ -2153,7 +2155,7 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
 | `HarnessProfile` | `harness_profiles` | An admin-approved Claude Code plugin profile, read from a repository folder or approved from a marketplace entry; carries its hook switch and tracking state; global, never deleted ([harness-profiles.md](./harness-profiles.md)) |
 | `HarnessProfileVersion` | `harness_profile_versions` | One immutable, content-hashed snapshot of a profile at an exact commit |
 | `MarketplaceSource` | `marketplace_sources` | A tracked plugin marketplace (`.claude-plugin/marketplace.json`), pinned to the commit its catalog was read at ([harness-profiles.md §11](./harness-profiles.md#11-marketplaces)) |
-| `PluginEnablement` | `plugin_enablements` | A team's enablement of one approved profile; a binding on that team's agents needs one ([harness-profiles.md §12](./harness-profiles.md#12-team-enablement)) |
+| `PluginEnablement` | `plugin_enablements` | A team's enablement of one approved profile; a TEAM-scoped binding on that team's agents needs one ([harness-profiles.md §12](./harness-profiles.md#12-team-enablement)) |
 | `Agent` | `agents` | Single source of truth per key/scope: model spec, system prompt, credential pin, tool keys, skill refs, runtime, reasoning level (versioned) |
 | `AgentSkillRef` | `agent_skill_refs` | Join from an `Agent` to a `Skill` with `sortOrder` |
 | `ProviderCredential` | `provider_credentials` | AES-256-GCM encrypted API keys per provider per scope |
@@ -2601,8 +2603,8 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   after the persona was saved (the parent's save lists the personas it strands, but does not refuse).
   A new override inherits the platform-wide runtime only when it is created; a later change to the
   platform-wide row's runtime does not reach existing overrides.
-- **Without a harness profile, the harness gets no sub-agent, web or plugin tool.** A profile can grant
-  `Agent` and `Skill` under the limits in [harness-profiles.md](./harness-profiles.md); nothing else is
+- **The harness gets no web tool, and a sub-agent or `Skill` tool only when a bound plugin profile
+  grants it,** under the limits in [harness-profiles.md](./harness-profiles.md); nothing else is
   granted. Its worker-owned tools include optional
   browser tools and knowledge search, plus the Agent's own MCP connection relayed from the worker;
   a repository's `.mcp.json` and the harness's own MCP settings

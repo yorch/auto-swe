@@ -13,7 +13,7 @@
 | Plugin | A Claude Code plugin directory: `.claude-plugin/plugin.json` and the folders it names. |
 | Harness profile | The stored record of approved plugins: one folder of one or more plugins, optional instructions, its versions, and its settings (name, `hooksEnabled`, `status`, tracking). Agents bind profiles, not plugins. |
 | Marketplace | A repository's `.claude-plugin/marketplace.json` catalog. An administrator approves one of its entries as a harness profile holding that single plugin. |
-| Plugin enablement | A team's permission to bind a profile on its own agents: one row per profile and team. |
+| Plugin enablement | A team's permission to bind a profile on its own (TEAM-scoped) agents: one row per profile and team. |
 
 ---
 
@@ -111,20 +111,22 @@ each plugin, applies the file rules, and computes the hash. It also produces war
 block:
 
 - plugin MCP servers are stored but never loaded at run time;
-- hooks are present (they run commands inside the run container);
+- auto-run sources are present: hooks, frontmatter hooks, monitors or LSP servers (each runs
+  commands inside the run container; section 7 lists them);
 - scripts are present;
 - files have the executable bit set;
 - files outside the instructions and plugins are stored but never used.
 
 Scanning (`scanProfile`) is advisory and executes nothing. The platform's skill-content scanner runs
-over the instructions and every plugin `.md`; the shell-command patterns run over every hook command
-in `hooks/hooks.json`, in a plugin's inline `hooks`, and in any hooks file a plugin's `plugin.json`
-names by path (a string, or an array mixing paths and inline objects) inside the plugin folder, and
-over every script, executable file and file that starts with `#!`. A `hooks` path that leaves the
-plugin folder, does not exist or is not valid JSON adds a `hooks-not-scanned` warning: the hooks it
-names would still run. A scan that could not run every rule over everything adds a `scan-incomplete`
-warning rather than reading as clean. Binary content and invalid UTF-8 prose are reported as not
-scanned.
+over the instructions and every plugin `.md`. The shell-command patterns run over every auto-run
+command of section 7: the commands of `hooks/hooks.json`, of a plugin's inline `hooks`, and of any
+hooks file a plugin's `plugin.json` names by path (a string, or an array mixing paths and inline
+objects) inside the plugin folder; the `hooks` frontmatter of each skill and command; the commands of
+monitors and LSP servers; and over every script, executable file and file that starts with `#!`.
+A source that cannot be read, that names a path outside the plugin folder, or that names a missing
+file adds a `hooks-not-scanned` warning: the commands it names would still run. A scan that could
+not run every rule over everything adds a `scan-incomplete` warning rather than reading as clean.
+Binary content and invalid UTF-8 prose are reported as not scanned.
 
 For a marketplace entry, the approval warnings also list each MCP server the plugin declares
 (section 11): one per unsupported server, and one for the HTTP servers the harness does not load.
@@ -162,8 +164,20 @@ administrator saw.
 
 ## 7. The hook switch
 
-`HarnessProfile.hooksEnabled` decides whether a plugin's hook configuration is written into the run
+`HarnessProfile.hooksEnabled` decides whether a plugin's auto-run commands are written into the run
 container. It is a boolean on the profile row, not on a version.
+
+An **auto-run source** is any place where a plugin declares a command the host runs without the
+model asking for it:
+
+- `hooks/hooks.json`, the inline `hooks` of `plugin.json`, or a hooks file `plugin.json` names under
+  `hooks`;
+- the `hooks` key of the YAML frontmatter of a skill or command `.md`;
+- monitors: `monitors/monitors.json`, and `monitors` or `experimental.monitors` in `plugin.json`;
+- LSP servers: `.lsp.json`, and `lspServers` in `plugin.json`.
+
+One module (`packages/shared/src/lib/harnessProfile/hookSources.ts`) lists these sources for the
+approval warnings and scan, the hook diff and the switch, so all three cover the same sources.
 
 - **Decided at approval.** The approval request must send `hooksEnabled` explicitly: a folder
   approval, a marketplace entry approval (both have no default) and a bundle install (which always
@@ -172,27 +186,39 @@ container. It is a boolean on the profile row, not on a version.
   it, is audited with the before and after values, and cuts no version. The stored snapshot and its
   content hash are unchanged, so an upstream check never sees a change from the switch alone.
 - **Applied when the plugin is written into the container, never in the snapshot.** With the switch
-  off, the worker leaves out of each plugin: `hooks/hooks.json`; the inline `hooks` of
-  `plugin.json` (the manifest is written again without that key); and any file `plugin.json` names
-  in `hooks`. Scripts and executable files are still written. The dashboard says so beside the
-  switch.
-- **A plugin that cannot be left out cleanly is refused.** When the switch is off, a hooks path that
-  leaves the plugin folder, names a file that is not in the snapshot or is not valid UTF-8 JSON, or
-  a `plugin.json` that is missing, not valid JSON or not a JSON object, fails the run without retry
-  with `PROFILE_HOOKS_UNREADABLE`. The plugin is not run; the run is not run without it.
-- **Updates never turn hooks on.** An accepted version leaves the switch as it is. With the switch
-  on, a version that changes a plugin's hook sources (`hooks/hooks.json`, the inline `hooks` of
-  `plugin.json`, or a file named in `hooks`) needs `acknowledgeHookChanges: true` at accept;
-  without it the answer is `409 HOOK_CHANGES_UNACKNOWLEDGED` with the diff. With the switch off, a
-  hook change needs no acknowledgement, because those files are not written.
+  off, the worker leaves out of each plugin every auto-run source above: `hooks/hooks.json`,
+  `monitors/monitors.json`, `.lsp.json`, and each file a `plugin.json` key names. `plugin.json` is
+  written again without its `hooks`, `monitors`, `experimental.monitors` and `lspServers` keys and
+  nothing else changed; each skill and command `.md` is written again without its `hooks` key, its
+  body byte for byte. Scripts and executable files are still written. The dashboard says so beside
+  the switch.
+- **A source that cannot be left out cleanly is refused.** With the switch off, a plugin the worker
+  cannot rewrite with certainty fails the run without retry with `PROFILE_HOOKS_UNREADABLE`: a
+  named path that leaves the plugin folder, or names a file that is not in the snapshot or is not
+  valid UTF-8 JSON; a `plugin.json` that is missing, not valid JSON or not a JSON object; a plugin
+  directory that is not a safe relative path; or frontmatter that cannot be parsed or cannot be
+  edited without changing another key or the body. The plugin is not run; the run is not run
+  without it.
+- **The effective switch is the pinned value AND the live value.** A run takes the switch it
+  pinned when it started (section 8), and the worker also reads the platform switch on each
+  resolution. So a run never gains hooks: turning them on reaches only runs that start afterwards.
+  An ADMIN turning them off applies to the next activity of a run in flight.
+- **Updates never turn hooks on.** An accepted version leaves the switch as it is. The accept
+  compares and sets the switch, so a switch change that races it answers `409
+  HARNESS_PROFILE_CHANGED` and nothing is written. With the switch on, a version that adds, removes
+  or changes any auto-run source (its commands, not only its file) needs `acknowledgeHookChanges:
+  true` at accept; without it the answer is `409 HOOK_CHANGES_UNACKNOWLEDGED` with the diff. With the
+  switch off, a hook change needs no acknowledgement, because those sources are not written.
 - **The diff is shown before accept.** `preview-update` returns `hookChanges` (sources `added`,
   `removed` and `changed`, each with the commands it runs; a changed source lists the commands
   added and removed) and the profile's `hooksEnabled`. The dashboard renders the diff in the update
   dialog.
 - **Recorded per run.** The first turn of each profiled Claude Code runtime emits an
-  `agent.plugin_hooks` event for each profile, carrying the profile name, version and `hooksEnabled`.
+  `agent.plugin_hooks` event for each profile. It carries the profile name and version, the
+  effective `hooksEnabled`, the `pinned` value the run started with and the `live` platform value.
 
-The switch covers the hook sources listed above and nothing else (Limitations).
+The switch covers every auto-run source listed above. A kind of auto-run source that the harness
+starts from a plugin but that this list does not name is outside the switch (Limitations).
 
 ## 8. Binding plugins to an agent
 
@@ -226,7 +252,7 @@ profile:
 | `PROFILE_NOT_FOUND` | A name is not an approved profile. |
 | `PROFILE_DISABLED` | A name is a disabled profile. |
 | `PROFILE_NAME_COLLISION` | Two profiles in the list hold a plugin with the same name (compared case-insensitively, from each profile's latest snapshot). |
-| `PROFILE_NOT_ENABLED` | A team override adds a profile its team has not enabled. |
+| `PROFILE_NOT_ENABLED` | A TEAM-scoped version adds a profile its team has not enabled. |
 
 The existence, status, collision and enablement checks run when the list is set or changed. A name
 the version already carries is not re-checked for status or enablement, so a disabled or revoked
@@ -244,13 +270,20 @@ run's pin, else the profile's latest version (which must be OK). It returns the 
 commit, content hash, manifest and files, and verifies the stored snapshot against its content hash
 before handing the files out.
 
-**Run pin.** `WorkflowRun.harnessProfileVersions` is `{ profileName: version }`. At run start the
-worker pins the latest version of every OK profile bound to an agent the run can resolve (same scope
-and agent-version pins as the runtime snapshot; channel turns too). A profile bound on a version that
-needs team enablement (section 12) is pinned only when the run's team has enabled it. An agent with
-no entry pins the version it first resolves with a compare-and-set on the whole map, so two
-activities pinning different profiles keep both entries and an existing pin is never overwritten. A
-run that pinned version N keeps N after a newer version is accepted or the profile is disabled.
+**Run pin.** `WorkflowRun.harnessProfileVersions` maps each profile name to what the run was given:
+a bare version number, or `{ version, hooks, verified }`. `hooks` is the platform switch at the pin.
+`verified` lists the agent keys whose TEAM-scoped binding of the plugin passed the enablement check
+(section 12). A reserved `__execution` key names the Temporal run id the map was taken for; a map
+that names another execution is ignored, so a reused workflow id never inherits an earlier run's pins
+or verified bindings.
+
+At run start the worker pins the latest version of every OK profile bound to an agent the run can
+resolve (same scope and agent-version pins as the runtime snapshot; channel turns too). A profile
+bound on a TEAM-scoped version is pinned only when the run's team has enabled it. An agent with no
+entry pins the version it first resolves with a compare-and-set on the whole map, so two activities
+pinning different profiles keep both entries and an existing pin is never overwritten. A run that
+pinned version N keeps N after a newer version is accepted or the profile is disabled. The pin
+decides the version; it does not decide the permission (section 12).
 
 **Fail closed.** An agent bound to a profile never runs without it. A non-retryable failure is raised
 for each of these:
@@ -258,7 +291,7 @@ for each of these:
 | Code | Cause |
 |---|---|
 | `PROFILE_UNAVAILABLE` | The profile does not exist; it is disabled and the run has not pinned it; or its pinned or latest version row is missing. |
-| `PLUGIN_NOT_ENABLED` | The binding is on a version that is not platform-wide, the run has no pin for the profile, and the run's team has no enablement for it. |
+| `PLUGIN_NOT_ENABLED` | The binding is on a TEAM-scoped version, the run has not verified that binding, and the run's team has no enablement for the plugin. Checked on every resolution, not only the first (section 12). |
 | `PLUGIN_NAME_COLLISION` | Two profiles bound to the agent hold a plugin with the same name (refused at bind time too). |
 | `PROFILE_INTEGRITY` | The snapshot no longer reproduces its content hash, or its instructions spell the provenance marker. |
 
@@ -326,10 +359,10 @@ beyond them.
 `plugins: [{ type: 'local', path: '<directory>/<plugin>', skipMcpDiscovery: true }]`. The SDK puts
 them on the harness's command line (`--plugin-dir-no-mcp <path>`) and the custom spawn hands that
 command line, unchanged, to the binary started in the container, so the paths are read there. A
-plugin's commands, skills, sub-agents and hooks load; its MCP servers do not (`skipMcpDiscovery`, and
-`strictMcpConfig` stays on). Everything else the worker sets is unchanged: the policy settings
-layers, `managedSettings`, the worker-side hooks, the `canUseTool` deny, `permissionMode`, the pinned
-API host and the tool allowlist rule.
+plugin's commands, skills, sub-agents and auto-run sources (section 7) load; its MCP servers do not
+(`skipMcpDiscovery`, and `strictMcpConfig` stays on). Everything else the worker sets is unchanged:
+the policy settings layers, `managedSettings`, the worker-side hooks, the `canUseTool` deny,
+`permissionMode`, the pinned API host and the tool allowlist rule.
 
 **Instructions.** Each profile's `instructions` file is appended to the system prompt, after the
 caller's prompt and skills, in binding order, each behind its own provenance line:
@@ -464,8 +497,9 @@ profile name, or an entry that is not an object, is not installable.
   `status`: `UPDATE_AVAILABLE`, `OK` or `ERROR`. It never moves a pin, approves an entry or changes a
   profile. `POST /marketplaces/:id/check` does the same for one source.
 - `POST /marketplaces/:id/accept-update` moves the pin to a commit the ref still names, after the
-  catalog reads at that commit. It installs nothing and changes no profile. The same commit answers
-  `MARKETPLACE_NO_CHANGE`.
+  catalog reads at that commit. The pin moves only if it still holds the commit the check was made
+  against, and the source is read back through the same transaction. It installs nothing and changes
+  no profile. The same commit answers `MARKETPLACE_NO_CHANGE`.
 - `PATCH /marketplaces/:id` sets `status` to `DISABLED` or back to `OK`. A disabled source answers
   `MARKETPLACE_DISABLED` to a check, an accept, and an entry read or approval.
 - `DELETE /marketplaces/:id` removes the source. Profiles approved from it keep working; their
@@ -476,12 +510,14 @@ profile name, or an entry that is not an object, is not installable.
 1. `POST /marketplaces/:id/entries/preview` with `{ entry, sha? }` reads the entry at the pinned
    commit (a relative entry) or at its own commit (a GitHub entry; `sha` is needed for one that names
    only a ref) and returns the wrapped profile's preview: manifest, files, warnings, `contentHash`,
-   `warningsHash`, the MCP servers it declares and any `conflicts` by name.
+   `warningsHash`, the MCP servers it declares, `hasHooks` (whether any auto-run source of section 7
+   exists) and any `conflicts` by name.
 2. `POST /marketplaces/:id/entries/approve` with `{ entry, sha, contentHash, warningsHash,
    hooksEnabled, acknowledgeWarnings? }` re-reads the entry, requires the same content and warnings
    (`PREVIEW_STALE` otherwise), requires acknowledgement of any warnings, and creates a single-plugin
    profile at version 1, named after the entry, with `marketplaceSourceId` and `marketplaceEntry`
    set. A name already taken answers `HARNESS_PROFILE_NAME_EXISTS`.
+3. Approval does not project the plugin's skills (Limitations).
 
 The catalog marks each entry with the profile approved from it (`profile`) and with `nameTaken` when
 another profile holds its name.
@@ -501,7 +537,7 @@ Because an HTTP server always adds a warning, approving a plugin that declares o
 ## 12. Team enablement
 
 A platform ADMIN approves a plugin for the platform. A team admin then enables it for their team, and
-only an enabled plugin can be bound on that team's agents.
+only an enabled plugin can be bound on a TEAM-scoped agent of that team.
 
 | Method and path | Who | Purpose |
 |---|---|---|
@@ -509,18 +545,23 @@ only an enabled plugin can be bound on that team's agents.
 | `PUT /api/v1/teams/:teamId/plugins/:name` | Team ADMIN (a platform ADMIN passes) | Enable one plugin for the team. Idempotent. `TEAM_INACTIVE` for an inactive team; `HARNESS_PROFILE_DISABLED` for a disabled profile. |
 | `DELETE /api/v1/teams/:teamId/plugins/:name` | Team ADMIN | Disable one plugin for the team. `NOT_FOUND` when it was not enabled. The response lists `strandedAgents`. |
 
-**What enablement governs.**
+**What enablement governs.** Enablement applies to a binding on a TEAM-scoped agent version, the
+version a team admin writes. A platform-wide (GLOBAL), organization, channel or workflow-template
+binding is written by a platform ADMIN and needs no enablement, at save or at run time.
 
-- A binding on a team override needs its team's enablement at save (`PROFILE_NOT_ENABLED`) and at
-  the run's first use of the profile (`PLUGIN_NOT_ENABLED`). A platform-wide binding needs none.
-- Removing an enablement does not change any agent. A run that starts afterwards and has no pin for
-  the plugin fails closed with `PLUGIN_NOT_ENABLED`, naming the plugin.
-- A run that already pinned the plugin (its pins are written at run start, section 8) keeps its
-  snapshot for the rest of the run, including retries. Its team's later revocation does not reach it.
-- `strandedAgents` lists the team's agent versions that still name the plugin. The plugin's detail page
-  lists every bound agent with a `stranded` flag, so the admin sees them before a run fails.
-- Disabling a profile (section 15) stops enablements, and stops runs that start after it from pinning or resolving
-  it. It does not change enablements already recorded.
+- A TEAM-scoped binding needs its team's enablement at save (`PROFILE_NOT_ENABLED`) and at every
+  resolution of that binding (`PLUGIN_NOT_ENABLED`), not only at the run's first use. The pin decides
+  the version; it does not decide the permission.
+- A binding the run has verified is the exception. The run's pin lists that agent key under
+  `verified` when its binding passed the check at run start or at its first use. Removing the
+  enablement during the run does not stop that binding for that run, its retries included. A binding
+  first seen after the removal fails closed.
+- Removing an enablement changes no agent. `DELETE` answers with `strandedAgents`: the team's
+  TEAM-scoped versions that name the plugin. The plugin's detail page lists every bound agent,
+  with `stranded` set when the profile is not OK, or when the agent is TEAM-scoped and its team has no
+  enablement.
+- A disabled profile cannot be enabled by a team (`HARNESS_PROFILE_DISABLED`). Disabling a profile
+  does not remove enablement rows already recorded.
 
 ## 13. Skill projection for other runtimes
 
@@ -533,24 +574,39 @@ are usable elsewhere, each `skills/<dir>/SKILL.md` of each plugin is projected i
   `isVerified` false (plugin text is third-party until a person verifies it), with `pluginProfileId`
   and `pluginVersion` set, and a `sourcePath` of `plugin:<profile>/<folder>`. `.md` and `.txt` files
   beside a `SKILL.md` are kept as reference files.
-- **When.** After a profile version commits: folder approval, an accepted update, and a bundle install.
-  A marketplace entry approval does not project (Limitations). A projection failure never undoes the
-  approval; the response carries a `projection` object with `created`, `updated`, `refused` and
-  `failed`.
+- **When.** After a profile version commits: folder approval, an accepted update, and a bundle install
+  (section 14). A marketplace entry approval does not project (Limitations). A projection failure never
+  undoes the approval; the response carries a `projection` object with `created`, `updated`, `refused`
+  and `failed`.
+- **Never older.** A projection never moves a skill back to an older version of its profile. A row
+  whose `pluginVersion` is newer than the version being projected is refused.
 - **Scanning.** The scanner runs over each skill's description and text. With
   `skills.import.blockOnScanWarnings` on (the default), a skill with any warning (an incomplete scan
   included) is refused and nothing is written for it. Refused skills are returned with their reason.
 - **Hand edits are refused, never overwritten.** A projected row whose text differs from its newest
   projection revision was edited by hand, and is refused. A row of the same name from another plugin,
-  or one that is not a projection, is refused too. A skill that disappears upstream stays installed
-  and is not reported.
+  or one that is not a projection, is refused too.
 - **Revisions.** A change to a skill's text or description cuts a further `SkillRevision`; an unchanged one
   does not. Runs keep the revisions they pinned.
+- **Disable and enable.** Disabling a plugin deactivates its projected skills in the same transaction.
+  Re-enabling reactivates the rows at the profile's latest version; a row left at an older
+  version stays inactive.
+- **Writes refused.** An update, a rename, a verify, a delete, a revision restore, or a bundle install
+  that would replace a projected skill answers `409 SKILL_PLUGIN_MANAGED`. Its text, name and state
+  change only by accepting a plugin version (or disabling the plugin).
+- **Attaching.** An agent version cannot add a skill of a disabled plugin (`SKILL_PLUGIN_DISABLED`, any
+  scope). A TEAM-scoped version cannot add one whose plugin the team has not enabled
+  (`SKILL_PLUGIN_NOT_ENABLED`). Skills the version already carries are not re-checked, and removal is
+  always allowed. A bundle that references a skill of a disabled plugin is refused (section 14).
+- **At run time.** A projected skill whose plugin is disabled, or, on a TEAM-scoped version, not enabled
+  for the run's team, is dropped from the prompt with an `agent.plugin_skill_excluded` event. This is
+  not a failure.
 - **Reaching a run.** A projected skill is a library skill; an agent uses it through its skill
   references, like any other skill, on a runtime other than `claude-code`. On `claude-code` the plugin
   loads its own skills from the plugin directory.
 - **Read-only in the dashboard.** The dashboard marks a projected skill read-only and says it changes
-  when a version is accepted (Limitations for what the API allows).
+  when a version is accepted. `GET /api/v1/platform/skills` reports `plugin: { profileId, name, version }`
+  for it, or `null` for any other skill.
 
 ## 14. Bundles
 
@@ -579,7 +635,12 @@ guarded fetcher and requires the computed content hash to equal the bundle's:
   on another runtime, or already bound is reported in `warnings` or skipped. A binding that would
   leave an agent with two plugins of one name, or the same profile twice, is refused
   (`PROFILE_NAME_COLLISION`, `PROFILE_DUPLICATE`) and rolls back the whole install.
-- After commit the installed plugins' skills are projected (section 13).
+- A reused profile is bound at its latest version. When the bundle's referenced version is not the
+  latest, the install warns with both numbers and projects no skills for it. The install result lists
+  `boundVersion` for each plugin (`plugins.bound`).
+- After commit the installed plugins' skills are projected (section 13). A projected skill that the
+  bundle names as a plain GLOBAL skill answers `409 SKILL_PLUGIN_MANAGED`; an agent that references a
+  skill of a disabled plugin answers `400 SKILL_PLUGIN_DISABLED`. Either way nothing is installed.
 
 ## 15. API
 
@@ -595,8 +656,8 @@ assistant for writes; list and get are readable.
 | `GET /` | Profiles with their latest version and tracking state (no file lists, no content). |
 | `GET /:name` | One profile with every version and its file list, `boundAgents` (each with `stranded`) and `enabledTeams`. |
 | `POST /:name/preview-update` | Body `{ sha?, file? }`. Reads the profile's stored source again (or the named commit) and reports `matchesVersion`, `hookChanges` and `hooksEnabled`. The manifest name must equal `:name`. |
-| `POST /:name/accept` | Body `{ sha, contentHash, warningsHash, acknowledgeWarnings?, acknowledgeHookChanges? }`. Adds the next version and returns the skill `projection`. `409 PREVIEW_STALE`, `409 HARNESS_PROFILE_NO_CHANGE`, `409 HARNESS_PROFILE_DISABLED`, `409 HOOK_CHANGES_UNACKNOWLEDGED` (with `hookChanges`), `409 HARNESS_PROFILE_CHANGED` when another accept won the version number. |
-| `PATCH /:name` | Body `{ status?: 'OK' \| 'DISABLED', hooksEnabled?: boolean }`; at least one. The hook switch is set here and cuts no version. |
+| `POST /:name/accept` | Body `{ sha, contentHash, warningsHash, acknowledgeWarnings?, acknowledgeHookChanges? }`. Adds the next version and returns the skill `projection`. `409 PREVIEW_STALE`, `409 HARNESS_PROFILE_NO_CHANGE`, `409 HARNESS_PROFILE_DISABLED`, `409 HOOK_CHANGES_UNACKNOWLEDGED` (with `hookChanges`), `409 HARNESS_PROFILE_CHANGED` when another accept or a switch change won the race. |
+| `PATCH /:name` | Body `{ status?: 'OK' \| 'DISABLED', hooksEnabled?: boolean }`; at least one. The hook switch is set here and cuts no version. Disabling a profile also deactivates its projected skills (section 13). |
 | `POST /:name/check` | Resolves the ref on request and records the result (the sweep's check). `409 HARNESS_PROFILE_DISABLED`. Returns `recorded: false` when the profile changed under the check. |
 | `GET /:name/enablements` | The teams that enabled the profile. |
 
@@ -618,6 +679,9 @@ There is no `DELETE`: an agent may reference a profile by name, so a profile is 
 | `POST /:id/entries/approve` | Body `{ entry, sha, contentHash, warningsHash, hooksEnabled, acknowledgeWarnings? }`. Creates the single-plugin profile. |
 
 **Team enablement** (`/api/v1/teams/:teamId/plugins`): the three routes in section 12.
+
+**Skills** (`/api/v1/platform/skills`): a skill projected from a plugin carries `plugin`
+(`{ profileId, name, version }`), and writes to it answer `409 SKILL_PLUGIN_MANAGED` (section 13).
 
 Fetch refusals use the fixed `HARNESS_PROFILE_<CODE>` and `MARKETPLACE_<CODE>` codes, with the same
 strings as skill sources.
@@ -652,28 +716,32 @@ warnings only.
 
 ## Limitations
 
-- **The hook switch is read at each resolution, not pinned to the run.** The run pins a profile's
-  version, not its `hooksEnabled`. Switching hooks off or on takes effect at the next activity that
-  resolves the profile, including an activity of a run already in progress.
-- **Enablement is checked only when a plugin has no pin in the run.** The pin is per plugin name for
-  the whole run, so disabling a team's enablement stops runs of that team that have no pin for the plugin, but not a run that pinned
-  the plugin, nor a retry of it.
-- **Enablement is checked at save only for team overrides.** A binding on any other narrower scope is
-  checked when a run first resolves it (`PLUGIN_NOT_ENABLED`), not when it is saved.
-- **The hook switch covers two places only.** It omits the hook configuration in `hooks/hooks.json` and
-  in the `hooks` field of `plugin.json` (and any file that field names). Hooks declared in a skill's or
-  a sub-agent's front matter are not omitted.
-- **Scripts and executables are written when hooks are off.** The switch removes hook configuration
+- **The hook switch covers the auto-run sources section 7 lists, and no others.** A kind of auto-run
+  source that the harness starts from a plugin, but that `hookSources.ts` does not name, is not left
+  out when the switch is off, is not in the hook diff and is not scanned. Such a source is covered only
+  once that module is extended.
+- **Scripts and executables are written when hooks are off.** The switch removes declared commands
   only. The agent can run a script the plugin ships, and the dashboard says so beside the switch.
-- **Plugin MCP servers are never loaded.** stdio and sse servers are unsupported. An HTTP server is a
-  declared dependency: the match to an `mcp` Connection is a manual admin step that the platform does
-  not check, and the agent's connection is what runs.
-- **Commands, hooks and sub-agents apply only on `claude-code`.** Other runtimes get the plugin's skills
-  as projected rows, and an `agent.plugin_partial` event names what was skipped.
-- **Projected skills are editable through the skill API.** The dashboard marks them read-only, but the
-  API does not refuse an edit. The next projection refuses to overwrite a hand edit and says so.
+- **Turning hooks on does not reach a run in flight.** A run takes its hook switch from its pin, so a
+  switch turned on takes effect only for runs that start afterwards. Turning it off reaches the next
+  activity of a run in flight.
+- **Plugin MCP servers are never loaded.** The harness loads no MCP server from a plugin, and stdio and
+  sse servers are unsupported. An HTTP server is a declared dependency: the match to an `mcp`
+  Connection is a manual admin step that the platform does not check, and the agent's own connection
+  is what runs.
+- **Commands, hooks, sub-agents and the other auto-run sources apply only on `claude-code`.** Other
+  runtimes get the plugin's skills as projected rows. The `agent.plugin_partial` event names commands,
+  hooks and sub-agents; monitors and LSP servers are skipped on those runtimes too, but the event does
+  not name them.
+- **A binding verified by a run keeps working for that run after its team's enablement is removed.**
+  The exemption covers the run's retries too. A binding first seen after the removal fails closed.
 - **Approving a marketplace entry does not project its skills.** Folder approval, an accepted update and
   a bundle install do.
+- **Projected skills are not removed upstream.** A skill that disappears from the plugin stays installed
+  and is not reported. A hand edit is refused and never overwritten.
+- **A bundle that reuses an older version binds the latest.** The profile of the bundle's name, with
+  the bundle's content hash, is reused, but its agents run the latest approved version. The install
+  warns with both numbers, and the older version's skills are not projected.
 - **Bundle-created profiles track `HEAD`.** A bundle pins a commit, but the profile follows the default
   branch, so a bundle gives no way to follow a tag or branch. Its update checks compare against the
   commit the bundle named.
@@ -683,8 +751,6 @@ warnings only.
   marketplace repository's ref, so an update is flagged whenever anything in that repository moves, and
   a GitHub entry's profile follows the ref it names rather than the commit it was approved at.
   `preview-update` reports `matchesVersion` when the plugin's own content is unchanged.
-- **A plugin without `.claude-plugin/plugin.json` is refused.** The `strict` key of an entry is not read,
-  so an entry whose folder lacks the manifest is refused at preview (`HARNESS_PROFILE_INVALID`).
 - **Large repositories are refused.** A tree listing that GitHub truncates refuses the read, for a
   marketplace catalog and for a plugin folder alike.
 - **The profile check shares the skill-source schedule.** Switching `SKILL_SOURCE_SYNC_ENABLED` off stops
@@ -726,10 +792,10 @@ warnings only.
   decided one and record or fail on a difference, or order the worker's hook after the plugins'.
 - **Disabling a profile is not a kill switch for runs that pinned it.** A pinned version keeps resolving
   after the profile is disabled, and the run-start upsert in `activities/templates.ts` keeps the pins of a
-  run across re-executions of the same workflow. A disabled profile stops runs that start after it from resolving it and
-  from being bound to it; it does not stop a run that already pinned it, nor a retry of that run. To pull
-  a profile from running work, cancel those runs, or bind the agents to a different profile, and approve a
-  further version.
+  run across re-executions of the same workflow. A disabled profile stops runs that start after it from
+  resolving it and from being bound to it; it does not stop a run that already pinned it, nor a retry of
+  that run. To pull a profile from running work, cancel those runs, or bind the agents to a different
+  profile, and approve a further version.
 - **`Skill` and `Agent` widen what the model can attempt.** They add no file or shell capability, but a
   sub-agent is another conversation with its own prompt, and a skill is more text in the conversation.
   Every tool call either makes is still decided by the worker's policy, but the policy sees a call, not
@@ -739,9 +805,6 @@ warnings only.
   shows; the SDK documents the `agent_id` field for it. A mode of the harness that ran sub-agent tools
   without the hook would bypass the policy for them, and the `canUseTool` deny and the policy settings
   layers would be the only remaining control.
-- **Plugin MCP servers stay off at run time.** Both `skipMcpDiscovery` and the strict MCP configuration
-  keep a plugin's MCP servers out; the only MCP server is the agent's own connection, relayed from the
-  worker.
 - **Not applied on other runtimes.** Mastra, Pi and any surface with no workspace run the agent without its
   plugins (`agent.profile_not_applicable`); nothing emulates plugins or instructions there.
 - **Every turn costs a sweep, a script and one transfer per profile.** Each profile directory is written

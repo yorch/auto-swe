@@ -1449,8 +1449,8 @@ sit on this seam, and so does the ephemeral shell/container-step sandbox:
 
 **Plugin checks.** Two sweeps read plugin sources and record what they find; neither installs anything.
 The `auto-swe-skill-source-sync` Temporal Schedule (`SKILL_SOURCE_SYNC_ENABLED`, `SKILL_SOURCE_SYNC_CRON`)
-runs the skill-source check and then, in the same activity, the check of every approved harness profile's
-ref. The `auto-swe-marketplace-sync` Temporal Schedule (`MARKETPLACE_SYNC_ENABLED`, `MARKETPLACE_SYNC_CRON`)
+runs the skill-source check and then, in the same activity, the check of every non-disabled approved
+harness profile's ref. The `auto-swe-marketplace-sync` Temporal Schedule (`MARKETPLACE_SYNC_ENABLED`, `MARKETPLACE_SYNC_CRON`)
 starts `ScheduledMarketplaceSyncWorkflow`, whose one activity (`syncMarketplaces`) asks each tracked
 marketplace which commit its ref names. Each records `latestSha`, the tracking status and the time of its
 check; the admin accepts an update by hand ([harness-profiles.md §10–11](./harness-profiles.md#10-update-tracking)).

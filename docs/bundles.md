@@ -205,13 +205,17 @@ requires the computed content hash to equal the bundle's. All of that happens be
   runtime, or already bound is reported in `warnings` or skipped. A binding that would give the agent
   two plugins of one name, or name one profile twice, fails the install with `PROFILE_NAME_COLLISION`
   or `PROFILE_DUPLICATE`, and the whole install is rolled back.
+- A reused profile is bound at its latest version. When the bundle's referenced version is not the
+  latest, the install warns with both numbers and projects no skills for that plugin.
 - After the transaction commits, the plugin's skills are projected into `<plugin>:<skill>` rows for
-  runtimes other than `claude-code` ([agents.md](./agents.md#6-skills)). The outcome, including
-  every skill refused by `skills.import.blockOnScanWarnings` or a hand edit, is part of `warnings`;
-  a projection failure never undoes the install.
+  runtimes other than `claude-code` ([harness-profiles.md §13](./harness-profiles.md#13-skill-projection-for-other-runtimes)).
+  The outcome, including every skill refused by `skills.import.blockOnScanWarnings` or a hand edit, is
+  part of `warnings`; a projection failure never undoes the install. A bundle that names a projected
+  skill as a plain GLOBAL skill is refused with `409 SKILL_PLUGIN_MANAGED`, and one whose agent
+  references a skill of a disabled plugin with `400 SKILL_PLUGIN_DISABLED`; nothing is installed.
 
-The response carries `plugins: { created, reused }` and `counts.plugins` when the bundle has
-plugin references.
+The response carries `plugins: { bound, created, reused }` and `counts.plugins` when the bundle has
+plugin references. `bound` lists each plugin with the `boundVersion` its agents run.
 
 ### Previewing before install
 
@@ -293,9 +297,12 @@ separately.
   time, so an install needs that host to be reachable and approved
   (`github.repositoryHosts`).
 - **Plugins are exported only for bound agents.** An export writes a plugin reference for each
-  profile an exported agent is bound to, at its newest approved commit; a profile no exported agent
-  uses is not exported, and neither are enablements or hook switches. A plugin's projected skills
-  are left out of the export's `skills`; they come back from the plugin.
+  profile that the head version of an exported GLOBAL agent is bound to, at its newest approved
+  commit; a profile no exported agent uses is not exported, and neither are enablements or hook
+  switches. A plugin's projected skills are left out of the export's `skills`; they come back from the
+  plugin.
+- **A reused older plugin version is not the one that runs.** A bundle that references a version older
+  than the profile's latest binds the agents to the latest version and says so in `warnings`.
 - **Skill/tool bindings are resolved at install time, not at export.** If a bundle references a tool
   or skill key that does not exist in the target, the install succeeds but the agent may fail when
   the workflow reaches that node.

@@ -119,7 +119,9 @@ it is on, importing skills from an external source refuses any chosen skill whos
 draws a scanner warning (an incomplete scan included) and names it in the response; off, such a skill is
 installed unverified with the warnings recorded on its first revision. It is read on each import, so a
 change applies within the settings cache's ~30 s; see
-[agents.md](./agents.md#66-external-skill-sources).
+[agents.md](./agents.md#66-external-skill-sources). The same setting decides the projection of skills
+from a plugin: with it on, a projected skill with a warning is refused and nothing is written for it
+([harness-profiles.md §13](./harness-profiles.md#13-skill-projection-for-other-runtimes)).
 
 The check that flags a moved ref on a tracked skill source is a scheduled sweep like the other gateway
 sweeps, so it is environment-only and applied once at gateway startup (a change needs a restart):
@@ -127,8 +129,8 @@ sweeps, so it is environment-only and applied once at gateway startup (a change 
 and `SKILL_SOURCE_SYNC_CRON` (five-field cron, UTC, default `41 5 * * *`). The gateway refuses to start on
 a value it cannot use. See [agents.md](./agents.md#66-external-skill-sources).
 
-The same sync also checks each approved harness profile's ref, so `SKILL_SOURCE_SYNC_ENABLED=false` stops
-those checks too.
+The same sync also checks the ref of each non-disabled approved harness profile, so
+`SKILL_SOURCE_SYNC_ENABLED=false` stops those checks too.
 
 The check that flags a moved commit on a tracked plugin marketplace is a scheduled sweep of the same kind,
 environment-only and applied at gateway startup: `MARKETPLACE_SYNC_ENABLED` (default `true`; one cheap
