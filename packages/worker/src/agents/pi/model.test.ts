@@ -258,8 +258,7 @@ describe('aiSdkStreamFn beforeCall', () => {
     const message = (await (
       await streamFn(piModelDescriptor('anthropic/claude-opus-5-5'), {
         messages: [{ content: 'go', role: 'user', timestamp: 0 }],
-        systemPrompt: 'S',
-      })
+      } as TranscriptContext)
     ).result()) as AssistantMessage;
     expect(doGenerate).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledWith(refusal);
