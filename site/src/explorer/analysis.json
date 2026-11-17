@@ -6588,6 +6588,7 @@
     "EvalRubric": "Scoped/versioned judge scoring prompt.",
     "EvalRun": "Candidate versus baseline benchmark execution, each side’s runtime and a summary; INCONCLUSIVE when no case was screened.",
     "EventEndpoint": "A team’s signed inbound-event URL: verification scheme, JSON pointers for event fields and sealed current and previous secrets.",
+    "FailureAssignment": "A team lead’s hand-off of a failed run, whose launcher left the team, to a current member. One per run; it records who is to look at the failure and never rewrites the run’s launcher, which keys credentials.",
     "FigmaConfig": "Schema entity; inspect fields and relationship declarations below.",
     "GitHubApproverApp": "Separate PR-approver GitHub App identity, encrypted signing key and current/retired bot slugs.",
     "GitHubConfig": "Schema entity; inspect fields and relationship declarations below.",
@@ -6671,6 +6672,7 @@
     "SlackWorkspace": "Slack installation and organization binding.",
     "Team": "Team-owned resources, configuration and workflow defaults; carries an optional monthly USD cap and alert threshold of its own.",
     "TeamBudgetNotice": "Marker row recording that a budget alert was sent: one per team, UTC month and level (WARNING or CAP_REACHED), so the same alert is never sent twice.",
+    "TeamBudgetRequest": "A team lead’s request, with a reason, that an admin change the team’s monthly cap. It carries no amount; at most one is pending per team, and saving the cap resolves it.",
     "TeamMembership": "Schema entity; inspect fields and relationship declarations below.",
     "TeamSecret": "One team's named secret: encrypted value, nonce, authentication tag and key version, plus a last-four display marker and timestamps. Unique by team and name, cascade-deleted with the team; management returns metadata rather than plaintext, and setup decrypts a value only for a repository it is granted to.",
     "TeamSecretGrant": "Allows one team secret to reach one repository the team owns. Cascade-deleted with either side and dropped when the repository moves teams; without a grant a team secret reaches no repository.",
@@ -6777,7 +6779,8 @@
       "OrchestrationMessage",
       "OrchestrationApproval",
       "RunSteeringMessage",
-      "RunPlan"
+      "RunPlan",
+      "FailureAssignment"
     ],
     "Identity & targets": [
       "ApiToken",
@@ -6797,6 +6800,7 @@
       "Organization",
       "Team",
       "TeamBudgetNotice",
+      "TeamBudgetRequest",
       "TeamMembership",
       "OrganizationMembership",
       "OrgMonthlyUsage",
