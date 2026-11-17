@@ -284,7 +284,7 @@ A new provider is a registry entry plus a class that implements the whole interf
 | `src/app/page.tsx` | Dashboard home — KPIs, "needs attention" queue, recent activity |
 | `src/app/runs/[id]/` | Linked investigation workspace — anchored verdict and shared branch/attempt selection across Events, Graph, Timing and Transcript; supporting Overview, Evidence, Activity and Details panels. Graph viewport and trace filters/expansion survive view changes. Events includes exact execution timestamps; replay shows active executions, phases and historically reached step bands. Live elapsed timing and historical playback use `src/lib/runPlayback.ts`; trace linkage uses `src/lib/traceLinkage.ts`. Legacy layout preferences remain readable by the API but do not switch the workspace. |
 | `src/app/requests/`, `src/app/approvals/`, `src/app/pull-requests/`, `src/app/tickets/` | Work — requests with their attempts, pending human steps with respond forms, and the pull-request and ticket views |
-| `src/app/teams/[slug]/` | The team space — Overview, Work, Automations, Reports, Knowledge, Members and Settings tabs for one team, taken from the route slug; the team switcher and the sidebar Teams group link here ([teams.md](./teams.md#3-the-team-space)) |
+| `src/app/teams/[slug]/` | The team space — Overview, Work, Automations, Reports, Knowledge, Members, Manage and Settings tabs for one team, taken from the route slug; the team switcher and the sidebar Teams group link here ([teams.md](./teams.md#3-the-team-space)) |
 | `src/app/library/[id]/` | Canvas-first workflow workspace — compact version selector, alternate outline/palette, collapsible edit/read-only node inspection; separate Settings and Versions panels retain the read-only description, triggers, A/B experiments and analytics. Removal is canvas-scoped, confirmed and undoable until another edit. |
 | `src/app/{agents,skills,review-presets}/` | Build — agents and the agent library, skills and Review presets; the Workflow library also belongs to Build |
 | `src/app/{models,mcp,bundles,connections}/` | Connect — model configuration, MCP connections, bundles, repositories and other connections |
@@ -766,7 +766,7 @@ flowchart LR
 |------|-------------|---------|-----------|
 | better-auth cookie | HTTP-only session cookie | `sessions` (60 s in-memory cache) | `POST /api/auth/sign-in/*` — email+password, GitHub, Google, magic-link |
 | PAT bearer | `ats_<base64url-32B>` | `api_tokens` (hash only) | Settings → API tokens |
-| Service principal bearer | `ats_<base64url-32B>` | `api_tokens` (hash only), owned by a `ServicePrincipal` | A team's Service principals card — see [service-principals.md](./service-principals.md) |
+| Service principal bearer | `ats_<base64url-32B>` | `api_tokens` (hash only), owned by a `ServicePrincipal` | A team's Manage tab, Service principals section — see [service-principals.md](./service-principals.md) |
 | JWT bearer | `eyJ…` (HS256/RS256) | — | `POST /api/v1/auth/session-token`, which exchanges an active session cookie for a short-lived JWT |
 | Assistant bearer | `asst_` + a JWT of its own audience | — | `app.auth.signAssistantToken`, for one user and one in-app assistant conversation, 15 minutes |
 

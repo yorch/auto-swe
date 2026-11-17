@@ -33,7 +33,7 @@ Three sources, merged and de-duplicated by `key`:
 |---|---|---|
 | `approval` | A pending human step the caller can answer: on a run they control, not yet answered by them, not expired | The caller, as an approver |
 | `approval_due_soon` | The same, with a deadline within the due-soon window | The caller, as an approver |
-| `failed_run` | The latest attempt of a request, when it failed or timed out **and the caller launched that attempt** | The person who launched it |
+| `failed_run` | The latest attempt of a request, when it failed or timed out **and the caller launched that attempt, or a lead assigned it to the caller** ([§3, Manage](#manage)) | The person who launched it, or the assignee |
 | `pr_merge` | A request the caller **requested** whose pull request is open and awaiting a human merge | The requester |
 
 The due-soon window is the registry setting `workflow.approvalDueSoonHours` (default 24 hours,
@@ -74,8 +74,8 @@ ticket id.
 
 | Person | Approvals | Failed runs | Merges |
 |---|---|---|---|
-| Owning team member | Steps on runs they control | Attempts they launched | Requests they made |
-| Member of a team the repository is shared to | None on the owner's runs (visible, not controllable) unless they launched the run | Attempts they launched | Requests they made |
+| Owning team member | Steps on runs they control | Attempts they launched, and failures a lead assigned to them | Requests they made |
+| Member of a team the repository is shared to | None on the owner's runs (visible, not controllable) unless they launched the run | Attempts they launched, and failures a lead assigned to them | Requests they made |
 | Platform ADMIN | Only for teams they are a member of | Same | Same |
 
 ## 2. Team overview
@@ -105,7 +105,7 @@ role of LEAD does not raise anything for a non-member: only the platform ADMIN i
 |---|---|---|
 | `team` | everyone | `id`, `slug`, `name`, `orgId`, `orgName`, the caller's `myRole` |
 | `needsYou.total` | everyone | The caller's own items on this team's work, by the desk's rules ([§1](#what-needs-you-contains)) scoped to this team. Its approvals are exactly `GET /api/v1/human-steps?actionable=true&teamId=<team>` |
-| `mine` | everyone | The caller's own work on this team: `running` (requests they launched that are running, counted as `running` is), `failed` (failed attempts they launched) and `prsAwaitingMerge` (pull requests of their requests that await a human merge). The last two are the desk's own `failed_run` and `pr_merge` items, so the team page and the desk agree |
+| `mine` | everyone | The caller's own work on this team: `running` (requests they launched that are running, counted as `running` is), `failed` (failed attempts they launched or a lead assigned to them) and `prsAwaitingMerge` (pull requests of their requests that await a human merge). The last two are the desk's own `failed_run` and `pr_merge` items, so the team page and the desk agree |
 | `running`, `queued` | everyone | Requests running on the team's work, split as the desk's team cards split them |
 | `last7d` | everyone | `started`, `succeeded`, `failed`: requests whose latest attempt started in the last 7 days on repositories the team owns or that are shared to it |
 | `pullRequests` | everyone | Last 30 days, owner-attributed: `opened`, `merged`, `closedUnmerged`, `mergeRate`, `timeToMergeP50Hours`. The same filters and summary as `GET /api/v1/pull-requests/outcomes?scope=TEAM&teamId=` (`teamPullRequestOutcomes()` in `gateway/src/lib/pullRequestOutcomesQuery.ts`) |
@@ -120,11 +120,16 @@ role of LEAD does not raise anything for a non-member: only the platform ADMIN i
 not run. The `activity` feed names a launcher by display name only. The feed's name is the run's credential launcher (`launchedById`), so it can differ from a run's initiator. Run lists are different: a run's
 initiator is shown with name and email to anyone who can see the run ([run-provenance.md](./run-provenance.md)).
 
+The **My work** card sits above the team numbers on the overview and shows `mine`: running, failed
+and PRs awaiting merge, each linking to the caller's filtered list. The lead panel follows it for a
+lead or admin.
+
 Definitions:
 
 - **Unowned failure.** A request on the team's work (last 30 days, as visible to the caller) whose
-  latest attempt failed or timed out and whose launcher is no longer a member of the team or is
-  unknown. A multi-repository request counts each failed repository.
+  latest attempt failed or timed out, whose launcher is no longer a member of the team or is
+  unknown, and which no lead has assigned ([Manage](#manage)). A multi-repository request counts each
+  failed repository.
 - **Stale approval.** A pending human step on a run the caller may see whose deadline has passed:
   `GET /api/v1/human-steps?overdue=true&teamId=<team>`.
 - **Open pull requests.** Open pull requests on repositories the team owns or that are shared to it,
@@ -211,15 +216,73 @@ Its header names the organization and the caller's role in the team. The tabs ar
 
 | Tab | Address | Who sees it | What it holds |
 |---|---|---|---|
-| Overview | `/teams/<slug>` | every member, and a platform ADMIN | The overview of [§2](#2-team-overview): the numbers, the lead and admin panels the server sent, recent activity and repositories |
+| Overview | `/teams/<slug>` | every member, and a platform ADMIN | The overview of [§2](#2-team-overview): the My work card, the numbers, the lead and admin panels the server sent, recent activity and repositories |
 | Work | `/teams/<slug>/work` | every member | One team's requests, pull requests, tickets and epics, through the same lists as the global pages, narrowed to the team |
 | Automations, Reports, Knowledge | `/teams/<slug>/automations`, `…/reports`, `…/knowledge` | every member | A short panel with a link to the existing page, which reads `?team=<slug>` and narrows itself |
 | Members | `/teams/<slug>/members` | every member | The team's membership |
-| Settings | `/teams/<slug>/settings` | a team `LEAD` or `ADMIN`, and a platform ADMIN | The team's configuration: general details, service principals, automation and the sandbox |
+| Manage | `/teams/<slug>/manage` | a team `LEAD` or `ADMIN`, and a platform ADMIN | The team's running: Attention, Repositories, Schedules, Automations, Budget and Service principals ([§3, Manage](#manage)) |
+| Settings | `/teams/<slug>/settings` | a team `LEAD` or `ADMIN`, and a platform ADMIN | The team's configuration: general details, the budget cap for those who may edit it, automation, secrets and the sandbox policy |
 
-The Settings tab is hidden from everyone else and its address answers not found. Which sections of
-the Overview appear is decided by the server from the team role ([§2](#the-view-is-decided-by-the-team-role)),
+The Manage and Settings tabs are hidden from everyone else, and their addresses answer not found.
+Which sections of the Overview appear is decided by the server from the team role ([§2](#the-view-is-decided-by-the-team-role)),
 never by the tabs.
+
+### Manage
+
+The Manage tab is where a team's lead runs the team. It is offered to a team `LEAD` or `ADMIN`
+and to a platform ADMIN, and no one else. Editing a cap or a configuration stays in Settings;
+Manage holds the work that a lead acts on and the sections that edit the team's own resources.
+
+| Section | What it holds |
+|---|---|
+| Attention | Unowned failures, stale approvals and open pull requests, each with the action it takes |
+| Repositories | The team's owned and shared repositories, with shares and launch permission |
+| Schedules, Automations | The team's own, editable here, narrowed to the team |
+| Budget | The meter, and **Request a change** for a lead who cannot edit the cap |
+| Service principals | The team's machine identities, moved here from Settings ([service-principals.md](./service-principals.md#6-managing-principals-and-tokens)) |
+
+**Attention.**
+
+- **Unowned failures.** `GET /api/v1/teams/:id/attention/failures` lists them, newest first, with the
+  request title, the repository, the failure time and the former launcher's name. A lead assigns one
+  with `POST /api/v1/teams/:id/failure-assignments` and `{ runId, assigneeId }`. The assignee must
+  be a member of the team (`422 ASSIGNEE_NOT_MEMBER`), and the run must still be an unowned failure
+  (`409 NOT_UNOWNED_FAILURE`). The assignment stores a `FailureAssignment` row and is audited. It
+  never changes `WorkflowRun.launchedById`: that field is the key a per-user GitHub credential is
+  resolved by, so later work on the request keeps running under the same credential, and the
+  assignee does not inherit the former launcher's. The assignee sees the failure as their own
+  `failed_run` item in the desk and in `mine.failed`, and it leaves the team's unowned count.
+- **Stale approvals.** The lead lists overdue pending steps with
+  `GET /api/v1/human-steps?overdue=true&teamId=<team>`. Each row says whether the step has a Slack
+  thread (`hasSlackThread`), which is what a nudge needs.
+- **Open pull requests.** The count links to the team's open pull requests.
+
+**The nudge.** `POST /api/v1/human-steps/:id/nudge` posts a reminder for one overdue step. The
+caller must be a platform ADMIN or a `LEAD` or `ADMIN` of a team that owns the run; anyone else gets
+`403`, and a step the caller cannot see gets `404`. The step must be pending, past its deadline and
+announced in Slack; otherwise the answer is `409 NUDGE_UNAVAILABLE`.
+
+- **Rate.** A step is nudged at most once every four hours (`429 NUDGE_RATE_LIMITED` before then).
+  The slot is claimed before the post, and a post that fails releases it and answers
+  `502 SLACK_POST_FAILED`.
+- **Reach.** The reminder is one plain reply in the thread of the step's Slack announcement, not a
+  broadcast to the channel. The announcement does not address the approvers by name, so the reply
+  reaches the people following that thread. It creates no in-app notification. The text is fixed
+  and carries only the step title, escaped, and the date the step was requested.
+- The response is `{ data: { nudgedAt } }`. The action is audited as an update of the step.
+
+**Budget requests.** A team `LEAD` (or `ADMIN`) who cannot edit the cap asks for a change with
+`POST /api/v1/teams/:id/budget-requests` and `{ reason }`. The reason is 1 to 500 characters after
+trimming. A request carries no amount. A team has one pending request at a time; a second one
+answers `409 REQUEST_PENDING`. The request is audited with the reason's length, not the reason.
+The team ADMIN, an ORG_ADMIN of the organization and a platform ADMIN list the pending requests
+with `GET /api/v1/teams/:id/budget-requests`, oldest first, and see them in Settings, Budget. Saving
+the cap with `PATCH /api/v1/teams/:id/budget`, set or cleared, resolves every pending request of the
+team.
+
+**Other sections.** Repositories use the existing repository routes. Schedules use
+`GET /api/v1/scheduled-work-requests?teamId=<team>`, which narrows the list to the schedules the team
+owns and keeps the caller's visibility.
 
 ### The team role decides
 
@@ -550,8 +613,9 @@ in the approval queue. See [invited users](./oauth-setup.md#invited-users) for t
   route. A failed invitation email does not roll back the account or memberships.
 
 - Removing an organization membership does not remove that user's team memberships.
-- **Engineers see failures only for runs they launched.** A lead does not see a failure on a
-  teammate's run in the desk, and a run the caller controls but did not launch is excluded.
+- **Engineers see failures only for runs they launched, or that a lead assigned to them.** A lead
+  does not see a failure on a teammate's run in the desk, and a run the caller controls but did not
+  launch is excluded unless it was assigned.
 - **Expired approvals are not in Needs you.** An expired step cannot be answered, so the actionable
   filter drops it, and the desk has no separate place for it.
 - **The caps and the counts differ.** `items` stops at 25; a team's `needsYou` and the `total` count
@@ -636,9 +700,18 @@ in the approval queue. See [invited users](./oauth-setup.md#invited-users) for t
   `openPullRequests` includes pull requests on a repository shared to the team, while `pullRequests`
   (opened, merged, merge rate) counts only runs the team owns, so a shared repository is counted
   once, by its owner.
-- **Unowned failures are a launcher test, not an ownership record.** A failure counts when its
-  launcher left the team or is unknown (a run launched by automation or a deleted account); nobody is
-  assigned it, and a failure older than 30 days is not read.
+- **Unowned failures are a launcher test until a lead assigns one.** A failure counts when its
+  launcher left the team or is unknown (a run launched by automation or a deleted account). An
+  assignment records who takes it over and moves no credential. A failure older than 30 days is not
+  read.
+- **The nudge reaches only the thread's followers.** It is a plain thread reply, so it notifies the
+  people following that thread, not the approvers by name and not the channel. A step whose
+  announcement was not posted to Slack cannot be nudged at all. No in-app reminder exists.
+- **No notification of a budget request.** A pending request reaches the team's admins only when they
+  open Settings, Budget or call the list; nothing pages or messages them.
+- **The failure list holds at most 100 items.** `GET /api/v1/teams/:id/attention/failures` returns the
+  newest 100 without a total, while the lead panel's `unownedFailures` counts every one of them, so
+  the count can exceed the list.
 - **`last7d` counts requests by their latest attempt.** A request first started earlier and retried
   inside the window counts as started; one started inside the window and retried later is judged on
   the retry.
