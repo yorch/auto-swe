@@ -79,8 +79,53 @@ export function TeamOverviewView({
 }) {
   const { last7d, pullRequests: pr } = overview;
   const q = `?team=${encodeURIComponent(slug)}`;
+  const teamParam = encodeURIComponent(slug);
   return (
     <div className="space-y-6">
+      <Card aria-label="My work" data-testid="my-work">
+        <CardHeader className="mb-3">
+          <CardTitle>My work</CardTitle>
+        </CardHeader>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Stat
+            hint={
+              <Link
+                className="underline-offset-2 hover:underline"
+                href={`/requests?scope=MINE&state=active&team=${teamParam}`}
+              >
+                View running
+              </Link>
+            }
+            label="Running"
+            value={overview.mine.running}
+          />
+          <Stat
+            hint={
+              <Link
+                className="underline-offset-2 hover:underline"
+                href={`/requests?scope=MINE&state=failed&team=${teamParam}`}
+              >
+                View failed
+              </Link>
+            }
+            label="Failed"
+            value={overview.mine.failed}
+          />
+          <Stat
+            hint={
+              <Link
+                className="underline-offset-2 hover:underline"
+                href={`/pull-requests?scope=MINE&state=OPEN&team=${teamParam}`}
+              >
+                View PRs awaiting merge
+              </Link>
+            }
+            label="PRs awaiting merge"
+            value={overview.mine.prsAwaitingMerge}
+          />
+        </div>
+      </Card>
+
       <section aria-label="Team numbers" className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Stat
           hint={
@@ -246,7 +291,17 @@ export function TeamOverviewView({
                       </span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
-                      {!repo.canLaunch && (
+                      {repo.canLaunch ? (
+                        <Link
+                          className={cn(
+                            'text-xs text-paper-300 underline-offset-2 hover:underline',
+                            FOCUS_RING
+                          )}
+                          href={`/start?team=${teamParam}`}
+                        >
+                          Start work
+                        </Link>
+                      ) : (
                         <Badge
                           title="Owner team set this repository to view only for your team"
                           tone="muted"
