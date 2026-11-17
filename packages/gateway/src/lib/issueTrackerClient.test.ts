@@ -83,6 +83,13 @@ describe('fetchTicket — jira', () => {
     expect(await fetchTicket(jiraConfig, 'PROJ-404')).toBeNull();
   });
 
+  it('makes one attempt on a server error when told not to retry', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}, 503));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await fetchTicket(jiraConfig, 'PROJ-1', { maxRetries: 0, timeoutMs: 2000 })).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('returns null when jira config is incomplete (no email)', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);

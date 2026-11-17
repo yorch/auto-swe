@@ -690,7 +690,13 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
             ...RUN_INITIATOR_INCLUDE,
             template: { select: { name: true, workspaceProvider: true } },
             workRequest: {
-              select: { description: true, externalTicketId: true, id: true, requestPayload: true },
+              select: {
+                description: true,
+                externalTicketId: true,
+                id: true,
+                requestPayload: true,
+                title: true,
+              },
             },
           },
           orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
@@ -1103,6 +1109,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
               externalTicketId: true,
               id: true,
               requestPayload: true,
+              title: true,
             },
           },
         },

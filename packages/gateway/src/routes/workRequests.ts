@@ -28,6 +28,7 @@ import { BUDGET_TIERS, type RepoWorkRequest } from '@auto-swe/shared/types/workf
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { launchWarningsFor, scanLaunchDescription } from '../lib/descriptionScan.js';
 import {
   egressPolicyForRerun,
   refuseWideningEgressPolicy,
@@ -43,6 +44,7 @@ import {
   validateKnowledgeBaseOverrides,
 } from '../lib/knowledgeBases.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
+import { resolveLaunchBrief } from '../lib/launchBrief.js';
 import {
   assertMcpWriteAllowed,
   mcpWriteAuditHook,
@@ -339,14 +341,36 @@ export async function resolveDefaultTemplate(
   return { isExperiment: false, templateId: tpl.id, version: tpl.activeVersion };
 }
 
+/**
+ * The description the caller submitted, as stored in `requestPayload` (the request body). The
+ * column holds what the run was launched with, which is the ticket brief for a request that left
+ * it blank, so a replay compares this instead. Rows without a readable payload fall back to it.
+ */
+function storedRequestDescription(prior: {
+  description: string;
+  requestPayload: string | null;
+}): string | null {
+  try {
+    const parsed: unknown = JSON.parse(prior.requestPayload ?? '');
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const stored = (parsed as { description?: unknown }).description;
+      return typeof stored === 'string' && stored.trim() !== '' ? stored : null;
+    }
+  } catch {
+    // Not a JSON request body: fall through to the column.
+  }
+  return prior.description;
+}
+
 const CreateWorkRequestSchema = z.object({
   /** Launch a request that is unchanged since a not-actionable stop (docs/agents.md §3.8). */
   acknowledgeUnchanged: z.boolean().optional(),
   budgetTier: z.enum(BUDGET_TIERS).optional().default('STANDARD'),
-  description: z
-    .string()
-    .min(1, 'description is required — tell the agent what to implement')
-    .max(MAX_DESCRIPTION_LENGTH),
+  /**
+   * What the agent should implement. Optional: left blank, the brief is built from the tracker
+   * ticket named by `externalTicketId` (400 `DESCRIPTION_REQUIRED` when it cannot be read).
+   */
+  description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
   /** Network egress for this run's containers; can only be stricter than the configured policy. */
   egressPolicy: egressPolicySchema.optional(),
   externalTicketId: ExternalTicketIdSchema,
@@ -434,11 +458,16 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       const {
         acknowledgeUnchanged,
         externalTicketId,
-        description,
+        description: requestDescription,
         egressPolicy,
         repoIds,
         budgetTier,
       } = request.body;
+      // Blank is "not typed": the request's own description, never a brief built from the ticket.
+      const typedDescription =
+        requestDescription !== undefined && requestDescription.trim() !== ''
+          ? requestDescription
+          : null;
       const user = requireUser(request);
       const idempotencyKey = request.headers['idempotency-key'];
 
@@ -517,7 +546,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         const priorBudget = (prior.payload as { budget?: unknown } | null)?.budget;
         if (
           prior.externalTicketId !== externalTicketId ||
-          prior.description !== description ||
+          (storedRequestDescription(prior) ?? '') !== (typedDescription ?? '') ||
           prior.connectionId !== repoIds[0] ||
           priorBudget !== budgetTier ||
           storedEgressPolicy(prior.requestPayload) !== egressPolicy
@@ -715,6 +744,29 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         return reply;
       }
 
+      // A blank description is built from the tracker ticket. After every authorization and
+      // refusal above and before anything is written or launched, so a refused request reads
+      // nothing. The request itself (`requestPayload`, the replay comparison) keeps it blank.
+      let description: string;
+      if (typedDescription !== null) {
+        description = typedDescription;
+      } else {
+        const resolved = await resolveLaunchBrief({
+          connection: repo,
+          log: request.log,
+          ticketId: externalTicketId,
+        });
+        if (!resolved.ok) {
+          return sendError(
+            reply,
+            400,
+            'DESCRIPTION_REQUIRED',
+            'A description is required: the ticket could not be read from the issue tracker'
+          );
+        }
+        description = resolved.description;
+      }
+
       // P3: build the generic run-input payload and validate it against the
       // template's declared inputSchema (if any). SWE maps its request fields
       // onto the seeded `{ ticketId, connectionId, description, budget }`
@@ -759,6 +811,11 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       ) {
         return;
       }
+
+      // Advisory scan of text the caller typed (a synthesized brief is never scanned), after every
+      // refusal above. It never affects the outcome.
+      const descriptionScan =
+        typedDescription !== null ? await scanLaunchDescription(typedDescription) : null;
 
       // Ledger rows are written BEFORE the workflow starts, and rolled back if
       // it fails to start — see `launchTrackedWorkflow` for why that ordering
@@ -828,7 +885,19 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             templateVersion: resolvedTemplate.version,
           }),
         {
-          audit: { actor: user, ...(egressPolicy ? { egressPolicy } : {}), source: 'work-request' },
+          audit: {
+            actor: user,
+            ...(descriptionScan
+              ? {
+                  descriptionScan: {
+                    incomplete: descriptionScan.incomplete,
+                    matches: descriptionScan.matches,
+                  },
+                }
+              : {}),
+            ...(egressPolicy ? { egressPolicy } : {}),
+            source: 'work-request',
+          },
           guard: mcpWrite.launchGuard,
           log: fastify.log,
           sourceAuthorization: { actor: user },
@@ -902,8 +971,10 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.log.warn({ err, workRequestId }, 'work-request enrichment failed');
       });
 
+      const warnings = descriptionScan ? launchWarningsFor(descriptionScan) : [];
       return reply.status(201).send({
         data: {
+          ...(warnings.length > 0 ? { warnings } : {}),
           workflowIds: [launch.activeWorkflowId],
           workRequestId,
         },

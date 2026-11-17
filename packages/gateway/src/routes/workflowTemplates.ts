@@ -13,7 +13,6 @@ import {
 import { CallbackRequestSchema } from '@auto-swe/shared/lib/runCallbacks';
 import { findUnauditedNodes, recordShellAudit } from '@auto-swe/shared/lib/shellAudit';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { buildTicketBrief } from '@auto-swe/shared/lib/ticketBrief';
 import {
   getWorkspaceProviderMetadata,
   isWorkspaceProviderType,
@@ -50,6 +49,7 @@ import { advisoryWarnings } from '../lib/advisoryWarnings.js';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { csvRow } from '../lib/csv.js';
 import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/dateWindow.js';
+import { launchWarningsFor, scanLaunchDescription } from '../lib/descriptionScan.js';
 import { refuseWideningEgressPolicy } from '../lib/egressPolicyLaunch.js';
 import { experimentBucket } from '../lib/experimentBucket.js';
 import { sendError } from '../lib/httpErrors.js';
@@ -64,6 +64,7 @@ import {
   sendLaunchRefusal,
 } from '../lib/launchAuthorization.js';
 import { launchBaseBranch } from '../lib/launchBaseBranch.js';
+import { resolveLaunchBrief } from '../lib/launchBrief.js';
 import {
   assertMcpWriteAllowed,
   mcpWriteAuditHook,
@@ -124,7 +125,6 @@ import {
 } from '../lib/templateWebhookSigning.js';
 import { memberOrgs } from '../lib/tenantScope.js';
 import { isValidTicketId } from '../lib/ticketId.js';
-import { lookupTrackerTicket } from '../lib/ticketLookup.js';
 import { launchTrackedTemplateRun } from '../lib/trackedTemplateLaunch.js';
 import { refuseUnchangedRerun } from '../lib/unchangedRerun.js';
 import { planWindow } from '../lib/usageWindows.js';
@@ -2662,14 +2662,15 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
               where: { id: connectionId, type: 'git_repo' },
             })
           : null;
-        const found = await lookupTrackerTicket(
-          ticketIdInput,
-          repo?.organizationName && repo.repoName
-            ? { ...repo, organizationName: repo.organizationName, repoName: repo.repoName }
-            : null,
-          request.log
-        );
-        if (found.state !== 'found') {
+        const resolved = await resolveLaunchBrief({
+          connection: repo,
+          // A launch with no git repository reads the project-key allowlist at the template's
+          // team and organization; a global template has none, so only GLOBAL applies.
+          launchTeam: tpl.teamId ? { orgId: tpl.team?.orgId ?? null, teamId: tpl.teamId } : null,
+          log: request.log,
+          ticketId: ticketIdInput,
+        });
+        if (!resolved.ok) {
           return sendError(
             reply,
             400,
@@ -2677,7 +2678,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             'A description is required: the ticket could not be read from the issue tracker'
           );
         }
-        const brief = buildTicketBrief(ticketIdInput, found.ticket);
+        const brief = resolved.description;
         const finalPayload = { ...submittedPayload, description: brief };
         if (
           isInputSchema(tpl.inputSchema) &&
@@ -2718,6 +2719,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       ) {
         return;
       }
+
+      // Advisory only, and only for text the caller typed: whatever string became `description`
+      // (the payload's, or the label standing in for it) unless it is the ticket-derived brief.
+      // After every refusal above, so a refused launch scans nothing; never affects the outcome.
+      const typedDescription = !needsTicketBrief && description.trim() !== '' ? description : null;
+      const descriptionScan =
+        typedDescription !== null ? await scanLaunchDescription(typedDescription) : null;
 
       const kbSource =
         connectionResult.source ??
@@ -2786,6 +2794,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             : { guard: mcpWrite.launchGuard }),
           audit: {
             actor: user ?? null,
+            ...(descriptionScan
+              ? {
+                  descriptionScan: {
+                    incomplete: descriptionScan.incomplete,
+                    matches: descriptionScan.matches,
+                  },
+                }
+              : {}),
             ...(request.body.egressPolicy ? { egressPolicy: request.body.egressPolicy } : {}),
             source: service ? 'service-token' : 'template-run',
           },
@@ -2807,10 +2823,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 409, 'RUN_CONFLICT', 'A run with this workflow ID already exists');
       }
 
+      const warnings = descriptionScan ? launchWarningsFor(descriptionScan) : [];
       return reply.status(201).send({
         data: {
           ...(callback.target ? { callback: { target: callback.target } } : {}),
           temporalWorkflowId,
+          ...(warnings.length > 0 ? { warnings } : {}),
           workflowId: launch.activeWorkflowId,
           workRequestId,
         },
@@ -2840,7 +2858,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           include: {
             ...RUN_INITIATOR_INCLUDE,
             workRequest: {
-              select: { description: true, externalTicketId: true, id: true },
+              select: { description: true, externalTicketId: true, id: true, title: true },
             },
           },
           orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
