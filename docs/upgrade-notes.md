@@ -1781,12 +1781,11 @@ authorized without it does not.
 
 ---
 
-### Plugins: the agent binding becomes a list, and hooks and team enablement are per plugin (`e062295`)
+### Plugins: the agent binding becomes a list, and hooks and team enablement are per plugin (`b03322e`)
 
 **Affected.** Any deployment that upgrades across migrations `20261117200000_plugins` and
-`20261117200001_plugin_skill_deactivation` (the second one is part of commit `691837b`). In a deployment
-that ran earlier code with an agent bound to a harness profile, every such binding is converted in
-place and the actions below apply to it.
+`20261117200001_plugin_skill_deactivation`. In a deployment that ran earlier code with an agent bound
+to a harness profile, every such binding is converted in place and the actions below apply to it.
 
 **What changes.** `agents.harness_profile` (one profile name) is replaced in place by
 `agents.harness_profiles` (a list of names): a bound name becomes a one-element list, an unbound agent
