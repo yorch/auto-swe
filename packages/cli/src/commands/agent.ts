@@ -120,7 +120,7 @@ async function readPrompt(flagValue: string | undefined, positional: string | un
   return positional;
 }
 
-async function resolveRepoId(
+export async function resolveRepoId(
   flags: Record<string, string>,
   env: CliEnv
 ): Promise<string | { error: string }> {
