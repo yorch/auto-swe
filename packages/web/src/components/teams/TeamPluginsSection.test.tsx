@@ -91,4 +91,24 @@ describe('TeamPluginsSection', () => {
       screen.getAllByText(/Only a team admin can enable or disable plugins/).length
     ).toBeGreaterThan(0);
   });
+
+  it('marks a platform-disabled plugin, offers withdrawal and no enable toggle', async () => {
+    state.plugins = [
+      {
+        description: '',
+        enabled: true,
+        enabledAt: '2026-10-02T00:00:00Z',
+        hooksEnabled: false,
+        latestVersion: 1,
+        name: 'old-kit',
+        status: 'DISABLED',
+      },
+    ];
+    render(<TeamPluginsSection canManage teamId="t1" />);
+    expect(screen.getByText('Disabled by platform admin')).toBeTruthy();
+    expect(screen.queryByRole('switch', { name: 'Enable old-kit for this team' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw enablement of old-kit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Disable plugin' }));
+    await waitFor(() => expect(disable).toHaveBeenCalledWith('old-kit'));
+  });
 });

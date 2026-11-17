@@ -153,6 +153,8 @@ export interface AgentSaveWarnings {
   runtimeWarnings?: string[];
   /** A new team override only: plugins left out of its starting value because the team has not enabled them. */
   profileNotes?: string[];
+  /** A create that sent no list: plugins inherited from the platform agent of the same key. */
+  profileCarried?: string[];
 }
 
 /** A create / update / restore response. */
@@ -247,9 +249,15 @@ export function useTeamAgentOptions(teamId: string) {
   return useQuery({
     queryFn: () =>
       api
-        .get<{ data: { key: string; name: string; modelSpec: string | null }[] }>(
-          `/api/v1/teams/${teamId}/agent-library/options`
-        )
+        .get<{
+          data: {
+            key: string;
+            name: string;
+            modelSpec: string | null;
+            /** The platform agent's bound plugins, when the gateway sends them. */
+            harnessProfiles?: string[];
+          }[];
+        }>(`/api/v1/teams/${teamId}/agent-library/options`)
         .then((r) => r.data),
     queryKey: ['team-agent-options', teamId],
   });

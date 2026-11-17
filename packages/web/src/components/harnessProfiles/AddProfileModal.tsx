@@ -52,6 +52,7 @@ export function AddProfileModal({ open, onClose }: { open: boolean; onClose: () 
   const [error, setError] = useState<ProfileError | null>(null);
   // Off is pre-selected and shown; what is sent is whatever the radio holds, never a server default.
   const [hooksEnabled, setHooksEnabled] = useState(false);
+  const [hooksConfirmed, setHooksConfirmed] = useState(false);
   const [created, setCreated] = useState<{ name: string; projection: Projection | null } | null>(
     null
   );
@@ -71,6 +72,7 @@ export function AddProfileModal({ open, onClose }: { open: boolean; onClose: () 
     setAcknowledged(false);
     setError(null);
     setHooksEnabled(false);
+    setHooksConfirmed(false);
     setCreated(null);
     onClose();
   }
@@ -86,6 +88,7 @@ export function AddProfileModal({ open, onClose }: { open: boolean; onClose: () 
     e?.preventDefault();
     setError(null);
     setAcknowledged(false);
+    setHooksConfirmed(false);
     try {
       setPreviewed(await preview.mutateAsync(location()));
     } catch (err) {
@@ -184,7 +187,13 @@ export function AddProfileModal({ open, onClose }: { open: boolean; onClose: () 
               already exists. Names are compared case-insensitively and cannot be reused.
             </Alert>
           )}
-          <HooksChoice name="add-profile-hooks" onChange={setHooksEnabled} value={hooksEnabled} />
+          <HooksChoice
+            hooksConfirmed={hooksConfirmed}
+            name="add-profile-hooks"
+            onChange={setHooksEnabled}
+            onConfirmedChange={setHooksConfirmed}
+            value={hooksEnabled}
+          />
           {needsAck && (
             <Checkbox
               checked={acknowledged}
@@ -194,7 +203,11 @@ export function AddProfileModal({ open, onClose }: { open: boolean; onClose: () 
           )}
           {errorAlert}
           <ModalFooter
-            disabled={conflicts.length > 0 || (needsAck && !acknowledged)}
+            disabled={
+              conflicts.length > 0 ||
+              (needsAck && !acknowledged) ||
+              (hooksEnabled && !hooksConfirmed)
+            }
             isPending={create.isPending}
             onCancel={() => {
               setPreviewed(null);

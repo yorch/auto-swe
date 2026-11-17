@@ -103,6 +103,10 @@ function useInvalidate() {
       qc.invalidateQueries({ queryKey: KEY }),
       // An approved entry is a new plugin.
       qc.invalidateQueries({ queryKey: ['harness-profiles'] }),
+      qc.invalidateQueries({ queryKey: ['skills'] }),
+      qc.invalidateQueries({ queryKey: ['admin-agent-library'] }),
+      qc.invalidateQueries({ queryKey: ['team-agent-library'] }),
+      qc.invalidateQueries({ queryKey: ['team-plugins'] }),
     ]);
 }
 

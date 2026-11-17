@@ -3,7 +3,6 @@
 import type {
   HarnessProfileBoundAgent,
   HarnessProfileDetail,
-  HarnessProfileHookChanges,
   HarnessProfileHookSource,
   HarnessProfilePreview,
   HarnessProfileProjectionWarnings,
@@ -26,7 +25,6 @@ import { api } from '@/lib/api';
 export type {
   HarnessProfileBoundAgent,
   HarnessProfileDetail,
-  HarnessProfileHookChanges,
   HarnessProfileHookSource,
   HarnessProfilePreview,
   HarnessProfileProjectionWarnings,
@@ -37,6 +35,16 @@ export type {
   HarnessProfileVersionDto,
 };
 
+/** A hook file that could not be read carries the reason; such a file is treated as unsafe. */
+type Unreadable = { unreadable?: string | null };
+
+/** What an update does to the plugin's hook files, against the previous version. */
+export interface HarnessProfileHookChanges {
+  added: Array<HarnessProfileHookSource & Unreadable>;
+  removed: Array<HarnessProfileHookSource & Unreadable>;
+  changed: Array<{ path: string; addedCommands: string[]; removedCommands: string[] } & Unreadable>;
+}
+
 /** One file's text from a review request. `text` is null for a binary file. */
 export interface ReviewedFile {
   path: string;
@@ -46,6 +54,20 @@ export interface ReviewedFile {
   text: string | null;
   truncated: boolean;
 }
+
+/** One file the plugin runs on its own when hooks are on (`GET /:name`, latest version). */
+export interface AutoRunSource {
+  path: string;
+  kind: string;
+  commands: string[];
+  /** Why the file could not be read; such a file is treated as unsafe. Null when it was read. */
+  unreadable: string | null;
+}
+
+/** `GET /:name`: the profile with the auto-run sources of its latest version. */
+export type HarnessProfileDetailWithSources = HarnessProfileDetail & {
+  autoRunSources?: AutoRunSource[];
+};
 
 export type HarnessProfileLocation = HarnessProfileSource;
 
@@ -107,7 +129,9 @@ export function useHarnessProfile(name: string | null) {
   return useQuery({
     enabled: name !== null,
     queryFn: () =>
-      api.get<{ data: HarnessProfileDetail }>(nameUrl(name as string)).then((r) => r.data),
+      api
+        .get<{ data: HarnessProfileDetailWithSources }>(nameUrl(name as string))
+        .then((r) => r.data),
     queryKey: [...KEY, 'detail', name],
   });
 }
@@ -137,9 +161,23 @@ export function useProfileUsage(names: string[]) {
   return usage;
 }
 
+/**
+ * A plugin change reaches more than its own list: projected skills, the agent libraries that
+ * bind it and the team enablement lists all read it.
+ */
 function useInvalidate() {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: KEY });
+  return () =>
+    Promise.all(
+      [
+        KEY,
+        ['skills'],
+        ['admin-agent-library'],
+        ['team-agent-library'],
+        ['team-plugins'],
+        ['marketplaces'],
+      ].map((queryKey) => qc.invalidateQueries({ queryKey }))
+    );
 }
 
 /** Reads, validates and scans a folder at a ref; writes nothing. */
@@ -221,6 +259,8 @@ export function usePatchProfile() {
       status?: HarnessProfileStatus;
       /** Platform ADMIN only, either direction; needs no new version. */
       hooksEnabled?: boolean;
+      /** Required with `hooksEnabled: true`: the version whose hook sources were reviewed. */
+      expectedVersion?: number;
     }) => api.patch<{ data: HarnessProfileSummary }>(nameUrl(name), body).then((r) => r.data),
     onSuccess: invalidate,
   });

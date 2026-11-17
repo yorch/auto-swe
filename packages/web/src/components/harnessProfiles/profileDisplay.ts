@@ -49,6 +49,9 @@ export const TRACK_TONE = {
 export const hasHookChanges = (c: HarnessProfileHookChanges | undefined | null): boolean =>
   !!c && (c.added.length > 0 || c.removed.length > 0 || c.changed.length > 0);
 
+const unreadableOf = (x: Record<string, unknown>) =>
+  typeof x.unreadable === 'string' ? { unreadable: x.unreadable } : {};
+
 /** Reads a `hookChanges` object off an error's details, tolerating any other shape. */
 function readHookChanges(d: unknown): HarnessProfileHookChanges | null {
   if (!isRecord(d) || !isRecord(d.hookChanges)) {
@@ -60,15 +63,18 @@ function readHookChanges(d: unknown): HarnessProfileHookChanges | null {
     added: list(h.added).map((x) => ({
       commands: strings(x.commands),
       path: String(x.path ?? ''),
+      ...unreadableOf(x),
     })),
     changed: list(h.changed).map((x) => ({
       addedCommands: strings(x.addedCommands),
       path: String(x.path ?? ''),
       removedCommands: strings(x.removedCommands),
+      ...unreadableOf(x),
     })),
     removed: list(h.removed).map((x) => ({
       commands: strings(x.commands),
       path: String(x.path ?? ''),
+      ...unreadableOf(x),
     })),
   };
 }

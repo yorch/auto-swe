@@ -103,10 +103,17 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   const { data: teamPlugins } = useTeamPlugins(teamId);
   const pluginOptions = (teamPlugins ?? [])
     .filter((p) => p.enabled)
-    .map((p) => ({ name: p.name, status: 'OK' as const }));
-
+    .map((p) => ({ name: p.name, status: p.status ?? ('OK' as const) }));
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState<CreateTeamAgentBody>(EMPTY);
+  // What the override starts with: the platform agent of the key, limited to the plugins the team
+  // has enabled (and the platform has not disabled). An explicit list is always sent, so what
+  // the form shows is what gets bound.
+  const enabledOk = new Set(pluginOptions.filter((p) => p.status === 'OK').map((p) => p.name));
+  const inheritedProfiles = (
+    parentAgents?.find((a) => a.key === form.key)?.harnessProfiles ?? []
+  ).filter((n) => enabledOk.has(n));
+  const createProfiles = form.harnessProfiles ?? inheritedProfiles;
   const [editing, setEditing] = useState<AgentRow | null>(null);
   // The row as it was when the edit opened, so a save sends only what changed.
   const [editingOriginal, setEditingOriginal] = useState<AgentRow | null>(null);
@@ -121,13 +128,16 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
     (saveWarnings.catalogWarnings?.length ?? 0) > 0 ||
     (saveWarnings.credentialWarnings?.length ?? 0) > 0 ||
     (saveWarnings.runtimeWarnings?.length ?? 0) > 0 ||
-    (saveWarnings.profileNotes?.length ?? 0) > 0;
+    (saveWarnings.profileNotes?.length ?? 0) > 0 ||
+    (saveWarnings.profileCarried?.length ?? 0) > 0;
 
   async function submitCreate() {
     setCreateError(null);
     try {
       setSaveWarnings(
-        await createAgent.mutateAsync(cleanAgentPayload({ ...form }) as CreateTeamAgentBody)
+        await createAgent.mutateAsync(
+          cleanAgentPayload({ ...form, harnessProfiles: createProfiles }) as CreateTeamAgentBody
+        )
       );
       setCreateOpen(false);
       setForm(EMPTY);
@@ -216,7 +226,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
               {saveWarnings.scanWarnings?.join('; ')}
             </Alert>
           )}
-          <ProfileNotes notes={saveWarnings.profileNotes} />
+          <ProfileNotes carried={saveWarnings.profileCarried} notes={saveWarnings.profileNotes} />
           <ModelSaveWarnings
             catalogWarnings={saveWarnings.catalogWarnings}
             credentialWarnings={saveWarnings.credentialWarnings}
@@ -338,7 +348,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
           onChange={(patch) => setForm({ ...form, ...patch })}
           parentAgents={parentAgents}
           skills={skills ?? []}
-          value={form}
+          value={{ ...form, harnessProfiles: createProfiles }}
         />
         {createError && <Alert variant="error">{createError}</Alert>}
         <ModalFooter

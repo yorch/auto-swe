@@ -173,6 +173,8 @@ interface SavedNotice {
   runtimeWarnings: string[];
   /** Plugins left out of a new team override because the team has not enabled them. */
   profileNotes: string[];
+  /** Plugins a create inherited from the platform agent of the same key. */
+  profileCarried: string[];
 }
 
 const ATTENTION_FILTERS = ['deactivated', 'noCredential', 'unverified'] as const;
@@ -261,15 +263,18 @@ function AgentLibraryContent() {
     const credentialWarnings = res.credentialWarnings ?? [];
     const runtimeWarnings = res.runtimeWarnings ?? [];
     const profileNotes = res.profileNotes ?? [];
+    const profileCarried = res.profileCarried ?? [];
     setSaved(
       scanWarnings.length > 0 ||
         catalogWarnings.length > 0 ||
         credentialWarnings.length > 0 ||
         runtimeWarnings.length > 0 ||
-        profileNotes.length > 0
+        profileNotes.length > 0 ||
+        profileCarried.length > 0
         ? {
             catalogWarnings,
             credentialWarnings,
+            profileCarried,
             profileNotes,
             runtimeWarnings,
             scanWarnings,
@@ -283,7 +288,10 @@ function AgentLibraryContent() {
     setCreateError(null);
     try {
       const res = await createAgent.mutateAsync(
-        cleanAgentPayload({ ...createForm }) as CreateAgentBody
+        cleanAgentPayload({
+          ...createForm,
+          harnessProfiles: createProfiles,
+        }) as CreateAgentBody
       );
       finishSave('Agent created', res);
       closeCreate();
@@ -314,6 +322,21 @@ function AgentLibraryContent() {
       setEditError(describeAgentSaveError(e, 'Update failed'));
     }
   }
+
+  // An explicit plugin list is always sent. Until the person edits it, it starts as the platform
+  // agent of the same key's list (what the server used to inherit silently), limited to plugins
+  // that are enabled, so what the form shows is what gets bound.
+  const enabledPlugins = new Set(
+    (harnessProfiles ?? []).filter((p) => p.status === 'OK').map((p) => p.name)
+  );
+  const createProfiles =
+    createForm.harnessProfiles ??
+    (createForm.scope === 'GLOBAL'
+      ? []
+      : (
+          (agents ?? []).find((a) => a.scope === 'GLOBAL' && a.key === createForm.key)
+            ?.harnessProfiles ?? []
+        ).filter((n) => enabledPlugins.has(n)));
 
   const createDirty = JSON.stringify(createForm) !== JSON.stringify(createBaseline);
   const editDirty =
@@ -782,7 +805,7 @@ function AgentLibraryContent() {
                 </ul>
               </Alert>
             )}
-            <ProfileNotes notes={saved.profileNotes} />
+            <ProfileNotes carried={saved.profileCarried} notes={saved.profileNotes} />
             <ModelSaveWarnings
               catalogWarnings={saved.catalogWarnings}
               credentialWarnings={saved.credentialWarnings}
@@ -964,7 +987,7 @@ function AgentLibraryContent() {
           skillEmptyHint="No skills available."
           skills={skills ?? []}
           toolKeysInheritHint="Agent inherits all available tools"
-          value={createForm}
+          value={{ ...createForm, harnessProfiles: createProfiles }}
         />
         {createError && <Alert variant="error">{createError}</Alert>}
         <ModalFooter

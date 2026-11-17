@@ -46,6 +46,7 @@ export function EntryApproveModal({
   const [previewed, setPreviewed] = useState<EntryPreview | null>(null);
   const [hooksEnabled, setHooksEnabled] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
+  const [hooksConfirmed, setHooksConfirmed] = useState(false);
   const [error, setError] = useState<ProfileError | null>(null);
   const [done, setDone] = useState<EntryApproveResult | null>(null);
 
@@ -53,6 +54,7 @@ export function EntryApproveModal({
   load.current = async (name: string) => {
     setError(null);
     setAcknowledged(false);
+    setHooksConfirmed(false);
     setPreviewed(null);
     try {
       setPreviewed(await preview.mutateAsync({ entry: name, id: marketplaceId }));
@@ -65,6 +67,7 @@ export function EntryApproveModal({
   useEffect(() => {
     setDone(null);
     setHooksEnabled(false);
+    setHooksConfirmed(false);
     setPreviewed(null);
     setError(null);
     if (entry !== null) {
@@ -173,8 +176,10 @@ export function EntryApproveModal({
                 </Alert>
               )}
               <HooksChoice
+                hooksConfirmed={hooksConfirmed}
                 name="entry-approve-hooks"
                 onChange={setHooksEnabled}
+                onConfirmedChange={setHooksConfirmed}
                 value={hooksEnabled}
               />
               {needsAck && (
@@ -188,7 +193,12 @@ export function EntryApproveModal({
           )}
           {errorAlert}
           <ModalFooter
-            disabled={!previewed || conflicts.length > 0 || (needsAck && !acknowledged)}
+            disabled={
+              !previewed ||
+              conflicts.length > 0 ||
+              (needsAck && !acknowledged) ||
+              (hooksEnabled && !hooksConfirmed)
+            }
             isPending={approve.isPending}
             onCancel={onClose}
             onSubmit={runApprove}

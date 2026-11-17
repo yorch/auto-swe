@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { HooksBadge } from '@/components/harnessProfiles/HooksBadge';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -108,7 +109,12 @@ export function TeamPluginsSection({ canManage, teamId }: { teamId: string; canM
                     <span className="font-medium text-paper-100">{visibleText(p.name)}</span>
                     <span className="text-xs text-paper-500">v{p.latestVersion}</span>
                     <HooksBadge enabled={p.hooksEnabled} />
-                    {p.enabled && (
+                    {p.status === 'DISABLED' && (
+                      <Badge dot tone="warning">
+                        Disabled by platform admin
+                      </Badge>
+                    )}
+                    {p.enabled && p.status !== 'DISABLED' && (
                       <Badge dot tone="success">
                         Enabled
                       </Badge>
@@ -123,19 +129,36 @@ export function TeamPluginsSection({ canManage, teamId }: { teamId: string; canM
                     </p>
                   )}
                 </div>
-                <ToggleSwitch
-                  ariaLabel={`Enable ${visibleText(p.name)} for this team`}
-                  checked={p.enabled}
-                  disabled={!canManage || enable.isPending || disable.isPending}
-                  onChange={() => (p.enabled ? setConfirm(p) : void turnOn(p))}
-                  title={
-                    canManage
-                      ? p.enabled
-                        ? 'Disable for the team'
-                        : 'Enable for the team'
-                      : READ_ONLY_REASON
-                  }
-                />
+                {p.status === 'DISABLED' ? (
+                  <Button
+                    aria-label={`Withdraw enablement of ${visibleText(p.name)}`}
+                    disabled={!canManage || disable.isPending}
+                    onClick={() => setConfirm(p)}
+                    size="sm"
+                    title={
+                      canManage
+                        ? 'A platform admin disabled this plugin; withdraw the team’s enablement'
+                        : READ_ONLY_REASON
+                    }
+                    variant="secondary"
+                  >
+                    Withdraw enablement
+                  </Button>
+                ) : (
+                  <ToggleSwitch
+                    ariaLabel={`Enable ${visibleText(p.name)} for this team`}
+                    checked={p.enabled}
+                    disabled={!canManage || enable.isPending || disable.isPending}
+                    onChange={() => (p.enabled ? setConfirm(p) : void turnOn(p))}
+                    title={
+                      canManage
+                        ? p.enabled
+                          ? 'Disable for the team'
+                          : 'Enable for the team'
+                        : READ_ONLY_REASON
+                    }
+                  />
+                )}
               </li>
             ))}
           </ul>

@@ -12,7 +12,15 @@ vi.mock('@/hooks/useAgentLibrary', () => ({
   useCreateTeamAgent: () => createMutation,
   useDeleteTeamAgent: () => idle,
   useTeamAgentOptions: () => ({
-    data: [{ key: 'reviewer', modelSpec: 'anthropic/x', name: 'Reviewer' }],
+    data: [
+      {
+        harnessProfiles: ['team-kit', 'not-yet-kit'],
+        key: 'reviewer',
+        modelSpec: 'anthropic/x',
+        name: 'Reviewer',
+      },
+      { key: 'planner', modelSpec: 'anthropic/x', name: 'Planner' },
+    ],
   }),
   useTeamAgents: () => ({
     data: teamAgents.data,
@@ -176,5 +184,32 @@ describe('TeamAgentLibrarySection', () => {
     } finally {
       teamAgents.data = [];
     }
+  });
+
+  it('sends the prefilled list: platform plugins limited to those the team enabled', async () => {
+    createMutation.mutateAsync.mockResolvedValueOnce({ data: {}, profileCarried: ['team-kit'] });
+    render(<TeamAgentLibrarySection teamId="t-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'New override' }));
+    fireEvent.change(screen.getByLabelText(/^Key/), { target: { value: 'reviewer' } });
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Reviewer' } });
+    expect(screen.getByText('team-kit')).toBeTruthy();
+    expect(screen.queryByText('not-yet-kit')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^(Create|Save)/ }));
+    await waitFor(() => expect(createMutation.mutateAsync).toHaveBeenCalled());
+    expect(createMutation.mutateAsync.mock.calls.at(-1)?.[0].harnessProfiles).toEqual(['team-kit']);
+    expect(
+      await screen.findByText(/Plugins carried over from the platform-wide agent/)
+    ).toBeTruthy();
+  });
+
+  it('sends an explicit empty list when nothing is prefilled', async () => {
+    createMutation.mutateAsync.mockResolvedValueOnce({ data: {} });
+    render(<TeamAgentLibrarySection teamId="t-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'New override' }));
+    fireEvent.change(screen.getByLabelText(/^Key/), { target: { value: 'planner' } });
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Planner' } });
+    fireEvent.click(screen.getByRole('button', { name: /^(Create|Save)/ }));
+    await waitFor(() => expect(createMutation.mutateAsync).toHaveBeenCalled());
+    expect(createMutation.mutateAsync.mock.calls.at(-1)?.[0].harnessProfiles).toEqual([]);
   });
 });

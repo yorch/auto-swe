@@ -79,6 +79,10 @@ describe('EntryApproveModal', () => {
     const off = (await screen.findByRole('radio', { name: /Hooks off/ })) as HTMLInputElement;
     expect(off.checked).toBe(true);
     fireEvent.click(screen.getByRole('radio', { name: /Hooks on/ }));
+    expect(
+      (screen.getByRole('button', { name: 'Approve plugin' }) as HTMLButtonElement).disabled
+    ).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'I have reviewed these hook sources' }));
     fireEvent.click(screen.getByRole('button', { name: 'Approve plugin' }));
     await waitFor(() =>
       expect(approve).toHaveBeenCalledWith({

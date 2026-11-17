@@ -15,6 +15,8 @@ export interface TeamPlugin {
   hooksEnabled: boolean;
   enabled: boolean;
   enabledAt: string | null;
+  /** DISABLED: a platform admin disabled it. Listed only when the team had enabled it. */
+  status?: 'OK' | 'DISABLED';
 }
 
 /** An agent version on the team that still names a plugin the team no longer enables. */
@@ -43,6 +45,9 @@ function useInvalidate(teamId: string) {
       qc.invalidateQueries({ queryKey: key(teamId) }),
       // Enablement decides which plugins an override may bind, and which agents are stranded.
       qc.invalidateQueries({ queryKey: ['harness-profiles'] }),
+      qc.invalidateQueries({ queryKey: ['team-agent-library', teamId] }),
+      qc.invalidateQueries({ queryKey: ['admin-agent-library'] }),
+      qc.invalidateQueries({ queryKey: ['skills'] }),
     ]);
 }
 

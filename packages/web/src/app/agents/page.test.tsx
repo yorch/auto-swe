@@ -347,6 +347,27 @@ describe('agent library — create form', () => {
     expect(screen.queryByRole('heading', { name: 'Discard unsaved changes?' })).toBeNull();
   });
 
+  it('always sends an explicit plugin list on create, empty when none is chosen', async () => {
+    render(withQuery(<AgentLibraryPage />));
+    fireEvent.click(screen.getAllByRole('button', { name: /New agent/ })[0]);
+    fireEvent.change(screen.getByLabelText(/^Key/), { target: { value: 'custom' } });
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Custom' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+    await waitFor(() => expect(createAgent).toHaveBeenCalled());
+    expect(createAgent.mock.calls[0][0].harnessProfiles).toEqual([]);
+  });
+
+  it('shows plugins carried over from the platform agent after a create', async () => {
+    createAgent.mockResolvedValue({ data: row('n1', 'Alpha', 'alpha'), profileCarried: ['kit-a'] });
+    render(withQuery(<AgentLibraryPage />));
+    fireEvent.click(screen.getAllByRole('button', { name: /New agent/ })[0]);
+    fireEvent.change(screen.getByLabelText(/^Key/), { target: { value: 'custom' } });
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Custom' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+    expect(await screen.findByText(/carried over from the platform-wide agent/)).toBeTruthy();
+    expect(screen.getByText('kit-a')).toBeTruthy();
+  });
+
   it('copies the runtime, harness profile, reasoning and credential into an override', async () => {
     state.teams = [{ id: 't1', name: 'Payments' }];
     state.agents = [

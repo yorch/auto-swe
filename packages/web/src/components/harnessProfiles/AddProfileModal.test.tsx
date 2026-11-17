@@ -177,10 +177,27 @@ describe('AddProfileModal', () => {
     const on = screen.getByRole('radio', { name: /Hooks on/ }) as HTMLInputElement;
     expect(off.checked).toBe(true);
     fireEvent.click(on);
+    // Hooks on needs the same confirmation as the switch before approving.
+    expect(
+      (screen.getByRole('button', { name: 'Approve plugin' }) as HTMLButtonElement).disabled
+    ).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'I have reviewed these hook sources' }));
     fireEvent.click(screen.getByRole('button', { name: 'Approve plugin' }));
     await waitFor(() =>
       expect(create).toHaveBeenCalledWith(expect.objectContaining({ hooksEnabled: true }))
     );
+  });
+
+  it('clears the hook confirmation when the choice goes back to off', async () => {
+    previewFn.mockResolvedValue(preview());
+    await openAndPreview();
+    fireEvent.click(screen.getByRole('radio', { name: /Hooks on/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'I have reviewed these hook sources' }));
+    fireEvent.click(screen.getByRole('radio', { name: /Hooks off/ }));
+    fireEvent.click(screen.getByRole('radio', { name: /Hooks on/ }));
+    expect(
+      (screen.getByRole('button', { name: 'Approve plugin' }) as HTMLButtonElement).disabled
+    ).toBe(true);
   });
 
   it('reports the projected skills after approval', async () => {

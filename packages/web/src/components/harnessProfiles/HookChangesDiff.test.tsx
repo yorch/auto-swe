@@ -30,4 +30,18 @@ describe('HookChangesDiff', () => {
     expect(screen.getByText('old-cmd')).toBeTruthy();
     expect(screen.getByText('gone-cmd')).toBeTruthy();
   });
+
+  it('shows why a hook file could not be read instead of an empty entry', () => {
+    render(
+      <HookChangesDiff
+        changes={{
+          added: [{ commands: [], path: 'hooks/bad.json', unreadable: 'invalid JSON' }],
+          changed: [],
+          removed: [],
+        }}
+      />
+    );
+    expect(screen.getByText('Added hooks/bad.json')).toBeTruthy();
+    expect(screen.getByText(/Could not be read, treated as unsafe: invalid JSON/)).toBeTruthy();
+  });
 });
