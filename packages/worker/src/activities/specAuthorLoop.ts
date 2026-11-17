@@ -12,6 +12,7 @@
 import { materializeUses, parseWorkflowSpec, type WorkflowSpec } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { ZodError } from 'zod';
+import { throwIfActivityCancelled } from '../lib/cancellation.js';
 import type { AgentSpec } from '../lib/config/agentSpec.js';
 import { runAgent } from './runAgent.js';
 
@@ -54,6 +55,9 @@ export async function runAuthorLoop<T>(args: AuthorLoopArgs<T>): Promise<AuthorL
   let lastErrors: string[] = ['model produced no output'];
 
   for (let attempt = 1; attempt <= args.maxAttempts; attempt++) {
+    // A cancelled activity stops before it pays for another round (the heartbeat is how the
+    // cancellation reaches it; the signal is how it notices).
+    throwIfActivityCancelled();
     heartbeat(`${args.heartbeatLabel}: attempt ${attempt}/${args.maxAttempts}`);
     const result = await runAgent<AuthorLoopOutput>(args.agentSpec, message, {
       spanName: args.spanName,

@@ -100,7 +100,9 @@ ADMIN-only, overridable per team and organization, and read where they are used 
 run. `runPlans.enabled` (default on) switches generating, ranking and approving plans; with it off, plans
 already launched keep running. `runPlans.createPerUserPerHour` (default 10; 0 disables generation) counts
 generation jobs a person has started in the last hour, whether or not a job produced a plan;
-`runPlans.maxPendingPerUser` (default 5) caps the plans a person holds waiting for approval; and
+`runPlans.maxPendingPerUser` (default 5) caps the plans a person holds waiting for approval;
+`runPlans.generationMaxAttempts` (default 3, 1 to 5) caps the author-model rounds one generation may spend, the first draft
+plus repairs, so it bounds what a single goal can cost; and
 `runPlans.routePerUserPerHour` (default 30; 0 disables ranking) bounds template-ranking requests. The
 counts come from the audit log and the plan table, so they hold across gateway replicas. Plans nobody
 approved in time are expired by a scheduled sweep, `RUN_PLAN_SWEEP_ENABLED` (default `true`) and

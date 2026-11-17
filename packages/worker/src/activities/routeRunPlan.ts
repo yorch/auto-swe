@@ -10,8 +10,9 @@
  * the model delimited, with an instruction not to follow them. Reasons are plain text, capped.
  */
 
-import { RUN_PLAN_INTENT_MAX_CHARS, wrapRunPlanIntent } from '@auto-swe/shared/workflow';
-import { heartbeat } from '@temporalio/activity';
+import { plainText, stripInvisible } from '@auto-swe/shared/lib/plainText';
+import { runPlanIntentIssue, wrapRunPlanIntent } from '@auto-swe/shared/workflow';
+import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { z } from 'zod';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
@@ -29,8 +30,8 @@ export interface RouteRunPlanInput {
   /** The templates the requester may launch. The only ids the result can contain. */
   candidates: RunPlanCandidate[];
   maxResults: number;
-  /** Scope of agent resolution and spend. */
-  teamId?: string | null;
+  /** The repository's owning team: scope of agent resolution and the team the spend is charged to. */
+  teamId: string;
   orgId?: string | null;
 }
 
@@ -44,7 +45,10 @@ export interface RunPlanMatch {
 
 export interface RouteRunPlanResult {
   matches: RunPlanMatch[];
-  /** True when nothing fits (or nothing could be matched to a supplied candidate). */
+  /**
+   * True when nothing fits (or nothing could be matched to a supplied candidate). Then `matches`
+   * is empty: a router that said "none fit" does not also rank anything.
+   */
   noneFit: boolean;
 }
 
@@ -68,27 +72,19 @@ const RouterOutputSchema = z.object({
 });
 type RouterOutput = z.infer<typeof RouterOutputSchema>;
 
-/** Plain text on one line: control characters, markup-looking tags and links removed. */
+/** Plain text on one line: control and bidi characters, markup, links and addresses removed. */
 export function plainReason(text: string): string {
-  const cleaned = text
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
-    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/https?:\/\/\S+/gi, '')
-    .replace(/[`*_#>]+/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return cleaned.length > ROUTE_REASON_MAX_CHARS
-    ? `${cleaned.slice(0, ROUTE_REASON_MAX_CHARS - 1)}…`
-    : cleaned;
+  return plainText(text, { max: ROUTE_REASON_MAX_CHARS });
 }
 
 function oneLine(text: string, max: number): string {
   const t = text.replace(/\s+/g, ' ').trim();
   const cut = t.length > max ? `${t.slice(0, max - 1)}…` : t;
   // A candidate must not be able to close the wrapper that holds it.
-  return cut.replace(/<\s*\/?\s*(candidates?|requester_intent)\b[^>]*>/gi, '[tag removed]');
+  return stripInvisible(cut.normalize('NFKC')).replace(
+    /<\s*\/?\s*(candidates?|requester_intent)\b[^>]*>?/gi,
+    '[tag removed]'
+  );
 }
 
 function renderCandidates(candidates: RunPlanCandidate[]): string {
@@ -107,12 +103,24 @@ export async function routeRunPlan(input: RouteRunPlanInput): Promise<RouteRunPl
 }
 
 async function routeRunPlanImpl(input: RouteRunPlanInput): Promise<RouteRunPlanResult> {
+  // Spend is always a team's: a call with no team would be charged to nobody.
+  if (typeof input.teamId !== 'string' || input.teamId === '') {
+    throw ApplicationFailure.nonRetryable(
+      'the ranking has no team to attribute its spend to',
+      'PLAN_INPUT_INVALID'
+    );
+  }
+  // The same intent rule as generation; the text is refused, never cut.
+  const intentIssue = runPlanIntentIssue(input.intent);
+  if (intentIssue) {
+    throw ApplicationFailure.nonRetryable(intentIssue, 'PLAN_INPUT_INVALID');
+  }
   const max = Math.max(1, Math.min(Math.trunc(input.maxResults) || 1, MAX_RESULTS_CAP));
   // Ids are the gateway's (uuids); a candidate with an id that could break the wrapper is dropped.
   const candidates = input.candidates
     .filter((c) => /^[A-Za-z0-9_-]{1,64}$/.test(c.id))
     .slice(0, MAX_CANDIDATES);
-  if (candidates.length === 0 || input.intent.trim() === '') {
+  if (candidates.length === 0) {
     return { matches: [], noneFit: true };
   }
   const known = new Set(candidates.map((c) => c.id));
@@ -120,13 +128,13 @@ async function routeRunPlanImpl(input: RouteRunPlanInput): Promise<RouteRunPlanR
   heartbeat('route run plan');
   const agentSpec = await resolveAgentSpec(
     { agentKey: 'runPlanRouter' as ModelBackedAgentKey, outputSchema: RouterOutputSchema },
-    { orgId: input.orgId ?? undefined, teamId: input.teamId ?? undefined }
+    { orgId: input.orgId ?? undefined, teamId: input.teamId }
   );
   const result = await runAgent<RouterOutput>(
     agentSpec,
     [
       `Return at most ${max} matches.`,
-      wrapRunPlanIntent(input.intent.slice(0, RUN_PLAN_INTENT_MAX_CHARS)),
+      wrapRunPlanIntent(input.intent),
       renderCandidates(candidates),
     ].join('\n\n'),
     { maxSteps: 1, spanName: 'llm.run_plan_router' }
@@ -151,6 +159,9 @@ async function routeRunPlanImpl(input: RouteRunPlanInput): Promise<RouteRunPlanR
     });
   }
   matches.sort((a, b) => b.score - a.score);
+  if (parsed.data.noneFit) {
+    return { matches: [], noneFit: true };
+  }
   const top = matches.slice(0, max);
-  return { matches: top, noneFit: top.length === 0 || parsed.data.noneFit };
+  return { matches: top, noneFit: top.length === 0 };
 }

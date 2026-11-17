@@ -4,7 +4,7 @@ import type {
   GenerateRunPlanSpecResult,
 } from '../activities/generateRunPlanSpec.js';
 import type * as activitiesType from '../activities/index.js';
-import { RETRY_SINGLE_ATTEMPT, T_10M } from './proxyOptions.js';
+import { RETRY_SINGLE_ATTEMPT, T_2M, T_15M } from './proxyOptions.js';
 
 /**
  * RunPlanGenerationWorkflow — generate a run plan's spec from the requester's intent.
@@ -21,9 +21,12 @@ import { RETRY_SINGLE_ATTEMPT, T_10M } from './proxyOptions.js';
  */
 const { generateRunPlanSpec } = proxyActivities<Pick<typeof activitiesType, 'generateRunPlanSpec'>>(
   {
+    // Every model call pumps heartbeats (`runAgent`), so a stuck worker is noticed in two minutes
+    // instead of when the whole timeout runs out; a cancellation reaches the activity the same way.
+    heartbeatTimeout: T_2M,
     retry: RETRY_SINGLE_ATTEMPT,
-    // Three rounds of the author model, each bounded by the model's own timeout.
-    startToCloseTimeout: T_10M,
+    // At most five rounds (`runPlans.generationMaxAttempts`) of the author model.
+    startToCloseTimeout: T_15M,
   }
 );
 

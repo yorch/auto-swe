@@ -9,7 +9,7 @@
  * `applySkeletonPolicy` (attach the validate phase and the canonical core) and then, independently,
  * `checkSkeletonPolicy`, `validateSpec` (internal steps NOT allowed), the launchable-agent check
  * and the plan-consistency check. Any error goes back to the model for repair (at most
- * {@link MAX_ATTEMPTS} rounds). Success needs zero errors from all of them, and this activity
+ * `runPlans.generationMaxAttempts` rounds, default {@link RUN_PLAN_MAX_ATTEMPTS}). Success needs zero errors from all of them, and this activity
  * returns a spec only on success: after the last failed round it throws `GENERATION_FAILED` with no
  * spec at all.
  *
@@ -20,6 +20,7 @@
  * The settings snapshot is the gateway's (`snapshotPlanSettings`); this activity does not compute it.
  */
 
+import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { WORKFLOW_AUTHOR_RUN_PLAN_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
 import { NON_LAUNCHABLE_AGENT_KEYS } from '@auto-swe/shared/lib/agentRun';
@@ -47,6 +48,7 @@ import {
   parseWorkflowSpec,
   type RunPlanCostEstimate,
   runPlanCatalogHash,
+  runPlanIntentIssue,
   type SkeletonIssue,
   type SkeletonReport,
   type ValidationReport,
@@ -55,6 +57,7 @@ import {
   type WorkflowSpec,
 } from '@auto-swe/shared/workflow';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
+import { logWarn } from '../lib/activityLog.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { ownerOfTeam, withSpendOwner } from '../lib/spendOwner.js';
@@ -99,9 +102,27 @@ export interface GenerateRunPlanSpecResult {
   model: string;
 }
 
-/** Hard cap on generate → repair rounds. Each round is one (costly) LLM call. */
+/**
+ * Generate → repair rounds when the `runPlans.generationMaxAttempts` setting cannot be read (1..5,
+ * default 3). Each round is one (costly) LLM call.
+ */
 export const RUN_PLAN_MAX_ATTEMPTS = 3;
-const MAX_ATTEMPTS = RUN_PLAN_MAX_ATTEMPTS;
+
+/** The per-plan round cap for this team and organization; a setting that cannot be read is the default. */
+async function resolveMaxAttempts(input: Pick<GenerateRunPlanSpecInput, 'teamId' | 'orgId'>) {
+  try {
+    const value = await resolveSetting('runPlans.generationMaxAttempts', {
+      ...(input.orgId ? { orgId: input.orgId } : {}),
+      teamId: input.teamId,
+    });
+    return Number.isInteger(value) && value >= 1 && value <= 5 ? value : RUN_PLAN_MAX_ATTEMPTS;
+  } catch (err) {
+    logWarn('run plan generation attempts setting unreadable; using the default', {
+      error: err instanceof Error ? err.name : 'unknown',
+    });
+    return RUN_PLAN_MAX_ATTEMPTS;
+  }
+}
 
 function agentKeyOf(ref: string): string {
   const at = ref.lastIndexOf('@');
@@ -181,8 +202,14 @@ async function generateRunPlanSpecImpl(
   if (!(RUN_PLAN_MODES as readonly string[]).includes(input.mode)) {
     throw invalidInput('unknown plan mode');
   }
-  if (input.intent.trim() === '') {
-    throw invalidInput('the intent is empty');
+  // The same rule the gateway applied: the text the author sees is the text the plan stores, so
+  // an over-long intent or one carrying the wrapper's own tag is refused, never cut or rewritten.
+  const intentIssue = runPlanIntentIssue(input.intent);
+  if (intentIssue) {
+    throw invalidInput(intentIssue);
+  }
+  if (typeof input.teamId !== 'string' || input.teamId === '') {
+    throw invalidInput('the plan has no team to attribute its spend to');
   }
   const mismatch = runPlanConsistencyIssue({ agentKey: input.agentKey, mode: input.mode });
   if (mismatch) {
@@ -194,6 +221,8 @@ async function generateRunPlanSpecImpl(
   if (input.agentKey && !launchable.has(input.agentKey)) {
     throw invalidInput(`the agent '${input.agentKey}' is not launchable by the requester`);
   }
+
+  const maxAttempts = await resolveMaxAttempts(input);
 
   heartbeat('generate run plan: building catalog');
   const agents = await loadCatalogAgents(input);
@@ -271,24 +300,50 @@ async function generateRunPlanSpecImpl(
         teamId: input.teamId,
         workflowTemplateId: templateId,
       });
-      const missing = Object.entries(pins)
-        .filter(([, pin]) => pin === null)
-        .map(([ref]) => ref);
+      const missing = Object.entries(pins).filter(([, pin]) => pin === null);
       if (missing.length > 0) {
-        const authoredRefs = new Set(
-          Object.values(candidate.nodes).flatMap((n) => (n.type === 'agent' ? [n.agentRef] : []))
-        );
-        const fixable = missing.filter((ref) => authoredRefs.has(ref));
-        if (fixable.length !== missing.length) {
-          // A core or step agent is not configured: no rewrite of the free part can fix that.
+        const authoredRefs = [
+          ...new Set(
+            Object.values(candidate.nodes).flatMap((n) => (n.type === 'agent' ? [n.agentRef] : []))
+          ),
+        ];
+        const reader = prisma as unknown as AgentPinReader;
+        const scope = {
+          orgId: input.orgId ?? null,
+          teamId: input.teamId,
+          workflowTemplateId: templateId,
+        };
+        // A core or step agent that is not configured cannot be fixed by rewriting the free part.
+        const platformRefs = refs.filter((ref) => !authoredRefs.includes(ref));
+        const platformPins = await resolveRunPlanAgentPins(reader, platformRefs, scope);
+        const platformMissing = Object.entries(platformPins)
+          .filter(([, pin]) => pin === null)
+          .map(([ref]) => ref);
+        if (platformMissing.length > 0) {
           throw ApplicationFailure.nonRetryable(
-            `agents the plan relies on are not available: ${missing.join(', ')}`,
+            `agents the plan relies on are not available: ${platformMissing.join(', ')}`,
+            'AGENTS_UNAVAILABLE'
+          );
+        }
+        // An authored agent is unusable when it, or the parent its model is inherited from, has no
+        // active version. That is repairable: name the agent so the model picks another.
+        const unusable: string[] = [];
+        for (const ref of authoredRefs) {
+          const own = await resolveRunPlanAgentPins(reader, [ref], scope);
+          if (Object.values(own).some((pin) => pin === null)) {
+            unusable.push(ref);
+          }
+        }
+        if (unusable.length === 0) {
+          throw ApplicationFailure.nonRetryable(
+            `agents the plan relies on are not available: ${missing.map(([ref]) => ref).join(', ')}`,
             'AGENTS_UNAVAILABLE'
           );
         }
         return {
-          errors: fixable.map(
-            (ref) => `[AGENT_UNAVAILABLE] agent '${ref}' has no active version; use another agent`
+          errors: unusable.map(
+            (ref) =>
+              `[AGENT_UNAVAILABLE] agent '${ref}' is unusable right now (it or the agent it takes its model from has no active version); use another agent`
           ),
           ok: false,
         };
@@ -318,13 +373,13 @@ async function generateRunPlanSpecImpl(
       }),
     heartbeatLabel: 'generate run plan',
     initialMessage: buildRunPlanRequestMessage(catalogInput, input.intent),
-    maxAttempts: MAX_ATTEMPTS,
+    maxAttempts,
     spanName: 'llm.run_plan_author',
   });
 
   if (!loop.ok) {
     throw ApplicationFailure.nonRetryable(
-      `the run plan could not be generated after ${MAX_ATTEMPTS} attempts: ${loop.errors.join('; ')}`,
+      `the run plan could not be generated after ${maxAttempts} attempts: ${loop.errors.join('; ')}`,
       'GENERATION_FAILED',
       { attempts: loop.attempts, errors: loop.errors }
     );

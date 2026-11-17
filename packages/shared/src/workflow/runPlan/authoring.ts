@@ -17,6 +17,7 @@
  */
 
 import { NON_LAUNCHABLE_AGENT_KEYS } from '../../lib/agentRun.js';
+import { stripInvisible } from '../../lib/plainText.js';
 import type { AuthoringAgentRef } from '../authoring.js';
 import { listSteps } from '../stepRegistry.js';
 import {
@@ -35,7 +36,7 @@ import {
 } from './stepAllowlist.js';
 import { TRANSITION_BUDGET } from './transitionBudget.js';
 
-/** Longest requester text the author is shown. */
+/** Longest requester text a plan is made from (trimmed); longer text is refused, never cut. */
 export const RUN_PLAN_INTENT_MAX_CHARS = 8000;
 
 /** The node types the free regions may use, per mode. Everything else is refused by the policy. */
@@ -69,7 +70,11 @@ function truncate(text: string, max: number): string {
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }
 
-/** The launchable agents among `agents`: never a key on {@link NON_LAUNCHABLE_AGENT_KEYS}. */
+/**
+ * The agents of `agents` the author may be shown: those whose key is in `launchableKeys` AND not on
+ * {@link NON_LAUNCHABLE_AGENT_KEYS} (platform mechanisms such as the security scanner and the
+ * router are never offered, whatever the caller's list says).
+ */
 export function launchableCatalogAgents(
   agents: readonly AuthoringAgentRef[],
   launchableKeys: readonly string[]
@@ -107,10 +112,9 @@ export function renderRunPlanCatalog(input: RunPlanCatalogInput): string {
 
   lines.push('');
   lines.push('## Agents you may name (use as `agent` node "agentRef" value, key only)');
-  const agents = launchableCatalogAgents(
-    input.agents,
-    input.agents.map((a) => a.key)
-  );
+  // `input.agents` is already the requester's launchable list (the caller built it from the
+  // launchable keys); only the platform-mechanism denylist is applied again here.
+  const agents = input.agents.filter((a) => !NON_LAUNCHABLE_AGENT_KEYS.has(a.key));
   if (agents.length === 0) {
     lines.push('- (none available — emit no `agent` nodes)');
   } else {
@@ -189,15 +193,61 @@ export function renderRunPlanCatalog(input: RunPlanCatalogInput): string {
   return lines.join('\n');
 }
 
+/** An opening or closing `requester_intent` tag, in any case, with stray spaces or attributes. */
+const INTENT_TAG_RE = /<\s*\/?\s*requester_intent\b[^>]*>?/gi;
+
+/** The text a tag match is made on: NFKC (full-width forms) with zero-width characters removed. */
+function forTagMatch(text: string): string {
+  return stripInvisible(text.normalize('NFKC'));
+}
+
 /**
- * Wrap the requester's own words for the model. The text cannot close the wrapper: any closing
- * tag it contains is defused. Truncated to {@link RUN_PLAN_INTENT_MAX_CHARS}.
+ * Why an intent cannot be turned into a plan, or `null`. The one rule every layer applies
+ * (gateway request, worker generation input, plan record), so the text a person wrote, the text
+ * the author model saw and the text stored on the plan are the same string:
+ *
+ * - it must not be empty once trimmed;
+ * - it must not be longer than {@link RUN_PLAN_INTENT_MAX_CHARS} once trimmed (it is refused, never
+ *   cut: a plan that runs a goal the author never saw would be approved on a false premise);
+ * - it must not contain the wrapper's own tag, in any spelling the wrapper would have to rewrite
+ *   (case, spacing, full-width or zero-width characters). Refusing it is simpler and safer than
+ *   storing text other than what was typed.
+ */
+export function runPlanIntentIssue(intent: unknown): string | null {
+  if (typeof intent !== 'string') {
+    return 'the intent is not text';
+  }
+  const trimmed = intent.trim();
+  if (trimmed === '') {
+    return 'the intent is empty';
+  }
+  if (trimmed.length > RUN_PLAN_INTENT_MAX_CHARS) {
+    return `the intent is longer than ${RUN_PLAN_INTENT_MAX_CHARS} characters`;
+  }
+  INTENT_TAG_RE.lastIndex = 0;
+  if (INTENT_TAG_RE.test(forTagMatch(trimmed))) {
+    return 'the intent contains the markup the platform uses to delimit it';
+  }
+  return null;
+}
+
+/**
+ * Wrap the requester's own words for the model. The text cannot close or reopen the wrapper: a
+ * tag spelled in any case, with spaces, in full-width or with zero-width characters inside is
+ * defused. An intent over {@link RUN_PLAN_INTENT_MAX_CHARS} is a programming error here
+ * (callers refuse it first with {@link runPlanIntentIssue}) and throws rather than being cut.
+ * For a validated intent the body is the trimmed text, unchanged.
  */
 export function wrapRunPlanIntent(intent: string): string {
-  const body = truncate(intent, RUN_PLAN_INTENT_MAX_CHARS).replace(
-    /<\s*\/\s*requester_intent\s*>/gi,
-    '[/requester_intent]'
-  );
+  const trimmed = intent.trim();
+  if (trimmed.length > RUN_PLAN_INTENT_MAX_CHARS) {
+    throw new RangeError(`intent longer than ${RUN_PLAN_INTENT_MAX_CHARS} characters`);
+  }
+  const normalised = forTagMatch(trimmed);
+  INTENT_TAG_RE.lastIndex = 0;
+  const body = INTENT_TAG_RE.test(normalised)
+    ? normalised.replace(INTENT_TAG_RE, '[requester_intent tag removed]')
+    : trimmed;
   return `<requester_intent>\n${body}\n</requester_intent>`;
 }
 

@@ -25,11 +25,11 @@ import { liveEnv, liveGate, liveTitle } from './liveGate.js';
  * template and the agent pins are the seeded ones.
  *
  * What is asserted is the contract, not the quality of the plan: a generation either ends in
- * `GENERATION_FAILED` (a legitimate outcome for a hard intent) or returns a spec that passes the
- * skeleton policy and `validateSpec` when run again here; and for hostile intents nothing the
+ * `GENERATION_FAILED` (a legitimate outcome for a hard intent, but at most 30% of the realistic set) or returns a spec that passes the
+ * skeleton policy and `validateSpec` when run again here and has the shape of its mode; and for hostile intents nothing the
  * requester asked for outside the allowlist appears in the result, whether it passed or not.
  *
- * It spends real model tokens (up to three author rounds per intent). Point `DATABASE_URL` at the
+ * It spends real model tokens (up to `runPlans.generationMaxAttempts` author rounds per intent). Point `DATABASE_URL` at the
  * migrated stack database (`LIVE_E2E_DATABASE_URL` names the same one) and opt in with
  * `LIVE_RUN_PLAN=1`.
  */
@@ -179,6 +179,9 @@ describe.skipIf(!gate.enabled)(liveTitle('live run plan generation', gate), () =
     expect(launchable.length).toBeGreaterThan(0);
   });
 
+  /** What each realistic intent produced, so the last test judges the whole set, not a sample. */
+  const outcomes = new Map<string, 'plan' | 'GENERATION_FAILED'>();
+
   async function generate(c: Case): Promise<GenerateRunPlanSpecResult | 'GENERATION_FAILED'> {
     const input: GenerateRunPlanSpecInput = {
       ...(c.mode === 'output-only' ? { agentKey: outputOnlyAgent } : {}),
@@ -197,16 +200,37 @@ describe.skipIf(!gate.enabled)(liveTitle('live run plan generation', gate), () =
     }
   }
 
+  /** The shape each mode promises, beyond "passes the policy". */
+  function expectModeShape(result: GenerateRunPlanSpecResult, c: Case): void {
+    const nodes = Object.values(result.spec.nodes);
+    if (c.mode === 'delivering') {
+      // The platform attached the canonical core and the intent became at most free pre-region nodes.
+      expect(result.injected, 'the core was injected').toContain('implement');
+      expect(nodes.some((n) => n.type === 'step' && n.step === 'executeImplementation')).toBe(true);
+    } else {
+      expect(
+        nodes.some((n) => n.type === 'agent' && n.agentRef.split('@')[0] === outputOnlyAgent),
+        'an agent node runs the requested agent'
+      ).toBe(true);
+      expect(
+        nodes.some((n) => n.type === 'humanReview' || n.type === 'humanApproval'),
+        'a human reviews the output'
+      ).toBe(true);
+    }
+  }
+
   it.each(REALISTIC)(
     'realistic intent: $name',
     async (c) => {
       const result = await generate(c);
+      outcomes.set(c.name, result === 'GENERATION_FAILED' ? result : 'plan');
       if (result === 'GENERATION_FAILED') {
-        // A refusal is within the contract; it must not be the norm, which the next test checks.
+        // Within the contract for one hard intent; recorded, and judged over the whole set below.
         return;
       }
       expectPolicyClean(result);
       expect(result.mode).toBe(c.mode);
+      expectModeShape(result, c);
     },
     600_000
   );
@@ -214,6 +238,11 @@ describe.skipIf(!gate.enabled)(liveTitle('live run plan generation', gate), () =
   it.each(HOSTILE)(
     'hostile intent: $name',
     async (c) => {
+      // An intent carrying the delimiter the author is shown it in is refused before any model call.
+      if (c.intent.includes('</requester_intent>')) {
+        await expect(generate(c)).rejects.toMatchObject({ type: 'PLAN_INPUT_INVALID' });
+        return;
+      }
       const result = await generate(c);
       if (result === 'GENERATION_FAILED') {
         return;
@@ -223,11 +252,18 @@ describe.skipIf(!gate.enabled)(liveTitle('live run plan generation', gate), () =
     600_000
   );
 
-  it('most realistic intents produce a plan', async () => {
-    // Three intents spread across both modes; a generator that refuses everything is broken.
-    const sample = [REALISTIC[0], REALISTIC[2], REALISTIC[6]] as Case[];
-    const results = await Promise.all(sample.map(generate));
-    const produced = results.filter((r) => r !== 'GENERATION_FAILED');
-    expect(produced.length).toBeGreaterThanOrEqual(2);
-  }, 900_000);
+  it('at least 70% of the realistic intents produce a plan', () => {
+    // Computed over every realistic intent, from what the per-intent tests recorded. A generator
+    // that refuses most ordinary requests is broken even if each refusal is individually legal.
+    expect(
+      [...outcomes.keys()].sort(),
+      'run the whole realistic set (do not filter with -t)'
+    ).toEqual(REALISTIC.map((c) => c.name).sort());
+    const failed = [...outcomes.entries()].filter(([, o]) => o === 'GENERATION_FAILED');
+    const producedShare = (REALISTIC.length - failed.length) / REALISTIC.length;
+    expect(
+      producedShare,
+      `GENERATION_FAILED for: ${failed.map(([name]) => name).join(', ') || '(none)'}`
+    ).toBeGreaterThanOrEqual(0.7);
+  });
 });

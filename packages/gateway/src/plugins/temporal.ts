@@ -291,7 +291,8 @@ export interface RunPlanRouteInput {
   intent: string;
   candidates: Array<{ id: string; name: string; description: string }>;
   maxResults: number;
-  teamId?: string | null;
+  /** Required: ranking spend is always a team's. */
+  teamId: string;
   orgId?: string | null;
 }
 

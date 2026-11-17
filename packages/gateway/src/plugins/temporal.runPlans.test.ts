@@ -170,7 +170,7 @@ describe('routeRunPlan', () => {
   it('executes RunPlanRouteWorkflow and awaits its result', async () => {
     const app = await build();
     execute.mockResolvedValueOnce({ matches: [], noneFit: true });
-    const input = { candidates: [], intent: 'x', maxResults: 5 };
+    const input = { candidates: [], intent: 'x', maxResults: 5, teamId: 'team-1' };
     expect(await app.temporal.routeRunPlan('runplan-route-a-b', input)).toEqual({
       matches: [],
       noneFit: true,

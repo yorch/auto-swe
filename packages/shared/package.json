@@ -50,6 +50,7 @@
     "./lib/channelTask": "./dist/lib/channelTask.js",
     "./lib/agentRun": "./dist/lib/agentRun.js",
     "./lib/plannedRun": "./dist/lib/plannedRun.js",
+    "./lib/plainText": "./dist/lib/plainText.js",
     "./lib/runPlanAgentPins": "./dist/lib/runPlanAgentPins.js",
     "./lib/runPlanWorkflows": "./dist/lib/runPlanWorkflows.js",
     "./lib/runPlanSweep": "./dist/lib/runPlanSweep.js",

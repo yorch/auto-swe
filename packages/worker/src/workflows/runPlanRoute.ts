@@ -15,6 +15,8 @@ import { T_2M } from './proxyOptions.js';
  * runtime imports come from `@temporalio/workflow` and the activity proxy.
  */
 const { routeRunPlan } = proxyActivities<Pick<typeof activitiesType, 'routeRunPlan'>>({
+  // The model call pumps heartbeats (`runAgent`); a stuck worker is noticed in two minutes.
+  heartbeatTimeout: T_2M,
   retry: { maximumAttempts: 2 },
   startToCloseTimeout: T_2M,
 });

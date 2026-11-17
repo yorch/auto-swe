@@ -806,6 +806,7 @@ describe('run plan settings', () => {
   const keys = [
     'runPlans.createPerUserPerHour',
     'runPlans.enabled',
+    'runPlans.generationMaxAttempts',
     'runPlans.maxPendingPerUser',
     'runPlans.routePerUserPerHour',
   ] as const;
@@ -826,6 +827,13 @@ describe('run plan settings', () => {
     expect(SETTING_DEFINITIONS['runPlans.enabled'].defaultValue).toBe(true);
     expect(SETTING_DEFINITIONS['runPlans.createPerUserPerHour'].defaultValue).toBe(10);
     expect(SETTING_DEFINITIONS['runPlans.maxPendingPerUser'].defaultValue).toBe(5);
+    expect(SETTING_DEFINITIONS['runPlans.generationMaxAttempts'].defaultValue).toBe(3);
+    const attempts = SETTING_DEFINITIONS['runPlans.generationMaxAttempts'].schema;
+    expect(attempts.safeParse(0).success).toBe(false);
+    expect(attempts.safeParse(1).success).toBe(true);
+    expect(attempts.safeParse(5).success).toBe(true);
+    expect(attempts.safeParse(6).success).toBe(false);
+    expect(attempts.safeParse(2.5).success).toBe(false);
     expect(SETTING_DEFINITIONS['runPlans.routePerUserPerHour'].defaultValue).toBe(30);
     const perHour = SETTING_DEFINITIONS['runPlans.createPerUserPerHour'].schema;
     expect(perHour.safeParse(0).success).toBe(true);

@@ -14,7 +14,7 @@ import {
 } from '@auto-swe/shared/lib/runPlanWorkflows';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { BUDGET_TIERS } from '@auto-swe/shared/types/workflow';
-import { RUN_PLAN_INTENT_MAX_CHARS } from '@auto-swe/shared/workflow/runPlan';
+import { RUN_PLAN_INTENT_MAX_CHARS, runPlanIntentIssue } from '@auto-swe/shared/workflow/runPlan';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -36,6 +36,8 @@ import {
 import {
   approveAndLaunchPlan,
   authorizeRepository,
+  cleanPlanSummary,
+  cleanSpecDisplayText,
   createPlanRecord,
   loadPlannedRunTemplate,
   type PlanRefusal,
@@ -76,7 +78,22 @@ const ROUTE_MAX_RESULTS = 5;
 
 const PLAN_STATUSES = ['PENDING', 'APPROVED', 'LAUNCHED', 'REJECTED', 'EXPIRED'] as const;
 
-const Intent = z.string().trim().min(1).max(RUN_PLAN_INTENT_MAX_CHARS);
+/**
+ * The goal as typed, trimmed. Over 8000 characters, empty, or carrying the delimiter the author
+ * model is shown it in, it is refused here (and again in the worker and when the plan is stored),
+ * never cut: the plan stores exactly the text the author saw.
+ */
+const Intent = z
+  .string()
+  .trim()
+  .min(1)
+  .max(RUN_PLAN_INTENT_MAX_CHARS)
+  .superRefine((value, ctx) => {
+    const issue = runPlanIntentIssue(value);
+    if (issue) {
+      ctx.addIssue({ code: 'custom', message: issue });
+    }
+  });
 
 const RouteBody = z.object({ intent: Intent, repoId: z.string().uuid() }).strict();
 const CreateBody = z
@@ -134,6 +151,7 @@ const POLICY_CODES: ReadonlySet<string> = new Set([
   'PLAN_SPEC_TOO_LARGE',
 ]);
 const DRIFT_KINDS: Readonly<Record<string, string>> = {
+  PLAN_AGENT_NOT_LAUNCHABLE: 'agents',
   PLAN_AGENTS_CHANGED: 'agents',
   PLAN_CATALOG_CHANGED: 'catalog',
   PLAN_REPOSITORY_CHANGED: 'repository',
@@ -264,9 +282,10 @@ function planView(plan: PlanRow) {
     mode: plan.mode,
     model: plan.model,
     nodes: markNodes(plan),
-    spec: plan.spec,
+    spec: cleanSpecDisplayText(plan.spec),
     specHash: plan.specHash,
     status: plan.status,
+    summary: cleanPlanSummary(asRecord(plan.routerCandidates).summary),
     teamId: plan.teamId,
     warnings: warningsOf(plan),
   };
@@ -600,7 +619,6 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
             agentPins: result.agentPins,
             catalogHash: result.catalogHash,
             connectionId: memo.data.repoId,
-            costEstimate: result.costEstimate,
             id: planId,
             intent: input.intent,
             mode: memo.data.mode,
@@ -614,6 +632,7 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
               teamId: input.teamId,
             }),
             spec: result.spec,
+            summary: result.summary,
           });
         } catch (err) {
           // Two polls raced and the other one won: the row exists, and it is this person's.

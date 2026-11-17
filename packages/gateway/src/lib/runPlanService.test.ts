@@ -1,4 +1,8 @@
-import { hashRunPlanSpec, runPlanCatalogHash } from '@auto-swe/shared/workflow/runPlan';
+import {
+  estimateRunPlanCost,
+  hashRunPlanSpec,
+  runPlanCatalogHash,
+} from '@auto-swe/shared/workflow/runPlan';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const m = vi.hoisted(() => ({
@@ -68,6 +72,9 @@ const SPEC = {
 };
 const SETTINGS = { 'workflow.maxTransitions': 500 };
 
+/** Agents the stand-in organization may launch unless a test says otherwise. */
+const DEFAULT_LAUNCHABLE = ['docsMaintainer'];
+
 interface PlanRow extends Record<string, unknown> {
   id: string;
   status: string;
@@ -105,6 +112,8 @@ function fakePrisma(
     agents?: Record<string, unknown>;
     /** Versioned rows; when given they answer lookups (with the `version` filter) instead. */
     agentRows?: Array<{ key: string; scope: string; version: number }>;
+    /** The agent keys the repository's organization may launch (what `launchableAgentKeys` reads). */
+    launchable?: string[];
   } = {}
 ) {
   const table: { plan: PlanRow | null } = { plan: initial ? { ...initial } : null };
@@ -126,6 +135,12 @@ function fakePrisma(
       }
       return actual === v;
     });
+  /** The keys `launchableAgentKeys` finds: every agent the stand-in knows, unless overridden. */
+  const launchableKeys = opts.launchable ?? [
+    ...Object.keys(opts.agents ?? { implementer: 'GLOBAL:3' }),
+    ...(opts.agentRows ?? []).map((r) => r.key),
+    ...DEFAULT_LAUNCHABLE,
+  ];
   const prisma = {
     agent: {
       findFirst: vi.fn(
@@ -150,6 +165,7 @@ function fakePrisma(
           return where.scope === scope ? { scope, version: Number(version) } : null;
         }
       ),
+      findMany: vi.fn(async () => [...new Set(launchableKeys)].map((key) => ({ key }))),
     },
     connection: {
       findUnique: vi.fn(async () =>
@@ -229,7 +245,6 @@ const createInput = (over: Record<string, unknown> = {}) => ({
   agentPins: { implementer: 'GLOBAL:3' },
   catalogHash: runPlanCatalogHash(),
   connectionId: 'repo-1',
-  costEstimate: { totalUsd: 1 },
   intent: 'add a health endpoint',
   mode: 'delivering' as const,
   model: 'anthropic/claude-sonnet-5-5',
@@ -929,7 +944,16 @@ describe('createPlanRecord: lifetime and size bounds', () => {
   });
 
   it('refuses a spec larger than the serialized cap', async () => {
-    const big = { ...SPEC, description: 'x'.repeat(MAX_PLAN_SPEC_BYTES) };
+    const big = {
+      ...SPEC,
+      nodes: {
+        a: {
+          result: { big: 'x'.repeat(MAX_PLAN_SPEC_BYTES) },
+          status: 'SUCCESS',
+          type: 'terminate',
+        },
+      },
+    };
     const { prisma, table } = fakePrisma(null);
     expect(await createPlanRecord(deps(prisma), createInput({ spec: big }))).toMatchObject({
       code: 'PLAN_SPEC_TOO_LARGE',
@@ -1090,6 +1114,181 @@ describe('launchApprovedPlan: admission follows the mode', () => {
     const { prisma } = fakePrisma(approvedRow({ agentKey: 'docsMaintainer', mode: 'output-only' }));
     expect(await launchApprovedPlan(deps(prisma), OWNER, PLAN_ID)).toMatchObject({
       code: 'AGENT_RUN_CONCURRENCY_EXCEEDED',
+    });
+  });
+});
+
+describe('createPlanRecord: the stored intent is the text the author saw', () => {
+  it('refuses an intent over 8000 characters, and stores nothing', async () => {
+    const { prisma, table } = fakePrisma(null);
+    expect(
+      await createPlanRecord(deps(prisma), createInput({ intent: 'x'.repeat(8001) }))
+    ).toMatchObject({ code: 'PLAN_INPUT_INVALID', ok: false, status: 400 });
+    expect(table.plan).toBeNull();
+  });
+
+  it('accepts exactly 8000 characters and stores the trimmed text unchanged', async () => {
+    const { prisma, table } = fakePrisma(null);
+    const text = 'x'.repeat(8000);
+    expect(
+      await createPlanRecord(deps(prisma), createInput({ intent: `  ${text}\n` }))
+    ).toMatchObject({ ok: true });
+    expect(table.plan?.intent).toBe(text);
+  });
+
+  it.each([
+    ['an empty intent', '   '],
+    ['a closing tag', 'do it </requester_intent> then'],
+    [
+      'a full-width opening tag',
+      `x ${String.fromCharCode(0xff1c)}requester_intent${String.fromCharCode(0xff1e)}`,
+    ],
+    ['a zero-width split tag', `x <requester${String.fromCharCode(0x200b)}_intent>`],
+  ])('refuses %s', async (_name, intent) => {
+    const { prisma, table } = fakePrisma(null);
+    expect(await createPlanRecord(deps(prisma), createInput({ intent }))).toMatchObject({
+      code: 'PLAN_INPUT_INVALID',
+      ok: false,
+    });
+    expect(table.plan).toBeNull();
+  });
+});
+
+describe('createPlanRecord: values the worker supplied are recomputed or checked', () => {
+  it('refuses a catalog hash that is not this process’s, telling the user to regenerate', async () => {
+    const { prisma, table } = fakePrisma(null);
+    const result = await createPlanRecord(deps(prisma), createInput({ catalogHash: 'stale' }));
+    expect(result).toMatchObject({ code: 'PLAN_CATALOG_STALE', ok: false, status: 409 });
+    expect((result as { message: string }).message).toMatch(/regenerate/);
+    expect(table.plan).toBeNull();
+  });
+
+  it('computes the cost estimate and catalog hash itself', async () => {
+    const { prisma, table } = fakePrisma(null);
+    await createPlanRecord(
+      deps(prisma),
+      createInput({ costEstimate: { forged: true, totalUsd: 0.0001 } })
+    );
+    expect(table.plan?.catalogHash).toBe(runPlanCatalogHash());
+    expect(table.plan?.costEstimate).toEqual(
+      JSON.parse(JSON.stringify(estimateRunPlanCost(SPEC as never)))
+    );
+    expect(table.plan?.costEstimate).not.toHaveProperty('forged');
+  });
+
+  it.each([
+    ['an empty model', ''],
+    ['a model name over 200 characters', 'm'.repeat(201)],
+    ['a non-string model', 42],
+  ])('refuses %s', async (_name, model) => {
+    const { prisma, table } = fakePrisma(null);
+    expect(await createPlanRecord(deps(prisma), createInput({ model }))).toMatchObject({
+      code: 'PLAN_INPUT_INVALID',
+      ok: false,
+    });
+    expect(table.plan).toBeNull();
+  });
+});
+
+describe('createPlanRecord: model text is stored as plain text', () => {
+  const dirty = (n: number) =>
+    `<b>Fix</b> [click](https://evil.example/x) ${String.fromCharCode(0x202e)}${'y'.repeat(n)}`;
+
+  it('cleans and bounds the spec name and description and the summary', async () => {
+    const { prisma, table } = fakePrisma(null);
+    const spec = { ...SPEC, description: dirty(5000), name: dirty(500) };
+    await createPlanRecord(deps(prisma), createInput({ spec, summary: dirty(5000) }));
+    const stored = table.plan?.spec as { name: string; description: string };
+    expect(stored.name.length).toBeLessThanOrEqual(120);
+    expect(stored.description.length).toBeLessThanOrEqual(2000);
+    for (const text of [stored.name, stored.description]) {
+      expect(text).toMatch(/^Fix click/);
+      expect(text).not.toMatch(/[<>]|evil|http/);
+      expect(text).not.toContain(String.fromCharCode(0x202e));
+    }
+    const summary = ((table.plan as PlanRow).routerCandidates as { summary: string }).summary;
+    expect(summary.length).toBeLessThanOrEqual(500);
+    expect(summary).not.toMatch(/[<>]|evil/);
+    // The hash covers what was stored, so approval does not see a tampered plan.
+    expect(table.plan?.specHash).toBe(hashRunPlanSpec(stored));
+  });
+
+  it('gives a name that cleans to nothing a neutral label rather than refusing the plan', async () => {
+    const { prisma, table } = fakePrisma(null);
+    const spec = { ...SPEC, name: '<i></i>' };
+    expect(await createPlanRecord(deps(prisma), createInput({ spec }))).toMatchObject({ ok: true });
+    expect(((table.plan as PlanRow).spec as { name: string }).name).toBe('Generated plan');
+  });
+});
+
+describe('launchability is decided by the gateway, at creation and again at approval', () => {
+  const agents = { docsMaintainer: 'GLOBAL:1', implementer: 'GLOBAL:3' };
+  const outputOnly = {
+    agentKey: 'docsMaintainer',
+    agentPins: { docsMaintainer: 'GLOBAL:1' },
+    mode: 'output-only' as const,
+    spec: AGENT_SPEC,
+  };
+
+  it('refuses at creation an agent node the repository cannot launch, whatever the worker said', async () => {
+    const { prisma, table } = fakePrisma(null, { agents, launchable: ['planner'] });
+    const result = await createPlanRecord(deps(prisma), createInput(outputOnly));
+    expect(result).toMatchObject({ code: 'PLAN_AGENT_NOT_LAUNCHABLE', ok: false });
+    expect((result as { message: string }).message).toContain('docsMaintainer');
+    expect(table.plan).toBeNull();
+  });
+
+  it('refuses a plan whose library agent is not launchable even when no node names it', async () => {
+    const { prisma } = fakePrisma(null, { agents, launchable: [] });
+    // `agentKey` is checked against the same set (the consistency check wants a node, so use a
+    // node-less mismatch-free pair: the node names it too).
+    expect(await createPlanRecord(deps(prisma), createInput(outputOnly))).toMatchObject({
+      code: 'PLAN_AGENT_NOT_LAUNCHABLE',
+    });
+  });
+
+  it('stores a plan whose agents are launchable', async () => {
+    const { prisma } = fakePrisma(null, { agents, launchable: ['docsMaintainer'] });
+    expect(await createPlanRecord(deps(prisma), createInput(outputOnly))).toMatchObject({
+      ok: true,
+    });
+  });
+
+  it('refuses at approval when an agent in the stored spec is no longer launchable', async () => {
+    const row = planRow({
+      agentKey: 'docsMaintainer',
+      agentPins: { docsMaintainer: 'GLOBAL:1' },
+      mode: 'output-only',
+      spec: AGENT_SPEC,
+      specHash: hashRunPlanSpec(AGENT_SPEC),
+    });
+    const withdrawn = fakePrisma(row, { agents, launchable: ['planner'] });
+    const result = await approvePlan(deps(withdrawn.prisma), OWNER, PLAN_ID);
+    expect(result).toMatchObject({ code: 'PLAN_AGENT_NOT_LAUNCHABLE', ok: false, status: 409 });
+    expect(withdrawn.table.plan?.status).toBe('PENDING');
+    expect(withdrawn.updates).toEqual([]);
+
+    const still = fakePrisma(row, { agents, launchable: ['docsMaintainer'] });
+    expect(await approvePlan(deps(still.prisma), OWNER, PLAN_ID)).toMatchObject({ ok: true });
+  });
+
+  it('refuses at approval when only the plan’s library agent key is no longer launchable', async () => {
+    // A delivering spec carries no agent node, so the check rests on `agentKey` alone: use the
+    // stored key of an output-only plan whose node was renamed to another launchable agent.
+    const spec = {
+      ...AGENT_SPEC,
+      nodes: { ...AGENT_SPEC.nodes, ask: { agentRef: 'planner', next: 'a', type: 'agent' } },
+    };
+    const row = planRow({
+      agentKey: 'planner',
+      agentPins: { planner: 'GLOBAL:1' },
+      mode: 'output-only',
+      spec,
+      specHash: hashRunPlanSpec(spec),
+    });
+    const { prisma } = fakePrisma(row, { agents: { planner: 'GLOBAL:1' }, launchable: [] });
+    expect(await approvePlan(deps(prisma), OWNER, PLAN_ID)).toMatchObject({
+      code: 'PLAN_AGENT_NOT_LAUNCHABLE',
     });
   });
 });

@@ -10,6 +10,7 @@ import {
 } from '@auto-swe/shared/lib/agentRunAdmission';
 import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
+import { plainText } from '@auto-swe/shared/lib/plainText';
 import {
   PLANNED_RUN_TEMPLATE_NAME,
   PLANNED_RUN_TEMPLATE_ORIGIN,
@@ -40,10 +41,13 @@ import {
 } from '@auto-swe/shared/workflow';
 import {
   checkSkeletonPolicy,
+  estimateRunPlanCost,
   hashRunPlanSpec,
   runPlanCatalogHash,
+  runPlanIntentIssue,
 } from '@auto-swe/shared/workflow/runPlan';
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
+import { launchableAgentKeys } from './launchableAgents.js';
 import { validateRunConnection } from './runConnection.js';
 import { runProvenance } from './runProvenance.js';
 import { launchTrackedWorkflow } from './workflowLaunch.js';
@@ -365,6 +369,79 @@ async function agentDrift(
   return agentPinDrift(plan.agentPins, current, named);
 }
 
+/** Longest model-written summary a plan keeps. */
+export const PLAN_SUMMARY_MAX_CHARS = 500;
+/** Longest generated workflow name and description a plan keeps (the spec's own schema limits). */
+export const PLAN_SPEC_NAME_MAX_CHARS = 120;
+export const PLAN_SPEC_DESCRIPTION_MAX_CHARS = 2000;
+/** Longest `<provider>/<model>` string a plan records. */
+export const PLAN_MODEL_MAX_CHARS = 200;
+
+/**
+ * A spec whose model-written display text is plain, bounded text: the name and description the
+ * approval screen shows. Control, zero-width and bidi characters, markup, links and addresses are
+ * removed (`plainText`). Only these two fields change; a spec that is not an object is returned
+ * as it is, for the parser to refuse.
+ */
+export function cleanSpecDisplayText(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return raw;
+  }
+  const spec = raw as Record<string, unknown>;
+  return {
+    ...spec,
+    ...('description' in spec
+      ? {
+          description: plainText(spec.description, {
+            max: PLAN_SPEC_DESCRIPTION_MAX_CHARS,
+            multiline: true,
+          }),
+        }
+      : {}),
+    // A name is required; an empty one after cleaning gets a neutral label rather than failing.
+    name: plainText(spec.name, { max: PLAN_SPEC_NAME_MAX_CHARS }) || 'Generated plan',
+  };
+}
+
+/** The model's summary as the approval screen shows it. */
+export function cleanPlanSummary(raw: unknown): string {
+  return plainText(raw, { max: PLAN_SUMMARY_MAX_CHARS, multiline: true });
+}
+
+/** `key` of an agent node's `key` or `key@N` reference. */
+function agentKeyOfRef(ref: string): string {
+  const at = ref.lastIndexOf('@');
+  return at === -1 ? ref : ref.slice(0, at);
+}
+
+/**
+ * The agents a plan names (its library agent and every `agent` node) that the requester's
+ * repository can no longer (or cannot) launch, as `key` strings. Computed from the database now,
+ * with the same `launchableAgentKeys` the create route uses; nothing a worker or a stored plan
+ * says about launchability is trusted.
+ */
+async function nonLaunchableAgents(
+  deps: Pick<RunPlanServiceDeps, 'prisma'>,
+  plan: { agentKey?: string | null },
+  spec: WorkflowSpec,
+  orgId: string | null
+): Promise<string[]> {
+  const named = new Set<string>();
+  if (plan.agentKey) {
+    named.add(plan.agentKey);
+  }
+  for (const node of Object.values(spec.nodes)) {
+    if (node.type === 'agent') {
+      named.add(agentKeyOfRef(node.agentRef));
+    }
+  }
+  if (named.size === 0) {
+    return [];
+  }
+  const launchable = new Set(await launchableAgentKeys(deps.prisma, orgId));
+  return [...named].filter((key) => !launchable.has(key)).sort();
+}
+
 // ───────────────────────────── create ─────────────────────────────
 
 export interface CreatePlanInput {
@@ -378,18 +455,28 @@ export interface CreatePlanInput {
   connectionId: string;
   /** The library agent a library-agent plan is built on; null for an engineering plan. */
   agentKey?: string | null;
+  /**
+   * The requester's own text, exactly as the author model saw it: trimmed, within
+   * 8000 characters, free of the wrapper's tag. Refused otherwise, never cut.
+   */
   intent: string;
   routerCandidates: unknown;
   /** The generated spec. Parsed, checked and hashed here; the caller's reports are not trusted. */
   spec: unknown;
   mode: RunPlanMode;
-  costEstimate: unknown;
+  /** The author's summary; stored as bounded plain text beside the preview markers. */
+  summary?: string;
+  /** `<provider>/<model>` the author ran on: taken as given, bounded. */
   model: string;
   /** `resolveRunPlanAgentPins` output for every agent the plan relies on. */
   agentPins: RunPlanAgentPins;
   /** `snapshotPlanSettings` output at generation time. */
   settingsSnapshot: Record<string, unknown>;
-  /** `runPlanCatalogHash()` at generation time. */
+  /**
+   * `runPlanCatalogHash()` at generation time. Only compared: a plan generated against another
+   * catalog than this process's is refused (`PLAN_CATALOG_STALE`), and the cost estimate is
+   * recomputed here from the spec, never taken from the caller.
+   */
   catalogHash: string;
   ttlMs?: number;
 }
@@ -412,11 +499,30 @@ export async function createPlanRecord(
   if (!isMode(input.mode)) {
     return refuse(400, 'PLAN_MODE_INVALID', 'Unknown plan mode');
   }
+  // The stored intent is the text the author saw: the same rule the request and the worker applied.
+  const intentIssue = runPlanIntentIssue(input.intent);
+  if (intentIssue) {
+    return refuse(400, 'PLAN_INPUT_INVALID', `The intent cannot be stored: ${intentIssue}`);
+  }
+  if (
+    typeof input.model !== 'string' ||
+    input.model.trim() === '' ||
+    input.model.length > PLAN_MODEL_MAX_CHARS
+  ) {
+    return refuse(400, 'PLAN_INPUT_INVALID', 'The model name is missing or too long');
+  }
+  if (input.catalogHash !== runPlanCatalogHash()) {
+    return refuse(
+      409,
+      'PLAN_CATALOG_STALE',
+      'The step catalog changed while the plan was being generated; regenerate it'
+    );
+  }
   const repository = await authorizeRepository(deps, input.owner, input.connectionId);
   if (!repository.ok) {
     return repository;
   }
-  const serialized = serializeSpec(input.spec);
+  const serialized = serializeSpec(cleanSpecDisplayText(input.spec));
   if (!serialized.ok) {
     return serialized;
   }
@@ -430,6 +536,14 @@ export async function createPlanRecord(
   );
   if (mismatch) {
     return refuse(422, 'PLAN_AGENT_MISMATCH', `The plan is inconsistent: ${mismatch}`);
+  }
+  const unlaunchable = await nonLaunchableAgents(deps, input, spec, repository.repo.orgId);
+  if (unlaunchable.length > 0) {
+    return refuse(
+      422,
+      'PLAN_AGENT_NOT_LAUNCHABLE',
+      `The plan names agents you cannot launch on this repository: ${unlaunchable.join(', ')}`
+    );
   }
   const skeletonReport = checkSkeletonPolicy(spec, input.mode);
   if (!skeletonReport.ok) {
@@ -483,17 +597,22 @@ export async function createPlanRecord(
     data: {
       agentKey: input.agentKey ?? null,
       agentPins: input.agentPins as object,
-      catalogHash: input.catalogHash,
+      catalogHash: runPlanCatalogHash(),
       connectionId: repository.repo.id,
-      costEstimate: input.costEstimate as object,
+      costEstimate: JSON.parse(JSON.stringify(estimateRunPlanCost(spec))) as object,
       createdAt: now,
       expiresAt,
       ...(input.id ? { id: input.id } : {}),
-      intent: input.intent,
+      intent: input.intent.trim(),
       mode: input.mode,
-      model: input.model,
+      model: input.model.trim(),
       ownerUserId: input.owner.sub,
-      routerCandidates: input.routerCandidates as object,
+      routerCandidates: {
+        ...(input.routerCandidates && typeof input.routerCandidates === 'object'
+          ? (input.routerCandidates as object)
+          : {}),
+        ...(input.summary !== undefined ? { summary: cleanPlanSummary(input.summary) } : {}),
+      },
       settingsSnapshot: input.settingsSnapshot as object,
       skeletonReport: JSON.parse(JSON.stringify(skeletonReport)) as object,
       spec: serialized.stored as object,
@@ -609,6 +728,16 @@ async function verifyPlanForApproval(
       503,
       'PLANNED_RUN_TEMPLATE_MISSING',
       'The Planned Run system template is not installed; run the database seed'
+    );
+  }
+  // Launchability is decided now, for this repository, not carried over from creation: an agent
+  // that was withdrawn or restricted since the plan was made cannot be run by approving it.
+  const unlaunchable = await nonLaunchableAgents(deps, plan, spec, repository.repo.orgId);
+  if (unlaunchable.length > 0) {
+    return refuse(
+      409,
+      'PLAN_AGENT_NOT_LAUNCHABLE',
+      `These agents can no longer be launched on this repository: ${unlaunchable.join(', ')}. Create a new plan.`
     );
   }
   const drift = await agentDrift(deps, plan, spec, repository.repo, template.id);

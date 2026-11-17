@@ -192,7 +192,7 @@ named in the agent roster docs, `BUILTIN_MODELS`, `PREVIOUS_DEFAULT_MODEL_SPECS`
 ### 6. Abuse and cost controls
 
 Registry settings: plans per user per hour, pending plans per user, and a per-plan generation attempt
-cap (default 3). Generation and routing spend is recorded against the team's budget. A sweeper expires
+cap (`runPlans.generationMaxAttempts`, default 3, 1 to 5, resolved by the worker at the repository's team and organization). Generation and routing spend is recorded against the team's budget. A sweeper expires
 `PENDING` plans and deletes expired and rejected ones after a retention window.
 
 ### 7. Surfaces
@@ -267,5 +267,19 @@ planned run are marked so `evaluatePullRequest` skips `auto` mode for them. The 
   complete by a test over the step allowlist and a scan of the activities' agent literals), and the
   parent a persona inherits its model from. An agent chosen at run time from data, rather than named
   in source or in the spec, is not seen by that scan.
+- The intent is the requester's own text, refused (never cut or rewritten) when it is longer than 8000
+  characters once trimmed or carries the author prompt's delimiter tag in any spelling (case, spacing,
+  full-width or zero-width characters). The gateway, the worker and the plan record apply the same rule, so
+  the stored intent is the text the author saw. A person whose goal mentions that tag must reword it.
+- The approval screen shows model-written text (summary, workflow name and description) as plain text: control,
+  zero-width and bidi characters, markup, links, addresses and bare domains on common top-level domains are
+  removed and the text is bounded. A domain on an uncommon top-level domain can pass, and the node titles and
+  messages inside the spec are not rewritten; the preview shows them as text, never as markup.
+- Launchability is the organization's (`launchableAgentKeys`), not a per-person grant: the gateway computes it at
+  creation and again at approval, and refuses a plan naming an agent the repository's organization can no longer
+  launch.  The window between approval and the worker pinning the plan is not re-checked for launchability.
+- A generation that exhausts its rounds is spent: the hourly quota counts it and nothing is refunded. A
+  cancelled generation stops before its next round; a model call already in flight is stopped only as far as the
+  model client honours the activity's abort signal.
 - Approval extends a plan's expiry to at least ten minutes ahead so the worker can still pin it; a
   plan approved but never launched stays launchable for that window.

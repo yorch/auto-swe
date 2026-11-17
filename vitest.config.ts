@@ -256,6 +256,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/budgetForecast.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/plainText',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/plainText.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/runPlanAgentPins',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/runPlanAgentPins.ts'),
       },

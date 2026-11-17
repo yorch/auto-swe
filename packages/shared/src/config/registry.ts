@@ -1532,6 +1532,19 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.boolean(),
   }),
+  'runPlans.generationMaxAttempts': defineSetting({
+    defaultValue: 3,
+    description:
+      'Most author-model rounds one plan generation may spend (the first draft plus repairs of what the platform refused). Each round is one paid model call, so this caps what a single goal can cost; a plan that is still refused after the last round is not created.',
+    group: 'runPlans',
+    label: 'Generation attempts per plan',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(5),
+    unit: 'attempts',
+  }),
   'runPlans.maxPendingPerUser': defineSetting({
     defaultValue: 5,
     description:
