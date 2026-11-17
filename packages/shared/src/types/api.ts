@@ -2283,8 +2283,18 @@ export interface HarnessProfileBoundAgent {
   scope: 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'CHANNEL' | 'WORKFLOW_TEMPLATE';
   teamId: string | null;
   version: number;
-  /** A TEAM agent whose team has no enablement: its new runs fail closed. */
+  /**
+   * Its new runs fail closed: a TEAM agent whose team has no enablement, or any binding of a
+   * disabled profile.
+   */
   stranded: boolean;
+}
+
+/** The plugin a projected skill belongs to (`GET /api/v1/platform/skills`); null on other skills. */
+export interface SkillPluginRef {
+  profileId: string;
+  name: string;
+  version: number | null;
 }
 
 export interface HarnessProfileDetail extends HarnessProfileSummary {

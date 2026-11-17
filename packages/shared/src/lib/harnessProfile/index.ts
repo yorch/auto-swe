@@ -1,5 +1,12 @@
 export { type ProfileFolderRead, readProfileFolder } from './fetch.js';
 export {
+  type AutoRunKind,
+  type AutoRunSource,
+  AutoRunSourceError,
+  autoRunSourcesOf,
+  stripAutoRunSources,
+} from './hookSources.js';
+export {
   MAX_PROFILE_DESCRIPTION,
   manifestIssues,
   PROFILE_TOOLS,

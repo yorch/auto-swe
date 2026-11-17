@@ -9,6 +9,7 @@ vi.mock('../skillScanner.js', () => ({ scanSkillContent }));
 
 import { skillContentHash } from '../skillRevision.js';
 import {
+  OLDER_VERSION_REASON,
   PROJECTION_SOURCE_PREFIX,
   type ProjectionFile,
   projectPluginSkills,
@@ -181,6 +182,24 @@ describe('projectPluginSkills', () => {
       pluginVersion: 2,
       promptText: 'Do the thing.',
     });
+  });
+
+  it('refuses to project a version older than the one a row came from', async () => {
+    const live = { description: 'Old', promptText: 'old body' };
+    const row: Row = {
+      currentRevision: 3,
+      description: live.description,
+      id: 's1',
+      name: 'acme:code-review',
+      pluginProfileId: 'p1',
+      pluginVersion: 3,
+      promptText: live.promptText,
+    };
+    const { db, tx } = fakeDb([row], { s1: { contentHash: skillContentHash(live) } });
+    const res = await projectPluginSkills(db, { ...INPUT, files: files(), version: 1 });
+    expect(res.refused).toEqual([{ name: 'acme:code-review', reason: OLDER_VERSION_REASON }]);
+    expect(res.updated).toEqual([]);
+    expect(tx.skill.update).not.toHaveBeenCalled();
   });
 
   it('refuses to overwrite a row whose live text differs from its last projection', async () => {

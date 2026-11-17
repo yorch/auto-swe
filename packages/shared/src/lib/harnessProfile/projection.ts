@@ -49,6 +49,10 @@ export interface ProjectPluginSkillsResult {
  */
 export const PROJECTION_SOURCE_PREFIX = 'plugin:';
 
+/** A projection never moves a skill back to an older version of its profile. */
+export const OLDER_VERSION_REASON =
+  'the skill is already projected from a newer version of this plugin';
+
 const SCAN_INCOMPLETE = 'scan-incomplete: some patterns could not be evaluated';
 const PLUGIN_MANIFEST = '.claude-plugin/plugin.json';
 const SKILL_DIR_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._ -]{0,199}$/;
@@ -295,6 +299,10 @@ export async function projectPluginSkills(
               ? 'a skill with this name already exists and is not a plugin projection'
               : 'a skill with this name is projected from another plugin',
         });
+        continue;
+      }
+      if (existing.pluginVersion !== null && input.version < existing.pluginVersion) {
+        result.refused.push({ name: c.name, reason: OLDER_VERSION_REASON });
         continue;
       }
       const projected = await tx.skillRevision.findFirst({

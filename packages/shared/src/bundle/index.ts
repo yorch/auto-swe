@@ -302,7 +302,12 @@ export interface BundleInstallResult {
   signedBy: string | null;
   warnings: string[];
   /** Plugins the install created a profile for, and ones it found already approved. */
-  plugins?: { created: string[]; reused: string[] };
+  plugins?: {
+    created: string[];
+    reused: string[];
+    /** The profile version an agent bound to each plugin runs (always the latest approved). */
+    bound: { name: string; action: 'create' | 'reuse'; boundVersion: number }[];
+  };
 }
 
 /** Thrown when a manifest declares a bundle schema version this build cannot trust. */
