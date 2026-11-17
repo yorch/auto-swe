@@ -6,6 +6,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
+import { skillPluginManaged } from '../lib/pluginSkillPolicy.js';
 import { checkTeamAccess } from '../lib/skillAssignmentService.js';
 import {
   createSkill,
@@ -31,6 +32,9 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
  *   PUT    /api/v1/platform/skills/:id          Update skill
  *   POST   /api/v1/platform/skills/:id/verify   Mark the current revision human-verified
  *   DELETE /api/v1/platform/skills/:id          Delete skill (rejects built-in)
+ *
+ * A skill projected from a plugin is managed by it: every write route answers 409
+ * SKILL_PLUGIN_MANAGED (its text arrives with a new plugin version).
  *   GET    /api/v1/teams/:teamId/skills      Read-only skill library (team members)
  */
 
@@ -123,6 +127,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
             _count: { select: { agentSkillRefs: true } },
             // Which agents reference it, so a delete or deactivate can name what it affects.
             agentSkillRefs: { select: { agent: { select: { isActive: true, key: true } } } },
+            pluginProfile: { select: { id: true, name: true } },
             // The newest revision is the current one; its scan findings are what a reviewer
             // reads before verifying.
             revisions: {
@@ -146,9 +151,12 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
         : [];
       const shaOf = new Map(shas.map((r) => [r.skillId, r.sourceSha]));
       return {
-        data: skills.map(({ _count, agentSkillRefs, revisions, source, ...s }) => ({
+        data: skills.map(({ _count, agentSkillRefs, pluginProfile, revisions, source, ...s }) => ({
           ...s,
           externalSource: source ? { ...source, sha: shaOf.get(s.id) ?? null } : null,
+          plugin: pluginProfile
+            ? { name: pluginProfile.name, profileId: pluginProfile.id, version: s.pluginVersion }
+            : null,
           scanWarnings: Array.isArray(revisions[0]?.scanWarnings) ? revisions[0].scanWarnings : [],
           usedBy: [
             ...new Set(agentSkillRefs.filter((r) => r.agent.isActive).map((r) => r.agent.key)),
@@ -237,6 +245,9 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       if (!existing) {
         return sendError(reply, 404, 'NOT_FOUND', 'Skill not found');
       }
+      if (existing.pluginProfileId) {
+        return skillPluginManaged(reply);
+      }
 
       if (
         request.body.expectedRevision !== undefined &&
@@ -294,6 +305,9 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       if (!existing) {
         return sendError(reply, 404, 'NOT_FOUND', 'Skill not found');
       }
+      if (existing.pluginProfileId) {
+        return skillPluginManaged(reply);
+      }
       if (request.body.revision !== existing.currentRevision) {
         return skillChanged(reply);
       }
@@ -326,6 +340,9 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (!existing) {
         return sendError(reply, 404, 'NOT_FOUND', 'Skill not found');
+      }
+      if (existing.pluginProfileId) {
+        return skillPluginManaged(reply);
       }
       if (existing.isBuiltIn) {
         return sendError(

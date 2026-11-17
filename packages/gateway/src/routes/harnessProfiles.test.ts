@@ -166,7 +166,8 @@ async function buildApp(
           (x) =>
             x.id === where.id &&
             x.latestVersion === where.latestVersion &&
-            x.status === where.status
+            x.status === where.status &&
+            (where.hooksEnabled === undefined || x.hooksEnabled === where.hooksEnabled)
         );
         if (!p) {
           return { count: 0 };
@@ -204,6 +205,7 @@ async function buildApp(
   };
   const agents: Row[] = [];
   const enablements: Row[] = [];
+  const skills: Row[] = [];
   const prisma = {
     $transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => {
       const snap = {
@@ -237,6 +239,28 @@ async function buildApp(
     pluginEnablement: {
       count: vi.fn(async () => enablements.length),
       findMany: vi.fn(async () => enablements.map((e) => ({ ...e }))),
+    },
+    skill: {
+      updateMany: vi.fn(
+        async ({
+          data,
+          where,
+        }: {
+          data: { isActive: boolean };
+          where: { isActive: boolean; pluginProfileId: string; pluginVersion?: number };
+        }) => {
+          const hit = skills.filter(
+            (x) =>
+              x.pluginProfileId === where.pluginProfileId &&
+              x.isActive === where.isActive &&
+              (where.pluginVersion === undefined || x.pluginVersion === where.pluginVersion)
+          );
+          for (const x of hit) {
+            x.isActive = data.isActive;
+          }
+          return { count: hit.length };
+        }
+      ),
     },
   };
 
@@ -301,7 +325,19 @@ async function buildApp(
       sha: SHA2,
       ...extra,
     });
-  return { accept, agents, call, create, enablements, fetchFn, hub, prisma, projectSkills, state };
+  return {
+    accept,
+    agents,
+    call,
+    create,
+    enablements,
+    fetchFn,
+    hub,
+    prisma,
+    projectSkills,
+    skills,
+    state,
+  };
 }
 
 const LOC = { owner: 'acme', path: 'p', ref: 'main', repo: 'profiles' };
@@ -633,6 +669,23 @@ describe('harness profile routes', () => {
       expect(t.state.versions).toHaveLength(1);
     });
 
+    it('answers 409 when hooks were switched on after the hook-change decision', async () => {
+      const real = t.prisma.harnessProfile.updateMany.getMockImplementation() as (
+        args: unknown
+      ) => Promise<{ count: number }>;
+      t.prisma.harnessProfile.updateMany.mockImplementationOnce(async (args: unknown) => {
+        // A concurrent PATCH commits between the decision (hooks off) and the write.
+        for (const p of t.state.profiles) {
+          p.hooksEnabled = true;
+        }
+        return real(args);
+      });
+      const res = await t.accept();
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('HARNESS_PROFILE_CHANGED');
+      expect(t.state.versions).toHaveLength(1);
+    });
+
     it('answers 409 when another accept took the version number', async () => {
       t.prisma.harnessProfile.updateMany.mockResolvedValueOnce({ count: 0 });
       const res = await t.accept();
@@ -667,6 +720,41 @@ describe('harness profile routes', () => {
       expect((await t.call('PATCH', '/missing', { status: 'OK' })).statusCode).toBe(404);
     });
   });
+  describe('projected skills follow the plugin', () => {
+    it('deactivates them on disable and reactivates the current-version rows on re-enable, keeping enablements', async () => {
+      await t.create();
+      const profileId = t.state.profiles[0]?.id as string;
+      const projected = (name: string, pluginVersion: number, isActive = true) =>
+        ({ id: name, isActive, name, pluginProfileId: profileId, pluginVersion }) as Row;
+      t.skills.push(
+        projected('demo:a', 1),
+        projected('demo:b', 1),
+        projected('demo:gone', 0, false),
+        { id: 'other', isActive: true, name: 'plain', pluginProfileId: 'someone-else' } as Row
+      );
+      t.enablements.push({ teamId: 'team-2' } as never);
+      const off = await t.call('PATCH', '/demo', { status: 'DISABLED' });
+      expect(off.statusCode).toBe(200);
+      expect(t.skills.map((x) => x.isActive)).toEqual([false, false, false, true]);
+      expect(t.state.audit.at(-1)).toMatchObject({
+        afterJson: { projectedSkills: { deactivated: 2 }, status: 'DISABLED' },
+      });
+      // A hook-only change touches no skill.
+      t.prisma.skill.updateMany.mockClear();
+      await t.call('PATCH', '/demo', { hooksEnabled: true });
+      expect(t.prisma.skill.updateMany).not.toHaveBeenCalled();
+      const on = await t.call('PATCH', '/demo', { status: 'OK' });
+      expect(on.statusCode).toBe(200);
+      // Only the rows of the profile's latest version come back; the stale one stays off.
+      expect(t.skills.map((x) => x.isActive)).toEqual([true, true, false, true]);
+      expect(t.state.audit.at(-1)).toMatchObject({
+        afterJson: { projectedSkills: { activated: 2 }, status: 'OK' },
+      });
+      // Disabling never deletes enablement rows.
+      expect(t.enablements).toHaveLength(1);
+    });
+  });
+
   describe('response fields', () => {
     it('carries the hook switch, tracking and marketplace fields on list and get', async () => {
       await t.create({ hooksEnabled: true });
@@ -710,6 +798,38 @@ describe('harness profile routes', () => {
         { key: 'implementer', scope: 'GLOBAL', stranded: false, teamId: null, version: 3 },
         { key: 'reviewer', scope: 'TEAM', stranded: true, teamId: 'team-1', version: 2 },
       ]);
+    });
+
+    it('marks every binding of a DISABLED profile stranded, an enabled TEAM binding included', async () => {
+      await t.create();
+      t.agents.push(
+        {
+          channelId: null,
+          key: 'implementer',
+          orgId: null,
+          scope: 'GLOBAL',
+          teamId: null,
+          version: 3,
+          workflowTemplateId: null,
+        } as never,
+        {
+          channelId: null,
+          key: 'reviewer',
+          orgId: null,
+          scope: 'TEAM',
+          teamId: 'team-2',
+          version: 2,
+          workflowTemplateId: null,
+        } as never
+      );
+      t.enablements.push({ teamId: 'team-2' } as never);
+      const stranded = async () =>
+        (await t.call('GET', '/demo'))
+          .json()
+          .data.boundAgents.map((a: { stranded: boolean }) => a.stranded);
+      expect(await stranded()).toEqual([false, false]);
+      await t.call('PATCH', '/demo', { status: 'DISABLED' });
+      expect(await stranded()).toEqual([true, true]);
     });
 
     it('lists the enabling teams for an admin', async () => {

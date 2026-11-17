@@ -327,6 +327,9 @@ export async function profileSaveError(
   if (collision) {
     return collision;
   }
+  // Enablement is a TEAM-only rule: it is how a team admin is allowed to bind a plugin. The other
+  // scopes (platform-wide, organization, channel, workflow template) are written by a platform
+  // ADMIN, who has already approved the plugin, so they need none.
   if (ctx.scope === 'TEAM' && ctx.teamId && prisma.pluginEnablement) {
     const carried = new Set(ctx.current ?? []);
     const added = found.filter((f) => !carried.has(f.name));

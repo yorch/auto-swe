@@ -124,6 +124,20 @@ describe('POST /skills/:id/revisions/:revision/restore', () => {
     });
   });
 
+  it('refuses a skill projected from a plugin', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.skill.findUnique.mockResolvedValue({
+      currentRevision: 3,
+      id: ID,
+      isBuiltIn: false,
+      pluginProfileId: 'profile-1',
+    });
+    const res = await app.inject({ headers: AUTH, method: 'POST', url });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('SKILL_PLUGIN_MANAGED');
+    expect(updateSkill).not.toHaveBeenCalled();
+  });
+
   it('refuses to restore the current revision', async () => {
     const { app, prisma } = await buildApp();
     prisma.skillRevision.findUnique.mockResolvedValue({

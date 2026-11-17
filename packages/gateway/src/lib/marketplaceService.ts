@@ -1,4 +1,5 @@
 import {
+  autoRunSourcesOf,
   MANIFEST_PATH,
   type ProfileFile,
   type ProfileManifest,
@@ -47,20 +48,9 @@ export interface EntryProfileRead extends ReadProfile {
 /** The profile name a plugin entry is installed under (already a valid profile name). */
 const pluginDir = (name: string) => `plugins/${name}`;
 
+/** Whether the plugin has any auto-run command source (hooks, frontmatter hooks, monitors, LSP). */
 function hasHooks(files: readonly ProfileFile[], dir: string): boolean {
-  if (files.some((f) => f.path === `${dir}/hooks/hooks.json`)) {
-    return true;
-  }
-  const manifest = files.find((f) => f.path === `${dir}/.claude-plugin/plugin.json`);
-  if (!manifest) {
-    return false;
-  }
-  try {
-    const json = JSON.parse(manifest.bytes.toString('utf8')) as Record<string, unknown>;
-    return json.hooks !== undefined;
-  } catch {
-    return false;
-  }
+  return autoRunSourcesOf(files, { plugins: [dir] }).length > 0;
 }
 
 /**

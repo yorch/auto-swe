@@ -19,6 +19,8 @@ import {
   listInstalledBundles,
   previewBundle,
   SkillChangedError,
+  SkillPluginDisabledError,
+  SkillPluginManagedError,
 } from '../lib/bundleService.js';
 import { resolveBundleAllowUnverified, resolveBundleTrustedKeys } from '../lib/bundleTrust.js';
 import { sendError } from '../lib/httpErrors.js';
@@ -219,6 +221,22 @@ async function runInstall(
         409,
         'SKILL_CHANGED',
         'A skill changed while the bundle installed; nothing was installed. Retry.'
+      );
+    }
+    if (err instanceof SkillPluginManagedError) {
+      return sendError(
+        reply,
+        409,
+        'SKILL_PLUGIN_MANAGED',
+        'The bundle names a skill that a plugin projects; nothing was installed.'
+      );
+    }
+    if (err instanceof SkillPluginDisabledError) {
+      return sendError(
+        reply,
+        400,
+        'SKILL_PLUGIN_DISABLED',
+        'An agent in the bundle references a skill of a disabled plugin; nothing was installed.'
       );
     }
     if (err instanceof z.ZodError) {

@@ -35,6 +35,7 @@ import {
 } from '../lib/harnessProfileService.js';
 import { sendError } from '../lib/httpErrors.js';
 import { synthesizeEntryProfile } from '../lib/marketplaceService.js';
+import { setProjectedSkillsActive } from '../lib/pluginSkillPolicy.js';
 import { hasHookChanges, hookChangesBetween } from '../lib/pluginSnapshot.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -622,7 +623,14 @@ export const harnessProfileRoutes: FastifyPluginAsync<HarnessProfileRouteOptions
               // Accepting the commit the last check found settles the tracking status.
               ...(existing.latestSha === read.sha ? { lastError: null, trackStatus: 'OK' } : {}),
             },
-            where: { id: existing.id, latestVersion: existing.latestVersion, status: 'OK' },
+            // `hooksEnabled` is the value the hook-change decision above used: a concurrent PATCH
+            // switching hooks on makes this miss rather than accept unreviewed hook changes.
+            where: {
+              hooksEnabled: existing.hooksEnabled,
+              id: existing.id,
+              latestVersion: existing.latestVersion,
+              status: 'OK',
+            },
           });
           if (moved.count !== 1) {
             return null;
@@ -723,10 +731,27 @@ export const harnessProfileRoutes: FastifyPluginAsync<HarnessProfileRouteOptions
           select: PROFILE_SELECT,
           where: { id: existing.id },
         });
+        // Projected skills follow the plugin: off while it is DISABLED, back on with it. Team
+        // enablement rows are untouched, so re-enabling restores team access.
+        const skillsToggled =
+          status !== undefined && status !== existing.status
+            ? await setProjectedSkillsActive(tx, row, status === 'OK')
+            : null;
         await writeAuditLog(fastify, {
           action: 'UPDATE',
           actor,
-          after: { hooksEnabled: row.hooksEnabled, name: row.name, status: row.status },
+          after: {
+            hooksEnabled: row.hooksEnabled,
+            name: row.name,
+            status: row.status,
+            ...(skillsToggled === null
+              ? {}
+              : {
+                  projectedSkills: {
+                    [status === 'OK' ? 'activated' : 'deactivated']: skillsToggled,
+                  },
+                }),
+          },
           before: {
             hooksEnabled: existing.hooksEnabled,
             name: existing.name,

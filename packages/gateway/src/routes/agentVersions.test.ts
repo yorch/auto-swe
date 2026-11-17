@@ -52,7 +52,10 @@ function newMockPrisma() {
       findUnique: vi.fn().mockResolvedValue(row(2)),
       findUniqueOrThrow: vi.fn().mockResolvedValue({ ...row(3), skillRefs: [] }),
     },
-    agentSkillRef: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    agentSkillRef: {
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     connection: { findUnique: vi.fn() },
     harnessProfile: { findUnique: vi.fn().mockResolvedValue({ status: 'OK' }) },
@@ -342,6 +345,26 @@ describe('POST /agent-library/:id/restore', () => {
     });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe('AGENT_INACTIVE');
+    expect(prisma.agent.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses to restore a version whose added skill belongs to a disabled plugin', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agent.findFirst
+      .mockResolvedValueOnce(row(1, { skillRefs: [{ skillId: SKILL, sortOrder: 0 }] }))
+      .mockResolvedValueOnce(row(2)) // latest
+      .mockResolvedValueOnce({ isActive: true, version: 2 }); // maxVersion
+    prisma.skill.findMany.mockResolvedValue([
+      { name: 'kit:review', pluginProfile: { id: 'p1', name: 'kit', status: 'DISABLED' } },
+    ]);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { versionId: V1 },
+      url: `/api/v1/platform/agent-library/${ID}/restore`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('SKILL_PLUGIN_DISABLED');
     expect(prisma.agent.create).not.toHaveBeenCalled();
   });
 

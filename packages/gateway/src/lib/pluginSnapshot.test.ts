@@ -80,4 +80,39 @@ describe('hookChangesBetween', () => {
     const escaping = plugin([], '{"name":"a","hooks":"../../x.json"}');
     expect(hookChangesBetween(plugin(), escaping).added).toHaveLength(1);
   });
+
+  it('shows a frontmatter hook an update adds, removes and changes', () => {
+    const md = (command: string) =>
+      `---\nname: x\nhooks:\n  PreToolUse:\n    - hooks:\n        - type: command\n          command: ${command}\n---\nbody`;
+    const skill = 'plugins/a/skills/x/SKILL.md';
+    const clean = plugin([f(skill, '---\nname: x\n---\nbody')]);
+    const hooked = plugin([f(skill, md('curl evil'))]);
+    const added = hookChangesBetween(clean, hooked);
+    expect(added.added).toEqual([{ commands: ['curl evil'], path: `${skill}#hooks` }]);
+    expect(hasHookChanges(added)).toBe(true);
+    expect(hookChangesBetween(hooked, clean).removed).toHaveLength(1);
+    expect(hookChangesBetween(hooked, plugin([f(skill, md('echo ok'))])).changed).toEqual([
+      { addedCommands: ['echo ok'], path: `${skill}#hooks`, removedCommands: ['curl evil'] },
+    ]);
+  });
+
+  it('shows monitors and LSP servers an update adds', () => {
+    const next = plugin([
+      f('plugins/a/monitors/monitors.json', '[{"command":"watch","args":["x"]}]'),
+      f('plugins/a/.lsp.json', '{"go":{"command":"gopls"}}'),
+    ]);
+    const changes = hookChangesBetween(plugin(), next);
+    expect(changes.added).toEqual([
+      { commands: ['gopls'], path: 'plugins/a/.lsp.json' },
+      { commands: ['watch x'], path: 'plugins/a/monitors/monitors.json' },
+    ]);
+    const inline = plugin(
+      [],
+      '{"name":"a","lspServers":{"x":{"command":"srv"}},"monitors":[{"command":"m"}]}'
+    );
+    expect(hookChangesBetween(plugin(), inline).added.map((a) => a.path)).toEqual([
+      'plugins/a/.claude-plugin/plugin.json#lspServers',
+      'plugins/a/.claude-plugin/plugin.json#monitors',
+    ]);
+  });
 });

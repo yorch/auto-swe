@@ -500,6 +500,23 @@ describe('marketplace routes', () => {
       });
     });
 
+    it('accept-update reads the updated row through the transaction client', async () => {
+      const { id } = await add();
+      t.hub.shas.market = SHA2;
+      const outer = t.prisma.marketplaceSource.findUnique;
+      const inner = vi.fn(outer.getMockImplementation() as never);
+      t.prisma.$transaction.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) =>
+        cb({ ...t.prisma, marketplaceSource: { ...t.prisma.marketplaceSource, findUnique: inner } })
+      );
+      outer.mockClear();
+      const acc = await t.call('POST', `/${id}/accept-update`, { sha: SHA2 });
+      expect(acc.statusCode).toBe(200);
+      expect(acc.json().data).toMatchObject({ pinnedSha: SHA2 });
+      expect(inner).toHaveBeenCalledTimes(1);
+      // The only read on the outer client is the one before the transaction.
+      expect(outer).toHaveBeenCalledTimes(1);
+    });
+
     it('check records a fixed error string for a failing host', async () => {
       const { id } = await add();
       t.hub.repos.market = [];

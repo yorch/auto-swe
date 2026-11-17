@@ -142,7 +142,7 @@ export const pluginEnablementRoutes: FastifyPluginAsync = async (fastify) => {
       const { name, teamId } = request.params;
       const actor = requireUser(request);
       const profile = await fastify.prisma.harnessProfile.findUnique({
-        select: { id: true },
+        select: { id: true, status: true },
         where: { name },
       });
       if (!profile) {
@@ -156,7 +156,11 @@ export const pluginEnablementRoutes: FastifyPluginAsync = async (fastify) => {
       }
       // Allowed while agents are bound; they are named so nobody finds out from a failed run.
       const strandedAgents = (
-        await boundAgentsForProfile(fastify.prisma, { id: profile.id, name }, { teamId })
+        await boundAgentsForProfile(
+          fastify.prisma,
+          { id: profile.id, name, status: profile.status },
+          { teamId }
+        )
       ).map((a) => ({ key: a.key, version: a.version }));
       await writeAuditLog(fastify, {
         action: 'DELETE',

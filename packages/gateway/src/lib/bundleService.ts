@@ -44,6 +44,7 @@ import {
   bindingCollision,
   bindingOutcome,
   bindingWarning,
+  boundVersionOf,
   decidePlugins,
   HOOKS_OFF_NOTE,
   type PluginDecision,
@@ -51,6 +52,7 @@ import {
   pluginConflicts,
   projectInstalledPlugins,
   readBundlePlugins,
+  reuseVersionWarning,
   warningsToAcknowledge,
 } from './pluginBundleInstall.js';
 import { scanSkillAdvisory } from './skillScan.js';
@@ -313,6 +315,22 @@ export class SkillChangedError extends Error {
   constructor(readonly skillName: string) {
     super(`skill '${skillName}' changed while the bundle installed`);
     this.name = 'SkillChangedError';
+  }
+}
+
+/** The bundle names a skill that a plugin projects: the plugin owns that row. */
+export class SkillPluginManagedError extends Error {
+  constructor(readonly skillName: string) {
+    super(`skill '${skillName}' is projected from a plugin and cannot be installed over`);
+    this.name = 'SkillPluginManagedError';
+  }
+}
+
+/** An agent in the bundle references a skill of a disabled plugin. */
+export class SkillPluginDisabledError extends Error {
+  constructor(readonly skillName: string) {
+    super(`skill '${skillName}' belongs to a disabled plugin and cannot be attached`);
+    this.name = 'SkillPluginDisabledError';
   }
 }
 
@@ -824,6 +842,9 @@ export async function installBundle(
           createdById: opts.installedById ?? null,
           scanWarnings: skillScans.get(s.name) ?? [],
         };
+        if (existing?.pluginProfileId) {
+          throw new SkillPluginManagedError(s.name);
+        }
         if (existing) {
           // Never trust the bundle's verification flag — installing new content
           // over an existing skill must reset isVerified, matching the create
@@ -917,7 +938,13 @@ export async function installBundle(
         // Reconcile skill refs from the bundle (clear + recreate by skill name).
         await tx.agentSkillRef.deleteMany({ where: { agentId: agent.id } });
         for (const ref of a.skills ?? []) {
-          const skill = await tx.skill.findFirst({ where: { name: ref.skill, scope: 'GLOBAL' } });
+          const skill = await tx.skill.findFirst({
+            include: { pluginProfile: { select: { status: true } } },
+            where: { name: ref.skill, scope: 'GLOBAL' },
+          });
+          if (skill?.pluginProfile && skill.pluginProfile.status !== 'OK') {
+            throw new SkillPluginDisabledError(ref.skill);
+          }
           if (skill) {
             await tx.agentSkillRef.create({
               data: { agentId: agent.id, skillId: skill.id, sortOrder: ref.sortOrder ?? 0 },
@@ -989,6 +1016,12 @@ export async function installBundle(
     ...(pluginResult.applied.length > 0
       ? {
           plugins: {
+            /** The profile version an agent bound to each plugin runs (the latest). */
+            bound: pluginResult.applied.map((a) => ({
+              action: a.action,
+              boundVersion: a.boundVersion,
+              name: a.name,
+            })),
             created: pluginResult.applied.filter((a) => a.action === 'create').map((a) => a.name),
             reused: pluginResult.applied.filter((a) => a.action === 'reuse').map((a) => a.name),
           },
@@ -1038,6 +1071,8 @@ export interface BundlePreview {
 
 /** What installing one plugin reference would do. */
 export interface BundlePreviewPlugin {
+  /** The profile version an agent bound to it runs: 1 for a create, the latest for a reuse. */
+  boundVersion: number | null;
   /** `create` approves a new profile (hooks off); `reuse` finds it approved; `conflict` refuses. */
   action: 'create' | 'reuse' | 'conflict';
   name: string;
@@ -1143,6 +1178,12 @@ export async function previewBundle(
   warnings.push(...bundleAgentRuntimeWarnings(manifest));
   warnings.push(...bundleContainerImageWarnings(manifest));
   warnings.push(...pluginPlans.flatMap((p) => p.warnings));
+  for (const d of pluginDecisions) {
+    const w = reuseVersionWarning(d);
+    if (w) {
+      warnings.push(w);
+    }
+  }
   for (const p of plugins) {
     if (p.action === 'create') {
       warnings.push(`plugin '${p.name}' ${HOOKS_OFF_NOTE}`);
@@ -1212,6 +1253,7 @@ async function previewPlugins(
     out.push({
       action: d.action,
       bindings,
+      boundVersion: d.action === 'conflict' ? null : boundVersionOf(d),
       contentHash: plugin.contentHash,
       hooksEnabled: d.action === 'create' ? false : null,
       name: plugin.name,

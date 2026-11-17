@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-import { type ProfileFile, unsafeProfilePath } from '@auto-swe/shared/lib/harnessProfile';
+import { autoRunSourcesOf, type ProfileFile } from '@auto-swe/shared/lib/harnessProfile';
 import type {
   HarnessProfileHookChanges,
   HarnessProfileHookSource,
@@ -64,93 +63,21 @@ interface HookSource {
   commands: string[];
 }
 
-const sha256 = (v: Buffer | string) => createHash('sha256').update(v).digest('hex');
-
-/** Every `command` string anywhere in a hooks document. */
-function commandsIn(doc: unknown, out: string[] = []): string[] {
-  if (Array.isArray(doc)) {
-    for (const item of doc) {
-      commandsIn(item, out);
-    }
-  } else if (doc && typeof doc === 'object') {
-    for (const [key, value] of Object.entries(doc)) {
-      if (key === 'command' && typeof value === 'string') {
-        out.push(value);
-      } else {
-        commandsIn(value, out);
-      }
-    }
-  }
-  return out;
-}
-
-function sourceOf(path: string, bytes: Buffer): HookSource {
-  let commands: string[] = [];
-  try {
-    commands = commandsIn(JSON.parse(decode(bytes) ?? ''));
-  } catch {
-    commands = [];
-  }
-  return { commands, digest: sha256(bytes), path };
-}
-
-/** `ref` (a plugin.json hooks path) as a path inside `dir`; null when it leaves it. */
-function resolveInside(dir: string, ref: string): string | null {
-  const rel = ref.replace(/^(\.\/|\$\{CLAUDE_PLUGIN_ROOT\}\/)/, '');
-  return unsafeProfilePath(rel) === null ? `${dir}/${rel}` : null;
-}
-
 /**
- * The hook sources of a snapshot, by path: each plugin's `hooks/hooks.json`, the inline `hooks`
- * of its `plugin.json` (keyed `<plugin.json path>#hooks`), and every file `plugin.json` names in
- * `hooks`. A named file that is missing or leaves the plugin folder is still a source (digest of
- * the reference), so changing it shows up as a change.
+ * The auto-run command sources of a snapshot, by path (`autoRunSourcesOf`, the module the
+ * worker's hook switch and the approval scanner use too): each plugin's `hooks/hooks.json`, the
+ * inline `hooks` of its `plugin.json` (keyed `<plugin.json path>#hooks`) and every file it names,
+ * the `hooks` frontmatter of its skills and commands (`<file>.md#hooks`), its monitors and its LSP
+ * servers. A named file that is missing or leaves the plugin folder is still a source, so changing
+ * it shows up as a change.
  */
 export function hookSourcesOf(
   files: readonly ProfileFile[],
   manifest: { plugins?: string[] } | null | undefined
 ): Map<string, HookSource> {
-  const byPath = new Map(files.map((f) => [f.path, f]));
   const out = new Map<string, HookSource>();
-  for (const dir of pluginDirsOf(manifest)) {
-    const hooksJson = byPath.get(`${dir}/hooks/hooks.json`);
-    if (hooksJson) {
-      out.set(hooksJson.path, sourceOf(hooksJson.path, hooksJson.bytes));
-    }
-    const pluginJsonPath = `${dir}/${PLUGIN_MANIFEST}`;
-    const pluginJson = byPath.get(pluginJsonPath);
-    if (!pluginJson) {
-      continue;
-    }
-    let hooks: unknown;
-    try {
-      hooks = (JSON.parse(decode(pluginJson.bytes) ?? '') as { hooks?: unknown } | null)?.hooks;
-    } catch {
-      continue;
-    }
-    if (hooks === undefined) {
-      continue;
-    }
-    const entries = Array.isArray(hooks) ? hooks : [hooks];
-    const inline = entries.filter((e) => typeof e !== 'string');
-    if (inline.length > 0) {
-      const text = JSON.stringify(inline);
-      out.set(`${pluginJsonPath}#hooks`, {
-        commands: commandsIn(inline),
-        digest: sha256(text),
-        path: `${pluginJsonPath}#hooks`,
-      });
-    }
-    for (const ref of entries.filter((e): e is string => typeof e === 'string')) {
-      const target = resolveInside(dir, ref);
-      const file = target === null ? undefined : byPath.get(target);
-      if (target !== null && file) {
-        out.set(target, sourceOf(target, file.bytes));
-      } else {
-        const label = `${pluginJsonPath}#hooks:${ref}`;
-        out.set(label, { commands: [], digest: sha256(`unresolved:${ref}`), path: label });
-      }
-    }
+  for (const s of autoRunSourcesOf(files, manifest)) {
+    out.set(s.path, { commands: s.commands, digest: s.digest, path: s.path });
   }
   return out;
 }

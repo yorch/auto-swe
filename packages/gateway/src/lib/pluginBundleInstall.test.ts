@@ -212,7 +212,11 @@ describe('installBundle with plugin references', () => {
     });
 
     expect(res.counts.plugins).toBe(1);
-    expect(res.plugins).toEqual({ created: ['acme-pack'], reused: [] });
+    expect(res.plugins).toEqual({
+      bound: [{ action: 'create', boundVersion: 1, name: 'acme-pack' }],
+      created: ['acme-pack'],
+      reused: [],
+    });
     expect(projectPluginSkills).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -270,7 +274,7 @@ describe('installBundle with plugin references', () => {
 
   it('reuses an approved profile with the same content and leaves its hook switch alone', async () => {
     prisma.harnessProfile.findMany.mockResolvedValue([
-      { id: 'hp-9', name: 'acme-pack', status: 'OK' },
+      { id: 'hp-9', latestVersion: 4, name: 'acme-pack', status: 'OK' },
     ]);
     prisma.harnessProfileVersion.findFirst.mockResolvedValue({ version: 4 });
     const res = await installBundle(asArg(), manifestFor({ plugins: [plugin()] }), {
@@ -279,12 +283,47 @@ describe('installBundle with plugin references', () => {
     });
     expect(prisma.harnessProfile.create).not.toHaveBeenCalled();
     expect(prisma.harnessProfile.update).not.toHaveBeenCalled();
-    expect(res.plugins).toEqual({ created: [], reused: ['acme-pack'] });
+    expect(res.plugins).toEqual({
+      bound: [{ action: 'reuse', boundVersion: 4, name: 'acme-pack' }],
+      created: [],
+      reused: ['acme-pack'],
+    });
     // Approved earlier: no acknowledgement needed, and no hooks-off note.
     expect(res.warnings.join('\n')).not.toContain('created with hooks off');
     expect(projectPluginSkills).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ profileId: 'hp-9', version: 4 })
+    );
+  });
+
+  it('does not project an older reused snapshot over a newer latest, and warns', async () => {
+    prisma.harnessProfile.findMany.mockResolvedValue([
+      { id: 'hp-9', latestVersion: 6, name: 'acme-pack', status: 'OK' },
+    ]);
+    prisma.harnessProfileVersion.findFirst.mockResolvedValue({ version: 4 });
+    const res = await installBundle(asArg(), manifestFor({ plugins: [plugin()] }), {
+      allowUnverified: true,
+      pluginReader: reader(),
+    });
+    expect(projectPluginSkills).not.toHaveBeenCalled();
+    expect(res.plugins?.bound).toEqual([{ action: 'reuse', boundVersion: 6, name: 'acme-pack' }]);
+    expect(res.warnings).toContain(
+      "plugin 'acme-pack': the profile's latest version (6) differs from the referenced version (4); the agent will use the latest approved version"
+    );
+  });
+
+  it('previews the bound version and the version-differs warning for a reuse', async () => {
+    prisma.harnessProfile.findMany.mockResolvedValue([
+      { id: 'hp-9', latestVersion: 6, name: 'acme-pack', status: 'OK' },
+    ]);
+    prisma.harnessProfileVersion.findFirst.mockResolvedValue({ version: 4 });
+    const res = await previewBundle(asArg(), manifestFor({ plugins: [plugin()] }), {
+      allowUnverified: true,
+      pluginReader: reader(),
+    });
+    expect(res.plugins[0]).toMatchObject({ action: 'reuse', boundVersion: 6 });
+    expect(res.warnings.join('\n')).toContain(
+      'latest version (6) differs from the referenced version (4)'
     );
   });
 
@@ -361,6 +400,7 @@ describe('previewBundle with plugin references', () => {
       {
         action: 'create',
         bindings: [{ agentKey: 'implementer', outcome: 'bind' }],
+        boundVersion: 1,
         contentHash: validated.contentHash,
         hooksEnabled: false,
         name: 'acme-pack',
@@ -568,6 +608,7 @@ describe('bundle routes with plugin references', () => {
     });
     expect(second.statusCode).toBe(200);
     expect(JSON.parse(second.payload).data.plugins).toEqual({
+      bound: [{ action: 'create', boundVersion: 1, name: 'acme-pack' }],
       created: ['acme-pack'],
       reused: [],
     });

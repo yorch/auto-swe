@@ -38,6 +38,7 @@ function newMockPrisma() {
     organization: { findUnique: vi.fn() },
     pluginEnablement: { findMany: vi.fn().mockResolvedValue([]) },
     providerCredential: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
+    skill: { findMany: vi.fn().mockResolvedValue([]) },
     // Channel assistant Phase 1: CHANNEL-scoped agent creation validates the channel exists.
     slackChannel: { findUnique: vi.fn() },
     team: { findUnique: vi.fn() },
@@ -2034,6 +2035,90 @@ describe('agent harness profile', () => {
     expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.harnessProfiles).toEqual([PROFILE]);
     expect(res.json().profileNotes).toEqual([expect.stringContaining("'other-kit'")]);
     await app.close();
+  });
+
+  it.each(['ORGANIZATION', 'CHANNEL', 'WORKFLOW_TEMPLATE', 'GLOBAL'] as const)(
+    'needs no team enablement for an ADMIN-written %s save',
+    async (scope) => {
+      const { app, mockPrisma } = await buildAdminApp();
+      mockPrisma.agent.findUnique.mockResolvedValue(
+        teamAgentRow({
+          channelId: scope === 'CHANNEL' ? 'chan-1' : null,
+          harnessProfiles: [],
+          orgId: scope === 'ORGANIZATION' ? 'org-1' : null,
+          runtime: 'claude-code',
+          scope,
+          teamId: null,
+          workflowTemplateId: scope === 'WORKFLOW_TEMPLATE' ? 'tpl-1' : null,
+        })
+      );
+      mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 });
+      mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
+      enabledFor(mockPrisma, []);
+      const res = await app.inject(globalPut({ harnessProfiles: [PROFILE] }));
+      expect(res.statusCode).toBe(200);
+      expect(mockPrisma.pluginEnablement.findMany).not.toHaveBeenCalled();
+      await app.close();
+    }
+  );
+
+  describe('attaching skills projected from a plugin', () => {
+    const SKILL = '44444444-4444-4444-8444-444444444444';
+    const projected = (status: 'OK' | 'DISABLED') => [
+      { name: 'kit:review', pluginProfile: { id: 'p1', name: 'kit', status } },
+    ];
+    const edit = (body: Record<string, unknown>) => teamPut(body);
+
+    it('refuses a TEAM attach when the team has not enabled the plugin, and allows it once enabled', async () => {
+      const { app, mockPrisma } = await buildTeamApp('ADMIN');
+      mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow());
+      mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 });
+      mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
+      mockPrisma.skill.findMany.mockResolvedValue(projected('OK'));
+      mockPrisma.pluginEnablement.findMany.mockResolvedValue([]);
+      const refs = { skillRefs: [{ skillId: SKILL, sortOrder: 0 }] };
+      const res = await app.inject(edit(refs));
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('SKILL_PLUGIN_NOT_ENABLED');
+      expect(res.json().error.message).toContain("'kit:review'");
+      expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+      mockPrisma.pluginEnablement.findMany.mockResolvedValue([{ profileId: 'p1' }]);
+      expect((await app.inject(edit(refs))).statusCode).toBe(200);
+      await app.close();
+    });
+
+    it('lets removing and carrying a projected skill through; only additions are checked', async () => {
+      const { app, mockPrisma } = await buildTeamApp('ADMIN');
+      mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow());
+      mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 });
+      mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
+      mockPrisma.skill.findMany.mockResolvedValue(projected('DISABLED'));
+      expect((await app.inject(edit({ skillRefs: [] }))).statusCode).toBe(200);
+      mockPrisma.agentSkillRef.findMany.mockResolvedValue([{ skillId: SKILL }]);
+      expect(
+        (await app.inject(edit({ skillRefs: [{ skillId: SKILL, sortOrder: 0 }] }))).statusCode
+      ).toBe(200);
+      await app.close();
+    });
+
+    it('needs no enablement at platform scope, but refuses a disabled plugin at every scope', async () => {
+      const { app, mockPrisma } = await buildAdminApp();
+      mockPrisma.agent.findUnique.mockResolvedValue(
+        teamAgentRow({ scope: 'GLOBAL', teamId: null })
+      );
+      mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 });
+      mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
+      mockPrisma.pluginEnablement.findMany.mockResolvedValue([]);
+      const refs = { skillRefs: [{ skillId: SKILL, sortOrder: 0 }] };
+      mockPrisma.skill.findMany.mockResolvedValue(projected('OK'));
+      expect((await app.inject(globalPut(refs))).statusCode).toBe(200);
+      expect(mockPrisma.pluginEnablement.findMany).not.toHaveBeenCalled();
+      mockPrisma.skill.findMany.mockResolvedValue(projected('DISABLED'));
+      const res = await app.inject(globalPut(refs));
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('SKILL_PLUGIN_DISABLED');
+      await app.close();
+    });
   });
 
   it('refuses a profile listed twice', async () => {

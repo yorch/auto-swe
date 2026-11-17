@@ -248,7 +248,7 @@ const MAX_BOUND_AGENT_LINEAGES = 500;
  */
 export async function boundAgentsForProfile(
   prisma: PrismaClient,
-  profile: { id: string; name: string },
+  profile: { id: string; name: string; status?: string },
   opts: { teamId?: string } = {}
 ): Promise<HarnessProfileBoundAgent[]> {
   const rows = await runUnscoped(
@@ -332,11 +332,13 @@ export async function boundAgentsForProfile(
       )
     ).map((e) => e.teamId)
   );
+  const disabled = profile.status !== undefined && profile.status !== 'OK';
   return current
     .map((c) => ({
       key: c.key,
       scope: c.scope,
-      stranded: c.scope === 'TEAM' && (c.teamId === null || !enabledTeams.has(c.teamId)),
+      stranded:
+        disabled || (c.scope === 'TEAM' && (c.teamId === null || !enabledTeams.has(c.teamId))),
       teamId: c.teamId,
       version: c.version,
     }))

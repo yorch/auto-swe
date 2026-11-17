@@ -168,6 +168,8 @@ export type PluginDecision =
       profileId: string;
       /** The stored version whose content hash equals the bundle's. */
       version: number;
+      /** The profile's latest version: what an agent bound by name actually runs. */
+      latestVersion: number;
       disabled: boolean;
     }
   | { action: 'conflict'; plan: PluginPlan };
@@ -187,7 +189,7 @@ export async function decidePlugins(
   for (const plan of plans) {
     const { name, contentHash } = plan.plugin;
     const rows = await db.harnessProfile.findMany({
-      select: { id: true, name: true, status: true },
+      select: { id: true, latestVersion: true, name: true, status: true },
       where: { name: { equals: name, mode: 'insensitive' } },
     });
     if (rows.length === 0) {
@@ -206,6 +208,7 @@ export async function decidePlugins(
       out.push({
         action: 'reuse',
         disabled: exact.status !== 'OK',
+        latestVersion: exact.latestVersion,
         plan,
         profileId: exact.id,
         version: version.version,
@@ -215,6 +218,21 @@ export async function decidePlugins(
     }
   }
   return out;
+}
+
+/** The profile version an agent bound to this plugin runs: always the latest approved one. */
+export const boundVersionOf = (d: Exclude<PluginDecision, { action: 'conflict' }>): number =>
+  d.action === 'create' ? 1 : d.latestVersion;
+
+/**
+ * A reused plugin whose matching version is not the profile's latest: the bundle verified an older
+ * snapshot, but binding is by name and so the agent runs the latest approved version. Null otherwise.
+ */
+export function reuseVersionWarning(d: PluginDecision): string | null {
+  if (d.action !== 'reuse' || d.version === d.latestVersion) {
+    return null;
+  }
+  return `plugin '${d.plan.plugin.name}': the profile's latest version (${d.latestVersion}) differs from the referenced version (${d.version}); the agent will use the latest approved version`;
 }
 
 /** Names of the plugins whose profile exists with different content. */
@@ -366,6 +384,8 @@ export interface AppliedPlugin {
   name: string;
   profileId: string;
   version: number;
+  /** The version an agent bound to the plugin runs (the profile's latest). */
+  boundVersion: number;
   plan: PluginPlan;
 }
 
@@ -405,6 +425,10 @@ export async function applyPlugins(
     const { plugin, read } = d.plan;
     let profileId: string;
     let version: number;
+    const versionWarning = reuseVersionWarning(d);
+    if (versionWarning) {
+      warnings.push(versionWarning);
+    }
     if (d.action === 'create') {
       const { host, owner, path, ref, repo } = read.location;
       const { manifest } = read.validated;
@@ -448,7 +472,14 @@ export async function applyPlugins(
         );
       }
     }
-    applied.push({ action: d.action, name: plugin.name, plan: d.plan, profileId, version });
+    applied.push({
+      action: d.action,
+      boundVersion: boundVersionOf(d),
+      name: plugin.name,
+      plan: d.plan,
+      profileId,
+      version,
+    });
     warnings.push(...(await bindPlugin(tx, plugin, opts.installedById)));
   }
   return { applied, warnings };
@@ -534,6 +565,10 @@ export async function projectInstalledPlugins(
   const warnings: string[] = [];
   for (const a of applied) {
     const { read } = a.plan;
+    // A reused older snapshot is never projected over the latest one's skills.
+    if (a.version !== a.boundVersion) {
+      continue;
+    }
     try {
       const res = await projectPluginSkills(db, {
         commitSha: read.sha,

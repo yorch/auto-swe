@@ -33,6 +33,7 @@ import {
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
 import { ModelSpecSchema } from '../lib/modelSpecSchema.js';
+import { skillAttachError } from '../lib/pluginSkillPolicy.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { checkTeamAccess } from '../lib/skillAssignmentService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -403,6 +404,13 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       if (profileError) {
         return sendError(reply, 400, profileError.code, profileError.message);
       }
+      const skillError = await skillAttachError(fastify.prisma, body.skillRefs, {
+        scope: body.scope,
+        teamId: body.teamId,
+      });
+      if (skillError) {
+        return sendError(reply, 400, skillError.code, skillError.message);
+      }
       const key: AgentScopeKey = {
         channelId: body.channelId,
         key: body.key,
@@ -485,6 +493,14 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       );
       if (profileError) {
         return sendError(reply, 400, profileError.code, profileError.message);
+      }
+      const skillError = await skillAttachError(fastify.prisma, request.body.skillRefs, {
+        currentAgentId: current.id,
+        scope: current.scope,
+        teamId: current.teamId,
+      });
+      if (skillError) {
+        return sendError(reply, 400, skillError.code, skillError.message);
       }
       const credentialError = await pinnedCredentialError(
         fastify.prisma,
@@ -701,6 +717,13 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       if (profileError) {
         return sendError(reply, 400, profileError.code, profileError.message);
       }
+      const skillError = await skillAttachError(fastify.prisma, request.body.skillRefs, {
+        scope: 'TEAM',
+        teamId: request.params.id,
+      });
+      if (skillError) {
+        return sendError(reply, 400, skillError.code, skillError.message);
+      }
       const mcpError = await validateMcpConnectionRef(
         fastify.prisma,
         request.body.mcpConnectionId,
@@ -804,6 +827,14 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       );
       if (profileError) {
         return sendError(reply, 400, profileError.code, profileError.message);
+      }
+      const skillError = await skillAttachError(fastify.prisma, request.body.skillRefs, {
+        currentAgentId: current.id,
+        scope: current.scope,
+        teamId: current.teamId,
+      });
+      if (skillError) {
+        return sendError(reply, 400, skillError.code, skillError.message);
       }
       const credentialError = await pinnedCredentialError(
         fastify.prisma,

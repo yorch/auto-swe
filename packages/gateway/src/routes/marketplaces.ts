@@ -236,8 +236,10 @@ export const marketplaceRoutes: FastifyPluginAsync<MarketplaceRouteOptions> = as
   const exists = (reply: FastifyReply) =>
     sendError(reply, 409, 'MARKETPLACE_EXISTS', 'This marketplace is already tracked');
 
-  const getSource = (id: string) =>
-    fastify.prisma.marketplaceSource.findUnique({ select: SOURCE_SELECT, where: { id } });
+  const getSource = (
+    id: string,
+    db: Pick<typeof fastify.prisma, 'marketplaceSource'> = fastify.prisma
+  ) => db.marketplaceSource.findUnique({ select: SOURCE_SELECT, where: { id } });
 
   /** The catalog with, per entry, the profile already approved from it and whether its name is taken. */
   async function catalogDto(
@@ -534,7 +536,8 @@ export const marketplaceRoutes: FastifyPluginAsync<MarketplaceRouteOptions> = as
             entityId: existing.id,
             entityType: 'MarketplaceSource',
           });
-          return getSource(existing.id);
+          // Through `tx`: another connection cannot see the uncommitted pin.
+          return getSource(existing.id, tx);
         });
         if (!updated) {
           return sendError(
