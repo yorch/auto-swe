@@ -31,6 +31,12 @@ export interface NormalizedCall {
   response: {
     content: NormalizedPart[];
     finishReason?: string;
+    /**
+     * The provider's own figures. Whether `inputTokens` already contains the cached part depends
+     * on the provider: Anthropic reports it WITHOUT `cacheRead`/`cacheWrite`; OpenAI (chat and
+     * responses) and Google report a total that includes `cacheRead`. Adding the two is right for
+     * one and double-counts for the others.
+     */
     usage?: {
       inputTokens?: number;
       outputTokens?: number;

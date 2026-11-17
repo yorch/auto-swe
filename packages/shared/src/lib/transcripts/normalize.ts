@@ -385,16 +385,28 @@ function openaiFromStream(events: unknown[]): NormalizedCall['response'] | null 
     }
     content.push({ id: t.id ?? '', input, name: t.name ?? '', type: 'tool_call' });
   }
-  const u = usage;
   return {
     content,
     finishReason,
-    usage: u
-      ? {
-          inputTokens: asNumber(u.prompt_tokens),
-          outputTokens: asNumber(u.completion_tokens),
-        }
-      : undefined,
+    usage: openaiChatUsage(usage),
+  };
+}
+
+/**
+ * A chat completions usage object. `prompt_tokens` includes the cached part, which is reported
+ * under `prompt_tokens_details.cached_tokens`.
+ */
+function openaiChatUsage(
+  u: Record<string, unknown> | undefined
+): NormalizedCall['response']['usage'] {
+  if (!u) {
+    return undefined;
+  }
+  const details = u.prompt_tokens_details as Record<string, unknown> | undefined;
+  return {
+    cacheRead: asNumber(details?.cached_tokens),
+    inputTokens: asNumber(u.prompt_tokens),
+    outputTokens: asNumber(u.completion_tokens),
   };
 }
 
@@ -424,12 +436,7 @@ function normalizeOpenAiChat(record: HttpCallLike): NormalizedCall | null {
     response = {
       content: msg ? [...openaiContentParts(msg.content), ...openaiToolCalls(msg.tool_calls)] : [],
       finishReason: asString(choice.finish_reason),
-      usage: u
-        ? {
-            inputTokens: asNumber(u.prompt_tokens),
-            outputTokens: asNumber(u.completion_tokens),
-          }
-        : undefined,
+      usage: openaiChatUsage(u),
     };
   } else {
     response = openaiFromStream(events);
