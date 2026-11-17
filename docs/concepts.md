@@ -208,7 +208,7 @@ these rules:
   for any template. On the template-run route it applies only to a template whose input schema
   declares a string `description`. A request with no Task name and no Description is titled with
   that first line. If the ticket cannot be read, the tracker is unreachable, the ticket is outside
-  `github.trackerAllowedProjectKeys`, or the brief does not satisfy the schema's rules for
+  `tracker.allowedProjectKeys`, or the brief does not satisfy the schema's rules for
   `description`, the launch is refused with `DESCRIPTION_REQUIRED` (the Slack modal asks for a typed
   description instead). Text typed in Description wins over the ticket. An `Idempotency-Key` replay
   compares the typed description, so a blank description matches a blank one. The agent also
@@ -332,7 +332,7 @@ Guided paths build on those pieces:
 
 ## Limitations
 
-- **Jira and Linear reads are unrestricted until an operator sets `github.trackerAllowedProjectKeys`.**
+- **Jira and Linear reads are unrestricted until an operator sets `tracker.allowedProjectKeys`.**
   The default is empty, so any launcher who can reach a repository can read any ticket the platform's
   tracker credential can see, through **Fetch title**, the brief and the worker's ticket read. Once an
   admin lists project keys, a ticket outside them reads as not found, and a Jira or Linear comment or

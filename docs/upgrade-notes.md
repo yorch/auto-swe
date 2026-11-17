@@ -1868,3 +1868,19 @@ list. A run of a team-scoped agent bound to a plugin completes once the plugin i
 and its `agent.plugin_hooks` event records the hook switch the run used.
 
 ---
+
+### Deployments that set `github.trackerAllowedProjectKeys` (`<fixing-commit-sha>`)
+
+**Affected.** Deployments that set `github.trackerAllowedProjectKeys` at any scope. The setting is renamed
+to `tracker.allowedProjectKeys` and moves to a new `tracker` group (Issue tracker). Its behaviour is
+unchanged.
+
+**What changes.** The key is renamed. A migration rewrites the stored setting rows and the permission grants
+that name the old key to the new one, so the list and its grants carry over.
+
+**Actions.** None. No manual step and no environment-variable change is needed.
+
+**Verify.** Open Admin → Platform settings (`/admin/platform-settings`) → Issue tracker. The allowlist
+setting shows the same project keys or team keys the old setting held.
+
+---

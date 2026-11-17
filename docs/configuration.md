@@ -123,6 +123,12 @@ change applies within the settings cache's ~30 s; see
 from a plugin: with it on, a projected skill with a warning is refused and nothing is written for it
 ([harness-profiles.md §13](./harness-profiles.md#13-skill-projection-for-other-runtimes)).
 
+The `tracker` group (labelled Issue tracker) holds `tracker.allowedProjectKeys` (ADMIN-only, overridable at
+`TEAM` and `ORGANIZATION`, default empty): the Jira project keys and Linear team keys a run may read,
+comment on or move. Empty is unrestricted; a non-empty list refuses any ticket whose key it does not name.
+It was previously `tracker.allowedProjectKeys`, and a migration moves stored values and permission
+grants to the new key. The rules, and the Jira and Linear project allowlist, are in section 9.
+
 The check that flags a moved ref on a tracked skill source is a scheduled sweep like the other gateway
 sweeps, so it is environment-only and applied once at gateway startup (a change needs a restart):
 `SKILL_SOURCE_SYNC_ENABLED` (default `true`; it spends one API request per source and changes no skill)
@@ -550,12 +556,12 @@ applies to reads and writes is in [`work-views.md`](./work-views.md).
 ### Jira and Linear project allowlist
 
 Jira and Linear ticket ids name no repository, so the extra-repositories setting above does not
-cover them. `github.trackerAllowedProjectKeys` limits which Jira project keys and Linear team keys
+cover them. `tracker.allowedProjectKeys` limits which Jira project keys and Linear team keys
 a launcher's ticket reads may use:
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `github.trackerAllowedProjectKeys` | `[]` | Jira project keys or Linear team keys (`PAY`, `ENG`), up to 100, compared case-insensitively. Empty is unrestricted: any ticket the platform's tracker credential can see may be read. |
+| `tracker.allowedProjectKeys` | `[]` | Jira project keys or Linear team keys (`PAY`, `ENG`), up to 100, compared case-insensitively. Empty is unrestricted: any ticket the platform's tracker credential can see may be read. |
 
 Only an ADMIN can change it, at `TEAM`, `ORGANIZATION` or globally. The key is parsed from the
 ticket id (`PAY-12` names `PAY`); a ticket id with no parseable key is refused when a list is set,
@@ -733,7 +739,7 @@ an MCP write is held for the launcher's decision.
   those snapshots do not pin execution. A later edit can affect a retry or newly created workspace
   or step in an existing run. Existing proxy registrations retain their registered list until teardown.
 - **A run with no launcher sees only the `GLOBAL` project-key list.**
-  `github.trackerAllowedProjectKeys` resolves at the launching template's team, or, for a template
+  `tracker.allowedProjectKeys` resolves at the launching template's team, or, for a template
   with no team and no repository, at the launcher's own active teams. A run with no launcher (a
   webhook, a schedule, or a service-principal run) has none, so only a `GLOBAL` list reaches it. A
   service principal's connection-less launch with no template team resolves at `GLOBAL` only, in the

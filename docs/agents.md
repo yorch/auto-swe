@@ -1433,7 +1433,12 @@ issue URL, `owner/repo`, a Jira-style key) is not written either and resolves `n
 (`workflow_started` writes nothing on GitHub and reports nothing). `finalizeRun` stores the class on the
 run's `contextSnapshot` as `trackerWriteback: { event, failure }` (`event` is `workflow_completed`
 or `workflow_failed`; a record stored without one reads as `workflow_failed`), and the run page
-shows "The ticket was not updated" with the reason.
+shows "The ticket was not updated" with the reason. The reason names the cause in the
+tracker's own terms. A GitHub write skipped because the ticket is in a repository the run does not
+target reads "the ticket is in a repository this run does not target". A Jira write skipped by the
+project allowlist reads "the ticket's Jira project is not one the operator allows for this run", and a
+Linear write reads the same with "Linear team" in place of "Jira project". A provider the page does not
+recognise keeps neutral wording.
 
 The Jira poller of an automation reads through `fetchIssueOutcome`, which classifies nothing itself:
 it maps the same class to what a poll decides. `not_found` is `refused`, the tracker's final word
