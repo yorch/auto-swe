@@ -547,14 +547,17 @@ export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller:
     {
       annotations: { ...WRITE, title: 'Submit a work request' },
       description:
-        "Submit a work request: the platform's agents implement the ticket in the repository and open a pull request for a person to review and merge. This tool never merges or approves anything. The run launches under YOUR identity, not a service account: it is recorded as launched by you, and where per-user GitHub credentials are enabled it may push branches and open pull requests with your own GitHub token. The description is read by the platform's agents as their instructions. Always the standard budget tier, and you may have only a few runs in flight at once. idempotencyKey is required: use a new random key for each distinct request, and reuse the same key only to retry that same request, which then returns the work request it started instead of starting another. Use list_repositories for repoId. The result carries workRequestId: pass it to cancel_run to stop the run, or to list_runs and get_run to follow it. The run itself appears a moment after the submit, so a list_runs for the work request can be empty at first.",
+        "Submit a work request: the platform's agents implement the ticket in the repository and open a pull request for a person to review and merge. This tool never merges or approves anything. The run launches under YOUR identity, not a service account: it is recorded as launched by you, and where per-user GitHub credentials are enabled it may push branches and open pull requests with your own GitHub token. The description is read by the platform's agents as their instructions; it is optional when the ticket can be read from the issue tracker, and otherwise the call is refused with DESCRIPTION_REQUIRED (nothing is launched). Always the standard budget tier, and you may have only a few runs in flight at once. idempotencyKey is required: use a new random key for each distinct request, and reuse the same key only to retry that same request, which then returns the work request it started instead of starting another. Use list_repositories for repoId. The result carries workRequestId: pass it to cancel_run to stop the run, or to list_runs and get_run to follow it. The run itself appears a moment after the submit, so a list_runs for the work request can be empty at first.",
       inputSchema: z
         .object({
           description: z
             .string()
             .min(1)
             .max(MAX_DESCRIPTION_LENGTH)
-            .describe("What to implement: the instructions the platform's agents will follow"),
+            .optional()
+            .describe(
+              "What to implement: the instructions the platform's agents will follow. Optional when the ticket can be read from the issue tracker; omit it then. Otherwise the call is refused with DESCRIPTION_REQUIRED."
+            ),
           externalTicketId: ExternalTicketIdSchema.describe('The ticket id, such as JIRA-1234'),
           idempotencyKey: z
             .string()
@@ -570,9 +573,11 @@ export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller:
     },
     async (args): Promise<ToolResult> => {
       try {
+        // An omitted description is left out of the body entirely, never sent as '' or null, so the
+        // route reads the ticket and the replay comparison sees it as absent.
         const response = await bridge.post(app, caller, '/api/v1/work-requests', {
           body: {
-            description: args.description,
+            ...(args.description !== undefined ? { description: args.description } : {}),
             externalTicketId: args.externalTicketId,
             repoIds: [args.repoId],
           },
@@ -581,6 +586,11 @@ export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller:
         if (response.status === 409 && errorCode(response.body) === 'WORKFLOW_ALREADY_EXISTS') {
           // Not a failure: this ticket is already being worked on, and nothing was launched.
           return ok(submitOutput.parse({ status: 'already_running' }));
+        }
+        if (response.status === 400 && errorCode(response.body) === 'DESCRIPTION_REQUIRED') {
+          return failure(
+            'The ticket could not be read from the issue tracker, so a description is required. Pass one, or try again later. Nothing was launched.'
+          );
         }
         if (response.status !== 200 && response.status !== 201) {
           return writeFailure(response, 'Repository not found.');

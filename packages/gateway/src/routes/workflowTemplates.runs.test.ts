@@ -92,6 +92,8 @@ interface Harness {
   auditRows: Array<Record<string, unknown>>;
   /** The `where` of every `connection.findFirst` the route made. */
   connectionWheres: unknown[];
+  /** The `where` of every `teamMembership.findMany` the route made. */
+  membershipWheres: unknown[];
   /** Set to make `startRunnableWorkflow` throw. */
   startError?: Error;
 }
@@ -115,6 +117,8 @@ function buildHarness(opts?: {
   stops?: unknown[] | Error;
   /** The row `connection.findFirst` answers; its `where` is kept on `h.connectionWheres`. */
   connection?: unknown;
+  /** The caller's active team memberships (`teamMembership.findMany`); an Error makes it throw. */
+  memberships?: Array<{ teamId: string; team: { orgId: string | null } }> | Error;
 }): Harness {
   let lookups = 0;
   const h: Harness = {
@@ -122,6 +126,7 @@ function buildHarness(opts?: {
     app: Fastify(),
     auditRows: [],
     connectionWheres: [],
+    membershipWheres: [],
     order: [],
     runInputs: [],
     started: [],
@@ -189,6 +194,15 @@ function buildHarness(opts?: {
       delete: async ({ where }: { where: { id: string } }) => {
         h.runInputs = h.runInputs.filter((r) => r.id !== where.id);
         return {};
+      },
+    },
+    teamMembership: {
+      findMany: async ({ where }: { where: unknown }) => {
+        h.membershipWheres.push(where);
+        if (opts?.memberships instanceof Error) {
+          throw opts.memberships;
+        }
+        return opts?.memberships ?? [];
       },
     },
     workflowRun: {
@@ -931,5 +945,97 @@ describe("POST /workflow-templates/:id/runs: a connection-less launch and the te
     const res = await launchTicket(h, 'ENG-7');
     expect(res.statusCode, res.body).toBe(201);
     expect(tracker.keysCtx).toEqual([{}]);
+  });
+
+  describe('with a global template, so the launcher teams apply', () => {
+    it("refuses a ticket outside the launcher's team list, without any fetch", async () => {
+      const h = buildHarness({
+        inputSchema: DESCRIPTION_SCHEMA,
+        memberships: [{ team: { orgId: 'org-1' }, teamId: 'team-1' }],
+      });
+      await h.app.ready();
+      const res = await launchTicket(h, 'ENG-7');
+      expect(res.statusCode, res.body).toBe(400);
+      expect(res.json().error.code).toBe('DESCRIPTION_REQUIRED');
+      expect(tracker.fetchTicket).not.toHaveBeenCalled();
+      expect(h.started).toHaveLength(0);
+      expect(tracker.keysCtx).toContainEqual({ orgId: 'org-1', teamId: 'team-1' });
+    });
+
+    it("builds the brief for a ticket the launcher's team lists", async () => {
+      const h = buildHarness({
+        inputSchema: DESCRIPTION_SCHEMA,
+        memberships: [{ team: { orgId: null }, teamId: 'team-1' }],
+      });
+      await h.app.ready();
+      const res = await launchTicket(h, 'PAY-7');
+      expect(res.statusCode, res.body).toBe(201);
+      expect(tracker.fetchTicket).toHaveBeenCalledTimes(1);
+    });
+
+    it('allows a key any one of the launcher teams lists, and refuses one none lists', async () => {
+      tracker.keysByTeam = { 'team-1': ['PAY'], 'team-2': ['ENG'], 'team-3': [] };
+      const memberships = [
+        { team: { orgId: null }, teamId: 'team-1' },
+        { team: { orgId: null }, teamId: 'team-2' },
+        { team: { orgId: null }, teamId: 'team-3' },
+      ];
+      const h = buildHarness({ inputSchema: DESCRIPTION_SCHEMA, memberships });
+      await h.app.ready();
+      expect((await launchTicket(h, 'ENG-7')).statusCode).toBe(201);
+      expect((await launchTicket(h, 'HR-7')).statusCode).toBe(400);
+    });
+
+    it('resolves at GLOBAL only for a launcher with no team', async () => {
+      const h = buildHarness({ inputSchema: DESCRIPTION_SCHEMA, memberships: [] });
+      await h.app.ready();
+      const res = await launchTicket(h, 'ENG-7');
+      expect(res.statusCode, res.body).toBe(201);
+      expect(tracker.keysCtx).toEqual([{}]);
+    });
+
+    it('refuses the brief when the memberships cannot be read', async () => {
+      const h = buildHarness({
+        inputSchema: DESCRIPTION_SCHEMA,
+        memberships: new Error('db down'),
+      });
+      await h.app.ready();
+      const res = await launchTicket(h, 'PAY-7');
+      expect(res.statusCode, res.body).toBe(400);
+      expect(res.json().error.code).toBe('DESCRIPTION_REQUIRED');
+      expect(tracker.fetchTicket).not.toHaveBeenCalled();
+    });
+
+    it("leaves a template team's own list in charge when the template has a team", async () => {
+      const h = buildHarness({
+        inputSchema: DESCRIPTION_SCHEMA,
+        memberships: [{ team: { orgId: null }, teamId: 'team-other' }],
+        teamOrgId: 'org-1',
+      });
+      await h.app.ready();
+      expect((await launchTicket(h, 'PAY-7')).statusCode).toBe(201);
+      expect(h.membershipWheres).toHaveLength(0);
+    });
+
+    it('counts only active teams of active organizations as the launcher teams', async () => {
+      const h = buildHarness({ inputSchema: DESCRIPTION_SCHEMA, memberships: [] });
+      await h.app.ready();
+      expect((await launchTicket(h, 'ENG-7')).statusCode).toBe(201);
+      expect(h.membershipWheres).toEqual([
+        { team: { isActive: true, organization: { isActive: true } }, userId: 'user-1' },
+      ]);
+    });
+
+    it("lets the launcher's team list override GLOBAL, which is not unioned in", async () => {
+      tracker.keysByTeam = { '': ['ENG'], 'team-1': ['PAY'] };
+      const h = buildHarness({
+        inputSchema: DESCRIPTION_SCHEMA,
+        memberships: [{ team: { orgId: null }, teamId: 'team-1' }],
+      });
+      await h.app.ready();
+      // The mock resolves a team context to that team's list only, as the real cascade does.
+      expect((await launchTicket(h, 'ENG-7')).statusCode).toBe(400);
+      expect((await launchTicket(h, 'PAY-7')).statusCode).toBe(201);
+    });
   });
 });

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   createProvider: vi.fn(),
+  launcher: vi.fn(async () => null as string | null),
+  memberships: vi.fn(async (..._args: unknown[]) => [] as unknown[]),
   readIssue: vi.fn(),
   resolveSetting: vi.fn(),
   resolveTracker: vi.fn(),
@@ -15,6 +17,7 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     contextSnapshot: { findUnique: mocks.snapshotFind, upsert: mocks.snapshotUpsert },
     runInput: { findUnique: mocks.runInputFind },
+    teamMembership: { findMany: mocks.memberships },
     workflowRun: { findFirst: mocks.workflowRunFind },
   },
 }));
@@ -27,6 +30,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveGitHubBaseUrl: async () => 'https://github.com',
   resolveIssueTrackerConfig: mocks.resolveTracker,
 }));
+vi.mock('./runLauncher.js', () => ({ currentRunLauncherId: () => mocks.launcher() }));
 vi.mock('@auto-swe/shared/lib/integrations/registry', () => ({
   createIssueTrackerProvider: mocks.createProvider,
 }));
@@ -492,6 +496,20 @@ describe('loadTicket', () => {
       expect((await loadTicket({ workRequestId: 'wr-1' }))?.source).toBe('tracker');
     });
 
+    it('does not look up the launch for a Jira run whose repository has a team, even if it would fail', async () => {
+      mocks.resolveTracker.mockResolvedValue({ baseUrl: null, provider: 'jira' });
+      mocks.workflowRunFind.mockRejectedValue(new Error('db down'));
+      mocks.launcher.mockRejectedValue(new Error('db down'));
+      mocks.resolveSetting.mockImplementation(async (key: string, ctx: { teamId?: string }) =>
+        key === 'github.trackerAllowedProjectKeys' && ctx.teamId === 'team-r' ? ['PAY'] : []
+      );
+      mocks.runInputFind.mockResolvedValue(run('PAY-7', { teamId: 'team-r' }));
+      expect((await loadTicket({ workRequestId: 'wr-1' }))?.source).toBe('tracker');
+      expect(mocks.workflowRunFind).not.toHaveBeenCalled();
+      expect(mocks.launcher).not.toHaveBeenCalled();
+      expect(mocks.memberships).not.toHaveBeenCalled();
+    });
+
     describe('Jira project keys on a run with no git repository', () => {
       beforeEach(() => {
         mocks.resolveTracker.mockResolvedValue({ baseUrl: null, provider: 'jira' });
@@ -516,6 +534,51 @@ describe('loadTicket', () => {
       it('reads a listed key', async () => {
         mocks.runInputFind.mockResolvedValue(run('PAY-7', null));
         expect((await loadTicket({ workRequestId: 'wr-1' }))?.source).toBe('tracker');
+      });
+
+      describe('and a global template, launched by a platform user', () => {
+        beforeEach(() => {
+          mocks.workflowRunFind.mockResolvedValue({
+            launchedById: 'requester-not-launcher',
+            template: { team: null, teamId: null },
+          });
+          mocks.launcher.mockResolvedValue('user-1');
+          mocks.memberships.mockResolvedValue([{ team: { orgId: 'org-9' }, teamId: 'team-9' }]);
+        });
+
+        it("applies the launcher's team list (read through currentRunLauncherId)", async () => {
+          mocks.runInputFind.mockResolvedValue(run('ENG-7', null));
+          expect(await loadTicket({ workRequestId: 'wr-1' })).toBeNull();
+          expect(mocks.readIssue).not.toHaveBeenCalled();
+          expect(mocks.memberships).toHaveBeenCalledWith(
+            expect.objectContaining({ where: expect.objectContaining({ userId: 'user-1' }) })
+          );
+          mocks.runInputFind.mockResolvedValue(run('PAY-7', null));
+          expect((await loadTicket({ workRequestId: 'wr-1' }))?.source).toBe('tracker');
+        });
+
+        it('resolves at GLOBAL only for a run with no launcher', async () => {
+          mocks.launcher.mockResolvedValue(null);
+          mocks.runInputFind.mockResolvedValue(run('ENG-7', null));
+          expect((await loadTicket({ workRequestId: 'wr-1' }))?.source).toBe('tracker');
+          expect(mocks.memberships).not.toHaveBeenCalled();
+        });
+
+        it('resolves at GLOBAL only for a launcher with no teams', async () => {
+          mocks.memberships.mockResolvedValue([]);
+          mocks.runInputFind.mockResolvedValue(run('ENG-7', null));
+          expect((await loadTicket({ workRequestId: 'wr-1' }))?.source).toBe('tracker');
+        });
+
+        it('refuses when the launcher or their teams cannot be read', async () => {
+          mocks.runInputFind.mockResolvedValue(run('PAY-7', null));
+          mocks.launcher.mockRejectedValue(new Error('db down'));
+          expect(await loadTicket({ workRequestId: 'wr-1' })).toBeNull();
+          mocks.launcher.mockResolvedValue('user-1');
+          mocks.memberships.mockRejectedValue(new Error('db down'));
+          expect(await loadTicket({ workRequestId: 'wr-1' })).toBeNull();
+          expect(mocks.readIssue).not.toHaveBeenCalled();
+        });
       });
 
       it('refuses when the launching template cannot be read', async () => {

@@ -16,6 +16,7 @@ import { recordEffect, recordTrackerSync } from '../lib/effectLedger.js';
 import { buildPrUiEvidence } from '../lib/prUiEvidence.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { requestedBaseBranch, resolveRunBaseBranch } from '../lib/runBaseBranch.js';
+import { currentRunLauncherId } from '../lib/runLauncher.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import {
   DraftPullRequestUnsupportedError,
@@ -327,6 +328,7 @@ async function doCreateOrUpdatePullRequest(
     } as const;
     let wrote: boolean | undefined;
     const synced = await syncTrackerOnEvent(trackerEvent, trackerConfig, {
+      launcher: currentRunLauncherId,
       onOutcome: (outcome) => {
         wrote = outcome.wrote;
       },

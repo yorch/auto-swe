@@ -626,3 +626,57 @@ describe('workflow launch task name and ticket', () => {
     expect(await screen.findByText(/first line of the description, or the ticket/)).toBeTruthy();
   });
 });
+
+describe('workflow launch warnings', () => {
+  function warningGateway(warnings?: { code: string; message: string }[]) {
+    setupFetchMock({
+      'GET /api/v1/repositories': () => ({ data: [], meta: { total: 0 } }),
+      'GET /api/v1/workflow-templates/template-1': () => ({
+        data: { ...template, activeVersionSpec: null },
+      }),
+      'POST /api/v1/workflow-templates/template-1/runs': () => ({
+        data: {
+          temporalWorkflowId: 'wf-1',
+          workRequestId: 'request-1',
+          ...(warnings ? { warnings } : {}),
+        },
+      }),
+    });
+  }
+  async function launchForm(onLaunched: (id: string) => void) {
+    render(withQuery(<WorkflowLaunchForm onLaunched={onLaunched} template={template} />));
+    fireEvent.change(screen.getByLabelText(/Description/), { target: { value: 'Brief' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Review workflow' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Launch workflow' }));
+  }
+
+  it('holds the form on a notice until Continue, with the launch locked', async () => {
+    warningGateway([
+      { code: 'DESCRIPTION_INJECTION_SUSPECTED', message: 'Looks like <b>instructions</b>' },
+    ]);
+    const launched = vi.fn();
+    await launchForm(launched);
+    expect(await screen.findByText('Your workflow has started.')).toBeTruthy();
+    expect(screen.getByText(/The run was not blocked/)).toBeTruthy();
+    // Untrusted text: shown literally, never parsed as markup.
+    expect(screen.getByText('Looks like <b>instructions</b>')).toBeTruthy();
+    expect(document.querySelector('li b')).toBeNull();
+    const next = screen.getByRole('button', { name: 'Continue to request' });
+    await waitFor(() => expect(document.activeElement).toBe(next));
+    expect(launched).not.toHaveBeenCalled();
+    expect(
+      (screen.getByRole('button', { name: 'Launch workflow' }) as HTMLButtonElement).disabled
+    ).toBe(true);
+    fireEvent.click(next);
+    expect(launched).toHaveBeenCalledTimes(1);
+    expect(launched).toHaveBeenCalledWith('request-1');
+  });
+
+  it.each([[undefined], [[]]])('navigates at once when warnings are %j', async (warnings) => {
+    warningGateway(warnings);
+    const launched = vi.fn();
+    await launchForm(launched);
+    await waitFor(() => expect(launched).toHaveBeenCalledWith('request-1'));
+    expect(screen.queryByText('Your workflow has started.')).toBeNull();
+  });
+});

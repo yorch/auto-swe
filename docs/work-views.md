@@ -439,7 +439,7 @@ ticket is fetched or stored, the submission still succeeds and the run continues
 description, and a fixed line is logged with ids only. Jira and Linear ids name no repository and are
 not checked against one. A Jira or Linear read is checked against the project keys an operator lists
 in `github.trackerAllowedProjectKeys` ([`configuration.md` §9](./configuration.md#jira-and-linear-project-allowlist)),
-which is unrestricted while the list is empty. Writes to those trackers are not checked against it.
+which is unrestricted while the list is empty. Jira and Linear writes (a run's lifecycle comment or status transition, and `postTicketComment`) are checked against the same list, and a write to a ticket outside it is skipped.
 
 The check runs on the repository the ticket id names, and the request then stays there. The
 provider follows a redirect only while its target is still under

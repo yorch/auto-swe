@@ -552,15 +552,24 @@ and so is a key that is not listed. A refused ticket reads as not found. Resolut
 repositories a request targets: each repository's team and organization is read, and the lists are
 unioned, so a key is allowed when any non-empty list names it. The request is unrestricted only when
 every list is empty. A launch with no git repository resolves the setting at the launching
-template's team and organization, and at `GLOBAL` scope only when the template is global and has no
-team. If a list cannot be read, or a stored `TEAM`, `ORGANIZATION` or `GLOBAL` value no longer
+template's team and organization. A template with no team resolves it at the launcher's own teams: a
+person's memberships, counting only active teams of active organizations, and their lists are
+unioned. Those team lists override `GLOBAL`; `GLOBAL` is not unioned in, so a person on team `T`
+listing `PAY` while `GLOBAL` lists `ENG` is held to `PAY`, and a person with no such team resolves
+at `GLOBAL`. In the worker the launcher is the run's `launchedById`, and a run with no launcher (a
+webhook, a schedule, a service-principal run) resolves at `GLOBAL` only. The launch contexts are
+loaded only when no targeted repository supplies a team of its own; a lookup that is needed and
+fails refuses the read or write. If a list cannot be read, or a stored `TEAM`, `ORGANIZATION` or `GLOBAL` value no longer
 satisfies the setting's schema, the read is refused, so the check fails closed (the generic resolver
 would otherwise fall through to the next, wider tier).
 
 The check applies to the launch-time ticket brief, `GET /api/v1/tickets/preview`, the worker's
-ticket read for a run, and the ticket read made when a submission is enriched. It does not apply to
-Jira and Linear writes (comments and status transitions), and it does not apply to the GitHub issue
-tracker, which keeps its own rules above. Reads and writes are described in
+ticket read for a run, the ticket read made when a submission is enriched, and Jira and Linear
+writes: a run's lifecycle comment or status transition, and the worker's `postTicketComment`. A write
+to a ticket outside the list is skipped (`out_of_scope`, or `posted: false`) and the run continues.
+It does not apply to the PRD flow's creation of epics and stories, which create issues in an
+operator-supplied project, nor to the Jira poller automations, which carry their own project
+allowlist. It does not apply to the GitHub issue tracker, which keeps its own rules above. Reads and writes are described in
 [`work-views.md`](./work-views.md).
 
 ---
@@ -712,10 +721,16 @@ an MCP write is held for the launcher's decision.
   not frozen per run. Template-code audit snapshots include baseline and team entries at sign-off;
   those snapshots do not pin execution. A later edit can affect a retry or newly created workspace
   or step in an existing run. Existing proxy registrations retain their registered list until teardown.
-- **A global template's connection-less launch sees only the `GLOBAL` project-key list.**
-  `github.trackerAllowedProjectKeys` resolves at the launching template's team, and a global
-  template has none, so a list set only at `TEAM` or `ORGANIZATION` does not restrict such a launch.
-  Set the list globally to cover it.
+- **A run with no launcher sees only the `GLOBAL` project-key list.**
+  `github.trackerAllowedProjectKeys` resolves at the launching template's team, or, for a template
+  with no team and no repository, at the launcher's own active teams. A run with no launcher (a
+  webhook, a schedule, or a service-principal run) has none, so only a `GLOBAL` list reaches it. A
+  service principal's connection-less launch with no template team resolves at `GLOBAL` only, in the
+  gateway and the worker alike, never at the principal's own team. Set the list globally to cover
+  such runs.
+- **A member of an organization who is in none of its teams resolves at `GLOBAL`.** Launch contexts
+  are teams, not organizations, so an organization-scope list does not reach a launch with no
+  repository and no template team unless the launcher belongs to a team of that organization.
 
 - **Conventional titles carry no scope and no breaking-change marker.** The title is `type: summary`.
   A scope such as `fix(gateway):` or a `!` would come from model or ticket text and change what

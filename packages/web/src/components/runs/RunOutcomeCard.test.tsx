@@ -181,7 +181,8 @@ describe('a spilled result text', () => {
         'No transition to a status named like the one the platform looks for was found on the ticket (the project may name its statuses differently), so nothing was written.',
       not_found:
         'The ticket could not be read from the tracker (access was refused, or it does not exist).',
-      out_of_scope: 'The ticket is in a repository this run does not target.',
+      out_of_scope:
+        'The ticket is outside what the operator allows this run to touch (a repository it does not target, or a project that is not allowed).',
       rate_limited:
         'The ticket could not be read from the tracker (the tracker is limiting requests).',
       redirect:

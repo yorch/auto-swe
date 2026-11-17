@@ -5,7 +5,7 @@ import type { TicketFailureClass } from '@auto-swe/shared/lib/integrations/ticke
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import {
   isTrackerReadInScope,
-  loadRunLaunchTeam,
+  loadRunLaunchContexts,
   RUN_TRACKER_SCOPE_SELECT,
   runTrackerScope,
   TRACKER_READ_OUT_OF_SCOPE,
@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { logWarn } from './activityLog.js';
 import type { AgentTracer } from './agentTracer.js';
 import { neutraliseFenceText } from './fenceText.js';
+import { currentRunLauncherId } from './runLauncher.js';
 
 const MAX_TITLE_CHARS = 300;
 const MAX_DESCRIPTION_CHARS = 6_000;
@@ -274,6 +275,10 @@ export async function readTicket(args: {
       input.connection?.organizationName && input.connection.repoName
         ? { owner: input.connection.organizationName, repo: input.connection.repoName }
         : undefined;
+    // A run with no repository and no template team reads the project allowlist at its launcher's
+    // own active teams (`currentRunLauncherId`, never `requestedById`), each team's list overriding
+    // GLOBAL; no launcher (every service principal) resolves at GLOBAL only. The lookup runs only
+    // when no targeted repository supplies a team, so one that would go unused cannot refuse.
     // On GitHub the ticket id names its own `owner/repo`, so it is read only from a repository
     // the run targets, on the tracker's host, and before any request is made. A refusal looks
     // like a missing ticket (`not_found`, which already covers a ticket the token may not see):
@@ -282,7 +287,8 @@ export async function readTicket(args: {
       !(await isTrackerReadInScope(
         config,
         input.externalTicketId,
-        async () => runTrackerScope(input, await loadRunLaunchTeam(workRequestId)),
+        async () =>
+          runTrackerScope(input, () => loadRunLaunchContexts(workRequestId, currentRunLauncherId)),
         defaultRepo
       ))
     ) {

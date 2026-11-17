@@ -83,6 +83,17 @@ describe('lookupTrackerTicket', () => {
     expect(scopeCalls).toEqual([{ launchTeam, repos: [] }]);
   });
 
+  it("passes the launcher's teams to the scope when the template has none", async () => {
+    resolveIssueTrackerConfig.mockResolvedValue({ provider: 'jira' });
+    fetchTicket.mockResolvedValue({ title: 'T' });
+    const launchTeam = [
+      { orgId: 'o1', teamId: 't1' },
+      { orgId: null, teamId: 't2' },
+    ];
+    await lookupTrackerTicket('PAY-1', null, undefined, { launchTeam });
+    expect(scopeCalls).toEqual([{ launchTeam, repos: [] }]);
+  });
+
   it('passes the retry and time budget to the fetch', async () => {
     resolveIssueTrackerConfig.mockResolvedValue({ provider: 'jira' });
     fetchTicket.mockResolvedValue({ title: 'T' });

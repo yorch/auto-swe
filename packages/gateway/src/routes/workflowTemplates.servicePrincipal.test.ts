@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -8,6 +8,46 @@ vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
 }));
 
 import { workflowTemplateRoutes } from './workflowTemplates.js';
+
+// Below the ticket lookup, so the tracker tests run the real scope check against stand-in lists.
+// Everything passes through to the real modules unless a test sets `tracker.config`.
+const tracker = vi.hoisted(() => ({
+  config: null as unknown,
+  fetchTicket: vi.fn(),
+  keysByTeam: {} as Record<string, string[]>,
+  keysCtx: [] as unknown[],
+}));
+vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@auto-swe/shared/lib/systemConfig')>();
+  return {
+    ...original,
+    resolveGitHubBaseUrl: async () => 'https://github.com',
+    resolveIssueTrackerConfig: async () => tracker.config ?? original.resolveIssueTrackerConfig(),
+  };
+});
+vi.mock('../lib/issueTrackerClient.js', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  fetchTicket: tracker.fetchTicket,
+}));
+vi.mock('@auto-swe/shared/config', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@auto-swe/shared/config')>();
+  return {
+    ...original,
+    resolveEffectiveSettings: async (
+      ...args: Parameters<typeof original.resolveEffectiveSettings>
+    ) =>
+      tracker.config
+        ? { overrideAt: () => undefined, settings: [] }
+        : original.resolveEffectiveSettings(...args),
+    resolveSetting: async (...args: Parameters<typeof original.resolveSetting>) => {
+      if (args[0] === 'github.trackerAllowedProjectKeys' && tracker.config) {
+        tracker.keysCtx.push(args[1]);
+        return tracker.keysByTeam[args[1]?.teamId ?? ''] ?? [];
+      }
+      return original.resolveSetting(...args);
+    },
+  };
+});
 
 // A callback's URL is sealed with the config envelope.
 process.env.CONFIG_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
@@ -29,6 +69,8 @@ interface State {
   templateTeamId: string | null;
   orgOverBudget: boolean;
   runsLastDay: number;
+  /** The template's input schema; absent means none. */
+  inputSchema?: unknown;
 }
 
 function harness(s: State) {
@@ -47,7 +89,7 @@ function harness(s: State) {
   const tpl = () => ({
     activeVersion: 3,
     id: TEMPLATE_ID,
-    inputSchema: null,
+    inputSchema: s.inputSchema ?? null,
     name: 'Release notes',
     team: s.templateTeamId
       ? {
@@ -192,7 +234,23 @@ function harness(s: State) {
       payload: { callback: { url }, payload: { description: 'write the notes' } },
       url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
     });
-  return { app, run, runInputs, runWithCallback, started, startedRequests, templateWheres };
+  const runTicket = (ticketId: string) =>
+    app.inject({
+      headers: { authorization: 'Bearer ats_service' },
+      method: 'POST',
+      payload: { payload: { ticketId } },
+      url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
+    });
+  return {
+    app,
+    run,
+    runInputs,
+    runTicket,
+    runWithCallback,
+    started,
+    startedRequests,
+    templateWheres,
+  };
 }
 
 describe('POST /workflow-templates/:id/runs with a service principal token', () => {
@@ -323,6 +381,56 @@ describe('POST /workflow-templates/:id/runs with a service principal token', () 
     });
     expect(res.statusCode).toBe(401);
     expect(res.json().error.code).toBe('SERVICE_TOKEN_NOT_ALLOWED');
+    await h.app.close();
+  });
+});
+
+describe("a service principal's ticket brief on a global template", () => {
+  beforeEach(() => {
+    tracker.fetchTicket.mockReset();
+    tracker.fetchTicket.mockResolvedValue({
+      description: 'Body',
+      labels: [],
+      raw: {},
+      status: 'To Do',
+      title: 'A ticket',
+      url: 'https://acme.atlassian.net/browse/X',
+    });
+    tracker.keysCtx.length = 0;
+    // The principal's own team lists PAY; GLOBAL lists none.
+    tracker.keysByTeam = { [SP_TEAM]: ['PAY'] };
+    tracker.config = {
+      allowPrivateNetwork: false,
+      apiToken: 'tok',
+      baseUrl: 'https://acme.atlassian.net',
+      email: 'bot@acme.com',
+      provider: 'jira',
+    };
+  });
+
+  afterEach(() => {
+    tracker.config = null;
+    tracker.keysByTeam = {};
+  });
+
+  const state = (): State => ({
+    inputSchema: {
+      properties: { description: { type: 'string' }, ticketId: { type: 'string' } },
+      type: 'object',
+    },
+    orgOverBudget: false,
+    runsLastDay: 0,
+    templateIds: [TEMPLATE_ID],
+    templateTeamId: null,
+  });
+
+  it("resolves at GLOBAL only, so its own team's list neither narrows nor widens the read", async () => {
+    // The worker resolves this run at GLOBAL (a principal is no launcher); the gateway agrees.
+    const h = harness(state());
+    const res = await h.runTicket('ENG-7');
+    expect(res.statusCode, res.body).toBe(201);
+    expect(tracker.fetchTicket).toHaveBeenCalledTimes(1);
+    expect(tracker.keysCtx).toEqual([{}]);
     await h.app.close();
   });
 });

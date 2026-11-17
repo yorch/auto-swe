@@ -72,15 +72,39 @@ export interface TrackerLaunchTeam {
   orgId?: string | null;
 }
 
-function launchTeamCtx(team: TrackerLaunchTeam | null | undefined): SettingResolveCtx | null {
-  if (!team?.teamId) {
-    return null;
+/**
+ * The team contexts a launch with no git repository resolves the project-key allowlist at: one
+ * team (the launching template's), or a list (the launcher's own teams, when the template has
+ * none). A list is read like several repositories: every context is read and the non-empty lists
+ * are unioned; each context's own list overrides GLOBAL (GLOBAL is not unioned in). An empty list
+ * is GLOBAL only.
+ */
+export type TrackerLaunchScope = TrackerLaunchTeam | ReadonlyArray<TrackerLaunchTeam> | null;
+
+/**
+ * A {@link TrackerLaunchScope}, or a function that loads one. The function is called only when a
+ * targeted repository supplies no team context of its own, so a run that targets a repository
+ * with a team never pays for (or fails on) the launch lookup.
+ */
+export type TrackerLaunchSource = TrackerLaunchScope | (() => Promise<TrackerLaunchScope>);
+
+function launchTeamCtxs(scope: TrackerLaunchScope | undefined): SettingResolveCtx[] {
+  const teams: ReadonlyArray<TrackerLaunchTeam | null> = !scope
+    ? []
+    : Array.isArray(scope)
+      ? scope
+      : [scope as TrackerLaunchTeam];
+  const ctxs: SettingResolveCtx[] = [];
+  for (const team of teams) {
+    if (team?.teamId) {
+      const ctx: SettingResolveCtx = { teamId: team.teamId };
+      if (team.orgId) {
+        ctx.orgId = team.orgId;
+      }
+      ctxs.push(ctx);
+    }
   }
-  const ctx: SettingResolveCtx = { teamId: team.teamId };
-  if (team.orgId) {
-    ctx.orgId = team.orgId;
-  }
-  return ctx;
+  return ctxs;
 }
 
 /**
@@ -121,26 +145,37 @@ export async function resolveTrackerIssueRepos(ctx: SettingResolveCtx): Promise<
 
 /**
  * The Jira/Linear project-key allowlist across the contexts a request targets (each repository's
- * team and organization; with no repository or a repository naming no team, the launching
- * template's team and organization when it has one, else GLOBAL, so a global list still applies
- * to a connection-less launch). Rule: every context is read; the result is the
- * union of the NON-EMPTY lists, so a key is allowed iff some non-empty list names it, and the
+ * team and organization; with no repository or a repository naming no team, the launch's own
+ * team contexts: the launching template's team and organization when it has one, else the
+ * launcher's own teams, else GLOBAL, so a global list still applies to a connection-less launch;
+ * a context's own list overrides GLOBAL, which is not unioned in). Rule: every context is read;
+ * the result is the union of the NON-EMPTY lists, so a key is allowed iff some non-empty list names it, and the
  * request is unrestricted (empty result) only when ALL lists are empty. An unreadable list is
  * reported, never treated as empty: the caller refuses. That includes a stored row that fails the
  * setting's schema, which the generic resolver would silently degrade to the next (wider) tier.
  */
 async function resolveProjectKeyScope(
   repos: ReadonlyArray<TrackerScopeRepo | undefined>,
-  launchTeam?: TrackerLaunchTeam | null
+  launchTeam?: TrackerLaunchSource
 ): Promise<{ allowedProjectKeys: string[]; projectKeysUnreadable?: true }> {
-  const fallback = launchTeamCtx(launchTeam) ?? {};
-  const ctxs = new Map<string, SettingResolveCtx>();
-  for (const repo of repos.length > 0 ? repos : [undefined]) {
-    const ctx = repoSettingCtx(repo) ?? fallback;
-    ctxs.set(`${ctx.teamId ?? ''}|${ctx.orgId ?? ''}`, ctx);
-  }
   const definition = SETTING_DEFINITIONS['github.trackerAllowedProjectKeys'];
   try {
+    const ctxs = new Map<string, SettingResolveCtx>();
+    // The launch's own contexts are loaded lazily, and only when some targeted repository names
+    // no team: a lookup that would not be used neither costs a query nor refuses the read. One
+    // that is needed and fails lands in the catch below, so the list is unreadable (fail closed).
+    let fallback: SettingResolveCtx[] | null = null;
+    for (const repo of repos.length > 0 ? repos : [undefined]) {
+      const repoCtx = repoSettingCtx(repo);
+      if (!repoCtx && fallback === null) {
+        const loaded = typeof launchTeam === 'function' ? await launchTeam() : launchTeam;
+        const launchCtxs = launchTeamCtxs(loaded);
+        fallback = launchCtxs.length > 0 ? launchCtxs : [{}];
+      }
+      for (const ctx of repoCtx ? [repoCtx] : (fallback ?? [])) {
+        ctxs.set(`${ctx.teamId ?? ''}|${ctx.orgId ?? ''}`, ctx);
+      }
+    }
     const lists = await Promise.all(
       [...ctxs.values()].map(async (ctx) => {
         // The resolver degrades a stored value that fails its schema to the next tier, which here
@@ -262,7 +297,7 @@ export function isGitHubTicketInScope(
  */
 export async function repoTrackerScope(
   repos: ReadonlyArray<TrackerScopeRepo>,
-  launchTeam?: TrackerLaunchTeam | null
+  launchTeam?: TrackerLaunchSource
 ): Promise<TrackerRepoScope> {
   return {
     extraRepos: [
@@ -298,18 +333,42 @@ export async function isTrackerReadInScope(
     if (!gated) {
       return isGitHubTicketInScope(ticketId, config.baseUrl, scope, defaultRepo);
     }
-    if (scope.projectKeysUnreadable) {
-      return false;
-    }
-    const allowed = scope.allowedProjectKeys ?? [];
-    if (allowed.length === 0) {
-      return true;
-    }
-    const key = parseTrackerProjectKey(ticketId)?.toLowerCase();
-    return key !== undefined && allowed.some((entry) => entry.toLowerCase() === key);
+    return !scope.projectKeysUnreadable && isProjectKeyAllowed(scope, ticketId);
   } catch {
     return false;
   }
+}
+
+/**
+ * Does the project-key allowlist of a loaded scope admit this Jira/Linear ticket id? Empty:
+ * unrestricted; else the id's project key must be listed, case-insensitively, and an unparseable id
+ * is refused. The caller has already ruled out `projectKeysUnreadable`.
+ */
+export function isProjectKeyAllowed(
+  scope: Pick<TrackerRepoScope, 'allowedProjectKeys'>,
+  ticketId: string
+): boolean {
+  const allowed = scope.allowedProjectKeys ?? [];
+  if (allowed.length === 0) {
+    return true;
+  }
+  const key = parseTrackerProjectKey(ticketId)?.toLowerCase();
+  return key !== undefined && allowed.some((entry) => entry.toLowerCase() === key);
+}
+
+/**
+ * May a tracker WRITE (a comment or a status transition) touch this ticket? The same decision as
+ * {@link isTrackerReadInScope} with no default repository, which a write never resolves a bare
+ * number against: Jira and Linear by `github.trackerAllowedProjectKeys` (same key parsing, union
+ * rule and fail-closed handling), GitHub by the repositories the run targets. A named wrapper so
+ * a write path reads as a write path; there is one rule, and a change to it changes both.
+ */
+export function isTrackerWriteInScope(
+  config: { provider: string | null; baseUrl?: string | null },
+  ticketId: string,
+  loadScope: () => Promise<TrackerRepoScope>
+): Promise<boolean> {
+  return isTrackerReadInScope(config, ticketId, loadScope);
 }
 
 /** The line a refused GitHub-tracker read logs. Fixed: it never carries ticket text. */
@@ -345,7 +404,7 @@ export async function runTrackerScope(
     connection: (TrackerScopeRepo & { type: string }) | null;
     knowledgeRepoSources: unknown;
   },
-  launchTeam?: TrackerLaunchTeam | null
+  launchTeam?: TrackerLaunchSource
 ): Promise<TrackerRepoScope> {
   const repos: TrackerScopeRepo[] = [];
   if (run.connection?.type === 'git_repo') {
@@ -381,24 +440,75 @@ export async function runTrackerScope(
 }
 
 /**
- * The team and organization of the template a run input was launched from (its latest run), for
- * {@link runTrackerScope}'s `launchTeam`. Null when the run has no template team (a global
- * template) or no run exists yet. Throws on a database failure; the scope loaders' callers treat
- * that as a refusal.
+ * The platform user who launched the run, as a value or a way to read it. A worker passes
+ * `currentRunLauncherId` (the launcher of the current execution); `null` is "no launcher" and
+ * resolves at GLOBAL only. Omitted, the newest run row of the request names it, for a caller
+ * (a webhook) that is not inside an execution.
  */
-export async function loadRunLaunchTeam(runInputId: string): Promise<TrackerLaunchTeam | null> {
+export type RunLauncherRef = string | null | (() => Promise<string | null>);
+
+/**
+ * The teams a user belongs to, with each team's organization, as launch contexts. Only ACTIVE
+ * teams whose organization is active count (the one rule every launch-context lookup applies); a
+ * member of an organization with no team of their own has no context here and resolves at GLOBAL.
+ * Throws on a database failure; the scope loaders' callers treat that as a refusal.
+ */
+export async function loadUserTrackerTeams(userId: string): Promise<TrackerLaunchTeam[]> {
+  const prisma = await db();
+  const rows = await runUnscoped(
+    "the launcher's own memberships, to resolve the tracker project allowlist at their teams",
+    ['TeamMembership'],
+    () =>
+      prisma.teamMembership.findMany({
+        select: { team: { select: { orgId: true } }, teamId: true },
+        where: { team: { isActive: true, organization: { isActive: true } }, userId },
+      })
+  );
+  return rows.map((row) => ({ orgId: row.team.orgId ?? null, teamId: row.teamId }));
+}
+
+/**
+ * The contexts a run with no git repository resolves the project-key allowlist at: the team of
+ * the template it was launched from (its latest run), else the launcher's own active teams, else
+ * none (GLOBAL only: a global template launched by no platform user, which is every service
+ * principal's launch, since `launchedById` names users only). The launcher's team lists override
+ * GLOBAL where they set one; GLOBAL is not unioned in. `launcher` is {@link RunLauncherRef}.
+ * Throws on a database failure; the scope loaders' callers treat that as a refusal.
+ */
+export async function loadRunLaunchContexts(
+  runInputId: string,
+  launcher?: RunLauncherRef
+): Promise<TrackerLaunchTeam[]> {
   const prisma = await db();
   const run = await prisma.workflowRun.findFirst({
     orderBy: { startedAt: 'desc' },
-    select: { template: { select: { team: { select: { orgId: true } }, teamId: true } } },
+    select: {
+      launchedById: true,
+      template: { select: { team: { select: { orgId: true } }, teamId: true } },
+    },
     where: { workRequestId: runInputId },
   });
   const template = run?.template;
-  return template?.teamId ? { orgId: template.team?.orgId ?? null, teamId: template.teamId } : null;
+  if (template?.teamId) {
+    return [{ orgId: template.team?.orgId ?? null, teamId: template.teamId }];
+  }
+  const launcherId =
+    launcher === undefined
+      ? (run?.launchedById ?? null)
+      : typeof launcher === 'function'
+        ? await launcher()
+        : launcher;
+  return launcherId ? loadUserTrackerTeams(launcherId) : [];
 }
 
-/** {@link runTrackerScope} for a run input by id; no repositories when there is no such row. */
-export async function loadRunTrackerScope(runInputId: string): Promise<TrackerRepoScope> {
+/**
+ * {@link runTrackerScope} for a run input by id; no repositories when there is no such row. The
+ * launch contexts are {@link loadRunLaunchContexts}, with `opts.launcher` as the launcher.
+ */
+export async function loadRunTrackerScope(
+  runInputId: string,
+  opts?: { launcher?: RunLauncherRef }
+): Promise<TrackerRepoScope> {
   const prisma = await db();
   const run = await prisma.runInput.findUnique({
     select: RUN_TRACKER_SCOPE_SELECT,
@@ -412,7 +522,8 @@ export async function loadRunTrackerScope(runInputId: string): Promise<TrackerRe
       repos: [],
     };
   }
-  return runTrackerScope(run, await loadRunLaunchTeam(runInputId));
+  // Lazy: the launch contexts are read only if a targeted repository names no team.
+  return runTrackerScope(run, () => loadRunLaunchContexts(runInputId, opts?.launcher));
 }
 
 /** The line a refused GitHub-tracker sync logs. Fixed: it never carries ticket text. */
@@ -426,7 +537,21 @@ export const TRACKER_SYNC_NO_REPOSITORY =
 /** The line a failed tracker sync logs. Fixed: it never carries an error or ticket text. */
 export const TRACKER_SYNC_FAILED = 'Tracker sync failed; continuing';
 
+/** A scope that carries only the project-key allowlist at GLOBAL: a Jira/Linear write naming no run. */
+async function globalProjectKeyScope(): Promise<TrackerRepoScope> {
+  return { instanceBaseUrl: '', repos: [], ...(await resolveProjectKeyScope([undefined])) };
+}
+
+/** The line a Jira/Linear sync logs when the ticket's project is not allowed. Fixed: never ticket text. */
+export const TRACKER_SYNC_PROJECT_OUT_OF_SCOPE =
+  "Tracker sync skipped: the ticket's project is not one the operator allows for this run";
+
 export interface SyncTrackerOptions {
+  /**
+   * The run's launcher, for a Jira/Linear write on a run with no repository and no template team
+   * (see {@link RunLauncherRef}). A worker passes `currentRunLauncherId`.
+   */
+  launcher?: RunLauncherRef;
   /**
    * The run's `RunInput.id`. On the GitHub tracker the write goes only to a repository this run
    * targets; with no id there is no such repository, and nothing is written.
@@ -492,6 +617,29 @@ async function syncTrackerOutcome(
           { event: event.type, runInputId: opts.runInputId ?? null }
         );
         return { failure: outOfScope ? 'out_of_scope' : 'no_repository', wrote: false };
+      }
+    }
+    // Jira and Linear ids name no repository, so a write is held to the project allowlist a read
+    // is: a run launched for a ticket outside its team's projects writes nothing to it. A scope
+    // that cannot be loaded or read is a fault, not a refusal: it writes nothing either (fail
+    // closed) but resolves `unknown`, so a transient failure never reads as a policy decision.
+    if (config.provider === 'jira' || config.provider === 'linear') {
+      const scope = opts.runInputId
+        ? await loadRunTrackerScope(opts.runInputId, { launcher: opts.launcher })
+        : await globalProjectKeyScope();
+      if (scope.projectKeysUnreadable) {
+        (opts.warn ?? console.warn)(TRACKER_SYNC_FAILED, {
+          event: event.type,
+          runInputId: opts.runInputId ?? null,
+        });
+        return { failure: 'unknown', wrote: false };
+      }
+      if (!isProjectKeyAllowed(scope, event.issueId)) {
+        (opts.warn ?? console.warn)(TRACKER_SYNC_PROJECT_OUT_OF_SCOPE, {
+          event: event.type,
+          runInputId: opts.runInputId ?? null,
+        });
+        return { failure: 'out_of_scope', wrote: false };
       }
     }
     const provider = createIssueTrackerProvider(config, { log: opts.log });

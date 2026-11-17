@@ -221,7 +221,9 @@ these rules:
   row for the launch records which patterns matched (their labels, never the text) as
   `descriptionScan`. On the template-run route and `POST /work-requests`, a non-empty match adds
   `warnings: [{ code: 'DESCRIPTION_INJECTION_SUSPECTED', message }]` to the `201` response; the
-  CLI prints the message to stderr, and Slack records the audit only.
+  CLI prints the message to stderr, the web launch form stays on screen with a success notice and
+  the messages as plain text until the person chooses **Continue to request**, and Slack records the
+  audit only.
 - **Fetch title** beside the Ticket ID calls `GET /api/v1/tickets/preview` with the ticket ID and
   the connection ID. It shows the ticket's title, status and URL, and nothing else from the ticket.
   It answers `503 TRACKER_UNAVAILABLE` when the tracker could not be read.
@@ -333,14 +335,15 @@ Guided paths build on those pieces:
 - **Jira and Linear reads are unrestricted until an operator sets `github.trackerAllowedProjectKeys`.**
   The default is empty, so any launcher who can reach a repository can read any ticket the platform's
   tracker credential can see, through **Fetch title**, the brief and the worker's ticket read. Once an
-  admin lists project keys, a ticket outside them reads as not found. The list does not restrict
-  Jira or Linear writes, such as comments and transitions.
-- **A launch of a global template without a repository applies only the GLOBAL allowed-projects
-  value, and the preview needs a reachable repository.** A launch with no git repository resolves
-  the list at the launching template's team and organization, but a global template has no team, so
-  a list set only at TEAM or ORGANIZATION does not reach such a launch. **Fetch title** is offered
-  only once a repository is chosen.
+  admin lists project keys, a ticket outside them reads as not found, and a Jira or Linear comment or
+  transition on it is skipped. The PRD flow's creation of epics and stories is not checked against
+  the list.
+- **A run with no launcher resolves the allowed-projects list at GLOBAL only.** A launch with no git
+  repository resolves the list at the launching template's team and organization. A template with
+  no team resolves it at the launcher's own active teams, whose lists override GLOBAL (GLOBAL is
+  not unioned in), and at GLOBAL for a launcher with no team. A run with no launcher (a webhook, a
+  schedule, or a service-principal run) has none, so a list set only at TEAM or ORGANIZATION does
+  not reach it. **Fetch title** is offered only once a repository is chosen.
 - **The Description scan is advisory and pattern-based.** It applies only the INJECTION patterns, not
-  the EXFILTRATION set, which matches ordinary prose such as URLs. The web form does not show its
-  warning. A reworded instruction can pass it, so it is not a security boundary, and the typed text
+  the EXFILTRATION set, which matches ordinary prose such as URLs. A reworded instruction can pass it, so it is not a security boundary, and the typed text
   still reaches the agent as the brief in the user message, unchanged.

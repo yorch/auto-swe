@@ -374,7 +374,11 @@ describe('the write tools', () => {
       const tools = JSON.parse(res.body).result.tools as Array<{
         annotations: Record<string, unknown>;
         description: string;
-        inputSchema: { additionalProperties?: boolean; properties: Record<string, unknown> };
+        inputSchema: {
+          additionalProperties?: boolean;
+          properties: Record<string, unknown>;
+          required?: string[];
+        };
         name: string;
       }>;
       const submit = tools.find((t) => t.name === 'submit_work_request');
@@ -387,6 +391,12 @@ describe('the write tools', () => {
         'repoId',
       ]);
       expect(submit?.inputSchema.additionalProperties).toBe(false);
+      // The description is optional: the route reads the ticket when it is omitted.
+      expect(submit?.inputSchema.required).toEqual(
+        expect.arrayContaining(['externalTicketId', 'idempotencyKey', 'repoId'])
+      );
+      expect(submit?.inputSchema.required).not.toContain('description');
+      expect(submit?.description).toContain('optional when the ticket can be read');
       expect(cancel?.annotations).toMatchObject({ destructiveHint: true, readOnlyHint: false });
       expect(cancel?.inputSchema.additionalProperties).toBe(false);
       // The disclosure: the run is the caller's, and may use the caller's own GitHub token.
@@ -445,6 +455,35 @@ describe('the write tools', () => {
         status: 'started',
         workRequestId: WR_ID,
       });
+    });
+
+    it('accepts an omitted description and does not forward it', async () => {
+      const s = await setup();
+      s.route.body = { data: { workflowIds: [WF_ID], workRequestId: WR_ID } };
+      const { description: _description, ...withoutDescription } = submitArgs;
+      const { json } = await s.callTool(s.writeToken, 'submit_work_request', {
+        ...withoutDescription,
+      });
+      expect(json.result.isError).toBeUndefined();
+      expect(json.result.structuredContent).toEqual({ status: 'started', workRequestId: WR_ID });
+      expect(s.sent).toHaveLength(1);
+      expect(s.sent[0]?.body).toEqual({ externalTicketId: 'JIRA-1', repoIds: [REPO_ID] });
+      expect(s.sent[0]?.body).not.toHaveProperty('description');
+      expect(s.sent[0]?.idempotencyKey).toBe(KEY);
+    });
+
+    it('reports DESCRIPTION_REQUIRED as a fixed message and launches nothing', async () => {
+      const s = await setup();
+      s.route.status = 400;
+      s.route.body = { error: { code: 'DESCRIPTION_REQUIRED', message: INJECTION } };
+      const { description: _description, ...withoutDescription } = submitArgs;
+      const { json } = await s.callTool(s.writeToken, 'submit_work_request', {
+        ...withoutDescription,
+      });
+      expect(json.result.isError).toBe(true);
+      expect(json.result.content[0].text).toContain('description is required');
+      expect(json.result.content[0].text).toContain('Nothing was launched');
+      expect(JSON.stringify(json.result)).not.toContain('IGNORE');
     });
 
     it('reports a replay of the same key as already_submitted with the original ids', async () => {

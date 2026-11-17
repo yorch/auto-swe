@@ -1,4 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+// No allowlist is stored: the project-key setting reads as empty (unrestricted) without a database.
+vi.mock('../config/index.js', () => ({
+  resolveEffectiveSettings: async () => ({ overrideAt: () => undefined, settings: [] }),
+  resolveSetting: async () => [],
+}));
+
 import type { ResolvedIssueTrackerConfig } from './integrations/registry.js';
 import { syncTrackerOnEvent } from './trackerSync.js';
 
