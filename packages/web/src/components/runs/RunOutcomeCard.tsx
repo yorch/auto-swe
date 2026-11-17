@@ -62,7 +62,10 @@ export const TICKET_UNAVAILABLE_LINES = new Map<string, string>([
   // Write-only, so unreachable here (the card only renders these for a read failure): a refused
   // read is reported as `not_found`, and a read never produces the next three. Kept so the table
   // stays aligned with the class set, with standalone text that does not claim a failed read.
-  ['out_of_scope', 'The ticket is in a repository this run does not target.'],
+  [
+    'out_of_scope',
+    'The ticket is outside what the operator allows this run to touch (a repository it does not target, or a project that is not allowed).',
+  ],
   [
     'no_repository',
     'The platform could not resolve a repository from the ticket id, so it did not write to it.',

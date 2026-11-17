@@ -8,7 +8,7 @@ import {
 } from '@auto-swe/shared/lib/workspaceProviders';
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { KnowledgeBasePicker } from '@/components/knowledgeBases/KnowledgeBasePicker';
 import { LaunchCardHeader, ReviewList } from '@/components/requests/LaunchSteps';
 import { SampleTaskButton } from '@/components/requests/SampleTaskButton';
@@ -145,8 +145,17 @@ export function WorkflowLaunchForm({
   const references = referenceSelections[referenceKey] ?? {};
   const [attempted, setAttempted] = useState(false);
   const lock = useRef(false);
+  const noticeRef = useRef<HTMLDivElement>(null);
+  // Set when the run started but the gateway attached advisory warnings: the form stays on
+  // screen so the person reads them before leaving.
+  const [notice, setNotice] = useState<{ requestId: string; messages: string[] } | null>(null);
   const launch = useRunTemplate(template.id);
   const { data: connections = [] } = useRepositories();
+  useEffect(() => {
+    if (notice) {
+      noticeRef.current?.querySelector('button')?.focus();
+    }
+  }, [notice]);
   const failure = launch.isError ? describeLaunchError(launch.error) : null;
   const unchanged = failure?.runAnyway ? failure : null;
   const sampleField = pickSampleField(schema);
@@ -221,7 +230,15 @@ export function WorkflowLaunchForm({
         ...egressPolicyFor(networkAccess),
         ...(acknowledgeUnchanged ? { acknowledgeUnchanged } : {}),
       });
-      onLaunched(result.workRequestId);
+      if (result.warnings?.length) {
+        // The lock stays set: the run exists, so no second launch is possible from here.
+        setNotice({
+          messages: [...new Set(result.warnings.map((warning) => warning.message))],
+          requestId: result.workRequestId,
+        });
+      } else {
+        onLaunched(result.workRequestId);
+      }
     } catch {
       lock.current = false;
     }
@@ -237,6 +254,26 @@ export function WorkflowLaunchForm({
         stage={review ? 'review' : 'details'}
         title={review ? 'Review and launch' : 'Task details'}
       />
+      {notice && (
+        <div className="space-y-3">
+          <Alert variant="success">Your workflow has started.</Alert>
+          <Alert title="Check the description" variant="warning">
+            <ul className="list-disc space-y-1 pl-4">
+              {notice.messages.map((message) => (
+                <li key={message}>{message}</li>
+              ))}
+            </ul>
+            <p className="mt-2">
+              The run was not blocked. Review the description if it contains text you did not write.
+            </p>
+            <div className="mt-3" ref={noticeRef}>
+              <Button onClick={() => onLaunched(notice.requestId)} variant="primary">
+                Continue to request
+              </Button>
+            </div>
+          </Alert>
+        </div>
+      )}
       {launch.isError &&
         (unchanged ? (
           <Alert title={unchanged.title}>

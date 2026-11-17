@@ -59,7 +59,7 @@ describe('TrackerWritebackNote', () => {
     render(
       <TrackerWritebackNote contextSnapshot={snapshot('out_of_scope', 'workflow_completed')} />
     );
-    expect(screen.getByText(/repository this run does not target/i)).toBeTruthy();
+    expect(screen.getByText(/outside what the operator allows this run to touch/i)).toBeTruthy();
   });
 
   it('does not hedge about the status for out_of_scope: nothing was written', () => {

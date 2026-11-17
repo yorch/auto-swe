@@ -30,7 +30,7 @@ export const TRACKER_WRITE_LINES = new Map<string, string>([
   ['empty', 'there was nothing to post'],
   [
     'out_of_scope',
-    'the ticket is in a repository this run does not target, so the platform did not write to it',
+    'the ticket is outside what the operator allows this run to touch (a repository it does not target, or a project that is not allowed), so the platform did not write to it',
   ],
   [
     'no_repository',
