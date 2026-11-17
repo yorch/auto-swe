@@ -143,7 +143,7 @@ import { isOnboardingDraftAgent } from '../lib/onboardingEgress.js';
 import { QUESTIONS, resumeInputFor } from '../lib/pauseResumeFixtures.js';
 import { restoreWorkingTree, snapshotWorkingTree } from '../lib/pauseSnapshot.js';
 import { runAgent } from './runAgent.js';
-import { runAgentNode } from './runAgentNode.js';
+import { inputsToMessage, runAgentNode } from './runAgentNode.js';
 import { createWorkspace } from './workspace.js';
 
 const mockedResolveSpec = vi.mocked(resolveAgentSpec);
@@ -1278,5 +1278,17 @@ describe('runAgentNode', () => {
         expect(failure).toMatchObject({ nonRetryable: true, type: 'NEEDS_INPUT_RESTORE_FAILED' });
       });
     });
+  });
+});
+
+describe('inputsToMessage', () => {
+  it('sends a lone string input bare and drops its key', () => {
+    expect(inputsToMessage({ goal: 'Write the guide' })).toBe('Write the guide');
+  });
+
+  it('sends a chained agent only the fixed key and the prior output', () => {
+    expect(inputsToMessage({ prior: { object: undefined, text: 'analysis' } })).toBe(
+      '{"prior":{"text":"analysis"}}'
+    );
   });
 });

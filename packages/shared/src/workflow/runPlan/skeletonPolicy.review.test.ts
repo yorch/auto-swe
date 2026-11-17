@@ -97,7 +97,7 @@ describe('M1: the transition cap is shared by the whole walk', () => {
   it('passes loops that leave the core its share (positive control)', () => {
     const raw = plan((r) => {
       r.nodes.research = { ...r.nodes.research, next: 'spin' };
-      spin(r, 'spin', 20, 'validate');
+      spin(r, 'spin', 20, 'gatherTicket');
       r.nodes.waitForHumanMerge = { ...r.nodes.waitForHumanMerge, onReceive: 'spinPost' };
       spin(r, 'spinPost', 20, 'commitLesson');
     });
@@ -108,7 +108,12 @@ describe('M1: the transition cap is shared by the whole walk', () => {
 describe('M2: what the run returns is what a human reviewed (output-only)', () => {
   const hidden = (r: RawSpec): void => {
     r.nodes.draft = { ...r.nodes.draft, next: 'hidden' };
-    r.nodes.hidden = { agentRef: 'contentWriter', next: 'reviewDraft', type: 'agent' };
+    r.nodes.hidden = {
+      agentRef: 'contentWriter',
+      inputs: { goal: { from: 'request.description' } },
+      next: 'reviewDraft',
+      type: 'agent',
+    };
     r.nodes.done = {
       result: { text: { from: 'nodes.hidden.output' } },
       status: 'SUCCESS',
@@ -125,6 +130,7 @@ describe('M2: what the run returns is what a human reviewed (output-only)', () =
       r.nodes.draft = { ...r.nodes.draft, next: 'hidden' };
       r.nodes.hidden = {
         agentRef: 'contentWriter',
+        inputs: { goal: { from: 'request.description' } },
         next: 'reviewDraft',
         storeAs: 'context.scratch.text',
         type: 'agent',
@@ -186,7 +192,12 @@ describe('M2: what the run returns is what a human reviewed (output-only)', () =
   it('passes two agents when a review shows each (positive control)', () => {
     const raw = outputOnly((r) => {
       r.nodes.reviewDraft = { ...r.nodes.reviewDraft, onSubmit: 'second' };
-      r.nodes.second = { agentRef: 'contentWriter', next: 'reviewSecond', type: 'agent' };
+      r.nodes.second = {
+        agentRef: 'contentWriter',
+        inputs: { goal: { from: 'request.description' } },
+        next: 'reviewSecond',
+        type: 'agent',
+      };
       r.nodes.reviewSecond = {
         contentFrom: 'nodes.second.output',
         onSubmit: 'done',
@@ -239,7 +250,12 @@ describe('M2: what the run returns is what a human reviewed (output-only)', () =
         title: 'Approve',
         type: 'humanApproval',
       };
-      r.nodes.late = { agentRef: 'contentWriter', next: 'done', type: 'agent' };
+      r.nodes.late = {
+        agentRef: 'contentWriter',
+        inputs: { goal: { from: 'request.description' } },
+        next: 'done',
+        type: 'agent',
+      };
     });
     expect(codesOf(raw, 'output-only')).not.toEqual([]);
   });
@@ -258,16 +274,12 @@ describe('M2: what the run returns is what a human reviewed (output-only)', () =
 describe('L1: the review is judged against what validation extracted', () => {
   const validated = (edit: (r: RawSpec) => void): RawSpec =>
     plan((r) => {
-      r.nodes.validate = { ...r.nodes.validate, next: 'keep' };
-      r.nodes.keep = {
-        next: 'implement',
-        type: 'set',
-        values: {
-          'context.successCriteria': { default: [], from: 'nodes.validate.output.successCriteria' },
-        },
-      };
       edit(r);
     });
+  // Routes the shipped phase's last step through a hostile `keep` node instead of the canonical one.
+  const viaKeep = (r: RawSpec): void => {
+    r.nodes.setSuccessCriteria = { ...r.nodes.setSuccessCriteria, next: 'keep' };
+  };
 
   it('passes the criteria copied from validate.output.successCriteria (positive control)', () => {
     expect(codesOf(validated(() => {}))).toEqual([]);
@@ -275,6 +287,7 @@ describe('L1: the review is judged against what validation extracted', () => {
 
   it('refuses the criteria copied from another field of the validation (repro: ambiguities)', () => {
     const raw = validated((r) => {
+      viaKeep(r);
       r.nodes.keep = {
         next: 'implement',
         type: 'set',
@@ -292,6 +305,7 @@ describe('L1: the review is judged against what validation extracted', () => {
     });
     expect(codesOf(stored)).toContain('CONTEXT_WRITE_DENIED');
     const whole = validated((r) => {
+      viaKeep(r);
       r.nodes.keep = {
         next: 'implement',
         type: 'set',
@@ -304,16 +318,13 @@ describe('L1: the review is judged against what validation extracted', () => {
   it('takes the ticket from the gatherer text field only', () => {
     const gathered = (from: string): RawSpec =>
       plan((r) => {
-        r.entry = 'gather';
-        r.nodes.gather = { next: 'setTicket', step: 'gatherTicketContext', type: 'step' };
         r.nodes.setTicket = {
-          next: 'research',
-          type: 'set',
+          ...r.nodes.setTicket,
           values: { 'context.ticket': { default: '', from } },
         };
       });
-    expect(codesOf(gathered('nodes.gather.output.text'))).toEqual([]);
-    expect(codesOf(gathered('nodes.gather.output.unavailableReason'))).toContain(
+    expect(codesOf(gathered('nodes.gatherTicket.output.text'))).toEqual([]);
+    expect(codesOf(gathered('nodes.gatherTicket.output.unavailableReason'))).toContain(
       'CONTEXT_WRITE_DENIED'
     );
   });
@@ -324,7 +335,7 @@ describe('L1: the review is judged against what validation extracted', () => {
       r.nodes.research = { ...r.nodes.research, next: 'route' };
       r.nodes.route = {
         expr: 'context.scratch.skip == true',
-        onFalse: 'validate',
+        onFalse: 'gatherTicket',
         onTrue: 'implement',
         type: 'cond',
       };
@@ -332,7 +343,6 @@ describe('L1: the review is judged against what validation extracted', () => {
     expect(codesOf(branch)).toContain('VALIDATE_MISSING');
     const none = plan((r) => {
       r.nodes.research = { ...r.nodes.research, next: 'implement' };
-      delete r.nodes.validate;
     });
     expect(codesOf(none)).toContain('VALIDATE_MISSING');
     const startsInCore = plan((r) => {
@@ -341,16 +351,58 @@ describe('L1: the review is judged against what validation extracted', () => {
     expect(codesOf(startsInCore)).toContain('VALIDATE_MISSING');
   });
 
+  it('refuses a free cond that skips the validate phase entry (VALIDATE_ENTRY_BYPASSED)', () => {
+    // onTrue goes straight to `validate`, past the gather and the actionability stop.
+    const skipFirst = plan((r) => {
+      r.nodes.research = { ...r.nodes.research, next: 'route' };
+      r.nodes.route = {
+        expr: 'context.scratch.skip == true',
+        onFalse: 'gatherTicket',
+        onTrue: 'validate',
+        type: 'cond',
+      };
+    });
+    expect(codesOf(skipFirst)).toContain('VALIDATE_ENTRY_BYPASSED');
+    // The same shape toward any later phase node.
+    const skipSet = plan((r) => {
+      r.nodes.research = { ...r.nodes.research, next: 'route' };
+      r.nodes.route = {
+        expr: 'context.scratch.skip == true',
+        onFalse: 'gatherTicket',
+        onTrue: 'setTicket',
+        type: 'cond',
+      };
+    });
+    expect(codesOf(skipSet)).toContain('VALIDATE_ENTRY_BYPASSED');
+    // Positive controls: both branches through the entry, and the plain plan.
+    expect(codesOf(plan(() => {}))).not.toContain('VALIDATE_ENTRY_BYPASSED');
+    const both = plan((r) => {
+      r.nodes.research = { ...r.nodes.research, next: 'route' };
+      r.nodes.route = {
+        expr: 'context.scratch.skip == true',
+        onFalse: 'gatherTicket',
+        onTrue: 'gatherTicket',
+        type: 'cond',
+      };
+    });
+    expect(codesOf(both)).not.toContain('VALIDATE_ENTRY_BYPASSED');
+  });
+
   it('passes a validation that sits behind a branch both ways lead through (positive control)', () => {
     const raw = plan((r) => {
       r.nodes.research = { ...r.nodes.research, next: 'route' };
       r.nodes.route = {
         expr: 'context.scratch.deep == true',
-        onFalse: 'validate',
+        onFalse: 'gatherTicket',
         onTrue: 'deep',
         type: 'cond',
       };
-      r.nodes.deep = { agentRef: 'productAnalyst', next: 'validate', type: 'agent' };
+      r.nodes.deep = {
+        agentRef: 'productAnalyst',
+        inputs: { goal: { from: 'request.description' } },
+        next: 'gatherTicket',
+        type: 'agent',
+      };
     });
     expect(codesOf(raw)).toEqual([]);
   });
@@ -372,7 +424,11 @@ describe('L2: the merge lesson is not skippable after the merge', () => {
 
   it('refuses a post-merge node with no next, which the interpreter ends SUCCESS', () => {
     const raw = hooked((r) => {
-      r.nodes.after = { agentRef: 'contentWriter', type: 'agent' };
+      r.nodes.after = {
+        agentRef: 'contentWriter',
+        inputs: { goal: { from: 'request.description' } },
+        type: 'agent',
+      };
     });
     expect(codesOf(raw)).toContain('POST_ENDS_SUCCESS');
   });
@@ -394,6 +450,7 @@ describe('L2: the merge lesson is not skippable after the merge', () => {
     const raw = hooked((r) => {
       r.nodes.after = {
         agentRef: 'contentWriter',
+        inputs: { goal: { from: 'request.description' } },
         next: 'commitLesson',
         onFailure: { status: 'SUCCESS' },
         type: 'agent',
@@ -404,7 +461,12 @@ describe('L2: the merge lesson is not skippable after the merge', () => {
 
   it('passes a post-merge region that returns to the lesson, and one that ends FAILED (controls)', () => {
     const returns = hooked((r) => {
-      r.nodes.after = { agentRef: 'contentWriter', next: 'commitLesson', type: 'agent' };
+      r.nodes.after = {
+        agentRef: 'contentWriter',
+        inputs: { goal: { from: 'request.description' } },
+        next: 'commitLesson',
+        type: 'agent',
+      };
     });
     expect(codesOf(returns)).toEqual([]);
     const fails = hooked((r) => {
@@ -427,7 +489,13 @@ describe('L3: a free node cannot fake the dashboard status', () => {
         r.nodes.research = { ...r.nodes.research, status };
       } else {
         r.nodes.waitForHumanMerge = { ...r.nodes.waitForHumanMerge, onReceive: 'after' };
-        r.nodes.after = { agentRef: 'contentWriter', next: 'commitLesson', status, type: 'agent' };
+        r.nodes.after = {
+          agentRef: 'contentWriter',
+          inputs: { goal: { from: 'request.description' } },
+          next: 'commitLesson',
+          status,
+          type: 'agent',
+        };
       }
     });
 

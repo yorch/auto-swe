@@ -79,6 +79,12 @@ interface PlanNode {
   step: string | null;
   marker: string;
   region: string;
+  agentRef?: string | null;
+  /** Binding source paths only; `from` is null for a value that is not a plain path. */
+  inputs?: Array<{ key: string; from: string | null; hasDefault?: boolean }>;
+  writes?: string[];
+  feedsImplementer?: boolean;
+  message?: string;
 }
 interface PlanWarning {
   source?: string;
@@ -415,6 +421,41 @@ function usd(n: number | null | undefined): string {
 }
 
 /** The plan as a human outline. The spec itself is never printed here. */
+/** Where an input is read from, in words. Server text is cleaned of control characters. */
+function describeSource(from: string | null): string {
+  if (from === null) {
+    return 'a fixed value';
+  }
+  if (from === 'request.description') {
+    return 'the goal';
+  }
+  const output = /^nodes\.([^.]+)\.output$/.exec(from);
+  return output ? `the output of "${clean(output[1] ?? '')}"` : clean(from);
+}
+
+function describeNodeAction(n: PlanNode): string | null {
+  if (n.type !== 'agent' || !n.agentRef) {
+    return null;
+  }
+  const sources = (n.inputs ?? []).map((i) => describeSource(i.from));
+  return sources.length > 0
+    ? `runs agent ${clean(n.agentRef)} on ${sources.join(' and ')}`
+    : `runs agent ${clean(n.agentRef)}`;
+}
+
+/** What a step node reads, with "has fallback value" where a default exists (never its value). */
+function describeNodeReads(n: PlanNode): string | null {
+  if (n.type !== 'step' || !n.inputs || n.inputs.length === 0) {
+    return null;
+  }
+  return `reads ${n.inputs
+    .map(
+      (i) =>
+        `${clean(i.key)} from ${describeSource(i.from)}${i.hasDefault ? ' (has fallback value)' : ''}`
+    )
+    .join(', ')}`;
+}
+
 function printPlan(plan: PlanView): void {
   const w = (s: string) => process.stdout.write(`${s}\n`);
   w(`Plan ${plan.id}`);
@@ -442,6 +483,20 @@ function printPlan(plan: PlanView): void {
   );
   for (const n of plan.nodes) {
     w(`  [${pad(n.marker, 9).trimEnd()}] ${clean(n.id)}  ${clean(n.step ?? n.type ?? '')}`);
+    const action = describeNodeAction(n);
+    if (action) {
+      w(`      ${action}`);
+    }
+    const reads = describeNodeReads(n);
+    if (reads) {
+      w(`      ${reads}`);
+    }
+    if (n.message) {
+      w(`      message: ${clean(n.message)}`);
+    }
+    if (n.feedsImplementer) {
+      w('      >> Output becomes guidance for the implementer');
+    }
   }
   w('');
   const cost = plan.cost;

@@ -19,7 +19,12 @@ approves it on the full preview.
    plan, persisted once, for its owner only.
 3. **Preview.** The owner sees the stated goal, the node outline with each node marked as
    platform-enforced, added by the platform or generated for this request, the cost estimate with
-   the steps that could not be priced, warnings and the pinned agent versions.
+   the steps that could not be priced, warnings and the pinned agent versions. An agent node
+   reads "runs agent X on the goal" or "on the output of Y", and a node whose output reaches the
+   implementer carries the badge **Output becomes guidance for the implementer**. The CLI prints
+   the same lines. The API's `nodes[]` carries, per node, `agentRef`, `inputs` (the source path of
+   each input and whether it has a fallback value, never a literal or the fallback itself), `writes`, `feedsImplementer` and, when the node has one, a cleaned
+   `message` of at most 500 characters.
 4. **Approve or reject.** Approval re-checks everything (section 5) and starts the run. A plan that
    no longer matches the platform is refused, never regenerated: the user generates a new one.
 
@@ -53,7 +58,14 @@ feature.
 The plan's mandatory region is not model output. For a delivering plan the validate phase and the
 engineering core (implementation, review loop, pull request, CI loop, human merge wait) must equal
 the shipped `ticket-to-merge` template's nodes exactly: same ids, steps, configuration, inputs and
-edges. The generator authors only:
+edges. The validate phase is the whole of it (ticket gather, actionability stop, `validateContext`
+and the success-criteria write): a plan with a lone or edited `validateContext`, or a second
+validator beside the phase, is refused with `VALIDATE_PHASE_MISMATCH`. The phase's entry node
+(`gatherTicket`) must dominate the rest of the phase and the implementation: a path from the plan's
+entry that reaches a later phase node or `implement` without passing it is refused with
+`VALIDATE_ENTRY_BYPASSED`. When the generator writes no
+validation the platform attaches the shipped phase ahead of the implementation. The generator
+authors only:
 
 - a **pre-region** before `implement`, built from a code-maintained step allowlist, agent nodes
   and human nodes;
@@ -62,8 +74,19 @@ edges. The generator authors only:
 The policy (`packages/shared/src/workflow/runPlan/`) is the security boundary, not the prompt:
 
 - Free nodes write only under `context.scratch.*`, plus one designated channel,
-  `context.planNotes`, which the core binds into the implementer's guidance. Nothing a free node
+  `context.planNotes`, which the core binds into the implementer's guidance. The validate phase,
+  which is the platform's, also writes `context.ticket` (from `gatherTicketContext`) and
+  `context.successCriteria` (from `validateContext`); no model-written node may. Nothing a free node
   writes reaches the review's inputs, the success criteria, the code result or the pull request step.
+- An `agent` node sets neither `userMessage` nor `systemPrompt`. Its message is its one input,
+  bound by `from` to the goal (`request.description`) or to the whole output of an agent node that
+  runs before it (`nodes.<agent>.output`), so every agent works from the goal or from what an
+  earlier agent made of it and the preview can name the source (`AGENT_MESSAGE_AUTHORED`,
+  `AGENT_INPUT_UNBOUND`). The input's name is fixed too, because the worker folds it into the
+  message of an agent that reads another agent's `{ object, text }` output: it is exactly `goal` for
+  the goal and exactly `prior` for an earlier agent's output (`AGENT_INPUT_KEY_INVALID`). A `step`
+  node's input names come from a per-step allowlist, so no free step accepts an arbitrary name. The implementer receives `context.planNotes` under the heading "Notes from
+  earlier plan steps (generated, not written by the requester)", never as the requester's guidance.
 - Node ids match `^[A-Za-z][A-Za-z0-9_-]{0,63}$`, and the core's ids are reserved.
 - Shell and container nodes, authored commands, MCP nodes, `fanOut` and `eval` nodes, and every
   step that pushes, posts, merges, starts runs or writes shared state are refused.
@@ -113,6 +136,7 @@ named reason when any of these no longer holds:
 | `422` | The stored spec fails the policy |
 | `403` `AGENT_RUNS_DISABLED` | Agent runs are switched off, for an output-only plan |
 | `409` `PLAN_LAUNCH_FAILED` | A retried approval finds that the run it started has failed |
+| `409` `PLAN_LAUNCH_IN_PROGRESS` | A retried approval arrives while the plan is still approved with no run recorded, so the first request can still roll back; a retry is answered `deduplicated` only once the plan is launched or its run exists and has not failed |
 | `429` `AGENT_RUN_CONCURRENCY_EXCEEDED` | Agent-run concurrency limit, for an output-only plan. Per-user quotas answer `429` on creation and ranking, not on approval |
 
 An approved plan starts a run of the hidden **Planned Run** system template. The worker re-checks
@@ -178,6 +202,19 @@ approves a plan or starts a run.
   implementer's guidance through `context.planNotes`. The core, the review network, the security
   gate, CI and the human merge still run on whatever the implementer produces, but the guidance
   itself is not verified.
+- **Plans are kept indefinitely once launched.** A launched plan, and with it the goal and the
+  spec, stays in the database; only pending, approved-but-unlaunched, expired and rejected plans
+  are swept. Nothing prunes a launched plan, so a deployment that must not keep goal text deletes
+  those rows itself.
+- **The platform does not retry an approval.** An approval that fails after the plan was approved
+  returns it to pending and answers an error; nothing starts the run again. The person approves
+  again, and a retry with the same `Idempotency-Key` finds its own earlier approval on record
+  (an approval is recorded before the run starts, so a retry that arrives while the run is starting
+  answers `409` `PLAN_LAUNCH_IN_PROGRESS`, and so does one that arrives after the workflow started
+  but before a worker has created the run: it is answered `deduplicated` only once the run exists).
+- **A global template named `Planned Run` blocks startup.** The sync that creates the hidden
+  system template refuses to start the gateway when a template of that name exists that the
+  platform did not create; see [upgrade notes](./upgrade-notes.md).
 - **Output-only plans have no step or wall-clock ceiling.** An `agent` node has no such fields, so
   library-agent plans are bounded by the team budget, agent-run concurrency admission and the
   transition cap, not by the agent-run ceilings.
@@ -196,6 +233,9 @@ approves a plan or starts a run.
 - **Slack has no completion notice.** The plan row is created when the job is read, so the Slack
   message links to the job, and a goal too long for the button's 2,000-character token gets no button: the reply asks the
   person to shorten it or to use the dashboard.
+- **Slack text over 32,000 characters is refused unparsed.** The goal is read from the raw message
+  after a length cap of four times the goal limit, so a message that long gets the too-long reply
+  even when most of it is markup that would shrink away.
 - **The Slack token is single-use through Temporal, not a table.** It holds while the job's history
   exists, and the token lives 15 minutes.
 - **A person in more than 50 teams and organizations** is limited by only the first 50 in a fixed order.

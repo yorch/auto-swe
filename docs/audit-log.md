@@ -71,8 +71,10 @@ when the system acted, such as a webhook or a sweep), `beforeJson`, `afterJson`,
   one) and the person as actor. `afterJson.event` names what happened: `run_plan.generation_started`
   (a `CREATE` when a generation job starts, in the same transaction as the per-user limit check, so
   it is also what that limit counts), `run_plan.route_requested` (a template ranking, counted the
-  same way), `run_plan.created` (the finished job stored as a plan), `run_plan.approved` and
-  `run_plan.rejected` (an `UPDATE`) and `run_plan.expired` (an `UPDATE` with no actor, written by the
+  same way), `run_plan.created` (the finished job stored as a plan), `run_plan.approved` (written before the
+  run starts, with a digest of the `Idempotency-Key` when there was one), `run_plan.launched` (after
+  it started), `run_plan.approval_reverted` (the launch failed and the plan went back to pending)
+  and `run_plan.rejected` (an `UPDATE`) and `run_plan.expired` (an `UPDATE` with no actor, written by the
   sweep). Rows carry ids, the mode and the team, never the goal text or the spec. See
   [configuration.md](./configuration.md) for the limits.
 - **Sign-ins.** Each session created by better-auth writes a `CREATE` row of entity type `Session`

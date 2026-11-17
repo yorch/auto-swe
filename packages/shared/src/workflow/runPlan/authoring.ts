@@ -160,12 +160,12 @@ export function renderRunPlanCatalog(input: RunPlanCatalogInput): string {
     lines.push('- `agent` nodes must not set `onFail: "warn"` or `onError: "continue"`.');
   }
   lines.push(
-    '- `agent` nodes: name only agents from the list above; NEVER set `systemPrompt`, `tools`, `workspace` or any override. Pass work through `userMessage` and `inputs` bindings.'
+    '- `agent` nodes: name only agents from the list above; NEVER set `systemPrompt`, `tools`, `workspace` or any override. Never set `userMessage`: each `agent` node has exactly ONE input, `{ "from": "request.description" }` (the goal, received word for word) or `{ "from": "nodes.<earlierAgentId>.output" }` (the whole output of an agent node that runs before it), and nothing else.'
   );
   lines.push(
     '- Writes (`set` values, `storeAs`) go ONLY under `context.scratch.*`. Never write `nodes.*`, `request.*` or any other context path' +
       (input.mode === 'delivering'
-        ? `, with these exceptions: \`${PLAN_NOTES_PATH}\` (guidance for the implementer: copy it from the output of an agent or step with \`{ "from": "nodes.<id>.output" }\`, or via \`storeAs\`), \`context.ticket\` (only \`nodes.<id>.output.text\` of a \`gatherTicketContext\` step) and \`context.successCriteria\` (only \`nodes.<id>.output.successCriteria\` of a \`validateContext\` step). Nothing else.`
+        ? `, with this one exception: \`${PLAN_NOTES_PATH}\` (notes for the implementer, shown to it as generated notes and not as the requester's words: copy it from the output of an agent or step with \`{ "from": "nodes.<id>.output" }\`, or via \`storeAs\`). Nothing else.`
         : '.')
   );
   lines.push(
@@ -178,7 +178,7 @@ export function renderRunPlanCatalog(input: RunPlanCatalogInput): string {
   );
   if (input.mode === 'delivering') {
     lines.push(
-      '- Every path to the implementation must run a `validateContext` step. If you run none, the platform adds the standard validation for you (then do not use its ids).'
+      '- Do not write a `validateContext` or `gatherTicketContext` step: the platform adds the standard validation ahead of the implementation, and a lone or edited one is rejected.'
     );
   }
   lines.push(

@@ -160,8 +160,7 @@ describe('syncPlannedRunTemplate', () => {
     });
   });
 
-  it('never appends the placeholder spec to a same-named template it does not own', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  it('never appends the placeholder spec to a same-named template it does not own, and fails loudly', async () => {
     for (const origin of [null, 'swe-starter', 'bundle:evil', 'system:agent-run']) {
       const { prisma, rows } = makePrisma([
         {
@@ -174,12 +173,12 @@ describe('syncPlannedRunTemplate', () => {
           versions: [{ spec: { admin: true }, version: 1 }],
         },
       ]);
-      await syncPlannedRunTemplate(prisma);
+      await expect(syncPlannedRunTemplate(prisma)).rejects.toThrow(
+        new RegExp(`'${PLANNED_RUN_TEMPLATE_NAME}'.*Rename or delete`)
+      );
       expect(rows[0]?.versions).toHaveLength(1);
       expect(rows[0]?.origin).toBe(origin);
     }
-    expect(error).toHaveBeenCalled();
-    error.mockRestore();
   });
 });
 

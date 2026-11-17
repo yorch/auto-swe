@@ -60,7 +60,12 @@ describe('checkSkeletonPolicy: delivering', () => {
   it('accepts a bounded retry and a free-middle agent node', () => {
     const raw = deliveringRaw();
     raw.nodes.implement = { ...raw.nodes.implement, onFail: { retry: 2 } };
-    raw.nodes.research = { agentRef: 'docsMaintainer@3', next: 'implement', type: 'agent' };
+    raw.nodes.research = {
+      agentRef: 'docsMaintainer@3',
+      inputs: { goal: { from: 'request.description' } },
+      next: 'implement',
+      type: 'agent',
+    };
     raw.entry = 'research';
     expect(checkGraphPolicy(parse(raw), 'delivering').errors).toEqual([]);
   });
@@ -119,7 +124,12 @@ describe('checkSkeletonPolicy: output-only', () => {
 
   it('refuses a plan with no human review', () => {
     const raw = outputOnlyRaw();
-    raw.nodes.draft = { agentRef: 'contentWriter', next: 'done', type: 'agent' };
+    raw.nodes.draft = {
+      agentRef: 'contentWriter',
+      inputs: { goal: { from: 'request.description' } },
+      next: 'done',
+      type: 'agent',
+    };
     delete raw.nodes.reviewDraft;
     expect(codes(checkSkeletonPolicy(parse(raw), 'output-only'))).toContain('MISSING_MANDATORY');
   });
@@ -128,7 +138,12 @@ describe('checkSkeletonPolicy: output-only', () => {
     const raw = outputOnlyRaw();
     raw.entry = 'reviewDraft';
     raw.nodes.reviewDraft = { ...raw.nodes.reviewDraft, onSubmit: 'draft' };
-    raw.nodes.draft = { agentRef: 'contentWriter', next: 'done', type: 'agent' };
+    raw.nodes.draft = {
+      agentRef: 'contentWriter',
+      inputs: { goal: { from: 'request.description' } },
+      next: 'done',
+      type: 'agent',
+    };
     expect(codes(checkSkeletonPolicy(parse(raw), 'output-only'))).toContain(
       'HUMAN_REVIEW_BEFORE_AGENT'
     );
@@ -171,7 +186,12 @@ describe('applySkeletonPolicy: delivering', () => {
     name: 'fixture-pre',
     nodes: {
       done: { status: 'SUCCESS', type: 'terminate' },
-      research: { agentRef: 'productAnalyst', next: 'done', type: 'agent' },
+      research: {
+        agentRef: 'productAnalyst',
+        inputs: { goal: { from: 'request.description' } },
+        next: 'done',
+        type: 'agent',
+      },
     },
     schemaVersion: deliveringRaw().schemaVersion,
   });
@@ -194,7 +214,13 @@ describe('applySkeletonPolicy: delivering', () => {
 
   it('attaches the core after a pre-region step with no next', () => {
     const raw = pre();
-    raw.nodes = { research: { agentRef: 'productAnalyst', type: 'agent' } };
+    raw.nodes = {
+      research: {
+        agentRef: 'productAnalyst',
+        inputs: { goal: { from: 'request.description' } },
+        type: 'agent',
+      },
+    };
     const result = applySkeletonPolicy(parse(raw), 'delivering');
     expect(result.report.errors).toEqual([]);
     expect(result.removed).toEqual([]);
@@ -268,7 +294,12 @@ describe('applySkeletonPolicy: delivering', () => {
 describe('applySkeletonPolicy: output-only', () => {
   it('adds a human review to a plan that has none', () => {
     const raw = outputOnlyRaw();
-    raw.nodes.draft = { agentRef: 'contentWriter', next: 'done', type: 'agent' };
+    raw.nodes.draft = {
+      agentRef: 'contentWriter',
+      inputs: { goal: { from: 'request.description' } },
+      next: 'done',
+      type: 'agent',
+    };
     delete raw.nodes.reviewDraft;
     delete raw.nodes.timedOut;
     const result = applySkeletonPolicy(parse(raw), 'output-only');

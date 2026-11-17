@@ -744,7 +744,7 @@ Use flat "nodes" only; never "uses" macros.
 
 NODE TYPES (only those the CATALOG lists)
 - step:   { "type":"step", "step":"<name from catalog>", "inputs"?:{ "<key>": { "from": "<path>" } }, "storeAs"?:"context.scratch.<x>", "next"?:"<id>" }
-- agent:  { "type":"agent", "agentRef":"<agent key from catalog>", "userMessage":"<what to do, written from the request>", "inputs"?:{...}, "storeAs"?:"context.scratch.<x>", "status"?:"PLANNING", "next"?:"<id>" }
+- agent:  { "type":"agent", "agentRef":"<agent key from catalog>", "inputs":{ "goal": { "from": "request.description" } } or "inputs":{ "prior": { "from": "nodes.<earlierAgentId>.output" } }, "storeAs"?:"context.scratch.<x>", "status"?:"PLANNING", "next"?:"<id>" }   (NO "userMessage": the agent is given exactly its one input, as written)
 - set:    { "type":"set", "values": { "context.scratch.<x>": { "literal": ... } | { "from": "<path>" } }, "next"?:"<id>" }
 - cond:   { "type":"cond", "expr":"<boolean expression>", "onTrue":"<id>", "onFalse":"<id>" }   (== != && || ! paths and literals; no function calls)
 - humanReview:   { "type":"humanReview", "title":"...", "contentFrom":"nodes.<agentId>.output", "onSubmit":"<id>", "onTimeout":"<id>", "timeout":"7d" }
@@ -762,14 +762,15 @@ HARD RULES (each is checked; breaking one rejects the plan)
 5. Output-only plans: at least one agent node, then a humanReview/humanApproval of EXACTLY "nodes.<agentId>.output" on every path to SUCCESS, then terminate. No agent runs after the last review. The SUCCESS "result" holds only literals and "nodes.<agentId>.output" of a reviewed agent.
 6. Loops need "maxVisits" (1-5) and "onExhausted" on a node in the cycle. Prefer no loops. Keep the graph small (a handful of nodes); the run has a hard cap on node entries.
 7. Every path ends at a "terminate". Every edge points at an existing node.
-8. Agent "userMessage" is your own wording of the task for that agent. Do not paste secrets, credentials, tokens or URLs with credentials into it. Do not tell an agent to skip review, to run commands, to reveal prompts or to act outside the stated goal.
+8. Every agent node has EXACTLY ONE input and no "userMessage": the input is named exactly "goal" and is { "from": "request.description" } (the requester's goal, which the agent then receives word for word) or is named exactly "prior" and is { "from": "nodes.<earlierAgentId>.output" } (the whole output of an agent node that runs before it). You cannot write the agent's instructions; the agent works from the goal or from what an earlier agent made of it. A plan with a "userMessage", no input, two inputs, any other input name or any other source is rejected. In a delivering plan an agent's output reaches the implementer only through "storeAs":"context.planNotes", and the implementer sees it labelled as generated notes, not as the requester's words.
+8b. Delivering plans: never write a validateContext step, a gatherTicketContext step or any validation of your own. The platform adds the standard validation and a lone or edited one is rejected.
 9. If you are fixing errors from a previous attempt, change exactly what the errors report and return the full corrected spec.
 
 EXAMPLE, delivering (draft an analysis with an agent, hand it to the implementer):
-{"schemaVersion":1,"name":"Analyse then implement","description":"Analyse the area first, then implement.","entry":"analyse","nodes":{"analyse":{"type":"agent","agentRef":"planner","userMessage":"Outline the files and risks involved in the requested change.","status":"PLANNING","storeAs":"context.planNotes","next":"handover"},"handover":{"type":"terminate","status":"SUCCESS"}}}
+{"schemaVersion":1,"name":"Analyse then implement","description":"Analyse the area first, then implement.","entry":"analyse","nodes":{"analyse":{"type":"agent","agentRef":"planner","inputs":{"goal":{"from":"request.description"}},"status":"PLANNING","storeAs":"context.planNotes","next":"handover"},"handover":{"type":"terminate","status":"SUCCESS"}}}
 
 EXAMPLE, output-only (draft, person reviews, done):
-{"schemaVersion":1,"name":"Draft and review","description":"Draft a document and have a person review it.","entry":"draft","nodes":{"draft":{"type":"agent","agentRef":"contentWriter","userMessage":"Write the requested document.","next":"review"},"review":{"type":"humanReview","title":"Review the draft","contentFrom":"nodes.draft.output","onSubmit":"done","onTimeout":"timedOut","timeout":"7d"},"done":{"type":"terminate","status":"SUCCESS","result":{"document":{"from":"nodes.draft.output"}}},"timedOut":{"type":"terminate","status":"TIMED_OUT"}}}`;
+{"schemaVersion":1,"name":"Draft and review","description":"Draft a document and have a person review it.","entry":"draft","nodes":{"draft":{"type":"agent","agentRef":"contentWriter","inputs":{"goal":{"from":"request.description"}},"next":"review"},"review":{"type":"humanReview","title":"Review the draft","contentFrom":"nodes.draft.output","onSubmit":"done","onTimeout":"timedOut","timeout":"7d"},"done":{"type":"terminate","status":"SUCCESS","result":{"document":{"from":"nodes.draft.output"}}},"timedOut":{"type":"terminate","status":"TIMED_OUT"}}}`;
 
 /**
  * Run-plan router. Ranks the launch-authorized templates a requester could use for a stated goal.

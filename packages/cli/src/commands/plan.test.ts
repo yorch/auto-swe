@@ -28,7 +28,29 @@ const PLAN = {
   mode: 'delivering',
   nodes: [
     { id: 'impl', marker: 'core', region: 'core', step: 'executeImplementation', type: 'step' },
-    { id: 'v', marker: 'injected', region: 'pre', step: 'validate', type: 'step' },
+    {
+      id: 'v',
+      inputs: [
+        { from: 'context.ticket', hasDefault: true, key: 'ticket' },
+        { from: 'request.description', hasDefault: false, key: 'goal' },
+      ],
+      marker: 'injected',
+      region: 'pre',
+      step: 'validate',
+      type: 'step',
+    },
+    {
+      agentRef: 'planner@2',
+      feedsImplementer: true,
+      id: 'r',
+      inputs: [{ from: 'request.description', key: 'goal' }],
+      marker: 'free',
+      message: 'legacy\u001b[31m text',
+      region: 'pre',
+      step: null,
+      type: 'agent',
+      writes: ['context.planNotes'],
+    },
   ],
   spec: { nodes: { SECRET_SPEC_MARKER: {} } },
   status: 'PENDING',
@@ -227,6 +249,12 @@ describe('auto-swe plan', () => {
     expect(await runPlanCommand(['approve', PLAN_ID], ENV, { confirm, interactive: true })).toBe(0);
     expect(confirm).toHaveBeenCalledOnce();
     expect(stdout()).toContain('Steps');
+    expect(stdout()).toContain('runs agent planner@2 on the goal');
+    expect(stdout()).toContain(
+      'reads ticket from context.ticket (has fallback value), goal from the goal'
+    );
+    expect(stdout()).toContain('>> Output becomes guidance for the implementer');
+    expect(stdout()).not.toContain('\u001b');
     expect(calls.at(-1)?.method).toBe('POST');
   });
 

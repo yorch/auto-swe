@@ -9,13 +9,14 @@ import {
   slackRunPlanIntentHash,
 } from '@auto-swe/shared/lib/slackRunPlanToken';
 import { resolveSlackConfig } from '@auto-swe/shared/lib/systemConfig';
-import { runPlanIntentIssue } from '@auto-swe/shared/workflow/runPlan';
+import { RUN_PLAN_INTENT_MAX_CHARS, runPlanIntentIssue } from '@auto-swe/shared/workflow/runPlan';
 import {
   buildProposal,
   explain,
   goalFromSlackMessage,
   PROPOSAL_TEXT,
   type ProposalMessage,
+  SLACK_RAW_GOAL_MAX_CHARS,
 } from '../lib/channelRunPlanProposal.js';
 import {
   decideChannelRepoAccess,
@@ -68,7 +69,15 @@ const PLAN_REFUSAL_OVERRIDES = {
 export async function proposeChannelRunPlan(
   input: ProposeChannelRunPlanInput
 ): Promise<ProposalMessage> {
+  // Over-length text is refused before any parsing, and a goal still over the limit once the
+  // markup is gone gets the same reply.
+  if (input.userText.length > SLACK_RAW_GOAL_MAX_CHARS) {
+    return explain(PROPOSAL_TEXT.tooLong);
+  }
   const goal = goalFromSlackMessage(input.userText);
+  if (goal.length > RUN_PLAN_INTENT_MAX_CHARS) {
+    return explain(PROPOSAL_TEXT.tooLong);
+  }
   if (!goal || runPlanIntentIssue(goal) !== null) {
     return explain(PROPOSAL_TEXT.emptyGoal);
   }

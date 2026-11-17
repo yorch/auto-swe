@@ -258,7 +258,10 @@ async function generateRunPlanSpecImpl(
         }
       }
 
-      const validationReport = validateSpec(candidate, { allowInternalSteps: false });
+      const validationReport = validateSpec(candidate, {
+        allowInternalSteps: false,
+        rejectNonLaunchableAgents: true,
+      });
       errors.push(...validationReport.errors.map(formatValidationIssue));
 
       // Agents outside the requester's launchable set (validateSpec only knows the global list).

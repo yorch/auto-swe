@@ -13,6 +13,7 @@ import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema } from '../lib/idempotency.js';
 import { paginationQuery } from '../lib/pagination.js';
+import { describeNode, type NodeDetail, nodesFeedingImplementer } from '../lib/runPlanNodeView.js';
 import { createRunPlanQuotaPolicy, reserveRouteSlot } from '../lib/runPlanQuotas.js';
 import {
   approveAndLaunchPlan,
@@ -179,13 +180,15 @@ function markNodes(plan: {
   spec: unknown;
   skeletonReport: unknown;
   routerCandidates: unknown;
-}): Array<{
-  id: string;
-  type: string | null;
-  step: string | null;
-  marker: string;
-  region: string;
-}> {
+}): Array<
+  {
+    id: string;
+    type: string | null;
+    step: string | null;
+    marker: string;
+    region: string;
+  } & NodeDetail
+> {
   const nodes = asRecord(asRecord(plan.spec).nodes);
   const report = asRecord(plan.skeletonReport);
   const regions = asRecord(report.regions);
@@ -194,6 +197,7 @@ function markNodes(plan: {
   const post = new Set(asStrings(regions.post));
   const mandatory = new Set(Object.values(asRecord(report.mandatory)).flatMap(asStrings));
   const injected = new Set(asStrings(asRecord(plan.routerCandidates).injected));
+  const feeding = nodesFeedingImplementer(nodes, core);
   return Object.entries(nodes).map(([id, raw]) => {
     const node = raw as SpecNode;
     const marker = core.has(id)
@@ -204,6 +208,7 @@ function markNodes(plan: {
           ? 'mandatory'
           : 'free';
     return {
+      ...describeNode(raw, feeding.has(id)),
       id,
       marker,
       region: core.has(id) ? 'core' : pre.has(id) ? 'pre' : post.has(id) ? 'post' : 'plan',
@@ -682,27 +687,36 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  /** Whether this person's approval of this plan was made with the Idempotency-Key of this digest. */
+  /**
+   * Whether this person's latest approval of this plan was made with the Idempotency-Key of this
+   * digest. An approval that was reverted (its launch failed) no longer counts.
+   */
   async function approvedWithKey(planId: string, userId: string, digest: string): Promise<boolean> {
-    const row = await fastify.prisma.configAuditLog.findFirst({
-      select: { id: true },
+    const rows = await fastify.prisma.configAuditLog.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: { afterJson: true },
+      take: 1,
       where: {
-        AND: [
-          { afterJson: { equals: 'run_plan.approved', path: ['event'] } },
-          { afterJson: { equals: digest, path: ['idempotencyKeyDigest'] } },
-        ],
         action: 'UPDATE',
         actorId: userId,
         entityId: planId,
         entityType: 'RunPlan',
+        OR: [
+          { afterJson: { equals: 'run_plan.approved', path: ['event'] } },
+          { afterJson: { equals: 'run_plan.approval_reverted', path: ['event'] } },
+        ],
       },
     });
-    return row !== null;
+    const latest = asRecord(rows[0]?.afterJson);
+    return latest.event === 'run_plan.approved' && latest.idempotencyKeyDigest === digest;
   }
 
   /**
-   * Where an approved plan's run stands now. `running`: a run is starting, going or finished well.
-   * `failed`: a run row exists and ended badly. `none`: the plan has no run to speak of.
+   * Where an approved plan's run stands now. `running`: the plan is launched, or a run row exists
+   * that has not failed. `starting`: input and workflow rows exist but the plan is still approved
+   * with no run recorded, so the launch can still roll back (it deletes those rows and returns the
+   * plan to pending) and nothing may be answered as a success yet. `failed`: a run row exists and
+   * ended badly. `none`: the plan has no run to speak of.
    */
   async function launchState(
     planId: string,
@@ -710,6 +724,7 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
   ): Promise<
     | { kind: 'none' }
     | { kind: 'running'; workRequestId: string }
+    | { kind: 'starting' }
     | { kind: 'failed'; details: Record<string, unknown> }
   > {
     const plan = await fastify.prisma.runPlan.findUnique({
@@ -744,6 +759,9 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
     }
     const failed =
       active?.currentStatus === 'FAILED' || (run ? FAILED_RUN_STATUSES.has(run.status) : false);
+    if (!failed && !run && plan.status !== 'LAUNCHED') {
+      return { kind: 'starting' };
+    }
     return failed
       ? {
           details: {
@@ -776,7 +794,38 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
         { ...deps(request), temporal: fastify.temporal },
         { sub: user.sub },
         id,
-        request.body?.budgetTier ? { budgetTier: request.body.budgetTier } : {}
+        {
+          ...(request.body?.budgetTier ? { budgetTier: request.body.budgetTier } : {}),
+          // The approval and its key digest are on record BEFORE the run starts, so a retry that
+          // arrives while the launch is in flight (or after a lost response) recognises its own
+          // approval. This write is not best effort: if it fails nothing is started and the
+          // approval is reverted.
+          afterRevert: async () => {
+            await audit({
+              action: 'UPDATE',
+              actor: user,
+              after: { event: 'run_plan.approval_reverted', status: 'PENDING' },
+              before: { status: 'APPROVED' },
+              entityId: id,
+              entityType: 'RunPlan',
+            });
+          },
+          beforeLaunch: async () => {
+            await writeAuditLog(fastify, {
+              action: 'UPDATE',
+              actor: user,
+              after: {
+                event: 'run_plan.approved',
+                // So a retry can be told apart from a different request: the digest, never the key.
+                ...(digest ? { idempotencyKeyDigest: digest } : {}),
+                status: 'APPROVED',
+              },
+              before: { status: 'PENDING' },
+              entityId: id,
+              entityType: 'RunPlan',
+            });
+          },
+        }
       );
       if (!result.ok) {
         // A retried approve answers with the earlier launch only when THIS key made that approval
@@ -793,6 +842,14 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
               data: { deduplicated: true, planId: id, workRequestId: launch.workRequestId },
             };
           }
+          if (launch.kind === 'starting') {
+            return sendError(
+              reply,
+              409,
+              'PLAN_LAUNCH_IN_PROGRESS',
+              'This approval is still starting its run; check again shortly'
+            );
+          }
           if (launch.kind === 'failed') {
             return sendError(
               reply,
@@ -800,6 +857,19 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
               'PLAN_LAUNCH_FAILED',
               'This approval started a run that did not succeed; create a new plan to try again',
               launch.details
+            );
+          }
+          // The approval is on record and no run exists yet: the first request is still starting it.
+          const current = await fastify.prisma.runPlan.findUnique({
+            select: { status: true },
+            where: { id },
+          });
+          if (current?.status === 'APPROVED') {
+            return sendError(
+              reply,
+              409,
+              'PLAN_LAUNCH_IN_PROGRESS',
+              'This approval is still starting its run; check again shortly'
             );
           }
         }
@@ -813,14 +883,12 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
         action: 'UPDATE',
         actor: user,
         after: {
-          event: 'run_plan.approved',
-          // So a retry can be told apart from a different request: the digest, never the key.
-          ...(digest ? { idempotencyKeyDigest: digest } : {}),
-          status: 'APPROVED',
+          event: 'run_plan.launched',
+          status: 'LAUNCHED',
           temporalWorkflowId: result.temporalWorkflowId,
           workRequestId: result.workRequestId,
         },
-        before: { status: 'PENDING' },
+        before: { status: 'APPROVED' },
         entityId: id,
         entityType: 'RunPlan',
       });

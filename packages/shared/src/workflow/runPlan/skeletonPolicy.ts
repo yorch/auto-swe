@@ -683,6 +683,7 @@ function checkNodes(
           id
         );
       }
+      checkAgentMessage(spec, id, node, add);
       if (mode === 'output-only') {
         if (node.onFail === 'warn') {
           add('ONFAIL_WARN', `agent node '${id}' continues after a failure (onFail: warn)`, id);
@@ -727,6 +728,103 @@ function checkNodes(
         );
       }
     }
+  }
+}
+
+/** Whether `to` can be reached from `from` along the spec's edges. */
+function pathExists(spec: WorkflowSpec, from: string, to: string): boolean {
+  const seen = new Set<string>([from]);
+  const stack = [from];
+  while (stack.length > 0) {
+    const cur = stack.pop() as string;
+    for (const [, next] of nodeEdges(spec.nodes[cur] as Node)) {
+      if (next === to) {
+        return true;
+      }
+      if (!seen.has(next) && Object.hasOwn(spec.nodes, next)) {
+        seen.add(next);
+        stack.push(next);
+      }
+    }
+  }
+  return false;
+}
+
+/** The only input names a generated agent node may use (see {@link checkAgentMessage}). */
+export const AGENT_GOAL_INPUT_KEY = 'goal';
+export const AGENT_PRIOR_INPUT_KEY = 'prior';
+
+/**
+ * What a generated agent node is told. Its message is built from `inputs` alone (an authored
+ * `userMessage` is text the requester never saw and the model guessed without the goal), and it
+ * has exactly one input, a plain `from` binding to the goal (`request.description`) or to the
+ * whole output of an agent node that runs before it. So an agent always works from the goal or
+ * from what an earlier agent made of it, and the preview can name that source.
+ */
+function checkAgentMessage(
+  spec: WorkflowSpec,
+  id: string,
+  node: Extract<Node, { type: 'agent' }>,
+  add: Add
+): void {
+  if (node.userMessage !== undefined) {
+    add(
+      'AGENT_MESSAGE_AUTHORED',
+      `agent node '${id}' sets userMessage; an agent's message is built from its input alone, bound to the goal or an earlier agent's output`,
+      id
+    );
+  }
+  const inputs = node.inputs ?? {};
+  const entries = Object.entries(inputs);
+  const unbound = (why: string): void =>
+    add(
+      'AGENT_INPUT_UNBOUND',
+      `agent node '${id}' ${why}; it needs exactly one input: "goal": { "from": "request.description" } or "prior": { "from": "nodes.<earlierAgent>.output" }`,
+      id
+    );
+  if (entries.length !== 1) {
+    unbound(entries.length === 0 ? 'has no input' : `has ${entries.length} inputs`);
+    return;
+  }
+  const inputKey = entries[0]?.[0] as string;
+  const binding = entries[0]?.[1] as unknown;
+  const keys =
+    typeof binding === 'object' && binding !== null ? Object.keys(binding as object) : [];
+  const from = (binding as { from?: unknown } | null)?.from;
+  if (typeof from !== 'string' || keys.length !== 1) {
+    unbound('binds its input to something other than a plain "from" path');
+    return;
+  }
+  // The input KEY is model-authored and the worker folds it into the message when the bound value
+  // is not a lone string (an agent's output is `{ object, text }`), so it is pinned to a fixed
+  // vocabulary: `goal` for the goal, `prior` for an earlier agent's output.
+  const keyInvalid = (expected: string): void =>
+    add(
+      'AGENT_INPUT_KEY_INVALID',
+      `agent node '${id}' names its input '${inputKey.slice(0, 40)}'; an input bound to '${from}' must be named exactly '${expected}'`,
+      id
+    );
+  if (from === 'request.description') {
+    if (inputKey !== AGENT_GOAL_INPUT_KEY) {
+      keyInvalid(AGENT_GOAL_INPUT_KEY);
+    }
+    return;
+  }
+  const source = wholeOutputId(from);
+  const sourceNode = source === undefined ? undefined : spec.nodes[source];
+  if (
+    source === undefined ||
+    source === id ||
+    sourceNode?.type !== 'agent' ||
+    !pathExists(spec, source, id)
+  ) {
+    unbound(
+      `reads '${from}', which is neither the goal nor the whole output of an earlier agent node`
+    );
+    return;
+  }
+  if (inputKey !== AGENT_PRIOR_INPUT_KEY) {
+    keyInvalid(AGENT_PRIOR_INPUT_KEY);
   }
 }
 

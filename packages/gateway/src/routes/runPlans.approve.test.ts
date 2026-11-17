@@ -149,6 +149,22 @@ describe('POST /run-plans/:id/approve with the real service', () => {
           );
           return hit ? { id: hit.id } : null;
         },
+        findMany: async ({ where, take }: { where: Record<string, unknown>; take?: number }) => {
+          const events = (where.OR as Array<{ afterJson: { equals: unknown } }>).map(
+            (c) => c.afterJson.equals
+          );
+          return t.audit
+            .filter(
+              (a) =>
+                a.data.entityId === where.entityId &&
+                a.data.actorId === where.actorId &&
+                a.data.action === where.action &&
+                events.includes((a.data.afterJson as Record<string, unknown>).event)
+            )
+            .reverse()
+            .slice(0, take ?? 1000)
+            .map((a) => ({ afterJson: a.data.afterJson }));
+        },
       },
       connection: {
         findUnique: async () => ({
@@ -249,9 +265,38 @@ describe('POST /run-plans/:id/approve with the real service', () => {
     }
   });
 
-  it('also answers a retry made before the worker has claimed the plan', async () => {
+  it('has the approval and key digest on record before the launch starts, and a retry during it is told so', async () => {
+    let retryDuringLaunch: Awaited<ReturnType<typeof approve>> | undefined;
+    const seenAtLaunch: string[] = [];
+    const realLaunch = m.launch.getMockImplementation() as (...a: unknown[]) => Promise<unknown>;
+    m.launch.mockImplementationOnce(async (...args: unknown[]) => {
+      seenAtLaunch.push(
+        ...t.audit.map((a) => String((a.data.afterJson as { event: string }).event))
+      );
+      // The run has not been created yet: a concurrent retry with the same key arrives now.
+      retryDuringLaunch = await approve('approve-key-1');
+      return (await realLaunch(...args)) as never;
+    });
     const first = await approve('approve-key-1');
+    expect(first.statusCode).toBe(201);
+    expect(seenAtLaunch).toEqual(['run_plan.approved']);
+    expect(retryDuringLaunch?.statusCode).toBe(409);
+    expect(retryDuringLaunch?.json().error.code).toBe('PLAN_LAUNCH_IN_PROGRESS');
+  });
+
+  it('does not dedupe while the plan is approved with rows but no run: the launch can still roll back', async () => {
+    const first = await approve('approve-key-1');
+    // The ledger rows exist and the workflow started, but the worker has not claimed the plan.
     expect(t.plan.status).toBe('APPROVED');
+    expect(t.plan.launchedWorkflowRunId).toBeNull();
+    expect(t.runInputs).toHaveLength(1);
+    const early = await approve('approve-key-1');
+    expect(early.statusCode).toBe(409);
+    expect(early.json().error.code).toBe('PLAN_LAUNCH_IN_PROGRESS');
+    expect(early.json().data).toBeUndefined();
+
+    // Once the worker has created the run, the same retry is the earlier launch.
+    workerClaims();
     const retry = await approve('approve-key-1');
     expect(retry.statusCode).toBe(200);
     expect(retry.json().data.workRequestId).toBe(first.json().data.workRequestId);

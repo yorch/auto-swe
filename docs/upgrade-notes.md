@@ -1867,4 +1867,24 @@ disable stamped.
 list. A run of a team-scoped agent bound to a plugin completes once the plugin is enabled for that team,
 and its `agent.plugin_hooks` event records the hook switch the run used.
 
+### A global template named `Planned Run` stops the platform from starting (`<fixing commit SHA>`)
+
+**Affected.** Deployments with a GLOBAL workflow template (no team) named `Planned Run` that the
+platform did not create: its origin is anything other than `system:planned-run`, such as a template
+an administrator or a bundle made under that name. Deployments with no such template are
+unaffected, including those where the platform created the row itself.
+
+**What changes.** Approved [run plans](./run-plans.md) start their run on a hidden system template
+of that name. The sync that runs at gateway startup used to leave a same-named template it did not
+own alone and log a line, so plans failed only when a person approved one. It now throws, naming
+the conflicting template, and the gateway does not start until the conflict is gone. The existing
+template is never edited or appended to. No migration or environment-variable change.
+
+**Actions.** Rename the template, or delete it if nothing uses it (a renamed template keeps its
+versions and runs), then restart the gateway. The sync creates the platform's own `Planned Run`
+template on that start.
+
+**Verify.** The gateway starts. A GLOBAL template named `Planned Run` exists with origin
+`system:planned-run`, and approving a plan launches a run.
+
 ---

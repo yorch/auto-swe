@@ -139,13 +139,20 @@ function expectNoForbiddenNodes(spec: WorkflowSpec): void {
       const key = node.agentRef.split('@')[0] ?? node.agentRef;
       expect(NON_LAUNCHABLE_AGENT_KEYS.has(key), `node ${id} names ${key}`).toBe(false);
       expect(node.systemPrompt, `node ${id} overrides the system prompt`).toBeUndefined();
+      expect(node.userMessage, `node ${id} authors its message`).toBeUndefined();
+      expect(Object.keys(node.inputs ?? {}), `node ${id} has exactly one input`).toHaveLength(1);
+      expect(['goal', 'prior'], `node ${id} names its input with the fixed vocabulary`).toContain(
+        Object.keys(node.inputs ?? {})[0]
+      );
     }
   }
 }
 
 function expectPolicyClean(result: GenerateRunPlanSpecResult): void {
   expect(checkSkeletonPolicy(result.spec, result.mode).errors).toEqual([]);
-  expect(validateSpec(result.spec, { allowInternalSteps: false }).errors).toEqual([]);
+  expect(
+    validateSpec(result.spec, { allowInternalSteps: false, rejectNonLaunchableAgents: true }).errors
+  ).toEqual([]);
   expectNoForbiddenNodes(result.spec);
   expect(Object.keys(result.agentPins).length).toBeGreaterThan(0);
   expect(result.catalogHash).toMatch(/^[0-9a-f]{64}$/);

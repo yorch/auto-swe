@@ -394,12 +394,16 @@ export async function syncAgentRunTemplate(prisma: PrismaClient): Promise<void> 
 /**
  * Seed the hidden "Planned Run" system template behind approved run plans. The same rules as
  * {@link syncAgentRunTemplate}: platform-owned, `system:planned-run` origin, never touches a
- * same-named row it does not own. Its spec is a failing placeholder; `createWorkflowRun` pins the
+ * same-named row it does not own. Unlike that one, a same-named row it does not own makes the sync
+ * throw, so startup fails with the conflict named rather than leaving plans silently unapprovable. Its spec is a failing placeholder; `createWorkflowRun` pins the
  * plan's own spec in its place.
  */
 export async function syncPlannedRunTemplate(prisma: PrismaClient): Promise<void> {
   await syncSystemTemplate(prisma, {
     description: PLANNED_RUN_SPEC.description,
+    // Run plans cannot be approved without this row, and a deployment that never notices would
+    // find out only when a person approves a plan: the sync stops the process instead.
+    failOnConflict: true,
     name: PLANNED_RUN_TEMPLATE_NAME,
     origin: PLANNED_RUN_TEMPLATE_ORIGIN,
     spec: PLANNED_RUN_SPEC,
@@ -413,6 +417,8 @@ async function syncSystemTemplate(
     description: string;
     name: string;
     origin: string;
+    /** Throw, instead of logging, when a same-named template the platform does not own exists. */
+    failOnConflict?: boolean;
     spec: { readonly description: string };
     unavailableNote: string;
   }
@@ -446,6 +452,14 @@ async function syncSystemTemplate(
   }
 
   if (existing.origin !== def.origin) {
+    if (def.failOnConflict) {
+      throw new Error(
+        `[syncBuiltins] a GLOBAL workflow template named '${def.name}' already exists and is not ` +
+          `the platform's (origin '${existing.origin ?? 'none'}'), so ${def.unavailableNote}. ` +
+          `Rename or delete that template (it is not an auto-swe system template), then restart; ` +
+          'see docs/upgrade-notes.md.'
+      );
+    }
     console.error(
       `[syncBuiltins] a GLOBAL template named '${def.name}' exists without the system origin; ` +
         `${def.unavailableNote} until it is renamed or removed`

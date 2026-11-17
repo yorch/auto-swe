@@ -810,6 +810,79 @@ describe('approveAndLaunchPlan', () => {
     expect(table.plan?.status).toBe('PENDING');
   });
 
+  it('runs beforeLaunch between the approval and the launch, and afterRevert after a refused launch', async () => {
+    const order: string[] = [];
+    m.launch.mockImplementationOnce(async () => {
+      order.push('launch');
+      return { ok: false, reason: 'DUPLICATE', source: 'ledger' };
+    });
+    const { prisma, table } = fakePrisma(planRow());
+    await approveAndLaunchPlan(deps(prisma), OWNER, PLAN_ID, {
+      afterRevert: async () => {
+        order.push(`afterRevert:${table.plan?.status}`);
+      },
+      beforeLaunch: async () => {
+        order.push(`beforeLaunch:${table.plan?.status}`);
+      },
+    });
+    expect(order).toEqual(['beforeLaunch:APPROVED', 'launch', 'afterRevert:PENDING']);
+  });
+
+  it('starts nothing and returns the plan to PENDING when beforeLaunch throws', async () => {
+    const { prisma, table } = fakePrisma(planRow());
+    await expect(
+      approveAndLaunchPlan(deps(prisma), OWNER, PLAN_ID, {
+        beforeLaunch: async () => {
+          throw new Error('audit store down');
+        },
+      })
+    ).rejects.toThrow('audit store down');
+    expect(m.launch).not.toHaveBeenCalled();
+    expect(table.plan?.status).toBe('PENDING');
+  });
+
+  it('writes no revert record when the plan was claimed, or when the revert itself failed', async () => {
+    const afterRevert = vi.fn(async () => {});
+    // Claimed between the launch and the refusal: the update matches nothing.
+    m.launch.mockImplementationOnce(async () => {
+      Object.assign(claimed.table.plan as object, {
+        launchedWorkflowRunId: 'run-1',
+        status: 'LAUNCHED',
+      });
+      return { ok: false, reason: 'DUPLICATE', source: 'temporal' };
+    });
+    const claimed = fakePrisma(planRow());
+    await approveAndLaunchPlan(deps(claimed.prisma), OWNER, PLAN_ID, { afterRevert });
+    expect(afterRevert).not.toHaveBeenCalled();
+
+    // The revert's own update throws: the swallowed error must not be recorded as a revert.
+    m.launch.mockImplementationOnce(async () => ({
+      ok: false,
+      reason: 'DUPLICATE',
+      source: 'ledger',
+    }));
+    const broken = fakePrisma(planRow());
+    type UpdateArg = { data: Record<string, unknown>; where: Record<string, unknown> };
+    const real = broken.prisma.runPlan.updateMany.getMockImplementation() as (
+      a: UpdateArg
+    ) => Promise<{ count: number }>;
+    let calls = 0;
+    broken.prisma.runPlan.updateMany.mockImplementation(async (arg: UpdateArg) => {
+      calls += 1;
+      if (calls === 2) {
+        throw new Error('db down');
+      }
+      return real(arg);
+    });
+    const warn = vi.fn();
+    await approveAndLaunchPlan({ ...deps(broken.prisma), log: { warn } as never }, OWNER, PLAN_ID, {
+      afterRevert,
+    });
+    expect(broken.table.plan?.status).toBe('APPROVED');
+    expect(afterRevert).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith({ planId: PLAN_ID }, expect.stringContaining('not reverted'));
+  });
+
   it('does not revert a plan the worker already claimed', async () => {
     m.launch.mockImplementationOnce(async () => {
       // The worker claimed it between the launch and the refusal.

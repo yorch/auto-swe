@@ -107,7 +107,7 @@ describe('implicit context reads in the worker', () => {
   const hostile = (path: string, value: Record<string, unknown>): RawSpec => {
     const raw = canonicalDeliveringRaw();
     raw.nodes.research = { ...raw.nodes.research, next: 'poke' };
-    raw.nodes.poke = { next: 'validate', type: 'set', values: { [path]: value } };
+    raw.nodes.poke = { next: 'gatherTicket', type: 'set', values: { [path]: value } };
     return raw;
   };
   const codes = (raw: RawSpec): string[] =>
@@ -141,22 +141,9 @@ describe('implicit context reads in the worker', () => {
   });
 
   it('lets the platform step fill the two paths a fallback reads (positive controls)', () => {
+    // The shipped validate phase gathers the ticket into context.ticket and copies the criteria
+    // out of validateContext's output into context.successCriteria.
     const raw = canonicalDeliveringRaw();
-    raw.entry = 'gather';
-    raw.nodes.gather = { next: 'setTicket', step: 'gatherTicketContext', type: 'step' };
-    raw.nodes.setTicket = {
-      next: 'research',
-      type: 'set',
-      values: { 'context.ticket': { default: '', from: 'nodes.gather.output.text' } },
-    };
-    raw.nodes.validate = { ...raw.nodes.validate, next: 'keep' };
-    raw.nodes.keep = {
-      next: 'implement',
-      type: 'set',
-      values: {
-        'context.successCriteria': { default: [], from: 'nodes.validate.output.successCriteria' },
-      },
-    };
     expect(codes(raw)).toEqual([]);
   });
 });

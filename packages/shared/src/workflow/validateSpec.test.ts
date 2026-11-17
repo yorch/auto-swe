@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CHANNEL_TASK_SPEC } from '../lib/syncBuiltins.js';
 import { BUILTIN_SHELL_IMAGES } from './shellImageAllowlist.js';
 import { parseWorkflowSpec } from './spec.js';
 import { BUILTIN_TEMPLATES } from './templates/index.js';
@@ -776,21 +777,34 @@ describe('validateSpec non-launchable agents', () => {
     });
 
   it.each(['securityReview', 'evalJudge@3', 'channelAssistant'])(
-    'errors on an agent node naming %s',
+    'errors on an agent node naming %s when asked to',
     (agentRef) => {
-      const issue = validateSpec(agentSpec(agentRef)).errors.find(
-        (e) => e.code === 'NON_LAUNCHABLE_AGENT'
-      );
+      const issue = validateSpec(agentSpec(agentRef), {
+        rejectNonLaunchableAgents: true,
+      }).errors.find((e) => e.code === 'NON_LAUNCHABLE_AGENT');
       expect(issue?.nodeId).toBe('a');
       expect(issue?.field).toBe('agentRef');
     }
   );
 
-  it('accepts a launchable agent, pinned or floating', () => {
-    for (const ref of ['contentWriter', 'contentWriter@2']) {
-      expect(validateSpec(agentSpec(ref)).errors.map((e) => e.code)).not.toContain(
+  it.each(['securityReview', 'ciTriager', 'validateContext', 'channelAssistant'])(
+    'accepts %s with the default options (platform and team templates name such agents)',
+    (agentRef) => {
+      expect(validateSpec(agentSpec(agentRef)).errors.map((e) => e.code)).not.toContain(
         'NON_LAUNCHABLE_AGENT'
       );
+    }
+  );
+
+  it('validates the seeded Channel Task template with default options', () => {
+    expect(validateSpec(parseWorkflowSpec(CHANNEL_TASK_SPEC)).errors).toEqual([]);
+  });
+
+  it('accepts a launchable agent, pinned or floating', () => {
+    for (const ref of ['contentWriter', 'contentWriter@2']) {
+      expect(
+        validateSpec(agentSpec(ref), { rejectNonLaunchableAgents: true }).errors.map((e) => e.code)
+      ).not.toContain('NON_LAUNCHABLE_AGENT');
     }
   });
 });

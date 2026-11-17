@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '@/lib/api';
 import {
@@ -7,8 +9,12 @@ import {
   describeJobFailure,
   describePlanError,
   expiryLabel,
+  FEEDS_IMPLEMENTER_LABEL,
   formatUsd,
+  GENERIC_PLAN_ERROR_CODES,
   intentError,
+  nodeAction,
+  nodeReads,
   outlineGroups,
   parseCost,
   pollDelayMs,
@@ -98,5 +104,127 @@ describe('polling and display helpers', () => {
   });
   it('encodes the workflow link', () => {
     expect(workflowLaunchHref('t 1', 'r')).toBe('/start?mode=workflow&template=t%201&repo=r');
+  });
+});
+
+describe('error code coverage', () => {
+  const GATEWAY = join(__dirname, '../../../gateway/src');
+  const files = [
+    'routes/runPlans.ts',
+    'lib/runPlanService.ts',
+    'lib/runPlanStart.ts',
+    'lib/runPlanQuotas.ts',
+  ];
+  const emitted = (): string[] => {
+    const codes = new Set<string>();
+    for (const file of files) {
+      const text = readFileSync(join(GATEWAY, file), 'utf8');
+      for (const m of text.matchAll(
+        /'((?:PLAN|RUN_PLAN|RUN|AGENT|REPO|IDEMPOTENCY|PLANNED)[A-Z0-9]*_[A-Z0-9_]+)'/g
+      )) {
+        codes.add(m[1] as string);
+      }
+      for (const m of text.matchAll(
+        /(?:refuse\(\s*\d{3},\s*|sendError\(\s*reply,\s*\d{3},\s*)'([A-Z][A-Z0-9_]+)'/g
+      )) {
+        codes.add(m[1] as string);
+      }
+    }
+    return [...codes].sort();
+  };
+
+  it('finds the codes the gateway emits', () => {
+    expect(emitted()).toEqual(expect.arrayContaining(['PLAN_LAUNCH_FAILED', 'PLAN_EXPIRED']));
+  });
+
+  it('maps every emitted code, or lists it as intentionally generic', () => {
+    const unmapped = emitted().filter((code) => {
+      const view = describePlanError(new ApiError('SENTINEL', 400, code));
+      return view.message === 'SENTINEL' && !GENERIC_PLAN_ERROR_CODES.includes(code);
+    });
+    expect(unmapped).toEqual([]);
+  });
+
+  it('words each of the previously missing codes', () => {
+    for (const code of [
+      'IDEMPOTENCY_KEY_MISMATCH',
+      'PLAN_NOT_LAUNCHABLE',
+      'RUN_CONFLICT',
+      'REPO_HOST_NOT_ALLOWED',
+      'AGENT_RUNS_DISABLED',
+      'PLAN_POLICY_FAILED',
+      'PLAN_SPEC_INVALID',
+      'PLAN_CATALOG_STALE',
+      'PLAN_AGENT_NOT_LAUNCHABLE',
+      'PLAN_LAUNCH_FAILED',
+      'PLAN_LAUNCH_IN_PROGRESS',
+    ]) {
+      const view = describePlanError(new ApiError('raw gateway text', 409, code));
+      expect(view.message, code).not.toBe('raw gateway text');
+      expect(view.title, code).not.toBe('The request failed');
+    }
+    expect(describePlanError(new ApiError('x', 409, 'PLAN_CATALOG_STALE')).drift).toBe('catalog');
+  });
+});
+
+describe('node action and feeding label', () => {
+  it('describes an agent node by its agent and where its input comes from', () => {
+    const node = { id: 'a', marker: 'free', region: 'pre', step: null, type: 'agent' } as const;
+    expect(
+      nodeAction({
+        ...node,
+        agentRef: 'planner',
+        inputs: [{ from: 'request.description', key: 'g' }],
+      })
+    ).toBe('runs agent planner on the goal');
+    expect(
+      nodeAction({ ...node, agentRef: 'writer@2', inputs: [{ from: 'nodes.a.output', key: 'p' }] })
+    ).toBe('runs agent writer@2 on the output of "a"');
+    expect(nodeAction({ ...node, type: 'step' })).toBeNull();
+    expect(FEEDS_IMPLEMENTER_LABEL).toBe('Output becomes guidance for the implementer');
+  });
+
+  it('describes what a step reads and flags a fallback without showing it', () => {
+    const step = {
+      id: 's',
+      marker: 'free',
+      region: 'pre',
+      step: 'retrieveKnowledge',
+      type: 'step',
+    } as const;
+    expect(nodeReads({ ...step })).toBeNull();
+    expect(
+      nodeReads({
+        ...step,
+        inputs: [
+          { from: 'context.ticket', hasDefault: true, key: 'query' },
+          { from: null, key: 'limit' },
+        ],
+      })
+    ).toBe('reads query from `context.ticket` (has fallback value), limit from a fixed value');
+    expect(nodeReads({ ...step, inputs: [], type: 'agent' })).toBeNull();
+  });
+
+  it('carries the action and the feeding flag into the outline', () => {
+    const groups = outlineGroups({
+      nodes: [
+        {
+          agentRef: 'planner',
+          feedsImplementer: true,
+          id: 'p',
+          inputs: [{ from: 'request.description', key: 'g' }],
+          marker: 'free',
+          region: 'pre',
+          step: null,
+          type: 'agent',
+          writes: ['context.planNotes'],
+        },
+      ],
+      spec: {},
+    });
+    expect(groups[0]?.nodes[0]).toMatchObject({
+      action: 'runs agent planner on the goal',
+      feedsImplementer: true,
+    });
   });
 });

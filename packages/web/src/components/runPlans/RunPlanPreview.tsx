@@ -18,6 +18,7 @@ import {
   deliveryEffect,
   describePlanError,
   expiryLabel,
+  FEEDS_IMPLEMENTER_LABEL,
   formatUsd,
   MARKER_LABEL,
   type NodeMarker,
@@ -76,6 +77,34 @@ function Outline({ groups }: { groups: OutlineGroup[] }) {
                 <Badge className="ml-auto" tone={MARKER_TONE[node.marker]} variant="outline">
                   {MARKER_LABEL[node.marker]}
                 </Badge>
+                {node.action && (
+                  <p
+                    className="basis-full break-words text-xs text-paper-300"
+                    data-testid="node-action"
+                  >
+                    {node.action}
+                  </p>
+                )}
+                {node.reads && (
+                  <p
+                    className="basis-full break-words text-xs text-paper-400"
+                    data-testid="node-reads"
+                  >
+                    {node.reads}
+                  </p>
+                )}
+                {node.message && (
+                  <p className="basis-full whitespace-pre-wrap break-words text-xs text-paper-400">
+                    {node.message}
+                  </p>
+                )}
+                {node.feedsImplementer && (
+                  <span data-testid="feeds-implementer">
+                    <Badge tone="warning" variant="outline">
+                      {FEEDS_IMPLEMENTER_LABEL}
+                    </Badge>
+                  </span>
+                )}
               </li>
             ))}
           </ol>

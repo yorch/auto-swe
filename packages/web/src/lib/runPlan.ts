@@ -28,12 +28,29 @@ export interface RouteResult {
   noneFit: boolean;
 }
 
+export interface PlanNodeInput {
+  key: string;
+  /** The path the input is read from; null when it is not a plain `from` binding. */
+  from: string | null;
+  /** The binding has a fallback value for an empty path (the value itself is never sent). */
+  hasDefault?: boolean;
+}
+
 export interface PlanNode {
   id: string;
   type: string | null;
   step: string | null;
   marker: NodeMarker;
   region: string;
+  /** The agent an `agent` node runs; null otherwise. Older responses omit it. */
+  agentRef?: string | null;
+  inputs?: PlanNodeInput[];
+  /** Context paths the node writes (a `set`'s keys and `storeAs`). */
+  writes?: string[];
+  /** The node's output reaches the implementer as guidance. */
+  feedsImplementer?: boolean;
+  /** A message the node authors, cleaned by the gateway; absent when it has none. */
+  message?: string;
 }
 
 export interface PlanWarning {
@@ -149,6 +166,28 @@ function driftKind(err: unknown): string | null {
   return null;
 }
 
+/**
+ * Codes the gateway can send that are deliberately left to the generic status wording: each is a
+ * request the dashboard cannot produce (a wrong mode or agent), or a plain 404/403 whose gateway
+ * message already says what is wrong. A test checks that every code the gateway's run-plan files
+ * name is either mapped below or listed here.
+ */
+export const GENERIC_PLAN_ERROR_CODES: readonly string[] = [
+  'AGENT_NOT_FOUND',
+  'AGENT_NOT_LAUNCHABLE',
+  'CONNECTION_NOT_FOUND',
+  'FORBIDDEN',
+  'NOT_A_GIT_REPO',
+  'PLAN_AGENT_MISMATCH',
+  'PLAN_MODE_INVALID',
+  'PLAN_NOT_APPROVED',
+  'PLAN_NOT_REJECTABLE',
+  'PLAN_SPEC_TOO_DEEP',
+  'PLAN_SPEC_TOO_LARGE',
+  'RUN_PLAN_JOB_NOT_FOUND',
+  'RUN_PLAN_SERVICE_FORBIDDEN',
+];
+
 /** Fixed wording by code or status; server text is shown only where it is a fixed gateway string. */
 export function describePlanError(err: unknown): PlanErrorView {
   const status = err instanceof ApiError ? err.status : null;
@@ -260,6 +299,62 @@ export function describePlanError(err: unknown): PlanErrorView {
         retryable: false,
         title: 'The run did not start',
       };
+    case 'PLAN_LAUNCH_IN_PROGRESS':
+      return {
+        hint: 'Check My plans in a moment before trying again.',
+        message: 'This approval is still starting its run.',
+        retryable: true,
+        title: 'The run is still starting',
+      };
+    case 'IDEMPOTENCY_KEY_MISMATCH':
+      return {
+        hint: 'Start the action again from the plan.',
+        message: 'This approval key was already used for a different plan.',
+        retryable: true,
+        title: 'Approval key already used',
+      };
+    case 'PLAN_NOT_LAUNCHABLE':
+      return {
+        message: 'This plan cannot be launched. Generate a new one.',
+        retryable: false,
+        title: 'The plan cannot be launched',
+      };
+    case 'RUN_CONFLICT':
+      return {
+        message: 'A run for this plan already exists, so nothing new was started.',
+        retryable: false,
+        title: 'A run already exists',
+      };
+    case 'REPO_HOST_NOT_ALLOWED':
+      return {
+        hint: 'Ask an administrator to allow the repository’s host in Platform settings.',
+        message: 'The repository’s host is not on the list of hosts this deployment may use.',
+        retryable: false,
+        title: 'Repository host not allowed',
+      };
+    case 'AGENT_RUNS_DISABLED':
+      return {
+        hint: 'An administrator controls this in Platform settings.',
+        message: 'Agent runs are turned off, so a plan that runs a library agent cannot start.',
+        retryable: false,
+        title: 'Agent runs are turned off',
+      };
+    case 'PLAN_POLICY_FAILED':
+      return {
+        hint: 'Nothing was started. Generate the plan again from the same goal.',
+        message: 'The plan no longer meets the platform’s rules for a plan.',
+        retryable: false,
+        title: 'The plan breaks the platform’s rules',
+      };
+    case 'PLAN_SPEC_INVALID':
+      return {
+        hint: 'Nothing was started. Generate the plan again from the same goal.',
+        message: 'The stored plan is not a valid workflow.',
+        retryable: false,
+        title: 'The plan is not valid',
+      };
+    case 'PLAN_CATALOG_STALE':
+      return driftView('catalog');
     case 'AGENT_RUN_CONCURRENCY_EXCEEDED':
       return {
         hint: 'Runs hold a workspace for their whole duration. Try again when one finishes.',
@@ -361,7 +456,7 @@ export interface OutlineGroup {
   region: string;
   title: string;
   hint: string;
-  nodes: (PlanNode & { title: string })[];
+  nodes: (PlanNode & { title: string; action: string | null; reads: string | null })[];
 }
 
 const REGION_COPY: Record<string, { title: string; hint: string }> = {
@@ -389,6 +484,50 @@ function nodeTitle(spec: unknown, id: string): string {
   return id;
 }
 
+/** Where an input is read from, in words. */
+export function describeSource(from: string | null): string {
+  if (from === null) {
+    return 'a fixed value';
+  }
+  if (from === 'request.description') {
+    return 'the goal';
+  }
+  const output = /^nodes\.([^.]+)\.output$/.exec(from);
+  if (output) {
+    return `the output of "${output[1]}"`;
+  }
+  return `\`${from}\``;
+}
+
+/** "runs agent X on the goal": what an agent node does and what it is given, or null. */
+export function nodeAction(node: PlanNode): string | null {
+  if (node.type !== 'agent' || !node.agentRef) {
+    return null;
+  }
+  const sources = (node.inputs ?? []).map((i) => describeSource(i.from));
+  return sources.length > 0
+    ? `runs agent ${node.agentRef} on ${sources.join(' and ')}`
+    : `runs agent ${node.agentRef}`;
+}
+
+/**
+ * What a `step` node reads: each input's key and source, with "has fallback value" where the
+ * binding carries a default (never the default itself). Null for other nodes or no inputs.
+ */
+export function nodeReads(node: PlanNode): string | null {
+  if (node.type !== 'step' || !node.inputs || node.inputs.length === 0) {
+    return null;
+  }
+  return `reads ${node.inputs
+    .map(
+      (i) => `${i.key} from ${describeSource(i.from)}${i.hasDefault ? ' (has fallback value)' : ''}`
+    )
+    .join(', ')}`;
+}
+
+/** The badge shown on a node whose output reaches the implementer. */
+export const FEEDS_IMPLEMENTER_LABEL = 'Output becomes guidance for the implementer';
+
 /** Nodes in spec order, grouped by region in run order. Titles are plain strings. */
 export function outlineGroups(plan: Pick<RunPlanView, 'nodes' | 'spec'>): OutlineGroup[] {
   const known = new Set<string>(REGION_ORDER);
@@ -396,7 +535,12 @@ export function outlineGroups(plan: Pick<RunPlanView, 'nodes' | 'spec'>): Outlin
   for (const region of REGION_ORDER) {
     const nodes = plan.nodes
       .filter((n) => (known.has(n.region) ? n.region : 'plan') === region)
-      .map((n) => ({ ...n, title: nodeTitle(plan.spec, n.id) }));
+      .map((n) => ({
+        ...n,
+        action: nodeAction(n),
+        reads: nodeReads(n),
+        title: nodeTitle(plan.spec, n.id),
+      }));
     if (nodes.length > 0) {
       groups.push({ ...(REGION_COPY[region] as { title: string; hint: string }), nodes, region });
     }

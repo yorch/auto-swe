@@ -33,7 +33,17 @@ describe('positive controls', () => {
   it('passes a pre-region feeding the canonical core', () => {
     const report = checkSkeletonPolicy(parse(canonicalDeliveringRaw()), 'delivering');
     expect(report.errors).toEqual([]);
-    expect(report.regions?.pre.sort()).toEqual(['research', 'validate']);
+    expect(report.regions?.pre.sort()).toEqual(
+      [
+        'checkActionable',
+        'gatherTicket',
+        'research',
+        'setSuccessCriteria',
+        'setTicket',
+        'terminateNotActionable',
+        'validate',
+      ].sort()
+    );
     expect(report.regions?.post).toEqual([]);
     expect(report.regions?.core).toEqual(canonicalCoreIds());
   });
@@ -56,7 +66,7 @@ describe('positive controls', () => {
   it('passes the core behind validation alone, with the guidance slot absent', () => {
     const raw = canonicalDeliveringRaw();
     delete raw.nodes.research;
-    raw.entry = 'validate';
+    raw.entry = 'gatherTicket';
     raw.nodes.implement = {
       ...raw.nodes.implement,
       inputs: {
@@ -72,6 +82,7 @@ describe('positive controls', () => {
       r.nodes.waitForHumanMerge = { ...r.nodes.waitForHumanMerge, onReceive: 'announce' };
       r.nodes.announce = {
         agentRef: 'contentWriter',
+        inputs: { goal: { from: 'request.description' } },
         next: 'commitLesson',
         storeAs: 'context.scratch.announcement',
         type: 'agent',
@@ -84,22 +95,16 @@ describe('positive controls', () => {
 
   it('passes a pre-region that gathers, validates and branches before the core', () => {
     const raw = plan((r) => {
-      r.entry = 'gather';
-      r.nodes.gather = { next: 'setTicket', step: 'gatherTicketContext', type: 'step' };
-      r.nodes.setTicket = {
-        next: 'research',
-        type: 'set',
-        values: { 'context.ticket': { default: '', from: 'nodes.gather.output.text' } },
-      };
       r.nodes.research = {
         agentRef: 'productAnalyst',
+        inputs: { goal: { from: 'request.description' } },
         next: 'route',
         storeAs: 'context.planNotes',
         type: 'agent',
       };
       r.nodes.route = {
         expr: 'context.scratch.skip == true',
-        onFalse: 'validate',
+        onFalse: 'gatherTicket',
         onTrue: 'stop',
         type: 'cond',
       };
@@ -210,7 +215,12 @@ describe('the free ends stay out of the core', () => {
   it('refuses a free node placed between core nodes', () => {
     const raw = plan((r) => {
       r.nodes.checkApproval = { ...r.nodes.checkApproval, onTrue: 'polish' };
-      r.nodes.polish = { agentRef: 'contentWriter', next: 'forgetRejection', type: 'agent' };
+      r.nodes.polish = {
+        agentRef: 'contentWriter',
+        inputs: { goal: { from: 'request.description' } },
+        next: 'forgetRejection',
+        type: 'agent',
+      };
     });
     const codes = codesOf(raw);
     expect(codes).toContain('CORE_MISMATCH');
@@ -220,7 +230,12 @@ describe('the free ends stay out of the core', () => {
 
   it('refuses a node that reuses a core id for something else', () => {
     const raw = plan((r) => {
-      r.nodes.review = { agentRef: 'contentWriter', next: 'checkApproval', type: 'agent' };
+      r.nodes.review = {
+        agentRef: 'contentWriter',
+        inputs: { goal: { from: 'request.description' } },
+        next: 'checkApproval',
+        type: 'agent',
+      };
     });
     expect(codesOf(raw)).toContain('CORE_MISMATCH');
   });
@@ -281,6 +296,7 @@ describe('the free ends stay out of the core', () => {
       codesOf(
         hook({
           agentRef: 'contentWriter',
+          inputs: { goal: { from: 'request.description' } },
           next: 'commitLesson',
           storeAs: 'context.planNotes',
           type: 'agent',
@@ -288,11 +304,25 @@ describe('the free ends stay out of the core', () => {
       )
     ).toContain('FREE_WRITE_DENIED');
     expect(
-      codesOf(hook({ agentRef: 'contentWriter', next: 'implement', type: 'agent' }))
+      codesOf(
+        hook({
+          agentRef: 'contentWriter',
+          inputs: { goal: { from: 'request.description' } },
+          next: 'implement',
+          type: 'agent',
+        })
+      )
     ).toContain('CORE_ENTERED_MIDWAY');
-    expect(codesOf(hook({ agentRef: 'contentWriter', next: 'research', type: 'agent' }))).toContain(
-      'POST_REGION_ESCAPE'
-    );
+    expect(
+      codesOf(
+        hook({
+          agentRef: 'contentWriter',
+          inputs: { goal: { from: 'request.description' } },
+          next: 'research',
+          type: 'agent',
+        })
+      )
+    ).toContain('POST_REGION_ESCAPE');
   });
 
   it('refuses a hook that points at a node that also runs before the core', () => {
@@ -305,7 +335,12 @@ describe('the free ends stay out of the core', () => {
   it('refuses any other route out of the core to a free node', () => {
     const raw = plan((r) => {
       r.nodes.waitForHumanMerge = { ...r.nodes.waitForHumanMerge, onTimeout: 'after' };
-      r.nodes.after = { agentRef: 'contentWriter', next: 'commitLesson', type: 'agent' };
+      r.nodes.after = {
+        agentRef: 'contentWriter',
+        inputs: { goal: { from: 'request.description' } },
+        next: 'commitLesson',
+        type: 'agent',
+      };
     });
     const codes = codesOf(raw);
     expect(codes).toContain('FREE_NODE_IN_CORE');
@@ -319,11 +354,12 @@ describe('the one channel: context.planNotes', () => {
     const set = plan((r) => {
       r.nodes.research = {
         agentRef: 'productAnalyst',
+        inputs: { goal: { from: 'request.description' } },
         next: 'notes',
         type: 'agent',
       };
       r.nodes.notes = {
-        next: 'validate',
+        next: 'gatherTicket',
         type: 'set',
         values: { 'context.planNotes': { from: 'nodes.research.output' } },
       };
@@ -367,6 +403,7 @@ describe('the one channel: context.planNotes', () => {
       const raw = plan((r) => {
         r.nodes.research = {
           agentRef: 'productAnalyst',
+          inputs: { goal: { from: 'request.description' } },
           next: 'implement',
           storeAs: path,
           type: 'agent',
@@ -419,6 +456,7 @@ describe('adversarial repros', () => {
     const raw = plan((r) => {
       r.nodes.research = {
         agentRef: 'productAnalyst',
+        inputs: { goal: { from: 'request.description' } },
         next: 'review.output.approved',
         type: 'agent',
       };
@@ -436,6 +474,7 @@ describe('adversarial repros', () => {
     const raw = plan((r) => {
       r.nodes.research = {
         agentRef: 'productAnalyst',
+        inputs: { goal: { from: 'request.description' } },
         next: 'review.output.approved',
         type: 'agent',
       };
@@ -454,7 +493,12 @@ describe('adversarial repros', () => {
     'refuses the node id %j in either mode',
     (id) => {
       const delivering = plan((r) => {
-        r.nodes.research = { agentRef: 'productAnalyst', next: id, type: 'agent' };
+        r.nodes.research = {
+          agentRef: 'productAnalyst',
+          inputs: { goal: { from: 'request.description' } },
+          next: id,
+          type: 'agent',
+        };
         r.nodes[id] = {
           next: 'implement',
           type: 'set',
@@ -497,6 +541,7 @@ describe('adversarial repros', () => {
       const raw = plan((r) => {
         r.nodes.research = {
           agentRef: 'productAnalyst',
+          inputs: { goal: { from: 'request.description' } },
           next: 'lesson',
           storeAs: path,
           type: 'agent',
@@ -515,6 +560,7 @@ describe('adversarial repros', () => {
       const viaAgent = plan((r) => {
         r.nodes.research = {
           agentRef: 'productAnalyst',
+          inputs: { goal: { from: 'request.description' } },
           next: 'implement',
           storeAs: path,
           type: 'agent',
@@ -522,7 +568,12 @@ describe('adversarial repros', () => {
       });
       expect(codesOf(viaAgent), path).toContain('CONTEXT_WRITE_DENIED');
       const viaSet = plan((r) => {
-        r.nodes.research = { agentRef: 'productAnalyst', next: 'stamp', type: 'agent' };
+        r.nodes.research = {
+          agentRef: 'productAnalyst',
+          inputs: { goal: { from: 'request.description' } },
+          next: 'stamp',
+          type: 'agent',
+        };
         r.nodes.stamp = {
           next: 'implement',
           type: 'set',
@@ -531,7 +582,12 @@ describe('adversarial repros', () => {
       });
       expect(codesOf(viaSet), path).toContain('CONTEXT_WRITE_DENIED');
       const viaOutput = plan((r) => {
-        r.nodes.research = { agentRef: 'productAnalyst', next: 'stamp', type: 'agent' };
+        r.nodes.research = {
+          agentRef: 'productAnalyst',
+          inputs: { goal: { from: 'request.description' } },
+          next: 'stamp',
+          type: 'agent',
+        };
         r.nodes.stamp = {
           next: 'implement',
           type: 'set',
@@ -544,7 +600,12 @@ describe('adversarial repros', () => {
 
   it('refuses validation fed with agent text, which would launder it into the criteria', () => {
     const raw = plan((r) => {
-      r.nodes.research = { agentRef: 'productAnalyst', next: 'validate', type: 'agent' };
+      r.nodes.research = {
+        agentRef: 'productAnalyst',
+        inputs: { goal: { from: 'request.description' } },
+        next: 'validate',
+        type: 'agent',
+      };
       r.nodes.validate = {
         inputs: { ticket: { from: 'nodes.research.output' } },
         next: 'implement',
@@ -564,7 +625,12 @@ describe('applySkeletonPolicy refuses a reserved id', () => {
       name: 'fixture-reserved',
       nodes: {
         end: { status: 'SUCCESS', type: 'terminate' },
-        review: { agentRef: 'productAnalyst', next: 'end', type: 'agent' },
+        review: {
+          agentRef: 'productAnalyst',
+          inputs: { goal: { from: 'request.description' } },
+          next: 'end',
+          type: 'agent',
+        },
       },
       schemaVersion: 1,
     };
@@ -577,9 +643,19 @@ describe('applySkeletonPolicy refuses a reserved id', () => {
 describe('output-only: no agent after the last human review', () => {
   const twoAgents = (edit: Edit): RawSpec => {
     const raw = outputOnlyRaw();
-    raw.nodes.draft = { agentRef: 'contentWriter', next: 'reviewDraft', type: 'agent' };
+    raw.nodes.draft = {
+      agentRef: 'contentWriter',
+      inputs: { goal: { from: 'request.description' } },
+      next: 'reviewDraft',
+      type: 'agent',
+    };
     raw.nodes.reviewDraft = { ...raw.nodes.reviewDraft, onSubmit: 'polish' };
-    raw.nodes.polish = { agentRef: 'contentWriter', next: 'done', type: 'agent' };
+    raw.nodes.polish = {
+      agentRef: 'contentWriter',
+      inputs: { goal: { from: 'request.description' } },
+      next: 'done',
+      type: 'agent',
+    };
     edit(raw);
     return raw;
   };
@@ -596,13 +672,23 @@ describe('output-only: no agent after the last human review', () => {
   it('refuses it when the late agent is the same agent looping back', () => {
     const raw = outputOnlyRaw();
     raw.nodes.reviewDraft = { ...raw.nodes.reviewDraft, onSubmit: 'draft2' };
-    raw.nodes.draft2 = { agentRef: 'contentWriter', next: 'done', type: 'agent' };
+    raw.nodes.draft2 = {
+      agentRef: 'contentWriter',
+      inputs: { goal: { from: 'request.description' } },
+      next: 'done',
+      type: 'agent',
+    };
     expect(codesOf(raw, 'output-only')).toContain('AGENT_AFTER_REVIEW');
   });
 
   it('accepts a second agent when a second review of its output follows', () => {
     const raw = twoAgents((r) => {
-      r.nodes.polish = { agentRef: 'contentWriter', next: 'review2', type: 'agent' };
+      r.nodes.polish = {
+        agentRef: 'contentWriter',
+        inputs: { goal: { from: 'request.description' } },
+        next: 'review2',
+        type: 'agent',
+      };
       r.nodes.review2 = {
         contentFrom: 'nodes.polish.output',
         onSubmit: 'done',
@@ -617,7 +703,12 @@ describe('output-only: no agent after the last human review', () => {
 
   it('accepts a late agent that cannot reach SUCCESS', () => {
     const raw = twoAgents((r) => {
-      r.nodes.polish = { agentRef: 'contentWriter', next: 'timedOut', type: 'agent' };
+      r.nodes.polish = {
+        agentRef: 'contentWriter',
+        inputs: { goal: { from: 'request.description' } },
+        next: 'timedOut',
+        type: 'agent',
+      };
       r.nodes.reviewDraft = {
         ...r.nodes.reviewDraft,
         onSubmit: 'done',
@@ -625,5 +716,90 @@ describe('output-only: no agent after the last human review', () => {
       };
     });
     expect(codesOf(raw, 'output-only')).not.toContain('AGENT_AFTER_REVIEW');
+  });
+});
+
+describe('the validate phase is the shipped one, whole', () => {
+  const mismatch = (raw: RawSpec): boolean => codesOf(raw).includes('VALIDATE_PHASE_MISMATCH');
+
+  it('refuses a lone validateContext step with no gather, actionability stop or criteria write', () => {
+    const lone = plan((r) => {
+      for (const id of [
+        'gatherTicket',
+        'setTicket',
+        'checkActionable',
+        'terminateNotActionable',
+        'setSuccessCriteria',
+      ]) {
+        delete r.nodes[id];
+      }
+      r.nodes.research = { ...r.nodes.research, next: 'validate' };
+      r.nodes.validate = {
+        next: 'implement',
+        onError: 'continue',
+        step: 'validateContext',
+        type: 'step',
+      };
+    });
+    expect(mismatch(lone)).toBe(true);
+  });
+
+  it.each(['gatherTicket', 'setTicket', 'validate', 'checkActionable', 'setSuccessCriteria'])(
+    'refuses an edit to validate-phase node %s',
+    (id) => {
+      const raw = plan((r) => {
+        r.nodes[id] = { ...r.nodes[id], title: 'Edited' };
+      });
+      expect(mismatch(raw)).toBe(true);
+    }
+  );
+
+  it('refuses a second validateContext step beside the phase', () => {
+    const raw = plan((r) => {
+      r.nodes.research = { ...r.nodes.research, next: 'extra' };
+      r.nodes.extra = { next: 'gatherTicket', step: 'validateContext', type: 'step' };
+    });
+    expect(mismatch(raw)).toBe(true);
+  });
+
+  it('passes the unedited phase, and the generator path injects it for a pre-region with none', () => {
+    expect(mismatch(canonicalDeliveringRaw())).toBe(false);
+    const applied = applySkeletonPolicy(
+      parse({
+        description: 'x',
+        entry: 'research',
+        name: 'x',
+        nodes: {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          research: {
+            agentRef: 'productAnalyst',
+            inputs: { goal: { from: 'request.description' } },
+            next: 'done',
+            type: 'agent',
+          },
+        },
+        schemaVersion: 1,
+      } as unknown as RawSpec),
+      'delivering'
+    );
+    expect(applied.report.errors).toEqual([]);
+    expect(applied.injected).toContain('setSuccessCriteria');
+  });
+
+  it('refuses, after generation, a pre-region that wrote only a lone validateContext', () => {
+    const applied = applySkeletonPolicy(
+      parse({
+        description: 'x',
+        entry: 'validate',
+        name: 'x',
+        nodes: {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          validate: { next: 'done', step: 'validateContext', type: 'step' },
+        },
+        schemaVersion: 1,
+      } as unknown as RawSpec),
+      'delivering'
+    );
+    expect(applied.report.errors.map((e) => e.code)).toContain('VALIDATE_PHASE_MISMATCH');
   });
 });

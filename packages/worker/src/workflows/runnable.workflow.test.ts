@@ -790,6 +790,37 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     );
   }, 120_000);
 
+  it('labels guidance bound from the plan notes as generated, not as the requester', async () => {
+    calls.implementationRequests.length = 0;
+    currentSpec = makeSpec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        impl: {
+          inputs: { guidance: { from: 'context.planNotes' } },
+          next: 'done',
+          step: 'executeImplementation',
+          type: 'step',
+        },
+        seed: {
+          next: 'impl',
+          type: 'set',
+          values: { 'context.planNotes': { literal: 'prefer a queue' } },
+        },
+      },
+      'seed'
+    );
+    const result = (await env.client.workflow.execute(
+      'RunnableWorkflow',
+      startArgs('wf-guidance-plan-notes')
+    )) as { status: string };
+    expect(result.status).toBe('SUCCESS');
+    const description = calls.implementationRequests[0]?.description ?? '';
+    expect(description).toBe(
+      'test\n\n## Notes from earlier plan steps (generated, not written by the requester)\nprefer a queue'
+    );
+    expect(description).not.toContain('from the requester\n');
+  }, 120_000);
+
   it('passes allowedPaths to the implementer and the review fix only when the node sets it', async () => {
     const paths = ['docs/a.md'];
     const specWith = (config?: Record<string, unknown>) =>

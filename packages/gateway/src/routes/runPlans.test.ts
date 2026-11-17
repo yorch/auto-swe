@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -45,6 +46,10 @@ const USER = '0a1b2c3d-1111-4111-8111-aaaaaaaaaaaa';
 const OTHER = '9f8e7d6c-2222-4222-8222-bbbbbbbbbbbb';
 const REPO = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 const PLAN = '0b1c2d3e-0000-4000-8000-000000000001';
+/** The digest the route records for an Idempotency-Key. */
+const keyDigestOf = (key: string): string =>
+  crypto.createHash('sha256').update(`run-plan-approve\n${key}`).digest('hex');
+
 const SECRET_INTENT = 'ship the zebra-migration-7731 hotfix';
 
 const DEFAULT_SETTINGS = {
@@ -120,6 +125,7 @@ interface State {
   queries: { templates: Array<Record<string, unknown>>; agents: Array<Record<string, unknown>> };
   raceOnCreate: boolean;
   launched: boolean;
+  auditCreateFails?: boolean;
 }
 
 describe('run plan routes', () => {
@@ -287,6 +293,9 @@ describe('run plan routes', () => {
           }
         }
       },
+      activeWorkflow: {
+        findFirst: async () => (s.launched ? { currentStatus: 'IMPLEMENTING' } : null),
+      },
       agent: {
         findMany: async (args: Record<string, unknown>) => {
           s.queries.agents.push(args);
@@ -299,6 +308,9 @@ describe('run plan routes', () => {
             (a) => a.data.actorId === where.actorId && eventOf(a) === cond(where.afterJson).equals
           ).length,
         create: async (args: { data: Record<string, unknown> }) => {
+          if (s.auditCreateFails) {
+            throw new Error('audit store down');
+          }
           const id = `audit-${s.audit.length + 1}-${Math.random().toString(16).slice(2, 8)}`;
           s.audit.push({ ...args, id } as never);
           return { id };
@@ -332,6 +344,23 @@ describe('run plan routes', () => {
               )
           );
           return hit ? { id: (hit as unknown as { id: string }).id } : null;
+        },
+        // Newest first, `take` honoured, the `OR` of event names honoured.
+        findMany: async ({ where, take }: { where: Record<string, unknown>; take?: number }) => {
+          const events = (where.OR as Array<{ afterJson: { equals: unknown } }>).map(
+            (c) => c.afterJson.equals
+          );
+          const hits = s.audit
+            .filter(
+              (a) =>
+                a.data.entityId === where.entityId &&
+                a.data.actorId === where.actorId &&
+                a.data.action === where.action &&
+                events.includes((a.data.afterJson as Record<string, unknown>).event)
+            )
+            .reverse()
+            .slice(0, take ?? 1000);
+          return hits.map((a) => ({ afterJson: a.data.afterJson }));
         },
       },
       connection: {
@@ -1095,7 +1124,15 @@ describe('run plan routes', () => {
         spec: {
           entry: 'gather',
           nodes: {
-            gather: { step: 'x', type: 'step' },
+            gather: {
+              agentRef: 'planner@2',
+              inputs: {
+                goal: { from: 'request.description' },
+                lit: { literal: 'hunter2-literal' },
+              },
+              storeAs: 'context.planNotes',
+              type: 'agent',
+            },
             gatherTicket: { step: 'gatherTicketContext', type: 'step' },
             implement: { step: 'executeImplementation', type: 'step' },
           },
@@ -1125,9 +1162,46 @@ describe('run plan routes', () => {
         d.nodes.map((n: { id: string; marker: string }) => [n.id, n.marker])
       );
       expect(marker).toEqual({ gather: 'free', gatherTicket: 'injected', implement: 'core' });
+      const gather = d.nodes.find((n: { id: string }) => n.id === 'gather');
+      expect(gather).toMatchObject({
+        agentRef: 'planner@2',
+        feedsImplementer: true,
+        inputs: [
+          { from: 'request.description', key: 'goal' },
+          { from: null, key: 'lit' },
+        ],
+        writes: ['context.planNotes'],
+      });
+      expect(JSON.stringify(d.nodes)).not.toContain('hunter2-literal');
+      const ticket = d.nodes.find((n: { id: string }) => n.id === 'gatherTicket');
+      expect(ticket.feedsImplementer).toBe(false);
       expect(
         d.warnings.map((w: { code: string; source: string }) => `${w.source}:${w.code}`)
       ).toEqual(['skeleton:W1', 'validation:V1']);
+    });
+
+    it('reports that a step input has a fallback value, never the value itself', async () => {
+      const base = plan();
+      const spec = base.spec as { nodes: Record<string, unknown> };
+      s.plans.push(
+        plan({
+          spec: {
+            ...spec,
+            nodes: {
+              ...spec.nodes,
+              gatherTicket: {
+                inputs: { query: { default: 'FALLBACK-VALUE-XYZ', from: 'context.ticket' } },
+                step: 'retrieveKnowledge',
+                type: 'step',
+              },
+            },
+          },
+        })
+      );
+      const res = await get(`/api/v1/run-plans/${PLAN}`);
+      const node = res.json().data.nodes.find((n: { id: string }) => n.id === 'gatherTicket');
+      expect(node.inputs).toEqual([{ from: 'context.ticket', hasDefault: true, key: 'query' }]);
+      expect(JSON.stringify(res.json().data.nodes)).not.toContain('FALLBACK-VALUE-XYZ');
     });
 
     it('shows model text as plain text: summary, name and description are cleaned and bounded', async () => {
@@ -1204,14 +1278,34 @@ describe('run plan routes', () => {
       status,
     });
 
-    it('launches an approved plan and answers like an agent run', async () => {
-      m.approve.mockResolvedValueOnce({
+    /** An approval that, like the service, runs the route's hooks around the launch. */
+    const approveRunning = (
+      launch: () => unknown = () => ({
         activeWorkflowId: 'aw-1',
         ok: true,
         planId: PLAN,
         temporalWorkflowId: 'plan-abc',
         workRequestId: 'wr-1',
-      });
+      })
+    ) =>
+      m.approve.mockImplementation(
+        async (
+          _deps: unknown,
+          _actor: unknown,
+          _id: string,
+          opts: { beforeLaunch?: () => Promise<void>; afterRevert?: () => Promise<void> }
+        ) => {
+          await opts.beforeLaunch?.();
+          const result = (await launch()) as { ok: boolean };
+          if (!result.ok) {
+            await opts.afterRevert?.();
+          }
+          return result;
+        }
+      );
+
+    it('launches an approved plan and answers like an agent run', async () => {
+      approveRunning();
       const res = await post(approveUrl, undefined);
       expect(res.statusCode).toBe(201);
       expect(res.json().data).toEqual({
@@ -1260,18 +1354,105 @@ describe('run plan routes', () => {
     });
 
     it('records a digest of the approving key, never the key', async () => {
-      m.approve.mockResolvedValueOnce({
-        activeWorkflowId: 'aw-1',
-        ok: true,
-        planId: PLAN,
-        temporalWorkflowId: 'plan-abc',
-        workRequestId: 'wr-1',
-      });
+      approveRunning();
       await post(approveUrl, undefined, { 'idempotency-key': 'approve-secret-key' });
       const row = s.audit.find((a) => eventOf(a) === 'run_plan.approved');
       const after = row?.data.afterJson as { idempotencyKeyDigest?: string };
       expect(after.idempotencyKeyDigest).toMatch(/^[0-9a-f]{64}$/);
       expect(JSON.stringify(row)).not.toContain('approve-secret-key');
+    });
+
+    describe('the approval is on record before the run starts', () => {
+      const KEY = { 'idempotency-key': 'approve-before' };
+
+      it('writes the approval and the key digest before the launch begins', async () => {
+        let auditedAtLaunch: string[] = [];
+        approveRunning(() => {
+          auditedAtLaunch = s.audit.map((a) => eventOf(a) ?? '');
+          return {
+            activeWorkflowId: 'aw-1',
+            ok: true,
+            planId: PLAN,
+            temporalWorkflowId: 'plan-abc',
+            workRequestId: 'wr-1',
+          };
+        });
+        const res = await post(approveUrl, undefined, KEY);
+        expect(res.statusCode).toBe(201);
+        expect(auditedAtLaunch).toEqual(['run_plan.approved']);
+        expect(s.audit.map((a) => eventOf(a))).toEqual(['run_plan.approved', 'run_plan.launched']);
+      });
+
+      it('answers a retry that arrives during the launch with an in-progress refusal, not a vague 409', async () => {
+        s.plans.push({ id: PLAN, ownerUserId: USER, status: 'APPROVED', teamId: 'team-1' });
+        s.audit.push({
+          data: {
+            action: 'UPDATE',
+            actorId: USER,
+            afterJson: {
+              event: 'run_plan.approved',
+              idempotencyKeyDigest: keyDigestOf('approve-before'),
+            },
+            entityId: PLAN,
+          },
+          id: 'a-1',
+        } as never);
+        m.approve.mockResolvedValue(refusal(409, 'PLAN_NOT_PENDING'));
+        const res = await post(approveUrl, undefined, KEY);
+        expect(res.statusCode).toBe(409);
+        expect(res.json().error.code).toBe('PLAN_LAUNCH_IN_PROGRESS');
+      });
+
+      it('answers a retry after the launch with the same run', async () => {
+        s.plans.push({ id: PLAN, ownerUserId: USER, status: 'LAUNCHED', teamId: 'team-1' });
+        s.launched = true;
+        s.audit.push({
+          data: {
+            action: 'UPDATE',
+            actorId: USER,
+            afterJson: {
+              event: 'run_plan.approved',
+              idempotencyKeyDigest: keyDigestOf('approve-before'),
+            },
+            entityId: PLAN,
+          },
+          id: 'a-1',
+        } as never);
+        m.approve.mockResolvedValue(refusal(409, 'PLAN_NOT_PENDING'));
+        const res = await post(approveUrl, undefined, KEY);
+        expect(res.statusCode).toBe(200);
+        expect(res.json().data).toMatchObject({ deduplicated: true, workRequestId: 'wr-1' });
+      });
+
+      it('marks the approval reverted when the launch is refused, and a later retry no longer matches it', async () => {
+        approveRunning(() => refusal(429, 'AGENT_RUN_CONCURRENCY_EXCEEDED'));
+        const res = await post(approveUrl, undefined, KEY);
+        expect(res.statusCode).toBe(429);
+        expect(s.audit.map((a) => eventOf(a))).toEqual([
+          'run_plan.approved',
+          'run_plan.approval_reverted',
+        ]);
+        // The plan is rejected afterwards; the retry must not be mistaken for the reverted approval.
+        s.plans.push({ id: PLAN, ownerUserId: USER, status: 'LAUNCHED', teamId: 'team-1' });
+        s.launched = true;
+        m.approve.mockReset();
+        m.approve.mockResolvedValue(refusal(409, 'PLAN_NOT_PENDING'));
+        const retry = await post(approveUrl, undefined, KEY);
+        expect(retry.statusCode).toBe(409);
+        expect(retry.json().error.code).toBe('PLAN_NOT_PENDING');
+      });
+
+      it('starts nothing and answers 500 when the approval cannot be recorded', async () => {
+        s.auditCreateFails = true;
+        let launched = false;
+        approveRunning(() => {
+          launched = true;
+          return { ok: true };
+        });
+        const res = await post(approveUrl, undefined, KEY);
+        expect(res.statusCode).toBe(500);
+        expect(launched).toBe(false);
+      });
     });
 
     it('passes the owner only, and a caller-supplied owner field is a validation error', async () => {

@@ -80,6 +80,10 @@ function stripUse(node: Node): Node {
  * keys dropped. A generated spec has been through the parser and a template's TypeScript literal
  * has not, so both sides of a comparison go through it.
  */
+export function parsedNode(node: Node): Node {
+  return asParsed(stripUse(structuredClone(node)));
+}
+
 function asParsed(node: Node): Node {
   const result = NodeSchema.safeParse(node);
   return result.success ? result.data : node;

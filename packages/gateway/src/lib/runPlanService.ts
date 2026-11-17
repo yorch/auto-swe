@@ -553,7 +553,7 @@ export async function createPlanRecord(
       `The plan breaks the skeleton policy (${skeletonReport.errors.map((e) => e.code).join(', ')})`
     );
   }
-  const validationReport = validateSpec(spec);
+  const validationReport = validateSpec(spec, { rejectNonLaunchableAgents: true });
   if (validationReport.errors.length > 0) {
     return refuse(
       422,
@@ -693,7 +693,7 @@ async function verifyPlanForApproval(
       `The plan no longer meets the skeleton policy (${policy.errors.map((e) => e.code).join(', ')})`
     );
   }
-  const validation = validateSpec(spec);
+  const validation = validateSpec(spec, { rejectNonLaunchableAgents: true });
   if (validation.errors.length > 0) {
     return refuse(
       409,
@@ -1086,6 +1086,18 @@ export async function launchApprovedPlan(
   };
 }
 
+/** Callbacks the route supplies around the approval flip and the launch. */
+export interface ApproveHooks {
+  /**
+   * Runs after the plan is APPROVED and before the run starts. The route records the approval and
+   * the Idempotency-Key digest here, so a retry that arrives while the launch is in flight finds
+   * it. A throw reverts the approval and nothing is started.
+   */
+  beforeLaunch?: () => Promise<void>;
+  /** Runs after a failed or refused launch returned the plan to PENDING. Best effort. */
+  afterRevert?: () => Promise<void>;
+}
+
 /**
  * Approve a plan and start its run. Every re-check and the admission run first, so a refusal
  * leaves the plan PENDING; the flip comes last, and a launch that then fails puts the plan back
@@ -1096,21 +1108,44 @@ export async function approveAndLaunchPlan(
   deps: RunPlanLaunchDeps,
   actor: PlanActor,
   planId: string,
-  opts: { budgetTier?: RepoWorkRequest['budgetTier'] } = {}
+  opts: { budgetTier?: RepoWorkRequest['budgetTier'] } & ApproveHooks = {}
 ): Promise<LaunchPlanResult> {
+  const { beforeLaunch, afterRevert, ...launchOpts } = opts;
   const approved = await approvePlan(deps, actor, planId);
   if (!approved.ok) {
     return approved;
   }
+  const revert = async (): Promise<void> => {
+    const reverted = await revertApproval(deps, approved.plan, actor);
+    if (!reverted) {
+      // The plan was not returned to PENDING (the update matched nothing or failed), so no
+      // `approval_reverted` record may claim it was.
+      deps.log?.warn({ planId }, 'approval was not reverted; skipping the revert record');
+      return;
+    }
+    try {
+      await afterRevert?.();
+    } catch (err) {
+      deps.log?.warn({ err, planId }, 'could not mark a reverted approval');
+    }
+  };
+  if (beforeLaunch) {
+    try {
+      await beforeLaunch();
+    } catch (err) {
+      await revert();
+      throw err;
+    }
+  }
   let launched: LaunchPlanResult;
   try {
-    launched = await launchApprovedPlan(deps, actor, planId, opts);
+    launched = await launchApprovedPlan(deps, actor, planId, launchOpts);
   } catch (err) {
-    await revertApproval(deps, approved.plan, actor);
+    await revert();
     throw err;
   }
   if (!launched.ok) {
-    await revertApproval(deps, approved.plan, actor);
+    await revert();
   }
   return launched;
 }
@@ -1119,9 +1154,9 @@ async function revertApproval(
   deps: RunPlanServiceDeps,
   plan: PlanRow,
   actor: PlanActor
-): Promise<void> {
+): Promise<boolean> {
   try {
-    await deps.prisma.runPlan.updateMany({
+    const { count } = await deps.prisma.runPlan.updateMany({
       // The expiry goes back to what it was before approval extended it, so repeated failed
       // launches cannot keep a plan alive past its original life plus one launch window.
       data: { approvedAt: null, approvedById: null, expiresAt: plan.expiresAt, status: 'PENDING' },
@@ -1134,11 +1169,13 @@ async function revertApproval(
         teamId: plan.teamId,
       },
     });
+    return count > 0;
   } catch (err) {
     // The plan stays APPROVED and unlaunched; `launchApprovedPlan` can be called again.
     deps.log?.warn(
       { err, planId: plan.id },
       'could not return a plan to PENDING after a failed launch'
     );
+    return false;
   }
 }

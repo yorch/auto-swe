@@ -298,7 +298,7 @@ export async function loadApprovedPlan(
       `the skeleton policy refuses the plan (${policy.errors.map((e) => e.code).join(', ')})`
     );
   }
-  const validation = validateSpec(spec);
+  const validation = validateSpec(spec, { rejectNonLaunchableAgents: true });
   if (validation.errors.length > 0) {
     throw refuse(
       'PLAN_SPEC_INVALID',

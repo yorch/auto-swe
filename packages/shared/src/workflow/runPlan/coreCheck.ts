@@ -19,7 +19,10 @@
  * `FREE_NODE_IN_CORE` (a core node points at a free node other than through the hook),
  * `POST_HOOK_INVALID`, `POST_REGION_ESCAPE`, `FREE_NODE_TYPE_DENIED`, `FREE_STEP_DENIED`,
  * `FREE_WRITE_DENIED`, `FREE_STATUS_DENIED`, `POST_ENDS_SUCCESS` (a post-merge path that ends the
- * run SUCCESS without the merge lesson), `VALIDATE_MISSING` (a path to the core that skips
+ * run SUCCESS without the merge lesson), `VALIDATE_PHASE_MISMATCH` (the validate phase is not
+ * exactly the shipped one: a lone
+ * `validateContext`, an edited node or a second validator), `VALIDATE_ENTRY_BYPASSED` (a path reaches a later
+ * phase node or the core without passing the phase's entry node), `VALIDATE_MISSING` (a path to the core that skips
  * `validateContext`, so the review has no criteria the platform extracted) and
  * `TRANSITION_BUDGET_EXCEEDED` (pre-region, core and post-region together may exceed the
  * interpreter's transition cap, which would kill the run after the pull request is open).
@@ -29,11 +32,14 @@
 
 import { type Node, nodeEdges, type WorkflowSpec } from '../spec.js';
 import {
+  parsedNode as asParsedNode,
   buildCanonicalCore,
+  buildValidatePhase,
   CORE_ENTRY,
   CORE_HOOK,
   normalizeCoreNode,
   sameJson,
+  VALIDATE_ENTRY,
 } from './canonicalCore.js';
 import { freeStatusRefusal, PLAN_NOTES, under } from './skeletonBindings.js';
 import { classifyRunPlanStep } from './stepAllowlist.js';
@@ -343,6 +349,45 @@ export function checkCanonicalCore(spec: WorkflowSpec): CoreCheck {
         .filter(([, n]) => n.type === 'step' && n.step === 'validateContext')
         .map(([id]) => id)
     );
+    // The whole validate phase, not a lone validateContext: without the ticket gather, the
+    // actionability stop and the success-criteria write the implementer would get no criteria.
+    const phase = buildValidatePhase();
+    const phaseIds = new Set(Object.keys(phase));
+    const wrong: string[] = [];
+    for (const [pid, canonicalNode] of Object.entries(phase)) {
+      const actual = has(pid) ? asParsedNode(spec.nodes[pid] as Node) : undefined;
+      if (actual === undefined || !sameJson(actual, canonicalNode)) {
+        wrong.push(pid);
+      }
+    }
+    const strayValidators = [...validators].filter((id) => !phaseIds.has(id));
+    if (wrong.length > 0 || strayValidators.length > 0) {
+      add(
+        'VALIDATE_PHASE_MISMATCH',
+        `the validate phase must equal ticket-to-merge's (${[...phaseIds].join(', ')}); ${
+          wrong.length > 0
+            ? `missing or edited: ${wrong.map((w) => `'${w}'`).join(', ')}`
+            : `another validateContext step: ${strayValidators.map((w) => `'${w}'`).join(', ')}`
+        }. Leave the validate phase out and the platform adds it`
+      );
+    }
+    // The phase's ENTRY must dominate the rest of it and the core: a free `cond` that sends one
+    // branch straight to a later phase node (or to the implementation) would run the phase without
+    // its first node, and the ticket and actionability stop that node provides.
+    if (has(VALIDATE_ENTRY)) {
+      const entryOnly = new Set([VALIDATE_ENTRY]);
+      const bypassed = [...phaseIds, CORE_ENTRY].filter(
+        (id) => id !== VALIDATE_ENTRY && has(id) && reachableAvoiding(spec, entryOnly, id)
+      );
+      if (bypassed.length > 0) {
+        add(
+          'VALIDATE_ENTRY_BYPASSED',
+          `'${VALIDATE_ENTRY}' must run before the rest of the validate phase and the core, but ${bypassed
+            .map((b) => `'${b}'`)
+            .join(', ')} can be reached without it`
+        );
+      }
+    }
     if (reachableAvoiding(spec, validators, CORE_ENTRY)) {
       add(
         'VALIDATE_MISSING',

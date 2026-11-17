@@ -26,9 +26,30 @@ const PLAN = {
   mode: 'delivering',
   model: 'anthropic/x',
   nodes: [
-    { id: 'evil', marker: 'free', region: 'pre', step: null, type: 'agent' },
+    {
+      agentRef: 'planner<b>@2</b>',
+      feedsImplementer: true,
+      id: 'evil',
+      inputs: [{ from: 'request.description', key: 'goal' }],
+      marker: 'free',
+      message: '<u>legacy message</u>',
+      region: 'pre',
+      step: null,
+      type: 'agent',
+      writes: ['context.planNotes'],
+    },
     { id: 'implement', marker: 'core', region: 'core', step: 'implement', type: 'step' },
-    { id: 'validate', marker: 'injected', region: 'pre', step: 'validateContext', type: 'step' },
+    {
+      id: 'validate',
+      inputs: [
+        { from: 'context.ticket', hasDefault: true, key: 'ticket' },
+        { from: 'request.description', hasDefault: false, key: 'goal' },
+      ],
+      marker: 'injected',
+      region: 'pre',
+      step: 'validateContext',
+      type: 'step',
+    },
   ],
   spec: { nodes: { evil: { label: '<img src=x onerror=alert(1)>' } } },
   specHash: 'h',
@@ -105,6 +126,24 @@ describe('RunPlanPreview', () => {
     expect(screen.getByTestId('plan-cost-note').textContent).toMatch(/1 step is unpriced/);
     expect(screen.getByText('GLOBAL:3')).toBeTruthy();
     expect(screen.getByText(/Expires in/)).toBeTruthy();
+  });
+
+  it('says which agent runs on what and that its output feeds the implementer, as text', async () => {
+    gateway();
+    mount();
+    await screen.findByTestId('plan-preview');
+    expect(screen.getByTestId('node-action').textContent).toBe(
+      'runs agent planner<b>@2</b> on the goal'
+    );
+    expect(screen.getAllByTestId('feeds-implementer')).toHaveLength(1);
+    expect(screen.getByText('Output becomes guidance for the implementer')).toBeTruthy();
+    expect(screen.getByText('<u>legacy message</u>')).toBeTruthy();
+    // A step names what it reads, and says a fallback exists without showing it.
+    expect(screen.getByTestId('node-reads').textContent).toBe(
+      'reads ticket from `context.ticket` (has fallback value), goal from the goal'
+    );
+    expect(document.querySelector('u')).toBeNull();
+    expect(document.querySelector('b')).toBeNull();
   });
 
   it('asks for confirmation naming the repository, delivery and cost before approving', async () => {

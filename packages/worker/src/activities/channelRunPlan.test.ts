@@ -91,16 +91,18 @@ describe('proposeChannelRunPlan', () => {
     expect(tokenOf(out.blocks).intent).toBe('add a health check');
   });
 
-  it('carries a hostile message verbatim in the token and escaped in the text', async () => {
-    const hostile = 'ship it <!channel> <https://evil.example|click> & <@U9>';
+  it('turns Slack markup into plain text for the goal and shows it escaped', async () => {
+    // As Slack delivers it: tokens are raw angle brackets, typed characters are entities.
+    const hostile = 'ship it <!channel> <https://evil.example|click> &amp; &lt;!here&gt; <@U9>';
     const out = await proposeChannelRunPlan(input({ userText: hostile }));
     const claims = tokenOf(out.blocks);
-    // The goal the plan is generated from is exactly the person's text (the mention is a token).
-    expect(claims.intent).toBe('ship it <!channel> <https://evil.example|click> &');
+    // The broadcast and the mention are gone, the link is its label, the entities are decoded.
+    expect(claims.intent).toBe('ship it click & <!here>');
     const rendered = JSON.stringify(out.blocks);
     expect(rendered).not.toContain('<!channel>');
+    expect(rendered).not.toContain('<!here>');
     expect(rendered).not.toContain('<https://evil.example');
-    expect(rendered).toContain('&lt;!channel&gt;');
+    expect(rendered).toContain('&lt;!here&gt;');
     expect(out.text).not.toContain('<');
   });
 
@@ -182,5 +184,14 @@ describe('proposeChannelRunPlan', () => {
     const long = await proposeChannelRunPlan(input({ userText: 'a'.repeat(3000) }));
     expect(long.blocks).toBeUndefined();
     expect(long.text).toContain('too long');
+  });
+
+  it('answers the too-long reply for an over-length goal, raw or after the markup is gone', async () => {
+    const started = performance.now();
+    const raw = await proposeChannelRunPlan(input({ userText: '<a:'.repeat(40_000) }));
+    expect(performance.now() - started).toBeLessThan(200);
+    expect(raw.text).toContain('too long');
+    const parsed = await proposeChannelRunPlan(input({ userText: 'a'.repeat(9000) }));
+    expect(parsed.text).toContain('too long');
   });
 });

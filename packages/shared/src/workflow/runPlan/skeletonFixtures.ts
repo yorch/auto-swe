@@ -4,7 +4,7 @@
  */
 
 import { parseWorkflowSpec, SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import { buildCanonicalCore, CORE_ENTRY } from './canonicalCore.js';
+import { buildCanonicalCore, buildValidatePhase } from './canonicalCore.js';
 
 export type RawSpec = {
   entry: string;
@@ -76,7 +76,12 @@ export function outputOnlyRaw(): RawSpec {
     name: 'fixture-output-only',
     nodes: {
       done: { status: 'SUCCESS', type: 'terminate' },
-      draft: { agentRef: 'contentWriter', next: 'reviewDraft', type: 'agent' },
+      draft: {
+        agentRef: 'contentWriter',
+        inputs: { goal: { from: 'request.description' } },
+        next: 'reviewDraft',
+        type: 'agent',
+      },
       reviewDraft: {
         contentFrom: 'nodes.draft.output',
         onSubmit: 'done',
@@ -111,16 +116,12 @@ export function canonicalDeliveringRaw(): RawSpec {
     nodes: {
       research: {
         agentRef: 'productAnalyst',
-        next: 'validate',
+        inputs: { goal: { from: 'request.description' } },
+        next: 'gatherTicket',
         storeAs: 'context.planNotes',
         type: 'agent',
       },
-      validate: {
-        next: CORE_ENTRY,
-        onError: 'continue',
-        step: 'validateContext',
-        type: 'step',
-      },
+      ...(structuredClone(buildValidatePhase()) as unknown as RawSpec['nodes']),
       ...(structuredClone(buildCanonicalCore().nodes) as unknown as RawSpec['nodes']),
       implement: {
         ...(structuredClone(buildCanonicalCore().nodes.implement) as unknown as Record<

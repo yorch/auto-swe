@@ -51,11 +51,11 @@ const AUTHORED = {
     handover: { status: 'SUCCESS', type: 'terminate' },
     survey: {
       agentRef: 'planner',
+      inputs: { goal: { from: 'request.description' } },
       next: 'handover',
       status: 'PLANNING',
       storeAs: 'context.planNotes',
       type: 'agent',
-      userMessage: 'Outline the files and risks involved.',
     },
   },
   schemaVersion: 1,
