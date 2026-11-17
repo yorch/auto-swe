@@ -7475,7 +7475,7 @@
       "title": "Trace filters and newest-event rendering cap"
     },
     {
-      "anchor": "export function TracesTab(",
+      "anchor": "export const TracesTab = memo(function TracesTab(",
       "before": 0,
       "id": "webTraceStream",
       "lines": 90,
