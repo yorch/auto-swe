@@ -7,6 +7,8 @@ import type {
 } from '@auto-swe/shared/types/api';
 import {
   apiRequest,
+  type LaunchWarning,
+  printLaunchWarnings,
   runWithExitCodes,
   UNKNOWN_SUBCOMMAND,
   withAcknowledgeHint,
@@ -407,12 +409,14 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
 
   const res = await apiRequest<{
     temporalWorkflowId: string;
+    warnings?: LaunchWarning[];
     workflowId: string;
     workRequestId: string;
   }>(env, 'POST', `/api/v1/workflow-templates/${tpl.id}/runs`, body).catch((err: unknown) => {
     throw withAcknowledgeHint(err);
   });
 
+  printLaunchWarnings(res.warnings);
   process.stdout.write(
     `Started run for "${name}": workRequestId=${res.workRequestId} workflowId=${res.workflowId} temporalWorkflowId=${res.temporalWorkflowId}\n`
   );

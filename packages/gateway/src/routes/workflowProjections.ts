@@ -92,23 +92,35 @@ export interface RunWithWorkRequest extends RunProvenanceFields {
     externalTicketId: string;
     description: string;
     requestPayload?: string;
+    /** The `RunInput.title` column. Optional: a query that does not select it falls back to the payload. */
+    title?: string | null;
   } | null;
 }
 
-/** A launch label is presentation data; never return the raw launch body. */
-export function projectWorkRequest(wr: RunWithWorkRequest['workRequest']) {
-  if (!wr) {
-    return null;
-  }
-  let title: string | undefined;
+/** The launch label, read from the payload. Legacy payloads are not necessarily JSON. */
+function titleFromPayload(requestPayload: string | undefined): string | undefined {
   try {
-    const body: unknown = JSON.parse(wr.requestPayload ?? '{}');
+    const body: unknown = JSON.parse(requestPayload ?? '{}');
     if (body && typeof body === 'object' && 'label' in body && typeof body.label === 'string') {
-      title = body.label.trim().slice(0, 200) || undefined;
+      return body.label.trim().slice(0, 200) || undefined;
     }
   } catch {
     /* Legacy request payloads are not necessarily JSON. */
   }
+  return undefined;
+}
+
+/**
+ * A launch label is presentation data; never return the raw launch body. The `title` column wins
+ * when it is a non-blank string; otherwise the label is read from `requestPayload`.
+ */
+export function projectWorkRequest(wr: RunWithWorkRequest['workRequest']) {
+  if (!wr) {
+    return null;
+  }
+  // The column is already capped by its database trigger (by code point), so it is not cut again.
+  const column = typeof wr.title === 'string' ? wr.title.trim() : '';
+  const title = column || titleFromPayload(wr.requestPayload);
   return {
     description: wr.description,
     externalTicketId: wr.externalTicketId,

@@ -112,6 +112,30 @@ describe('launchTrackedWorkflow audit', () => {
     });
   });
 
+  it('records descriptionScan only when it matched or was incomplete', async () => {
+    const run = async (descriptionScan?: { matches: string[]; incomplete: boolean }) => {
+      const { prisma } = mockPrisma();
+      await launchTrackedWorkflow(
+        prisma as never,
+        { activeWorkflow: { currentStatus: 'IMPLEMENTING', temporalWorkflowId: 'wf-s' } },
+        async () => {},
+        { audit: { descriptionScan, source: 'work-request' } }
+      );
+      const call = prisma.configAuditLog.create.mock.calls[0] as unknown as [
+        { data: { afterJson: object } },
+      ];
+      return call[0].data.afterJson;
+    };
+    expect(await run({ incomplete: false, matches: [] })).not.toHaveProperty('descriptionScan');
+    expect(await run()).not.toHaveProperty('descriptionScan');
+    expect(await run({ incomplete: false, matches: ['injection:x'] })).toMatchObject({
+      descriptionScan: { incomplete: false, matches: ['injection:x'] },
+    });
+    expect(await run({ incomplete: true, matches: [] })).toMatchObject({
+      descriptionScan: { incomplete: true, matches: [] },
+    });
+  });
+
   it('records an ActiveWorkflow entity, never a WorkRequest, when there is no work request id', async () => {
     const { prisma } = mockPrisma();
     await launchTrackedWorkflow(

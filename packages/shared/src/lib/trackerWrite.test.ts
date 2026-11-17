@@ -22,6 +22,7 @@ import {
 
 const GITHUB = { baseUrl: null, provider: 'github' } as unknown as ResolvedIssueTrackerConfig;
 const SCOPE: TrackerRepoScope = {
+  allowedProjectKeys: [],
   instanceBaseUrl: 'https://github.com',
   repos: [{ githubApiUrl: null, githubUrl: null, organizationName: 'Acme', repoName: 'Web' }],
 };

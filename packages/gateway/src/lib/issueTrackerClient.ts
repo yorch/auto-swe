@@ -30,6 +30,10 @@ export interface FetchedTicket {
 export interface FetchTicketOptions {
   defaultRepo?: { owner: string; repo: string };
   fetchLinkedPages?: boolean;
+  /** Retries per request for providers that retry (Jira); unset keeps the provider default. */
+  maxRetries?: number;
+  /** Per-request timeout for providers that take one (Jira); unset keeps the provider default. */
+  timeoutMs?: number;
   log?: { warn: (obj: unknown, msg?: string) => void };
 }
 
@@ -44,9 +48,16 @@ export async function fetchTicket(
   opts?: FetchTicketOptions
 ): Promise<FetchedTicket | null> {
   try {
-    const provider = createIssueTrackerProvider(config, {
-      log: opts?.log,
-    });
+    const provider = createIssueTrackerProvider(
+      {
+        ...config,
+        ...(opts?.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
+        ...(opts?.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+      },
+      {
+        log: opts?.log,
+      }
+    );
     if (!provider) {
       return null;
     }

@@ -17,7 +17,9 @@ import {
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance } from 'fastify';
 import { resolveDefaultTemplate } from '../../routes/workRequests.js';
+import { scanLaunchDescription } from '../descriptionScan.js';
 import { authorizeLaunch, launchRefusalMessage } from '../launchAuthorization.js';
+import { resolveLaunchBrief } from '../launchBrief.js';
 import { asPlatformAdmin } from '../platformAdminScope.js';
 import { runProvenance } from '../runProvenance.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../systemTemplate.js';
@@ -145,10 +147,15 @@ export async function buildRunModalView(
           action_id: 'description_input',
           ...(initialDescription ? { initial_value: initialDescription } : {}),
           multiline: true,
-          placeholder: { text: 'What should the agent build?', type: 'plain_text' },
+          placeholder: {
+            text: 'What should the agent build? Leave blank to use the ticket',
+            type: 'plain_text',
+          },
           type: 'plain_text_input',
         },
         label: { text: 'Description', type: 'plain_text' },
+        // Blank is allowed: the brief is built from the ticket named above.
+        optional: true,
         type: 'input',
       },
       {
@@ -185,6 +192,15 @@ export async function buildRunModalView(
   return { ok: true, view };
 }
 
+/**
+ * The tracker read budget of a view submission, which Slack gives 3 s to answer: no retries and a
+ * 2 s limit, where the providers default to a 5 s timeout and 3 retries.
+ */
+export const SLACK_TRACKER_BUDGET = { maxRetries: 0, timeoutMs: 2000 } as const;
+
+/** What the input schema sees as the description while it is still to be read from the ticket. */
+const TICKET_BRIEF_PLACEHOLDER = '(read from the ticket)';
+
 export async function handleRunModalSubmission(
   fastify: FastifyInstance,
   user: { id: string; role: Role },
@@ -192,7 +208,7 @@ export async function handleRunModalSubmission(
 ): Promise<unknown> {
   const values = payload.view?.state?.values ?? {};
   const ticket = (values.ticket_block?.ticket_input?.value ?? '').trim();
-  const description = (values.description_block?.description_input?.value ?? '').trim();
+  const typedDescription = (values.description_block?.description_input?.value ?? '').trim();
   const repoId = values.repo_block?.repo_select?.selected_option?.value ?? '';
   const templateId = values.template_block?.template_select?.selected_option?.value ?? '';
 
@@ -204,11 +220,8 @@ export async function handleRunModalSubmission(
     // id, so it takes the same validation as POST /work-requests.
     errors.ticket_block =
       'Ticket ID may only contain letters, digits, ".", "_", "#", "/" and "-" (max 100)';
-  } else if (description.length > MAX_DESCRIPTION_LENGTH) {
+  } else if (typedDescription.length > MAX_DESCRIPTION_LENGTH) {
     errors.description_block = `Description must be at most ${MAX_DESCRIPTION_LENGTH} characters`;
-  }
-  if (!description) {
-    errors.description_block = 'Description is required';
   }
   if (!repoId) {
     errors.repo_block = 'Repository is required';
@@ -329,23 +342,36 @@ export async function handleRunModalSubmission(
 
   // The same payload contract POST /work-requests validates against the
   // template's declared input schema, checked before any ledger row is written.
-  const requestPayload = JSON.stringify({ description, externalTicketId: ticket, source: 'slack' });
-  const runPayload = {
-    budget: 'STANDARD',
-    connectionId: repo.id,
-    description,
-    ticketId: ticket,
+  const requestPayload = JSON.stringify({
+    description: typedDescription,
+    externalTicketId: ticket,
+    source: 'slack',
+  });
+  // A blank description is built from the tracker only after every refusal below, so the schema
+  // sees a placeholder for it here and the brief is checked against the same rules once built.
+  const blankDescription = !typedDescription;
+  const basePayload = { budget: 'STANDARD', connectionId: repo.id, ticketId: ticket };
+  const schemaPayload = {
+    ...basePayload,
+    description: blankDescription ? TICKET_BRIEF_PLACEHOLDER : typedDescription,
   };
   const tplSchema = await fastify.prisma.workflowTemplate.findUnique({
     select: { inputSchema: true },
     where: { id: resolvedTemplate.templateId },
   });
   if (tplSchema?.inputSchema && isInputSchema(tplSchema.inputSchema)) {
-    const result = validateInputPayload(tplSchema.inputSchema, runPayload);
-    if (!result.ok) {
+    const result = validateInputPayload(tplSchema.inputSchema, schemaPayload);
+    const problems = blankDescription
+      ? result.ok
+        ? []
+        : result.errors.filter((e) => !e.startsWith("'description'"))
+      : result.ok
+        ? []
+        : result.errors;
+    if (problems.length > 0) {
       return {
         errors: {
-          template_block: `This workflow needs inputs the modal cannot supply: ${result.errors.join('; ')}`,
+          template_block: `This workflow needs inputs the modal cannot supply: ${problems.join('; ')}`,
         },
         response_action: 'errors',
       };
@@ -356,7 +382,7 @@ export async function handleRunModalSubmission(
     // nothing between here and the worker decides the connections it declares. `connectionId` is
     // the repository this launch already decided; every other connection-typed field this payload
     // fills is refused, as is a `connectionId` whose declared type contradicts that repository.
-    const declared = declaredConnectionInputs(tplSchema.inputSchema, runPayload);
+    const declared = declaredConnectionInputs(tplSchema.inputSchema, schemaPayload);
     const unexpected = declared.find((field) => field.connectionId !== repo.id);
     const mismatched = declared.find(
       (field) =>
@@ -396,9 +422,45 @@ export async function handleRunModalSubmission(
     };
   }
   const temporalWorkflowId = allocated.workflowId;
+
+  // A blank description is built from the tracker ticket. This is the first read of the tracker:
+  // after authorization, template resolution, the input-schema check and the workflow-id conflict
+  // checks, so a refused submission never reads it. Slack allows 3 s to answer a view submission,
+  // so the read gets a short budget and no retries; a slow or failed read is the error below.
+  let description = typedDescription;
+  let runPayload: Record<string, unknown> = { ...basePayload, description };
+  if (blankDescription) {
+    const resolved = await resolveLaunchBrief({
+      connection: repo,
+      log: fastify.log,
+      ...SLACK_TRACKER_BUDGET,
+      ticketId: ticket,
+    });
+    const briefPayload = resolved.ok ? { ...basePayload, description: resolved.description } : null;
+    const briefRulesHold =
+      briefPayload !== null &&
+      (!tplSchema?.inputSchema ||
+        !isInputSchema(tplSchema.inputSchema) ||
+        validateInputPayload(tplSchema.inputSchema, briefPayload).ok);
+    if (!resolved.ok || !briefPayload || !briefRulesHold) {
+      return {
+        errors: {
+          description_block: resolved.ok
+            ? "Description is required: the ticket doesn't satisfy this workflow's description rules, so type one"
+            : 'Description is required: the ticket could not be read from the issue tracker, so type one',
+        },
+        response_action: 'errors',
+      };
+    }
+    description = resolved.description;
+    runPayload = briefPayload;
+  }
   const { branchPrefix: slackBranchPrefix } = await resolveWorkflowDefaults();
   const branch = generateBranchName(ticket, slackBranchPrefix);
   const workRequestId = crypto.randomUUID();
+  // Advisory scan of text the user typed (a synthesized brief is never scanned); recorded in the
+  // audit only, and never affects the launch.
+  const descriptionScan = typedDescription ? await scanLaunchDescription(typedDescription) : null;
   const repoWorkRequest: RepoWorkRequest = {
     budgetTier: 'STANDARD',
     description,
@@ -452,7 +514,18 @@ export async function handleRunModalSubmission(
         templateVersion: resolvedTemplate.version,
       }),
     {
-      audit: { actor: { sub: user.id }, source: 'slack' },
+      audit: {
+        actor: { sub: user.id },
+        ...(descriptionScan
+          ? {
+              descriptionScan: {
+                incomplete: descriptionScan.incomplete,
+                matches: descriptionScan.matches,
+              },
+            }
+          : {}),
+        source: 'slack',
+      },
       log: fastify.log,
       sourceAuthorization: { actor: { role: user.role, sub: user.id } },
     }

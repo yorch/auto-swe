@@ -436,8 +436,10 @@ admin-configured default is used and is not checked. A write that fails the chec
 logged with a fixed line, and a PRD item that is refused counts as a failed tracker item. A read
 that fails the check happens before any request and is treated as a ticket that was not found: no
 ticket is fetched or stored, the submission still succeeds and the run continues from its
-description, and a fixed line is logged with ids only. Jira and Linear ids and project keys name no
-repository and are not checked.
+description, and a fixed line is logged with ids only. Jira and Linear ids name no repository and are
+not checked against one. A Jira or Linear read is checked against the project keys an operator lists
+in `github.trackerAllowedProjectKeys` ([`configuration.md` §9](./configuration.md#jira-and-linear-project-allowlist)),
+which is unrestricted while the list is empty. Writes to those trackers are not checked against it.
 
 The check runs on the repository the ticket id names, and the request then stays there. The
 provider follows a redirect only while its target is still under

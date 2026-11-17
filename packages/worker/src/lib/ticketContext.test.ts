@@ -8,16 +8,19 @@ const mocks = vi.hoisted(() => ({
   runInputFind: vi.fn(),
   snapshotFind: vi.fn(),
   snapshotUpsert: vi.fn(async (..._args: unknown[]) => ({ id: 'snap-1' })),
+  workflowRunFind: vi.fn(),
 }));
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     contextSnapshot: { findUnique: mocks.snapshotFind, upsert: mocks.snapshotUpsert },
     runInput: { findUnique: mocks.runInputFind },
+    workflowRun: { findFirst: mocks.workflowRunFind },
   },
 }));
 vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@auto-swe/shared/config')>()),
+  resolveEffectiveSettings: async () => ({ overrideAt: () => undefined, settings: [] }),
   resolveSetting: mocks.resolveSetting,
 }));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
@@ -102,6 +105,8 @@ describe('loadTicketContext', () => {
     for (const m of Object.values(mocks)) {
       m.mockReset();
     }
+    mocks.workflowRunFind.mockResolvedValue(null);
+    mocks.resolveSetting.mockResolvedValue([]);
     mocks.snapshotUpsert.mockResolvedValue({ id: 'snap-1' });
     mocks.runInputFind.mockResolvedValue({
       connection: { organizationName: 'acme', repoName: 'api' },
@@ -301,6 +306,8 @@ describe('loadTicket', () => {
     for (const m of Object.values(mocks)) {
       m.mockReset();
     }
+    mocks.workflowRunFind.mockResolvedValue(null);
+    mocks.resolveSetting.mockResolvedValue([]);
     mocks.snapshotUpsert.mockResolvedValue({ id: 'snap-1' });
     mocks.runInputFind.mockResolvedValue({
       connection: { organizationName: 'acme', repoName: 'api' },
@@ -466,7 +473,10 @@ describe('loadTicket', () => {
       mocks.resolveSetting.mockResolvedValue(['acme/issues']);
       mocks.runInputFind.mockResolvedValue(run('acme/issues#5', null));
       expect(await loadTicket({ workRequestId: 'wr-1' })).toBeNull();
-      expect(mocks.resolveSetting).not.toHaveBeenCalled();
+      expect(mocks.resolveSetting).not.toHaveBeenCalledWith(
+        'github.trackerIssueRepositories',
+        expect.anything()
+      );
       expect(mocks.readIssue).not.toHaveBeenCalled();
     });
 
@@ -481,6 +491,40 @@ describe('loadTicket', () => {
       mocks.runInputFind.mockResolvedValue(run('attacker/private#1'));
       expect((await loadTicket({ workRequestId: 'wr-1' }))?.source).toBe('tracker');
     });
+
+    describe('Jira project keys on a run with no git repository', () => {
+      beforeEach(() => {
+        mocks.resolveTracker.mockResolvedValue({ baseUrl: null, provider: 'jira' });
+        mocks.workflowRunFind.mockResolvedValue({
+          template: { team: { orgId: 'org-9' }, teamId: 'team-9' },
+        });
+        mocks.resolveSetting.mockImplementation(async (key: string, ctx: { teamId?: string }) =>
+          key === 'github.trackerAllowedProjectKeys' && ctx.teamId === 'team-9' ? ['PAY'] : []
+        );
+      });
+
+      it("applies the launching template's team list: an unlisted key is refused, no read", async () => {
+        mocks.runInputFind.mockResolvedValue(run('ENG-7', null));
+        expect(await loadTicket({ workRequestId: 'wr-1' })).toBeNull();
+        expect(mocks.readIssue).not.toHaveBeenCalled();
+        expect(mocks.resolveSetting).toHaveBeenCalledWith('github.trackerAllowedProjectKeys', {
+          orgId: 'org-9',
+          teamId: 'team-9',
+        });
+      });
+
+      it('reads a listed key', async () => {
+        mocks.runInputFind.mockResolvedValue(run('PAY-7', null));
+        expect((await loadTicket({ workRequestId: 'wr-1' }))?.source).toBe('tracker');
+      });
+
+      it('refuses when the launching template cannot be read', async () => {
+        mocks.workflowRunFind.mockRejectedValue(new Error('db down'));
+        mocks.runInputFind.mockResolvedValue(run('PAY-7', null));
+        expect(await loadTicket({ workRequestId: 'wr-1' })).toBeNull();
+        expect(mocks.readIssue).not.toHaveBeenCalled();
+      });
+    });
   });
 });
 
@@ -489,6 +533,8 @@ describe('readTicket', () => {
     for (const m of Object.values(mocks)) {
       m.mockReset();
     }
+    mocks.workflowRunFind.mockResolvedValue(null);
+    mocks.resolveSetting.mockResolvedValue([]);
     mocks.snapshotUpsert.mockResolvedValue({ id: 'snap-1' });
     mocks.runInputFind.mockResolvedValue({
       connection: null,

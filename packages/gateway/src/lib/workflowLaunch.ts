@@ -395,6 +395,8 @@ export async function launchTrackedWorkflow(
      */
     audit?: {
       actor?: { sub: string } | null;
+      /** Advisory description scan; recorded only when it matched or was incomplete. */
+      descriptionScan?: { matches: string[]; incomplete: boolean };
       egressPolicy?: string;
       source: string;
       templateId?: string;
@@ -567,12 +569,15 @@ async function recordLaunchAudit(
     log?: { error: (obj: unknown, msg?: string) => void };
     audit?: {
       actor?: { sub: string } | null;
+      /** Advisory description scan; recorded only when it matched or was incomplete. */
+      descriptionScan?: { matches: string[]; incomplete: boolean };
       egressPolicy?: string;
       source: string;
       templateId?: string;
     };
   }
 ): Promise<void> {
+  const scan = opts?.audit?.descriptionScan;
   const workRequestId = (rows.runInput?.id ?? rows.activeWorkflow?.workRequestId) as
     | string
     | null
@@ -588,6 +593,9 @@ async function recordLaunchAudit(
         action: 'CREATE',
         actorId: opts?.audit?.actor?.sub ?? null,
         afterJson: {
+          ...(scan && (scan.matches.length > 0 || scan.incomplete)
+            ? { descriptionScan: { incomplete: scan.incomplete, matches: scan.matches } }
+            : {}),
           ...(opts?.audit?.egressPolicy ? { egressPolicy: opts.audit.egressPolicy } : {}),
           source: opts?.audit?.source ?? 'unspecified',
           templateId:

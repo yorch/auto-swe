@@ -180,6 +180,7 @@ export const requestWorkspaceRoutes: FastifyPluginAsync = async (fastify) => {
               externalTicketId: true,
               id: true,
               requestPayload: true,
+              title: true,
             },
           },
         },

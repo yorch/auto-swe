@@ -536,6 +536,33 @@ repository is not applied to them, but the tracker is only ever called at its co
 an entry cannot reach another host. An unreadable value is treated as an empty list. How the scope
 applies to reads and writes is in [`work-views.md`](./work-views.md).
 
+### Jira and Linear project allowlist
+
+Jira and Linear ticket ids name no repository, so the extra-repositories setting above does not
+cover them. `github.trackerAllowedProjectKeys` limits which Jira project keys and Linear team keys
+a launcher's ticket reads may use:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `github.trackerAllowedProjectKeys` | `[]` | Jira project keys or Linear team keys (`PAY`, `ENG`), up to 100, compared case-insensitively. Empty is unrestricted: any ticket the platform's tracker credential can see may be read. |
+
+Only an ADMIN can change it, at `TEAM`, `ORGANIZATION` or globally. The key is parsed from the
+ticket id (`PAY-12` names `PAY`); a ticket id with no parseable key is refused when a list is set,
+and so is a key that is not listed. A refused ticket reads as not found. Resolution follows the
+repositories a request targets: each repository's team and organization is read, and the lists are
+unioned, so a key is allowed when any non-empty list names it. The request is unrestricted only when
+every list is empty. A launch with no git repository resolves the setting at the launching
+template's team and organization, and at `GLOBAL` scope only when the template is global and has no
+team. If a list cannot be read, or a stored `TEAM`, `ORGANIZATION` or `GLOBAL` value no longer
+satisfies the setting's schema, the read is refused, so the check fails closed (the generic resolver
+would otherwise fall through to the next, wider tier).
+
+The check applies to the launch-time ticket brief, `GET /api/v1/tickets/preview`, the worker's
+ticket read for a run, and the ticket read made when a submission is enriched. It does not apply to
+Jira and Linear writes (comments and status transitions), and it does not apply to the GitHub issue
+tracker, which keeps its own rules above. Reads and writes are described in
+[`work-views.md`](./work-views.md).
+
 ---
 
 ## 10. Pull request titles
@@ -685,6 +712,10 @@ an MCP write is held for the launcher's decision.
   not frozen per run. Template-code audit snapshots include baseline and team entries at sign-off;
   those snapshots do not pin execution. A later edit can affect a retry or newly created workspace
   or step in an existing run. Existing proxy registrations retain their registered list until teardown.
+- **A global template's connection-less launch sees only the `GLOBAL` project-key list.**
+  `github.trackerAllowedProjectKeys` resolves at the launching template's team, and a global
+  template has none, so a list set only at `TEAM` or `ORGANIZATION` does not restrict such a launch.
+  Set the list globally to cover it.
 
 - **Conventional titles carry no scope and no breaking-change marker.** The title is `type: summary`.
   A scope such as `fix(gateway):` or a `!` would come from model or ticket text and change what

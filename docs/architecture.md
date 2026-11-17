@@ -1591,6 +1591,12 @@ check match DB regex patterns. Table and rules in
 [AGENTS.md §6](../AGENTS.md#runtime-security-scanners); the dashboards are `/admin/security` and the
 per-run panel on `/runs/[id]`.
 
+A launch-time check sits beside them and is not one of the seven. The Description scan
+(`gateway/src/lib/descriptionScan.ts`) screens a description a person typed, on the template-run route,
+`POST /work-requests` and the Slack run modal, against the INJECTION patterns only. It is advisory: it
+never blocks a launch, and it records matched pattern labels in the launch's audit row. See
+[`concepts.md`](./concepts.md#running-work).
+
 ---
 
 ## 9. Key Design Decisions

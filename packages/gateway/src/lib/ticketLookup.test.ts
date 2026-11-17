@@ -2,15 +2,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { lookupTrackerTicket } from './ticketLookup.js';
 
 const resolveIssueTrackerConfig = vi.hoisted(() => vi.fn());
+const scopeCalls = vi.hoisted(() => [] as Array<{ launchTeam: unknown; repos: unknown[] }>);
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({ resolveIssueTrackerConfig }));
 // The real scope loads operator settings from the database; the check itself stays real.
 vi.mock('@auto-swe/shared/lib/trackerSync', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@auto-swe/shared/lib/trackerSync')>()),
-  repoTrackerScope: async (repos: unknown[]) => ({
-    extraRepos: [],
-    instanceBaseUrl: 'https://github.com',
-    repos,
-  }),
+  repoTrackerScope: async (repos: unknown[], launchTeam?: unknown) => {
+    scopeCalls.push({ launchTeam, repos });
+    return {
+      allowedProjectKeys: [],
+      extraRepos: [],
+      instanceBaseUrl: 'https://github.com',
+      repos,
+    };
+  },
 }));
 const fetchTicket = vi.hoisted(() => vi.fn());
 vi.mock('./issueTrackerClient.js', () => ({ fetchTicket }));
@@ -27,6 +32,7 @@ const repo = {
 beforeEach(() => {
   resolveIssueTrackerConfig.mockReset();
   fetchTicket.mockReset();
+  scopeCalls.length = 0;
 });
 
 describe('lookupTrackerTicket', () => {
@@ -67,5 +73,42 @@ describe('lookupTrackerTicket', () => {
     resolveIssueTrackerConfig.mockResolvedValue({ provider: 'jira' });
     fetchTicket.mockRejectedValue(new Error('boom'));
     expect(await lookupTrackerTicket('PAY-1', repo)).toEqual({ state: 'error' });
+  });
+
+  it("resolves the scope at the launching template's team when there is no repository", async () => {
+    resolveIssueTrackerConfig.mockResolvedValue({ provider: 'jira' });
+    fetchTicket.mockResolvedValue({ title: 'T' });
+    const launchTeam = { orgId: 'o1', teamId: 'tpl-team' };
+    await lookupTrackerTicket('PAY-1', null, undefined, { launchTeam });
+    expect(scopeCalls).toEqual([{ launchTeam, repos: [] }]);
+  });
+
+  it('passes the retry and time budget to the fetch', async () => {
+    resolveIssueTrackerConfig.mockResolvedValue({ provider: 'jira' });
+    fetchTicket.mockResolvedValue({ title: 'T' });
+    await lookupTrackerTicket('PAY-1', null, undefined, { maxRetries: 0, timeoutMs: 2000 });
+    expect(fetchTicket).toHaveBeenCalledWith(
+      expect.anything(),
+      'PAY-1',
+      expect.objectContaining({ maxRetries: 0, timeoutMs: 2000 })
+    );
+  });
+
+  it('gives up with error when the read overruns its time budget, whatever the provider', async () => {
+    resolveIssueTrackerConfig.mockResolvedValue({ provider: 'linear' });
+    fetchTicket.mockImplementation(() => new Promise(() => undefined));
+    const warn = vi.fn();
+    expect(await lookupTrackerTicket('ENG-1', null, { warn }, { timeoutMs: 20 })).toEqual({
+      state: 'error',
+    });
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('passes no budget to the fetch when none is given', async () => {
+    resolveIssueTrackerConfig.mockResolvedValue({ provider: 'jira' });
+    fetchTicket.mockResolvedValue({ title: 'T' });
+    await lookupTrackerTicket('PAY-1', null);
+    expect(fetchTicket.mock.calls[0]?.[2]).not.toHaveProperty('timeoutMs');
+    expect(fetchTicket.mock.calls[0]?.[2]).not.toHaveProperty('maxRetries');
   });
 });

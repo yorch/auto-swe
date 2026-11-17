@@ -482,4 +482,38 @@ describe('runWorkflowsCommand run', () => {
     expect(calls[0].body).toEqual({ label: 'prod', payload: { ticketId: 'WEB-1' } });
     expect(stdoutWrites.join('')).toContain('workRequestId=wr-1');
   });
+
+  it('prints the response warnings to stderr and still succeeds', async () => {
+    globalThis.fetch = vi.fn(async (url: string) => {
+      if (url === 'http://gw/api/v1/workflow-templates') {
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              data: [{ activeVersion: 1, id: 'tpl-9', name: 'My Flow', status: 'ACTIVE' }],
+            }),
+        } as unknown as Response;
+      }
+      return {
+        ok: true,
+        status: 201,
+        text: async () =>
+          JSON.stringify({
+            data: {
+              temporalWorkflowId: 'twf-1',
+              warnings: [{ code: 'DESCRIPTION_INJECTION_SUSPECTED', message: 'Looks odd.' }],
+              workflowId: 'wf-1',
+              workRequestId: 'wr-1',
+            },
+          }),
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    const code = await runWorkflowsCommand(['run', 'My Flow', '--payload={}'], ENV);
+
+    expect(code).toBe(0);
+    expect(stderrWrites.join('')).toContain('Warning: Looks odd.');
+    expect(stdoutWrites.join('')).toContain('workRequestId=wr-1');
+  });
 });

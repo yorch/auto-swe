@@ -14671,10 +14671,10 @@
       "title": "A GitHub ticket is in scope only when it names one of the run's repositories on the tracker's host"
     },
     {
-      "anchor": "export async function runTrackerScope(run: {",
+      "anchor": "export async function runTrackerScope(",
       "before": 6,
       "id": "trackerRunScope",
-      "lines": 35,
+      "lines": 40,
       "path": "packages/shared/src/lib/trackerSync.ts",
       "title": "A run's repositories: its git connection plus the launch-authorized ones"
     },

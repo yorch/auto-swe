@@ -1473,8 +1473,10 @@ recorded, never from its text: the run is `FAILED`, its spec snapshot holds the
 `terminateNotActionable` terminate node, and its context holds `validate`'s `actionable == false`
 verdict. The request is the same when the description and every input match exactly (the repository,
 budget tier and every other payload field), except that whitespace in the description and the case
-of the ticket id are ignored. A template run takes its description from `payload.description`, else
-from its label, so for a template with no `payload.description` the label is part of the request.
+of the ticket id are ignored. A template run takes its description from `payload.description` when that is a string, else from
+its label, so a run whose payload omits `description` carries the label as its request. The input
+schema is checked first: a schema that requires `description` refuses an absent one (`INVALID_INPUT`),
+and a run whose ticket brief is built takes the brief instead (see [`concepts.md`](./concepts.md)).
 Only the newest run of a request counts: a later run of the same request or of the same work
 request, whatever its outcome (even one cancelled at its first step), means the stop was overridden
 or fixed, and the guard steps aside. A
