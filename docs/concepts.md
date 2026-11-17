@@ -192,22 +192,36 @@ A git-repository workflow without an input schema collects a required Repository
 a multi-line Description and a Ticket ID. Only the Repository is required; the other three follow
 these rules:
 
-- **Task name** is display only. The run list shows it. When it is absent the title falls back to
-  the first line of the Description, then to the Ticket ID. It never determines the Ticket ID.
+- **Task name** is display only. The run list shows it. The title shown for a request is its stored
+  title (the `RunInput.title` column); when that is blank it is the label in the request's stored
+  payload. When neither is set the title falls back to the first line of the Description, then to
+  the Ticket ID. It never determines the Ticket ID.
 - **Ticket ID** names the run's branch and workflow ID and, when an issue tracker is configured,
   selects the ticket the run reads. An absent or empty Ticket ID makes the run synthetic: it reads
   no tracker context and posts no ticket comments. A Task name that looks like a ticket ID is not
   used as one.
 - **Description** is the agent's brief. It may be left empty when a Ticket ID is given and the
-  ticket can be read, and only for a workflow whose input schema declares a string `description`.
-  The server then builds the brief from the ticket after the launch is authorized: its first line
-  is `Ticket <id>`, and the title and body sit inside a `<ticket>` fence as data, with every angle
-  bracket in them neutralised. A request with no Task name and no Description is titled with that
-  first line. If the ticket cannot be read, the tracker is unreachable, or the brief does not
-  satisfy the schema's rules for `description`, the launch is refused with
-  `DESCRIPTION_REQUIRED`. Text typed in Description wins over the ticket. The agent
-  also receives the ticket as fenced context, and on a conflict it follows the Description and
-  records the conflict in its implementation notes.
+  ticket can be read. The server then builds the brief from the ticket after the launch is
+  authorized: its first line is `Ticket <id>`, and the title and body sit inside a `<ticket>` fence
+  as data, with every angle bracket in them neutralised. The ticket-derived brief applies on
+  `POST /work-requests`, the Slack run modal and `auto-swe run` (where `--description` is optional)
+  for any template. On the template-run route it applies only to a template whose input schema
+  declares a string `description`. A request with no Task name and no Description is titled with
+  that first line. If the ticket cannot be read, the tracker is unreachable, the ticket is outside
+  `github.trackerAllowedProjectKeys`, or the brief does not satisfy the schema's rules for
+  `description`, the launch is refused with `DESCRIPTION_REQUIRED` (the Slack modal asks for a typed
+  description instead). Text typed in Description wins over the ticket. An `Idempotency-Key` replay
+  compares the typed description, so a blank description matches a blank one. The agent also
+  receives the ticket as fenced context, and on a conflict it follows the Description and records
+  the conflict in its implementation notes. The allowed-projects setting is described in
+  [`configuration.md` §9](./configuration.md#jira-and-linear-project-allowlist).
+- **Description scan** is an advisory prompt-injection check on text a person typed. It runs on
+  the template-run route, `POST /work-requests` and the Slack run modal, and it never sees a brief
+  built from a ticket. It matches only the INJECTION patterns and never blocks a launch. The audit
+  row for the launch records which patterns matched (their labels, never the text) as
+  `descriptionScan`. On the template-run route and `POST /work-requests`, a non-empty match adds
+  `warnings: [{ code: 'DESCRIPTION_INJECTION_SUSPECTED', message }]` to the `201` response; the
+  CLI prints the message to stderr, and Slack records the audit only.
 - **Fetch title** beside the Ticket ID calls `GET /api/v1/tickets/preview` with the ticket ID and
   the connection ID. It shows the ticket's title, status and URL, and nothing else from the ticket.
   It answers `503 TRACKER_UNAVAILABLE` when the tracker could not be read.
@@ -316,12 +330,17 @@ Guided paths build on those pieces:
 
 ## Limitations
 
-- **Fetch title and ticket reads are not scoped per project on Jira and Linear.** Those trackers have
-  no per-project scope, so any launcher who can reach a repository can read the title of any ticket
-  that the platform's tracker credential can see, through **Fetch title**.
-- **A launch without a repository reads any Jira or Linear ticket into the run, and the preview
-  needs a reachable repository.** With no repository there is no scope to check the ticket against,
-  so the brief can hold any ticket the platform's tracker credential can see. **Fetch title** is
-  offered only once a repository is chosen.
-- **Typed Description text is not scanned for prompt injection.** It reaches the agent as the brief
-  in the user message, unchanged, as any launcher's text does.
+- **Jira and Linear reads are unrestricted until an operator sets `github.trackerAllowedProjectKeys`.**
+  The default is empty, so any launcher who can reach a repository can read any ticket the platform's
+  tracker credential can see, through **Fetch title**, the brief and the worker's ticket read. Once an
+  admin lists project keys, a ticket outside them reads as not found. The list does not restrict
+  Jira or Linear writes, such as comments and transitions.
+- **A launch of a global template without a repository applies only the GLOBAL allowed-projects
+  value, and the preview needs a reachable repository.** A launch with no git repository resolves
+  the list at the launching template's team and organization, but a global template has no team, so
+  a list set only at TEAM or ORGANIZATION does not reach such a launch. **Fetch title** is offered
+  only once a repository is chosen.
+- **The Description scan is advisory and pattern-based.** It applies only the INJECTION patterns, not
+  the EXFILTRATION set, which matches ordinary prose such as URLs. The web form does not show its
+  warning. A reworded instruction can pass it, so it is not a security boundary, and the typed text
+  still reaches the agent as the brief in the user message, unchanged.

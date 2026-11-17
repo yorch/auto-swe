@@ -1779,4 +1779,23 @@ warning. No server-side change is needed beyond applying the migration (`yarn db
 **Verify.** A client re-authorized with **Admin read** lists `list_skills` in `tools/list`; a client
 authorized without it does not.
 
+### Jira or Linear deployments that want project-limited ticket reads (`<fixing-commit-sha>`)
+
+**Affected.** Deployments whose tracker is Jira or Linear and that want a launcher's ticket reads
+limited to some projects or teams. A deployment that keeps the default is unaffected: an empty
+`github.trackerAllowedProjectKeys` leaves reads unrestricted, as before.
+
+**What changes.** Nothing changes until an admin sets the setting. It is new, and it defaults to
+empty.
+
+**Actions.** To limit reads, an ADMIN sets `github.trackerAllowedProjectKeys` at TEAM or ORGANIZATION
+scope (or globally) to the Jira project keys or Linear team keys the team should read, for example
+`PAY` and `ENG`. A ticket whose key is not listed then reads as not found. A launch with no git
+repository resolves the list at the launching template's team and organization; a global template
+has no team, so set the list globally if such launches should be limited too. The
+list does not restrict Jira or Linear writes. No migration and no environment-variable change.
+
+**Verify.** `GET /api/v1/tickets/preview` for a ticket outside the list answers as not found, and for a
+ticket inside it returns the ticket.
+
 ---
