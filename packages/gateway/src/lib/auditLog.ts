@@ -69,23 +69,30 @@ export type AuditEntityType =
   | 'WorkRequest'
   | 'WorkflowRun';
 
-export async function writeAuditLog(
+type AuditArgs = {
+  action: 'CREATE' | 'DELETE' | 'UPDATE';
+  /** Null when the system acts — a webhook or a sweep, not a person. */
+  actor: JwtPayload | null;
+  after?: unknown;
+  before?: unknown;
+  entityId: string;
+  entityType: AuditEntityType;
+  /** Overrides the request's audit context; by default it is read from the request being handled. */
+  context?: AuditContext;
+  /** A transaction client, so the entry commits or rolls back with the change it records. */
+  client?: Pick<FastifyInstance['prisma'], 'configAuditLog'>;
+};
+
+export async function writeAuditLog(fastify: FastifyInstance, args: AuditArgs): Promise<void> {
+  await writeAuditLogRow(fastify, args);
+}
+
+/** {@link writeAuditLog}, returning the id of the row written, for a caller that may delete it. */
+export async function writeAuditLogRow(
   fastify: FastifyInstance,
-  args: {
-    action: 'CREATE' | 'DELETE' | 'UPDATE';
-    /** Null when the system acts — a webhook or a sweep, not a person. */
-    actor: JwtPayload | null;
-    after?: unknown;
-    before?: unknown;
-    entityId: string;
-    entityType: AuditEntityType;
-    /** Overrides the request's audit context; by default it is read from the request being handled. */
-    context?: AuditContext;
-    /** A transaction client, so the entry commits or rolls back with the change it records. */
-    client?: Pick<FastifyInstance['prisma'], 'configAuditLog'>;
-  }
-): Promise<void> {
-  await (args.client ?? fastify.prisma).configAuditLog.create({
+  args: AuditArgs
+): Promise<string | undefined> {
+  const row = await (args.client ?? fastify.prisma).configAuditLog.create({
     data: {
       action: args.action,
       actorId: args.actor?.sub ?? null,
@@ -96,4 +103,6 @@ export async function writeAuditLog(
       ...auditContextData(args.context),
     },
   });
+  // The id of the row written, for a caller that must later delete exactly this row.
+  return (row as { id?: string } | undefined)?.id;
 }

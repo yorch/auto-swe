@@ -820,10 +820,11 @@ export async function approvePlan(
 export type RejectPlanResult = { ok: true } | PlanRefusal;
 
 /**
- * Reject a plan the caller owns. A PENDING plan, or an APPROVED one that has not been launched
- * (a launch that failed), can be rejected; a LAUNCHED plan has a run and cannot. If the worker is
- * claiming an APPROVED plan at this moment exactly one side wins: its claim then finds the plan
- * REJECTED and refuses.
+ * Reject a plan the caller owns. Only a PENDING plan can be rejected. An APPROVED plan has a launch
+ * in flight (or a run starting): rejecting it would not stop that run and would let the plan read as
+ * withdrawn while its run exists, so it is not offered. An approved plan whose launch failed is put
+ * back to PENDING by {@link approveAndLaunchPlan}, and one nobody launches expires on its
+ * `expiresAt` (the launch window), so there is no state in which an unlaunched approval is stuck.
  */
 export async function rejectPlan(
   deps: RunPlanServiceDeps,
@@ -842,12 +843,12 @@ export async function rejectPlan(
     where: {
       id: plan.id,
       ownerUserId: actor.sub,
-      status: { in: ['PENDING', 'APPROVED'] },
+      status: 'PENDING',
       teamId: plan.teamId,
     },
   });
   if (result.count !== 1) {
-    return refuse(409, 'PLAN_NOT_REJECTABLE', 'The plan can no longer be rejected');
+    return refuse(409, 'PLAN_NOT_REJECTABLE', 'Only a plan waiting for approval can be rejected');
   }
   return { ok: true };
 }
@@ -1121,7 +1122,9 @@ async function revertApproval(
 ): Promise<void> {
   try {
     await deps.prisma.runPlan.updateMany({
-      data: { approvedAt: null, approvedById: null, status: 'PENDING' },
+      // The expiry goes back to what it was before approval extended it, so repeated failed
+      // launches cannot keep a plan alive past its original life plus one launch window.
+      data: { approvedAt: null, approvedById: null, expiresAt: plan.expiresAt, status: 'PENDING' },
       where: {
         approvedById: actor.sub,
         id: plan.id,

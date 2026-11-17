@@ -574,12 +574,18 @@ describe('approvePlan', () => {
 });
 
 describe('rejectPlan', () => {
-  it('rejects the owner’s pending plan, and an approved one that never launched', async () => {
-    for (const status of ['PENDING', 'APPROVED']) {
-      const { prisma, table } = fakePrisma(planRow({ status }));
-      expect(await rejectPlan(deps(prisma), OWNER, PLAN_ID)).toEqual({ ok: true });
-      expect(table.plan?.status).toBe('REJECTED');
-    }
+  it('rejects the owner’s pending plan', async () => {
+    const { prisma, table } = fakePrisma(planRow({ status: 'PENDING' }));
+    expect(await rejectPlan(deps(prisma), OWNER, PLAN_ID)).toEqual({ ok: true });
+    expect(table.plan?.status).toBe('REJECTED');
+  });
+
+  it('cannot reject an approved plan: its launch is in flight, and a run may exist', async () => {
+    const { prisma, table } = fakePrisma(planRow({ approvedById: OWNER.sub, status: 'APPROVED' }));
+    expect(await rejectPlan(deps(prisma), OWNER, PLAN_ID)).toMatchObject({
+      code: 'PLAN_NOT_REJECTABLE',
+    });
+    expect(table.plan?.status).toBe('APPROVED');
   });
 
   it('answers another user as not found and changes nothing', async () => {
@@ -779,6 +785,20 @@ describe('approveAndLaunchPlan', () => {
       code: 'RUN_CONFLICT',
     });
     expect(table.plan).toMatchObject({ approvedById: null, status: 'PENDING' });
+  });
+
+  it('restores the original expiry on a failed launch, so retries never extend the plan’s life', async () => {
+    const original = new Date(NOW.getTime() + 60_000);
+    const { prisma, table } = fakePrisma(planRow({ expiresAt: original }));
+    for (let attempt = 0; attempt < 3; attempt++) {
+      m.launch.mockResolvedValueOnce({ ok: false, reason: 'DUPLICATE', source: 'ledger' });
+      await approveAndLaunchPlan(deps(prisma), OWNER, PLAN_ID);
+      expect(table.plan).toMatchObject({ status: 'PENDING' });
+      expect((table.plan as PlanRow).expiresAt).toEqual(original);
+    }
+    // A launch that holds keeps the launch window, once.
+    await approveAndLaunchPlan(deps(prisma), OWNER, PLAN_ID);
+    expect((table.plan as PlanRow).expiresAt).toEqual(new Date(NOW.getTime() + LAUNCH_WINDOW_MS));
   });
 
   it('puts a plan back to PENDING when the launch throws, and rethrows', async () => {

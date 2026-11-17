@@ -104,7 +104,13 @@ generation jobs a person has started in the last hour, whether or not a job prod
 `runPlans.generationMaxAttempts` (default 3, 1 to 5) caps the author-model rounds one generation may spend, the first draft
 plus repairs, so it bounds what a single goal can cost; and
 `runPlans.routePerUserPerHour` (default 30; 0 disables ranking) bounds template-ranking requests. The
-counts come from the audit log and the plan table, so they hold across gateway replicas. Plans nobody
+three per-user limits (`runPlans.createPerUserPerHour`, `runPlans.maxPendingPerUser` and
+`runPlans.routePerUserPerHour`) apply to a person across every team, so each is resolved at the
+repository's team and organization and at every active team and organization the person belongs to
+(at most 50 scopes, in a fixed order), and the smallest value wins: choosing a repository of a more
+generous team does not raise a person's limit, and a 0 set by any one of their teams or organizations
+disables the feature for them. The counts come from the audit log and the plan table, so they hold
+across gateway replicas. Plans nobody
 approved in time are expired by a scheduled sweep, `RUN_PLAN_SWEEP_ENABLED` (default `true`) and
 `RUN_PLAN_SWEEP_CRON` (default `*/15 * * * *`), which also deletes expired and rejected plans after a
 week; approval refuses an expired plan on its own, so the sweep is housekeeping.

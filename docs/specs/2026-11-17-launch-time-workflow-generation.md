@@ -191,15 +191,16 @@ named in the agent roster docs, `BUILTIN_MODELS`, `PREVIOUS_DEFAULT_MODEL_SPECS`
 
 ### 6. Abuse and cost controls
 
-Registry settings: plans per user per hour, pending plans per user, and a per-plan generation attempt
+Registry settings: plans per user per hour, pending plans per user, template rankings per user per hour (each held to the smallest value set at the repository's team and organization and at every active team and organization the person belongs to, at most 50 scopes), and a per-plan generation attempt
 cap (`runPlans.generationMaxAttempts`, default 3, 1 to 5, resolved by the worker at the repository's team and organization). Generation and routing spend is recorded against the team's budget. A sweeper expires
 `PENDING` plans and deletes expired and rejected ones after a retention window.
 
 ### 7. Surfaces
 
 - Gateway: `POST /run-plans`, `GET /run-plans/:id`, `POST /run-plans/:id/approve`,
-  `POST /run-plans/:id/reject`. Every route has an `assistantPolicy` entry; creating is `confirm`, and
-  approving is `never` for the assistant because it is the human decision.
+  `POST /run-plans/:id/reject`. Every route has an `assistantPolicy` entry; creating and ranking
+  (which writes a rate-limit row, starts a workflow and spends tokens) are `confirm`, and approving
+  is `never` for the assistant because it is the human decision. Only a `PENDING` plan can be rejected.
 - Web: a "Describe the goal" mode on `/start` showing the router's matches beside "Generate new", then
   the plan preview (outline, cost with unpriced nodes listed, mandatory nodes marked, warnings,
   pinned agent versions) and an Approve button.
@@ -283,3 +284,21 @@ planned run are marked so `evaluatePullRequest` skips `auto` mode for them. The 
   model client honours the activity's abort signal.
 - Approval extends a plan's expiry to at least ten minutes ahead so the worker can still pin it; a
   plan approved but never launched stays launchable for that window.
+- A plan approved while the worker is slow to pick the run up is lost if pickup takes longer than the
+  ten-minute launch window: the plan expires unlaunched and the person approves a new one.
+- The goal text is the generation workflow's input, so it is visible in Temporal's workflow history to
+  anyone who can read it (operators, the Temporal UI). The gateway's logs, errors and the job-status
+  route never carry it.
+- `GET /run-plans/jobs/:jobId` writes: polling a finished job stores it as a `PENDING` plan, once,
+  for its own requester, and the jobs of other people are answered as missing. A job closed more than
+  24 hours ago, or with no close time, is not stored.
+- An approval's idempotent retry is answered with the earlier launch only when the same
+  `Idempotency-Key` made that approval and its run is going or finished well; a run that failed is
+  reported as `PLAN_LAUNCH_FAILED`. The approval is recorded, with a digest of the key, only after the
+  launch returns, so a retry that arrives while the first request is still launching is refused as not
+  pending rather than deduplicated.
+- Concurrent requests that carry one `Idempotency-Key` each take a generation slot while they are in
+  flight and all but the one that started the job give theirs back, so a duplicate burst can see a
+  `429` for a request that would have been deduplicated. A start that fails on the gateway's side
+  after Temporal may have accepted it keeps its slot unless the job is shown not to exist.
+- A person in more than 50 teams and organizations is limited by the first 50 in a fixed order.

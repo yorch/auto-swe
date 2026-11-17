@@ -1510,7 +1510,7 @@ export const SETTING_DEFINITIONS = {
   'runPlans.createPerUserPerHour': defineSetting({
     defaultValue: 10,
     description:
-      'Most plan generations one person may start in an hour (counted when the job starts, whether or not it produces a plan). 0 stops everyone from generating plans.',
+      "Most plan generations one person may start in an hour (counted when the job starts, whether or not it produces a plan). A person is held to the smallest value set at the repository's team and organization and at every active team and organization they belong to, so 0 disables generation for a person if ANY of their teams or organizations sets 0.",
     group: 'runPlans',
     label: 'Plans per user per hour',
     overridableAt: ['TEAM', 'ORGANIZATION'],
@@ -1548,7 +1548,7 @@ export const SETTING_DEFINITIONS = {
   'runPlans.maxPendingPerUser': defineSetting({
     defaultValue: 5,
     description:
-      'Most plans one person may hold waiting for approval (PENDING) at once. Reject or let one expire to make room.',
+      "Most plans one person may hold waiting for approval (PENDING) at once. Reject or let one expire to make room. A person is held to the smallest value set at the repository's team and organization and at every active team and organization they belong to.",
     group: 'runPlans',
     label: 'Pending plans per user',
     overridableAt: ['TEAM', 'ORGANIZATION'],
@@ -1561,7 +1561,7 @@ export const SETTING_DEFINITIONS = {
   'runPlans.routePerUserPerHour': defineSetting({
     defaultValue: 30,
     description:
-      'Most template-ranking requests one person may make in an hour. 0 stops everyone from ranking templates, so only "generate new" remains.',
+      'Most template-ranking requests one person may make in an hour. A person is held to the smallest value set at the repository\'s team and organization and at every active team and organization they belong to, so 0 disables ranking for a person if ANY of their teams or organizations sets 0 (only "generate new" remains).',
     group: 'runPlans',
     label: 'Template rankings per user per hour',
     overridableAt: ['TEAM', 'ORGANIZATION'],

@@ -3,12 +3,19 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const cfg = vi.hoisted(() => ({
+  /** Overrides by organization id for a lookup that names only an organization. */
+  byOrg: {} as Record<string, Record<string, unknown>>,
+  /** Overrides by team id, layered over `settings` for a lookup that names that team. */
+  byTeam: {} as Record<string, Record<string, unknown>>,
   settings: {} as Record<string, unknown>,
 }));
 vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   resolveSetting: vi.fn(async () => 'open'),
-  resolveSettings: vi.fn(async () => ({ ...cfg.settings })),
+  resolveSettings: vi.fn(async (_keys: string[], ctx?: { teamId?: string; orgId?: string }) => ({
+    ...cfg.settings,
+    ...(ctx?.teamId ? cfg.byTeam[ctx.teamId] : ctx?.orgId ? cfg.byOrg[ctx.orgId] : undefined),
+  })),
   snapshotPinnedSettings: vi.fn(async () => ({ 'workflow.maxTransitions': 500 })),
 }));
 vi.mock('@auto-swe/shared/lib/connectionCredential', async (orig) => ({
@@ -31,6 +38,7 @@ vi.mock('../lib/runPlanService.js', async (importOriginal) => ({
   createPlanRecord: m.create,
 }));
 
+import { workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { planIdForJob, runPlanRoutes } from './runPlans.js';
 
 const USER = '0a1b2c3d-1111-4111-8111-aaaaaaaaaaaa';
@@ -79,6 +87,15 @@ const whereOf = (query: unknown) => (query as { where: Record<string, unknown> }
 
 interface State {
   role: string;
+  /** The role the database holds, when it differs from the token's. */
+  dbRole?: string;
+  /** The teams (and their organizations) the person belongs to. */
+  memberships: Array<{ team: { id: string; orgId: string } }>;
+  orgMemberships: Array<{ orgId: string }>;
+  /** Start like Temporal does: a second start of one id answers `started: false`. */
+  realStart: boolean;
+  /** The start reaches Temporal and then fails on the caller's side (a client timeout). */
+  startThrowsAfter: boolean;
   active: boolean;
   reach: boolean;
   agents: Array<{ key: string }>;
@@ -115,6 +132,8 @@ describe('run plan routes', () => {
     for (const k of Object.keys(cfg.settings)) {
       delete cfg.settings[k];
     }
+    cfg.byTeam = {};
+    cfg.byOrg = {};
     Object.assign(cfg.settings, DEFAULT_SETTINGS);
     hostState.ok = true;
     m.approve.mockReset();
@@ -127,10 +146,13 @@ describe('run plan routes', () => {
       audit: [],
       jobs: new Map(),
       launched: false,
+      memberships: [{ team: { id: 'team-1', orgId: 'org-1' } }],
+      orgMemberships: [],
       plans: [],
       queries: { agents: [], templates: [] },
       raceOnCreate: false,
       reach: true,
+      realStart: false,
       role: 'ENGINEER',
       routed: [],
       routeResult: { matches: [], noneFit: true },
@@ -138,6 +160,7 @@ describe('run plan routes', () => {
       started: [],
       startResult: { started: true },
       startThrows: false,
+      startThrowsAfter: false,
       templates: [
         {
           description: 'Ship a ticket',
@@ -230,12 +253,40 @@ describe('run plan routes', () => {
         }
         return row[k] === v;
       });
+    // Advisory locks as Postgres has them: a transaction that asks for a key waits until the
+    // previous holder's transaction has finished, and releases all its keys when it ends.
+    const locks = new Map<string, Promise<void>>();
     const prisma: Record<string, unknown> = {
       $executeRaw: async () => 1,
-      $transaction: async (arg: unknown) =>
-        typeof arg === 'function'
-          ? (arg as (p: unknown) => unknown)(prisma)
-          : Promise.all(arg as Promise<unknown>[]),
+      $transaction: async (arg: unknown) => {
+        if (typeof arg !== 'function') {
+          return Promise.all(arg as Promise<unknown>[]);
+        }
+        const held: Array<() => void> = [];
+        const tx = Object.create(prisma) as Record<string, unknown>;
+        tx.$executeRaw = async (_strings: TemplateStringsArray, ...values: unknown[]) => {
+          const key = String(values[0]);
+          const previous = locks.get(key) ?? Promise.resolve();
+          let release = () => {};
+          const mine = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          locks.set(
+            key,
+            previous.then(() => mine)
+          );
+          await previous;
+          held.push(release);
+          return 1;
+        };
+        try {
+          return await (arg as (p: unknown) => unknown)(tx);
+        } finally {
+          for (const release of held) {
+            release();
+          }
+        }
+      },
       agent: {
         findMany: async (args: Record<string, unknown>) => {
           s.queries.agents.push(args);
@@ -248,16 +299,39 @@ describe('run plan routes', () => {
             (a) => a.data.actorId === where.actorId && eventOf(a) === cond(where.afterJson).equals
           ).length,
         create: async (args: { data: Record<string, unknown> }) => {
-          s.audit.push(args);
-          return {};
+          const id = `audit-${s.audit.length + 1}-${Math.random().toString(16).slice(2, 8)}`;
+          s.audit.push({ ...args, id } as never);
+          return { id };
         },
+        // Faithful to Prisma: every field the `where` names must match, and only those.
         deleteMany: async ({ where }: { where: Record<string, unknown> }) => {
           const before = s.audit.length;
-          s.audit = s.audit.filter(
-            (a) =>
-              !(eventOf(a) === cond(where.afterJson).equals && a.data.entityId === where.entityId)
-          );
+          s.audit = s.audit.filter((a) => {
+            const row = a as unknown as { id: string; data: Record<string, unknown> };
+            const hit =
+              (where.id === undefined || row.id === where.id) &&
+              (where.entityId === undefined || row.data.entityId === where.entityId) &&
+              (where.actorId === undefined || row.data.actorId === where.actorId) &&
+              (where.afterJson === undefined || eventOf(a) === cond(where.afterJson).equals);
+            return !hit;
+          });
           return { count: before - s.audit.length };
+        },
+        findFirst: async ({ where }: { where: Record<string, unknown> }) => {
+          const clauses = (
+            where.AND as Array<{ afterJson: { equals: unknown; path: string[] } }>
+          ).map((c) => c.afterJson);
+          const hit = s.audit.find(
+            (a) =>
+              a.data.entityId === where.entityId &&
+              a.data.actorId === where.actorId &&
+              a.data.action === where.action &&
+              clauses.every(
+                (c) =>
+                  (a.data.afterJson as Record<string, unknown>)[c.path[0] as string] === c.equals
+              )
+          );
+          return hit ? { id: (hit as unknown as { id: string }).id } : null;
         },
       },
       connection: {
@@ -272,6 +346,7 @@ describe('run plan routes', () => {
           type: 'git_repo',
         }),
       },
+      organizationMembership: { findMany: async () => s.orgMemberships },
       runInput: {
         findFirst: async () => (s.launched ? { id: 'wr-1' } : null),
       },
@@ -304,8 +379,9 @@ describe('run plan routes', () => {
         },
       },
       team: { findUnique: async () => ({ orgId: 'org-1' }) },
+      teamMembership: { findMany: async () => s.memberships },
       user: {
-        findUnique: async () => ({ id: USER, isActive: s.active, role: s.role }),
+        findUnique: async () => ({ id: USER, isActive: s.active, role: s.dbRole ?? s.role }),
       },
       workflowTemplate: {
         findFirst: async () => ({ activeVersion: 1, id: 'tpl-planned' }),
@@ -334,6 +410,19 @@ describe('run plan routes', () => {
       ) => {
         if (s.startThrows) {
           throw new Error('temporal down');
+        }
+        if (s.realStart) {
+          // Let the other requests run before the answer, as a network round trip does.
+          await new Promise((resolve) => setImmediate(resolve));
+          if (s.jobs.has(id)) {
+            return { started: false };
+          }
+          s.started.push({ id, input, memo });
+          s.jobs.set(id, { memo, status: 'running' });
+          if (s.startThrowsAfter) {
+            throw new Error('client timed out after the server accepted the start');
+          }
+          return { started: true };
         }
         if (s.startResult.started) {
           s.started.push({ id, input, memo });
@@ -613,10 +702,173 @@ describe('run plan routes', () => {
     it('resolves the settings at the repository team and organization', async () => {
       const config = await import('@auto-swe/shared/config');
       await create();
+      expect(config.resolveSettings).toHaveBeenCalledWith(['runPlans.enabled'], {
+        orgId: 'org-1',
+        teamId: 'team-1',
+      });
       expect(config.resolveSettings).toHaveBeenCalledWith(
-        expect.arrayContaining(['runPlans.enabled', 'runPlans.createPerUserPerHour']),
+        expect.arrayContaining(['runPlans.createPerUserPerHour', 'runPlans.maxPendingPerUser']),
         { orgId: 'org-1', teamId: 'team-1' }
       );
+    });
+
+    describe('per-user limits are the strictest of the person’s teams', () => {
+      const twoTeams = () => {
+        s.memberships = [
+          { team: { id: 'team-1', orgId: 'org-1' } },
+          { team: { id: 'team-2', orgId: 'org-1' } },
+        ];
+      };
+
+      it('holds a person to the lower limit of another team they belong to, whatever repository they pick', async () => {
+        twoTeams();
+        // The repository's team is generous; the person's other team allows one an hour.
+        cfg.byTeam['team-1'] = { 'runPlans.createPerUserPerHour': 50 };
+        cfg.byTeam['team-2'] = { 'runPlans.createPerUserPerHour': 1 };
+        expect((await create()).statusCode).toBe(202);
+        const second = await create();
+        expect(second.statusCode).toBe(429);
+        expect(second.json().error.code).toBe('RUN_PLAN_RATE_LIMITED');
+        expect(s.started).toHaveLength(1);
+      });
+
+      it('takes 0 at any one team or organization as disabled for the person', async () => {
+        twoTeams();
+        cfg.byTeam['team-2'] = { 'runPlans.createPerUserPerHour': 0 };
+        const off = await create();
+        expect(off.statusCode).toBe(403);
+        expect(off.json().error.code).toBe('RUN_PLANS_DISABLED');
+        delete cfg.byTeam['team-2'];
+        s.orgMemberships = [{ orgId: 'org-9' }];
+        cfg.byOrg['org-9'] = { 'runPlans.createPerUserPerHour': 0 };
+        expect((await create()).statusCode).toBe(403);
+        expect(s.started).toEqual([]);
+      });
+
+      it('applies the lowest pending-plan cap and the lowest ranking limit the same way', async () => {
+        twoTeams();
+        cfg.byTeam['team-2'] = {
+          'runPlans.maxPendingPerUser': 1,
+          'runPlans.routePerUserPerHour': 1,
+        };
+        s.plans.push({
+          expiresAt: new Date(Date.now() + 60_000),
+          id: PLAN,
+          ownerUserId: USER,
+          status: 'PENDING',
+        });
+        const pending = await create();
+        expect(pending.statusCode).toBe(429);
+        expect(pending.json().error.code).toBe('RUN_PLAN_PENDING_LIMIT');
+        expect(
+          (await post('/api/v1/run-plans/route', { intent: SECRET_INTENT, repoId: REPO }))
+            .statusCode
+        ).toBe(200);
+        const ranked = await post('/api/v1/run-plans/route', {
+          intent: SECRET_INTENT,
+          repoId: REPO,
+        });
+        expect(ranked.statusCode).toBe(429);
+      });
+    });
+
+    describe('Idempotency-Key and the generation quota', () => {
+      const generations = () => s.audit.filter((a) => eventOf(a) === 'run_plan.generation_started');
+
+      it('starts one job and keeps exactly one audit row for parallel requests with one key', async () => {
+        s.realStart = true;
+        const results = await Promise.all(
+          Array.from({ length: 8 }, () => create({}, { 'idempotency-key': 'key-parallel' }))
+        );
+        expect(results.map((r) => r.statusCode)).toEqual(Array(8).fill(202));
+        expect(new Set(results.map((r) => r.json().data.jobId)).size).toBe(1);
+        expect(results.filter((r) => !r.json().data.deduplicated)).toHaveLength(1);
+        expect(s.started).toHaveLength(1);
+        // The started job is paid for, once: no loser deleted the winner's row.
+        expect(generations()).toHaveLength(1);
+      });
+
+      it('charges one slot per distinct key under parallel load, and 429s past the limit', async () => {
+        s.realStart = true;
+        cfg.settings['runPlans.createPerUserPerHour'] = 3;
+        const results = await Promise.all(
+          Array.from({ length: 7 }, (_, i) => create({}, { 'idempotency-key': `key-fresh-${i}` }))
+        );
+        expect(results.filter((r) => r.statusCode === 202)).toHaveLength(3);
+        expect(results.filter((r) => r.statusCode === 429)).toHaveLength(4);
+        expect(s.started).toHaveLength(3);
+        expect(generations()).toHaveLength(3);
+        // The window is spent: fresh keys do not buy more.
+        expect((await create({}, { 'idempotency-key': 'key-fresh-late' })).statusCode).toBe(429);
+        expect(s.started).toHaveLength(3);
+      });
+
+      it('gives back only its own row when a duplicate start loses, never the winner’s', async () => {
+        const key = 'key-loser';
+        const jobId = workflowIdFromIdempotencyKey('runplan', '0a1b2c3d', key);
+        const winner = {
+          data: {
+            action: 'CREATE',
+            actorId: USER,
+            afterJson: { event: 'run_plan.generation_started' },
+            entityId: planIdForJob(USER, jobId),
+          },
+          id: 'winner-row',
+        };
+        s.audit.push(winner as never);
+        s.startResult = { started: false };
+        await create({}, { 'idempotency-key': key });
+        expect(s.audit.map((a) => (a as unknown as { id: string }).id)).toEqual(['winner-row']);
+      });
+
+      it('keeps its row when a start fails client-side but the job exists', async () => {
+        s.realStart = true;
+        s.startThrowsAfter = true;
+        const res = await create({}, { 'idempotency-key': 'key-timeout' });
+        expect(res.statusCode).toBe(500);
+        expect(s.started).toHaveLength(1);
+        expect(generations()).toHaveLength(1);
+        // The retry finds the job and is not charged again.
+        s.startThrowsAfter = false;
+        const retry = await create({}, { 'idempotency-key': 'key-timeout' });
+        expect(retry.json().data.deduplicated).toBe(true);
+        expect(generations()).toHaveLength(1);
+      });
+
+      it('refuses to start again under a key whose earlier plan outlived its job', async () => {
+        const key = 'key-old';
+        const jobId = workflowIdFromIdempotencyKey('runplan', '0a1b2c3d', key);
+        s.plans.push({
+          id: planIdForJob(USER, jobId),
+          ownerUserId: USER,
+          status: 'LAUNCHED',
+        });
+        const res = await create({ intent: 'a different goal' }, { 'idempotency-key': key });
+        expect(res.statusCode).toBe(422);
+        expect(res.json().error.code).toBe('IDEMPOTENCY_KEY_MISMATCH');
+        expect(s.started).toEqual([]);
+        expect(s.audit).toEqual([]);
+      });
+    });
+
+    describe('the caller’s role is read from the database', () => {
+      it('refuses a viewer token', async () => {
+        s.role = 'VIEWER';
+        expect((await create()).statusCode).toBe(403);
+        expect(s.started).toEqual([]);
+      });
+
+      it.each([
+        ['demoted', { dbRole: 'VIEWER' }],
+        ['deactivated', { active: false }],
+      ])('refuses a person who was %s since the token was issued', async (_name, change) => {
+        Object.assign(s, change);
+        const res = await create();
+        expect(res.statusCode).toBe(403);
+        expect(res.json().error.code).toBe('FORBIDDEN');
+        expect(s.started).toEqual([]);
+        expect(s.audit).toEqual([]);
+      });
     });
 
     it('returns the same job for a retried Idempotency-Key, without starting or charging twice', async () => {
@@ -771,6 +1023,37 @@ describe('run plan routes', () => {
         status: 'failed',
       });
       expect(s.plans).toEqual([]);
+    });
+
+    it('stores the request’s hash with the plan, and answers PLAN_KEY_REUSED for another goal’s plan under the same id', async () => {
+      s.jobs.set(JOB, generated());
+      await get(`/api/v1/run-plans/jobs/${JOB}`);
+      const input = m.create.mock.calls[0]?.[1] as CreateInput;
+      expect(input.routerCandidates).toMatchObject({ intentHash: 'x' });
+      // The same job id now runs for a different goal (its history was purged and the key reused).
+      s.jobs.set(JOB, generated({ memo: { ...generated().memo, intentHash: 'a-different-goal' } }));
+      const body = (await get(`/api/v1/run-plans/jobs/${JOB}`)).json().data;
+      expect(body).toMatchObject({ code: 'PLAN_KEY_REUSED', retryable: false, status: 'failed' });
+      expect(body.planId).toBeUndefined();
+    });
+
+    it('also refuses an existing plan for another repository or mode', async () => {
+      s.jobs.set(JOB, generated());
+      await get(`/api/v1/run-plans/jobs/${JOB}`);
+      s.jobs.set(
+        JOB,
+        generated({ memo: { ...generated().memo, repoId: 'bbbbbbbb-1111-4111-8111-aaaaaaaaaaaa' } })
+      );
+      expect((await get(`/api/v1/run-plans/jobs/${JOB}`)).json().data.code).toBe('PLAN_KEY_REUSED');
+      s.jobs.set(JOB, generated({ memo: { ...generated().memo, mode: 'output-only' } }));
+      expect((await get(`/api/v1/run-plans/jobs/${JOB}`)).json().data.code).toBe('PLAN_KEY_REUSED');
+    });
+
+    it('does not skip the persist window when the job has no close time', async () => {
+      s.jobs.set(JOB, generated({ closedAt: null }));
+      const body = (await get(`/api/v1/run-plans/jobs/${JOB}`)).json().data;
+      expect(body).toMatchObject({ code: 'PLAN_JOB_EXPIRED', status: 'failed' });
+      expect(m.create).not.toHaveBeenCalled();
     });
 
     it('does not turn a job that finished long ago into a plan', async () => {
@@ -967,18 +1250,28 @@ describe('run plan routes', () => {
       expect(res.json().error.details).toEqual(details);
     });
 
-    it('returns the earlier launch for a retried approval that carries an Idempotency-Key', async () => {
+    it('does not treat a bare Idempotency-Key as proof of an earlier launch', async () => {
+      // A run exists for the plan, but no approval made with this key is on record.
       s.launched = true;
       m.approve.mockResolvedValue(refusal(409, 'PLAN_NOT_PENDING'));
       const keyed = await post(approveUrl, undefined, { 'idempotency-key': 'approve-1' });
-      expect(keyed.statusCode).toBe(200);
-      expect(keyed.json().data).toEqual({
-        deduplicated: true,
+      expect(keyed.statusCode).toBe(409);
+      expect(keyed.json().error.code).toBe('PLAN_NOT_PENDING');
+    });
+
+    it('records a digest of the approving key, never the key', async () => {
+      m.approve.mockResolvedValueOnce({
+        activeWorkflowId: 'aw-1',
+        ok: true,
         planId: PLAN,
+        temporalWorkflowId: 'plan-abc',
         workRequestId: 'wr-1',
       });
-      const plain = await post(approveUrl, undefined);
-      expect(plain.statusCode).toBe(409);
+      await post(approveUrl, undefined, { 'idempotency-key': 'approve-secret-key' });
+      const row = s.audit.find((a) => eventOf(a) === 'run_plan.approved');
+      const after = row?.data.afterJson as { idempotencyKeyDigest?: string };
+      expect(after.idempotencyKeyDigest).toMatch(/^[0-9a-f]{64}$/);
+      expect(JSON.stringify(row)).not.toContain('approve-secret-key');
     });
 
     it('passes the owner only, and a caller-supplied owner field is a validation error', async () => {
@@ -1007,6 +1300,10 @@ describe('run plan routes', () => {
       const res = await post(rejectUrl, undefined);
       expect(res.statusCode).toBe(409);
       expect(res.json().error.code).toBe('PLAN_NOT_REJECTABLE');
+      // An approved plan has a launch in flight and is not rejectable either.
+      s.plans[0] = { id: PLAN, ownerUserId: USER, status: 'APPROVED', teamId: 'team-1' };
+      expect((await post(rejectUrl, undefined)).statusCode).toBe(409);
+      expect(s.plans[0]?.status).toBe('APPROVED');
     });
   });
 

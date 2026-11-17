@@ -42,6 +42,7 @@ import {
   loadPlannedRunTemplate,
   type PlanRefusal,
   rejectPlan,
+  requireEngineer,
   snapshotPlanSettings,
 } from '../lib/runPlanService.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
@@ -141,6 +142,14 @@ function intentHash(repoId: string, agent: string | undefined, intent: string): 
     .update(`${repoId}\n${agent ?? ''}\n${intent}`)
     .digest('hex');
 }
+
+/** What an approval's audit row records of the Idempotency-Key: a digest, never the key. */
+function keyDigest(key: string): string {
+  return crypto.createHash('sha256').update(`run-plan-approve\n${key}`).digest('hex');
+}
+
+/** Run states that mean the launch did not end in a running or finished run. */
+const FAILED_RUN_STATUSES: ReadonlySet<string> = new Set(['CANCELLED', 'FAILED', 'TIMED_OUT']);
 
 /** The refusal statuses the approval path reports, by kind. */
 const POLICY_CODES: ReadonlySet<string> = new Set([
@@ -316,6 +325,23 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
     return false;
   }
 
+  /**
+   * The role is read from the database, not trusted from the token: a person demoted or deactivated
+   * since it was issued must not be able to start a paid model call with it.
+   */
+  async function refuseNonEngineer(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    userId: string
+  ): Promise<boolean> {
+    const engineer = await requireEngineer(deps(request), { sub: userId });
+    if (!engineer.ok) {
+      sendRefusal(reply, engineer);
+      return true;
+    }
+    return false;
+  }
+
   /** Best effort: an audit write that fails is logged by id and never fails the action. */
   async function audit(args: Parameters<typeof writeAuditLog>[1]): Promise<void> {
     try {
@@ -340,6 +366,9 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
         return reply;
       }
       const user = requireUser(request);
+      if (await refuseNonEngineer(request, reply, user.sub)) {
+        return reply;
+      }
       const { intent, repoId } = request.body;
       const repo = await authorizeRepository(deps(request), { sub: user.sub }, repoId);
       if (!repo.ok) {
@@ -444,6 +473,9 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
         return reply;
       }
       const user = requireUser(request);
+      if (await refuseNonEngineer(request, reply, user.sub)) {
+        return reply;
+      }
       const { agent, intent, repoId } = request.body;
       const idempotencyKey = request.headers['idempotency-key'];
 
@@ -505,15 +537,30 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
         }
         return reply.status(202).send({ data: { deduplicated: true, jobId } });
       };
+      const planId = planIdForJob(user.sub, jobId);
       if (idempotencyKey) {
         const existing = await fastify.temporal.getRunPlanJob(jobId);
         if (existing.status !== 'not_found') {
           return replay(existing);
         }
+        // The job's history is gone but the plan it made is not: the plan id is a function of the
+        // key, so starting again would hand the caller that old plan (launched, rejected or for
+        // another goal) as if it were the answer to this request.
+        const prior = await fastify.prisma.runPlan.findUnique({
+          select: { id: true },
+          where: { id: planId },
+        });
+        if (prior) {
+          return sendError(
+            reply,
+            422,
+            'IDEMPOTENCY_KEY_MISMATCH',
+            'This Idempotency-Key already produced a plan, so it cannot start another. Use a new key.'
+          );
+        }
       }
 
-      const planId = planIdForJob(user.sub, jobId);
-      const refused = await reserveGenerationSlot(fastify, {
+      const reservation = await reserveGenerationSlot(fastify, {
         jobId,
         mode,
         planId,
@@ -521,9 +568,10 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
         scope,
         user,
       });
-      if (refused) {
-        return sendRefusal(reply, refused);
+      if (!reservation.ok) {
+        return sendRefusal(reply, reservation);
       }
+      const { auditId } = reservation;
       try {
         const { started } = await fastify.temporal.startRunPlanGeneration(
           jobId,
@@ -538,12 +586,23 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
           { intentHash: hash, mode, ownerUserId: user.sub, repoId, teamId: scope.teamId }
         );
         if (!started) {
-          // A retry that raced its own first request: nothing new started, so nothing was spent.
-          await releaseGenerationSlot(fastify, { planId, userId: user.sub });
+          // A retry that raced its own first request: this call started nothing, so it gives back
+          // its own row. The request that did start the job holds the row that pays for it.
+          await releaseGenerationSlot(fastify, { auditId, userId: user.sub });
           return replay(await fastify.temporal.getRunPlanJob(jobId));
         }
       } catch (err) {
-        await releaseGenerationSlot(fastify, { planId, userId: user.sub });
+        // A start that failed on this side may still have reached Temporal (a timeout after the
+        // server accepted it). Take the row back only once the job is shown not to exist.
+        let startedAnyway = true;
+        try {
+          startedAnyway = (await fastify.temporal.getRunPlanJob(jobId)).status !== 'not_found';
+        } catch {
+          // Cannot prove it did not start: keep the row.
+        }
+        if (!startedAnyway) {
+          await releaseGenerationSlot(fastify, { auditId, userId: user.sub });
+        }
         throw err;
       }
       return reply.status(202).send({ data: { jobId } });
@@ -589,14 +648,41 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
       // Done. The plan id is a function of the job, so a repeated poll finds the row it made.
       const planId = planIdForJob(user.sub, jobId);
       const done = { data: { planId, status: 'done' } };
+      // The poll persists a plan on the owner's behalf; it only ever acts on the owner's own job.
       const existing = await fastify.prisma.runPlan.findUnique({
-        select: { id: true, ownerUserId: true },
+        select: {
+          connectionId: true,
+          id: true,
+          mode: true,
+          ownerUserId: true,
+          routerCandidates: true,
+        },
         where: { id: planId },
       });
       if (existing) {
-        return existing.ownerUserId === user.sub ? done : notFound();
+        if (existing.ownerUserId !== user.sub) {
+          return notFound();
+        }
+        // The plan id is a function of the job id, which an Idempotency-Key fixes. A job that ran
+        // again under a reused key (its history was purged) must not report an older plan made for
+        // another goal, repository or mode as its own result.
+        const storedHash = asRecord(existing.routerCandidates).intentHash;
+        if (
+          (typeof storedHash === 'string' && storedHash !== memo.data.intentHash) ||
+          existing.connectionId !== memo.data.repoId ||
+          existing.mode !== memo.data.mode
+        ) {
+          return failed(
+            'PLAN_KEY_REUSED',
+            'This Idempotency-Key already produced a different plan; start a new generation with a new key',
+            false
+          );
+        }
+        return done;
       }
-      if (state.closedAt && Date.now() - state.closedAt.getTime() > JOB_PERSIST_WINDOW_MS) {
+      // A finished job with no close time is treated as one that closed too long ago: the window
+      // cannot be skipped by a missing field.
+      if (!state.closedAt || Date.now() - state.closedAt.getTime() > JOB_PERSIST_WINDOW_MS) {
         return failed(
           'PLAN_JOB_EXPIRED',
           'This generation finished long ago; start a new one',
@@ -625,7 +711,7 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
             model: result.model,
             owner: { sub: user.sub },
             // What the platform added around the model's nodes, for the preview's markers.
-            routerCandidates: { injected: result.injected },
+            routerCandidates: { injected: result.injected, intentHash: memo.data.intentHash },
             settingsSnapshot: await snapshotPlanSettings({
               orgId: input.orgId ?? null,
               plannedRunTemplateId: template.id,
@@ -748,6 +834,81 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  /** Whether this person's approval of this plan was made with the Idempotency-Key of this digest. */
+  async function approvedWithKey(planId: string, userId: string, digest: string): Promise<boolean> {
+    const row = await fastify.prisma.configAuditLog.findFirst({
+      select: { id: true },
+      where: {
+        AND: [
+          { afterJson: { equals: 'run_plan.approved', path: ['event'] } },
+          { afterJson: { equals: digest, path: ['idempotencyKeyDigest'] } },
+        ],
+        action: 'UPDATE',
+        actorId: userId,
+        entityId: planId,
+        entityType: 'RunPlan',
+      },
+    });
+    return row !== null;
+  }
+
+  /**
+   * Where an approved plan's run stands now. `running`: a run is starting, going or finished well.
+   * `failed`: a run row exists and ended badly. `none`: the plan has no run to speak of.
+   */
+  async function launchState(
+    planId: string,
+    userId: string
+  ): Promise<
+    | { kind: 'none' }
+    | { kind: 'running'; workRequestId: string }
+    | { kind: 'failed'; details: Record<string, unknown> }
+  > {
+    const plan = await fastify.prisma.runPlan.findUnique({
+      select: { launchedWorkflowRunId: true, status: true },
+      where: { id: planId },
+    });
+    if (!plan || (plan.status !== 'LAUNCHED' && plan.status !== 'APPROVED')) {
+      return { kind: 'none' };
+    }
+    const input = await fastify.prisma.runInput.findFirst({
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+      where: { externalTicketId: plannedRunTicketId(planId), requestedById: userId },
+    });
+    if (!input) {
+      return { kind: 'none' };
+    }
+    const [active, run] = await Promise.all([
+      fastify.prisma.activeWorkflow.findFirst({
+        select: { currentStatus: true },
+        where: { workRequestId: input.id },
+      }),
+      plan.launchedWorkflowRunId
+        ? fastify.prisma.workflowRun.findUnique({
+            select: { status: true },
+            where: { id: plan.launchedWorkflowRunId },
+          })
+        : Promise.resolve(null),
+    ]);
+    if (!active && !run) {
+      return { kind: 'none' };
+    }
+    const failed =
+      active?.currentStatus === 'FAILED' || (run ? FAILED_RUN_STATUSES.has(run.status) : false);
+    return failed
+      ? {
+          details: {
+            planStatus: plan.status,
+            runStatus: run?.status ?? null,
+            workflowStatus: active?.currentStatus ?? null,
+            workRequestId: input.id,
+          },
+          kind: 'failed',
+        }
+      : { kind: 'running', workRequestId: input.id };
+  }
+
   // ── Approve: re-check everything, then start the run ──
   app.post(
     '/:id/approve',
@@ -761,6 +922,8 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const user = requireUser(request);
       const { id } = request.params;
+      const idempotencyKey = request.headers['idempotency-key'];
+      const digest = idempotencyKey ? keyDigest(idempotencyKey) : undefined;
       const result = await approveAndLaunchPlan(
         { ...deps(request), temporal: fastify.temporal },
         { sub: user.sub },
@@ -768,18 +931,28 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
         request.body?.budgetTier ? { budgetTier: request.body.budgetTier } : {}
       );
       if (!result.ok) {
-        // A retried approve (same key) of a plan that did launch answers with that launch.
+        // A retried approve answers with the earlier launch only when THIS key made that approval
+        // and its run is still going or finished; a run that was refused or failed is reported as
+        // what it is, never as success.
         if (
-          request.headers['idempotency-key'] &&
-          (result.code === 'PLAN_NOT_PENDING' || result.code === 'PLAN_NOT_APPROVED')
+          digest &&
+          (result.code === 'PLAN_NOT_PENDING' || result.code === 'PLAN_NOT_APPROVED') &&
+          (await approvedWithKey(id, user.sub, digest))
         ) {
-          const launched = await fastify.prisma.runInput.findFirst({
-            orderBy: { createdAt: 'desc' },
-            select: { id: true },
-            where: { externalTicketId: plannedRunTicketId(id), requestedById: user.sub },
-          });
-          if (launched) {
-            return { data: { deduplicated: true, planId: id, workRequestId: launched.id } };
+          const launch = await launchState(id, user.sub);
+          if (launch.kind === 'running') {
+            return {
+              data: { deduplicated: true, planId: id, workRequestId: launch.workRequestId },
+            };
+          }
+          if (launch.kind === 'failed') {
+            return sendError(
+              reply,
+              409,
+              'PLAN_LAUNCH_FAILED',
+              'This approval started a run that did not succeed; create a new plan to try again',
+              launch.details
+            );
           }
         }
         if (POLICY_CODES.has(result.code)) {
@@ -793,6 +966,8 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
         actor: user,
         after: {
           event: 'run_plan.approved',
+          // So a retry can be told apart from a different request: the digest, never the key.
+          ...(digest ? { idempotencyKeyDigest: digest } : {}),
           status: 'APPROVED',
           temporalWorkflowId: result.temporalWorkflowId,
           workRequestId: result.workRequestId,
@@ -832,7 +1007,7 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
         action: 'UPDATE',
         actor: user,
         after: { event: 'run_plan.rejected', status: 'REJECTED' },
-        before: { status: 'PENDING_OR_APPROVED' },
+        before: { status: 'PENDING' },
         entityId: id,
         entityType: 'RunPlan',
       });
