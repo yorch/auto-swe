@@ -1780,3 +1780,42 @@ warning. No server-side change is needed beyond applying the migration (`yarn db
 authorized without it does not.
 
 ---
+
+### Plugins: the agent binding becomes a list, and hooks and team enablement are per plugin (`e062295`)
+
+**Affected.** Any deployment that upgrades across migration `20261117000000_plugins`. In a deployment
+that ran earlier code with an agent bound to a harness profile, every such binding is converted in
+place and the actions below apply to it.
+
+**What changes.** `agents.harness_profile` (one profile name) is replaced in place by
+`agents.harness_profiles` (a list of names): a bound name becomes a one-element list, an unbound agent
+an empty list, and the old column is dropped. There is no fallback to it. Older code that reads a whole
+agent row fails on the missing column; older code with a narrower select sees no plugin list, so an
+agent it runs has no plugins. The migration also adds the hook switch
+(`harness_profiles.hooks_enabled`, default true, so each existing profile keeps hooks on as it was
+approved), the profile tracking columns, the `marketplace_sources` and `plugin_enablements` tables, and
+the projection columns on `skills`.
+
+The migration creates no team enablements. A team-scoped agent bound to a plugin therefore fails its
+runs with `PLUGIN_NOT_ENABLED` until a team admin enables that plugin for the team. A platform-wide
+binding needs no enablement.
+
+**Actions.**
+
+1. Upgrade the gateway and the worker together, in one deployment step. Do not run old and new code
+   side by side against the migrated database.
+2. Review each approved plugin's hook switch on the Plugins page (`/admin/harness-profiles`) and switch
+   hooks off where they should not run. Existing profiles keep hooks on until someone changes them.
+3. For each team with a team-scoped agent bound to a plugin, a team admin enables that plugin in the
+   team's Plugins section, or with `PUT /api/v1/teams/:teamId/plugins/:name`. Until then those runs fail
+   closed. The plugin's details list the bound agents, with the stranded ones marked.
+4. Optional environment variables, read at gateway startup: `MARKETPLACE_SYNC_ENABLED` (default `true`)
+   and `MARKETPLACE_SYNC_CRON` (default `53 5 * * *`, UTC) for the marketplace check. Profile update checks
+   run on the skill-source schedule (`SKILL_SOURCE_SYNC_ENABLED`, `SKILL_SOURCE_SYNC_CRON`), so turning
+   that sync off stops them as well.
+
+**Verify.** The agent library shows each agent bound before the upgrade with the same profile name in its
+list. A run of a team-scoped agent bound to a plugin completes once the plugin is enabled for that team,
+and its `agent.plugin_hooks` event records the hook switch the run used.
+
+---

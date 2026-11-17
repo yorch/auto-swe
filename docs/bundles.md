@@ -202,7 +202,9 @@ requires the computed content hash to equal the bundle's. All of that happens be
 - Each binding cuts a new version of the named GLOBAL agent with the plugin name appended to
   `harnessProfiles`; older versions are never changed. It applies only when the agent runs on the
   `claude-code` runtime (the bundle's own agent entry counts); an agent that is missing, on another
-  runtime, or already bound is reported in `warnings` or skipped.
+  runtime, or already bound is reported in `warnings` or skipped. A binding that would give the agent
+  two plugins of one name, or name one profile twice, fails the install with `PROFILE_NAME_COLLISION`
+  or `PROFILE_DUPLICATE`, and the whole install is rolled back.
 - After the transaction commits, the plugin's skills are projected into `<plugin>:<skill>` rows for
   runtimes other than `claude-code` ([agents.md](./agents.md#6-skills)). The outcome, including
   every skill refused by `skills.import.blockOnScanWarnings` or a hand edit, is part of `warnings`;
@@ -290,8 +292,6 @@ separately.
   bundle gives no way to follow a tag or branch. The bytes are read from the source host at install
   time, so an install needs that host to be reachable and approved
   (`github.repositoryHosts`).
-- **A binding does not check `plugin.json` name collisions** with the plugins the agent already
-  carries; the check at bind time in the agent form does not run for a bundle's binding.
 - **Plugins are exported only for bound agents.** An export writes a plugin reference for each
   profile an exported agent is bound to, at its newest approved commit; a profile no exported agent
   uses is not exported, and neither are enablements or hook switches. A plugin's projected skills

@@ -45,7 +45,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [knowledge.md](./knowledge.md) | Governed reusable knowledge — local capture, evidence, review/publication scopes, retrieval and trust boundaries |
 | [knowledge-bases.md](./knowledge-bases.md) | Repository-backed references — attachments, pinned snapshots, read-only files, indexing, search and trust boundaries |
 | [repo-dependency-graph.md](./repo-dependency-graph.md) | Directed dependency edges between git repos — the `RepoDependency` model, the cross-team edge API and management UI, and the neighbour resolver |
-| [harness-profiles.md](./harness-profiles.md) | Admin-approved Claude Code plugin profiles — the folder contract, the guarded fetch, validation and scanning at approval, the immutable snapshot, and the admin API |
+| [harness-profiles.md](./harness-profiles.md) | Claude Code plugins — the harness profile that stores an approved plugin, its folder contract, approval and scanning, the hook switch, marketplaces, update tracking, team enablement, binding to agents, skill projection for other runtimes, and the admin API |
 | [bundles.md](./bundles.md) | Signed, versioned distribution of reusable agents, skills, scanner patterns, and templates across deployments |
 | [qodo.md](./qodo.md) | Reading Qodo's review of a pull request through a team's read-only Qodo MCP connection — setup, output screening, the shared findings client and the `qodo.enabled` switch |
 | [transcripts.md](./transcripts.md) | Full-fidelity agent model-call capture: recording, normalized reads, integrity hashes, retention and legal holds |

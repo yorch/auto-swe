@@ -127,6 +127,15 @@ sweeps, so it is environment-only and applied once at gateway startup (a change 
 and `SKILL_SOURCE_SYNC_CRON` (five-field cron, UTC, default `41 5 * * *`). The gateway refuses to start on
 a value it cannot use. See [agents.md](./agents.md#66-external-skill-sources).
 
+The same sync also checks each approved harness profile's ref, so `SKILL_SOURCE_SYNC_ENABLED=false` stops
+those checks too.
+
+The check that flags a moved commit on a tracked plugin marketplace is a scheduled sweep of the same kind,
+environment-only and applied at gateway startup: `MARKETPLACE_SYNC_ENABLED` (default `true`; one cheap
+request per tracked marketplace, and it only flags: it never moves a pin or changes a profile) and
+`MARKETPLACE_SYNC_CRON` (five-field cron, UTC, default `53 5 * * *`). See
+[harness-profiles.md](./harness-profiles.md#11-marketplaces).
+
 ### Knowledge-base synchronization
 
 Repository-backed KB synchronization is environment-only and applied at gateway startup:
