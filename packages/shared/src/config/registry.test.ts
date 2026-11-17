@@ -735,3 +735,51 @@ describe('workspace sizing', () => {
     }
   });
 });
+
+describe('orchestration settings', () => {
+  const keys = (Object.keys(SETTING_DEFINITIONS) as (keyof typeof SETTING_DEFINITIONS)[]).filter(
+    (k) => k.startsWith('orchestration.')
+  );
+
+  it('defines the seven keys, all ADMIN-only, GLOBAL only and valid by default', () => {
+    expect([...keys].sort()).toEqual([
+      'orchestration.approvalTimeoutSeconds',
+      'orchestration.enabled',
+      'orchestration.maxChildren',
+      'orchestration.maxConcurrentChildren',
+      'orchestration.maxTurns',
+      'orchestration.maxWallClockSeconds',
+      'orchestration.maxWriterChildren',
+    ]);
+    for (const key of keys) {
+      const def = SETTING_DEFINITIONS[key];
+      expect(def.group, key).toBe('orchestration');
+      expect(def.requiredRole, key).toBe('ADMIN');
+      expect(def.overridableAt, key).toEqual([]);
+      expect(def.schema.safeParse(def.defaultValue).success, key).toBe(true);
+    }
+  });
+
+  it('is off by default and pins exactly the bounds the workflow decides on', () => {
+    expect(SETTING_DEFINITIONS['orchestration.enabled'].defaultValue).toBe(false);
+    const pinned = keys.filter((k) => SETTING_DEFINITIONS[k].runPinned).sort();
+    expect(pinned).toEqual([
+      'orchestration.maxChildren',
+      'orchestration.maxConcurrentChildren',
+      'orchestration.maxTurns',
+      'orchestration.maxWallClockSeconds',
+      'orchestration.maxWriterChildren',
+    ]);
+  });
+
+  it('bounds the wall clock at four hours and the approval wait at an hour', () => {
+    const wall = SETTING_DEFINITIONS['orchestration.maxWallClockSeconds'].schema;
+    expect(wall.safeParse(14_400).success).toBe(true);
+    expect(wall.safeParse(14_401).success).toBe(false);
+    expect(wall.safeParse(59).success).toBe(false);
+    const approval = SETTING_DEFINITIONS['orchestration.approvalTimeoutSeconds'].schema;
+    expect(approval.safeParse(30).success).toBe(true);
+    expect(approval.safeParse(29).success).toBe(false);
+    expect(approval.safeParse(3601).success).toBe(false);
+  });
+});

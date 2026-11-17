@@ -27,6 +27,7 @@ import {
   LESSON_CONSOLIDATOR_PROMPT,
   MEMORY_SUMMARIZER_PROMPT,
   MERGE_CONFLICT_RESOLVER_PROMPT,
+  ORCHESTRATOR_PROMPT,
   PERFORMANCE_REVIEWER_PROMPT,
   PLANNER_AGENT_PROMPT,
   PR_FEEDBACK_RESPONDER_PROMPT,
@@ -870,6 +871,20 @@ export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     modelSpec: 'anthropic/claude-haiku-4-5-20251001',
     name: 'Assistant Titler',
     systemPrompt: ASSISTANT_TITLER_PROMPT,
+  },
+  // ── Orchestration ──────────────────────────────────────────────────────────
+  {
+    // Talks to the launcher and records intents (spawn, message, cancel, request a repository)
+    // that fixed workflow code validates and applies. No workspace tools and no MCP binding:
+    // repository knowledge comes from read-only child agents. Platform machinery, so it is on
+    // NON_LAUNCHABLE_AGENT_KEYS. Resolved by the orchestration workflow's turn activity.
+    description:
+      'Turns a task into sub-agent runs by recording intents that platform code validates and applies. No workspace tools.',
+    key: 'orchestrator',
+    modelSpec: 'anthropic/claude-opus-5-5',
+    name: 'Orchestrator',
+    systemPrompt: ORCHESTRATOR_PROMPT,
+    toolKeys: [],
   },
   // ── CI failure triage ──────────────────────────────────────────────────────
   {

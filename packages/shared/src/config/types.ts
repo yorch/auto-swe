@@ -33,6 +33,7 @@ export const SETTING_GROUPS = [
   'memory',
   'models',
   'onboarding',
+  'orchestration',
   'prEvaluation',
   'qodo',
   'repoAccess',

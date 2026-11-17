@@ -42,6 +42,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'HumanErrorBaseline',
   'HumanStepDailyRollup',
   'MemoryItem',
+  'Orchestration',
   'KnowledgeItem',
   'KnowledgeBase',
   'KnowledgeBaseLink',

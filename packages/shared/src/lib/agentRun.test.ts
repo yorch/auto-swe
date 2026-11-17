@@ -37,6 +37,35 @@ describe('AgentRunPayloadSchema', () => {
   });
 });
 
+describe('AgentRunPayloadSchema orchestration fields', () => {
+  const id = '0b1c2d3e-4f5a-4b6c-8d7e-9f8091a2b3c4';
+
+  it('accepts an orchestration id and path scopes', () => {
+    const p = AgentRunPayloadSchema.parse({
+      agentRef: 'implementer',
+      orchestrationId: id,
+      pathScopes: ['src/a/**'],
+    });
+    expect(p.orchestrationId).toBe(id);
+    expect(p.pathScopes).toEqual(['src/a/**']);
+  });
+
+  it('leaves both unset for a direct run', () => {
+    const p = AgentRunPayloadSchema.parse({ agentRef: 'implementer' });
+    expect(p.orchestrationId).toBeUndefined();
+    expect(p.pathScopes).toBeUndefined();
+  });
+
+  it.each([
+    [{ orchestrationId: 'nope' }],
+    [{ pathScopes: Array.from({ length: 21 }, (_, i) => `d${i}/**`) }],
+    [{ pathScopes: ['x'.repeat(201)] }],
+    [{ pathScopes: 'src/**' }],
+  ])('rejects %j', (bad) => {
+    expect(AgentRunPayloadSchema.safeParse({ agentRef: 'a', ...bad }).success).toBe(false);
+  });
+});
+
 describe('launchable agents', () => {
   it('denies the gate, judge and memory agents', () => {
     for (const key of ['securityReview', 'evalJudge', 'workflowAuthor', 'commitToMemory']) {
@@ -47,6 +76,10 @@ describe('launchable agents', () => {
 
   it('allows an ordinary agent', () => {
     expect(isLaunchableAgentKey('contentWriter')).toBe(true);
+  });
+
+  it('denies the orchestrator', () => {
+    expect(isLaunchableAgentKey('orchestrator')).toBe(false);
   });
 });
 

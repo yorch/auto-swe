@@ -654,6 +654,23 @@ run-pinned and apply through the settings cache. Public PR screenshot copies req
 `UI_EVIDENCE_PUBLIC_BUCKET` and `UI_EVIDENCE_PUBLIC_BASE_URL` in the worker environment in addition
 to enabling `uiValidation.prInlineImages`. The public bucket policy is operator-managed.
 
+## Orchestration
+
+The `orchestration` group bounds orchestrated agent runs (see the orchestration design in
+`docs/specs/`). All keys are ADMIN-only and GLOBAL only. The first five are run-pinned: the
+orchestration workflow decides on them inside a V8 isolate that cannot read the database, and a
+replay must take the same path as the first execution.
+
+| Key | Default | Bounds | Run-pinned | Meaning |
+|---|---|---|---|---|
+| `orchestration.enabled` | off | boolean | no | Kill switch for launching an orchestration and for spawning a child. |
+| `orchestration.maxChildren` | 12 | 1 to 100 | yes | Children one orchestration may start over its lifetime. |
+| `orchestration.maxConcurrentChildren` | 4 | 1 to 20 | yes | Children running at once in one orchestration. |
+| `orchestration.maxWriterChildren` | 4 | 0 to 50 | yes | Writer children (branch or draft pull request) per orchestration. |
+| `orchestration.maxTurns` | 200 | 1 to 2000 | yes | Orchestrator turns per orchestration. |
+| `orchestration.maxWallClockSeconds` | 14400 | 60 to 14400 | yes | Lifetime of one orchestration. |
+| `orchestration.approvalTimeoutSeconds` | 600 | 30 to 3600 | no | How long an MCP write waits for the launcher; a timeout is a denial. |
+
 ## Limitations
 
 - The onboarding draft's wider egress list is not a strong boundary against a team admin: the

@@ -67,6 +67,7 @@ export const NON_LAUNCHABLE_AGENT_KEYS: ReadonlySet<string> = new Set([
   'ciTriager',
   'prFeedbackResponder',
   'prTitler',
+  'orchestrator',
 ]);
 
 export function isLaunchableAgentKey(key: string): boolean {
@@ -93,6 +94,13 @@ export const AgentRunPayloadSchema = z.object({
   /** Per-launch caps. Can only lower the platform ceilings. */
   maxSteps: z.number().int().min(1).max(500).optional(),
   maxWallClockSeconds: z.number().int().min(60).max(14_400).optional(),
+  /** The orchestration that started this run as a child. Set by the gateway's child launch route only. */
+  orchestrationId: z.string().uuid().optional(),
+  /**
+   * Repository paths a writer child may change (grammar in `orchestration.ts`). The push policy
+   * refuses any changed path outside them. Unset: no restriction, as for a direct agent run.
+   */
+  pathScopes: z.array(z.string().max(200)).max(20).optional(),
   reviewFixOfRunId: z.string().uuid().optional(),
 });
 export type AgentRunPayload = z.infer<typeof AgentRunPayloadSchema>;

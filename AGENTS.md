@@ -530,7 +530,7 @@ are added as data, not code. Seeded built-ins split by how they bind a model:
   `planner`, `securityReview`, `validateContext`, `commitToMemory`, `channelAssistant`, `evalJudge`,
   `workflowAuthor`, `workflowExplainer`, `repoDependencyInferrer`. `appAssistant` answers in the
   dashboard's assistant panel, acting as the signed-in user, and `assistantTitler` names its
-  conversations. `prTitler` picks the type and summary of a Conventional Commits pull request title. The rest exist because the
+  conversations. `prTitler` picks the type and summary of a Conventional Commits pull request title. `orchestrator` records intents that start sub-agent runs. The rest exist because the
   platform is not only for engineering teams: `contentWriter`, `brandReviewer` (content and comms),
   `supportResponder` (support and ops), `productAnalyst`, `prdWriter`, `issueDrafter` (product),
   `docsMaintainer`, `docReviewer`, `ticketPlanner` (documentation and document review), and
