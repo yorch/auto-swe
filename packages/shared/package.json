@@ -151,6 +151,7 @@
     "./workflow/testHelpers": "./dist/workflow/testHelpers.js",
     "./workflow/inventory": "./dist/workflow/inventory.js",
     "./workflow/runAttribution": "./dist/workflow/runAttribution.js",
+    "./workflow/runPlan": "./dist/workflow/runPlan/index.js",
     "./lib/shellAudit": "./dist/lib/shellAudit.js",
     "./lib/tenantGuard": "./dist/lib/tenantGuard.js",
     "./lib/githubInstallation": "./dist/lib/githubInstallation.js",

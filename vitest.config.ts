@@ -643,6 +643,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/workflow/runAttribution.ts'),
       },
       {
+        find: '@auto-swe/shared/workflow/runPlan',
+        replacement: path.resolve(__dirname, 'packages/shared/src/workflow/runPlan/index.ts'),
+      },
+      {
         find: '@auto-swe/shared/workflow',
         replacement: path.resolve(__dirname, 'packages/shared/src/workflow/index.ts'),
       },

@@ -19,6 +19,8 @@
  *                          version, refused arguments, a node tagged with an undeclared use,
  *                          a use with no nodes, or drift between a use's nodes and a fresh
  *                          expansion (`macros.ts`, `collectUseProblems`)
+ *     - NON_LAUNCHABLE_AGENT  an `agent` node names an agent on `NON_LAUNCHABLE_AGENT_KEYS`,
+ *                          which backs a platform mechanism and is never launched by a spec
  *   warnings (advisory):
  *     - UNKNOWN_NODE_REF   a `{ from: "nodes.<id>..." }` binding names a node
  *                          that doesn't exist (may reference a not-yet-added node)
@@ -56,6 +58,7 @@
  * (`validateSpecRefs`, shell gating) and compose on top.
  */
 
+import { NON_LAUNCHABLE_AGENT_KEYS } from '../lib/agentRun.js';
 import { checkExprSyntax, RESERVED_SEGMENTS } from './expr.js';
 import { collectUseProblems } from './macros.js';
 import {
@@ -389,6 +392,18 @@ export function validateSpec(
         nodeId: id,
         severity: 'error',
       });
+    }
+    if (node.type === 'agent') {
+      const key = node.agentRef.split('@')[0] ?? node.agentRef;
+      if (NON_LAUNCHABLE_AGENT_KEYS.has(key)) {
+        errors.push({
+          code: 'NON_LAUNCHABLE_AGENT',
+          field: 'agentRef',
+          message: `agent '${key}' backs a platform mechanism and cannot be named by a workflow node`,
+          nodeId: id,
+          severity: 'error',
+        });
+      }
     }
     if (node.maxVisits !== undefined && node.onExhausted === undefined) {
       errors.push({
