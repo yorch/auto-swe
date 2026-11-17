@@ -136,7 +136,10 @@ export function RunSummary({
           ))}
         </section>
       )}
-      <TrackerWritebackNote contextSnapshot={run.contextSnapshot} />
+      <TrackerWritebackNote
+        contextSnapshot={run.contextSnapshot}
+        trackerProvider={run.trackerProvider}
+      />
       {full && (hasResult || failedStep) && (
         <Button
           aria-expanded={!folded}

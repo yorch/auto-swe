@@ -168,6 +168,23 @@ describe('check-doc-drift', () => {
     expect(r.out).toContain('Unknown setting keys');
   });
 
+  it('lets the append-only upgrade notes name a retired setting key', () => {
+    const r = check({
+      'docs/upgrade-notes.md':
+        '# Upgrade notes\n\n### Old entry\n\nSet `github.trackerAllowedProjectKeys` on a team.\n\n## Limitations\n\nNone.\n',
+    });
+    expect(r.out).not.toContain('Unknown setting keys');
+    expect(r.status).toBe(0);
+  });
+
+  it('rejects a retired setting key anywhere but the upgrade notes', () => {
+    const r = check({
+      'README.md': '# Readme\n\nSet `github.trackerAllowedProjectKeys` on a team.\n',
+    });
+    expect(r.status).toBe(1);
+    expect(r.out).toContain('Unknown setting keys');
+  });
+
   it('fails a broken relative .md link', () => {
     const r = check({ 'README.md': '# Readme\n\nSee [the guide](./docs/missing.md).\n' });
     expect(r.status).toBe(1);

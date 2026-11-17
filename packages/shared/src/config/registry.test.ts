@@ -777,8 +777,8 @@ describe('orchestration settings', () => {
   });
 });
 
-describe('github.trackerAllowedProjectKeys', () => {
-  const def = SETTING_DEFINITIONS['github.trackerAllowedProjectKeys'];
+describe('tracker.allowedProjectKeys', () => {
+  const def = SETTING_DEFINITIONS['tracker.allowedProjectKeys'];
 
   it('is empty by default, ADMIN-only, overridable at team and organization, not pinned', () => {
     expect(def.defaultValue).toEqual([]);

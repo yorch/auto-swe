@@ -29,6 +29,20 @@ vi.mock('@auto-swe/shared/lib/reviewLaunch', () => ({
   })),
 }));
 vi.mock('@auto-swe/shared/lib/artifactStore', () => ({ getArtifact, getArtifactStream }));
+const configMock = vi.hoisted(() => ({
+  calls: 0,
+  fail: false,
+  provider: null as 'github' | 'jira' | 'linear' | null,
+}));
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveIssueTrackerConfig: vi.fn(async () => {
+    configMock.calls += 1;
+    if (configMock.fail) {
+      throw new Error('config unreadable');
+    }
+    return { provider: configMock.provider };
+  }),
+}));
 vi.mock('@auto-swe/shared/lib/repoAccessGate', () => ({
   resolveRepoAccessGateOrLastKnown: vi.fn().mockResolvedValue(null),
 }));
@@ -557,6 +571,54 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
       url: `/api/v1/workflow-runs/${runId}`,
     });
     expect(res.json().data.implementerRuntime).toBe(expected);
+  });
+
+  describe('trackerProvider', () => {
+    async function detail(contextSnapshot: unknown) {
+      const { app, prisma } = await buildApp();
+      mockRun(prisma);
+      const row = await prisma.workflowRun.findFirst();
+      prisma.workflowRun.findFirst.mockResolvedValue({ ...row, contextSnapshot });
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `/api/v1/workflow-runs/${runId}`,
+      });
+      return res.json().data.trackerProvider;
+    }
+    const outOfScope = {
+      trackerWriteback: { event: 'workflow_completed', failure: 'out_of_scope' },
+    };
+
+    it.each(['github', 'jira', 'linear'] as const)(
+      'reports %s for an out_of_scope write-back',
+      async (provider) => {
+        configMock.provider = provider;
+        expect(await detail(outOfScope)).toBe(provider);
+      }
+    );
+
+    it('is null for an out_of_scope write-back when no tracker is configured', async () => {
+      configMock.provider = null;
+      expect(await detail(outOfScope)).toBeNull();
+    });
+
+    it('is null, and reads no config, for any other failure or none', async () => {
+      configMock.provider = 'jira';
+      configMock.calls = 0;
+      expect(
+        await detail({ trackerWriteback: { event: 'workflow_failed', failure: 'forbidden' } })
+      ).toBeNull();
+      expect(await detail(null)).toBeNull();
+      expect(configMock.calls).toBe(0);
+    });
+
+    it('is null when the tracker config cannot be read', async () => {
+      configMock.provider = 'jira';
+      configMock.fail = true;
+      expect(await detail(outOfScope)).toBeNull();
+      configMock.fail = false;
+    });
   });
 
   it.each([

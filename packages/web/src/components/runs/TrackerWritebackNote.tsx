@@ -48,10 +48,40 @@ export const TRACKER_WRITE_LINES = new Map<string, string>([
 // remote link could succeed before the move is found missing. Revisit this set if that changes.
 const NOTHING_WRITTEN = new Set(['out_of_scope', 'no_repository', 'no_transition']);
 
+/**
+ * The `out_of_scope` wording for a tracker whose refusal has one cause, keyed by the provider the
+ * gateway reports. Any other provider (or none) keeps the neutral line in `TRACKER_WRITE_LINES`.
+ */
+export const OUT_OF_SCOPE_PROVIDER_LINES = new Map<string, string>([
+  [
+    'github',
+    'the ticket is in a repository this run does not target, so the platform did not write to it',
+  ],
+  [
+    'jira',
+    "the ticket's Jira project is not one the operator allows for this run, so the platform did not write to it",
+  ],
+  [
+    'linear',
+    "the ticket's Linear team is not one the operator allows for this run, so the platform did not write to it",
+  ],
+]);
+
 /** The notice that a run could not report its end back to its ticket. */
-export function TrackerWritebackNote({ contextSnapshot }: { contextSnapshot: unknown }) {
+export function TrackerWritebackNote({
+  contextSnapshot,
+  trackerProvider,
+}: {
+  contextSnapshot: unknown;
+  /** The configured tracker, as the run detail reports it; absent for an older gateway. */
+  trackerProvider?: string | null | undefined;
+}) {
   const writeback = readTrackerWriteback(contextSnapshot);
-  const reason = writeback ? TRACKER_WRITE_LINES.get(writeback.failure) : undefined;
+  const reason = writeback
+    ? ((writeback.failure === 'out_of_scope' && trackerProvider
+        ? OUT_OF_SCOPE_PROVIDER_LINES.get(trackerProvider)
+        : undefined) ?? TRACKER_WRITE_LINES.get(writeback.failure))
+    : undefined;
   if (!writeback || !reason) {
     return null;
   }

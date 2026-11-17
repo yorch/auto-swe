@@ -376,6 +376,15 @@ for (const key of settingKeys) {
 /** Group prefixes actually in use — `channel`, `memory`, `workflow`, `workspace`. */
 const settingGroups = new Set([...settingKeys].map((k) => k.slice(0, k.indexOf('.'))));
 
+/**
+ * Keys the registry once defined and has since renamed. `docs/upgrade-notes.md` is append-only,
+ * so an entry written while a key existed keeps naming it, and an operator reading that entry
+ * needs the name as it was. Only that one file may name them: anywhere else a retired key is a
+ * stale reference and is rejected like any other unknown key.
+ */
+const RETIRED_SETTING_KEYS = new Set(['github.trackerAllowedProjectKeys']);
+const UPGRADE_NOTES_FILE = join('docs', 'upgrade-notes.md');
+
 const settingFailures = [];
 const checkSettingKeys = (file, line, lineNo) => {
   // Backticked only: a setting named in running prose without code formatting is
@@ -386,6 +395,9 @@ const checkSettingKeys = (file, line, lineNo) => {
     const suffix = m[2];
     const token = `${group}.${suffix}`;
     if (settingKeys.has(token)) {
+      continue;
+    }
+    if (file === UPGRADE_NOTES_FILE && RETIRED_SETTING_KEYS.has(token)) {
       continue;
     }
     const bySuffix = settingKeysBySuffix.get(suffix);

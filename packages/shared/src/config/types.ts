@@ -40,6 +40,7 @@ export const SETTING_GROUPS = [
   'repoDependency',
   'review',
   'skills',
+  'tracker',
   'uiValidation',
   'workflow',
   'workspace',

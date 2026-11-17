@@ -283,7 +283,7 @@ describe('repoTrackerScope', () => {
 describe('allowedProjectKeys in repoTrackerScope', () => {
   const byTeam =
     (lists: Record<string, string[]>) => async (key: string, ctx: { teamId?: string }) =>
-      key === 'github.trackerAllowedProjectKeys' ? (lists[ctx.teamId ?? ''] ?? []) : [];
+      key === 'tracker.allowedProjectKeys' ? (lists[ctx.teamId ?? ''] ?? []) : [];
 
   it('is empty (unrestricted) when every context lists nothing', async () => {
     expect((await repoTrackerScope([repo({ teamId: 't1' })])).allowedProjectKeys).toEqual([]);
@@ -293,7 +293,7 @@ describe('allowedProjectKeys in repoTrackerScope', () => {
     mocks.resolveSetting.mockImplementation(byTeam({ t1: ['PAY'] }));
     const repos = [repo({ team: { orgId: 'o1' }, teamId: 't1' })];
     expect((await repoTrackerScope(repos)).allowedProjectKeys).toEqual(['PAY']);
-    expect(mocks.resolveSetting).toHaveBeenCalledWith('github.trackerAllowedProjectKeys', {
+    expect(mocks.resolveSetting).toHaveBeenCalledWith('tracker.allowedProjectKeys', {
       orgId: 'o1',
       teamId: 't1',
     });
@@ -327,7 +327,7 @@ describe('allowedProjectKeys in repoTrackerScope', () => {
     mocks.resolveSetting.mockImplementation(byTeam({ '': ['GLOBALKEY'], tpl: ['PAY'] }));
     const loaded = await repoTrackerScope([], { orgId: 'o9', teamId: 'tpl' });
     expect(loaded.allowedProjectKeys).toEqual(['PAY']);
-    expect(mocks.resolveSetting).toHaveBeenCalledWith('github.trackerAllowedProjectKeys', {
+    expect(mocks.resolveSetting).toHaveBeenCalledWith('tracker.allowedProjectKeys', {
       orgId: 'o9',
       teamId: 'tpl',
     });
@@ -372,7 +372,7 @@ describe('allowedProjectKeys in repoTrackerScope', () => {
 describe('allowedProjectKeys for a launch with launcher teams', () => {
   const byTeam =
     (lists: Record<string, string[]>) => async (key: string, ctx: { teamId?: string }) =>
-      key === 'github.trackerAllowedProjectKeys' ? (lists[ctx.teamId ?? ''] ?? []) : [];
+      key === 'tracker.allowedProjectKeys' ? (lists[ctx.teamId ?? ''] ?? []) : [];
   const jira = { provider: 'jira' };
 
   it("unions the non-empty lists of the launcher's teams", async () => {
@@ -562,7 +562,7 @@ describe('syncTrackerOnEvent on Jira and Linear', () => {
   const event = (issueId: string) => ({ issueId, type: 'ci_passed' }) as const;
   const stored = (list: string[]) =>
     mocks.resolveSetting.mockImplementation(async (key: string) =>
-      key === 'github.trackerAllowedProjectKeys' ? list : []
+      key === 'tracker.allowedProjectKeys' ? list : []
     );
 
   beforeEach(() => {
@@ -638,7 +638,7 @@ describe('syncTrackerOnEvent on Jira and Linear', () => {
     });
     mocks.findWorkflowRun.mockRejectedValue(new Error('db down'));
     mocks.resolveSetting.mockImplementation(async (key: string, ctx: { teamId?: string }) =>
-      key === 'github.trackerAllowedProjectKeys' && ctx.teamId === 'r' ? ['PAY'] : []
+      key === 'tracker.allowedProjectKeys' && ctx.teamId === 'r' ? ['PAY'] : []
     );
     expect(
       await syncTrackerOnEvent(event('PAY-7'), JIRA, { runInputId: 'ri-1', warn: vi.fn() })
@@ -676,7 +676,7 @@ describe('syncTrackerOnEvent on Jira and Linear', () => {
     });
     mocks.findMemberships.mockResolvedValue([{ team: { orgId: null }, teamId: 't1' }]);
     mocks.resolveSetting.mockImplementation(async (key: string, ctx: { teamId?: string }) =>
-      key === 'github.trackerAllowedProjectKeys' && ctx.teamId === 't1' ? ['PAY'] : []
+      key === 'tracker.allowedProjectKeys' && ctx.teamId === 't1' ? ['PAY'] : []
     );
     const warn = vi.fn();
     expect(await syncTrackerOnEvent(event('ENG-7'), JIRA, { runInputId: 'ri-1', warn })).toBe(
