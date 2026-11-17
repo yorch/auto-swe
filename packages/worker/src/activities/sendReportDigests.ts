@@ -382,7 +382,7 @@ export async function sendReportDigests(input: {
           pendingApprovalCount: pendingCount,
           previousPeriod: { end: new Date(currentStart.getTime() - DAY_MS), start: previousStart },
           previousRows,
-          reportsUrl: `${resolveWebUrl().replace(/\/$/, '')}/admin/reports`,
+          reportsUrl: `${resolveWebUrl().replace(/\/$/, '')}/insights/reports`,
           scope: {
             name: cleanHeading(
               subscription.scope === 'ORGANIZATION'

@@ -588,7 +588,7 @@ describe('sendReportDigests', () => {
     expect(mocks.slackPosts[0]?.blocks).toContainEqual(
       expect.objectContaining({
         elements: [
-          expect.objectContaining({ url: 'https://dashboard.example.test/admin/reports' }),
+          expect.objectContaining({ url: 'https://dashboard.example.test/insights/reports' }),
         ],
         type: 'actions',
       })
