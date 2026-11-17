@@ -1,8 +1,19 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearStopNodeCache } from '../lib/unchangedRerun.js';
 import { workflowTemplateRoutes } from './workflowTemplates.js';
+
+const lookupTrackerTicket = vi.hoisted(() => vi.fn());
+vi.mock('../lib/ticketLookup.js', () => ({ lookupTrackerTicket }));
+
+// Passes through to the real check unless a test stands in for the connection decision.
+const validateRunConnection = vi.hoisted(() => vi.fn());
+vi.mock('../lib/runConnection.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/runConnection.js')>();
+  validateRunConnection.mockImplementation(actual.validateRunConnection);
+  return { ...actual, validateRunConnection };
+});
 
 // A callback's URL is sealed with the config envelope.
 process.env.CONFIG_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
@@ -30,9 +41,16 @@ interface Harness {
   order: string[];
   runInputs: Array<Record<string, unknown>>;
   activeWorkflows: Array<Record<string, unknown>>;
+  /** The `where` of every `connection.findFirst` the route made. */
+  connectionWheres: unknown[];
   /** Set to make `startRunnableWorkflow` throw. */
   startError?: Error;
 }
+
+const DESCRIPTION_SCHEMA = {
+  properties: { description: { type: 'string' }, ticketId: { type: 'string' } },
+  type: 'object',
+};
 
 function uniqueViolation(): Error {
   return Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
@@ -46,11 +64,14 @@ function buildHarness(opts?: {
   teamOrgId?: string;
   /** What the not-actionable-stop lookup finds; absent means the model lacks the call. */
   stops?: unknown[] | Error;
+  /** The row `connection.findFirst` answers; its `where` is kept on `h.connectionWheres`. */
+  connection?: unknown;
 }): Harness {
   let lookups = 0;
   const h: Harness = {
     activeWorkflows: [],
     app: Fastify(),
+    connectionWheres: [],
     order: [],
     runInputs: [],
     started: [],
@@ -97,6 +118,12 @@ function buildHarness(opts?: {
               },
             ]
           : [],
+    },
+    connection: {
+      findFirst: async ({ where }: { where: unknown }) => {
+        h.connectionWheres.push(where);
+        return opts?.connection ?? null;
+      },
     },
     runInput: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
@@ -502,5 +529,195 @@ describe('GET /workflow-templates/:id/runs provenance', () => {
     expect(row).not.toHaveProperty('launchedById');
     expect(JSON.stringify(res.json())).not.toMatch(/launcher-credential-key|PLANTED-HASH/);
     expect(include.initiatedBy).toEqual({ select: { email: true, id: true, name: true } });
+  });
+});
+
+describe('POST /workflow-templates/:id/runs: ticket id and description', () => {
+  async function launch(
+    h: Harness,
+    body: { label?: string; payload?: Record<string, unknown> },
+    key?: string
+  ) {
+    return h.app.inject({
+      headers: { authorization: 'Bearer t', ...(key ? { 'idempotency-key': key } : {}) },
+      method: 'POST',
+      payload: body,
+      url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
+    });
+  }
+
+  beforeEach(() => lookupTrackerTicket.mockReset());
+
+  it('does not take the ticket id from a label that looks like one', async () => {
+    const h = buildHarness();
+    await h.app.ready();
+    const res = await launch(h, { label: 'PAY-12', payload: { description: 'do it' } });
+    expect(res.statusCode).toBe(201);
+    const workRequestId = res.json().data.workRequestId;
+    expect(h.startedRequests[0]?.externalTicketId).toBe(workRequestId);
+    expect(h.runInputs[0]?.externalTicketId).toBe(workRequestId);
+  });
+
+  it('runs without a label, and stores none that it derived', async () => {
+    const h = buildHarness();
+    await h.app.ready();
+    expect((await launch(h, { payload: { description: 'do it' } })).statusCode).toBe(201);
+    expect(JSON.parse(String(h.runInputs[0]?.requestPayload))).not.toHaveProperty('label');
+  });
+
+  it('uses payload.ticketId as the external ticket id', async () => {
+    const h = buildHarness();
+    await h.app.ready();
+    await launch(h, { payload: { description: 'do it', ticketId: 'PAY-12' } });
+    expect(h.startedRequests[0]?.externalTicketId).toBe('PAY-12');
+  });
+
+  it('treats an empty ticketId as absent', async () => {
+    const h = buildHarness();
+    await h.app.ready();
+    const res = await launch(h, { payload: { description: 'do it', ticketId: '' } });
+    expect(res.statusCode).toBe(201);
+    expect(h.startedRequests[0]?.externalTicketId).toBe(res.json().data.workRequestId);
+    expect(lookupTrackerTicket).not.toHaveBeenCalled();
+  });
+
+  it('still refuses a non-empty invalid ticketId', async () => {
+    const h = buildHarness();
+    await h.app.ready();
+    const res = await launch(h, { payload: { description: 'x', ticketId: 'bad id!' } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('INVALID_TICKET_ID');
+  });
+
+  it('keeps the caller description and reads no ticket when one is given', async () => {
+    const h = buildHarness();
+    await h.app.ready();
+    await launch(h, { payload: { description: 'my words', ticketId: 'PAY-12' } });
+    expect(lookupTrackerTicket).not.toHaveBeenCalled();
+    expect(h.startedRequests[0]?.description).toBe('my words');
+  });
+
+  it('builds the description from the ticket, past a schema that requires one', async () => {
+    lookupTrackerTicket.mockResolvedValue({
+      state: 'found',
+      ticket: { description: 'Add a probe', title: 'Health check', url: 'https://t.test/PAY-12' },
+    });
+    const h = buildHarness({
+      inputSchema: {
+        properties: { description: { type: 'string' }, ticketId: { type: 'string' } },
+        required: ['description'],
+        type: 'object',
+      },
+    });
+    await h.app.ready();
+    const body = { label: 'Task', payload: { description: '  ', ticketId: 'PAY-12' } };
+    const res = await launch(h, body);
+    expect(res.statusCode, res.body).toBe(201);
+    expect(lookupTrackerTicket).toHaveBeenCalledWith('PAY-12', null, expect.anything());
+    const request = h.startedRequests[0] as {
+      description: string;
+      payload: { description: string };
+    };
+    expect(request.description.split('\n')[0]).toBe('Ticket PAY-12');
+    expect(request.description).toContain('Health check');
+    expect(request.payload.description).toBe(request.description);
+    expect(request.description).toContain('<ticket>');
+    // The stored request is what the caller sent, not the brief.
+    expect(JSON.parse(String(h.runInputs[0]?.requestPayload))).toEqual(body);
+  });
+
+  it.each([
+    ['not configured', { state: 'unconfigured' }],
+    ['not found or out of scope', { state: 'not_found' }],
+    ['unreadable', { state: 'error' }],
+  ])('answers DESCRIPTION_REQUIRED when the ticket is %s', async (_name, result) => {
+    lookupTrackerTicket.mockResolvedValue(result);
+    const h = buildHarness({ inputSchema: DESCRIPTION_SCHEMA });
+    await h.app.ready();
+    const res = await launch(h, { payload: { ticketId: 'PAY-12' } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('DESCRIPTION_REQUIRED');
+    expect(res.json().error.message).toMatch(/could not be read/);
+    expect(h.started).toHaveLength(0);
+    expect(h.runInputs).toHaveLength(0);
+  });
+
+  it('does not read a ticket when neither a description nor a ticket id is given', async () => {
+    const h = buildHarness({ inputSchema: DESCRIPTION_SCHEMA });
+    await h.app.ready();
+    await launch(h, { payload: {} });
+    expect(lookupTrackerTicket).not.toHaveBeenCalled();
+  });
+
+  it('keeps the label as the description, and reads no ticket, for a schema without one', async () => {
+    const h = buildHarness({
+      inputSchema: { properties: { ticketId: { type: 'string' } }, type: 'object' },
+    });
+    await h.app.ready();
+    const res = await launch(h, { label: 'prod', payload: { ticketId: 'WEB-1' } });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(lookupTrackerTicket).not.toHaveBeenCalled();
+    expect(h.startedRequests[0]?.description).toBe('prod');
+  });
+
+  it('reads no ticket for a launch that is refused', async () => {
+    validateRunConnection.mockImplementationOnce(async (_input, reply) => {
+      reply.status(403).send({ error: { code: 'FORBIDDEN', message: 'no' } });
+      return { ok: false };
+    });
+    const h = buildHarness({ inputSchema: DESCRIPTION_SCHEMA });
+    await h.app.ready();
+    const res = await launch(h, { payload: { ticketId: 'PAY-12' } });
+    expect(res.statusCode).toBe(403);
+    expect(lookupTrackerTicket).not.toHaveBeenCalled();
+    expect(h.started).toHaveLength(0);
+  });
+
+  it('scopes the read to the launch connection, git_repo only', async () => {
+    lookupTrackerTicket.mockResolvedValue({ state: 'found', ticket: { title: 'T' } });
+    validateRunConnection.mockImplementationOnce(async () => ({
+      budgetCap: null,
+      budgetOrgId: null,
+      budgetTeam: null,
+      ok: true,
+      source: undefined,
+    }));
+    const connection = {
+      githubApiUrl: null,
+      githubUrl: null,
+      organizationName: 'acme',
+      repoName: 'api',
+      team: { orgId: null },
+      teamId: 't1',
+    };
+    const h = buildHarness({ connection, inputSchema: DESCRIPTION_SCHEMA });
+    await h.app.ready();
+    const connectionId = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
+    const res = await launch(h, { payload: { connectionId, ticketId: 'PAY-12' } });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(h.connectionWheres).toEqual([{ id: connectionId, type: 'git_repo' }]);
+    expect(lookupTrackerTicket).toHaveBeenCalledWith('PAY-12', connection, expect.anything());
+  });
+
+  it('refuses a ticket-built brief that breaks the description rules', async () => {
+    lookupTrackerTicket.mockResolvedValue({
+      state: 'found',
+      ticket: { description: 'x'.repeat(500), title: 'T' },
+    });
+    const h = buildHarness({
+      inputSchema: {
+        properties: {
+          description: { maxLength: 100, type: 'string' },
+          ticketId: { type: 'string' },
+        },
+        type: 'object',
+      },
+    });
+    await h.app.ready();
+    const res = await launch(h, { payload: { ticketId: 'PAY-12' } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('DESCRIPTION_REQUIRED');
+    expect(res.json().error.message).toMatch(/ticket-derived brief/);
+    expect(h.started).toHaveLength(0);
   });
 });

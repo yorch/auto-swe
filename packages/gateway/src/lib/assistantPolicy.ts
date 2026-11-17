@@ -54,7 +54,12 @@ export type NeverReason =
    * The record of what people were refused and which pages they opened. The assistant acts for one
    * person; it does not read other people's behaviour, and a page view it posted would be its own.
    */
-  | 'userActivity';
+  | 'userActivity'
+  /**
+   * Reads text a third party wrote from a system the platform does not control (an issue
+   * tracker). It would put untrusted instructions into the conversation.
+   */
+  | 'untrustedText';
 
 export type RoutePolicyEntry = 'read' | 'confirm' | { read: string } | { never: NeverReason };
 
@@ -254,6 +259,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/teams/:teamId/service-principals/:id/tokens': { never: 'secret' },
   'GET /api/v1/teams/:teamId/skills': 'read',
   'GET /api/v1/tickets': 'read',
+  'GET /api/v1/tickets/preview': { never: 'untrustedText' },
   'GET /api/v1/transcripts/:id': { never: 'secret' },
   'GET /api/v1/transcripts/:id/content': { never: 'secret' },
   'GET /api/v1/users': 'read',

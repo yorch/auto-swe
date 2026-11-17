@@ -1,4 +1,5 @@
 import type { Prisma } from '@auto-swe/shared';
+import { Role } from '@auto-swe/shared';
 import { AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
 import {
   CHANNEL_ASSISTANT_TEMPLATE_NAME,
@@ -10,10 +11,14 @@ import type { TicketGroup, WorkflowRunStatus } from '@auto-swe/shared/types/api'
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
+import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { reachableConnections } from '../lib/tenantScope.js';
+import { isValidTicketId } from '../lib/ticketId.js';
+import { lookupTrackerTicket } from '../lib/ticketLookup.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const Query = paginationQuery({ defaultLimit: 50, maxLimit: 100 }).extend({
@@ -22,6 +27,11 @@ const Query = paginationQuery({ defaultLimit: 50, maxLimit: 100 }).extend({
   scope: z.enum(['MINE', 'TEAM']).default('MINE'),
   search: z.string().trim().max(200).optional(),
   teamId: z.string().uuid().optional(),
+});
+
+const PreviewQuery = z.object({
+  connectionId: z.string().uuid(),
+  ticketId: z.string().trim().min(1).max(200),
 });
 
 const TICKET_TEXT_MAX = 300;
@@ -268,6 +278,78 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
         };
       });
       return { data, meta: { limit, offset, total: everyTicket.length } };
+    }
+  );
+
+  /**
+   * What the tracker calls a ticket, for the launch form to show beside the ticket id: title,
+   * status and link, never the body or comments. A ticket the tracker does not have, or one this
+   * repository may not read, answers the same `found: false`.
+   */
+  app.get(
+    '/preview',
+    {
+      config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { querystring: PreviewQuery },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const { connectionId, ticketId } = request.query;
+      if (!isValidTicketId(ticketId)) {
+        return sendError(reply, 400, 'INVALID_TICKET_ID', 'ticketId is not a valid ticket id');
+      }
+      const reach =
+        user.role === Role.ADMIN ? null : reachableConnections(user, request.repoAccessGate);
+      const repo = await asPlatformAdmin(
+        user,
+        'an admin may read a ticket for any repository',
+        ['Connection'],
+        () =>
+          fastify.prisma.connection.findFirst({
+            select: {
+              githubApiUrl: true,
+              githubUrl: true,
+              organizationName: true,
+              repoName: true,
+              team: { select: { orgId: true } },
+              teamId: true,
+            },
+            where: {
+              AND: [
+                ...(reach ? [reach] : []),
+                { id: connectionId, isActive: true, type: 'git_repo' },
+              ],
+            },
+          })
+      );
+      if (!repo) {
+        return sendError(reply, 404, 'CONNECTION_NOT_FOUND', 'Connection not found or inactive');
+      }
+      const found = await lookupTrackerTicket(
+        ticketId,
+        repo.organizationName && repo.repoName
+          ? { ...repo, organizationName: repo.organizationName, repoName: repo.repoName }
+          : null,
+        request.log
+      );
+      if (found.state === 'error') {
+        return sendError(
+          reply,
+          503,
+          'TRACKER_UNAVAILABLE',
+          "Couldn't reach the issue tracker. Try again."
+        );
+      }
+      const none = { found: false, status: null, title: null, url: null };
+      if (found.state === 'unconfigured') {
+        return { data: { configured: false, ...none } };
+      }
+      if (found.state === 'not_found') {
+        return { data: { configured: true, ...none } };
+      }
+      const ticket = readTicket(found.ticket);
+      return { data: { configured: true, found: true, ...ticket } };
     }
   );
 };
