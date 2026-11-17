@@ -14,6 +14,10 @@ import { orchestrationRoutes } from './orchestrations.js';
 const cfg = vi.hoisted(() => ({
   enabled: true,
   settings: {
+    'mcp.agentRunAllowedDeliverModes': ['none'],
+    'mcp.maxConcurrentRuns': 5,
+    'mcp.writeCallsPerMinute': 100,
+    'mcp.writeToolsEnabled': true,
     'orchestration.maxChildren': 3,
     'orchestration.maxConcurrentChildren': 2,
     'orchestration.maxTurns': 200,
@@ -21,7 +25,7 @@ const cfg = vi.hoisted(() => ({
     'orchestration.maxWriterChildren': 5,
     'workspace.agentRunMaxConcurrentGlobal': 4,
     'workspace.agentRunMaxConcurrentPerTeam': 2,
-  } as Record<string, number>,
+  } as Record<string, number | boolean | string[]>,
 }));
 vi.mock('@auto-swe/shared/config', () => ({
   resolveSetting: vi.fn(async () => cfg.enabled),
@@ -245,6 +249,16 @@ describe('orchestration routes', () => {
     tracked.rows = [];
     prisma = makePrisma();
     app = await buildAssistantApp(prisma as never, async (a) => {
+      // A request carrying this header is treated as arriving through the MCP bridge.
+      a.addHook('onRequest', async (request) => {
+        if (request.headers['x-test-mcp']) {
+          request.mcpBridge = {
+            clientId: 'test',
+            consentId: 'test',
+            scopes: ['mcp:read', 'mcp:write'],
+          };
+        }
+      });
       a.decorate('temporal', temporal as never);
       await a.register(orchestrationRoutes, { prefix: '/api/v1/orchestrations' });
     });
@@ -741,6 +755,95 @@ describe('orchestration routes', () => {
   });
 
   // ── Launch ────────────────────────────────────────────────────────────────
+
+  describe('MCP write guards on the routes the MCP tools call', () => {
+    const bridged = { 'x-test-mcp': '1' };
+    const launchBody = { allowlist: ['reader'], task: 'Investigate the outage', teamId: TEAM };
+    const keyed = { ...bridged, 'idempotency-key': 'key-1' };
+
+    beforeEach(() => {
+      cfg.settings['mcp.writeToolsEnabled'] = true;
+      cfg.settings['mcp.agentRunAllowedDeliverModes'] = ['none'];
+    });
+
+    it('refuses a bridged launch while MCP writes are off, before any row is written', async () => {
+      cfg.settings['mcp.writeToolsEnabled'] = false;
+      const res = await call('POST', '/', person(), launchBody, keyed);
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('MCP_WRITE_DISABLED');
+      expect(prisma.orchestration.create).not.toHaveBeenCalled();
+      expect(temporal.signalWithStartOrchestration).not.toHaveBeenCalled();
+    });
+
+    it('requires an idempotency key on a bridged launch', async () => {
+      const res = await call('POST', '/', person(), launchBody, bridged);
+      expect(res.statusCode).toBe(422);
+      expect(res.json().error.code).toBe('MCP_IDEMPOTENCY_KEY_REQUIRED');
+      expect(prisma.orchestration.create).not.toHaveBeenCalled();
+    });
+
+    it('runs a bridged launch at the STANDARD tier only', async () => {
+      const res = await call('POST', '/', person(), { ...launchBody, budgetTier: 'LARGE' }, keyed);
+      expect(res.statusCode).toBe(422);
+      expect(res.json().error.code).toBe('MCP_BUDGET_TIER_NOT_ALLOWED');
+      expect(prisma.orchestration.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a delivery default the MCP settings do not allow', async () => {
+      const res = await call(
+        'POST',
+        '/',
+        person(),
+        { ...launchBody, deliveryDefault: 'draft_pr' },
+        keyed
+      );
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('MCP_DELIVER_MODE_NOT_ALLOWED');
+      expect(prisma.orchestration.create).not.toHaveBeenCalled();
+    });
+
+    it('launches through the bridge when every guard passes', async () => {
+      // A fresh idempotency key: nothing has launched under it yet, so this is not a replay.
+      prisma.orchestration.findFirst.mockResolvedValue(null as never);
+      const res = await call('POST', '/', person(), launchBody, keyed);
+      expect(res.statusCode).toBe(201);
+      expect(prisma.orchestration.create).toHaveBeenCalled();
+    });
+
+    it('does not apply the MCP guards to a direct REST launch', async () => {
+      cfg.settings['mcp.writeToolsEnabled'] = false;
+      const res = await call('POST', '/', person(), launchBody);
+      expect(res.statusCode).toBe(201);
+    });
+
+    it('refuses a bridged user message while MCP writes are off', async () => {
+      cfg.settings['mcp.writeToolsEnabled'] = false;
+      const res = await call('POST', `/${ORCH}/messages`, person(), { body: 'hello' }, bridged);
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('MCP_WRITE_DISABLED');
+      expect(prisma.orchestrationMessage.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts a bridged user message when the guards pass', async () => {
+      const res = await call('POST', `/${ORCH}/messages`, person(), { body: 'hello' }, bridged);
+      expect(res.statusCode).toBe(201);
+      expect(prisma.orchestrationMessage.create).toHaveBeenCalled();
+    });
+
+    it('refuses a bridged message to a child while MCP writes are off', async () => {
+      cfg.settings['mcp.writeToolsEnabled'] = false;
+      const res = await call(
+        'POST',
+        `/${ORCH}/children/${CHILD}/messages`,
+        person(),
+        { body: 'hello' },
+        bridged
+      );
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('MCP_WRITE_DISABLED');
+      expect(prisma.runSteeringMessage.create).not.toHaveBeenCalled();
+    });
+  });
 
   describe('POST /', () => {
     const body = { allowlist: ['reader'], task: 'Investigate the outage', teamId: TEAM };

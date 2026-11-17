@@ -341,6 +341,8 @@ describe('the write tools', () => {
           'list_runs',
           'list_templates',
           'list_work_requests',
+          'orchestrations_launch',
+          'orchestrations_message',
           'start_agent_run',
           'start_template_run',
           'submit_work_request',

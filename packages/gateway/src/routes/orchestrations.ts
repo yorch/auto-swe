@@ -37,6 +37,12 @@ import {
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, uuidFromIdempotencyKey } from '../lib/idempotency.js';
+import {
+  assertMcpWriteAllowed,
+  mcpWriteAuditHook,
+  mcpWriteBegin,
+  sendRunCapRefusal,
+} from '../lib/mcpWriteGuard.js';
 import { authorizeTeamLaunch, checkPushPermission } from '../lib/orchestrationAccess.js';
 import type { OrchestrationWorkflowInput } from '../lib/orchestrationInput.js';
 import {
@@ -403,8 +409,10 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     '/',
     {
       // Open to service principals (repository-bound only): docs/service-principals.md.
-      config: { serviceScopes: ['runs:agent'] },
+      config: { mcpScope: 'write', serviceScopes: ['runs:agent'] },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onSend: mcpWriteAuditHook,
+      preValidation: mcpWriteBegin('start_orchestration'),
       schema: { body: OrchestrationLaunchSchema, headers: IdempotencyHeaderSchema },
     },
     async (request, reply) => {
@@ -412,6 +420,28 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       const user = caller.kind === 'user' ? caller.user : null;
       const service = caller.kind === 'service' ? caller.principal : null;
       const body = request.body;
+      // First, as for an agent run: a refused MCP write never reaches a replayed answer.
+      const mcpWrite = await assertMcpWriteAllowed(request, reply, {
+        submit: {
+          budgetTier: body.budgetTier,
+          idempotencyKey: request.headers['idempotency-key'],
+        },
+        tool: 'start_orchestration',
+      });
+      if (mcpWrite.refused) {
+        return mcpWrite.refused;
+      }
+      if (request.mcpBridge) {
+        const modes = await resolveSettings(['mcp.agentRunAllowedDeliverModes']);
+        if (!modes['mcp.agentRunAllowedDeliverModes'].includes(body.deliveryDefault)) {
+          return sendError(
+            reply,
+            403,
+            'MCP_DELIVER_MODE_NOT_ALLOWED',
+            'This delivery mode is not allowed through MCP'
+          );
+        }
+      }
       const on = await switchOn(request, reply);
       if (on === 'sent') {
         return reply;
@@ -647,7 +677,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
                     connectionId: target.repoId,
                   }),
                 }
-              : {}),
+              : { guard: mcpWrite.launchGuard }),
             inTransaction: async (tx) => {
               await tx.orchestration.create({
                 data: {
@@ -681,9 +711,12 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
           }
         );
         if (!result.ok) {
-          return result.reason === 'GUARD_REFUSED'
-            ? sendServiceLaunchRefusal(reply, result.refusal)
-            : sendError(reply, 409, 'RUN_CONFLICT', 'This orchestration already exists');
+          if (result.reason === 'GUARD_REFUSED') {
+            return request.mcpBridge
+              ? sendRunCapRefusal(reply)
+              : sendServiceLaunchRefusal(reply, result.refusal);
+          }
+          return sendError(reply, 409, 'RUN_CONFLICT', 'This orchestration already exists');
         }
       } catch (err) {
         const sent = replyIfTemporalUnavailable(err, reply);
@@ -709,7 +742,11 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get(
     '/',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { querystring: ListQuery } },
+    {
+      config: { mcpScope: 'read' },
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { querystring: ListQuery },
+    },
     async (request) => {
       const user = requireUser(request);
       const { limit, offset, status, teamId } = request.query;
@@ -825,7 +862,11 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get(
     '/:id',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: IdParams } },
+    {
+      config: { mcpScope: 'read' },
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { params: IdParams },
+    },
     async (request, reply) => {
       const user = requireUser(request);
       const row = await visible(request, request.params.id);
@@ -843,6 +884,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/messages',
     {
+      config: { mcpScope: 'read' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { params: IdParams, querystring: MessagesQuery },
     },
@@ -1052,10 +1094,19 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/messages',
     {
+      config: { mcpScope: 'write' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onSend: mcpWriteAuditHook,
+      preValidation: mcpWriteBegin('message_orchestration'),
       schema: { body: OrchestrationBodySchema, params: IdParams },
     },
     async (request, reply) => {
+      const mcpWrite = await assertMcpWriteAllowed(request, reply, {
+        tool: 'message_orchestration',
+      });
+      if (mcpWrite.refused) {
+        return mcpWrite.refused;
+      }
       const user = requireUser(request);
       const row = await launcherOwned(request, reply, request.params.id);
       if (!row) {
@@ -1122,11 +1173,19 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/children/:childId/messages',
     {
-      config: { orchestrationToken: 'caller' },
+      config: { mcpScope: 'write', orchestrationToken: 'caller' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onSend: mcpWriteAuditHook,
+      preValidation: mcpWriteBegin('message_orchestration'),
       schema: { body: OrchestrationBodySchema, params: ChildParams },
     },
     async (request, reply) => {
+      const mcpWrite = await assertMcpWriteAllowed(request, reply, {
+        tool: 'message_orchestration',
+      });
+      if (mcpWrite.refused) {
+        return mcpWrite.refused;
+      }
       const byOrchestrator = request.orchestration !== undefined;
       const orch = byOrchestrator
         ? await prisma.orchestration.findFirst({

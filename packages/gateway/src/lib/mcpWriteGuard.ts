@@ -25,6 +25,8 @@ export type McpWriteTool =
   | 'submit_work_request'
   | 'start_agent_run'
   | 'start_template_run'
+  | 'start_orchestration'
+  | 'message_orchestration'
   | 'cancel_run';
 
 /** Refusal codes the MCP tools translate to a fixed message. The codes are a closed vocabulary. */
