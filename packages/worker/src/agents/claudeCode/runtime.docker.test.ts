@@ -227,13 +227,15 @@ async function makeRuntime(
     },
     loadProjectSettings: true,
     maxTurns: 8,
+    // A direct property, not a conditional spread: a spread escapes the excess-property
+    // check, so a renamed option would silently run the suite with no profile at all.
+    profiles: overrides.profile ? [overrides.profile] : [],
     tracer: {
       addActivityEvent: (e: { name: string; outputJson: unknown }) => events.push(e),
       addToolCall: (c: Record<string, unknown>) => toolCalls.push(c),
     } as unknown as AgentTracer,
     workspace: ws.workspace as never,
     ...(overrides.allowPause ? { allowPause: true } : {}),
-    ...(overrides.profile ? { profile: overrides.profile } : {}),
     ...(overrides.modelProxy ? { modelProxy: overrides.modelProxy } : {}),
     ...(overrides.mcp ? { mcp: overrides.mcp } : {}),
   });
