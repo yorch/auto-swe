@@ -6,6 +6,7 @@ import { isMcpToolEnabled } from '../../agents/mcpTools.js';
 import { logWarn } from '../activityLog.js';
 import type { AgentTracer } from '../agentTracer.js';
 import { type AgentConnectionTenant, agentMayUseConnection } from '../connectionAccess.js';
+import type { McpApprovalGuard } from '../mcpApproval.js';
 import { fetchActiveAgent } from './agentResolver.js';
 import { parseToolKeys } from './toolKeys.js';
 import type { ResolveCtx } from './types.js';
@@ -42,6 +43,16 @@ export interface McpConnectionTarget {
    * connection; always on for a Qodo-marked one).
    */
   readonly scanResults?: boolean;
+  /**
+   * The Connection row this target was resolved from. Non-enumerable, like the credential, and read
+   * by `withMcpApproval` right after resolution.
+   */
+  readonly connectionId?: string;
+  /**
+   * Set for a run that belongs to an orchestration: every tool call the binding points make goes
+   * through it, and a write waits for the launcher (`lib/mcpApproval.ts`). Absent for any other run.
+   */
+  readonly approval?: McpApprovalGuard;
 }
 
 /** A finite, strictly-positive number — `0`/negative/NaN/Infinity are invalid timeouts. */
@@ -92,6 +103,7 @@ export async function mcpUrlForConnection(
       ...(listTimeoutMs !== undefined ? { listTimeoutMs } : {}),
       ...(callTimeoutMs !== undefined ? { callTimeoutMs } : {}),
     };
+    Object.defineProperty(target, 'connectionId', { enumerable: false, value: connectionId });
     if (conn.apiKeyCiphertext && conn.apiKeyNonce && conn.apiKeyAuthTag) {
       let bearerToken: string;
       try {

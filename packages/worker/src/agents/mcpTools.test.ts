@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { McpConnectionTarget } from '../lib/config/mcpConnection.js';
+import type { McpApprovalGuard, McpGuardCall, McpGuardOutcome } from '../lib/mcpApproval.js';
 import {
   bearerFetch,
   isMcpToolEnabled,
@@ -67,6 +68,18 @@ beforeEach(() => {
   vi.clearAllMocks();
   constructorArgs.length = 0;
 });
+
+const guardThat = (decide: (call: McpGuardCall) => boolean) => {
+  const guard: McpApprovalGuard = {
+    async run<T>(call: McpGuardCall, run: () => Promise<T>): Promise<McpGuardOutcome<T>> {
+      return decide(call)
+        ? { ran: true, value: await run() }
+        : { message: 'denied by launcher', ran: false };
+    },
+  };
+  vi.spyOn(guard, 'run');
+  return guard;
+};
 
 // ── Gating (AgentToolConfig 'mcp' pseudo-key) ──
 
@@ -661,6 +674,75 @@ describe('loadMcpTools — result screening', () => {
     expect(await exec(tools['mcp_rules-search'] ?? {}, {})).toBe('raw');
     expect(screen).not.toHaveBeenCalled();
     expect(tracer.addToolCall).toHaveBeenCalledWith(expect.objectContaining({ outputJson: 'raw' }));
+    vi.mocked(console.log).mockRestore();
+  });
+});
+
+// ── Orchestration approval (spec section 7) ──
+
+describe('loadMcpTools — orchestration write approval', () => {
+  const ref = 'http://mcp-server.example.com:9999/mcp';
+
+  function listed() {
+    const read = vi.fn(async () => 'read result');
+    const write = vi.fn(async () => 'write result');
+    listToolsetsWithErrors.mockResolvedValue({
+      errors: {},
+      toolsets: {
+        mcp: {
+          lookup: {
+            description: 'r',
+            execute: read,
+            id: 'lookup',
+            mcp: { annotations: { readOnlyHint: true } },
+          },
+          wipe: { description: 'w', execute: write, id: 'wipe' },
+        },
+      },
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    return { read, write };
+  }
+
+  it('hands each call and the annotations the server listed to the guard', async () => {
+    const { read, write } = listed();
+    const approval = guardThat((c) => c.toolName === 'lookup');
+    const { tools } = await load(ref, makeTracer(), { approval });
+    expect(await exec(tools.mcp_lookup ?? {}, { q: 1 })).toBe('read result');
+    expect(approval.run).toHaveBeenCalledWith(
+      { annotations: { readOnlyHint: true }, args: { q: 1 }, toolName: 'lookup' },
+      expect.any(Function)
+    );
+    const tracer = makeTracer();
+    const denied = await load(ref, tracer, { approval });
+    await expect(exec(denied.tools.mcp_wipe ?? {}, { path: 'x' })).rejects.toThrow(
+      'denied by launcher'
+    );
+    expect(approval.run).toHaveBeenLastCalledWith(
+      expect.objectContaining({ annotations: undefined, toolName: 'wipe' }),
+      expect.any(Function)
+    );
+    expect(write).not.toHaveBeenCalled();
+    expect(read).toHaveBeenCalledTimes(1);
+    // The refusal is traced without the arguments.
+    expect(JSON.stringify(tracer.addToolCall.mock.calls)).not.toContain('"path"');
+    vi.mocked(console.log).mockRestore();
+  });
+
+  it('runs an approved write through the guard once', async () => {
+    const { write } = listed();
+    const approval = guardThat(() => true);
+    const { tools } = await load(ref, makeTracer(), { approval });
+    expect(await exec(tools.mcp_wipe ?? {}, {})).toBe('write result');
+    expect(write).toHaveBeenCalledTimes(1);
+    vi.mocked(console.log).mockRestore();
+  });
+
+  it('is byte-identical for a run with no guard: a write runs with no approval', async () => {
+    const { write } = listed();
+    const { tools } = await load(ref, makeTracer());
+    expect(await exec(tools.mcp_wipe ?? {}, {})).toBe('write result');
+    expect(write).toHaveBeenCalledTimes(1);
     vi.mocked(console.log).mockRestore();
   });
 });

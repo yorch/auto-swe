@@ -166,6 +166,22 @@ export async function openMcpRelay(
     if (!offered) {
       return failure(`The MCP tool '${name}' is not offered by this connection.`);
     }
+    const guarded = target.approval;
+    if (guarded) {
+      // An orchestration's run: a write waits for the launcher, and a refusal is an error result.
+      const outcome = await guarded.run(
+        { annotations: offered.annotations, args, toolName: name },
+        () => invoke(offered, name, args)
+      );
+      return outcome.ran ? outcome.value : failure(outcome.message);
+    }
+    return invoke(offered, name, args);
+  };
+  const invoke = async (
+    offered: Tool,
+    name: string,
+    args: Record<string, unknown> | undefined
+  ): Promise<CallToolResult> => {
     // Reads are not effects: only a call the server did not declare read-only is recorded.
     const record = (status: 'DONE' | 'FAILED', error?: unknown) =>
       mcpToolIsReadOnly(offered)
