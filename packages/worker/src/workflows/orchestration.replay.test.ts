@@ -1,6 +1,6 @@
 /**
  * Determinism guard for the workflows that are not `RunnableWorkflow`: the epic
- * orchestrator, the campaign workflow, the channel assistant family and the in-app assistant's conversation workflow. The sibling of
+ * orchestrator, the campaign workflow, the channel assistant family, the in-app assistant's conversation workflow and the orchestration workflow. The sibling of
  * `runnable.replay.test.ts`, with the same contract — each committed history is
  * replayed against current workflow code, and a change that makes the workflow
  * take a different path on replay fails it.
@@ -104,6 +104,14 @@ describe('Epic and channel workflows — history replay', () => {
       ['epic-cancel', 'EpicOrchestratorWorkflow'],
       ['epic-dag', 'EpicOrchestratorWorkflow'],
       ['epic-planned', 'EpicOrchestratorWorkflow'],
+      ['orchestration-cancel', 'OrchestrationWorkflow'],
+      ['orchestration-conversation', 'OrchestrationWorkflow'],
+      ['orchestration-deferred-results', 'OrchestrationWorkflow'],
+      ['orchestration-failed-turns-reset', 'OrchestrationWorkflow'],
+      ['orchestration-handle-cancel', 'OrchestrationWorkflow'],
+      ['orchestration-idle-race', 'OrchestrationWorkflow'],
+      ['orchestration-lifetime', 'OrchestrationWorkflow'],
+      ['orchestration-turn-failures', 'OrchestrationWorkflow'],
     ]);
   });
 
@@ -359,6 +367,139 @@ describe('Epic and channel workflows — history replay', () => {
       expect(typesOf('assistant-conversation')).toContain(
         EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
       );
+    });
+
+    it('orchestration-conversation walked begin, a turn, the backstop, a refusal wake and idle', () => {
+      expect(activitiesOf('orchestration-conversation')).toEqual([
+        'beginOrchestrationRun',
+        'runOrchestratorTurn',
+        'applyOrchestrationIntents',
+        'refreshOrchestrationChildren',
+        'refreshOrchestrationChildren',
+        'runOrchestratorTurn',
+        'applyOrchestrationIntents',
+        'runOrchestratorTurn',
+        'recordOrchestrationStatus',
+      ]);
+      // The backstop is a durable timer, not a wall-clock read.
+      expect(
+        count('orchestration-conversation', EventType.EVENT_TYPE_TIMER_STARTED)
+      ).toBeGreaterThan(0);
+      expect(typesOf('orchestration-conversation')).toContain(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+      );
+    });
+
+    it('orchestration-cancel held on a running child, then cancelled it on the cancel signal', () => {
+      const activities = activitiesOf('orchestration-cancel');
+      expect(activities.slice(0, 3)).toEqual([
+        'beginOrchestrationRun',
+        'runOrchestratorTurn',
+        'applyOrchestrationIntents',
+      ]);
+      // It held on the backstop (reconciling a running child) until the cancel arrived.
+      expect(activities).toContain('refreshOrchestrationChildren');
+      expect(activities.slice(-2)).toEqual([
+        'cancelOrchestrationChildren',
+        'recordOrchestrationStatus',
+      ]);
+      expect(count('orchestration-cancel', EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED)).toBe(
+        2
+      );
+      expect(typesOf('orchestration-cancel').at(-1)).toBe(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+      );
+    });
+
+    it('orchestration-handle-cancel was cancelled itself and still stopped the children first', () => {
+      const activities = activitiesOf('orchestration-handle-cancel');
+      expect(activities.slice(0, 3)).toEqual([
+        'beginOrchestrationRun',
+        'runOrchestratorTurn',
+        'applyOrchestrationIntents',
+      ]);
+      // It held on the backstop (reconciling a running child) until the cancel arrived.
+      expect(activities).toContain('refreshOrchestrationChildren');
+      expect(activities.slice(-2)).toEqual([
+        'cancelOrchestrationChildren',
+        'recordOrchestrationStatus',
+      ]);
+      expect(typesOf('orchestration-handle-cancel')).toContain(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED
+      );
+      expect(typesOf('orchestration-handle-cancel').at(-1)).toBe(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED
+      );
+    });
+
+    it('orchestration-idle-race answered a message that landed while WAITING was recorded', () => {
+      // WAITING, then ACTIVE again, a second turn, and WAITING once more.
+      expect(activitiesOf('orchestration-idle-race')).toEqual([
+        'beginOrchestrationRun',
+        'runOrchestratorTurn',
+        'recordOrchestrationStatus',
+        'recordOrchestrationStatus',
+        'runOrchestratorTurn',
+        'recordOrchestrationStatus',
+      ]);
+      expect(
+        count('orchestration-idle-race', EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED)
+      ).toBe(2);
+      expect(typesOf('orchestration-idle-race').at(-1)).toBe(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+      );
+    });
+
+    it('orchestration-lifetime ended COMPLETED at the pinned wall clock with the children cancelled', () => {
+      expect(activitiesOf('orchestration-lifetime').slice(-2)).toEqual([
+        'cancelOrchestrationChildren',
+        'recordOrchestrationStatus',
+      ]);
+      expect(typesOf('orchestration-lifetime').at(-1)).toBe(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+      );
+    });
+
+    it('orchestration-turn-failures stopped after three failed turns and waited for a person', () => {
+      const activities = activitiesOf('orchestration-turn-failures');
+      expect(activities.filter((a) => a === 'runOrchestratorTurn')).toHaveLength(4);
+      // The TURNS_FAILING notice is recorded once, between the third and fourth turn.
+      expect(activities.filter((a) => a === 'recordOrchestrationStatus')).toHaveLength(2);
+      expect(
+        count('orchestration-turn-failures', EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED)
+      ).toBe(2);
+    });
+
+    it('orchestration-failed-turns-reset let a person end the failure wait and then took a machine-driven turn', () => {
+      const activities = activitiesOf('orchestration-failed-turns-reset');
+      // Failed turns 1-3, the person's turn 4 (failed again), and turn 5 started by the backstop's
+      // report: only possible because the person's message reset the failed-turn count.
+      expect(activities.filter((a) => a === 'runOrchestratorTurn')).toHaveLength(5);
+      // TURNS_FAILING once (third failure), then the final WAITING.
+      expect(activities.filter((a) => a === 'recordOrchestrationStatus')).toHaveLength(2);
+      const refreshAfterPerson = activities
+        .slice(activities.lastIndexOf('runOrchestratorTurn') - 2)
+        .filter((a) => a === 'refreshOrchestrationChildren');
+      expect(refreshAfterPerson.length).toBeGreaterThan(0);
+      expect(
+        count('orchestration-failed-turns-reset', EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED)
+      ).toBe(2);
+      expect(typesOf('orchestration-failed-turns-reset').at(-1)).toBe(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+      );
+    });
+
+    it('orchestration-deferred-results woke itself for a deferred result with nothing running', () => {
+      expect(activitiesOf('orchestration-deferred-results')).toEqual([
+        'beginOrchestrationRun',
+        'runOrchestratorTurn',
+        'runOrchestratorTurn',
+        'recordOrchestrationStatus',
+      ]);
+      // One signal only: the second turn was started by the workflow, not by the backstop.
+      expect(
+        count('orchestration-deferred-results', EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED)
+      ).toBe(1);
     });
 
     it('channel-reactive ran its interjection check', () => {

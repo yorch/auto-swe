@@ -523,7 +523,7 @@ export async function findTemplateByName(
   return matches[0] ?? null;
 }
 
-async function resolveTeamIdBySlug(env: CliEnv, slug: string): Promise<string | null> {
+export async function resolveTeamIdBySlug(env: CliEnv, slug: string): Promise<string | null> {
   const teams = await apiRequest<Array<{ id: string; slug: string }>>(env, 'GET', '/api/v1/teams');
   return teams.find((t) => t.slug === slug)?.id ?? null;
 }

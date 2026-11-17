@@ -31,6 +31,7 @@ const REPO = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 const OWNER = 'owner-user';
 const SHARED = 'shared-user';
 const OUTSIDER = 'outsider-user';
+const TEAM = 'bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb';
 
 type Where = Record<string, unknown>;
 
@@ -65,6 +66,7 @@ describe('agent run form support (agents, limits)', () => {
   let agentRows: Array<Record<string, unknown>>;
   let agentWheres: Array<Record<string, unknown>>;
   let orgMembers: string[];
+  let teamLookups: string[];
 
   beforeEach(async () => {
     cfg.settingsCtx = [];
@@ -74,6 +76,7 @@ describe('agent run form support (agents, limits)', () => {
     cfg.settings['workspace.agentRunMaxWallClockSeconds'] = 1800;
     user = { role: 'ENGINEER', sub: OWNER };
     agentWheres = [];
+    teamLookups = [];
     orgMembers = [OWNER, SHARED, OUTSIDER];
     agentRows = [
       {
@@ -115,6 +118,22 @@ describe('agent run form support (agents, limits)', () => {
       organizationMembership: {
         findUnique: async ({ where }: { where: { userId_orgId: { userId: string } } }) =>
           orgMembers.includes(where.userId_orgId.userId) ? { role: 'ORG_MEMBER' } : null,
+      },
+      team: {
+        findFirst: async (args: {
+          select: { memberships: { where: { userId: string } } };
+          where: { id: string };
+        }) => {
+          teamLookups.push(args.where.id);
+          return args.where.id === TEAM
+            ? {
+                isActive: true,
+                memberships:
+                  args.select.memberships.where.userId === OWNER ? [{ userId: OWNER }] : [],
+                orgId: 'org-1',
+              }
+            : null;
+        },
       },
     } as unknown as never);
     app.register(agentRunRoutes, { prefix: '/api/v1/agent-runs' });
@@ -251,6 +270,40 @@ describe('agent run form support (agents, limits)', () => {
     it('an ADMIN reaches a repository of a team they do not belong to', async () => {
       user = { role: 'ADMIN', sub: OUTSIDER };
       expect((await get(`/api/v1/agent-runs/agents?repoId=${REPO}`)).statusCode).toBe(200);
+    });
+
+    it('with a team and no repository adds that team organization scope, never TEAM scope', async () => {
+      const res = await get(`/api/v1/agent-runs/agents?teamId=${TEAM}`);
+      expect(res.statusCode).toBe(200);
+      expect(agentWheres[0]?.OR).toEqual([
+        { channelId: null, scope: 'GLOBAL', teamId: null, workflowTemplateId: null },
+        { orgId: 'org-1', scope: 'ORGANIZATION' },
+      ]);
+      expect(JSON.stringify(agentWheres[0])).not.toContain('TEAM');
+    });
+
+    it('answers 404 for a team the caller is not a member of, and lets an ADMIN through', async () => {
+      user = { role: 'ENGINEER', sub: OUTSIDER };
+      const res = await get(`/api/v1/agent-runs/agents?teamId=${TEAM}`);
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe('TEAM_NOT_FOUND');
+      expect(agentWheres).toEqual([]);
+      user = { role: 'ADMIN', sub: OUTSIDER };
+      expect((await get(`/api/v1/agent-runs/agents?teamId=${TEAM}`)).statusCode).toBe(200);
+    });
+
+    it('answers 404 for a team member outside the team organization, as for a missing team', async () => {
+      orgMembers = [];
+      const res = await get(`/api/v1/agent-runs/agents?teamId=${TEAM}`);
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe('TEAM_NOT_FOUND');
+      expect(agentWheres).toEqual([]);
+    });
+
+    it('leaves the repository behaviour alone when both are given', async () => {
+      const res = await get(`/api/v1/agent-runs/agents?repoId=${REPO}&teamId=${TEAM}`);
+      expect(res.statusCode).toBe(200);
+      expect(teamLookups).toEqual([]);
     });
 
     it('requires ENGINEER', async () => {

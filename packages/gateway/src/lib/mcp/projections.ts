@@ -27,7 +27,20 @@ import { isValidTicketId } from '../ticketId.js';
 const INVISIBLE = /[\p{Cf}\p{Co}\p{Cs}\u{E0000}-\u{E007F}]/gu;
 const SPACING_CONTROLS = /[\p{Cc}\u2028\u2029]/gu;
 
-const cleaned = (s: string) => s.replace(INVISIBLE, '').replace(SPACING_CONTROLS, ' ').trim();
+export const cleaned = (s: string) =>
+  s.replace(INVISIBLE, '').replace(SPACING_CONTROLS, ' ').trim();
+
+/**
+ * Text someone or some model wrote, cleaned and cut to at most `max` code points (the last one an
+ * ellipsis when it was cut). `truncated` says whether anything was lost, so a reader knows to open
+ * the dashboard for the rest.
+ */
+export function clip(text: string, max: number): { text: string; truncated: boolean } {
+  const points = [...cleaned(text)];
+  return points.length > max
+    ? { text: `${points.slice(0, max - 1).join('')}…`, truncated: true }
+    : { text: points.join(''), truncated: false };
+}
 
 /** A short name authored by a team member: cleaned, at most `max` code points. */
 export const shortName = (max: number) =>
@@ -347,6 +360,7 @@ export const runOutput = z.object({
         'AGENT_RUN_CONCURRENCY_EXCEEDED',
         'AGENT_RUN_DIFF_TOO_LARGE',
         'AGENT_RUN_EXPORT_TOO_LARGE',
+        'AGENT_RUN_PATH_OUT_OF_SCOPE',
         'AGENT_RUN_PUSH_POLICY',
         'AGENT_RUNS_DISABLED',
         'BUDGET_EXCEEDED',

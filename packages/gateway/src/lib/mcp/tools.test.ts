@@ -1437,6 +1437,10 @@ describe('which routes an MCP token may reach', () => {
         'HEAD /api/v1/workflow-templates read',
         // The two write tools' routes, and only those.
         'POST /api/v1/agent-runs write',
+        // The two orchestration write tools' routes, and only those.
+        'POST /api/v1/orchestrations write',
+        'POST /api/v1/orchestrations/:id/children/:childId/messages write',
+        'POST /api/v1/orchestrations/:id/messages write',
         'POST /api/v1/work-requests write',
         'POST /api/v1/workflow-runs/:id/cancel write',
         'POST /api/v1/workflow-templates/:id/runs write',

@@ -99,7 +99,7 @@ interface ActiveWorkflowReader {
         currentStatus: true;
         temporalWorkflowId: true;
         repository: { select: { teamId: true } };
-        workRequest: { select: { createdAt: true } };
+        workRequest: { select: { createdAt: true; billingTeamId: true } };
       };
       where: { currentStatus: { notIn: string[] }; workRequest: { templateId: string } };
     }) => Promise<
@@ -107,7 +107,7 @@ interface ActiveWorkflowReader {
         currentStatus: string;
         temporalWorkflowId: string;
         repository: { teamId: string } | null;
-        workRequest: { createdAt: Date } | null;
+        workRequest: { createdAt: Date; billingTeamId?: string | null } | null;
       }>
     >;
   };
@@ -123,7 +123,7 @@ export async function loadAgentRunSlots(
       currentStatus: true,
       repository: { select: { teamId: true } },
       temporalWorkflowId: true,
-      workRequest: { select: { createdAt: true } },
+      workRequest: { select: { billingTeamId: true, createdAt: true } },
     },
     // Filtered in the database: the template's history grows without bound,
     // and only what is still running can hold a slot.
@@ -134,7 +134,9 @@ export async function loadAgentRunSlots(
   });
   return rows.map((r) => ({
     launchedAt: r.workRequest?.createdAt ?? new Date(0),
-    teamId: r.repository?.teamId ?? null,
+    // A repo-less orchestration child has no repository: it is charged to the team its work
+    // request names, so it counts against that team's limit and not only the global one.
+    teamId: r.repository?.teamId ?? r.workRequest?.billingTeamId ?? null,
     workflowId: r.temporalWorkflowId,
   }));
 }

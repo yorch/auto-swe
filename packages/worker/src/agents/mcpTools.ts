@@ -33,6 +33,7 @@ import type { McpConnectionTarget } from '../lib/config/mcpConnection.js';
 import { mcpToolIsReadOnly, recordEffect } from '../lib/effectLedger.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { capturingFetch } from '../lib/httpCapture.js';
+import type { McpApprovalGuard } from '../lib/mcpApproval.js';
 import { screenMcpResult } from './mcpScreen.js';
 
 /**
@@ -228,14 +229,15 @@ function wrapMcpTool(
   callTimeoutMs: number,
   tracer?: McpTracer,
   screenResults = false,
-  bearerToken?: string
+  bearerToken?: string,
+  approval?: McpApprovalGuard
 ): void {
   const originalExecute = tool.execute?.bind(tool);
   if (!originalExecute) {
     return;
   }
   const tracedName = `mcp:${toolName}`;
-  tool.execute = async (...args: Parameters<NonNullable<typeof originalExecute>>) => {
+  const execute = async (...args: Parameters<NonNullable<typeof originalExecute>>) => {
     const input = args[0];
     // Audit line, same spirit as the bash tool's `[bash:audit]` log.
     // Redact likely secrets before they reach stdout/logs; the AgentTracer will
@@ -295,6 +297,30 @@ function wrapMcpTool(
       }
       throw err;
     }
+  };
+  if (!approval) {
+    tool.execute = execute;
+    return;
+  }
+  // An orchestration's run: a write waits for the launcher before anything below runs, and a
+  // refusal reaches the model as a tool error. The annotations are the ones the server listed.
+  const annotations =
+    (tool as { mcp?: { annotations?: unknown } }).mcp?.annotations ??
+    (tool as { annotations?: unknown }).annotations;
+  tool.execute = async (...args: Parameters<NonNullable<typeof originalExecute>>) => {
+    const outcome = await approval.run({ annotations, args: args[0], toolName }, () =>
+      execute(...args)
+    );
+    if (!outcome.ran) {
+      tracer?.addToolCall({
+        durationMs: 0,
+        error: outcome.message,
+        inputJson: { arguments: 'withheld' },
+        toolName: tracedName,
+      });
+      throw new Error(outcome.message);
+    }
+    return outcome.value;
   };
 }
 
@@ -391,8 +417,10 @@ export async function loadMcpTools(
         url.toString(),
         callTimeoutMs,
         tracer,
-        target.scanResults === true,
-        target.bearerToken
+        // An orchestration's agents (the ones that carry an approval guard) are always screened.
+        target.scanResults === true || target.approval !== undefined,
+        target.bearerToken,
+        target.approval
       );
       tools[`mcp_${sanitizeToolName(name)}`] = tool;
     }

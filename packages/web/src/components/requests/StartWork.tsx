@@ -7,6 +7,7 @@ import { type ReactNode, useState } from 'react';
 import { AgentRunForm } from '@/components/agentRuns/AgentRunForm';
 import { EpicLaunchForm } from '@/components/epics/EpicLaunchForm';
 import { HowItWorks } from '@/components/help/HowItWorks';
+import { OrchestrateForm } from '@/components/orchestrations/OrchestrateForm';
 import { PrdRunLaunchForm } from '@/components/prdRuns/PrdRunLaunchForm';
 import { ModeChooser } from '@/components/requests/ModeChooser';
 import { StartScopeProvider, type StartScopeValue } from '@/components/requests/StartScope';
@@ -37,7 +38,7 @@ import { hasRole } from '@/lib/roles';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
-type Mode = 'workflow' | 'agent' | 'epic' | 'prd';
+type Mode = 'workflow' | 'agent' | 'epic' | 'prd' | 'orchestrate';
 
 interface ModeOption {
   value: Mode;
@@ -65,6 +66,14 @@ const GUIDE: Record<Exclude<Mode, 'workflow'>, { title: string; points: string[]
     ],
     title: 'Running an epic',
   },
+  orchestrate: {
+    points: [
+      'You chat with an orchestrator that starts and steers other agents from the list you allow.',
+      'Without a repository, agents can read and report but not change code. You can attach one later when asked.',
+      'Only you can message it, attach a repository or approve calls. Teammates can watch.',
+    ],
+    title: 'Orchestrating agents',
+  },
   prd: {
     points: [
       'An agent analyses the PRD and you review the analysis.',
@@ -91,7 +100,7 @@ function WorkModePicker({
   return (
     <fieldset>
       <legend className="sr-only">How do you want to work?</legend>
-      <div className="grid gap-2 sm:grid-cols-2 sm:gap-3 xl:grid-cols-4">
+      <div className="grid gap-2 sm:grid-cols-2 sm:gap-3 xl:grid-cols-3">
         {options.map((option) => {
           const selected = option.value === value;
           return (
@@ -246,7 +255,22 @@ export function StartWork({
     epicTeamIds: epic.epicTeamIds,
     team: scopeTeam ? { id: scopeTeam.id, name: scopeTeam.name } : null,
   };
-  const [mode, setMode] = useState<Mode>(initialMode);
+  const canOrchestrate = hasRole(platformRole, 'ENGINEER');
+  const [requestedMode, setRequestedMode] = useState<Mode>(initialMode);
+  // `?mode=orchestrate` below ENGINEER falls back to a workflow: that mode cannot be launched.
+  const mode: Mode =
+    requestedMode === 'orchestrate' && !canOrchestrate ? 'workflow' : requestedMode;
+  // The orchestration form (and its queries) mounts the first time its mode is shown.
+  const [orchestrateOpened, setOrchestrateOpened] = useState(initialMode === 'orchestrate');
+  const setMode = (next: Mode) => {
+    if (next === 'orchestrate' && !canOrchestrate) {
+      return;
+    }
+    setRequestedMode(next);
+    if (next === 'orchestrate') {
+      setOrchestrateOpened(true);
+    }
+  };
   const [visited, setVisited] = useState<string[]>(initialTemplateId ? [initialTemplateId] : []);
   const [chosenTemplateId, setTemplateId] = useState(initialTemplateId);
   // With a `?team=` slug the templates wait for the team list, and stay unloaded when it failed,
@@ -304,6 +328,15 @@ export function StartWork({
       icon: 'agents',
       label: 'Run an agent',
       value: 'agent',
+    },
+    {
+      description: canOrchestrate
+        ? 'Chat with an orchestrator that runs several agents.'
+        : 'Requires engineer or above.',
+      disabled: !canOrchestrate,
+      icon: 'branch',
+      label: 'Orchestrate agents',
+      value: 'orchestrate',
     },
     {
       description: canStartEpic ? 'Coordinated work across repositories.' : epic.reason,
@@ -369,6 +402,7 @@ export function StartWork({
                 </summary>
                 <div className="mt-3">
                   <ModeChooser
+                    canOrchestrate={canOrchestrate}
                     canStartEpic={canStartEpic}
                     current={mode}
                     epicReason={epic.reason === BASE_EPIC_REASON ? undefined : epic.reason}
@@ -461,6 +495,11 @@ export function StartWork({
             <div hidden={mode !== 'agent'}>
               <Step number={detailsStep} title="Describe the task">
                 <AgentRunForm onLaunched={onLaunched} reviewBeforeLaunch />
+              </Step>
+            </div>
+            <div hidden={mode !== 'orchestrate'}>
+              <Step number={detailsStep} title="Describe the task">
+                {orchestrateOpened && canOrchestrate && <OrchestrateForm />}
               </Step>
             </div>
             <div hidden={mode !== 'epic'}>

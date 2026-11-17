@@ -1633,6 +1633,23 @@ async function runAgentPrFeedbackTaskImpl(input: {
     );
   }
   const originalTask = originalRun?.workRequest?.description ?? gather.originalTask ?? '';
+  // A scoped writer's pull request stays scoped: the follow-up may change only the paths the
+  // original run was assigned (the push policy enforces it before the gate). Only the scopes are
+  // copied — not `orchestrationId`, which would make this follow-up a child it is not; instead its MCP is withheld. A list that
+  // is present but unreadable fails closed rather than running unscoped.
+  const rawScopes = originalPayload.pathScopes;
+  if (
+    rawScopes !== undefined &&
+    rawScopes !== null &&
+    !(Array.isArray(rawScopes) && rawScopes.every((scope) => typeof scope === 'string'))
+  ) {
+    throw ApplicationFailure.nonRetryable(
+      'the original run’s path scopes could not be read, so a follow-up would be unscoped',
+      'PR_FEEDBACK_SCOPES_UNREADABLE'
+    );
+  }
+  const pathScopes =
+    rawScopes === undefined || rawScopes === null ? undefined : (rawScopes as string[]);
   const { parseAgentRef } = await import('../lib/config/agentRef.js');
   const { isLaunchableAgentKey, clampToCeiling } = await import('@auto-swe/shared/lib/agentRun');
   const { key, version } = parseAgentRef(gather.agentRef);
@@ -1719,10 +1736,13 @@ async function runAgentPrFeedbackTaskImpl(input: {
     deliver: 'push',
     effective,
     key,
+    ...(pathScopes ? { pathScopes } : {}),
     prompt,
     repo,
     skillRevisions: baseCtx.skillRevisions,
     version,
+    // The follow-up of an orchestration child has no approval guard, so it binds no MCP tool.
+    ...(originalPayload.orchestrationId ? { withholdMcp: true } : {}),
   });
   const codeResult: CodeResult = {
     baseBranch: payload.baseBranch,

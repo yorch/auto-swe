@@ -111,6 +111,26 @@ beforeEach(() => {
   });
 });
 describe('stored review follow-ups', () => {
+  it('carries orchestrationId and pathScopes into the follow-up payload', async () => {
+    m.source.mockResolvedValue({
+      ...(await m.source()),
+      agentPayload: {
+        agentRef: 'docsMaintainer@3',
+        deliver: 'none',
+        orchestrationId: '0b1c2d3e-0000-4000-8000-000000000001',
+        pathScopes: ['docs/**'],
+      },
+    });
+    await startStoredReviewFix(payload, 'review');
+    expect(m.createInput).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        payload: expect.objectContaining({
+          orchestrationId: '0b1c2d3e-0000-4000-8000-000000000001',
+          pathScopes: ['docs/**'],
+        }),
+      }),
+    });
+  });
   it('uses the same agent and source parameters, DB findings, deliver:none and a ledger-first launch', async () => {
     const result = await startStoredReviewFix(payload, 'review');
     expect(result.status).toBe('started');

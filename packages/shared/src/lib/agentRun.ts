@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { egressPolicySchema } from './egressPolicy.js';
 import { BaseBranchSchema } from './gitRef.js';
+import { PATH_SCOPE_MAX_LENGTH, PATH_SCOPES_MAX, parsePathScope } from './pathScope.js';
 
 /**
  * Agent runs: an ad-hoc "run this library Agent on this repository" launch.
@@ -67,6 +68,7 @@ export const NON_LAUNCHABLE_AGENT_KEYS: ReadonlySet<string> = new Set([
   'ciTriager',
   'prFeedbackResponder',
   'prTitler',
+  'orchestrator',
 ]);
 
 export function isLaunchableAgentKey(key: string): boolean {
@@ -83,18 +85,51 @@ export const AGENT_REF_RE = /^[A-Za-z0-9_.-]+(@[1-9][0-9]*)?$/;
  * Slack, schedules, webhooks, bundles), so nothing the gateway checked may be
  * assumed.
  */
-export const AgentRunPayloadSchema = z.object({
-  agentRef: z.string().min(1).max(130).regex(AGENT_REF_RE),
-  /** The branch the checkout is cut from and a draft PR targets. Unset: the default branch. */
-  baseBranch: BaseBranchSchema.optional(),
-  deliver: z.enum(AGENT_RUN_DELIVERIES).default('none'),
-  /** Requested network egress policy; kept here so a re-run asks for the same one. */
-  egressPolicy: egressPolicySchema.optional(),
-  /** Per-launch caps. Can only lower the platform ceilings. */
-  maxSteps: z.number().int().min(1).max(500).optional(),
-  maxWallClockSeconds: z.number().int().min(60).max(14_400).optional(),
-  reviewFixOfRunId: z.string().uuid().optional(),
-});
+export const AgentRunPayloadSchema = z
+  .object({
+    agentRef: z.string().min(1).max(130).regex(AGENT_REF_RE),
+    /** The branch the checkout is cut from and a draft PR targets. Unset: the default branch. */
+    baseBranch: BaseBranchSchema.optional(),
+    deliver: z.enum(AGENT_RUN_DELIVERIES).default('none'),
+    /** Requested network egress policy; kept here so a re-run asks for the same one. */
+    egressPolicy: egressPolicySchema.optional(),
+    /** Per-launch caps. Can only lower the platform ceilings. */
+    maxSteps: z.number().int().min(1).max(500).optional(),
+    maxWallClockSeconds: z.number().int().min(60).max(14_400).optional(),
+    /** The orchestration that started this run as a child. Set by the gateway's child launch route only. */
+    orchestrationId: z.string().uuid().optional(),
+    /**
+     * Repository paths a writer child may change (grammar in `pathScope.ts`, re-exported by
+     * `orchestration.ts`). The push policy refuses any changed path outside them. Unset: no
+     * restriction, as for a direct agent run. Never empty (an empty list would read as "nothing is
+     * out of scope"), and every entry must parse.
+     */
+    pathScopes: z
+      .array(z.string().max(PATH_SCOPE_MAX_LENGTH))
+      .min(1)
+      .max(PATH_SCOPES_MAX)
+      .superRefine((scopes, ctx) => {
+        scopes.forEach((raw, i) => {
+          const parsed = parsePathScope(raw);
+          if (!parsed.ok) {
+            ctx.addIssue({ code: 'custom', message: parsed.reason, path: [i] });
+          }
+        });
+      })
+      .optional(),
+    reviewFixOfRunId: z.string().uuid().optional(),
+  })
+  .superRefine((v, ctx) => {
+    // A child that delivers a branch or pull request is a writer, and a writer without scopes would
+    // be unrestricted: the gateway's launch path must say where it may write.
+    if (v.orchestrationId !== undefined && v.deliver !== 'none' && v.pathScopes === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'an orchestration child that delivers needs path scopes',
+        path: ['pathScopes'],
+      });
+    }
+  });
 export type AgentRunPayload = z.infer<typeof AgentRunPayloadSchema>;
 
 /** `min(requested ?? ceiling, ceiling)`: a launch can only lower a ceiling. */

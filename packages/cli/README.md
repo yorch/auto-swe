@@ -27,6 +27,7 @@ the dashboard at **Settings → API tokens**, or with
 | -------------------- | ----------------------- | ---------------------------------------- |
 | `AUTO_SWE_API_URL`   | `http://localhost:8080` | Base URL of the gateway                  |
 | `AUTO_SWE_TOKEN`     | —                       | Bearer token (`ats_*` PAT or JWT)        |
+| `AUTO_SWE_WEB_URL`   | `http://localhost:3000` | Dashboard base URL for the links `orchestrate` prints |
 
 ### MCP device authorization
 
@@ -87,6 +88,26 @@ agent run <key[@version]> "<prompt>" --repo=<org/name> [--deliver=none|branch|dr
                                      --deliver=branch|draft_pr publishes it after the platform's
                                      checks pass (see docs/agent-runs.md)
 agent rerun <workRequestId> [--wait] Run an earlier agent run again as a new run
+
+orchestrate start "<task>" --agent=<key> [--agent=<key> ...] [--repo=<org/name> | --team=<slug>]
+          [--connection=<id> ...] [--budget-tier=STANDARD|LARGE|EPIC]
+          [--deliver=none|branch|draft_pr] [--idempotency-key=KEY] [--wait] [--json]
+                                     Start an orchestration: a conversation with an orchestrator
+                                     that starts, steers and collects agent runs
+orchestrate list [--team=<slug>] [--status=S] [--json]
+orchestrate show <id> [--json]       Print an orchestration's status, children, pending requests
+orchestrate messages <id> [--follow] [--json]
+                                     Print the transcript; --follow keeps polling until it finishes
+orchestrate say <id> "<message>"     Message the orchestrator
+orchestrate steer <id> <childId> "<message>"
+                                     Steer one running agent
+orchestrate cancel-agent <id> <childId>
+orchestrate cancel <id>              Cancel the orchestration and its running agents
+orchestrate end <id>                 End the orchestration
+orchestrate attach <id> --repo=<org/name>
+orchestrate decline <id>             Human acts: answer the orchestrator's repository request
+orchestrate approve <id> <approvalId>
+orchestrate deny <id> <approvalId>   Human acts: decide one held MCP write
 
 workflows list                       List workflow templates visible to you
 workflows show <name> [--version=N]  Print one template's active (or given) spec (JSON)
@@ -210,13 +231,73 @@ help                                 Show usage
 admin token; `evals run` is the regression gate a nightly CI job polls to completion
 (see [`docs/evals.md`](../../docs/evals.md)).
 
+## `auto-swe orchestrate`
+
+An orchestration is a conversation with an `orchestrator` agent. The orchestrator turns your task
+into child agent runs, each a library agent with one role: a **reader** delivers nothing, and a
+**writer** delivers a branch or draft pull request under its declared path scopes. The orchestrator
+never touches a workspace itself. The platform must have `orchestration.enabled` switched on, and
+every child is started through the same launch path as `agent run`.
+
+```bash
+# Repository-bound: writers and delivery are available once the repository is attached.
+auto-swe orchestrate start "Find why retries double-charge" --repo=acme/payments \
+  --agent=contentWriter --agent=reviewer --budget-tier=LARGE --wait
+
+# Repo-less: read-only (readers only, no workspace). --team names the team that owns it.
+auto-swe orchestrate start "Summarise last week's incidents" --team=payments --agent=contentWriter
+
+auto-swe orchestrate show <id>                  # status, children, pending requests and approvals
+auto-swe orchestrate messages <id> --follow     # the transcript, polled every 3 seconds
+auto-swe orchestrate steer <id> <childId> "Skip the cache layer"
+```
+
+**Start.** `--agent` names an agent on the allowlist and repeats; at least one is required. A
+version can be pinned with `key@3`. `--repo` takes `org/name` (or a repository UUID); without it,
+`--team` is required and the orchestration is read-only. `--connection` takes an MCP connection UUID
+and repeats; the set is fixed at launch, and omitting it gives children no MCP connection. Each
+invocation sends an `Idempotency-Key`: a new one by default, or the value of `--idempotency-key`, so
+a retried launch with the same key returns the orchestration it already made. `--budget-tier` and
+`--deliver` set the defaults; `--deliver` applies to writers once a repository is attached. The
+command prints the orchestration id and a dashboard link built from `AUTO_SWE_WEB_URL`.
+
+**Following.** `--wait` on `start` and `--follow` on `messages` print the transcript as
+`role: body` lines (roles are lowercase: `user`, `orchestrator`, `system`), with `(child <id>)` after
+the role for a message addressed to one child. Status changes go to stderr as `[STATUS]`. `--wait`
+stops when the orchestration is `WAITING` for a person, `COMPLETED`, `CANCELLED` or `FAILED`;
+`--follow` keeps going through `WAITING` and stops only when it is finished. A request that needs a
+person is printed once, with the exact command that answers it, and only the launcher is shown
+those commands.
+
+**Output.** `list`, `show` and `start` print tables or key-value lines. `--json` prints the API's
+data instead: one document for `list`, `show` and `start`, and one JSON object per line for
+`messages`. `start` cannot combine `--json` with `--wait`.
+
+**Human acts.** `attach`, `decline`, `approve` and `deny` are decisions only the person who
+launched the orchestration can make. They are recorded under the token's account, and the gateway
+refuses them to anyone else, to the in-app assistant and to service principals. Each prints a
+one-line reminder to stderr. `attach` takes the repository the orchestrator asked for; `decline`
+keeps the orchestration repo-less; `approve` and `deny` decide one MCP write, which runs once if
+approved and returns an error to the agent if denied or expired.
+
+**Steering.** `say` messages the orchestrator, and `steer` queues a message for one running child.
+A child on a harness runtime (Claude Code or Pi) cannot take a message mid-run: the message stays
+queued and undelivered, and `show` counts it as such. `cancel-agent` stops
+one child, `cancel` stops the whole orchestration with its running children, and `end` completes it.
+Pushed branches stay in place when either is cancelled.
+
+**Refusals.** A refusal prints `CODE: <plain sentence>` to stderr and exits 2. Every code in the
+orchestration contract has a sentence, and so do the common gateway refusals, for example
+`ORCHESTRATION_DISABLED`, `TEAM_REPO_MISMATCH`, `NOT_LAUNCHER` and `APPROVAL_NOT_PENDING`. An
+unrecognised code prints the gateway's own message.
+
 ## Exit codes
 
 | Code | Meaning                                   |
 | ---- | ----------------------------------------- |
 | `0`  | Success                                   |
 | `1`  | User error (missing arg, no token, etc.); `evals run` also exits 1 on a regression, and `connections test` and `repos test-access` when a connection or step fails |
-| `2`  | Remote error (HTTP non-2xx from gateway); `runs tail` and `agent run --wait` also exit 2 when the run ends in a non-success status, and `evals run` when the eval run fails without reaching a verdict, ends `INCONCLUSIVE` (no case had passed its flake screen, so none was scored), or passes over only the cases its budget reached (`summary.partial`; a partial run that regressed exits 1) |
+| `2`  | Remote error (HTTP non-2xx from gateway); `runs tail`, `agent run --wait` and `orchestrate start --wait` also exit 2 when the run or orchestration ends in a non-success status (`orchestrate` cancelled or failed), and `evals run` when the eval run fails without reaching a verdict, ends `INCONCLUSIVE` (no case had passed its flake screen, so none was scored), or passes over only the cases its budget reached (`summary.partial`; a partial run that regressed exits 1) |
 
 ## Examples
 

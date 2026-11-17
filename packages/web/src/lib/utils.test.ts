@@ -17,6 +17,13 @@ describe('STATUS_META', () => {
   it('reads a timed-out status as a failure, the same tone as FAILED', () => {
     expect(STATUS_META.TIMED_OUT?.dotClass).toBe(STATUS_META.FAILED?.dotClass);
   });
+
+  it('gives the orchestration and child statuses their own entry, with words beside the dot', () => {
+    expect(STATUS_META.WAITING?.dotClass).toBe(STATUS_META.PENDING?.dotClass);
+    expect(STATUS_META.WAITING?.label).toBe('waiting for input');
+    expect(STATUS_META.STARTING?.live).toBe(true);
+    expect(STATUS_META.STARTING?.dotClass).not.toBe(STATUS_META.UNKNOWN?.dotClass);
+  });
 });
 
 // These formatters deliberately follow the runtime's default locale, so the

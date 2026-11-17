@@ -19,7 +19,11 @@ const m = vi.hoisted(() => ({
     gitAuthed: vi.fn(async () => ''),
   },
   applyStored: vi.fn(async () => ''),
+  /** What the MCP approval guard finds for the run (`orchestrationId: null` = not an orchestration). */
+  approvalRows: [] as Array<Record<string, unknown>>,
   assertBudget: vi.fn(async (_label?: string) => {}),
+  billed: { billingOrgId: 'org-9', billingTeamId: 'team-9' } as unknown,
+  childConfirmed: true,
   claudeCodeRuntime: vi.fn(),
   closeRows: vi.fn(async (_args: unknown) => ({ count: 1 })),
   commit: vi.fn(),
@@ -40,10 +44,12 @@ const m = vi.hoisted(() => ({
   resolveAgentSpec: vi.fn(),
   resolvePrTitle: vi.fn(async (input: { legacyTitle?: string }) => input.legacyTitle ?? ''),
   run: {
+    id: 'run-1',
     template: { name: 'Agent Run', origin: 'system:agent-run', teamId: null },
     templateId: 'tpl-1',
   } as unknown,
   runAgent: vi.fn(),
+  runLink: { orchestrationId: null } as { orchestrationId: string | null },
   runtime: null as string | null,
   /** `workspace.agentRunRuntime` per owning team (undefined team: the default). */
   runtimeSetting: {} as Record<string, string>,
@@ -70,6 +76,18 @@ const m = vi.hoisted(() => ({
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        orchestrationApproval: {
+          create: async ({ data }: { data: Record<string, unknown> }) => {
+            const row = { ...data, id: 'ap-1', outcome: null, status: 'PENDING' };
+            m.approvalRows.push(row);
+            return row;
+          },
+        },
+        orchestrationMessage: { create: async () => ({}) },
+      })
+    ),
     activeWorkflow: { findFirst: vi.fn(async () => m.ledger), updateMany: m.closeRows },
     connection: {
       findUnique: vi.fn(async () => ({ previewConfig: m.previewConfig })),
@@ -80,7 +98,24 @@ vi.mock('@auto-swe/shared/db', () => ({
         installation: null,
       })),
     },
+    orchestration: {
+      findUnique: vi.fn(async () => ({
+        connectionIds: ['conn-1'],
+        launchedById: 'user-1',
+        teamId: 'team-9',
+      })),
+    },
+    orchestrationApproval: {
+      findUnique: vi.fn(async () => m.approvalRows[0] ?? null),
+      update: vi.fn(async () => ({})),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+    },
+    orchestrationChild: {
+      findFirst: vi.fn(async () => (m.childConfirmed ? { id: 'child-1' } : null)),
+    },
+    orchestrationMessage: { create: vi.fn(async () => ({})) },
     pullRequest: { create: m.prCreate, update: m.prUpdate },
+    runInput: { findUnique: vi.fn(async () => m.billed) },
     workflowHumanStep: { findMany: m.waiting },
     workflowRun: {
       findFirst: vi.fn(async () => ({
@@ -91,7 +126,9 @@ vi.mock('@auto-swe/shared/db', () => ({
       findUnique: vi.fn(async (args: { select: Record<string, unknown> }) =>
         'template' in args.select
           ? m.run
-          : { id: 'run-1', templateId: 'template-1', templateVersion: 2 }
+          : 'orchestrationId' in args.select
+            ? m.runLink
+            : { id: 'run-1', templateId: 'template-1', templateVersion: 2 }
       ),
     },
   },
@@ -114,11 +151,13 @@ vi.mock('@auto-swe/shared/config', () => ({
   // Like the real resolver: a run-pinned value wins over the live cascade.
   resolveSetting: vi.fn(
     async (key: string, ctx?: { teamId?: string; pinnedSettings?: Record<string, unknown> }) =>
-      ctx?.pinnedSettings && key in ctx.pinnedSettings
-        ? ctx.pinnedSettings[key]
-        : ctx?.teamId
-          ? (m.runtimeSetting[ctx.teamId] ?? 'mastra')
-          : 'mastra'
+      key === 'orchestration.approvalTimeoutSeconds'
+        ? 600
+        : ctx?.pinnedSettings && key in ctx.pinnedSettings
+          ? ctx.pinnedSettings[key]
+          : ctx?.teamId
+            ? (m.runtimeSetting[ctx.teamId] ?? 'mastra')
+            : 'mastra'
   ),
   resolveSettings: vi.fn(async () => m.settings),
 }));
@@ -251,7 +290,7 @@ import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import { QUESTIONS, resumeInputFor } from '../lib/pauseResumeFixtures.js';
 import { restoreWorkingTree, snapshotWorkingTree } from '../lib/pauseSnapshot.js';
 import { DraftPullRequestUnsupportedError } from '../lib/scm/types.js';
-import { runAgentTask } from './runAgentTask.js';
+import { runAgentTask, runAgentTaskCore } from './runAgentTask.js';
 import { createWorkspace } from './workspace.js';
 
 const request = (over: Record<string, unknown> = {}) =>
@@ -297,10 +336,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   egressPolicy.value = 'open';
   m.run = {
+    id: 'run-1',
     template: { name: 'Agent Run', origin: 'system:agent-run', teamId: null },
     templateId: 'tpl-1',
   };
+  m.runLink = { orchestrationId: null };
+  m.approvalRows = [];
   m.ledger = { id: 'ledger-1', repoId: 'repo-1' };
+  m.billed = { billingOrgId: 'org-9', billingTeamId: 'team-9' };
+  m.childConfirmed = true;
   m.prCreate.mockResolvedValue({});
   m.slots = [{ launchedAt: new Date(1), teamId: 'team-1', workflowId: 'wf-1' }];
   m.temporal = {};
@@ -462,9 +506,287 @@ describe('authority checks (the worker does not trust the gateway)', () => {
     }
   );
 
+  const ORCH = '0b1c2d3e-0000-4000-8000-000000000001';
+  it.each([[{ deliver: 'branch' }], [{ deliver: 'draft_pr', pathScopes: [] }]])(
+    'fails closed for an orchestration child that delivers without path scopes: %j',
+    async (extra) => {
+      const f = await failureOf(
+        runAgentTask({
+          request: request({
+            payload: { agentRef: 'contentWriter', orchestrationId: ORCH, ...extra },
+          }),
+        })
+      );
+      // The payload schema itself refuses it, so the run fails before any container exists.
+      expect(f.type).toBe('AGENT_RUN_INVALID_PAYLOAD');
+      expect(createWorkspace).not.toHaveBeenCalled();
+    }
+  );
+
+  it('steers only a run an orchestration started, through the loop prepareStep hook', async () => {
+    await runAgentTask({
+      request: request({
+        payload: { agentRef: 'contentWriter', deliver: 'none', orchestrationId: ORCH },
+      }),
+    });
+    const hook = (i: number) => (m.runAgent.mock.calls[i]?.[2] ?? {}) as { prepareStep?: unknown };
+    expect(typeof hook(0).prepareStep).toBe('function');
+    m.runAgent.mockClear();
+    vi.mocked(createWorkspace)
+      .mockReset()
+      .mockResolvedValue(m.agentWs as never);
+    await runAgentTask({ request: request() });
+    expect(hook(0).prepareStep).toBeUndefined();
+  });
+
+  it('fails a repository-bound orchestration child closed when its run id is unknown', async () => {
+    m.run = {
+      template: { name: 'Agent Run', origin: 'system:agent-run', teamId: null },
+      templateId: 'tpl-1',
+    };
+    const f = await failureOf(
+      runAgentTask({
+        request: request({
+          payload: { agentRef: 'contentWriter', deliver: 'none', orchestrationId: ORCH },
+        }),
+      })
+    );
+    expect(f.type).toBe('ORCHESTRATION_RUN_UNKNOWN');
+    expect(f.nonRetryable).toBe(true);
+    expect(loadMcpTools).not.toHaveBeenCalled();
+    expect(createWorkspace).not.toHaveBeenCalled();
+  });
+
   it('only publishes under its own agent-<id> branch names', async () => {
     const f = await failureOf(runAgentTask({ request: request({ externalTicketId: 'JIRA-1' }) }));
     expect(f.type).toBe('AGENT_RUN_INVALID_PAYLOAD');
+  });
+});
+
+describe('a run with no repository (a read-only orchestration child)', () => {
+  const ORCH = '0b1c2d3e-0000-4000-8000-000000000001';
+  const repoless = (over: Record<string, unknown> = {}) =>
+    request({
+      payload: { agentRef: 'contentWriter', deliver: 'none', orchestrationId: ORCH },
+      repoId: null,
+      workRequestId: 'wr-1',
+      ...over,
+    });
+  beforeEach(() => {
+    m.ledger = { id: 'ledger-1', repoId: null };
+    m.slots = [{ launchedAt: new Date(1), teamId: 'team-9', workflowId: 'wf-1' }];
+  });
+
+  it('runs the agent with no workspace, clone, gate or delivery, and returns a delivery-none result', async () => {
+    m.runAgent.mockResolvedValue({
+      costUsd: 0.5,
+      stepCount: 4,
+      stoppedReason: 'max_steps',
+      text: 'findings',
+    });
+    const r = await runAgentTask({ request: repoless() });
+    expect(createWorkspace).not.toHaveBeenCalled();
+    expect(m.commit).not.toHaveBeenCalled();
+    expect(m.gate).not.toHaveBeenCalled();
+    expect(m.push).not.toHaveBeenCalled();
+    expect(m.createPr).not.toHaveBeenCalled();
+    expect(r).toMatchObject({
+      agent: 'contentWriter',
+      costUsd: 0.5,
+      deliver: 'none',
+      diff: '',
+      diffVerified: false,
+      filesChanged: [],
+      gate: 'not_applicable',
+      steps: 4,
+      stoppedReason: 'max_steps',
+      text: 'findings',
+    });
+    // Per-step accounting, as on the repository path; the trace is persisted.
+    expect(m.runAgent.mock.calls[0]?.[2]).toMatchObject({
+      ctx: { orgId: 'org-9', teamId: 'team-9' },
+      maxSteps: 50,
+      perStepAccounting: true,
+      spanName: 'llm.agent_run',
+    });
+    const options = (m.runAgent.mock.calls[0]?.[2] ?? {}) as { prepareStep?: unknown };
+    expect(typeof options.prepareStep).toBe('function');
+    expect(m.persist).toHaveBeenCalled();
+  });
+
+  it('binds no workspace tool even when the agent grants them all', async () => {
+    m.toolKeys = ['readFile', 'writeFile', 'bash', 'listDirectory'];
+    await runAgentTask({ request: repoless() });
+    const spec = m.runAgent.mock.calls[0]?.[0] as { tools?: Record<string, unknown> };
+    expect(Object.keys(spec.tools ?? {})).toEqual([]);
+  });
+
+  /** The target `loadMcpTools` was handed, as the run left it. */
+  const boundTarget = () =>
+    vi.mocked(loadMcpTools).mock.calls[0]?.[0] as unknown as {
+      approval?: {
+        run: (
+          call: { toolName: string; args: unknown; annotations: unknown },
+          exec: () => Promise<unknown>
+        ) => Promise<{ ran: boolean; message?: string }>;
+      };
+      scanResults?: boolean;
+    };
+  const bindMcp = (target: Record<string, unknown> = { url: 'https://mcp.example/x' }) => {
+    m.toolKeys = ['mcp'];
+    m.runLink = { orchestrationId: ORCH };
+    vi.mocked(resolveAgentMcpUrl).mockResolvedValueOnce(
+      Object.defineProperty({ ...target }, 'connectionId', {
+        enumerable: false,
+        value: 'conn-1',
+      }) as never
+    );
+    vi.mocked(loadMcpTools).mockResolvedValueOnce({
+      close: vi.fn(async () => {}),
+      tools: { srv__read: { id: 'srv__read' } },
+    } as never);
+  };
+
+  it('binds the agent MCP connection checked against the billed team, behind the approval guard', async () => {
+    bindMcp();
+    await runAgentTask({ request: repoless() });
+    expect(vi.mocked(resolveAgentMcpUrl).mock.calls[0]?.[2]).toMatchObject({
+      tenant: { orgId: 'org-9', teamId: 'team-9' },
+    });
+    const spec = m.runAgent.mock.calls[0]?.[0] as { tools?: Record<string, unknown> };
+    expect(spec.tools).toHaveProperty('srv__read');
+    // The guard is attached, and result screening is forced on although the connection did not ask.
+    expect(boundTarget().approval).toBeDefined();
+    expect(boundTarget().scanResults).toBe(true);
+  });
+
+  it('makes a repo-less child write wait for the launcher before it runs', async () => {
+    vi.useFakeTimers();
+    try {
+      bindMcp();
+      await runAgentTask({ request: repoless() });
+      const exec = vi.fn(async () => 'wrote');
+      const pending = boundTarget().approval?.run(
+        { annotations: undefined, args: { path: 'x' }, toolName: 'wipe' },
+        exec
+      );
+      await vi.advanceTimersByTimeAsync(10);
+      // Not run, and an approval row is waiting for the launcher.
+      expect(exec).not.toHaveBeenCalled();
+      expect(m.approvalRows).toHaveLength(1);
+      expect(m.approvalRows[0]).toMatchObject({ orchestrationId: ORCH, status: 'PENDING' });
+      m.approvalRows[0] = { ...m.approvalRows[0], status: 'DENIED' };
+      await vi.advanceTimersByTimeAsync(2_500);
+      await expect(pending).resolves.toMatchObject({ ran: false });
+      expect(exec).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refuses a call on a connection outside the orchestration set without running it', async () => {
+    bindMcp();
+    vi.mocked(resolveAgentMcpUrl).mockReset();
+    vi.mocked(resolveAgentMcpUrl).mockResolvedValueOnce(
+      Object.defineProperty({ url: 'https://mcp.example/x' }, 'connectionId', {
+        enumerable: false,
+        value: 'conn-OTHER',
+      }) as never
+    );
+    await runAgentTask({ request: repoless() });
+    const exec = vi.fn(async () => 'read');
+    const out = await boundTarget().approval?.run(
+      { annotations: { readOnlyHint: true }, args: {}, toolName: 'lookup' },
+      exec
+    );
+    expect(out).toMatchObject({ ran: false });
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the run row cannot be identified: no MCP tool is bound', async () => {
+    bindMcp();
+    m.run = {
+      template: { name: 'Agent Run', origin: 'system:agent-run', teamId: null },
+      templateId: 'tpl-1',
+    };
+    const f = await failureOf(runAgentTask({ request: repoless() }));
+    expect(f.type).toBe('ORCHESTRATION_RUN_UNKNOWN');
+    expect(f.nonRetryable).toBe(true);
+    expect(loadMcpTools).not.toHaveBeenCalled();
+    expect(m.runAgent).not.toHaveBeenCalled();
+  });
+
+  it('denies every call when the orchestration lookup fails (no raw target)', async () => {
+    bindMcp();
+    vi.mocked(prisma.orchestration.findUnique).mockRejectedValueOnce(new Error('db down'));
+    await runAgentTask({ request: repoless() });
+    const exec = vi.fn(async () => 'read');
+    const out = await boundTarget().approval?.run(
+      { annotations: { readOnlyHint: true }, args: {}, toolName: 'lookup' },
+      exec
+    );
+    expect(out).toMatchObject({ ran: false });
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('fails a harness-runtime agent before any work, non-retryably', async () => {
+    m.runtimeSetting['team-9'] = 'claude-code';
+    const f = await failureOf(runAgentTask({ request: repoless() }));
+    expect(f.type).toBe('AGENT_RUN_NEEDS_WORKSPACE');
+    expect(f.nonRetryable).toBe(true);
+    expect(m.runAgent).not.toHaveBeenCalled();
+    expect(createWorkspace).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['not a confirmed orchestration child', () => ({ childConfirmed: false })],
+    [
+      'delivering',
+      () => ({
+        payload: {
+          agentRef: 'contentWriter',
+          deliver: 'branch',
+          orchestrationId: ORCH,
+          pathScopes: ['docs/**'],
+        },
+      }),
+    ],
+    [
+      'a plain agent run payload',
+      () => ({ payload: { agentRef: 'contentWriter', deliver: 'none' } }),
+    ],
+  ])('refuses a repo-less run that is %s', async (_n, mutate) => {
+    const over = mutate() as Record<string, unknown>;
+    if ('childConfirmed' in over) {
+      m.childConfirmed = false;
+    }
+    const f = await failureOf(
+      runAgentTask({ request: repoless('childConfirmed' in over ? {} : over) })
+    );
+    expect(f.type).toBe('NO_CONNECTION');
+    expect(m.runAgent).not.toHaveBeenCalled();
+  });
+
+  it('refuses a repo-less request whose ledger row names a repository', async () => {
+    m.ledger = { id: 'ledger-1', repoId: 'repo-1' };
+    const f = await failureOf(runAgentTask({ request: repoless() }));
+    expect(f.type).toBe('AGENT_RUN_REPO_MISMATCH');
+  });
+
+  it('refuses a work request that bills no team', async () => {
+    m.billed = { billingOrgId: null, billingTeamId: null };
+    const f = await failureOf(runAgentTask({ request: repoless() }));
+    expect(f.type).toBe('NO_CONNECTION');
+  });
+
+  it('is admitted against the billed team limit', async () => {
+    m.settings['workspace.agentRunMaxConcurrentPerTeam'] = 1;
+    m.slots = [
+      { launchedAt: new Date(0), teamId: 'team-9', workflowId: 'older' },
+      { launchedAt: new Date(1), teamId: 'team-9', workflowId: 'wf-1' },
+    ];
+    const f = await failureOf(runAgentTask({ request: repoless() }));
+    expect(f.type).toBe('AGENT_RUN_CONCURRENCY_EXCEEDED');
   });
 });
 
@@ -851,6 +1173,62 @@ describe('delivery: trust boundary and gate-before-push', () => {
       headSha: GATED.sha,
     });
     expect(r.prUrl).toBeUndefined();
+  });
+
+  describe('path scopes (an orchestration writer child)', () => {
+    const ORCH = '0b1c2d3e-0000-4000-8000-000000000001';
+    const change = (path: string) => ({
+      newMode: '100644',
+      newSha: 'b'.repeat(40),
+      oldMode: '100644',
+      path,
+      status: 'M',
+    });
+    // The real rule, fed the paths the "trusted container" says changed.
+    const gateWithChanges = (paths: string[]) =>
+      m.gate.mockImplementation(async (_ws: unknown, args: unknown) => {
+        const { enforcePathScopes } =
+          await vi.importActual<typeof import('./agentRunFinalize.js')>('./agentRunFinalize.js');
+        const a = args as { orchestrated?: boolean; pathScopes?: unknown };
+        enforcePathScopes(paths.map(change), a.pathScopes, a.orchestrated === true);
+        return GATED;
+      });
+    const child = (pathScopes?: string[]) =>
+      request({
+        payload: {
+          agentRef: 'contentWriter',
+          deliver: 'draft_pr',
+          orchestrationId: ORCH,
+          ...(pathScopes ? { pathScopes } : {}),
+        },
+      });
+
+    it('hands the payload scopes and the orchestrated flag to the gate', async () => {
+      gateWithChanges(['docs/a.md']);
+      await runAgentTask({ request: child(['docs/**']) });
+      expect(m.gate.mock.calls[0]?.[1]).toMatchObject({
+        orchestrated: true,
+        pathScopes: ['docs/**'],
+      });
+    });
+
+    it('fails a child that changes a path outside its scopes, and pushes nothing', async () => {
+      gateWithChanges(['docs/a.md', 'src/secret.ts']);
+      const f = await failureOf(runAgentTask({ request: child(['docs/**']) }));
+      expect(f.type).toBe('AGENT_RUN_PATH_OUT_OF_SCOPE');
+      expect(m.push).not.toHaveBeenCalled();
+      expect(m.createPr).not.toHaveBeenCalled();
+      expect(m.trustedWs.destroy).toHaveBeenCalled();
+    });
+
+    it('leaves a direct agent run, which has no scopes, unrestricted', async () => {
+      gateWithChanges(['anything/at/all.ts']);
+      const r = await runAgentTask({ request: deliver('branch') });
+      expect(r.gate).toBe('passed');
+      expect(m.gate.mock.calls[0]?.[1]).toMatchObject({ orchestrated: false });
+      expect(m.gate.mock.calls[0]?.[1].pathScopes).toBeUndefined();
+      expect(m.push).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('gates strictly before pushing', async () => {
@@ -1511,5 +1889,65 @@ describe('ask and resume', () => {
     expect(f).toMatchObject({ nonRetryable: true, type: 'NEEDS_INPUT_RESTORE_FAILED' });
     expect(createWorkspace).not.toHaveBeenCalled();
     expect(m.harnessTurn).not.toHaveBeenCalled();
+  });
+});
+
+describe('withholdMcp (the follow-up of an orchestration child)', () => {
+  const MCP = { url: 'https://mcp.example/mcp' };
+  const core = (over: Record<string, unknown> = {}) =>
+    runAgentTaskCore({
+      allowWorkflowChanges: false,
+      baseBranch: 'main',
+      baseCtx: { orgId: 'org-1', teamId: 'team-1' },
+      branch: 'auto/prfb-9-777',
+      commitMessage: 'auto: follow-up',
+      deliver: 'push',
+      effective: { maxSteps: 10, maxWallClockSeconds: 600 },
+      key: 'contentWriter',
+      prompt: 'fix it',
+      repo: { id: 'repo-1', teamId: 'team-1' },
+      ...over,
+    } as never);
+  const withheld = () =>
+    traceEvents().filter((e) => e.toolName === 'agent.mcp_withheld') as unknown as Array<{
+      outputJson: unknown;
+    }>;
+
+  describe.each([['mastra'], ['claude-code']])('on the %s loop', (runtime) => {
+    beforeEach(() => {
+      m.runtime = runtime;
+      m.toolKeys = ['mcp'];
+      vi.mocked(resolveAgentMcpUrl).mockResolvedValue(MCP as never);
+      vi.mocked(loadMcpTools).mockResolvedValue({
+        close: vi.fn(async () => {}),
+        tools: { srv__write: { id: 'srv__write' } },
+      } as never);
+    });
+
+    it('binds no MCP tool and records the withholding once', async () => {
+      await core({ withholdMcp: true });
+      expect(loadMcpTools).not.toHaveBeenCalled();
+      expect(resolveAgentMcpUrl).not.toHaveBeenCalled();
+      if (runtime === 'mastra') {
+        const spec = m.runAgent.mock.calls[0]?.[0] as { tools?: Record<string, unknown> };
+        expect(spec.tools ?? {}).not.toHaveProperty('srv__write');
+      } else {
+        expect(m.claudeCodeRuntime.mock.calls[0]?.[0].mcp ?? null).toBeNull();
+      }
+      expect(withheld()).toHaveLength(1);
+      expect(withheld()[0]?.outputJson).toEqual({ reason: 'orchestration_followup' });
+    });
+
+    it('still binds the agent’s MCP connection without the flag', async () => {
+      await core();
+      expect(withheld()).toHaveLength(0);
+      if (runtime === 'mastra') {
+        expect(loadMcpTools).toHaveBeenCalledTimes(1);
+        const spec = m.runAgent.mock.calls[0]?.[0] as { tools?: Record<string, unknown> };
+        expect(spec.tools).toHaveProperty('srv__write');
+      } else {
+        expect(m.claudeCodeRuntime.mock.calls[0]?.[0]).toMatchObject({ mcp: MCP });
+      }
+    });
   });
 });

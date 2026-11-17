@@ -883,6 +883,102 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.array(z.hostname().toLowerCase()).max(200),
   }),
+  'orchestration.approvalTimeoutSeconds': defineSetting({
+    defaultValue: 600,
+    description:
+      'How long an MCP tool call that is not provably read-only waits for the launcher to approve it. A timeout is a denial.',
+    group: 'orchestration',
+    label: 'Orchestration: approval timeout',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.min(30).max(3600),
+    unit: 'seconds',
+  }),
+
+  // ── Orchestrated agent runs ────────────────────────────────────────────────
+  // None of these is run-pinned: an orchestration has no WorkflowRun to pin on. The gateway reads
+  // the bounds once at launch and freezes them into the workflow input (the workflow isolate cannot
+  // read the database, and a replay must not take a different path because an operator edited a
+  // knob), so an edit reaches only orchestrations launched after it.
+  'orchestration.enabled': defineSetting({
+    defaultValue: false,
+    description:
+      'Kill switch for orchestrated agent runs. While off, no orchestration can be launched and a running one spawns no further children. Turning it off does not stop children already running.',
+    group: 'orchestration',
+    label: 'Orchestration: enabled',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'orchestration.maxChildren': defineSetting({
+    defaultValue: 12,
+    description:
+      'Most child agent runs one orchestration may start over its lifetime, finished ones included.',
+    group: 'orchestration',
+    label: 'Orchestration: max children',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(100),
+    unit: 'children',
+  }),
+  'orchestration.maxConcurrentChildren': defineSetting({
+    defaultValue: 4,
+    description:
+      'Most children one orchestration may have running at once. Each also counts toward the agent-run concurrency limits of the team it bills.',
+    group: 'orchestration',
+    label: 'Orchestration: max concurrent children',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(20),
+    unit: 'children',
+  }),
+  'orchestration.maxTurns': defineSetting({
+    defaultValue: 200,
+    description:
+      "Most orchestrator turns one orchestration may take. A turn is one model pass over a batch of events, so this bounds the orchestrator's own spend.",
+    group: 'orchestration',
+    label: 'Orchestration: max turns',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(2000),
+    unit: 'turns',
+  }),
+  'orchestration.maxWallClockSeconds': defineSetting({
+    defaultValue: 14_400,
+    description:
+      'Lifetime of one orchestration, from launch. When it passes the orchestration ends and its running children are cancelled; pushed branches stay.',
+    group: 'orchestration',
+    label: 'Orchestration: max lifetime',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.min(60).max(14_400),
+    unit: 'seconds',
+  }),
+  'orchestration.maxWriterChildren': defineSetting({
+    defaultValue: 4,
+    description:
+      'Most writer children (agent runs that deliver a branch or draft pull request) one orchestration may start. Each opens its own pull request.',
+    group: 'orchestration',
+    label: 'Orchestration: max writer children',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(0).max(50),
+    unit: 'children',
+  }),
 
   // ── Pull request evaluation ────────────────────────────────────────────────
   // Risk class, approver counts and the auto-merge gate for the pull requests the

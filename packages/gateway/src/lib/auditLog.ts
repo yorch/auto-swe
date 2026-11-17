@@ -37,6 +37,7 @@ export type AuditEntityType =
   | 'OktaOAuthConfig'
   | 'Organization'
   | 'OrganizationMembership'
+  | 'Orchestration'
   | 'OutboundDelivery'
   | 'PackageRegistry'
   | 'PersonalAccessToken'

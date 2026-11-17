@@ -23,6 +23,9 @@ export const MODEL_BACKED_AGENT_KEYS = [
   // NOT in `requiredAgentKeys()` (no workflow step needs it), so it does not gate
   // worker boot via `assertConfigReady`; `syncBuiltins` seeds its GLOBAL Agent.
   'channelAssistant',
+  // Orchestrator: records intents for the orchestration workflow. Not in
+  // `requiredAgentKeys()`, so it does not gate worker boot; `syncBuiltins` seeds its GLOBAL Agent.
+  'orchestrator',
 ] as const;
 
 /** One of the six seeded SWE model-backed agent keys. */

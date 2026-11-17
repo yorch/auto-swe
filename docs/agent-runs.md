@@ -7,7 +7,8 @@ pull request, and only after deterministic checks and the security gate have pas
 merged by the platform; a human merges it, unless its repository is in `auto` mode, where GitHub may merge a qualifying low-risk one once a person has marked it ready.
 
 It is the way to use a library agent (`contentWriter`, `supportResponder`, a team's own) without
-authoring a workflow around it.
+authoring a workflow around it. A run that starts other agent runs is an [orchestration](./orchestrations.md);
+the child runs it starts are ordinary agent runs, subject to the path scopes in section 4.1.
 
 A finished agent run is also a source for [code review](./code-review.md): its PR, recorded branch
 head, or unverified stored diff for `deliver: none`. The shared run viewer launches and lists reviews.
@@ -203,10 +204,14 @@ Run in this order, all failing closed and all non-retryable:
    `.github/actions` unless `workspace.agentRunAllowWorkflowChanges` allows it. This keeps an agent from
    adding or editing a workflow; it does not stop a pushed branch running the repository's existing
    push-triggered workflows (see Limitations).
-2. **Size bound** (`AGENT_RUN_DIFF_TOO_LARGE`). The gate reads the whole diff in one model call, so a
+2. **Path scopes** (`AGENT_RUN_PATH_OUT_OF_SCOPE`), for a run an orchestration started. Every changed
+   path must lie inside the run's assigned path scopes. Both sides of a rename are checked, and deletions
+   count. A run an orchestration started with no scopes fails the same way; a run that no orchestration
+   started and has no scopes is unaffected.
+3. **Size bound** (`AGENT_RUN_DIFF_TOO_LARGE`). The gate reads the whole diff in one model call, so a
    diff over 300,000 characters is refused rather than truncated: a truncated scan would be a bypass.
-3. **Static code scan.** Advisory, as everywhere: findings are recorded and put in the PR body.
-4. **The security gate** (`securityReview`). A gate that errors is `SECURITY_GATE_UNAVAILABLE`; a
+4. **Static code scan.** Advisory, as everywhere: findings are recorded and put in the PR body.
+5. **The security gate** (`securityReview`). A gate that errors is `SECURITY_GATE_UNAVAILABLE`; a
    CRITICAL finding is `SECURITY_GATE_FAILURE`, with the same message text the implementer's gate uses so
    alerts keyed on it still match.
 
@@ -475,6 +480,9 @@ takes no new slot.
   with full history, for the trusted container.
 - **`deliver: none` shows an unverified diff.** It comes from the agent's own container, which the agent
   controls; it is for reading, not for trust, and is labelled so.
+- **A run started by an orchestration cannot be re-run.** A re-run is refused with
+  `409 ORCHESTRATION_CHILD_NO_RERUN`, because it would rebuild the payload without the orchestration id
+  and path scopes. The orchestrator starts another run instead; see [orchestrations.md](./orchestrations.md).
 - **Binary and workflow files are refused outright.** There is no per-file override; the only switch is
   `workspace.agentRunAllowWorkflowChanges`, and a refused run publishes nothing, including its
   permitted files.

@@ -6,6 +6,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import type { McpApprovalGuard, McpGuardCall, McpGuardOutcome } from '../../lib/mcpApproval.js';
 
 const h = vi.hoisted(() => ({ audit: vi.fn(), record: vi.fn(), scan: vi.fn() }));
 
@@ -104,6 +105,18 @@ afterEach(async () => {
   h.scan.mockResolvedValue({ incomplete: false, loadFailed: false, matches: [] });
   h.record.mockClear();
 });
+
+const guardThat = (decide: (call: McpGuardCall) => boolean) => {
+  const guard: McpApprovalGuard = {
+    async run<T>(call: McpGuardCall, run: () => Promise<T>): Promise<McpGuardOutcome<T>> {
+      return decide(call)
+        ? { ran: true, value: await run() }
+        : { message: 'denied by launcher', ran: false };
+    },
+  };
+  vi.spyOn(guard, 'run');
+  return guard;
+};
 
 describe('openMcpRelay', () => {
   it('offers the remote tools with their own schemas and runs each call in the worker', async () => {
@@ -297,11 +310,71 @@ describe('openMcpRelay: result screening', () => {
     await relay?.close();
   });
 
+  it("fences an orchestration agent's result although the connection did not opt in", async () => {
+    remote = await remoteServer();
+    const relay = await openMcpRelay({ approval: guardThat(() => true), url: remote.url });
+    const result = await relay?.callTool('echo', { text: 'hi' });
+    expect(JSON.stringify(result)).toContain('BEGIN UNTRUSTED MCP OUTPUT');
+    await relay?.close();
+  });
+
   it('passes a result through unchanged when it does not', async () => {
     remote = await remoteServer();
     const relay = await openMcpRelay({ url: remote.url });
     const result = await relay?.callTool('echo', { text: 'hi' });
     expect(result?.content).toEqual([{ text: 'echo: hi', type: 'text' }]);
+    await relay?.close();
+  });
+});
+
+describe('openMcpRelay: orchestration write approval', () => {
+  it('classifies by the annotations the server listed and refuses a denied write', async () => {
+    remote = await remoteServer({ withEffectTools: true, withWipe: true });
+    const approval = guardThat((c) => c.toolName !== 'wipe');
+    const relay = await openMcpRelay({ approval, url: remote.url });
+
+    // A guarded run's results are screened and fenced.
+    expect(JSON.stringify(await relay?.callTool('lookup', {}))).toContain('found');
+    expect(approval.run).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        annotations: expect.objectContaining({ readOnlyHint: true }),
+        toolName: 'lookup',
+      }),
+      expect.any(Function)
+    );
+    const denied = await relay?.callTool('wipe', { secret: 'x' });
+    expect(denied).toMatchObject({
+      content: [{ text: 'denied by launcher', type: 'text' }],
+      isError: true,
+    });
+    expect(approval.run).toHaveBeenLastCalledWith(
+      expect.objectContaining({ annotations: undefined, toolName: 'wipe' }),
+      expect.any(Function)
+    );
+    // The denied call reached neither the remote server nor the ledger.
+    expect(h.record).not.toHaveBeenCalledWith(expect.objectContaining({ action: 'wipe' }));
+    await relay?.close();
+  });
+
+  it('guards the call a harness makes through its in-process server', async () => {
+    remote = await remoteServer({ withWipe: true });
+    const approval = guardThat(() => false);
+    const relay = await openMcpRelay({ approval, url: remote.url });
+    const client = await harnessClient(relay?.createServer() as McpServer);
+    await expect(client.callTool({ arguments: {}, name: 'wipe' })).resolves.toMatchObject({
+      content: [{ text: 'denied by launcher', type: 'text' }],
+      isError: true,
+    });
+    await relay?.close();
+  });
+
+  it('leaves a run with no guard untouched: a write runs and is recorded', async () => {
+    remote = await remoteServer({ withWipe: true });
+    const relay = await openMcpRelay({ url: remote.url });
+    await expect(relay?.callTool('wipe', {})).resolves.toMatchObject({
+      content: [{ text: 'wiped', type: 'text' }],
+    });
+    expect(h.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'wipe' }));
     await relay?.close();
   });
 });

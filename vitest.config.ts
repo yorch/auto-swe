@@ -264,6 +264,14 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/agentRunAdmission.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/orchestrationApi',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/orchestrationApi.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/orchestration',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/orchestration.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/agentRun',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/agentRun.ts'),
       },

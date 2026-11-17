@@ -50,6 +50,8 @@
     "./lib/channelTask": "./dist/lib/channelTask.js",
     "./lib/agentRun": "./dist/lib/agentRun.js",
     "./lib/agentRunAdmission": "./dist/lib/agentRunAdmission.js",
+    "./lib/orchestration": "./dist/lib/orchestration.js",
+    "./lib/orchestrationApi": "./dist/lib/orchestrationApi.js",
     "./lib/agentRunFailure": "./dist/lib/agentRunFailure.js",
     "./lib/canonicalPath": "./dist/lib/canonicalPath.js",
     "./lib/runCallbacks": "./dist/lib/runCallbacks.js",

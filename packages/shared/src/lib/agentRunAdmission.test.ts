@@ -120,6 +120,36 @@ describe('loadAgentRunSlots', () => {
     );
     expect(arg.where.workRequest.templateId).toBe('tpl-1');
   });
+
+  it('charges a repo-less run to the team its work request bills', async () => {
+    const findMany = vi.fn(async (_args: unknown) => [
+      {
+        currentStatus: 'IMPLEMENTING',
+        repository: null,
+        temporalWorkflowId: 'w-repoless',
+        workRequest: { billingTeamId: 't9', createdAt: at(2) },
+      },
+      {
+        currentStatus: 'IMPLEMENTING',
+        repository: { teamId: 't1' },
+        temporalWorkflowId: 'w-repo',
+        workRequest: { billingTeamId: 'ignored', createdAt: at(3) },
+      },
+      {
+        currentStatus: 'IMPLEMENTING',
+        repository: null,
+        temporalWorkflowId: 'w-none',
+        workRequest: { billingTeamId: null, createdAt: at(4) },
+      },
+    ]);
+    const slots = await loadAgentRunSlots({ activeWorkflow: { findMany } }, 'tpl-1');
+    expect(slots.map((s) => s.teamId)).toEqual(['t9', 't1', null]);
+    // The per-team limit now sees the repo-less run.
+    expect(wouldAdmitNewRun(slots, 't9', { global: 10, perTeam: 1 })).toEqual({
+      admitted: false,
+      reason: 'team_limit',
+    });
+  });
 });
 
 describe('isWorkflowStatusFinished', () => {

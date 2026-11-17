@@ -257,6 +257,8 @@ export function formatPercent(p: number | null): string {
 type StatusMeta = {
   /** Background colour for the status dot */
   dotClass: string;
+  /** Replaces the status name as the visible text, for a status whose name alone says too little. */
+  label?: string;
   /** If true, dot pulses to indicate an in-flight workflow */
   live?: boolean;
 };
@@ -287,8 +289,11 @@ export const STATUS_META: Record<string, StatusMeta> = {
   PENDING: WARNING,
   RUNNING: INFO_LIVE,
   SKIPPED: NEUTRAL,
+  // ── Orchestration and child statuses ──
+  STARTING: { ...INFO_LIVE, label: 'starting' },
   SUCCESS: SUCCESS,
   TIMED_OUT: DANGER,
   UNKNOWN: NEUTRAL,
   VALIDATING_CONTEXT: INFO_LIVE,
+  WAITING: { ...WARNING, label: 'waiting for input' },
 };

@@ -197,6 +197,66 @@ describe('runAgentPrFeedbackTask — checks', () => {
   });
 });
 
+describe('runAgentPrFeedbackTask — a scoped writer’s follow-up', () => {
+  const originalWith = (payload: Record<string, unknown>) =>
+    m.findRun.mockResolvedValue({
+      template: { name: 'Agent Run', origin: 'system:agent-run', teamId: null },
+      workRequest: { description: 'the original task', payload: { agentRef: 'impl', ...payload } },
+    });
+
+  it('copies the original run’s path scopes, and never its orchestration id', async () => {
+    base();
+    originalWith({
+      orchestrationId: '0b1c2d3e-0000-4000-8000-000000000001',
+      pathScopes: ['docs/**'],
+    });
+    await runAgentPrFeedbackTask({ gather: gather(), request: request() });
+    const args = vi.mocked(runAgentTaskCore).mock.calls.at(-1)?.[0] as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(args.pathScopes).toEqual(['docs/**']);
+    expect(args).not.toHaveProperty('orchestrationId');
+    expect(args).not.toHaveProperty('orchestrated');
+    expect(args).not.toHaveProperty('steeringRunId');
+    // Without the guard an orchestration child's run had, its follow-up binds no MCP at all.
+    expect(args.withholdMcp).toBe(true);
+  });
+
+  it('does not withhold MCP from a plain agent run’s follow-up', async () => {
+    base();
+    originalWith({ pathScopes: ['docs/**'] });
+    await runAgentPrFeedbackTask({ gather: gather(), request: request() });
+    const args = vi.mocked(runAgentTaskCore).mock.calls.at(-1)?.[0] as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(args).not.toHaveProperty('withholdMcp');
+  });
+
+  it('leaves a direct agent run’s follow-up unscoped', async () => {
+    base();
+    await runAgentPrFeedbackTask({ gather: gather(), request: request() });
+    const args = vi.mocked(runAgentTaskCore).mock.calls.at(-1)?.[0] as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(args).not.toHaveProperty('pathScopes');
+  });
+
+  it.each([['docs/**'], [{ glob: 'x' }], [[1, 2]]])(
+    'fails closed on unreadable scopes %j instead of running unscoped',
+    async (bad) => {
+      base();
+      originalWith({ pathScopes: bad });
+      await expect(
+        runAgentPrFeedbackTask({ gather: gather(), request: request() })
+      ).rejects.toMatchObject({ nonRetryable: true, type: 'PR_FEEDBACK_SCOPES_UNREADABLE' });
+      expect(runAgentTaskCore).not.toHaveBeenCalled();
+    }
+  );
+});
+
 describe('runAgentPrFeedbackTask — prompt and CI logs', () => {
   it('prompts with the original task + fenced brief; never request.description', async () => {
     base();

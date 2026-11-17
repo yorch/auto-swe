@@ -1,6 +1,7 @@
 import type { McpToolDeps, ToolKit } from '../toolKit.js';
 import { deliveryDomain } from './delivery.js';
 import { libraryDomain } from './library.js';
+import { orchestrationsDomain } from './orchestrations.js';
 import { reportsDomain } from './reports.js';
 import { runEvidenceDomain } from './runEvidence.js';
 import { teamsDomain } from './teams.js';
@@ -35,6 +36,7 @@ export interface McpDomain {
 export const MCP_DOMAINS: readonly McpDomain[] = [
   deliveryDomain,
   libraryDomain,
+  orchestrationsDomain,
   reportsDomain,
   runEvidenceDomain,
   teamsDomain,

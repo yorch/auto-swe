@@ -37,6 +37,7 @@ export function detailParent(pathname: string): DetailParent | null {
     [/^\/pull-requests\/[^/]+\/?$/, { href: '/pull-requests', label: 'Pull requests' }],
     [/^\/epics\/[^/]+\/?$/, { href: '/epics', label: 'Epics' }],
     [/^\/campaigns\/[^/]+\/?$/, { href: '/campaigns', label: 'Campaigns' }],
+    [/^\/orchestrations\/[^/]+\/?$/, { href: '/orchestrations', label: 'Orchestrations' }],
     [/^\/docs\/[^/]+\/?$/, { href: '/docs', label: 'Docs' }],
     [/^\/teams\/[^/]+(?:\/|$)/, { href: '/admin/teams', label: 'Teams', section: 'Teams' }],
     [/^\/admin\/teams\/[^/]+\/?$/, { href: '/admin/teams', label: 'Teams' }],
@@ -318,6 +319,7 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       { href: '/epics', icon: 'epics', label: 'Epics', minRole: 'ENGINEER' },
       { href: '/campaigns', icon: 'layers', label: 'Campaigns', minRole: 'ENGINEER' },
+      { href: '/orchestrations', icon: 'branch', label: 'Orchestrations', minRole: 'ENGINEER' },
       { href: '/runs', icon: 'runs', label: 'All runs', minRole: 'ENGINEER' },
       {
         href: '/pull-requests',

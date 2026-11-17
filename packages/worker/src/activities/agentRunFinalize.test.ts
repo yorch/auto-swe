@@ -44,6 +44,7 @@ vi.mock('../lib/effectLedger.js', async (importOriginal) => ({
 import { AgentTracer } from '../lib/agentTracer.js';
 import {
   commitTrustedTree,
+  enforcePathScopes,
   type GateDeps,
   type GatedCommit,
   gateTrustedCommit,
@@ -455,5 +456,116 @@ describe('nulProbeScript (run under a real sh, against a real object store)', ()
     const { flagged } = await run([Buffer.from('hello')], [`${missing} 9`]);
     // Both counts are 0 for an unreadable blob, which used to read as "no NUL".
     expect(flagged).toEqual([missing]);
+  });
+});
+
+describe('gateTrustedCommit path scopes', () => {
+  const Z = '0'.repeat(40);
+  const entry = (status: string, p: string, oldMode = '100644', newMode = '100644') =>
+    `:${status === 'A' ? '000000' : oldMode} ${status === 'D' ? '000000' : newMode} ${Z} ${status === 'D' ? Z : BLOB} ${status}\0${p}\0`;
+  const run = (raw: string, extra: Record<string, unknown> = {}) => {
+    const { ws } = fakeWorkspace('t', { raw });
+    return gateTrustedCommit(ws, { ...args(), ...extra }, passDeps());
+  };
+  const scopes = ['src/lib/**', 'docs/*.md', 'README.md'];
+
+  it('passes tree, dir-glob and exact-file matches', async () => {
+    const raw = entry('A', 'src/lib/deep/x.ts') + entry('M', 'docs/a.md') + entry('M', 'README.md');
+    await expect(run(raw, { pathScopes: scopes })).resolves.toBeTruthy();
+  });
+
+  it.each([
+    ['sibling dir', entry('A', 'src/other/x.ts')],
+    ['dir-glob subdirectory', entry('A', 'docs/sub/a.md')],
+    ['dir-glob wrong extension', entry('A', 'docs/a.txt')],
+    ['deletion', entry('D', 'src/app.ts')],
+    ['case variant', entry('A', 'SRC/lib/x.ts')],
+    ['non-NFC path', entry('A', 'src/lib/cafe\u0301.ts').replace('src/lib/', 'docs/')],
+    ['mode change outside', entry('M', 'bin/run.sh', '100644', '100755')],
+  ])('refuses %s with AGENT_RUN_PATH_OUT_OF_SCOPE', async (_n, raw) => {
+    const f = await failureOf(run(raw, { pathScopes: scopes }));
+    expect(f.type).toBe('AGENT_RUN_PATH_OUT_OF_SCOPE');
+    expect(f.nonRetryable).toBe(true);
+  });
+
+  it('refuses symlink and traversal paths whichever rule sees them first', async () => {
+    for (const raw of [entry('M', 'link', '100644', '120000'), entry('A', 'src/lib/../../x.ts')]) {
+      const f = await failureOf(run(raw, { pathScopes: scopes }));
+      expect(['AGENT_RUN_PUSH_POLICY', 'AGENT_RUN_PATH_OUT_OF_SCOPE']).toContain(f.type);
+    }
+    const t = [{ newMode: '120000', newSha: BLOB, oldMode: '100644', path: 'link', status: 'T' }];
+    expect(() => enforcePathScopes(t, scopes, false)).toThrow(/outside the paths/);
+    const d = [
+      { newMode: '100644', newSha: BLOB, oldMode: '100644', path: 'src/lib/../../x', status: 'A' },
+    ];
+    expect(() => enforcePathScopes(d, scopes, false)).toThrow(/outside the paths/);
+  });
+
+  it('checks both sides of a rename (a delete plus an add)', async () => {
+    const raw = entry('D', 'src/app.ts') + entry('A', 'src/lib/app.ts');
+    const f = await failureOf(run(raw, { pathScopes: scopes }));
+    expect(f.message).toContain('src/app.ts');
+    expect(f.message).not.toContain('src/lib/app.ts');
+  });
+
+  it('lists at most 10 offenders, with the count, and no control characters', async () => {
+    const raw = Array.from({ length: 12 }, (_, i) => entry('A', `out/f${i}.ts`)).join('');
+    const f = await failureOf(run(raw, { pathScopes: scopes }));
+    expect(f.message).toContain('12 changed path');
+    expect(f.message).toContain('out/f9.ts');
+    expect(f.message).not.toContain('out/f10.ts');
+    // The classifier refuses such names first; the scope rule still never echoes them raw.
+    const changes = [
+      {
+        newMode: '100644',
+        newSha: BLOB,
+        oldMode: '100644',
+        path: 'out/bad\u202e\u0007name',
+        status: 'A',
+      },
+    ];
+    let msg = '';
+    try {
+      enforcePathScopes(changes, scopes, false);
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    expect(msg).toContain('out/bad??name');
+  });
+
+  it('fails closed on unparseable scopes', async () => {
+    for (const bad of [['../x'], [], 'src/**', [42], ['a/**/b']]) {
+      const f = await failureOf(run(entry('A', 'src/lib/x.ts'), { pathScopes: bad }));
+      expect(f.type).toBe('AGENT_RUN_PATH_OUT_OF_SCOPE');
+    }
+  });
+
+  it('fails closed for an orchestrated run with no scopes', async () => {
+    const f = await failureOf(run(entry('A', 'a.ts'), { orchestrated: true }));
+    expect(f.type).toBe('AGENT_RUN_PATH_OUT_OF_SCOPE');
+  });
+
+  it('runs before the gate and the diff-size bound, and pushes nothing', async () => {
+    const deps = passDeps();
+    const { ws } = fakeWorkspace('t', { raw: entry('A', 'out/x.ts') });
+    await failureOf(gateTrustedCommit(ws, { ...args(), pathScopes: scopes }, deps));
+    expect(deps.scanDiffForSecurityIssues).not.toHaveBeenCalled();
+    expect(ws.gitAuthed).not.toHaveBeenCalled();
+  });
+
+  it('a push-policy violation still reports AGENT_RUN_PUSH_POLICY first', async () => {
+    const f = await failureOf(
+      run(entry('A', 'src/lib/l', '100644', '120000'), { pathScopes: scopes })
+    );
+    expect(f.type).toBe('AGENT_RUN_PUSH_POLICY');
+  });
+
+  it('without pathScopes the outcome is unchanged', async () => {
+    const wide = entry('A', 'anywhere/at/all.ts') + entry('D', 'x/y.ts');
+    const a = await run(wide);
+    const b = await run(wide, { orchestrated: false, pathScopes: undefined });
+    expect(b.sha).toBe(a.sha);
+    expect(b.filesChanged).toEqual(a.filesChanged);
+    expect(b.diff).toBe(a.diff);
   });
 });

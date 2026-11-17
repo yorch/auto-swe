@@ -118,6 +118,7 @@ describe('allowlisted run outcomes', () => {
     });
   });
   it.each([
+    'AGENT_RUN_PATH_OUT_OF_SCOPE',
     'AGENT_RUN_PUSH_POLICY',
     'SECURITY_GATE_FAILURE',
     'BUDGET_EXCEEDED',

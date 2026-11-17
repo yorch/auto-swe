@@ -32,6 +32,32 @@ export const READ_ONLY = {
   readOnlyHint: true,
 } as const;
 
+/** Annotations of a write tool: not read-only, never destructive, and it reaches beyond the platform. */
+export const WRITE = {
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
+  readOnlyHint: false,
+} as const;
+
+/**
+ * The longest a tool may wait, in seconds: 600 when the request asked for progress (a client that
+ * sent a `progressToken` is watching and keeps its connection alive on each notification), 50
+ * otherwise, which stays under the usual proxy idle timeout.
+ */
+export const maxWaitSeconds = (progressToken: unknown): number =>
+  progressToken === undefined ? 50 : 600;
+
+/** The signal that ends a wait: the MCP request's, joined with the HTTP request's when there is one. */
+export function requestSignal(extra: {
+  http?: { req?: { signal: AbortSignal } };
+  mcpReq: { signal: AbortSignal };
+}): AbortSignal {
+  return extra.http?.req
+    ? AbortSignal.any([extra.mcpReq.signal, extra.http.req.signal])
+    : extra.mcpReq.signal;
+}
+
 export type ToolResult = {
   content: Array<{ type: 'text'; text: string }>;
   isError?: boolean;
@@ -69,6 +95,64 @@ export function failureFor(status: number, notFound = 'Not found.'): ToolResult 
   }
 }
 
+/** The route's error code (`{ error: { code } }`), if it sent one. */
+export const errorCode = (body: unknown): string | undefined => {
+  const code = (body as { error?: { code?: unknown } } | undefined)?.error?.code;
+  return typeof code === 'string' ? code : undefined;
+};
+
+/**
+ * A fixed message for a write refusal, chosen by status and, where several refusals share one,
+ * by the route's error code. The route's own text is never relayed: it can echo input.
+ */
+export function writeFailure(response: BridgeResponse, notFound: string): ToolResult {
+  const code = errorCode(response.body);
+  switch (response.status) {
+    case 402:
+      return failure(
+        "Your organization's monthly budget is used up, so no new run can start. Nothing was launched."
+      );
+    case 403:
+      if (code === 'MCP_TEMPLATE_RUNS_DISABLED') {
+        return failure(
+          'Template launches through MCP are turned off. Ask an administrator to enable them. Nothing was launched.'
+        );
+      }
+      if (code === 'MCP_DELIVER_MODE_NOT_ALLOWED') {
+        return failure('This delivery mode is not allowed through MCP. Nothing was launched.');
+      }
+      return code === 'MCP_WRITE_DISABLED'
+        ? failure('Write access is turned off on this platform.')
+        : failureFor(403);
+    case 409:
+      if (code === 'IDEMPOTENCY_KEY_IN_PROGRESS' || code === 'IDEMPOTENCY_KEY_RETRY') {
+        return failure(
+          'A request with this idempotency key is still starting. Retry shortly with the same key.'
+        );
+      }
+      // The override is deliberately not a tool input: a person decides to launch it as it is.
+      return code === 'UNCHANGED_AFTER_NOT_ACTIONABLE'
+        ? failure(
+            'This same request stopped as not actionable before and nothing has changed. Change it (add the ticket text or acceptance criteria) and submit again, or have a person launch it as it is from the dashboard or the CLI. Nothing was launched.'
+          )
+        : failure('The run is not in a state where this can be done.');
+    case 422:
+      return code === 'IDEMPOTENCY_KEY_MISMATCH'
+        ? failure(
+            'That idempotency key was already used for a different request. Use a new key for a different request.'
+          )
+        : failure('The platform refused the request.');
+    case 429:
+      return code === 'MCP_RUN_CAP_REACHED'
+        ? failure(
+            'You already have the maximum number of runs in flight. Wait for one to finish, or cancel one, then try again.'
+          )
+        : failure('Too many write calls. Wait a minute and try again.');
+    default:
+      return failureFor(response.status, notFound);
+  }
+}
+
 export const query = (entries: Record<string, string | number | undefined>) => {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(entries)) {
@@ -81,6 +165,8 @@ export const query = (entries: Record<string, string | number | undefined>) => {
 
 export interface ToolKit {
   app: FastifyInstance;
+  /** For a tool that needs the request (`extra`) a {@link readTool} does not hand on: waits. */
+  server: McpServer;
   caller: McpCaller;
   /** The dashboard origin without a trailing slash. */
   origin: string;
@@ -154,5 +240,5 @@ export function createToolKit(server: McpServer, deps: McpToolDeps, caller: McpC
     );
   }
 
-  return { app, caller, get, origin: deps.dashboardOrigin.replace(/\/+$/, ''), readTool };
+  return { app, caller, get, origin: deps.dashboardOrigin.replace(/\/+$/, ''), readTool, server };
 }

@@ -634,6 +634,7 @@ model ApiToken {
 /// and may launch only what its allowlists name — an empty list allows nothing.
 /// Its runs use the platform credential.
 model ServicePrincipal {
+  orchestrations Orchestration[] @relation("OrchestrationService")
   id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   teamId        String     @map("team_id") @db.Uuid
   team          Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
@@ -671,6 +672,7 @@ model ServicePrincipal {
 /// `git_repo` specifics (GitHub coords, default branch, gate commands) stay as
 /// typed columns for parity and migrate further in later slices.
 model Connection {
+  orchestrations Orchestration[] @relation("OrchestrationRepo")
   knowledgeBase           KnowledgeBase?      @relation("KnowledgeBaseConnection")
   knowledgeBaseLinks      KnowledgeBaseLink[] @relation("KnowledgeBaseRepoLinks")
   id                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -1303,6 +1305,7 @@ model RepoDependency {
 /// `monthlyBudgetUsdCents` is optional; when set, work-request creation is rejected
 /// once the org's spend for the current calendar month meets or exceeds the cap.
 model Organization {
+  orchestrations Orchestration[]
   githubInstallations GitHubInstallation[]
   knowledgeBases              KnowledgeBase[]
   id                          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -1345,6 +1348,7 @@ model Organization {
 }
 
 model Team {
+  orchestrations       Orchestration[]
   knowledgeBaseShares  KnowledgeBaseTeamShare[]
   knowledgeBaseLinks   KnowledgeBaseLink[]
   id                   String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -1792,6 +1796,10 @@ model ChannelBudgetHold {
 }
 
 model User {
+  launchedOrchestrations Orchestration[] @relation("OrchestrationLauncher")
+  orchestrationMessages OrchestrationMessage[] @relation("OrchestrationMessageAuthor")
+  decidedOrchestrationApprovals OrchestrationApproval[] @relation("OrchestrationApprovalDecider")
+  runSteeringMessages RunSteeringMessage[] @relation("RunSteeringAuthor")
   createdTeamSecrets        TeamSecret[]       @relation("TeamSecretCreator")
   createdTeamSecretGrants   TeamSecretGrant[]  @relation("TeamSecretGrantCreator")
   createdReviewPresets           ReviewPreset[]           @relation("ReviewPresetCreator")
@@ -1953,6 +1961,8 @@ model Verification {
 /// the scalar FK (`workRequestId`) are intentionally kept stable across the
 /// rename so the public API shape doesn't churn.
 model RunInput {
+  orchestrationRoot Orchestration? @relation("OrchestrationRootRequest")
+  orchestrationChildren OrchestrationChild[] @relation("OrchestrationChildRequest")
   id                      String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   externalTicketId        String      @map("external_ticket_id")
   /// True when the platform generated `externalTicketId` (a launch that named no
@@ -2419,6 +2429,11 @@ enum LessonRecallArm {
 /// One execution of a template. `specSnapshot` is the parsed WorkflowSpec at
 /// start time, so live edits to the template do not affect this run.
 model WorkflowRun {
+  /// The orchestration that started this run as a child, when one did. Null otherwise.
+  orchestrationId String? @map("orchestration_id") @db.Uuid
+  orchestration   Orchestration? @relation("OrchestrationRuns", fields: [orchestrationId], references: [id], onDelete: SetNull)
+  orchestrationChildren OrchestrationChild[] @relation("OrchestrationChildRun")
+  steeringMessages RunSteeringMessage[]
   lessonRecallArm     LessonRecallArm? @map("lesson_recall_arm")
   lessonRecallHeldOut Boolean          @default(false) @map("lesson_recall_held_out")
   reviewOfRunId         String?              @map("review_of_run_id") @db.Uuid
@@ -2638,6 +2653,7 @@ model WorkflowRun {
   @@index([updatedAt, startedAt])
   @@index([reviewOfRunId])
   @@index([reviewPresetId])
+  @@index([orchestrationId])
   @@map("workflow_runs")
 }
 
@@ -5323,4 +5339,197 @@ model CampaignTarget {
   @@index([teamId])
   @@index([connectionId])
   @@map("campaign_targets")
+}
+
+// ── Orchestrated agent runs ──────────────────────────────────────────────────
+
+enum OrchestrationStatus {
+  ACTIVE
+  WAITING
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum OrchestrationChildRole {
+  READER
+  WRITER
+}
+
+enum OrchestrationMessageRole {
+  USER
+  ORCHESTRATOR
+  SYSTEM
+}
+
+enum OrchestrationMessageKind {
+  TEXT
+  ATTACH_REQUEST
+  APPROVAL_REQUEST
+  CHILD_RESULT
+  NOTICE
+}
+
+enum OrchestrationApprovalStatus {
+  PENDING
+  APPROVED
+  DENIED
+  EXPIRED
+}
+
+/// One conversation with an `orchestrator` agent and the child agent runs it started. The Temporal
+/// workflow id is `orch-<id>`. `teamId`/`orgId` name the team the orchestrator's own spend and
+/// pins belong to; children bill the repository's owning team once a repository is attached.
+model Orchestration {
+  id             String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId         String                @map("team_id") @db.Uuid
+  team           Team                  @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  orgId          String?               @map("org_id") @db.Uuid
+  organization   Organization?         @relation(fields: [orgId], references: [id], onDelete: SetNull)
+  /// The person every child acts as. Null when a service principal launched it (`serviceId`).
+  launchedById   String?               @map("launched_by_id") @db.Uuid
+  launchedBy     User?                 @relation("OrchestrationLauncher", fields: [launchedById], references: [id], onDelete: SetNull)
+  serviceId      String?               @map("service_id") @db.Uuid
+  service        ServicePrincipal?     @relation("OrchestrationService", fields: [serviceId], references: [id], onDelete: SetNull)
+  /// Null until a human attaches one; set at most once together with `repoAttachedAt`.
+  repoId         String?               @map("repo_id") @db.Uuid
+  repo           Connection?           @relation("OrchestrationRepo", fields: [repoId], references: [id], onDelete: SetNull)
+  repoAttachedAt DateTime?             @map("repo_attached_at") @db.Timestamptz
+  status         OrchestrationStatus   @default(ACTIVE)
+  title          String
+  /// Agent refs (`key` or `key@version`) the orchestrator may spawn.
+  allowlist      String[]              @default([])
+  /// The complete set of MCP connections children may bind.
+  connectionIds  String[]              @default([]) @map("connection_ids") @db.Uuid
+  budgetTier     String                @default("STANDARD") @map("budget_tier")
+  /// `none`, `branch` or `draft_pr`: what the attach card offers as the delivery default.
+  deliveryDefault String               @default("none") @map("delivery_default")
+  /// The work request that carries the orchestrator's own ledger identity (team, org, tier, spend).
+  workRequestId  String?               @unique @map("work_request_id") @db.Uuid
+  workRequest    RunInput?             @relation("OrchestrationRootRequest", fields: [workRequestId], references: [id], onDelete: SetNull)
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  endedAt        DateTime?             @map("ended_at") @db.Timestamptz
+  children       OrchestrationChild[]
+  messages       OrchestrationMessage[]
+  approvals      OrchestrationApproval[]
+  runs           WorkflowRun[]         @relation("OrchestrationRuns")
+
+  @@index([teamId, updatedAt])
+  @@index([launchedById, updatedAt])
+  @@index([status, updatedAt])
+  @@index([repoId])
+  @@index([orgId])
+  @@index([serviceId])
+  @@map("orchestrations")
+}
+
+/// One agent run started by an orchestrator intent. The result is the child's one structured
+/// `ChildResult` (`shared/lib/orchestration.ts`).
+model OrchestrationChild {
+  id              String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orchestrationId String                 @map("orchestration_id") @db.Uuid
+  orchestration   Orchestration          @relation(fields: [orchestrationId], references: [id], onDelete: Cascade)
+  workRequestId   String                 @map("work_request_id") @db.Uuid
+  workRequest     RunInput               @relation("OrchestrationChildRequest", fields: [workRequestId], references: [id], onDelete: Restrict)
+  runId           String?                @map("run_id") @db.Uuid
+  run             WorkflowRun?           @relation("OrchestrationChildRun", fields: [runId], references: [id], onDelete: SetNull)
+  agentKey        String                 @map("agent_key")
+  role            OrchestrationChildRole
+  label           String
+  /// Empty for a reader. Disjoint across the orchestration's writers.
+  pathScopes      String[]               @default([]) @map("path_scopes")
+  /// One of CHILD_STATUSES (`STARTING`, `RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED`); a CHECK
+  /// constraint in the migration holds it.
+  status          String                 @default("STARTING")
+  resultJson      Json?                  @map("result_json")
+  costUsd         Float                  @default(0) @map("cost_usd")
+  createdAt       DateTime               @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  endedAt         DateTime?              @map("ended_at") @db.Timestamptz
+  messages        OrchestrationMessage[]
+  approvals       OrchestrationApproval[]
+
+  @@unique([orchestrationId, workRequestId])
+  @@index([orchestrationId, createdAt])
+  @@index([runId])
+  @@index([workRequestId])
+  @@map("orchestration_children")
+}
+
+/// The orchestration transcript: the launcher's messages, the orchestrator's replies, system
+/// notices and the cards the page renders from `kind` + `payload`.
+model OrchestrationMessage {
+  id              String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orchestrationId String                   @map("orchestration_id") @db.Uuid
+  orchestration   Orchestration            @relation(fields: [orchestrationId], references: [id], onDelete: Cascade)
+  role            OrchestrationMessageRole
+  /// Set for a message addressed to, or reporting, a child.
+  childId         String?                  @map("child_id") @db.Uuid
+  child           OrchestrationChild?      @relation(fields: [childId], references: [id], onDelete: SetNull)
+  authorId        String?                  @map("author_id") @db.Uuid
+  author          User?                    @relation("OrchestrationMessageAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  body            String                   @default("")
+  kind            OrchestrationMessageKind @default(TEXT)
+  payload         Json?
+  createdAt       DateTime                 @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([orchestrationId, createdAt])
+  @@index([childId])
+  @@index([authorId])
+  @@map("orchestration_messages")
+}
+
+/// An MCP tool call that is not provably read-only, held until the launcher decides. Stores a
+/// redacted digest of the arguments, never the values.
+model OrchestrationApproval {
+  id              String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orchestrationId String                      @map("orchestration_id") @db.Uuid
+  orchestration   Orchestration               @relation(fields: [orchestrationId], references: [id], onDelete: Cascade)
+  childId         String?                     @map("child_id") @db.Uuid
+  child           OrchestrationChild?         @relation(fields: [childId], references: [id], onDelete: SetNull)
+  /// The child's run, when the call came from one. No foreign key: the record of an approval
+  /// outlives the run row.
+  runId           String?                     @map("run_id") @db.Uuid
+  /// Identity of the one call this row decides (run, step and tool call), so a retried activity
+  /// finds its own approval instead of opening a second one. Unique per orchestration; a CHECK in
+  /// the migration bounds its length at 200.
+  callKey         String                      @map("call_key")
+  /// The MCP connection the call targets. No foreign key: deleting a connection must not erase
+  /// the record of what was approved on it.
+  connectionId    String                      @map("connection_id") @db.Uuid
+  toolName        String                      @map("tool_name")
+  argumentsDigest String                      @map("arguments_digest")
+  status          OrchestrationApprovalStatus @default(PENDING)
+  decidedById     String?                     @map("decided_by_id") @db.Uuid
+  decidedBy       User?                       @relation("OrchestrationApprovalDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt       DateTime?                   @map("decided_at") @db.Timestamptz
+  /// The recorded outcome of the approved call, so a retried activity returns it instead of
+  /// running the call again.
+  outcome         Json?
+  expiresAt       DateTime                    @map("expires_at") @db.Timestamptz
+  createdAt       DateTime                    @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([orchestrationId, callKey])
+  @@index([orchestrationId, createdAt])
+  @@index([status, expiresAt])
+  @@index([childId])
+  @@index([decidedById])
+  @@map("orchestration_approvals")
+}
+
+/// A message to a running agent, drained by the agent loop at step boundaries.
+model RunSteeringMessage {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId       String      @map("run_id") @db.Uuid
+  run         WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  authorId    String?     @map("author_id") @db.Uuid
+  author      User?       @relation("RunSteeringAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  body        String
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  deliveredAt DateTime?   @map("delivered_at") @db.Timestamptz
+
+  @@index([runId, createdAt])
+  @@index([authorId])
+  @@map("run_steering_messages")
 }

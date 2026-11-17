@@ -5,8 +5,9 @@ import { type AuthInfo, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../mcpOAuth.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../ticketId.js';
-import { type BridgeResponse, callerFromAuthInfo, type McpCaller } from './bridge.js';
+import { callerFromAuthInfo, type McpCaller } from './bridge.js';
 import { MCP_DOMAINS } from './domains/index.js';
+import { registerOrchestrationWriteTools } from './orchestrationWriteTools.js';
 import {
   agentRunLimits,
   agentsOutput,
@@ -35,14 +36,19 @@ import {
 } from './projections.js';
 import {
   createToolKit,
+  errorCode,
   failure,
   failureFor,
   type McpToolDeps,
+  maxWaitSeconds,
   ok,
   pageInput,
   query,
   READ_ONLY,
+  requestSignal,
   type ToolResult,
+  WRITE,
+  writeFailure,
 } from './toolKit.js';
 
 export type { McpToolDeps } from './toolKit.js';
@@ -168,13 +174,11 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
       title: 'Wait for a run',
     },
     async (args, extra): Promise<ToolResult> => {
-      const signal = extra.http?.req
-        ? AbortSignal.any([extra.mcpReq.signal, extra.http.req.signal])
-        : extra.mcpReq.signal;
+      const signal = requestSignal(extra);
       const progressToken = extra.mcpReq._meta?.progressToken;
       try {
         const deadline =
-          Date.now() + Math.min(args.timeoutSeconds, progressToken === undefined ? 50 : 600) * 1000;
+          Date.now() + Math.min(args.timeoutSeconds, maxWaitSeconds(progressToken)) * 1000;
         let progress = 0;
         let initial: string | null | undefined;
         while (!signal.aborted) {
@@ -419,77 +423,15 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
   'submit_work_request',
   'start_agent_run',
   'cancel_run',
+  'orchestrations_launch',
+  'orchestrations_message',
 ]);
 
-const WRITE = {
-  destructiveHint: false,
-  idempotentHint: true,
-  openWorldHint: true,
-  readOnlyHint: false,
-} as const;
-
-/** Route error codes a write tool understands. Anything else is a fixed generic message. */
-const errorCode = (body: unknown): string | undefined => {
-  const code = (body as { error?: { code?: unknown } } | undefined)?.error?.code;
-  return typeof code === 'string' ? code : undefined;
-};
-
 /**
- * A fixed message for a write refusal, chosen by status and, where several refusals share one,
- * by the route's error code. The route's own text is never relayed: it can echo input.
- */
-function writeFailure(response: BridgeResponse, notFound: string): ToolResult {
-  const code = errorCode(response.body);
-  switch (response.status) {
-    case 402:
-      return failure(
-        "Your organization's monthly budget is used up, so no new run can start. Nothing was launched."
-      );
-    case 403:
-      if (code === 'MCP_TEMPLATE_RUNS_DISABLED') {
-        return failure(
-          'Template launches through MCP are turned off. Ask an administrator to enable them. Nothing was launched.'
-        );
-      }
-      if (code === 'MCP_DELIVER_MODE_NOT_ALLOWED') {
-        return failure('This delivery mode is not allowed through MCP. Nothing was launched.');
-      }
-      return code === 'MCP_WRITE_DISABLED'
-        ? failure('Write access is turned off on this platform.')
-        : failureFor(403);
-    case 409:
-      if (code === 'IDEMPOTENCY_KEY_IN_PROGRESS' || code === 'IDEMPOTENCY_KEY_RETRY') {
-        return failure(
-          'A request with this idempotency key is still starting. Retry shortly with the same key.'
-        );
-      }
-      // The override is deliberately not a tool input: a person decides to launch it as it is.
-      return code === 'UNCHANGED_AFTER_NOT_ACTIONABLE'
-        ? failure(
-            'This same request stopped as not actionable before and nothing has changed. Change it (add the ticket text or acceptance criteria) and submit again, or have a person launch it as it is from the dashboard or the CLI. Nothing was launched.'
-          )
-        : failure('The run is not in a state where this can be done.');
-    case 422:
-      return code === 'IDEMPOTENCY_KEY_MISMATCH'
-        ? failure(
-            'That idempotency key was already used for a different request. Use a new key for a different request.'
-          )
-        : failure('The platform refused the request.');
-    case 429:
-      return code === 'MCP_RUN_CAP_REACHED'
-        ? failure(
-            'You already have the maximum number of runs in flight. Wait for one to finish, or cancel one, then try again.'
-          )
-        : failure('Too many write calls. Wait a minute and try again.');
-    default:
-      return failureFor(response.status, notFound);
-  }
-}
-
-/**
- * The write tools: `submit_work_request` and `cancel_run`, registered only for a token that holds
- * `mcp:write` (which the verifier grants only while `mcp.writeToolsEnabled` is on). Neither can
- * approve, merge or answer a human step: no tool does, and the routes they reach do none of it.
+ * The write tools, registered only for a token that holds `mcp:write` (which the verifier grants
+ * only while `mcp.writeToolsEnabled` is on). None can approve, merge or answer a human step, and
+ * none can attach a repository, decline one, decide a tool-call approval or end an orchestration:
+ * no tool does, and the routes they reach do none of it.
  */
 export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller: McpCaller) {
   const { app, bridge } = deps;
@@ -844,6 +786,7 @@ export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller:
       }
     }
   );
+  registerOrchestrationWriteTools(server, deps, caller);
 }
 
 /**

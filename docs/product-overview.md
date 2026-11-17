@@ -242,6 +242,9 @@ real repository produces a pull request worth merging. Verifying the Temporal, D
 end to end requires the full infrastructure stack, and the channel assistant in particular is newly
 built rather than validated under sustained real-world use.
 
+Orchestrated agent runs are off by default: an orchestration can be launched only while an administrator
+has set `orchestration.enabled`.
+
 **A non-SWE workflow has its own way in.** Two entry points take a generic payload validated against
 the template's declared `inputSchema`, with no ticket ID and no repository required:
 

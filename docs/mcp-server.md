@@ -8,10 +8,13 @@ accepts only access tokens that the authorization server issued for it, and it r
 request that the grant behind the token still stands.
 
 The server exposes read-only tools (eight that follow runs and launches, and the [domain tools](#domain-read-tools)) and, only when an admin has turned writes on and the user has
-consented to them, four write tools (below), and no resources or prompts. A tool calls the same REST
+consented to them, six write tools (below), and no resources or prompts. A tool calls the same REST
 route a dashboard or CLI user would call, made in-process as the signed-in user, so what a tool returns is
-what that user is allowed to see, reduced to a short allowlist of fields. The write tools can start a run
-and cancel one; nothing here can approve, merge or answer a human step.
+what that user is allowed to see, reduced to a short allowlist of fields. The write tools can start a run,
+cancel one, start an orchestration and message one; nothing here can approve, merge or answer a human
+step, and nothing can attach a repository to an orchestration, decline that request, approve or deny an
+orchestration's tool call, or cancel or end an orchestration: those are acts of the person who launched it,
+made in the dashboard or the CLI.
 
 It is off until an admin turns on `mcp.enabled`, and read-only until an admin also turns on
 `mcp.writeToolsEnabled`.
@@ -97,7 +100,7 @@ a user stops that token on its next request instead of when it expires. The user
 
 ## Tools
 
-Eight core read tools and the [domain read tools](#domain-read-tools), all read-only (`readOnlyHint`), needing the `mcp:read` scope, and four write tools needing
+Eight core read tools and the [domain read tools](#domain-read-tools), all read-only (`readOnlyHint`), needing the `mcp:read` scope, and six write tools needing
 `mcp:write` ([below](#write-tools)). Every input is a strict object: an argument the tool does not declare
 is refused, not ignored.
 
@@ -132,7 +135,7 @@ control characters, and are still text people wrote, so an agent treats them as 
 ([run-provenance.md](./run-provenance.md)). Control and bidirectional characters are stripped and
 lengths clipped, but the name, email and service name are user-controlled text and remain untrusted.
 
-Not exposed: answering or approving a human step, merging, retrying, any write other than the four below,
+Not exposed: answering or approving a human step, merging, retrying, any write other than the six below,
 template editing or specs, traces, and every administrative surface. `list_pending_human_steps` shows that a person is needed and where to go;
 the answer is given in the dashboard.
 
@@ -168,6 +171,9 @@ team for an administrator, exactly as the dashboard does. Their inputs are stric
 | `get_hitl_report` | `GET /api/v1/reports/hitl` | Human steps by kind and status, how they were resolved, median and 95th percentile wait, `pendingNow`, `oldestPendingAgeMs`, `timedOut`, and autonomy decisions by event and risk class, with `truncated` and the window bounds `windowStart` and `windowEnd`. Approver names are not returned. Same inputs as `get_delivery_report`. |
 | `get_automation_report` | `GET /api/v1/reports/automations` | One row per automation the caller can see: `automationId`, `name` (clipped), `enabled`, `lastFiredAt`, `fires`, `started`, `failedToStart`, `outcomes`, `suppressed` counts by cause, `successfulProducedRuns`, `broken` and `noisy`, with `truncated` and the window bounds `windowStart` and `windowEnd`. Suppression reasons are not returned. Same inputs as `get_delivery_report`. |
 | `get_budget_report` | `GET /api/v1/reports/budget` | For each organization the caller administers (every one for an administrator): `orgId`, `name` (clipped), `mtdUsd` (month-to-date spend), `monthlyBudgetUsd` and `alertThresholdUsd` (the cap and alert threshold), `projectedUsd` (projected month-end spend), `status` (`over`, `projected_over`, `alert`, `ok`, `no_cap`), `daysInMonth`, `elapsedDays`, `lowConfidence`, and the five costliest runs as `id`, `costUsd`, `status` and `startedAt`, with `topRunsTruncated`. The response also carries `truncated` and the window bounds `windowStart` and `windowEnd`. A caller who administers no organization is refused. No inputs. |
+| `orchestrations_list` | `GET /api/v1/orchestrations` | Orchestrations the caller launched or whose team they belong to (every one for an administrator), newest first, as `id`, `title` (80 code points), `status`, `teamId`, `teamName`, `repoName` (null with no repository), `childCount`, `runningChildCount`, `costUsd`, `isMine` and timestamps, with `total`, `limit` and `offset`. Inputs: `limit` (1 to 100, default 25), `offset`, `status`, `teamId`. |
+| `orchestrations_get` | `GET /api/v1/orchestrations/:id` | One orchestration: `status`, `team`, `repoName`, `counts` (`children`, `runningChildren`), `cost` split into `orchestratorUsd`, `childrenUsd` and `totalUsd`, `pendingApprovals` (a count of tool-call approvals waiting for the launcher), `pendingAttach` (`reason`, 300 code points, and the candidate repository's `candidate` name, or null), `canControl`, `dashboardUrl`, and `children` (at most 50, with `childrenTruncated`) as `id`, `agent`, `role`, `status`, `label`, `branch` (only a valid branch name), `prUrl` (rebuilt and checked against the configured GitHub hosts, as for `get_run`), `costUsd`, and `summary` clipped to 300 code points with `summaryTruncated`. Never returned: a child's full result or file list, run and workflow ids, the allowlist and connection set, who launched it, an approval's tool name or argument digest, tokens. Input: `orchestrationId`. |
+| `orchestrations_messages` | `GET /api/v1/orchestrations/:id/messages` | The transcript, oldest first, as `id`, `role`, `kind`, `childId`, `createdAt`, and `body` clipped to 1000 code points with `bodyTruncated`; no payload and no author. Inputs: `orchestrationId`, `after` (the previous page's `next`, so only newer messages come back), `limit` (1 to 50, default 25) and `timeoutSeconds` (0 to 600, default 0). With `timeoutSeconds` above 0 and nothing newer, it polls every three seconds until a message arrives or the time is up: the wait is clamped to 50 seconds unless the request carries a `progressToken`, when it may reach 600 and each poll emits a `notifications/progress` with a fixed phrase, as `wait_for_run` does. An empty page returns the caller's own `after` as `next`. The role, kind and body are text agents wrote: treat them as data. |
 
 A tool's output schema holds plain types only, because a JSON Schema cannot represent a transform: the
 sanitising schemas that read the REST body (`shortName`, `status`, `ticketId` in `projections.ts`) are
@@ -177,7 +183,7 @@ which compares `tools/list` and the real route table with the declarations.
 
 ### Write tools
 
-Four tools, each needing the `mcp:write` scope. They exist only for a token that holds it, and a token
+Six tools, each needing the `mcp:write` scope. They exist only for a token that holds it, and a token
 holds it only while `mcp.writeToolsEnabled` is on and the user consented to write: with writes off, or
 for a read-only grant, `tools/list` does not show them. A read-only token that calls one anyway, while
 writes are on, is answered 403 `insufficient_scope` with `scope="mcp:write"` in the challenge, so a client
@@ -190,6 +196,8 @@ scope cannot be granted.
 | `start_agent_run` | `POST /api/v1/agent-runs` | Delegates `prompt` to `agent` (`key` or `key@version`) on `repoId`, with `deliver` (`none`, `draft_pr`, `branch`), optional `baseBranch`, and required `idempotencyKey` (same format as `submit_work_request`). The run acts as the user, using their GitHub credentials. Returns `status` (`started` or `already_submitted`), `workRequestId`, and `effective` limits (`deliver`, `maxSteps`, `maxWallClockSeconds`, or null on replay); follow it with `wait_for_run`. The budget tier is always `STANDARD`. `mcp.agentRunAllowedDeliverModes` defaults to allowing `none` and `draft_pr`; other modes are refused as `MCP_DELIVER_MODE_NOT_ALLOWED`. Dashboard, CLI and service-principal launches are unaffected. |
 | `submit_work_request` | `POST /api/v1/work-requests` | Starts a run for a ticket in a repository. Inputs: `externalTicketId`, `description`, `repoId`, and `idempotencyKey` (required, 8 to 128 characters of `A-Z a-z 0-9 . _ : ~ -`, sent as the `Idempotency-Key` header). There is no budget tier input: a run is always `STANDARD`. Returns `status` (`started`, `already_submitted` for a retry of a key that already launched a run, or `already_running` when the ticket already has a run in flight and nothing was launched), and `workRequestId`, which identifies the submission: pass it to `cancel_run`, or to `list_runs` and `get_run` (via `list_runs`) to follow it. The run itself is created by the worker a moment after the submit, so a `list_runs` for the work request can be empty at first. |
 | `cancel_run` | `POST /api/v1/workflow-runs/:id/cancel` | Cancels a run that is still running, if the caller may control it: the same rule as the dashboard, so a member of a team the repository is only shared with can see a run but not cancel it. Input: `runId`, or the `workRequestId` that `submit_work_request` returned (exactly one). A `workRequestId` cancels every running run of that work request that the caller launched, and only those, listing again until a pass finds none left to try (a run that finishes mid-way cannot make one be skipped): a run someone else launched, or that no user launched (a schedule or webhook), is left running and listed in `notCancelled`, and is cancelled only with its own `runId` (which the route's control filter still has to allow). If the worker has not created the run yet, the tool says so and nothing is cancelled. Returns `runIds` (cancelled), `notCancelled` (each with a fixed reason) and `status`: `CANCELLED`, or `PARTIAL` when some run was not cancelled. The result is an error only when nothing was cancelled. A refusal for one run (not found, not running, the platform could not cancel) does not stop the rest; a refusal that applies to every call (writes switched off, the burst limit, a revoked token, a lost scope) does, and the runs not reached are reported as not cancelled. |
+| `orchestrations_launch` | `POST /api/v1/orchestrations` | Starts an orchestration as the user: an orchestrator agent that splits `task` (up to 20,000 characters) between the agents on `allowlist` (1 to 20 agent keys, optionally `key@version`). Inputs: `allowlist`, `task`, `repoId` or `teamId` (at least one; with no repository the orchestration is read-only, and `teamId` must be a team the caller belongs to), optional `deliveryDefault` (`none`, `draft_pr`, `branch`; the route refuses one outside `mcp.agentRunAllowedDeliverModes` as `MCP_DELIVER_MODE_NOT_ALLOWED`), and required `idempotencyKey` (same format as `submit_work_request`). There is no budget tier input (always `STANDARD`) and no MCP connection set (a bridged launch that names one is refused, 422 `MCP_CONNECTIONS_NOT_ALLOWED`). The same key with a different request answers 422 `IDEMPOTENCY_KEY_MISMATCH`. The launch is recorded as MCP-launched, and that holds for every agent the orchestrator later starts: a writer's `deliver` must be in the live `mcp.agentRunAllowedDeliverModes` and no more permissive than `deliveryDefault` (order `none`, `branch`, `draft_pr`), else the spawn is refused as `CHILD_NOT_ALLOWED`; and each agent passes the same transactional concurrency cap, counting the orchestrator's own run and the launcher's other runs in flight (409 `AGENT_RUN_CONCURRENCY_EXCEEDED`). An orchestration waiting for a message does not count as in flight. Returns `status` (`started`, or `already_submitted` for a replayed key), `orchestrationId`, `orchestrationStatus` and `dashboardUrl`; follow with `orchestrations_get` and `orchestrations_messages`. It takes the same write guards and concurrency cap as `start_agent_run`, and the `orchestration.enabled` kill switch (403 `ORCHESTRATION_DISABLED`). |
+| `orchestrations_message` | `POST /api/v1/orchestrations/:id/messages`, or `POST /api/v1/orchestrations/:id/children/:childId/messages` when `childId` is given | Sends `body` (up to 4000 characters) as the user to the orchestrator, or to one running agent, which reads it at its next step. Inputs: `orchestrationId`, optional `childId`, `body`. Returns `messageId`, `childId` and `status: sent`. Only the launcher may send one (403 `NOT_LAUNCHER`), and not to an ended orchestration: cancelled, failed or completed (409 `ORCHESTRATION_NOT_ACTIVE`; restarting a completed one is a dashboard or CLI act). A message to an idle (`WAITING`) orchestration restarts its workflow, so it passes the same transactional `mcp.maxConcurrentRuns` cap as a launch: the orchestrator's ledger row is reopened and counted under the per-user lock, and at the cap the message is refused (429 `MCP_RUN_CAP_REACHED`) and nothing is sent. A message to an agent that is not running is refused (409 `CHILD_NOT_ALLOWED`). A message to an orchestration whose delivery default is broader than the highest mode in the live `mcp.agentRunAllowedDeliverModes` (order `none`, `branch`, `draft_pr`; no default counts as `none`) is refused (403 `MCP_DELIVER_MODE_NOT_ALLOWED`), whichever way the orchestration was launched; reads are unaffected. It takes the write switch and the burst limit; it has no idempotency key, so a repeat sends the message again. Steering only: it does not approve, attach or cancel anything. |
 
 **A run launches under the caller's identity**, not a service account. It is recorded as launched by the
 user (`launchedById`, run identity `caller`), and where `github.userCredentialsEnabled` is on and the user
@@ -206,7 +214,7 @@ write access off, no permission, repository or run not found, the organization's
 concurrency cap, and the burst limit. A ticket that already has a run in flight is a result
 (`already_running`), not an error.
 
-**The guards are in the route, not in the tool.** The tool is not the control: all four write routes declare
+**The guards are in the route, not in the tool.** The tool is not the control: all seven write routes declare
 `config: { mcpScope: 'write' }`, and when a
 request is bridged they call `assertMcpWriteAllowed` before anything else, so a leaked bridge secret plus
 a valid write token gets exactly what the tool gets. In order, on `POST /work-requests`:
@@ -221,7 +229,7 @@ a valid write token gets exactly what the tool gets. In order, on `POST /work-re
 6. The concurrency cap, inside the transaction that writes the ledger rows (below), else 429
    `MCP_RUN_CAP_REACHED`.
 
-`cancel_run` takes steps 1 and 2 only, and then the route's own control filter. A request that is not
+`cancel_run` takes steps 1 and 2 only, and then the route's own control filter. `orchestrations_message` takes the same two steps, then the route's launcher check. `orchestrations_launch` takes steps 1 to 4 and the transactional concurrency cap, and refuses a delivery mode outside `mcp.agentRunAllowedDeliverModes`. A request that is not
 bridged (the dashboard, the CLI) skips all of it.
 
 `start_agent_run` uses the same guard chain, including the transactional concurrency cap. It also
@@ -279,7 +287,7 @@ rules:
    no header the client sent is forwarded, and the only thing taken from the outer request is the
    client's address, so the call is rate limited as the client is. A route accepts a bridged MCP token
    only if it declares `config: { mcpScope: 'read' | 'write' }`: the read routes in the table above
-   (including the `/api/v1/inbox` alias of the human-steps route), plus the four `write` routes.
+   (including the `/api/v1/inbox` alias of the human-steps route), plus the seven `write` routes (work requests, agent runs, the template run, run cancel, and the three orchestration routes).
 
 `requireAuth` applies these rules, in this order, to any request that carries the bridge header (its
 presence, in whatever form, is enough to take this path, so no other credential is tried after it):
@@ -396,9 +404,9 @@ and needs no restart. None is read only at startup.
   with it even at the cap, and a retry that raced its own first submit is answered with the replay or
   "still starting", not the cap; a new key for a ticket already in flight is answered "already running".
 - Resources and prompts are not exposed.
-- The domain tools cover the teams, pull requests, epics, schedules, run records, and the agent library and skills listed in the domain read table. Most other things the dashboard
+- The domain tools cover the teams, pull requests, epics, schedules, orchestrations, run records, and the agent library and skills listed in the domain read table. Most other things the dashboard
   reads (knowledge, reports, usage, platform configuration) and every dashboard write other
-  than the four write tools are available through the REST API but not over MCP.
+  than the six write tools are available through the REST API but not over MCP.
 - A team's members are returned as user ids and roles. `get_team` resolves no id to a person, but the
   run tools return an initiator's `id`, name and email, so a client can map member ids to emails for
   the people who initiated runs it can see. Any other name or email must come from the dashboard.

@@ -7,6 +7,7 @@ import { runBundlesCommand } from './commands/bundles.js';
 import { runConnectionsCommand } from './commands/connections.js';
 import { runEvalsCommand } from './commands/evals.js';
 import { runMcpCommand } from './commands/mcp.js';
+import { runOrchestrateCommand } from './commands/orchestrate.js';
 import { runPrPolicyCommand } from './commands/prPolicy.js';
 import { runReposCommand, runReposSetupInit } from './commands/repos.js';
 import { runRunsCommand } from './commands/runs.js';
@@ -35,6 +36,14 @@ COMMANDS
                                        Run a library agent on a repository in a throwaway workspace;
                                        --deliver=branch|draft_pr publishes it after the platform's checks
   agent rerun <workRequestId> [--wait] Run an earlier agent run again as a new run
+
+  orchestrate start "<task>" --agent=<key> [--repo=<org/name> | --team=<slug>] [--wait]
+                                       Start a conversation that starts and steers agent runs
+  orchestrate list|show|messages|say|steer|cancel-agent|cancel|end
+                                       Follow and steer an orchestration (see orchestrate help)
+  orchestrate attach|decline|approve|deny
+                                       Human decisions: the launcher attaches a repository or
+                                       decides an MCP write
 
   workflows list                       List workflow templates visible to you
   workflows show <name> [--version=N]  Print one template's active (or given) spec (JSON)
@@ -161,6 +170,9 @@ async function main(argv: string[]): Promise<number> {
   }
   if (cmd === 'agent') {
     return await runAgentCommand(rest, env);
+  }
+  if (cmd === 'orchestrate') {
+    return await runOrchestrateCommand(rest, env);
   }
   if (cmd === 'workflows') {
     return await runWorkflowsCommand(rest, env);

@@ -50,6 +50,7 @@ library at `/agents`.
 | `appAssistant` | The dashboard's in-app assistant panel (`runAssistantTurn`), acting as the signed-in user; its read-only tools (`searchDocs`, `workflowInventory`, `getPageContext`, `describeApi`, `callApi`) are bound in code — see [architecture.md §5](./architecture.md#5-authentication) | `anthropic/claude-sonnet-5-5` |
 | `assistantTitler` | `nameAssistantConversation` — names an in-app assistant conversation from the user's first messages, alongside its turn; no tools | `anthropic/claude-haiku-4-5-20251001` |
 | `prTitler` | `resolvePrTitle` — picks the Conventional Commits type and a summary for a pull request title, from the request and the changed file paths, when a repository's format is `conventional` and no type is fixed; no tools; best-effort, so a failure falls back to `chore` rather than failing the run | `anthropic/claude-haiku-4-5-20251001` |
+| `orchestrator` | `runOrchestratorTurn`, the orchestration workflow's turn activity — talks to the launcher and records intents through four tools (`spawnAgent`, `messageAgent`, `cancelAgent`, `requestRepo`) that fixed code validates and applies; it reads children's results only as fenced, escaped data (`fenceChildResult`); no workspace tools, no MCP binding; not launchable as an agent run and never on an orchestration's own allowlist | `anthropic/claude-opus-5-5` |
 
 `assertConfigReady()` gates worker boot on the agents the **installed templates** can reach:
 `requiredAgentKeysForDeployment()` walks the active (and experiment) version of every `ACTIVE`
@@ -567,6 +568,10 @@ built-in tools.
 - **Guarding:** non-git connections are filtered out of the repo read/submit paths (GET
   `/repositories`, Slack picker, epics, scheduled requests) and rejected by the shared
   `isGitRepoConnection` guard (`@auto-swe/shared/lib/connectionGuards`) on the submit paths.
+
+For a run an [orchestration](./orchestrations.md) started, every MCP call that does not declare
+`readOnlyHint: true` waits for the launcher's approval before it runs; a denial, a timeout or a failure to
+reach the launcher is a refusal. A run that no orchestration started gets no such guard.
 
 ### 3.6 Large Tool Output Offload
 
@@ -2552,7 +2557,9 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   after the persona was saved (the parent's save lists the personas it strands, but does not refuse).
   A new override inherits the platform-wide runtime only when it is created; a later change to the
   platform-wide row's runtime does not reach existing overrides.
-- **The harness gets no sub-agent, web or plugin tool.** Its worker-owned tools include optional
+- **Without a harness profile, the harness gets no sub-agent, web or plugin tool.** A profile can grant
+  `Agent` and `Skill` under the limits in [harness-profiles.md](./harness-profiles.md); nothing else is
+  granted. Its worker-owned tools include optional
   browser tools and knowledge search, plus the Agent's own MCP connection relayed from the worker;
   a repository's `.mcp.json` and the harness's own MCP settings
   are ignored (`strictMcpConfig`). A relayed MCP tool is allowed by name and runs in the worker; like

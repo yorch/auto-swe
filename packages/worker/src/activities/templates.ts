@@ -54,6 +54,11 @@ import { type EndRunOutcome, endWorkflowRun } from '../lib/endRun.js';
 import { recordWorkerLaunchAudit, type WorkerLaunchSource } from '../lib/launchAudit.js';
 import { assignLessonRecall } from '../lib/lessonRecallAssignment.js';
 import { recordRunFinalized } from '../lib/metrics.js';
+import {
+  childOrchestrationIdOf,
+  markChildRunStarted,
+  onOrchestrationRunFinalized,
+} from '../lib/orchestrationChildren.js';
 import { pinDetectionsOnRun } from '../lib/runDetection.js';
 import {
   snapshotAgentRuntimes,
@@ -788,9 +793,13 @@ export async function createWorkflowRun(
   });
   const runId = reviewPayload?.success ? reviewRunId(input.workflowId) : randomUUID();
   const provenance = await resolveProvenance(input);
+  // The orchestration this run is a child of, confirmed against the child row the gateway wrote
+  // at launch. It is what lets `finalizeRun` find the child and signal the orchestrator.
+  const orchestrationId = await childOrchestrationIdOf(input.payload, input.workRequestId);
   const runUpsert: Prisma.WorkflowRunUpsertArgs = {
     create: {
       id: runId,
+      ...(orchestrationId ? { orchestrationId } : {}),
       ...assignLessonRecall(runId, pinnedSettings),
       ...(reviewPayload?.success
         ? {
@@ -861,6 +870,23 @@ export async function createWorkflowRun(
           return tx.workflowRun.upsert(runUpsert);
         })
       : await prisma.workflowRun.upsert(runUpsert);
+
+  // The child's row names its run from now on (the gateway's steering route refuses until it
+  // does). Best-effort: the orchestration's polling backstop completes the same move.
+  if (orchestrationId && input.workRequestId) {
+    try {
+      await markChildRunStarted({
+        orchestrationId,
+        runId: run.id,
+        workRequestId: input.workRequestId,
+      });
+    } catch (err) {
+      logWarn('could not mark the orchestration child as running; the backstop will', {
+        err: String(err),
+        runId: run.id,
+      });
+    }
+  }
 
   if (reviewPayload?.success && reviewPayload.data.presetId) {
     const intent = await prisma.reviewLaunchIntent.findUnique({
@@ -1195,6 +1221,7 @@ export async function finalizeRun(
       connection: { select: { team: { select: { id: true, orgId: true } } } },
       connectionId: true,
       endedAt: true,
+      orchestrationId: true,
       reviewOfRunId: true,
       startedAt: true,
       template: { select: { kind: true } },
@@ -1499,6 +1526,12 @@ export async function finalizeRun(
     recordRunFinalized(status, source);
   }
   const finalStatus = endedStatus(outcome);
+
+  // A child an orchestration started: record its structured result and tell the orchestrator.
+  // Never throws, and the run is already ended.
+  if (run?.orchestrationId) {
+    await onOrchestrationRunFinalized(runId);
+  }
 
   // The side effects below (Slack notifications + channel task finalization +
   // tracker sync) are non-idempotent. Only fire them when we actually finalized
