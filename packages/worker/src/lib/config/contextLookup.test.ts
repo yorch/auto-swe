@@ -176,3 +176,45 @@ describe('currentRequestContext pinned settings', () => {
     expect(ctx.pinnedSettings).toEqual(partial);
   });
 });
+
+describe('currentRequestContext billing team', () => {
+  beforeEach(() => {
+    _resetConfigCacheForTests();
+    vi.clearAllMocks();
+    activityInfo.mockReturnValue({ workflowExecution: { workflowId: 'wf-1' } });
+    snapshotPinnedSettings.mockResolvedValue(live);
+    updateRuns.mockResolvedValue({ count: 1 } as never);
+  });
+
+  const billed = { id: 'team-billed', orgId: 'org-billed' };
+
+  it('scopes a repository-less run to the team its launch was billed to', async () => {
+    findActive.mockResolvedValue(null as never);
+    findRun.mockResolvedValue(runRow({ attributedTeam: billed, pinnedSettings: live }) as never);
+    const ctx = await currentRequestContext();
+    expect(ctx.teamId).toBe('team-billed');
+    expect(ctx.orgId).toBe('org-billed');
+  });
+
+  it("keeps the repository's team over the billed one", async () => {
+    findActive.mockResolvedValue({
+      repository: { team: { orgId: 'org-1' }, teamId: 'team-1' },
+    } as never);
+    findRun.mockResolvedValue(runRow({ attributedTeam: billed, pinnedSettings: live }) as never);
+    const ctx = await currentRequestContext();
+    expect(ctx.teamId).toBe('team-1');
+    expect(ctx.orgId).toBe('org-1');
+  });
+
+  it('leaves a channel run to the scope its caller adds', async () => {
+    findActive.mockResolvedValue(null as never);
+    findRun.mockResolvedValue(
+      runRow({
+        attributedTeam: billed,
+        channel: { id: 'c', orgId: null, teamId: null },
+        pinnedSettings: live,
+      }) as never
+    );
+    expect((await currentRequestContext()).teamId).toBeUndefined();
+  });
+});

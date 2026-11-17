@@ -14,6 +14,7 @@ import {
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { recordSuspiciousLlmOutput } from '../lib/llmOutputScan.js';
 import type { StepLike } from '../lib/stepAccounting.js';
+import { isSpendRefusal } from '../lib/usdCapGuard.js';
 
 /** What the platform reads off one finished model turn, whatever drove the loop. */
 export interface ImplementerTurnOutcome {
@@ -95,6 +96,13 @@ export interface ImplementerTurnInput {
    * follows. A runtime that meters per call and has none uses `onCallSpent`.
    */
   chargeCall?: (spent: SpentByModel) => Promise<void>;
+  /**
+   * Asked before a model call is sent, for a runtime that sees its calls start
+   * (a metering proxy, an in-process loop). It throws the budget stop
+   * (`BUDGET_EXCEEDED`) when a cap is already exhausted, and the turn then fails
+   * with that error without making the call. It only reads; nothing is debited.
+   */
+  beforeCall?: () => Promise<void>;
   /** The spec the caller bound for the turn; a runtime that meters per call prices at it. */
   modelSpec?: string;
 }
@@ -443,6 +451,28 @@ function recordAbortedTurn(
 }
 
 /**
+ * The pre-call cap check a metering runtime asks before each model call. Only a
+ * genuine refusal to spend (`BUDGET_EXCEEDED`, `MODEL_UNPRICED`,
+ * `MODEL_PRICE_UNAVAILABLE`: `isSpendRefusal`, the debit path's own classification)
+ * is thrown, and ends the turn; any other error (a database blip in the lookups
+ * the check makes) is logged and the call goes ahead, failing open as the guards
+ * do. The debit after the call still counts the spend and enforces the cap.
+ */
+export async function checkBudgetBeforeCall(scope: string): Promise<void> {
+  try {
+    await assertBudgetAvailable(scope);
+  } catch (error) {
+    if (isSpendRefusal(error)) {
+      throw error;
+    }
+    logWarn('[implementer] could not check the budget before a model call; allowing it', {
+      error: error instanceof Error ? error.message : String(error),
+      scope,
+    });
+  }
+}
+
+/**
  * One implementer turn plus the bookkeeping every caller owes it: accrue the
  * usage against the run's budget, run the advisory output scan, and record the
  * LLM call on the tracer. This is the ONE implementation the TDD loop, the fix
@@ -468,6 +498,7 @@ export async function runImplementerTurn(turn: ImplementerTurn): Promise<{
   let outcome: ImplementerTurnOutcome;
   try {
     outcome = await turn.runtime.runTurn({
+      beforeCall: () => checkBudgetBeforeCall(`agent.${turn.role}`),
       chargeCall: accounting.charge,
       onCallSpent: accounting.onCallSpent,
       ...(turn.boundModelSpec ? { modelSpec: turn.boundModelSpec } : {}),

@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   ledger: vi.fn(),
   run: vi.fn(),
   team: vi.fn(),
+  user: vi.fn(),
 }));
 
 vi.mock('@temporalio/activity', () => ({ activityInfo: h.activityInfo }));
@@ -16,6 +17,7 @@ vi.mock('@auto-swe/shared/db', () => ({
     connection: { findUnique: h.connection },
     evalDataset: { findUnique: h.dataset },
     team: { findUnique: h.team },
+    user: { findUnique: h.user },
     workflowRun: { findUnique: h.run },
   },
 }));
@@ -26,6 +28,7 @@ import {
   ownerOfConnection,
   ownerOfDataset,
   ownerOfTeam,
+  ownerOfUser,
   withSpendOwner,
 } from './spendOwner.js';
 
@@ -170,5 +173,64 @@ describe('owner lookups', () => {
     expect(await ownerOfDataset('d')).toEqual({ orgId: 'org-only' });
     h.dataset.mockResolvedValue({ orgId: null, teamId: null });
     expect(await ownerOfDataset('d')).toEqual({});
+  });
+});
+
+describe('ownerOfUser', () => {
+  const user = (teams: string[], orgs: string[] = []) => ({
+    memberships: teams.map((id) => ({ team: team(id) })),
+    orgMemberships: orgs.map((orgId) => ({ orgId })),
+  });
+
+  it('attributes a user in exactly one team to that team and its org', async () => {
+    h.user.mockResolvedValue(user(['a']));
+    expect(await ownerOfUser('u')).toEqual({ orgId: 'org-of-a', teamId: 'a' });
+  });
+
+  it('keeps a multi-team user at the org level rather than guessing a team', async () => {
+    h.user.mockResolvedValue({
+      memberships: [{ team: { id: 'a', orgId: 'o' } }, { team: { id: 'b', orgId: 'o' } }],
+      orgMemberships: [],
+    });
+    expect(await ownerOfUser('u')).toEqual({ orgId: 'o' });
+  });
+
+  it('attributes to nobody when the user spans several organizations', async () => {
+    h.user.mockResolvedValue(user(['a'], ['other-org']));
+    expect(await ownerOfUser('u')).toEqual({});
+  });
+
+  it('uses the org alone for a user with an org membership and no team', async () => {
+    h.user.mockResolvedValue(user([], ['o']));
+    expect(await ownerOfUser('u')).toEqual({ orgId: 'o' });
+  });
+
+  describe('inactive teams', () => {
+    /** Applies the `where` the query passes, as the database would. */
+    const withTeams = (teams: { id: string; isActive: boolean }[], orgs: string[] = []) =>
+      h.user.mockImplementation(async (args: { select: { memberships: { where?: unknown } } }) => {
+        const wantsActive =
+          JSON.stringify(args.select.memberships.where) ===
+          JSON.stringify({ team: { isActive: true } });
+        return {
+          memberships: teams
+            .filter((t) => !wantsActive || t.isActive)
+            .map((t) => ({ team: team(t.id) })),
+          orgMemberships: orgs.map((orgId) => ({ orgId })),
+        };
+      });
+
+    it('treats a user whose other team is inactive as single-team', async () => {
+      withTeams([
+        { id: 'a', isActive: true },
+        { id: 'b', isActive: false },
+      ]);
+      expect(await ownerOfUser('u')).toEqual({ orgId: 'org-of-a', teamId: 'a' });
+    });
+
+    it('attributes a user whose only team is inactive to the org alone', async () => {
+      withTeams([{ id: 'a', isActive: false }], ['org-of-a']);
+      expect(await ownerOfUser('u')).toEqual({ orgId: 'org-of-a' });
+    });
   });
 });

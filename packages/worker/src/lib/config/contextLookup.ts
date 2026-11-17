@@ -1,6 +1,7 @@
 import { RUN_PINNED_SETTING_KEYS, snapshotPinnedSettings } from '@auto-swe/shared/config';
 import { configCacheTtlMs, withCache } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
+import { resolveRunTenantScope } from '@auto-swe/shared/workflow/runAttribution';
 import { activityInfo } from '@temporalio/activity';
 import { logWarn } from '../activityLog.js';
 import { asPinnedSettings, backfillPinnedSettings, hasEveryPin } from './pinnedSettings.js';
@@ -59,6 +60,7 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
         prisma.workflowRun.findUnique({
           select: {
             agentVersions: true,
+            attributedTeam: { select: { id: true, orgId: true } },
             channel: { select: { id: true, orgId: true, teamId: true } },
             id: true,
             pinnedSettings: true,
@@ -76,11 +78,20 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
         run?.skillRevisions && typeof run.skillRevisions === 'object'
           ? (run.skillRevisions as Record<string, number>)
           : undefined;
+      // A run with no repository (template, service-principal or connection-less launch) has no
+      // repository team; the team its launch was billed to stands in, so the TEAM tiers apply to it
+      // too. The repository's team stays authoritative when present, and a channel run keeps the
+      // scope its caller adds from the channel.
       const scope = {
         // Org is derived transitively (team → org); the ORGANIZATION cascade
-        // tier sits between TEAM and GLOBAL.
-        orgId: active?.repository?.team?.orgId,
-        teamId: active?.repository?.teamId,
+        // tier sits between TEAM and GLOBAL. Shared with `runSettingsContext`
+        // so the run-start pins land on the same tenant.
+        ...resolveRunTenantScope({
+          attributedTeam: run?.channel ? null : run?.attributedTeam,
+          repositoryTeam: active?.repository
+            ? { orgId: active.repository.team?.orgId, teamId: active.repository.teamId }
+            : null,
+        }),
         workflowTemplateId: run?.templateId,
       };
       // Run-start snapshot of the registry settings marked `runPinned`, completed

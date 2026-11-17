@@ -85,6 +85,14 @@ export interface ModelProxy {
     /** Each call, once its response has ended. Runs in the registering activity's context. */
     onCall(call: ProxiedCall): void;
     /**
+     * Asked before a Messages call is forwarded, after the token is validated.
+     * Throws to refuse it (a spend cap already exhausted): the harness is answered
+     * with a non-retryable error and the provider is never contacted. The
+     * callback owns ending the turn; the proxy only refuses the call. Runs in the
+     * registering activity's context, bound the same way as `onCall`.
+     */
+    precheck?(): Promise<void>;
+    /**
      * Every exchange, once it ends — Messages API or not, success or failure.
      * Runs in the registering activity's context, bound the same way as `onCall`.
      */
@@ -102,6 +110,7 @@ interface Registration {
   upstreamBaseUrl: string;
   apiKey: string;
   onCall: (call: ProxiedCall) => void;
+  precheck: (() => Promise<void>) | undefined;
   onExchange: ((exchange: ProxyExchange) => void) | undefined;
   signal: AbortSignal;
   inFlight: Set<Promise<void>>;
@@ -364,6 +373,40 @@ export function createModelProxy(options: {
     }
   }
 
+  /**
+   * Asks the turn whether a cap is already exhausted, before anything is
+   * forwarded. A refusal is answered as a non-retryable client error — Claude
+   * Code retries 429 and 5xx with backoff, which would stall a turn that is
+   * already being ended — and says nothing about which cap bound; the turn's own
+   * failure carries that. Whatever the check throws refuses the call, as the
+   * debit path's throw ends the turn: the runtime's check ends the turn first.
+   */
+  async function refused(
+    reg: Registration,
+    req: http.IncomingMessage,
+    res: http.ServerResponse
+  ): Promise<boolean> {
+    try {
+      await reg.precheck?.();
+      return false;
+    } catch {
+      req.resume();
+      if (!res.headersSent) {
+        res.writeHead(400, { 'content-type': 'application/json', 'x-should-retry': 'false' });
+        res.end(
+          JSON.stringify({
+            error: {
+              message: 'A spending limit for this run has been reached; no further model calls.',
+              type: 'invalid_request_error',
+            },
+            type: 'error',
+          })
+        );
+      }
+      return true;
+    }
+  }
+
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://proxy');
     const token = credentialOf(req);
@@ -380,7 +423,12 @@ export function createModelProxy(options: {
       sendError(res, 403, 'permission_error', 'This turn has ended; no further model calls.');
       return;
     }
-    const call = forward(reg, req, res, url.pathname, url.search).catch(() => {
+    const call = (async () => {
+      if (url.pathname === METERED_PATH && reg.precheck && (await refused(reg, req, res))) {
+        return;
+      }
+      await forward(reg, req, res, url.pathname, url.search);
+    })().catch(() => {
       sendError(res, 502, 'api_error', 'The model call could not be completed.');
     });
     reg.inFlight.add(call);
@@ -428,8 +476,9 @@ export function createModelProxy(options: {
         // Bound here so the debit it triggers runs in the registering activity's
         // context (its workflow id, its cancellation), not the server's.
         onCall: AsyncResource.bind(turn.onCall),
-        // Bound the same way so transcript recording sees the activity's recorder.
         onExchange: turn.onExchange ? AsyncResource.bind(turn.onExchange) : undefined,
+        // Bound the same way so transcript recording sees the activity's recorder.
+        precheck: turn.precheck ? AsyncResource.bind(turn.precheck) : undefined,
         signal: turn.signal,
         upstreamBaseUrl: turn.upstreamBaseUrl,
       };

@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createModelProxy,
   MessagesUsageReader,
@@ -80,7 +80,7 @@ afterEach(async () => {
   await upstream?.close();
 });
 
-async function setup(reply: Parameters<typeof upstreamServer>[0]) {
+async function setup(reply: Parameters<typeof upstreamServer>[0], precheck?: () => Promise<void>) {
   upstream = await upstreamServer(reply);
   proxy = createModelProxy({
     advertisedUrl: (port) => `http://127.0.0.1:${port}`,
@@ -94,6 +94,7 @@ async function setup(reply: Parameters<typeof upstreamServer>[0]) {
   const registration = await proxy.register({
     apiKey: 'sk-ant-real',
     onCall: (call) => calls.push(call),
+    precheck,
     signal: abort.signal,
     upstreamBaseUrl: upstream.baseUrl,
   });
@@ -268,6 +269,52 @@ describe('createModelProxy', () => {
       method: 'POST',
     });
     expect(refused.status).toBe(401);
+  });
+
+  it('refuses a call before forwarding it when the precheck throws, and never contacts the provider', async () => {
+    const stop = Object.assign(new Error('Budget already exhausted'), { type: 'BUDGET_EXCEEDED' });
+    const precheck = vi.fn(async () => {
+      throw stop;
+    });
+    const { calls, post, registration } = await setup((_req, res) => streamedReply(res), precheck);
+
+    const res = await post('/v1/messages?beta=true', { model: 'claude-opus-5-5', stream: true });
+    const body = await res.json();
+
+    expect(precheck).toHaveBeenCalledTimes(1);
+    // Non-retryable for the harness, and well-formed.
+    expect(res.status).toBe(400);
+    expect(res.headers.get('x-should-retry')).toBe('false');
+    expect(body).toMatchObject({ error: { type: 'invalid_request_error' }, type: 'error' });
+    expect(JSON.stringify(body)).not.toContain('Budget already exhausted');
+    expect(upstream.seen).toHaveLength(0);
+    await registration.release();
+    expect(calls).toEqual([]);
+  });
+
+  it('forwards a call when the precheck passes, and does not check a token count', async () => {
+    const precheck = vi.fn(async () => undefined);
+    const { post } = await setup((_req, res) => streamedReply(res), precheck);
+
+    expect((await post('/v1/messages', { model: 'claude-opus-5-5', stream: true })).status).toBe(
+      200
+    );
+    expect(precheck).toHaveBeenCalledTimes(1);
+    expect(upstream.seen).toHaveLength(1);
+    await post('/v1/messages/count_tokens', {});
+    expect(precheck).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not run the precheck for an unknown token', async () => {
+    const precheck = vi.fn(async () => undefined);
+    const { registration } = await setup((_req, res) => streamedReply(res), precheck);
+    const res = await fetch(`${registration.baseUrl}/v1/messages`, {
+      body: '{}',
+      headers: { 'x-api-key': 'sk-ant-proxy-nope' },
+      method: 'POST',
+    });
+    expect(res.status).toBe(401);
+    expect(precheck).not.toHaveBeenCalled();
   });
 
   it('refuses a call for a turn whose signal has already aborted, without reaching the provider', async () => {

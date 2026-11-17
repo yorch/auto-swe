@@ -18,6 +18,7 @@ vi.mock('../lib/llmOutputScan.js', () => ({ recordSuspiciousLlmOutput }));
 import { ApplicationFailure } from '@temporalio/activity';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import {
+  checkBudgetBeforeCall,
   type ImplementerRuntime,
   mastraRuntime,
   perCallAccounting,
@@ -109,6 +110,7 @@ describe('runImplementerTurn', () => {
     const result = await runImplementerTurn(turn(runtime, { iteration: 2 }));
 
     expect(runtime.runTurn).toHaveBeenCalledWith({
+      beforeCall: expect.any(Function),
       chargeCall: expect.any(Function),
       onCallSpent: expect.any(Function),
       system: 'SYS',
@@ -1108,6 +1110,39 @@ describe('a Mastra turn metered per step', () => {
     expect(addLlmResponse).toHaveBeenCalledTimes(1);
     expect(addLlmResponse).toHaveBeenCalledWith(
       expect.objectContaining({ inputTokens: 300, outputTokens: 30 })
+    );
+  });
+});
+
+describe('checkBudgetBeforeCall', () => {
+  beforeEach(() => {
+    assertBudgetAvailable.mockReset().mockResolvedValue(undefined);
+    logWarn.mockClear();
+  });
+
+  it.each(['BUDGET_EXCEEDED', 'MODEL_UNPRICED', 'MODEL_PRICE_UNAVAILABLE'])(
+    'refuses the call on a genuine %s',
+    async (type) => {
+      const refusal = ApplicationFailure.nonRetryable('stop', type);
+      assertBudgetAvailable.mockRejectedValueOnce(refusal);
+      await expect(checkBudgetBeforeCall('agent.x')).rejects.toBe(refusal);
+    }
+  );
+
+  it('refuses on a refusal wrapped in a cause chain', async () => {
+    const refusal = Object.assign(new Error('wrapped'), {
+      cause: ApplicationFailure.nonRetryable('stop', 'BUDGET_EXCEEDED'),
+    });
+    assertBudgetAvailable.mockRejectedValueOnce(refusal);
+    await expect(checkBudgetBeforeCall('agent.x')).rejects.toBe(refusal);
+  });
+
+  it('allows the call, with a warning, on any other error', async () => {
+    assertBudgetAvailable.mockRejectedValueOnce(new Error('connection reset by peer'));
+    await expect(checkBudgetBeforeCall('agent.x')).resolves.toBeUndefined();
+    expect(logWarn).toHaveBeenCalledWith(
+      expect.stringContaining('allowing it'),
+      expect.objectContaining({ error: 'connection reset by peer', scope: 'agent.x' })
     );
   });
 });

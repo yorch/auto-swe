@@ -519,6 +519,120 @@ describe('per-call accounting (onCallSpent)', () => {
   });
 });
 
+describe('precheck (beforeCall)', () => {
+  const run = (
+    drive: (turn: HarnessTurn) => Promise<{ text?: string; usage: Report }>,
+    extra: { beforeCall?: () => Promise<void>; onCallSpent?: (spent: unknown) => Promise<void> }
+  ) => {
+    const { adapter } = fakeAdapter(drive);
+    const runtime = harnessRuntime(adapter, {
+      tracer: { addToolCall: vi.fn() } as never,
+      workspace: workspace() as never,
+    });
+    return runtime.runTurn({ system: 'S', user: 'U', ...(extra as object) });
+  };
+
+  it('is a no-op for a turn without beforeCall', async () => {
+    await expect(
+      run(async (turn) => {
+        await turn.precheck();
+        return { usage: {} };
+      }, {})
+    ).resolves.toBeDefined();
+  });
+
+  it('throws the budget stop, aborts the turn, and fails the turn with that error', async () => {
+    const budget = Object.assign(new Error('Budget exhausted'), { type: 'BUDGET_EXCEEDED' });
+    let aborted: boolean | undefined;
+    const thrown = await run(
+      async (turn) => {
+        await turn.precheck().catch(() => undefined);
+        aborted = turn.abort.signal.aborted;
+        // The harness, refused, ends however it likes: the budget stop is still the failure.
+        throw new Error('harness gave up');
+      },
+      {
+        beforeCall: async () => {
+          throw budget;
+        },
+      }
+    ).catch((e) => e);
+    expect(aborted).toBe(true);
+    expect(thrown).toBe(budget);
+  });
+
+  it('fails a turn whose harness finished normally after a refused call', async () => {
+    const budget = new Error('Budget exhausted');
+    const thrown = await run(
+      async (turn) => {
+        await turn.precheck().catch(() => undefined);
+        return { usage: {} };
+      },
+      {
+        beforeCall: async () => {
+          throw budget;
+        },
+      }
+    ).catch((e) => e);
+    expect(thrown).toBe(budget);
+  });
+
+  it('reuses a passing check until a debit lands', async () => {
+    const beforeCall = vi.fn(async () => {});
+    await run(
+      async (turn) => {
+        await turn.precheck();
+        await turn.precheck();
+        await turn.precheck();
+        expect(beforeCall).toHaveBeenCalledTimes(1);
+        turn.callSpent('c1', 'fake/m', totals(10, 1));
+        await turn.precheck();
+        await turn.precheck();
+        expect(beforeCall).toHaveBeenCalledTimes(2);
+        return { usage: {} };
+      },
+      { beforeCall, onCallSpent: async () => {} }
+    );
+  });
+
+  it('never remembers a refusal as a pass', async () => {
+    const budget = new Error('Budget exhausted');
+    const beforeCall = vi.fn(async () => {
+      throw budget;
+    });
+    await run(
+      async (turn) => {
+        await turn.precheck().catch(() => undefined);
+        await expect(turn.precheck()).rejects.toBe(budget);
+        return { usage: {} };
+      },
+      { beforeCall }
+    ).catch(() => undefined);
+    expect(beforeCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for the calls already reported to be debited before it checks', async () => {
+    const order: string[] = [];
+    await run(
+      async (turn) => {
+        turn.callSpent('c1', 'fake/m', totals(10, 1));
+        await turn.precheck();
+        return { usage: {} };
+      },
+      {
+        beforeCall: async () => {
+          order.push('check');
+        },
+        onCallSpent: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          order.push('debit');
+        },
+      }
+    );
+    expect(order).toEqual(['debit', 'check']);
+  });
+});
+
 describe('the decision a turn hands the adapter', () => {
   async function decideWith(verdict: () => Promise<unknown>) {
     let turn: HarnessTurn | undefined;
