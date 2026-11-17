@@ -1016,7 +1016,7 @@ describe.skipIf(!enabled)('OAuth authorization server against Postgres', () => {
     const migrationSql = readFileSync(
       fileURLToPath(
         new URL(
-          '../../../shared/src/prisma/migrations/20261116000000_oauth_clients_grant_admin_scope/migration.sql',
+          '../../../shared/src/prisma/migrations/20261117100000_oauth_clients_grant_admin_scope/migration.sql',
           import.meta.url
         )
       ),
