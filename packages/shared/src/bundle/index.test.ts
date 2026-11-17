@@ -660,6 +660,7 @@ describe('schema v3 plugin references', () => {
   };
   const withPlugins = (plugins: unknown[]) =>
     buildBundleManifest({
+      createdAt: '2026-01-01T00:00:00.000Z',
       entities: { ...emptyEntities, plugins } as BundleEntities,
       name: 'b',
       version: '1',
@@ -684,7 +685,12 @@ describe('schema v3 plugin references', () => {
     const empty = withPlugins([]);
     expect('plugins' in empty.entities).toBe(false);
     expect(empty.metadata.contentHash).toBe(
-      buildBundleManifest({ entities: emptyEntities, name: 'b', version: '1' }).metadata.contentHash
+      buildBundleManifest({
+        createdAt: '2026-01-01T00:00:00.000Z',
+        entities: emptyEntities,
+        name: 'b',
+        version: '1',
+      }).metadata.contentHash
     );
   });
 
