@@ -8,7 +8,6 @@ import type {
 } from '@auto-swe/shared/types/api';
 import { humanStepListWhere, humanStepTeamScope } from './humanStepFilters.js';
 import {
-  attemptWindowTerm,
   countRunningRequests,
   deskRunTerms,
   loadDeskEntries,
@@ -27,6 +26,7 @@ import {
   runMetricsTeamScope,
 } from './runTeamScope.js';
 import { buildWorkflowRunVisibilityFilter, type VisibilityActor } from './runVisibility.js';
+import { loadUnownedFailures } from './teamAttention.js';
 import { bindingBudgetStatuses } from './teamBudgetStatus.js';
 import { type MaybeGate, reachableConnections } from './tenantScope.js';
 
@@ -233,33 +233,6 @@ function toOverviewRepos(
   });
 }
 
-/** Failed latest attempts on the team's work whose launcher is not a current member (or is unknown). */
-async function countUnownedFailures(
-  deps: OverviewDeps,
-  teamId: string,
-  now: number
-): Promise<number> {
-  const { gate, prisma, user } = deps;
-  const [attempts, members] = await Promise.all([
-    latestAttempts(prisma, {
-      AND: [...deskRunTerms(user, gate, teamDeskScope(teamId)), attemptWindowTerm(now)],
-    }),
-    prisma.teamMembership.findMany({ select: { userId: true }, where: { teamId } }),
-  ]);
-  const memberIds = new Set(members.map((m) => m.userId));
-  const launcherOf = new Map(attempts.map((run) => [run.id, run.launchedById]));
-  let count = 0;
-  for (const group of groupRequestExecutions(attempts)) {
-    for (const failedId of group.failedRunIds) {
-      const launcher = launcherOf.get(failedId);
-      if (!launcher || !memberIds.has(launcher)) {
-        count++;
-      }
-    }
-  }
-  return count;
-}
-
 async function monthCostCents(
   deps: OverviewDeps,
   teamId: string,
@@ -395,7 +368,7 @@ export async function buildTeamOverview(
   }
 
   const [unownedFailures, staleApprovals, openPullRequests] = await Promise.all([
-    countUnownedFailures(deps, team.id, now),
+    loadUnownedFailures(deps, team.id, now).then((failures) => failures.length),
     prisma.workflowHumanStep.count({
       where: {
         AND: [

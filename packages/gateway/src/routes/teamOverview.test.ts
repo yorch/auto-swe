@@ -309,6 +309,23 @@ describe('GET /api/v1/teams/:id/overview', () => {
     expect('admin' in data).toBe(false);
   });
 
+  it('leaves an assigned failure out of the lead unowned count', async () => {
+    const { res } = await get({
+      teamRole: 'LEAD',
+      unowned: [
+        runRow({ id: 'gone', launchedById: 'ex-member', status: 'FAILED', workRequestId: 'w1' }),
+        runRow({
+          failureAssignment: { id: 'fa-1' },
+          id: 'taken',
+          launchedById: 'ex-member',
+          status: 'FAILED',
+          workRequestId: 'w2',
+        }),
+      ],
+    });
+    expect(res.json().data.lead.unownedFailures).toBe(1);
+  });
+
   it('gives a team ADMIN the spend, in cents', async () => {
     const { prisma, res } = await get({ costUsd: 12.345, teamRole: 'ADMIN' });
     const { data } = res.json();
@@ -637,6 +654,18 @@ describe('GET /api/v1/teams/:id/overview', () => {
       });
       const { data } = res.json();
       expect(data.mine).toMatchObject({ failed: 1, prsAwaitingMerge: 1 });
+    });
+
+    it('counts a failure assigned to the caller, whoever launched it, in mine and needsYou', async () => {
+      const assigned = {
+        ...failed('f3', 'ex-member'),
+        failureAssignment: { assigneeId: ME },
+      };
+      const elsewhere = { ...failed('f4', 'ex-member'), failureAssignment: { assigneeId: OTHER } };
+      const { res } = await get({ attempts: [assigned, elsewhere], teamRole: 'ENGINEER' });
+      const { data } = res.json();
+      expect(data.mine.failed).toBe(1);
+      expect(data.needsYou.total).toBe(1);
     });
 
     it.each(['ENGINEER', 'LEAD', 'ADMIN'] as const)(

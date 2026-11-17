@@ -304,6 +304,22 @@ describe('GET /api/v1/me/summary', () => {
     expect(body.needsYou.items.map((i) => [i.key, i.kind])).toEqual([['mine', 'failed_run']]);
   });
 
+  it('lists a failure a lead assigned to the caller as theirs, and once when they also launched it', async () => {
+    ctx.prisma.workflowRun.findMany.mockResolvedValueOnce([
+      { ...attempt('assigned', 'FAILED', 'ex-member'), failureAssignment: { assigneeId: ME } },
+      { ...attempt('other', 'FAILED', 'ex-member'), failureAssignment: { assigneeId: 'erin' } },
+      { ...attempt('both', 'FAILED', ME), failureAssignment: { assigneeId: ME } },
+    ]);
+    const body = await get();
+    expect(body.needsYou.items.map((i) => [i.key, i.kind]).sort()).toEqual([
+      ['assigned', 'failed_run'],
+      ['both', 'failed_run'],
+    ]);
+    expect(body.needsYou.total).toBe(2);
+    const where = JSON.stringify(ctx.prisma.workflowRun.findMany.mock.calls[0][0].where);
+    expect(where).toContain(`"failureAssignment":{"assigneeId":"${ME}"}`);
+  });
+
   it("lists a failed attempt the caller launched even when another launcher's sorts first", async () => {
     const crossRepo = { isCrossRepo: true };
     ctx.prisma.workflowRun.findMany.mockResolvedValueOnce([

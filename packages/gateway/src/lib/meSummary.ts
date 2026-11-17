@@ -113,7 +113,11 @@ function deskAttemptWhere(
       ...deskRunTerms(user, gate, scope),
       {
         workRequest: {
-          OR: [{ requestedById: user.sub }, { workflowRuns: { some: { launchedById: user.sub } } }],
+          OR: [
+            { requestedById: user.sub },
+            { workflowRuns: { some: { launchedById: user.sub } } },
+            { workflowRuns: { some: { failureAssignment: { assigneeId: user.sub } } } },
+          ],
         },
       },
       attemptWindowTerm(now),
@@ -247,6 +251,7 @@ export async function loadDeskEntries({
         ...RUN_TEAM_SELECT,
         _count: { select: { humanSteps: { where: { status: 'PENDING' } } } },
         endedAt: true,
+        failureAssignment: { select: { assigneeId: true } },
         id: true,
         launchedById: true,
         startedAt: true,
@@ -314,8 +319,12 @@ export async function loadDeskEntries({
     // person who launched it, and the first one need not be the caller's.
     for (const failedId of group.failedRunIds) {
       const failed = rows.get(failedId);
-      // Only a failure of an attempt the caller launched is theirs to act on.
-      if (failed && failed.launchedById === user.sub) {
+      // A failure is theirs to act on when they launched the attempt, or a lead assigned it to
+      // them (the assignment never rewrites the launcher).
+      if (
+        failed &&
+        (failed.launchedById === user.sub || failed.failureAssignment?.assigneeId === user.sub)
+      ) {
         entries.push({
           item: {
             ...placement(failed),
