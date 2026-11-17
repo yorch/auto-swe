@@ -1370,7 +1370,7 @@ fail preview resolution instead of behaving as an unconfigured repository.
 
 ---
 
-### UN-27. Generic steps on `http_api`, `hubspot` and `mcp` connections, and `runTool` on `notion`, make real requests (`<fixing commit SHA>`)
+### UN-28. Generic steps on `http_api`, `hubspot` and `mcp` connections, and `runTool` on `notion`, make real requests (`<fixing commit SHA>`)
 
 **Affected.** Deployments with a template that runs `readSource`, `writeOutcome` or `runTool` on an
 `http_api`, `hubspot` or `mcp` connection, or `runTool` on a `notion` connection, and deployments
