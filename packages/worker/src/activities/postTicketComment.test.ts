@@ -4,8 +4,12 @@ const mocks = vi.hoisted(() => ({
   addComment: vi.fn(async (..._args: unknown[]) => true),
   createProvider: vi.fn(),
   findConnections: vi.fn(async (..._args: unknown[]) => [] as unknown[]),
+  findMemberships: vi.fn(async (..._args: unknown[]) => [] as unknown[]),
   findRunInput: vi.fn(),
+  findWorkflowRun: vi.fn(async (..._args: unknown[]) => null as unknown),
+  launcher: vi.fn(async () => null as string | null),
   logWarn: vi.fn(),
+  overrideAt: vi.fn((_key: string, _scope: string): unknown => undefined),
   resolveConfig: vi.fn(),
   resolveSetting: vi.fn(),
 }));
@@ -14,10 +18,17 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     connection: { findMany: (...args: unknown[]) => mocks.findConnections(...args) },
     runInput: { findUnique: (...args: unknown[]) => mocks.findRunInput(...args) },
+    teamMembership: { findMany: (...args: unknown[]) => mocks.findMemberships(...args) },
+    workflowRun: { findFirst: (...args: unknown[]) => mocks.findWorkflowRun(...args) },
   },
 }));
+vi.mock('../lib/runLauncher.js', () => ({ currentRunLauncherId: () => mocks.launcher() }));
 vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@auto-swe/shared/config')>()),
+  resolveEffectiveSettings: async () => ({
+    overrideAt: (key: string, scope: string) => mocks.overrideAt(key, scope),
+    settings: [],
+  }),
   resolveSetting: (...args: unknown[]) => mocks.resolveSetting(...args),
 }));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
@@ -61,6 +72,10 @@ function githubRun(overrides: Record<string, unknown> = {}, baseUrl: string | nu
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.findWorkflowRun.mockResolvedValue(null);
+  mocks.findMemberships.mockResolvedValue([]);
+  mocks.launcher.mockResolvedValue(null);
+  mocks.overrideAt.mockReturnValue(undefined);
   mocks.resolveSetting.mockResolvedValue([]);
   mocks.findRunInput.mockResolvedValue({ externalTicketId: 'DEMO-4', ticketIsSynthetic: false });
   mocks.resolveConfig.mockResolvedValue(JIRA);
@@ -407,5 +422,83 @@ describe('postTicketComment on the GitHub tracker', () => {
       posted: true,
     });
     expect(mocks.addComment).toHaveBeenCalledWith('attacker/public#1', 'X');
+  });
+});
+
+describe('postTicketComment on Jira and Linear project keys', () => {
+  const listFor = (byTeam: Record<string, string[]>) =>
+    mocks.resolveSetting.mockImplementation(async (key: string, ctx: { teamId?: string }) =>
+      key === 'github.trackerAllowedProjectKeys' ? (byTeam[ctx.teamId ?? ''] ?? []) : []
+    );
+  const run = (externalTicketId: string) =>
+    mocks.findRunInput.mockResolvedValue({
+      connection: null,
+      externalTicketId,
+      knowledgeRepoSources: null,
+      ticketIsSynthetic: false,
+    });
+
+  it.each(['jira', 'linear'])('comments on an allowed key (%s)', async (provider) => {
+    mocks.resolveConfig.mockResolvedValue({ ...JIRA, provider });
+    listFor({ '': ['pay'] });
+    run('PAY-7');
+    await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual({
+      posted: true,
+    });
+    expect(mocks.addComment).toHaveBeenCalledWith('PAY-7', 'X');
+  });
+
+  it.each(['jira', 'linear'])('skips a disallowed key without a request (%s)', async (provider) => {
+    mocks.resolveConfig.mockResolvedValue({ ...JIRA, provider });
+    listFor({ '': ['PAY'] });
+    run('ENG-7');
+    const out = await postTicketComment({ body: 'secret text', workRequestId: 'wr-1' });
+    expect(out).toEqual({ posted: false, reason: expect.stringMatching(/project/) });
+    expect(mocks.createProvider).not.toHaveBeenCalled();
+    expect(mocks.addComment).not.toHaveBeenCalled();
+    expect(JSON.stringify(mocks.logWarn.mock.calls)).not.toMatch(/ENG-7|secret text/);
+  });
+
+  it('skips when the list cannot be read', async () => {
+    mocks.resolveSetting.mockRejectedValue(new Error('db down'));
+    run('PAY-7');
+    const out = await postTicketComment({ body: 'X', workRequestId: 'wr-1' });
+    expect(out.posted).toBe(false);
+    expect(mocks.addComment).not.toHaveBeenCalled();
+  });
+
+  it('is unrestricted with an empty list', async () => {
+    run('ENG-7');
+    await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual({
+      posted: true,
+    });
+  });
+
+  it("holds a global-template run to its launcher's teams (currentRunLauncherId)", async () => {
+    mocks.launcher.mockResolvedValue('u1');
+    mocks.findWorkflowRun.mockResolvedValue({
+      launchedById: 'requester-not-launcher',
+      template: { team: null, teamId: null },
+    });
+    mocks.findMemberships.mockResolvedValue([{ team: { orgId: null }, teamId: 't1' }]);
+    listFor({ t1: ['PAY'] });
+    run('ENG-7');
+    expect((await postTicketComment({ body: 'X', workRequestId: 'wr-1' })).posted).toBe(false);
+    expect(mocks.findMemberships).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ userId: 'u1' }) })
+    );
+    run('PAY-7');
+    await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual({
+      posted: true,
+    });
+  });
+
+  it('skips, without throwing, when the launcher cannot be read', async () => {
+    mocks.launcher.mockRejectedValue(new Error('db down'));
+    mocks.findWorkflowRun.mockResolvedValue({ launchedById: null, template: null });
+    run('PAY-7');
+    const out = await postTicketComment({ body: 'X', workRequestId: 'wr-1' });
+    expect(out.posted).toBe(false);
+    expect(mocks.addComment).not.toHaveBeenCalled();
   });
 });

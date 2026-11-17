@@ -61,6 +61,7 @@ import {
   onOrchestrationRunFinalized,
 } from '../lib/orchestrationChildren.js';
 import { pinDetectionsOnRun } from '../lib/runDetection.js';
+import { currentRunLauncherId } from '../lib/runLauncher.js';
 import {
   snapshotAgentRuntimes,
   snapshotAgentVersions,
@@ -1601,6 +1602,7 @@ export async function finalizeRun(
             };
       let wrote: boolean | undefined;
       const failure = await syncTrackerOnEvent(trackerEvent, trackerConfig, {
+        launcher: currentRunLauncherId,
         onOutcome: (outcome) => {
           wrote = outcome.wrote;
         },

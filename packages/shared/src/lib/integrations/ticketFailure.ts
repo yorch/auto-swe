@@ -5,7 +5,8 @@
  * ever writes, and the platform knows nothing was written (for `no_transition` only because
  * `finalizeRun`, the sole recorder, sends no `prUrl`; a Jira remote link could otherwise succeed
  * first): `out_of_scope` declined a GitHub ticket
- * in a repository the run does not target, `no_repository` a GitHub ticket id the platform could
+ * in a repository the run does not target, or a Jira/Linear ticket in a project the operator's
+ * allowlist excludes, `no_repository` a GitHub ticket id the platform could
  * not resolve a repository from (a bare `123`, an issue URL, `owner/repo`, or another tracker's
  * key), and `no_transition` is a Jira ticket on which no transition to a status
  * named like the target was found (the platform looks for a fixed name, and the project may name

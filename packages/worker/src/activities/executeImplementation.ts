@@ -76,6 +76,7 @@ import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
 import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
+import { currentRunLauncherId } from '../lib/runLauncher.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
 import { resolveTestIntegrityMode, type TestIntegrityGuardMode } from '../lib/testIntegrityGate.js';
@@ -479,6 +480,7 @@ export async function executeImplementation(
                 startedEvent,
                 await resolveIssueTrackerConfig(),
                 {
+                  launcher: currentRunLauncherId,
                   onOutcome: (outcome) => {
                     wrote = outcome.wrote;
                   },

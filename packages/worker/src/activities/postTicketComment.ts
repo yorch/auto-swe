@@ -3,12 +3,15 @@ import { createIssueTrackerProvider } from '@auto-swe/shared/lib/integrations/re
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import {
   isGitHubTicketInScope,
+  isTrackerWriteInScope,
+  loadRunTrackerScope,
   RUN_TRACKER_SCOPE_SELECT,
   runTrackerScope,
 } from '@auto-swe/shared/lib/trackerSync';
 import { logWarn } from '../lib/activityLog.js';
 import { redactCiLog } from '../lib/ciLogGuard.js';
 import { getErrorMessage } from '../lib/errors.js';
+import { currentRunLauncherId } from '../lib/runLauncher.js';
 
 /** Under Jira's 32,767-character comment limit, with room for the marker. */
 export const MAX_TICKET_COMMENT_CHARS = 30_000;
@@ -91,6 +94,19 @@ export async function postTicketComment(
       !isGitHubTicketInScope(run.externalTicketId, config.baseUrl, await runTrackerScope(run))
     ) {
       const reason = "the ticket's repository is not one this run targets or the operator allows";
+      logWarn(`postTicketComment: ${reason}`, { workRequestId: input.workRequestId });
+      return { posted: false, reason };
+    }
+    // Jira and Linear ids name no repository: the comment is held to the same project allowlist a
+    // read of the ticket is (resolved at the run's team, else its launcher's). A refusal is a
+    // skip, never a failure of the run, and the log line carries no ticket text.
+    if (
+      (config.provider === 'jira' || config.provider === 'linear') &&
+      !(await isTrackerWriteInScope(config, run.externalTicketId, () =>
+        loadRunTrackerScope(input.workRequestId, { launcher: currentRunLauncherId })
+      ))
+    ) {
+      const reason = "the ticket's project is not one the operator allows for this run";
       logWarn(`postTicketComment: ${reason}`, { workRequestId: input.workRequestId });
       return { posted: false, reason };
     }
