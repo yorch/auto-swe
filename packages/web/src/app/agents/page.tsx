@@ -489,7 +489,7 @@ function AgentLibraryContent() {
       ...EMPTY_CREATE,
       credentialId: a.credentialId,
       description: a.description ?? '',
-      harnessProfile: a.harnessProfile,
+      harnessProfiles: a.harnessProfiles,
       inheritsModelFrom: a.inheritsModelFrom ?? '',
       key: a.key,
       mcpConnectionId: a.mcpConnectionId,

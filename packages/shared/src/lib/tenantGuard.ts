@@ -53,6 +53,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'OrgMonthlyUsage',
   'PackageRegistry',
   'OrganizationMembership',
+  'PluginEnablement',
   'ProviderCredential',
   'ReportDigestSubscription',
   'ReviewPreset',

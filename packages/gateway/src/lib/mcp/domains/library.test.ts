@@ -18,7 +18,7 @@ const agentRow = {
   createdById: USER,
   credentialId: CONN,
   description: INJECTION,
-  harnessProfile: INJECTION,
+  harnessProfiles: [INJECTION],
   id: AGENT,
   inheritsModelFrom: null,
   isActive: true,

@@ -323,7 +323,7 @@ describe('agent library — create form', () => {
       {
         ...row('a1', 'Alpha', 'alpha'),
         credentialId: 'cred-1',
-        harnessProfile: 'strict-profile',
+        harnessProfiles: ['strict-profile'],
         reasoning: 'high',
         runtime: 'claude-code',
         systemPrompt: 'Be careful',
@@ -353,7 +353,7 @@ describe('agent library — create form', () => {
       {
         ...row('a1', 'Alpha', 'alpha'),
         credentialId: 'cred-1',
-        harnessProfile: 'strict-profile',
+        harnessProfiles: ['strict-profile'],
         reasoning: 'high',
         runtime: 'claude-code',
         systemPrompt: 'Be careful',
@@ -370,7 +370,7 @@ describe('agent library — create form', () => {
     await waitFor(() => expect(createAgent).toHaveBeenCalled());
     expect(createAgent.mock.calls[0][0]).toMatchObject({
       credentialId: 'cred-1',
-      harnessProfile: 'strict-profile',
+      harnessProfiles: ['strict-profile'],
       key: 'alpha',
       reasoning: 'high',
       runtime: 'claude-code',

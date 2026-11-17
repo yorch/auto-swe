@@ -47,12 +47,12 @@ export interface ResolvedAgent {
    */
   runtime: ImplementerRuntimeKind | null;
   /**
-   * The NAME of the harness profile this version is bound to (`Agent.harnessProfile`),
-   * or null. Read from the resolved version ITSELF: unlike the runtime it is not
+   * The NAMES of the harness profiles this version is bound to (`Agent.harnessProfiles`),
+   * in binding order; empty when none. Read from the resolved version ITSELF: unlike the runtime it is not
    * inherited along `inheritsModelFrom`, so a persona never silently picks up its
    * parent's instructions and plugins. See `resolveHarnessProfile`.
    */
-  harnessProfile: string | null;
+  harnessProfiles: string[];
 }
 
 export type AgentRow = NonNullable<Awaited<ReturnType<typeof fetchActiveAgent>>>;
@@ -426,7 +426,8 @@ export async function resolveAgentProfileName(
   if (!agent) {
     throw new ConfigMissingError(`No active Agent found for key '${key}' at any scope.`);
   }
-  return agent.harnessProfile ?? null;
+  // Single-plugin behaviour: only the first binding is applied until multi-plugin lands.
+  return agent.harnessProfiles[0] ?? null;
 }
 
 /**
@@ -558,7 +559,7 @@ async function resolveAgentUncached(key: string, ctx?: ResolveCtx): Promise<Reso
   const { model, runtime } = await resolveModelForAgent(agent, ctx);
 
   return {
-    harnessProfile: agent.harnessProfile ?? null,
+    harnessProfiles: agent.harnessProfiles,
     id: agent.id,
     isVerified: agent.isVerified,
     key,

@@ -102,7 +102,7 @@ export async function isOnboardingDraftAgent(
   const agent = await prisma.agent.findUnique({
     select: {
       channelId: true,
-      harnessProfile: true,
+      harnessProfiles: true,
       inheritsModelFrom: true,
       key: true,
       mcpConnectionId: true,

@@ -29,7 +29,7 @@ export interface AgentFormValue {
   credentialId?: string | null;
   runtime?: ImplementerRuntimeKind | null;
   /** The approved profile (by name). Editable only where `harnessProfiles` is passed (platform admin). */
-  harnessProfile?: string | null;
+  harnessProfiles?: string[];
   reasoning?: ReasoningLevel | null;
 }
 
@@ -361,24 +361,25 @@ export function AgentFormFields({
         <Combobox
           hint="Plugins and instructions the Claude Code harness loads for this agent. Needs the Claude Code runtime, and is not inherited: bind each agent that should have one."
           label={optional('Harness profile')}
-          onChange={(v) => onChange({ harnessProfile: v || null })}
+          onChange={(v) => onChange({ harnessProfiles: v ? [v] : [] })}
           options={[
             { label: 'None', value: '' },
             ...harnessProfiles
               // A disabled profile cannot be newly bound; one already bound stays visible.
-              .filter((p) => p.status === 'OK' || p.name === value.harnessProfile)
+              .filter((p) => p.status === 'OK' || p.name === value.harnessProfiles?.[0])
               .map((p) => ({
                 label:
                   p.status === 'OK' ? visibleText(p.name) : `${visibleText(p.name)} (disabled)`,
                 value: p.name,
               })),
           ]}
-          value={value.harnessProfile ?? ''}
+          value={value.harnessProfiles?.[0] ?? ''}
         />
       )}
-      {showRuntime && !harnessProfiles && value.harnessProfile && (
+      {showRuntime && !harnessProfiles && (value.harnessProfiles?.length ?? 0) > 0 && (
         <p className="text-xs text-paper-500">
-          Harness profile: <code>{value.harnessProfile}</code> (changed by a platform admin)
+          Harness profile: <code>{value.harnessProfiles?.join(', ')}</code> (changed by a platform
+          admin)
         </p>
       )}
       {credentials && (

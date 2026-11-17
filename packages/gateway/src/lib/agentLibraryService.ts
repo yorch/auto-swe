@@ -67,12 +67,11 @@ export interface AgentBaseInput {
    */
   runtime?: ImplementerRuntimeKind | null;
   /**
-   * The approved harness profile (by name) this version runs with on the
-   * `claude-code` runtime. undefined = keep, null = none. Set on the version
-   * itself: never inherited along `inheritsModelFrom`. Platform-ADMIN only: the
-   * routes enforce it.
+   * The approved harness profiles (plugins, by name, in binding order) this version runs with
+   * on the `claude-code` runtime. undefined = keep, [] = none. Set on the version itself:
+   * never inherited along `inheritsModelFrom`. Platform-ADMIN only: the routes enforce it.
    */
-  harnessProfile?: string | null;
+  harnessProfiles?: string[];
   /**
    * How hard the model reasons before it answers. null = no opinion: the
    * provider's default, or the parent's level for a persona that inherits its
@@ -262,14 +261,14 @@ export interface ProfileSaveError {
 export async function profileSaveError(
   prisma: AgentReader & Pick<PrismaClient, 'harnessProfile'>,
   version: {
-    harnessProfile: string | null;
+    harnessProfiles: string[];
     inheritsModelFrom: string | null;
     runtime: string | null;
   },
   changed: boolean
 ): Promise<ProfileSaveError | null> {
-  const name = version.harnessProfile;
-  if (!name) {
+  const names = version.harnessProfiles;
+  if (names.length === 0) {
     return null;
   }
   const runtime = await effectiveRuntime(prisma, version);
@@ -282,15 +281,17 @@ export async function profileSaveError(
   if (!changed) {
     return null;
   }
-  const profile = await prisma.harnessProfile.findUnique({
-    select: { status: true },
-    where: { name },
-  });
-  if (!profile) {
-    return { code: 'PROFILE_NOT_FOUND', message: `No harness profile named '${name}'.` };
-  }
-  if (profile.status !== 'OK') {
-    return { code: 'PROFILE_DISABLED', message: `Harness profile '${name}' is disabled.` };
+  for (const name of names) {
+    const profile = await prisma.harnessProfile.findUnique({
+      select: { status: true },
+      where: { name },
+    });
+    if (!profile) {
+      return { code: 'PROFILE_NOT_FOUND', message: `No harness profile named '${name}'.` };
+    }
+    if (profile.status !== 'OK') {
+      return { code: 'PROFILE_DISABLED', message: `Harness profile '${name}' is disabled.` };
+    }
   }
   return null;
 }
@@ -304,16 +305,16 @@ export async function defaultOverrideProfile(
   prisma: AgentReader,
   key: Pick<AgentScopeKey, 'key' | 'scope'>,
   runtime: string | null
-): Promise<string | null> {
+): Promise<string[]> {
   if (key.scope === 'GLOBAL' || runtime !== 'claude-code') {
-    return null;
+    return [];
   }
   const global = await prisma.agent.findFirst({
     orderBy: { version: 'desc' },
-    select: { harnessProfile: true },
+    select: { harnessProfiles: true },
     where: { isActive: true, key: key.key, scope: 'GLOBAL' },
   });
-  return global?.harnessProfile ?? null;
+  return global?.harnessProfiles ?? [];
 }
 
 /**
@@ -691,7 +692,7 @@ export async function createAgent(
           createdById: actorId,
           credentialId: base.credentialId ?? null,
           description: base.description ?? null,
-          harnessProfile: base.harnessProfile ?? null,
+          harnessProfiles: base.harnessProfiles ?? [],
           inheritsModelFrom: base.inheritsModelFrom ?? null,
           isActive: true,
           isBuiltIn: false,
@@ -818,7 +819,7 @@ export async function updateAgent(
           createdById: actorId,
           credentialId: pick(base.credentialId, current.credentialId),
           description: pick(base.description, current.description),
-          harnessProfile: pick(base.harnessProfile, current.harnessProfile),
+          harnessProfiles: base.harnessProfiles ?? current.harnessProfiles,
           inheritsModelFrom: pick(base.inheritsModelFrom, current.inheritsModelFrom),
           // Active, because the guard above admits only a lineage that is already active or a
           // deliberate reactivation: no version decides its lineage's activation.
@@ -1263,7 +1264,7 @@ export async function bulkUpdateAgentModels(
           modelSpec: target,
           // A profile only means something on the harness: leaving it behind would make the
           // version unsavable (PROFILE_RUNTIME_MISMATCH) and fail its runs closed.
-          ...(change.runtimeChange ? { harnessProfile: null, runtime: 'mastra' as const } : {}),
+          ...(change.runtimeChange ? { harnessProfiles: [], runtime: 'mastra' as const } : {}),
           ...(change.credentialCleared ? { credentialId: null } : {}),
         };
         const saved = await updateAgent(prisma, head, base, actorId);

@@ -1003,7 +1003,7 @@ function promptHash(text: string): string {
 /** The columns of an `Agent` row that {@link firstDifferenceFromSeed} reads. */
 export interface SeedComparableAgentRow {
   channelId: string | null;
-  harnessProfile: string | null;
+  harnessProfiles: string[];
   inheritsModelFrom: string | null;
   key: string;
   mcpConnectionId: string | null;
@@ -1064,8 +1064,8 @@ export function firstDifferenceFromSeed(
   if (row.runtime !== null) {
     return 'runtime';
   }
-  if (row.harnessProfile !== null) {
-    return 'harnessProfile';
+  if (row.harnessProfiles.length > 0) {
+    return 'harnessProfiles';
   }
   if (row.inheritsModelFrom !== (seed.inheritsModelFrom ?? null)) {
     return 'inheritsModelFrom';
@@ -1135,7 +1135,7 @@ async function migrateSeededDefaults(
         channelId: current.channelId,
         credentialId: current.credentialId,
         description: current.description,
-        harnessProfile: current.harnessProfile,
+        harnessProfiles: current.harnessProfiles,
         inheritsModelFrom: current.inheritsModelFrom,
         isActive: true,
         isBuiltIn: current.isBuiltIn,

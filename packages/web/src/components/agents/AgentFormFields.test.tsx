@@ -41,7 +41,7 @@ describe('AgentFormFields', () => {
         onChange={vi.fn()}
         showRuntime
         skills={[]}
-        value={{ ...VALUE, harnessProfile: 'review-kit', runtime: 'claude-code' }}
+        value={{ ...VALUE, harnessProfiles: ['review-kit'], runtime: 'claude-code' }}
       />
     );
 
@@ -62,7 +62,7 @@ describe('AgentFormFields', () => {
         onChange={onChange}
         showRuntime
         skills={[]}
-        value={{ ...VALUE, harnessProfile: 'review-kit', runtime: 'claude-code' }}
+        value={{ ...VALUE, harnessProfiles: ['review-kit'], runtime: 'claude-code' }}
       />
     );
 

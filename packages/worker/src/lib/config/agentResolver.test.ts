@@ -90,6 +90,7 @@ function agentRow(overrides: Record<string, any> = {}) {
   return {
     credentialId: null,
     description: 'd',
+    harnessProfiles: [],
     id: 'a-1',
     inheritsModelFrom: null,
     isActive: true,
@@ -645,26 +646,28 @@ describe('resolveAgent — scope cascade', () => {
 describe('resolveAgent — harness profile', () => {
   it('reads the version’s own profile name, and null as none', async () => {
     agentFindFirst.mockResolvedValueOnce(
-      agentRow({ harnessProfile: 'kit', runtime: 'claude-code' })
+      agentRow({ harnessProfiles: ['kit'], runtime: 'claude-code' })
     );
-    expect((await resolveAgent('reviewer')).harnessProfile).toBe('kit');
+    expect((await resolveAgent('reviewer')).harnessProfiles).toEqual(['kit']);
     agentFindFirst.mockResolvedValueOnce(agentRow({ key: 'planner' }));
-    expect((await resolveAgent('planner')).harnessProfile).toBeNull();
+    expect((await resolveAgent('planner')).harnessProfiles).toEqual([]);
   });
 
   it('does not inherit the profile along inheritsModelFrom, though the runtime is', async () => {
     agentFindFirst.mockImplementation(async ({ where }: { where: { key: string } }) =>
       where.key === 'ciFixer'
         ? agentRow({ inheritsModelFrom: 'implementer', key: 'ciFixer', modelSpec: null })
-        : agentRow({ harnessProfile: 'kit', key: 'implementer', runtime: 'claude-code' })
+        : agentRow({ harnessProfiles: ['kit'], key: 'implementer', runtime: 'claude-code' })
     );
     const r = await resolveAgent('ciFixer');
     expect(r.runtime).toBe('claude-code');
-    expect(r.harnessProfile).toBeNull();
+    expect(r.harnessProfiles).toEqual([]);
   });
 
   it('resolveAgentProfileName reads the pinned version’s binding without binding a model', async () => {
-    agentFindFirst.mockResolvedValueOnce(agentRow({ harnessProfile: 'kit', key: 'implementer' }));
+    agentFindFirst.mockResolvedValueOnce(
+      agentRow({ harnessProfiles: ['kit'], key: 'implementer' })
+    );
     expect(
       await resolveAgentProfileName('implementer', { agentVersions: { implementer: 3 } })
     ).toBe('kit');

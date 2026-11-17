@@ -194,7 +194,7 @@ describe('startChannelRun', () => {
     p.agent.findFirst.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
       where.scope === 'CHANNEL'
         ? {
-            harnessProfile: 'kit',
+            harnessProfiles: ['kit'],
             inheritsModelFrom: null,
             key: 'channelAssistant',
             modelSpec: 'a/m',

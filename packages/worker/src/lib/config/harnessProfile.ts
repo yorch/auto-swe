@@ -44,11 +44,13 @@ export interface ResolvedHarnessProfile {
 export async function resolveHarnessProfile(
   agentKey: string,
   ctx: ResolveCtx | undefined,
-  resolved?: Pick<ResolvedAgent, 'harnessProfile'>
+  resolved?: Pick<ResolvedAgent, 'harnessProfiles'>
 ): Promise<ResolvedHarnessProfile | null> {
   // The caller's own resolution when it has one: resolving again could land on
   // a version cut in between and pair one version's model with the next one's profile.
-  const { harnessProfile: name } = resolved ?? (await resolveAgent(agentKey, ctx));
+  const { harnessProfiles } = resolved ?? (await resolveAgent(agentKey, ctx));
+  // Single-plugin behaviour: only the first binding is applied until multi-plugin lands.
+  const name = harnessProfiles[0];
   if (!name) {
     return null;
   }
@@ -121,14 +123,15 @@ export async function resolveProfileForRuntime(args: {
   appliesToRun?: boolean;
   ranOn?: string;
   /** The caller's resolution of `agentKey`, so the profile comes from the same Agent version as its model. */
-  resolved?: Pick<ResolvedAgent, 'harnessProfile'>;
+  resolved?: Pick<ResolvedAgent, 'harnessProfiles'>;
   tracer: Pick<McpTracer, 'addActivityEvent'>;
 }): Promise<ResolvedHarnessProfile | undefined> {
   const { agentKey, ctx, ranOn, resolved, runtime, tracer } = args;
   if (runtime === 'claude-code' && args.appliesToRun !== false) {
     return (await resolveHarnessProfile(agentKey, ctx, resolved)) ?? undefined;
   }
-  const { harnessProfile: profile } = resolved ?? (await resolveAgent(agentKey, ctx));
+  const { harnessProfiles } = resolved ?? (await resolveAgent(agentKey, ctx));
+  const profile = harnessProfiles[0];
   if (profile) {
     tracer.addActivityEvent({
       name: 'agent.profile_not_applicable',

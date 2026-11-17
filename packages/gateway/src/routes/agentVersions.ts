@@ -405,7 +405,7 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
       const profileError = await profileSaveError(
         fastify.prisma,
         {
-          harnessProfile: source.harnessProfile,
+          harnessProfiles: source.harnessProfiles,
           inheritsModelFrom: source.inheritsModelFrom,
           runtime: toImplementerRuntime(source.runtime),
         },
@@ -454,7 +454,7 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
           {
             credentialId: source.credentialId,
             description: source.description,
-            harnessProfile: source.harnessProfile,
+            harnessProfiles: source.harnessProfiles,
             inheritsModelFrom: source.inheritsModelFrom,
             mcpConnectionId: source.mcpConnectionId,
             modelSpec: source.modelSpec,

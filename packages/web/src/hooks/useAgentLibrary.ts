@@ -30,8 +30,8 @@ export interface AgentRow {
   credentialId: string | null;
   /** The loop that drives the agent in a workspace; null = no opinion. */
   runtime?: ImplementerRuntimeKind | null;
-  /** The approved harness profile (by name) the version runs with; null = none. */
-  harnessProfile?: string | null;
+  /** The approved harness profiles (by name, in binding order) the version runs with; [] = none. */
+  harnessProfiles?: string[];
   /** How hard the model reasons; null = no opinion (provider default, or the parent's). */
   reasoning?: ReasoningLevel | null;
   origin: string | null;
@@ -129,7 +129,7 @@ export interface CreateAgentBody {
   /** Platform-admin only. */
   runtime?: ImplementerRuntimeKind | null;
   /** Platform-admin only; the name of an approved, enabled harness profile. */
-  harnessProfile?: string | null;
+  harnessProfiles?: string[];
   reasoning?: ReasoningLevel | null;
 }
 

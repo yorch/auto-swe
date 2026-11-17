@@ -88,7 +88,7 @@ const profile = (over: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   vi.clearAllMocks();
   h.inActivity.value = true;
-  h.resolveAgent.mockResolvedValue({ harnessProfile: 'kit' });
+  h.resolveAgent.mockResolvedValue({ harnessProfiles: ['kit'] });
   h.profileFind.mockResolvedValue(profile());
   h.versionFind.mockImplementation(async ({ where }) =>
     versionRow(`version ${where.profileId_version.version}`)
@@ -97,7 +97,7 @@ beforeEach(() => {
 
 describe('resolveHarnessProfile', () => {
   it('returns null, and touches nothing, for an agent bound to no profile', async () => {
-    h.resolveAgent.mockResolvedValue({ harnessProfile: null });
+    h.resolveAgent.mockResolvedValue({ harnessProfiles: [] });
     expect(await resolveHarnessProfile('implementer', undefined)).toBeNull();
     expect(h.profileFind).not.toHaveBeenCalled();
     expect(h.runUpdateMany).not.toHaveBeenCalled();
@@ -105,8 +105,8 @@ describe('resolveHarnessProfile', () => {
 
   it('takes the profile name from the caller’s own resolution, not a second one', async () => {
     runRow(null);
-    h.resolveAgent.mockResolvedValue({ harnessProfile: 'a-version-cut-in-between' });
-    const r = await resolveHarnessProfile('implementer', {}, { harnessProfile: 'kit' });
+    h.resolveAgent.mockResolvedValue({ harnessProfiles: ['a-version-cut-in-between'] });
+    const r = await resolveHarnessProfile('implementer', {}, { harnessProfiles: ['kit'] });
     expect(r).toMatchObject({ name: 'kit' });
     expect(h.resolveAgent).not.toHaveBeenCalled();
     expect(h.profileFind).toHaveBeenCalledWith(expect.objectContaining({ where: { name: 'kit' } }));
@@ -114,7 +114,7 @@ describe('resolveHarnessProfile', () => {
       await resolveProfileForRuntime({
         agentKey: 'implementer',
         ctx: {},
-        resolved: { harnessProfile: null },
+        resolved: { harnessProfiles: [] },
         runtime: 'claude-code',
         tracer: { addActivityEvent: vi.fn() },
       })
@@ -207,7 +207,7 @@ describe('resolveHarnessProfile', () => {
 
   it('does not use a profile bound to a different agent (no inheritance)', async () => {
     // The resolver returns the version’s OWN binding; a persona with none gets none.
-    h.resolveAgent.mockResolvedValue({ harnessProfile: null, runtime: 'claude-code' });
+    h.resolveAgent.mockResolvedValue({ harnessProfiles: [], runtime: 'claude-code' });
     expect(await resolveHarnessProfile('ciFixer', {})).toBeNull();
   });
 
@@ -279,7 +279,7 @@ describe('resolveProfileForRuntime', () => {
   });
 
   it('returns undefined, with no event, for an agent bound to no profile', async () => {
-    h.resolveAgent.mockResolvedValue({ harnessProfile: null });
+    h.resolveAgent.mockResolvedValue({ harnessProfiles: [] });
     const given = args();
     await expect(resolveProfileForRuntime(given)).resolves.toBeUndefined();
     expect(given.tracer.addActivityEvent).not.toHaveBeenCalled();

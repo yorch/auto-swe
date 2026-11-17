@@ -884,7 +884,7 @@ describe('syncBuiltins — the onboarding agent as persisted', () => {
     const column = (name: string) => (row[name] ?? null) as never;
     const persisted = {
       channelId: column('channelId'),
-      harnessProfile: column('harnessProfile'),
+      harnessProfiles: (row.harnessProfiles ?? []) as never,
       inheritsModelFrom: column('inheritsModelFrom'),
       key: row.key as string,
       mcpConnectionId: column('mcpConnectionId'),
