@@ -524,6 +524,16 @@ describe('POST /api/v1/work-requests', () => {
         expect(res.json().error.code).toBe('IDEMPOTENCY_KEY_MISMATCH');
       });
 
+      it('compares a row whose stored body is not a request body against its column', async () => {
+        // A row written without a request body (an empty `{}`) has no description to compare, so
+        // the column that holds what it launched with stands in for it.
+        priorRunInput = stored({}, 'Typed');
+        const same = await post({ description: 'Typed' }, { 'idempotency-key': 'k-empty' });
+        expect(same.statusCode).toBe(200);
+        const other = await post({ description: 'Different' }, { 'idempotency-key': 'k-empty' });
+        expect(other.statusCode).toBe(422);
+      });
+
       it('refuses a blank request on a key first used with a typed description', async () => {
         priorRunInput = stored(
           { description: 'Typed', externalTicketId: 'JIRA-9', repoIds },

@@ -342,24 +342,35 @@ export async function resolveDefaultTemplate(
 }
 
 /**
- * The description the caller submitted, as stored in `requestPayload` (the request body). The
- * column holds what the run was launched with, which is the ticket brief for a request that left
- * it blank, so a replay compares this instead. Rows without a readable payload fall back to it.
+ * Whether a replayed request's description is the one the stored request carried. The stored
+ * `requestPayload` is the request body, so a typed description compares against it. The column
+ * holds what the run launched with, which is the ticket brief for a request that left the
+ * description blank, so it is not compared for such a body: a blank replay matches a blank
+ * original and a typed one does not. A body this route did not write (no `externalTicketId`, or
+ * not JSON) carries no description to compare, so the column stands in for it.
  */
-function storedRequestDescription(prior: {
-  description: string;
-  requestPayload: string | null;
-}): string | null {
+function replayDescriptionMatches(
+  prior: { description: string; requestPayload: string | null },
+  typed: string | null
+): boolean {
+  const replayed = typed ?? '';
   try {
     const parsed: unknown = JSON.parse(prior.requestPayload ?? '');
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed) &&
+      typeof (parsed as { externalTicketId?: unknown }).externalTicketId === 'string'
+    ) {
       const stored = (parsed as { description?: unknown }).description;
-      return typeof stored === 'string' && stored.trim() !== '' ? stored : null;
+      return typeof stored === 'string' && stored.trim() !== ''
+        ? stored === replayed
+        : replayed === '';
     }
   } catch {
-    // Not a JSON request body: fall through to the column.
+    // Not a JSON request body: compare with the column.
   }
-  return prior.description;
+  return prior.description === replayed;
 }
 
 const CreateWorkRequestSchema = z.object({
@@ -546,7 +557,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         const priorBudget = (prior.payload as { budget?: unknown } | null)?.budget;
         if (
           prior.externalTicketId !== externalTicketId ||
-          (storedRequestDescription(prior) ?? '') !== (typedDescription ?? '') ||
+          !replayDescriptionMatches(prior, typedDescription) ||
           prior.connectionId !== repoIds[0] ||
           priorBudget !== budgetTier ||
           storedEgressPolicy(prior.requestPayload) !== egressPolicy
