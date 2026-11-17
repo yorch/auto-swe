@@ -275,6 +275,8 @@ function kitProfile(): ResolvedHarnessProfile {
     contentHash: createHash('sha256').update('kit').digest('hex'),
     files,
     hooksEnabled: true,
+    hooksLive: true,
+    hooksPinned: true,
     manifest: {
       description: 'Kit',
       instructions: 'INSTRUCTIONS.md',

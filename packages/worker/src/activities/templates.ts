@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Prisma } from '@auto-swe/shared';
+import { Prisma } from '@auto-swe/shared';
 import type { SettingResolveCtx } from '@auto-swe/shared/config';
 import { snapshotPinnedSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
@@ -50,6 +50,7 @@ import {
   runPullRequestUrl,
 } from '../lib/callbackOutbox.js';
 import { backfillPinnedSettings } from '../lib/config/pinnedSettings.js';
+import { PIN_EXECUTION_KEY, pinMapOwner } from '../lib/config/pluginEnablement.js';
 import { recordTrackerSync } from '../lib/effectLedger.js';
 import { type EndRunOutcome, endWorkflowRun } from '../lib/endRun.js';
 import { recordWorkerLaunchAudit, type WorkerLaunchSource } from '../lib/launchAudit.js';
@@ -889,6 +890,32 @@ export async function createWorkflowRun(
         runId: run.id,
       });
     }
+  }
+
+  // A reused workflow id keeps the first execution's row (`update` writes nothing), and so
+  // its plugin pins, which name that execution. This execution resolves plugins fresh: its
+  // own snapshot replaces the earlier one's, compare-and-set so a concurrent activity's
+  // first-use pin is not clobbered. A retry of the same execution finds its own id and
+  // changes nothing.
+  const pinnedExecution = (harnessProfileVersions as Record<string, unknown> | undefined)?.[
+    PIN_EXECUTION_KEY
+  ];
+  const priorOwner = pinMapOwner(run.harnessProfileVersions, run.temporalRunId);
+  if (
+    harnessProfileVersions &&
+    typeof pinnedExecution === 'string' &&
+    priorOwner !== null &&
+    priorOwner !== pinnedExecution
+  ) {
+    await prisma.workflowRun.updateMany({
+      data: { harnessProfileVersions: harnessProfileVersions as Prisma.InputJsonObject },
+      where: {
+        harnessProfileVersions: run.harnessProfileVersions
+          ? { equals: run.harnessProfileVersions as Prisma.InputJsonObject }
+          : { equals: Prisma.DbNull },
+        id: run.id,
+      },
+    });
   }
 
   if (reviewPayload?.success && reviewPayload.data.presetId) {

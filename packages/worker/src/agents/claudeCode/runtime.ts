@@ -952,7 +952,9 @@ export function claudeCodeAdapter(
             name: 'agent.plugin_hooks',
             outputJson: {
               hooksEnabled: profile.hooksEnabled,
+              live: profile.hooksLive,
               name: profile.name,
+              pinned: profile.hooksPinned,
               version: profile.version,
             },
           });

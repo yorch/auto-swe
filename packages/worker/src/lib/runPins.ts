@@ -2,11 +2,14 @@ import type { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
+import { currentTemporalRunId } from './activityContext.js';
 import { resolveAgentProfileBinding, resolveAgentRuntimeChoice } from './config/agentResolver.js';
 import {
   bindingNeedsEnablement,
   enabledProfileIds,
   enablementTeamId,
+  type HarnessPinEntry,
+  PIN_EXECUTION_KEY,
 } from './config/pluginEnablement.js';
 import type { ResolveCtx } from './config/types.js';
 
@@ -127,7 +130,7 @@ async function visibleAgentKeys(ctx: ResolveCtx): Promise<string[]> {
 }
 
 /**
- * `{ profileName: version }` for every harness profile an agent the run can
+ * `{ profileName: version | { version, verified } }` for every harness profile an agent the run can
  * resolve is bound to: the profile's latest version at this moment, read for
  * each key through the scope and agent-version pins the run's activities resolve
  * with, and written to `WorkflowRun.harnessProfileVersions`. Approving a newer
@@ -138,14 +141,21 @@ async function visibleAgentKeys(ctx: ResolveCtx): Promise<string[]> {
  * bound on an agent version that is not platform-wide when the run's team has not
  * enabled it: it is left out, so the agent fails closed where it first uses it.
  * A key whose resolution fails is left out too, and pins at first use.
+ *
+ * The pin decides the VERSION, not the PERMISSION. A plugin bound on a narrower
+ * agent version is pinned as `{ version, verified: [agentKey…] }` naming the agents
+ * whose binding passed the team's enablement check here; at run time only those
+ * bindings skip the check, so removing the enablement mid-run keeps the run's own
+ * verified bindings working and fails every other one closed. The snapshot also
+ * carries the Temporal run id of the execution it was taken for.
  */
 export async function snapshotHarnessProfileVersions(
   ctx: ResolveCtx
-): Promise<Record<string, number>> {
+): Promise<Record<string, HarnessPinEntry | string>> {
   const keys = await visibleAgentKeys(ctx);
   const pinnable = new Set<string>();
-  /** Plugin names bound on a version that needs the team's enablement, by team. */
-  const gated = new Map<string, Set<string>>();
+  /** Per team, the agent keys bound to a plugin that needs that team's enablement. */
+  const gated = new Map<string, Map<string, Set<string>>>();
   await Promise.all(
     keys.map(async (key) => {
       try {
@@ -163,37 +173,61 @@ export async function snapshotHarnessProfileVersions(
         if (!teamId) {
           return;
         }
-        const names = gated.get(teamId) ?? new Set<string>();
+        const byName = gated.get(teamId) ?? new Map<string, Set<string>>();
         for (const name of binding.harnessProfiles) {
-          names.add(name);
+          const agents = byName.get(name) ?? new Set<string>();
+          agents.add(key);
+          byName.set(name, agents);
         }
-        gated.set(teamId, names);
+        gated.set(teamId, byName);
       } catch {
         // Unresolvable now: it pins (or fails) where the run first uses it.
       }
     })
   );
-  const wanted = new Set([...pinnable, ...[...gated.values()].flatMap((n) => [...n])]);
+  // The execution this snapshot is for travels with it, so a later execution that
+  // reuses the workflow id never reads it (see `PIN_EXECUTION_KEY`).
+  const execution = currentTemporalRunId();
+  const stamp: Record<string, string> = execution ? { [PIN_EXECUTION_KEY]: execution } : {};
+  const wanted = new Set([...pinnable, ...[...gated.values()].flatMap((m) => [...m.keys()])]);
   if (wanted.size === 0) {
-    return {};
+    return stamp;
   }
   const profiles = await prisma.harnessProfile.findMany({
-    select: { id: true, latestVersion: true, name: true },
+    select: { hooksEnabled: true, id: true, latestVersion: true, name: true },
     where: { name: { in: [...wanted] }, status: 'OK' },
   });
   const allowed = new Set(pinnable);
-  for (const [teamId, names] of gated) {
+  /** Plugin name to the agent keys whose team-side binding passed the enablement check now. */
+  const verified = new Map<string, Set<string>>();
+  for (const [teamId, byName] of gated) {
     const enabled = await enabledProfileIds(
-      profiles.filter((p) => names.has(p.name)).map((p) => p.id),
+      profiles.filter((p) => byName.has(p.name)).map((p) => p.id),
       teamId
     );
     for (const p of profiles) {
-      if (names.has(p.name) && enabled.has(p.id)) {
+      if (byName.has(p.name) && enabled.has(p.id)) {
         allowed.add(p.name);
+        const agents = verified.get(p.name) ?? new Set<string>();
+        for (const agent of byName.get(p.name) ?? []) {
+          agents.add(agent);
+        }
+        verified.set(p.name, agents);
       }
     }
   }
-  return Object.fromEntries(
-    profiles.filter((p) => allowed.has(p.name)).map((p) => [p.name, p.latestVersion])
-  );
+  const pins: Record<string, HarnessPinEntry | string> = {};
+  for (const p of profiles) {
+    if (!allowed.has(p.name)) {
+      continue;
+    }
+    const agents = verified.get(p.name);
+    // The hook switch the run starts with travels with the version (see resolveHarnessProfiles).
+    pins[p.name] = {
+      hooks: p.hooksEnabled !== false,
+      ...(agents && agents.size > 0 ? { verified: [...agents].sort() } : {}),
+      version: p.latestVersion,
+    };
+  }
+  return { ...pins, ...stamp };
 }

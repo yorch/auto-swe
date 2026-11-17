@@ -2222,6 +2222,8 @@ describe('a harness profile', () => {
       { bytes: Buffer.from('{}'), mode: '100644', path: 'profile.json' },
     ],
     hooksEnabled: true,
+    hooksLive: true,
+    hooksPinned: true,
     manifest: {
       description: 'd',
       instructions: 'INSTRUCTIONS.md',
@@ -2391,7 +2393,10 @@ describe('a harness profile', () => {
           version: 4,
         },
       },
-      { name: 'agent.plugin_hooks', outputJson: { hooksEnabled: true, name: 'demo', version: 4 } },
+      {
+        name: 'agent.plugin_hooks',
+        outputJson: { hooksEnabled: true, live: true, name: 'demo', pinned: true, version: 4 },
+      },
     ]);
   });
 
@@ -2404,6 +2409,8 @@ describe('a harness profile', () => {
         { bytes: Buffer.from('{}'), mode: '100644', path: 'profile.json' },
       ],
       hooksEnabled: false,
+      hooksLive: false,
+      hooksPinned: true,
       manifest: { ...PROFILE.manifest, name: 'other', plugins: ['plugins/baz'], tools: ['Skill'] },
       name: 'other',
       version: 2,
@@ -2424,8 +2431,8 @@ describe('a harness profile', () => {
       options.systemPrompt.append.indexOf('[profile: other@2 sha cd34ef56ab12]')
     );
     expect(events.filter((e) => e.name === 'agent.plugin_hooks').map((e) => e.outputJson)).toEqual([
-      { hooksEnabled: true, name: 'demo', version: 4 },
-      { hooksEnabled: false, name: 'other', version: 2 },
+      { hooksEnabled: true, live: true, name: 'demo', pinned: true, version: 4 },
+      { hooksEnabled: false, live: false, name: 'other', pinned: true, version: 2 },
     ]);
   });
 

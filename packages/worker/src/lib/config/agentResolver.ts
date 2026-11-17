@@ -12,6 +12,7 @@ import { asyncLocalStorage } from '@temporalio/activity';
 import { persistActivityTrace } from '../activityContext.js';
 import { logWarn } from '../activityLog.js';
 import { AgentTracer } from '../agentTracer.js';
+import { bindingNeedsEnablement, enabledProfileIds, enablementTeamId } from './pluginEnablement.js';
 import {
   ConfigMissingError,
   resolvePinnedCredential,
@@ -149,7 +150,11 @@ function cascadeWheres(key: string, ctx?: ResolveCtx) {
  * falls back to the live text rather than failing the run.
  */
 export async function skillsFromAgent(agent: AgentRow, ctx?: ResolveCtx): Promise<ResolvedSkill[]> {
-  const refs = agent.skillRefs.filter((ref) => ref.skill.isActive);
+  const refs = await withoutUnavailablePluginSkills(
+    agent,
+    agent.skillRefs.filter((ref) => ref.skill.isActive),
+    ctx
+  );
   const stale = refs.filter((ref) => {
     const pinned = ctx?.skillRevisions?.[ref.skill.id];
     return pinned !== undefined && pinned !== ref.skill.currentRevision;
@@ -192,6 +197,84 @@ export async function skillsFromAgent(agent: AgentRow, ctx?: ResolveCtx): Promis
       sortOrder: ref.sortOrder,
     };
   });
+}
+
+/** Fixed reasons on `agent.plugin_skill_excluded`; never free text. */
+export const PLUGIN_SKILL_EXCLUDED_DISABLED = 'plugin is disabled';
+export const PLUGIN_SKILL_EXCLUDED_NOT_ENABLED = 'plugin is not enabled for the run’s team';
+
+/**
+ * Drops from `refs` a skill projected from a plugin (`Skill.pluginProfileId`) when
+ * the plugin is no longer usable: its profile is not OK, or the agent version is
+ * TEAM-scoped and the team has no `PluginEnablement` for it (no team to check
+ * fails closed). An agent version that is not TEAM-scoped was written by a
+ * platform ADMIN and needs no enablement (`bindingNeedsEnablement`); the profile
+ * status still applies. Skills are advisory text, so an exclusion is an
+ * `agent.plugin_skill_excluded` event, never a failure. Nothing is cached here
+ * beyond the resolver's own config-cache window.
+ */
+async function withoutUnavailablePluginSkills(
+  agent: AgentRow,
+  refs: AgentRow['skillRefs'],
+  ctx?: ResolveCtx
+): Promise<AgentRow['skillRefs']> {
+  const projected = refs.filter((ref) => ref.skill.pluginProfileId);
+  if (projected.length === 0) {
+    return refs;
+  }
+  const ids = [...new Set(projected.map((ref) => ref.skill.pluginProfileId as string))];
+  const profiles = await prisma.harnessProfile.findMany({
+    select: { id: true, status: true },
+    where: { id: { in: ids } },
+  });
+  const usable = new Set(profiles.filter((p) => p.status === 'OK').map((p) => p.id));
+  let enabled: Set<string> | undefined;
+  if (bindingNeedsEnablement(agent.scope)) {
+    const teamId = enablementTeamId(ctx, agent);
+    enabled = teamId ? await enabledProfileIds([...usable], teamId) : new Set();
+  }
+  const excluded: Array<{ skill: string; reason: string }> = [];
+  const kept = refs.filter((ref) => {
+    const profileId = ref.skill.pluginProfileId;
+    if (!profileId) {
+      return true;
+    }
+    if (!usable.has(profileId)) {
+      excluded.push({ reason: PLUGIN_SKILL_EXCLUDED_DISABLED, skill: ref.skill.name });
+      return false;
+    }
+    if (enabled && !enabled.has(profileId)) {
+      excluded.push({ reason: PLUGIN_SKILL_EXCLUDED_NOT_ENABLED, skill: ref.skill.name });
+      return false;
+    }
+    return true;
+  });
+  if (excluded.length > 0) {
+    await reportExcludedPluginSkills(agent.key, excluded);
+  }
+  return kept;
+}
+
+/** One `agent.plugin_skill_excluded` event per skill; inside an activity only; never throws. */
+async function reportExcludedPluginSkills(
+  agentKey: string,
+  excluded: Array<{ skill: string; reason: string }>
+): Promise<void> {
+  if (!asyncLocalStorage.getStore()) {
+    return;
+  }
+  try {
+    const tracer = new AgentTracer();
+    for (const { skill, reason } of excluded) {
+      tracer.addActivityEvent({
+        name: 'agent.plugin_skill_excluded',
+        outputJson: { agentKey, reason, skill },
+      });
+    }
+    await persistActivityTrace(tracer, 'skillResolver');
+  } catch {
+    // Observability must never fail a resolution.
+  }
 }
 
 /**

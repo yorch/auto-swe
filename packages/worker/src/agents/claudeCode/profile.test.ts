@@ -44,6 +44,8 @@ function profile(over: Partial<ResolvedHarnessProfile> = {}): ResolvedHarnessPro
       file('plugins/foo/scripts/run.sh', '#!/bin/sh\necho hi\n', '100755'),
     ],
     hooksEnabled: true,
+    hooksLive: true,
+    hooksPinned: true,
     manifest: {
       description: 'd',
       instructions: 'INSTRUCTIONS.md',

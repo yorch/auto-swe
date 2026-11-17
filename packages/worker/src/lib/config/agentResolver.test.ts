@@ -1,22 +1,38 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { agentFindFirst, cacheKeys, inActivity, persistTrace, ttls, revisionFindMany, warn } =
-  vi.hoisted(() => ({
-    agentFindFirst: vi.fn(),
-    cacheKeys: [] as string[],
-    inActivity: { value: false },
-    persistTrace: vi.fn(async () => undefined),
-    revisionFindMany: vi.fn(),
-    ttls: [] as number[],
-    warn: vi.fn(),
-  }));
+const {
+  agentFindFirst,
+  cacheKeys,
+  enablementFind,
+  inActivity,
+  persistTrace,
+  profileFindMany,
+  ttls,
+  revisionFindMany,
+  warn,
+} = vi.hoisted(() => ({
+  agentFindFirst: vi.fn(),
+  cacheKeys: [] as string[],
+  enablementFind: vi.fn(),
+  inActivity: { value: false },
+  persistTrace: vi.fn(async () => undefined),
+  profileFindMany: vi.fn(),
+  revisionFindMany: vi.fn(),
+  ttls: [] as number[],
+  warn: vi.fn(),
+}));
 vi.mock('@temporalio/activity', () => ({
   asyncLocalStorage: { getStore: () => (inActivity.value ? {} : undefined) },
 }));
 vi.mock('../activityContext.js', () => ({ persistActivityTrace: persistTrace }));
 vi.mock('../activityLog.js', () => ({ logWarn: warn }));
 vi.mock('@auto-swe/shared/db', () => ({
-  prisma: { agent: { findFirst: agentFindFirst }, skillRevision: { findMany: revisionFindMany } },
+  prisma: {
+    agent: { findFirst: agentFindFirst },
+    harnessProfile: { findMany: profileFindMany },
+    pluginEnablement: { findMany: enablementFind },
+    skillRevision: { findMany: revisionFindMany },
+  },
 }));
 
 // Pass-through cache so resolution isn't memoized across cases; records the
@@ -798,5 +814,110 @@ describe('resolveAgentRuntimeChoice', () => {
     expect(await resolveAgentRuntimeChoice('reviewer')).toBeNull();
     agentFindFirst.mockResolvedValue(null);
     await expect(resolveAgentRuntimeChoice('ghost')).rejects.toBeInstanceOf(ConfigMissingError);
+  });
+});
+
+describe('resolveAgent — plugin-projected skills follow the plugin', () => {
+  const projected = (name: string, pluginProfileId = 'pf-1') => ({
+    ...skillRef(name, 0),
+    skill: { ...skillRef(name, 0).skill, pluginProfileId },
+  });
+  const eventsOf = () =>
+    persistTrace.mock.calls.flatMap(
+      (c) =>
+        (c as unknown as [{ records: Array<{ toolName: string; outputJson: unknown }> }])[0].records
+    );
+  const resolveInActivity = async (ctx: Record<string, unknown> | undefined) => {
+    inActivity.value = true;
+    try {
+      return await resolveAgent('reviewer', ctx);
+    } finally {
+      inActivity.value = false;
+    }
+  };
+
+  beforeEach(() => {
+    profileFindMany.mockResolvedValue([{ id: 'pf-1', status: 'OK' }]);
+    enablementFind.mockResolvedValue([{ profileId: 'pf-1' }]);
+  });
+
+  it('leaves ordinary skills alone and queries nothing', async () => {
+    agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [skillRef('plain', 0)] }));
+    const r = await resolveAgent('reviewer', { teamId: 't1' });
+    expect(r.skills.map((x) => x.name)).toEqual(['plain']);
+    expect(profileFindMany).not.toHaveBeenCalled();
+    expect(enablementFind).not.toHaveBeenCalled();
+  });
+
+  it('drops a skill whose plugin is disabled, with an event, even for a platform agent', async () => {
+    profileFindMany.mockResolvedValue([{ id: 'pf-1', status: 'DISABLED' }]);
+    agentFindFirst.mockResolvedValue(
+      agentRow({ skillRefs: [projected('kit-skill'), skillRef('plain', 1)] })
+    );
+    const r = await resolveInActivity({ teamId: 't1' });
+    expect(r.skills.map((x) => x.name)).toEqual(['plain']);
+    expect(eventsOf()).toEqual([
+      expect.objectContaining({
+        outputJson: { agentKey: 'reviewer', reason: 'plugin is disabled', skill: 'kit-skill' },
+        toolName: 'agent.plugin_skill_excluded',
+      }),
+    ]);
+  });
+
+  it('drops a skill of a plugin whose profile row is gone', async () => {
+    profileFindMany.mockResolvedValue([]);
+    agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [projected('kit-skill')] }));
+    expect((await resolveAgent('reviewer', {})).skills).toEqual([]);
+  });
+
+  it('drops a TEAM agent’s skill when the team has not enabled the plugin', async () => {
+    enablementFind.mockResolvedValue([]);
+    agentFindFirst.mockResolvedValue(
+      agentRow({ scope: 'TEAM', skillRefs: [projected('kit-skill')], teamId: 't1' })
+    );
+    const r = await resolveInActivity({ teamId: 't1' });
+    expect(r.skills).toEqual([]);
+    expect(enablementFind).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ teamId: 't1' }) })
+    );
+    expect(eventsOf()[0]?.outputJson).toMatchObject({
+      reason: 'plugin is not enabled for the run’s team',
+      skill: 'kit-skill',
+    });
+  });
+
+  it('keeps a TEAM agent’s skill when the team enabled the plugin', async () => {
+    agentFindFirst.mockResolvedValue(
+      agentRow({ scope: 'TEAM', skillRefs: [projected('kit-skill')], teamId: 't1' })
+    );
+    expect((await resolveAgent('reviewer', { teamId: 't1' })).skills).toHaveLength(1);
+  });
+
+  it('fails closed for a TEAM agent’s skill with no team to check', async () => {
+    agentFindFirst.mockResolvedValue(
+      agentRow({ scope: 'TEAM', skillRefs: [projected('kit-skill')], teamId: null })
+    );
+    expect((await resolveAgent('reviewer', {})).skills).toEqual([]);
+    expect(enablementFind).not.toHaveBeenCalled();
+  });
+
+  it.each(['GLOBAL', 'ORGANIZATION', 'CHANNEL', 'WORKFLOW_TEMPLATE'])(
+    'needs no enablement for a %s agent’s skill',
+    async (scope) => {
+      enablementFind.mockResolvedValue([]);
+      agentFindFirst.mockResolvedValue(agentRow({ scope, skillRefs: [projected('kit-skill')] }));
+      const r = await resolveAgent('reviewer', { teamId: 't1' });
+      expect(r.skills.map((x) => x.name)).toEqual(['kit-skill']);
+      expect(enablementFind).not.toHaveBeenCalled();
+    }
+  );
+
+  it('records nothing outside an activity and never throws on a trace failure', async () => {
+    profileFindMany.mockResolvedValue([{ id: 'pf-1', status: 'DISABLED' }]);
+    agentFindFirst.mockResolvedValue(agentRow({ skillRefs: [projected('kit-skill')] }));
+    await resolveAgent('reviewer', {});
+    expect(persistTrace).not.toHaveBeenCalled();
+    persistTrace.mockRejectedValueOnce(new Error('db down'));
+    await expect(resolveInActivity({})).resolves.toMatchObject({ skills: [] });
   });
 });

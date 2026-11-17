@@ -12,7 +12,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@temporalio/activity', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@temporalio/activity')>()),
-  activityInfo: () => ({ workflowExecution: { workflowId: 'wf-1' } }),
+  activityInfo: () => ({ workflowExecution: { runId: 'exec-1', workflowId: 'wf-1' } }),
   asyncLocalStorage: { getStore: () => (h.inActivity.value ? {} : undefined) },
 }));
 vi.mock('@auto-swe/shared/db', () => ({
@@ -57,8 +57,8 @@ function versionRow(text: string, tamper = false) {
 }
 
 /** A run row whose pin map the updateMany compare-and-set reads and writes. */
-function runRow(initial: Record<string, unknown> | null) {
-  const row = { harnessProfileVersions: initial, id: 'run-1' };
+function runRow(initial: Record<string, unknown> | null, temporalRunId: string | null = 'exec-1') {
+  const row = { harnessProfileVersions: initial, id: 'run-1', temporalRunId };
   h.runFind.mockImplementation(async () => ({ ...row }));
   h.runUpdateMany.mockImplementation(
     async ({
@@ -148,7 +148,7 @@ describe('resolveHarnessProfiles', () => {
     expect(
       r?.files.find((f: { path: string }) => f.path === 'INSTRUCTIONS.md')?.bytes.toString()
     ).toBe('version 2');
-    expect(row.harnessProfileVersions).toEqual({ kit: 2 });
+    expect(row.harnessProfileVersions).toEqual({ kit: { hooks: true, version: 2 } });
   });
 
   it('keeps the run’s pinned version after a newer one is approved', async () => {
@@ -246,7 +246,8 @@ describe('resolveHarnessProfiles', () => {
     expect(cas).toBeDefined();
     const [r] = await resolveHarnessProfiles('implementer', {});
     expect(r?.version).toBe(1);
-    expect(row.harnessProfileVersions).toEqual({ kit: 1 });
+    // The pin it found had no hook switch; the first use records it beside the version.
+    expect(row.harnessProfileVersions).toEqual({ kit: { hooks: true, version: 1 } });
   });
 });
 
@@ -286,7 +287,10 @@ describe('several plugins, hooks, enablement and collisions', () => {
       ['alpha', true],
       ['quiet', false],
     ]);
-    expect(row.harnessProfileVersions).toEqual({ alpha: 2, quiet: 2 });
+    expect(row.harnessProfileVersions).toEqual({
+      alpha: { hooks: true, version: 2 },
+      quiet: { hooks: false, version: 2 },
+    });
   });
 
   it('fails closed when one of several is disabled, naming it', async () => {
@@ -344,25 +348,207 @@ describe('several plugins, hooks, enablement and collisions', () => {
     expect(list).toHaveLength(1);
   });
 
-  it('fails closed for a scoped override with no team to check', async () => {
+  it('fails closed for a TEAM override with no team to check', async () => {
     rows.alpha = pluginRow('alpha', 'alpha');
     runRow(null);
     await expect(
-      resolveHarnessProfiles('implementer', {}, binding(['alpha'], { scope: 'ORGANIZATION' }))
+      resolveHarnessProfiles('implementer', {}, binding(['alpha'], { scope: 'TEAM' }))
     ).rejects.toMatchObject({ type: 'PLUGIN_NOT_ENABLED' });
   });
 
-  it('keeps a run in flight on its pinned snapshot after the enablement is removed', async () => {
+  it.each(['ORGANIZATION', 'CHANNEL', 'WORKFLOW_TEMPLATE'] as const)(
+    'needs no enablement, and no team, for a %s binding',
+    async (scope) => {
+      rows.alpha = pluginRow('alpha', 'alpha');
+      runRow(null);
+      h.enabledFind.mockResolvedValue([]);
+      const list = await resolveHarnessProfiles('implementer', {}, binding(['alpha'], { scope }));
+      expect(list).toHaveLength(1);
+      expect(h.enabledFind).not.toHaveBeenCalled();
+    }
+  );
+
+  const teamBinding = () => binding(['alpha'], { scope: 'TEAM', teamId: 't1' });
+
+  it('keeps a run in flight on a binding it verified after the enablement is removed', async () => {
     rows.alpha = pluginRow('alpha', 'alpha');
-    runRow({ alpha: 2 });
+    runRow({ alpha: { verified: ['implementer'], version: 2 } });
     h.enabledFind.mockResolvedValue([]);
-    const list = await resolveHarnessProfiles(
-      'implementer',
-      { teamId: 't1' },
-      binding(['alpha'], { scope: 'TEAM', teamId: 't1' })
-    );
+    const list = await resolveHarnessProfiles('implementer', { teamId: 't1' }, teamBinding());
     expect(list).toHaveLength(1);
     expect(h.enabledFind).not.toHaveBeenCalled();
+  });
+
+  it('does not let another agent’s pin stand in for a team binding that was never verified', async () => {
+    rows.alpha = pluginRow('alpha', 'alpha');
+    // Pinned by a platform-wide binding (bare version): no agent is verified.
+    runRow({ alpha: 2 });
+    h.enabledFind.mockResolvedValue([]);
+    await expect(
+      resolveHarnessProfiles('implementer', { teamId: 't1' }, teamBinding())
+    ).rejects.toMatchObject({ nonRetryable: true, type: 'PLUGIN_NOT_ENABLED' });
+    expect(h.enabledFind).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ teamId: 't1' }) })
+    );
+  });
+
+  it('fails closed for an agent not in the pin’s verified list, even when another is', async () => {
+    rows.alpha = pluginRow('alpha', 'alpha');
+    runRow({ alpha: { verified: ['reviewer'], version: 2 } });
+    h.enabledFind.mockResolvedValue([]);
+    await expect(
+      resolveHarnessProfiles('implementer', { teamId: 't1' }, teamBinding())
+    ).rejects.toMatchObject({ type: 'PLUGIN_NOT_ENABLED' });
+  });
+
+  it('serves the pinned version to a not-yet-verified binding that is enabled, and records it', async () => {
+    rows.alpha = pluginRow('alpha', 'alpha');
+    const row = runRow({ alpha: 1 });
+    h.enabledFind.mockResolvedValue([{ profileId: 'id-alpha' }]);
+    const [p] = await resolveHarnessProfiles('implementer', { teamId: 't1' }, teamBinding());
+    expect(p?.version).toBe(1);
+    expect(row.harnessProfileVersions).toEqual({
+      alpha: { hooks: true, verified: ['implementer'], version: 1 },
+    });
+    // Enablement removed afterwards: the run's own verified binding keeps working.
+    h.enabledFind.mockResolvedValue([]);
+    await expect(
+      resolveHarnessProfiles('implementer', { teamId: 't1' }, teamBinding())
+    ).resolves.toHaveLength(1);
+  });
+
+  it('pins a first use of a team binding with itself verified', async () => {
+    rows.alpha = pluginRow('alpha', 'alpha');
+    const row = runRow(null);
+    h.enabledFind.mockResolvedValue([{ profileId: 'id-alpha' }]);
+    await resolveHarnessProfiles('implementer', { teamId: 't1' }, teamBinding());
+    expect(row.harnessProfileVersions).toEqual({
+      alpha: { hooks: true, verified: ['implementer'], version: 2 },
+    });
+  });
+
+  it('checks enablement on a caller-supplied pin too', async () => {
+    rows.alpha = pluginRow('alpha', 'alpha');
+    runRow(null);
+    h.enabledFind.mockResolvedValue([]);
+    await expect(
+      resolveHarnessProfiles(
+        'implementer',
+        { harnessProfileVersions: { alpha: 2 }, teamId: 't1' },
+        teamBinding()
+      )
+    ).rejects.toMatchObject({ type: 'PLUGIN_NOT_ENABLED' });
+  });
+
+  describe('a workflow id reused by a later execution', () => {
+    it('ignores the earlier execution’s pin and resolves fresh (status and enablement checked)', async () => {
+      rows.alpha = pluginRow('alpha', 'alpha');
+      const row = runRow({ alpha: { verified: ['implementer'], version: 1 } }, 'exec-0');
+      h.enabledFind.mockResolvedValue([]);
+      await expect(
+        resolveHarnessProfiles('implementer', { teamId: 't1' }, teamBinding())
+      ).rejects.toMatchObject({ type: 'PLUGIN_NOT_ENABLED' });
+      h.profileFind.mockImplementation(async ({ where }: { where: { name: string } }) =>
+        profile({ id: `id-${where.name}`, status: 'DISABLED' })
+      );
+      await expect(
+        resolveHarnessProfiles('implementer', {}, binding(['alpha']))
+      ).rejects.toMatchObject({ type: 'PROFILE_UNAVAILABLE' });
+      expect(h.runUpdateMany).not.toHaveBeenCalled();
+      expect(row.harnessProfileVersions).toEqual({
+        alpha: { verified: ['implementer'], version: 1 },
+      });
+    });
+
+    it('resolves the latest version and writes nothing into the earlier execution’s pins', async () => {
+      rows.alpha = pluginRow('alpha', 'alpha');
+      runRow({ alpha: 1 }, 'exec-0');
+      const [p] = await resolveHarnessProfiles('implementer', {}, binding(['alpha']));
+      expect(p?.version).toBe(2);
+      expect(h.runUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it('trusts a map that names this execution even when the row names the first', async () => {
+      rows.alpha = pluginRow('alpha', 'alpha');
+      runRow({ __execution: 'exec-1', alpha: { verified: ['implementer'], version: 1 } }, 'exec-0');
+      h.enabledFind.mockResolvedValue([]);
+      const [p] = await resolveHarnessProfiles('implementer', { teamId: 't1' }, teamBinding());
+      expect(p?.version).toBe(1);
+    });
+
+    it('treats a row with no execution at all as having no pin', async () => {
+      rows.alpha = pluginRow('alpha', 'alpha');
+      runRow({ alpha: 1 }, null);
+      const [p] = await resolveHarnessProfiles('implementer', {}, binding(['alpha']));
+      expect(p?.version).toBe(2);
+    });
+  });
+
+  describe('hook switch: pinned at run start, effective value is pinned AND live', () => {
+    const setup = (pin: Record<string, unknown> | number | null, live: boolean) => {
+      rows.alpha = pluginRow('alpha', 'alpha');
+      h.profileFind.mockImplementation(async ({ where }: { where: { name: string } }) => ({
+        ...profile({ id: `id-${where.name}` }),
+        hooksEnabled: live,
+      }));
+      return runRow(pin === null ? null : { alpha: pin });
+    };
+    const resolve = async () =>
+      (await resolveHarnessProfiles('implementer', {}, binding(['alpha'])))[0];
+
+    it.each([
+      [true, true, true],
+      [true, false, false],
+      [false, true, false],
+      [false, false, false],
+    ])('pinned %s and live %s is effective %s', async (pinned, live, effective) => {
+      setup({ hooks: pinned, version: 2 }, live);
+      expect(await resolve()).toMatchObject({
+        hooksEnabled: effective,
+        hooksLive: live,
+        hooksPinned: pinned,
+      });
+      expect(h.runUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it('reads an old pin (a bare version) live once and pins it at first use', async () => {
+      const row = setup(2, true);
+      expect(await resolve()).toMatchObject({
+        hooksEnabled: true,
+        hooksLive: true,
+        hooksPinned: true,
+      });
+      expect(row.harnessProfileVersions).toEqual({ alpha: { hooks: true, version: 2 } });
+    });
+
+    it('an old pin read while hooks are off pins OFF, so a later switch-on is not gained', async () => {
+      const row = setup({ verified: [], version: 2 }, false);
+      expect((await resolve())?.hooksEnabled).toBe(false);
+      expect(row.harnessProfileVersions).toEqual({ alpha: { hooks: false, version: 2 } });
+      h.profileFind.mockImplementation(async ({ where }: { where: { name: string } }) => ({
+        ...profile({ id: `id-${where.name}` }),
+        hooksEnabled: true,
+      }));
+      expect(await resolve()).toMatchObject({ hooksEnabled: false, hooksLive: true });
+    });
+
+    it('never overwrites a pinned hook switch', async () => {
+      const row = setup({ hooks: false, version: 2 }, true);
+      await resolve();
+      expect(row.harnessProfileVersions).toEqual({ alpha: { hooks: false, version: 2 } });
+    });
+
+    it('pins the live switch at first use alongside the version', async () => {
+      const row = setup(null, false);
+      expect(await resolve()).toMatchObject({ hooksEnabled: false, hooksPinned: false });
+      expect(row.harnessProfileVersions).toEqual({ alpha: { hooks: false, version: 2 } });
+    });
+
+    it('with no run row to pin on, the live value stands as the pinned one', async () => {
+      h.inActivity.value = false;
+      setup(null, true);
+      expect(await resolve()).toMatchObject({ hooksEnabled: true, hooksPinned: true });
+    });
   });
 
   it('records plugin_partial for several plugins on another runtime', async () => {
@@ -403,6 +589,23 @@ describe('pinHarnessProfileVersion', () => {
       pinHarnessProfileVersion('wf-1', 'kit', 2),
     ]);
     expect(a).toBe(b);
+  });
+
+  it('adds a verified agent to an existing pin without changing its version', async () => {
+    const row = runRow({ kit: 1 });
+    const v = await pinHarnessProfileVersion('wf-1', 'kit', 9, {
+      runId: 'exec-1',
+      verifiedAgentKey: 'implementer',
+    });
+    expect(v).toBe(1);
+    expect(row.harnessProfileVersions).toEqual({ kit: { verified: ['implementer'], version: 1 } });
+  });
+
+  it('writes nothing when the pins belong to another execution', async () => {
+    const row = runRow({ kit: 1 }, 'exec-0');
+    expect(await pinHarnessProfileVersion('wf-1', 'kit', 9, { runId: 'exec-1' })).toBe(9);
+    expect(h.runUpdateMany).not.toHaveBeenCalled();
+    expect(row.harnessProfileVersions).toEqual({ kit: 1 });
   });
 
   it('keeps the candidate for a workflow with no run row', async () => {
