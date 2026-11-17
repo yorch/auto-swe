@@ -2,7 +2,7 @@
 
 import { Button } from '@/components/ui/Button';
 
-export type WorkMode = 'workflow' | 'agent' | 'epic' | 'prd';
+export type WorkMode = 'workflow' | 'agent' | 'orchestrate' | 'epic' | 'prd';
 
 export interface ModeChoice {
   mode: WorkMode;
@@ -28,6 +28,11 @@ export function modeChoices(canStartEpic: boolean, epicReason?: string): ModeCho
       action: 'Run an agent',
       mode: 'agent',
       question: 'You want one agent to do one focused task on a single repository.',
+    },
+    {
+      action: 'Orchestrate agents',
+      mode: 'orchestrate',
+      question: 'The task needs several agents, and you want to steer them as they work.',
     },
     canStartEpic
       ? {

@@ -28,6 +28,10 @@ vi.mock('@/components/agentRuns/AgentRunForm', () => ({
   AgentRunForm: () => <div>agent form</div>,
 }));
 
+vi.mock('@/components/orchestrations/OrchestrateForm', () => ({
+  OrchestrateForm: () => <div>orchestrate form</div>,
+}));
+
 import { modeChoices } from './ModeChooser';
 import { StartWork } from './StartWork';
 
@@ -409,7 +413,19 @@ describe('StartWork', () => {
     expect(chooser.getAllByRole('button').map((b) => b.textContent)).toEqual([
       'Pick a workflow',
       'Run an agent',
+      'Orchestrate agents',
     ]);
+  });
+
+  it('offers orchestration to an engineer and shows its form', () => {
+    auth.role = 'ENGINEER';
+    gateway();
+    render(withQuery(<StartWork initialMode="orchestrate" />));
+    const option = screen.getByRole('radio', { name: /orchestrate agents/i }) as HTMLInputElement;
+    expect(option.disabled).toBe(false);
+    expect(option.checked).toBe(true);
+    expect(screen.getByText('orchestrate form')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /orchestrating agents/i })).toBeTruthy();
   });
 
   it('describes the chooser rows from the mode table', () => {

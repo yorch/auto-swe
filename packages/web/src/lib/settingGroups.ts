@@ -11,6 +11,7 @@ export const GROUP_TITLES: Record<string, string> = {
   memory: 'Semantic memory',
   models: 'Model providers',
   onboarding: 'Repository onboarding',
+  orchestration: 'Orchestrated agent runs',
   prEvaluation: 'Pull request evaluation',
   qodo: 'Qodo review',
   repoAccess: 'Repository access',
@@ -40,6 +41,8 @@ export const GROUP_BLURBS: Record<string, string> = {
     'Which internal hosts a provider credential may point at, for LLM endpoints on a private network.',
   onboarding:
     'Automatic repository onboarding and temporary draft-workspace download access; trials retain the real run policy.',
+  orchestration:
+    'Whether orchestrations may be launched, and how many agents, turns and how much time one may use, and how long an MCP write waits for approval.',
   prEvaluation:
     'Risk class, approver counts and the auto-merge gate for the pull requests the platform opens.',
   qodo: "Whether the platform may read Qodo's review of pull requests through a team's Qodo connection.",
