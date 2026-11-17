@@ -65,7 +65,9 @@ import { skillsRoutes, teamAgentSkillRoutes } from './skills.js';
 import { slackRoutes } from './slack.js';
 import { slackChannelRoutes } from './slackChannels.js';
 import { systemConfigRoutes } from './systemConfig.js';
+import { teamAttentionRoutes } from './teamAttention.js';
 import { teamBudgetRoutes } from './teamBudget.js';
+import { teamBudgetRequestRoutes } from './teamBudgetRequests.js';
 import { teamOverviewRoutes } from './teamOverview.js';
 import { teamSecretRoutes } from './teamSecrets.js';
 import { orgTeamRoutes, teamRoutes } from './teams.js';
@@ -124,6 +126,8 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(inboundEventRoutes, { prefix: '/api/v1/webhooks/events' });
   await app.register(teamRoutes, { prefix: '/api/v1/teams' });
   await app.register(teamOverviewRoutes, { prefix: '/api/v1/teams' });
+  await app.register(teamAttentionRoutes, { prefix: '/api/v1/teams' });
+  await app.register(teamBudgetRequestRoutes, { prefix: '/api/v1/teams' });
   await app.register(teamBudgetRoutes, { prefix: '/api/v1/teams' });
   await app.register(teamSecretRoutes, { prefix: '/api/v1/teams' });
   await app.register(pluginEnablementRoutes, { prefix: '/api/v1/teams' });
