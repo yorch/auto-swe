@@ -53,6 +53,13 @@ export interface ResolvedAgent {
    * parent's instructions and plugins. See `resolveHarnessProfile`.
    */
   harnessProfiles: string[];
+  /**
+   * The scope of the resolved Agent row. A plugin binding on a version that is not
+   * GLOBAL needs the run's team to have enabled the plugin (`PluginEnablement`).
+   */
+  scope: ResolvedModelConfig['scope'];
+  /** The owning team of a TEAM-scoped row; null otherwise. */
+  teamId: string | null;
 }
 
 export type AgentRow = NonNullable<Awaited<ReturnType<typeof fetchActiveAgent>>>;
@@ -413,21 +420,25 @@ export async function resolveAgentRuntimeChoice(
 }
 
 /**
- * The harness profile name the resolved version of `key` is bound to, or null —
- * the profile part of {@link resolveAgent}, through the same cascade and version
- * pin, without binding a model or decrypting a credential. For the run-start
- * snapshot. Throws `ConfigMissingError` when no active row exists.
+ * The harness profile names the resolved version of `key` is bound to, in binding
+ * order, with the row's scope and team — the profile part of {@link resolveAgent},
+ * through the same cascade and version pin, without binding a model or decrypting
+ * a credential. For the run-start snapshot. Throws `ConfigMissingError` when no
+ * active row exists.
  */
-export async function resolveAgentProfileName(
+export async function resolveAgentProfileBinding(
   key: string,
   ctx?: ResolveCtx
-): Promise<string | null> {
+): Promise<Pick<ResolvedAgent, 'harnessProfiles' | 'scope' | 'teamId'>> {
   const agent = await fetchActiveAgent(key, ctx);
   if (!agent) {
     throw new ConfigMissingError(`No active Agent found for key '${key}' at any scope.`);
   }
-  // Single-plugin behaviour: only the first binding is applied until multi-plugin lands.
-  return agent.harnessProfiles[0] ?? null;
+  return {
+    harnessProfiles: agent.harnessProfiles,
+    scope: agent.scope,
+    teamId: agent.teamId ?? null,
+  };
 }
 
 /**
@@ -567,7 +578,9 @@ async function resolveAgentUncached(key: string, ctx?: ResolveCtx): Promise<Reso
     model,
     origin: agent.origin ?? null,
     runtime,
+    scope: agent.scope,
     skills: await skillsFromAgent(agent, ctx),
+    teamId: agent.teamId ?? null,
     toolKeys: parseToolKeys(agent.toolKeys),
     version: agent.version,
   };

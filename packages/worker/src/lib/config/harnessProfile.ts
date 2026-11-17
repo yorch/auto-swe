@@ -7,8 +7,10 @@ import {
   unpackAndVerify,
 } from '@auto-swe/shared/lib/harnessProfile';
 import { ApplicationFailure, activityInfo, asyncLocalStorage } from '@temporalio/activity';
+import { profilePluginNames } from '../../agents/claudeCode/pluginFiles.js';
 import type { McpTracer } from '../../agents/mcpTools.js';
 import { type ResolvedAgent, resolveAgent } from './agentResolver.js';
+import { bindingNeedsEnablement, enabledProfileIds, enablementTeamId } from './pluginEnablement.js';
 import type { ResolveCtx } from './types.js';
 
 /** An agent's bound profile, verified against the hash it was approved under. */
@@ -19,43 +21,64 @@ export interface ResolvedHarnessProfile {
   contentHash: string;
   manifest: ProfileManifest;
   files: ProfileFile[];
+  /**
+   * The platform ADMIN's hook switch (`HarnessProfile.hooksEnabled`) as read when the
+   * profile was resolved. It is applied when the plugin is written into the container
+   * (`filesToMaterialize`), never to the stored snapshot. Absent reads as on.
+   */
+  hooksEnabled: boolean;
 }
 
+/** What {@link resolveHarnessProfiles} needs from the caller's resolution of the agent. */
+export type ProfileBinding = Pick<ResolvedAgent, 'harnessProfiles' | 'scope' | 'teamId'>;
+
 /**
- * The approved harness profile `agentKey` runs with, or null when its resolved
- * version is bound to none.
+ * The approved harness profiles (plugins) `agentKey` runs with, in binding order;
+ * empty when its resolved version is bound to none.
  *
- * Which profile comes from the resolved Agent version itself (`Agent.harnessProfile`);
- * it is not inherited along `inheritsModelFrom`. Which VERSION of it, in order:
+ * Which profiles come from the resolved Agent version itself (`Agent.harnessProfiles`);
+ * they are not inherited along `inheritsModelFrom`. Which VERSION of each, in order:
  *  1. a caller-supplied pin (`ctx.harnessProfileVersions`), never written back;
  *  2. the run's pin (`WorkflowRun.harnessProfileVersions`), taken at run start for
  *     every bound agent (`snapshotHarnessProfileVersions`) and otherwise at first
  *     use by a compare-and-set that never overwrites an entry;
  *  3. the profile's latest version, which must be OK.
- * A pinned version keeps working after the profile is disabled or a newer version
- * is approved: the run was given those instructions and plugins, and a retry or a
- * sibling activity must get the same ones.
+ * A pinned version keeps working after the profile is disabled, a newer version
+ * is approved or the team's enablement is removed: the run was given those
+ * instructions and plugins, and a retry or a sibling activity must get the same ones.
  *
- * FAILS CLOSED. A bound profile that is missing, disabled and not pinned, whose
- * version row is gone, or whose snapshot no longer reproduces its content hash
- * raises a non-retryable failure; it never resolves to "no profile", which would
- * run the agent without the instructions and plugins an admin bound to it.
+ * FAILS CLOSED. A bound profile that is missing, disabled and not pinned, not enabled
+ * for the run's team (an agent version that is not platform-wide needs a
+ * `PluginEnablement` row for each plugin), whose version row is gone, or whose
+ * snapshot no longer reproduces its content hash raises a non-retryable failure; it
+ * never resolves to "no profile", which would run the agent without the instructions
+ * and plugins an admin bound to it. So do two bound plugins that share a
+ * `plugin.json` name (the gateway refuses that at bind time).
  */
-export async function resolveHarnessProfile(
+export async function resolveHarnessProfiles(
   agentKey: string,
   ctx: ResolveCtx | undefined,
-  resolved?: Pick<ResolvedAgent, 'harnessProfiles'>
-): Promise<ResolvedHarnessProfile | null> {
+  resolved?: ProfileBinding
+): Promise<ResolvedHarnessProfile[]> {
   // The caller's own resolution when it has one: resolving again could land on
   // a version cut in between and pair one version's model with the next one's profile.
-  const { harnessProfiles } = resolved ?? (await resolveAgent(agentKey, ctx));
-  // Single-plugin behaviour: only the first binding is applied until multi-plugin lands.
-  const name = harnessProfiles[0];
-  if (!name) {
-    return null;
+  const binding = resolved ?? (await resolveAgent(agentKey, ctx));
+  const out: ResolvedHarnessProfile[] = [];
+  for (const name of binding.harnessProfiles) {
+    out.push(await resolveOne(agentKey, ctx, binding, name));
   }
+  assertNoCollision(agentKey, out);
+  return out;
+}
+
+async function resolveOne(
+  agentKey: string,
+  ctx: ResolveCtx | undefined,
+  binding: ProfileBinding,
+  name: string
+): Promise<ResolvedHarnessProfile> {
   const profile = await prisma.harnessProfile.findUnique({
-    select: { id: true, latestVersion: true, status: true },
+    select: { hooksEnabled: true, id: true, latestVersion: true, status: true },
     where: { name },
   });
   if (!profile) {
@@ -68,6 +91,15 @@ export async function resolveHarnessProfile(
   if (version === undefined) {
     if (profile.status !== 'OK') {
       throw unavailable(agentKey, name, 'it is disabled and this run has not pinned a version');
+    }
+    if (bindingNeedsEnablement(binding.scope)) {
+      const teamId = enablementTeamId(ctx, binding);
+      if (!teamId || !(await enabledProfileIds([profile.id], teamId)).has(profile.id)) {
+        throw ApplicationFailure.nonRetryable(
+          `Agent '${agentKey}' is bound to plugin '${name}', which is not enabled for this run's team. The agent is not run without its plugin.`,
+          'PLUGIN_NOT_ENABLED'
+        );
+      }
     }
     version = profile.latestVersion;
     if (workflowId) {
@@ -97,22 +129,43 @@ export async function resolveHarnessProfile(
     commitSha: row.commitSha,
     contentHash: row.contentHash,
     files,
+    hooksEnabled: profile.hooksEnabled,
     manifest: manifest.data,
     name,
     version,
   };
 }
 
+function assertNoCollision(agentKey: string, profiles: readonly ResolvedHarnessProfile[]): void {
+  const owner = new Map<string, string>();
+  for (const profile of profiles) {
+    for (const plugin of profilePluginNames(profile)) {
+      const key = plugin.toLowerCase();
+      const other = owner.get(key);
+      if (other !== undefined) {
+        throw ApplicationFailure.nonRetryable(
+          `Agent '${agentKey}' is bound to plugins '${other}' and '${profile.name}' that both declare the plugin name '${plugin}'. The agent is not run with colliding plugins.`,
+          'PLUGIN_NAME_COLLISION'
+        );
+      }
+      owner.set(key, profile.name);
+    }
+  }
+}
+
 /**
- * The profile a run of `agentKey` on `runtime` is given, for a caller about to
+ * The profiles a run of `agentKey` on `runtime` is given, for a caller about to
  * build that runtime.
  *
- * `claude-code` is the one runtime that loads a profile: there the profile is
- * resolved (failing closed, see {@link resolveHarnessProfile}) and returned for
+ * `claude-code` is the one runtime that loads a profile: there the profiles are
+ * resolved (failing closed, see {@link resolveHarnessProfiles}) and returned for
  * the runtime's options. On any other runtime (Mastra, Pi, or a surface with
  * no workspace) a bound profile is NOT an error: the run proceeds without it
- * and an `agent.profile_not_applicable` event says so. `ranOn` names the loop
- * that actually ran when it is not `runtime`.
+ * and an `agent.profile_not_applicable` event says so, beside an
+ * `agent.plugin_partial` event naming what the runtime skipped of each plugin
+ * (commands, hooks and sub-agents apply only on `claude-code`; the plugins'
+ * skills reach such a run as projected skills). `ranOn` names the loop that
+ * actually ran when it is not `runtime`.
  */
 export async function resolveProfileForRuntime(args: {
   agentKey: string;
@@ -122,20 +175,37 @@ export async function resolveProfileForRuntime(args: {
   /** True when a Claude Code runtime is built for this run (it has a workspace). */
   appliesToRun?: boolean;
   ranOn?: string;
-  /** The caller's resolution of `agentKey`, so the profile comes from the same Agent version as its model. */
-  resolved?: Pick<ResolvedAgent, 'harnessProfiles'>;
+  /** The caller's resolution of `agentKey`, so the profiles come from the same Agent version as its model. */
+  resolved?: ProfileBinding;
   tracer: Pick<McpTracer, 'addActivityEvent'>;
-}): Promise<ResolvedHarnessProfile | undefined> {
+}): Promise<ResolvedHarnessProfile[] | undefined> {
   const { agentKey, ctx, ranOn, resolved, runtime, tracer } = args;
   if (runtime === 'claude-code' && args.appliesToRun !== false) {
-    return (await resolveHarnessProfile(agentKey, ctx, resolved)) ?? undefined;
+    const profiles = await resolveHarnessProfiles(agentKey, ctx, resolved);
+    return profiles.length > 0 ? profiles : undefined;
   }
   const { harnessProfiles } = resolved ?? (await resolveAgent(agentKey, ctx));
-  const profile = harnessProfiles[0];
-  if (profile) {
+  if (harnessProfiles.length > 0) {
+    const ran = ranOn ?? runtime;
     tracer.addActivityEvent({
       name: 'agent.profile_not_applicable',
-      outputJson: { agentKey, profile, ranOn: ranOn ?? runtime, runtime },
+      outputJson: {
+        agentKey,
+        profile: harnessProfiles[0],
+        profiles: harnessProfiles,
+        ranOn: ran,
+        runtime,
+      },
+    });
+    tracer.addActivityEvent({
+      name: 'agent.plugin_partial',
+      outputJson: {
+        agentKey,
+        profiles: harnessProfiles,
+        ranOn: ran,
+        runtime,
+        skipped: ['commands', 'hooks', 'sub-agents'],
+      },
     });
   }
   return undefined;

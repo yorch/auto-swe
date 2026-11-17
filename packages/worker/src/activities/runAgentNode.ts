@@ -312,7 +312,7 @@ async function runInCheckout(args: {
       : HARNESSES.select(loop.runtime).bind(key, resolved.model);
   // Claude Code gets the Agent's approved profile (or fails closed without it); Mastra and
   // Pi note that it was not applied. Before the container exists.
-  const profile = await resolveProfileForRuntime({
+  const profiles = await resolveProfileForRuntime({
     agentKey: key,
     ctx: resolveCtx,
     resolved,
@@ -443,7 +443,7 @@ async function runInCheckout(args: {
       mcp: onboardingDraft ? null : await resolveAgentMcpUrl(key, resolveCtx, { tracer }),
       toolKeys: resolved.toolKeys,
       ...pausable(input.allowPause, loop.runtime),
-      ...(profile ? { profile } : {}),
+      ...(profiles ? { profiles } : {}),
       tracer,
       workspace,
     });

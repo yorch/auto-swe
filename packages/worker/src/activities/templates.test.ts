@@ -93,13 +93,15 @@ const { resolveAgentRuntimeChoice } = vi.hoisted(() => ({
     key === 'implementer' ? 'claude-code' : key === 'broken' ? Promise.reject(new Error('x')) : null
   ),
 }));
-const { resolveAgentProfileName } = vi.hoisted(() => ({
-  resolveAgentProfileName: vi.fn(async (key: string) =>
-    key === 'implementer' ? 'kit' : key === 'reviewer' ? 'gone' : null
-  ),
+const { resolveAgentProfileBinding } = vi.hoisted(() => ({
+  resolveAgentProfileBinding: vi.fn(async (key: string) => ({
+    harnessProfiles: key === 'implementer' ? ['kit'] : key === 'reviewer' ? ['gone'] : [],
+    scope: 'GLOBAL',
+    teamId: null,
+  })),
 }));
 vi.mock('../lib/config/agentResolver.js', () => ({
-  resolveAgentProfileName,
+  resolveAgentProfileBinding,
   resolveAgentRuntimeChoice,
 }));
 
@@ -981,10 +983,10 @@ describe('createWorkflowRun', () => {
 
     expect(lastRunCreate().harnessProfileVersions).toEqual({ kit: 4 });
     expect(findProfiles).toHaveBeenCalledWith({
-      select: { latestVersion: true, name: true },
+      select: { id: true, latestVersion: true, name: true },
       where: { name: { in: ['kit', 'gone'] }, status: 'OK' },
     });
-    expect(resolveAgentProfileName).toHaveBeenCalledWith(
+    expect(resolveAgentProfileBinding).toHaveBeenCalledWith(
       'implementer',
       expect.objectContaining({ agentVersions: { implementer: 1 }, workflowTemplateId: 'tpl-1' })
     );
@@ -995,10 +997,10 @@ describe('createWorkflowRun', () => {
       spec: validSpec,
       template: { origin: 'system:agent-run' },
     } as never);
-    resolveAgentProfileName.mockClear();
+    resolveAgentProfileBinding.mockClear();
     await createWorkflowRun({ templateId: 'tpl-1', templateVersion: 1, workflowId: 'wf-1' });
     expect(lastRunCreate()).not.toHaveProperty('harnessProfileVersions');
-    expect(resolveAgentProfileName).not.toHaveBeenCalled();
+    expect(resolveAgentProfileBinding).not.toHaveBeenCalled();
   });
 
   it('takes no runtime snapshot for an agent run, which pins its one agent itself', async () => {

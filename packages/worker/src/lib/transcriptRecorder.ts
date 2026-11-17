@@ -144,8 +144,14 @@ export interface HarnessTurnRecord {
   mcpServers: string[];
   loadProjectSettings: boolean;
   effort?: string;
-  /** The approved harness profile the turn ran with; absent when the Agent has none. */
-  profile?: { name: string; version: number; contentHash: string; commitSha: string };
+  /** The approved harness profiles (plugins) the turn ran with, in binding order; absent when the Agent has none. */
+  profiles?: {
+    name: string;
+    version: number;
+    contentHash: string;
+    commitSha: string;
+    hooksEnabled: boolean;
+  }[];
 }
 
 /** The bytes a non-proxied Claude Code turn added to its session JSONL file. */

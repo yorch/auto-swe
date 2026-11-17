@@ -157,10 +157,10 @@ export interface PolicyContext {
    */
   tools: readonly ClaudeCodeTool[];
   /**
-   * Where the materialized profile lives in the container. Readable (plugins
-   * must be); like the rest of the harness directory it is never writable.
+   * Where the materialized profiles live in the container. Readable (plugins
+   * must be); like the rest of the harness directory they are never writable.
    */
-  profileDir?: string;
+  profileDirs?: readonly string[];
   /** The skills and commands the profile's plugins declare, plugin-qualified ({@link profileSkillNames}). */
   profileSkills?: ReadonlySet<string>;
   /**
@@ -374,7 +374,7 @@ export async function decideToolCall(
     {
       containerId: ctx.containerId,
       cwd: ctx.cwd,
-      extraReadRoots: [`${ctx.home}/.claude`, ...(ctx.profileDir ? [ctx.profileDir] : [])],
+      extraReadRoots: [`${ctx.home}/.claude`, ...(ctx.profileDirs ?? [])],
       protectedConfig: ctx.projectConfigLoaded
         ? { label: 'Claude Code', matches: isHarnessConfig }
         : undefined,

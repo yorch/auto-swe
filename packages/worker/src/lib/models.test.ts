@@ -39,7 +39,9 @@ function resolvedAgent(modelOverrides: Record<string, unknown> = {}): ResolvedAg
     },
     origin: null,
     runtime: null,
+    scope: 'GLOBAL',
     skills: [],
+    teamId: null,
     toolKeys: null,
     version: 1,
   };

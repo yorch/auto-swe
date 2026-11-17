@@ -111,7 +111,7 @@ export async function buildImplementerTurnRunner(input: {
     outputJson: { agentKey, runtime: kind, source: kindSource },
   });
 
-  const profile = await resolveProfileForRuntime({
+  const profiles = await resolveProfileForRuntime({
     agentKey,
     ctx: input.ctx,
     runtime: kind,
@@ -181,8 +181,8 @@ export async function buildImplementerTurnRunner(input: {
     // The same MCP connection the Mastra loop would bind, relayed from the worker.
     mcp: isMcpToolEnabled(config.toolKeys) ? mcpTarget : null,
     ...(browserToolset ? { browserToolset } : {}),
-    // The approved profile the Agent is bound to (Claude Code only; see above).
-    ...(profile ? { profile } : {}),
+    // The approved profiles the Agent is bound to (Claude Code only; see above).
+    ...(profiles ? { profiles } : {}),
     // The Agent row's tools bound the harness as they bound the Mastra loop.
     toolKeys: config.toolKeys,
     tracer: input.tracer,

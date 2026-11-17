@@ -2221,6 +2221,7 @@ describe('a harness profile', () => {
       { bytes: Buffer.from('Be careful.\n'), mode: '100644', path: 'INSTRUCTIONS.md' },
       { bytes: Buffer.from('{}'), mode: '100644', path: 'profile.json' },
     ],
+    hooksEnabled: true,
     manifest: {
       description: 'd',
       instructions: 'INSTRUCTIONS.md',
@@ -2240,7 +2241,7 @@ describe('a harness profile', () => {
       addActivityEvent: (e: { name: string; outputJson: unknown }) => events.push(e),
       addToolCall: vi.fn(),
     };
-    const ctx = setup({ modelProxy: null, profile: PROFILE, tracer, ...overrides });
+    const ctx = setup({ modelProxy: null, profiles: [PROFILE], tracer, ...overrides });
     return { ...ctx, events };
   };
 
@@ -2294,7 +2295,7 @@ describe('a harness profile', () => {
       'Skill',
       {},
       expect.objectContaining({
-        profileDir: DIR,
+        profileDirs: [DIR],
         tools: ['Read', 'Glob', 'Grep', 'Skill', 'Agent'],
       }),
       '/workspace/target-repo'
@@ -2390,6 +2391,41 @@ describe('a harness profile', () => {
           version: 4,
         },
       },
+      { name: 'agent.plugin_hooks', outputJson: { hooksEnabled: true, name: 'demo', version: 4 } },
+    ]);
+  });
+
+  it('serves several profiles: every plugin loaded, instructions in order, grants unioned', async () => {
+    const OTHER = {
+      ...PROFILE,
+      contentHash: 'cd34ef56ab12'.padEnd(64, '0'),
+      files: [
+        { bytes: Buffer.from('Second rules.\n'), mode: '100644', path: 'INSTRUCTIONS.md' },
+        { bytes: Buffer.from('{}'), mode: '100644', path: 'profile.json' },
+      ],
+      hooksEnabled: false,
+      manifest: { ...PROFILE.manifest, name: 'other', plugins: ['plugins/baz'], tools: ['Skill'] },
+      name: 'other',
+      version: 2,
+    };
+    const { events, runtime } = profiled({ profiles: [PROFILE, OTHER], toolKeys: ['readFile'] });
+    h.script.push([[init('s1'), success('a')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    const options = h.queryCalls[0]?.options as unknown as {
+      plugins: { path: string }[];
+      systemPrompt: { append: string };
+    };
+    expect(options.plugins.map((p) => p.path)).toEqual([
+      `${DIR}/plugins/foo`,
+      `${DIR}/plugins/bar`,
+      '/workspace/.harness/profiles/cd34ef56ab12/plugins/baz',
+    ]);
+    expect(options.systemPrompt.append.indexOf(MARK)).toBeLessThan(
+      options.systemPrompt.append.indexOf('[profile: other@2 sha cd34ef56ab12]')
+    );
+    expect(events.filter((e) => e.name === 'agent.plugin_hooks').map((e) => e.outputJson)).toEqual([
+      { hooksEnabled: true, name: 'demo', version: 4 },
+      { hooksEnabled: false, name: 'other', version: 2 },
     ]);
   });
 
@@ -2408,7 +2444,15 @@ describe('a harness profile', () => {
     h.script.push([[init('s1'), success('a')]]);
     await runtime.runTurn({ system: 'S', user: 'U' });
     expect(rec.addHarnessTurn.mock.calls[0]?.[0]).toMatchObject({
-      profile: { commitSha: 'c0ffee111111', contentHash: 'ab12cd34ef56', name: 'demo', version: 4 },
+      profiles: [
+        {
+          commitSha: 'c0ffee111111',
+          contentHash: 'ab12cd34ef56',
+          hooksEnabled: true,
+          name: 'demo',
+          version: 4,
+        },
+      ],
       tools: expect.arrayContaining(['Skill', 'Agent']),
     });
   });

@@ -446,7 +446,7 @@ describe('tools a profile grants', () => {
   const PROFILE_DIR = '/workspace/.harness/profiles/0123456789ab';
   const granted: PolicyContext = {
     ...ctx,
-    profileDir: PROFILE_DIR,
+    profileDirs: [PROFILE_DIR],
     profileSkills: new Set(['kit:hello', 'kit:ops:restart']),
     tools: toolsWithProfile(HARNESS_TOOLS, ['Skill', 'Agent']),
   };
@@ -591,7 +591,7 @@ describe('the harness directory, profile included', () => {
   const PROFILE_DIR = '/workspace/.harness/profiles/0123456789ab';
   const withProfile: PolicyContext = {
     ...ctx,
-    profileDir: PROFILE_DIR,
+    profileDirs: [PROFILE_DIR],
     tools: toolsWithProfile(HARNESS_TOOLS, ['Skill']),
   };
 

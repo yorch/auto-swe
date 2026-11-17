@@ -43,6 +43,7 @@ function profile(over: Partial<ResolvedHarnessProfile> = {}): ResolvedHarnessPro
       file('plugins/foo/hooks/hooks.json', '{}'),
       file('plugins/foo/scripts/run.sh', '#!/bin/sh\necho hi\n', '100755'),
     ],
+    hooksEnabled: true,
     manifest: {
       description: 'd',
       instructions: 'INSTRUCTIONS.md',

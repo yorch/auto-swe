@@ -2,7 +2,12 @@ import type { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
-import { resolveAgentProfileName, resolveAgentRuntimeChoice } from './config/agentResolver.js';
+import { resolveAgentProfileBinding, resolveAgentRuntimeChoice } from './config/agentResolver.js';
+import {
+  bindingNeedsEnablement,
+  enabledProfileIds,
+  enablementTeamId,
+} from './config/pluginEnablement.js';
 import type { ResolveCtx } from './config/types.js';
 
 /**
@@ -129,32 +134,66 @@ async function visibleAgentKeys(ctx: ResolveCtx): Promise<string[]> {
  * version, or disabling the profile, after the run starts cannot change what the
  * run's agents are given. Only OK profiles are pinned: a bound-but-disabled one
  * is left out so the run fails closed where the agent first uses it, rather than
- * freezing a profile an admin has already withdrawn. A key whose resolution fails
- * is left out too, and pins at first use.
+ * freezing a profile an admin has already withdrawn. The same holds for a plugin
+ * bound on an agent version that is not platform-wide when the run's team has not
+ * enabled it: it is left out, so the agent fails closed where it first uses it.
+ * A key whose resolution fails is left out too, and pins at first use.
  */
 export async function snapshotHarnessProfileVersions(
   ctx: ResolveCtx
 ): Promise<Record<string, number>> {
   const keys = await visibleAgentKeys(ctx);
-  const names = new Set<string>();
+  const pinnable = new Set<string>();
+  /** Plugin names bound on a version that needs the team's enablement, by team. */
+  const gated = new Map<string, Set<string>>();
   await Promise.all(
     keys.map(async (key) => {
       try {
-        const name = await resolveAgentProfileName(key, ctx);
-        if (name) {
+        const binding = await resolveAgentProfileBinding(key, ctx);
+        if (binding.harnessProfiles.length === 0) {
+          return;
+        }
+        if (!bindingNeedsEnablement(binding.scope)) {
+          for (const name of binding.harnessProfiles) {
+            pinnable.add(name);
+          }
+          return;
+        }
+        const teamId = enablementTeamId(ctx, binding);
+        if (!teamId) {
+          return;
+        }
+        const names = gated.get(teamId) ?? new Set<string>();
+        for (const name of binding.harnessProfiles) {
           names.add(name);
         }
+        gated.set(teamId, names);
       } catch {
         // Unresolvable now: it pins (or fails) where the run first uses it.
       }
     })
   );
-  if (names.size === 0) {
+  const wanted = new Set([...pinnable, ...[...gated.values()].flatMap((n) => [...n])]);
+  if (wanted.size === 0) {
     return {};
   }
   const profiles = await prisma.harnessProfile.findMany({
-    select: { latestVersion: true, name: true },
-    where: { name: { in: [...names] }, status: 'OK' },
+    select: { id: true, latestVersion: true, name: true },
+    where: { name: { in: [...wanted] }, status: 'OK' },
   });
-  return Object.fromEntries(profiles.map((p) => [p.name, p.latestVersion]));
+  const allowed = new Set(pinnable);
+  for (const [teamId, names] of gated) {
+    const enabled = await enabledProfileIds(
+      profiles.filter((p) => names.has(p.name)).map((p) => p.id),
+      teamId
+    );
+    for (const p of profiles) {
+      if (names.has(p.name) && enabled.has(p.id)) {
+        allowed.add(p.name);
+      }
+    }
+  }
+  return Object.fromEntries(
+    profiles.filter((p) => allowed.has(p.name)).map((p) => [p.name, p.latestVersion])
+  );
 }

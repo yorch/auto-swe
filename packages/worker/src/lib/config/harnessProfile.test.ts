@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
+  enabledFind: vi.fn(),
   inActivity: { value: true },
   profileFind: vi.fn(),
   resolveAgent: vi.fn(),
@@ -18,6 +19,7 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     harnessProfile: { findUnique: h.profileFind },
     harnessProfileVersion: { findUnique: h.versionFind },
+    pluginEnablement: { findMany: h.enabledFind },
     workflowRun: { findUnique: h.runFind, updateMany: h.runUpdateMany },
   },
 }));
@@ -26,8 +28,9 @@ vi.mock('./agentResolver.js', () => ({ resolveAgent: h.resolveAgent }));
 import { Prisma } from '@auto-swe/shared';
 import { computeContentHash, packFiles } from '@auto-swe/shared/lib/harnessProfile';
 import {
+  type ProfileBinding,
   pinHarnessProfileVersion,
-  resolveHarnessProfile,
+  resolveHarnessProfiles,
   resolveProfileForRuntime,
 } from './harnessProfile.js';
 
@@ -78,7 +81,18 @@ function runRow(initial: Record<string, unknown> | null) {
   return row;
 }
 
+const binding = (
+  harnessProfiles: string[],
+  over: Partial<ProfileBinding> = {}
+): ProfileBinding => ({
+  harnessProfiles,
+  scope: 'GLOBAL',
+  teamId: null,
+  ...over,
+});
+
 const profile = (over: Record<string, unknown> = {}) => ({
+  hooksEnabled: true,
   id: 'p1',
   latestVersion: 2,
   status: 'OK',
@@ -88,33 +102,34 @@ const profile = (over: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   vi.clearAllMocks();
   h.inActivity.value = true;
-  h.resolveAgent.mockResolvedValue({ harnessProfiles: ['kit'] });
+  h.resolveAgent.mockResolvedValue(binding(['kit']));
+  h.enabledFind.mockResolvedValue([]);
   h.profileFind.mockResolvedValue(profile());
   h.versionFind.mockImplementation(async ({ where }) =>
     versionRow(`version ${where.profileId_version.version}`)
   );
 });
 
-describe('resolveHarnessProfile', () => {
-  it('returns null, and touches nothing, for an agent bound to no profile', async () => {
-    h.resolveAgent.mockResolvedValue({ harnessProfiles: [] });
-    expect(await resolveHarnessProfile('implementer', undefined)).toBeNull();
+describe('resolveHarnessProfiles', () => {
+  it('returns an empty list, and touches nothing, for an agent bound to no profile', async () => {
+    h.resolveAgent.mockResolvedValue(binding([]));
+    expect(await resolveHarnessProfiles('implementer', undefined)).toEqual([]);
     expect(h.profileFind).not.toHaveBeenCalled();
     expect(h.runUpdateMany).not.toHaveBeenCalled();
   });
 
   it('takes the profile name from the caller’s own resolution, not a second one', async () => {
     runRow(null);
-    h.resolveAgent.mockResolvedValue({ harnessProfiles: ['a-version-cut-in-between'] });
-    const r = await resolveHarnessProfile('implementer', {}, { harnessProfiles: ['kit'] });
-    expect(r).toMatchObject({ name: 'kit' });
+    h.resolveAgent.mockResolvedValue(binding(['a-version-cut-in-between']));
+    const r = await resolveHarnessProfiles('implementer', {}, binding(['kit']));
+    expect(r[0]).toMatchObject({ name: 'kit' });
     expect(h.resolveAgent).not.toHaveBeenCalled();
     expect(h.profileFind).toHaveBeenCalledWith(expect.objectContaining({ where: { name: 'kit' } }));
     expect(
       await resolveProfileForRuntime({
         agentKey: 'implementer',
         ctx: {},
-        resolved: { harnessProfiles: [] },
+        resolved: binding([]),
         runtime: 'claude-code',
         tracer: { addActivityEvent: vi.fn() },
       })
@@ -124,23 +139,32 @@ describe('resolveHarnessProfile', () => {
 
   it('uses the latest version, verified, and pins it on the run', async () => {
     const row = runRow(null);
-    const r = await resolveHarnessProfile('implementer', {});
-    expect(r).toMatchObject({ commitSha: 'abc', name: 'kit', version: 2 });
-    expect(r?.files.map((f) => f.path)).toEqual(['INSTRUCTIONS.md', 'profile.json']);
-    expect(r?.files.find((f) => f.path === 'INSTRUCTIONS.md')?.bytes.toString()).toBe('version 2');
+    const [r] = await resolveHarnessProfiles('implementer', {});
+    expect(r).toMatchObject({ commitSha: 'abc', hooksEnabled: true, name: 'kit', version: 2 });
+    expect(r?.files.map((f: { path: string }) => f.path)).toEqual([
+      'INSTRUCTIONS.md',
+      'profile.json',
+    ]);
+    expect(
+      r?.files.find((f: { path: string }) => f.path === 'INSTRUCTIONS.md')?.bytes.toString()
+    ).toBe('version 2');
     expect(row.harnessProfileVersions).toEqual({ kit: 2 });
   });
 
   it('keeps the run’s pinned version after a newer one is approved', async () => {
     runRow({ kit: 1 });
-    const r = await resolveHarnessProfile('implementer', {});
+    const [r] = await resolveHarnessProfiles('implementer', {});
     expect(r?.version).toBe(1);
-    expect(r?.files.find((f) => f.path === 'INSTRUCTIONS.md')?.bytes.toString()).toBe('version 1');
+    expect(
+      r?.files.find((f: { path: string }) => f.path === 'INSTRUCTIONS.md')?.bytes.toString()
+    ).toBe('version 1');
   });
 
   it('prefers a caller-supplied pin over the run’s, and never writes it back', async () => {
     const row = runRow({ kit: 1 });
-    const r = await resolveHarnessProfile('implementer', { harnessProfileVersions: { kit: 2 } });
+    const [r] = await resolveHarnessProfiles('implementer', {
+      harnessProfileVersions: { kit: 2 },
+    });
     expect(r?.version).toBe(2);
     expect(row.harnessProfileVersions).toEqual({ kit: 1 });
     expect(h.runUpdateMany).not.toHaveBeenCalled();
@@ -148,7 +172,7 @@ describe('resolveHarnessProfile', () => {
 
   it('resolves live and pins nothing outside an activity', async () => {
     h.inActivity.value = false;
-    const r = await resolveHarnessProfile('implementer', {});
+    const [r] = await resolveHarnessProfiles('implementer', {});
     expect(r?.version).toBe(2);
     expect(h.runFind).not.toHaveBeenCalled();
     expect(h.runUpdateMany).not.toHaveBeenCalled();
@@ -157,7 +181,7 @@ describe('resolveHarnessProfile', () => {
   it('fails closed when the profile is disabled and the run has not pinned it', async () => {
     runRow(null);
     h.profileFind.mockResolvedValue(profile({ status: 'DISABLED' }));
-    await expect(resolveHarnessProfile('implementer', {})).rejects.toMatchObject({
+    await expect(resolveHarnessProfiles('implementer', {})).rejects.toMatchObject({
       nonRetryable: true,
       type: 'PROFILE_UNAVAILABLE',
     });
@@ -167,13 +191,13 @@ describe('resolveHarnessProfile', () => {
   it('still serves a disabled profile to a run that pinned it', async () => {
     runRow({ kit: 1 });
     h.profileFind.mockResolvedValue(profile({ status: 'DISABLED' }));
-    expect((await resolveHarnessProfile('implementer', {}))?.version).toBe(1);
+    expect((await resolveHarnessProfiles('implementer', {}))[0]?.version).toBe(1);
   });
 
   it('fails closed when the profile does not exist, even if pinned', async () => {
     runRow({ kit: 1 });
     h.profileFind.mockResolvedValue(null);
-    await expect(resolveHarnessProfile('implementer', {})).rejects.toMatchObject({
+    await expect(resolveHarnessProfiles('implementer', {})).rejects.toMatchObject({
       nonRetryable: true,
       type: 'PROFILE_UNAVAILABLE',
     });
@@ -182,7 +206,7 @@ describe('resolveHarnessProfile', () => {
   it('fails closed when the pinned version row is gone', async () => {
     runRow({ kit: 7 });
     h.versionFind.mockResolvedValue(null);
-    await expect(resolveHarnessProfile('implementer', {})).rejects.toMatchObject({
+    await expect(resolveHarnessProfiles('implementer', {})).rejects.toMatchObject({
       nonRetryable: true,
       type: 'PROFILE_UNAVAILABLE',
     });
@@ -191,7 +215,7 @@ describe('resolveHarnessProfile', () => {
   it('fails closed with PROFILE_INTEGRITY when the snapshot no longer matches its hash', async () => {
     runRow({ kit: 1 });
     h.versionFind.mockResolvedValue(versionRow('x', true));
-    await expect(resolveHarnessProfile('implementer', {})).rejects.toMatchObject({
+    await expect(resolveHarnessProfiles('implementer', {})).rejects.toMatchObject({
       nonRetryable: true,
       type: 'PROFILE_INTEGRITY',
     });
@@ -200,15 +224,15 @@ describe('resolveHarnessProfile', () => {
   it('fails closed with PROFILE_INTEGRITY on a malformed stored manifest', async () => {
     runRow({ kit: 1 });
     h.versionFind.mockResolvedValue({ ...versionRow('x'), manifest: { nope: true } });
-    await expect(resolveHarnessProfile('implementer', {})).rejects.toMatchObject({
+    await expect(resolveHarnessProfiles('implementer', {})).rejects.toMatchObject({
       type: 'PROFILE_INTEGRITY',
     });
   });
 
   it('does not use a profile bound to a different agent (no inheritance)', async () => {
     // The resolver returns the version’s OWN binding; a persona with none gets none.
-    h.resolveAgent.mockResolvedValue({ harnessProfiles: [], runtime: 'claude-code' });
-    expect(await resolveHarnessProfile('ciFixer', {})).toBeNull();
+    h.resolveAgent.mockResolvedValue({ ...binding([]), runtime: 'claude-code' });
+    expect(await resolveHarnessProfiles('ciFixer', {})).toEqual([]);
   });
 
   it('adopts the version a concurrent resolution pinned first', async () => {
@@ -220,9 +244,142 @@ describe('resolveHarnessProfile', () => {
       return { count: 0 };
     });
     expect(cas).toBeDefined();
-    const r = await resolveHarnessProfile('implementer', {});
+    const [r] = await resolveHarnessProfiles('implementer', {});
     expect(r?.version).toBe(1);
     expect(row.harnessProfileVersions).toEqual({ kit: 1 });
+  });
+});
+
+describe('several plugins, hooks, enablement and collisions', () => {
+  /** A stored version row for a one-plugin profile whose plugin.json is named `plugin`. */
+  function pluginRow(profileName: string, plugin: string) {
+    const manifest = { description: 'A plugin', name: profileName, plugins: ['plugins/p'] };
+    const files = [
+      file('profile.json', JSON.stringify(manifest)),
+      file('plugins/p/.claude-plugin/plugin.json', JSON.stringify({ name: plugin })),
+    ];
+    return {
+      commitSha: 'abc',
+      contentHash: computeContentHash(files, manifest),
+      files: packFiles(files),
+      manifest,
+    };
+  }
+  const rows: Record<string, ReturnType<typeof pluginRow>> = {};
+  beforeEach(() => {
+    h.profileFind.mockImplementation(async ({ where }: { where: { name: string } }) => ({
+      ...profile({ id: `id-${where.name}` }),
+      hooksEnabled: where.name !== 'quiet',
+    }));
+    h.versionFind.mockImplementation(
+      async ({ where }: { where: { profileId_version: { profileId: string } } }) =>
+        rows[where.profileId_version.profileId.slice(3)]
+    );
+  });
+
+  it('resolves every bound plugin in list order, pinning each, with its own hook switch', async () => {
+    rows.alpha = pluginRow('alpha', 'alpha');
+    rows.quiet = pluginRow('quiet', 'quiet');
+    const row = runRow(null);
+    const list = await resolveHarnessProfiles('implementer', {}, binding(['alpha', 'quiet']));
+    expect(list.map((p) => [p.name, p.hooksEnabled])).toEqual([
+      ['alpha', true],
+      ['quiet', false],
+    ]);
+    expect(row.harnessProfileVersions).toEqual({ alpha: 2, quiet: 2 });
+  });
+
+  it('fails closed when one of several is disabled, naming it', async () => {
+    rows.alpha = pluginRow('alpha', 'alpha');
+    runRow(null);
+    h.profileFind.mockImplementation(async ({ where }: { where: { name: string } }) =>
+      profile({ id: `id-${where.name}`, status: where.name === 'beta' ? 'DISABLED' : 'OK' })
+    );
+    await expect(
+      resolveHarnessProfiles('implementer', {}, binding(['alpha', 'beta']))
+    ).rejects.toThrow(/'beta'/);
+  });
+
+  it('fails closed on two plugins that share a plugin.json name', async () => {
+    rows.alpha = pluginRow('alpha', 'shared');
+    rows.beta = pluginRow('beta', 'Shared');
+    runRow(null);
+    await expect(
+      resolveHarnessProfiles('implementer', {}, binding(['alpha', 'beta']))
+    ).rejects.toMatchObject({ nonRetryable: true, type: 'PLUGIN_NAME_COLLISION' });
+  });
+
+  it('needs no enablement for a platform-wide binding', async () => {
+    rows.alpha = pluginRow('alpha', 'alpha');
+    runRow(null);
+    await resolveHarnessProfiles('implementer', { teamId: 't1' }, binding(['alpha']));
+    expect(h.enabledFind).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for a team override whose team has not enabled the plugin', async () => {
+    rows.alpha = pluginRow('alpha', 'alpha');
+    runRow(null);
+    h.enabledFind.mockResolvedValue([]);
+    await expect(
+      resolveHarnessProfiles(
+        'implementer',
+        { teamId: 't1' },
+        binding(['alpha'], { scope: 'TEAM', teamId: 't1' })
+      )
+    ).rejects.toMatchObject({ nonRetryable: true, type: 'PLUGIN_NOT_ENABLED' });
+    expect(h.enabledFind).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ teamId: 't1' }) })
+    );
+  });
+
+  it('serves a team override whose team enabled the plugin', async () => {
+    rows.alpha = pluginRow('alpha', 'alpha');
+    runRow(null);
+    h.enabledFind.mockResolvedValue([{ profileId: 'id-alpha' }]);
+    const list = await resolveHarnessProfiles(
+      'implementer',
+      { teamId: 't1' },
+      binding(['alpha'], { scope: 'TEAM', teamId: 't1' })
+    );
+    expect(list).toHaveLength(1);
+  });
+
+  it('fails closed for a scoped override with no team to check', async () => {
+    rows.alpha = pluginRow('alpha', 'alpha');
+    runRow(null);
+    await expect(
+      resolveHarnessProfiles('implementer', {}, binding(['alpha'], { scope: 'ORGANIZATION' }))
+    ).rejects.toMatchObject({ type: 'PLUGIN_NOT_ENABLED' });
+  });
+
+  it('keeps a run in flight on its pinned snapshot after the enablement is removed', async () => {
+    rows.alpha = pluginRow('alpha', 'alpha');
+    runRow({ alpha: 2 });
+    h.enabledFind.mockResolvedValue([]);
+    const list = await resolveHarnessProfiles(
+      'implementer',
+      { teamId: 't1' },
+      binding(['alpha'], { scope: 'TEAM', teamId: 't1' })
+    );
+    expect(list).toHaveLength(1);
+    expect(h.enabledFind).not.toHaveBeenCalled();
+  });
+
+  it('records plugin_partial for several plugins on another runtime', async () => {
+    const tracer = { addActivityEvent: vi.fn() };
+    await resolveProfileForRuntime({
+      agentKey: 'implementer',
+      ctx: undefined,
+      resolved: binding(['alpha', 'beta']),
+      runtime: 'mastra',
+      tracer,
+    });
+    expect(tracer.addActivityEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'agent.plugin_partial',
+        outputJson: expect.objectContaining({ profiles: ['alpha', 'beta'] }),
+      })
+    );
   });
 });
 
@@ -274,12 +431,12 @@ describe('resolveProfileForRuntime', () => {
     runRow(null);
     const given = args();
     const resolved = await resolveProfileForRuntime(given);
-    expect(resolved).toMatchObject({ name: 'kit', version: 2 });
+    expect(resolved?.[0]).toMatchObject({ name: 'kit', version: 2 });
     expect(given.tracer.addActivityEvent).not.toHaveBeenCalled();
   });
 
   it('returns undefined, with no event, for an agent bound to no profile', async () => {
-    h.resolveAgent.mockResolvedValue({ harnessProfiles: [] });
+    h.resolveAgent.mockResolvedValue(binding([]));
     const given = args();
     await expect(resolveProfileForRuntime(given)).resolves.toBeUndefined();
     expect(given.tracer.addActivityEvent).not.toHaveBeenCalled();
@@ -291,7 +448,23 @@ describe('resolveProfileForRuntime', () => {
     expect(h.profileFind).not.toHaveBeenCalled();
     expect(given.tracer.addActivityEvent).toHaveBeenCalledWith({
       name: 'agent.profile_not_applicable',
-      outputJson: { agentKey: 'implementer', profile: 'kit', ranOn: runtime, runtime },
+      outputJson: {
+        agentKey: 'implementer',
+        profile: 'kit',
+        profiles: ['kit'],
+        ranOn: runtime,
+        runtime,
+      },
+    });
+    expect(given.tracer.addActivityEvent).toHaveBeenCalledWith({
+      name: 'agent.plugin_partial',
+      outputJson: {
+        agentKey: 'implementer',
+        profiles: ['kit'],
+        ranOn: runtime,
+        runtime,
+        skipped: ['commands', 'hooks', 'sub-agents'],
+      },
     });
   });
 
@@ -304,6 +477,7 @@ describe('resolveProfileForRuntime', () => {
       outputJson: {
         agentKey: 'implementer',
         profile: 'kit',
+        profiles: ['kit'],
         ranOn: 'mastra',
         runtime: 'claude-code',
       },

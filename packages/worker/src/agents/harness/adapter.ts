@@ -280,10 +280,11 @@ export interface HarnessRuntimeOptions<Access> {
   browserToolset?: BrowserToolset;
   evalLessonTools?: EvalLessonTool[];
   /**
-   * The approved harness profile the Agent is bound to (`resolveHarnessProfile`),
-   * for a harness that loads one (Claude Code); ignored by the rest.
+   * The approved harness profiles (plugins) the Agent is bound to, in binding order
+   * (`resolveHarnessProfiles`), for a harness that loads them (Claude Code); ignored
+   * by the rest.
    */
-  profile?: ResolvedHarnessProfile;
+  profiles?: ResolvedHarnessProfile[];
   /**
    * The run can stop to ask a person (the workflow's ask-and-resume loop set it).
    * A harness that supports it offers its question tool and ends the turn when

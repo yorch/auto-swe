@@ -58,7 +58,7 @@ vi.mock('./resolver.js', () => ({
 
 import {
   resolveAgent,
-  resolveAgentProfileName,
+  resolveAgentProfileBinding,
   resolveAgentRuntimeChoice,
 } from './agentResolver.js';
 import {
@@ -664,16 +664,16 @@ describe('resolveAgent — harness profile', () => {
     expect(r.harnessProfiles).toEqual([]);
   });
 
-  it('resolveAgentProfileName reads the pinned version’s binding without binding a model', async () => {
+  it('resolveAgentProfileBinding reads the pinned version’s bindings and scope without binding a model', async () => {
     agentFindFirst.mockResolvedValueOnce(
-      agentRow({ harnessProfiles: ['kit'], key: 'implementer' })
+      agentRow({ harnessProfiles: ['kit', 'ops'], key: 'implementer', scope: 'TEAM', teamId: 't1' })
     );
     expect(
-      await resolveAgentProfileName('implementer', { agentVersions: { implementer: 3 } })
-    ).toBe('kit');
+      await resolveAgentProfileBinding('implementer', { agentVersions: { implementer: 3 } })
+    ).toEqual({ harnessProfiles: ['kit', 'ops'], scope: 'TEAM', teamId: 't1' });
     expect(agentFindFirst.mock.calls.at(-1)?.[0].where).toMatchObject({ version: 3 });
     agentFindFirst.mockResolvedValue(null);
-    await expect(resolveAgentProfileName('nope')).rejects.toThrow(/No active Agent/);
+    await expect(resolveAgentProfileBinding('nope')).rejects.toThrow(/No active Agent/);
   });
 });
 

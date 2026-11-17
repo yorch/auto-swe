@@ -274,6 +274,7 @@ function kitProfile(): ResolvedHarnessProfile {
     commitSha: 'c0ffee'.padEnd(40, '1'),
     contentHash: createHash('sha256').update('kit').digest('hex'),
     files,
+    hooksEnabled: true,
     manifest: {
       description: 'Kit',
       instructions: 'INSTRUCTIONS.md',

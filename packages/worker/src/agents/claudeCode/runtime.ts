@@ -67,6 +67,7 @@ import {
   profileShortHash,
   profileShortSha,
   profileSkillNames,
+  profileToolGrants,
   withProfileInstructions,
 } from './profile.js';
 
@@ -433,12 +434,12 @@ export function claudeCodeAdapter(
   const baseUrl = normalizeAnthropicBaseUrl(access.apiBase);
   // The approved profile, when the Agent is bound to one: its tools are added to
   // the harness's list and the policy's allowlist together, and nothing else is.
-  const { profile } = options;
+  const profiles = options.profiles ?? [];
   // The question tool is offered only to a run the workflow can pause.
   const tools = toolsWithPause(
     toolsWithProfile(
       options.tools ? [...options.tools] : harnessToolsFor(options.toolKeys),
-      profile?.manifest.tools
+      profileToolGrants(profiles)
     ),
     options.allowPause
   );
@@ -456,15 +457,19 @@ export function claudeCodeAdapter(
     containerId: workspace.containerId,
     cwd: WORKSPACE_DIR,
     home: HARNESS_HOME,
-    ...(profile
-      ? { profileDir: profileContainerDir(profile), profileSkills: profileSkillNames(profile) }
+    ...(profiles.length > 0
+      ? {
+          profileDirs: profiles.map((profile) => profileContainerDir(profile)),
+          profileSkills: profileSkillNames(profiles),
+        }
       : {}),
     projectConfigLoaded: loadProjectSettings,
     tools,
   };
-  const profilePlugins = profile ? profilePluginDirs(profile) : [];
+  const profilePlugins = profiles.flatMap((profile) => profilePluginDirs(profile));
   let profileAnnounced = false;
-  const profileMaterialization = profile ? profileMaterializer(workspace, profile) : undefined;
+  const profileMaterialization =
+    profiles.length > 0 ? profileMaterializer(workspace, profiles) : undefined;
   // The harness reports usage as running totals per model, and a resumed session
   // starts from its saved totals. What a turn spent is the change since the last.
   const totals = runningTotalsUsage('anthropic/');
@@ -677,14 +682,15 @@ export function claudeCodeAdapter(
           ...(knowledgeServer ? [KNOWLEDGE_MCP_SERVER] : []),
         ],
         model: access.modelId,
-        ...(profile
+        ...(profiles.length > 0
           ? {
-              profile: {
+              profiles: profiles.map((profile) => ({
                 commitSha: profileShortSha(profile),
                 contentHash: profileShortHash(profile),
+                hooksEnabled: profile.hooksEnabled,
                 name: profile.name,
                 version: profile.version,
-              },
+              })),
             }
           : {}),
         proxied: endpoint.proxied,
@@ -928,23 +934,34 @@ export function claudeCodeAdapter(
       if (profileMaterialization) {
         await profileMaterialization.ensure();
       }
-      if (profile && !profileAnnounced) {
+      if (profiles.length > 0 && !profileAnnounced) {
         profileAnnounced = true;
-        options.tracer?.addActivityEvent({
-          name: 'agent.profile',
-          outputJson: {
-            commitSha: profileShortSha(profile),
-            contentHash: profileShortHash(profile),
-            plugins: profile.manifest.plugins ?? [],
-            profile: profile.name,
-            tools: profile.manifest.tools ?? [],
-            version: profile.version,
-          },
-        });
+        for (const profile of profiles) {
+          options.tracer?.addActivityEvent({
+            name: 'agent.profile',
+            outputJson: {
+              commitSha: profileShortSha(profile),
+              contentHash: profileShortHash(profile),
+              plugins: profile.manifest.plugins ?? [],
+              profile: profile.name,
+              tools: profile.manifest.tools ?? [],
+              version: profile.version,
+            },
+          });
+          options.tracer?.addActivityEvent({
+            name: 'agent.plugin_hooks',
+            outputJson: {
+              hooksEnabled: profile.hooksEnabled,
+              name: profile.name,
+              version: profile.version,
+            },
+          });
+        }
       }
-      const input = profile
-        ? { ...rawInput, system: withProfileInstructions(rawInput.system, profile) }
-        : rawInput;
+      const input =
+        profiles.length > 0
+          ? { ...rawInput, system: withProfileInstructions(rawInput.system, profiles) }
+          : rawInput;
       const mcpRelay = await openRelay();
       policy.mcpTools = [
         ...(mcpRelay?.tools.map((tool) => relayedToolName(tool.name)) ?? []),
