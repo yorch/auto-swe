@@ -103,6 +103,9 @@ export function mergeTraces(
  * that count, the poll re-reads every (trimmed) trace instead. It does the same
  * once when the run turns terminal, so the finished run is never left short.
  */
+/** Most traces the live tail keeps; matches the server's single-read cap. */
+const HELD_TRACE_CAP = 5000;
+
 export function useWorkflowRun(id: string, includeTraces = true, fullTraces = false) {
   const qc = useQueryClient();
   const param = fullTraces ? 'fullTraces=true' : includeTraces ? 'includeTraces=true' : '';
@@ -144,8 +147,12 @@ export function useWorkflowRun(id: string, includeTraces = true, fullTraces = fa
       // A run with more traces than one read returns is shown as a window of its
       // newest ones. The window cannot match the run's count, so the count check
       // below would re-read everything on every poll; slide the window instead.
-      const windowed = held.tracesTruncated === true;
-      const traces = windowed ? merged.slice(-heldTraces.length) : merged;
+      // A run that outgrows the cap while being watched becomes a window too, so the held
+      // list (and every pass over it on each render) stops growing with the run.
+      const windowed = held.tracesTruncated === true || merged.length > HELD_TRACE_CAP;
+      const traces = windowed
+        ? merged.slice(-Math.min(HELD_TRACE_CAP, Math.max(heldTraces.length, 1)))
+        : merged;
       const justFinished =
         isTerminalWorkflowRunStatus(run.data.status) && !isTerminalWorkflowRunStatus(held.status);
       // The tail's server time precedes the full read too, so either way it is

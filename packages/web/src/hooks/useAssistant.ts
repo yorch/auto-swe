@@ -7,7 +7,7 @@ import type {
 } from '@auto-swe/shared/lib/assistantConversation';
 import { isAssistantReplyOpen } from '@auto-swe/shared/lib/assistantConversation';
 import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { API_BASE } from '@/lib/config';
 
@@ -210,6 +210,8 @@ export function useResetAssistantTitle() {
  * The stream ends itself when the reply finishes; it is reopened if the panel is (or the reply is
  * still open after the gateway's stream time limit).
  */
+/** Reconnects tried, with backoff, before a failing reply stream is left alone. */
+const MAX_STREAM_RETRIES = 6;
 export function useAssistantReplyStream(
   conversationId: string | null,
   messages: AssistantMessageView[] | undefined
@@ -217,6 +219,7 @@ export function useAssistantReplyStream(
   const qc = useQueryClient();
   // Bumped after a dropped stream, so a reply that is still open gets a fresh one.
   const [attempt, setAttempt] = useState(0);
+  const failures = useRef(0);
   const open = messages?.find((m) => m.role === 'ASSISTANT' && isAssistantReplyOpen(m.status));
   const openId = open?.id ?? null;
 
@@ -234,6 +237,7 @@ export function useAssistantReplyStream(
         prev ? { ...prev, messages: prev.messages.map((m) => (m.id === next.id ? next : m)) } : prev
       );
     es.addEventListener('message', (event) => {
+      failures.current = 0;
       try {
         update(JSON.parse((event as MessageEvent<string>).data) as AssistantMessageView);
       } catch {
@@ -252,7 +256,15 @@ export function useAssistantReplyStream(
       // conversation, and try again shortly if the reply is still open.
       es.close();
       qc.invalidateQueries({ queryKey: conversationKey(conversationId) });
-      retry = setTimeout(() => setAttempt((n) => n + 1), 2000);
+      // Back off and give up after a few tries: a stream that keeps failing (an expired
+      // session, a dead worker) must not turn into a reconnect-and-refetch loop.
+      failures.current += 1;
+      if (failures.current <= MAX_STREAM_RETRIES) {
+        retry = setTimeout(
+          () => setAttempt((n) => n + 1),
+          Math.min(30_000, 2000 * 2 ** (failures.current - 1))
+        );
+      }
     };
     return () => {
       es.close();
