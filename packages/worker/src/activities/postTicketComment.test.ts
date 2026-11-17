@@ -337,7 +337,10 @@ describe('postTicketComment on the GitHub tracker', () => {
     mocks.resolveSetting.mockResolvedValue(['acme/issues']);
     githubRun({ connection: null, externalTicketId: 'acme/issues#5' });
     await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual(REFUSED);
-    expect(mocks.resolveSetting).not.toHaveBeenCalled();
+    expect(mocks.resolveSetting).not.toHaveBeenCalledWith(
+      'github.trackerIssueRepositories',
+      expect.anything()
+    );
     expect(mocks.addComment).not.toHaveBeenCalled();
   });
 

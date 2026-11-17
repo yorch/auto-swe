@@ -110,6 +110,26 @@ const trackerIssueRepository = z
   .max(200)
   .regex(/^[\w.-]+\/[\w.-]+$/, 'must be owner/repo')
   .refine((v) => v.split('/').every((part) => part !== '.' && part !== '..'), 'must be owner/repo');
+/// A Jira project key or Linear team key. Case is kept as typed; the scope check compares
+/// case-insensitively, and a repeat that differs only by case is dropped.
+const trackerProjectKey = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z][A-Za-z0-9_]{0,31}$/, 'must be a Jira project key or Linear team key');
+const trackerProjectKeyList = z
+  .array(trackerProjectKey)
+  .max(100)
+  .transform((entries) => {
+    const seen = new Set<string>();
+    return entries.filter((entry) => {
+      const key = entry.toLowerCase();
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  });
 const trackerIssueRepositoryList = z
   .array(trackerIssueRepository)
   .max(50)
@@ -580,6 +600,19 @@ export const SETTING_DEFINITIONS = {
     restartRequired: false,
     runPinned: false,
     schema: z.array(githubOrgLogin).max(50),
+    sensitive: true,
+  }),
+  'github.trackerAllowedProjectKeys': defineSetting({
+    defaultValue: [],
+    description:
+      "Jira project keys or Linear team keys (for example PAY or ENG) whose tickets a run, a launch brief or the ticket preview may read. Empty means unrestricted: any ticket the platform's tracker credential can see. When set, a ticket id whose key is not listed (or that carries no parseable key) reads as not found, the same answer as a ticket that does not exist. Resolved at each targeted repository's team and organization, or at the launching template's team and organization for a launch with no git repository (a global template has no team, so only a GLOBAL value reaches it); when several repositories are targeted and any of them lists keys, a key is allowed if it appears in any non-empty list, and the request is unrestricted only if every list is empty. Does not apply to the GitHub issue tracker (see the extra issue-tracker repositories setting). Up to 100 keys, compared case-insensitively. Read through a ~30 s cache. A value that cannot be loaded refuses the read.",
+    group: 'github',
+    label: 'Allowed tracker projects (Jira / Linear)',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: trackerProjectKeyList,
     sensitive: true,
   }),
   'github.trackerIssueRepositories': defineSetting({

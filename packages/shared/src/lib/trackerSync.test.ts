@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   createProvider: vi.fn(),
   findConnections: vi.fn(async (..._args: unknown[]) => [] as unknown[]),
   findRunInput: vi.fn(),
+  findWorkflowRun: vi.fn(),
+  overrideAt: vi.fn((_key: string, _scope: string): unknown => undefined),
   resolveSetting: vi.fn(),
   syncOnEvent: vi.fn(async (..._args: unknown[]): Promise<string | null> => null),
 }));
@@ -12,9 +14,14 @@ vi.mock('../db.js', () => ({
   prisma: {
     connection: { findMany: (...args: unknown[]) => mocks.findConnections(...args) },
     runInput: { findUnique: (...args: unknown[]) => mocks.findRunInput(...args) },
+    workflowRun: { findFirst: (...args: unknown[]) => mocks.findWorkflowRun(...args) },
   },
 }));
 vi.mock('../config/index.js', () => ({
+  resolveEffectiveSettings: async () => ({
+    overrideAt: (key: string, scope: string) => mocks.overrideAt(key, scope),
+    settings: [],
+  }),
   resolveSetting: (...args: unknown[]) => mocks.resolveSetting(...args),
 }));
 vi.mock('./systemConfig.js', () => ({
@@ -28,8 +35,10 @@ import type { ResolvedIssueTrackerConfig } from './integrations/registry.js';
 import {
   isGitHubTicketInScope,
   isTrackerReadInScope,
+  loadRunLaunchTeam,
   repoTrackerScope,
   resolveTrackerIssueRepos,
+  runTrackerScope,
   syncTrackerOnEvent,
   TRACKER_SYNC_FAILED,
   TRACKER_SYNC_NO_REPOSITORY,
@@ -47,6 +56,7 @@ const repo = (overrides: Partial<TrackerScopeRepo> = {}): TrackerScopeRepo => ({
   ...overrides,
 });
 const scope = (...repos: TrackerScopeRepo[]): TrackerRepoScope => ({
+  allowedProjectKeys: [],
   instanceBaseUrl: DOTCOM,
   repos,
 });
@@ -54,6 +64,10 @@ const scope = (...repos: TrackerScopeRepo[]): TrackerRepoScope => ({
 beforeEach(() => {
   mocks.resolveSetting.mockReset();
   mocks.resolveSetting.mockResolvedValue([]);
+  mocks.overrideAt.mockReset();
+  mocks.overrideAt.mockReturnValue(undefined);
+  mocks.findRunInput.mockReset();
+  mocks.findWorkflowRun.mockReset();
 });
 
 describe('isGitHubTicketInScope', () => {
@@ -72,7 +86,11 @@ describe('isGitHubTicketInScope', () => {
   it('treats a repository with no host as the instance host, github.com by default', () => {
     const onDotcom = scope(repo());
     expect(isGitHubTicketInScope('acme/web#1', 'https://api.github.com', onDotcom)).toBe(true);
-    const onGhe: TrackerRepoScope = { instanceBaseUrl: 'https://ghe.corp', repos: [repo()] };
+    const onGhe: TrackerRepoScope = {
+      allowedProjectKeys: [],
+      instanceBaseUrl: 'https://ghe.corp',
+      repos: [repo()],
+    };
     expect(isGitHubTicketInScope('acme/web#1', null, onGhe)).toBe(false);
     expect(isGitHubTicketInScope('acme/web#1', 'https://ghe.corp/api/v3', onGhe)).toBe(true);
   });
@@ -137,6 +155,7 @@ describe('isGitHubTicketInScope with a default repository', () => {
 
 describe('isGitHubTicketInScope with operator-listed repositories', () => {
   const withExtra = (extraRepos: string[], ...repos: TrackerScopeRepo[]): TrackerRepoScope => ({
+    allowedProjectKeys: [],
     extraRepos,
     instanceBaseUrl: DOTCOM,
     repos,
@@ -211,6 +230,7 @@ describe('repoTrackerScope', () => {
   it('pairs the repositories with the instance host and an empty list by default', async () => {
     const repos = [repo()];
     expect(await repoTrackerScope(repos)).toEqual({
+      allowedProjectKeys: [],
       extraRepos: [],
       instanceBaseUrl: DOTCOM,
       repos,
@@ -246,7 +266,116 @@ describe('repoTrackerScope', () => {
   it('lists nothing, and reads no setting, for a repository with no owning team', async () => {
     mocks.resolveSetting.mockResolvedValue(['acme/issues']);
     expect((await repoTrackerScope([repo()])).extraRepos).toEqual([]);
-    expect(mocks.resolveSetting).not.toHaveBeenCalled();
+    expect(mocks.resolveSetting).not.toHaveBeenCalledWith(
+      'github.trackerIssueRepositories',
+      expect.anything()
+    );
+  });
+});
+
+describe('allowedProjectKeys in repoTrackerScope', () => {
+  const byTeam =
+    (lists: Record<string, string[]>) => async (key: string, ctx: { teamId?: string }) =>
+      key === 'github.trackerAllowedProjectKeys' ? (lists[ctx.teamId ?? ''] ?? []) : [];
+
+  it('is empty (unrestricted) when every context lists nothing', async () => {
+    expect((await repoTrackerScope([repo({ teamId: 't1' })])).allowedProjectKeys).toEqual([]);
+  });
+
+  it("resolves at the repository's team and organization", async () => {
+    mocks.resolveSetting.mockImplementation(byTeam({ t1: ['PAY'] }));
+    const repos = [repo({ team: { orgId: 'o1' }, teamId: 't1' })];
+    expect((await repoTrackerScope(repos)).allowedProjectKeys).toEqual(['PAY']);
+    expect(mocks.resolveSetting).toHaveBeenCalledWith('github.trackerAllowedProjectKeys', {
+      orgId: 'o1',
+      teamId: 't1',
+    });
+  });
+
+  it('unions the non-empty lists; an empty list does not make the request unrestricted', async () => {
+    mocks.resolveSetting.mockImplementation(
+      byTeam({ t1: ['PAY', 'ENG'], t2: ['eng', 'HR'], t3: [] })
+    );
+    const repos = [repo({ teamId: 't1' }), repo({ teamId: 't2' }), repo({ teamId: 't3' })];
+    const keys = (await repoTrackerScope(repos)).allowedProjectKeys.map((k) => k.toLowerCase());
+    expect(keys.sort()).toEqual(['eng', 'hr', 'pay']);
+  });
+
+  it('resolves at GLOBAL for a connection-less request or a repository with no team', async () => {
+    mocks.resolveSetting.mockImplementation(byTeam({ '': ['PAY'] }));
+    expect((await repoTrackerScope([])).allowedProjectKeys).toEqual(['PAY']);
+    expect((await repoTrackerScope([repo()])).allowedProjectKeys).toEqual(['PAY']);
+  });
+
+  it('flags the scope unreadable, rather than empty, when the setting cannot be read', async () => {
+    mocks.resolveSetting.mockRejectedValue(new Error('db down'));
+    const loaded = await repoTrackerScope([repo({ teamId: 't1' })]);
+    expect(loaded.allowedProjectKeys).toEqual([]);
+    expect(loaded.projectKeysUnreadable).toBe(true);
+    expect(await isTrackerReadInScope({ provider: 'jira' }, 'PAY-1', async () => loaded)).toBe(
+      false
+    );
+  });
+  it("resolves a repository-less request at the launching template's team and organization", async () => {
+    mocks.resolveSetting.mockImplementation(byTeam({ '': ['GLOBALKEY'], tpl: ['PAY'] }));
+    const loaded = await repoTrackerScope([], { orgId: 'o9', teamId: 'tpl' });
+    expect(loaded.allowedProjectKeys).toEqual(['PAY']);
+    expect(mocks.resolveSetting).toHaveBeenCalledWith('github.trackerAllowedProjectKeys', {
+      orgId: 'o9',
+      teamId: 'tpl',
+    });
+    const jira = { provider: 'jira' };
+    expect(await isTrackerReadInScope(jira, 'ENG-7', async () => loaded)).toBe(false);
+    expect(await isTrackerReadInScope(jira, 'PAY-7', async () => loaded)).toBe(true);
+  });
+
+  it("uses the template's team for a run with a non-git connection, and a repository's own team otherwise", async () => {
+    mocks.resolveSetting.mockImplementation(byTeam({ t1: ['PAY'], tpl: ['ENG'] }));
+    const nonGit = await runTrackerScope(
+      { connection: null, knowledgeRepoSources: null },
+      { teamId: 'tpl' }
+    );
+    expect(nonGit.allowedProjectKeys).toEqual(['ENG']);
+    const withRepo = await repoTrackerScope([repo({ teamId: 't1' })], { teamId: 'tpl' });
+    expect(withRepo.allowedProjectKeys).toEqual(['PAY']);
+  });
+
+  it('resolves at GLOBAL only for a global template (no launch team)', async () => {
+    mocks.resolveSetting.mockImplementation(byTeam({ '': ['PAY'], tpl: ['ENG'] }));
+    expect((await repoTrackerScope([], null)).allowedProjectKeys).toEqual(['PAY']);
+    expect((await repoTrackerScope([], { teamId: null })).allowedProjectKeys).toEqual(['PAY']);
+  });
+
+  it('flags the scope unreadable when a stored value fails the schema, instead of degrading', async () => {
+    mocks.overrideAt.mockImplementation((_key, scope) =>
+      scope === 'TEAM' ? 'not-a-list' : undefined
+    );
+    const loaded = await repoTrackerScope([repo({ teamId: 't1' })]);
+    expect(loaded.projectKeysUnreadable).toBe(true);
+    expect(await isTrackerReadInScope({ provider: 'linear' }, 'ENG-1', async () => loaded)).toBe(
+      false
+    );
+    mocks.overrideAt.mockImplementation((_key, scope) => (scope === 'TEAM' ? ['PAY'] : undefined));
+    expect(
+      (await repoTrackerScope([repo({ teamId: 't1' })])).projectKeysUnreadable
+    ).toBeUndefined();
+  });
+});
+
+describe('loadRunLaunchTeam', () => {
+  it("reads the latest run's template team and organization", async () => {
+    mocks.findWorkflowRun.mockResolvedValue({ template: { team: { orgId: 'o1' }, teamId: 't1' } });
+    expect(await loadRunLaunchTeam('ri-1')).toEqual({ orgId: 'o1', teamId: 't1' });
+    expect(mocks.findWorkflowRun).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { workRequestId: 'ri-1' } })
+    );
+  });
+
+  it('is null for a global template or a run input with no run', async () => {
+    mocks.findWorkflowRun.mockResolvedValue({ template: { team: null, teamId: null } });
+    expect(await loadRunLaunchTeam('ri-1')).toBeNull();
+    mocks.findWorkflowRun.mockResolvedValue(null);
+    expect(await loadRunLaunchTeam('ri-2')).toBeNull();
   });
 });
 
@@ -268,11 +397,54 @@ describe('isTrackerReadInScope', () => {
     expect(await isTrackerReadInScope(ghe, 'acme/web#1', load)).toBe(false);
   });
 
-  it.each(['jira', 'linear'])('does not gate %s, nor load a scope for it', async (provider) => {
+  it('does not gate a null provider, nor load a scope for it', async () => {
     const load = vi.fn(async () => scope());
-    expect(await isTrackerReadInScope({ provider }, 'attacker/private#1', load)).toBe(true);
     expect(await isTrackerReadInScope({ provider: null }, 'X-1', load)).toBe(true);
     expect(load).not.toHaveBeenCalled();
+  });
+
+  describe.each(['jira', 'linear'])('%s project keys', (provider) => {
+    const cfg = { provider };
+    const withKeys = (...keys: string[]) =>
+      vi.fn(async () => ({ ...scope(repo()), allowedProjectKeys: keys }));
+
+    it('is unrestricted with an empty list', async () => {
+      expect(await isTrackerReadInScope(cfg, 'ANY-1', withKeys())).toBe(true);
+      expect(await isTrackerReadInScope(cfg, 'not an id', withKeys())).toBe(true);
+    });
+
+    it('allows a listed key and refuses another, case-insensitively', async () => {
+      const load = withKeys('PAY', 'Eng');
+      expect(await isTrackerReadInScope(cfg, 'PAY-12', load)).toBe(true);
+      expect(await isTrackerReadInScope(cfg, 'pay-12', load)).toBe(true);
+      expect(await isTrackerReadInScope(cfg, 'ENG-45', load)).toBe(true);
+      expect(await isTrackerReadInScope(cfg, 'HR-1', load)).toBe(false);
+      expect(await isTrackerReadInScope(cfg, 'PAYX-1', load)).toBe(false);
+    });
+
+    it('refuses an id with no parseable key when a list is set', async () => {
+      const load = withKeys('PAY');
+      for (const id of [
+        '',
+        '12',
+        'PAY',
+        'PAY-',
+        'PAY-1-x',
+        'https://x/browse/PAY-1',
+        'acme/web#1',
+      ]) {
+        expect(await isTrackerReadInScope(cfg, id, load), id).toBe(false);
+      }
+    });
+
+    it('refuses, and never throws, when the scope cannot be loaded or read', async () => {
+      const boom = vi.fn(async () => {
+        throw new Error('db down');
+      });
+      expect(await isTrackerReadInScope(cfg, 'PAY-1', boom)).toBe(false);
+      const unreadable = vi.fn(async () => ({ ...scope(), projectKeysUnreadable: true }));
+      expect(await isTrackerReadInScope(cfg, 'PAY-1', unreadable)).toBe(false);
+    });
   });
 
   it('refuses, and never throws, when the scope cannot be loaded', async () => {
@@ -379,7 +551,10 @@ describe('syncTrackerOnEvent', () => {
       runInputId: 'wr-1',
       warn,
     });
-    expect(mocks.resolveSetting).not.toHaveBeenCalled();
+    expect(mocks.resolveSetting).not.toHaveBeenCalledWith(
+      'github.trackerIssueRepositories',
+      expect.anything()
+    );
     expect(mocks.syncOnEvent).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledTimes(1);
   });
@@ -403,7 +578,10 @@ describe('syncTrackerOnEvent', () => {
     });
     const warn = vi.fn();
     await syncTrackerOnEvent(EVENT, GITHUB, { runInputId: 'wr-1', warn });
-    expect(mocks.resolveSetting).not.toHaveBeenCalled();
+    expect(mocks.resolveSetting).not.toHaveBeenCalledWith(
+      'github.trackerIssueRepositories',
+      expect.anything()
+    );
     expect(mocks.syncOnEvent).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledTimes(1);
   });

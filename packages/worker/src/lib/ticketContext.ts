@@ -5,6 +5,7 @@ import type { TicketFailureClass } from '@auto-swe/shared/lib/integrations/ticke
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import {
   isTrackerReadInScope,
+  loadRunLaunchTeam,
   RUN_TRACKER_SCOPE_SELECT,
   runTrackerScope,
   TRACKER_READ_OUT_OF_SCOPE,
@@ -281,7 +282,7 @@ export async function readTicket(args: {
       !(await isTrackerReadInScope(
         config,
         input.externalTicketId,
-        () => runTrackerScope(input),
+        async () => runTrackerScope(input, await loadRunLaunchTeam(workRequestId)),
         defaultRepo
       ))
     ) {

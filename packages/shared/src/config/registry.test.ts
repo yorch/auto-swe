@@ -776,3 +776,28 @@ describe('orchestration settings', () => {
     expect(approval.safeParse(3601).success).toBe(false);
   });
 });
+
+describe('github.trackerAllowedProjectKeys', () => {
+  const def = SETTING_DEFINITIONS['github.trackerAllowedProjectKeys'];
+
+  it('is empty by default, ADMIN-only, overridable at team and organization, not pinned', () => {
+    expect(def.defaultValue).toEqual([]);
+    expect(def.requiredRole).toBe('ADMIN');
+    expect(def.overridableAt).toEqual(['TEAM', 'ORGANIZATION']);
+    expect(def.runPinned).toBe(false);
+  });
+
+  it('takes project keys, trimmed, dropping case-insensitive repeats', () => {
+    expect(def.schema.parse([' PAY ', 'pay', 'Eng_2'])).toEqual(['PAY', 'Eng_2']);
+  });
+
+  it.each([['1ABC'], ['A-B'], ['A B'], [''], ['A'.repeat(33)]])('rejects %s', (bad) => {
+    expect(def.schema.safeParse([bad]).success).toBe(false);
+  });
+
+  it('takes at most one hundred keys', () => {
+    const many = (n: number) => Array.from({ length: n }, (_, i) => `K${i}`);
+    expect(def.schema.safeParse(many(100)).success).toBe(true);
+    expect(def.schema.safeParse(many(101)).success).toBe(false);
+  });
+});
