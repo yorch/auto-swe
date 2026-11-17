@@ -17,6 +17,7 @@ import { ApiError } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
 import { isOrchestrationLive } from '@/lib/orchestration';
 import { validateRouteParam } from '@/lib/routeParams';
+import { cn } from '@/lib/utils';
 
 type Tab = 'conversation' | 'agents';
 
@@ -110,6 +111,8 @@ export default function OrchestrationDetailPage({ params }: { params: Promise<{ 
   );
   const agents = <AgentsColumn detail={data} />;
 
+  // One tree at every width, so a draft in either column survives a tab switch or a resize:
+  // the inactive panel on a narrow screen is hidden, never unmounted.
   return (
     <div className="space-y-6">
       <BackLink />
@@ -119,8 +122,8 @@ export default function OrchestrationDetailPage({ params }: { params: Promise<{ 
           Showing the last data received. Could not refresh: {errMsg(detail.error)}
         </Alert>
       )}
-      {narrow ? (
-        <div className="space-y-4">
+      <div className="space-y-4">
+        {narrow && (
           <TabBar
             active={tab}
             ariaLabel="Orchestration sections"
@@ -131,22 +134,32 @@ export default function OrchestrationDetailPage({ params }: { params: Promise<{ 
               { id: 'agents', label: `Agents (${data.children.length})` },
             ]}
           />
-          <div {...tabPanelProps('orch', tab)}>
-            {tab === 'conversation' ? conversation : agents}
-          </div>
-        </div>
-      ) : (
-        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-          <div className="min-w-0 space-y-3">
-            <h2 className="text-base font-semibold text-paper-100">Conversation</h2>
+        )}
+        <div
+          className={cn(
+            narrow
+              ? 'space-y-4'
+              : 'grid items-start gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]'
+          )}
+        >
+          <div
+            className="min-w-0 space-y-3"
+            hidden={narrow && tab !== 'conversation'}
+            {...(narrow ? tabPanelProps('orch', 'conversation') : {})}
+          >
+            {!narrow && <h2 className="text-base font-semibold text-paper-100">Conversation</h2>}
             {conversation}
           </div>
-          <div className="min-w-0 space-y-3">
-            <h2 className="text-base font-semibold text-paper-100">Agents</h2>
+          <div
+            className="min-w-0 space-y-3"
+            hidden={narrow && tab !== 'agents'}
+            {...(narrow ? tabPanelProps('orch', 'agents') : {})}
+          >
+            {!narrow && <h2 className="text-base font-semibold text-paper-100">Agents</h2>}
             {agents}
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

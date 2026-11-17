@@ -255,7 +255,22 @@ export function StartWork({
     epicTeamIds: epic.epicTeamIds,
     team: scopeTeam ? { id: scopeTeam.id, name: scopeTeam.name } : null,
   };
-  const [mode, setMode] = useState<Mode>(initialMode);
+  const canOrchestrate = hasRole(platformRole, 'ENGINEER');
+  const [requestedMode, setRequestedMode] = useState<Mode>(initialMode);
+  // `?mode=orchestrate` below ENGINEER falls back to a workflow: that mode cannot be launched.
+  const mode: Mode =
+    requestedMode === 'orchestrate' && !canOrchestrate ? 'workflow' : requestedMode;
+  // The orchestration form (and its queries) mounts the first time its mode is shown.
+  const [orchestrateOpened, setOrchestrateOpened] = useState(initialMode === 'orchestrate');
+  const setMode = (next: Mode) => {
+    if (next === 'orchestrate' && !canOrchestrate) {
+      return;
+    }
+    setRequestedMode(next);
+    if (next === 'orchestrate') {
+      setOrchestrateOpened(true);
+    }
+  };
   const [visited, setVisited] = useState<string[]>(initialTemplateId ? [initialTemplateId] : []);
   const [chosenTemplateId, setTemplateId] = useState(initialTemplateId);
   // With a `?team=` slug the templates wait for the team list, and stay unloaded when it failed,
@@ -300,7 +315,6 @@ export function StartWork({
     !templates.isLoading &&
     !templates.isError &&
     !template;
-  const canOrchestrate = hasRole(platformRole, 'ENGINEER');
   const onLaunched = (requestId: string) => router.push(requestHref(requestId));
   const options: ModeOption[] = [
     {
@@ -388,6 +402,7 @@ export function StartWork({
                 </summary>
                 <div className="mt-3">
                   <ModeChooser
+                    canOrchestrate={canOrchestrate}
                     canStartEpic={canStartEpic}
                     current={mode}
                     epicReason={epic.reason === BASE_EPIC_REASON ? undefined : epic.reason}
@@ -484,7 +499,7 @@ export function StartWork({
             </div>
             <div hidden={mode !== 'orchestrate'}>
               <Step number={detailsStep} title="Describe the task">
-                <OrchestrateForm />
+                {orchestrateOpened && canOrchestrate && <OrchestrateForm />}
               </Step>
             </div>
             <div hidden={mode !== 'epic'}>

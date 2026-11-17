@@ -428,9 +428,39 @@ describe('StartWork', () => {
     expect(screen.getByRole('heading', { name: /orchestrating agents/i })).toBeTruthy();
   });
 
+  it('does not mount the orchestration form until its mode is chosen, then keeps it', () => {
+    auth.role = 'ENGINEER';
+    gateway();
+    render(withQuery(<StartWork />));
+    expect(screen.queryByText('orchestrate form')).toBeNull();
+    fireEvent.click(screen.getByRole('radio', { name: /orchestrate agents/i }));
+    expect(screen.getByText('orchestrate form')).toBeTruthy();
+    fireEvent.click(screen.getByRole('radio', { name: /run an agent/i }));
+    // Switching away hides it; the half-filled form is not thrown away.
+    expect(screen.getByText('orchestrate form').closest('[hidden]')).not.toBeNull();
+  });
+
+  it('neither offers nor starts in orchestration below engineer', () => {
+    auth.role = 'VIEWER';
+    gateway();
+    render(withQuery(<StartWork initialMode="orchestrate" />));
+    const option = screen.getByRole('radio', { name: /orchestrate agents/i }) as HTMLInputElement;
+    expect(option.disabled).toBe(true);
+    expect(option.checked).toBe(false);
+    expect(screen.queryByText('orchestrate form')).toBeNull();
+    expect(screen.queryByRole('heading', { name: /orchestrating agents/i })).toBeNull();
+    fireEvent.click(screen.getByText('Need help choosing?'));
+    const chooser = within(screen.getByTestId('mode-hint'));
+    expect(chooser.queryByRole('button', { name: /orchestrate/i })).toBeNull();
+    expect(chooser.getByText(/Requires engineer or above/)).toBeTruthy();
+  });
+
   it('describes the chooser rows from the mode table', () => {
     expect(modeChoices(true).every((c) => c.action)).toBe(true);
     expect(modeChoices(false).find((c) => c.mode === 'epic')?.action).toBeUndefined();
+    expect(
+      modeChoices(true, undefined, false).find((c) => c.mode === 'orchestrate')?.action
+    ).toBeUndefined();
   });
 
   it('never promises a draft pull request or a per-repository request in the side rail', async () => {

@@ -8,10 +8,12 @@ import {
   elapsedMs,
   finishedReason,
   httpsUrl,
+  isAlreadyDecided,
   isChildRunning,
   isOrchestrationLive,
   type OrchestrateFormValues,
   REFUSAL_MESSAGES,
+  restartsOnMessage,
   validateOrchestrateForm,
 } from './orchestration';
 
@@ -55,11 +57,26 @@ describe('status helpers', () => {
     expect(isChildRunning('COMPLETED')).toBe(false);
   });
 
-  it('explains why a finished orchestration takes no messages', () => {
+  it('explains why a cancelled or failed orchestration takes no messages', () => {
     expect(finishedReason('ACTIVE')).toBeNull();
+    expect(finishedReason('WAITING')).toBeNull();
     expect(finishedReason('CANCELLED')).toMatch(/cancelled/);
     expect(finishedReason('FAILED')).toMatch(/failed/);
-    expect(finishedReason('COMPLETED')).toMatch(/ended/);
+  });
+
+  it('keeps a completed orchestration open: a message restarts it', () => {
+    expect(finishedReason('COMPLETED')).toBeNull();
+    expect(restartsOnMessage('COMPLETED')).toBe(true);
+    expect(restartsOnMessage('ACTIVE')).toBe(false);
+    expect(restartsOnMessage('CANCELLED')).toBe(false);
+  });
+
+  it('recognises an already-decided race by status and code only', () => {
+    expect(isAlreadyDecided(new ApiError('x', 409, 'APPROVAL_NOT_PENDING'))).toBe(true);
+    expect(isAlreadyDecided(new ApiError('x', 409, 'NO_PENDING_ATTACH'))).toBe(true);
+    expect(isAlreadyDecided(new ApiError('x', 409, 'REPO_ALREADY_ATTACHED'))).toBe(false);
+    expect(isAlreadyDecided(new ApiError('x', 500, 'APPROVAL_NOT_PENDING'))).toBe(false);
+    expect(isAlreadyDecided(new Error('APPROVAL_NOT_PENDING'))).toBe(false);
   });
 });
 
@@ -73,6 +90,12 @@ describe('httpsUrl', () => {
       'nope',
       '',
       null,
+      // Credentials in the link, and characters no link may carry.
+      'https://user:pw@github.com/a/b/pull/1',
+      'https://token@github.com/a/b/pull/1',
+      'https://github.com/a b',
+      'https://github.com/a\nb',
+      'https://github.com/a\u0007b',
     ]) {
       expect(httpsUrl(bad)).toBeNull();
     }

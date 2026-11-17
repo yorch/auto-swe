@@ -33,7 +33,14 @@ const AGENTS = [
   },
 ];
 
-function gateway(options: { teams?: { id: string; name: string }[]; launchStatus?: number } = {}) {
+function gateway(
+  options: {
+    teams?: { id: string; name: string }[];
+    launchStatus?: number;
+    connections?: { id: string; name: string }[];
+    platformConnections?: unknown[];
+  } = {}
+) {
   const teams = options.teams ?? [{ id: 't1', name: 'Payments' }];
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' }, status });
@@ -48,6 +55,12 @@ function gateway(options: { teams?: { id: string; name: string }[]; launchStatus
     }
     if (path === '/api/v1/repositories') {
       return json({ data: [], meta: { limit: 500, offset: 0, total: 0 } });
+    }
+    if (path === '/api/v1/platform/mcp-connections') {
+      return json({ data: options.platformConnections ?? [] });
+    }
+    if (path === '/api/v1/orchestrations/connections') {
+      return json({ data: options.connections ?? [] });
     }
     if (path === '/api/v1/agent-runs/agents') {
       return json({ data: AGENTS });
@@ -65,6 +78,7 @@ function gateway(options: { teams?: { id: string; name: string }[]; launchStatus
 }
 
 afterEach(() => {
+  auth.role = 'ENGINEER';
   cleanup();
   vi.unstubAllGlobals();
   push.mockClear();
@@ -155,5 +169,102 @@ describe('OrchestrateForm launch', () => {
     fireEvent.click(screen.getByRole('button', { name: /Review orchestration/ }));
     expect(await screen.findByText('<img src=x onerror=alert(1)>')).toBeTruthy();
     expect(document.querySelector('img')).toBeNull();
+  });
+});
+
+describe('OrchestrateForm connections', () => {
+  const go = async (agent: RegExp) => {
+    await fill('Triage the queue');
+    fireEvent.click(await screen.findByLabelText(agent));
+  };
+
+  it('lists the team’s connections for a non-admin from the orchestration route', async () => {
+    auth.role = 'ENGINEER';
+    const spy = gateway({ connections: [{ id: 'c1', name: 'Linear' }] });
+    render(withQuery(<OrchestrateForm />));
+    await go(/Researcher/);
+    fireEvent.click(await screen.findByLabelText('Linear'));
+    expect(
+      spy.mock.calls.some(([u]) => String(u).includes('/orchestrations/connections?teamId=t1'))
+    ).toBe(true);
+    // A non-admin never asks for the ADMIN-only platform list.
+    expect(spy.mock.calls.some(([u]) => String(u).includes('/platform/mcp-connections'))).toBe(
+      false
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Review orchestration/ }));
+    expect(await screen.findByText('Review and launch')).toBeTruthy();
+    expect(screen.getByText('Linear')).toBeTruthy();
+    expect(screen.getByText('Every write asks first')).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Launch orchestration' }));
+    });
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    expect(bodyOf(spy, '/api/v1/orchestrations')).toMatchObject({ connectionIds: ['c1'] });
+  });
+
+  it('says so when the team’s connections cannot be loaded', async () => {
+    auth.role = 'ENGINEER';
+    const spy = gateway();
+    const real = spy.getMockImplementation();
+    spy.mockImplementation(async (input, init) => {
+      if (String(input).includes('/orchestrations/connections')) {
+        return new Response('{}', { status: 500 });
+      }
+      return (real as NonNullable<typeof real>)(input, init);
+    });
+    render(withQuery(<OrchestrateForm />));
+    expect(await screen.findByText('Could not load this team’s MCP connections.')).toBeTruthy();
+  });
+
+  it('always lists the connections on the review step, and warns when none was chosen but an agent uses MCP', async () => {
+    auth.role = 'ADMIN';
+    gateway({
+      platformConnections: [
+        {
+          id: 'c1',
+          name: 'Linear',
+          teamId: 't1',
+          usedBy: [{ key: 'researcher', name: 'Researcher', scope: 'GLOBAL' }],
+        },
+      ],
+    });
+    render(withQuery(<OrchestrateForm />));
+    await go(/Researcher/);
+    await screen.findByLabelText('Linear');
+    fireEvent.click(screen.getByRole('button', { name: /Review orchestration/ }));
+    expect(await screen.findByText('Review and launch')).toBeTruthy();
+    expect(screen.getByText('MCP connections')).toBeTruthy();
+    expect(screen.getByText(/None chosen/)).toBeTruthy();
+    expect(screen.getByText('Every write asks first')).toBeTruthy();
+  });
+
+  it('shows who reaches a chosen connection, for an admin', async () => {
+    auth.role = 'ADMIN';
+    gateway({
+      platformConnections: [
+        {
+          id: 'c1',
+          name: 'Linear',
+          teamId: 't1',
+          usedBy: [{ key: 'researcher', name: 'Researcher', scope: 'GLOBAL' }],
+        },
+      ],
+    });
+    render(withQuery(<OrchestrateForm />));
+    await go(/Researcher/);
+    fireEvent.click(await screen.findByLabelText('Linear'));
+    fireEvent.click(screen.getByRole('button', { name: /Review orchestration/ }));
+    expect(await screen.findByText(/Linear \(reachable by Researcher\)/)).toBeTruthy();
+  });
+
+  it('shows no write warning when there are no connections at all', async () => {
+    auth.role = 'ENGINEER';
+    gateway();
+    render(withQuery(<OrchestrateForm />));
+    await go(/Researcher/);
+    fireEvent.click(screen.getByRole('button', { name: /Review orchestration/ }));
+    await screen.findByText('Review and launch');
+    expect(screen.getByText(/None chosen/)).toBeTruthy();
+    expect(screen.queryByText('Every write asks first')).toBeNull();
   });
 });

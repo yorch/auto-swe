@@ -289,9 +289,14 @@ export function useAllWorkflowRuns(
   });
 }
 
-export function useRunsForWorkRequest(workRequestId?: string | null, limit = 20) {
+export function useRunsForWorkRequest(
+  workRequestId?: string | null,
+  limit = 20,
+  options: { enabled?: boolean; poll?: boolean; untilFound?: boolean } = {}
+) {
+  const { enabled = true, poll = true, untilFound = false } = options;
   return useQuery({
-    enabled: !!workRequestId,
+    enabled: !!workRequestId && enabled,
     queryFn: () =>
       api
         .get<{ data: WorkflowRunSummary[] }>(
@@ -299,7 +304,9 @@ export function useRunsForWorkRequest(workRequestId?: string | null, limit = 20)
         )
         .then((r) => r.data),
     queryKey: ['workflow-runs', 'by-work-request', workRequestId, limit],
-    refetchInterval: 10_000,
+    refetchInterval: poll ? (q) => (untilFound && q.state.data?.length ? false : 10_000) : false,
+    // A caller that stopped polling has what it needs: do not re-read on every mount either.
+    ...(poll ? {} : { staleTime: 5 * 60_000 }),
   });
 }
 

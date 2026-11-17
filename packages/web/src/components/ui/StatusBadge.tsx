@@ -21,7 +21,7 @@ export function StatusBadge({ status }: { status: string }) {
       />
       {/* Lower-cased text, shown sentence-case: `first-letter` needs a block box. */}
       <span className="inline-block first-letter:uppercase">
-        {status.replace(/_/g, ' ').toLowerCase()}
+        {meta.label ?? status.replace(/_/g, ' ').toLowerCase()}
       </span>
     </span>
   );

@@ -14,7 +14,11 @@ import { Icon } from '@/components/ui/Icon';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
-import { useLaunchOrchestration, useOrchestrationAgents } from '@/hooks/useOrchestrations';
+import {
+  useLaunchOrchestration,
+  useOrchestrationAgents,
+  useOrchestrationConnections,
+} from '@/hooks/useOrchestrations';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useTeams } from '@/hooks/useTeams';
 import { useIsViewOnly } from '@/hooks/useViewOnlyRepos';
@@ -37,6 +41,13 @@ import { hasRole } from '@/lib/roles';
 import { useAuthStore } from '@/stores/authStore';
 
 const NO_REPO = 'none';
+
+/** A connection the launcher may choose; `usedBy` is known only from the ADMIN platform list. */
+interface ConnectionOption {
+  id: string;
+  name: string | null;
+  usedBy?: { key: string; name: string }[];
+}
 
 const EMPTY: OrchestrateFormValues = {
   allowlist: [],
@@ -79,8 +90,14 @@ export function OrchestrateForm({
   };
   const namedTeamId = repo ? repo.team?.id : effective.teamId;
   const agents = useOrchestrationAgents(values.repoId || null);
-  const connections = useMcpConnections({ enabled: isAdmin });
-  const teamConnections = (connections.data ?? []).filter((c) => c.teamId === namedTeamId);
+  // An ADMIN reads the platform list (which also says which agents use each connection); anyone
+  // else reads the team's connections from the orchestration route, open to its members.
+  const adminConnections = useMcpConnections({ enabled: isAdmin });
+  const memberConnections = useOrchestrationConnections(isAdmin ? '' : (namedTeamId ?? ''));
+  const teamConnections: ConnectionOption[] = isAdmin
+    ? (adminConnections.data ?? []).filter((c) => c.teamId === namedTeamId)
+    : (memberConnections.data ?? []);
+  const connectionsFailed = isAdmin ? adminConnections.isError : memberConnections.isError;
   const agentList = agents.data ?? [];
   // A repository change can drop an agent the organization overrides differently.
   const allowlist = effective.allowlist.filter((k) => agentList.some((a) => a.key === k));
@@ -107,6 +124,7 @@ export function OrchestrateForm({
   const goReview = () => {
     setAttempted(true);
     if (Object.keys(errors).length === 0) {
+      launch.reset();
       setReviewing(true);
     }
   };
@@ -139,6 +157,11 @@ export function OrchestrateForm({
 
   const launchError = launch.isError ? describeOrchestrationError(launch.error) : null;
   const chosenConnections = teamConnections.filter((c) => checked.connectionIds.includes(c.id));
+  // An agent that uses MCP asks before every write, whether or not its connection was chosen.
+  const allowedAgentUsesMcp = teamConnections.some((c) =>
+    (c.usedBy ?? []).some((u) => allowlist.includes(u.key))
+  );
+  const writesAsk = chosenConnections.length > 0 || allowedAgentUsesMcp;
 
   if (reviewing) {
     return (
@@ -173,10 +196,13 @@ export function OrchestrateForm({
               label: 'MCP connections',
               value:
                 chosenConnections.length === 0
-                  ? 'None'
+                  ? 'None chosen. Agents get no MCP tools.'
                   : chosenConnections
                       .map((c) => {
-                        const reach = (c.usedBy ?? [])
+                        if (!c.usedBy) {
+                          return c.name ?? c.id;
+                        }
+                        const reach = c.usedBy
                           .filter((u) => allowlist.includes(u.key))
                           .map((u) => u.name);
                         return `${c.name ?? c.id} (reachable by ${reach.length ? reach.join(', ') : 'no chosen agent'})`;
@@ -195,7 +221,7 @@ export function OrchestrateForm({
             },
           ]}
         />
-        {chosenConnections.length > 0 && (
+        {writesAsk && (
           <Alert title="Every write asks first" variant="warning">
             Every MCP call that is not marked read-only will wait for your approval before it runs,
             and is denied if you do not answer in time.
@@ -293,27 +319,28 @@ export function OrchestrateForm({
           </p>
         )}
       </fieldset>
-      {isAdmin && (
-        <fieldset className="space-y-2">
-          <legend className="label-mono mb-1 block">MCP connections</legend>
-          <p className="text-xs text-paper-500">
-            Optional. Only this team’s connections, fixed for the whole orchestration. Every call
-            that is not read-only asks for your approval.
-          </p>
-          {teamConnections.length === 0 ? (
-            <p className="text-sm text-paper-500">This team has no MCP connections.</p>
-          ) : (
-            teamConnections.map((c) => (
-              <Checkbox
-                checked={checked.connectionIds.includes(c.id)}
-                key={c.id}
-                label={c.name ?? c.id}
-                onChange={() => toggle('connectionIds', c.id)}
-              />
-            ))
-          )}
-        </fieldset>
-      )}
+      <fieldset className="space-y-2">
+        <legend className="label-mono mb-1 block">MCP connections</legend>
+        <p className="text-xs text-paper-500">
+          Optional. Only this team’s connections, fixed for the whole orchestration. Every call that
+          is not read-only asks for your approval.
+        </p>
+        {connectionsFailed && (
+          <Alert variant="error">Could not load this team’s MCP connections.</Alert>
+        )}
+        {teamConnections.length === 0 && !connectionsFailed ? (
+          <p className="text-sm text-paper-500">This team has no MCP connections.</p>
+        ) : (
+          teamConnections.map((c) => (
+            <Checkbox
+              checked={checked.connectionIds.includes(c.id)}
+              key={c.id}
+              label={c.name ?? c.id}
+              onChange={() => toggle('connectionIds', c.id)}
+            />
+          ))
+        )}
+      </fieldset>
       <div className="grid gap-4 sm:grid-cols-2">
         <Select
           label="Budget"

@@ -28,7 +28,7 @@ const calls = vi.hoisted(() => ({
   messageChild: vi.fn(),
   send: vi.fn(),
 }));
-const idle = { error: null, isError: false, isPending: false, mutate: vi.fn() };
+const idle = { error: null, isError: false, isPending: false, mutate: vi.fn(), reset: vi.fn() };
 
 vi.mock('@/hooks/useOrchestrations', () => ({
   useAttachRepo: () => idle,
@@ -51,10 +51,8 @@ vi.mock('@/hooks/useRepositories', () => ({
 vi.mock('@/hooks/useRuns', () => ({
   useRunsForWorkRequest: (wr: string) => ({ data: wr === 'wr-ch1' ? [{ id: 'run-77' }] : [] }),
 }));
-vi.mock('@/hooks/useRunActivity', () => ({
-  useRunActivity: () => ({
-    data: [{ id: 'a1', kind: 'tool_call', summary: 'bash: ls <b>src</b>' }],
-  }),
+vi.mock('@/hooks/useLatestToolCall', () => ({
+  useLatestToolCall: () => ({ data: { id: 'a1', summary: 'bash: ls <b>src</b>', ts: 't' } }),
 }));
 vi.mock('@/hooks/useWorkViews', () => ({
   usePullRequests: () => ({
@@ -140,7 +138,7 @@ describe('launcher view', () => {
     expect(screen.getByText('Attached')).toBeTruthy();
     expect(screen.getByText('acme/api')).toBeTruthy();
     expect(screen.getByText('Linear')).toBeTruthy();
-    expect(screen.getByText(/orchestrator,/)).toBeTruthy();
+    expect(screen.getByText(/orchestrator;/)).toBeTruthy();
     // Transcript: agent text is inert.
     expect(screen.getByText(/Plan: <script>x\(\)<\/script> split in two/)).toBeTruthy();
     expect(document.querySelector('script')).toBeNull();
@@ -278,12 +276,12 @@ describe('read-only viewer', () => {
     expect(screen.queryByRole('button', { name: /Cancel|End|Approve|Deny|Send/ })).toBeNull();
     expect(screen.getByText('Read only')).toBeTruthy();
     expect(screen.getByText(/Ada is the only one/)).toBeTruthy();
-    expect(screen.getByText('create_issue')).toBeTruthy();
+    expect(screen.getAllByText('create_issue').length).toBeGreaterThan(0);
   });
 });
 
 describe('finished orchestration', () => {
-  it('disables the composer with the reason and stops polling', async () => {
+  it('disables the composer with the reason for a cancelled one and stops polling', async () => {
     setDetail(detail({ children: [child({ status: 'COMPLETED' })], status: 'CANCELLED' }));
     await renderPage();
     const box = screen.getByLabelText('Message to the orchestrator') as HTMLTextAreaElement;
@@ -291,6 +289,108 @@ describe('finished orchestration', () => {
     expect(screen.getByText(/was cancelled/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Cancel orchestration' })).toBeNull();
     expect(calls.live).toBe(false);
+  });
+
+  it('keeps a failed one closed too', async () => {
+    setDetail(detail({ status: 'FAILED' }));
+    await renderPage();
+    expect(
+      (screen.getByLabelText('Message to the orchestrator') as HTMLTextAreaElement).disabled
+    ).toBe(true);
+    expect(screen.getByText(/orchestration failed/)).toBeTruthy();
+  });
+
+  it('lets the launcher message a completed one, which restarts it', async () => {
+    setDetail(detail({ children: [child({ status: 'COMPLETED' })], status: 'COMPLETED' }));
+    await renderPage();
+    const box = screen.getByLabelText('Message to the orchestrator') as HTMLTextAreaElement;
+    expect(box.disabled).toBe(false);
+    expect(screen.getByText('Sending a message restarts this orchestration.')).toBeTruthy();
+    fireEvent.change(box, { target: { value: 'one more thing' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(calls.send).toHaveBeenCalledWith('one more thing', expect.anything());
+    expect(calls.live).toBe(false);
+  });
+});
+
+describe('header', () => {
+  it('shows the tier, what is left, and which team each part bills', async () => {
+    setDetail(
+      detail({
+        billing: { childrenTeamName: 'Platform', orchestratorTeamName: 'Payments' },
+        budget: { remainingUsd: 12.5, tier: 'LARGE' },
+      })
+    );
+    await renderPage();
+    expect(screen.getByText(/Large tier, \$12\.50 remaining/)).toBeTruthy();
+    expect(screen.getByText(/billed to Payments/)).toBeTruthy();
+    expect(screen.getByText(/billed to Platform/)).toBeTruthy();
+  });
+
+  it('shows only the tier when the gateway reports no budget or billing', async () => {
+    setDetail(detail());
+    await renderPage();
+    expect(screen.getByText('Standard tier')).toBeTruthy();
+    expect(screen.queryByText(/remaining/)).toBeNull();
+    expect(screen.queryByText(/billed to/)).toBeNull();
+  });
+});
+
+describe('decisions', () => {
+  const approval = {
+    argumentsDigest: 'digest',
+    childId: null,
+    connectionId: 'c1',
+    connectionName: 'Linear',
+    createdAt: '2026-01-01T00:00:00Z',
+    expiresAt: '2999-01-01T00:00:00Z',
+    id: 'ap1',
+    status: 'PENDING' as const,
+    toolName: 'create_issue',
+  };
+
+  it('offers a pending approval even when no request message is loaded', async () => {
+    setDetail(detail({ pendingApprovals: [approval] }));
+    await renderPage();
+    const region = screen.getByRole('region', { name: 'Needs your decision' });
+    expect(within(region).getByRole('button', { name: 'Approve this call' })).toBeTruthy();
+  });
+
+  it('keeps cards and the countdown out of the live log', async () => {
+    setDetail(
+      detail({
+        pendingApprovals: [approval],
+        pendingAttach: { candidateRepoId: null, messageId: 'm-att', reason: 'need code' },
+      })
+    );
+    state.messages = {
+      data: {
+        messages: [
+          message({ id: 'm-att', kind: 'ATTACH_REQUEST', payload: { reason: 'need code' } }),
+          message({
+            id: 'm-ap',
+            kind: 'APPROVAL_REQUEST',
+            payload: { approvalId: 'ap1', toolName: 'create_issue' },
+          }),
+        ],
+        next: null,
+      },
+      isError: false,
+      isLoading: false,
+    };
+    await renderPage();
+    const log = screen.getByRole('log');
+    expect(within(log).queryByRole('button')).toBeNull();
+    expect(log.textContent).not.toMatch(/left\)/);
+    // The cards are in their own region, outside the live log.
+    const region = screen.getByRole('region', { name: 'Needs your decision' });
+    expect(log.contains(region)).toBe(false);
+    expect(region.contains(log)).toBe(false);
+    expect(within(region).getByRole('button', { name: 'Attach repository' })).toBeTruthy();
+    // The request stays in the transcript as plain text, once per request.
+    expect(within(log).getByText('Approval request')).toBeTruthy();
+    expect(within(log).getByText('Repository request')).toBeTruthy();
+    expect(region.querySelectorAll('[aria-live]')).toHaveLength(0);
   });
 });
 
@@ -304,7 +404,29 @@ describe('narrow layout', () => {
     expect(screen.queryByRole('heading', { name: 'Find callers' })).toBeNull();
     fireEvent.click(tabs[1]);
     expect(screen.getByRole('heading', { name: 'Find callers' })).toBeTruthy();
-    expect(screen.queryByLabelText('Message to the orchestrator')).toBeNull();
+    // The conversation is hidden, not gone.
+    expect(screen.getByLabelText('Message to the orchestrator').closest('[hidden]')).not.toBeNull();
+  });
+
+  it('keeps unsent drafts when switching tabs', async () => {
+    mockViewport(390);
+    setDetail(detail());
+    await renderPage();
+    fireEvent.change(screen.getByLabelText('Message to the orchestrator'), {
+      target: { value: 'half a thought' },
+    });
+    const tabs = screen.getAllByRole('tab');
+    fireEvent.click(tabs[1]);
+    fireEvent.change(screen.getByLabelText('Message to Find callers'), {
+      target: { value: 'draft for the child' },
+    });
+    fireEvent.click(tabs[0]);
+    expect(
+      (screen.getByLabelText('Message to the orchestrator') as HTMLTextAreaElement).value
+    ).toBe('half a thought');
+    expect((screen.getByLabelText('Message to Find callers') as HTMLInputElement).value).toBe(
+      'draft for the child'
+    );
   });
 });
 

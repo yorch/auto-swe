@@ -1,30 +1,33 @@
 'use client';
 
 import type { OrchestrationSummaryDto } from '@auto-swe/shared/lib/orchestrationApi';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { useOrchestrations } from '@/hooks/useOrchestrations';
+import { ORCHESTRATIONS_PAGE_SIZE, useOrchestrations } from '@/hooks/useOrchestrations';
 import { useTeams } from '@/hooks/useTeams';
 import { formatTotalCost } from '@/lib/utils';
 
 const START_HREF = '/start?mode=orchestrate';
 
 export default function OrchestrationsPage() {
-  const orchestrations = useOrchestrations();
+  const [offset, setOffset] = useState(0);
+  const orchestrations = useOrchestrations(offset);
   const teams = useTeams();
   const teamNames = useMemo(
     () => new Map((teams.data ?? []).map((t) => [t.id, t.name] as const)),
     [teams.data]
   );
-  const rows = orchestrations.data ?? [];
+  const rows = orchestrations.data?.rows ?? [];
+  const total = orchestrations.data?.total ?? rows.length;
 
   const columns: DataTableColumn<OrchestrationSummaryDto>[] = [
     {
@@ -35,7 +38,9 @@ export default function OrchestrationsPage() {
     },
     { cell: (o) => <StatusBadge status={o.status} />, header: 'Status', id: 'status' },
     {
-      cell: (o) => <span className="text-paper-300">{teamNames.get(o.teamId) ?? 'Team'}</span>,
+      cell: (o) => (
+        <span className="text-paper-300">{o.teamName ?? teamNames.get(o.teamId) ?? 'Team'}</span>
+      ),
       header: 'Team',
       id: 'team',
     },
@@ -104,7 +109,7 @@ export default function OrchestrationsPage() {
         label="orchestrations"
         onRetry={() => void orchestrations.refetch()}
       >
-        {rows.length === 0 ? (
+        {rows.length === 0 && offset === 0 ? (
           <EmptyState
             action={
               <ButtonLink href={START_HREF} variant="primary">
@@ -117,15 +122,26 @@ export default function OrchestrationsPage() {
             title="No orchestrations yet"
           />
         ) : (
-          <Card className="overflow-hidden p-0">
-            <DataTable
-              caption="Orchestrations, most recently updated first"
-              columns={columns}
-              getRowId={(o) => o.id}
-              rowHref={(o) => `/orchestrations/${encodeURIComponent(o.id)}`}
-              rows={rows}
+          <div className="space-y-3">
+            <Card className="overflow-hidden p-0">
+              <DataTable
+                caption="Orchestrations, most recently updated first"
+                columns={columns}
+                getRowId={(o) => o.id}
+                rowHref={(o) => `/orchestrations/${encodeURIComponent(o.id)}`}
+                rows={rows}
+              />
+            </Card>
+            <Pagination
+              hasNext={offset + ORCHESTRATIONS_PAGE_SIZE < total}
+              hasPrev={offset > 0}
+              onNext={() => setOffset(offset + ORCHESTRATIONS_PAGE_SIZE)}
+              onPrev={() => setOffset(Math.max(0, offset - ORCHESTRATIONS_PAGE_SIZE))}
+              rangeEnd={Math.min(offset + rows.length, total)}
+              rangeStart={rows.length === 0 ? 0 : offset + 1}
+              total={total}
             />
-          </Card>
+          </div>
         )}
       </QueryBoundary>
     </div>

@@ -4,25 +4,28 @@ import type {
   OrchestrationDetailDto,
   OrchestrationMessageDto,
 } from '@auto-swe/shared/lib/orchestrationApi';
-import { type FormEvent, type KeyboardEvent, useState } from 'react';
+import { type FormEvent, type KeyboardEvent, useId, useState } from 'react';
 import {
   ApprovalCard,
+  ApprovalRequestRow,
   AttachRequestCard,
+  AttachRequestRow,
   ChildResultCard,
 } from '@/components/orchestrations/OrchestrationCards';
+import { approvalKey, attachKey, useDecisions } from '@/components/orchestrations/useDecisions';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { Textarea } from '@/components/ui/Textarea';
+import { useSendOrchestrationMessage } from '@/hooks/useOrchestrations';
 import {
-  useAttachRepo,
-  useDecideApproval,
-  useDeclineAttach,
-  useSendOrchestrationMessage,
-} from '@/hooks/useOrchestrations';
-import { describeOrchestrationError, finishedReason } from '@/lib/orchestration';
+  describeOrchestrationError,
+  finishedReason,
+  RESTART_NOTE,
+  restartsOnMessage,
+} from '@/lib/orchestration';
 import { cn } from '@/lib/utils';
 
 const MAX_MESSAGE_CHARS = 4000;
@@ -46,40 +49,12 @@ function MessageRow({
   detail: OrchestrationDetailDto;
   message: OrchestrationMessageDto;
 }) {
-  const attach = useAttachRepo(detail.id);
-  const decline = useDeclineAttach(detail.id);
-  const decide = useDecideApproval(detail.id);
-
+  // Requests that need an answer are cards in the decision region, not in this live log.
   if (message.kind === 'ATTACH_REQUEST') {
-    return (
-      <AttachRequestCard
-        canControl={detail.canControl}
-        detail={detail}
-        error={
-          attach.isError
-            ? describeOrchestrationError(attach.error)
-            : decline.isError
-              ? describeOrchestrationError(decline.error)
-              : null
-        }
-        message={message}
-        onAttach={(repoId) => attach.mutate(repoId)}
-        onDecline={() => decline.mutate()}
-        pending={attach.isPending || decline.isPending}
-      />
-    );
+    return <AttachRequestRow detail={detail} message={message} />;
   }
   if (message.kind === 'APPROVAL_REQUEST') {
-    return (
-      <ApprovalCard
-        canControl={detail.canControl}
-        detail={detail}
-        error={decide.isError ? describeOrchestrationError(decide.error) : null}
-        message={message}
-        onDecide={(approvalId, decision) => decide.mutate({ approvalId, decision })}
-        pending={decide.isPending}
-      />
-    );
+    return <ApprovalRequestRow detail={detail} message={message} />;
   }
   if (message.kind === 'CHILD_RESULT') {
     return <ChildResultCard detail={detail} message={message} />;
@@ -112,6 +87,58 @@ function MessageRow({
   );
 }
 
+/**
+ * The attach request and the MCP writes waiting for an answer, from the detail (authoritative,
+ * so a request whose transcript message is not loaded is still answerable). Outside the live
+ * log: a ticking countdown and buttons do not belong in a polite announcement region.
+ */
+function DecisionRegion({
+  detail,
+  messages,
+}: {
+  detail: OrchestrationDetailDto;
+  messages: OrchestrationMessageDto[];
+}) {
+  const decisions = useDecisions(detail);
+  const headingId = useId();
+  const approvals = detail.pendingApprovals.filter((a) => a.status === 'PENDING');
+  const attach = detail.pendingAttach;
+  if (!attach && approvals.length === 0) {
+    return null;
+  }
+  return (
+    <section aria-labelledby={headingId} className="space-y-3">
+      <h3 className="text-sm font-semibold text-paper-100" id={headingId}>
+        {detail.canControl ? 'Needs your decision' : 'Waiting for the launcher’s decision'}
+      </h3>
+      {attach && (
+        <AttachRequestCard
+          canControl={detail.canControl}
+          decided={decisions.isDecided(attachKey(attach.messageId))}
+          detail={detail}
+          error={decisions.errorFor(attachKey(attach.messageId))}
+          message={messages.find((m) => m.id === attach.messageId)}
+          note={decisions.noteFor(attachKey(attach.messageId))}
+          onAttach={(repoId) => decisions.attach(attach.messageId, repoId)}
+          onDecline={() => decisions.decline(attach.messageId)}
+          pending={attach}
+        />
+      )}
+      {approvals.map((approval) => (
+        <ApprovalCard
+          approval={approval}
+          canControl={detail.canControl}
+          decided={decisions.isDecided(approvalKey(approval.id))}
+          error={decisions.errorFor(approvalKey(approval.id))}
+          key={approval.id}
+          note={decisions.noteFor(approvalKey(approval.id))}
+          onDecide={decisions.decide}
+        />
+      ))}
+    </section>
+  );
+}
+
 function Composer({ detail }: { detail: OrchestrationDetailDto }) {
   const send = useSendOrchestrationMessage(detail.id);
   const [text, setText] = useState('');
@@ -119,6 +146,7 @@ function Composer({ detail }: { detail: OrchestrationDetailDto }) {
   const body = text.trim();
   const tooLong = text.length > MAX_MESSAGE_CHARS;
   const disabled = reason !== null;
+  const restarts = restartsOnMessage(detail.status);
 
   const submit = (e?: FormEvent) => {
     e?.preventDefault();
@@ -138,7 +166,7 @@ function Composer({ detail }: { detail: OrchestrationDetailDto }) {
       <Textarea
         disabled={disabled}
         error={tooLong ? `At most ${MAX_MESSAGE_CHARS} characters` : undefined}
-        hint={reason ?? 'Press Ctrl+Enter to send.'}
+        hint={reason ?? (restarts ? RESTART_NOTE : 'Press Ctrl+Enter to send.')}
         label="Message to the orchestrator"
         mono={false}
         onChange={(e) => setText(e.target.value)}
@@ -170,7 +198,8 @@ export function ConversationColumn({
 }) {
   return (
     <section aria-label="Conversation" className="flex min-w-0 flex-col gap-3">
-      {/* A polite live region: new messages are announced without stealing focus. */}
+      <DecisionRegion detail={detail} messages={messages} />
+      {/* A polite live region: only plain transcript text, so nothing here ticks or asks for a click. */}
       <div aria-label="Conversation messages" aria-live="polite" className="space-y-3" role="log">
         {messages.length === 0 ? (
           <EmptyState

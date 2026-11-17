@@ -15,8 +15,8 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { CiBadge } from '@/components/work/PullRequestBadges';
+import { useLatestToolCall } from '@/hooks/useLatestToolCall';
 import { useCancelChild, useMessageChild } from '@/hooks/useOrchestrations';
-import { useRunActivity } from '@/hooks/useRunActivity';
 import { useRunsForWorkRequest } from '@/hooks/useRuns';
 import { usePullRequests } from '@/hooks/useWorkViews';
 import {
@@ -29,14 +29,17 @@ import {
 import { requestHref } from '@/lib/requestDisplay';
 import { formatDuration, formatTotalCost } from '@/lib/utils';
 
-/** The newest tool call of a run, from the run's activity feed. */
-function LatestToolCall({ live, runId }: { live: boolean; runId: string }) {
-  const activity = useRunActivity(runId, { kinds: 'tool_call' }, live);
-  const latest = activity.data.at(-1);
+/** The newest tool call of a run; read once for a finished lane, polled for a running one. */
+function LatestToolCall({ poll, runId }: { poll: boolean; runId: string }) {
+  const latest = useLatestToolCall(runId, poll).data;
   return (
     <p className="min-w-0 break-words text-xs text-paper-400">
       <span className="text-paper-500">Latest tool call: </span>
-      {latest ? <span className="font-mono text-paper-300">{latest.summary}</span> : 'none yet'}
+      {latest ? (
+        <span className="break-all font-mono text-paper-300">{latest.summary}</span>
+      ) : (
+        'none yet'
+      )}
     </p>
   );
 }
@@ -81,18 +84,28 @@ function ChildMessageBox({
 function ChildLane({
   canControl,
   child,
+  live,
   orchestrationId,
 }: {
   canControl: boolean;
   child: OrchestrationChildDto;
+  /** Whether the orchestration itself is still running; a finished one polls nothing. */
+  live: boolean;
   orchestrationId: string;
 }) {
   const running = isChildRunning(child.status);
-  const now = useNow(running);
+  // Only a running lane of a running orchestration is polled; the rest are read once.
+  const polling = running && live;
+  const now = useNow(polling);
   const cancel = useCancelChild(orchestrationId);
-  // The run viewer finds a run by the child's work request, as the other run lists do.
-  const runs = useRunsForWorkRequest(child.workRequestId, 5);
-  const runId = runs.data?.[0]?.id ?? null;
+  // The child names its run once it has one; until then the run viewer's way of finding it, by
+  // work request, is asked every 10 s for a lane that is still running, and never after.
+  const runs = useRunsForWorkRequest(child.workRequestId, 5, {
+    enabled: !child.runId,
+    poll: polling,
+    untilFound: true,
+  });
+  const runId = child.runId ?? runs.data?.[0]?.id ?? null;
   const href = runId ? `/runs/${runId}` : requestHref(child.workRequestId);
 
   return (
@@ -102,7 +115,7 @@ function ChildLane({
         <StatusBadge status={child.status} />
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-paper-400">
-        <span className="font-mono">{child.agentKey}</span>
+        <span className="break-all font-mono">{child.agentKey}</span>
         <Badge tone={child.role === 'WRITER' ? 'warning' : 'info'} variant="outline">
           {child.role === 'WRITER' ? 'Writer' : 'Reader'}
         </Badge>
@@ -121,7 +134,7 @@ function ChildLane({
           <span className="font-mono">{child.pathScopes.join(', ')}</span>
         </p>
       )}
-      {runId && <LatestToolCall live={running} runId={runId} />}
+      {runId && <LatestToolCall poll={polling} runId={runId} />}
       {child.undeliveredSteering > 0 && (
         <p className="text-xs text-warning-400">
           {child.undeliveredSteering} message{child.undeliveredSteering === 1 ? '' : 's'} not
@@ -183,7 +196,7 @@ function PullRequestGroup({ detail }: { detail: OrchestrationDetailDto }) {
           const ci = child.prUrl ? ciByUrl.get(child.prUrl) : undefined;
           return (
             <li className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1" key={child.id}>
-              <span className="font-medium text-paper-200">{child.label}</span>
+              <span className="break-words font-medium text-paper-200">{child.label}</span>
               {child.branch && (
                 <span className="break-all font-mono text-xs text-paper-400">{child.branch}</span>
               )}
@@ -234,6 +247,7 @@ export function AgentsColumn({ detail }: { detail: OrchestrationDetailDto }) {
               canControl={detail.canControl}
               child={child}
               key={child.id}
+              live={live}
               orchestrationId={detail.id}
             />
           ))}

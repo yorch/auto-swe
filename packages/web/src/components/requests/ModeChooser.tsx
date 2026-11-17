@@ -17,7 +17,11 @@ export interface ModeChoice {
  * (POST /epics requires LEAD on each owning team); below that the row says so and offers no control, so nobody is
  * steered towards a mode they cannot launch.
  */
-export function modeChoices(canStartEpic: boolean, epicReason?: string): ModeChoice[] {
+export function modeChoices(
+  canStartEpic: boolean,
+  epicReason?: string,
+  canOrchestrate = true
+): ModeChoice[] {
   return [
     {
       action: 'Pick a workflow',
@@ -29,11 +33,17 @@ export function modeChoices(canStartEpic: boolean, epicReason?: string): ModeCho
       mode: 'agent',
       question: 'You want one agent to do one focused task on a single repository.',
     },
-    {
-      action: 'Orchestrate agents',
-      mode: 'orchestrate',
-      question: 'The task needs several agents, and you want to steer them as they work.',
-    },
+    canOrchestrate
+      ? {
+          action: 'Orchestrate agents',
+          mode: 'orchestrate',
+          question: 'The task needs several agents, and you want to steer them as they work.',
+        }
+      : {
+          mode: 'orchestrate',
+          note: 'Requires engineer or above.',
+          question: 'The task needs several agents, and you want to steer them as they work.',
+        },
     canStartEpic
       ? {
           action: 'Run an epic',
@@ -60,11 +70,14 @@ export function modeChoices(canStartEpic: boolean, epicReason?: string): ModeCho
 }
 
 export function ModeChooser({
+  canOrchestrate = true,
   canStartEpic,
   current,
   epicReason,
   onChoose,
 }: {
+  /** False below ENGINEER: the row explains instead of offering a mode the person cannot launch. */
+  canOrchestrate?: boolean;
   canStartEpic: boolean;
   /** Why an epic is not offered, when it is not; replaces the generic role sentence. */
   epicReason?: string;
@@ -81,7 +94,7 @@ export function ModeChooser({
         Not sure? Pick the line that matches your task.
       </p>
       <ul className="mt-3 space-y-3">
-        {modeChoices(canStartEpic, epicReason).map((choice) => (
+        {modeChoices(canStartEpic, epicReason, canOrchestrate).map((choice) => (
           <li
             className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
             key={choice.mode}

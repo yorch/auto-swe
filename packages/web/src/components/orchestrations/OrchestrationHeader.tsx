@@ -8,7 +8,11 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useCancelOrchestration, useEndOrchestration } from '@/hooks/useOrchestrations';
-import { describeOrchestrationError, isOrchestrationLive } from '@/lib/orchestration';
+import {
+  BUDGET_TIER_OPTIONS,
+  describeOrchestrationError,
+  isOrchestrationLive,
+} from '@/lib/orchestration';
 import { formatTotalCost } from '@/lib/utils';
 
 function RepoState({ detail }: { detail: OrchestrationDetailDto }) {
@@ -43,6 +47,15 @@ export function OrchestrationHeader({ detail }: { detail: OrchestrationDetailDto
   const live = isOrchestrationLive(detail.status);
   const showActions = detail.canControl && live;
   const action = confirm === 'cancel' ? cancel : end;
+  const billing = detail.billing ?? null;
+  const tier = detail.budget?.tier ?? detail.budgetTier;
+  const tierLabel = BUDGET_TIER_OPTIONS.find((o) => o.value === tier)?.label ?? tier;
+  const openConfirm = (which: 'cancel' | 'end') => {
+    // A refusal from an earlier attempt must not greet the next one.
+    cancel.reset();
+    end.reset();
+    setConfirm(which);
+  };
 
   return (
     <div className="space-y-4 rounded-xl border border-ink-400 bg-ink-700 p-4 sm:p-5">
@@ -59,10 +72,10 @@ export function OrchestrationHeader({ detail }: { detail: OrchestrationDetailDto
         </div>
         {showActions && (
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => setConfirm('end')} variant="secondary">
+            <Button onClick={() => openConfirm('end')} variant="secondary">
               End
             </Button>
-            <Button onClick={() => setConfirm('cancel')} variant="danger">
+            <Button onClick={() => openConfirm('cancel')} variant="danger">
               Cancel orchestration
             </Button>
           </div>
@@ -88,9 +101,21 @@ export function OrchestrationHeader({ detail }: { detail: OrchestrationDetailDto
           <dd className="mt-1 text-paper-200">
             <span className="font-medium">{formatTotalCost(detail.cost.totalUsd)}</span>{' '}
             <span className="text-paper-400">
-              ({formatTotalCost(detail.cost.orchestratorUsd)} orchestrator,{' '}
-              {formatTotalCost(detail.cost.childrenUsd)} agents)
+              ({formatTotalCost(detail.cost.orchestratorUsd)} orchestrator
+              {billing ? `, billed to ${billing.orchestratorTeamName ?? 'an unreported team'}` : ''}
+              ; {formatTotalCost(detail.cost.childrenUsd)} agents
+              {billing ? `, billed to ${billing.childrenTeamName ?? 'an unreported team'}` : ''})
             </span>
+          </dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="label-mono">Budget</dt>
+          <dd className="mt-1 break-words text-paper-200">
+            {tierLabel} tier
+            {detail.budget &&
+              (detail.budget.remainingUsd === null
+                ? ', remaining budget not reported'
+                : `, ${formatTotalCost(detail.budget.remainingUsd)} remaining`)}
           </dd>
         </div>
       </dl>

@@ -1,6 +1,7 @@
 'use client';
 
 import type {
+  OrchestrationConnectionOption,
   OrchestrationDetailDto,
   OrchestrationLaunchResponse,
   OrchestrationMessageDto,
@@ -8,11 +9,17 @@ import type {
   OrchestrationSummaryDto,
 } from '@auto-swe/shared/lib/orchestrationApi';
 import type { AgentRunAgent } from '@auto-swe/shared/types/api';
-import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  type QueryClient,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { ME_SUMMARY_KEY } from '@/hooks/useMeSummary';
 import { api } from '@/lib/api';
-import { isOrchestrationLive } from '@/lib/orchestration';
+import { isOrchestrationLive, restartsOnMessage } from '@/lib/orchestration';
 import { randomId } from '@/lib/randomId';
 
 const BASE = '/api/v1/orchestrations';
@@ -31,18 +38,38 @@ export function orchestrationRefetchInterval(
   return isOrchestrationLive(status) ? ORCHESTRATION_POLL_MS : false;
 }
 
-export function useOrchestrations() {
+export const ORCHESTRATIONS_PAGE_SIZE = 25;
+
+export interface OrchestrationsPage {
+  rows: OrchestrationSummaryDto[];
+  total: number;
+}
+
+/** One page of the list, newest update first. The previous page stays on screen while the next loads. */
+export function useOrchestrations(offset = 0, limit = ORCHESTRATIONS_PAGE_SIZE) {
   return useQuery({
+    placeholderData: keepPreviousData,
     queryFn: () =>
-      api.get<{ data: OrchestrationSummaryDto[] }>(`${BASE}?limit=100`).then((r) => r.data),
-    queryKey: orchestrationsKey,
+      api
+        .get<{ data: OrchestrationSummaryDto[]; total?: number }>(
+          `${BASE}?limit=${limit}&offset=${offset}`
+        )
+        .then((r): OrchestrationsPage => ({ rows: r.data, total: r.total ?? r.data.length })),
+    queryKey: [...orchestrationsKey, offset, limit],
     // Rows move between active and finished; there is no per-row status to key a stop on.
     refetchInterval: (q) =>
-      q.state.data?.some((o) => isOrchestrationLive(o.status)) ? ORCHESTRATION_POLL_MS * 2 : false,
+      q.state.data?.rows.some((o) => isOrchestrationLive(o.status))
+        ? ORCHESTRATION_POLL_MS * 2
+        : false,
   });
 }
 
+/** How long after a message restarts a finished orchestration its status is re-read. */
+export const RESTART_WATCH_MS = 30_000;
+const restartKey = (id: string) => ['orchestration-restarting', id] as const;
+
 export function useOrchestration(id: string) {
+  const qc = useQueryClient();
   return useQuery({
     enabled: !!id,
     queryFn: () =>
@@ -50,12 +77,22 @@ export function useOrchestration(id: string) {
         .get<{ data: OrchestrationDetailDto }>(`${BASE}/${encodeURIComponent(id)}`)
         .then((r) => r.data),
     queryKey: orchestrationKey(id),
-    refetchInterval: (q) => orchestrationRefetchInterval(q.state.data?.status),
+    refetchInterval: (q) => {
+      const status = q.state.data?.status;
+      if (isOrchestrationLive(status)) {
+        return ORCHESTRATION_POLL_MS;
+      }
+      // A message sent to a finished orchestration restarts it; keep reading until it shows.
+      const until = qc.getQueryData<number>(restartKey(id)) ?? 0;
+      return until > Date.now() ? ORCHESTRATION_POLL_MS : false;
+    },
   });
 }
 
 export interface MessagesState {
   messages: OrchestrationMessageDto[];
+  /** True when the last fetch stopped at its page bound with more waiting. */
+  more?: boolean;
   /** The cursor for the next read; null until a message has been seen. */
   next: string | null;
 }
@@ -74,11 +111,17 @@ export function mergeMessages(
   return [...held, ...fresh].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
 }
 
+/** Messages asked for per request, the gateway's maximum. */
+export const MESSAGES_PAGE_SIZE = 200;
+/** A bound on one fetch; a longer transcript is finished by the follow-up reads. */
+export const MESSAGES_MAX_PAGES = 20;
+
 /**
- * The transcript. The first read takes everything; each poll passes the previous page's `next`
- * as `after` and appends what comes back to the cached list, so a long conversation is not
- * re-downloaded every few seconds. `live` stops the polling once the orchestration is finished,
- * with one last read so the closing messages are not missed.
+ * The transcript. The first read takes everything, following the cursor while a page comes back
+ * full; each poll passes the previous cursor as `after` and appends what comes back, so a long
+ * conversation is not re-downloaded every few seconds. `live` stops the polling once the
+ * orchestration is finished, with one last read (which drains every page) so the closing
+ * messages are not missed.
  */
 export function useOrchestrationMessages(id: string, live: boolean) {
   const qc = useQueryClient();
@@ -86,17 +129,26 @@ export function useOrchestrationMessages(id: string, live: boolean) {
     enabled: !!id,
     queryFn: async () => {
       const held = qc.getQueryData<MessagesState>(orchestrationMessagesKey(id));
-      const qs = held?.next ? `?after=${encodeURIComponent(held.next)}` : '';
-      const page = await api.get<OrchestrationMessagesPage>(
-        `${BASE}/${encodeURIComponent(id)}/messages${qs}`
-      );
-      return {
-        messages: mergeMessages(held?.messages ?? [], page.data),
-        next: page.next ?? held?.next ?? null,
-      };
+      let messages = held?.messages ?? [];
+      let cursor = held?.next ?? null;
+      let more = false;
+      for (let pages = 0; pages < MESSAGES_MAX_PAGES; pages += 1) {
+        const qs = `?limit=${MESSAGES_PAGE_SIZE}${cursor ? `&after=${encodeURIComponent(cursor)}` : ''}`;
+        const page = await api.get<OrchestrationMessagesPage>(
+          `${BASE}/${encodeURIComponent(id)}/messages${qs}`
+        );
+        messages = mergeMessages(messages, page.data);
+        cursor = page.next ?? cursor;
+        if (page.data.length < MESSAGES_PAGE_SIZE) {
+          break;
+        }
+        more = pages === MESSAGES_MAX_PAGES - 1;
+      }
+      return { messages, more, next: cursor };
     },
     queryKey: orchestrationMessagesKey(id),
-    refetchInterval: live ? ORCHESTRATION_POLL_MS : false,
+    // A fetch that hit its page bound continues straight away, live or not.
+    refetchInterval: (q) => (q.state.data?.more ? 250 : live ? ORCHESTRATION_POLL_MS : false),
   });
   const wasLive = useRef(live);
   const refetch = query.refetch;
@@ -122,17 +174,39 @@ export function useOrchestrationAgents(repoId: string | null) {
   });
 }
 
+/**
+ * The MCP connections a launcher may put in the fixed set for a team. Open to any ENGINEER who is
+ * a member of the team, unlike the platform list, which is ADMIN-only.
+ */
+export function useOrchestrationConnections(teamId: string) {
+  return useQuery({
+    enabled: !!teamId,
+    queryFn: () =>
+      api
+        .get<{ data: OrchestrationConnectionOption[] }>(
+          `${BASE}/connections?teamId=${encodeURIComponent(teamId)}`
+        )
+        .then((r) => r.data),
+    queryKey: ['orchestration-connections', teamId],
+  });
+}
+
 function refresh(qc: QueryClient, id: string) {
   void qc.invalidateQueries({ queryKey: orchestrationKey(id) });
   void qc.invalidateQueries({ queryKey: orchestrationMessagesKey(id) });
   void qc.invalidateQueries({ queryKey: orchestrationsKey });
 }
 
-function useOrchestrationAction<V>(id: string, run: (variables: V) => Promise<unknown>) {
+function useOrchestrationAction<V>(
+  id: string,
+  run: (variables: V) => Promise<unknown>,
+  onSuccess?: (qc: QueryClient) => void
+) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: run,
     onSettled: () => refresh(qc, id),
+    onSuccess: () => onSuccess?.(qc),
   });
 }
 
@@ -140,7 +214,17 @@ const path = (id: string, suffix: string) => `${BASE}/${encodeURIComponent(id)}$
 
 /** A human message to the orchestrator. Launcher only. */
 export function useSendOrchestrationMessage(id: string) {
-  return useOrchestrationAction(id, (body: string) => api.post(path(id, '/messages'), { body }));
+  return useOrchestrationAction(
+    id,
+    (body: string) => api.post(path(id, '/messages'), { body }),
+    (qc) => {
+      // A message to a COMPLETED orchestration restarts it: watch the status until it shows.
+      const status = qc.getQueryData<OrchestrationDetailDto>(orchestrationKey(id))?.status;
+      if (status && restartsOnMessage(status)) {
+        qc.setQueryData(restartKey(id), Date.now() + RESTART_WATCH_MS);
+      }
+    }
+  );
 }
 
 /** A human message to one child. Launcher only. */

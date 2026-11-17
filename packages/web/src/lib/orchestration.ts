@@ -1,9 +1,18 @@
 import {
+  APPROVAL_STATUSES,
   type ChildStatus,
   ORCHESTRATION_REFUSAL_CODES,
   type OrchestrationRefusalCode,
   type OrchestrationStatusValue,
 } from '@auto-swe/shared/lib/orchestration';
+import {
+  type ApprovalRequestPayload,
+  ApprovalRequestPayloadSchema,
+  type AttachRequestPayload,
+  AttachRequestPayloadSchema,
+  type ChildResultPayload,
+  ChildResultPayloadSchema,
+} from '@auto-swe/shared/lib/orchestrationApi';
 import { ApiError } from '@/lib/api';
 import { isRecord } from '@/lib/utils';
 
@@ -17,11 +26,12 @@ export function isChildRunning(status: ChildStatus): boolean {
   return status === 'STARTING' || status === 'RUNNING';
 }
 
-/** Why the composer is off for a finished orchestration, or null while it is open. */
+/**
+ * Why the composer is off, or null while it is open. A COMPLETED orchestration is open: a
+ * message restarts it. Cancelled and failed ones stay closed.
+ */
 export function finishedReason(status: OrchestrationStatusValue): string | null {
   switch (status) {
-    case 'COMPLETED':
-      return 'This orchestration has ended. Start a new one to keep working.';
     case 'CANCELLED':
       return 'This orchestration was cancelled. Start a new one to keep working.';
     case 'FAILED':
@@ -29,6 +39,24 @@ export function finishedReason(status: OrchestrationStatusValue): string | null 
     default:
       return null;
   }
+}
+
+/** True when a message sent now starts the orchestration again. */
+export function restartsOnMessage(status: OrchestrationStatusValue): boolean {
+  return status === 'COMPLETED';
+}
+
+export const RESTART_NOTE = 'Sending a message restarts this orchestration.';
+
+/** How an already-decided race is recognised: the item was resolved before this click landed. */
+export const ALREADY_DECIDED_CODES = ['APPROVAL_NOT_PENDING', 'NO_PENDING_ATTACH'] as const;
+
+export function isAlreadyDecided(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    err.status === 409 &&
+    (ALREADY_DECIDED_CODES as readonly (string | null)[]).includes(err.code)
+  );
 }
 
 /**
@@ -67,13 +95,29 @@ export function describeOrchestrationError(err: unknown): string {
   return err instanceof Error && err.message ? err.message : 'The request failed.';
 }
 
-/** A link target from untrusted data: https only, anything else is shown as text. */
+/** True when the text carries a control character, which no link target may. */
+function hasControlChars(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * A link target from untrusted data: an `https:` URL with no credentials and no whitespace or
+ * control characters (the same rule the gateway applies to a child's `prUrl`). Anything else is
+ * shown as text.
+ */
 export function httpsUrl(value: string | null | undefined): string | null {
-  if (!value) {
+  if (!value || hasControlChars(value) || /\s/u.test(value)) {
     return null;
   }
   try {
-    return new URL(value).protocol === 'https:' ? value : null;
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.username === '' && url.password === '' ? value : null;
   } catch {
     return null;
   }
@@ -83,6 +127,57 @@ export function httpsUrl(value: string | null | undefined): string | null {
 export function payloadString(payload: Record<string, unknown> | null, key: string): string | null {
   const value = payload?.[key];
   return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/** A transcript payload read with the shared schema; null when it does not fit (tolerated). */
+export function parseAttachPayload(
+  payload: Record<string, unknown> | null
+): AttachRequestPayload | null {
+  const parsed = AttachRequestPayloadSchema.safeParse(payload);
+  return parsed.success ? parsed.data : null;
+}
+
+export function parseApprovalPayload(
+  payload: Record<string, unknown> | null
+): ApprovalRequestPayload | null {
+  const parsed = ApprovalRequestPayloadSchema.safeParse(payload);
+  return parsed.success ? parsed.data : null;
+}
+
+export function parseChildResultPayload(
+  payload: Record<string, unknown> | null
+): ChildResultPayload | null {
+  const parsed = ChildResultPayloadSchema.safeParse(payload);
+  return parsed.success ? parsed.data : null;
+}
+
+export type ApprovalOutcome = 'PENDING' | 'APPROVED' | 'DENIED' | 'EXPIRED';
+
+/** A status string narrowed to the known approval statuses. */
+export function asApprovalStatus(value: unknown): ApprovalOutcome | null {
+  return typeof value === 'string' && (APPROVAL_STATUSES as readonly string[]).includes(value)
+    ? (value as ApprovalOutcome)
+    : null;
+}
+
+export const APPROVAL_OUTCOME_LABELS: Record<ApprovalOutcome, string> = {
+  APPROVED: 'Approved',
+  DENIED: 'Denied',
+  EXPIRED: 'Expired',
+  PENDING: 'Waiting for approval',
+};
+
+/** Plain-language names for a delivery default. */
+export const DELIVERY_LABELS: Record<OrchestrateDelivery, string> = {
+  branch: 'Push a branch for each change',
+  draft_pr: 'Open a draft pull request for each change',
+  none: 'Show results only; nothing is pushed',
+};
+
+export function deliveryLabel(value: unknown): string | null {
+  return value === 'none' || value === 'branch' || value === 'draft_pr'
+    ? DELIVERY_LABELS[value]
+    : null;
 }
 
 /** Milliseconds a child ran (or has run so far). */
