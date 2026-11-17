@@ -954,3 +954,16 @@ describe('fenceChildResult', () => {
     expect(overInner).not.toMatch(/&[a-z]*\n/);
   });
 });
+
+describe('isAttachRequestPending', () => {
+  it('is pending until the payload carries a resolution', async () => {
+    const { isAttachRequestPending } = await import('./orchestration.js');
+    expect(isAttachRequestPending({ candidateRepoId: null, reason: 'x' })).toBe(true);
+    expect(isAttachRequestPending({ resolution: 'ATTACHED' })).toBe(false);
+    expect(isAttachRequestPending({ resolution: 'DECLINED', resolvedAt: 'now' })).toBe(false);
+    // Legacy status is still read.
+    expect(isAttachRequestPending({ status: 'PENDING' })).toBe(true);
+    expect(isAttachRequestPending({ status: 'DECLINED' })).toBe(false);
+    expect(isAttachRequestPending(null)).toBe(true);
+  });
+});

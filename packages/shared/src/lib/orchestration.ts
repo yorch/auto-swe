@@ -82,6 +82,24 @@ export const MESSAGE_KINDS = [
 ] as const;
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
 
+/**
+ * Whether an `ATTACH_REQUEST` message is still waiting for the launcher. ONE rule for both sides:
+ * a request is pending until `payload.resolution` is set (`ATTACHED` or `DECLINED`) by the
+ * gateway's attach and decline routes. The worker writes `{ reason, candidateRepoId }` and no
+ * status. A legacy payload that carries a `status` is still read: `ATTACHED`/`DECLINED` is
+ * resolved, anything else (`PENDING`) is not.
+ */
+export function isAttachRequestPending(payload: unknown): boolean {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    return true;
+  }
+  const rec = payload as Record<string, unknown>;
+  if (rec.resolution !== undefined) {
+    return false;
+  }
+  return rec.status !== 'ATTACHED' && rec.status !== 'DECLINED';
+}
+
 export const APPROVAL_STATUSES = ['PENDING', 'APPROVED', 'DENIED', 'EXPIRED'] as const;
 export type ApprovalStatusValue = (typeof APPROVAL_STATUSES)[number];
 
