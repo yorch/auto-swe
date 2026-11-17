@@ -8,6 +8,7 @@ export const RUN_TRIGGERS = [
   'template-run',
   'template-retry',
   'agent-run',
+  'planned-run',
   'service-token',
   'slack',
   'webhook',

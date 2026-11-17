@@ -6,7 +6,7 @@ import {
   verify as cryptoVerify,
 } from 'node:crypto';
 import { z } from 'zod';
-import { AGENT_RUN_TEMPLATE_NAME, isReservedTemplateOrigin } from '../lib/agentRun.js';
+import { isReservedTemplateName, isReservedTemplateOrigin } from '../lib/agentRun.js';
 import { ProfileNameSchema } from '../lib/harnessProfile/manifest.js';
 import { inputSchemaProblems } from '../lib/inputSchema.js';
 import { parseProviderModelSpec } from '../lib/modelSpec.js';
@@ -638,10 +638,7 @@ export function validateBundleTemplates(manifest: BundleManifest): string[] {
     // would be matched to it by name and given the bundle's spec, and one that
     // claims a `system:` origin would be mistaken for it. No overwrite flag
     // lifts this: it is checked before any conflict handling.
-    if (
-      t.name.trim().toLowerCase() === AGENT_RUN_TEMPLATE_NAME.toLowerCase() ||
-      isReservedTemplateOrigin(t.origin)
-    ) {
+    if (isReservedTemplateName(t.name) || isReservedTemplateOrigin(t.origin)) {
       errors.push(
         `template '${t.name}': the name and the system: origin are reserved for platform templates`
       );

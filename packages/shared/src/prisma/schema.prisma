@@ -844,6 +844,7 @@ model Connection {
   prEvaluations         PrEvaluation[]
 
   campaignTargets CampaignTarget[]
+  runPlans        RunPlan[]
   @@index([teamId])
   @@index([installationId])
   reviewPresetAttachments ReviewPresetAttachment[]
@@ -1427,6 +1428,7 @@ model Team {
 
   campaigns       Campaign[]
   campaignTargets CampaignTarget[]
+  runPlans        RunPlan[]
   @@index([orgId])
   @@map("teams")
 }
@@ -1892,6 +1894,8 @@ model User {
 
   campaignsCreated   Campaign[] @relation("CampaignCreatedBy")
   campaignsCancelled Campaign[] @relation("CampaignCancelledBy")
+  runPlansOwned      RunPlan[]  @relation("RunPlanOwner")
+  runPlansApproved   RunPlan[]  @relation("RunPlanApprover")
   @@map("users")
 }
 
@@ -2635,6 +2639,9 @@ model WorkflowRun {
   outboundDeliveries OutboundDelivery[]
   transcripts       AgentTranscript[]
   attributedPullRequests PullRequest[] @relation("PullRequestAttributionRun")
+  /// The run plan this run was launched from (null for every run not started from an approved
+  /// plan). Set by the plan's claim in `createWorkflowRun`, never by a launcher.
+  launchedFromPlans RunPlan[] @relation("RunPlanLaunchedRun")
   effects           RunEffect[]
 
   @@index([templateId])
@@ -5641,4 +5648,60 @@ model RunSteeringMessage {
   @@index([runId, createdAt])
   @@index([authorId])
   @@map("run_steering_messages")
+}
+
+// Run plans: a launch-time generated workflow a human approves before it runs. The plan holds the
+// exact spec the run will execute; an approved plan is pinned as `WorkflowRun.specSnapshot` by the
+// hidden "Planned Run" system template (docs/specs/2026-11-17-launch-time-workflow-generation.md).
+enum RunPlanStatus {
+  PENDING
+  APPROVED
+  LAUNCHED
+  REJECTED
+  EXPIRED
+}
+
+model RunPlan {
+  id                  String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// The person who asked for the plan and the only one who may approve it. Never a service
+  /// principal (the column is a User FK and NOT NULL; the migration also names it in a CHECK).
+  ownerUserId         String        @map("owner_user_id") @db.Uuid
+  owner               User          @relation("RunPlanOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  teamId              String        @map("team_id") @db.Uuid
+  team                Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  /// The repository the run acts on.
+  connectionId        String        @map("connection_id") @db.Uuid
+  connection          Connection    @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  /// The library agent a library-agent plan is built on; null for an engineering plan.
+  agentKey            String?       @map("agent_key")
+  intent              String
+  routerCandidates    Json          @map("router_candidates")
+  /// The `WorkflowSpec` the run will execute. `specHash` is the SHA-256 of its canonical JSON.
+  spec                Json
+  specHash            String        @map("spec_hash")
+  skeletonReport      Json          @map("skeleton_report")
+  validationReport    Json          @map("validation_report")
+  costEstimate        Json          @map("cost_estimate")
+  catalogHash         String        @map("catalog_hash")
+  model               String
+  /// `{ agentKey: version }` of every agent the spec names, as resolved when the plan was built.
+  agentPins           Json          @map("agent_pins")
+  /// The run-pinned registry settings as they stood when the plan was built.
+  settingsSnapshot    Json          @map("settings_snapshot")
+  /// `delivering` or `output-only` (CHECK in the migration).
+  mode                String
+  status              RunPlanStatus @default(PENDING)
+  approvedAt          DateTime?     @map("approved_at") @db.Timestamptz
+  approvedById        String?       @map("approved_by_id") @db.Uuid
+  approvedBy          User?         @relation("RunPlanApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  launchedWorkflowRunId String?     @map("launched_workflow_run_id") @db.Uuid
+  launchedWorkflowRun WorkflowRun?  @relation("RunPlanLaunchedRun", fields: [launchedWorkflowRunId], references: [id], onDelete: SetNull)
+  createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  expiresAt           DateTime      @map("expires_at") @db.Timestamptz
+
+  @@index([ownerUserId, status])
+  @@index([status, expiresAt])
+  @@index([teamId])
+  @@index([connectionId])
+  @@map("run_plans")
 }

@@ -19,6 +19,7 @@ const m = vi.hoisted(() => ({
   logs: [] as { message: string; meta: unknown }[],
   markers: vi.fn(),
   onInvalidate: undefined as (() => void) | undefined,
+  plannedRunCount: vi.fn(),
   platformPr: vi.fn(),
   previous: vi.fn(),
   prUpdateMany: vi.fn(),
@@ -69,6 +70,7 @@ vi.mock('@auto-swe/shared/db', () => ({
     runInput: { findUnique: m.request },
     user: { findMany: m.user },
     workflowRun: {
+      count: m.plannedRunCount,
       findMany: (args: { where: { reviewOfRunId?: string; reviewOfRun?: unknown } }) =>
         args.where.reviewOfRunId || args.where.reviewOfRun ? m.linkedRuns(args) : m.runs(args),
     },
@@ -275,6 +277,8 @@ beforeEach(() => {
   m.runs.mockReset();
   m.linkedRuns.mockReset();
   m.linkedRuns.mockResolvedValue([]);
+  m.plannedRunCount.mockReset();
+  m.plannedRunCount.mockResolvedValue(0);
   m.runs.mockImplementation(async (args: { where: { OR: unknown[] } }) => {
     expect(args.where.OR).toEqual([
       { id: 'run-1' },
@@ -1873,6 +1877,34 @@ describe('evaluatePullRequest: auto-merge', () => {
     expect(m.created[0]?.mode).toBe('auto');
     expect(m.created[0]?.statusState).toBe('pending');
     expect(JSON.stringify(m.created[0]?.reasons)).toContain('auto-merge-globally-disabled');
+    expect(scm.calls).not.toContain('enableAutoMerge');
+  });
+
+  it('never arms or approves a pull request a planned run opened, whatever the mode', async () => {
+    await autoRepo();
+    // The run behind the pull request belongs to the hidden Planned Run template.
+    m.plannedRunCount.mockResolvedValue(1);
+    const scm = fakeScm({ listPullRequestReviews: async () => [] });
+    const result = await evaluatePullRequestWith(INPUT, depsWith(scm));
+    expect(result.outcome).toBe('evaluated');
+    expect(result.autoMerge).toBe('not-eligible');
+    expect(scm.calls).not.toContain('enableAutoMerge');
+    // The status still follows the chosen mode's rules (auto: pending until approved).
+    expect(result.statusState).toBe('pending');
+    expect(m.created[0]?.mode).toBe('auto');
+    expect(JSON.stringify(m.created[0]?.reasons)).toContain('planned-run-never-auto-merged');
+    // Asked by the reserved origin of a template with no owning team, never by a name.
+    expect(m.plannedRunCount.mock.calls[0]?.[0]).toMatchObject({
+      where: { template: { origin: 'system:planned-run', teamId: null } },
+    });
+  });
+
+  it('disarms an arming a pull request already carries once it is known to be a planned run', async () => {
+    await autoRepo();
+    m.plannedRunCount.mockResolvedValue(1);
+    const scm = fakeScm({ getPullRequest: async () => ARMED });
+    await evaluatePullRequestWith(INPUT, depsWith(scm));
+    expect(scm.calls).toContain('disableAutoMerge');
     expect(scm.calls).not.toContain('enableAutoMerge');
   });
 

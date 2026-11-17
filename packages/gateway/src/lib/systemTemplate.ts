@@ -4,7 +4,7 @@ import { isReservedTemplateOrigin } from '@auto-swe/shared/lib/agentRun';
 export { isReservedTemplateName } from '@auto-swe/shared/lib/agentRun';
 
 /**
- * The hidden system templates (today: "Agent Run"). They are platform
+ * The hidden system templates (today: "Agent Run" and "Planned Run", both under a `system:` origin). They are platform
  * machinery, not content: invisible in the template list, 404 on every
  * template route, never exported, and not creatable or renameable by name.
  */

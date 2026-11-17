@@ -23,6 +23,7 @@ import {
 import { isInputSchema, runAuthorizedConnectionIds } from '@auto-swe/shared/lib/inputSchema';
 import type { TrackerWriteback } from '@auto-swe/shared/lib/integrations/ticketFailure';
 import type { KnowledgeBaseOverrides } from '@auto-swe/shared/lib/knowledgeBaseResolution';
+import { PLANNED_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/plannedRun';
 import { loadReviewSource, reviewRunId } from '@auto-swe/shared/lib/reviewLaunch';
 import { isRunTrigger, type RunTrigger } from '@auto-swe/shared/lib/runTrigger';
 import { resolveIssueTrackerConfig, resolveWebUrl } from '@auto-swe/shared/lib/systemConfig';
@@ -61,6 +62,7 @@ import {
   markChildRunStarted,
   onOrchestrationRunFinalized,
 } from '../lib/orchestrationChildren.js';
+import { claimPlanWithRun, loadApprovedPlan, type PinnedPlan } from '../lib/plannedRunPin.js';
 import { pinDetectionsOnRun } from '../lib/runDetection.js';
 import { currentRunLauncherId } from '../lib/runLauncher.js';
 import {
@@ -738,6 +740,19 @@ export async function createWorkflowRun(
   // ceiling must finish under the same one or its replay history stops matching
   // its code — so these are resolved once, here, and carried forward.
   const settingsCtx = await runSettingsContext(input, scheduledRepoId, attribution);
+
+  // A run of the hidden Planned Run template executes the approved plan's spec, not the
+  // template's placeholder. Everything about the plan is read and refused here, before the run row
+  // exists; the workflow only sees the spec this activity returns. The origin is the system
+  // marker no bundle or API write can set, and it must sit on a template with no owning team.
+  let pinnedPlan: PinnedPlan | null = null;
+  if (version.template?.origin === PLANNED_RUN_TEMPLATE_ORIGIN && !version.template.team) {
+    pinnedPlan = await loadApprovedPlan(input, {
+      orgId: settingsCtx.orgId,
+      teamId: settingsCtx.teamId,
+    });
+    spec = pinnedPlan.spec;
+  }
   const pinnedSettings = narrowPinnedEgressPolicy(
     await snapshotPinnedSettings(settingsCtx),
     input.egressPolicy,
@@ -797,7 +812,12 @@ export async function createWorkflowRun(
     workspaceConnectionId: input.runConnectionId ?? input.repoId ?? scheduledRepoId ?? null,
   });
   const runId = reviewPayload?.success ? reviewRunId(input.workflowId) : randomUUID();
-  const provenance = await resolveProvenance(input);
+  const resolvedProvenance = await resolveProvenance(input);
+  // A planned run names its plan as its trigger reference whatever the launcher wrote: the
+  // provenance is what ties the run (and, through it, a pull request) back to the plan.
+  const provenance = pinnedPlan
+    ? { ...resolvedProvenance, trigger: 'planned-run' as const, triggerRefId: pinnedPlan.planId }
+    : resolvedProvenance;
   // The orchestration this run is a child of, confirmed against the child row the gateway wrote
   // at launch. It is what lets `finalizeRun` find the child and signal the orchestrator.
   const orchestrationId = await childOrchestrationIdOf(input.payload, input.workRequestId);
@@ -862,8 +882,14 @@ export async function createWorkflowRun(
     update: { authorizedConnectionIds: authorizedConnectionIds as Prisma.InputJsonValue },
     where: { workflowId: input.workflowId },
   };
-  const run =
-    input.workRequestId && input.workflowId.startsWith('sched-')
+  const run = pinnedPlan
+    ? // The run row and the plan's claim commit together: a row without the claim could be
+      // started twice from one approval, a claim without the row would strand the plan LAUNCHED.
+      await claimPlanWithRun<Awaited<ReturnType<typeof prisma.workflowRun.upsert>>>(
+        pinnedPlan,
+        runUpsert
+      )
+    : input.workRequestId && input.workflowId.startsWith('sched-')
       ? await prisma.$transaction(async (tx) => {
           const existing = await tx.workflowRun.findUnique({
             select: { id: true },

@@ -5,6 +5,7 @@ import {
   CHANNEL_ASSISTANT_TEMPLATE_NAME,
   CHANNEL_TASK_TEMPLATE_NAME,
 } from '@auto-swe/shared/lib/channelTask';
+import { PLANNED_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/plannedRun';
 import { type PullRequestState, pullRequestUrl } from '@auto-swe/shared/lib/pullRequest';
 import { resolveGitHubBaseUrl } from '@auto-swe/shared/lib/systemConfig';
 import type { TicketGroup, WorkflowRunStatus } from '@auto-swe/shared/types/api';
@@ -146,6 +147,7 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
             some: {
               OR: [
                 { template: { origin: AGENT_RUN_TEMPLATE_ORIGIN } },
+                { template: { origin: PLANNED_RUN_TEMPLATE_ORIGIN } },
                 {
                   template: {
                     name: { in: [CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME] },

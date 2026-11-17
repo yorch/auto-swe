@@ -54,6 +54,11 @@ import {
   CHANNEL_TASK_TEMPLATE_NAME,
 } from './channelTask.js';
 import type { InputSchema } from './inputSchema.js';
+import {
+  PLANNED_RUN_SPEC,
+  PLANNED_RUN_TEMPLATE_NAME,
+  PLANNED_RUN_TEMPLATE_ORIGIN,
+} from './plannedRun.js';
 import { findUnauditedNodes, recordShellAudit } from './shellAudit.js';
 import {
   initialRevision,
@@ -325,6 +330,7 @@ export async function seedSweStarter(prisma: PrismaClient): Promise<void> {
   await syncChannelAssistantTemplate(prisma);
   await syncChannelTaskTemplate(prisma);
   await syncAgentRunTemplate(prisma);
+  await syncPlannedRunTemplate(prisma);
   const newSkillNames = await syncSkills(prisma);
   await syncScannerPatterns(prisma, 'swe');
   await syncAgents(prisma, newSkillNames);
@@ -375,9 +381,44 @@ async function syncChannelTaskTemplate(prisma: PrismaClient): Promise<void> {
  * and the gateway answers a launch with a clear "template missing" instead.
  */
 export async function syncAgentRunTemplate(prisma: PrismaClient): Promise<void> {
-  const spec = AGENT_RUN_SPEC as unknown as object;
+  await syncSystemTemplate(prisma, {
+    description: AGENT_RUN_SPEC.description,
+    name: AGENT_RUN_TEMPLATE_NAME,
+    origin: AGENT_RUN_TEMPLATE_ORIGIN,
+    spec: AGENT_RUN_SPEC,
+    unavailableNote: 'agent runs are unavailable',
+  });
+}
+
+/**
+ * Seed the hidden "Planned Run" system template behind approved run plans. The same rules as
+ * {@link syncAgentRunTemplate}: platform-owned, `system:planned-run` origin, never touches a
+ * same-named row it does not own. Its spec is a failing placeholder; `createWorkflowRun` pins the
+ * plan's own spec in its place.
+ */
+export async function syncPlannedRunTemplate(prisma: PrismaClient): Promise<void> {
+  await syncSystemTemplate(prisma, {
+    description: PLANNED_RUN_SPEC.description,
+    name: PLANNED_RUN_TEMPLATE_NAME,
+    origin: PLANNED_RUN_TEMPLATE_ORIGIN,
+    spec: PLANNED_RUN_SPEC,
+    unavailableNote: 'planned runs are unavailable',
+  });
+}
+
+async function syncSystemTemplate(
+  prisma: PrismaClient,
+  def: {
+    description: string;
+    name: string;
+    origin: string;
+    spec: { readonly description: string };
+    unavailableNote: string;
+  }
+): Promise<void> {
+  const spec = def.spec as unknown as object;
   const existing = await prisma.workflowTemplate.findFirst({
-    where: { name: AGENT_RUN_TEMPLATE_NAME, teamId: null },
+    where: { name: def.name, teamId: null },
   });
 
   if (!existing) {
@@ -385,10 +426,10 @@ export async function syncAgentRunTemplate(prisma: PrismaClient): Promise<void> 
       await prisma.workflowTemplate.create({
         data: {
           activeVersion: 1,
-          description: AGENT_RUN_SPEC.description,
+          description: def.description,
           isDefault: false,
-          name: AGENT_RUN_TEMPLATE_NAME,
-          origin: AGENT_RUN_TEMPLATE_ORIGIN,
+          name: def.name,
+          origin: def.origin,
           status: 'ACTIVE',
           teamId: null,
           versions: { create: { spec, version: 1 } },
@@ -403,10 +444,10 @@ export async function syncAgentRunTemplate(prisma: PrismaClient): Promise<void> 
     return;
   }
 
-  if (existing.origin !== AGENT_RUN_TEMPLATE_ORIGIN) {
+  if (existing.origin !== def.origin) {
     console.error(
-      `[syncBuiltins] a GLOBAL template named '${AGENT_RUN_TEMPLATE_NAME}' exists without the system origin; ` +
-        'agent runs are unavailable until it is renamed or removed'
+      `[syncBuiltins] a GLOBAL template named '${def.name}' exists without the system origin; ` +
+        `${def.unavailableNote} until it is renamed or removed`
     );
     return;
   }

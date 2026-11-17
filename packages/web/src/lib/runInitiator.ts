@@ -10,6 +10,7 @@ export const RUN_TRIGGER_LABELS: Record<RunTrigger, string> = {
   'code-review': 'Code review',
   epic: 'Epic',
   'epic-child': 'Epic repo run',
+  'planned-run': 'Planned run',
   'prd-child': 'PRD story',
   'prd-run': 'PRD run',
   'review-fix': 'Review fix',

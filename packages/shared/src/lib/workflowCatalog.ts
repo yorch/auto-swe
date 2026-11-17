@@ -72,6 +72,7 @@ const entries: [string, { title: string; group: WorkflowGroup }][] = [
   ],
   ['issue-to-confluence-page', { group: 'content', title: 'Tracker issue to Confluence page' }],
   ['Agent Run', { group: 'engineering', title: 'Run an agent' }],
+  ['Planned Run', { group: 'engineering', title: 'Run an approved plan' }],
   ['Channel Assistant', { group: 'content', title: 'Channel assistant' }],
   ['Channel Task', { group: 'content', title: 'Task from a channel mention' }],
 ];

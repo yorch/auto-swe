@@ -1180,20 +1180,23 @@ describe('installBundle', () => {
       expect(prisma.workflowTemplate.create).not.toHaveBeenCalled();
     });
 
-    it('treats a system-origin row as protected like the starter content', async () => {
-      prisma.workflowTemplate.findFirst.mockResolvedValue({
-        activeVersion: 1,
-        id: 'sys',
-        origin: 'system:agent-run',
-        status: 'ACTIVE',
-      });
-      const m = manifestFor({
-        ...EMPTY,
-        templates: [{ name: 'std', spec: RUNNABLE_SPEC }],
-      } as unknown as BundleEntities);
-      const err = await installBundle(asArg(), m, { allowUnverified: true }).catch((e) => e);
-      expect(err).toBeInstanceOf(BundleProtectedContentError);
-    });
+    it.each(['system:agent-run', 'system:planned-run'])(
+      'treats a system-origin row (%s) as protected like the starter content',
+      async (origin) => {
+        prisma.workflowTemplate.findFirst.mockResolvedValue({
+          activeVersion: 1,
+          id: 'sys',
+          origin,
+          status: 'ACTIVE',
+        });
+        const m = manifestFor({
+          ...EMPTY,
+          templates: [{ name: 'std', spec: RUNNABLE_SPEC }],
+        } as unknown as BundleEntities);
+        const err = await installBundle(asArg(), m, { allowUnverified: true }).catch((e) => e);
+        expect(err).toBeInstanceOf(BundleProtectedContentError);
+      }
+    );
   });
 
   it('rejects an UNVERIFIED bundle by default', async () => {

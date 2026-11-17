@@ -3290,6 +3290,7 @@ describe('system templates are hidden and locked', () => {
   let app: FastifyInstance;
   let state: Parameters<typeof buildApp>[0];
   const SYSTEM_ID = '11111111-1111-4111-8111-111111111111';
+  const PLANNED_ID = '11111111-1111-4111-8111-111111111112';
   it('refuses review templates on the ordinary run endpoint', async () => {
     const reviewApp = buildApp({
       runs: [],
@@ -3346,6 +3347,23 @@ describe('system templates are hidden and locked', () => {
           versions: [{ createdAt: new Date(), createdBy: null, id: 'v1', version: 1 }],
           workspaceProvider: 'git_repo',
         },
+        {
+          activeVersion: 1,
+          createdAt: new Date(),
+          description: '',
+          experimentSplit: null,
+          experimentVersion: null,
+          id: PLANNED_ID,
+          isDefault: false,
+          name: 'Planned Run',
+          ...({ origin: 'system:planned-run' } as object),
+          status: 'ACTIVE',
+          team: null,
+          teamId: null,
+          updatedAt: new Date(),
+          versions: [{ createdAt: new Date(), createdBy: null, id: 'v1', version: 1 }],
+          workspaceProvider: 'git_repo',
+        },
       ],
       userRole: 'ADMIN',
       versions: new Map(),
@@ -3378,6 +3396,37 @@ describe('system templates are hidden and locked', () => {
     const res = await call(method, `/${SYSTEM_ID}${suffix}`, payload);
     expect(res.statusCode).toBe(404);
     expect(res.json().error.code).toBe('TEMPLATE_NOT_FOUND');
+  });
+
+  it.each([
+    ['GET', '', undefined],
+    ['PATCH', '', { description: 'x' }],
+    ['POST', '/versions', { spec: VALID_SPEC }],
+    ['POST', '/promote', { version: 1 }],
+    ['POST', '/runs', { payload: {}, repoId: PLANNED_ID }],
+    ['POST', '/refine', { prompt: 'make it do something else' }],
+    ['POST', '/webhook/regenerate', undefined],
+    ['GET', '/versions/1', undefined],
+    ['GET', '/diff?a=1&b=1', undefined],
+  ] as const)(
+    '404s %s /:id%s for the Planned Run template too',
+    async (method, suffix, payload) => {
+      const res = await call(method, `/${PLANNED_ID}${suffix}`, payload);
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe('TEMPLATE_NOT_FOUND');
+    }
+  );
+
+  it('refuses a template named "Planned Run" in any casing, on create', async () => {
+    for (const name of ['Planned Run', ' planned RUN ']) {
+      const created = await call('POST', '', {
+        name,
+        spec: VALID_SPEC,
+        teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
+      });
+      expect(created.statusCode).toBe(400);
+      expect(created.json().error.code).toBe('RESERVED_TEMPLATE_NAME');
+    }
   });
 
   it('refuses a template named "Agent Run" in any casing, on create and on rename', async () => {

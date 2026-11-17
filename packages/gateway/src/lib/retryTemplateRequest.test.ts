@@ -158,6 +158,36 @@ describe('generic workflow retry of a request that stopped as not actionable', (
   });
 });
 
+describe('generic workflow retry of a system template run', () => {
+  it('answers a planned run with USE_PLAN_RERUN and starts nothing', async () => {
+    const { app, start } = await harness(true, input, {
+      id: 'template-1',
+      origin: 'system:planned-run',
+      teamId: null,
+      workspaceProvider: null,
+    });
+    const response = await app.inject({ headers: auth, method: 'POST', url: '/retry' });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.code).toBe('USE_PLAN_RERUN');
+    expect(start).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('keeps refusing another system template, as before', async () => {
+    const { app, start } = await harness(true, input, {
+      id: 'template-1',
+      origin: 'system:agent-run',
+      teamId: null,
+      workspaceProvider: null,
+    });
+    const response = await app.inject({ headers: auth, method: 'POST', url: '/retry' });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.code).toBe('NO_TEMPLATE_SNAPSHOT');
+    expect(start).not.toHaveBeenCalled();
+    await app.close();
+  });
+});
+
 describe('generic workflow retry', () => {
   it('retains the request and version, applies instructions only to the attempt, and acts as its caller', async () => {
     const { app, prisma, start } = await harness();

@@ -9,6 +9,7 @@ export {
   PLAN_NOTES_PATH,
   VALIDATE_ENTRY,
 } from './canonicalCore.js';
+export { runPlanCatalogHash } from './catalogHash.js';
 export type { CoreCheck, CoreRegions } from './coreCheck.js';
 export type { RunPlanCostEstimate, RunPlanCostOptions } from './costPreview.js';
 export { estimateRunPlanCost } from './costPreview.js';
@@ -27,6 +28,7 @@ export {
   MERGE_WAIT_SIGNAL,
   NODE_ID_PATTERN,
 } from './skeletonPolicy.js';
+export { hashRunPlanSpec } from './specHash.js';
 export type { RunPlanStepClass } from './stepAllowlist.js';
 export {
   classifyRunPlanStep,
