@@ -276,6 +276,14 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/ticketId.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/ticketBrief',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/ticketBrief.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/fenceText',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/fenceText.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/workflowCatalog',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/workflowCatalog.ts'),
       },
