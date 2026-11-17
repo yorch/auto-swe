@@ -513,6 +513,7 @@ async function readSourceInner(input: ReadSourceInput): Promise<ReadSourceResult
     case 'mcp':
       return mcpReadSource(connectionId, query);
     case 'git_repo':
+    case 'pagerduty_events':
     case 'slack_workspace':
       return refuseUnimplemented('readSource', type);
     default:
@@ -1125,6 +1126,7 @@ async function writeOutcomeInner(input: WriteOutcomeInput): Promise<WriteOutcome
         // Handled before the ledger above; reaching here would claim the ledger twice.
         throw ApplicationFailure.nonRetryable('mcp writeOutcome is dispatched before the ledger');
       case 'git_repo':
+      case 'pagerduty_events':
         return refuseUnimplemented('writeOutcome', type);
       default:
         return unsupportedType('writeOutcome', type);
@@ -1560,6 +1562,7 @@ async function runToolInner(input: RunToolInput): Promise<RunToolResult> {
         // Handled before the ledger above; reaching here would claim the ledger twice.
         throw ApplicationFailure.nonRetryable('mcp runTool is dispatched before the ledger');
       case 'git_repo':
+      case 'pagerduty_events':
         return refuseUnimplemented('runTool', type);
       default:
         return unsupportedType('runTool', type);
