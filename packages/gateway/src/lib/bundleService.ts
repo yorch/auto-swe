@@ -746,6 +746,15 @@ function validateBundleForInstall(raw: unknown, opts: InstallOptions): Validated
     // row it writes as the platform's own.
     throw new BundleIntegrityError(`bundle source '${origin}' uses the reserved system: prefix`);
   }
+  if (isDeploymentOwned(origin)) {
+    // The seeded starter's origin is what provenance gates read as "the platform's own
+    // content" (`isDeploymentOwned`, the repo-onboarding egress check). A bundle that
+    // could claim it would satisfy them with content an admin installed.
+    throw new BundleIntegrityError(
+      `bundle source '${origin}' is the origin of the platform's seeded content; ` +
+        'choose another source, rebuild the bundle so its content hash covers it, and sign it again if it was signed'
+    );
+  }
   return { manifest, origin, trust, trustState };
 }
 
@@ -923,7 +932,12 @@ export async function installBundle(
           where: { key: a.key, scope: 'GLOBAL', teamId: null, workflowTemplateId: null },
         });
         const agent = existing
-          ? await tx.agent.update({ data: base, where: { id: existing.id } })
+          ? // The head's prompt is replaced in place, so a verified flag earned by the old
+            // text must not carry over (as for skills above).
+            await tx.agent.update({
+              data: { ...base, isVerified: false },
+              where: { id: existing.id },
+            })
           : await tx.agent.create({
               data: {
                 ...base,

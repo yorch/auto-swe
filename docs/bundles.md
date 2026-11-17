@@ -155,6 +155,12 @@ On install the gateway:
    install (and fails `validateBundle` in the SDK). An agent the bundle puts on a harness adds an
    advisory warning naming the harness — for `claude-code`, that it holds a model credential inside
    the workspace container ([agents.md §3.7](./agents.md#37-runtimes-mastra-and-the-harnesses)).
+   An agent a bundle creates or rewrites installs unverified: re-installing over an existing
+   GLOBAL agent replaces its prompt in place and clears `isVerified`, whatever the bundle's trust
+   state. A bundle's `metadata.source` becomes the `origin` of every row it writes, so the install
+   refuses a source that is the seeded content's origin (`swe-starter`) or that starts with
+   `system:`: provenance checks read those origins as the platform's own, and a bundle must not
+   be able to claim one.
 4. Refuses, with `409 PROTECTED_CONTENT_OVERWRITE`, any bundle entry that would replace GLOBAL
    content the deployment owns — a seeded built-in (`origin = 'swe-starter'`, or a core row with a
    null origin) or an admin-authored row (`origin` null): an agent by key, a skill by name, a
@@ -260,6 +266,11 @@ separately.
 - **The protected check is not a lock.** It reads inside the install transaction, but a row created
   concurrently by another transaction after that read — a `syncBuiltins` on another gateway booting
   at the same moment — can still be overwritten.
+- **A bundle-written template version can carry the seeded origin.** A forced install appends its
+  version but rewrites the template's `origin` only while the template is active on the previous
+  author-less version. If an admin had moved the template or archived it, the origin stays
+  `swe-starter`, and activating that version later leaves a bundle-written spec under the seeded
+  origin.
 - **A bundle's template versions are indistinguishable from built-in ones.** Both are authorless, so
   "the version the previous install wrote" is the newest authorless version. After a forced install
   over a built-in template, the next built-in sync and the next bundle install each see the other's
