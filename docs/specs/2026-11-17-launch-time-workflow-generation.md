@@ -1,107 +1,173 @@
 # Launch-time workflow generation (design)
 
-Goal: at launch a user states what they want done; the platform proposes either an existing
-template or a generated workflow (deterministic skeleton plus agentic nodes), shows the plan,
-and starts the run only after the launcher approves it.
+Goal: at launch a user states what they want done; the platform proposes existing templates and a
+generated workflow (a deterministic skeleton plus agentic nodes), shows the plan, and starts the run
+only after the launcher approves exactly that plan.
 
-## Decisions (made with the product owner)
+## Decisions
+
+Made with the product owner:
 
 1. A human approves every generated plan before the run starts. No auto-start path.
 2. Scope: repo-bound runs for engineering and for any launchable library agent.
 3. Entry points: dashboard `/start`, REST API + CLI, Slack channel assistant.
 4. Routing: a router ranks existing templates; the user chooses between them and "generate new".
-5. Freedom: a policy-injected mandatory skeleton, a free middle composed from a filtered catalog.
-   No shell, container or MCP nodes by default.
+5. Freedom: a policy-pinned mandatory skeleton, a free middle composed from a filtered catalog.
+   No shell, container, MCP or authored-command nodes.
+6. Library-agent plans (anything other than the implementer path) are output-only in v1.
+7. An approved plan runs through one hidden system template, not through per-plan templates.
 
-## Facts about the current code this design rests on
+Defaults taken after adversarial review (changeable):
+
+- Service principals cannot create or approve plans.
+- A Slack plan is approved only by the user whose message created it, in the same channel.
+- Pull requests opened by a generated plan are excluded from PR-evaluation `auto` mode.
+- Plan creation is rate-limited per user (registry settings).
+
+## Facts this design rests on
 
 - A run launches only from an ACTIVE template version (`launchableTemplateWhere`); DRAFT is not
-  launchable. `createWorkflowRun` reads `WorkflowTemplateVersion` and writes
-  `WorkflowRun.specSnapshot`, `agentVersions`, `pinnedSettings`, `skillRevisions`.
-- No ad-hoc spec launch exists. Every `startRunnableWorkflow` caller goes through a template row.
-- `generateWorkflowSpec` returns `{ spec, summary, attempts }`; the catalog can be narrowed only
-  by `teamId` and `allowShell`.
-- The security gate is not a node. It runs inside `executeImplementation` and the fix steps, so
-  "gate present" means "an implementation step present".
-- `runAgentTask` is internal and `validateSpec` rejects it in authored specs. An `agent` node with
-  `workspace: true` keeps nothing it changes.
-- `estimateSpecCost` exists in shared and is called only by the web editor.
-- No semantic template search exists; template search is an unranked substring match.
+  launchable. `createWorkflowRun` reads `WorkflowTemplateVersion` and writes `WorkflowRun.specSnapshot`,
+  `agentVersions`, `pinnedSettings`, `skillRevisions`.
+- Template writes need LEAD on the owning team. A generated version cannot be promoted or activated
+  without a review by someone other than its generator (`SELF_REVIEW_FORBIDDEN`).
+- The hidden-template mechanism is `isSystemTemplate` / `EXCLUDE_SYSTEM_TEMPLATES`: null team, a
+  `system:` origin, `404` on every template route. Agent runs use it.
+- `generateWorkflowSpec` returns `{ spec, summary, attempts }`; its catalog is narrowed only by
+  `teamId` and `allowShell`, and it lists agents on `NON_LAUNCHABLE_AGENT_KEYS`.
+- The LLM security gate runs inside `executeImplementation`, the fix paths, decomposition and agent-run
+  finalize, not as a node. `applyRecipe` and other steps push without it.
+- `runReviewNetwork` and the implementation steps accept step-level `systemPrompt`, `tools`,
+  `allowedPaths` and `testIntegrity`; `onFail: 'warn'`, `onFailure` and `cond` edges can route around any
+  node. Existence of a node therefore proves nothing about what it does.
+- Agent-run ceilings and admission (`wouldAdmitNewRun`, `clampToCeiling`) apply only to the Agent Run
+  template.
+- `WorkflowRun.template` is `onDelete: Restrict`; templates with runs cannot be deleted.
 
 ## Design
 
-### 1. RunPlan entity
+### 1. The plan
 
-A `RunPlan` row holds: owner (user or service principal), team, repository, intent text, router
-candidates, the generated `WorkflowSpec`, its `validateSpec` report, a cost estimate, the catalog
-hash and model that produced it, a status (`PENDING`, `APPROVED`, `LAUNCHED`, `EXPIRED`,
-`REJECTED`) and an expiry. A plan is bound to its owner and repository; only the owner may
-approve it, and approval re-runs every check (below) against current state.
+A `RunPlan` row holds: the owning user (never a service principal), team, repository, agent (for
+library-agent plans), intent text, router candidates, the generated `WorkflowSpec`, the `validateSpec`
+and skeleton reports, a cost estimate, the catalog hash and model, the resolved `key@version` of every
+agent the spec names, a status (`PENDING`, `APPROVED`, `LAUNCHED`, `REJECTED`, `EXPIRED`) and an
+expiry. Approval is an atomic `updateMany where status = PENDING`, so a second approval launches
+nothing. Approval re-checks the owner, repository reach under the access gate, role, quotas and
+budget, and refuses (it never regenerates or re-injects) when any pinned agent version, the setting
+snapshot or the catalog hash no longer matches. A refused plan is regenerated by the user.
 
-### 2. Launching an approved generated plan
+### 2. Running an approved plan
 
-On approval the gateway persists the spec as a `WorkflowTemplate` with origin `generated:plan`,
-status ACTIVE, one version, scoped to the repository's owning team and excluded from the library
-list, picker and schedules by default. It then launches through the existing
-`launchTrackedWorkflow` path, so version pinning, budget, concurrency and provenance are
-unchanged. "Save to library" clears the origin flag. Choosing an existing template skips the
-persist step and launches that template as today.
+One hidden GLOBAL system template, "Planned Run" (reserved `system:planned-run` origin, null team,
+guarded like Agent Run: absent from lists, pickers, schedules, bundles; `404` on template routes; not
+creatable by name). Launch parameters carry only the plan id. The worker, when it creates the run for
+that template, loads the approved plan and pins **its** spec as `WorkflowRun.specSnapshot` instead of
+the template's placeholder version, and refuses if the plan is not `APPROVED`, was not approved by the
+launcher, or belongs to another repository. No per-plan template rows exist, so there is nothing to
+re-run by id, schedule, attach a webhook to, export or accumulate. Retry of a planned run is refused
+(`USE_PLAN_RERUN`): the user creates a new plan. Run provenance records the plan id, the intent and the
+model.
 
-### 3. Mandatory skeleton
+"Save to library" creates an ordinary DRAFT template from the plan's spec for a LEAD, which then needs
+an independent review like any generated draft. Choosing an existing template in the preview skips the
+plan spec and launches that template through the normal path, with that path's own checks.
 
-A pure function `applySkeletonPolicy(spec, mode)` in shared both checks and injects. For a
-delivering run it requires, on every path reaching a terminal node: an implementation step (which
-carries the security gate), the review network, quality gates, a PR step, and the human merge
-wait. For output-only library-agent runs it requires an `agent` node, a terminate node and a
-human review node before any external effect. Missing mandatory nodes are inserted by the
-injector; a spec that still violates the policy is refused. The policy is code, not a prompt.
+Planned runs charge the owning team's budget and concurrency like any run, and additionally take the
+agent-run admission (`wouldAdmitNewRun`) and step/wall-clock ceilings when the plan is built on a
+library agent, so a generated spec cannot exceed what an agent run could.
 
-### 4. Generation constraints
+### 3. Skeleton policy (pins behaviour, not presence)
 
-`generateWorkflowSpec` gains a `profile: 'run-plan'` mode: catalog restricted to a role-filtered
-step and agent allowlist, shell and container off, MCP off, intent taken only from the user's
-text (never from ticket or repository content), and the repair loop hard-gating on
-`validateSpec` errors plus the skeleton policy. Every loop node must set `maxVisits` and
-`onExhausted`.
+`applySkeletonPolicy(spec, mode)` in shared runs at generation, and its **check** half runs again at
+approval and in the worker before pinning. It never silently rewrites an approved spec.
+
+For a delivering (implementer) plan, the mandatory nodes are `executeImplementation`,
+`runReviewNetwork`, the quality-gate step, `createOrUpdatePullRequest` and the human merge wait. The
+policy requires, for each:
+
+- the node's config contains only allowlisted keys with allowlisted values: no `systemPrompt`,
+  `tools`, `allowedPaths` or `testIntegrity` override, no authored `command`;
+- `onFail` is `block` (or a bounded retry), never `warn`, and no `onFailure` or `onExhausted` edge from
+  it leads past a later mandatory node;
+- ordering by dominance: implementation dominates review, review dominates quality gates, they dominate
+  the PR step, and the PR step dominates the merge wait, on every path to a `SUCCESS` terminal;
+- no `cond` edge may bypass a mandatory node, and its verdict outputs feed the successor routing the
+  skeleton declares.
+
+For an output-only library-agent plan the mandatory nodes are one or more `agent` nodes, a human
+review node before any step with an external effect, and a terminate node.
+
+The free middle draws only from a **step allowlist** maintained in code beside the registry. The
+allowlist excludes: `runContainerStep` and any authored command, `submitPrdWorkRequests`, `runTool`,
+`postTicketComment`, `createTrackerItems`, `publishOutcome`, `writeOutcome`, `mergeBranches`,
+`applyRecipe`, and every step that pushes or posts. `agent` nodes may not name an agent on
+`NON_LAUNCHABLE_AGENT_KEYS` or one outside the requester's launchable set; `validateSpec` gains a
+`NON_LAUNCHABLE_AGENT` error for it. The skeleton's mandatory sequence is taken from the
+`ticket-to-merge` built-in via the `validatePhase@1`, `reviewLoop@1`, `openPullRequest@1` and
+`ciLoop@1` macros, so the pinned shape is the same one the platform already ships.
+
+### 4. Generation
+
+`generateWorkflowSpec` gains a `profile: 'run-plan'`: the catalog is the allowlist above, the agent list
+is the requester's launchable agents, shell and MCP are off, and the intent is only the user's own text.
+For Slack the intent is the verbatim message text and thread excerpt the user wrote, not a model
+paraphrase. The repair loop hard-gates on `validateSpec` errors and the skeleton policy, and every loop
+node needs `maxVisits` and `onExhausted`. Generation is an async job; its `JobWorkflow` is the existing
+`WorkflowAuthorJobWorkflow` shape and is not replay-affecting, because the output is recorded as an
+activity result and the run pins the resulting spec.
 
 ### 5. Router
 
-A `runPlanRouter` agent (cheap model, seeded as data) receives the intent and the names and
-descriptions of launchable templates and returns a ranked list with reasons and a "none fits"
-flag. It is advisory: the preview shows the top matches next to "generate new". Template text is
-untrusted input to the router and its output is validated against real launchable ids.
+A seeded `runPlanRouter` agent (cheap model) receives the intent and the id, name and description of the
+templates the requester can launch, and returns ranked ids with reasons and a "none fits" flag. Output
+is intersected with the launchable set, so injected template text can influence only ordering. It is
+named in the agent roster docs, `BUILTIN_MODELS`, `PREVIOUS_DEFAULT_MODEL_SPECS` handling and
+`NON_LAUNCHABLE_AGENT_KEYS`.
 
-### 6. Surfaces
+### 6. Abuse and cost controls
 
-- Gateway: `POST /run-plans` (intent, repo, optional agent), `GET /run-plans/:id`,
-  `POST /run-plans/:id/approve` (body: chosen template id or `generated`), `POST /run-plans/:id/reject`.
-  Generation runs as an async job. Each route has an `assistantPolicy` entry; approve is `confirm`.
-- Web: a "Describe the goal" mode on `/start` with a plan preview (outline, cost, mandatory
-  nodes marked, warnings) and an Approve button.
-- CLI: `auto-swe plan create`, `plan show`, `plan approve`, and `run --describe "<goal>" --yes`.
-- Slack: the channel assistant records a plan intent; fixed code creates the plan and posts it
-  with an Approve button. Approval requires a linked ENGINEER with repository reach.
+Registry settings: plans per user per hour, pending plans per user, and a per-plan generation attempt
+cap (default 3). Generation and routing spend is recorded against the team's budget. A sweeper expires
+`PENDING` plans and deletes expired and rejected ones after a retention window.
 
-### 7. Library-agent delivery
+### 7. Surfaces
 
-Plans built on a library agent other than the implementer path are output-only: `agent` nodes keep
-no changes and `runAgentTask` stays internal. Their results are text or artifacts reviewed at a
-human node. Delivery of non-engineering agent changes is a separate feature, available today
-through agent runs.
+- Gateway: `POST /run-plans`, `GET /run-plans/:id`, `POST /run-plans/:id/approve`,
+  `POST /run-plans/:id/reject`. Every route has an `assistantPolicy` entry; creating is `confirm`, and
+  approving is `never` for the assistant because it is the human decision.
+- Web: a "Describe the goal" mode on `/start` showing the router's matches beside "Generate new", then
+  the plan preview (outline, cost with unpriced nodes listed, mandatory nodes marked, warnings,
+  pinned agent versions) and an Approve button.
+- CLI: `auto-swe plan create|show|approve|reject`, and `run --describe "<goal>" --yes`.
+- Slack: the channel assistant records a plan intent; fixed code creates the plan and posts it with an
+  Approve button that only its creator can use. The channel path requires a linked, active ENGINEER with
+  repository reach, as agent runs do.
+
+### 8. Obligations
+
+A hand-written `RunPlan` migration (see the `prisma-pgvector-hnsw` skill, `db:deploy` only) with an
+owner-not-null CHECK; docs for the feature with a `## Limitations` section; the agent roster and model
+docs for `runPlanRouter`; an `upgrade-notes.md` entry only if a deployment must act. PRs opened by a
+planned run are marked so `evaluatePullRequest` skips `auto` mode for them. The spec moves to
+`docs/history/` when the work lands.
 
 ## Phasing
 
-1. Shared: skeleton policy, run-plan generation profile, cost estimate endpoint, tests.
-2. Gateway + worker: `RunPlan` model and migration, plan routes, generated-template persist and
-   launch, approval re-validation.
-3. Router agent and ranking.
-4. Dashboard mode.
-5. API/CLI.
+1. Shared: step allowlist, skeleton policy with dominance checks, `NON_LAUNCHABLE_AGENT` lint, cost
+   estimate helper, and the adversarial eval set (intents with expected graph properties, including
+   hostile ones that try to disable mandatory nodes).
+2. Data and worker: `RunPlan` model and migration, "Planned Run" system template, spec pinning in
+   `createWorkflowRun`, approval re-checks, `run-plan` generation profile, planned-run PR marking.
+3. Gateway: plan routes, quotas, expiry sweeper, assistant policy, router agent and ranking.
+4. CLI and API documentation.
+5. Dashboard mode.
 6. Slack.
-7. Eval set of intents with expected graph properties in the live-checks harness.
 
 ## Limitations
 
-- A generated spec is only as safe as the skeleton policy and `validateSpec`; neither judges
-  whether the middle nodes are a sensible way to do the task.
+- The skeleton policy pins the shape and configuration of the mandatory nodes; it does not judge
+  whether the free middle is a sensible way to do the task.
 - Cost estimates use role defaults and a fan-out guess; unpriced nodes are listed, not costed.
+- A plan is approved against agent versions and settings at that moment; a change afterwards makes the
+  plan unapprovable and the user must regenerate it.
