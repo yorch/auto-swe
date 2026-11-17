@@ -17,7 +17,7 @@ function isEnabled(s: ScheduledWorkRequestSummary): boolean {
 
 /**
  * The schedules a team owns: name, cadence, whether it is on and what its latest fire decided.
- * Editing stays on the schedules page, narrowed to the team.
+ * The list is read-only; the editor opens on the schedules page, which is not narrowed to the team.
  */
 export function TeamSchedulesSection({ team }: { team: { id: string; slug: string } }) {
   const { data, error, isError, isFetching, isLoading, refetch } = useSchedules({
@@ -27,12 +27,8 @@ export function TeamSchedulesSection({ team }: { team: { id: string; slug: strin
     <Card data-testid="manage-schedules">
       <CardHeader className="mb-2">
         <CardTitle>Schedules</CardTitle>
-        <ButtonLink
-          href={`/admin/schedules?team=${encodeURIComponent(team.slug)}`}
-          size="sm"
-          variant="secondary"
-        >
-          Open
+        <ButtonLink href="/admin/schedules" size="sm" variant="secondary">
+          Open schedules
         </ButtonLink>
       </CardHeader>
       <QueryBoundary

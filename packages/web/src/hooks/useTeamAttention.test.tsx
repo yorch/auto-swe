@@ -67,6 +67,27 @@ describe('team attention hooks', () => {
     expect(keys).toContainEqual(['me-summary']);
   });
 
+  it.each([409, 422])('refreshes the failures list after a %i', async (status) => {
+    const qc = newClient();
+    const invalidate = vi.spyOn(qc, 'invalidateQueries');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { code: 'X', message: 'no' } }), {
+            headers: { 'content-type': 'application/json' },
+            status,
+          })
+      )
+    );
+    const { result } = renderHook(() => useAssignFailure('t-1'), { wrapper: wrapper(qc) });
+    await act(async () => {
+      await result.current.mutateAsync({ assigneeId: 'u1', runId: 'r1' }).catch(() => undefined);
+    });
+    const keys = invalidate.mock.calls.map(([f]) => f?.queryKey);
+    expect(keys).toEqual([['team-attention-failures', 't-1']]);
+  });
+
   it('POSTs a nudge to the step and returns when it went out', async () => {
     const spy = setupFetchMock({
       'POST /api/v1/human-steps/s1/nudge': () => ({ data: { nudgedAt: '2026-11-16T10:00:00Z' } }),

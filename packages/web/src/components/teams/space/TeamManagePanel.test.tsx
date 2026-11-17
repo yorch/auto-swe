@@ -138,4 +138,14 @@ describe('TeamManagePanel', () => {
     await within(budget).findByRole('progressbar');
     expect(screen.queryByRole('button', { name: 'Request a change' })).toBeNull();
   });
+
+  it('shows the meter with no controls while the caller’s budget rights are unknown', async () => {
+    gateway();
+    render(withQuery(<TeamManagePanel canManageBudget={null} team={team} />));
+    const budget = await screen.findByTestId('manage-budget');
+    await within(budget).findByRole('progressbar');
+    expect(within(budget).queryByRole('button', { name: 'Request a change' })).toBeNull();
+    expect(within(budget).queryByRole('link')).toBeNull();
+    expect(within(budget).queryByText('Ask a team or organization admin to change it.')).toBeNull();
+  });
 });

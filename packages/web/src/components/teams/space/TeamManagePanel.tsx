@@ -2,7 +2,7 @@
 
 import type { TeamSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { BudgetMeter } from '@/components/teams/BudgetMeter';
 import { ServicePrincipalsSection } from '@/components/teams/ServicePrincipalsSection';
 import { TeamAttentionSection } from '@/components/teams/space/TeamAttentionSection';
@@ -95,11 +95,12 @@ function TeamBudgetPanel({
   canManageBudget,
   team,
 }: {
-  canManageBudget: boolean;
+  canManageBudget: boolean | null;
   team: TeamSummary;
 }) {
   const { data, error, isError, isFetching, isLoading, refetch } = useTeamOverview(team.id);
   const [requesting, setRequesting] = useState(false);
+  const trigger = useRef<HTMLSpanElement>(null);
   return (
     <Card data-testid="manage-budget">
       <CardHeader className="mb-2">
@@ -126,19 +127,22 @@ function TeamBudgetPanel({
         ) : (
           <p className="text-sm text-paper-400">No budget limit applies to this team.</p>
         )}
-        {!canManageBudget && (
+        {canManageBudget === false && (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-paper-400">Ask a team or organization admin to change it.</p>
-            <Button onClick={() => setRequesting(true)} size="sm" variant="secondary">
-              Request a change
-            </Button>
+            <span ref={trigger}>
+              <Button onClick={() => setRequesting(true)} size="sm" variant="secondary">
+                Request a change
+              </Button>
+            </span>
           </div>
         )}
       </QueryBoundary>
-      {!canManageBudget && (
+      {canManageBudget === false && (
         <TeamBudgetRequestDialog
           onClose={() => setRequesting(false)}
           open={requesting}
+          returnFocus={() => trigger.current?.querySelector('button') ?? null}
           teamId={team.id}
         />
       )}
@@ -179,8 +183,8 @@ export function TeamManagePanel({
   canManageBudget,
   team,
 }: {
-  /** Whether the caller may edit the team's budget cap. */
-  canManageBudget: boolean;
+  /** Whether the caller may edit the team's budget cap; null while that is not yet known. */
+  canManageBudget: boolean | null;
   team: TeamSummary;
 }) {
   return (

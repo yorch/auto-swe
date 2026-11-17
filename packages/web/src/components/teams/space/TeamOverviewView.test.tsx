@@ -266,7 +266,7 @@ describe('TeamOverviewView', () => {
     }
   });
 
-  it('shows the caller own running, failed and PR figures, each linked to its filtered page', () => {
+  it('shows the caller own running, failed and PR figures, each with a browse link and a definition', () => {
     render(
       <TeamOverviewView
         overview={{ ...base, mine: { failed: 2, prsAwaitingMerge: 1, running: 3 } }}
@@ -277,15 +277,24 @@ describe('TeamOverviewView', () => {
     expect(card.getByText('3')).toBeTruthy();
     expect(card.getByText('2')).toBeTruthy();
     expect(card.getByText('1')).toBeTruthy();
-    expect(card.getByRole('link', { name: 'View running' }).getAttribute('href')).toBe(
+    expect(card.getByRole('link', { name: 'Browse active requests' }).getAttribute('href')).toBe(
       '/requests?scope=MINE&state=active&team=payments'
     );
-    expect(card.getByRole('link', { name: 'View failed' }).getAttribute('href')).toBe(
+    expect(card.getByRole('link', { name: 'Browse failed requests' }).getAttribute('href')).toBe(
       '/requests?scope=MINE&state=failed&team=payments'
     );
-    expect(card.getByRole('link', { name: 'View PRs awaiting merge' }).getAttribute('href')).toBe(
+    expect(card.getByRole('link', { name: 'Browse open pull requests' }).getAttribute('href')).toBe(
       '/pull-requests?scope=MINE&state=OPEN&team=payments'
     );
+    expect(card.getByText('Requests you launched that are running')).toBeTruthy();
+    expect(
+      card.getByText('Failed attempts you launched or were assigned, last 30 days')
+    ).toBeTruthy();
+    expect(card.getByText('Pull requests of your requests awaiting a merge')).toBeTruthy();
+    for (const link of card.getAllByRole('link')) {
+      expect(link.textContent).not.toMatch(/\d/);
+      expect(link.textContent).not.toMatch(/^View /);
+    }
   });
 
   it('shows Start work on a launchable repository, linked to the team start page', () => {

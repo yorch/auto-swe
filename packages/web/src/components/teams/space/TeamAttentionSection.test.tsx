@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { withQuery } from '@/test/rtl-helpers';
@@ -40,6 +41,7 @@ function gateway(handlers: Record<string, () => Reply>) {
 const failure = (over: Record<string, unknown> = {}) => ({
   failedAt: '2026-11-15T10:00:00.000Z',
   formerLauncherName: 'Dana',
+  launchedByAutomation: false,
   repoName: 'acme/api',
   requestId: 'q1',
   runId: 'run-1',
@@ -48,6 +50,7 @@ const failure = (over: Record<string, unknown> = {}) => ({
 });
 
 const step = (over: Record<string, unknown> = {}) => ({
+  canNudge: true,
   hasSlackThread: true,
   id: 'step-1',
   kind: 'APPROVAL',
@@ -93,9 +96,13 @@ function renderSection() {
   render(withQuery(<TeamAttentionSection team={TEAM} />));
 }
 
+const ASSIGN = { name: 'Assign Fix the flaky login test' };
+const CONFIRM = { name: 'Confirm assignment of Fix the flaky login test' };
+const CANCEL = { name: 'Cancel assignment of Fix the flaky login test' };
+
 async function openAssign(email = 'ana@acme.test') {
-  fireEvent.click(await screen.findByRole('button', { name: 'Assign' }));
-  const select = screen.getByLabelText('Assign to') as HTMLSelectElement;
+  fireEvent.click(await screen.findByRole('button', ASSIGN));
+  const select = screen.getByLabelText('Assign Fix the flaky login test to') as HTMLSelectElement;
   const option = within(select).getByRole('option', { name: email }) as HTMLOptionElement;
   fireEvent.change(select, { target: { value: option.value } });
   return select;
@@ -134,9 +141,9 @@ describe('TeamAttentionSection', () => {
     });
     renderSection();
     expect(await screen.findByText('Fix the flaky login test')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Assign' })).toBeNull();
+    expect(screen.queryByRole('button', ASSIGN)).toBeNull();
     release();
-    expect(await screen.findByRole('button', { name: 'Assign' })).toBeTruthy();
+    expect(await screen.findByRole('button', ASSIGN)).toBeTruthy();
   });
 
   it('assigns a failure to the chosen member and refreshes the list', async () => {
@@ -157,7 +164,7 @@ describe('TeamAttentionSection', () => {
     );
     renderSection();
     await openAssign();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', CONFIRM));
     expect(await screen.findByText('No failures without an owner.')).toBeTruthy();
     const post = spy.mock.calls.find(([, init]) => init?.method === 'POST');
     expect(JSON.parse(String(post?.[1]?.body))).toEqual({ assigneeId: 'u1', runId: 'run-1' });
@@ -178,19 +185,24 @@ describe('TeamAttentionSection', () => {
     );
     renderSection();
     await openAssign();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', CONFIRM));
     expect(await screen.findByText(message)).toBeTruthy();
     expect(screen.getByText('Fix the flaky login test')).toBeTruthy();
   });
 
-  it('lists stale approvals with a Nudge only where there is a Slack thread, and the hint', async () => {
+  it('lists stale approvals with a Nudge only where the server accepts one, and the hint', async () => {
     gateway(
       baseHandlers({
         'GET /api/v1/human-steps': () => ({
           body: {
             data: [
               step(),
-              step({ hasSlackThread: false, id: 'step-2', title: 'Approve the migration' }),
+              step({
+                canNudge: false,
+                hasSlackThread: true,
+                id: 'step-2',
+                title: 'Approve the migration',
+              }),
             ],
           },
         }),
@@ -199,8 +211,10 @@ describe('TeamAttentionSection', () => {
     renderSection();
     const withThread = (await screen.findByText('Approve the deploy')).closest('li') as HTMLElement;
     const without = screen.getByText('Approve the migration').closest('li') as HTMLElement;
-    expect(within(withThread).getByRole('button', { name: 'Nudge' })).toBeTruthy();
-    expect(within(without).queryByRole('button', { name: 'Nudge' })).toBeNull();
+    expect(
+      within(withThread).getByRole('button', { name: 'Nudge Approve the deploy' })
+    ).toBeTruthy();
+    expect(within(without).queryByRole('button', { name: /^Nudge/ })).toBeNull();
     expect(screen.getByText("Replies in the step's Slack thread.")).toBeTruthy();
   });
 
@@ -222,8 +236,10 @@ describe('TeamAttentionSection', () => {
       })
     );
     renderSection();
-    fireEvent.click(await screen.findByRole('button', { name: 'Nudge' }));
-    const done = (await screen.findByRole('button', { name: 'Nudged' })) as HTMLButtonElement;
+    fireEvent.click(await screen.findByRole('button', { name: 'Nudge Approve the deploy' }));
+    const done = (await screen.findByRole('button', {
+      name: 'Nudged Approve the deploy',
+    })) as HTMLButtonElement;
     expect(done.disabled).toBe(true);
   });
 
@@ -237,9 +253,207 @@ describe('TeamAttentionSection', () => {
       })
     );
     renderSection();
-    fireEvent.click(await screen.findByRole('button', { name: 'Nudge' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Nudge Approve the deploy' }));
     expect(await screen.findByText('Already nudged in the last 4 hours.')).toBeTruthy();
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Nudged' })).toBeNull());
+    const done = (await screen.findByRole('button', {
+      name: 'Nudged Approve the deploy',
+    })) as HTMLButtonElement;
+    expect(done.disabled).toBe(true);
+  });
+
+  it('shows a recently nudged step as Nudged and disabled on first render', async () => {
+    const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    gateway(
+      baseHandlers({
+        'GET /api/v1/human-steps': () => ({ body: { data: [step({ lastNudgedAt: recent })] } }),
+      })
+    );
+    renderSection();
+    const button = (await screen.findByRole('button', {
+      name: 'Nudged Approve the deploy',
+    })) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+  });
+
+  it('offers Nudge again once the last nudge is older than 4 hours', async () => {
+    const old = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
+    gateway(
+      baseHandlers({
+        'GET /api/v1/human-steps': () => ({ body: { data: [step({ lastNudgedAt: old })] } }),
+      })
+    );
+    renderSection();
+    const button = (await screen.findByRole('button', {
+      name: 'Nudge Approve the deploy',
+    })) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+  });
+
+  it('offers only active members, sorted by email', async () => {
+    gateway(
+      baseHandlers({
+        'GET /api/v1/teams/t-1': () => ({
+          body: {
+            data: {
+              id: 't-1',
+              memberships: [
+                { id: 'm1', role: 'ENGINEER', user: { email: 'zed@acme.test', id: 'u3' } },
+                {
+                  id: 'm2',
+                  role: 'LEAD',
+                  user: { email: 'gone@acme.test', id: 'u2', isActive: false },
+                },
+                { id: 'm3', role: 'ENGINEER', user: { email: 'ana@acme.test', id: 'u1' } },
+              ],
+            },
+          },
+        }),
+      })
+    );
+    renderSection();
+    fireEvent.click(await screen.findByRole('button', ASSIGN));
+    const select = screen.getByLabelText('Assign Fix the flaky login test to');
+    const labels = within(select as HTMLElement)
+      .getAllByRole('option')
+      .map((o) => o.textContent);
+    expect(labels).toEqual(['Choose a member', 'ana@acme.test', 'zed@acme.test']);
+  });
+
+  it('says a failure launched by a person who left was launched by a former member', async () => {
+    gateway(
+      baseHandlers({
+        'GET /api/v1/teams/t-1/attention/failures': () => ({
+          body: { data: [failure({ formerLauncherName: null })] },
+        }),
+      })
+    );
+    renderSection();
+    expect(await screen.findByText(/launched by a former member/)).toBeTruthy();
+  });
+
+  it('says a failure launched by automation was launched by automation', async () => {
+    gateway(
+      baseHandlers({
+        'GET /api/v1/teams/t-1/attention/failures': () => ({
+          body: { data: [failure({ formerLauncherName: null, launchedByAutomation: true })] },
+        }),
+      })
+    );
+    renderSection();
+    expect(
+      await screen.findByText(/launched by automation \(a schedule or webhook\)/)
+    ).toBeTruthy();
+    expect(screen.queryByText(/former member/)).toBeNull();
+  });
+
+  it.each([409, 422])(
+    'refetches the failures after a %i so the row reflects the server',
+    async (status) => {
+      let reads = 0;
+      gateway(
+        baseHandlers({
+          'GET /api/v1/teams/t-1/attention/failures': () => {
+            reads += 1;
+            return { body: { data: [failure()] } };
+          },
+          'POST /api/v1/teams/t-1/failure-assignments': () => ({
+            body: { error: { code: 'X', message: 'nope' } },
+            status,
+          }),
+        })
+      );
+      renderSection();
+      await openAssign();
+      expect(reads).toBe(1);
+      fireEvent.click(screen.getByRole('button', CONFIRM));
+      await screen.findByText('nope');
+      await waitFor(() => expect(reads).toBe(2));
+    }
+  );
+
+  it('invalidates the failures, the overview and the desk after an assignment', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(qc, 'invalidateQueries');
+    gateway(
+      baseHandlers({
+        'POST /api/v1/teams/t-1/failure-assignments': () => ({
+          body: { data: { assignedAt: 'x', assigneeId: 'u1', runId: 'run-1' } },
+          status: 201,
+        }),
+      })
+    );
+    render(
+      <QueryClientProvider client={qc}>
+        <TeamAttentionSection team={TEAM} />
+      </QueryClientProvider>
+    );
+    await openAssign();
+    fireEvent.click(screen.getByRole('button', CONFIRM));
+    await waitFor(() => expect(invalidate).toHaveBeenCalled());
+    const keys = invalidate.mock.calls.map(([f]) => f?.queryKey);
+    expect(keys).toContainEqual(['team-attention-failures', 't-1']);
+    expect(keys).toContainEqual(['team-overview', 't-1']);
+    expect(keys).toContainEqual(['me-summary']);
+  });
+
+  it('keeps Confirm disabled while the assignment is pending and after it succeeded', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const spy = gateway(
+      baseHandlers({
+        'GET /api/v1/teams/t-1/attention/failures': () => ({ body: { data: [failure()] } }),
+        'POST /api/v1/teams/t-1/failure-assignments': () => ({
+          body: { data: { assignedAt: 'x', assigneeId: 'u1', runId: 'run-1' } },
+          status: 201,
+        }),
+      })
+    );
+    const real = spy.getMockImplementation();
+    spy.mockImplementation(async (input, init) => {
+      if (init?.method === 'POST') {
+        await gate;
+      }
+      return (real as NonNullable<typeof real>)(input, init);
+    });
+    renderSection();
+    await openAssign();
+    const confirm = screen.getByRole('button', CONFIRM) as HTMLButtonElement;
+    fireEvent.click(confirm);
+    await waitFor(() => expect(confirm.disabled).toBe(true));
+    release();
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'Failures with no owner' })).toBe(
+        document.activeElement
+      )
+    );
+    expect(confirm.disabled).toBe(true);
+  });
+
+  it('returns focus to the row Assign button when the chooser is cancelled', async () => {
+    gateway(baseHandlers());
+    renderSection();
+    await openAssign();
+    fireEvent.click(screen.getByRole('button', CANCEL));
+    const assign = await screen.findByRole('button', ASSIGN);
+    await waitFor(() => expect(document.activeElement).toBe(assign));
+  });
+
+  it('moves focus to the list heading once the assignment succeeded', async () => {
+    gateway(
+      baseHandlers({
+        'POST /api/v1/teams/t-1/failure-assignments': () => ({
+          body: { data: { assignedAt: 'x', assigneeId: 'u1', runId: 'run-1' } },
+          status: 201,
+        }),
+      })
+    );
+    renderSection();
+    await openAssign();
+    fireEvent.click(screen.getByRole('button', CONFIRM));
+    const heading = screen.getByRole('heading', { name: 'Failures with no owner' });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
   });
 
   it('links the open pull request count to the team’s open pull requests', async () => {

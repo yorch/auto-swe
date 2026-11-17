@@ -4,7 +4,7 @@ import type { TeamSummary } from '@auto-swe/shared/types/api';
 import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { KnowledgeBaseLinksPanel } from '@/components/knowledgeBases/KnowledgeBaseLinksSection';
 import { RepoShareAccess } from '@/components/repositories/RepoShareAccess';
 import { EgressAllowlistEditor } from '@/components/teams/EgressAllowlistEditor';
@@ -127,6 +127,13 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { params: urlParams, update: updateUrl } = useUrlFilters();
+  // Service principals moved to the Manage tab; an old bookmark follows them.
+  const movedToManage = urlParams.get('tab') === 'service-principals';
+  useEffect(() => {
+    if (movedToManage) {
+      router.replace(`/teams/${encodeURIComponent(summary.slug)}/manage`);
+    }
+  }, [movedToManage, router, summary.slug]);
 
   const [editing, setEditing] = useState(false);
   const [personaInput, setPersonaInput] = usePrefilledField(team?.defaultPersonaPrompt);

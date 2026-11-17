@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Textarea } from '@/components/ui/Textarea';
@@ -19,15 +19,19 @@ function submitError(e: unknown): string {
 
 /**
  * Where a lead who cannot edit the team's cap asks an admin to change it. The request carries a
- * reason and no amount: the admin decides the number.
+ * reason and no amount: the admin decides the number. Nobody is notified; admins find it in
+ * Settings, Budget.
  */
 export function TeamBudgetRequestDialog({
   onClose,
   open,
+  returnFocus,
   teamId,
 }: {
   onClose: () => void;
   open: boolean;
+  /** The button that opened the dialog; it gets focus back when the dialog closes. */
+  returnFocus?: () => HTMLElement | null;
   teamId: string;
 }) {
   const create = useCreateTeamBudgetRequest(teamId);
@@ -36,13 +40,23 @@ export function TeamBudgetRequestDialog({
   const [sent, setSent] = useState(false);
   const trimmed = reason.trim();
 
-  function close() {
-    setReason('');
-    setError(null);
-    setSent(false);
-    create.reset();
-    onClose();
-  }
+  const wasOpen = useRef(open);
+  const { reset } = create;
+
+  useEffect(() => {
+    if (open) {
+      wasOpen.current = true;
+      return;
+    }
+    if (wasOpen.current) {
+      wasOpen.current = false;
+      setReason('');
+      setError(null);
+      setSent(false);
+      reset();
+      returnFocus?.()?.focus();
+    }
+  }, [open, reset, returnFocus]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -61,15 +75,15 @@ export function TeamBudgetRequestDialog({
   return (
     <Modal
       dismissible={!create.isPending}
-      onClose={close}
+      onClose={onClose}
       open={open}
-      subtitle="An admin sees your reason and decides the new cap."
+      subtitle="Team and organization admins see it in Settings, Budget."
       title="Request a budget change"
     >
       {sent ? (
         <div className="space-y-4">
           <Alert variant="success">Request sent.</Alert>
-          <ModalFooter cancelLabel="Close" onCancel={close} />
+          <ModalFooter cancelLabel="Close" onCancel={onClose} />
         </div>
       ) : (
         <form className="space-y-3" onSubmit={submit}>
@@ -89,7 +103,7 @@ export function TeamBudgetRequestDialog({
           <ModalFooter
             disabled={trimmed.length === 0}
             isPending={create.isPending}
-            onCancel={close}
+            onCancel={onClose}
             pendingLabel="Sending…"
             submitLabel="Send request"
           />

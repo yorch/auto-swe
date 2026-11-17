@@ -2,7 +2,7 @@
 
 import type { HumanStepSummary, TeamAttentionFailure } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
-import { useState } from 'react';
+import { type Ref, useEffect, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -25,36 +25,70 @@ interface Member {
   label: string;
 }
 
-function BlockTitle({ children }: { children: React.ReactNode }) {
-  return <h4 className="mb-1 text-sm font-medium text-paper-200">{children}</h4>;
+const NUDGE_WINDOW_MS = 4 * 60 * 60 * 1000;
+
+function BlockTitle({
+  children,
+  ref,
+}: {
+  children: React.ReactNode;
+  ref?: Ref<HTMLHeadingElement>;
+}) {
+  return (
+    <h4 className="mb-1 text-sm font-medium text-paper-200 outline-none" ref={ref} tabIndex={-1}>
+      {children}
+    </h4>
+  );
+}
+
+function launcherText(failure: TeamAttentionFailure): string {
+  if (failure.formerLauncherName) {
+    return failure.formerLauncherName;
+  }
+  return failure.launchedByAutomation ? 'automation (a schedule or webhook)' : 'a former member';
 }
 
 /** One failure with no owner; Assign opens a chooser of the team's members. */
 function FailureRow({
   failure,
   members,
+  onAssigned,
   teamId,
 }: {
   failure: TeamAttentionFailure;
   members: Member[] | undefined;
+  onAssigned: () => void;
   teamId: string;
 }) {
   const assign = useAssignFailure(teamId);
   const [choosing, setChoosing] = useState(false);
   const [assigneeId, setAssigneeId] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const row = useRef<HTMLLIElement>(null);
+  const select = useRef<HTMLSelectElement>(null);
+  const returnFocus = useRef(false);
+
+  useEffect(() => {
+    if (choosing) {
+      select.current?.focus();
+    } else if (returnFocus.current) {
+      returnFocus.current = false;
+      row.current?.querySelector<HTMLElement>('[data-assign]')?.focus();
+    }
+  }, [choosing]);
 
   async function confirm() {
     setError(null);
     try {
       await assign.mutateAsync({ assigneeId, runId: failure.runId });
+      onAssigned();
     } catch (e) {
       setError(errMsg(e, 'Could not assign the failure.'));
     }
   }
 
   return (
-    <li className="py-2.5">
+    <li className="py-2.5" ref={row}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <span className="min-w-0">
           <Link
@@ -68,20 +102,27 @@ function FailureRow({
             {' · failed '}
             <RelativeTime value={failure.failedAt} />
             {' · launched by '}
-            {failure.formerLauncherName ?? 'a former member'}
+            {launcherText(failure)}
           </span>
         </span>
         {members && !choosing && (
-          <Button onClick={() => setChoosing(true)} size="sm" variant="secondary">
+          <Button
+            aria-label={`Assign ${failure.title}`}
+            data-assign=""
+            onClick={() => setChoosing(true)}
+            size="sm"
+            variant="secondary"
+          >
             Assign
           </Button>
         )}
         {members && choosing && (
           <span className="flex items-center gap-2">
             <select
-              aria-label="Assign to"
+              aria-label={`Assign ${failure.title} to`}
               className="h-8 rounded-md border border-ink-200 bg-ink-900 px-2 text-sm text-paper-100"
               onChange={(e) => setAssigneeId(e.target.value)}
+              ref={select}
               value={assigneeId}
             >
               <option value="">Choose a member</option>
@@ -92,7 +133,8 @@ function FailureRow({
               ))}
             </select>
             <Button
-              disabled={assigneeId === '' || assign.isPending}
+              aria-label={`Confirm assignment of ${failure.title}`}
+              disabled={assigneeId === '' || assign.isPending || assign.isSuccess}
               onClick={() => void confirm()}
               size="sm"
               variant="primary"
@@ -100,8 +142,10 @@ function FailureRow({
               Confirm
             </Button>
             <Button
+              aria-label={`Cancel assignment of ${failure.title}`}
               disabled={assign.isPending}
               onClick={() => {
+                returnFocus.current = true;
                 setChoosing(false);
                 setError(null);
               }}
@@ -129,16 +173,23 @@ function nudgeError(e: unknown): string {
   return errMsg(e, 'Could not send the nudge.');
 }
 
-/** One overdue pending step; Nudge shows only when its Slack announcement can be replied to. */
+/** One overdue pending step; Nudge shows only when the server will accept one. */
 function StaleApprovalRow({ step }: { step: HumanStepSummary }) {
   const nudge = useNudgeHumanStep();
   const [error, setError] = useState<string | null>(null);
+  const [limited, setLimited] = useState(false);
+  const nudgedAt = nudge.data?.nudgedAt ?? step.lastNudgedAt ?? null;
+  const recent = nudgedAt !== null && Date.now() - new Date(nudgedAt).getTime() < NUDGE_WINDOW_MS;
+  const nudged = recent || limited;
 
   async function send() {
     setError(null);
     try {
       await nudge.mutateAsync(step.id);
     } catch (e) {
+      if (e instanceof ApiError && e.status === 429) {
+        setLimited(true);
+      }
       setError(nudgeError(e));
     }
   }
@@ -154,22 +205,23 @@ function StaleApprovalRow({ step }: { step: HumanStepSummary }) {
             </span>
           )}
         </span>
-        {step.hasSlackThread === true && (
-          <span className="flex items-center gap-2">
-            {nudge.data && (
-              <span className="text-xs text-paper-500">
-                <RelativeTime value={nudge.data.nudgedAt} />
-              </span>
+        {step.canNudge === true && (
+          <Button
+            aria-label={`${nudged ? 'Nudged' : 'Nudge'} ${step.title}`}
+            disabled={nudge.isPending || nudged}
+            onClick={() => void send()}
+            size="sm"
+            variant="secondary"
+          >
+            {nudged ? (
+              <>
+                Nudged{recent && nudgedAt ? ' ' : ''}
+                {recent && nudgedAt && <RelativeTime value={nudgedAt} />}
+              </>
+            ) : (
+              'Nudge'
             )}
-            <Button
-              disabled={nudge.isPending || nudge.isSuccess}
-              onClick={() => void send()}
-              size="sm"
-              variant="secondary"
-            >
-              {nudge.isSuccess ? 'Nudged' : 'Nudge'}
-            </Button>
-          </span>
+          </Button>
         )}
       </div>
       {error && (
@@ -190,10 +242,11 @@ export function TeamAttentionSection({ team }: { team: { id: string; slug: strin
   const stale = useTeamStaleApprovals(team.id);
   const detail = useTeam(team.id);
   const overview = useTeamOverview(team.id);
-  const members: Member[] | undefined = detail.data?.memberships.map((m) => ({
-    id: m.user.id,
-    label: m.user.email,
-  }));
+  const failuresHeading = useRef<HTMLHeadingElement>(null);
+  const members: Member[] | undefined = detail.data?.memberships
+    .filter((m) => m.user.isActive !== false)
+    .map((m) => ({ id: m.user.id, label: m.user.email }))
+    .sort((a, b) => a.label.localeCompare(b.label));
   const staleSteps = stale.data ?? [];
   const openPullRequests = overview.data?.lead?.openPullRequests;
 
@@ -204,7 +257,7 @@ export function TeamAttentionSection({ team }: { team: { id: string; slug: strin
       </CardHeader>
       <div className="space-y-5">
         <section>
-          <BlockTitle>Failures with no owner</BlockTitle>
+          <BlockTitle ref={failuresHeading}>Failures with no owner</BlockTitle>
           <QueryBoundary
             error={failures.error}
             isError={failures.isError}
@@ -218,7 +271,13 @@ export function TeamAttentionSection({ team }: { team: { id: string; slug: strin
             ) : (
               <ul className="divide-y divide-ink-600">
                 {(failures.data ?? []).map((f) => (
-                  <FailureRow failure={f} key={f.runId} members={members} teamId={team.id} />
+                  <FailureRow
+                    failure={f}
+                    key={f.runId}
+                    members={members}
+                    onAssigned={() => failuresHeading.current?.focus()}
+                    teamId={team.id}
+                  />
                 ))}
               </ul>
             )}
@@ -244,7 +303,7 @@ export function TeamAttentionSection({ team }: { team: { id: string; slug: strin
                     <StaleApprovalRow key={s.id} step={s} />
                   ))}
                 </ul>
-                {staleSteps.some((s) => s.hasSlackThread === true) && (
+                {staleSteps.some((s) => s.canNudge === true) && (
                   <p className="mt-2 text-xs text-paper-500">Replies in the step's Slack thread.</p>
                 )}
               </>

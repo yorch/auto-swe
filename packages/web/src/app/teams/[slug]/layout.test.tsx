@@ -2,6 +2,7 @@
 
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useTeamSpace } from '@/components/teams/space/TeamSpaceContext';
 import { useAuthStore } from '@/stores/authStore';
 import { resetNavigation } from '@/test/mockNavigation';
 import { bodyOf, setupFetchMock, withQuery } from '@/test/rtl-helpers';
@@ -47,6 +48,11 @@ function renderLayout(slug: string) {
       </TeamSpaceLayout>
     )
   );
+}
+
+function BudgetProbe() {
+  const { canManageBudget } = useTeamSpace();
+  return <p>budget: {String(canManageBudget)}</p>;
 }
 
 beforeEach(() => {
@@ -187,5 +193,49 @@ describe('team space layout', () => {
     expect(
       spy.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === 'PATCH')
     ).toHaveLength(1);
+  });
+
+  it('does not say a lead may not manage the budget while the organizations load', async () => {
+    gateway([team('payments', 'Payments', 'LEAD')], {
+      'GET /api/v1/platform/organizations': () => ({
+        data: [{ id: 'org-1', name: 'Acme Corp', role: 'ORG_ADMIN', slug: 'acme' }],
+      }),
+    });
+    const inner = globalThis.fetch;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/api/v1/platform/organizations')) {
+        await gate;
+      }
+      return inner(input, init);
+    });
+    render(
+      withQuery(
+        <TeamSpaceLayout params={params('payments')}>
+          <BudgetProbe />
+        </TeamSpaceLayout>
+      )
+    );
+    await screen.findByRole('heading', { name: 'Payments' });
+    expect(screen.getByText('budget: null')).toBeTruthy();
+    release();
+    expect(await screen.findByText('budget: true')).toBeTruthy();
+  });
+
+  it('settles a lead who is no ORG_ADMIN on false once the organizations load', async () => {
+    gateway([team('payments', 'Payments', 'LEAD')], {
+      'GET /api/v1/platform/organizations': () => ({ data: [] }),
+    });
+    render(
+      withQuery(
+        <TeamSpaceLayout params={params('payments')}>
+          <BudgetProbe />
+        </TeamSpaceLayout>
+      )
+    );
+    expect(await screen.findByText('budget: false')).toBeTruthy();
   });
 });

@@ -46,4 +46,22 @@ describe('team budget request hooks', () => {
     });
     expect(bodyOf(spy, '/api/v1/teams/t-1/budget-requests')).toEqual({ reason: 'Launch month' });
   });
+
+  it('refreshes the pending requests after one is created', async () => {
+    const qc = newClient();
+    const invalidate = vi.spyOn(qc, 'invalidateQueries');
+    setupFetchMock({
+      'POST /api/v1/teams/t-1/budget-requests': () => ({ data: { id: 'b1' } }),
+    });
+    const { result } = renderHook(() => useCreateTeamBudgetRequest('t-1'), {
+      wrapper: wrapper(qc),
+    });
+    await act(async () => {
+      await result.current.mutateAsync({ reason: 'Launch month' });
+    });
+    expect(invalidate.mock.calls.map(([f]) => f?.queryKey)).toContainEqual([
+      'team-budget-requests',
+      't-1',
+    ]);
+  });
 });

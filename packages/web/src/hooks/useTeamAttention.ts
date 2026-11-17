@@ -9,7 +9,7 @@ import type {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApprovals } from '@/hooks/useApprovals';
 import { ME_SUMMARY_KEY } from '@/hooks/useMeSummary';
-import { api } from '@/lib/api';
+import { ApiError, api } from '@/lib/api';
 
 const failuresKey = (teamId: string) => ['team-attention-failures', teamId] as const;
 
@@ -44,6 +44,11 @@ export function useAssignFailure(teamId: string) {
           body
         )
         .then((r) => r.data),
+    onError: (e) => {
+      if (e instanceof ApiError && (e.status === 409 || e.status === 422)) {
+        void qc.invalidateQueries({ queryKey: failuresKey(teamId) });
+      }
+    },
     onSuccess: () => {
       for (const queryKey of [failuresKey(teamId), ['team-overview', teamId], ME_SUMMARY_KEY]) {
         void qc.invalidateQueries({ queryKey });

@@ -39,8 +39,8 @@ describe('TeamSchedulesSection', () => {
     expect(screen.getByText('Enabled')).toBeTruthy();
     expect(screen.getByText('Paused')).toBeTruthy();
     expect(screen.getByText('started')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Open' }).getAttribute('href')).toBe(
-      '/admin/schedules?team=payments'
+    expect(screen.getByRole('link', { name: 'Open schedules' }).getAttribute('href')).toBe(
+      '/admin/schedules'
     );
     expect(String(spy.mock.calls[0]?.[0])).toContain('teamId=team-1');
   });
@@ -49,6 +49,6 @@ describe('TeamSchedulesSection', () => {
     setupFetchMock({ 'GET /api/v1/scheduled-work-requests': () => ({ data: [] }) });
     render(withQuery(<TeamSchedulesSection team={{ id: 'team-1', slug: 'payments' }} />));
     expect(await screen.findByText('No schedules yet')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Open' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open schedules' })).toBeTruthy();
   });
 });

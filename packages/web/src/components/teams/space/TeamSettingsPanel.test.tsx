@@ -111,6 +111,13 @@ describe('TeamSettingsPanel sections', () => {
     expect(screen.queryByLabelText('Persona')).toBeNull();
   });
 
+  it('sends an old service-principals bookmark to the Manage tab', async () => {
+    mockTeam();
+    resetNavigation('tab=service-principals', '/teams/payments/settings');
+    renderPanel();
+    await waitFor(() => expect(nav.replace.at(-1)).toBe('/teams/payments/manage'));
+  });
+
   it('offers a team lead who is not a platform ADMIN no sandbox section, and lists no service principals', async () => {
     useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
     mockTeam();
