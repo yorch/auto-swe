@@ -18,6 +18,14 @@ export {
   ScheduledKnowledgeBaseSyncWorkflow,
 } from './knowledgeBases.js';
 export { onboardingPrWorkflow } from './onboardingPr.js';
+export {
+  approvalResolvedSignal,
+  attachResolvedSignal,
+  cancelSignal as orchestrationCancelSignal,
+  childFinishedSignal,
+  OrchestrationWorkflow,
+  userMessageSignal,
+} from './orchestration.js';
 export { prEvaluationWorkflow } from './prEvaluation.js';
 export { ReembedMemoryWorkflow, ReembedStaleMemoryWorkflow } from './reembedMemory.js';
 export { ReplaceEvalLessonsWorkflow } from './replaceEvalLessons.js';

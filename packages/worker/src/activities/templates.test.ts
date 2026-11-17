@@ -154,6 +154,11 @@ vi.mock('@auto-swe/shared/db', () => {
       findMany: vi.fn(async () => []),
     },
     harnessProfile: { findMany: vi.fn(async () => []) },
+    // An orchestration child's row, read to confirm a payload's orchestration id.
+    orchestrationChild: {
+      findFirst: vi.fn(async () => null),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+    },
     organizationMembership: { findUnique: vi.fn(async () => null) },
     orgMonthlyUsage: {
       upsert: vi.fn(),
@@ -403,6 +408,44 @@ describe('createWorkflowRun', () => {
       workRequestId: 'wr-1',
     });
     expect(upsertRun.mock.calls.at(-1)?.[0].create).not.toHaveProperty('connectionId');
+  });
+
+  it('stamps the orchestration on a child run and marks the child running with its run id', async () => {
+    const orchestrationId = '0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e';
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    upsertRun.mockResolvedValue({ id: 'run-child' } as never);
+    const findChild = vi.mocked(prisma.orchestrationChild.findFirst);
+    const markChild = vi.mocked(prisma.orchestrationChild.updateMany);
+    findChild.mockResolvedValueOnce({ id: 'child-1' } as never);
+    await createWorkflowRun({
+      payload: { agentRef: 'researcher', orchestrationId },
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: 'agent-1',
+      workRequestId: 'wr-child',
+    });
+    expect(upsertRun.mock.calls.at(-1)?.[0].create).toMatchObject({ orchestrationId });
+    expect(markChild).toHaveBeenLastCalledWith({
+      data: { runId: 'run-child', status: 'RUNNING' },
+      where: {
+        orchestrationId,
+        status: { in: ['STARTING', 'RUNNING'] },
+        workRequestId: 'wr-child',
+      },
+    });
+
+    // A payload naming an orchestration that has no child row for this request is not trusted.
+    findChild.mockResolvedValueOnce(null);
+    markChild.mockClear();
+    await createWorkflowRun({
+      payload: { agentRef: 'researcher', orchestrationId },
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: 'agent-2',
+      workRequestId: 'wr-forged',
+    });
+    expect(upsertRun.mock.calls.at(-1)?.[0].create).not.toHaveProperty('orchestrationId');
+    expect(markChild).not.toHaveBeenCalled();
   });
 
   it('persists team attribution from the run connection on create', async () => {

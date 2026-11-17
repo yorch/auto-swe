@@ -42,6 +42,23 @@ describe('stored source evidence', () => {
       diff: 'stored diff',
     });
   });
+  it('keeps orchestrationId and pathScopes of the source payload', async () => {
+    const orchestrationId = '0b1c2d3e-0000-4000-8000-000000000001';
+    m.source.mockResolvedValueOnce({
+      ...(await m.source()),
+      workRequest: {
+        description: 'original',
+        payload: {
+          agentRef: 'docsMaintainer',
+          deliver: 'none',
+          orchestrationId,
+          pathScopes: ['docs/**'],
+        },
+      },
+    });
+    const loaded = await loadStoredAgentChange('source', 'repo');
+    expect(loaded.agentPayload).toMatchObject({ orchestrationId, pathScopes: ['docs/**'] });
+  });
   it('rejects missing/empty source evidence and different-agent or changed-patch follow-ups', async () => {
     m.source.mockResolvedValueOnce(null);
     await expect(loadStoredAgentChange('source', 'repo')).rejects.toThrow(

@@ -194,6 +194,15 @@ export type { McpCallToolInput, McpCallToolResult } from './mcpCallTool.js';
 // P2/WS4 — declarative mcp node (single MCP tool call)
 export { mcpCallTool } from './mcpCallTool.js';
 export { openOnboardingPr } from './openOnboardingPr.js';
+// Orchestrated agent runs — the orchestrator turn, intent application and bookkeeping
+export { applyOrchestrationIntents } from './orchestrationApply.js';
+export {
+  beginOrchestrationRun,
+  cancelOrchestrationChildren,
+  recordOrchestrationStatus,
+  refreshOrchestrationChildren,
+} from './orchestrationControl.js';
+export { runOrchestratorTurn } from './orchestrationTurn.js';
 export type {
   ParseAgentOutputInput,
   ParseAgentOutputKind,

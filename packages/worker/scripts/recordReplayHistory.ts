@@ -1,7 +1,7 @@
 /**
  * Records workflow execution histories to binary fixtures, which
  * `runnable.replay.test.ts` (RunnableWorkflow) and `orchestration.replay.test.ts`
- * (the epic orchestrator and the channel workflows) replay against current
+ * (the epic orchestrator, the channel workflows and the orchestration conversation) replay against current
  * workflow code.
  *
  * One fixture per control-flow *shape*, because replay only guards the paths a
@@ -1506,6 +1506,83 @@ const SCENARIOS: Scenario[] = [
     workflow: {
       args: [{ conversationId: 'conv-replay', userId: 'user-replay' }],
       type: 'AssistantConversationWorkflow',
+    },
+  },
+  {
+    // An orchestration: a message starts a turn that spawns a child; the lost-signal backstop wakes
+    // twice and the second pass finds the child finished; that turn's spawn is refused, which wakes
+    // the orchestrator once to read the notice; then it idles out to WAITING.
+    activities: () => {
+      let turns = 0;
+      let applies = 0;
+      let refreshes = 0;
+      return {
+        applyOrchestrationIntents: async () => {
+          applies += 1;
+          return {
+            pendingApprovals: 0,
+            pendingAttach: false,
+            refused: applies === 2 ? 1 : 0,
+            runningChildren: applies === 1 ? 1 : 0,
+            spawned: applies === 1 ? 1 : 0,
+            wait: applies === 1,
+          };
+        },
+        // Far enough ahead that the recorder's skipped clock cannot pass the lifetime.
+        beginOrchestrationRun: async () => ({
+          createdAtMs: Date.now() + 30 * 24 * 3600 * 1000,
+          pendingApprovals: 0,
+          proceed: true,
+          runningChildren: 0,
+          turns: 0,
+          unseenChildIds: [],
+        }),
+        cancelOrchestrationChildren: async () => ({ cancelled: 0 }),
+        recordOrchestrationStatus: async () => {},
+        refreshOrchestrationChildren: async () => {
+          refreshes += 1;
+          return {
+            finishedChildIds: refreshes >= 2 ? ['child-1'] : [],
+            pendingApprovals: 0,
+            runningChildren: refreshes >= 2 ? 0 : 1,
+          };
+        },
+        runOrchestratorTurn: async () => {
+          turns += 1;
+          const spawn = {
+            intent: { agent: 'docsMaintainer', label: 'read', role: 'reader', task: 'read' },
+            kind: 'spawn',
+          };
+          return {
+            intents: turns <= 2 ? [spawn] : [],
+            pendingApprovals: 0,
+            runningChildren: turns === 1 ? 1 : 0,
+            status: 'COMPLETE',
+          };
+        },
+      };
+    },
+    drive: async (handle) => {
+      await handle.signal('userMessage', { messageId: 'message-1' });
+    },
+    name: 'orchestration-conversation',
+    workflow: {
+      args: [
+        {
+          orchestrationId: '0b1c2d3e-0000-4000-8000-0000000000aa',
+          pinned: {
+            maxChildren: 12,
+            maxConcurrentChildren: 4,
+            maxTurns: 200,
+            maxWallClockSeconds: 14_400,
+            maxWriterChildren: 4,
+          },
+          teamId: 'team-replay',
+          token: 'orch_fixture',
+          userId: 'user-replay',
+        },
+      ],
+      type: 'OrchestrationWorkflow',
     },
   },
 ];

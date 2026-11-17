@@ -1,5 +1,5 @@
 import { resolveSetting } from '@auto-swe/shared/config';
-import { Agent } from '@mastra/core/agent';
+import { Agent, type AgentExecutionOptions } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
 import {
   currentWorkflowId,
@@ -56,6 +56,11 @@ export interface RunAgentOptions {
    * with `BUDGET_EXCEEDED`, and an abort loses at most the one step in flight.
    */
   perStepAccounting?: boolean;
+  /**
+   * Called by the Mastra loop before every step (`prepareStep`). Used to inject steering messages
+   * at step boundaries. Ignored by a harness loop, which does not run through here.
+   */
+  prepareStep?: AgentExecutionOptions['prepareStep'];
   /**
    * Record into the caller's tracer instead of a private one, and leave
    * persisting and live flushing it to the caller (including any trace tags).
@@ -214,14 +219,16 @@ export async function runAgent<T = unknown>(
               },
             }
           : {};
+        const stepHook = options.prepareStep ? { prepareStep: options.prepareStep } : {};
         const callOptions = accounting
           ? {
               ...stepBudget,
               ...chunkOption,
+              ...stepHook,
               abortSignal: accounting.signal,
               onStepFinish: accounting.onStepFinish,
             }
-          : { ...stepBudget, ...chunkOption, ...abortSignalOption() };
+          : { ...stepBudget, ...chunkOption, ...stepHook, ...abortSignalOption() };
         const messages: Array<
           { role: 'user'; content: string } | { role: 'assistant'; content: string }
         > = [

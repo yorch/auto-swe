@@ -33,6 +33,7 @@ import { createProvisionTool, grantsProvisionTool } from '../agents/provisionToo
 import { buildWorkspaceTools } from '../agents/workspaceTools.js';
 import {
   currentWorkflowId,
+  currentWorkflowRunId,
   persistActivityTrace,
   startTraceFlushing,
   traceWorkspacePreparation,
@@ -56,6 +57,8 @@ import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { resolveRunEgressPolicy } from '../lib/egressWiring.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
+import { withMcpApproval } from '../lib/mcpApproval.js';
+import { childOrchestrationIdOf } from '../lib/orchestrationChildren.js';
 import {
   carriedUsage,
   checkSurfaceState,
@@ -74,6 +77,7 @@ import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
 import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
+import { createSteeringPrepareStep } from '../lib/runSteering.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { DraftPullRequestUnsupportedError } from '../lib/scm/types.js';
 import { storedFixInput } from '../lib/storedAgentChange.js';
@@ -88,6 +92,7 @@ import {
 import { renderTemplate } from './createOrUpdatePullRequest.js';
 import { resolvePrTitle } from './prTitle.js';
 import { runAgent } from './runAgent.js';
+import { runRepolessAgent } from './runRepolessAgentTask.js';
 import { parseDiffToFileChanges } from './utils.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
@@ -181,8 +186,17 @@ export interface AgentTaskCoreInput extends PauseOptions {
   baseBranch: string;
   /** The branch the gated commit is pushed to. */
   branch: string;
+  /**
+   * The run's `WorkflowRun.id`, set only for a run an orchestration started: the Mastra loop
+   * drains its undelivered steering messages at each step boundary.
+   */
+  steeringRunId?: string;
   /** The commit message of the gated commit. */
   commitMessage: string;
+  /** The run's path scopes (a writer child); the push policy refuses any path outside them. */
+  pathScopes?: readonly string[];
+  /** The run is an orchestration child: scopes are mandatory for a delivering one. */
+  orchestrated?: boolean;
   /** `push` delivers through the fresh trusted container; `none` reports the agent's own diff. */
   deliver: 'push' | 'none';
   /** Whether the gate lets the agent touch workflow files. */
@@ -406,9 +420,17 @@ export async function runAgentTaskCore(
       repoId: input.repo.id,
       resolved,
       settingsCtx,
+      ...(input.steeringRunId ? { steeringRunId: input.steeringRunId } : {}),
       tracer,
       workspace: agentWs,
     };
+    if (input.steeringRunId && harness) {
+      // A harness loop is one turn: it cannot take a message mid-run. Messages stay queued.
+      tracer.addActivityEvent({
+        name: 'agent.steering_not_supported',
+        outputJson: { runtime: loop.runtime },
+      });
+    }
     const result = harness
       ? await runOnHarness(loopInput, harness)
       : await runOnMastra(loopInput, (close) => {
@@ -496,6 +518,8 @@ export async function runAgentTaskCore(
       allowWorkflowChanges:
         allowWorkflowChanges && settings['workspace.agentRunAllowWorkflowChanges'],
       baseSha,
+      orchestrated: input.orchestrated === true,
+      pathScopes: input.pathScopes,
       sha: committed.sha,
       tracer,
     });
@@ -539,7 +563,9 @@ async function runAgentTaskImpl({
   request,
   resumeInput,
 }: RunAgentTaskInput): Promise<RunAgentTaskResult | NeedsInputResult> {
-  const repoId = requireRepoId(request, 'runAgentTask');
+  // No repository: a READER child of a repo-less orchestration (checked below), which runs with
+  // no workspace at all. Anything else without one is refused as before (`requireRepoId`).
+  const repoId = request.repoId ? requireRepoId(request, 'runAgentTask') : null;
   const workflowId = currentWorkflowId();
 
   // ── 1. Only the system template may run this, against the repo its ledger row names.
@@ -562,7 +588,7 @@ async function runAgentTaskImpl({
     select: { id: true, repoId: true, temporalWorkflowId: true },
     where: { temporalWorkflowId: workflowId },
   });
-  if (!ledger?.repoId || ledger.repoId !== repoId) {
+  if (!ledger || (repoId === null ? ledger.repoId !== null : ledger.repoId !== repoId)) {
     throw refuse(
       'The run does not name the repository its ledger row names',
       'AGENT_RUN_REPO_MISMATCH'
@@ -579,6 +605,30 @@ async function runAgentTaskImpl({
   if (!isLaunchableAgentKey(key)) {
     throw refuse(`Agent '${key}' cannot be launched as an agent run`, 'AGENT_NOT_LAUNCHABLE');
   }
+  // A repo-less run is only ever an orchestration reader: the child row the gateway wrote in the
+  // launch transaction must confirm it, it delivers nothing, and the team it is billed to comes
+  // from its work request. Any other launch path that reaches this step without a repository is
+  // refused here, whatever its payload says.
+  let repolessTenant: { orgId: string | undefined; teamId: string } | undefined;
+  if (repoId === null) {
+    const confirmed = await childOrchestrationIdOf(request.payload, request.workRequestId);
+    if (!confirmed || payload.deliver !== 'none' || payload.reviewFixOfRunId) {
+      throw refuse(
+        'A run with no repository must be a read-only child of an orchestration',
+        'NO_CONNECTION'
+      );
+    }
+    const billed = request.workRequestId
+      ? await prisma.runInput.findUnique({
+          select: { billingOrgId: true, billingTeamId: true },
+          where: { id: request.workRequestId },
+        })
+      : null;
+    if (!billed?.billingTeamId) {
+      throw refuse('A run with no repository names no team to bill', 'NO_CONNECTION');
+    }
+    repolessTenant = { orgId: billed.billingOrgId ?? undefined, teamId: billed.billingTeamId };
+  }
   if (!TICKET_RE.test(request.externalTicketId)) {
     throw refuse(
       'Agent runs publish under their own agent-<id> branch names',
@@ -587,7 +637,9 @@ async function runAgentTaskImpl({
   }
 
   // ── 3. Ceilings, kill switch and concurrency, from the platform's settings.
-  const baseCtx = await currentRequestContext();
+  const baseCtx: ResolveCtx = repolessTenant
+    ? { ...(await currentRequestContext()), ...repolessTenant }
+    : await currentRequestContext();
   // The template can never override a ceiling: the cascade is read with the
   // owning team and org only.
   const settingsCtx: ResolveCtx = { orgId: baseCtx.orgId, teamId: baseCtx.teamId };
@@ -638,6 +690,18 @@ async function runAgentTaskImpl({
   // ── 4. The shared core: resolve the agent at GLOBAL + ORGANIZATION (never the
   // owning team's scope — a member of a team the repo is shared with launches
   // this), run it in its container, gate the commit and push it.
+  if (repoId === null) {
+    // No clone, container, push policy, gate or delivery.
+    return await runRepolessAgent({
+      agentRef: payload.agentRef,
+      baseCtx,
+      effective,
+      key,
+      prompt: request.description,
+      ...(payload.orchestrationId ? { steeringRunId: await currentWorkflowRunId() } : {}),
+      ...(version !== undefined ? { version } : {}),
+    });
+  }
   const repo = await prisma.connection.findUniqueOrThrow({
     include: { installation: { select: { host: true, installationId: true } } },
     where: { id: repoId },
@@ -657,6 +721,8 @@ async function runAgentTaskImpl({
   let pr: { prNumber: number; prUrl: string } | undefined;
   const repoRef = toRepoRef(repo);
   const scm = getScmProvider(repoRef);
+  // A run an orchestration started takes steering messages at step boundaries (Mastra loop only).
+  const steeringRunId = payload.orchestrationId ? await currentWorkflowRunId() : undefined;
   const core = await runAgentTaskCore({
     agentVersions: baseCtx.agentVersions,
     allowPause,
@@ -667,6 +733,8 @@ async function runAgentTaskImpl({
     commitMessage: `auto: agent run ${request.externalTicketId} (${payload.agentRef})`,
     deliver: payload.deliver === 'none' ? 'none' : 'push',
     effective,
+    orchestrated: payload.orchestrationId !== undefined,
+    ...(payload.pathScopes ? { pathScopes: payload.pathScopes } : {}),
     initialChange,
     key,
     knowledgeBases,
@@ -674,6 +742,7 @@ async function runAgentTaskImpl({
     repo,
     resumeInput,
     skillRevisions: baseCtx.skillRevisions,
+    ...(steeringRunId ? { steeringRunId } : {}),
     version,
     ...(payload.deliver !== 'draft_pr'
       ? {}
@@ -753,6 +822,25 @@ async function runAgentTaskImpl({
   };
 }
 
+/**
+ * An orchestration's run waits for the launcher before an MCP write runs (`lib/mcpApproval.ts`);
+ * any other run's target comes back as it was.
+ */
+function guardedMcpTarget(
+  target: Awaited<ReturnType<typeof resolveAgentMcpUrl>>,
+  input: Pick<AgentLoopInput, 'deadline' | 'steeringRunId'>,
+  tracer: AgentTracer
+) {
+  return input.steeringRunId
+    ? withMcpApproval(target, {
+        expectOrchestrated: true,
+        runId: input.steeringRunId,
+        signal: input.deadline,
+        tracer,
+      })
+    : target;
+}
+
 interface AgentLoopInput {
   /** The agent may stop to ask a person (set only for a runtime that can). */
   allowPause?: true;
@@ -769,6 +857,8 @@ interface AgentLoopInput {
   settingsCtx: ResolveCtx;
   tracer: AgentTracer;
   repoId: string;
+  /** Drain this run's steering messages at step boundaries (Mastra loop only). */
+  steeringRunId?: string;
   workspace: Workspace;
 }
 
@@ -861,7 +951,11 @@ async function runOnMastra(
   // MCP per the agent's own configuration (a known exfiltration channel next
   // to a workspace; documented in docs/agent-runs.md). The agent resolves with
   // no team, so the connection is checked against the repository's team.
-  const mcpTarget = await resolveAgentMcpUrl(key, agentCtx, { tenant: input.settingsCtx, tracer });
+  const mcpTarget = await guardedMcpTarget(
+    await resolveAgentMcpUrl(key, agentCtx, { tenant: input.settingsCtx, tracer }),
+    input,
+    tracer
+  );
   let mcpTools: AgentTools | undefined;
   if (mcpTarget) {
     const loaded = await loadMcpTools(mcpTarget, tracer);
@@ -876,6 +970,9 @@ async function runOnMastra(
     ctx: input.settingsCtx,
     maxSteps: input.maxSteps,
     perStepAccounting: true,
+    ...(input.steeringRunId
+      ? { prepareStep: createSteeringPrepareStep(input.steeringRunId, tracer) }
+      : {}),
     // The workspace and MCP tools record their own calls on this tracer; any
     // other tool's calls are recorded from the loop's steps.
     selfRecordingTools: boundToolKeys(spec.tools, built, mcpTools, browserTools, provisionTools),
@@ -926,7 +1023,11 @@ async function runOnHarness(
     loadProjectSettings: true,
     maxTurns: input.maxSteps,
     // The connection the Mastra loop would bind, relayed from the worker.
-    mcp: await resolveAgentMcpUrl(key, agentCtx, { tenant: input.settingsCtx, tracer }),
+    mcp: await guardedMcpTarget(
+      await resolveAgentMcpUrl(key, agentCtx, { tenant: input.settingsCtx, tracer }),
+      input,
+      tracer
+    ),
     ...(input.allowPause ? { allowPause: true } : {}),
     ...(input.profile ? { profile: input.profile } : {}),
     tracer,

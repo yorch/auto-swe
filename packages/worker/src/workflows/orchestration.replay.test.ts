@@ -1,6 +1,6 @@
 /**
  * Determinism guard for the workflows that are not `RunnableWorkflow`: the epic
- * orchestrator, the campaign workflow, the channel assistant family and the in-app assistant's conversation workflow. The sibling of
+ * orchestrator, the campaign workflow, the channel assistant family, the in-app assistant's conversation workflow and the orchestration workflow. The sibling of
  * `runnable.replay.test.ts`, with the same contract — each committed history is
  * replayed against current workflow code, and a change that makes the workflow
  * take a different path on replay fails it.
@@ -104,6 +104,7 @@ describe('Epic and channel workflows — history replay', () => {
       ['epic-cancel', 'EpicOrchestratorWorkflow'],
       ['epic-dag', 'EpicOrchestratorWorkflow'],
       ['epic-planned', 'EpicOrchestratorWorkflow'],
+      ['orchestration-conversation', 'OrchestrationWorkflow'],
     ]);
   });
 
@@ -357,6 +358,27 @@ describe('Epic and channel workflows — history replay', () => {
         count('assistant-conversation', EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED)
       ).toBe(2);
       expect(typesOf('assistant-conversation')).toContain(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+      );
+    });
+
+    it('orchestration-conversation walked begin, a turn, the backstop, a refusal wake and idle', () => {
+      expect(activitiesOf('orchestration-conversation')).toEqual([
+        'beginOrchestrationRun',
+        'runOrchestratorTurn',
+        'applyOrchestrationIntents',
+        'refreshOrchestrationChildren',
+        'refreshOrchestrationChildren',
+        'runOrchestratorTurn',
+        'applyOrchestrationIntents',
+        'runOrchestratorTurn',
+        'recordOrchestrationStatus',
+      ]);
+      // The backstop is a durable timer, not a wall-clock read.
+      expect(
+        count('orchestration-conversation', EventType.EVENT_TYPE_TIMER_STARTED)
+      ).toBeGreaterThan(0);
+      expect(typesOf('orchestration-conversation')).toContain(
         EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
       );
     });
