@@ -111,7 +111,9 @@ named reason when any of these no longer holds:
 | `409` with `details.drift` | Agents, settings, catalog, repository or spec changed since generation |
 | `409` | The plan is not pending, or has expired |
 | `422` | The stored spec fails the policy |
-| `429` | Quota, or agent-run admission for an output-only plan |
+| `403` `AGENT_RUNS_DISABLED` | Agent runs are switched off, for an output-only plan |
+| `409` `PLAN_LAUNCH_FAILED` | A retried approval finds that the run it started has failed |
+| `429` `AGENT_RUN_CONCURRENCY_EXCEEDED` | Agent-run concurrency limit, for an output-only plan. Per-user quotas answer `429` on creation and ranking, not on approval |
 
 An approved plan starts a run of the hidden **Planned Run** system template. The worker re-checks
 the launcher, the policy and the agent pins, then pins the plan's spec as the run's
@@ -138,7 +140,8 @@ A person's limits are the lowest value across their teams and organizations, so 
 permissive team's repository does not raise them. A started generation counts against the hourly
 limit whether or not it yields a plan. Pending plans expire after 30 minutes; approval grants a
 10-minute launch window. A scheduled sweep (`RUN_PLAN_SWEEP_ENABLED`, `RUN_PLAN_SWEEP_CRON`; every
-15 minutes by default) expires and deletes plans that were never launched.
+15 minutes by default) marks pending and unlaunched approved plans past their expiry as expired,
+and deletes expired and rejected plans more than 7 days old. Launched plans are never touched.
 
 Plan, route and approval events are written to the audit log with ids, mode and team only; the goal
 and the spec are never logged.
@@ -191,7 +194,8 @@ approves a plan or starts a run.
 - **A duplicate burst can answer a spurious `429`.** Requests with one `Idempotency-Key` each hold a
   quota slot while in flight; one that loses the start gives its own slot back.
 - **Slack has no completion notice.** The plan row is created when the job is read, so the Slack
-  message links to the job, and a goal over about 1,100 characters is sent to the dashboard instead.
+  message links to the job, and a goal too long for the button's 2,000-character token gets no button: the reply asks the
+  person to shorten it or to use the dashboard.
 - **The Slack token is single-use through Temporal, not a table.** It holds while the job's history
   exists, and the token lives 15 minutes.
 - **A person in more than 50 teams and organizations** is limited by only the first 50 in a fixed order.
