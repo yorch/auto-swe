@@ -30,7 +30,7 @@ import { Textarea } from '@/components/ui/Textarea';
 import { useUserOrgs } from '@/hooks/useAdmin';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { useRepositories } from '@/hooks/useRepositories';
-import { useTeamBudgetRequests } from '@/hooks/useTeamBudgetRequests';
+import { useDismissBudgetRequest, useTeamBudgetRequests } from '@/hooks/useTeamBudgetRequests';
 import { useTeam, useUpdateTeam } from '@/hooks/useTeams';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { api } from '@/lib/api';
@@ -67,6 +67,7 @@ function RepoLine({ name, trailing }: { name: string; trailing: React.ReactNode 
  */
 function PendingBudgetRequests({ teamId }: { teamId: string }) {
   const { data } = useTeamBudgetRequests(teamId);
+  const dismiss = useDismissBudgetRequest(teamId);
   if (!data || data.length === 0) {
     return null;
   }
@@ -75,13 +76,27 @@ function PendingBudgetRequests({ teamId }: { teamId: string }) {
       <CardHeader className="mb-2">
         <CardTitle>Pending requests</CardTitle>
       </CardHeader>
+      {dismiss.isError ? (
+        <Alert variant="error">{errMsg(dismiss.error, 'Failed to dismiss the request')}</Alert>
+      ) : null}
       <ul className="divide-y divide-ink-600">
         {data.map((r) => (
-          <li className="py-2.5" key={r.id}>
-            <p className="text-sm text-paper-100">{r.reason}</p>
-            <p className="text-xs text-paper-500">
-              {r.requestedBy.name ?? 'A team member'} · <RelativeTime value={r.createdAt} />
-            </p>
+          <li className="flex items-start justify-between gap-3 py-2.5" key={r.id}>
+            <div>
+              <p className="text-sm text-paper-100">{r.reason}</p>
+              <p className="text-xs text-paper-500">
+                {r.requestedBy.name ?? 'A team member'} · <RelativeTime value={r.createdAt} />
+              </p>
+            </div>
+            <Button
+              aria-label={`Dismiss request: ${r.reason.slice(0, 30)}`}
+              disabled={dismiss.isPending}
+              onClick={() => dismiss.mutate(r.id)}
+              size="sm"
+              variant="secondary"
+            >
+              Dismiss
+            </Button>
           </li>
         ))}
       </ul>

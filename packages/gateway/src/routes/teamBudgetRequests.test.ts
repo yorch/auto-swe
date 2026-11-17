@@ -43,6 +43,23 @@ function build(opts: Opts = {}) {
     return row;
   });
   const findMany = vi.fn(async (_args: unknown) => rows.filter((r) => r.resolvedAt === null));
+  // A dismissal matches only a pending request of the team named in the where clause.
+  const updateMany = vi.fn(
+    async ({
+      data,
+      where,
+    }: {
+      data: { resolvedAt: Date };
+      where: { id: string; teamId: string; resolvedAt: null };
+    }) => {
+      const hit =
+        where.teamId === TEAM ? rows.find((r) => r.id === where.id && !r.resolvedAt) : null;
+      if (hit) {
+        hit.resolvedAt = data.resolvedAt;
+      }
+      return { count: hit ? 1 : 0 };
+    }
+  );
   const prisma = {
     // A rolled-back transaction leaves no row behind, as in Postgres.
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => {
@@ -68,14 +85,14 @@ function build(opts: Opts = {}) {
         orgId: ORG,
       })),
     },
-    teamBudgetRequest: { create, findMany },
+    teamBudgetRequest: { create, findMany, updateMany },
     teamMembership: {
       findUnique: vi.fn(async () => (opts.teamRole ? { role: opts.teamRole } : null)),
     },
   };
   const app = makeAuthedApp({ prisma, role: opts.platformRole ?? 'ENGINEER', sub: USER });
   app.register(teamBudgetRequestRoutes, { prefix: PREFIX });
-  return { app, create, findMany, prisma, rows };
+  return { app, create, findMany, prisma, rows, updateMany };
 }
 
 afterEach(() => vi.clearAllMocks());
@@ -206,5 +223,80 @@ describe('GET /teams/:id/budget-requests', () => {
     const res = await list(app);
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe('FORBIDDEN');
+  });
+});
+
+describe('POST /teams/:id/budget-requests/:requestId/dismiss', () => {
+  const REQUEST = '00000000-0000-4000-8000-0000000000b2';
+  const dismiss = (app: ReturnType<typeof build>['app'], id = REQUEST, team = TEAM) =>
+    app.inject({ method: 'POST', url: `${PREFIX}/${team}/budget-requests/${id}/dismiss` });
+
+  async function seeded(opts: Opts) {
+    const built = build(opts);
+    built.rows.push({
+      createdAt: CREATED_AT,
+      id: REQUEST,
+      reason: 'more please',
+      requestedBy: { id: USER, name: null },
+      resolvedAt: null,
+    });
+    await built.app.ready();
+    return built;
+  }
+
+  it('resolves a pending request for a team ADMIN and audits it in the transaction', async () => {
+    const { app, prisma, rows, updateMany } = await seeded({ teamRole: 'ADMIN' });
+    const res = await dismiss(app);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toEqual({ id: REQUEST });
+    expect(updateMany).toHaveBeenCalledWith({
+      data: { resolvedAt: expect.any(Date) },
+      where: { id: REQUEST, resolvedAt: null, teamId: TEAM },
+    });
+    expect(rows[0]?.resolvedAt).toBeInstanceOf(Date);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.configAuditLog.create).toHaveBeenCalledTimes(1);
+    const arg = JSON.stringify(prisma.configAuditLog.create.mock.calls[0]?.[0]);
+    expect(arg).toContain('TeamBudgetRequest');
+    expect(arg).toContain('UPDATE');
+    expect(arg).toContain(REQUEST);
+    expect(arg).toContain('"resolvedAt":null');
+  });
+
+  it('lets an ORG_ADMIN who is not on the team dismiss', async () => {
+    const { app } = await seeded({ orgRole: 'ORG_ADMIN' });
+    expect((await dismiss(app)).statusCode).toBe(200);
+  });
+
+  it('answers 404 BUDGET_REQUEST_NOT_FOUND for an unknown, foreign or resolved request', async () => {
+    const { app, prisma, rows } = await seeded({ teamRole: 'ADMIN' });
+    const unknown = await dismiss(app, '00000000-0000-4000-8000-0000000000ff');
+    expect(unknown.statusCode).toBe(404);
+    expect(unknown.json().error.code).toBe('BUDGET_REQUEST_NOT_FOUND');
+    // The id exists but belongs to another team: the where clause names this team, so no match.
+    const foreign = build({ teamRole: 'ADMIN' });
+    foreign.updateMany.mockResolvedValueOnce({ count: 0 });
+    await foreign.app.ready();
+    expect((await dismiss(foreign.app)).json().error.code).toBe('BUDGET_REQUEST_NOT_FOUND');
+    // Already resolved.
+    expect((await dismiss(app)).statusCode).toBe(200);
+    const again = await dismiss(app);
+    expect(again.statusCode).toBe(404);
+    expect(rows[0]?.resolvedAt).toBeInstanceOf(Date);
+    expect(prisma.configAuditLog.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a team LEAD without budget management and writes nothing', async () => {
+    const { app, prisma, updateMany } = await seeded({ teamRole: 'LEAD' });
+    const res = await dismiss(app);
+    expect(res.statusCode).toBe(403);
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(prisma.configAuditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('404s a caller with no standing on the team and rejects a non-uuid id', async () => {
+    const { app } = await seeded({ teamRole: null });
+    expect((await dismiss(app)).statusCode).toBe(404);
+    expect((await dismiss(app, 'nope')).statusCode).toBe(400);
   });
 });

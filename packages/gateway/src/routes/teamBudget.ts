@@ -87,22 +87,18 @@ export const teamBudgetRoutes: FastifyPluginAsync = async (fastify) => {
         ...(budgetAlertThresholdPercent !== undefined ? { budgetAlertThresholdPercent } : {}),
         ...(monthlyBudgetUsdCents !== undefined ? { monthlyBudgetUsdCents } : {}),
       };
-      // A request filed after the update began asks about the new cap, so it is not resolved.
-      const began = new Date();
       const updated = await fastify.prisma.$transaction(async (tx) => {
         const saved = await tx.team.update({
           data,
           select: { budgetAlertThresholdPercent: true, id: true, monthlyBudgetUsdCents: true },
           where: { id: access.team.id },
         });
-        if (
-          monthlyBudgetUsdCents !== undefined &&
-          monthlyBudgetUsdCents !== access.team.monthlyBudgetUsdCents
-        ) {
-          // A changed cap, raised or cleared, answers the requests waiting on it.
+        if (monthlyBudgetUsdCents !== undefined) {
+          // Saving the cap, changed or not, answers the requests waiting on it: an admin who
+          // decides the cap stands closes them by saving it as it is.
           await tx.teamBudgetRequest.updateMany({
-            data: { resolvedAt: began },
-            where: { createdAt: { lte: began }, resolvedAt: null, teamId: access.team.id },
+            data: { resolvedAt: new Date() },
+            where: { resolvedAt: null, teamId: access.team.id },
           });
         }
         return saved;

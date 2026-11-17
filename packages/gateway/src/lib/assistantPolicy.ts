@@ -518,6 +518,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/teams': 'confirm',
   'POST /api/v1/teams/:id/agent-library': 'confirm',
   'POST /api/v1/teams/:id/budget-requests': 'confirm',
+  'POST /api/v1/teams/:id/budget-requests/:requestId/dismiss': 'confirm',
   'POST /api/v1/teams/:id/credentials': { never: 'secret' },
   'POST /api/v1/teams/:id/failure-assignments': 'confirm',
   'POST /api/v1/teams/:id/members': { never: 'identity' },

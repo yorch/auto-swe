@@ -257,6 +257,69 @@ describe('TeamSettingsPanel budget and sharing', () => {
     ).toBeTruthy();
   });
 
+  it('dismisses a pending request and refetches the list', async () => {
+    let pending = [
+      {
+        createdAt: '2026-11-15T10:00:00.000Z',
+        id: 'b1',
+        reason: 'Launch month needs more headroom',
+        requestedBy: { id: 'u1', name: 'Dana Lead' },
+      },
+    ];
+    const spy = mock({
+      [`GET /api/v1/teams/${TEAM_ID}/budget-requests`]: () => ({ data: pending }),
+      [`POST /api/v1/teams/${TEAM_ID}/budget-requests/b1/dismiss`]: () => {
+        pending = [];
+        return { data: { id: 'b1' } };
+      },
+    });
+    resetNavigation('tab=budget', '/teams/payments/settings');
+    renderPanel('ADMIN');
+    const requests = await screen.findByTestId('budget-requests');
+    fireEvent.click(
+      within(requests).getByRole('button', {
+        name: 'Dismiss request: Launch month needs more headro',
+      })
+    );
+    await waitFor(() => expect(screen.queryByTestId('budget-requests')).toBeNull());
+    expect(
+      spy.mock.calls.filter(([url]) => String(url).endsWith('/budget-requests')).length
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it('shows the error and keeps the request when the dismissal fails', async () => {
+    const spy = mock({
+      [`GET /api/v1/teams/${TEAM_ID}/budget-requests`]: () => ({
+        data: [
+          {
+            createdAt: '2026-11-15T10:00:00.000Z',
+            id: 'b1',
+            reason: 'More',
+            requestedBy: { id: 'u1', name: 'Dana Lead' },
+          },
+        ],
+      }),
+    });
+    const base = spy.getMockImplementation() as (
+      input: RequestInfo | URL,
+      init?: RequestInit
+    ) => Promise<Response>;
+    spy.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).endsWith('/dismiss')
+        ? new Response(JSON.stringify({ error: { message: 'No pending budget request' } }), {
+            headers: { 'content-type': 'application/json' },
+            status: 404,
+          })
+        : base(input, init)
+    );
+    resetNavigation('tab=budget', '/teams/payments/settings');
+    renderPanel('ADMIN');
+    const requests = await screen.findByTestId('budget-requests');
+    fireEvent.click(within(requests).getByRole('button', { name: 'Dismiss request: More' }));
+    expect(await within(requests).findByText('No pending budget request')).toBeTruthy();
+    expect(within(requests).getByText('More')).toBeTruthy();
+  });
+
   it('renders nothing for the budget requests when there are none', async () => {
     mock({ [`GET /api/v1/teams/${TEAM_ID}/budget-requests`]: () => ({ data: [] }) });
     resetNavigation('tab=budget', '/teams/payments/settings');

@@ -260,6 +260,7 @@ export async function loadDeskEntries({
       select: {
         ...RUN_TEAM_SELECT,
         _count: { select: { humanSteps: { where: { status: 'PENDING' } } } },
+        attributedTeamId: true,
         endedAt: true,
         failureAssignment: {
           select: {
@@ -267,6 +268,7 @@ export async function loadDeskEntries({
             team: {
               select: { memberships: { select: { userId: true }, where: { userId: user.sub } } },
             },
+            teamId: true,
           },
         },
         id: true,
@@ -338,9 +340,11 @@ export async function loadDeskEntries({
       const failed = rows.get(failedId);
       // A failure is theirs to act on when they launched the attempt, or a lead assigned it to
       // them while they are still on the assigning team (the assignment never rewrites the
-      // launcher).
+      // launcher). The assignment counts only when the team that made it is the run's attributed
+      // team, as the owner's attention list reads it: a legacy row from a sharee team does not.
       const assigned =
         failed?.failureAssignment?.assigneeId === user.sub &&
+        failed.failureAssignment.teamId === failed.attributedTeamId &&
         failed.failureAssignment.team.memberships.length > 0;
       if (failed && (failed.launchedById === user.sub || assigned)) {
         entries.push({

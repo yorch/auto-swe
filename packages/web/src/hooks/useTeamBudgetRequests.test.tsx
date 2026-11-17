@@ -5,7 +5,11 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bodyOf, setupFetchMock } from '@/test/rtl-helpers';
-import { useCreateTeamBudgetRequest, useTeamBudgetRequests } from './useTeamBudgetRequests';
+import {
+  useCreateTeamBudgetRequest,
+  useDismissBudgetRequest,
+  useTeamBudgetRequests,
+} from './useTeamBudgetRequests';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -59,6 +63,25 @@ describe('team budget request hooks', () => {
     await act(async () => {
       await result.current.mutateAsync({ reason: 'Launch month' });
     });
+    expect(invalidate.mock.calls.map(([f]) => f?.queryKey)).toContainEqual([
+      'team-budget-requests',
+      't-1',
+    ]);
+  });
+});
+
+describe('useDismissBudgetRequest', () => {
+  it('POSTs the dismiss route and refreshes the pending requests', async () => {
+    const qc = newClient();
+    const invalidate = vi.spyOn(qc, 'invalidateQueries');
+    const spy = setupFetchMock({
+      'POST /api/v1/teams/t-1/budget-requests/b1/dismiss': () => ({ data: { id: 'b1' } }),
+    });
+    const { result } = renderHook(() => useDismissBudgetRequest('t-1'), { wrapper: wrapper(qc) });
+    await act(async () => {
+      await result.current.mutateAsync('b1');
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
     expect(invalidate.mock.calls.map(([f]) => f?.queryKey)).toContainEqual([
       'team-budget-requests',
       't-1',

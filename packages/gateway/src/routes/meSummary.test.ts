@@ -275,6 +275,7 @@ describe('GET /api/v1/me/summary', () => {
   const attempt = (id: string, status: string, launchedById: string | null, extra = {}) => ({
     ...runRow({ workflowId: `wf-${id}` }),
     _count: { humanSteps: 0 },
+    attributedTeamId: 'team-owner',
     endedAt: new Date(),
     id,
     launchedById,
@@ -295,9 +296,10 @@ describe('GET /api/v1/me/summary', () => {
   });
 
   /** An assignment to `assigneeId` whose team the caller (ME) still belongs to. */
-  const held = (assigneeId: string) => ({
+  const held = (assigneeId: string, teamId = 'team-owner') => ({
     assigneeId,
     team: { memberships: [{ userId: ME }] },
+    teamId,
   });
 
   it('includes failed latest attempts only when the caller launched them', async () => {
@@ -332,12 +334,31 @@ describe('GET /api/v1/me/summary', () => {
     ctx.prisma.workflowRun.findMany.mockResolvedValueOnce([
       {
         ...attempt('removed', 'FAILED', 'ex-member'),
-        failureAssignment: { assigneeId: ME, team: { memberships: [] } },
+        failureAssignment: { assigneeId: ME, team: { memberships: [] }, teamId: 'team-owner' },
       },
     ]);
     const body = await get();
     expect(body.needsYou.items).toEqual([]);
     expect(body.needsYou.total).toBe(0);
+  });
+
+  it("drops a failure assigned by a team other than the run's attributed team", async () => {
+    ctx.prisma.workflowRun.findMany.mockResolvedValueOnce([
+      // A legacy row written by a sharee team: the owner's list calls this run unowned.
+      {
+        ...attempt('legacy', 'FAILED', 'ex-member'),
+        failureAssignment: held(ME, 'team-sharee'),
+      },
+      {
+        ...attempt('unattributed', 'FAILED', 'ex-member'),
+        attributedTeamId: null,
+        failureAssignment: held(ME),
+      },
+      { ...attempt('owned', 'FAILED', 'ex-member'), failureAssignment: held(ME) },
+    ]);
+    const body = await get();
+    expect(body.needsYou.items.map((i) => i.key)).toEqual(['owned']);
+    expect(body.needsYou.total).toBe(1);
   });
 
   it("lists a failed attempt the caller launched even when another launcher's sorts first", async () => {

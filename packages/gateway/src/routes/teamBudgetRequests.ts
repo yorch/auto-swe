@@ -12,6 +12,7 @@ import { teamBudgetAccess } from '../lib/teamBudgetAccess.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const TeamParamsSchema = z.object({ id: z.string().uuid() });
+const RequestParamsSchema = z.object({ id: z.string().uuid(), requestId: z.string().uuid() });
 
 const CreateBodySchema: z.ZodType<CreateTeamBudgetRequestBody> = z.object({
   reason: z.string().trim().min(1).max(500),
@@ -117,6 +118,55 @@ export const teamBudgetRequestRoutes: FastifyPluginAsync = async (fastify) => {
         where: { resolvedAt: null, teamId: access.team.id },
       });
       return { data: rows.map(summary) };
+    }
+  );
+
+  // POST /api/v1/teams/:id/budget-requests/:requestId/dismiss — close a pending request without
+  // changing the cap, so the lead can ask again. Whoever may set the cap may dismiss.
+  app.post(
+    '/:id/budget-requests/:requestId/dismiss',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { params: RequestParamsSchema },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const access = await teamBudgetAccess(fastify.prisma, user, request.params.id);
+      if (!access) {
+        return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
+      }
+      if (!access.canManage) {
+        return sendError(reply, 403, 'FORBIDDEN', "Requires ADMIN role in this team's budget");
+      }
+      const { requestId } = request.params;
+      const dismissed = await fastify.prisma.$transaction(async (tx) => {
+        const { count } = await tx.teamBudgetRequest.updateMany({
+          data: { resolvedAt: new Date() },
+          where: { id: requestId, resolvedAt: null, teamId: access.team.id },
+        });
+        if (count === 0) {
+          return false;
+        }
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor: user,
+          after: { dismissed: true },
+          before: { resolvedAt: null },
+          client: tx,
+          entityId: requestId,
+          entityType: 'TeamBudgetRequest',
+        });
+        return true;
+      });
+      if (!dismissed) {
+        return sendError(
+          reply,
+          404,
+          'BUDGET_REQUEST_NOT_FOUND',
+          'No pending budget request with that id'
+        );
+      }
+      return { data: { id: requestId } };
     }
   );
 };

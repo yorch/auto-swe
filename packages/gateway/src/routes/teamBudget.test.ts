@@ -38,16 +38,12 @@ function build(opts: Opts = {}) {
     name: 'Payments',
     orgId: ORG,
   };
-  const updateStartedAt: number[] = [];
-  const update = vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
-    updateStartedAt.push(Date.now());
-    return {
-      budgetAlertThresholdPercent: null,
-      id: TEAM,
-      monthlyBudgetUsdCents: teamCap,
-      ...data,
-    };
-  });
+  const update = vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+    budgetAlertThresholdPercent: null,
+    id: TEAM,
+    monthlyBudgetUsdCents: teamCap,
+    ...data,
+  }));
   const resolvePending = vi.fn(async () => ({ count: 1 }));
   const prisma = {
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
@@ -80,7 +76,7 @@ function build(opts: Opts = {}) {
   };
   const app = makeAuthedApp({ prisma, role: opts.platformRole ?? 'ENGINEER', sub: USER });
   app.register(teamBudgetRoutes, { prefix: PREFIX });
-  return { app, prisma, resolvePending, update, updateStartedAt };
+  return { app, prisma, resolvePending, update };
 }
 
 afterEach(() => vi.clearAllMocks());
@@ -179,13 +175,13 @@ describe('PATCH /teams/:id/budget', () => {
     expect(prisma.configAuditLog.create).toHaveBeenCalled();
   });
 
-  it('resolves the pending budget requests when the cap changes, set or cleared', async () => {
+  it('resolves the pending budget requests when the cap is saved, set or cleared', async () => {
     const set = build({ teamRole: 'ADMIN' });
     await set.app.ready();
     await patch(set.app, { monthlyBudgetUsdCents: 2500 });
     expect(set.resolvePending).toHaveBeenCalledWith({
       data: { resolvedAt: expect.any(Date) },
-      where: { createdAt: { lte: expect.any(Date) }, resolvedAt: null, teamId: TEAM },
+      where: { resolvedAt: null, teamId: TEAM },
     });
 
     const cleared = build({ teamCap: 100, teamRole: 'ADMIN' });
@@ -203,29 +199,16 @@ describe('PATCH /teams/:id/budget', () => {
     expect(resolvePending).toHaveBeenCalledTimes(1);
   });
 
-  it('resolves only requests created at or before the moment the update began', async () => {
-    const { app, resolvePending, updateStartedAt } = build({ teamRole: 'ADMIN' });
-    await app.ready();
-    const before = Date.now();
-    await patch(app, { monthlyBudgetUsdCents: 2500 });
-    const call = resolvePending.mock.calls[0] as unknown as [
-      { where: { createdAt: { lte: Date } } },
-    ];
-    const cutoff = call[0].where.createdAt.lte.getTime();
-    expect(cutoff).toBeGreaterThanOrEqual(before);
-    expect(cutoff).toBeLessThanOrEqual(updateStartedAt[0] ?? 0);
-  });
-
-  it('leaves pending requests alone when the saved cap is the stored one', async () => {
+  it('resolves the pending requests when the saved cap is the stored one', async () => {
     const same = build({ teamCap: 2500, teamRole: 'ADMIN' });
     await same.app.ready();
     expect((await patch(same.app, { monthlyBudgetUsdCents: 2500 })).statusCode).toBe(200);
-    expect(same.resolvePending).not.toHaveBeenCalled();
+    expect(same.resolvePending).toHaveBeenCalledTimes(1);
 
     const sameNull = build({ teamCap: null, teamRole: 'ADMIN' });
     await sameNull.app.ready();
     await patch(sameNull.app, { monthlyBudgetUsdCents: null });
-    expect(sameNull.resolvePending).not.toHaveBeenCalled();
+    expect(sameNull.resolvePending).toHaveBeenCalledTimes(1);
   });
 
   it('leaves pending requests alone when only the threshold changes or the save is refused', async () => {

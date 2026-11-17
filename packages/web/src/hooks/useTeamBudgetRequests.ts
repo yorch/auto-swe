@@ -35,3 +35,18 @@ export function useCreateTeamBudgetRequest(teamId: string) {
     onSuccess: () => qc.invalidateQueries({ queryKey: requestsKey(teamId) }),
   });
 }
+
+/** Close a pending request without changing the cap, so the lead can ask again. */
+export function useDismissBudgetRequest(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (requestId: string) =>
+      api
+        .post<{ data: { id: string } }>(
+          `/api/v1/teams/${teamId}/budget-requests/${requestId}/dismiss`,
+          {}
+        )
+        .then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: requestsKey(teamId) }),
+  });
+}
