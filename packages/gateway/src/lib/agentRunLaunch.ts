@@ -53,7 +53,7 @@ import {
   sendServiceLaunchRefusal,
   servicePrincipalLaunchGuard,
 } from './servicePrincipals.js';
-import { launchTrackedWorkflow } from './workflowLaunch.js';
+import { type LaunchGuard, launchTrackedWorkflow } from './workflowLaunch.js';
 
 /**
  * The agent-run launch pipeline, shared by `POST /api/v1/agent-runs`, its re-run route and the
@@ -175,6 +175,12 @@ export interface OrchestrationChildSeam {
   ) => Promise<void>;
   /** An existing child already launched under this deterministic workflow id (a retried spawn). */
   existing: (temporalWorkflowId: string) => Promise<Record<string, unknown> | null>;
+  /**
+   * A transactional launch guard run with the ledger rows (the MCP concurrency cap, for an
+   * orchestration launched through the MCP bridge). A refusal answers 409
+   * `AGENT_RUN_CONCURRENCY_EXCEEDED`.
+   */
+  guard?: LaunchGuard;
   /** Removes the child row when the workflow never started, ahead of the ledger compensation. */
   onStartFailed: (workRequestId: string) => Promise<void>;
   /**
@@ -762,7 +768,7 @@ export function createAgentRunLauncher(fastify: FastifyInstance) {
                 connectionId: repo?.id ?? null,
               }),
             }
-          : { guard: mcpWrite.launchGuard }),
+          : { guard: orch?.guard ?? mcpWrite.launchGuard }),
         audit: {
           actor: user ?? null,
           ...(egressPolicy ? { egressPolicy } : {}),
@@ -784,6 +790,13 @@ export function createAgentRunLauncher(fastify: FastifyInstance) {
         return raced.reply;
       }
       if (result.reason === 'GUARD_REFUSED') {
+        if (orch?.guard) {
+          return refuse(
+            409,
+            'AGENT_RUN_CONCURRENCY_EXCEEDED',
+            'You already have the maximum number of runs in flight; wait for one to finish'
+          );
+        }
         if (request.mcpBridge) {
           return sendRunCapRefusal(reply);
         }

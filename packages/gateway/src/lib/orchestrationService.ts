@@ -21,6 +21,7 @@ import type {
 } from '@auto-swe/shared/lib/orchestrationApi';
 import { repoMemberWhere } from '@auto-swe/shared/lib/repoMembership';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import type { OrchestrationPins } from './orchestrationInput.js';
@@ -129,10 +130,15 @@ export async function reachableRepoIds(
   if (viewer.admin) {
     return new Set(ids);
   }
-  const rows = await prisma.connection.findMany({
-    select: { id: true },
-    where: { id: { in: ids }, ...repoMemberWhere({ userId: viewer.sub }) },
-  });
+  const rows = await runUnscoped(
+    'repository reach is membership of the owning team or a team it is shared with, which is scoped to the viewer, not to one tenant',
+    ['Connection'],
+    () =>
+      prisma.connection.findMany({
+        select: { id: true },
+        where: { id: { in: ids }, ...repoMemberWhere({ userId: viewer.sub }) },
+      })
+  );
   return new Set(rows.map((r) => r.id));
 }
 
@@ -150,12 +156,39 @@ export async function canSeeRepoData(
 
 export const WITHHELD_RESULT = 'The result is withheld: it may contain repository content.';
 
+/** The fixed body of a message withheld from a viewer who cannot reach the attached repository. */
+export const WITHHELD_MESSAGE =
+  'Withheld: this part of the conversation involves a repository you cannot access.';
+
 /**
- * A transcript message as a viewer who cannot reach the repository sees it: a child's result is
- * withheld, and nothing else in the message names repository content. (Free text of the
- * orchestrator and the launcher is the conversation, which the named team may read.)
+ * A per-turn marker row the worker writes for its own bookkeeping (`payload.hidden === true`).
+ * It stays in the database and is never served: not in the transcript, not in the stream.
  */
-export function redactMessage(m: OrchestrationMessageDto): OrchestrationMessageDto {
+export function isHiddenMessage(m: { payload: unknown }): boolean {
+  const p = m.payload;
+  return (
+    !!p && typeof p === 'object' && !Array.isArray(p) && (p as { hidden?: unknown }).hidden === true
+  );
+}
+
+/**
+ * A transcript message as a viewer who cannot reach the repository sees it.
+ *
+ * Withheld whole (fixed body, payload `{ withheld: true }`): every orchestrator message, because
+ * the orchestrator writes after it has read full child results, and every NOTICE from the moment
+ * the repository was attached, because a notice can quote repository data. A child's result is
+ * withheld too. What is served as it was: the launcher's and users' own words, and everything
+ * written before the attach (no repository data existed in the conversation then).
+ */
+export function redactMessage(
+  m: OrchestrationMessageDto,
+  repoAttachedAt: Date | string | null = null
+): OrchestrationMessageDto {
+  const attachedMs = repoAttachedAt ? new Date(repoAttachedAt).getTime() : Number.NaN;
+  const afterAttach = !Number.isNaN(attachedMs) && new Date(m.createdAt).getTime() >= attachedMs;
+  if (m.role === 'ORCHESTRATOR' || (m.kind === 'NOTICE' && afterAttach)) {
+    return { ...m, body: WITHHELD_MESSAGE, payload: { withheld: true } };
+  }
   if (m.kind !== 'CHILD_RESULT') {
     return m;
   }
@@ -268,7 +301,8 @@ export function childView(
     finishedAt: row.endedAt ? row.endedAt.toISOString() : null,
     id: row.id,
     label: row.label,
-    pathScopes: row.pathScopes,
+    // File paths of the repository: only to someone who can reach it.
+    pathScopes: opts.redactRepo ? [] : row.pathScopes,
     prUrl: result?.prUrl ?? null,
     result,
     role: row.role,
@@ -483,7 +517,9 @@ export async function buildDetail(
     allowlist: row.allowlist,
     billing: {
       // Children spawned after an attach bill the repository's owning team; before it, the named team.
-      childrenTeamName: row.repo?.team?.name ?? row.team.name,
+      // The owning team of the attached repository is repository-derived: withheld from a viewer
+      // who cannot reach it.
+      childrenTeamName: sees ? (row.repo?.team?.name ?? row.team.name) : null,
       orchestratorTeamName: row.team.name,
     },
     budget: {

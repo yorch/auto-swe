@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { type Prisma, Role } from '@auto-swe/shared';
 import { resolveSetting, resolveSettings } from '@auto-swe/shared/config';
 import {
@@ -23,6 +23,7 @@ import {
   OrchestrationBodySchema,
 } from '@auto-swe/shared/lib/orchestrationApi';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { ACTIVE_WORKFLOW_TERMINAL_STATUSES } from '@auto-swe/shared/types/api';
 import type { BudgetTier } from '@auto-swe/shared/types/workflow';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -41,6 +42,7 @@ import {
   assertMcpWriteAllowed,
   mcpWriteAuditHook,
   mcpWriteBegin,
+  runCapGuard,
   sendRunCapRefusal,
 } from '../lib/mcpWriteGuard.js';
 import { authorizeTeamLaunch, checkPushPermission } from '../lib/orchestrationAccess.js';
@@ -53,6 +55,7 @@ import {
   childView,
   decodeCursor,
   encodeCursor,
+  isHiddenMessage,
   messageView,
   ORCHESTRATION_LIVE_STATUSES,
   parseStoredScopes,
@@ -111,6 +114,8 @@ const SpawnBody = z.object({
   turnKey: z.string().min(1).max(200),
 });
 
+/** Delivery modes from least to most permissive. */
+const DELIVER_RANK = ['none', 'branch', 'draft_pr'];
 const STREAM_POLL_MS = 1500;
 const STREAM_HEARTBEAT_MS = 15_000;
 const STREAM_MAX_MS = 16 * 60 * 1000;
@@ -210,12 +215,64 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
           action,
           ...after,
           ...(request.principal ? { serviceId: request.principal.servicePrincipalId } : {}),
+          // The call arrived through the MCP bridge, not the dashboard or the CLI.
+          ...(request.mcpBridge ? { mcp: { clientId: request.mcpBridge.clientId } } : {}),
         },
         entityId,
         entityType: 'Orchestration',
       });
     } catch (err) {
       request.log.error({ action, err }, 'orchestration audit entry could not be written');
+    }
+  }
+
+  /**
+   * Keep the orchestrator's own ledger row (`ActiveWorkflow`, keyed by the orchestration's workflow
+   * id and work request) in step with its status, so it counts toward a launcher's in-flight cap
+   * only while the orchestration is running. `close` finishes a row that is not terminal yet;
+   * `reopen` revives a row an idle or ended orchestration had closed as COMPLETED. The worker keeps
+   * the same row in step when it records WAITING or COMPLETED.
+   */
+  async function closeLedger(
+    request: FastifyRequest,
+    row: { id: string; workRequestId: string | null },
+    to: 'CANCELLED' | 'COMPLETED'
+  ): Promise<void> {
+    if (!row.workRequestId) {
+      return;
+    }
+    try {
+      await prisma.activeWorkflow.updateMany({
+        data: { currentStatus: to },
+        where: {
+          currentStatus: { notIn: [...ACTIVE_WORKFLOW_TERMINAL_STATUSES] },
+          temporalWorkflowId: orchestrationWorkflowId(row.id),
+          workRequestId: row.workRequestId,
+        },
+      });
+    } catch (err) {
+      request.log.error({ err, orchestrationId: row.id }, 'orchestrator ledger row not closed');
+    }
+  }
+
+  async function reopenLedger(
+    request: FastifyRequest,
+    row: { id: string; workRequestId: string | null }
+  ): Promise<void> {
+    if (!row.workRequestId) {
+      return;
+    }
+    try {
+      await prisma.activeWorkflow.updateMany({
+        data: { currentStatus: 'IMPLEMENTING' },
+        where: {
+          currentStatus: 'COMPLETED',
+          temporalWorkflowId: orchestrationWorkflowId(row.id),
+          workRequestId: row.workRequestId,
+        },
+      });
+    } catch (err) {
+      request.log.error({ err, orchestrationId: row.id }, 'orchestrator ledger row not reopened');
     }
   }
 
@@ -381,7 +438,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
   async function cancelLiveChildren(
     request: FastifyRequest,
     orchestrationId: string
-  ): Promise<{ failed: number; ids: string[] }> {
+  ): Promise<{ failed: number; failedIds: string[]; ids: string[] }> {
     const children = await prisma.orchestrationChild.findMany({
       select: {
         id: true,
@@ -389,18 +446,19 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       },
       where: { orchestrationId, status: { in: [...CHILD_LIVE_STATUSES] } },
     });
-    let failed = 0;
+    const failedIds = new Set<string>();
     for (const child of children) {
       for (const wf of child.workRequest.activeWorkflows) {
         try {
           await cancelRun(wf.temporalWorkflowId);
         } catch (err) {
-          failed += 1;
+          failedIds.add(child.id);
           request.log.error({ childId: child.id, err }, 'child cancel failed');
         }
       }
     }
-    return { failed, ids: children.map((c) => c.id) };
+    // `failed` counts children, not workflows: one child failing twice is one failure.
+    return { failed: failedIds.size, failedIds: [...failedIds], ids: children.map((c) => c.id) };
   }
 
   // ── Launch ────────────────────────────────────────────────────────────────
@@ -412,7 +470,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       config: { mcpScope: 'write', serviceScopes: ['runs:agent'] },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       onSend: mcpWriteAuditHook,
-      preValidation: mcpWriteBegin('start_orchestration'),
+      preValidation: mcpWriteBegin('orchestrations_launch'),
       schema: { body: OrchestrationLaunchSchema, headers: IdempotencyHeaderSchema },
     },
     async (request, reply) => {
@@ -426,7 +484,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
           budgetTier: body.budgetTier,
           idempotencyKey: request.headers['idempotency-key'],
         },
-        tool: 'start_orchestration',
+        tool: 'orchestrations_launch',
       });
       if (mcpWrite.refused) {
         return mcpWrite.refused;
@@ -441,6 +499,15 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
             'This delivery mode is not allowed through MCP'
           );
         }
+      }
+      // The MCP tool has no connection set; a bridged launch cannot widen the agents' reach.
+      if (request.mcpBridge && (body.connectionIds ?? []).length > 0) {
+        return sendError(
+          reply,
+          422,
+          'MCP_CONNECTIONS_NOT_ALLOWED',
+          'An orchestration launched through MCP has no MCP connection set'
+        );
       }
       const on = await switchOn(request, reply);
       if (on === 'sent') {
@@ -579,25 +646,72 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       const key = request.headers['idempotency-key'];
       const callerScope = idempotencyCallerScope(caller);
       const id = key ? uuidFromIdempotencyKey(`orchestration-${callerScope}`, key) : randomUUID();
-      if (key) {
-        const existing = await prisma.orchestration.findFirst({
-          select: { id: true, launchedById: true, serviceId: true, status: true },
-          where: { id, teamId: target.teamId },
-        });
-        if (existing) {
-          const same =
-            existing.launchedById === (user?.sub ?? null) &&
-            existing.serviceId === (service?.servicePrincipalId ?? null);
-          return same
-            ? reply.status(200).send({
-                data: {
-                  orchestrationId: existing.id,
-                  status: existing.status,
-                  workflowId: orchestrationWorkflowId(existing.id),
-                },
-              })
-            : sendError(reply, 409, 'RUN_CONFLICT', 'This idempotency key is already in use');
+      // What the caller asked for, as a digest stored with the launch: the same key with a
+      // different request is a mistake, not a replay (a bridged call; as for an agent run).
+      const requestDigest = createHash('sha256')
+        .update(
+          JSON.stringify({
+            allowlist: [...allowlist].sort(),
+            budgetTier: body.budgetTier,
+            connectionIds: [...connectionIds].sort(),
+            deliveryDefault: body.deliveryDefault,
+            repoId: body.repoId ?? null,
+            task: body.task,
+            teamId: body.teamId ?? null,
+          })
+        )
+        .digest('hex');
+      /** Answers a replay on `reply` and says so; false when there is nothing to replay. */
+      const replay = async (): Promise<boolean> => {
+        if (!key) {
+          return false;
         }
+        const existing = await prisma.orchestration.findFirst({
+          select: {
+            id: true,
+            launchedById: true,
+            serviceId: true,
+            status: true,
+            workRequest: { select: { payload: true } },
+          },
+          // A bridged call looks across teams, so a changed team is a mismatch, not a new launch.
+          where: request.mcpBridge ? { id } : { id, teamId: target.teamId },
+        });
+        if (!existing) {
+          return false;
+        }
+        const same =
+          existing.launchedById === (user?.sub ?? null) &&
+          existing.serviceId === (service?.servicePrincipalId ?? null);
+        if (!same) {
+          sendError(reply, 409, 'RUN_CONFLICT', 'This idempotency key is already in use');
+          return true;
+        }
+        const stored = (existing.workRequest?.payload ?? {}) as { requestDigest?: unknown };
+        if (
+          request.mcpBridge &&
+          typeof stored.requestDigest === 'string' &&
+          stored.requestDigest !== requestDigest
+        ) {
+          sendError(
+            reply,
+            422,
+            'IDEMPOTENCY_KEY_MISMATCH',
+            'This Idempotency-Key was already used for a different request. Use a new key for different orchestration inputs.'
+          );
+          return true;
+        }
+        reply.status(200).send({
+          data: {
+            orchestrationId: existing.id,
+            status: existing.status,
+            workflowId: orchestrationWorkflowId(existing.id),
+          },
+        });
+        return true;
+      };
+      if (await replay()) {
+        return reply;
       }
 
       const pinned = await resolvePins({ orgId: target.orgId, teamId: target.teamId });
@@ -649,7 +763,13 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
               externalTicketId: `orchestration-${id.replace(/-/g, '').slice(0, 8)}`,
               id: workRequestId,
               // The bounds this orchestration launched under; spawn validation reads them here.
-              payload: { orchestrationId: id, pinned },
+              // `mcpLaunched` keeps the MCP delivery and concurrency limits on every later spawn.
+              payload: {
+                ...(request.mcpBridge ? { mcpLaunched: true } : {}),
+                orchestrationId: id,
+                pinned,
+                requestDigest,
+              },
               requestedById: user?.sub ?? null,
               requestedByServiceId: service?.servicePrincipalId ?? null,
               requestPayload: JSON.stringify({ kind: 'orchestration', orchestrationId: id }),
@@ -715,6 +835,10 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
             return request.mcpBridge
               ? sendRunCapRefusal(reply)
               : sendServiceLaunchRefusal(reply, result.refusal);
+          }
+          // A concurrent launch with the same key won the insert: answer with its orchestration.
+          if (await replay()) {
+            return reply;
           }
           return sendError(reply, 409, 'RUN_CONFLICT', 'This orchestration already exists');
         }
@@ -916,7 +1040,10 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       const last = rows[rows.length - 1];
       const sees = await canSeeRepoData(prisma, viewerOf(request), row);
       return {
-        data: rows.map((m) => (sees ? messageView(m) : redactMessage(messageView(m)))),
+        // Hidden marker rows count toward the cursor but are never served.
+        data: rows
+          .filter((m) => !isHiddenMessage(m))
+          .map((m) => (sees ? messageView(m) : redactMessage(messageView(m), row.repoAttachedAt))),
         next: last ? encodeCursor(last) : null,
       };
     }
@@ -1024,7 +1151,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
             });
             // The repository may be attached while the stream is open: ask each poll.
             const live = await prisma.orchestration.findFirst({
-              select: { repoId: true, status: true },
+              select: { repoAttachedAt: true, repoId: true, status: true },
               where: { id: orchestrationId, teamId },
             });
             if (!live) {
@@ -1036,7 +1163,12 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
               repoId: live.repoId,
             });
             for (const m of messages) {
-              write('message', sees ? messageView(m) : redactMessage(messageView(m)));
+              if (!isHiddenMessage(m)) {
+                write(
+                  'message',
+                  sees ? messageView(m) : redactMessage(messageView(m), live.repoAttachedAt)
+                );
+              }
               cursor = { createdAt: m.createdAt, id: m.id };
             }
             const children = await prisma.orchestrationChild.findMany({
@@ -1097,12 +1229,12 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       config: { mcpScope: 'write' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       onSend: mcpWriteAuditHook,
-      preValidation: mcpWriteBegin('message_orchestration'),
+      preValidation: mcpWriteBegin('orchestrations_message'),
       schema: { body: OrchestrationBodySchema, params: IdParams },
     },
     async (request, reply) => {
       const mcpWrite = await assertMcpWriteAllowed(request, reply, {
-        tool: 'message_orchestration',
+        tool: 'orchestrations_message',
       });
       if (mcpWrite.refused) {
         return mcpWrite.refused;
@@ -1114,8 +1246,10 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       }
       // A quiet orchestration that completed starts again on a new message; a cancelled or
       // failed one does not.
+      // A bridged (MCP) caller may not restart one: that passes no concurrency check, so it stays
+      // a dashboard or CLI act.
       if (
-        row.status !== 'COMPLETED' &&
+        (row.status !== 'COMPLETED' || request.mcpBridge) &&
         !ORCHESTRATION_LIVE_STATUSES.includes(row.status as never)
       ) {
         return refusal(reply, 409, 'ORCHESTRATION_NOT_ACTIVE', 'This orchestration has ended');
@@ -1149,6 +1283,8 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
           name: ORCHESTRATION_SIGNALS.userMessage,
           payload: { messageId: message.id },
         });
+        // A revived (or waking) orchestration counts as in flight again.
+        await reopenLedger(request, row);
       } catch (err) {
         // Undo, so the person can send it again: the orchestrator never saw it.
         await prisma.orchestrationMessage.deleteMany({ where: { id: message.id } });
@@ -1176,12 +1312,12 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       config: { mcpScope: 'write', orchestrationToken: 'caller' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       onSend: mcpWriteAuditHook,
-      preValidation: mcpWriteBegin('message_orchestration'),
+      preValidation: mcpWriteBegin('orchestrations_message'),
       schema: { body: OrchestrationBodySchema, params: ChildParams },
     },
     async (request, reply) => {
       const mcpWrite = await assertMcpWriteAllowed(request, reply, {
-        tool: 'message_orchestration',
+        tool: 'orchestrations_message',
       });
       if (mcpWrite.refused) {
         return mcpWrite.refused;
@@ -1291,7 +1427,9 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
           allowlist: true,
           budgetTier: true,
           connectionIds: true,
+          deliveryDefault: true,
           id: true,
+          launchedById: true,
           orgId: true,
           repoId: true,
           status: true,
@@ -1397,6 +1535,27 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         return refuse('ROLE_RULE_VIOLATED', 'A reader delivers nothing and has no path scopes');
       }
 
+      // 4b. An orchestration launched through MCP stays inside the MCP delivery policy for every
+      // child: the live allowlist of modes, and never more than the launch default allowed.
+      const mcpLaunched =
+        (orch.workRequest?.payload as { mcpLaunched?: unknown } | null | undefined)?.mcpLaunched ===
+        true;
+      if (mcpLaunched && writer) {
+        const modes = (await resolveSettings(['mcp.agentRunAllowedDeliverModes']))[
+          'mcp.agentRunAllowedDeliverModes'
+        ];
+        const rank = (m: string | null | undefined) => DELIVER_RANK.indexOf(m ?? 'none');
+        if (
+          !modes.includes(intent.deliver as string) ||
+          rank(intent.deliver) > rank(orch.deliveryDefault)
+        ) {
+          return refuse(
+            'CHILD_NOT_ALLOWED',
+            `This orchestration was launched through MCP: a writer's delivery mode must be allowed by the MCP delivery restriction and no broader than the launch default (${orch.deliveryDefault ?? 'none'})`
+          );
+        }
+      }
+
       // 5. Scopes.
       const liveWriters = existing.filter(
         (c) => c.role === 'WRITER' && (CHILD_LIVE_STATUSES as readonly string[]).includes(c.status)
@@ -1487,23 +1646,36 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
             }
             try {
               await cancelRun(temporalWorkflowId);
+              await prisma.orchestrationChild.updateMany({
+                data: { endedAt: new Date(), status: 'CANCELLED' },
+                where: {
+                  orchestrationId: orch.id,
+                  status: { in: [...CHILD_LIVE_STATUSES] },
+                  workRequestId,
+                },
+              });
             } catch (err) {
+              // The workflow may still be running: do not mark the child finished (its result
+              // would be dropped and its writer scopes stop counting). The row stays STARTING for
+              // the cancel/end second sweep and the worker's refresh to finish.
               request.log.error({ err, temporalWorkflowId }, 'late child cancel failed');
             }
-            await prisma.orchestrationChild.updateMany({
-              data: { endedAt: new Date(), status: 'CANCELLED' },
-              where: {
-                orchestrationId: orch.id,
-                status: { in: [...CHILD_LIVE_STATUSES] },
-                workRequestId,
-              },
-            });
             return {
               code: 'ORCHESTRATION_NOT_ACTIVE',
               message: 'This orchestration ended while the agent was starting; it was cancelled',
               status: 409,
             };
           },
+          // MCP-launched: the child counts against the launcher's MCP concurrency cap, under the
+          // same transactional guard the launch used.
+          ...(mcpLaunched && orch.launchedById
+            ? {
+                guard: runCapGuard(
+                  orch.launchedById,
+                  (await resolveSettings(['mcp.maxConcurrentRuns']))['mcp.maxConcurrentRuns']
+                ),
+              }
+            : {}),
           checkRepo: async (repo) => {
             if (!writer) {
               return null;
@@ -1612,7 +1784,6 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
               workflowId: temporalWorkflowId,
               workRequestId,
             },
-            ...(clamped ? { clamped } : {}),
           }),
           ...(repoless ? { repoless } : {}),
         },
@@ -1823,18 +1994,22 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
           name: ORCHESTRATION_SIGNALS.attachResolved,
           payload: { accepted: true, messageId: pending.msg.id, repoId: repo.id },
         });
+        // The orchestration wakes: it counts as in flight again.
+        await reopenLedger(request, row);
       } catch (err) {
         // The workflow never learned of it. Undo, so the person can try again, unless a writer
         // has already been started against the repository in the meantime: then the attach
         // stands (a rollback would leave a writer on a repository the orchestration no longer
-        // has). Under the orchestration's row lock, the same one a spawn takes.
+        // has). Any child still running counts, reader or writer: a reader started after the
+        // attach already reads the repository. Under the orchestration's row lock, the same
+        // one a spawn takes.
         const undone = await prisma.$transaction(async (tx) => {
           // CLAUDE.md §7 exception: the same row lock a spawn holds while it writes its child.
           await tx.$queryRaw`SELECT id FROM orchestrations WHERE id = ${row.id}::uuid FOR UPDATE`;
-          const writers = await tx.orchestrationChild.count({
-            where: { orchestrationId: row.id, role: 'WRITER' },
+          const live = await tx.orchestrationChild.count({
+            where: { orchestrationId: row.id, status: { in: [...CHILD_LIVE_STATUSES] } },
           });
-          if (writers > 0) {
+          if (live > 0) {
             return false;
           }
           await tx.orchestration.updateMany({
@@ -1855,7 +2030,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         }
         request.log.error(
           { err, orchestrationId: row.id },
-          'attach stands but the workflow was not signalled: a writer already runs on it'
+          'attach stands but the workflow was not signalled: a child already runs on it'
         );
         await audit(request, row.id, 'attach', {
           accepted: true,
@@ -1926,6 +2101,8 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
           name: ORCHESTRATION_SIGNALS.attachResolved,
           payload: { accepted: false, messageId: pending.msg.id, repoId: null },
         });
+        // The orchestration wakes: it counts as in flight again.
+        await reopenLedger(request, row);
       } catch (err) {
         // Reopen the request so the person can decide again, unless it was resolved since.
         await prisma
@@ -2030,8 +2207,8 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       if (count !== 1) {
         return refusal(reply, 409, 'ORCHESTRATION_NOT_ACTIVE', 'This orchestration has ended');
       }
+      await closeLedger(request, row, 'CANCELLED');
       const first = await cancelLiveChildren(request, row.id);
-      let failed = first.failed;
       let orchestratorFailed = 0;
       try {
         await cancelRun(orchestrationWorkflowId(row.id));
@@ -2041,19 +2218,21 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       }
       // A second sweep: a spawn that was between its child row and its workflow start when the
       // first one ran has started by now (and cancels itself, see `afterStart`, if it did not
-      // notice), and a child the first sweep could not reach is tried again.
+      // notice), and a child the first sweep could not reach is tried again. A child still
+      // failing after the retry counts once, however many sweeps it failed in.
       const second = await cancelLiveChildren(request, row.id);
-      failed += second.failed;
       const children = new Set([...first.ids, ...second.ids]);
+      const failedChildren = new Set(second.failedIds);
+      const failed = failedChildren.size + orchestratorFailed;
       await audit(request, row.id, 'cancel', {
         children: children.size,
-        failed: failed + orchestratorFailed,
+        failed,
         scope: 'orchestration',
       });
       return {
         data: {
-          childrenCancelled: Math.max(0, children.size - second.failed),
-          failed: failed + orchestratorFailed,
+          childrenCancelled: Math.max(0, children.size - failedChildren.size),
+          failed,
           status: 'CANCELLED',
         },
       };
@@ -2072,8 +2251,26 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         return refusal(reply, 409, 'ORCHESTRATION_NOT_ACTIVE', 'This orchestration has ended');
       }
       // Children first, while the orchestration token is still valid: flipping the status revokes
-      // it, and the worker's own cancel calls would then be refused with 401.
+      // it, and the worker's own cancel calls would then be refused with 401. A child whose cancel
+      // fails is retried once; if any still fails the status is NOT flipped, because COMPLETED
+      // revokes the token and the orchestrator could no longer cancel the survivors itself.
       const first = await cancelLiveChildren(request, row.id);
+      const retry = first.failed > 0 ? await cancelLiveChildren(request, row.id) : first;
+      const stuck = first.failed > 0 ? retry.failedIds : [];
+      if (stuck.length > 0) {
+        await audit(request, row.id, 'cancel', {
+          children: new Set([...first.ids, ...retry.ids]).size,
+          failed: stuck.length,
+          scope: 'end',
+          status: 'not ended',
+        });
+        return refusal(
+          reply,
+          502,
+          'CHILD_CANCEL_FAILED',
+          `${stuck.length} child${stuck.length === 1 ? '' : 'ren'} could not be cancelled; the orchestration was not ended. Try again.`
+        );
+      }
       const { count } = await prisma.orchestration.updateMany({
         data: { endedAt: new Date(), status: 'COMPLETED' },
         where: { id: row.id, status: { in: [...ORCHESTRATION_LIVE_STATUSES] }, teamId: row.teamId },
@@ -2081,6 +2278,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       if (count !== 1) {
         return refusal(reply, 409, 'ORCHESTRATION_NOT_ACTIVE', 'This orchestration has ended');
       }
+      await closeLedger(request, row, 'COMPLETED');
       // A spawn that was between its child row and its workflow start is caught by this sweep or
       // by its own re-check after the start.
       const second = await cancelLiveChildren(request, row.id);
@@ -2090,8 +2288,8 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         request.log.warn({ err }, 'the orchestration ended but its workflow was not signalled');
       }
       await audit(request, row.id, 'cancel', {
-        children: new Set([...first.ids, ...second.ids]).size,
-        failed: first.failed + second.failed,
+        children: new Set([...first.ids, ...retry.ids, ...second.ids]).size,
+        failed: second.failed,
         scope: 'end',
       });
       return { data: { status: 'COMPLETED' } };

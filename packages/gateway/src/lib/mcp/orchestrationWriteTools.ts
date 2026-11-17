@@ -68,6 +68,14 @@ function orchestrationFailure(response: BridgeResponse, notFound: string): ToolR
       return failure(
         'This orchestration has ended, so it cannot take a message. Nothing was sent.'
       );
+    case '422 MCP_CONNECTIONS_NOT_ALLOWED':
+      return failure(
+        'An orchestration started through MCP has no MCP connection set. Nothing was started.'
+      );
+    case '422 IDEMPOTENCY_KEY_MISMATCH':
+      return failure(
+        'That idempotency key was already used for a different request. Use a new key. Nothing was started.'
+      );
     case '409 CHILD_NOT_ALLOWED':
       return failure(
         'That agent is not running (it has finished, or its run has not started yet). Nothing was sent.'
@@ -107,7 +115,7 @@ export function registerOrchestrationWriteTools(
     {
       annotations: { ...WRITE, title: 'Start an orchestration' },
       description:
-        'Start an orchestration: a conversation in which an orchestrator agent splits your task between the agents on `allowlist` and reports back. It acts as YOU, under YOUR identity and your saved GitHub credentials. Give `allowlist` (agent keys from list_agents, 1-20) and either `repoId` (from list_repositories) or a `teamId` you belong to; with no repository the orchestration can only read. Always the standard budget tier, and the in-flight run cap applies. `deliveryDefault` (default none) is what its writer agents deliver once a repository is attached, if the platform allows that mode through MCP. It cannot attach a repository, approve a tool call, cancel or end the orchestration: you do those in the dashboard, and the orchestrator may ask for them there. Use a new idempotencyKey per distinct task and reuse it only to retry that task. Follow with orchestrations_get and orchestrations_messages.',
+        'Start an orchestration: a conversation in which an orchestrator agent splits your task between the agents on `allowlist` and reports back. It acts as YOU, under YOUR identity and your saved GitHub credentials. Give `allowlist` (agent keys from list_agents, 1-20) and either `repoId` (from list_repositories) or a `teamId` you belong to; with no repository the orchestration can only read. Always the standard budget tier, and the in-flight run cap applies. `deliveryDefault` (default none) is the most its writer agents may deliver once a repository is attached (none, then branch, then draft_pr); every writer it starts must also use a delivery mode the platform allows through MCP at that moment, and its agents count toward your in-flight run cap. It cannot attach a repository, approve a tool call, cancel or end the orchestration: you do those in the dashboard, and the orchestrator may ask for them there. Use a new idempotencyKey per distinct task and reuse it only to retry that task. Follow with orchestrations_get and orchestrations_messages.',
       inputSchema: z
         .object({
           allowlist: z.array(z.string().min(1).max(130).regex(AGENT_REF_RE)).min(1).max(20),
@@ -180,7 +188,7 @@ export function registerOrchestrationWriteTools(
         title: 'Message an orchestration',
       },
       description:
-        'Send a message, as YOU, to an orchestration you launched: to its orchestrator, or with `childId` (from orchestrations_get) to one running agent, which reads it at its next step. A message to a finished orchestration or agent is refused. Only the launcher can send one. This is steering only: it does not approve a tool call, attach a repository, cancel or end anything. The text is read by agents as instructions from you. Each call counts against the per-minute write limit and a repeat sends the message again.',
+        'Send a message, as YOU, to an orchestration you launched: to its orchestrator, or with `childId` (from orchestrations_get) to one running agent, which reads it at its next step. A message to a finished orchestration (cancelled, failed or completed: a completed one is restarted from the dashboard, not here) or agent is refused. Only the launcher can send one. This is steering only: it does not approve a tool call, attach a repository, cancel or end anything. The text is read by agents as instructions from you. Each call counts against the per-minute write limit and a repeat sends the message again.',
       inputSchema: z
         .object({
           body: z.string().min(1).max(4000),

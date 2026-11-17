@@ -735,6 +735,18 @@ describe('POST /api/v1/agent-runs', () => {
       );
     });
 
+    it('refuses a child as 409 AGENT_RUN_CONCURRENCY_EXCEEDED when the seam guard refuses, before the workflow starts', async () => {
+      seam.guard = async () => 'MCP_RUN_CAP_REACHED';
+      try {
+        const res = await child({});
+        expect(res.statusCode).toBe(409);
+        expect(res.json().error.code).toBe('AGENT_RUN_CONCURRENCY_EXCEEDED');
+        expect(events).not.toContain('start');
+      } finally {
+        seam.guard = undefined;
+      }
+    });
+
     it('refuses with the late refusal once the workflow has started, instead of a success', async () => {
       seamRefusal = {
         code: 'ORCHESTRATION_NOT_ACTIVE',

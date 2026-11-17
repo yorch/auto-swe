@@ -25,8 +25,8 @@ export type McpWriteTool =
   | 'submit_work_request'
   | 'start_agent_run'
   | 'start_template_run'
-  | 'start_orchestration'
-  | 'message_orchestration'
+  | 'orchestrations_launch'
+  | 'orchestrations_message'
   | 'cancel_run';
 
 /** Refusal codes the MCP tools translate to a fixed message. The codes are a closed vocabulary. */
@@ -41,7 +41,7 @@ export const MCP_WRITE_CODES = {
 declare module 'fastify' {
   interface FastifyRequest {
     /** Set by {@link mcpWriteBegin} on a bridged write; read by {@link mcpWriteAuditHook}. */
-    mcpWrite?: { tool: McpWriteTool; inputDigest: string; target?: string };
+    mcpWrite?: { tool: McpWriteTool; inputDigest: string; target?: string; childId?: string };
   }
 }
 
@@ -81,7 +81,7 @@ const TERMINAL = [...ACTIVE_WORKFLOW_TERMINAL_STATUSES];
  * bridged launch of the same user counts after this one's rows are committed. `ActiveWorkflow` is
  * written synchronously at submit, unlike `WorkflowRun`, which the worker creates later.
  */
-function runCapGuard(userId: string, cap: number): LaunchGuard {
+export function runCapGuard(userId: string, cap: number): LaunchGuard {
   return async (tx: Prisma.TransactionClient) => {
     // CLAUDE.md §7 exception: Prisma cannot express a transaction-scoped advisory lock.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`mcp-launch:${userId}`}, 0))`;
@@ -199,10 +199,18 @@ export function mcpWriteBegin(tool: McpWriteTool) {
     if (!request.mcpBridge || !request.user) {
       return;
     }
-    const params = request.params as { id?: unknown } | undefined;
-    const target = tool === 'cancel_run' && typeof params?.id === 'string' ? params.id : undefined;
+    const params = request.params as { childId?: unknown; id?: unknown } | undefined;
+    const id = typeof params?.id === 'string' ? params.id : undefined;
+    // A cancel keeps the run id it targeted; the orchestration message tools keep the
+    // orchestration (and the child, on the child route). Identifiers, never text.
+    const target = tool === 'cancel_run' || tool === 'orchestrations_message' ? id : undefined;
+    const childId =
+      tool === 'orchestrations_message' && typeof params?.childId === 'string'
+        ? params.childId.slice(0, 64)
+        : undefined;
     const input = tool === 'cancel_run' ? { runId: target } : request.body;
     request.mcpWrite = {
+      ...(childId ? { childId } : {}),
       inputDigest: createHash('sha256')
         .update(JSON.stringify(input ?? null))
         .digest('hex'),
@@ -254,11 +262,18 @@ export async function mcpWriteAuditHook(
       action: 'CREATE',
       actor: user,
       after: {
+        childId: write.childId,
         clientName,
         errorCode: typeof body?.error?.code === 'string' ? body.error.code : undefined,
         inputDigest: write.inputDigest,
         oauthClientId: bridge.clientId,
-        runId: write.target,
+        orchestrationId:
+          write.tool === 'orchestrations_message'
+            ? write.target
+            : typeof body?.data?.orchestrationId === 'string'
+              ? body.data.orchestrationId
+              : undefined,
+        runId: write.tool === 'cancel_run' ? write.target : undefined,
         status: reply.statusCode,
         tool: write.tool,
         workflowIds: Array.isArray(workflowIds) ? workflowIds : undefined,

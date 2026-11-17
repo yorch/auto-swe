@@ -120,7 +120,14 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
           },
           where: { id: request.query.teamId },
         });
-        if (!team?.isActive || (team.memberships.length === 0 && user.role !== Role.ADMIN)) {
+        // The launch also requires membership of the organization: without it the list would
+        // offer ORGANIZATION agents to a team member outside the organization. Such a caller
+        // gets the answer a team that does not exist gets.
+        if (
+          !team?.isActive ||
+          (team.memberships.length === 0 && user.role !== Role.ADMIN) ||
+          !(await isOrgMember(fastify.prisma, user, team.orgId))
+        ) {
           return error(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
         }
         orgId = team.orgId;

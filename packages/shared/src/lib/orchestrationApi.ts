@@ -149,6 +149,8 @@ export type ApprovalDecisionBody = z.infer<typeof ApprovalDecisionBodySchema>;
 /** The worker's call to start a child: the validated intent plus the idempotency key of the turn. */
 export const SpawnChildResponseSchema = z.object({
   childId: z.string(),
+  /** Set when the requested `maxSteps` was lowered to the ceiling. */
+  clamped: z.object({ maxSteps: z.number().int() }).optional(),
   workflowId: z.string(),
   workRequestId: z.string(),
 });

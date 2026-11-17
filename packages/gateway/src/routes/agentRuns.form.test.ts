@@ -292,6 +292,14 @@ describe('agent run form support (agents, limits)', () => {
       expect((await get(`/api/v1/agent-runs/agents?teamId=${TEAM}`)).statusCode).toBe(200);
     });
 
+    it('answers 404 for a team member outside the team organization, as for a missing team', async () => {
+      orgMembers = [];
+      const res = await get(`/api/v1/agent-runs/agents?teamId=${TEAM}`);
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe('TEAM_NOT_FOUND');
+      expect(agentWheres).toEqual([]);
+    });
+
     it('leaves the repository behaviour alone when both are given', async () => {
       const res = await get(`/api/v1/agent-runs/agents?repoId=${REPO}&teamId=${TEAM}`);
       expect(res.statusCode).toBe(200);

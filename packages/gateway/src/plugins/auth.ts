@@ -1329,7 +1329,7 @@ async function admitOrchestrationToken(
           disabledAt: true,
           id: true,
           name: true,
-          team: { select: { isActive: true } },
+          team: { select: { isActive: true, organization: { select: { isActive: true } } } },
           teamId: true,
           templateIds: true,
         },
@@ -1338,17 +1338,22 @@ async function admitOrchestrationToken(
       .catch((err: unknown) => {
         throw new TokenUserLookupError(err);
       });
-    if (!sp || sp.disabledAt || !sp.team.isActive) {
+    // The same standing PAT admission requires: principal enabled, team and organization active.
+    if (!sp || sp.disabledAt || !sp.team.isActive || !sp.team.organization.isActive) {
       return { code: 'TOKEN_INVALID', message: 'The launching principal is disabled', status: 401 };
     }
     // Re-checked at every admission: the orchestration token carries no scope of its own, so the
     // principal must still hold a live token with `runs:agent` (a revoked or expired one, or one
-    // whose scope was dropped, ends the orchestration's authority to act).
+    // whose scope was dropped, ends the orchestration's authority to act). The token must be
+    // unrevoked, unexpired and carry an expiry, as PAT admission requires (a service token with
+    // none is refused, never treated as eternal). The model stores no token id, so ANY of the
+    // principal's runs:agent tokens that satisfies this keeps the orchestration alive, not
+    // necessarily the one that launched it.
     const holdsScope = await prisma.apiToken
       .findFirst({
         select: { id: true },
         where: {
-          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+          expiresAt: { gt: new Date() },
           revokedAt: null,
           scopes: { has: 'runs:agent' },
           servicePrincipalId: claims.serviceId,
