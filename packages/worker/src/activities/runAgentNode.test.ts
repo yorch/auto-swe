@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { buildKnowledgeTools } from '../agents/knowledgeTools.js';
 import { searchRunKnowledge } from '../lib/knowledgeBaseSearch.js';
 import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
@@ -14,30 +14,44 @@ vi.mock('../lib/knowledgeBaseSearch.js', () => ({
   searchRunKnowledge: vi.fn(async () => ({ injectionDropped: 0, mode: 'text', results: [] })),
 }));
 
-const { browser, findChannel, findRepo, harness, profileFor } = vi.hoisted(() => ({
-  browser: {
-    close: vi.fn(async () => {}),
-    construct: vi.fn(),
-    tool: { name: 'browser-start-app' },
-  },
-  findChannel: vi.fn(),
-  findRepo: vi.fn(),
-  harness: {
-    bind: vi.fn(),
-    build: vi.fn(),
-    close: vi.fn(),
-    select: vi.fn(),
-  },
-  profileFor: vi.fn(async (_args: unknown): Promise<unknown> => undefined),
-}));
+const { browser, findChannel, findRepo, findTemplate, harness, profileFor, resolveSettingsMock } =
+  vi.hoisted(() => ({
+    browser: {
+      close: vi.fn(async () => {}),
+      construct: vi.fn(),
+      tool: { name: 'browser-start-app' },
+    },
+    findChannel: vi.fn(),
+    findRepo: vi.fn(),
+    findTemplate: vi.fn(async (): Promise<unknown> => null),
+    harness: {
+      bind: vi.fn(),
+      build: vi.fn(),
+      close: vi.fn(),
+      select: vi.fn(),
+    },
+    profileFor: vi.fn(async (_args: unknown): Promise<unknown> => undefined),
+    resolveSettingsMock: vi.fn(
+      async (_keys: unknown, _ctx?: unknown): Promise<unknown> => ({
+        'workspace.agentRunMaxSteps': 50,
+        'workspace.agentRunMaxWallClockSeconds': 1800,
+      })
+    ),
+  }));
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     connection: { findUniqueOrThrow: findRepo },
     slackChannel: { findUnique: findChannel },
+    workflowTemplate: { findUnique: findTemplate },
   },
 }));
 vi.mock('@auto-swe/shared/config', () => ({
   resolveSetting: vi.fn(async (key: string) => (key === 'workspace.agentMaxSteps' ? 40 : 20_000)),
+  resolveSettings: resolveSettingsMock,
+  SETTING_DEFINITIONS: {
+    'workspace.agentRunMaxSteps': { defaultValue: 50 },
+    'workspace.agentRunMaxWallClockSeconds': { defaultValue: 1800 },
+  },
 }));
 vi.mock('../lib/config/harnessProfile.js', () => ({ resolveProfileForRuntime: profileFor }));
 vi.mock('../lib/config/agentRuntime.js', () => ({
@@ -127,7 +141,7 @@ vi.mock('../lib/pauseSnapshot.js', async (importOriginal) => ({
 }));
 vi.mock('../lib/activityLog.js', () => ({ logWarn: vi.fn() }));
 
-import { ApplicationFailure } from '@temporalio/activity';
+import { ApplicationFailure, Context } from '@temporalio/activity';
 import { createMastraBrowserTools } from '../agents/browserTools.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
 import { loadMcpTools } from '../agents/mcpTools.js';
@@ -514,6 +528,258 @@ describe('runAgentNode', () => {
 
     expect(vi.mocked(persistActivityTrace)).toHaveBeenCalledTimes(1);
   });
+  describe('planned-run ceilings', () => {
+    const planned = { origin: 'system:planned-run', teamId: null };
+    const plannedCtx = { orgId: 'org-1', teamId: 'team-1', workflowTemplateId: 'tpl-planned' };
+
+    async function runPlanned(): Promise<void> {
+      vi.mocked(currentRequestContext).mockResolvedValueOnce(plannedCtx);
+      findTemplate.mockResolvedValueOnce(planned);
+    }
+
+    it('hands a planned run both ceilings, resolved at its team and organization', async () => {
+      await runPlanned();
+      resolveSettingsMock.mockResolvedValueOnce({
+        'workspace.agentRunMaxSteps': 12,
+        'workspace.agentRunMaxWallClockSeconds': 600,
+      });
+      const events = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+      await runAgentNode({ agentRef: 'reviewer', userMessage: 'x' });
+      expect(findTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'tpl-planned' } })
+      );
+      expect(resolveSettingsMock).toHaveBeenCalledWith(
+        ['workspace.agentRunMaxSteps', 'workspace.agentRunMaxWallClockSeconds'],
+        { orgId: 'org-1', teamId: 'team-1' }
+      );
+      const options = mockedRunAgent.mock.calls[0][2];
+      expect(options).toMatchObject({ maxSteps: 12, perStepAccounting: true });
+      expect(options?.abortSignal).toBeInstanceOf(AbortSignal);
+      expect(options?.abortSignal?.aborted).toBe(false);
+      expect(events).toHaveBeenCalledWith({
+        name: 'agent.ceilings_applied',
+        outputJson: {
+          activityBudgetSeconds: null,
+          agentKey: 'reviewer',
+          effectiveWallClockSeconds: 600,
+          maxSteps: 12,
+          maxWallClockSeconds: 600,
+        },
+      });
+      events.mockRestore();
+    });
+
+    it.each([
+      ['max_steps', 'steps', 12],
+      ['wall_clock', 'wall_clock', 600],
+    ] as const)(
+      'fails the node at the %s ceiling, after recording the event',
+      async (stopped, ceiling, value) => {
+        await runPlanned();
+        resolveSettingsMock.mockResolvedValueOnce({
+          'workspace.agentRunMaxSteps': 12,
+          'workspace.agentRunMaxWallClockSeconds': 600,
+        });
+        mockedRunAgent.mockResolvedValueOnce({
+          stepCount: 12,
+          stoppedReason: stopped,
+          text: 'part',
+        });
+        const events = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+        const err = await runAgentNode({ agentRef: 'reviewer', userMessage: 'x' }).catch((e) => e);
+        expect(err).toBeInstanceOf(ApplicationFailure);
+        expect(err).toMatchObject({ nonRetryable: true, type: 'AGENT_CEILING_REACHED' });
+        expect(events).toHaveBeenCalledWith({
+          name: 'agent.ceiling_reached',
+          outputJson: { agentKey: 'reviewer', ceiling, steps: 12, value },
+        });
+        // The trace is still persisted: what the loop consumed stays on record.
+        expect(persistActivityTrace).toHaveBeenCalled();
+        events.mockRestore();
+      }
+    );
+
+    describe('activity timeout clamp', () => {
+      const withActivity = (startToCloseTimeoutMs: number | undefined) =>
+        vi.spyOn(Context, 'current').mockReturnValue({ info: { startToCloseTimeoutMs } } as never);
+      const configured = (seconds: number) =>
+        resolveSettingsMock.mockResolvedValueOnce({
+          'workspace.agentRunMaxSteps': 12,
+          'workspace.agentRunMaxWallClockSeconds': seconds,
+        });
+      afterEach(() => {
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+      });
+
+      it('clamps the default 1800 s to 600 - 90 s inside a 10 minute activity', async () => {
+        // The elapsed time is read from the clock, and the deadline is floored to whole seconds, so a
+        // real clock (a few ms of load) would give 509 s: freeze it.
+        vi.useFakeTimers({ toFake: ['Date'] });
+        await runPlanned();
+        configured(1800);
+        withActivity(600_000);
+        const events = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+        const spy = vi.spyOn(AbortSignal, 'timeout');
+        await runAgentNode({ agentRef: 'reviewer', userMessage: 'x' });
+        expect(spy).toHaveBeenCalledWith(510_000);
+        expect(events).toHaveBeenCalledWith({
+          name: 'agent.ceilings_applied',
+          outputJson: {
+            activityBudgetSeconds: 600,
+            agentKey: 'reviewer',
+            effectiveWallClockSeconds: 510,
+            maxSteps: 12,
+            maxWallClockSeconds: 1800,
+          },
+        });
+      });
+
+      it('shrinks the deadline by time already spent (a 30 minute activity, 20 minutes in)', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        await runPlanned();
+        configured(1800);
+        withActivity(1_800_000);
+        mockedRunAgent.mockImplementationOnce(
+          async () => ({ stepCount: 3, stoppedReason: 'wall_clock', text: 'part' }) as never
+        );
+        const spy = vi.spyOn(AbortSignal, 'timeout');
+        const events = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+        // Workspace-style setup: 20 minutes pass before the loop starts.
+        vi.mocked(resolveAgentRuntime).mockImplementationOnce(async () => {
+          vi.setSystemTime(Date.now() + 1_200_000);
+          return { runtime: 'mastra', source: 'run' };
+        });
+        const err = await runAgentNode({ agentRef: 'reviewer', userMessage: 'x' }).catch((e) => e);
+        expect(spy).toHaveBeenCalledWith(510_000);
+        expect(err).toMatchObject({ nonRetryable: true, type: 'AGENT_CEILING_REACHED' });
+        expect(events).toHaveBeenCalledWith({
+          name: 'agent.ceiling_reached',
+          outputJson: {
+            agentKey: 'reviewer',
+            ceiling: 'wall_clock',
+            clampedByActivityTimeout: true,
+            steps: 3,
+            value: 510,
+          },
+        });
+      });
+
+      it('uses a configured value below the activity budget as is', async () => {
+        await runPlanned();
+        configured(300);
+        withActivity(600_000);
+        const spy = vi.spyOn(AbortSignal, 'timeout');
+        await runAgentNode({ agentRef: 'reviewer', userMessage: 'x' });
+        expect(spy).toHaveBeenCalledWith(300_000);
+      });
+
+      it('falls back to the configured value when the activity info has no timeout', async () => {
+        await runPlanned();
+        configured(1800);
+        withActivity(undefined);
+        const spy = vi.spyOn(AbortSignal, 'timeout');
+        await runAgentNode({ agentRef: 'reviewer', userMessage: 'x' });
+        expect(spy).toHaveBeenCalledWith(1_800_000);
+      });
+
+      it('fails fast, non-retryably, when the activity budget is nearly spent', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        await runPlanned();
+        configured(1800);
+        withActivity(600_000);
+        vi.mocked(resolveAgentRuntime).mockImplementationOnce(async () => {
+          // 600 - 500 - 90 = 10 s of room, under the 30 s minimum.
+          vi.setSystemTime(Date.now() + 500_000);
+          return { runtime: 'mastra', source: 'run' };
+        });
+        const callsBefore = mockedRunAgent.mock.calls.length;
+        const err = await runAgentNode({ agentRef: 'reviewer', userMessage: 'x' }).catch((e) => e);
+        expect(err).toMatchObject({ nonRetryable: true, type: 'AGENT_CEILING_REACHED' });
+        expect(mockedRunAgent.mock.calls.length).toBe(callsBefore);
+        expect(persistActivityTrace).toHaveBeenCalled();
+      });
+    });
+
+    it('lets a planned node that finishes under its ceilings return its output', async () => {
+      await runPlanned();
+      await expect(runAgentNode({ agentRef: 'reviewer', userMessage: 'x' })).resolves.toEqual({
+        object: undefined,
+        text: 'verdict',
+      });
+    });
+
+    it('falls back to the registry defaults when the settings read fails', async () => {
+      await runPlanned();
+      resolveSettingsMock.mockRejectedValueOnce(new Error('db down'));
+      await runAgentNode({ agentRef: 'reviewer', userMessage: 'x' });
+      expect(mockedRunAgent.mock.calls[0][2]).toMatchObject({ maxSteps: 50 });
+    });
+
+    it("clamps a resolved ceiling to the registry's hard maximum", async () => {
+      await runPlanned();
+      resolveSettingsMock.mockResolvedValueOnce({
+        'workspace.agentRunMaxSteps': 9999,
+        'workspace.agentRunMaxWallClockSeconds': 999_999,
+      });
+      const events = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+      await runAgentNode({ agentRef: 'reviewer', userMessage: 'x' });
+      expect(mockedRunAgent.mock.calls[0][2]).toMatchObject({ maxSteps: 500 });
+      expect(events).toHaveBeenCalledWith({
+        name: 'agent.ceilings_applied',
+        outputJson: {
+          activityBudgetSeconds: null,
+          agentKey: 'reviewer',
+          effectiveWallClockSeconds: 14_400,
+          maxSteps: 500,
+          maxWallClockSeconds: 14_400,
+        },
+      });
+      events.mockRestore();
+    });
+
+    it('never falls back to unlimited on a malformed value', async () => {
+      await runPlanned();
+      resolveSettingsMock.mockResolvedValueOnce({
+        'workspace.agentRunMaxSteps': Number.NaN,
+        'workspace.agentRunMaxWallClockSeconds': undefined,
+      });
+      await runAgentNode({ agentRef: 'reviewer', userMessage: 'x' });
+      expect(mockedRunAgent.mock.calls[0][2]).toMatchObject({ maxSteps: 50 });
+    });
+
+    it('leaves an ordinary template unchanged, even when it has a template id', async () => {
+      vi.mocked(currentRequestContext).mockResolvedValueOnce({
+        ...plannedCtx,
+        workflowTemplateId: 'tpl-ordinary',
+      });
+      findTemplate.mockResolvedValueOnce({ origin: 'system:agent-run', teamId: null });
+      mockedRunAgent.mockResolvedValueOnce({ stoppedReason: 'max_steps', text: 'ok' });
+      await expect(runAgentNode({ agentRef: 'reviewer', userMessage: 'x' })).resolves.toEqual({
+        object: undefined,
+        text: 'ok',
+      });
+      expect(resolveSettingsMock).not.toHaveBeenCalled();
+      const options = mockedRunAgent.mock.calls[0][2];
+      expect(options).not.toHaveProperty('maxSteps');
+      expect(options).not.toHaveProperty('abortSignal');
+      expect(options).not.toHaveProperty('perStepAccounting');
+    });
+
+    it('does not even look up a template for a run that has none', async () => {
+      await runAgentNode({ agentRef: 'reviewer', userMessage: 'x' });
+      expect(findTemplate).not.toHaveBeenCalled();
+      expect(resolveSettingsMock).not.toHaveBeenCalled();
+    });
+
+    it('does not treat a team-owned template wearing the planned origin as planned', async () => {
+      vi.mocked(currentRequestContext).mockResolvedValueOnce(plannedCtx);
+      findTemplate.mockResolvedValueOnce({ origin: 'system:planned-run', teamId: 'team-1' });
+      await runAgentNode({ agentRef: 'reviewer', userMessage: 'x' });
+      expect(resolveSettingsMock).not.toHaveBeenCalled();
+    });
+  });
+
   describe('in a checkout', () => {
     it.each(['mastra', 'claude-code', 'pi'] as const)(
       'passes mounted reference material to the %s prompt',
@@ -1013,6 +1279,92 @@ describe('runAgentNode', () => {
 
       expect(workspace.destroy).toHaveBeenCalledTimes(1);
       expect(mockedRunAgent).not.toHaveBeenCalled();
+    });
+
+    it("bounds a planned run's harness turn by the ceilings and fails it at a stop", async () => {
+      vi.mocked(resolveAgentRuntime).mockResolvedValueOnce({
+        runtime: 'claude-code',
+        source: 'run',
+      });
+      vi.mocked(resolveAgent).mockResolvedValue({
+        id: 'row-3',
+        model: { apiKey: 'k', spec: 'anthropic/claude-sonnet-5-5', systemPrompt: 'Review.' },
+        runtime: 'claude-code',
+        skills: [],
+        toolKeys: ['readFile'],
+        version: 3,
+      } as never);
+      vi.mocked(currentRequestContext).mockResolvedValueOnce({
+        teamId: 'team-1',
+        workflowTemplateId: 'tpl-planned',
+      });
+      findTemplate.mockResolvedValueOnce({ origin: 'system:planned-run', teamId: null });
+      resolveSettingsMock.mockResolvedValueOnce({
+        'workspace.agentRunMaxSteps': 7,
+        'workspace.agentRunMaxWallClockSeconds': 300,
+      });
+      vi.mocked(runImplementerTurn).mockResolvedValueOnce({
+        steps: 7,
+        stoppedReason: 'max_steps',
+        text: 'part',
+      } as never);
+
+      await expect(
+        runAgentNode({
+          agentRef: 'reviewer',
+          userMessage: 'audit',
+          workspace: { branch: 'auto/JIRA-1', repoId: 'repo-1', ticketId: 'JIRA-1' },
+        })
+      ).rejects.toMatchObject({ nonRetryable: true, type: 'AGENT_CEILING_REACHED' });
+      expect(harness.build).toHaveBeenCalledWith(
+        expect.objectContaining({ deadline: expect.any(AbortSignal), maxTurns: 7 })
+      );
+    });
+
+    it("hands a planned run's harness the same clamped deadline as the Mastra loop", async () => {
+      // Frozen for the same reason as the clamp tests above: elapsed time is read from the clock.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.mocked(resolveAgentRuntime).mockResolvedValueOnce({
+        runtime: 'claude-code',
+        source: 'run',
+      });
+      vi.mocked(resolveAgent).mockResolvedValue({
+        id: 'row-3',
+        model: { apiKey: 'k', spec: 'anthropic/claude-sonnet-5-5', systemPrompt: 'Review.' },
+        runtime: 'claude-code',
+        skills: [],
+        toolKeys: ['readFile'],
+        version: 3,
+      } as never);
+      vi.mocked(currentRequestContext).mockResolvedValueOnce({
+        teamId: 'team-1',
+        workflowTemplateId: 'tpl-planned',
+      });
+      findTemplate.mockResolvedValueOnce({ origin: 'system:planned-run', teamId: null });
+      resolveSettingsMock.mockResolvedValueOnce({
+        'workspace.agentRunMaxSteps': 7,
+        'workspace.agentRunMaxWallClockSeconds': 1800,
+      });
+      vi.spyOn(Context, 'current').mockReturnValue({
+        info: { startToCloseTimeoutMs: 1_800_000 },
+      } as never);
+      const timeout = vi.spyOn(AbortSignal, 'timeout');
+      vi.mocked(runImplementerTurn).mockResolvedValueOnce({
+        steps: 2,
+        text: 'done',
+      } as never);
+      await runAgentNode({
+        agentRef: 'reviewer',
+        userMessage: 'audit',
+        workspace: { branch: 'auto/JIRA-1', repoId: 'repo-1', ticketId: 'JIRA-1' },
+      });
+      // 1800 s activity, nothing elapsed: the 1800 s setting is clamped to 1800 - 90.
+      expect(timeout).toHaveBeenCalledWith(1_710_000);
+      expect(harness.build).toHaveBeenCalledWith(
+        expect.objectContaining({ deadline: expect.any(AbortSignal) })
+      );
+      vi.restoreAllMocks();
+      vi.useRealTimers();
     });
 
     it('runs one harness turn in the checkout when the run pinned the agent to it', async () => {

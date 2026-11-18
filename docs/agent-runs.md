@@ -254,6 +254,9 @@ contract and cannot be launched. It is checked at the gateway and again in the w
 | `workspace.agentRunMaxConcurrentPerTeam` | 2 | Runs in flight for the repository's owning team; `0` disables for the team |
 | `workspace.agentRunAllowWorkflowChanges` | off | Whether a delivering run may change `.github/workflows` or `.github/actions` |
 
+The step and wall-clock ceilings also bound the `agent` nodes of [planned runs](./run-plans.md#agent-node-ceilings),
+which are held to the same values resolved at the run's team and organization.
+
 All are ADMIN-only and not run-pinned. A launch's caps can only **lower** the step and wall-clock
 ceilings: the gateway rejects a larger value (`CAP_EXCEEDS_CEILING`) and the worker clamps again,
 because a ceiling can drop between launch and start. The step and time ceilings cascade to team and

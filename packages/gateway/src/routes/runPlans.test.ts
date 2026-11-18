@@ -1066,6 +1066,27 @@ describe('run plan routes', () => {
       expect(body.planId).toBeUndefined();
     });
 
+    it('is still reported as the finished job’s plan when the job is polled again', async () => {
+      s.jobs.set(JOB, generated());
+      await get(`/api/v1/run-plans/jobs/${JOB}`);
+      // The stored plan is scrubbed later: its intent hash is gone, so only the repository and
+      // mode of the job are compared, and nothing is persisted again.
+      const created = m.create.mock.calls.length;
+      const id = planIdForJob(USER, JOB);
+      const row = s.plans.find((p) => p.id === id) as Row;
+      Object.assign(row, {
+        intent: '',
+        routerCandidates: {},
+        scrubbedAt: new Date('2026-11-17T00:00:00Z'),
+        spec: {},
+        status: 'LAUNCHED',
+      });
+      const body = (await get(`/api/v1/run-plans/jobs/${JOB}`)).json().data;
+      expect(body).toEqual({ planId: id, status: 'done' });
+      expect(m.create.mock.calls.length).toBe(created);
+      expect(s.plans.find((p) => p.id === id)?.scrubbedAt).toBeTruthy();
+    });
+
     it('also refuses an existing plan for another repository or mode', async () => {
       s.jobs.set(JOB, generated());
       await get(`/api/v1/run-plans/jobs/${JOB}`);
@@ -1259,6 +1280,76 @@ describe('run plan routes', () => {
       expect(text).not.toContain('0b1c2d3e-0000-4000-8000-0000000002ff');
       expect((await get('/api/v1/run-plans?status=NOPE')).statusCode).toBe(400);
       expect((await get('/api/v1/run-plans?limit=1000')).statusCode).toBe(400);
+    });
+
+    describe('a scrubbed plan', () => {
+      const scrubbed = (over: Record<string, unknown> = {}): Row =>
+        plan({
+          approvedAt: new Date('2026-08-01T12:00:00Z'),
+          costEstimate: { fanOutWidthAssumed: 3, perStep: [], totalUsd: 2, unpriced: [] },
+          intent: '',
+          launchedWorkflowRunId: 'run-1',
+          routerCandidates: {},
+          scrubbedAt: new Date('2026-11-17T00:00:00Z'),
+          skeletonReport: {},
+          spec: {},
+          specHash: 'scrubbed',
+          status: 'LAUNCHED',
+          validationReport: {},
+          ...over,
+        });
+
+      it('answers with its metadata and no text, nodes or spec', async () => {
+        s.plans.push(scrubbed());
+        const res = await get(`/api/v1/run-plans/${PLAN}`);
+        expect(res.statusCode).toBe(200);
+        expect(res.json().data).toMatchObject({
+          id: PLAN,
+          intent: '',
+          launchedWorkflowRunId: 'run-1',
+          mode: 'delivering',
+          model: 'anthropic/x',
+          nodes: [],
+          scrubbed: true,
+          scrubbedAt: '2026-11-17T00:00:00.000Z',
+          spec: null,
+          specHash: null,
+          status: 'LAUNCHED',
+          summary: null,
+          warnings: [],
+        });
+        expect(res.json().data.cost.totalUsd).toBe(2);
+      });
+
+      it('never reads text out of a row that is only partly scrubbed', async () => {
+        // A scrubbed marker with the text still in place: the presenter must not echo it.
+        s.plans.push(scrubbed({ intent: SECRET_INTENT, spec: plan().spec }));
+        const body = JSON.stringify((await get(`/api/v1/run-plans/${PLAN}`)).json());
+        expect(body).not.toContain('zebra-migration');
+        expect(body).not.toContain('hunter2');
+        expect(body).not.toContain('gatherTicket');
+      });
+
+      it('is marked in the list, with an empty intent, and the plan stays listed', async () => {
+        s.plans.push(scrubbed({ intent: SECRET_INTENT }));
+        const listed = (await get('/api/v1/run-plans')).json().data[0];
+        expect(listed).toMatchObject({ id: PLAN, intent: '', scrubbed: true, status: 'LAUNCHED' });
+        expect(JSON.stringify(listed)).not.toContain('zebra');
+      });
+
+      it('marks a live plan as not scrubbed', async () => {
+        s.plans.push(plan());
+        expect((await get(`/api/v1/run-plans/${PLAN}`)).json().data.scrubbed).toBe(false);
+        expect((await get('/api/v1/run-plans')).json().data[0].scrubbed).toBe(false);
+      });
+
+      it('cannot be rejected again (approval is covered by the service tests)', async () => {
+        s.plans.push(scrubbed({ approvedById: USER }));
+        const reject = await post(`/api/v1/run-plans/${PLAN}/reject`, undefined);
+        expect(reject.statusCode).toBe(409);
+        expect(reject.json().error.code).toBe('PLAN_NOT_REJECTABLE');
+        expect(s.plans[0]?.status).toBe('LAUNCHED');
+      });
     });
 
     it('truncates a long intent in the list but not in the plan', async () => {

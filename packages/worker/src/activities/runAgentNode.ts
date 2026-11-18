@@ -46,13 +46,23 @@ import {
   resumeCheckoutSha,
   resumeMessage,
 } from '../lib/pauseResume.js';
+import {
+  ACTIVITY_SLACK_SECONDS,
+  currentActivityTimeoutMs,
+  type EffectiveDeadline,
+  effectiveWallClock,
+  isPlannedRunContext,
+  MIN_EFFECTIVE_WALL_CLOCK_SECONDS,
+  type PlannedRunCeilings,
+  resolvePlannedRunCeilings,
+} from '../lib/plannedRunCeilings.js';
 import { resolvePreviewFromScm } from '../lib/repoConfigResolver.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
 import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { assertModelPricedForUsdCap } from '../lib/usdCapGuard.js';
-import { runAgent } from './runAgent.js';
+import { type RunAgentOptions, runAgent } from './runAgent.js';
 import { createWorkspace, fetchBranchesSubcommand, shellQuote } from './workspace.js';
 
 export interface RunAgentNodeInput extends PauseOptions {
@@ -126,6 +136,9 @@ export async function runAgentNode(
 async function runAgentNodeImpl(
   input: RunAgentNodeInput
 ): Promise<RunAgentNodeResult | NeedsInputResult> {
+  // The activity attempt's own clock: the planned-run deadline is clamped to what is left of
+  // its startToCloseTimeout (see `effectiveWallClock`).
+  const startedAtMs = Date.now();
   const baseCtx = await currentRequestContext();
   // Phase A: a channel-task run carries its originating channelId on the request
   // (not derivable from `currentRequestContext`, which keys on ActiveWorkflow).
@@ -157,10 +170,14 @@ async function runAgentNodeImpl(
     // Pinned on the run like any agent's runtime, so a node and every later
     // resolution of the same agent in this run agree on it.
     const loop = await resolveAgentRuntime(key, resolveCtx, 'agentRunSetting');
+    // A planned run's agent nodes carry no step or time fields of their own, so they obey the
+    // ceilings an agent run does. Decided here, in the activity, from the run's template row.
+    const limits = await plannedRunLimits(resolveCtx, key, tracer, startedAtMs);
     if (input.workspace) {
       return await runInCheckout({
         input,
         key,
+        limits,
         loop,
         onOpen,
         resolveCtx,
@@ -233,7 +250,9 @@ async function runAgentNodeImpl(
       selfRecordingTools: boundToolKeys(spec.tools, mcpTools),
       spanName: input.spanName ?? 'llm.agent_node',
       tracer,
+      ...limits?.runAgentOptions(),
     });
+    limits?.assertNotStopped(result.stoppedReason, result.stepCount);
     return { object: result.object, text: result.text };
   } finally {
     stopTraceFlushing();
@@ -288,6 +307,7 @@ async function bindMcpTools(
 async function runInCheckout(args: {
   input: RunAgentNodeInput;
   key: string;
+  limits: PlannedRunLimits | undefined;
   loop: ResolvedAgentRuntime;
   onOpen: (close: () => Promise<void>) => void;
   resolveCtx: ResolveCtx;
@@ -295,7 +315,7 @@ async function runInCheckout(args: {
   userMessage: string;
   workspace: NonNullable<RunAgentNodeInput['workspace']>;
 }): Promise<RunAgentNodeResult | NeedsInputResult> {
-  const { input, key, loop, onOpen, resolveCtx, tracer } = args;
+  const { input, key, limits, loop, onOpen, resolveCtx, tracer } = args;
   if (!args.workspace.repoId) {
     throw ApplicationFailure.nonRetryable(
       `Agent node '${input.agentRef}' asks for a workspace, but its run has no repository.`,
@@ -436,9 +456,11 @@ async function runInCheckout(args: {
     const systemPrompt = composeAgentPrompt(resolved, { promptOverride: input.systemPrompt });
     const runtime = harness.build({
       ...(browserToolset ? { browserToolset } : {}),
+      ...(limits ? { deadline: limits.deadline() } : {}),
       exactToolKeys: grantedWorkspaceToolIds(resolved.toolKeys),
       loadProjectSettings: true,
-      maxTurns: await resolveSetting('workspace.agentMaxSteps', resolveCtx),
+      maxTurns:
+        limits?.ceilings.maxSteps ?? (await resolveSetting('workspace.agentMaxSteps', resolveCtx)),
       // The connection the Mastra loop would bind, relayed from the worker.
       mcp: onboardingDraft ? null : await resolveAgentMcpUrl(key, resolveCtx, { tracer }),
       toolKeys: resolved.toolKeys,
@@ -464,6 +486,7 @@ async function runInCheckout(args: {
       usageEvent: spanName,
       user: userMessage,
     });
+    limits?.assertNotStopped(turn.stoppedReason, turn.steps);
     // The agent asked a person: nothing else this node does is skipped, it just ends here.
     if (turn.needsInput) {
       return pauseForInput({
@@ -568,8 +591,126 @@ async function runInCheckout(args: {
     selfRecordingTools: boundToolKeys(spec.tools, built, mcpTools, browserTools, provisionTools),
     spanName,
     tracer,
+    ...limits?.runAgentOptions(),
   });
+  limits?.assertNotStopped(result.stoppedReason, result.stepCount);
   return { object: result.object, text: result.text };
+}
+
+/** The ceilings a planned run's agent node runs under, and what to do when one is hit. */
+interface PlannedRunLimits {
+  ceilings: PlannedRunCeilings;
+  /** The wall-clock deadline, started when the agent loop starts (not at workspace setup). */
+  deadline(): AbortSignal;
+  /** `runAgent` options that enforce both ceilings and bill every step as it lands. */
+  runAgentOptions(): Pick<RunAgentOptions, 'abortSignal' | 'maxSteps' | 'perStepAccounting'>;
+  /**
+   * A node stopped at a ceiling did not finish: its output is partial, and a later node (or the
+   * implementer's guidance) would read it as complete. So the node fails, non-retryably (a retry
+   * would spend the ceiling again), after recording the event. What the loop consumed is already
+   * debited and its trace rows are kept.
+   */
+  assertNotStopped(stoppedReason: 'max_steps' | 'wall_clock' | undefined, steps?: number): void;
+}
+
+/** The limits for this node, or undefined for any run that is not a planned run (unchanged). */
+async function plannedRunLimits(
+  ctx: ResolveCtx,
+  agentKey: string,
+  tracer: AgentTracer,
+  startedAtMs: number = Date.now()
+): Promise<PlannedRunLimits | undefined> {
+  if (!(await isPlannedRunContext(ctx))) {
+    return undefined;
+  }
+  const ceilings = await resolvePlannedRunCeilings(ctx);
+  const activityTimeoutMs = currentActivityTimeoutMs();
+  const measure = () =>
+    effectiveWallClock({
+      activityTimeoutMs,
+      configuredSeconds: ceilings.maxWallClockSeconds,
+      elapsedMs: Date.now() - startedAtMs,
+    });
+  const initial = measure();
+  tracer.addActivityEvent({
+    name: 'agent.ceilings_applied',
+    outputJson: {
+      agentKey,
+      ...ceilings,
+      activityBudgetSeconds: initial.activityBudgetSeconds,
+      effectiveWallClockSeconds: initial.exhausted ? 0 : initial.effectiveSeconds,
+    },
+  });
+  // Armed when the agent loop starts, so workspace setup has already been charged to the budget.
+  let deadline: AbortSignal | undefined;
+  let effective: EffectiveDeadline = initial;
+  const start = () => {
+    if (!deadline) {
+      effective = measure();
+      if (effective.exhausted) {
+        tracer.addActivityEvent({
+          name: 'agent.ceiling_reached',
+          outputJson: {
+            agentKey,
+            ceiling: 'activity_budget',
+            clampedByActivityTimeout: true,
+            value: effective.activityBudgetSeconds,
+          },
+        });
+        throw ApplicationFailure.nonRetryable(
+          `Agent node '${agentKey}' has too little of its activity time budget left to run (under ${MIN_EFFECTIVE_WALL_CLOCK_SECONDS} seconds after reserving ${ACTIVITY_SLACK_SECONDS} for cleanup); its output is incomplete.`,
+          'AGENT_CEILING_REACHED'
+        );
+      }
+      if (effective.clamped) {
+        tracer.addActivityEvent({
+          name: 'agent.deadline_started',
+          outputJson: {
+            activityBudgetSeconds: effective.activityBudgetSeconds,
+            agentKey,
+            effectiveWallClockSeconds: effective.effectiveSeconds,
+          },
+        });
+      }
+      deadline = AbortSignal.timeout(effective.effectiveSeconds * 1000);
+    }
+    return deadline;
+  };
+  return {
+    assertNotStopped(stoppedReason, steps) {
+      if (!stoppedReason) {
+        return;
+      }
+      const steppedOut = stoppedReason === 'max_steps';
+      const clamped = !steppedOut && effective.clamped;
+      const value = steppedOut
+        ? ceilings.maxSteps
+        : clamped
+          ? effective.effectiveSeconds
+          : ceilings.maxWallClockSeconds;
+      tracer.addActivityEvent({
+        name: 'agent.ceiling_reached',
+        outputJson: {
+          agentKey,
+          ceiling: steppedOut ? 'steps' : 'wall_clock',
+          steps,
+          value,
+          ...(clamped ? { clampedByActivityTimeout: true } : {}),
+        },
+      });
+      throw ApplicationFailure.nonRetryable(
+        `Agent node '${agentKey}' stopped at the planned-run ${steppedOut ? `step ceiling (${value} steps)` : `wall-clock ceiling (${value} seconds${clamped ? ', limited by the activity timeout' : ''})`}; its output is incomplete.`,
+        'AGENT_CEILING_REACHED'
+      );
+    },
+    ceilings,
+    deadline: start,
+    runAgentOptions: () => ({
+      abortSignal: start(),
+      maxSteps: ceilings.maxSteps,
+      perStepAccounting: true,
+    }),
+  };
 }
 
 /** Appended to the system prompt of a node that runs in a checkout. */

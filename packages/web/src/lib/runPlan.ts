@@ -75,17 +75,23 @@ export interface RunPlanView {
   teamId: string;
   intent: string;
   spec: unknown;
-  specHash: string;
+  specHash: string | null;
   nodes: PlanNode[];
   cost: unknown;
   warnings: PlanWarning[];
   agentPins: Record<string, string> | null;
   model: string | null;
-  summary: string;
+  summary: string | null;
   createdAt: string;
   expiresAt: string;
   approvedAt: string | null;
   launchedWorkflowRunId: string | null;
+  /**
+   * True once the retention sweep removed the goal and the plan body of a launched plan: `intent`
+   * is empty, `nodes` is empty and `spec` is null. The metadata is all that is left.
+   */
+  scrubbed?: boolean;
+  scrubbedAt?: string | null;
 }
 
 export interface RunPlanListItem {
@@ -99,7 +105,13 @@ export interface RunPlanListItem {
   createdAt: string;
   expiresAt: string;
   totalUsd: number | null;
+  /** The goal and plan body were removed from this plan record after the retention period; `intent` is empty. */
+  scrubbed?: boolean;
 }
+
+/** What the dashboard says wherever it meets a plan whose goal and body were removed. */
+export const SCRUBBED_PLAN_NOTICE =
+  'The goal and plan body were removed from this plan record after the retention period. The run keeps its own records';
 
 export type PlanJob =
   | { status: 'running' }
@@ -111,6 +123,14 @@ export interface ApprovedPlan {
   workRequestId: string;
   workflowId?: string;
   temporalWorkflowId?: string;
+}
+
+/** The DRAFT template a plan was saved as. */
+export interface SavedTemplate {
+  templateId: string;
+  name: string;
+  version: number;
+  status: 'DRAFT';
 }
 
 // ── Intent ──────────────────────────────────────────────────────────────────
@@ -186,6 +206,8 @@ export const GENERIC_PLAN_ERROR_CODES: readonly string[] = [
   'PLAN_SPEC_TOO_LARGE',
   'RUN_PLAN_JOB_NOT_FOUND',
   'RUN_PLAN_SERVICE_FORBIDDEN',
+  'SHELL_AUTHOR_FORBIDDEN',
+  'SHELL_IMAGE_NOT_ALLOWED',
 ];
 
 /** Fixed wording by code or status; server text is shown only where it is a fixed gateway string. */
@@ -372,6 +394,46 @@ export function describePlanError(err: unknown): PlanErrorView {
         title: `The ${scope} budget is used up`,
       };
     }
+    case 'PLAN_SCRUBBED':
+      return {
+        message: 'This plan was removed after it launched, so there is nothing left to save.',
+        retryable: false,
+        title: 'The plan was removed',
+      };
+    case 'PLAN_NOT_SAVEABLE':
+      return {
+        hint: 'Generate a new plan, then save that one.',
+        message: 'A rejected or expired plan cannot be saved as a template.',
+        retryable: false,
+        title: 'This plan cannot be saved',
+      };
+    case 'NAME_CONFLICT':
+      return {
+        hint: 'Choose another name and save again.',
+        message: 'A template with that name already exists in this team.',
+        retryable: false,
+        title: 'That name is taken',
+      };
+    case 'RESERVED_TEMPLATE_NAME':
+      return {
+        hint: 'Choose another name and save again.',
+        message: 'That template name is reserved.',
+        retryable: false,
+        title: 'That name is reserved',
+      };
+    case 'TEMPLATE_NAME_INVALID':
+      return {
+        hint: 'Use 1 to 120 characters.',
+        message: 'The template needs a name.',
+        retryable: false,
+        title: 'The name cannot be used',
+      };
+    case 'INVALID_SPEC':
+      return {
+        message: 'The stored plan is not a valid workflow, so it cannot be saved.',
+        retryable: false,
+        title: 'The plan is not valid',
+      };
     case 'PLAN_AGENTS_CHANGED':
     case 'PLAN_AGENT_NOT_LAUNCHABLE':
     case 'PLAN_CATALOG_CHANGED':
@@ -425,6 +487,35 @@ function driftView(kind: string): PlanErrorView {
     retryable: false,
     title: 'This plan is out of date',
   };
+}
+
+/**
+ * A failed save as a template. A 403 from it is the template-authoring role of the plan's team
+ * (LEAD or ADMIN of it), not the Engineer role the other plan actions need.
+ */
+export function describeSaveError(err: unknown): PlanErrorView {
+  if (err instanceof ApiError && err.status === 403 && err.code === 'FORBIDDEN') {
+    return {
+      hint: 'Ask a lead of the plan’s team to save it, or to make you one.',
+      message: 'Only team leads can save templates.',
+      retryable: false,
+      title: 'Not allowed',
+    };
+  }
+  return describePlanError(err);
+}
+
+/** Whether a plan can be offered for saving as a template: it has a body and is still live. */
+export function planSaveable(
+  plan: Pick<RunPlanView, 'scrubbed' | 'status' | 'expiresAt'>,
+  now: number
+): boolean {
+  if (plan.scrubbed || plan.status === 'REJECTED' || plan.status === 'EXPIRED') {
+    return false;
+  }
+  const lapsed =
+    (plan.status === 'PENDING' || plan.status === 'APPROVED') && Date.parse(plan.expiresAt) <= now;
+  return !lapsed;
 }
 
 /** Describe a failed generation job exactly as the job route reported it. */

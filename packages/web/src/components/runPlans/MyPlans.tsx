@@ -6,7 +6,7 @@ import { Card } from '@/components/ui/Card';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { useRunPlans } from '@/hooks/useRunPlans';
-import { formatUsd } from '@/lib/runPlan';
+import { formatUsd, SCRUBBED_PLAN_NOTICE } from '@/lib/runPlan';
 
 const TONE: Record<string, BadgeTone> = {
   APPROVED: 'info',
@@ -42,12 +42,22 @@ export function MyPlans({ onOpen }: { onOpen: (planId: string) => void }) {
                 <Badge tone={TONE[plan.status] ?? 'neutral'} variant="outline">
                   {plan.status}
                 </Badge>
-                <span
-                  className="min-w-0 flex-1 truncate text-sm text-paper-200"
-                  title={plan.intent}
-                >
-                  {plan.intent}
-                </span>
+                {plan.scrubbed ? (
+                  <span
+                    className="min-w-0 flex-1 truncate text-sm italic text-paper-400"
+                    data-testid="plan-scrubbed"
+                    title={SCRUBBED_PLAN_NOTICE}
+                  >
+                    {SCRUBBED_PLAN_NOTICE}
+                  </span>
+                ) : (
+                  <span
+                    className="min-w-0 flex-1 truncate text-sm text-paper-200"
+                    title={plan.intent}
+                  >
+                    {plan.intent}
+                  </span>
+                )}
                 <span className="text-xs text-paper-500">{formatUsd(plan.totalUsd)}</span>
                 <RelativeTime className="text-xs text-paper-500" value={plan.createdAt} />
                 <Button onClick={() => onOpen(plan.id)} size="sm" variant="ghost">

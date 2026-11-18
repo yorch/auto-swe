@@ -1,5 +1,6 @@
 import { NON_LAUNCHABLE_AGENT_KEYS } from '@auto-swe/shared/lib/agentRun';
 import {
+  buildCanonicalCore,
   checkSkeletonPolicy,
   renderRunPlanCatalog,
   runPlanCatalogHash,
@@ -379,6 +380,46 @@ const BAD_DELIVERING: Array<{ name: string; spec: unknown; code: string }> = [
     ),
   },
 ];
+
+describe('generateRunPlanSpec: model text inside the spec is cleaned before the policy', () => {
+  const HOSTILE = 'Look\u202e [here](https://evil.example) <b>now</b> https://evil.example/x';
+
+  it('cleans titles and groups of free nodes and leaves the core as shipped', async () => {
+    const tainted = {
+      ...GOOD_PRE,
+      nodes: {
+        ...GOOD_PRE.nodes,
+        analyse: { ...GOOD_PRE.nodes.analyse, group: 'g\u200b<i>x</i>', title: HOSTILE },
+      },
+    };
+    mockedRunAgent.mockResolvedValueOnce(out(tainted) as never);
+    const result = await generateRunPlanSpec(DELIVERING);
+    const node = result.spec.nodes.analyse as { title?: string; group?: string };
+    expect(node.title).toBe('Look here now');
+    expect(node.group).toBe('g x');
+    // Core nodes keep their shipped text.
+    const core = buildCanonicalCore().nodes;
+    expect(result.spec.nodes.review).toEqual(core.review);
+    expect(result.spec.nodes.waitForHumanMerge).toEqual(core.waitForHumanMerge);
+    expect(checkSkeletonPolicy(result.spec, 'delivering').ok).toBe(true);
+  });
+
+  it('keeps a human review title non-empty and does not fail a plan over hostile text', async () => {
+    const tainted = {
+      ...GOOD_OUTPUT,
+      nodes: {
+        ...GOOD_OUTPUT.nodes,
+        review: { ...GOOD_OUTPUT.nodes.review, description: HOSTILE, title: '\u200b<b></b>' },
+      },
+    };
+    mockedRunAgent.mockResolvedValueOnce(out(tainted) as never);
+    const result = await generateRunPlanSpec(OUTPUT_ONLY);
+    expect(result.attempts).toBe(1);
+    const review = result.spec.nodes.review as { title: string; description?: string };
+    expect(review.title).toBe('review');
+    expect(review.description).toBe('Look here now');
+  });
+});
 
 describe('generateRunPlanSpec: the policy gates every attempt', () => {
   it.each(BAD_DELIVERING)('$name: repaired on a later attempt', async ({ spec, code }) => {

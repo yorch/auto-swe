@@ -306,14 +306,20 @@ function resolveCreateTeam(
  * id cannot schedule another team's workflow. It is null when the override is
  * the one already stored on the schedule, which was checked when it was set.
  */
+const REVIEW_REQUIRED_MESSAGE =
+  'This AI-generated version must be reviewed and approved before a schedule can run it.';
+
 async function resolveScheduleTemplate(
   prisma: Prisma,
   repo: { teamId: string },
   templateId: string | null,
   templateVersion: number | null,
   ticketId: string,
-  viewer: { role: string; sub: string } | null
-): Promise<{ templateId: string; templateVersion: number } | { error: string }> {
+  viewer: { role: string; sub: string } | null,
+  enforceReview = true
+): Promise<
+  { templateId: string; templateVersion: number } | { error: string } | { reviewRequired: true }
+> {
   if (templateId) {
     const tpl = await prisma.workflowTemplate.findFirst({
       where: {
@@ -336,6 +342,11 @@ async function resolveScheduleTemplate(
     });
     if (!versionRow) {
       return { error: `Template ${templateId} has no version ${version}` };
+    }
+    // A schedule fires with no one watching, so an AI-generated version serves it only once
+    // someone has reviewed it: the rule `/promote` and the experiment arms apply.
+    if (enforceReview && versionRow.generatedBy && !versionRow.reviewedAt) {
+      return { reviewRequired: true };
     }
     return { templateId, templateVersion: version };
   }
@@ -831,6 +842,9 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         ticketId,
         user
       );
+      if ('reviewRequired' in template) {
+        return sendError(reply, 409, 'REVIEW_REQUIRED', REVIEW_REQUIRED_MESSAGE);
+      }
       if ('error' in template) {
         return sendError(reply, 422, 'TEMPLATE_NOT_RESOLVABLE', template.error);
       }
@@ -995,8 +1009,16 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           ticketId,
           // Only a newly chosen override is checked against the caller; the stored
           // one was checked by whoever set it.
-          nextTemplateId !== existing.templateId ? user : null
+          nextTemplateId !== existing.templateId ? user : null,
+          // A pause or rename of a schedule that already names the version is not a choice of
+          // it; a retarget or a revival is, and the fire-time check backstops the rest.
+          nextTemplateId !== existing.templateId ||
+            nextTemplateVersion !== existing.templateVersion ||
+            (body.isActive === true && !existing.isActive)
         );
+        if ('reviewRequired' in template) {
+          return sendError(reply, 409, 'REVIEW_REQUIRED', REVIEW_REQUIRED_MESSAGE);
+        }
         if ('error' in template) {
           return sendError(reply, 422, 'TEMPLATE_NOT_RESOLVABLE', template.error);
         }

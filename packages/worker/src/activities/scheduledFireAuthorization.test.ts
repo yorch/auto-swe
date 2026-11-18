@@ -61,6 +61,7 @@ vi.mock('@auto-swe/shared/db', () => ({
         role: 'LEAD',
       })),
     },
+    workflowTemplateVersion: { findUnique: vi.fn(async () => null as unknown) },
   },
 }));
 
@@ -204,6 +205,33 @@ describe('scheduledFireRefusal', () => {
 
   it('lets an owner who still has access fire', async () => {
     expect(await scheduledFireRefusal(db, FIRE)).toBeNull();
+  });
+
+  it('refuses a fire whose template version is AI-generated and unreviewed', async () => {
+    db.workflowTemplateVersion.findUnique.mockResolvedValueOnce({
+      generatedBy: 'workflow_author',
+      reviewedAt: null,
+    });
+    expect(
+      await scheduledFireRefusal(db, { ...FIRE, templateId: 't-1', templateVersion: 2 })
+    ).toMatchObject({ reason: 'template-unreviewed' });
+  });
+
+  it('lets a fire of a reviewed generated version, or of a hand-written one, run', async () => {
+    db.workflowTemplateVersion.findUnique.mockResolvedValueOnce({
+      generatedBy: 'workflow_author',
+      reviewedAt: new Date(),
+    });
+    expect(
+      await scheduledFireRefusal(db, { ...FIRE, templateId: 't-1', templateVersion: 2 })
+    ).toBeNull();
+    db.workflowTemplateVersion.findUnique.mockResolvedValueOnce({
+      generatedBy: null,
+      reviewedAt: null,
+    });
+    expect(
+      await scheduledFireRefusal(db, { ...FIRE, templateId: 't-1', templateVersion: 2 })
+    ).toBeNull();
   });
 
   it('is a no-op for a run that is not a scheduled fire', async () => {

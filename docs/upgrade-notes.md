@@ -1947,3 +1947,33 @@ WHERE table_name = 'workflow_human_steps' AND column_name = 'last_nudged_at';
 
 Both `to_regclass` values are non-null and the column query returns one row.
 
+---
+
+### Launched run plans are scrubbed after 90 days by default (`<fixing commit SHA>`)
+
+**Affected.** Deployments that have launched [run plans](./run-plans.md). The retention applies to every
+launched plan older than the period: the sweep scrubs up to 200 plans per run until the backlog
+clears.
+
+**What changes.** An additive migration, `20261118000000_run_plans_scrubbed_at`, adds `scrubbed_at` to
+`run_plans`, with a CHECK and a partial index; `yarn db:deploy` applies it. The setting
+`runPlans.launchedRetentionDays` defaults to 90. The plan sweep, scheduled every 15 minutes by default,
+replaces the goal and the plan body of each launched plan older than the period with empty values and
+sets `scrubbed_at`. The scrub is irreversible. The run's own records (the work request description, the
+run's spec snapshot and the agent traces) are not touched.
+
+**Actions.**
+
+1. To keep launched plans, set `runPlans.launchedRetentionDays` to `0` at GLOBAL scope, or to a longer
+   period, in `/admin/platform-settings` before the first sweep after upgrading (sweeps run every 15 minutes by
+   default, so do this before or together with the upgrade). The other way to stop
+   the scrub is to disable the sweep with `RUN_PLAN_SWEEP_ENABLED=false`.
+2. To shorten the period, set a smaller value of `runPlans.launchedRetentionDays`.
+
+**Verify.** After the sweeps have run, `GET /api/v1/run-plans/:id` for a launched plan older than the period
+answers `scrubbed: true` and `intent: ''`, and plans inside the period are intact. The count
+`SELECT count(*) FROM run_plans WHERE scrubbed_at IS NOT NULL` should match the number of
+`run_plan.scrubbed` audit events; an audit write that fails is logged and not retried, so the count of
+events can be lower.
+
+---

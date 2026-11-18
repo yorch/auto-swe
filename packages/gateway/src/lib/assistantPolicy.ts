@@ -510,6 +510,8 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/run-plans': 'confirm',
   'POST /api/v1/run-plans/:id/approve': { never: 'humanDecision' },
   'POST /api/v1/run-plans/:id/reject': 'confirm',
+  // Creates a DRAFT template in the plan's team; a draft serves no run until another person reviews it.
+  'POST /api/v1/run-plans/:id/save-as-template': 'confirm',
   // Not a read: it writes an audit row (the rate-limit count), starts a ranking workflow and spends
   // model tokens charged to the repository's team. The ranking launches nothing.
   'POST /api/v1/run-plans/route': 'confirm',
