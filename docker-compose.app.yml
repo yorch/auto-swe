@@ -175,7 +175,7 @@ services:
 
   # The path filter is a second layer behind the body/ownership policy broker.
   docker-socket-proxy:
-    image: ${DOCKER_SOCKET_PROXY_IMAGE:-haproxy:3.4-alpine@sha256:2caaf8b1a1ef67f3f1ea9b721f2821675d3ba4500fb518e23884fecb93e8dbaa}
+    image: ${DOCKER_SOCKET_PROXY_IMAGE:-haproxy:3.4-alpine@sha256:b9fe316f718d5015c5cfebd8ca019591f3e44656f61d93cb8b59a1028961e530}
     restart: unless-stopped
     user: root
     read_only: true
