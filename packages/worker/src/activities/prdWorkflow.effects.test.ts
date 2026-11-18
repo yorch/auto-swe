@@ -5,6 +5,7 @@ const m = vi.hoisted(() => ({
   createEpic: vi.fn(),
   createPage: vi.fn(),
   createStory: vi.fn(),
+  loadScope: vi.fn(),
   record: vi.fn(async () => {}),
 }));
 
@@ -30,11 +31,17 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   })),
   resolveKnowledgeBaseConfig: vi.fn(async () => ({ spaces: ['PRD'] })),
 }));
-vi.mock('@auto-swe/shared/lib/trackerWrite', () => ({
+vi.mock('@auto-swe/shared/lib/trackerWrite', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   createTrackerEpic: m.createEpic,
   createTrackerStory: m.createStory,
 }));
-vi.mock('@temporalio/activity', () => ({
+vi.mock('@auto-swe/shared/lib/trackerSync', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  loadRunTrackerScope: m.loadScope,
+}));
+vi.mock('@temporalio/activity', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   activityInfo: vi.fn(),
   asyncLocalStorage: { getStore: () => undefined },
   heartbeat: vi.fn(),
@@ -74,6 +81,7 @@ beforeEach(() => {
   });
   m.createStory.mockResolvedValue({ id: 'S-1', title: 'Story A', type: 'story', url: null });
   m.createPage.mockResolvedValue({ id: 'p1', url: 'https://kb/p1' });
+  m.loadScope.mockResolvedValue({ allowedProjectKeys: [], instanceBaseUrl: '', repos: [] });
 });
 
 describe('createTrackerItems run effects', () => {
@@ -159,5 +167,62 @@ describe('createTrackerItems run effects', () => {
     } as never);
     await createTrackerItems(request, { decomposition }); // projectKey 'PRJ' is not owner/repo
     expect(effects().filter((e) => e.kind === 'TRACKER')).toEqual([]);
+  });
+
+  describe('tracker.allowedProjectKeys', () => {
+    const nonRetryable = { nonRetryable: true, type: 'TRACKER_PROJECT_NOT_ALLOWED' };
+
+    it('fails non-retryably, naming the key, and calls no provider, for an unlisted project', async () => {
+      m.loadScope.mockResolvedValue({
+        allowedProjectKeys: ['PAY'],
+        instanceBaseUrl: '',
+        repos: [],
+      });
+      const error = await createTrackerItems(request, { decomposition }).catch((e) => e);
+      expect(error).toMatchObject(nonRetryable);
+      expect(error.message).toContain('PRJ');
+      expect(error.message).toContain('Issue tracker');
+      expect(m.createEpic).not.toHaveBeenCalled();
+      expect(m.createStory).not.toHaveBeenCalled();
+      expect(m.createPage).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when the allowlist could not be read', async () => {
+      m.loadScope.mockResolvedValue({
+        allowedProjectKeys: [],
+        instanceBaseUrl: '',
+        projectKeysUnreadable: true,
+        repos: [],
+      });
+      await expect(createTrackerItems(request, { decomposition })).rejects.toMatchObject(
+        nonRetryable
+      );
+      expect(m.createEpic).not.toHaveBeenCalled();
+    });
+
+    it('creates when the project is listed, case-insensitively', async () => {
+      m.loadScope.mockResolvedValue({
+        allowedProjectKeys: ['prj'],
+        instanceBaseUrl: '',
+        repos: [],
+      });
+      const result = await createTrackerItems(request, { decomposition });
+      expect(result.failedCount).toBe(0);
+      expect(m.createEpic).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not gate the GitHub tracker here (its repository scope applies instead)', async () => {
+      const systemConfig = await import('@auto-swe/shared/lib/systemConfig');
+      vi.mocked(systemConfig.resolveIssueTrackerConfig).mockResolvedValueOnce({
+        apiToken: 't',
+        provider: 'github',
+      } as never);
+      m.loadScope.mockResolvedValue({
+        allowedProjectKeys: ['PAY'],
+        instanceBaseUrl: '',
+        repos: [],
+      });
+      await expect(createTrackerItems(request, { decomposition })).resolves.toBeDefined();
+    });
   });
 });

@@ -86,7 +86,19 @@ export type TrackerWritebackEvent = (typeof TRACKER_WRITEBACK_EVENTS)[number];
  * like it is `no_transition`.
  */
 // A type alias, not an interface: only an alias is assignable to Prisma's JSON input type.
-export type TrackerWriteback = { event: TrackerWritebackEvent; failure: TicketFailureClass };
+export type TrackerWriteback = {
+  event: TrackerWritebackEvent;
+  failure: TicketFailureClass;
+  /**
+   * The tracker the write was attempted against, recorded when it was skipped so a later change of
+   * tracker does not reword an old run. Absent on a record stored before it was kept.
+   */
+  provider?: TrackerWritebackProvider;
+};
+
+export const TRACKER_WRITEBACK_PROVIDERS = ['github', 'jira', 'linear'] as const;
+
+export type TrackerWritebackProvider = (typeof TRACKER_WRITEBACK_PROVIDERS)[number];
 
 /**
  * The write-back failure on a run snapshot, or null when it holds none or holds anything else.
@@ -101,7 +113,17 @@ export function readTrackerWriteback(snapshot: unknown): TrackerWriteback | null
   if (typeof record !== 'object' || record === null) {
     return null;
   }
-  const { event, failure } = record as { event?: unknown; failure?: unknown };
+  const { event, failure, provider } = record as {
+    event?: unknown;
+    failure?: unknown;
+    provider?: unknown;
+  };
+  // An unknown or malformed provider reads as absent: the record is still a valid write-back.
+  const recorded: { provider?: TrackerWritebackProvider } =
+    typeof provider === 'string' &&
+    (TRACKER_WRITEBACK_PROVIDERS as readonly string[]).includes(provider)
+      ? { provider: provider as TrackerWritebackProvider }
+      : {};
   if (
     typeof failure !== 'string' ||
     !(TICKET_FAILURE_CLASSES as readonly string[]).includes(failure)
@@ -109,7 +131,7 @@ export function readTrackerWriteback(snapshot: unknown): TrackerWriteback | null
     return null;
   }
   if (event === undefined) {
-    return { event: 'workflow_failed', failure: failure as TicketFailureClass };
+    return { event: 'workflow_failed', failure: failure as TicketFailureClass, ...recorded };
   }
   if (
     typeof event !== 'string' ||
@@ -117,5 +139,9 @@ export function readTrackerWriteback(snapshot: unknown): TrackerWriteback | null
   ) {
     return null;
   }
-  return { event: event as TrackerWritebackEvent, failure: failure as TicketFailureClass };
+  return {
+    event: event as TrackerWritebackEvent,
+    failure: failure as TicketFailureClass,
+    ...recorded,
+  };
 }

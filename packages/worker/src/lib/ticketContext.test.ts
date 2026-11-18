@@ -570,6 +570,37 @@ describe('loadTicket', () => {
           expect((await loadTicket({ workRequestId: 'wr-1' }))?.source).toBe('tracker');
         });
 
+        describe('with contexts recorded at launch', () => {
+          const recorded = (id: string, trackerScopeContexts: unknown) =>
+            mocks.runInputFind.mockResolvedValue({
+              ...run(id, null),
+              trackerScopeContexts,
+            });
+
+          it('reads them instead of the launcher, so a team left after launch changes nothing', async () => {
+            // The launcher has since left every team; the run was launched in team-9.
+            mocks.memberships.mockResolvedValue([]);
+            recorded('ENG-7', [{ orgId: 'org-9', teamId: 'team-9' }]);
+            expect(await loadTicket({ workRequestId: 'wr-1' })).toBeNull();
+            recorded('PAY-7', [{ orgId: 'org-9', teamId: 'team-9' }]);
+            expect((await loadTicket({ workRequestId: 'wr-1' }))?.source).toBe('tracker');
+            expect(mocks.memberships).not.toHaveBeenCalled();
+            expect(mocks.workflowRunFind).not.toHaveBeenCalled();
+          });
+
+          it('applies a service principal team although the run has no launcher', async () => {
+            mocks.launcher.mockResolvedValue(null);
+            recorded('ENG-7', [{ orgId: 'org-9', teamId: 'team-9' }]);
+            expect(await loadTicket({ workRequestId: 'wr-1' })).toBeNull();
+          });
+
+          it('refuses when the recorded value is unreadable', async () => {
+            recorded('PAY-7', { teamId: 'team-9' });
+            expect(await loadTicket({ workRequestId: 'wr-1' })).toBeNull();
+            expect(mocks.readIssue).not.toHaveBeenCalled();
+          });
+        });
+
         it('refuses when the launcher or their teams cannot be read', async () => {
           mocks.runInputFind.mockResolvedValue(run('PAY-7', null));
           mocks.launcher.mockRejectedValue(new Error('db down'));

@@ -2422,6 +2422,31 @@ describe('finalizeWorkflowRun', () => {
       });
     });
 
+    it('records the provider the sync ran against, so a later tracker switch rewords nothing', async () => {
+      tracker.mockImplementation((async (_event: unknown, _config: unknown, opts: unknown) => {
+        (opts as { onOutcome: (o: unknown) => void }).onOutcome({
+          failure: 'out_of_scope',
+          provider: 'jira',
+          wrote: false,
+        });
+        return 'out_of_scope';
+      }) as never);
+      await finalizeRun('run-wb', 'SUCCESS', stored, 'worker');
+      expect(patchRun).toHaveBeenCalledWith({
+        data: {
+          contextSnapshot: {
+            ...stored,
+            trackerWriteback: {
+              event: 'workflow_completed',
+              failure: 'out_of_scope',
+              provider: 'jira',
+            },
+          },
+        },
+        where: { id: 'run-wb' },
+      });
+    });
+
     it('writes nothing for a run that succeeded when the tracker took every write', async () => {
       tracker.mockResolvedValue(null as never);
       await finalizeRun('run-wb', 'SUCCESS', stored, 'worker');

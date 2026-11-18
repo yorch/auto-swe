@@ -493,6 +493,46 @@ describe('postTicketComment on Jira and Linear project keys', () => {
     });
   });
 
+  describe('with contexts recorded at launch', () => {
+    const recorded = (externalTicketId: string, trackerScopeContexts: unknown) =>
+      mocks.findRunInput.mockResolvedValue({
+        connection: null,
+        externalTicketId,
+        knowledgeRepoSources: null,
+        ticketIsSynthetic: false,
+        trackerScopeContexts,
+      });
+
+    it('uses them, not the launcher, so a team left after launch changes nothing', async () => {
+      // The launcher now belongs to no team at all; the run was launched in t1.
+      mocks.launcher.mockResolvedValue('u1');
+      mocks.findMemberships.mockResolvedValue([]);
+      listFor({ t1: ['PAY'] });
+      recorded('ENG-7', [{ teamId: 't1' }]);
+      expect((await postTicketComment({ body: 'X', workRequestId: 'wr-1' })).posted).toBe(false);
+      recorded('PAY-7', [{ teamId: 't1' }]);
+      await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual({
+        posted: true,
+      });
+      expect(mocks.findMemberships).not.toHaveBeenCalled();
+    });
+
+    it("holds a service principal's run to the team recorded for it", async () => {
+      // No launcher (a principal names no user), yet the recorded team's list applies.
+      mocks.launcher.mockResolvedValue(null);
+      listFor({ t1: ['PAY'] });
+      recorded('ENG-7', [{ orgId: 'o1', teamId: 't1' }]);
+      expect((await postTicketComment({ body: 'X', workRequestId: 'wr-1' })).posted).toBe(false);
+    });
+
+    it('skips, without throwing, when the recorded value is unreadable', async () => {
+      recorded('PAY-7', 'garbage');
+      const out = await postTicketComment({ body: 'X', workRequestId: 'wr-1' });
+      expect(out.posted).toBe(false);
+      expect(mocks.addComment).not.toHaveBeenCalled();
+    });
+  });
+
   it('skips, without throwing, when the launcher cannot be read', async () => {
     mocks.launcher.mockRejectedValue(new Error('db down'));
     mocks.findWorkflowRun.mockResolvedValue({ launchedById: null, template: null });

@@ -80,6 +80,11 @@ export interface TrackerSyncOutcome {
   failure: TicketFailureClass | null;
   /** True when a comment, link or status change reached the ticket; false for a no-op sync. */
   wrote: boolean;
+  /**
+   * The tracker the sync ran against, from the config in use at that moment. Set by
+   * `syncTrackerOnEvent`, not by a provider; absent on an outcome a provider reports directly.
+   */
+  provider?: 'github' | 'jira' | 'linear';
 }
 
 export interface TrackerSyncEvent {

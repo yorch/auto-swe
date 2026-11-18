@@ -39,6 +39,7 @@ import {
   isTrackerReadInScope,
   isTrackerWriteInScope,
   loadRunLaunchContexts,
+  loadRunTrackerScope,
   loadUserTrackerTeams,
   repoTrackerScope,
   resolveTrackerIssueRepos,
@@ -517,6 +518,84 @@ describe('launcher team loaders', () => {
     expect(await loadRunLaunchContexts('ri-1')).toEqual([{ orgId: null, teamId: 't7' }]);
   });
 
+  describe('with contexts recorded on the run', () => {
+    beforeEach(() => {
+      mocks.findWorkflowRun.mockResolvedValue({
+        launchedById: 'u1',
+        template: { team: null, teamId: null },
+      });
+      mocks.findMemberships.mockResolvedValue([{ team: { orgId: 'o9' }, teamId: 'later-team' }]);
+    });
+
+    it('wins over the launcher lookup, so a team joined or left after launch changes nothing', async () => {
+      mocks.findRunInput.mockResolvedValue({
+        trackerScopeContexts: [{ orgId: 'o1', teamId: 't1' }],
+      });
+      expect(await loadRunLaunchContexts('ri-1', 'u1')).toEqual([{ orgId: 'o1', teamId: 't1' }]);
+      expect(await loadRunLaunchContexts('ri-1', async () => 'u2')).toEqual([
+        { orgId: 'o1', teamId: 't1' },
+      ]);
+      expect(mocks.findMemberships).not.toHaveBeenCalled();
+      expect(mocks.findWorkflowRun).not.toHaveBeenCalled();
+    });
+
+    it('keeps an organization-only context and a service principal team', async () => {
+      mocks.findRunInput.mockResolvedValue({
+        trackerScopeContexts: [{ orgId: 'o2' }, { orgId: 'o3', teamId: 'sp-team' }],
+      });
+      expect(await loadRunLaunchContexts('ri-1', null)).toEqual([
+        { orgId: 'o2' },
+        { orgId: 'o3', teamId: 'sp-team' },
+      ]);
+    });
+
+    it('treats a recorded empty list as GLOBAL only, not as "not recorded"', async () => {
+      mocks.findRunInput.mockResolvedValue({ trackerScopeContexts: [] });
+      expect(await loadRunLaunchContexts('ri-1', 'u1')).toEqual([]);
+      expect(mocks.findMemberships).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the launcher lookup when none is recorded', async () => {
+      mocks.findRunInput.mockResolvedValue({ trackerScopeContexts: null });
+      expect(await loadRunLaunchContexts('ri-1', 'u1')).toEqual([
+        { orgId: 'o9', teamId: 'later-team' },
+      ]);
+    });
+
+    it('fails closed on a value that is not a list of contexts', async () => {
+      for (const bad of ['t1', { teamId: 't1' }, [{ teamId: 5 }], [null], [{ teamId: '' }]]) {
+        mocks.findRunInput.mockResolvedValue({ trackerScopeContexts: bad });
+        await expect(loadRunLaunchContexts('ri-1', 'u1')).rejects.toThrow();
+      }
+    });
+
+    it('is refused by the scope loader when the recorded value is unreadable', async () => {
+      mocks.findRunInput.mockResolvedValue({
+        connection: null,
+        knowledgeRepoSources: null,
+        trackerScopeContexts: 'garbage',
+      });
+      const loaded = await loadRunTrackerScope('ri-1', { launcher: 'u1' });
+      expect(loaded.projectKeysUnreadable).toBe(true);
+    });
+
+    it('resolves an organization-only context at that organization', async () => {
+      mocks.findRunInput.mockResolvedValue({
+        connection: null,
+        knowledgeRepoSources: null,
+        trackerScopeContexts: [{ orgId: 'o2' }],
+      });
+      const seen: unknown[] = [];
+      mocks.resolveSetting.mockImplementation(async (_key: string, ctx: unknown) => {
+        seen.push(ctx);
+        return (ctx as { orgId?: string }).orgId === 'o2' ? ['ORG'] : [];
+      });
+      const loaded = await loadRunTrackerScope('ri-1', { launcher: null });
+      expect(loaded.allowedProjectKeys).toEqual(['ORG']);
+      expect(seen).toContainEqual({ orgId: 'o2' });
+    });
+  });
+
   it('throws when the database does, so a caller refuses', async () => {
     mocks.findWorkflowRun.mockRejectedValue(new Error('db down'));
     await expect(loadRunLaunchContexts('ri-1', 'u1')).rejects.toThrow();
@@ -593,7 +672,11 @@ describe('syncTrackerOnEvent on Jira and Linear', () => {
       ).toBe('out_of_scope');
       expect(mocks.createProvider).not.toHaveBeenCalled();
       expect(mocks.syncOnEvent).not.toHaveBeenCalled();
-      expect(onOutcome).toHaveBeenCalledWith({ failure: 'out_of_scope', wrote: false });
+      expect(onOutcome).toHaveBeenCalledWith({
+        failure: 'out_of_scope',
+        provider: config.provider,
+        wrote: false,
+      });
       expect(warn).toHaveBeenCalledWith(TRACKER_SYNC_PROJECT_OUT_OF_SCOPE, {
         event: 'ci_passed',
         runInputId: 'ri-1',
@@ -960,7 +1043,7 @@ describe('syncTrackerOnEvent', () => {
       await expect(
         syncTrackerOnEvent(EVENT, JIRA, { onOutcome, runInputId: null })
       ).resolves.toBeNull();
-      expect(onOutcome).toHaveBeenCalledWith({ failure: null, wrote: false });
+      expect(onOutcome).toHaveBeenCalledWith({ failure: null, provider: 'jira', wrote: false });
       expect(mocks.syncOnEvent).not.toHaveBeenCalled();
     });
 
@@ -968,7 +1051,7 @@ describe('syncTrackerOnEvent', () => {
       const onOutcome = vi.fn();
       mocks.syncOnEvent.mockResolvedValueOnce(null);
       await syncTrackerOnEvent(EVENT, JIRA, { onOutcome, runInputId: null });
-      expect(onOutcome).toHaveBeenCalledWith({ failure: null, wrote: true });
+      expect(onOutcome).toHaveBeenCalledWith({ failure: null, provider: 'jira', wrote: true });
     });
 
     it('says nothing was written for GitHub workflow_started and for a declined scope', async () => {
@@ -977,13 +1060,21 @@ describe('syncTrackerOnEvent', () => {
         onOutcome,
         runInputId: 'wr-1',
       });
-      expect(onOutcome).toHaveBeenLastCalledWith({ failure: null, wrote: false });
+      expect(onOutcome).toHaveBeenLastCalledWith({
+        failure: null,
+        provider: 'github',
+        wrote: false,
+      });
       await syncTrackerOnEvent({ ...EVENT, issueId: 'attacker/public#1' }, GITHUB, {
         onOutcome,
         runInputId: 'wr-1',
         warn: vi.fn(),
       });
-      expect(onOutcome).toHaveBeenLastCalledWith({ failure: 'out_of_scope', wrote: false });
+      expect(onOutcome).toHaveBeenLastCalledWith({
+        failure: 'out_of_scope',
+        provider: 'github',
+        wrote: false,
+      });
     });
 
     it('says nothing was written when the sync throws, and a throwing sink changes nothing', async () => {
@@ -994,7 +1085,11 @@ describe('syncTrackerOnEvent', () => {
       await expect(
         syncTrackerOnEvent(EVENT, JIRA, { onOutcome, runInputId: null, warn: vi.fn() })
       ).resolves.toBe('unknown');
-      expect(onOutcome).toHaveBeenCalledWith({ failure: 'unknown', wrote: false });
+      expect(onOutcome).toHaveBeenCalledWith({
+        failure: 'unknown',
+        provider: 'jira',
+        wrote: false,
+      });
     });
   });
 

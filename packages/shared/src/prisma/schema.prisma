@@ -2013,6 +2013,10 @@ model RunInput {
   knowledgeSourceOrgId String? @map("knowledge_source_org_id") @db.Uuid
   /// Authorized epic target identities, separate from caller-controlled requestPayload.
   knowledgeRepoSources Json?     @map("knowledge_repo_sources")
+  /// The tracker project-allowlist contexts the launch recorded for a run with no repository and
+  /// no template team: `Array<{ teamId?, orgId? }>`, read through `loadRunLaunchContexts`. Null =
+  /// none recorded (older rows, other launch paths); `[]` = GLOBAL only. Unreadable = refused.
+  trackerScopeContexts Json?     @map("tracker_scope_contexts")
   slackMessageTs   String?     @map("slack_message_ts")
   /// Channel that originated the request (paired with slackMessageTs to thread
   /// per-step failure notifications back to the source conversation). Populated

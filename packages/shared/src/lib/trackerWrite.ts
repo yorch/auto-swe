@@ -70,6 +70,47 @@ function projectKeyAllowed(
   return false;
 }
 
+/** Error code of a PRD tracker create refused by `tracker.allowedProjectKeys`. */
+export const TRACKER_PROJECT_NOT_ALLOWED = 'TRACKER_PROJECT_NOT_ALLOWED';
+
+/**
+ * The project a Jira or Linear create targets: the caller's key, else the admin-configured default,
+ * else `BACKLOG`. The same fallback `createTrackerEpic` and `createTrackerStory` send, so the gate
+ * checks what is written.
+ */
+export function createTargetProjectKey(
+  config: Pick<ResolvedIssueTrackerConfig, 'defaultProjectKey'>,
+  projectKey: string | null | undefined
+): string {
+  return projectKey || config.defaultProjectKey || 'BACKLOG';
+}
+
+/**
+ * May a Jira project / Linear team with this KEY receive created issues? Same allowlist semantics as
+ * `isProjectKeyAllowed` in `trackerSync` (which parses a ticket id): empty list unrestricted,
+ * case-insensitive match, the scope's union of contexts, and an unreadable list refuses. The key is
+ * the creation target, not a ticket id.
+ */
+export function isTargetProjectKeyAllowed(
+  projectKey: string,
+  scope: Pick<TrackerRepoScope, 'allowedProjectKeys' | 'projectKeysUnreadable'>
+): boolean {
+  if (scope.projectKeysUnreadable) {
+    return false;
+  }
+  const allowed = scope.allowedProjectKeys ?? [];
+  if (allowed.length === 0) {
+    return true;
+  }
+  const key = projectKey.trim().toLowerCase();
+  return key !== '' && allowed.some((entry) => entry.toLowerCase() === key);
+}
+
+/** The refusal text for a create into a project the allowlist does not list. Names the key only. */
+export function trackerProjectNotAllowedMessage(projectKey: string): string {
+  return `Tracker project ${projectKey} is not in the allowed list for this run; no epics or stories were created. An admin can add it under Admin → Platform settings → Issue tracker.`;
+}
+
 function toCreatedTrackerItem(issue: CreatedIssue, type: 'epic' | 'story'): CreatedTrackerItem {
   return {
     id: issue.id,
