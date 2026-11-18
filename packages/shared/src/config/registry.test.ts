@@ -807,6 +807,7 @@ describe('run plan settings', () => {
     'runPlans.createPerUserPerHour',
     'runPlans.enabled',
     'runPlans.generationMaxAttempts',
+    'runPlans.launchWindowMinutes',
     'runPlans.launchedRetentionDays',
     'runPlans.maxPendingPerUser',
     'runPlans.routePerUserPerHour',
@@ -841,6 +842,13 @@ describe('run plan settings', () => {
     expect(perHour.safeParse(-1).success).toBe(false);
     expect(perHour.safeParse(1.5).success).toBe(false);
     expect(perHour.safeParse(1_000_000).success).toBe(false);
+    expect(SETTING_DEFINITIONS['runPlans.launchWindowMinutes'].defaultValue).toBe(10);
+    const window = SETTING_DEFINITIONS['runPlans.launchWindowMinutes'].schema;
+    expect(window.safeParse(1).success).toBe(true);
+    expect(window.safeParse(240).success).toBe(true);
+    expect(window.safeParse(0).success).toBe(false);
+    expect(window.safeParse(241).success).toBe(false);
+    expect(window.safeParse(1.5).success).toBe(false);
     expect(SETTING_DEFINITIONS['runPlans.launchedRetentionDays'].defaultValue).toBe(90);
     const retention = SETTING_DEFINITIONS['runPlans.launchedRetentionDays'].schema;
     expect(retention.safeParse(0).success).toBe(true); // 0 keeps launched plans forever

@@ -1545,6 +1545,19 @@ export const SETTING_DEFINITIONS = {
     schema: z.number().int().min(0).max(3650),
     unit: 'days',
   }),
+  'runPlans.launchWindowMinutes': defineSetting({
+    defaultValue: 10,
+    description:
+      "How many minutes after approval the worker may still start the run. Approval pushes the plan's expiry out to at least this far, so a plan approved a moment before it expires is not lost, and an approved plan nobody launches within the window expires. Raise it when the worker queue can be slower than the default. Resolved at the plan's own team and organization when the plan is approved; a plan already approved keeps the window it was given.",
+    group: 'runPlans',
+    label: 'Launch window after approval',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(240),
+    unit: 'minutes',
+  }),
   'runPlans.maxPendingPerUser': defineSetting({
     defaultValue: 5,
     description:

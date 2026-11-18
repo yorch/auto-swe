@@ -43,6 +43,7 @@ import {
   buildRunPlanRepairMessage,
   buildRunPlanRequestMessage,
   checkSkeletonPolicy,
+  cleanPlanSpecText,
   estimateRunPlanCost,
   formatValidationIssue,
   parseWorkflowSpec,
@@ -242,7 +243,11 @@ async function generateRunPlanSpecImpl(
   type Accepted = Omit<GenerateRunPlanSpecResult, 'attempts' | 'summary'>;
 
   const loop = await runAuthorLoop<Accepted>({
-    accept: async (authored) => {
+    accept: async (parsed) => {
+      // The model's display text (titles, groups, descriptions, labels) becomes plain text first,
+      // so the policy below judges exactly the spec that is stored and hashed. Core nodes are not
+      // touched; the gateway repeats this before it hashes the spec.
+      const authored = cleanPlanSpecText(parsed, input.mode);
       // Attach the validate phase and the canonical core. The model's own text never reaches
       // the core except through the two named slots the policy allows.
       const applied = applySkeletonPolicy(authored, input.mode);

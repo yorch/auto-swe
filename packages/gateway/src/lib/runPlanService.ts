@@ -41,6 +41,7 @@ import {
 } from '@auto-swe/shared/workflow';
 import {
   checkSkeletonPolicy,
+  cleanPlanSpecText,
   estimateRunPlanCost,
   hashRunPlanSpec,
   runPlanCatalogHash,
@@ -91,11 +92,40 @@ export const DEFAULT_PLAN_TTL_MS = 30 * 60_000;
 export const MIN_PLAN_TTL_MS = 60_000;
 export const MAX_PLAN_TTL_MS = 24 * 3_600_000;
 /**
- * How long after approval the worker may still pin the plan. Approval pushes `expiresAt` out to at
- * least this far, so a plan approved a second before its expiry is not refused by the worker after
- * the gateway reported success; it is not a way to keep a plan alive indefinitely.
+ * How long after approval the worker may still pin the plan, when nothing else is configured: the
+ * default of the registry setting `runPlans.launchWindowMinutes`, in milliseconds. Approval pushes
+ * `expiresAt` out to at least the configured window, so a plan approved a second before its expiry
+ * is not refused by the worker after the gateway reported success; it is not a way to keep a plan
+ * alive indefinitely.
  */
 export const LAUNCH_WINDOW_MS = 10 * 60_000;
+const LAUNCH_WINDOW_DEFAULT_MINUTES = 10;
+const LAUNCH_WINDOW_MAX_MINUTES = 240;
+
+/**
+ * The launch window for a plan of this scope, in milliseconds. A failed or malformed read falls
+ * back to the default; the result is a whole number of minutes in 1..240 whatever came back.
+ */
+async function resolveLaunchWindowMs(
+  deps: Pick<RunPlanServiceDeps, 'log'>,
+  repo: { orgId: string | null; teamId: string }
+): Promise<number> {
+  let minutes: unknown = LAUNCH_WINDOW_DEFAULT_MINUTES;
+  try {
+    const settings = await resolveSettings(['runPlans.launchWindowMinutes'], {
+      ...(repo.orgId ? { orgId: repo.orgId } : {}),
+      teamId: repo.teamId,
+    });
+    minutes = settings['runPlans.launchWindowMinutes'];
+  } catch (err) {
+    deps.log?.warn({ err }, 'could not read the launch window; using the default');
+  }
+  const n = typeof minutes === 'number' && Number.isFinite(minutes) ? Math.floor(minutes) : NaN;
+  const clamped = Number.isNaN(n)
+    ? LAUNCH_WINDOW_DEFAULT_MINUTES
+    : Math.min(LAUNCH_WINDOW_MAX_MINUTES, Math.max(1, n));
+  return clamped * 60_000;
+}
 /** Largest serialized spec a plan may carry. */
 export const MAX_PLAN_SPEC_BYTES = 512 * 1024;
 
@@ -551,7 +581,9 @@ export async function createPlanRecord(
   if (!repository.ok) {
     return repository;
   }
-  const serialized = serializeSpec(cleanSpecDisplayText(input.spec));
+  // Cleaned before it is hashed, so the stored text, the hash and the policy verdict all describe
+  // the same spec; the worker's generation did this already, and a spec from other code gets it here.
+  const serialized = serializeSpec(cleanPlanSpecText(cleanSpecDisplayText(input.spec), input.mode));
   if (!serialized.ok) {
     return serialized;
   }
@@ -805,12 +837,15 @@ async function verifyPlanForApproval(
 async function flipToApproved(
   deps: RunPlanServiceDeps,
   plan: PlanRow,
-  actor: PlanActor
+  actor: PlanActor,
+  repo: { orgId: string | null; teamId: string }
 ): Promise<boolean> {
   const now = nowOf(deps);
+  const windowMs = await resolveLaunchWindowMs(deps, repo);
   // Approval grants a bounded launch window: a plan approved a moment before its expiry must still
-  // be pinnable by the worker once the gateway has reported success.
-  const expiresAt = new Date(Math.max(plan.expiresAt.getTime(), now.getTime() + LAUNCH_WINDOW_MS));
+  // be pinnable by the worker once the gateway has reported success. The window is the setting
+  // `runPlans.launchWindowMinutes` at the plan's own team and organization.
+  const expiresAt = new Date(Math.max(plan.expiresAt.getTime(), now.getTime() + windowMs));
   const result = await deps.prisma.runPlan.updateMany({
     data: { approvedAt: now, approvedById: actor.sub, expiresAt, status: 'APPROVED' },
     where: {
@@ -838,7 +873,7 @@ export async function approvePlan(
   if (!verified.ok) {
     return verified;
   }
-  if (!(await flipToApproved(deps, verified.plan, actor))) {
+  if (!(await flipToApproved(deps, verified.plan, actor, verified.repo))) {
     return refuse(409, 'PLAN_NOT_PENDING', 'The plan is no longer pending');
   }
   return verified;
