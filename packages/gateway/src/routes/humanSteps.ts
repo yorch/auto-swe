@@ -15,6 +15,7 @@ import {
   answerableStepIds,
   humanStepListWhere,
   humanStepMineScope,
+  humanStepSearchWhere,
   humanStepTeamScope,
 } from '../lib/humanStepFilters.js';
 import { NUDGE_INTERVAL_MS, nudgeSlackMessage, nudgeText } from '../lib/humanStepNudge.js';
@@ -71,6 +72,8 @@ const ListQuery = z.object({
   answeredByMe: booleanQueryParam(false),
   /** Include `meta.total` even when no page parameter is given (the sidebar badge reads it). */
   count: booleanQueryParam(false),
+  /** Only steps of this kind. */
+  kind: z.enum(['APPROVAL', 'DECISION', 'INPUT', 'REVIEW']).optional(),
   /** Page size; defaults to 100 for `PENDING` and 200 for `ALL`. */
   limit: z.coerce.number().int().min(1).max(200).optional(),
   /**
@@ -81,6 +84,11 @@ const ListQuery = z.object({
   mine: booleanQueryParam(false),
   offset: z.coerce.number().int().min(0).optional(),
   overdue: booleanQueryParam(false),
+  /**
+   * Case-insensitive text search over the step's title and description, the run's ticket id and
+   * request description, and its repository (`org/repo`). Only narrows the list.
+   */
+  q: z.string().trim().max(200).optional(),
   runId: z.string().uuid().optional(),
   sort: z
     .enum(['requestedAt:asc', 'requestedAt:desc', 'timeoutAt:asc', 'timeoutAt:desc'])
@@ -403,10 +411,12 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         actionable,
         answeredByMe,
         count,
+        kind,
         limit,
         mine,
         offset,
         overdue,
+        q,
         sort,
         status,
         runId,
@@ -435,6 +445,8 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       const narrowing: Prisma.WorkflowHumanStepWhereInput[] = [
         ...(mine ? [humanStepMineScope(user)] : []),
         ...(teamId ? [humanStepTeamScope(teamId)] : []),
+        ...(kind ? [{ kind }] : []),
+        ...(q ? [humanStepSearchWhere(q)] : []),
       ];
       const where: Prisma.WorkflowHumanStepWhereInput =
         narrowing.length > 0 ? { AND: [listWhere, ...narrowing] } : listWhere;

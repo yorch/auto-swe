@@ -585,6 +585,55 @@ describe('human step routes', () => {
     });
   });
 
+  describe('GET / q and kind', () => {
+    const listWhere = async (url: string) => {
+      await app.inject({ headers: AUTH, method: 'GET', url });
+      return findManyCalls.at(-1)?.where as { AND?: Array<Record<string, unknown>> };
+    };
+
+    it('ANDs a case-insensitive text match over the step, its request and its repository', async () => {
+      const where = await listWhere('/api/v1/human-steps?q=%20Pay%20');
+      const match = { contains: 'Pay', mode: 'insensitive' };
+      const repo = { OR: [{ organizationName: match }, { repoName: match }] };
+      expect(where.AND?.[1]).toEqual({
+        OR: [
+          { title: match },
+          { description: match },
+          { run: { workRequest: { externalTicketId: match } } },
+          { run: { workRequest: { description: match } } },
+          { run: { connection: repo } },
+          { run: { workRequest: { connection: repo } } },
+        ],
+      });
+    });
+
+    it('ANDs the kind, and counts under the same where', async () => {
+      const where = await listWhere('/api/v1/human-steps?kind=REVIEW&count=true&q=x');
+      expect(where.AND).toContainEqual({ kind: 'REVIEW' });
+      expect(countCalls.at(-1)?.where).toEqual(findManyCalls.at(-1)?.where);
+    });
+
+    it('treats a blank q as no search', async () => {
+      const where = await listWhere('/api/v1/human-steps?q=%20%20');
+      expect(where.AND).toBeUndefined();
+    });
+
+    it('refuses an unknown kind and an over-long q', async () => {
+      const bad = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/human-steps?kind=NOPE',
+      });
+      expect(bad.statusCode).toBe(400);
+      const long = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `/api/v1/human-steps?q=${'a'.repeat(201)}`,
+      });
+      expect(long.statusCode).toBe(400);
+    });
+  });
+
   describe('GET / answeredByMe', () => {
     const OTHER = 'user-2';
     const resolved = (resolvedBy: string | null, payload: unknown, extra = {}) =>

@@ -115,3 +115,24 @@ export function humanStepMineScope(user: VisibilityActor): Prisma.WorkflowHumanS
 export function humanStepTeamScope(teamId: string): Prisma.WorkflowHumanStepWhereInput {
   return { run: runListTeamScope(teamId) };
 }
+
+/**
+ * The text term of `GET /human-steps?q=`: a case-insensitive contains match over the step's title
+ * and description, the run's request (ticket id, description) and the run's repository
+ * (`organizationName` / `repoName`, from the run's connection or its request's). AND it beside
+ * {@link humanStepListWhere}; it narrows only.
+ */
+export function humanStepSearchWhere(q: string): Prisma.WorkflowHumanStepWhereInput {
+  const match = { contains: q, mode: 'insensitive' as const };
+  const repo = { OR: [{ organizationName: match }, { repoName: match }] };
+  return {
+    OR: [
+      { title: match },
+      { description: match },
+      { run: { workRequest: { externalTicketId: match } } },
+      { run: { workRequest: { description: match } } },
+      { run: { connection: repo } },
+      { run: { workRequest: { connection: repo } } },
+    ],
+  };
+}

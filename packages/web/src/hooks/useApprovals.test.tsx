@@ -41,6 +41,44 @@ describe('useApprovals fallback poll', () => {
   });
 });
 
+describe('useApprovals search params', () => {
+  it('sends a trimmed q and the kind, and keys the cache on them', async () => {
+    const fetchSpy = setupFetchMock({ '/api/v1/human-steps': () => ({ data: [] }) });
+    const qc = new QueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () =>
+        useApprovals('PENDING', 'requestedAt:desc', false, undefined, false, {
+          kind: 'REVIEW',
+          q: '  pay api ',
+        }),
+      { wrapper }
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const url = new URL(String(fetchSpy.mock.calls[0]?.[0]), 'http://x');
+    expect(url.searchParams.get('q')).toBe('pay api');
+    expect(url.searchParams.get('kind')).toBe('REVIEW');
+    expect(qc.getQueryCache().getAll()[0]?.queryKey).toEqual(
+      expect.arrayContaining(['REVIEW', 'pay api'])
+    );
+  });
+
+  it('omits a blank q', async () => {
+    const fetchSpy = setupFetchMock({ '/api/v1/human-steps': () => ({ data: [] }) });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={new QueryClient()}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () => useApprovals('PENDING', 'requestedAt:desc', false, undefined, false, { q: '   ' }),
+      { wrapper }
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(String(fetchSpy.mock.calls[0]?.[0])).not.toContain('q=');
+  });
+});
+
 describe('useApprovalsCount', () => {
   function renderCount(handler: () => unknown) {
     const fetchSpy = setupFetchMock({ '/api/v1/human-steps': handler });

@@ -164,7 +164,7 @@ The response is recorded before the signal is sent, and what a failed signal doe
 
 ## The inbox UI
 
-All pending steps are visible on the Approvals page (`/approvals`). The page polls every 10 seconds. The tab, sort, kind, search, deadline filter and page are kept in the address, so a reload or a shared link keeps the view. Kind and search narrow the steps already loaded (the list holds at most 100 pending or 200 of all steps, and the page says so at the cap).
+All pending steps are visible on the Approvals page (`/approvals`). The page polls every 10 seconds. The tab, sort, kind, search, deadline filter and page are kept in the address, so a reload or a shared link keeps the view. Kind and search are applied by the gateway (`kind` and `q` on `GET /api/v1/human-steps`), so they reach steps beyond the list cap, which holds at most 100 pending or 200 of all steps; the page says so at the cap. The **Pending** tab's number counts the pending steps the caller can answer, and is labelled "for you"; the list beneath it shows every pending step unless **Only what I can answer** is on.
 
 - **Admins** see all pending steps across all teams.
 - **Leads and Engineers** see only steps from runs belonging to their teams.
@@ -268,6 +268,11 @@ Returns up to 100 `PENDING` steps visible to the authenticated user, ordered by 
 `status=ALL` also returns answered steps (up to 200). `actionable=true` narrows the list to pending,
 unexpired steps the caller may answer and has not already answered; it is what the sidebar count
 reads. The Home desk reads the same predicate through `mine=true` ([teams.md](./teams.md)).
+
+`kind=APPROVAL|DECISION|INPUT|REVIEW` keeps one step kind. `q` (trimmed, at most 200 characters) keeps
+steps whose title, description, run's ticket id, request description or repository (`org/repo`)
+contains the text, ignoring case. Both only narrow, compose with every other term, and are counted
+by `count` and `meta.total` like the rest.
 
 `mine=true` keeps only steps on runs of the caller's own teams' work, which is what bounds a platform
 ADMIN's otherwise unrestricted list to the desk's ([teams.md](./teams.md)); it only narrows.
