@@ -15,6 +15,7 @@ import {
   reviewToComments,
   type TicketPlan,
 } from '../lib/documentReview.js';
+import { relaxDraftToolChecks } from '../lib/onboardingTooling.js';
 
 export type ParseAgentOutputKind =
   | 'docReview'
@@ -55,7 +56,9 @@ function parseRepoOnboardingDraft(text: string): ParsedRepoOnboardingDraft | Unp
     const paths = [...new Set(parsed.error.issues.map((issue) => issue.path.join('.') || 'draft'))];
     return invalid(`The onboarding draft has invalid fields: ${paths.join(', ')}.`);
   }
-  const draft = parsed.data;
+  // Reason: the agent's tooling checks run in a workspace that may lack Docker or Helm, and a
+  // bare `command -v` there fails the whole trial for a tool the setup never uses.
+  const draft = relaxDraftToolChecks(parsed.data);
   let files: ReturnType<typeof renderOnboardingFiles>;
   try {
     files = renderOnboardingFiles({

@@ -21,6 +21,7 @@ export const REPO_ONBOARDING_SPEC: WorkflowSpec = {
         'context.onboardingReview.status': { literal: 'No valid draft.' },
         'context.onboardingReview.draftMarkdown': { literal: 'No valid draft.' },
         'context.onboardingReview.trialMarkdown': { literal: 'No trial has run.' },
+        'context.onboardingReview.trialOutcome': { literal: 'not_run' },
       },
       next: 'draft',
     },
@@ -69,6 +70,7 @@ export const REPO_ONBOARDING_SPEC: WorkflowSpec = {
         },
         'context.onboardingReview.draftMarkdown': { from: 'nodes.parse.output.markdown' },
         'context.onboardingReview.trialAppliesToCurrentDraft': { literal: false },
+        'context.onboardingReview.trialOutcome': { literal: 'not_run' },
       },
       next: 'draft',
     },
@@ -86,35 +88,68 @@ export const REPO_ONBOARDING_SPEC: WorkflowSpec = {
       type: 'set',
       group: 'onboarding',
       values: {
-        'context.onboardingReview.status': {
-          literal: 'Validated draft; review the trial results and blockers before approving.',
-        },
         'context.onboardingReview.draftMarkdown': { from: 'nodes.parse.output.markdown' },
         'context.onboardingReview.trialMarkdown': { from: 'nodes.trial.output.markdown' },
         'context.onboardingReview.trialAppliesToCurrentDraft': { literal: true },
       },
       next: 'trialPassed',
     },
+    // Reason: the status is derived from the trial's own result, so the review never calls a
+    // draft validated when its trial failed or was blocked.
     trialPassed: {
       type: 'cond',
       group: 'onboarding',
       expr: 'nodes.trial.output.trialPassed == true',
-      onTrue: 'review',
+      onTrue: 'statusPassed',
       onFalse: 'repairable',
+    },
+    statusPassed: {
+      type: 'set',
+      group: 'onboarding',
+      values: {
+        'context.onboardingReview.status': {
+          literal: 'Draft verified: the trial passed. Review the draft before approving.',
+        },
+        'context.onboardingReview.trialOutcome': { literal: 'passed' },
+      },
+      next: 'review',
     },
     repairable: {
       type: 'cond',
       group: 'onboarding',
       expr: 'nodes.trial.output.repairable == true',
-      onTrue: 'draft',
-      onFalse: 'review',
+      onTrue: 'statusFailed',
+      onFalse: 'statusBlocked',
+    },
+    statusFailed: {
+      type: 'set',
+      group: 'onboarding',
+      values: {
+        'context.onboardingReview.status': {
+          literal: 'Draft not verified: the trial failed. Review the failures before approving.',
+        },
+        'context.onboardingReview.trialOutcome': { literal: 'failed' },
+      },
+      next: 'draft',
+    },
+    statusBlocked: {
+      type: 'set',
+      group: 'onboarding',
+      values: {
+        'context.onboardingReview.status': {
+          literal:
+            'Draft not verified: the trial is blocked and needs operator action. Review the blockers before approving.',
+        },
+        'context.onboardingReview.trialOutcome': { literal: 'blocked' },
+      },
+      next: 'review',
     },
     review: {
       type: 'humanApproval',
       group: 'onboarding',
       title: 'Review repository onboarding',
       description:
-        'Review the draft and trial blockers. Approval proposes configuration even if its trial failed; merging the PR activates the files unless connection overrides win. No valid draft means no delivery.',
+        'Review the proposed repository configuration and the result of its trial. Approving opens a pull request with the files even when the trial failed or was blocked. The files take effect only when that pull request is merged, and settings saved on the connection still take precedence. If there is no valid draft, approving opens nothing.',
       contextFrom: 'context.onboardingReview',
       timeout: '7d',
       onApprove: 'canDeliver',

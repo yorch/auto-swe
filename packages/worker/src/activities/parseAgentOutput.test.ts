@@ -11,6 +11,23 @@ describe('repository onboarding draft', () => {
   const fenced = (value: unknown) => `Draft:\n\n\`\`\`json\n${JSON.stringify(value)}\n\`\`\``;
   const parse = (text: unknown) => parseAgentOutput({ kind: 'repoOnboardingDraft', text });
 
+  it('makes optional tooling checks non-fatal in the draft it shows and trials', async () => {
+    const result = await parse(
+      fenced({
+        gateCommands: {},
+        setup: {
+          steps: [
+            { name: 'Verify required local tooling', run: 'command -v docker\ncommand -v helm' },
+          ],
+        },
+      })
+    );
+    expect(result).toMatchObject({ valid: true });
+    const run = result.valid ? JSON.stringify(result.markdown) : '';
+    expect(run).toContain('docker || echo');
+    expect(run).toContain('helm || echo');
+  });
+
   it('validates and summarizes all configuration for approval', async () => {
     const result = await parse(fenced(draft));
     expect(result).toMatchObject({

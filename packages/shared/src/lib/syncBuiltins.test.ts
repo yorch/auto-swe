@@ -913,7 +913,7 @@ describe('syncBuiltins — the onboarding agent as persisted', () => {
     // one. Without it that deployment keeps the old prompt, which then no longer equals the seed,
     // so the onboarding draft silently loses its wider egress. When this fails: add the sha256 of
     // the outgoing prompt to the list, then update PINNED_PROMPT_SHA256 below to the new one.
-    const PINNED_PROMPT_SHA256 = '084076167240a25d2e7572752ac004e42b7712954dbd7ab84a254d8edd926f71';
+    const PINNED_PROMPT_SHA256 = '77e0e35ccb6bf5253843ee4d5efb20ae40db3fc409b45924bf928f32c49c4abc';
     const current = SWE_AGENTS.find((def) => def.key === 'repo-onboarder')?.systemPrompt ?? '';
     expect(
       createHash('sha256').update(current).digest('hex'),

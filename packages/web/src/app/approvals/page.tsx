@@ -270,7 +270,7 @@ function GovernApprovals() {
             loading={<ApprovalSkeleton />}
           >
             {count > 0 && (
-              <div className="space-y-3 outline-none" ref={listRef} tabIndex={-1}>
+              <div className="scroll-mt-6 space-y-3 outline-none" ref={listRef} tabIndex={-1}>
                 {narrowed && atCap && (
                   <p className="text-xs text-paper-500">
                     Searching the {loaded} steps this list loads; others may match.

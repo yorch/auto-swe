@@ -18,9 +18,12 @@ import { useRespondToApproval } from '@/hooks/useApprovals';
 import { useTick } from '@/hooks/useTick';
 import { errMsg } from '@/lib/errors';
 import { requestHref } from '@/lib/requestDisplay';
-import { cn, FOCUS_RING, formatDate, formatDuration, formatRelativeTime } from '@/lib/utils';
+import { cn, FOCUS_RING, formatDate, formatRelativeTime } from '@/lib/utils';
 import { respondLabel, summarizeContext } from './contextSummary';
 import { DiffRenderer } from './DiffRenderer';
+import { formatTimeUntil } from './deadline';
+import { OnboardingReviewView } from './OnboardingReviewView';
+import { parseOnboardingReview, trialDidNotPass } from './onboardingReview';
 
 const KIND_LABEL: Record<string, string> = {
   APPROVAL: 'Approval',
@@ -157,7 +160,7 @@ function formatTimeRemaining(timeoutAt: string): string {
   if (msLeft <= 0) {
     return `expired ${formatRelativeTime(timeoutAt)}`;
   }
-  return `expires in ${formatDuration(msLeft)}`;
+  return `expires ${formatTimeUntil(msLeft)}`;
 }
 
 function getTimeoutColor(timeoutAt: string): string {
@@ -188,8 +191,9 @@ const RESPONSE_ICON: Record<string, { icon: IconName; tone: string }> = {
   submit: { icon: 'chat', tone: 'text-info-400' },
 };
 
+// Underlined at rest: a link that only underlines on hover reads as plain text, and touch has no hover.
 const LINK = cn(
-  'rounded-sm underline-offset-2 hover:underline focus-visible:underline',
+  'rounded-sm underline decoration-current/50 underline-offset-2 hover:decoration-current',
   FOCUS_RING
 );
 
@@ -332,7 +336,7 @@ export function HumanStepCard({
   }
 
   function openDialog(next: 'approve' | 'reject' | 'request_changes') {
-    setComment('');
+    // Reason: the note typed in the footer travels into the dialog, so it is neither lost nor retyped.
     setDialogError(null);
     setDialog(next);
   }
@@ -340,6 +344,9 @@ export function HumanStepCard({
   // Stringifying and parsing a large diff is not cheap, and the card re-renders on every tick.
   const contextStr = useMemo(() => contextToString(step.context), [step.context]);
   const hasContext = contextStr.length > 0;
+  // An onboarding review gets a purpose-built view; any other approval keeps the generic one.
+  const onboarding = step.kind === 'APPROVAL' ? parseOnboardingReview(step.context) : null;
+  const unverified = trialDidNotPass(onboarding);
   const expired = isExpired(step);
   const youApproved = step.status === 'PENDING' && step.myResponse === 'approve';
   const canRespond = step.status === 'PENDING' && !expired && !youApproved;
@@ -365,7 +372,7 @@ export function HumanStepCard({
   );
 
   return (
-    <Card className="space-y-3 p-4" variant="inset">
+    <Card className="scroll-mt-6 space-y-3 p-4" variant="inset">
       <div className="flex flex-wrap items-start gap-x-3 gap-y-2 sm:flex-nowrap">
         <Badge className="mt-px shrink-0" tone={KIND_TONE[step.kind] ?? 'neutral'}>
           {KIND_LABEL[step.kind] ?? step.kind}
@@ -398,13 +405,14 @@ export function HumanStepCard({
             </p>
           )}
           <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-paper-500">
-            <span
+            <time
               className={cn('inline-flex items-center gap-1', getTimestampColor(step.requestedAt))}
-              title={`Requested ${formatDate(requestedAt)}`}
+              dateTime={requestedAt.toISOString()}
+              title={`Requested ${formatDate(requestedAt, { showSeconds: true })}`}
             >
               <Icon name="clock" size={12} />
               Requested {formatRelativeTime(step.requestedAt)}
-            </span>
+            </time>
             {step.status === 'PENDING' && step.timeoutAt && !expired && (
               <>
                 <span aria-hidden="true">·</span>
@@ -544,18 +552,33 @@ export function HumanStepCard({
             hasContext && (
               <div className="space-y-1.5">
                 <h4 className="text-xs font-medium text-paper-400">Context</h4>
-                <DiffRenderer content={contextStr} />
+                {onboarding ? (
+                  <OnboardingReviewView review={onboarding} />
+                ) : (
+                  <DiffRenderer content={contextStr} />
+                )}
               </div>
             )}
 
           {step.kind === 'APPROVAL' && (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-ink-500/50 bg-ink-900/50 px-3 py-2.5">
-              <p className="min-w-0 flex-1 basis-[14rem] text-xs text-paper-400">
+            <div className="space-y-3 rounded-lg border border-ink-500/50 bg-ink-900/50 px-3 py-2.5">
+              <p className="text-xs text-paper-400">
                 {hasContext
-                  ? 'Review the context above, then decide. Either way you can leave a note.'
-                  : 'Decide on this step. Either way you can leave a note.'}
+                  ? 'Review the context above, then decide. The note below is optional for approving, and required to reject or request changes. It is sent with your decision.'
+                  : 'Decide on this step. The note below is optional for approving, and required to reject or request changes. It is sent with your decision.'}
               </p>
-              <div className="flex gap-2 max-sm:w-full max-sm:*:flex-1">
+              <Textarea
+                compact
+                id={`human-step-${step.id}-note`}
+                label="Note for the requester"
+                maxLength={MAX_COMMENT_LENGTH}
+                mono={false}
+                onChange={(e) => setComment(e.target.value)}
+                placeholder="Add a note with your decision…"
+                rows={2}
+                value={comment}
+              />
+              <div className="flex flex-wrap justify-end gap-2 max-sm:w-full max-sm:*:flex-1">
                 <GuardedButton
                   blockedReason={answerBlocked}
                   className="h-[40px] lg:h-8"
@@ -586,7 +609,8 @@ export function HumanStepCard({
                   disabled={respond.isPending}
                   onClick={() => openDialog('approve')}
                   size="sm"
-                  variant="primary"
+                  // Reason: approving a draft whose trial did not pass is allowed but not the default.
+                  variant={unverified ? 'secondary' : 'primary'}
                 >
                   <Icon name="check" size={13} />
                   Approve
@@ -789,6 +813,13 @@ export function HumanStepCard({
               ? 'The run gets your feedback and continues down its change-request path — usually a fix, then back here. This cannot be undone.'
               : approveConsequence(step)}
         </p>
+        {dialog === 'approve' && unverified && (
+          <Alert announce={false} title="The trial did not pass" variant="warning">
+            {onboarding?.outcome === 'not_run'
+              ? 'This draft was not trialled. Approving still opens a pull request with these files.'
+              : `The trial ${onboarding?.outcome === 'blocked' ? 'was blocked' : 'failed'}. Approving still opens a pull request with these files, which may not set the repository up correctly.`}
+          </Alert>
+        )}
         <Textarea
           compact
           hint={`${comment.length} / ${MAX_COMMENT_LENGTH}`}
@@ -834,7 +865,9 @@ export function HumanStepCard({
               ? 'Reject'
               : dialog === 'request_changes'
                 ? 'Request changes'
-                : 'Approve'
+                : unverified
+                  ? 'Approve anyway'
+                  : 'Approve'
           }
         />
       </Modal>

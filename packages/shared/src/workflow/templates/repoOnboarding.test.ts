@@ -123,6 +123,38 @@ describe('repository onboarding', () => {
     });
   });
 
+  it('derives the review status and outcome from the trial result', async () => {
+    const passed = await run();
+    expect(passed.reviews[0]).toMatchObject({
+      status: expect.stringContaining('Draft verified'),
+      trialOutcome: 'passed',
+    });
+
+    const blocked = await run({
+      trials: [
+        {
+          ...success,
+          trialPassed: false,
+          blockers: [{ kind: 'missing_secret', subject: 'TOKEN', detail: 'Not configured' }],
+        },
+      ],
+    });
+    expect(blocked.reviews[0]).toMatchObject({
+      status: expect.stringContaining('Draft not verified: the trial is blocked'),
+      trialOutcome: 'blocked',
+    });
+
+    // A repairable failure that exhausts its repair visits reaches review as a failed trial.
+    const failed = await run({ trials: [{ ...success, trialPassed: false, repairable: true }] });
+    expect(failed.reviews[0]).toMatchObject({
+      status: expect.stringContaining('Draft not verified: the trial failed'),
+      trialOutcome: 'failed',
+    });
+    for (const outcome of [passed, blocked, failed]) {
+      expect(JSON.stringify(outcome.reviews)).not.toContain('Validated');
+    }
+  });
+
   it('returns invalid output to draft with the parse error in resolved inputs', async () => {
     const outcome = await run({ parses: [invalid, valid] });
     expect(outcome.draftCalls).toHaveLength(2);
@@ -175,6 +207,7 @@ describe('repository onboarding', () => {
       draftMarkdown: 'Invalid JSON',
       trialMarkdown: 'No trial has run.',
       trialAppliesToCurrentDraft: false,
+      trialOutcome: 'not_run',
     });
     expect(outcome.delivered).toHaveLength(0);
     expect(outcome.result.status).toBe('FAILED');
@@ -194,6 +227,7 @@ describe('repository onboarding', () => {
     });
     expect(outcome.reviews[0]).toMatchObject({
       trialAppliesToCurrentDraft: false,
+      trialOutcome: 'not_run',
       status: expect.stringContaining('No valid draft'),
     });
     expect(outcome.delivered).toHaveLength(0);

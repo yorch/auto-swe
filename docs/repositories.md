@@ -879,9 +879,13 @@ the repository's **Setup health** blockers; it returns typed blockers in the tri
 
 Invalid proposals and repairable trial failures return to the drafter, up to three draft visits
 (two repair rounds). Operator-only blockers, such as missing secrets or denied egress, go to
-review without an automatic repair. A person sees both the draft summary and the trial report,
-including blockers. They can approve even a failed trial, request changes within the same draft
-visit budget, or reject. Exhaustion still reaches review; an invalid draft is explicitly marked
+review without an automatic repair. A person sees the trial summary first (passed, failed or
+blocked, with the failed steps and blockers), then the draft files as readable code blocks, then
+the full trial report. The status line states the real outcome, so it only says the draft is
+verified when its trial passed. They can approve even a failed trial (Approve is then secondary
+and asks for confirmation), request changes within the same draft visit budget, or reject. Bare
+`command -v <tool>` checks in the draft for tools the workspace may lack (Docker, Helm, kubectl
+and similar) are made non-fatal before the trial, so a missing optional tool does not fail it. Exhaustion still reaches review; an invalid draft is explicitly marked
 and cannot reach delivery even when approved. Approval opens one configuration PR; it does not
 merge it. The PR body includes the latest trial report, bounded to 12,000 characters and redacted
 for credential shapes and known delivery credentials; report text does not change the file hash
