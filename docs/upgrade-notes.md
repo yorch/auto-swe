@@ -1917,13 +1917,13 @@ setting shows the same project keys or team keys the old setting held.
 
 ---
 
-### Team attention, budget requests and nudges need the migration `20261117200000_team_attention`
+### Team attention, budget requests and nudges need the migration `20261117400000_team_attention`
 
 **Affected.** Every deployment that runs the gateway from a commit containing the migration
-`20261117200000_team_attention`.
+`20261117400000_team_attention`.
 
 **Fix commit.** Identified before its SHA is assigned by the migration
-`20261117200000_team_attention`; compare the source when commit ancestry is unavailable.
+`20261117400000_team_attention`; compare the source when commit ancestry is unavailable.
 
 **Actions.** Apply the migration before starting the updated gateway or worker. The gateway image's
 entrypoint runs `prisma migrate deploy` before it starts, and the Helm migrate Job runs it before any
