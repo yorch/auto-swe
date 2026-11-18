@@ -2,8 +2,8 @@
 
 Jira: N/A
 Date: 2026-11-14
-Status: Approved
-Last reviewed: 2026-11-14
+Status: Implemented 2026-11-18 — historical snapshot, not maintained; see docs/adr/team-role-ux-restructure.md for current decisions
+Last reviewed: 2026-11-18
 
 ## Problem
 
