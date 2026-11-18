@@ -119,6 +119,8 @@ function buildHarness(opts?: {
   connection?: unknown;
   /** The caller's active team memberships (`teamMembership.findMany`); an Error makes it throw. */
   memberships?: Array<{ teamId: string; team: { orgId: string | null } }> | Error;
+  /** The caller's active organization memberships (`organizationMembership.findMany`). */
+  orgMemberships?: Array<{ orgId: string }>;
 }): Harness {
   let lookups = 0;
   const h: Harness = {
@@ -185,6 +187,9 @@ function buildHarness(opts?: {
         h.connectionWheres.push(where);
         return opts?.connection ?? null;
       },
+    },
+    organizationMembership: {
+      findMany: async () => opts?.orgMemberships ?? [],
     },
     runInput: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
@@ -994,16 +999,32 @@ describe("POST /workflow-templates/:id/runs: a connection-less launch and the te
       expect(tracker.keysCtx).toEqual([{}]);
     });
 
-    it('refuses the brief when the memberships cannot be read', async () => {
+    it('refuses the launch when the memberships cannot be read', async () => {
       const h = buildHarness({
         inputSchema: DESCRIPTION_SCHEMA,
         memberships: new Error('db down'),
       });
       await h.app.ready();
       const res = await launchTicket(h, 'PAY-7');
-      expect(res.statusCode, res.body).toBe(400);
-      expect(res.json().error.code).toBe('DESCRIPTION_REQUIRED');
+      expect(res.statusCode, res.body).toBe(503);
+      expect(res.json().error.code).toBe('LAUNCH_SCOPE_UNAVAILABLE');
       expect(tracker.fetchTicket).not.toHaveBeenCalled();
+    });
+
+    it('refuses a launch with a typed description too, rather than recording no scope', async () => {
+      const h = buildHarness({
+        inputSchema: DESCRIPTION_SCHEMA,
+        memberships: new Error('db down'),
+      });
+      await h.app.ready();
+      const res = await h.app.inject({
+        headers: { authorization: 'Bearer t' },
+        method: 'POST',
+        payload: { payload: { description: 'Add a health endpoint', ticketId: 'PAY-7' } },
+        url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
+      });
+      expect(res.statusCode, res.body).toBe(503);
+      expect(res.json().error.code).toBe('LAUNCH_SCOPE_UNAVAILABLE');
     });
 
     it("leaves a template team's own list in charge when the template has a team", async () => {
@@ -1037,5 +1058,175 @@ describe("POST /workflow-templates/:id/runs: a connection-less launch and the te
       expect((await launchTicket(h, 'ENG-7')).statusCode).toBe(400);
       expect((await launchTicket(h, 'PAY-7')).statusCode).toBe(201);
     });
+  });
+});
+
+describe('POST /workflow-templates/:id/runs: the tracker scope contexts recorded on the run', () => {
+  beforeEach(async () => {
+    const actual =
+      await vi.importActual<typeof import('../lib/ticketLookup.js')>('../lib/ticketLookup.js');
+    lookupTrackerTicket.mockReset();
+    lookupTrackerTicket.mockImplementation(actual.lookupTrackerTicket);
+    tracker.fetchTicket.mockReset();
+    tracker.fetchTicket.mockResolvedValue({
+      description: 'Body',
+      labels: [],
+      raw: {},
+      status: 'To Do',
+      title: 'A ticket',
+      url: 'https://acme.atlassian.net/browse/X',
+    });
+    tracker.keysCtx.length = 0;
+    tracker.keysByTeam = {};
+    tracker.config = {
+      allowPrivateNetwork: false,
+      apiToken: 'tok',
+      baseUrl: 'https://acme.atlassian.net',
+      email: 'bot@acme.com',
+      provider: 'jira',
+    };
+  });
+
+  afterEach(() => {
+    tracker.config = null;
+    tracker.keysByTeam = {};
+  });
+
+  async function launchTicket(h: Harness, ticketId: string) {
+    return h.app.inject({
+      headers: { authorization: 'Bearer t' },
+      method: 'POST',
+      payload: { payload: { ticketId } },
+      url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
+    });
+  }
+
+  it("records the launcher's active teams, with their organizations", async () => {
+    const h = buildHarness({
+      inputSchema: DESCRIPTION_SCHEMA,
+      memberships: [
+        { team: { orgId: 'org-1' }, teamId: 'team-1' },
+        { team: { orgId: null }, teamId: 'team-2' },
+      ],
+    });
+    await h.app.ready();
+    expect((await run(h)).statusCode).toBe(201);
+    expect(h.runInputs[0]?.trackerScopeContexts).toEqual([
+      { orgId: 'org-1', teamId: 'team-1' },
+      { teamId: 'team-2' },
+    ]);
+  });
+
+  it('adds an organization the launcher belongs to through none of their listed teams', async () => {
+    const h = buildHarness({
+      inputSchema: DESCRIPTION_SCHEMA,
+      memberships: [{ team: { orgId: 'org-1' }, teamId: 'team-1' }],
+      orgMemberships: [{ orgId: 'org-1' }, { orgId: 'org-2' }],
+    });
+    await h.app.ready();
+    expect((await run(h)).statusCode).toBe(201);
+    expect(h.runInputs[0]?.trackerScopeContexts).toEqual([
+      { orgId: 'org-1', teamId: 'team-1' },
+      { orgId: 'org-2' },
+    ]);
+  });
+
+  it('records an organization-only member as that organization', async () => {
+    const h = buildHarness({
+      inputSchema: DESCRIPTION_SCHEMA,
+      orgMemberships: [{ orgId: 'org-2' }],
+    });
+    await h.app.ready();
+    expect((await run(h)).statusCode).toBe(201);
+    expect(h.runInputs[0]?.trackerScopeContexts).toEqual([{ orgId: 'org-2' }]);
+  });
+
+  it('records an empty list for a launcher with no team and no organization', async () => {
+    const h = buildHarness({ inputSchema: DESCRIPTION_SCHEMA });
+    await h.app.ready();
+    expect((await run(h)).statusCode).toBe(201);
+    expect(h.runInputs[0]?.trackerScopeContexts).toEqual([]);
+  });
+
+  it('records nothing when the template has a team', async () => {
+    const h = buildHarness({
+      inputSchema: DESCRIPTION_SCHEMA,
+      memberships: [{ team: { orgId: 'org-1' }, teamId: 'team-9' }],
+      teamOrgId: 'org-1',
+    });
+    await h.app.ready();
+    expect((await run(h)).statusCode).toBe(201);
+    expect(h.runInputs[0]).not.toHaveProperty('trackerScopeContexts');
+    expect(h.membershipWheres).toHaveLength(0);
+  });
+
+  it('records nothing when the launch names a repository', async () => {
+    validateRunConnection.mockImplementationOnce(async () => ({
+      budgetCap: null,
+      budgetOrgId: null,
+      budgetTeam: null,
+      ok: true,
+      source: undefined,
+    }));
+    lookupTrackerTicket.mockResolvedValue({ state: 'found', ticket: { title: 'T' } });
+    const connection = {
+      githubApiUrl: null,
+      githubUrl: null,
+      organizationName: 'acme',
+      repoName: 'api',
+      team: { orgId: null },
+      teamId: 't1',
+    };
+    const h = buildHarness({
+      connection,
+      inputSchema: DESCRIPTION_SCHEMA,
+      memberships: [{ team: { orgId: 'org-1' }, teamId: 'team-9' }],
+    });
+    await h.app.ready();
+    const res = await h.app.inject({
+      headers: { authorization: 'Bearer t' },
+      method: 'POST',
+      payload: {
+        payload: { connectionId: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb', ticketId: 'PAY-12' },
+      },
+      url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(h.runInputs[0]).not.toHaveProperty('trackerScopeContexts');
+    expect(h.membershipWheres).toHaveLength(0);
+  });
+
+  it('uses the one recorded value for the brief lookup, as one query', async () => {
+    tracker.keysByTeam = { 'team-1': ['PAY'] };
+    const h = buildHarness({
+      inputSchema: DESCRIPTION_SCHEMA,
+      memberships: [{ team: { orgId: 'org-1' }, teamId: 'team-1' }],
+    });
+    await h.app.ready();
+    const res = await launchTicket(h, 'PAY-7');
+    expect(res.statusCode, res.body).toBe(201);
+    expect(tracker.keysCtx).toEqual([{ orgId: 'org-1', teamId: 'team-1' }]);
+    expect(h.runInputs[0]?.trackerScopeContexts).toEqual([{ orgId: 'org-1', teamId: 'team-1' }]);
+    expect(h.membershipWheres).toHaveLength(1);
+  });
+
+  it('reads an organization-only member at that organization for the brief', async () => {
+    const h = buildHarness({
+      inputSchema: DESCRIPTION_SCHEMA,
+      orgMemberships: [{ orgId: 'org-2' }],
+    });
+    await h.app.ready();
+    expect((await launchTicket(h, 'PAY-7')).statusCode).toBe(201);
+    expect(tracker.keysCtx).toEqual([{ orgId: 'org-2' }]);
+  });
+
+  it('refuses the launch and records nothing when the contexts cannot be read', async () => {
+    const h = buildHarness({ inputSchema: DESCRIPTION_SCHEMA, memberships: new Error('db down') });
+    await h.app.ready();
+    const res = await launchTicket(h, 'PAY-7');
+    expect(res.statusCode, res.body).toBe(503);
+    expect(res.json().error.code).toBe('LAUNCH_SCOPE_UNAVAILABLE');
+    expect(tracker.fetchTicket).not.toHaveBeenCalled();
+    expect(h.runInputs).toHaveLength(0);
   });
 });

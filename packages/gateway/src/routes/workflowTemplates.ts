@@ -127,6 +127,7 @@ import {
 import { memberOrgs } from '../lib/tenantScope.js';
 import { isValidTicketId } from '../lib/ticketId.js';
 import { launchTrackedTemplateRun } from '../lib/trackedTemplateLaunch.js';
+import { loadLaunchTrackerContexts } from '../lib/trackerLaunchContexts.js';
 import { refuseUnchangedRerun } from '../lib/unchangedRerun.js';
 import { planWindow } from '../lib/usageWindows.js';
 import {
@@ -2646,6 +2647,33 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       if (!callback.ok) {
         return sendCallbackRefusal(reply, callback);
       }
+      // A launch with no repository and no template team resolves the tracker project allowlist at
+      // its launcher's contexts, computed ONCE here: stored on the run (`trackerScopeContexts`,
+      // which the worker reads instead of re-deriving, so a launcher who later leaves a team
+      // changes nothing mid-run) and used for the brief lookup below. A person's active teams
+      // plus any organization they belong to through no listed team; a service principal's own
+      // team. A lookup that fails refuses the launch: recording nothing would leave the worker to
+      // resolve a service principal's run at GLOBAL, dropping its team's restriction.
+      const recordTrackerContexts = !connectionId && !tpl.teamId;
+      let trackerScopeContexts: TrackerLaunchTeam[] | null = null;
+      if (recordTrackerContexts) {
+        try {
+          trackerScopeContexts = await loadLaunchTrackerContexts(
+            fastify.prisma,
+            caller.kind === 'user'
+              ? { kind: 'user', userId: caller.user.sub }
+              : { kind: 'service', teamId: caller.principal.teamId }
+          );
+        } catch (err) {
+          request.log.warn({ err }, 'Launcher team lookup failed');
+          return sendError(
+            reply,
+            503,
+            'LAUNCH_SCOPE_UNAVAILABLE',
+            'The launch could not be checked against the issue tracker allowlist; try again'
+          );
+        }
+      }
       // Every refusal and authorization above has passed, so the tracker is read only for a launch
       // that will go ahead. After this the description is final: the unchanged-rerun check below
       // and the run itself see the brief.
@@ -2664,16 +2692,18 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             })
           : null;
         // A launch with no git repository reads the project-key allowlist at the template's team
-        // and organization. A global template has none, so a person's own active teams apply (the
-        // worker resolves the same run through `currentRunLauncherId`, which names users only):
-        // each team's list overrides GLOBAL where it sets one, and a person with no team resolves
-        // at GLOBAL. A service principal has no launcher on the run, so its connection-less launch
-        // with no template team resolves at GLOBAL only, here and in the worker alike, never at
-        // the principal's own team. A lookup that fails refuses the brief.
+        // and organization. A global template has none, so the contexts computed above apply (a
+        // person's own active teams and organizations, or a service principal's own team): each
+        // context's list overrides GLOBAL where it sets one, and none resolves at GLOBAL. The
+        // worker reads the same recorded value.
         let launchTeam: TrackerLaunchTeam | TrackerLaunchTeam[] | null = null;
         if (tpl.teamId) {
           launchTeam = { orgId: tpl.team?.orgId ?? null, teamId: tpl.teamId };
+        } else if (!repo && recordTrackerContexts) {
+          launchTeam = trackerScopeContexts;
         } else if (!repo && caller.kind === 'user') {
+          // A connection that names no git repository: nothing is recorded, and the worker
+          // re-derives the launcher's teams, so the brief does too.
           try {
             const memberships = await fastify.prisma.teamMembership.findMany({
               select: { team: { select: { orgId: true } }, teamId: true },
@@ -2811,6 +2841,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           templateId: tpl.id,
           templateVersion: resolvedVersion,
           temporalWorkflowId,
+          ...(trackerScopeContexts ? { trackerScopeContexts } : {}),
         },
         {
           ...(service

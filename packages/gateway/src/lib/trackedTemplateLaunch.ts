@@ -14,6 +14,8 @@ export function launchTrackedTemplateRun(
     requestedByServiceId?: string | null;
     callback?: object | null;
     source?: Pick<WorkflowLedgerRows, 'knowledgeSourceRepo' | 'knowledgeSourceTeam'>;
+    /** The tracker allowlist contexts recorded for the run (see `loadLaunchTrackerContexts`). */
+    trackerScopeContexts?: ReadonlyArray<{ orgId?: string | null; teamId?: string | null }>;
   },
   options: Parameters<typeof launchTrackedWorkflow>[3]
 ) {
@@ -44,6 +46,14 @@ export function launchTrackedTemplateRun(
         templateVersion: input.templateVersion,
         ticketIsSynthetic: request.externalTicketId === request.workRequestId,
         ...(input.callback ? { callback: { create: input.callback } } : {}),
+        ...(input.trackerScopeContexts
+          ? {
+              trackerScopeContexts: input.trackerScopeContexts.map((c) => ({
+                ...(c.orgId ? { orgId: c.orgId } : {}),
+                ...(c.teamId ? { teamId: c.teamId } : {}),
+              })),
+            }
+          : {}),
       },
     },
     () =>

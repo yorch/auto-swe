@@ -424,13 +424,27 @@ describe("a service principal's ticket brief on a global template", () => {
     templateTeamId: null,
   });
 
-  it("resolves at GLOBAL only, so its own team's list neither narrows nor widens the read", async () => {
-    // The worker resolves this run at GLOBAL (a principal is no launcher); the gateway agrees.
+  it("resolves at the principal's own team and records that context on the run", async () => {
+    // The brief and the stored value are the one computed list, which the worker reads back.
     const h = harness(state());
     const res = await h.runTicket('ENG-7');
-    expect(res.statusCode, res.body).toBe(201);
+    expect(res.statusCode, res.body).toBe(400);
+    expect(tracker.fetchTicket).not.toHaveBeenCalled();
+    expect(tracker.keysCtx).toEqual([{ orgId: 'org-1', teamId: SP_TEAM }]);
+    await h.app.close();
+    const ok = harness(state());
+    const accepted = await ok.runTicket('PAY-7');
+    expect(accepted.statusCode, accepted.body).toBe(201);
     expect(tracker.fetchTicket).toHaveBeenCalledTimes(1);
-    expect(tracker.keysCtx).toEqual([{}]);
+    expect(ok.runInputs[0]?.trackerScopeContexts).toEqual([{ orgId: 'org-1', teamId: SP_TEAM }]);
+    await ok.app.close();
+  });
+
+  it('records no contexts when the principal has a template team', async () => {
+    const h = harness({ ...state(), templateTeamId: SP_TEAM });
+    const res = await h.runTicket('PAY-7');
+    expect(res.statusCode, res.body).toBe(201);
+    expect(h.runInputs[0]).not.toHaveProperty('trackerScopeContexts');
     await h.app.close();
   });
 });
