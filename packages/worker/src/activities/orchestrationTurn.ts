@@ -16,6 +16,7 @@ import {
   type TranscriptRow,
   TURN_INSTRUCTIONS,
 } from '../lib/orchestrationContext.js';
+import { assertCurrentWorkflowOwns } from '../lib/orchestrationIdentity.js';
 import { countOrchestrationLoad, hasPendingAttach } from '../lib/orchestrationState.js';
 import type {
   RunOrchestratorTurnInput,
@@ -85,6 +86,7 @@ function failureText(err: unknown): { code: string; text: string } {
 export async function runOrchestratorTurn(
   input: RunOrchestratorTurnInput
 ): Promise<RunOrchestratorTurnResult> {
+  assertCurrentWorkflowOwns(input.orchestrationId);
   const orch = await prisma.orchestration.findUnique({
     select: {
       allowlist: true,

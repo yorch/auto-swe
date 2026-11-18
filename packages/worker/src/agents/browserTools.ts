@@ -4,7 +4,8 @@ import type { PreviewConfig } from '@auto-swe/shared/lib/previewConfig';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
-import { BrowserSession } from '../browser/session.js';
+import { navigationRefusal } from '../browser/navigationPolicy.js';
+import { BrowserSession, type BrowserWorkspace } from '../browser/session.js';
 import { auditLog } from '../lib/activityLog.js';
 import { type AgentTracer, redactString } from '../lib/agentTracer.js';
 import { resolveRepoPreview, workspaceConfigReader } from '../lib/repoConfigResolver.js';
@@ -62,6 +63,10 @@ export const BROWSER_TOOLS = [
     description: 'Navigate to a URL in the app browser.',
     name: 'browser_navigate',
     async run(session, args) {
+      const refusal = navigationRefusal(String(args.url));
+      if (refusal) {
+        throw new Error(`browser_navigate refused: ${refusal}.`);
+      }
       const result = await (await session.ensureSession()).call({ cmd: 'goto', url: args.url });
       return { text: textResult(result) };
     },
@@ -204,12 +209,21 @@ export const BROWSER_TOOLS = [
 
 export type BrowserToolName = (typeof BROWSER_TOOLS)[number]['name'];
 
-export interface BrowserToolsetOptions {
-  workspace: Workspace;
-  repoId: string;
+export type BrowserToolsetOptions = {
   tracer: AgentTracer;
   containerId: string;
-}
+} & (
+  | { workspace: Workspace; repoId: string }
+  | {
+      /**
+       * A run with no repository: a scratch container, no preview recipe, no app preview. The
+       * browser may navigate only to `allowedHosts` (the run's effective egress allowlist).
+       */
+      workspace: BrowserWorkspace;
+      repoId: null;
+      allowedHosts: string[];
+    }
+);
 
 export class BrowserToolset implements BrowserToolContext {
   private closed = false;
@@ -247,9 +261,14 @@ export class BrowserToolset implements BrowserToolContext {
         this.agentScreenshotImages = agentScreenshotImages;
         this.maxScreenshotBytes = maxScreenshotBytes;
         return BrowserSession.start(this.options.workspace, {
-          allowedHosts: this.previewConfig?.allowedHosts ?? [],
+          allowedHosts:
+            this.options.repoId === null
+              ? this.options.allowedHosts
+              : (this.previewConfig?.allowedHosts ?? []),
           maxVideoBytes,
           recordVideo,
+          // A run with no repository also loses data: and blob: resources in the driver.
+          ...(this.options.repoId === null ? { scratch: true } : {}),
           trace: true,
         });
       })();
@@ -275,8 +294,12 @@ export class BrowserToolset implements BrowserToolContext {
     if (!this.previewPromise) {
       const starting = (async () => {
         const { startAppPreview } = await import('../lib/appPreview.js');
-        return startAppPreview(this.options.workspace, this.previewConfig as PreviewConfig, {
-          connectionId: this.options.repoId,
+        const { repoId, workspace } = this.options;
+        if (repoId === null) {
+          throw new Error('A run with no repository has no app preview');
+        }
+        return startAppPreview(workspace as Workspace, this.previewConfig as PreviewConfig, {
+          connectionId: repoId,
         });
       })();
       this.previewPromise = starting;
@@ -440,12 +463,17 @@ export class BrowserToolset implements BrowserToolContext {
     if (this.previewConfig !== undefined) {
       return;
     }
+    const options = this.options;
+    if (options.repoId === null) {
+      this.previewConfig = null;
+      return;
+    }
     const repo = await prisma.connection.findUnique({
       select: { previewConfig: true },
-      where: { id: this.options.repoId },
+      where: { id: options.repoId },
     });
     this.previewConfig = await resolveRepoPreview(
-      workspaceConfigReader(this.options.workspace, this.options.repoId),
+      workspaceConfigReader(options.workspace, options.repoId),
       repo?.previewConfig
     );
   }

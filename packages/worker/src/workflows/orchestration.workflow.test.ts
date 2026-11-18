@@ -12,6 +12,7 @@ import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
 import type { TestContext } from 'vitest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { assertCurrentWorkflowOwns } from '../lib/orchestrationIdentity.js';
 import type {
   OrchestrationEvent,
   OrchestrationWorkflowInput,
@@ -32,6 +33,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** Everything the fakes saw and everything a test scripts. */
 const log = {
+  /** Every input the apply and cancel activities received, as the workflow sent it. */
+  activityInputs: [] as unknown[],
   applied: [] as { intents: OrchestratorIntent[]; turnKey: string }[],
   begun: 0,
   cancelled: 0,
@@ -67,6 +70,7 @@ let currentId = '';
 
 const fakeActivities = {
   applyOrchestrationIntents: async (input: { intents: OrchestratorIntent[]; turnKey: string }) => {
+    log.activityInputs.push(input);
     log.applied.push({ intents: input.intents, turnKey: input.turnKey });
     const r = script.applyResult(log.applied.length);
     return {
@@ -78,8 +82,10 @@ const fakeActivities = {
       wait: r.running > 0,
     };
   },
-  beginOrchestrationRun: async () => {
+  beginOrchestrationRun: async (begin: { orchestrationId: string }) => {
     log.begun += 1;
+    // The activity's own identity check, against the id of the workflow that scheduled it.
+    assertCurrentWorkflowOwns(begin.orchestrationId);
     if (script.begin.delayMs) {
       await new Promise((r) => setTimeout(r, script.begin.delayMs));
     }
@@ -93,7 +99,8 @@ const fakeActivities = {
       unseenChildIds: script.begin.unseen,
     };
   },
-  cancelOrchestrationChildren: async () => {
+  cancelOrchestrationChildren: async (input: unknown) => {
+    log.activityInputs.push(input);
     log.cancelled += 1;
     return { cancelled: 0 };
   },
@@ -150,6 +157,7 @@ beforeEach((ctx: TestContext) => {
     ctx.skip();
   }
   log.applied = [];
+  log.activityInputs = [];
   log.begun = 0;
   log.cancelled = 0;
   log.refreshed = 0;
@@ -224,6 +232,42 @@ describe('OrchestrationWorkflow', () => {
     expect(attachResolvedSignal.name).toBe(ORCHESTRATION_SIGNALS.attachResolved);
     expect(approvalResolvedSignal.name).toBe(ORCHESTRATION_SIGNALS.approvalResolved);
     expect(orchestrationCancelSignal.name).toBe(ORCHESTRATION_SIGNALS.cancel);
+  });
+
+  it('does nothing when it is started under an id other than the one the orchestration owns', async () => {
+    const wfInput = input();
+    const client = (env as TestWorkflowEnvironment).client;
+    const handle = await client.workflow.signalWithStart('OrchestrationWorkflow', {
+      args: [wfInput],
+      signal: ORCHESTRATION_SIGNALS.userMessage,
+      signalArgs: [{ messageId: 'm1' }],
+      taskQueue: TASK_QUEUE,
+      workflowExecutionTimeout: '48 hours',
+      workflowId: `foreign-${wfInput.orchestrationId}`,
+    });
+    await expect(handle.result()).rejects.toThrow();
+    expect(log.begun).toBe(1);
+    expect(log.turns).toHaveLength(0);
+    expect(log.applied).toHaveLength(0);
+    expect(log.statuses).toHaveLength(0);
+    expect(log.refreshed).toBe(0);
+    expect(log.cancelled).toBe(0);
+  });
+
+  it("does nothing when it is started under another orchestration's id", async () => {
+    const wfInput = input();
+    const client = (env as TestWorkflowEnvironment).client;
+    const handle = await client.workflow.signalWithStart('OrchestrationWorkflow', {
+      args: [wfInput],
+      signal: ORCHESTRATION_SIGNALS.userMessage,
+      signalArgs: [{ messageId: 'm1' }],
+      taskQueue: TASK_QUEUE,
+      workflowExecutionTimeout: '48 hours',
+      workflowId: orchestrationWorkflowId('0b1c2d3e-0000-4000-8000-0000000000ff'),
+    });
+    await expect(handle.result()).rejects.toThrow();
+    expect(log.turns).toHaveLength(0);
+    expect(log.statuses).toHaveLength(0);
   });
 
   it('batches events that arrive together into one turn, then idles to WAITING', async () => {
@@ -418,6 +462,57 @@ describe('OrchestrationWorkflow', () => {
     // The signal sent during turn 50 rode across the continue-as-new.
     expect(log.turns[50]?.[0]).toEqual({ messageId: 'm-50', type: 'userMessage' });
   }, 120_000);
+
+  describe('the orchestration token', () => {
+    const LEGACY = 'orch_legacy.token';
+
+    it('is in no activity input, even when the workflow was started with a legacy one', async () => {
+      script.turnIntents = (n) => (n === 1 ? [spawn] : []);
+      script.applyResult = () => {
+        // The cancel lands while the apply activity is answering, so the finish cancels children.
+        void sendSignal(ORCHESTRATION_SIGNALS.cancel);
+        return { refused: 0, running: 1 };
+      };
+      const handle = await start(input({ token: LEGACY }));
+      await handle.result();
+      // Both an apply and a cancel ran, and neither carries a token field or a token value.
+      expect(log.applied).toHaveLength(1);
+      expect(log.cancelled).toBe(1);
+      expect(log.activityInputs).toHaveLength(2);
+      for (const activityInput of log.activityInputs) {
+        expect(activityInput).not.toHaveProperty('token');
+        expect(JSON.stringify(activityInput)).not.toContain('orch_');
+      }
+    });
+
+    it('is not carried across a continue-as-new, and a workflow without one runs', async () => {
+      script.onTurn = (n) => {
+        if (n < 52) {
+          void sendSignal(ORCHESTRATION_SIGNALS.userMessage, { messageId: `m-${n}` });
+        }
+      };
+      const wfInput = input({ token: LEGACY });
+      const handle = await start(wfInput);
+      await handle.result();
+      expect(log.turns).toHaveLength(52);
+      const client = (env as TestWorkflowEnvironment).client;
+      const startedInput = async (runId?: string) => {
+        const history = await client.workflow
+          .getHandle(orchestrationWorkflowId(wfInput.orchestrationId), runId)
+          .fetchHistory();
+        const payload =
+          history.events?.[0]?.workflowExecutionStartedEventAttributes?.input?.payloads?.[0];
+        return Buffer.from(payload?.data ?? []).toString('utf8');
+      };
+      // The first execution started with the legacy token (the control); the last one, which the
+      // workflow continued into, has the carried state and no token.
+      expect(await startedInput(handle.signaledRunId)).toContain(LEGACY);
+      const continued = await startedInput();
+      expect(continued).toContain('"carried"');
+      expect(continued).not.toContain('orch_');
+      expect(continued).not.toContain('"token"');
+    }, 120_000);
+  });
 
   it('passes each turn its number, carried from the database count', async () => {
     script.begin.turns = 7;

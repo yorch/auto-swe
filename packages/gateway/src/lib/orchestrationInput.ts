@@ -20,6 +20,5 @@ export interface OrchestrationWorkflowInput {
   pinned: OrchestrationPins;
   serviceId: string | null;
   teamId: string;
-  token: string;
   userId: string | null;
 }

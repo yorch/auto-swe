@@ -12,6 +12,20 @@ records the image and build settings on the repository connection. `docker.yml` 
 `executor-node-browser` for deployments that manage their own image references; set it as the
 repository's `executorImage` when UI validation needs Chromium.
 
+A repo-less orchestration child ([orchestrations](./orchestrations.md)) can use the agent browser
+tool too. It gets a throwaway container made from the deployment's configured workspace image (so
+that image needs Chromium), with no repository, no credential and no preview recipe, locked to the
+worker's egress proxy under the `restricted` policy. It may navigate only to the team's own egress
+allowlist entries: the global baseline is not added, the proxy and the browser use the same list, and a
+team with no entries gets no browser. It runs only on the Docker workspace backend (on Kubernetes
+cluster DNS stays reachable, which page script could use to leak data), opens only `http` and `https`
+URLs and `about:blank`, and refuses `data:` and `blob:` page resources. Screenshots, recordings and
+traces are recorded as run evidence exactly as above. Where any of this cannot be enforced, the child
+runs without the browser.
+
+The `http`/`https` rule applies to every browser run: `browser_navigate` refuses `file:`, `chrome:`,
+`view-source:`, `javascript:`, `ftp:`, `data:` and `blob:`, and the driver refuses them again.
+
 ## Run evidence
 
 Screenshots, recordings, traces and text logs use the workflow artifact store and carry run
@@ -191,6 +205,8 @@ dropped.
 
 ## Limitations
 
+- A repo-less child that has both MCP and the browser can put data it read through MCP into a URL on a
+  host its team allowlisted; the allowlist limits where it goes, not what.
 - Editing `.auto-swe/preview.yml` in an agent's working tree does not reconfigure its preview.
   Preview files must be merged to the trusted base branch, and are limited to 64 KiB.
 - An existing connection recipe hides the entire repository recipe, including its services.

@@ -264,6 +264,55 @@ describe('BrowserToolset', () => {
     expect(result.text).toContain('"imageOmitted":"file exceeds the 100 byte limit"');
   });
 
+  describe('browser_navigate schemes', () => {
+    const refused = [
+      'file:///etc/passwd',
+      'chrome://settings',
+      'view-source:https://example.com/',
+      'javascript:alert(1)',
+      'ftp://example.com/x',
+      'data:text/html,<script>1</script>',
+      'blob:https://example.com/0000',
+    ];
+
+    it.each(refused)('refuses %s without starting the browser or navigating', async (url) => {
+      const toolset = createToolset();
+      await expect(toolset.call('browser_navigate', { url })).rejects.toThrow(/refused/);
+      expect(startBrowser).not.toHaveBeenCalled();
+      expect(session.call).not.toHaveBeenCalled();
+      expect(tracer.addToolCall).toHaveBeenCalledWith(
+        expect.objectContaining({ toolName: 'browser:browser_navigate' })
+      );
+    });
+
+    it('lets http, https and about:blank through', async () => {
+      const toolset = createToolset();
+      for (const url of ['http://localhost:3000/', 'https://example.com/a?b=1', 'about:blank']) {
+        await toolset.call('browser_navigate', { url });
+      }
+      expect(session.call.mock.calls.map(([c]) => (c as { url: string }).url)).toEqual([
+        'http://localhost:3000/',
+        'https://example.com/a?b=1',
+        'about:blank',
+      ]);
+    });
+
+    it('marks a run with no repository as scratch, so the driver refuses data: and blob: resources', async () => {
+      const toolset = new BrowserToolset({
+        allowedHosts: ['docs.example.com'],
+        containerId: 'workspace-1',
+        repoId: null,
+        tracer,
+        workspace: {} as never,
+      });
+      await toolset.call('browser_navigate', { url: 'https://docs.example.com/' });
+      expect(startBrowser).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ allowedHosts: ['docs.example.com'], scratch: true })
+      );
+    });
+  });
+
   it('traces and rethrows browser allowlist errors', async () => {
     const toolset = createToolset();
     session.call.mockRejectedValueOnce(new Error('Navigation blocked by host allowlist'));

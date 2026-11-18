@@ -288,8 +288,16 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/agentRunAdmission.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/orchestrationTokenKey',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/orchestrationTokenKey.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/orchestrationApi',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/orchestrationApi.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/sse',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/sse.ts'),
       },
       {
         find: '@auto-swe/shared/lib/orchestration',

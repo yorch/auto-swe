@@ -13,7 +13,9 @@ import {
   createOrchestrationGateway,
   type OrchestrationGateway,
   type OrchestrationGatewayResponse,
+  redactOrchestrationTokens,
 } from '../lib/orchestrationGateway.js';
+import { assertCurrentWorkflowOwns } from '../lib/orchestrationIdentity.js';
 import {
   countOrchestrationLoad,
   hasPendingAttach,
@@ -24,11 +26,10 @@ import type {
   ApplyOrchestrationIntentsResult,
   OrchestratorIntent,
 } from '../lib/orchestrationTypes.js';
-import { redactToken } from '../lib/redactToken.js';
 
 /**
  * Apply the intents an orchestrator turn recorded, in order. This is fixed code, not the model:
- * a spawn, message or cancel goes to the gateway with the orchestration token and the gateway is
+ * a spawn, message or cancel goes to the gateway with a per-call orchestration token and the gateway is
  * the authority; a repository request is checked here and becomes an `ATTACH_REQUEST` message.
  *
  * A refusal is never retried. It becomes a SYSTEM `NOTICE` carrying the gateway's code, which the
@@ -56,8 +57,7 @@ const LOCAL_CODES = {
  * markup, redacted and length-capped. Null when the body carries neither.
  */
 export function parseGatewayError(
-  body: unknown,
-  token: string
+  body: unknown
 ): { code: string | null; message: string | null } | null {
   const record = (v: unknown): Record<string, unknown> | null =>
     typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -75,14 +75,13 @@ export function parseGatewayError(
     typeof rawCode === 'string' && /^[A-Z][A-Z0-9_]{2,63}$/.test(rawCode) ? rawCode : null;
   const message =
     typeof rawMessage === 'string'
-      ? redactToken(
+      ? redactOrchestrationTokens(
           redactString(
             rawMessage
               .replace(/[\p{Cc}<>]+/gu, ' ')
               .replace(/\s+/g, ' ')
               .trim()
-          ),
-          token
+          )
         ).slice(0, NOTICE_MESSAGE_CHARS)
       : null;
   return code || message ? { code, message: message || null } : null;
@@ -91,7 +90,8 @@ export function parseGatewayError(
 export async function applyOrchestrationIntents(
   input: ApplyOrchestrationIntentsInput
 ): Promise<ApplyOrchestrationIntentsResult> {
-  return applyIntents(input, createOrchestrationGateway(input.token));
+  assertCurrentWorkflowOwns(input.orchestrationId);
+  return applyIntents(input, createOrchestrationGateway(input.orchestrationId));
 }
 
 /** The body of the activity with the gateway client supplied, for tests. */
@@ -134,7 +134,7 @@ export async function applyIntents(
       return await gateway.post(path, body);
     } catch (err) {
       logWarn('orchestration gateway call failed', {
-        error: redactToken(err instanceof Error ? err.message : String(err), input.token),
+        error: redactOrchestrationTokens(err instanceof Error ? err.message : String(err)),
         orchestrationId,
       });
       return { error: true };
@@ -153,7 +153,7 @@ export async function applyIntents(
     if (res.status >= 200 && res.status < 300) {
       return true;
     }
-    const parsed = parseGatewayError(res.body, input.token);
+    const parsed = parseGatewayError(res.body);
     if (parsed) {
       // The real code and message, so the orchestrator can correct itself. The message is quoted
       // data from the platform, not an instruction.
@@ -186,8 +186,14 @@ export async function applyIntents(
           turnKey: `${input.turnKey}:${i}`,
         });
         const ok = await settle(`Starting "${label}"`, res);
-        if (ok && !('error' in res) && SpawnChildResponseSchema.safeParse(res.body).success) {
+        // The gateway answers `{ data: { childId, ... } }`.
+        const answer =
+          ok && !('error' in res) ? SpawnChildResponseSchema.safeParse(unwrapData(res.body)) : null;
+        if (answer?.success) {
           spawned += 1;
+          if (answer.data.clamped) {
+            await noteClamped(orchestrationId, answer.data.clamped.maxSteps);
+          }
         } else if (ok) {
           await refuse(
             `Starting "${label}"`,
@@ -252,7 +258,7 @@ export async function applyIntents(
     } catch (err) {
       // One intent failing (a database write, say) must not abort the ones after it.
       logWarn('orchestration intent could not be applied', {
-        error: redactToken(err instanceof Error ? err.message : String(err), input.token),
+        error: redactOrchestrationTokens(err instanceof Error ? err.message : String(err)),
         index: i,
         kind: recorded.kind,
         orchestrationId,
@@ -273,6 +279,34 @@ export async function applyIntents(
     spawned,
     wait: load.runningChildren > 0 || load.pendingApprovals > 0 || pendingAttach,
   };
+}
+
+/** The body's `data` member when it has one, else the body itself. */
+function unwrapData(body: unknown): unknown {
+  return typeof body === 'object' && body !== null && 'data' in body
+    ? (body as { data: unknown }).data
+    : body;
+}
+
+/**
+ * Tell the next orchestrator turn that the gateway lowered a child's step limit to the platform
+ * ceiling. Fixed wording and a number only, so no model text reaches the notice. A failed write
+ * loses the notice, never the spawn.
+ */
+async function noteClamped(orchestrationId: string, maxSteps: number): Promise<void> {
+  try {
+    await writeNotice(
+      orchestrationId,
+      'MAX_STEPS_CLAMPED',
+      `A child you started asked for more steps than the platform allows, so its step limit was lowered to ${maxSteps}.`,
+      { maxSteps }
+    );
+  } catch (err) {
+    logWarn('orchestration clamp notice not written', {
+      error: err instanceof Error ? err.message : String(err),
+      orchestrationId,
+    });
+  }
 }
 
 /**

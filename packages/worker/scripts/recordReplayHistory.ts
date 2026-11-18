@@ -78,10 +78,18 @@ interface Scenario {
    * (an attempt counter, say) cannot leak between scenarios.
    */
   activities?: () => Record<string, (...args: never[]) => unknown>;
+  /**
+   * Record the history of the FIRST execution only. A workflow that ends its run with
+   * `continueAsNew` leaves the first execution closed as ContinuedAsNew, which is the path this
+   * guards; the default `fetchHistory` would return the last execution of the chain.
+   */
+  firstExecutionOnly?: boolean;
 }
 
 interface DriveHandle {
   workflowId: string;
+  /** The run id the workflow was started under (the first execution of its chain). */
+  firstExecutionRunId: string;
   signal(name: string, arg?: unknown): Promise<void>;
   cancel(): Promise<unknown>;
   result(): Promise<unknown>;
@@ -432,7 +440,6 @@ const orchestrationInput = (maxWallClockSeconds = 14_400) => ({
     maxWriterChildren: 4,
   },
   teamId: 'team-replay',
-  token: 'orch_fixture',
   userId: 'user-replay',
 });
 
@@ -1815,6 +1822,35 @@ const SCENARIOS: Scenario[] = [
     name: 'orchestration-deferred-results',
     workflow: { args: [orchestrationInput()], type: 'OrchestrationWorkflow' },
   },
+  {
+    // Fifty turns in one execution, so the workflow continues as new carrying its turn counter,
+    // run-key epoch and the message that arrived during the fiftieth turn. Each turn signals the
+    // next one; the recording is the FIRST execution, closed as ContinuedAsNew.
+    activities: () => {
+      let turns = 0;
+      return orchestrationActivities({
+        runOrchestratorTurn: async () => {
+          turns += 1;
+          if (turns <= 50) {
+            await raceRef.handle?.signal('userMessage', { messageId: `message-${turns + 1}` });
+          }
+          return { intents: [], pendingApprovals: 0, runningChildren: 0, status: 'COMPLETE' };
+        },
+      } as never);
+    },
+    drive: async (handle) => {
+      raceRef.handle = handle;
+      await handle.signal('userMessage', { messageId: 'message-1' });
+    },
+    firstExecutionOnly: true,
+    name: 'orchestration-continue-as-new',
+    // Started with the LEGACY `token` field an earlier release put in the input, so the replay test
+    // can prove the continued input drops it rather than merely never having had one.
+    workflow: {
+      args: [{ ...orchestrationInput(), token: 'orch_legacy_fixture' }],
+      type: 'OrchestrationWorkflow',
+    },
+  },
 ];
 
 /**
@@ -1902,6 +1938,11 @@ async function record(scenario: Scenario, env: TestWorkflowEnvironment): Promise
     });
     await scenario.drive?.(handle, states, env);
     await handle.result().catch(() => undefined);
+    if (scenario.firstExecutionOnly) {
+      return env.client.workflow
+        .getHandle(handle.workflowId, handle.firstExecutionRunId)
+        .fetchHistory();
+    }
     return handle.fetchHistory();
   });
 

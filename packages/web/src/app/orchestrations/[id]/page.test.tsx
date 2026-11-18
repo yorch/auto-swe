@@ -28,6 +28,7 @@ const calls = vi.hoisted(() => ({
   messageChild: vi.fn(),
   send: vi.fn(),
 }));
+const stream = vi.hoisted(() => ({ enabled: undefined as boolean | undefined, state: 'idle' }));
 const idle = { error: null, isError: false, isPending: false, mutate: vi.fn(), reset: vi.fn() };
 
 vi.mock('@/hooks/useOrchestrations', () => ({
@@ -44,6 +45,12 @@ vi.mock('@/hooks/useOrchestrations', () => ({
     return { ...state.messages, refetch: vi.fn() };
   },
   useSendOrchestrationMessage: () => ({ ...idle, mutate: calls.send }),
+}));
+vi.mock('@/hooks/useOrchestrationStream', () => ({
+  useOrchestrationStream: (_id: string, enabled: boolean) => {
+    stream.enabled = enabled;
+    return enabled ? stream.state : 'idle';
+  },
 }));
 vi.mock('@/hooks/useRepositories', () => ({
   useRepositories: () => ({ data: [], isLoading: false }),
@@ -120,6 +127,31 @@ describe('OrchestrationDetailPage states', () => {
     await renderPage();
     expect(screen.getByText('Could not load this orchestration')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+  });
+});
+
+describe('live indicator', () => {
+  const labels: Array<[string, string]> = [
+    ['live', 'Live'],
+    ['reconnecting', 'Reconnecting…'],
+    ['polling', 'Updating by polling'],
+  ];
+  it.each(labels)('says %s in words, in a region that is not announced', async (st, label) => {
+    stream.state = st;
+    setDetail(detail());
+    await renderPage();
+    const text = screen.getByText(label);
+    expect(text).toBeTruthy();
+    expect(text.closest('[aria-live]')?.getAttribute('aria-live')).toBe('off');
+    expect(stream.enabled).toBe(true);
+  });
+
+  it('is absent, and the stream off, once the orchestration is finished', async () => {
+    stream.state = 'live';
+    setDetail(detail({ status: 'COMPLETED' }));
+    await renderPage();
+    expect(screen.queryByText('Live')).toBeNull();
+    expect(stream.enabled).toBe(false);
   });
 });
 
@@ -318,13 +350,46 @@ describe('header', () => {
     setDetail(
       detail({
         billing: { childrenTeamName: 'Platform', orchestratorTeamName: 'Payments' },
-        budget: { remainingUsd: 12.5, tier: 'LARGE' },
+        budget: {
+          monthlyRemainingUsd: 12.5,
+          percentUsed: 42,
+          remainingUsd: null,
+          tier: 'LARGE',
+          tokens: { cap: 2_000_000, kind: 'input', used: 840_000 },
+        },
       })
     );
     await renderPage();
-    expect(screen.getByText(/Large tier, \$12\.50 remaining/)).toBeTruthy();
+    const used = screen.getByText('42% of the Large budget used');
+    expect(used.getAttribute('title')).toBe(
+      '840,000 of 2,000,000 input tokens, the orchestrator and its agents together'
+    );
+    expect(screen.getByText(/remaining \$12\.50 this month/)).toBeTruthy();
     expect(screen.getByText(/billed to Payments/)).toBeTruthy();
     expect(screen.getByText(/billed to Platform/)).toBeTruthy();
+  });
+
+  it('shows the percentage without a monthly figure when no USD budget is set', async () => {
+    setDetail(
+      detail({
+        budget: {
+          percentUsed: 7,
+          remainingUsd: null,
+          tier: 'STANDARD',
+          tokens: { cap: 1000, kind: 'output', used: 70 },
+        },
+      })
+    );
+    await renderPage();
+    expect(screen.getByText('7% of the Standard budget used')).toBeTruthy();
+    expect(screen.queryByText(/this month/)).toBeNull();
+  });
+
+  it('tolerates an older payload that carries only the tier and an estimate', async () => {
+    setDetail(detail({ budget: { remainingUsd: null, tier: 'LARGE' } }));
+    await renderPage();
+    expect(screen.getByText('Large tier')).toBeTruthy();
+    expect(screen.queryByText(/budget used/)).toBeNull();
   });
 
   it('shows only the tier when the gateway reports no budget or billing', async () => {

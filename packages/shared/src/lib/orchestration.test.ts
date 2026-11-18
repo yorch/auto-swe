@@ -524,6 +524,15 @@ describe('OrchestrationLaunchSchema', () => {
     ).toBe(true);
   });
 
+  it('leaves the allowlist optional: omitted and empty both mean the platform default', () => {
+    const { allowlist: _omit, ...noList } = base;
+    expect(OrchestrationLaunchSchema.parse(noList).allowlist).toBeUndefined();
+    expect(OrchestrationLaunchSchema.parse({ ...base, allowlist: [] }).allowlist).toEqual([]);
+    expect(
+      OrchestrationLaunchSchema.safeParse({ ...noList, allowlist: ['orchestrator'] }).success
+    ).toBe(false);
+  });
+
   it('requires a team or a repository', () => {
     expect(OrchestrationLaunchSchema.safeParse({ allowlist: ['a'], task: 't' }).success).toBe(
       false
@@ -534,7 +543,6 @@ describe('OrchestrationLaunchSchema', () => {
     [{ task: '' }],
     [{ task: '   ' }],
     [{ task: 'x'.repeat(20_001) }],
-    [{ allowlist: [] }],
     [{ allowlist: Array.from({ length: 21 }, (_, i) => `a${i}`) }],
     [{ allowlist: ['a b'] }],
     [{ allowlist: ['a@0'] }],

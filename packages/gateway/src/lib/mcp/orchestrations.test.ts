@@ -800,6 +800,42 @@ describe('the orchestration tools', () => {
       expect(JSON.stringify(json.result)).not.toContain('workflowId');
     });
 
+    it('launches without an allowlist and reports the one the platform applied', async () => {
+      const s = await setup();
+      s.write.body = {
+        data: {
+          allowlist: ['implementer', 'reviewer'],
+          orchestrationId: ORCH,
+          status: 'ACTIVE',
+          workflowId: `orch-${ORCH}`,
+          writeCapable: ['implementer'],
+        },
+      };
+      const { allowlist: _omit, ...withoutAllowlist } = launchArgs;
+      const { json } = await s.callTool(s.writeToken, 'orchestrations_launch', withoutAllowlist);
+      expect(json.result.isError).not.toBe(true);
+      expect(json.result.structuredContent.writeCapable).toEqual(['implementer']);
+      expect(s.sent[0]?.body).toEqual({ repoId: REPO, task: launchArgs.task });
+      expect(json.result.structuredContent.allowlist).toEqual(['implementer', 'reviewer']);
+      // An empty list is the same request as none.
+      const empty = await s.callTool(s.writeToken, 'orchestrations_launch', {
+        ...withoutAllowlist,
+        allowlist: [],
+      });
+      expect(empty.json.result.isError).not.toBe(true);
+    });
+
+    it('says to pass an allowlist when the platform has no default for the team', async () => {
+      const s = await setup();
+      s.write.status = 400;
+      s.write.body = { error: { code: 'ALLOWLIST_REQUIRED', message: INJECTION } };
+      const { allowlist: _omit, ...withoutAllowlist } = launchArgs;
+      const { json } = await s.callTool(s.writeToken, 'orchestrations_launch', withoutAllowlist);
+      expect(json.result.isError).toBe(true);
+      expect(json.result.content[0].text).toContain('give `allowlist`');
+      expect(JSON.stringify(json.result)).not.toContain(INJECTION);
+    });
+
     it('reports a replay of the key as already_submitted', async () => {
       const s = await setup();
       s.write.status = 200;
@@ -826,7 +862,6 @@ describe('the orchestration tools', () => {
       { budgetTier: 'LARGE' },
       { connectionIds: [REPO] },
       { requestedById: 'someone-else' },
-      { allowlist: [] },
       { allowlist: ['bad agent!'] },
       { allowlist: Array.from({ length: 21 }, () => 'implementer') },
       { idempotencyKey: undefined },

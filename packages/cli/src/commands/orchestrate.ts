@@ -14,6 +14,7 @@ import type {
 } from '@auto-swe/shared/lib/orchestrationApi';
 import { apiRequest, apiRequestFull, GatewayError, runWithExitCodes } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
+import { consumeEventStream } from '../lib/eventStream.js';
 import { missingValue, parseFlags } from '../lib/flags.js';
 import { clean, pad } from '../lib/format.js';
 import { sleep } from '../lib/time.js';
@@ -28,7 +29,7 @@ import { resolveTeamIdBySlug } from './workflows.js';
 
 const SUB_HELP = `auto-swe orchestrate — a conversation that starts, steers and collects agent runs
 
-  orchestrate start "<task>" --agent=<key> [--agent=<key> ...] [--repo=<org/name> | --team=<slug>]
+  orchestrate start "<task>" [--agent=<key> ...] [--repo=<org/name> | --team=<slug>]
             [--connection=<id> ...] [--budget-tier=STANDARD|LARGE|EPIC]
             [--deliver=none|branch|draft_pr] [--idempotency-key=KEY] [--wait] [--json]
   orchestrate list [--team=<slug>] [--status=S] [--json]
@@ -49,7 +50,8 @@ const SUB_HELP = `auto-swe orchestrate — a conversation that starts, steers an
   orchestrate deny <id> <approvalId>             Refuse one held MCP write
 
   FLAGS
-    --agent=KEY           An agent on the allowlist. Repeatable; at least one. KEY may pin a version (key@3).
+    --agent=KEY           An agent on the allowlist. Repeatable; KEY may pin a version (key@3). Omit it
+                          to use the platform's default agents; the output names the ones applied.
     --repo=<org/name>     Start on this repository. Writers and delivery need one.
     --team=<slug>         The team that owns the orchestration. Required without --repo; a repo-less
                           orchestration is read-only (no workspace, no delivery).
@@ -86,6 +88,10 @@ const TERMINAL: readonly string[] = ['COMPLETED', 'CANCELLED', 'FAILED'];
  * ORCHESTRATION_REFUSAL_CODES is here (a test enforces it); the rest are common gateway refusals.
  */
 const REFUSAL_SENTENCES = new Map<string, string>([
+  [
+    'ALLOWLIST_REQUIRED',
+    'No default agents are available to this team; pass at least one --agent=<key>.',
+  ],
   [
     'AGENT_RUN_CONCURRENCY_EXCEEDED',
     'Too many agent runs are already running for this team or repository; try again when one finishes.',
@@ -305,10 +311,8 @@ async function cmdStart(rawArgs: string[], env: CliEnv): Promise<number> {
     return usage('The task is empty');
   }
 
+  // No --agent: the gateway applies the platform's default allowlist.
   const allowlist = [...new Set(agents.values.map((a) => a.trim()))];
-  if (allowlist.length === 0) {
-    return usage('At least one --agent=<key> is required');
-  }
   const badAgent = allowlist.find((a) => !AGENT_KEY_RE.test(a));
   if (badAgent !== undefined) {
     return usage(`--agent "${badAgent}" is not an agent key (for example contentWriter or key@3)`);
@@ -358,7 +362,7 @@ async function cmdStart(rawArgs: string[], env: CliEnv): Promise<number> {
     'POST',
     BASE,
     {
-      allowlist,
+      ...(allowlist.length > 0 ? { allowlist } : {}),
       budgetTier: budget,
       ...(connectionIds.length > 0 ? { connectionIds } : {}),
       deliveryDefault: deliver,
@@ -377,6 +381,9 @@ async function cmdStart(rawArgs: string[], env: CliEnv): Promise<number> {
     `Orchestration started.\n` +
       `  Orchestration: ${launched.orchestrationId}\n` +
       `  Status:        ${launched.status}\n` +
+      (launched.allowlist
+        ? `  Agents:        ${launched.allowlist.map((a) => agentLabel(a, launched.writeCapable)).join(', ') || '-'}${allowlist.length === 0 ? ' (platform default)' : ''}\n`
+        : '') +
       `  Dashboard:     ${dashboardUrl(launched.orchestrationId)}\n`
   );
   if (!switches.on.wait) {
@@ -391,11 +398,31 @@ async function cmdStart(rawArgs: string[], env: CliEnv): Promise<number> {
 
 // ── Following a transcript ───────────────────────────────────────────────────
 
+/** What one follow carries from the stream to the polling loop, so a fallback loses nothing. */
+interface FollowState {
+  announced: Set<string>;
+  /** The transcript cursor: the last stream event id, which is the `next` the REST route returns. */
+  cursor: string | undefined;
+  lastStatus: string;
+  /** Ids of messages already written, so a stream and a poll never print one twice. */
+  printed: Set<string>;
+}
+
+/** Consecutive stream failures (after it had been established) before polling takes over. */
+const STREAM_MAX_FAILURES = 5;
+/** A bound on reconnects (the gateway ends a stream every 16 minutes): beyond an orchestration's life. */
+const STREAM_MAX_CONNECTIONS = 1000;
+const STREAM_BACKOFF_BASE_MS = 1000;
+const STREAM_BACKOFF_MAX_MS = 30_000;
+/** The exit code of a Ctrl-C while following: 128 + SIGINT. */
+const EXIT_SIGINT = 130;
+
 /**
- * Poll the orchestration and its transcript until it is finished. `wait` stops as soon as the
+ * Follow the orchestration and its transcript until it is finished. `wait` stops as soon as the
  * orchestration waits for a person (WAITING) and exits 2 when it was cancelled or failed; `follow`
- * stops only when it finishes. The detail is read before the messages, so a status that turns
- * terminal is never reported before the messages written before it.
+ * stops only when it finishes. The server-sent event stream is used when the gateway offers it
+ * and resumes from the last event id after a drop; when it is unavailable (a 429, a proxy that
+ * does not stream, repeated failures) the same output comes from polling every few seconds.
  */
 async function follow(
   env: CliEnv,
@@ -404,18 +431,157 @@ async function follow(
   json: boolean
 ): Promise<number> {
   const stop = mode === 'wait' ? [...TERMINAL, 'WAITING'] : TERMINAL;
-  const announced = new Set<string>();
-  let cursor: string | undefined;
-  let lastStatus = '';
+  const state: FollowState = {
+    announced: new Set(),
+    cursor: undefined,
+    lastStatus: '',
+    printed: new Set(),
+  };
+  const streamed = await followStream(env, id, mode, json, stop, state);
+  if (streamed !== null) {
+    return streamed;
+  }
+  return followPoll(env, id, mode, json, stop, state);
+}
+
+/** Returns the exit code, or null when the stream is not usable and polling should take over. */
+async function followStream(
+  env: CliEnv,
+  id: string,
+  mode: 'wait' | 'follow',
+  json: boolean,
+  stop: readonly string[],
+  state: FollowState
+): Promise<number | null> {
+  const ctl = new AbortController();
+  let interrupted = false;
+  // Ctrl-C closes the stream (freeing the gateway's per-user stream slot at once) and ends the
+  // follow wherever it is waiting: the stream, a REST read in a batch, or the reconnect backoff.
+  // The listener is persistent, so the FIRST Ctrl-C is the one that counts, and it is removed
+  // in `finally`.
+  let signalInterrupt: () => void = () => undefined;
+  const interruptP = new Promise<'interrupted'>((resolve) => {
+    signalInterrupt = () => resolve('interrupted');
+  });
+  const onSigint = () => {
+    interrupted = true;
+    ctl.abort();
+    signalInterrupt();
+  };
+  process.on('SIGINT', onSigint);
+  let failures = 0;
+  try {
+    for (let connection = 0; connection < STREAM_MAX_CONNECTIONS; connection++) {
+      let exit: number | undefined;
+      const cursorBefore = state.cursor;
+      const consuming = consumeEventStream(env, `${BASE}/${id}/events`, {
+        lastEventId: state.cursor,
+        onBatch: async (events) => {
+          let changed = false;
+          for (const ev of events) {
+            if (ev.id) {
+              state.cursor = ev.id;
+            }
+            if (ev.event === 'message') {
+              const message = parseJson<OrchestrationMessageDto>(ev.data);
+              if (message && !state.printed.has(message.id)) {
+                state.printed.add(message.id);
+                writeMessage(message, json);
+              }
+            }
+            changed = changed || ['message', 'child', 'status'].includes(ev.event);
+          }
+          if (!changed) {
+            return false;
+          }
+          const detail = await gw<OrchestrationDetailDto>(env, 'GET', `${BASE}/${id}`);
+          if (detail.status !== state.lastStatus) {
+            state.lastStatus = detail.status;
+            process.stderr.write(`[${detail.status}]\n`);
+          }
+          if (!json) {
+            printPending(id, detail, state.announced);
+          }
+          if (stop.includes(detail.status)) {
+            // Anything written before the status turned is read from the REST route once more.
+            state.cursor = await printMessages(env, id, state.cursor, json, state.printed);
+            exit = exitFor(mode, detail.status, id);
+            return true;
+          }
+          return false;
+        },
+        signal: ctl.signal,
+      });
+      // An abandoned read (the user left while it was in flight) must not surface later.
+      consuming.catch(() => undefined);
+      const result = await Promise.race([consuming, interruptP]);
+      if (exit !== undefined) {
+        return exit;
+      }
+      if (result === 'interrupted') {
+        return EXIT_SIGINT;
+      }
+      if (interrupted) {
+        return EXIT_SIGINT;
+      }
+      if (result.kind === 'unavailable') {
+        return null;
+      }
+      if (result.kind === 'done') {
+        failures = 0;
+        continue;
+      }
+      // A connection that moved the cursor made progress; one that only replayed did not.
+      failures = state.cursor !== cursorBefore ? 1 : failures + 1;
+      if (failures > STREAM_MAX_FAILURES) {
+        return null;
+      }
+      const delay = Math.min(STREAM_BACKOFF_MAX_MS, STREAM_BACKOFF_BASE_MS * 2 ** (failures - 1));
+      await Promise.race([
+        sleep(Math.round(delay * (0.5 + Math.random() * 0.5)), ctl.signal),
+        interruptP,
+      ]);
+      if (interrupted) {
+        return EXIT_SIGINT;
+      }
+    }
+    return null;
+  } finally {
+    process.off('SIGINT', onSigint);
+    ctl.abort();
+    signalInterrupt();
+  }
+}
+
+function parseJson<T>(text: string): T | null {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Poll the orchestration and its transcript until it is finished. The detail is read before the
+ * messages, so a status that turns terminal is never reported before the messages written before it.
+ */
+async function followPoll(
+  env: CliEnv,
+  id: string,
+  mode: 'wait' | 'follow',
+  json: boolean,
+  stop: readonly string[],
+  state: FollowState
+): Promise<number> {
   for (let poll = 0; poll < MAX_POLLS; poll++) {
     const detail = await gw<OrchestrationDetailDto>(env, 'GET', `${BASE}/${id}`);
-    if (detail.status !== lastStatus) {
-      lastStatus = detail.status;
+    if (detail.status !== state.lastStatus) {
+      state.lastStatus = detail.status;
       process.stderr.write(`[${detail.status}]\n`);
     }
-    cursor = await printMessages(env, id, cursor, json);
+    state.cursor = await printMessages(env, id, state.cursor, json, state.printed);
     if (!json) {
-      printPending(id, detail, announced);
+      printPending(id, detail, state.announced);
     }
     if (stop.includes(detail.status)) {
       return exitFor(mode, detail.status, id);
@@ -446,13 +612,18 @@ async function printMessages(
   env: CliEnv,
   id: string,
   after: string | undefined,
-  json: boolean
+  json: boolean,
+  printed?: Set<string>
 ): Promise<string | undefined> {
   let cursor = after;
   for (;;) {
     const query = cursor === undefined ? '' : `?after=${encodeURIComponent(cursor)}`;
     const page = await gwFull<OrchestrationMessagesPage>(env, `${BASE}/${id}/messages${query}`);
     for (const message of page.data) {
+      if (printed?.has(message.id)) {
+        continue;
+      }
+      printed?.add(message.id);
       writeMessage(message, json);
     }
     if (page.data.length === 0 || !page.next) {
@@ -580,6 +751,11 @@ async function cmdShow(rawArgs: string[], env: CliEnv): Promise<number> {
   return 0;
 }
 
+/** An agent reference, marked when its effective agent can change files. */
+function agentLabel(ref: string, writeCapable: readonly string[] | undefined): string {
+  return writeCapable?.includes(ref) ? `${clean(ref)} (can change files)` : clean(ref);
+}
+
 function renderDetail(d: OrchestrationDetailDto): string {
   const lines: string[] = [];
   lines.push(clean(d.title));
@@ -593,13 +769,14 @@ function renderDetail(d: OrchestrationDetailDto): string {
     );
   }
   lines.push(`  Launched by:   ${d.launchedByName ? clean(d.launchedByName) : '-'}`);
+  const b = d.budget;
+  const used =
+    b?.percentUsed != null && b.tokens
+      ? `, ${b.percentUsed}% used (${b.tokens.used.toLocaleString('en-US')} of ${b.tokens.cap.toLocaleString('en-US')} ${b.tokens.kind} tokens)`
+      : '';
   const remaining =
-    d.budget === undefined || d.budget === null
-      ? ''
-      : d.budget.remainingUsd === null
-        ? ', uncapped'
-        : `, ${money(d.budget.remainingUsd)} remaining`;
-  lines.push(`  Budget:        ${d.budgetTier}${remaining}`);
+    b?.monthlyRemainingUsd != null ? `, ${money(b.monthlyRemainingUsd)} remaining this month` : '';
+  lines.push(`  Budget:        ${d.budgetTier}${used}${remaining}`);
   lines.push(
     `  Spend:         ${money(d.cost.totalUsd)} (orchestrator ${money(d.cost.orchestratorUsd)}, children ${money(d.cost.childrenUsd)})`
   );

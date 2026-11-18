@@ -184,7 +184,7 @@ describe('the library tools', () => {
   });
 
   it('says an unknown agent was not found', async () => {
-    const { callTool, json } = await setup({
+    const { json } = await setup({
       ...routes,
       [versionsPath]: { body: {}, status: 404 },
     }).then(async ({ callTool }) => ({

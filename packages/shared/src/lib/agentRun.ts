@@ -222,3 +222,18 @@ export const AGENT_RUN_SPEC = {
   },
   schemaVersion: 1,
 } as const;
+
+/**
+ * The workspace tools that can change a repository checkout. One definition for the worker's
+ * grant (`grantsWriteTools`), the orchestration launch surfaces that mark write-capable agents,
+ * and the registry test that classifies the default allowlist.
+ */
+export const AGENT_RUN_WRITE_TOOL_IDS = ['writeFile', 'bash'] as const;
+
+/**
+ * True when an agent with these `toolKeys` is granted a write-capable workspace tool in an agent
+ * run. `null` ("no opinion") grants the read tools only; a list grants exactly the tools it names.
+ */
+export function agentRunGrantsWriteTools(toolKeys: unknown): boolean {
+  return Array.isArray(toolKeys) && AGENT_RUN_WRITE_TOOL_IDS.some((id) => toolKeys.includes(id));
+}

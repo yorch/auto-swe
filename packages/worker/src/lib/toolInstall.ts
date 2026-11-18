@@ -71,7 +71,7 @@ export function toolInstallScript(
     // release download's redirect to another host (curl exit 56) and burn the activity's retries.
     // With the proxy out of the path, exit 56 is a genuine network failure and stays retryable.
     'unset HTTPS_PROXY https_proxy HTTP_PROXY http_proxy ALL_PROXY all_proxy NO_PROXY no_proxy',
-    'fail() { echo "auto-swe tool install: $1" >&2; exit "${2:-1}"; }',
+    `fail() { echo "auto-swe tool install: $1" >&2; exit "\${2:-1}"; }`,
     'case "$(uname -m)" in',
     '  x86_64|amd64) arch=amd64 ;;',
     '  aarch64|arm64) arch=arm64 ;;',
@@ -84,7 +84,7 @@ export function toolInstallScript(
     // https URL without userinfo or query, but a URL is never echoed whole). A transport failure
     // and HTTP 408/429/5xx are retryable (75); any other HTTP status is permanent.
     'fetch() {',
-    '  host=${1#*://}; host=${host%%[/?#]*}; host=${host##*@}',
+    `  host=\${1#*://}; host=\${host%%[/?#]*}; host=\${host##*@}`,
     '  rc=0',
     '  if command -v curl >/dev/null 2>&1; then',
     '    code=$(curl -sSL --globoff --retry 2 --connect-timeout 20 --max-time 240 --proto "=https" --proto-redir "=https" -o "$2" -w "%{http_code}" "$1" 2>/dev/null) || rc=$?',

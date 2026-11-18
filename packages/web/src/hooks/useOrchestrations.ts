@@ -2,6 +2,7 @@
 
 import type {
   OrchestrationConnectionOption,
+  OrchestrationDefaults,
   OrchestrationDetailDto,
   OrchestrationLaunchResponse,
   OrchestrationMessageDto,
@@ -27,9 +28,29 @@ const BASE = '/api/v1/orchestrations';
 /** How often a live orchestration is re-read. TanStack pauses it while the tab is hidden. */
 export const ORCHESTRATION_POLL_MS = 3_000;
 
+/** How often a live orchestration is re-read while its event stream is healthy: a safety net. */
+export const ORCHESTRATION_SAFETY_POLL_MS = 30_000;
+
+/** The state of an orchestration's event stream (see `useOrchestrationStream`). */
+export type OrchestrationStreamState =
+  | 'idle'
+  | 'connecting'
+  | 'live'
+  | 'reconnecting'
+  | 'polling'
+  | 'paused';
+
 export const orchestrationsKey = ['orchestrations'] as const;
+export const orchestrationStreamKey = (id: string) => ['orchestration-stream', id] as const;
 export const orchestrationKey = (id: string) => ['orchestration', id] as const;
 export const orchestrationMessagesKey = (id: string) => ['orchestration-messages', id] as const;
+
+/** The poll interval for a live orchestration: slow while its stream delivers, else 3 s. */
+function liveInterval(qc: QueryClient, id: string): number {
+  return qc.getQueryData<OrchestrationStreamState>(orchestrationStreamKey(id)) === 'live'
+    ? ORCHESTRATION_SAFETY_POLL_MS
+    : ORCHESTRATION_POLL_MS;
+}
 
 /** The interval for a status: none once the orchestration is finished or not yet known. */
 export function orchestrationRefetchInterval(
@@ -80,7 +101,7 @@ export function useOrchestration(id: string) {
     refetchInterval: (q) => {
       const status = q.state.data?.status;
       if (isOrchestrationLive(status)) {
-        return ORCHESTRATION_POLL_MS;
+        return liveInterval(qc, id);
       }
       // A message sent to a finished orchestration restarts it; keep reading until it shows.
       const until = qc.getQueryData<number>(restartKey(id)) ?? 0;
@@ -129,26 +150,34 @@ export function useOrchestrationMessages(id: string, live: boolean) {
     enabled: !!id,
     queryFn: async () => {
       const held = qc.getQueryData<MessagesState>(orchestrationMessagesKey(id));
-      let messages = held?.messages ?? [];
       let cursor = held?.next ?? null;
       let more = false;
+      const fetched: OrchestrationMessageDto[] = [];
       for (let pages = 0; pages < MESSAGES_MAX_PAGES; pages += 1) {
         const qs = `?limit=${MESSAGES_PAGE_SIZE}${cursor ? `&after=${encodeURIComponent(cursor)}` : ''}`;
         const page = await api.get<OrchestrationMessagesPage>(
           `${BASE}/${encodeURIComponent(id)}/messages${qs}`
         );
-        messages = mergeMessages(messages, page.data);
+        fetched.push(...page.data);
         cursor = page.next ?? cursor;
         if (page.data.length < MESSAGES_PAGE_SIZE) {
           break;
         }
         more = pages === MESSAGES_MAX_PAGES - 1;
       }
-      return { messages, more, next: cursor };
+      // Merge into what the cache holds NOW, not what it held when the poll began: the stream may
+      // have written a message while the requests were in flight, and replacing the cache with a
+      // state built from the earlier snapshot would drop it.
+      const current = qc.getQueryData<MessagesState>(orchestrationMessagesKey(id));
+      return {
+        messages: mergeMessages(current?.messages ?? held?.messages ?? [], fetched),
+        more,
+        next: cursor,
+      };
     },
     queryKey: orchestrationMessagesKey(id),
     // A fetch that hit its page bound continues straight away, live or not.
-    refetchInterval: (q) => (q.state.data?.more ? 250 : live ? ORCHESTRATION_POLL_MS : false),
+    refetchInterval: (q) => (q.state.data?.more ? 250 : live ? liveInterval(qc, id) : false),
   });
   const wasLive = useRef(live);
   const refetch = query.refetch;
@@ -188,6 +217,24 @@ export function useOrchestrationConnections(teamId: string) {
         )
         .then((r) => r.data),
     queryKey: ['orchestration-connections', teamId],
+  });
+}
+
+/**
+ * The allowlist a launch with none named would apply for a team: the operator's default, reduced
+ * to agents the caller could start, and which of them can change files as the team's organization
+ * resolves them. Open to any member of the team.
+ */
+export function useOrchestrationDefaults(teamId: string) {
+  return useQuery({
+    enabled: !!teamId,
+    queryFn: () =>
+      api
+        .get<{ data: OrchestrationDefaults }>(
+          `${BASE}/defaults?teamId=${encodeURIComponent(teamId)}`
+        )
+        .then((r) => ({ allowlist: r.data.allowlist, writeCapable: r.data.writeCapable ?? [] })),
+    queryKey: ['orchestration-defaults', teamId],
   });
 }
 

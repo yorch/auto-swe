@@ -7,6 +7,7 @@ import {
   recordChildResult,
 } from '../lib/orchestrationChildren.js';
 import { createOrchestrationGateway } from '../lib/orchestrationGateway.js';
+import { assertCurrentWorkflowOwns } from '../lib/orchestrationIdentity.js';
 import {
   countOrchestrationLoad,
   RUNNING_CHILD_STATUSES,
@@ -39,11 +40,14 @@ const NEVER_STARTED_MS = 5 * 60_000;
  * Start (or resume) an execution of the orchestration workflow. Reads what the workflow cannot:
  * when the orchestration began, how many turns it has taken, what is in flight, and which finished
  * children no turn has read yet (a restarted workflow reports them). A stale start for an
- * orchestration that is already over does nothing.
+ * orchestration that is already over does nothing. Refused (non-retryable) when the workflow that
+ * scheduled it is not `orch-<orchestrationId>`.
  */
 export async function beginOrchestrationRun(
   input: BeginOrchestrationInput
 ): Promise<BeginOrchestrationResult & { unseenChildIds: string[] }> {
+  // Before any read or write: only the workflow the orchestration owns may drive it.
+  assertCurrentWorkflowOwns(input.orchestrationId);
   const orch = await prisma.orchestration.findUnique({
     select: { createdAt: true, status: true, teamId: true },
     where: { id: input.orchestrationId },
@@ -115,6 +119,7 @@ export async function beginOrchestrationRun(
 export async function refreshOrchestrationChildren(
   input: RefreshOrchestrationChildrenInput
 ): Promise<RefreshOrchestrationChildrenResult> {
+  assertCurrentWorkflowOwns(input.orchestrationId);
   const { orchestrationId } = input;
   const inFlight = await prisma.orchestrationChild.findMany({
     select: { createdAt: true, id: true, runId: true, status: true, workRequestId: true },
@@ -203,6 +208,7 @@ async function failIfNeverStarted(
 export async function recordOrchestrationStatus(
   input: RecordOrchestrationStatusInput
 ): Promise<void> {
+  assertCurrentWorkflowOwns(input.orchestrationId);
   const ending = input.status !== 'ACTIVE' && input.status !== 'WAITING';
   const row = await prisma.orchestration.findUnique({
     select: { status: true, teamId: true },
@@ -245,6 +251,7 @@ const ALREADY_STOPPED_STATUSES = new Set([401, 404, 409]);
 export async function cancelOrchestrationChildren(
   input: CancelOrchestrationChildrenInput
 ): Promise<CancelOrchestrationChildrenResult> {
+  assertCurrentWorkflowOwns(input.orchestrationId);
   const running = await prisma.orchestrationChild.findMany({
     select: { id: true },
     where: {
@@ -252,7 +259,7 @@ export async function cancelOrchestrationChildren(
       status: { in: [...RUNNING_CHILD_STATUSES] },
     },
   });
-  const gateway = createOrchestrationGateway(input.token);
+  const gateway = createOrchestrationGateway(input.orchestrationId);
   let cancelled = 0;
   for (const child of running) {
     try {

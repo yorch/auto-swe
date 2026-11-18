@@ -615,7 +615,9 @@ command is covered the same as a passing one.
 Three loops can drive an agent that works in a workspace: the platform's own Mastra tool loop, the
 Claude Code harness running inside the workspace container, and Pi's agent loop running in the
 worker with its tools acting on the container. Which one drives an agent is decided per agent, by
-`resolveAgentRuntime(key, ctx, default)`:
+`resolveAgentRuntime(key, ctx, default)`. An orchestration child on either harness takes the launcher's
+steering messages at its next tool call ([orchestrations.md §4](./orchestrations.md#4-steering)):
+
 
 1. **The run's pin.** `WorkflowRun.agentRuntimes` (`{ agentKey: runtime | null }`) is written at run
    start by `createWorkflowRun`, or by `startChannelRun` for a channel-assistant turn

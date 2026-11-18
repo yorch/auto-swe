@@ -723,7 +723,7 @@ to enabling `uiValidation.prInlineImages`. The public bucket policy is operator-
 ## Orchestration
 
 The `orchestration` group bounds orchestrated agent runs (see the orchestration design in
-`docs/specs/`). All keys are ADMIN-only and GLOBAL only. None is run-pinned, because an
+`docs/specs/`). All keys are ADMIN-only and GLOBAL only, except `orchestration.defaultAllowlist`, which an organization may override. None is run-pinned, because an
 orchestration has no workflow run to pin on. The gateway reads the five bounds once, when an
 orchestration is launched, and freezes them into the workflow input: the orchestration workflow
 decides on them inside a V8 isolate that cannot read the database, and a replay must take the same
@@ -735,6 +735,7 @@ an MCP write is held for the launcher's decision.
 | Key | Default | Bounds | Read | Meaning |
 |---|---|---|---|---|
 | `orchestration.enabled` | off | boolean | per launch and per child | Kill switch for launching an orchestration and for spawning a child. |
+| `orchestration.defaultAllowlist` | `implementer`, `reviewer`, `planner`, `securityReviewer`, `domainLogicReviewer`, `performanceReviewer` | list of launchable agent keys, at most 20 | per launch | Agents an orchestration may start when its launcher names none, filtered to those that exist and are launchable at the launch scope. Never the orchestrator or a platform-mechanism agent. |
 | `orchestration.maxChildren` | 12 | 1 to 100 | once, at launch | Children one orchestration may start over its lifetime. |
 | `orchestration.maxConcurrentChildren` | 4 | 1 to 20 | once, at launch | Children running at once in one orchestration. |
 | `orchestration.maxWriterChildren` | 4 | 0 to 50 | once, at launch | Writer children (branch or draft pull request) per orchestration. |

@@ -9,7 +9,9 @@ import { detail as detailFixture } from '@/test/orchestrationFixtures';
 import { bodyOf, setupFetchMock } from '@/test/rtl-helpers';
 import {
   MESSAGES_PAGE_SIZE,
+  type MessagesState,
   mergeMessages,
+  orchestrationMessagesKey,
   orchestrationRefetchInterval,
   useAttachRepo,
   useDecideApproval,
@@ -113,6 +115,42 @@ describe('useOrchestrationMessages', () => {
     });
     expect(result.current.data?.next).toBe('cur-1');
     expect(result.current.data?.messages).toHaveLength(1);
+  });
+
+  it('keeps a message the stream delivered while a poll was in flight', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let call = 0;
+    setupFetchMock({
+      '/api/v1/orchestrations/o1/messages': () => {
+        call += 1;
+        if (call === 1) {
+          return { data: [msg('a', '2026-01-01T00:00:01Z')], next: 'cur-1' };
+        }
+        // The stream writes message b into the cache while this request is out.
+        qc.setQueryData<MessagesState>(orchestrationMessagesKey('o1'), (prev) =>
+          prev
+            ? {
+                ...prev,
+                messages: mergeMessages(prev.messages, [msg('b', '2026-01-01T00:00:02Z')]),
+              }
+            : prev
+        );
+        return { data: [], next: null };
+      },
+    });
+    const { result } = renderHook(() => useOrchestrationMessages('o1', false), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      ),
+    });
+    await waitFor(() => expect(result.current.data?.next).toBe('cur-1'));
+    await act(async () => {
+      await result.current.refetch();
+    });
+    await waitFor(() => expect(result.current.data?.messages.map((m) => m.id)).toEqual(['a', 'b']));
+    const held = qc.getQueryData<MessagesState>(orchestrationMessagesKey('o1'));
+    expect(held?.messages.map((m) => m.id)).toEqual(['a', 'b']);
+    expect(held?.next).toBe('cur-1');
   });
 
   it('polls while live and does not poll when finished', async () => {

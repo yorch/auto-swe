@@ -94,8 +94,33 @@ export const OrchestrationDetailDtoSchema = OrchestrationSummaryDtoSchema.extend
     })
     .nullable()
     .optional(),
-  /** Remaining budget in USD for the tier, null when uncapped or unknown. */
-  budget: z.object({ remainingUsd: z.number().nullable(), tier: z.string() }).nullable().optional(),
+  /**
+   * What the orchestration has spent against its tier's token cap, orchestrator and children
+   * together. `tokens` and `percentUsed` describe the binding cap (the input or the output cap,
+   * whichever is nearer); both are null when the tier has no readable cap. `monthlyRemainingUsd`
+   * is what is left of the tightest monthly USD budget among the teams and organizations that bill
+   * this orchestration (the named team and organization, and the repository's owning team and
+   * organization once one is attached), and null when none sets one. `remainingUsd` is
+   * deprecated and always null; read `monthlyRemainingUsd`.
+   */
+  budget: z
+    .object({
+      monthlyRemainingUsd: z.number().nullable().optional(),
+      percentUsed: z.number().int().nullable().optional(),
+      /** @deprecated Always null. Use `monthlyRemainingUsd`. */
+      remainingUsd: z.number().nullable(),
+      tier: z.string(),
+      tokens: z
+        .object({
+          cap: z.number(),
+          kind: z.enum(['input', 'output']),
+          used: z.number(),
+        })
+        .nullable()
+        .optional(),
+    })
+    .nullable()
+    .optional(),
   budgetTier: z.string(),
   /** True for the launcher: the only caller who sees the message box, attach and approvals. */
   canControl: z.boolean(),
@@ -124,11 +149,26 @@ export const OrchestrationDetailDtoSchema = OrchestrationSummaryDtoSchema.extend
 export type OrchestrationDetailDto = z.infer<typeof OrchestrationDetailDtoSchema>;
 
 export const OrchestrationLaunchResponseSchema = z.object({
+  /** The allowlist the orchestration launched with: the request's, or the applied default. */
+  allowlist: z.array(z.string()).optional(),
   orchestrationId: z.string(),
   status: z.enum(ORCHESTRATION_STATUSES),
   workflowId: z.string(),
+  /**
+   * The entries of `allowlist` whose effective agent (an organization override counts) can change
+   * files: it names `writeFile` or `bash`. Additive; absent from an older gateway.
+   */
+  writeCapable: z.array(z.string()).optional(),
 });
 export type OrchestrationLaunchResponse = z.infer<typeof OrchestrationLaunchResponseSchema>;
+
+/** `GET /orchestrations/defaults`: the agents a launch with no allowlist would apply. */
+export const OrchestrationDefaultsSchema = z.object({
+  allowlist: z.array(z.string()),
+  /** The entries of `allowlist` that can change files, as resolved for the team's organization. */
+  writeCapable: z.array(z.string()).optional(),
+});
+export type OrchestrationDefaults = z.infer<typeof OrchestrationDefaultsSchema>;
 
 export const OrchestrationMessagesPageSchema = z.object({
   data: z.array(OrchestrationMessageDtoSchema),

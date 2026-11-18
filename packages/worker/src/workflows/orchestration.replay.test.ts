@@ -105,6 +105,7 @@ describe('Epic and channel workflows — history replay', () => {
       ['epic-dag', 'EpicOrchestratorWorkflow'],
       ['epic-planned', 'EpicOrchestratorWorkflow'],
       ['orchestration-cancel', 'OrchestrationWorkflow'],
+      ['orchestration-continue-as-new', 'OrchestrationWorkflow'],
       ['orchestration-conversation', 'OrchestrationWorkflow'],
       ['orchestration-deferred-results', 'OrchestrationWorkflow'],
       ['orchestration-failed-turns-reset', 'OrchestrationWorkflow'],
@@ -136,10 +137,12 @@ describe('Epic and channel workflows — history replay', () => {
     expect(
       types.filter((t) => t === EventType.EVENT_TYPE_WORKFLOW_TASK_COMPLETED).length
     ).toBeGreaterThan(1);
-    // Every fixture ran to a close, so replay walks the whole run, not a prefix.
+    // Every fixture ran to a close, so replay walks the whole run, not a prefix. A workflow that
+    // continues as new closes its execution that way.
     expect(types.at(-1)).toBeOneOf([
       EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED,
       EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED,
+      EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW,
     ]);
   });
 
@@ -388,6 +391,46 @@ describe('Epic and channel workflows — history replay', () => {
       expect(typesOf('orchestration-conversation')).toContain(
         EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
       );
+    });
+
+    it('orchestration-continue-as-new took fifty turns, then continued as new carrying its state', () => {
+      const activities = activitiesOf('orchestration-continue-as-new');
+      expect(activities.filter((a) => a === 'beginOrchestrationRun')).toHaveLength(1);
+      expect(activities.filter((a) => a === 'runOrchestratorTurn')).toHaveLength(50);
+      expect(typesOf('orchestration-continue-as-new').at(-1)).toBe(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW
+      );
+      const closing = eventsOf('orchestration-continue-as-new').at(
+        -1
+      )?.workflowExecutionContinuedAsNewEventAttributes;
+      const raw = closing?.input?.payloads?.[0]?.data;
+      const next = JSON.parse(Buffer.from(raw ?? []).toString('utf8')) as {
+        carried: Record<string, unknown>;
+        orchestrationId: string;
+        pending: Array<Record<string, unknown>>;
+      };
+      // The carried state: the turn counter, the run-key epoch, the lifetime, the failure and
+      // refusal counters and the cancel flag; the queue carries the signal that arrived during
+      // the fiftieth turn.
+      expect(next.carried).toMatchObject({
+        cancelRequested: false,
+        failedTurns: 0,
+        pendingApprovals: 0,
+        refusalStreak: 0,
+        runningChildren: 0,
+        turns: 50,
+      });
+      expect(typeof next.carried.keyEpoch).toBe('string');
+      expect(typeof next.carried.deadlineMs).toBe('number');
+      expect(next.pending).toEqual([{ messageId: 'message-51', type: 'userMessage' }]);
+      // The first execution was started with a legacy `token` in its input: the precondition that
+      // makes the assertions below prove the strip, not merely the absence of a token.
+      const started = eventsOf('orchestration-continue-as-new')[0]
+        ?.workflowExecutionStartedEventAttributes?.input?.payloads?.[0]?.data;
+      expect(Buffer.from(started ?? []).toString('utf8')).toContain('orch_legacy_fixture');
+      // No token of any kind rides the continued input.
+      expect(JSON.stringify(next)).not.toContain('orch_');
+      expect(next).not.toHaveProperty('token');
     });
 
     it('orchestration-cancel held on a running child, then cancelled it on the cancel signal', () => {

@@ -18,6 +18,7 @@ import {
   useLaunchOrchestration,
   useOrchestrationAgents,
   useOrchestrationConnections,
+  useOrchestrationDefaults,
 } from '@/hooks/useOrchestrations';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useTeams } from '@/hooks/useTeams';
@@ -72,6 +73,8 @@ export function OrchestrateForm({
   const [values, setValues] = useState<OrchestrateFormValues>(EMPTY);
   const [reviewing, setReviewing] = useState(false);
   const [attempted, setAttempted] = useState(false);
+  // Until the person changes the agent choice, it is the platform default for the named team.
+  const [allowlistTouched, setAllowlistTouched] = useState(false);
   const idempotency = useRef<IdempotencyState | null>(null);
   const submitting = useRef(false);
 
@@ -98,9 +101,15 @@ export function OrchestrateForm({
     ? (adminConnections.data ?? []).filter((c) => c.teamId === namedTeamId)
     : (memberConnections.data ?? []);
   const connectionsFailed = isAdmin ? adminConnections.isError : memberConnections.isError;
+  const defaults = useOrchestrationDefaults(namedTeamId ?? '');
   const agentList = agents.data ?? [];
+  const chosenAllowlist = allowlistTouched ? effective.allowlist : (defaults.data?.allowlist ?? []);
   // A repository change can drop an agent the organization overrides differently.
-  const allowlist = effective.allowlist.filter((k) => agentList.some((a) => a.key === k));
+  const allowlist = chosenAllowlist.filter((k) => agentList.some((a) => a.key === k));
+  const usingDefault = !allowlistTouched && allowlist.length > 0;
+  // Only the platform default is classified (an organization override of a default agent can make
+  // it write-capable); other agents are not marked, which is not a claim that they cannot write.
+  const writeCapable = new Set(defaults.data?.writeCapable ?? []);
   const checked: OrchestrateFormValues = {
     ...effective,
     allowlist,
@@ -115,11 +124,15 @@ export function OrchestrateForm({
       launch.reset();
     }
   };
-  const toggle = (key: 'allowlist' | 'connectionIds', item: string) =>
+  const toggle = (key: 'allowlist' | 'connectionIds', item: string) => {
+    if (key === 'allowlist') {
+      setAllowlistTouched(true);
+    }
     set(
       key,
       checked[key].includes(item) ? checked[key].filter((x) => x !== item) : [...checked[key], item]
     );
+  };
 
   const goReview = () => {
     setAttempted(true);
@@ -186,10 +199,12 @@ export function OrchestrateForm({
                 repo?.team?.name ?? memberTeams.find((t) => t.id === checked.teamId)?.name ?? '',
             },
             {
-              label: 'Agents it may start',
+              label: usingDefault
+                ? 'Agents it may start (platform default)'
+                : 'Agents it may start',
               value: agentList
                 .filter((a) => allowlist.includes(a.key))
-                .map((a) => a.name)
+                .map((a) => (writeCapable.has(a.key) ? `${a.name} (can change files)` : a.name))
                 .join(', '),
             },
             {
@@ -299,6 +314,8 @@ export function OrchestrateForm({
         </legend>
         <p className="text-xs text-paper-500" id="orch-allowlist-hint">
           The orchestrator can start only these. Choose the fewest it needs.
+          {usingDefault &&
+            ' Pre-selected from your platform default; change it if this task needs less.'}
         </p>
         {agents.isLoading && <p className="text-sm text-paper-500">Loading agents…</p>}
         {agents.isError && <Alert variant="error">Could not load the launchable agents.</Alert>}
@@ -308,7 +325,9 @@ export function OrchestrateForm({
               checked={allowlist.includes(a.key)}
               hint={a.description ?? undefined}
               key={a.key}
-              label={a.scope === 'ORGANIZATION' ? `${a.name} (organization)` : a.name}
+              label={`${a.scope === 'ORGANIZATION' ? `${a.name} (organization)` : a.name}${
+                writeCapable.has(a.key) ? ' (can change files)' : ''
+              }`}
               onChange={() => toggle('allowlist', a.key)}
             />
           ))}

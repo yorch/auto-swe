@@ -1309,6 +1309,44 @@ with team caps.
 **Verify.** `\d team_budget_notices` shows the table. A template run with no repository, billed to a
 team, shows that team's agent and credential in its run trace.
 
+### UN-29. Orchestration calls use per-call tokens minted by the worker
+
+**Affected.** Deployments that ran the earlier orchestration token: the gateway signed one token
+when an orchestration launched or restarted and passed it to the worker in the workflow input.
+
+**Fix commit.** `<fixing commit SHA>`.
+
+**Actions.**
+
+- Deploy the gateway and the worker together. The worker now mints a two-minute token for every
+  gateway call from its own `CONFIG_ENCRYPTION_KEY`, and the gateway admits only that token. A new
+  worker calling an old gateway, or the reverse, makes the orchestration child, message and cancel
+  calls answer `401` until both run the new code.
+- Orchestrations in flight resume once both run the new code: the worker ignores any token a
+  workflow was started with and mints its own, so nothing needs restarting or relaunching.
+- No configuration change and no credential rotation. The old tokens stop being accepted when the
+  gateway is updated. A token stored in the history of an orchestration that started earlier is
+  therefore inert; it expires with the orchestration's lifetime and is not a credential after the
+  update.
+- Gateway and worker must hold the same `CONFIG_ENCRYPTION_KEY` (and, during a key rotation, the
+  same `CONFIG_ENCRYPTION_KEY_PREVIOUS` and version), as they already must to read stored
+  credentials.
+- Do not leave the two on different versions, even briefly, and treat a window of mismatch as lossy:
+  - Orchestration intents recorded during it (spawns, messages, cancels) are **dropped, not resumed**.
+    The apply step makes a single attempt, and a `401` from the gateway becomes a permanent notice on
+    the orchestration, so a request the orchestrator made in the window is never retried once both
+    sides match. Re-ask in the orchestration afterwards.
+  - An orchestration that **finishes during the window can leave its children running.** The worker's
+    child-cancel step treats a `401` as "already stopped" (the normal answer once an orchestration has
+    ended), so it cannot tell a mismatch from a revoked token and cancels nothing. Cancel the children
+    as runs, or cancel or end the orchestration again, once both run the new code.
+  - The same silent non-cancel and dropped intents happen whenever gateway and worker disagree on
+    `CONFIG_ENCRYPTION_KEY` or on its version (a half-finished key rotation, say): every worker call is
+    refused with `401` and nothing in the worker reports it as an error.
+
+**Verify.** A running orchestration still starts children after both are updated; a child call
+made with a token from before the update answers `401 TOKEN_INVALID`.
+
 ---
 
 ## 4. If you cannot tell

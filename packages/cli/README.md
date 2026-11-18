@@ -92,7 +92,7 @@ agent run <key[@version]> "<prompt>" --repo=<org/name> [--deliver=none|branch|dr
                                      checks pass (see docs/agent-runs.md)
 agent rerun <workRequestId> [--wait] Run an earlier agent run again as a new run
 
-orchestrate start "<task>" --agent=<key> [--agent=<key> ...] [--repo=<org/name> | --team=<slug>]
+orchestrate start "<task>" [--agent=<key> ...] [--repo=<org/name> | --team=<slug>]
           [--connection=<id> ...] [--budget-tier=STANDARD|LARGE|EPIC]
           [--deliver=none|branch|draft_pr] [--idempotency-key=KEY] [--wait] [--json]
                                      Start an orchestration: a conversation with an orchestrator
@@ -100,7 +100,7 @@ orchestrate start "<task>" --agent=<key> [--agent=<key> ...] [--repo=<org/name> 
 orchestrate list [--team=<slug>] [--status=S] [--json]
 orchestrate show <id> [--json]       Print an orchestration's status, children, pending requests
 orchestrate messages <id> [--follow] [--json]
-                                     Print the transcript; --follow keeps polling until it finishes
+                                     Print the transcript; --follow streams (or polls) until it finishes
 orchestrate say <id> "<message>"     Message the orchestrator
 orchestrate steer <id> <childId> "<message>"
                                      Steer one running agent
@@ -266,13 +266,18 @@ auto-swe orchestrate start "Find why retries double-charge" --repo=acme/payments
 # Repo-less: read-only (readers only, no workspace). --team names the team that owns it.
 auto-swe orchestrate start "Summarise last week's incidents" --team=payments --agent=contentWriter
 
+# No --agent: the platform's default agents apply, and the output lists them.
+auto-swe orchestrate start "Triage the open alerts" --team=payments
+
 auto-swe orchestrate show <id>                  # status, children, pending requests and approvals
-auto-swe orchestrate messages <id> --follow     # the transcript, polled every 3 seconds
+auto-swe orchestrate messages <id> --follow     # the transcript, live over the event stream
 auto-swe orchestrate steer <id> <childId> "Skip the cache layer"
 ```
 
-**Start.** `--agent` names an agent on the allowlist and repeats; at least one is required. A
-version can be pinned with `key@3`. `--repo` takes `org/name` (or a repository UUID); without it,
+**Start.** `--agent` names an agent on the allowlist and repeats. A version can be pinned with
+`key@3`. Without `--agent` the platform's default agents apply (the `orchestration.defaultAllowlist`
+setting), and the output's `Agents:` line names the ones applied; a team with no default available is
+refused and needs at least one `--agent`. `--repo` takes `org/name` (or a repository UUID); without it,
 `--team` is required and the orchestration is read-only. `--connection` takes an MCP connection UUID
 and repeats; the set is fixed at launch, and omitting it gives children no MCP connection. Each
 invocation sends an `Idempotency-Key`: a new one by default, or the value of `--idempotency-key`, so
@@ -286,7 +291,11 @@ the role for a message addressed to one child. Status changes go to stderr as `[
 stops when the orchestration is `WAITING` for a person, `COMPLETED`, `CANCELLED` or `FAILED`;
 `--follow` keeps going through `WAITING` and stops only when it is finished. A request that needs a
 person is printed once, with the exact command that answers it, and only the launcher is shown
-those commands.
+those commands. Both read the gateway's server-sent event stream and resume from the last event id
+after a drop (a few retries with backoff), so output is the same as polling without the delay. They
+fall back to polling every 3 seconds when the stream is unavailable (a refusal, the four-stream limit
+per user, a proxy that does not stream, or repeated failures); `--json` lines, output and exit codes do
+not change. Ctrl-C closes the stream and exits 130.
 
 **Output.** `list`, `show` and `start` print tables or key-value lines. `--json` prints the API's
 data instead: one document for `list`, `show` and `start`, and one JSON object per line for

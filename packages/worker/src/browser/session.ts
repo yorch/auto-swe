@@ -8,9 +8,17 @@ const BROWSER_ROOT = '/tmp/.asw/browser';
 const DRIVER_PATH = `${BROWSER_ROOT}/driver.mjs`;
 const DEFAULT_MAX_OUTPUT_BYTES = 100 * 1024 * 1024;
 
+/**
+ * What a browser session needs of a container. A repository workspace satisfies it, and so does the
+ * scratch container of a run with no repository (`lib/scratchBrowserWorkspace.ts`).
+ */
+export type BrowserWorkspace = Pick<Workspace, 'exec' | 'execStdin' | 'readFile' | 'copyFileOut'>;
+
 export interface BrowserSessionOptions {
   allowedHosts: string[];
   recordVideo: boolean;
+  /** A run with no repository: the driver also refuses data: and blob: resources. */
+  scratch?: boolean;
   trace: boolean;
   viewport?: { width: number; height: number };
   /** Bytes the worker will read back for a recording. Defaults to 100 MiB. */
@@ -46,7 +54,7 @@ export class BrowserSession {
   private closeResponse?: Promise<DriverResult>;
 
   private constructor(
-    private readonly workspace: Workspace,
+    private readonly workspace: BrowserWorkspace,
     sessionId: string,
     private readonly options: BrowserSessionOptions
   ) {
@@ -55,7 +63,10 @@ export class BrowserSession {
     this.outputDir = `${this.sessionRoot}/out`;
   }
 
-  static async start(workspace: Workspace, opts: BrowserSessionOptions): Promise<BrowserSession> {
+  static async start(
+    workspace: BrowserWorkspace,
+    opts: BrowserSessionOptions
+  ): Promise<BrowserSession> {
     const checkScript =
       'require.resolve("playwright"); const p=require("playwright"); require("node:fs").accessSync(p.chromium.executablePath())';
     try {
@@ -74,6 +85,7 @@ export class BrowserSession {
     const config = JSON.stringify({
       allowedHosts: opts.allowedHosts,
       recordVideo: opts.recordVideo,
+      ...(opts.scratch ? { scratch: true } : {}),
       trace: opts.trace,
       ...(opts.viewport ? { viewport: opts.viewport } : {}),
     });

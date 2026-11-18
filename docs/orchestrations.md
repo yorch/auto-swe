@@ -31,7 +31,7 @@ Orchestrations are off until an administrator turns on `orchestration.enabled` (
 | Surface | Call |
 |---|---|
 | API | `POST /api/v1/orchestrations` |
-| CLI | `auto-swe orchestrate start "<task>" --agent=<key> [--agent=<key> ...] [--repo=<org/name> \| --team=<slug>] [--connection=<id> ...] [--budget-tier=STANDARD\|LARGE\|EPIC] [--deliver=none\|branch\|draft_pr] [--idempotency-key=KEY] [--wait]` |
+| CLI | `auto-swe orchestrate start "<task>" [--agent=<key> ...] [--repo=<org/name> \| --team=<slug>] [--connection=<id> ...] [--budget-tier=STANDARD\|LARGE\|EPIC] [--deliver=none\|branch\|draft_pr] [--idempotency-key=KEY] [--wait]` |
 | Dashboard | **Orchestrate agents** in **Start work** (`/start`); the list is at `/orchestrations` |
 | MCP | `orchestrations_launch` (section 9) |
 
@@ -40,7 +40,7 @@ Request body:
 | Field | Meaning |
 |---|---|
 | `task` | What to get done. 1 to 20,000 characters, no control characters. The first line (80 characters) becomes the title |
-| `allowlist` | The agents the orchestrator may start: 1 to 20 references, each `key` or `key@version`. See below |
+| `allowlist` | Optional. The agents the orchestrator may start: up to 20 references, each `key` or `key@version`. Omitted or empty, the platform default applies. See below |
 | `repoId` | Optional. A `git_repo` connection to start with. The orchestration is then repository-bound from the first message |
 | `teamId` | The team the orchestration is named for. Required without `repoId`. With `repoId` it must be the repository's owning team |
 | `connectionIds` | Optional. Up to 10 MCP connections the children may use. Fixed at launch |
@@ -99,9 +99,29 @@ organisation override shadows it. The refusals are `400 AGENT_NOT_LAUNCHABLE`, `
 `400 AGENT_PIN_SHADOWED`. A spawn must name an entry **exactly as written** on the list: `key` and
 `key@3` are different entries.
 
-There is no default allowlist; the launcher chooses one. The agents' own definitions bound what a child
-can do, so list only agents whose tools and MCP connection the launcher is willing to expose to a model
-that follows the task.
+The launcher may leave the allowlist out. The gateway then applies `orchestration.defaultAllowlist`
+(section 10), read at the named team's organisation and then GLOBAL, and reduced to the agents that exist
+and are launchable there now, so an entry that was deleted since the operator wrote it shrinks the default
+instead of failing the launch. The default is curated: read-oriented investigators and reviewers, plus the
+`implementer`, the one default agent that can change files by the worker's definition (it grants
+`writeFile` or `bash`), so that writers are possible without any setup. An organisation override of a
+default agent can make it write-capable too: the launch response and `GET /api/v1/orchestrations/defaults`
+carry `writeCapable`, the entries of the applied list whose effective (organisation-resolved) agent can
+change files, and the dashboard form and the CLI's `Agents:` line mark them "can change files". The
+form marks only the agents of the default list, not others the person ticks. When nothing is left the launch
+is refused as `400 ALLOWLIST_REQUIRED`, and the launcher passes an allowlist. An explicit allowlist is
+used exactly as given, with every refusal above, and the default is not merged into it.
+
+The launch response and the detail view carry the allowlist that was **applied**, whichever way it was
+chosen. The dashboard form pre-selects the default (`GET /api/v1/orchestrations/defaults?teamId=`) and
+sends whatever the person leaves checked; its review step shows the list and says when it is the default.
+A replayed `Idempotency-Key` is answered before any allowlist is resolved: it returns the orchestration the
+first launch created, with the allowlist that launch applied, even when the default has since been emptied
+or its agents removed (a first launch under the same default is still refused). The key's request digest
+covers what the caller sent, so a changed default never turns a retry into a mismatch.
+
+The agents' own definitions bound what a child can do, so list, or configure as the default, only agents
+whose tools and MCP connection the launcher is willing to expose to a model that follows the task.
 
 ### Connections
 
@@ -118,7 +138,8 @@ The tier is the orchestration's tier: the orchestrator's own ledger row carries 
 launched with it, so every run has the tier's token caps on its own. The orchestrator also stops taking
 turns when its model price or the organisation's USD cap says so (section 2). `deliveryDefault` is stored
 with the orchestration and shown on the attach card. The orchestrator chooses `branch` or `draft_pr` in
-each writer spawn, and the launcher's push permission and the path scopes bound what the writer can do.
+each writer spawn, and the launcher's push permission (for a person; section 1, Service principals, for a
+principal) and the path scopes bound what the writer can do.
 For an orchestration launched through MCP, `deliveryDefault` is also a ceiling: a writer's delivery must
 be allowed by the live setting `mcp.agentRunAllowedDeliverModes` and cannot exceed the launch's
 `deliveryDefault` (`none` allows no writer, `branch` allows `branch`, `draft_pr` allows both).
@@ -134,11 +155,43 @@ caller or principal answers `409 RUN_CONFLICT`, and the same key with a differen
 ### Service principals
 
 A team's [service principal](./service-principals.md) whose token carries `runs:agent` may launch a
-repository-bound orchestration. It acts as no one: there is no launcher, so nobody can approve, attach,
-message, cancel or end it, any MCP write is denied, and a writer cannot be authorised because a
-principal holds no GitHub push permission. A principal's orchestration is effectively read-only, and its
+repository-bound orchestration. It acts as no person: `launchedById` is null and the orchestration carries
+the principal's id as `serviceId`. That principal, and only it, is the launcher: it can message the
+orchestrator or a child, cancel a child, cancel the orchestration and end it, and read its own
+orchestrations (section 7). Nobody can approve a tool call or attach a repository for it, since both are a
+person's acts, so any MCP write its agents attempt is denied and it works on the repository it was
+launched with. A writer child is allowed when the repository is on the principal's allowlist and the
+principal's team owns it or has it shared; there is no GitHub push permission to ask about, and each child
+spawn takes the same launch guard as a direct service-principal agent run (the daily and in-flight
+limits). The push policy, the path scopes and the security gate still bound the delivery. The principal's
 `Idempotency-Key` is scoped to the principal. A principal cannot launch without a repository
 (`400 REPO_REQUIRED`).
+
+**The repository allowlist is the governance.** A principal-launched orchestration has no human behind
+it, so its writers run with no `launchedById`: the worker uses the platform credential, never a
+person's saved token, and no person's push permission is asked. What bounds them is the principal's
+repository allowlist and its team's reach to that repository (re-checked at every child spawn and every
+revive), the principal's own limits, the push policy, the path scopes and the security gate. Grant a
+repository to a principal only when its token holder may change files there. `deliveryDefault` is a
+ceiling only for MCP launches; a principal launches through REST, so it does not limit a principal's
+writer, and a principal that launches without naming an `allowlist` gets the default list, which
+includes the `implementer` (a writer-capable agent). A principal that must not run writers passes an
+explicit allowlist of read-only agents.
+
+**Waking or reviving one.** A message that starts a new orchestrator execution (a `WAITING` orchestration
+woken, or a `COMPLETED` one revived) takes the same launch guard as a direct principal launch, in the
+same transaction that reopens the orchestrator's ledger row: the principal must still be enabled with an
+active team, the repository must still be on its allowlist and its team's, and it must be under its
+in-flight and daily limits. A refusal answers like a launch refusal (`403`/`429` with the
+`SERVICE_…` code), writes nothing and leaves the orchestration as it was.
+
+**Stopping a runaway one.** Disabling the principal (or revoking its `runs:agent` tokens) stops new
+spawns and ends the orchestration's authority to act, but it does not stop children that are already
+running. To stop one now, an ADMIN cancels or ends the orchestration
+(`POST /api/v1/orchestrations/:id/cancel` or `…/end`), which cancels its running children. That is open
+to an ADMIN only for an orchestration no person launched (`serviceId` set, `launchedById` null); a
+person's orchestration stays its launcher's alone. The audit entry carries the ADMIN as actor and
+`adminStop: true` with `targetServiceId` naming the principal.
 
 ---
 
@@ -231,15 +284,43 @@ A child is one agent run started by an intent. It has a **role**, a **label**, a
 | Launcher's GitHub push permission | Not checked | Checked live at every spawn |
 | Where it runs | With a repository: a clone of the default branch, delivering nothing. Without: no workspace at all | A clone of the default branch, then the agent-run delivery path |
 
-A reader cannot change anything outside its own container. A **repo-less** reader has no container: it
+A reader cannot change anything outside its own container. A **repo-less** reader has no workspace: it
 has no workspace tool whatever its `toolKeys` say, it runs only on the Mastra loop (an agent configured
 for Claude Code or Pi fails with `AGENT_RUN_NEEDS_WORKSPACE`), and its tools are what the agent's own
-definition grants of MCP and knowledge search. It cannot use the browser tool, which needs a workspace.
+definition grants of MCP, knowledge search and the browser.
+
+The browser is the one thing a repo-less reader may have a container for. When the agent grants
+`browser`, the child gets a throwaway container with no clone, no git configuration and no credential
+of any kind (no GitHub token, model credential or MCP credential), used only to drive the browser. It
+is made before the loop starts, on the deployment's configured workspace image (which must carry the
+browser, as for [UI validation](./ui-validation.md)), counts as part of the run's own agent-run slot,
+and is removed when the child ends, however it ends.
+
+- **Hosts.** The browser reaches the team's own egress allowlist entries and nothing else: the global
+  baseline (`workspace.egressBaselineAllowlist`: a code host, package registries) is not added. The
+  worker's egress proxy admits exactly that list and the browser driver navigates to exactly that list.
+  A team with no entries gets no browser.
+- **Network.** Egress is always `restricted`, whatever the run's own policy says short of `blocked`, and
+  the container is locked to the proxy's address alone, so it cannot reach the model proxy, the registry
+  proxy or anything else. A child that has both MCP and the browser is allowed for that reason.
+- **Docker only.** On the Kubernetes workspace backend cluster DNS stays reachable under the lock (see
+  `workspace.egressPolicy`), and script in a page can put data into a DNS lookup that never passes the
+  proxy, so no scratch browser is made there.
+- **Schemes.** `browser_navigate` opens `http` and `https` URLs, and `about:blank`. `file:`, `chrome:`,
+  `view-source:`, `javascript:`, `ftp:`, `data:` and `blob:` are refused with a tool error before any
+  navigation, and the browser driver refuses them again itself. In this container the driver also
+  refuses `data:` and `blob:` page resources.
+
+The trace records `agent.browser_egress` with the number of allowed hosts when the container is ready.
+Where this cannot be enforced (the run's policy is `blocked`, the worker has no egress proxy, the team's
+allowlist is empty, the workspace backend is Kubernetes, the network lock fails, the image has no
+browser, or the container cannot be created) no container is made, the child runs without a browser and
+the trace records `agent.browser_unavailable` with the reason. It never falls back to open egress.
 
 ### How a child starts
 
-The worker's apply activity calls `POST /api/v1/orchestrations/:id/children` with the orchestration token
-and the intent. The gateway is the authority. It validates in this order and stops at the first refusal:
+The worker's apply activity calls `POST /api/v1/orchestrations/:id/children` with a per-call orchestration
+token and the intent. The gateway is the authority. It validates in this order and stops at the first refusal:
 
 1. The orchestration is `ACTIVE` or `WAITING` and `orchestration.enabled` is on (`ORCHESTRATION_NOT_ACTIVE`).
    A retried spawn (the same turn key) is answered with the child its first attempt started, before any
@@ -255,7 +336,8 @@ and the intent. The gateway is the authority. It validates in this order and sto
 6. The agent's MCP connection, if any, is in the launch-time set (`CONNECTION_NOT_IN_SET`).
 7. The agent-run launch path, as the launcher: repository authorisation, the push-permission check for a
    writer (`PUSH_PERMISSION_REQUIRED`), the agent-run ceilings (a `maxSteps` above the ceiling is clamped,
-   not refused), and the concurrency decision (`AGENT_RUN_CONCURRENCY_EXCEEDED`), charged to the
+   not refused; the answer carries `clamped.maxSteps` and the worker writes a fixed `MAX_STEPS_CLAMPED`
+   `SYSTEM` notice with that number, so the next turn knows), and the concurrency decision (`AGENT_RUN_CONCURRENCY_EXCEEDED`), charged to the
    repository's owning team once a repository is attached and to the named team before.
 8. A transaction under a row lock on the orchestration repeats the width and overlap checks and writes the
    child, so two concurrent spawns cannot both pass. A start that fails leaves no child row.
@@ -341,6 +423,18 @@ for the team the child bills. Each child has the agent-run step and wall-clock c
 (`workspace.agentRunMaxSteps`, `workspace.agentRunMaxWallClockSeconds`) and the tier's token caps on its
 own ledger row.
 
+The detail view's `budget` reports what the orchestration has used of its tier's token cap, the
+orchestrator's own ledger row and every child's together: `tokens` (`used`, `cap` and `kind`, `input` or
+`output`, whichever cap is nearer) and `percentUsed`, an integer. The input side counts what a run's own
+cap counts, cache reads and writes at their cost-equivalent. `monthlyRemainingUsd` is the smallest amount
+left under any monthly USD budget among the teams and organisations that bill the orchestration: the
+named team and its organisation, and, once a repository is attached, the repository's owning team and its
+organisation, because children bill them. It is month to date including runs in flight, floored at zero,
+and null when none of them sets a budget. `remainingUsd` is deprecated and always null (it once carried
+the tier's USD estimate); read `monthlyRemainingUsd`. The header reads "N% of the
+Standard budget used" (the tier's name), with the exact token counts on hover, and "remaining $X this month" when
+`monthlyRemainingUsd` is set.
+
 ### Split ownership after an attach
 
 The orchestrator's own spend and settings stay with the named team. Every child started after a
@@ -356,8 +450,8 @@ Only the launcher steers. Every message is recorded in the transcript.
 | Target | Path | Delivered |
 |---|---|---|
 | The orchestrator | `POST /api/v1/orchestrations/:id/messages` signals the workflow | At the next turn |
-| A child, by the launcher | `POST /api/v1/orchestrations/:id/children/:childId/messages` writes a steering message for the run | At the child's next step boundary |
-| A child, by the orchestrator | `messageAgent` applies the same write through the gateway | At the child's next step boundary |
+| A child, by the launcher | `POST /api/v1/orchestrations/:id/children/:childId/messages` writes a steering message for the run | At the child's next step (Mastra), tool batch (Claude Code) or turn (Pi) boundary |
+| A child, by the orchestrator | `messageAgent` applies the same write through the gateway | At the child's next step (Mastra), tool batch (Claude Code) or turn (Pi) boundary |
 
 A message to a child needs a child that is `STARTING` or `RUNNING` and has a run (`409
 CHILD_NOT_ALLOWED` otherwise). When the launcher steers a child, the orchestrator is told, so its picture
@@ -374,13 +468,36 @@ message 2 | from: orchestrator (not the launcher) | text: "Also check the retry 
 
 The `from` label comes only from the stored author (a message with an author is the launcher's, one
 without was written by the orchestrator's tool, which a prompt-injected model can drive). The body is a
-JSON-quoted string on that one line, clipped to 2,000 characters, so it cannot start a line of its own,
-and text that imitates the envelope or a provenance label is replaced.
+JSON-quoted string on that one line, so it cannot start a line of its own. The quoted, escaped string is
+capped at 2,000 characters (a body of control characters, which cost six characters each when escaped,
+is cut sooner), and one drain takes at most 20 messages and 16,000 characters in all. When the caps
+leave messages behind, the block ends with a `(+N more messages queued; ...)` line and they arrive at
+the next boundary. The body is NFKC-normalised first, text that imitates the envelope or a provenance
+label is replaced, and zero-width characters are written as `\uXXXX` escapes. That replacement is
+defence in depth: the provenance rests on the quoted single-line envelope and on `from` coming from
+the stored author.
 
-**Not mid-run on Claude Code or Pi.** A harness loop is one turn and cannot take a message while it runs.
-Its messages stay queued and are shown as not delivered, an `agent.steering_not_supported` event is
-recorded, and the launcher's remedy is to cancel the child. The same is true of a message that arrives
-after the child's last step.
+**Delivery on Claude Code and Pi.** A harness child takes a message at a boundary, as the same block of
+lines. Each records an `agent.steered` event. Steering text is data the model reads: it never reaches the
+policy that decides each tool call.
+
+Harness delivery is **at most once**. The rows are claimed with a per-row compare-and-set (`deliveredAt`
+from null to now) and only the rows the claim won are handed over, so two processes, or a retried attempt
+of the same activity, cannot both inject one message. The claim comes first, then the hand-over, so a
+message is lost if the run ends before the model's next request. The dashboard's "delivered" means
+handed to the harness, not that the model acted on it.
+
+- **Claude Code** receives it as the `additionalContext` of the `PostToolBatch` hook, which fires once
+  per batch of tool calls, after the last has resolved and before the next model request (parallel calls
+  cannot race for it). A hook that fires inside a sub-agent the child started (`agent_id` set) takes
+  nothing, so a message is never put into a sub-agent's context. A reply with no tool call has no batch,
+  so it sees nothing until a later batch.
+- **Pi** asks for steering messages after every turn, a text-only reply too, and its loop goes on while
+  a message is pending, so the child answers it. Each such turn counts toward `maxTurns`: once the cap is
+  reached Pi hands over nothing more and the run ends there, with any message still queued.
+
+A message that arrives after the child's last boundary stays queued and is shown as not delivered, and
+the launcher's remedy is to cancel the child.
 
 ---
 
@@ -437,8 +554,8 @@ among identical ones. A retried activity finds its own decision instead of openi
 outcome is recorded with it, so a retry returns the recorded result and never executes an approved write
 twice; if an earlier attempt died mid-call, the write is not run again.
 
-**No approver.** An orchestration launched by a service principal has no launcher, so every write is
-denied at once.
+**No approver.** An orchestration launched by a service principal has no person to approve, and a principal
+cannot call the approval route, so every write is denied at once.
 
 **Screening is forced on.** For an orchestration's agents, every MCP result is scanned for prompt
 injection whatever the connection's own setting says, since a result is untrusted data entering a run that
@@ -458,8 +575,26 @@ stands in for the platform credential, subject to the host allowlist
 
 **Launcher-only acts.** Messaging the orchestrator or a child, attaching or declining a repository,
 approving or denying a write, cancelling a child, cancelling the orchestration and ending it. Each
-answers `403 NOT_LAUNCHER` to anyone else, an ADMIN included. The in-app assistant may launch an
+answers `403 NOT_LAUNCHER` to anyone else, an ADMIN included, with one exception: an ADMIN may cancel
+or end an orchestration that has no human launcher, as an emergency stop (section 1, Service
+principals). The in-app assistant may launch an
 orchestration or send a message only behind the person's confirmation, and is refused the rest outright.
+
+**A launching principal controls its own.** For an orchestration launched by a service principal the
+launcher is that principal: a token with `runs:agent` whose principal id is the orchestration's
+`serviceId` may message the orchestrator or a child, cancel a child, cancel the orchestration, end it,
+and read the list, the detail, the transcript and `canControl` (true for it). Those routes declare
+`serviceScopes: ['runs:agent']`, and the token is re-checked on every request (scope held, unrevoked,
+unexpired with an expiry, principal enabled, team and organisation active). A principal sees only the
+orchestrations whose `serviceId` is its own; another principal's, or a person's, is `404`, and a person
+who is not the launcher gets `403 NOT_LAUNCHER` on a principal's orchestration. A principal's messages
+have no author and its id is on the audit entry, with no actor; a steering message it sends a child
+carries the principal's id, so the child reads it as the launcher's word (a steering row with neither an
+author nor a principal id is the orchestrator's, which the child is told is not the launcher). A
+principal reads repository-derived data of its own orchestration only while it still reaches the
+repository (the repository on its allowlist and owned by, or shared for launching with, its team): once
+that ends the data is redacted as for any viewer without reach. Attaching, declining, approving, the
+event stream and the connection list refuse a principal (`401 SERVICE_TOKEN_NOT_ALLOWED`).
 
 **Who can watch.** The launcher, the members of the named team and ADMINs; anyone else gets `404`. They
 see the same page read-only.
@@ -485,48 +620,77 @@ audit-log entry on the `Orchestration` entity with the actor.
 
 ## 8. The orchestration token
 
-The worker cannot be the launcher, so the launch mints a short-lived token the worker presents when it
-applies intents. It is a JWT of its own audience behind the prefix `orch_`, so it is never mistaken for an
-API token, a PAT or an assistant token. Its claims name the orchestration and either the launching person
-or the launching principal.
+The worker cannot be the launcher, so it presents a token of its own when it applies intents. The worker
+mints a fresh token for **every** gateway call: it lives two minutes, and no token is ever placed in the
+workflow's input, its carried state, an activity's input or result, or Temporal history. A token is
+`orch_` + `base64url(payload)` + `.` + `base64url(HMAC-SHA256)`, so it is never mistaken for an API token,
+a PAT or an assistant token. The HMAC key is an HKDF-SHA256 subkey of `CONFIG_ENCRYPTION_KEY` (purpose
+`auto-swe/orchestration-token/v1`), the same construction as the transcript download links. The payload
+carries the key version, the orchestration id, issue and expiry times and a random id, and nothing about a
+person or a principal: the gateway derives who acts from the orchestration's row on every request.
+
+Verification runs in this order: the prefix and shape; the key version the token names (a version the
+process holds no key for is refused, and during a key rotation the previous key verifies tokens minted
+under it); the HMAC, compared in constant time; the claims; the lifetime (a token whose own lifetime
+exceeds five minutes, or whose expiry is more than five minutes ahead, is refused even when correctly
+signed); then expiry. A refusal at any of these is `401`.
 
 - **Three routes only.** `requireAuth` admits it on `POST …/children`, `POST …/children/:childId/messages`
   and `POST …/children/:childId/cancel`, and only for the orchestration named in the path. Anywhere else
   it answers `403 ORCHESTRATION_TOKEN_NOT_ALLOWED`. A person's session on the spawn route answers
-  `403 ORCHESTRATION_TOKEN_REQUIRED`: children are started by the orchestrator.
-- **Acts as the launcher** with their *current* role, like any other credential. A deactivated person, or
-  a principal that is disabled, whose team or organisation is inactive, or that no longer holds a live
-  `runs:agent` token with an expiry, ends the orchestration's authority to act.
-- **Lifetime.** Its expiry is the orchestration's pinned lifetime plus 15 minutes. It is also revoked the
-  moment the orchestration is no longer `ACTIVE` or `WAITING`, because every admission re-reads the status.
-  Cancelling or ending the orchestration therefore revokes it at once; the gateway cancels children
-  *before* flipping the status, while the token still works.
+  `403 ORCHESTRATION_TOKEN_REQUIRED`: children are started by the orchestrator. A token minted for one
+  orchestration is refused for another.
+- **Acts as the launcher** the orchestration's row names, with their *current* role, like any other
+  credential. A deactivated person, or a principal that is disabled, whose team or organisation is
+  inactive, or that no longer holds a live `runs:agent` token with an expiry, ends the orchestration's
+  authority to act.
+- **Revoked with the orchestration.** Every admission re-reads the status, so a token is refused the
+  moment the orchestration is no longer `ACTIVE` or `WAITING`. Cancelling or ending the orchestration
+  therefore revokes it at once; the gateway cancels children *before* flipping the status, while the token
+  still works.
+- **Never recorded.** A token is not logged, stored in the database, returned in a response or written to
+  an audit row. The worker masks any `orch_` value in an error before it reaches a log or a notice.
+- **Replay inside the window is not prevented.** The payload carries a random id (`jti`), but the gateway
+  mints no record of it and checks none: a token captured in transit can be presented again, any number of
+  times, until it expires. What a captured token can do in that window is what any token can: call the three
+  routes above for **its one orchestration** while that orchestration is `ACTIVE` or `WAITING`, as the
+  launcher's current standing allows (every spawn still passes the allowlist, caps and path-scope checks).
+  It cannot reach another orchestration or any other route, and it dies with the orchestration. Its
+  lifetime is two minutes as minted, and a token claiming more than five minutes is refused even when
+  correctly signed, so five minutes is the hard cap on a capture's usefulness.
+- **The signature has one spelling.** The gateway accepts only the exact canonical base64url of the 32-byte
+  MAC (43 characters, no padding, no extra characters) and the exact canonical encoding of the payload, so
+  one valid token has one valid form.
+
+---
 
 ---
 
 ## 9. API reference
 
-All routes need ENGINEER. Visibility is section 7. Orchestration refusals answer
+All routes need ENGINEER (a service principal holds no role and is admitted only where the table says
+"or its principal"). Visibility is section 7. Orchestration refusals answer
 `{ "code", "error": { "code", "message" }, "message" }`; other errors use the gateway's
 `{ "error": { "code", "message" } }`.
 
 | Route | Who | Notes |
 |---|---|---|
-| `POST /api/v1/orchestrations` | A person, or a principal with `runs:agent` | Section 1. `201`, or `200` for a replayed key. `403 ORCHESTRATION_DISABLED`, `400 TEAM_REPO_MISMATCH`, `400 CONNECTION_NOT_OWNED`, `409 RUN_CONFLICT` |
-| `GET /api/v1/orchestrations` | Viewers | `limit` (1 to 100, default 25), `offset`, `status`, `teamId`. The repository's name is withheld from a viewer who cannot reach it |
+| `POST /api/v1/orchestrations` | A person, or a principal with `runs:agent` | Section 1. `201`, or `200` for a replayed key. `403 ORCHESTRATION_DISABLED`, `400 TEAM_REPO_MISMATCH`, `400 CONNECTION_NOT_OWNED`, `409 RUN_CONFLICT`, `400 ALLOWLIST_REQUIRED`. The answer carries `allowlist`, the one applied |
+| `GET /api/v1/orchestrations` | Viewers, or a principal (its own only) | `limit` (1 to 100, default 25), `offset`, `status`, `teamId`. The repository's name is withheld from a viewer who cannot reach it |
+| `GET /api/v1/orchestrations/defaults?teamId=` | Members of the team | `{ "data": { "allowlist": [...] } }`: what a launch with no allowlist would apply for that team, filtered to launchable agents that exist |
 | `GET /api/v1/orchestrations/connections?teamId=` | Members of the team | The team's active MCP connections, by id and name |
-| `GET /api/v1/orchestrations/:id` | Viewers | Status, allowlist, connections, children, pending approvals, the pending repository request, spend split, remaining budget, and `canControl` |
-| `GET /api/v1/orchestrations/:id/messages` | Viewers | The transcript, oldest first. `after` (opaque cursor from `next`), `limit` (1 to 200, default 100) |
-| `GET /api/v1/orchestrations/:id/events` | Viewers | A server-sent stream of `message`, `child` and `status` events, `: ping` heartbeats every 15 s. Polled server-side every 1.5 s; ends after 16 minutes with a `done` event; at most 4 concurrent streams per user (`429 TOO_MANY_STREAMS`) |
-| `POST /api/v1/orchestrations/:id/messages` | Launcher | `{ "body" }` (1 to 4,000 characters). `201`. `409 ORCHESTRATION_NOT_ACTIVE` once cancelled or failed |
-| `POST /api/v1/orchestrations/:id/children/:childId/messages` | Launcher, or the orchestration token | Same body. `409 CHILD_NOT_ALLOWED` for a finished child or one with no run yet |
+| `GET /api/v1/orchestrations/:id` | Viewers, or its principal | Status, allowlist, connections, children, pending approvals, the pending repository request, spend split, budget readout, and `canControl` |
+| `GET /api/v1/orchestrations/:id/messages` | Viewers, or its principal | The transcript, oldest first. `after` (opaque cursor from `next`), `limit` (1 to 200, default 100) |
+| `GET /api/v1/orchestrations/:id/events` | Viewers | A server-sent stream of `message`, `child` and `status` events, `: ping` heartbeats every 15 s. Polled server-side every 1.5 s; the viewer's access is re-checked every 60 s (`done` with reason `access`); ends after 16 minutes with a `done` event; at most 4 concurrent streams per user (`429 TOO_MANY_STREAMS`). Resumable: see Event ids and resuming (section 11) |
+| `POST /api/v1/orchestrations/:id/messages` | Launcher, or its principal | `{ "body" }` (1 to 4,000 characters). `201`. `409 ORCHESTRATION_NOT_ACTIVE` once cancelled or failed |
+| `POST /api/v1/orchestrations/:id/children/:childId/messages` | Launcher, its principal, or the orchestration token | Same body. `409 CHILD_NOT_ALLOWED` for a finished child or one with no run yet |
 | `POST /api/v1/orchestrations/:id/children` | Orchestration token only | Body `{ "intent", "turnKey" }`. Section 3. `200` for a retried turn, `422 INVALID_INTENT`, `409` with a refusal code |
-| `POST /api/v1/orchestrations/:id/children/:childId/cancel` | Launcher, or the orchestration token | `409 CHILD_NOT_ALLOWED` for a finished child; `502 TEMPORAL_CANCEL_FAILED` |
+| `POST /api/v1/orchestrations/:id/children/:childId/cancel` | Launcher, its principal, or the orchestration token | `409 CHILD_NOT_ALLOWED` for a finished child; `502 TEMPORAL_CANCEL_FAILED` |
 | `POST /api/v1/orchestrations/:id/attach` | Launcher | `{ "repoId" }`. Section 5. `409 NO_PENDING_ATTACH`, `409 REPO_ALREADY_ATTACHED`, `502 ATTACH_SIGNAL_FAILED` |
 | `POST /api/v1/orchestrations/:id/attach/decline` | Launcher | `409 NO_PENDING_ATTACH` |
 | `POST /api/v1/orchestrations/:id/approvals/:approvalId` | Launcher | `{ "decision": "APPROVE" \| "DENY" }`. Section 6. `409 APPROVAL_NOT_PENDING` |
-| `POST /api/v1/orchestrations/:id/cancel` | Launcher | Sets `CANCELLED`, cancels the running children and the workflow, and answers `{ childrenCancelled, failed, status }` |
-| `POST /api/v1/orchestrations/:id/end` | Launcher | Cancels the running children, then sets `COMPLETED`. If a child cannot be cancelled it answers `502 CHILD_CANCEL_FAILED` and leaves the status unchanged, so the orchestrator can still cancel the survivors |
+| `POST /api/v1/orchestrations/:id/cancel` | Launcher, or its principal | Sets `CANCELLED`, cancels the running children and the workflow, and answers `{ childrenCancelled, failed, status }` |
+| `POST /api/v1/orchestrations/:id/end` | Launcher, or its principal | Cancels the running children, then sets `COMPLETED`. If a child cannot be cancelled it answers `502 CHILD_CANCEL_FAILED` and leaves the status unchanged, so the orchestrator can still cancel the survivors |
 
 Refusal codes the spawn, message, cancel and attach routes use: `CHILD_NOT_ALLOWED`, `CHILD_LIMIT`,
 `SCOPE_OVERLAP`, `PUSH_PERMISSION_REQUIRED`, `REPO_REQUIRED`, `CONNECTION_NOT_IN_SET`,
@@ -582,13 +746,14 @@ orchestration.** Those are the launcher's acts on the dashboard and the CLI (`at
 
 ## 10. Settings
 
-All are in the setting registry, ADMIN-only and GLOBAL only. None is run-pinned, because an orchestration
+All are in the setting registry and ADMIN-only. All are GLOBAL only except `orchestration.defaultAllowlist`, which an organisation may override. None is run-pinned, because an orchestration
 has no workflow run to pin on; the gateway freezes the bounds into the workflow input at launch instead.
 [configuration.md](./configuration.md) lists them with their read points.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `orchestration.enabled` | off | Kill switch for launching, messaging and spawning. Turning it off does not stop children already running |
+| `orchestration.defaultAllowlist` | `implementer`, `reviewer`, `planner`, `securityReviewer`, `domainLogicReviewer`, `performanceReviewer` | The agents a launch with no allowlist may start. Read at launch only; entries that are not launchable (the orchestrator included) are refused on save, and entries with no active agent at launch are dropped. `implementer` is the one seeded default that can change files (`writeFile` or `bash`); an organisation override of another default can make it write-capable, which `writeCapable` reports |
 | `orchestration.maxChildren` | 12 | Children one orchestration may start over its lifetime, finished ones included |
 | `orchestration.maxConcurrentChildren` | 4 | Children running at once in one orchestration |
 | `orchestration.maxWriterChildren` | 4 | Writers per orchestration, finished ones included; each opens its own pull request |
@@ -610,50 +775,118 @@ has no workflow run to pin on; the gateway freezes the bounds into the workflow 
 - **Traces.** The orchestrator's turns are *runless* traces keyed by the workflow id (`llm.orchestrator`
   spans), as the in-app assistant's are; a runless transcript is readable by ADMIN only
   ([transcripts.md](./transcripts.md)). A child's trace carries `agent.steered`,
-  `agent.steering_not_supported`, `mcp.write_approved`, `mcp.write_denied` and
+  `mcp.write_approved`, `mcp.write_denied` and
   `agent.browser_unavailable` events where they apply.
 - **Spend.** The detail view splits spend into the orchestrator's own turns, its children, and the total,
   and names the team each part bills: the named team for the orchestrator, the repository's owning team
   for children once attached. Orchestrator turns debit the named team's ledger and the organisation's
   USD cap as any model call does; a model with no catalog price stops turns while a USD cap is set.
-- **Remaining budget.** The header shows the orchestrator's own remaining budget for the tier, an
-  estimate (see Limitations).
+- **Budget.** The header shows the share of the tier's token cap used by the orchestrator and its
+  children together, and the monthly USD left when the team or organisation has a budget (section 3).
 - **Dashboard.** The orchestration page is two columns, Conversation and Agents, on a wide screen and
-  two tabs on a narrow one. It polls every three seconds while the orchestration is live. Only the
-  launcher sees the message boxes, the attach card's buttons and the approval buttons.
+  two tabs on a narrow one. Only the launcher sees the message boxes, the attach card's buttons and
+  the approval buttons. While the orchestration is live the page follows the event stream (below) and
+  patches `child` events (cost included) straight into what it shows; it re-reads the detail only after
+  a `status` event, a new child or a change of a child's status, run or result (once, debounced by 1.5 s),
+  and otherwise at most once per 15 s while a number is moving. It shows how updates arrive, in words beside the status: `Live` (the stream delivers; the page re-reads
+  only every 30 s as a safety net), `Connecting…` or `Reconnecting…` (re-reading every 3 s while the
+  stream is rebuilt, with exponential backoff and jitter), or `Updating by polling` (the stream is
+  unavailable; re-reading every 3 s). The indicator is not a live region, so a screen reader is not
+  interrupted by connection changes. The page falls back to polling when the stream answers an HTTP
+  error or a 429, when a proxy answers something other than `text/event-stream`, or when 45 s pass
+  without a byte (the gateway pings every 15 s); it tries again later, and stops trying after three
+  answers that are not an event stream until the tab is hidden and shown again. A hidden tab closes
+  the stream (freeing one of the user's four slots) and a returning tab re-reads once and reconnects
+  from the last event id. When the orchestration finishes the stream is closed and the transcript is
+  read once more, so the closing messages are not missed.
+- **CLI.** `orchestrate start --wait` and `orchestrate messages --follow` read the same stream and
+  print what polling would: `role: body` lines, `[STATUS]` on stderr, pending requests once. They fall
+  back to polling every 3 s when the stream is unavailable or has failed five times in a row without
+  progress, continuing from the stream's cursor, so no message is printed twice or skipped. The first
+  Ctrl-C closes the stream and exits 130, whether the CLI is reading, waiting out a reconnect backoff or
+  fetching the detail. The web client and the CLI share one parser (`@auto-swe/shared/lib/sse`) that
+  refuses a line over 256 KiB or an event over 1 MiB, which both treat as a failed connection.
+
+### Event ids and resuming
+
+The stream opens with `retry: 3000`. Every `message`, `child`, `status` and `done` event carries
+`id:`, the transcript cursor at that point: the same opaque value `GET /:id/messages` returns as `next`.
+A client resumes with the `Last-Event-ID` header (or `?after=` where it cannot set one; when both are
+present the header wins, because an `EventSource` keeps its original URL on reconnect and adds the
+header); the server replays only the messages after that cursor, in order, and an invalid cursor is `400 INVALID_CURSOR`
+before any stream opens. Hidden marker rows move the cursor but are never sent, and redaction applies on
+every poll, a resumed stream included. `child` and `status` are state rather than history: every new
+stream, resumed or not, opens with the current snapshot of each, and a client folds them into what it
+holds. A client that reconnects after the 16-minute `done` event resumes from that event's id; see the
+cursor caveat under Limitations for when that is not gapless. Access is re-checked every 60 s while the
+stream is open: a viewer who is no longer allowed to see the orchestration (removed from the team, say)
+receives a final `done` event with `{"reason":"access"}` and the stream closes. A client that
+disconnects while the stream is still opening is never given a slot or polled. A `429 TOO_MANY_STREAMS` is refused before any stream opens and counts nothing against
+the user, so a client polls and tries again after a slot frees.
 
 ---
 
 ## Limitations
 
-- **The orchestration token sits in the workflow's history.** It is the workflow's input, so for the
-  orchestration's lifetime (plus the token's 15-minute grace) anyone who can read that Temporal history
-  can read a token that acts as the launcher on the three child routes. The routes are narrow and the
-  token is revoked when the orchestration ends, but it is a bearer credential in a place with its own
-  access list.
-- **Repo-less children cannot use the browser tool.** The browser runs in a workspace container, and a
-  repo-less child has none; the child records `agent.browser_unavailable` and carries on without it. They
-  also run only on the Mastra loop.
-- **Claude Code and Pi children cannot be steered mid-run.** Their messages stay queued and unread, and
-  the only remedy is to cancel the child. A Mastra child takes a message at its next step, not within
-  one.
-- **Remaining budget is an estimate.** It is the orchestrator's own spend scaled by the unused share of
-  the tier's token caps, shown only when the tier has a cap and some spend. It does not cover the
-  children, each of which has the tier's caps on its own ledger row: the tier is not a pooled budget for
-  the orchestration. The pooled limits are the child and turn counts and the organisation's and team's
-  caps.
-- **GitHub push permission is checked per writer spawn; direct agent runs do not check it.** A writer
-  needs the launcher to hold push permission, live, at each spawn, with no ADMIN bypass. A direct agent
+- **Starting a workflow is not enough to drive an orchestration.** The orchestration activities (begin, turn,
+  apply, refresh, status, cancel-children) refuse, non-retryably, unless the workflow that scheduled them
+  has the id `orch-<orchestrationId>` of the orchestration they name. Temporal start access on the task
+  queue therefore no longer lets someone run an orchestration they chose, under an id of their choosing or
+  another orchestration's id. The check lives in the activities, not the workflow, so replaying histories
+  recorded under other ids stays deterministic. It does not stop someone who can start the workflow
+  under the right id, which the gateway itself does, and an activity called outside any workflow is not
+  judged.
+- **A compromised worker can mint orchestration tokens.** The worker holds `CONFIG_ENCRYPTION_KEY`, which
+  the token key derives from, so a compromised worker can mint a token for any orchestration. Such a token
+  stays scoped to the child spawn, message and cancel routes, is refused unless that orchestration is
+  `ACTIVE` or `WAITING` and its launcher is still allowed to act, and every spawn still passes the
+  gateway's allowlist, caps and path-scope checks. The worker already holds the key that decrypts every
+  stored provider credential, so the token adds no authority beyond what that process has.
+- **A repo-less child's browser needs the egress proxy, restricted egress and the Docker backend.**
+  Without the worker's egress proxy, with a `blocked` run policy, with an empty team allowlist or on the
+  Kubernetes backend the child runs without a browser and records `agent.browser_unavailable`. It also
+  needs the configured workspace image to carry the browser, and it has no app preview (there is no
+  repository to start one from). Repo-less children run only on the Mastra loop.
+- **A child with MCP and the browser can still place data in a URL.** The browser is held to the team's
+  allowlist and to `http`/`https`, but data a child read through MCP can be put in a URL on a host the
+  team allowlisted, which that host then receives, as with any allowlisted egress. The allowlist bounds
+  where it can go, not what.
+- **A child takes a steering message only at a boundary.** A Mastra child takes it at its next step, a
+  Claude Code child after its next batch of tool calls and a Pi child after its next turn, never within
+  one. Harness delivery is at most once: a message is lost if the run ends before the model's next
+  request. A Pi child stops taking steering at its turn cap, and a message that arrives after the last
+  boundary stays queued; the only remedy is to cancel the child.
+- **The tier budget is a readout, not a pooled limit.** The percentage sums the orchestrator's and every
+  child's ledger rows, but each child is stopped by the tier's caps on its own row, so an orchestration
+  can pass 100% without being stopped as a whole. The pooled limits are the child and turn counts and the
+  organisation's and team's USD caps. The percentage is absent when the tier has no cap or the defaults
+  cannot be read, and `monthlyRemainingUsd` is null when none of the billing teams and organisations
+  sets a monthly budget.
+- **The transcript cursor can skip a message committed late.** The cursor orders messages by
+  `(created_at, id)`, and `created_at` defaults to the start time of the transaction that wrote the row. A
+  message committed after a stream or poll has already passed its timestamp is not returned to that
+  reader. "No gap and no repeat on resume" holds only when messages commit in timestamp order; a
+  reload of the transcript (a fresh read from the start) always shows it.
+- **The default allowlist is not tuned per team.** An organisation can override it; a team cannot, and a
+  launcher who wants fewer agents narrows the pre-selection in the form or passes `allowlist`.
+- **GitHub push permission is checked per writer spawn for a person; direct agent runs do not check it.**
+  A person's writer needs the launcher to hold push permission, live, at each spawn, with no ADMIN
+  bypass. A principal-launched writer is authorised by the principal's allowlist and team instead. A direct agent
   run that delivers does not, and the repository's own push-triggered workflows are still reachable by a
   pushed branch ([agent-runs.md](./agent-runs.md#limitations)).
 - **A principal's other tokens keep an orchestration alive.** The model records which principal launched
   an orchestration, not which of its tokens, so any unrevoked, unexpired `runs:agent` token of that
   principal keeps the orchestration's authority to act.
-- **A principal-launched orchestration has no controller.** With no launcher, nobody can message, cancel
-  or end it through these routes. It ends when it is idle for 30 minutes, at its turn limit or at its
-  lifetime, and each of its children can be cancelled as a run.
-- **The dashboard polls.** No live push reaches it. The server-sent stream route exists, but neither the
-  dashboard nor the CLI reads it; both poll, so a status change shows up to a few seconds late.
+- **A principal cannot attach a repository or approve a call.** Those are a person's acts, so a
+  principal-launched orchestration works only on the repository it was launched with and every MCP write
+  its agents attempt is denied. A person who is not the launcher cannot control it either (`403
+  NOT_LAUNCHER`); an ADMIN can read it. The event stream is a person's route: a principal polls the detail
+  and the transcript.
+- **Live updates need a streaming path.** A proxy that buffers responses, a user with four streams
+  already open, or a gateway that cannot be held open leaves the dashboard and the CLI polling every 3 s,
+  so a status change shows up to a few seconds late. Streamed `child` and `status` events carry no
+  budget readout: while only a cost is moving, the page re-reads the detail at most once per 15 s to
+  refresh it.
 - **Sibling writer pull requests can conflict.** Disjoint path scopes keep two writers from touching the
   same files, not from depending on each other's changes (an interface one changes, a test the other
   breaks). Each writer starts from the default branch and cannot see the others' work. Reconciling
@@ -700,13 +933,16 @@ has no workflow run to pin on; the gateway freezes the bounds into the workflow 
 | `packages/gateway/src/routes/orchestrations.ts` | The routes |
 | `packages/gateway/src/lib/orchestrationService.ts` | Views, redaction, width checks |
 | `packages/gateway/src/lib/orchestrationAccess.ts` | The repo-less launch decision and the push-permission check |
-| `packages/gateway/src/lib/orchestrationToken.ts` | Token claims and lifetime |
+| `packages/shared/src/lib/orchestrationTokenKey.ts` | Minting and verifying the per-call token |
+| `packages/worker/src/lib/orchestrationGateway.ts` | The worker's gateway client, which mints a token per call |
+| `packages/worker/src/lib/orchestrationIdentity.ts` | The check that the scheduling workflow's id is `orch-<id>` |
 | `packages/worker/src/workflows/orchestration.ts` | The workflow |
 | `packages/worker/src/activities/orchestrationTurn.ts` | The turn |
 | `packages/worker/src/activities/orchestrationApply.ts` | Applying intents |
 | `packages/worker/src/lib/orchestrationContext.ts` | What the orchestrator reads |
 | `packages/worker/src/lib/orchestrationChildren.ts` | Child results and the finish signal |
 | `packages/worker/src/lib/mcpApproval.ts` | The write approval guard |
-| `packages/worker/src/lib/runSteering.ts` | Step-boundary steering |
+| `packages/worker/src/lib/runSteering.ts` | Step- and tool-boundary steering |
 | `packages/worker/src/activities/runRepolessAgentTask.ts` | The repo-less reader |
+| `packages/worker/src/lib/scratchBrowserWorkspace.ts` | The throwaway, restricted-egress container behind a repo-less reader's browser |
 | `packages/worker/src/activities/agentRunFinalize.ts` | The path-scope rule in the push policy |

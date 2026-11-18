@@ -5,7 +5,7 @@ import { type AuthInfo, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../mcpOAuth.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../ticketId.js';
-import { type BridgeResponse, callerFromAuthInfo, type McpCaller } from './bridge.js';
+import { callerFromAuthInfo, type McpCaller } from './bridge.js';
 import { ADMIN_TOOL_NAMES, MCP_DOMAINS } from './domains/index.js';
 import { registerOrchestrationWriteTools } from './orchestrationWriteTools.js';
 import {
