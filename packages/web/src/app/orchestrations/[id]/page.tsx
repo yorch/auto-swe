@@ -12,6 +12,7 @@ import { SkeletonDetail } from '@/components/ui/LoadingState';
 import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useIsNarrow } from '@/hooks/useMediaQuery';
+import { useOrchestrationStream } from '@/hooks/useOrchestrationStream';
 import { useOrchestration, useOrchestrationMessages } from '@/hooks/useOrchestrations';
 import { ApiError } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
@@ -51,6 +52,7 @@ export default function OrchestrationDetailPage({ params }: { params: Promise<{ 
   const detail = useOrchestration(id ?? '');
   const live = isOrchestrationLive(detail.data?.status);
   const messages = useOrchestrationMessages(id ?? '', live);
+  const stream = useOrchestrationStream(id ?? '', !!id && live);
   const narrow = useIsNarrow();
   const [tab, setTab] = useState<Tab>('conversation');
   useEntityTitle(detail.data?.title);
@@ -116,7 +118,7 @@ export default function OrchestrationDetailPage({ params }: { params: Promise<{ 
   return (
     <div className="space-y-6">
       <BackLink />
-      <OrchestrationHeader detail={data} />
+      <OrchestrationHeader detail={data} stream={stream} />
       {detail.isError && (
         <Alert variant="warning">
           Showing the last data received. Could not refresh: {errMsg(detail.error)}

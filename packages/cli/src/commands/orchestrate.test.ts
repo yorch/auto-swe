@@ -32,7 +32,13 @@ type Responder = (c: Call) => Reply;
 function detail(overrides: Record<string, unknown> = {}) {
   return {
     allowlist: ['contentWriter'],
-    budget: { remainingUsd: 12.5, tier: 'STANDARD' },
+    budget: {
+      monthlyRemainingUsd: 12.5,
+      percentUsed: 42,
+      remainingUsd: null,
+      tier: 'STANDARD',
+      tokens: { cap: 2_000_000, kind: 'input', used: 840_000 },
+    },
     budgetTier: 'STANDARD',
     canControl: true,
     childCount: 0,
@@ -90,16 +96,20 @@ describe('auto-swe orchestrate', () => {
   let out: string[];
   let err: string[];
   let calls: Call[];
+  let signals: AbortSignal[];
   let originalOut: typeof process.stdout.write;
   let originalErr: typeof process.stderr.write;
   let originalFetch: typeof globalThis.fetch;
   let originalWebUrl: string | undefined;
   let responder: Responder;
+  /** Answers `GET …/events`; by default the stream is unavailable, so following polls. */
+  let events: (c: Call) => Response;
 
   beforeEach(() => {
     out = [];
     err = [];
     calls = [];
+    signals = [];
     vi.mocked(sleep).mockClear();
     originalOut = process.stdout.write;
     originalErr = process.stderr.write;
@@ -118,7 +128,21 @@ describe('auto-swe orchestrate', () => {
       body: { error: { code: 'NOT_FOUND', message: 'no route' } },
       status: 404,
     });
+    events = () =>
+      new Response(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'no stream' } }), {
+        status: 404,
+      });
     globalThis.fetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      if (String(url).includes('/events')) {
+        const streamCall: Call = {
+          headers: (init?.headers ?? {}) as Record<string, string>,
+          method: String(init?.method ?? 'GET'),
+          url: String(url),
+        };
+        calls.push(streamCall);
+        signals.push(init?.signal as AbortSignal);
+        return events(streamCall);
+      }
       const call: Call = {
         body: init?.body ? JSON.parse(String(init.body)) : undefined,
         headers: (init?.headers ?? {}) as Record<string, string>,
@@ -227,6 +251,64 @@ describe('auto-swe orchestrate', () => {
       });
     });
 
+    it('sends no allowlist without --agent and names the applied default in the output', async () => {
+      responder = (c) => {
+        if (c.url.endsWith('/api/v1/teams')) {
+          return { body: { data: [{ id: TEAM_ID, slug: 'payments' }] } };
+        }
+        return {
+          body: {
+            data: {
+              allowlist: ['implementer', 'reviewer'],
+              orchestrationId: ORCH_ID,
+              status: 'ACTIVE',
+              workflowId: `orch-${ORCH_ID}`,
+              writeCapable: ['implementer'],
+            },
+          },
+          status: 201,
+        };
+      };
+      expect(await run(['start', 'Do it', '--team=payments'])).toBe(0);
+      expect(posts()[0]?.body).not.toHaveProperty('allowlist');
+      expect(stdout()).toContain(
+        'Agents:        implementer (can change files), reviewer (platform default)'
+      );
+    });
+
+    it('does not call a named allowlist the default', async () => {
+      responder = (c) => {
+        if (c.url.endsWith('/api/v1/teams')) {
+          return { body: { data: [{ id: TEAM_ID, slug: 'payments' }] } };
+        }
+        return {
+          body: {
+            data: {
+              allowlist: ['reviewer'],
+              orchestrationId: ORCH_ID,
+              status: 'ACTIVE',
+              workflowId: `orch-${ORCH_ID}`,
+            },
+          },
+          status: 201,
+        };
+      };
+      expect(await run(['start', 'Do it', '--team=payments', '--agent=reviewer'])).toBe(0);
+      expect(stdout()).toContain('Agents:        reviewer\n');
+    });
+
+    it('explains an ALLOWLIST_REQUIRED refusal in plain words', async () => {
+      responder = (c) =>
+        c.url.endsWith('/api/v1/teams')
+          ? { body: { data: [{ id: TEAM_ID, slug: 'payments' }] } }
+          : {
+              body: { error: { code: 'ALLOWLIST_REQUIRED', message: 'raw' } },
+              status: 400,
+            };
+      expect(await run(['start', 'Do it', '--team=payments'])).not.toBe(0);
+      expect(stderr()).toContain('pass at least one --agent=<key>');
+    });
+
     it('refuses a repo-less start without --team before any request', async () => {
       expect(await run(['start', 'Do it', '--agent=contentWriter'])).toBe(1);
       expect(stderr()).toContain('needs the team that owns it');
@@ -277,7 +359,6 @@ describe('auto-swe orchestrate', () => {
     });
 
     it.each([
-      ['no agent', ['start', 'Do it', '--team=payments']],
       [
         'a bad budget tier',
         ['start', 'Do it', '--team=payments', '--agent=a', '--budget-tier=HUGE'],
@@ -455,6 +536,292 @@ describe('auto-swe orchestrate', () => {
     });
   });
 
+  describe('streaming --wait and --follow', () => {
+    const enc = new TextEncoder();
+    const frame = (event: string, id: string, data: unknown) =>
+      `id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    /** An event-stream response: `chunks` are written, then it closes or hangs until aborted. */
+    function eventStream(chunks: string[], end: 'close' | 'hang', init?: ResponseInit) {
+      return (c: Call & { signal?: AbortSignal }) => {
+        const signal = signals[signals.length - 1];
+        void c;
+        const body = new ReadableStream<Uint8Array>({
+          start(ctrl) {
+            for (const chunk of chunks) {
+              ctrl.enqueue(enc.encode(chunk));
+            }
+            if (end === 'close') {
+              ctrl.close();
+            }
+            signal?.addEventListener('abort', () => {
+              try {
+                ctrl.error(new TypeError('terminated'));
+              } catch {
+                // Already closed.
+              }
+            });
+          },
+        });
+        return new Response(body, {
+          headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+          status: 200,
+          ...init,
+        });
+      };
+    }
+    /** The detail is ACTIVE for `active` reads, then `status`: the stream's last batch ends it. */
+    const restDetail = (status: string, active = 0) => {
+      let reads = 0;
+      responder = (c) => {
+        if (c.url.includes('/messages')) {
+          return { body: { data: [], next: null } };
+        }
+        reads += 1;
+        return { body: { data: detail({ status: reads > active ? status : 'ACTIVE' }) } };
+      };
+    };
+    const streamCalls = () => calls.filter((c) => c.url.includes('/events'));
+    const m = (id: string, body: string) => message(id, body, { role: 'ORCHESTRATOR' });
+
+    it('prints streamed messages, sends the token and never polls or sleeps', async () => {
+      restDetail('COMPLETED', 2);
+      events = eventStream(
+        [
+          'retry: 3000\n\n',
+          frame('message', 'c1', m('m1', 'first')),
+          frame('message', 'c2', m('m2', 'second')),
+          frame('status', 'c2', { status: 'COMPLETED' }),
+        ],
+        'hang'
+      );
+      expect(await run(['messages', ORCH_ID, '--follow'])).toBe(0);
+      expect(stdout()).toBe('orchestrator: first\norchestrator: second\n');
+      expect(stderr()).toContain('[COMPLETED]');
+      expect(vi.mocked(sleep)).not.toHaveBeenCalled();
+      expect(streamCalls()[0]?.headers).toMatchObject({
+        Accept: 'text/event-stream',
+        Authorization: 'Bearer t',
+      });
+      expect(streamCalls()[0]?.headers['Last-Event-ID']).toBeUndefined();
+      // The stream is closed once the orchestration is over: it holds one of the user's four slots.
+      expect(signals[0]?.aborted).toBe(true);
+    });
+
+    it('--json prints one message object per line, exactly as polling does', async () => {
+      restDetail('COMPLETED', 1);
+      events = eventStream(
+        [frame('message', 'c1', m('m1', 'first')), frame('status', 'c1', { status: 'COMPLETED' })],
+        'hang'
+      );
+      expect(await run(['messages', ORCH_ID, '--follow', '--json'])).toBe(0);
+      expect(
+        stdout()
+          .trim()
+          .split('\n')
+          .map((l) => JSON.parse(l).id)
+      ).toEqual(['m1']);
+    });
+
+    it('--wait stops at WAITING with exit 0 and at FAILED with exit 2', async () => {
+      const launch = (c: Call) => {
+        if (c.url.endsWith('/api/v1/teams')) {
+          return { body: { data: [{ id: TEAM_ID, slug: 'payments' }] } };
+        }
+        return c.method === 'POST' ? launchOk : null;
+      };
+      for (const [status, code] of [
+        ['WAITING', 0],
+        ['FAILED', 2],
+      ] as const) {
+        out = [];
+        responder = (c) =>
+          launch(c) ??
+          (c.url.includes('/messages')
+            ? { body: { data: [], next: null } }
+            : { body: { data: detail({ status }) } });
+        events = eventStream([frame('status', 'c0', { status })], 'hang');
+        expect(await run(['start', 'Do it', '--team=payments', '--agent=a', '--wait'])).toBe(code);
+        expect(streamCalls().length).toBeGreaterThan(0);
+      }
+      expect(vi.mocked(sleep)).not.toHaveBeenCalled();
+    });
+
+    it('resumes from the last event id after a drop without repeating a message', async () => {
+      let n = 0;
+      restDetail('COMPLETED', 3);
+      events = (c) => {
+        n += 1;
+        return n === 1
+          ? eventStream([frame('message', 'c1', m('m1', 'one'))], 'close')(c)
+          : eventStream(
+              [
+                frame('message', 'c1', m('m1', 'one')),
+                frame('message', 'c2', m('m2', 'two')),
+                frame('status', 'c2', { status: 'COMPLETED' }),
+              ],
+              'hang'
+            )(c);
+      };
+      expect(await run(['messages', ORCH_ID, '--follow'])).toBe(0);
+      expect(streamCalls()).toHaveLength(2);
+      expect(streamCalls()[1]?.headers['Last-Event-ID']).toBe('c1');
+      expect(stdout()).toBe('orchestrator: one\norchestrator: two\n');
+      expect(vi.mocked(sleep)).toHaveBeenCalledTimes(1);
+      const delay = vi.mocked(sleep).mock.calls[0]?.[0] ?? 0;
+      expect(delay).toBeGreaterThanOrEqual(500);
+      expect(delay).toBeLessThanOrEqual(1000);
+    });
+
+    it('reconnects at once, without sleeping, when the server ends the stream at its time limit', async () => {
+      let n = 0;
+      restDetail('COMPLETED', 1);
+      events = (c) => {
+        n += 1;
+        return n === 1
+          ? eventStream(
+              [frame('message', 'c1', m('m1', 'one')), frame('done', 'c1', { reason: 'timeout' })],
+              'hang'
+            )(c)
+          : eventStream([frame('status', 'c1', { status: 'COMPLETED' })], 'hang')(c);
+      };
+      expect(await run(['messages', ORCH_ID, '--follow'])).toBe(0);
+      expect(streamCalls()[1]?.headers['Last-Event-ID']).toBe('c1');
+      expect(vi.mocked(sleep)).not.toHaveBeenCalled();
+    });
+
+    it('falls back to polling, with the same output, when the stream is refused (429)', async () => {
+      const statuses = sequence([
+        { body: { data: detail({ status: 'ACTIVE' }) } },
+        { body: { data: detail({ status: 'COMPLETED' }) } },
+      ]);
+      let pages = 0;
+      responder = (c) => {
+        if (c.url.includes('/messages')) {
+          pages += 1;
+          return {
+            body:
+              pages === 1 ? { data: [m('m1', 'polled')], next: 'cur' } : { data: [], next: null },
+          };
+        }
+        return statuses();
+      };
+      events = () =>
+        new Response(JSON.stringify({ error: { code: 'TOO_MANY_STREAMS' } }), { status: 429 });
+      expect(await run(['messages', ORCH_ID, '--follow'])).toBe(0);
+      expect(streamCalls()).toHaveLength(1);
+      expect(vi.mocked(sleep)).toHaveBeenCalledWith(3000);
+      expect(stdout()).toBe('orchestrator: polled\n');
+      expect(stderr()).toContain('[COMPLETED]');
+    });
+
+    it('falls back to polling when a proxy answers 200 without an event stream', async () => {
+      restDetail('COMPLETED');
+      events = () => new Response('<html></html>', { headers: { 'content-type': 'text/html' } });
+      expect(await run(['messages', ORCH_ID, '--follow'])).toBe(0);
+      expect(streamCalls()).toHaveLength(1);
+      expect(stderr()).toContain('[COMPLETED]');
+    });
+
+    it('hands over to polling after repeated drops, from the stream cursor and with no duplicate', async () => {
+      let reads = 0;
+      const pages: string[] = [];
+      responder = (c) => {
+        if (c.url.includes('/messages')) {
+          pages.push(c.url);
+          return {
+            body:
+              pages.length === 1
+                ? { data: [m('m1', 'one'), m('m2', 'two')], next: 'c2' }
+                : { data: [], next: null },
+          };
+        }
+        reads += 1;
+        return { body: { data: detail({ status: reads > 6 ? 'COMPLETED' : 'ACTIVE' }) } };
+      };
+      events = (c) => eventStream([frame('message', 'c1', m('m1', 'one'))], 'close')(c);
+      expect(await run(['messages', ORCH_ID, '--follow'])).toBe(0);
+      // A first message from the stream, then every reconnect fails to progress: 1 + 5 retries.
+      expect(streamCalls()).toHaveLength(6);
+      expect(stdout()).toBe('orchestrator: one\norchestrator: two\n');
+      expect(pages[0]).toContain('after=c1');
+    });
+
+    it('closes the stream and exits 130 on Ctrl-C, leaving no listener behind', async () => {
+      restDetail('ACTIVE');
+      events = eventStream([': ping\n\n'], 'hang');
+      const before = process.listenerCount('SIGINT');
+      const running = run(['messages', ORCH_ID, '--follow']);
+      await vi.waitFor(() => expect(streamCalls()).toHaveLength(1));
+      await vi.waitFor(() => expect(process.listenerCount('SIGINT')).toBe(before + 1));
+      process.emit('SIGINT');
+      expect(await running).toBe(130);
+      expect(signals[0]?.aborted).toBe(true);
+      expect(process.listenerCount('SIGINT')).toBe(before);
+    });
+
+    it('exits 130 on the FIRST Ctrl-C during the reconnect backoff, leaving no listener', async () => {
+      vi.useFakeTimers();
+      const before = process.listenerCount('SIGINT');
+      try {
+        restDetail('ACTIVE');
+        events = (c) => eventStream([frame('message', 'c1', m('m1', 'one'))], 'close')(c);
+        // A backoff that never ends on its own: only the interrupt can finish it.
+        vi.mocked(sleep).mockImplementationOnce(() => new Promise<void>(() => undefined));
+        const running = run(['messages', ORCH_ID, '--follow']);
+        await vi.waitFor(() => expect(vi.mocked(sleep)).toHaveBeenCalledTimes(1));
+        process.emit('SIGINT');
+        expect(await running).toBe(130);
+        expect(streamCalls()).toHaveLength(1);
+        expect(process.listenerCount('SIGINT')).toBe(before);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('exits 130 on the first Ctrl-C while a REST read inside a batch is in flight', async () => {
+      restDetail('ACTIVE');
+      events = eventStream([frame('status', 'c1', { status: 'ACTIVE' })], 'hang');
+      const base = globalThis.fetch;
+      let streamed = false;
+      let hungReads = 0;
+      globalThis.fetch = vi.fn((url: string | URL, init?: RequestInit) => {
+        if (String(url).includes('/events')) {
+          streamed = true;
+          return base(url, init);
+        }
+        if (streamed) {
+          hungReads += 1;
+          return new Promise<Response>(() => undefined);
+        }
+        return base(url, init);
+      }) as unknown as typeof fetch;
+      const before = process.listenerCount('SIGINT');
+      const running = run(['messages', ORCH_ID, '--follow']);
+      await vi.waitFor(() => expect(hungReads).toBe(1));
+      process.emit('SIGINT');
+      expect(await running).toBe(130);
+      expect(process.listenerCount('SIGINT')).toBe(before);
+    });
+
+    it('treats 45 seconds of silence as a dead stream and polls instead', async () => {
+      vi.useFakeTimers();
+      try {
+        restDetail('COMPLETED');
+        events = eventStream([], 'hang');
+        const running = run(['messages', ORCH_ID, '--follow']);
+        for (let i = 0; i < 7; i += 1) {
+          await vi.advanceTimersByTimeAsync(45_000);
+        }
+        expect(await running).toBe(0);
+        // Five retries after the first silent stream, then polling.
+        expect(streamCalls()).toHaveLength(6);
+        expect(stderr()).toContain('[COMPLETED]');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   describe('list', () => {
     it('passes the team and status as query parameters and prints one row per orchestration', async () => {
       responder = (c) => {
@@ -510,6 +877,32 @@ describe('auto-swe orchestrate', () => {
   });
 
   describe('show', () => {
+    it('prints the budget readout: percent of the token cap and the monthly USD left', async () => {
+      responder = () => ({ body: { data: detail() } });
+      expect(await run(['show', ORCH_ID])).toBe(0);
+      expect(stdout()).toContain(
+        'Budget:        STANDARD, 42% used (840,000 of 2,000,000 input tokens), $12.50 remaining this month'
+      );
+    });
+
+    it('omits the monthly USD figure when no budget is set', async () => {
+      responder = () => ({
+        body: {
+          data: detail({
+            budget: {
+              percentUsed: 5,
+              remainingUsd: null,
+              tier: 'STANDARD',
+              tokens: { cap: 1000, kind: 'output', used: 50 },
+            },
+          }),
+        },
+      });
+      expect(await run(['show', ORCH_ID])).toBe(0);
+      expect(stdout()).toContain('5% used (50 of 1,000 output tokens)');
+      expect(stdout()).not.toContain('this month');
+    });
+
     it('renders the children table, the billing split and the pending requests', async () => {
       responder = () => ({
         body: {

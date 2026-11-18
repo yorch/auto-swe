@@ -2,12 +2,17 @@
 
 import type { OrchestrationDetailDto } from '@auto-swe/shared/lib/orchestrationApi';
 import { useState } from 'react';
+import { StreamIndicator } from '@/components/orchestrations/StreamIndicator';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { useCancelOrchestration, useEndOrchestration } from '@/hooks/useOrchestrations';
+import {
+  type OrchestrationStreamState,
+  useCancelOrchestration,
+  useEndOrchestration,
+} from '@/hooks/useOrchestrations';
 import {
   BUDGET_TIER_OPTIONS,
   describeOrchestrationError,
@@ -39,8 +44,25 @@ function RepoState({ detail }: { detail: OrchestrationDetailDto }) {
   return <Badge tone="neutral">No repository (read-only)</Badge>;
 }
 
+/** The exact figures behind the percentage, for a hover. */
+function tokenTitle(
+  tokens: NonNullable<OrchestrationDetailDto['budget']>['tokens']
+): string | undefined {
+  if (!tokens) {
+    return undefined;
+  }
+  return `${tokens.used.toLocaleString('en-US')} of ${tokens.cap.toLocaleString('en-US')} ${tokens.kind} tokens, the orchestrator and its agents together`;
+}
+
 /** Status, repository state, connections, spend, and the launcher's cancel and end. */
-export function OrchestrationHeader({ detail }: { detail: OrchestrationDetailDto }) {
+export function OrchestrationHeader({
+  detail,
+  stream = 'idle',
+}: {
+  detail: OrchestrationDetailDto;
+  /** How updates arrive, shown beside the status while the orchestration is live. */
+  stream?: OrchestrationStreamState;
+}) {
   const cancel = useCancelOrchestration(detail.id);
   const end = useEndOrchestration(detail.id);
   const [confirm, setConfirm] = useState<'cancel' | 'end' | null>(null);
@@ -66,6 +88,7 @@ export function OrchestrationHeader({ detail }: { detail: OrchestrationDetailDto
           </h1>
           <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-paper-400">
             <StatusBadge status={detail.status} />
+            <StreamIndicator state={stream} />
             <span>{detail.teamName ?? 'Unknown team'}</span>
             {detail.launchedByName && <span>Launched by {detail.launchedByName}</span>}
           </div>
@@ -111,11 +134,15 @@ export function OrchestrationHeader({ detail }: { detail: OrchestrationDetailDto
         <div className="min-w-0">
           <dt className="label-mono">Budget</dt>
           <dd className="mt-1 break-words text-paper-200">
-            {tierLabel} tier
-            {detail.budget &&
-              (detail.budget.remainingUsd === null
-                ? ', remaining budget not reported'
-                : `, ${formatTotalCost(detail.budget.remainingUsd)} remaining`)}
+            {detail.budget?.percentUsed != null ? (
+              <span title={tokenTitle(detail.budget.tokens)}>
+                {detail.budget.percentUsed}% of the {tierLabel} budget used
+              </span>
+            ) : (
+              <span>{tierLabel} tier</span>
+            )}
+            {detail.budget?.monthlyRemainingUsd != null &&
+              `, remaining ${formatTotalCost(detail.budget.monthlyRemainingUsd)} this month`}
           </dd>
         </div>
       </dl>

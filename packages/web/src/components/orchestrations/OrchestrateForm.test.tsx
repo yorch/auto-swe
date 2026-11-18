@@ -39,6 +39,8 @@ function gateway(
     launchStatus?: number;
     connections?: { id: string; name: string }[];
     platformConnections?: unknown[];
+    defaults?: string[];
+    defaultsWriteCapable?: string[];
   } = {}
 ) {
   const teams = options.teams ?? [{ id: 't1', name: 'Payments' }];
@@ -61,6 +63,14 @@ function gateway(
     }
     if (path === '/api/v1/orchestrations/connections') {
       return json({ data: options.connections ?? [] });
+    }
+    if (path === '/api/v1/orchestrations/defaults') {
+      return json({
+        data: {
+          allowlist: options.defaults ?? [],
+          writeCapable: options.defaultsWriteCapable ?? [],
+        },
+      });
     }
     if (path === '/api/v1/agent-runs/agents') {
       return json({ data: AGENTS });
@@ -169,6 +179,56 @@ describe('OrchestrateForm launch', () => {
     fireEvent.click(screen.getByRole('button', { name: /Review orchestration/ }));
     expect(await screen.findByText('<img src=x onerror=alert(1)>')).toBeTruthy();
     expect(document.querySelector('img')).toBeNull();
+  });
+});
+
+describe('OrchestrateForm default allowlist', () => {
+  it('pre-selects the platform default and launches with it, unchanged', async () => {
+    const spy = gateway({ defaults: ['researcher', 'gone'] });
+    render(withQuery(<OrchestrateForm />));
+    await fill('Investigate the flake');
+    const researcher = (await screen.findByLabelText(/Researcher/)) as HTMLInputElement;
+    await waitFor(() => expect(researcher.checked).toBe(true));
+    expect((screen.getByLabelText(/Writer/) as HTMLInputElement).checked).toBe(false);
+    expect(
+      spy.mock.calls.some(([u]) => String(u).includes('/orchestrations/defaults?teamId=t1'))
+    ).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: /Review orchestration/ }));
+    expect(await screen.findByText('Agents it may start (platform default)')).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Launch orchestration' }));
+    });
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    expect(bodyOf(spy, '/api/v1/orchestrations')).toMatchObject({ allowlist: ['researcher'] });
+  });
+
+  it('marks a default agent that can change files, in the list and on the review step', async () => {
+    gateway({ defaults: ['researcher', 'writer'], defaultsWriteCapable: ['writer'] });
+    render(withQuery(<OrchestrateForm />));
+    await fill('Investigate the flake');
+    expect(await screen.findByLabelText(/Writer \(can change files\)/)).toBeTruthy();
+    expect(screen.queryByLabelText(/Researcher \(can change files\)/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Review orchestration/ }));
+    expect(await screen.findByText(/Researcher, Writer \(can change files\)/)).toBeTruthy();
+  });
+
+  it('lets the person change the selection, and sends what they chose', async () => {
+    const spy = gateway({ defaults: ['researcher'] });
+    render(withQuery(<OrchestrateForm />));
+    await fill('Investigate the flake');
+    const researcher = (await screen.findByLabelText(/Researcher/)) as HTMLInputElement;
+    await waitFor(() => expect(researcher.checked).toBe(true));
+    fireEvent.click(screen.getByLabelText(/Writer/));
+    fireEvent.click(researcher);
+    expect(researcher.checked).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: /Review orchestration/ }));
+    expect(await screen.findByText('Agents it may start')).toBeTruthy();
+    expect(screen.queryByText(/platform default\)/)).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Launch orchestration' }));
+    });
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    expect(bodyOf(spy, '/api/v1/orchestrations')).toMatchObject({ allowlist: ['writer'] });
   });
 });
 
