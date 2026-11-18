@@ -26,10 +26,14 @@ import {
  */
 
 export const orchestrationLaunchOutput = z.object({
+  /** The agents the orchestration may use: the ones given, or the platform default applied. */
+  allowlist: z.array(z.string().max(130).regex(AGENT_REF_RE)).max(20).optional(),
   dashboardUrl: z.string(),
   orchestrationId: z.string().uuid(),
   orchestrationStatus: z.string(),
   status: z.enum(['started', 'already_submitted']),
+  /** The entries of `allowlist` whose effective agent can change files. */
+  writeCapable: z.array(z.string().max(130).regex(AGENT_REF_RE)).max(20).optional(),
 });
 
 export const orchestrationMessageOutput = z.object({
@@ -40,8 +44,10 @@ export const orchestrationMessageOutput = z.object({
 
 const restLaunched = z.object({
   data: z.object({
+    allowlist: z.array(z.string().max(130).regex(AGENT_REF_RE)).max(20).optional(),
     orchestrationId: z.string().uuid(),
     status: z.string().max(40),
+    writeCapable: z.array(z.string().max(130).regex(AGENT_REF_RE)).max(20).optional(),
   }),
 });
 
@@ -84,6 +90,10 @@ function orchestrationFailure(response: BridgeResponse, notFound: string): ToolR
       return failure(
         'That idempotency key is already used by another launch. Use a new key for a different request.'
       );
+    case '400 ALLOWLIST_REQUIRED':
+      return failure(
+        'No default agents are available to this team, so give `allowlist` (agent keys from list_agents). Nothing was started.'
+      );
     case '400 AGENT_NOT_LAUNCHABLE':
     case '400 AGENT_PIN_SHADOWED':
     case '404 AGENT_NOT_FOUND':
@@ -115,10 +125,10 @@ export function registerOrchestrationWriteTools(
     {
       annotations: { ...WRITE, title: 'Start an orchestration' },
       description:
-        'Start an orchestration: a conversation in which an orchestrator agent splits your task between the agents on `allowlist` and reports back. It acts as YOU, under YOUR identity and your saved GitHub credentials. Give `allowlist` (agent keys from list_agents, 1-20) and either `repoId` (from list_repositories) or a `teamId` you belong to; with no repository the orchestration can only read. Always the standard budget tier, and the in-flight run cap applies. `deliveryDefault` (default none) is the most its writer agents may deliver once a repository is attached (none, then branch, then draft_pr); every writer it starts must also use a delivery mode the platform allows through MCP at that moment, and its agents count toward your in-flight run cap. It cannot attach a repository, approve a tool call, cancel or end the orchestration: you do those in the dashboard, and the orchestrator may ask for them there. Use a new idempotencyKey per distinct task and reuse it only to retry that task. Follow with orchestrations_get and orchestrations_messages.',
+        'Start an orchestration: a conversation in which an orchestrator agent splits your task between the agents on `allowlist` and reports back. It acts as YOU, under YOUR identity and your saved GitHub credentials. Optionally give `allowlist` (agent keys from list_agents, up to 20); omit it, or pass none, to use the platform default agents (curated read-oriented agents plus the implementer, the one that can change files; an organization override of a default agent can also make it write-capable), and the result names the allowlist applied and `writeCapable`, the agents on it that can change files. Give either `repoId` (from list_repositories) or a `teamId` you belong to; with no repository the orchestration can only read. Always the standard budget tier, and the in-flight run cap applies. `deliveryDefault` (default none) is the most its writer agents may deliver once a repository is attached (none, then branch, then draft_pr); every writer it starts must also use a delivery mode the platform allows through MCP at that moment, and its agents count toward your in-flight run cap. It cannot attach a repository, approve a tool call, cancel or end the orchestration: you do those in the dashboard, and the orchestrator may ask for them there. Use a new idempotencyKey per distinct task and reuse it only to retry that task. Follow with orchestrations_get and orchestrations_messages.',
       inputSchema: z
         .object({
-          allowlist: z.array(z.string().min(1).max(130).regex(AGENT_REF_RE)).min(1).max(20),
+          allowlist: z.array(z.string().min(1).max(130).regex(AGENT_REF_RE)).max(20).optional(),
           deliveryDefault: z.enum(['none', 'draft_pr', 'branch']).optional(),
           idempotencyKey: z
             .string()
@@ -163,6 +173,7 @@ export function registerOrchestrationWriteTools(
         const id = parsed.data.data.orchestrationId;
         return ok(
           orchestrationLaunchOutput.parse({
+            allowlist: parsed.data.data.allowlist,
             dashboardUrl: `${origin}/orchestrations/${id}`,
             orchestrationId: id,
             orchestrationStatus: /^[A-Z_]{1,32}$/.test(parsed.data.data.status)
@@ -170,6 +181,7 @@ export function registerOrchestrationWriteTools(
               : 'UNKNOWN',
             // A replay of the key answers 200; a new orchestration answers 201.
             status: response.status === 200 ? 'already_submitted' : 'started',
+            writeCapable: parsed.data.data.writeCapable,
           })
         );
       } catch (err) {

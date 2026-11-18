@@ -1,14 +1,18 @@
+import { randomBytes } from 'node:crypto';
+import { _resetKeyCacheForTests } from '@auto-swe/shared/lib/crypto';
 import {
   OrchestrationDetailDtoSchema,
   OrchestrationMessagesPageSchema,
   OrchestrationSummaryDtoSchema,
   SpawnChildResponseSchema,
 } from '@auto-swe/shared/lib/orchestrationApi';
+import { mintOrchestrationToken } from '@auto-swe/shared/lib/orchestrationTokenKey';
 import { repoMemberWhere } from '@auto-swe/shared/lib/repoMembership';
 import type { FastifyInstance } from 'fastify';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { agentRunWorkflowId } from '../lib/agentRunLaunch.js';
 import { resetMcpWriteRateLimit } from '../lib/mcpWriteGuard.js';
+import { encodeCursor } from '../lib/orchestrationService.js';
 import { _resetAuthCachesForTests } from '../plugins/auth.js';
 import { buildAssistantApp, OTHER_USER_ID, USER_ID } from '../test/assistantApp.js';
 import { orchestrationRoutes } from './orchestrations.js';
@@ -20,6 +24,7 @@ const cfg = vi.hoisted(() => ({
     'mcp.maxConcurrentRuns': 5,
     'mcp.writeCallsPerMinute': 100,
     'mcp.writeToolsEnabled': true,
+    'orchestration.defaultAllowlist': ['reader', 'writer', 'gone', 'orchestrator'],
     'orchestration.maxChildren': 3,
     'orchestration.maxConcurrentChildren': 2,
     'orchestration.maxTurns': 200,
@@ -32,6 +37,12 @@ const cfg = vi.hoisted(() => ({
 vi.mock('@auto-swe/shared/config', () => ({
   resolveSetting: vi.fn(async () => cfg.enabled),
   resolveSettings: vi.fn(async () => cfg.settings),
+}));
+const spend = vi.hoisted(() => ({ org: 40, team: 12.5 }));
+vi.mock('@auto-swe/shared/lib/billing', async (orig) => ({
+  ...(await orig<typeof import('@auto-swe/shared/lib/billing')>()),
+  orgMonthSpend: vi.fn(async () => ({ totalUsd: spend.org })),
+  teamMonthSpend: vi.fn(async () => ({ totalUsd: spend.team })),
 }));
 vi.mock('@auto-swe/shared/lib/systemConfig', async (orig) => ({
   ...(await orig<typeof import('@auto-swe/shared/lib/systemConfig')>()),
@@ -94,6 +105,7 @@ vi.mock('../lib/workflowLaunch.js', () => ({
 const ORCH = '00000000-0000-4000-8000-0000000000f1';
 const OTHER_ORCH = '00000000-0000-4000-8000-0000000000f2';
 const TEAM = '00000000-0000-4000-8000-0000000000a1';
+const OTHER_TEAM = '00000000-0000-4000-8000-0000000000a9';
 const ORG = '00000000-0000-4000-8000-0000000000a2';
 const REPO = '00000000-0000-4000-8000-0000000000a3';
 const CHILD = '00000000-0000-4000-8000-0000000000c1';
@@ -175,11 +187,16 @@ function makePrisma() {
           key,
           mcpConnectionId: null,
           scope: 'GLOBAL',
+          toolKeys: key === 'writer' ? ['readFile', 'writeFile'] : ['readFile', 'listDirectory'],
           version: 1,
         }))
       ),
     },
-    apiToken: { findFirst: vi.fn(async () => ({ id: 'tok' })) },
+    apiToken: {
+      findFirst: vi.fn(async () => ({ id: 'tok' })),
+      findUnique: vi.fn(async () => null),
+      update: vi.fn(async () => ({})),
+    },
     configAuditLog: { create: vi.fn(async () => ({})) },
     connection: {
       findFirst: vi.fn(async () => null),
@@ -223,6 +240,7 @@ function makePrisma() {
       findMany: vi.fn(async () => []),
       update: vi.fn(async () => ({})),
     },
+    organization: { findFirst: vi.fn(async () => ({ monthlyBudgetUsdCents: null })) },
     organizationMembership: { findUnique: vi.fn(async () => ({ userId: USER_ID })) },
     runSteeringMessage: { create: vi.fn(async () => ({})), groupBy: vi.fn(async () => []) },
     servicePrincipal: { findUnique: vi.fn(async () => null) },
@@ -248,16 +266,23 @@ function makePrisma() {
 describe('orchestration routes', () => {
   let app: FastifyInstance;
   let prisma: ReturnType<typeof makePrisma>;
+  const logLines: string[] = [];
   const temporal = {
     cancelWorkflow: vi.fn(),
     signalWithStartOrchestration: vi.fn(),
     signalWorkflow: vi.fn(),
   };
 
+  beforeAll(() => {
+    process.env.CONFIG_ENCRYPTION_KEY = randomBytes(32).toString('base64');
+    _resetKeyCacheForTests();
+  });
+
   beforeEach(async () => {
     _resetAuthCachesForTests();
     cfg.enabled = true;
     state = { children: [], orch: orchRow(), tx: {} };
+    logLines.length = 0;
     for (const fn of Object.values(temporal)) {
       fn.mockReset();
     }
@@ -274,20 +299,24 @@ describe('orchestration routes', () => {
     tracked.result = null;
     resetMcpWriteRateLimit();
     prisma = makePrisma();
-    app = await buildAssistantApp(prisma as never, async (a) => {
-      // A request carrying this header is treated as arriving through the MCP bridge.
-      a.addHook('onRequest', async (request) => {
-        if (request.headers['x-test-mcp']) {
-          request.mcpBridge = {
-            clientId: 'test',
-            consentId: 'test',
-            scopes: ['mcp:read', 'mcp:write'],
-          };
-        }
-      });
-      a.decorate('temporal', temporal as never);
-      await a.register(orchestrationRoutes, { prefix: '/api/v1/orchestrations' });
-    });
+    app = await buildAssistantApp(
+      prisma as never,
+      async (a) => {
+        // A request carrying this header is treated as arriving through the MCP bridge.
+        a.addHook('onRequest', async (request) => {
+          if (request.headers['x-test-mcp']) {
+            request.mcpBridge = {
+              clientId: 'test',
+              consentId: 'test',
+              scopes: ['mcp:read', 'mcp:write'],
+            };
+          }
+        });
+        a.decorate('temporal', temporal as never);
+        await a.register(orchestrationRoutes, { prefix: '/api/v1/orchestrations' });
+      },
+      { logger: { level: 'trace', stream: { write: (line: string) => void logLines.push(line) } } }
+    );
   });
   afterEach(async () => {
     await app.close();
@@ -295,8 +324,8 @@ describe('orchestration routes', () => {
 
   const person = (sub = USER_ID, role = 'ENGINEER') =>
     `Bearer ${app.auth.signAccessToken({ role: role as never, sub })}`;
-  const token = (id = ORCH, userId: string | null = USER_ID, serviceId: string | null = null) =>
-    `Bearer ${app.auth.signOrchestrationToken({ orchestrationId: id, serviceId, userId }, 3600)}`;
+  // The token names only the orchestration; who acts is read from the orchestration's row.
+  const token = (id = ORCH) => `Bearer ${mintOrchestrationToken({ orchestrationId: id })}`;
   const call = (
     method: 'GET' | 'POST',
     url: string,
@@ -343,13 +372,92 @@ describe('orchestration routes', () => {
       expect(res.statusCode).toBe(401);
     });
 
-    it('is refused when it names someone other than the launcher', async () => {
-      const res = await call(
-        'POST',
-        `/${ORCH}/children/${CHILD}/cancel`,
-        token(ORCH, OTHER_USER_ID)
-      );
+    it('is refused once the launcher is deactivated', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        isActive: false,
+        role: 'ENGINEER',
+        slackId: null,
+      });
+      const res = await call('POST', `/${ORCH}/children/${CHILD}/cancel`, token());
       expect(res.statusCode).toBe(401);
+      expect(temporal.cancelWorkflow).not.toHaveBeenCalled();
+    });
+
+    it("acts with the launcher's current role, not one the token could claim", async () => {
+      prisma.user.findUnique.mockResolvedValue({ isActive: true, role: 'LEAD', slackId: null });
+      launcher.launch.mockImplementation(
+        async (
+          _req: unknown,
+          reply: { status: (n: number) => { send: (b: unknown) => unknown } }
+        ) => reply.status(201).send({ data: {} })
+      );
+      await call('POST', `/${ORCH}/children`, token(), {
+        intent: { agent: 'reader', label: 'l', role: 'reader', task: 't' },
+        turnKey: 'k',
+      });
+      expect(launcher.launch.mock.calls[0]?.[2].caller).toMatchObject({
+        kind: 'user',
+        user: { role: 'LEAD', sub: USER_ID },
+      });
+    });
+
+    it('is refused when it has expired', async () => {
+      const stale = mintOrchestrationToken({ orchestrationId: ORCH }, 120, Date.now() - 200_000);
+      const res = await call('POST', `/${ORCH}/children/${CHILD}/cancel`, `Bearer ${stale}`);
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('is refused when its lifetime is longer than a call needs, even though signed', async () => {
+      const long = mintOrchestrationToken({ orchestrationId: ORCH }, 3600);
+      const res = await call('POST', `/${ORCH}/children/${CHILD}/cancel`, `Bearer ${long}`);
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('is refused when signed under another key', async () => {
+      const mine = process.env.CONFIG_ENCRYPTION_KEY;
+      process.env.CONFIG_ENCRYPTION_KEY = randomBytes(32).toString('base64');
+      _resetKeyCacheForTests();
+      const foreign = mintOrchestrationToken({ orchestrationId: ORCH });
+      process.env.CONFIG_ENCRYPTION_KEY = mine;
+      _resetKeyCacheForTests();
+      const res = await call('POST', `/${ORCH}/children/${CHILD}/cancel`, `Bearer ${foreign}`);
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('cannot be replayed against another orchestration', async () => {
+      const forOther = token(OTHER_ORCH);
+      const res = await call('POST', `/${ORCH}/children/${CHILD}/cancel`, forOther);
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('ORCHESTRATION_TOKEN_NOT_ALLOWED');
+    });
+
+    it('never appears in a response, a log line or an audit row', async () => {
+      const lines: string[] = [];
+      const bearer = token();
+      const raw = bearer.slice('Bearer '.length);
+      state.children = [
+        {
+          id: CHILD,
+          status: 'RUNNING',
+          workRequest: { activeWorkflows: [{ temporalWorkflowId: 'agent-1' }] },
+        },
+      ];
+      const res = await call('POST', `/${ORCH}/children/${CHILD}/cancel`, bearer);
+      expect(res.statusCode).toBe(200);
+      // A non-canonical spelling of the same signature is not the same token.
+      const bad = await call('POST', `/${ORCH}/children/${CHILD}/cancel`, `${bearer}x`);
+      const padded = await call('POST', `/${ORCH}/children/${CHILD}/cancel`, `${bearer}=`);
+      expect(bad.statusCode).toBe(401);
+      expect(padded.statusCode).toBe(401);
+      lines.push(res.body, bad.body, padded.body, JSON.stringify(res.headers), ...logLines);
+      expect(logLines.length).toBeGreaterThan(0);
+      lines.push(JSON.stringify(prisma.configAuditLog.create.mock.calls));
+      lines.push(JSON.stringify(prisma.orchestration.updateMany.mock.calls));
+      lines.push(JSON.stringify(temporal.signalWorkflow.mock.calls));
+      for (const line of lines) {
+        expect(line).not.toContain(raw);
+        expect(line).not.toContain('orch_');
+      }
     });
 
     it('rejects a forged token', async () => {
@@ -908,7 +1016,7 @@ describe('orchestration routes', () => {
     const launch = (b: unknown = body, authorization = person(), headers = {}) =>
       call('POST', '/', authorization, b, headers);
 
-    it('launches a repo-less orchestration and starts the workflow with the launcher and token', async () => {
+    it('launches a repo-less orchestration and starts the workflow with the launcher and no token', async () => {
       const res = await launch();
       expect(res.statusCode).toBe(201);
       const data = res.json().data;
@@ -922,7 +1030,8 @@ describe('orchestration routes', () => {
         teamId: TEAM,
         userId: USER_ID,
       });
-      expect(input.token).toMatch(/^orch_/);
+      expect(input).not.toHaveProperty('token');
+      expect(JSON.stringify(input)).not.toContain('orch_');
       expect(signal.name).toBe('userMessage');
       const ledger = tracked.rows[0] as { runInput: Record<string, unknown> };
       expect(ledger.runInput).toMatchObject({ billingTeamId: TEAM, requestedById: USER_ID });
@@ -937,6 +1046,131 @@ describe('orchestration routes', () => {
     it('refuses while the kill switch is off', async () => {
       cfg.enabled = false;
       expect((await launch()).statusCode).toBe(403);
+    });
+
+    describe('default allowlist', () => {
+      const noList = { task: 'Investigate the outage', teamId: TEAM };
+
+      it.each([
+        ['omitted', noList],
+        ['empty', { ...noList, allowlist: [] }],
+      ])('applies the configured default when the allowlist is %s', async (_n, b) => {
+        const res = await launch(b);
+        expect(res.statusCode).toBe(201);
+        // 'gone' has no active agent and 'orchestrator' is never launchable: both are dropped.
+        const applied = ['reader', 'writer'];
+        expect(res.json().data.allowlist).toEqual(applied);
+        expect(res.json().data.writeCapable).toEqual(['writer']);
+        expect(prisma.orchestration.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ allowlist: applied }),
+        });
+      });
+
+      it('resolves the default at the named team organization', async () => {
+        const { resolveSettings } = await import('@auto-swe/shared/config');
+        await launch(noList);
+        expect(resolveSettings).toHaveBeenCalledWith(
+          ['orchestration.defaultAllowlist'],
+          expect.objectContaining({ orgId: ORG })
+        );
+      });
+
+      it('answers ALLOWLIST_REQUIRED, and writes nothing, when no default agent exists', async () => {
+        prisma.agent.findMany.mockResolvedValue([] as never);
+        const res = await launch(noList);
+        expect(res.statusCode).toBe(400);
+        expect(res.json().error.code).toBe('ALLOWLIST_REQUIRED');
+        expect(res.json().error.message).toMatch(/allowlist/i);
+        expect(prisma.orchestration.create).not.toHaveBeenCalled();
+        expect(temporal.signalWithStartOrchestration).not.toHaveBeenCalled();
+      });
+
+      it('answers ALLOWLIST_REQUIRED when the setting is empty', async () => {
+        const saved = cfg.settings['orchestration.defaultAllowlist'];
+        cfg.settings['orchestration.defaultAllowlist'] = [];
+        try {
+          expect((await launch(noList)).json().error.code).toBe('ALLOWLIST_REQUIRED');
+        } finally {
+          cfg.settings['orchestration.defaultAllowlist'] = saved as string[];
+        }
+      });
+
+      it('keeps an explicit allowlist exactly as given, defaults ignored', async () => {
+        const res = await launch({ ...noList, allowlist: ['reader'] });
+        expect(res.statusCode).toBe(201);
+        expect(res.json().data.allowlist).toEqual(['reader']);
+        expect(prisma.orchestration.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ allowlist: ['reader'] }),
+        });
+        prisma.agent.findMany.mockResolvedValue([] as never);
+        expect((await launch({ ...noList, allowlist: ['reader'] })).statusCode).toBe(404);
+      });
+
+      it('replays with the allowlist that was applied', async () => {
+        const first = await launch(noList, person(), { 'idempotency-key': 'dflt' });
+        state.orch = orchRow({ id: first.json().data.orchestrationId });
+        const again = await launch(noList, person(), { 'idempotency-key': 'dflt' });
+        expect(again.statusCode).toBe(200);
+        expect(again.json().data.allowlist).toEqual(['reader', 'writer']);
+      });
+
+      it('replays before the default is resolved, even after it was emptied', async () => {
+        prisma.orchestration.findFirst.mockResolvedValueOnce(null as never);
+        const first = await launch(noList, person(), { 'idempotency-key': 'dflt2' });
+        expect(first.statusCode).toBe(201);
+        state.orch = orchRow({
+          allowlist: ['reader', 'writer'],
+          id: first.json().data.orchestrationId,
+        });
+        const saved = cfg.settings['orchestration.defaultAllowlist'];
+        cfg.settings['orchestration.defaultAllowlist'] = [];
+        prisma.agent.findMany.mockResolvedValue([] as never);
+        try {
+          const again = await launch(noList, person(), { 'idempotency-key': 'dflt2' });
+          expect(again.statusCode).toBe(200);
+          expect(again.json().data.allowlist).toEqual(['reader', 'writer']);
+          // A first launch under the same emptied default is still refused.
+          prisma.orchestration.findFirst.mockResolvedValueOnce(null as never);
+          const fresh = await launch(noList, person(), { 'idempotency-key': 'dflt3' });
+          expect(fresh.statusCode).toBe(400);
+          expect(fresh.json().error.code).toBe('ALLOWLIST_REQUIRED');
+        } finally {
+          cfg.settings['orchestration.defaultAllowlist'] = saved as string[];
+        }
+      });
+    });
+
+    describe('GET /defaults', () => {
+      it('answers the filtered default for a member, and is not read as an id', async () => {
+        const res = await call('GET', `/defaults?teamId=${TEAM}`, person());
+        expect(res.statusCode).toBe(200);
+        expect(res.json()).toEqual({
+          data: { allowlist: ['reader', 'writer'], writeCapable: ['writer'] },
+        });
+      });
+
+      it('marks a default whose organization override can change files, bash included', async () => {
+        prisma.agent.findMany.mockResolvedValue([
+          { key: 'reader', scope: 'GLOBAL', toolKeys: ['readFile'], version: 1 },
+          { key: 'reader', scope: 'ORGANIZATION', toolKeys: ['bash'], version: 2 },
+          { key: 'writer', scope: 'GLOBAL', toolKeys: null, version: 1 },
+        ] as never);
+        const res = await call('GET', `/defaults?teamId=${TEAM}`, person());
+        expect(res.json().data.writeCapable).toEqual(['reader']);
+        // The launch reports the same effective marking.
+        const launched = await launch({ task: 't', teamId: TEAM });
+        expect(launched.json().data.writeCapable).toEqual(['reader']);
+      });
+
+      it('answers 404 to a non-member', async () => {
+        prisma.team.findFirst.mockResolvedValue({
+          id: TEAM,
+          isActive: true,
+          memberships: [],
+          orgId: ORG,
+        } as never);
+        expect((await call('GET', `/defaults?teamId=${TEAM}`, person())).statusCode).toBe(404);
+      });
     });
 
     it.each(['orchestrator', 'orchestrator@1', 'Orchestrator'])(
@@ -1145,7 +1379,8 @@ describe('orchestration routes', () => {
       expect(res.statusCode).toBe(201);
       const [, input, signal] = temporal.signalWithStartOrchestration.mock.calls[0] ?? [];
       expect(signal).toEqual({ name: 'userMessage', payload: { messageId: MESSAGE } });
-      expect(input.token).toMatch(/^orch_/);
+      expect(input).not.toHaveProperty('token');
+      expect(JSON.stringify(input)).not.toContain('orch_');
     });
 
     it('refuses someone who only has visibility', async () => {
@@ -1182,7 +1417,7 @@ describe('orchestration routes', () => {
       });
       expect(res.statusCode).toBe(201);
       expect(prisma.runSteeringMessage.create).toHaveBeenCalledWith({
-        data: { authorId: USER_ID, body: 'use X', runId: 'run-1' },
+        data: { authorId: USER_ID, authorServiceId: null, body: 'use X', runId: 'run-1' },
       });
       expect(temporal.signalWorkflow).toHaveBeenCalledWith(`orch-${ORCH}`, 'userMessage', [
         { messageId: MESSAGE },
@@ -1196,7 +1431,7 @@ describe('orchestration routes', () => {
       });
       expect(res.statusCode).toBe(201);
       expect(prisma.runSteeringMessage.create).toHaveBeenCalledWith({
-        data: { authorId: null, body: 'hi', runId: 'run-1' },
+        data: { authorId: null, authorServiceId: null, body: 'hi', runId: 'run-1' },
       });
       // The worker relies on the transcript row: an orchestrator-originated message is recorded.
       expect(prisma.orchestrationMessage.create).toHaveBeenCalledWith({
@@ -1949,6 +2184,276 @@ describe('orchestration routes', () => {
       expect(text).not.toContain('auto/agent-1');
       expect(text).toContain('"body":"hello"');
     });
+
+    describe('resuming a stream', () => {
+      const at = (sec: number) => new Date(NOW.getTime() + sec * 1000);
+      const row = (n: number, extra: Record<string, unknown> = {}) => ({
+        authorId: null,
+        body: `m${n}`,
+        childId: null,
+        createdAt: at(n),
+        id: `00000000-0000-4000-8000-00000000010${n}`,
+        kind: 'TEXT',
+        payload: null,
+        role: 'USER',
+        ...extra,
+      });
+      const cursorOf = (m: { createdAt: Date; id: string }) => encodeCursor(m);
+
+      /** A transcript that honours the `after` cursor the way the database would. */
+      function transcript(rows: ReturnType<typeof row>[]) {
+        prisma.orchestrationMessage.findMany.mockImplementation((async (args: {
+          where: { OR?: Array<{ createdAt: Date | { gt: Date }; id?: { gt: string } }> };
+        }) =>
+          rows.filter(
+            (m) =>
+              !args.where.OR ||
+              args.where.OR.some((c) =>
+                c.id
+                  ? m.createdAt.getTime() === (c.createdAt as Date).getTime() && m.id > c.id.gt
+                  : m.createdAt.getTime() > (c.createdAt as { gt: Date }).gt.getTime()
+              )
+          )) as never);
+      }
+
+      async function url() {
+        if (!app.server.listening) {
+          await app.listen({ host: '127.0.0.1', port: 0 });
+        }
+        const addr = app.server.address() as { port: number };
+        return `http://127.0.0.1:${addr.port}/api/v1/orchestrations/${ORCH}/events`;
+      }
+      async function open(suffix: string, headers: Record<string, string>, want: RegExp) {
+        const ctl = new AbortController();
+        const res = await fetch(`${await url()}${suffix}`, { headers, signal: ctl.signal });
+        let text = '';
+        if (res.status === 200) {
+          const reader = res.body?.getReader();
+          try {
+            while (reader && !want.test(text)) {
+              const { done, value } = await reader.read();
+              if (done) {
+                break;
+              }
+              text += new TextDecoder().decode(value);
+            }
+          } finally {
+            ctl.abort();
+          }
+        }
+        return { status: res.status, text };
+      }
+      const messageIds = (text: string) =>
+        [...text.matchAll(/event: message\ndata: (.*)\n/g)].map(
+          (m) => (JSON.parse(m[1] ?? '{}') as { body: string }).body
+        );
+      const lastId = (text: string) => [...text.matchAll(/^id: (.*)$/gm)].pop()?.[1];
+
+      it('opens with a retry hint and gives every event the cursor it was written at', async () => {
+        transcript([row(1), row(2)]);
+        const { text } = await open('', { authorization: person() }, /event: status/);
+        expect(text.startsWith('retry: 3000\n\n')).toBe(true);
+        expect(text).toContain(`id: ${cursorOf(row(1))}\nevent: message`);
+        expect(text).toContain(`id: ${cursorOf(row(2))}\nevent: message`);
+        // child and status carry the high-water mark so a resume from them skips nothing.
+        expect(text).toContain(`id: ${cursorOf(row(2))}\nevent: status`);
+      });
+
+      it('resumes after Last-Event-ID or ?after= without repeating or skipping a message', async () => {
+        transcript([row(1), row(2), row(3)]);
+        const resumed = await open(
+          '',
+          { authorization: person(), 'last-event-id': cursorOf(row(2)) },
+          /event: status/
+        );
+        expect(messageIds(resumed.text)).toEqual(['m3']);
+        const fromQuery = await open(
+          `?after=${cursorOf(row(1))}`,
+          { authorization: person() },
+          /event: status/
+        );
+        expect(messageIds(fromQuery.text)).toEqual(['m2', 'm3']);
+      });
+
+      it('prefers Last-Event-ID over ?after= when a reconnect carries both', async () => {
+        transcript([row(1), row(2), row(3), row(4)]);
+        const { text } = await open(
+          `?after=${cursorOf(row(1))}`,
+          { authorization: person(), 'last-event-id': cursorOf(row(3)) },
+          /event: status/
+        );
+        expect(messageIds(text)).toEqual(['m4']);
+      });
+
+      it('gives no slot and runs no poll to clients that disconnect during the lookup', async () => {
+        transcript([row(1)]);
+        const target = await url();
+        prisma.orchestration.findFirst.mockImplementation((async () => {
+          await new Promise((r) => setTimeout(r, 300));
+          return state.orch;
+        }) as never);
+        const ctls = Array.from({ length: 4 }, () => new AbortController());
+        const pending = ctls.map((c) =>
+          fetch(target, { headers: { authorization: person() }, signal: c.signal }).catch(
+            () => null
+          )
+        );
+        await new Promise((r) => setTimeout(r, 100));
+        for (const c of ctls) {
+          c.abort();
+        }
+        await Promise.all(pending);
+        await new Promise((r) => setTimeout(r, 600));
+        // Nobody was left to poll for.
+        expect(prisma.orchestrationMessage.findMany).not.toHaveBeenCalled();
+        prisma.orchestration.findFirst.mockImplementation((async () => state.orch) as never);
+        const fifth = await open('', { authorization: person() }, /event: status/);
+        expect(fifth.status).toBe(200);
+      });
+
+      it('stops a stream whose viewer lost access, within one re-check interval', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+          vi.setSystemTime(NOW);
+          transcript([row(1)]);
+          let removed = false;
+          prisma.orchestration.findFirst.mockImplementation((async (args: {
+            select: Record<string, unknown>;
+          }) => (removed && 'launchedById' in args.select ? null : state.orch)) as never);
+          const res = await fetch(await url(), { headers: { authorization: person() } });
+          const reader = res.body?.getReader();
+          let text = '';
+          let jumped = false;
+          while (reader && !/event: done/.test(text)) {
+            const { done, value } = await reader.read();
+            if (done) {
+              break;
+            }
+            text += new TextDecoder().decode(value);
+            if (!jumped && /event: status/.test(text)) {
+              jumped = true;
+              removed = true;
+              vi.setSystemTime(new Date(NOW.getTime() + 61 * 1000));
+            }
+          }
+          expect(text).toContain('event: done\ndata: {"reason":"access"}');
+        } finally {
+          prisma.orchestration.findFirst.mockImplementation((async () => state.orch) as never);
+          vi.useRealTimers();
+        }
+      });
+
+      it('chains the last id of one connection into the next with nothing between', async () => {
+        transcript([row(1), row(2)]);
+        const a = await open('', { authorization: person() }, /event: status/);
+        transcript([row(1), row(2), row(3)]);
+        const b = await open(
+          '',
+          { authorization: person(), 'last-event-id': lastId(a.text) ?? '' },
+          /event: status/
+        );
+        expect([...messageIds(a.text), ...messageIds(b.text)]).toEqual(['m1', 'm2', 'm3']);
+      });
+
+      it('lets a hidden marker row advance the cursor without emitting it', async () => {
+        transcript([row(1), row(2, { payload: { hidden: true } }), row(3)]);
+        const { text } = await open('', { authorization: person() }, /event: status/);
+        expect(messageIds(text)).toEqual(['m1', 'm3']);
+        expect(text).not.toContain('m2');
+        const resumed = await open(
+          '',
+          { authorization: person(), 'last-event-id': cursorOf(row(1)) },
+          /event: status/
+        );
+        expect(messageIds(resumed.text)).toEqual(['m3']);
+      });
+
+      it('keeps redaction on a resumed stream', async () => {
+        prisma.connection.findMany.mockResolvedValue([] as never);
+        state.orch = orchRow({ repoAttachedAt: at(1.5), repoId: REPO });
+        transcript([row(1), row(2, { body: 'private plan', role: 'ORCHESTRATOR' })]);
+        const { text } = await open(
+          '',
+          { authorization: person(OTHER_USER_ID), 'last-event-id': cursorOf(row(1)) },
+          /event: status/
+        );
+        expect(text).toContain('event: message');
+        expect(text).not.toContain('private plan');
+      });
+
+      it('refuses a resume cursor that is not valid before opening a stream', async () => {
+        const res = await call('GET', `/${ORCH}/events`, person(), undefined, {
+          'last-event-id': 'zzz',
+        });
+        expect(res.statusCode).toBe(400);
+        expect(res.json().error.code).toBe('INVALID_CURSOR');
+      });
+
+      it('ends at the time limit with a done event whose id resumes without a gap', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+          vi.setSystemTime(NOW);
+          transcript([row(1), row(2)]);
+          const res = await fetch(await url(), { headers: { authorization: person() } });
+          const reader = res.body?.getReader();
+          let text = '';
+          let jumped = false;
+          while (reader && !/event: done/.test(text)) {
+            const { done, value } = await reader.read();
+            if (done) {
+              break;
+            }
+            text += new TextDecoder().decode(value);
+            if (!jumped && /event: status/.test(text)) {
+              jumped = true;
+              vi.setSystemTime(new Date(NOW.getTime() + 17 * 60 * 1000));
+            }
+          }
+          expect(messageIds(text)).toEqual(['m1', 'm2']);
+          expect(text).toContain(`id: ${cursorOf(row(2))}\nevent: done`);
+          vi.setSystemTime(NOW);
+          transcript([row(1), row(2), row(3)]);
+          const again = await open(
+            '',
+            { authorization: person(), 'last-event-id': lastId(text) ?? '' },
+            /event: status/
+          );
+          expect(messageIds(again.text)).toEqual(['m3']);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('answers 429 over the cap and takes the resumed stream once one closes', async () => {
+        transcript([row(1), row(2)]);
+        const target = await url();
+        const ctls = Array.from({ length: 4 }, () => new AbortController());
+        const held = await Promise.all(
+          ctls.map((c) => fetch(target, { headers: { authorization: person() }, signal: c.signal }))
+        );
+        expect(held.map((r) => r.status)).toEqual([200, 200, 200, 200]);
+        const refused = await fetch(target, {
+          headers: { authorization: person(), 'last-event-id': cursorOf(row(1)) },
+        });
+        expect(refused.status).toBe(429);
+        expect(((await refused.json()) as { error: { code: string } }).error.code).toBe(
+          'TOO_MANY_STREAMS'
+        );
+        ctls[0]?.abort();
+        await vi.waitFor(async () => {
+          const { status, text } = await open(
+            '',
+            { authorization: person(), 'last-event-id': cursorOf(row(1)) },
+            /event: status/
+          );
+          expect(status).toBe(200);
+          expect(messageIds(text)).toEqual(['m2']);
+        });
+        for (const c of ctls) {
+          c.abort();
+        }
+      });
+    });
   });
 
   // ── DTO fields, the connection options and the principal ──────────────────
@@ -1972,16 +2477,136 @@ describe('orchestration routes', () => {
         orchestratorTeamName: 'Payments',
       });
       expect(dto.deliveryDefault).toBe('branch');
-      // Half the input cap is used at $0.50: about $0.50 is left at that price.
-      expect(dto.budget).toEqual({ remainingUsd: 0.5, tier: 'STANDARD' });
+      // The tier cap is 1000 input / 1000 output tokens; half the input cap is used.
+      expect(dto.budget).toEqual({
+        monthlyRemainingUsd: null,
+        percentUsed: 50,
+        remainingUsd: null,
+        tier: 'STANDARD',
+        tokens: { cap: 1000, kind: 'input', used: 500 },
+      });
     });
 
-    it('reports no remaining budget when nothing was spent or the tier has no cap', async () => {
-      state.orch = orchRow({ budgetTier: 'LARGE' });
+    it('counts the children tokens with the orchestrator, against the binding cap', async () => {
+      state.orch = orchRow({
+        workRequest: {
+          activeWorkflows: [{ costUsdAccrued: 0.5, tokensInputUsed: 200n, tokensOutputUsed: 100n }],
+          payload: { pinned: PINS },
+        },
+      });
+      state.children = [
+        {
+          agentKey: 'reader',
+          costUsd: 0.2,
+          createdAt: NOW,
+          endedAt: null,
+          id: CHILD,
+          label: 'look',
+          pathScopes: [],
+          resultJson: null,
+          role: 'READER',
+          runId: null,
+          status: 'RUNNING',
+          workRequest: {
+            activeWorkflows: [
+              {
+                assignedBranch: null,
+                costUsdAccrued: 0.2,
+                tokensInputUsed: 100n,
+                tokensOutputUsed: 650n,
+              },
+            ],
+          },
+          workRequestId: 'wr-1',
+        },
+      ];
       const dto = OrchestrationDetailDtoSchema.parse(
         (await call('GET', `/${ORCH}`, person())).json().data
       );
-      expect(dto.budget).toEqual({ remainingUsd: null, tier: 'LARGE' });
+      // Output is nearer its cap (750 of 1000) than input (300 of 1000).
+      expect(dto.budget).toMatchObject({
+        percentUsed: 75,
+        tokens: { cap: 1000, kind: 'output', used: 750 },
+      });
+    });
+
+    it('reports the monthly USD remaining only when the team or organization has a budget', async () => {
+      const get = async () =>
+        OrchestrationDetailDtoSchema.parse((await call('GET', `/${ORCH}`, person())).json().data);
+      expect((await get()).budget?.monthlyRemainingUsd).toBeNull();
+
+      // Team cap $100, spent $12.50 this month; organization cap $50, spent $40: the tighter binds.
+      prisma.team.findFirst.mockResolvedValue({
+        monthlyBudgetUsdCents: 10_000,
+        orgId: ORG,
+      } as never);
+      prisma.organization.findFirst.mockResolvedValue({ monthlyBudgetUsdCents: 5_000 } as never);
+      expect((await get()).budget?.monthlyRemainingUsd).toBeCloseTo(10, 5);
+
+      // Only the team has a cap.
+      prisma.organization.findFirst.mockResolvedValue({ monthlyBudgetUsdCents: null } as never);
+      expect((await get()).budget?.monthlyRemainingUsd).toBeCloseTo(87.5, 5);
+
+      // The deprecated field never carries the monthly figure.
+      expect((await get()).budget?.remainingUsd).toBeNull();
+
+      // Spend past the cap floors at zero.
+      spend.team = 150;
+      try {
+        expect((await get()).budget?.monthlyRemainingUsd).toBe(0);
+      } finally {
+        spend.team = 12.5;
+      }
+    });
+
+    it('also counts the team and organization that bill the attached repository', async () => {
+      const get = async () =>
+        OrchestrationDetailDtoSchema.parse((await call('GET', `/${ORCH}`, person())).json().data);
+      const TEAM_B = '00000000-0000-4000-8000-0000000000b2';
+      const ORG_B = '00000000-0000-4000-8000-0000000000b3';
+      state.orch = orchRow({
+        repo: {
+          organizationName: 'acme',
+          repoName: 'api',
+          team: { name: 'Platform', orgId: ORG_B },
+          teamId: TEAM_B,
+        },
+      });
+      // The named team has a $100 cap; the repository's owning team a $20 cap; its organization $15.
+      prisma.team.findFirst.mockImplementation((async (args: { where: { id: string } }) =>
+        args.where.id === TEAM_B
+          ? { monthlyBudgetUsdCents: 2_000, orgId: ORG_B }
+          : { monthlyBudgetUsdCents: 10_000, orgId: ORG }) as never);
+      prisma.organization.findFirst.mockImplementation((async (args: { where: { id: string } }) =>
+        args.where.id === ORG_B
+          ? { monthlyBudgetUsdCents: 1_500 }
+          : { monthlyBudgetUsdCents: null }) as never);
+      // Every team has spent $12.50 and every organization $5: the owning team's $20 leaves 7.50,
+      // its organization's $15 leaves 10.
+      spend.org = 5;
+      try {
+        expect((await get()).budget?.monthlyRemainingUsd).toBeCloseTo(7.5, 5);
+        // Without a repository only the named team counts (87.50).
+        state.orch = orchRow({ repo: null, repoId: null });
+        expect((await get()).budget?.monthlyRemainingUsd).toBeCloseTo(87.5, 5);
+      } finally {
+        spend.org = 40;
+      }
+    });
+
+    it('reports no token readout when the tier has no cap, and survives a failed read', async () => {
+      state.orch = orchRow({ budgetTier: 'LARGE' });
+      prisma.team.findFirst.mockRejectedValue(new Error('db down') as never);
+      const res = await call('GET', `/${ORCH}`, person());
+      expect(res.statusCode).toBe(200);
+      const dto = OrchestrationDetailDtoSchema.parse(res.json().data);
+      expect(dto.budget).toEqual({
+        monthlyRemainingUsd: null,
+        percentUsed: null,
+        remainingUsd: null,
+        tier: 'LARGE',
+        tokens: null,
+      });
     });
 
     it('lists the active MCP connections a team owns, by name only', async () => {
@@ -2107,6 +2732,7 @@ describe('orchestration routes', () => {
       await call('POST', '/', person(), launchBody, keyed);
       const stored = (tracked.rows[0] as { runInput: { payload: unknown } }).runInput.payload;
       prisma.orchestration.findFirst.mockResolvedValue({
+        allowlist: ['reader'],
         id: ORCH,
         launchedById: USER_ID,
         serviceId: null,
@@ -2131,6 +2757,7 @@ describe('orchestration routes', () => {
     it('answers a concurrent launch with the same key by returning the winner, not a conflict', async () => {
       tracked.result = { ok: false, reason: 'DUPLICATE', source: 'ledger' };
       prisma.orchestration.findFirst.mockResolvedValueOnce(null as never).mockResolvedValueOnce({
+        allowlist: ['reader'],
         id: ORCH,
         launchedById: USER_ID,
         serviceId: null,
@@ -2556,8 +3183,7 @@ describe('orchestration routes', () => {
         templateIds: [],
       } as never);
     });
-    const cancelChild = () =>
-      call('POST', `/${ORCH}/children/${CHILD}/cancel`, token(ORCH, null, SERVICE));
+    const cancelChild = () => call('POST', `/${ORCH}/children/${CHILD}/cancel`, token());
 
     it('records the principal in the audit entry of what it does', async () => {
       const res = await cancelChild();
@@ -2608,6 +3234,571 @@ describe('orchestration routes', () => {
       const res = await cancelChild();
       expect(res.statusCode).toBe(401);
       expect(temporal.cancelWorkflow).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── A service principal as the launcher ───────────────────────────────────
+
+  describe('a launching service principal', () => {
+    const SP = '00000000-0000-4000-8000-0000000000f9';
+    const OTHER_SP = '00000000-0000-4000-8000-0000000000fa';
+    const bearer = 'Bearer ats_principal-token';
+
+    function principalToken(over: { id?: string; scopes?: string[]; revoked?: boolean } = {}) {
+      prisma.apiToken.findUnique.mockResolvedValue({
+        expiresAt: new Date(Date.now() + 3_600_000),
+        id: 'tok',
+        revokedAt: over.revoked ? new Date() : null,
+        scopes: over.scopes ?? ['runs:agent'],
+        servicePrincipal: {
+          connectionIds: [REPO],
+          disabledAt: null,
+          id: over.id ?? SP,
+          name: 'ci',
+          team: { isActive: true, organization: { isActive: true } },
+          teamId: TEAM,
+          templateIds: [],
+        },
+        user: null,
+      } as never);
+    }
+    const lastAudit = () =>
+      (prisma.configAuditLog.create.mock.calls as unknown as unknown[][]).at(-1)?.[0] as {
+        data: { actorId: string | null; afterJson: Record<string, unknown> };
+      };
+
+    beforeEach(() => {
+      state.orch = orchRow({ launchedById: null, serviceId: SP });
+      state.children = [
+        {
+          id: CHILD,
+          role: 'READER',
+          runId: 'run-1',
+          status: 'RUNNING',
+          workRequest: { activeWorkflows: [{ temporalWorkflowId: 'agent-1' }] },
+        },
+      ];
+      principalToken();
+      // The database answers as the real where clause would: a row is found only by its owner.
+      prisma.orchestration.findFirst.mockImplementation((async (args: {
+        where: { serviceId?: string };
+      }) =>
+        args.where.serviceId !== undefined &&
+        args.where.serviceId !== (state.orch?.serviceId as string | null | undefined)
+          ? null
+          : state.orch) as never);
+      prisma.orchestration.findMany.mockImplementation((async (args: {
+        where: { serviceId?: string };
+      }) =>
+        state.orch && args.where.serviceId === state.orch.serviceId ? [state.orch] : []) as never);
+    });
+
+    it('reads its own orchestration, and canControl is true', async () => {
+      state.children = [];
+      const res = await call('GET', `/${ORCH}`, bearer);
+      expect(res.statusCode, res.body).toBe(200);
+      expect(OrchestrationDetailDtoSchema.safeParse(res.json().data).success).toBe(true);
+      expect(res.json().data.canControl).toBe(true);
+      expect(whereOf(prisma.orchestration.findFirst)).toMatchObject({ id: ORCH, serviceId: SP });
+    });
+
+    it('lists only what it launched', async () => {
+      const res = await call('GET', '/', bearer);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.map((r: { id: string }) => r.id)).toEqual([ORCH]);
+      expect(whereOf(prisma.orchestration.findMany)).toEqual({ serviceId: SP });
+      expect(whereOf(prisma.orchestration.count)).toEqual({ serviceId: SP });
+    });
+
+    it('reads its messages', async () => {
+      const res = await call('GET', `/${ORCH}/messages`, bearer);
+      expect(res.statusCode).toBe(200);
+      expect(whereOf(prisma.orchestration.findFirst)).toMatchObject({ serviceId: SP });
+    });
+
+    it('does not see another principal orchestration', async () => {
+      principalToken({ id: OTHER_SP });
+      for (const [method, url, payload] of [
+        ['GET', `/${ORCH}`, undefined],
+        ['GET', `/${ORCH}/messages`, undefined],
+        ['POST', `/${ORCH}/messages`, { body: 'hi' }],
+        ['POST', `/${ORCH}/cancel`, undefined],
+        ['POST', `/${ORCH}/end`, undefined],
+        ['POST', `/${ORCH}/children/${CHILD}/cancel`, undefined],
+        ['POST', `/${ORCH}/children/${CHILD}/messages`, { body: 'hi' }],
+      ] as const) {
+        const res = await call(method, url, bearer, payload);
+        expect(res.statusCode, `${method} ${url}`).toBe(404);
+      }
+      expect((await call('GET', '/', bearer)).json().data).toEqual([]);
+      expect(temporal.signalWithStartOrchestration).not.toHaveBeenCalled();
+      expect(temporal.cancelWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('does not see a person-launched orchestration', async () => {
+      state.orch = orchRow({ launchedById: USER_ID, serviceId: null });
+      expect((await call('GET', `/${ORCH}`, bearer)).statusCode).toBe(404);
+      expect((await call('POST', `/${ORCH}/cancel`, bearer)).statusCode).toBe(404);
+      expect(prisma.orchestration.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('messages its orchestrator, with no author and its id on the audit entry', async () => {
+      const res = await call('POST', `/${ORCH}/messages`, bearer, { body: 'status?' });
+      expect(res.statusCode).toBe(201);
+      expect(prisma.orchestrationMessage.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ authorId: null, body: 'status?', role: 'USER' }),
+      });
+      expect(temporal.signalWithStartOrchestration).toHaveBeenCalledWith(
+        ORCH,
+        expect.objectContaining({ serviceId: SP, userId: null }),
+        expect.anything()
+      );
+      expect(lastAudit().data.actorId).toBeNull();
+      expect(lastAudit().data.afterJson).toMatchObject({ action: 'steer', serviceId: SP });
+    });
+
+    it('steers one of its children', async () => {
+      const res = await call('POST', `/${ORCH}/children/${CHILD}/messages`, bearer, {
+        body: 'narrower',
+      });
+      expect(res.statusCode).toBe(201);
+      expect(prisma.runSteeringMessage.create).toHaveBeenCalledWith({
+        data: { authorId: null, authorServiceId: SP, body: 'narrower', runId: 'run-1' },
+      });
+      expect(lastAudit().data.afterJson).toMatchObject({ byOrchestrator: false, serviceId: SP });
+    });
+
+    it('cancels one of its children', async () => {
+      const res = await call('POST', `/${ORCH}/children/${CHILD}/cancel`, bearer);
+      expect(res.statusCode).toBe(200);
+      expect(temporal.cancelWorkflow).toHaveBeenCalledWith('agent-1');
+      expect(lastAudit().data.afterJson).toMatchObject({ scope: 'child', serviceId: SP });
+    });
+
+    it('cancels its orchestration', async () => {
+      const res = await call('POST', `/${ORCH}/cancel`, bearer);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.status).toBe('CANCELLED');
+      expect(lastAudit().data.actorId).toBeNull();
+      expect(lastAudit().data.afterJson).toMatchObject({ scope: 'orchestration', serviceId: SP });
+    });
+
+    it('ends its orchestration', async () => {
+      const res = await call('POST', `/${ORCH}/end`, bearer);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.status).toBe('COMPLETED');
+      expect(lastAudit().data.afterJson).toMatchObject({ scope: 'end', serviceId: SP });
+    });
+
+    it('is refused without the runs:agent scope', async () => {
+      principalToken({ scopes: ['runs:launch'] });
+      for (const [method, url] of [
+        ['GET', '/'],
+        ['GET', `/${ORCH}`],
+        ['POST', `/${ORCH}/cancel`],
+        ['POST', `/${ORCH}/end`],
+      ] as const) {
+        const res = await call(method, url, bearer);
+        expect(res.statusCode, url).toBe(403);
+        expect(res.json().error.code).toBe('INSUFFICIENT_SCOPE');
+      }
+    });
+
+    it('is refused once its token is revoked', async () => {
+      principalToken({ revoked: true });
+      expect((await call('POST', `/${ORCH}/cancel`, bearer)).statusCode).toBe(401);
+      expect(prisma.orchestration.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('cannot attach, decline, approve, stream or list connections', async () => {
+      for (const [method, url, payload] of [
+        ['POST', `/${ORCH}/attach`, { repoId: REPO }],
+        ['POST', `/${ORCH}/attach/decline`, undefined],
+        ['POST', `/${ORCH}/approvals/${APPROVAL}`, { decision: 'APPROVE' }],
+        ['GET', `/${ORCH}/events`, undefined],
+        ['GET', `/connections?teamId=${TEAM}`, undefined],
+        ['POST', `/${ORCH}/children`, { intent: {}, turnKey: 't' }],
+      ] as const) {
+        const res = await call(method, url, bearer, payload);
+        expect(res.statusCode, url).toBe(401);
+        expect(res.json().error.code).toBe('SERVICE_TOKEN_NOT_ALLOWED');
+      }
+      expect(prisma.orchestrationApproval.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('is refused as a person when someone other than the launcher tries the same acts', async () => {
+      for (const [url, payload] of [
+        [`/${ORCH}/messages`, { body: 'hi' }],
+        [`/${ORCH}/cancel`, undefined],
+        [`/${ORCH}/end`, undefined],
+      ] as const) {
+        const res = await call('POST', url, person(OTHER_USER_ID), payload);
+        expect(res.statusCode, url).toBe(403);
+        expect(res.json().error.code).toBe('NOT_LAUNCHER');
+      }
+    });
+
+    it("labels a steering message from the principal as its own, and the orchestrator's as nobody's", async () => {
+      prisma.servicePrincipal.findUnique.mockResolvedValue({
+        connectionIds: [REPO],
+        disabledAt: null,
+        id: SP,
+        name: 'ci',
+        team: { isActive: true, organization: { isActive: true } },
+        teamId: TEAM,
+        templateIds: [],
+      } as never);
+      await call('POST', `/${ORCH}/children/${CHILD}/messages`, bearer, { body: 'narrower' });
+      const byAgent = await call('POST', `/${ORCH}/children/${CHILD}/messages`, token(), {
+        body: 'by agent',
+      });
+      expect(byAgent.statusCode).toBe(201);
+      const data = (
+        prisma.runSteeringMessage.create.mock.calls as unknown as Array<
+          [{ data: Record<string, unknown> }]
+        >
+      ).map((c) => c[0].data);
+      expect(data[0]).toMatchObject({ authorId: null, authorServiceId: SP });
+      // The orchestrator's token acts as the launching principal, yet its message has no author.
+      expect(data[1]).toMatchObject({ authorId: null, authorServiceId: null });
+    });
+
+    describe('waking or reviving its orchestration', () => {
+      const world = {
+        connectionIds: [REPO],
+        disabledAt: null as Date | null,
+        inFlight: 0,
+        lastDay: 0,
+        maxInFlight: 3,
+        maxRunsPerDay: 10,
+        repoTeamId: TEAM,
+      };
+      const send = () => call('POST', `/${ORCH}/messages`, bearer, { body: 'again' });
+      const writes = () => ({
+        activeWorkflow: prisma.activeWorkflow.updateMany.mock.calls.length,
+        message: prisma.orchestrationMessage.create.mock.calls.length,
+        orchestration: prisma.orchestration.updateMany.mock.calls.length,
+        signal: temporal.signalWithStartOrchestration.mock.calls.length,
+      });
+
+      beforeEach(() => {
+        Object.assign(world, {
+          connectionIds: [REPO],
+          disabledAt: null,
+          inFlight: 0,
+          lastDay: 0,
+          maxInFlight: 3,
+          maxRunsPerDay: 10,
+          repoTeamId: TEAM,
+        });
+        state.orch = orchRow({ launchedById: null, serviceId: SP, status: 'COMPLETED' });
+        // The parked ledger row exists; the principal's other in-flight rows are `world.inFlight`.
+        prisma.activeWorkflow.count.mockImplementation((async ({
+          where,
+        }: {
+          where: { currentStatus: unknown };
+        }) => (where.currentStatus === 'COMPLETED' ? 1 : world.inFlight)) as never);
+        // The real launch guard reads these inside the same transaction.
+        prisma.servicePrincipal.findUnique.mockImplementation((async () => ({
+          connectionIds: world.connectionIds,
+          disabledAt: world.disabledAt,
+          maxInFlight: world.maxInFlight,
+          maxRunsPerDay: world.maxRunsPerDay,
+          team: { isActive: true },
+          teamId: TEAM,
+          templateIds: [],
+        })) as never);
+        const tx = state.tx as Record<string, unknown>;
+        tx.connection = {
+          findUnique: vi.fn(async () => ({ isActive: true, shares: [], teamId: world.repoTeamId })),
+        };
+        tx.runInput = { count: vi.fn(async () => world.lastDay) };
+      });
+
+      it('revives a COMPLETED orchestration under its limits, as a person would', async () => {
+        const res = await send();
+        expect(res.statusCode, res.body).toBe(201);
+        expect(writes()).toEqual({ activeWorkflow: 1, message: 1, orchestration: 1, signal: 1 });
+        expect(whereOf(prisma.activeWorkflow.updateMany)).toMatchObject({
+          currentStatus: 'COMPLETED',
+        });
+      });
+
+      it('wakes a WAITING orchestration under its limits', async () => {
+        state.orch = orchRow({ launchedById: null, serviceId: SP, status: 'WAITING' });
+        const res = await send();
+        expect(res.statusCode, res.body).toBe(201);
+        expect(writes().signal).toBe(1);
+      });
+
+      it.each([
+        [
+          'at its in-flight limit',
+          () => (world.inFlight = 3),
+          429,
+          'SERVICE_IN_FLIGHT_LIMIT_REACHED',
+        ],
+        ['over its daily limit', () => (world.lastDay = 10), 429, 'SERVICE_DAILY_LIMIT_REACHED'],
+        ['disabled', () => (world.disabledAt = new Date()), 403, 'SERVICE_PRINCIPAL_DISABLED'],
+        [
+          'with the repository off its allowlist',
+          () => (world.connectionIds = []),
+          403,
+          'SERVICE_CONNECTION_NOT_ALLOWED',
+        ],
+        [
+          "with the repository no longer its team's",
+          () => (world.repoTeamId = OTHER_TEAM),
+          403,
+          'SERVICE_CONNECTION_NOT_ALLOWED',
+        ],
+      ])(
+        'refuses a revive %s, writing and signalling nothing',
+        async (_name, arrange, status, code) => {
+          arrange();
+          const res = await send();
+          expect(res.statusCode).toBe(status);
+          expect(res.json().error.code).toBe(code);
+          expect(writes()).toEqual({ activeWorkflow: 0, message: 0, orchestration: 0, signal: 0 });
+        }
+      );
+
+      it('refuses a wake of a WAITING orchestration at its in-flight limit, leaving the row parked', async () => {
+        state.orch = orchRow({ launchedById: null, serviceId: SP, status: 'WAITING' });
+        world.inFlight = 3;
+        const res = await send();
+        expect(res.statusCode).toBe(429);
+        expect(res.json().error.code).toBe('SERVICE_IN_FLIGHT_LIMIT_REACHED');
+        expect(writes()).toEqual({ activeWorkflow: 0, message: 0, orchestration: 0, signal: 0 });
+      });
+
+      it('does not apply the guard to a message for an execution that is already running', async () => {
+        state.orch = orchRow({ launchedById: null, serviceId: SP, status: 'ACTIVE' });
+        prisma.activeWorkflow.count.mockResolvedValue(0 as never);
+        world.inFlight = 3;
+        world.disabledAt = new Date();
+        const res = await send();
+        expect(res.statusCode).toBe(201);
+      });
+    });
+
+    describe('what it reads once it loses the repository', () => {
+      const attachedRow = () =>
+        orchRow({
+          launchedById: null,
+          repoAttachedAt: new Date('2026-11-17T09:00:00Z'),
+          serviceId: SP,
+        });
+      const WITHHELD =
+        'Withheld: this part of the conversation involves a repository you cannot access.';
+      const reach = (over: {
+        connectionIds?: string[];
+        repoTeamId?: string;
+        shares?: unknown[];
+      }) => {
+        prisma.servicePrincipal.findUnique.mockResolvedValue({
+          connectionIds: over.connectionIds ?? [REPO],
+          disabledAt: null,
+          id: SP,
+          name: 'ci',
+          team: { isActive: true, organization: { isActive: true } },
+          teamId: TEAM,
+          templateIds: [],
+        } as never);
+        prisma.connection.findMany.mockResolvedValue([
+          { id: REPO, shares: over.shares ?? [], teamId: over.repoTeamId ?? TEAM },
+        ] as never);
+      };
+      const orchestratorMessage = {
+        authorId: null,
+        body: 'summary of SECRET-CODE',
+        childId: null,
+        createdAt: new Date('2026-11-17T10:30:00Z'),
+        id: 'm-1',
+        kind: 'TEXT',
+        payload: null,
+        role: 'ORCHESTRATOR',
+      };
+
+      beforeEach(() => {
+        state.orch = attachedRow();
+        state.children = [];
+        prisma.orchestrationMessage.findMany.mockResolvedValue([orchestratorMessage] as never);
+      });
+
+      it("shows the repository data while the repository is on its allowlist and its team's", async () => {
+        reach({});
+        const detail = (await call('GET', `/${ORCH}`, bearer)).json().data;
+        expect(detail.repoName).toBe('acme/api');
+        const page = (await call('GET', `/${ORCH}/messages`, bearer)).json();
+        expect(page.data[0].body).toBe('summary of SECRET-CODE');
+        const list = (await call('GET', '/', bearer)).json();
+        expect(list.data[0].repoName).toBe('acme/api');
+      });
+
+      it('redacts it once the repository is edited off its allowlist', async () => {
+        reach({ connectionIds: [] });
+        const detail = (await call('GET', `/${ORCH}`, bearer)).json().data;
+        expect(detail.repoName).toBeNull();
+        expect(detail.canControl).toBe(true);
+        const page = (await call('GET', `/${ORCH}/messages`, bearer)).json();
+        expect(page.data[0].body).toBe(WITHHELD);
+        expect(JSON.stringify(page)).not.toContain('SECRET-CODE');
+        const list = (await call('GET', '/', bearer)).json();
+        expect(list.data[0].repoName).toBeNull();
+      });
+
+      it('redacts it once its team neither owns nor is shared the repository', async () => {
+        reach({ repoTeamId: OTHER_TEAM });
+        expect((await call('GET', `/${ORCH}`, bearer)).json().data.repoName).toBeNull();
+        expect((await call('GET', '/', bearer)).json().data[0].repoName).toBeNull();
+      });
+
+      it('redacts it when its team holds only a view-only share', async () => {
+        reach({ repoTeamId: OTHER_TEAM, shares: [{ canLaunch: false, teamId: TEAM }] });
+        expect((await call('GET', `/${ORCH}`, bearer)).json().data.repoName).toBeNull();
+      });
+
+      it('keeps showing it through a launch-capable share', async () => {
+        reach({ repoTeamId: OTHER_TEAM, shares: [{ canLaunch: true, teamId: TEAM }] });
+        expect((await call('GET', `/${ORCH}`, bearer)).json().data.repoName).toBe('acme/api');
+      });
+
+      it('never lets a person launcher lose the shortcut', async () => {
+        state.orch = orchRow({ launchedById: USER_ID, serviceId: null });
+        prisma.connection.findMany.mockResolvedValue([] as never);
+        expect((await call('GET', `/${ORCH}`, person())).json().data.repoName).toBe('acme/api');
+      });
+    });
+
+    describe('an ADMIN stopping an orchestration no person launched', () => {
+      const admin = () => person(OTHER_USER_ID, 'ADMIN');
+      beforeEach(() => {
+        prisma.user.findUnique.mockResolvedValue({
+          isActive: true,
+          role: 'ADMIN',
+          slackId: null,
+        } as never);
+      });
+      const auditOf = () =>
+        (prisma.configAuditLog.create.mock.calls as unknown as unknown[][]).at(-1)?.[0] as {
+          data: { actorId: string | null; afterJson: Record<string, unknown> };
+        };
+
+      it('cancels it, audited with the ADMIN as actor and the principal as target', async () => {
+        const res = await call('POST', `/${ORCH}/cancel`, admin());
+        expect(res.statusCode, res.body).toBe(200);
+        expect(res.json().data.status).toBe('CANCELLED');
+        expect(temporal.cancelWorkflow).toHaveBeenCalledWith('agent-1');
+        expect(auditOf().data.actorId).toBe(OTHER_USER_ID);
+        expect(auditOf().data.afterJson).toMatchObject({
+          action: 'cancel',
+          adminStop: true,
+          scope: 'orchestration',
+          targetServiceId: SP,
+        });
+      });
+
+      it('ends it, audited the same way', async () => {
+        const res = await call('POST', `/${ORCH}/end`, admin());
+        expect(res.statusCode, res.body).toBe(200);
+        expect(res.json().data.status).toBe('COMPLETED');
+        expect(auditOf().data.actorId).toBe(OTHER_USER_ID);
+        expect(auditOf().data.afterJson).toMatchObject({
+          adminStop: true,
+          scope: 'end',
+          targetServiceId: SP,
+        });
+      });
+
+      it('does not let an ADMIN message it, steer its children or cancel one child: launcher only', async () => {
+        for (const [url, payload] of [
+          [`/${ORCH}/messages`, { body: 'hi' }],
+          [`/${ORCH}/children/${CHILD}/messages`, { body: 'hi' }],
+          [`/${ORCH}/children/${CHILD}/cancel`, undefined],
+        ] as const) {
+          const res = await call('POST', url, admin(), payload);
+          expect(res.statusCode, url).toBe(403);
+          expect(res.json().error.code).toBe('NOT_LAUNCHER');
+        }
+      });
+
+      it('does not let a non-ADMIN member stop it', async () => {
+        prisma.user.findUnique.mockResolvedValue({
+          isActive: true,
+          role: 'ENGINEER',
+          slackId: null,
+        } as never);
+        for (const url of [`/${ORCH}/cancel`, `/${ORCH}/end`]) {
+          const res = await call('POST', url, person(OTHER_USER_ID));
+          expect(res.statusCode, url).toBe(403);
+          expect(res.json().error.code).toBe('NOT_LAUNCHER');
+        }
+        expect(prisma.orchestration.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('stays launcher-only for a person-launched orchestration, ADMIN or not', async () => {
+        state.orch = orchRow({ launchedById: USER_ID, serviceId: null });
+        for (const url of [`/${ORCH}/cancel`, `/${ORCH}/end`]) {
+          const res = await call('POST', url, admin());
+          expect(res.statusCode, url).toBe(403);
+          expect(res.json().error.code).toBe('NOT_LAUNCHER');
+        }
+        expect(prisma.orchestration.updateMany).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('writers', () => {
+      const writer = {
+        agent: 'writer',
+        deliver: 'draft_pr',
+        label: 'api',
+        pathScopes: ['src/api/**'],
+        role: 'writer',
+        task: 'change',
+      };
+      beforeEach(() => {
+        prisma.servicePrincipal.findUnique.mockResolvedValue({
+          connectionIds: [REPO],
+          disabledAt: null,
+          id: SP,
+          name: 'ci',
+          team: { isActive: true, organization: { isActive: true } },
+          teamId: TEAM,
+          templateIds: [],
+        } as never);
+        state.children = [];
+        launcher.launch.mockImplementation(
+          async (
+            _req: unknown,
+            reply: { status: (n: number) => { send: (b: unknown) => unknown } },
+            input: { orchestration: { respond: (l: unknown) => unknown } }
+          ) =>
+            reply.status(201).send(
+              input.orchestration.respond({
+                temporalWorkflowId: 'agent-x',
+                workRequestId: 'wr-1',
+              })
+            )
+        );
+      });
+
+      it('runs a writer without asking GitHub, under the launch guard as the principal', async () => {
+        const res = await call('POST', `/${ORCH}/children`, token(), {
+          intent: writer,
+          turnKey: 'turn-1',
+        });
+        expect(res.statusCode).toBe(201);
+        const input = launcher.launch.mock.calls[0]?.[2];
+        // The launcher applies `servicePrincipalLaunchGuard` to a service caller.
+        expect(input.caller).toMatchObject({
+          kind: 'service',
+          principal: { servicePrincipalId: SP },
+        });
+        expect(input.orchestration.guard).toBeUndefined();
+        expect(await input.orchestration.checkRepo({ id: REPO })).toBeNull();
+        expect(launcher.push).not.toHaveBeenCalled();
+      });
     });
   });
 });

@@ -1,5 +1,6 @@
 import type { Prisma } from '@auto-swe/shared';
 import { resolveSettings } from '@auto-swe/shared/config';
+import { orgMonthSpend, teamMonthSpend } from '@auto-swe/shared/lib/billing';
 import {
   APPROVAL_STATUSES,
   CHILD_STATUSES,
@@ -19,7 +20,7 @@ import type {
   OrchestrationMessageDto,
   OrchestrationSummaryDto,
 } from '@auto-swe/shared/lib/orchestrationApi';
-import { repoMemberWhere } from '@auto-swe/shared/lib/repoMembership';
+import { canTeamLaunchOnRepo, repoMemberWhere } from '@auto-swe/shared/lib/repoMembership';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyReply } from 'fastify';
@@ -110,7 +111,20 @@ export function decodeCursor(cursor: string): { createdAt: Date; id: string } | 
  */
 export interface Viewer {
   admin: boolean;
+  /** The person's id; empty for a service principal, which is identified by `serviceId`. */
   sub: string;
+  /** Set when the viewer is a service principal: it is the launcher of its own orchestrations. */
+  serviceId?: string;
+}
+
+/** Whether the viewer is the launcher of the row: the person, or the service principal. */
+export function launchedByViewer(
+  viewer: Viewer,
+  row: { launchedById: string | null; serviceId?: string | null }
+): boolean {
+  return viewer.serviceId
+    ? row.serviceId === viewer.serviceId
+    : row.launchedById !== null && row.launchedById === viewer.sub;
 }
 
 /**
@@ -130,6 +144,9 @@ export async function reachableRepoIds(
   if (viewer.admin) {
     return new Set(ids);
   }
+  if (viewer.serviceId) {
+    return servicePrincipalReach(prisma, viewer.serviceId, ids);
+  }
   const rows = await runUnscoped(
     'repository reach is membership of the owning team or a team it is shared with, which is scoped to the viewer, not to one tenant',
     ['Connection'],
@@ -142,13 +159,62 @@ export async function reachableRepoIds(
   return new Set(rows.map((r) => r.id));
 }
 
+/**
+ * Which of `repoIds` a service principal reaches NOW: still on its allowlist, and its team still
+ * owns the repository or has it shared for launching (the rule `authorizeServiceLaunch` applies).
+ * A grant edited after launch ends the principal's view of what the repository produced.
+ */
+async function servicePrincipalReach(
+  prisma: Db,
+  serviceId: string,
+  repoIds: string[]
+): Promise<Set<string>> {
+  const sp = await runUnscoped(
+    "a principal's reach is its own allowlist and team, read by its own id",
+    ['ServicePrincipal'],
+    () =>
+      prisma.servicePrincipal.findUnique({
+        select: { connectionIds: true, disabledAt: true, teamId: true },
+        where: { id: serviceId },
+      })
+  );
+  if (!sp || sp.disabledAt) {
+    return new Set();
+  }
+  const allowed = repoIds.filter((id) => sp.connectionIds.includes(id));
+  if (allowed.length === 0) {
+    return new Set();
+  }
+  const rows = await runUnscoped(
+    'repository reach for a principal is its team owning or being shared the repository',
+    ['Connection'],
+    () =>
+      prisma.connection.findMany({
+        select: { id: true, shares: { select: { canLaunch: true, teamId: true } }, teamId: true },
+        where: { id: { in: allowed } },
+      })
+  );
+  return new Set(rows.filter((r) => canTeamLaunchOnRepo(r, sp.teamId)).map((r) => r.id));
+}
+
+/**
+ * Whether the viewer is a person who launched the row, and so sees its repository data without a
+ * reach check. A service principal never takes this shortcut: its reach is read afresh.
+ */
+export function launcherSeesRepo(
+  viewer: Viewer,
+  row: { launchedById: string | null; serviceId?: string | null }
+): boolean {
+  return !viewer.serviceId && launchedByViewer(viewer, row);
+}
+
 /** Whether the viewer sees repository-derived data of an orchestration (children's results, ...). */
 export async function canSeeRepoData(
   prisma: Db,
   viewer: Viewer,
-  row: { launchedById: string | null; repoId: string | null }
+  row: { launchedById: string | null; repoId: string | null; serviceId?: string | null }
 ): Promise<boolean> {
-  if (!row.repoId || viewer.admin || row.launchedById === viewer.sub) {
+  if (!row.repoId || viewer.admin || launcherSeesRepo(viewer, row)) {
     return true;
   }
   return (await reachableRepoIds(prisma, viewer, [row.repoId])).has(row.repoId);
@@ -362,7 +428,17 @@ type Db = FastifyInstance['prisma'];
 
 const CHILD_INCLUDE = {
   workRequest: {
-    select: { activeWorkflows: { select: { assignedBranch: true, costUsdAccrued: true } } },
+    select: {
+      activeWorkflows: {
+        select: {
+          assignedBranch: true,
+          costUsdAccrued: true,
+          tokensInputCountedUsed: true,
+          tokensInputUsed: true,
+          tokensOutputUsed: true,
+        },
+      },
+    },
   },
 } as const;
 
@@ -372,15 +448,19 @@ export interface DetailRow extends OrchestrationRow {
   connectionIds: string[];
   deliveryDefault?: string | null;
   launchedBy: { name: string | null } | null;
+  orgId?: string | null;
   repo: {
     organizationName: string | null;
     repoName: string | null;
-    team?: { name: string } | null;
+    /** The owning team, which bills the children once the repository is attached. */
+    teamId?: string | null;
+    team?: { name: string; orgId?: string | null } | null;
   } | null;
   team: { name: string };
   workRequest: {
     activeWorkflows: Array<{
       costUsdAccrued: number;
+      tokensInputCountedUsed?: bigint | number | null;
       tokensInputUsed?: bigint | number | null;
       tokensOutputUsed?: bigint | number | null;
     }>;
@@ -389,29 +469,83 @@ export interface DetailRow extends OrchestrationRow {
 
 const DELIVERY_DEFAULTS = ['none', 'branch', 'draft_pr'] as const;
 
+type Ledger = NonNullable<DetailRow['workRequest']>['activeWorkflows'];
+
 /**
- * What is left of the orchestrator's own tier budget, in USD, when the tier has a token cap and
- * the orchestrator has spent some of it: the spend so far scaled by the unused share of the
- * binding cap (an estimate at the price per token seen so far). Null when there is no cap, no
- * spend yet, or the defaults cannot be read.
+ * What the orchestration has spent against its tier's token cap, orchestrator and children
+ * together. The binding cap is whichever of the input and output caps is nearer; the input side
+ * counts what a run's own cap counts (`tokensInputCountedUsed`: cache reads and writes at their
+ * cost-equivalent), falling back to the raw total where that is absent. Null when the tier has no
+ * usable cap or the defaults cannot be read. Never throws: a readout must not fail the detail.
  */
-async function remainingBudgetUsd(
+async function tokenReadout(
   tier: string,
-  ledger: NonNullable<DetailRow['workRequest']>['activeWorkflows']
-): Promise<number | null> {
+  ledgers: Ledger
+): Promise<{
+  percentUsed: number;
+  tokens: { cap: number; kind: 'input' | 'output'; used: number };
+} | null> {
   try {
     const cap = (await resolveWorkflowDefaults()).budgetTiers?.[tier];
-    if (!cap || cap.inputTokens <= 0 || cap.outputTokens <= 0) {
+    if (!cap || !(cap.inputTokens > 0) || !(cap.outputTokens > 0)) {
       return null;
     }
-    const usedIn = ledger.reduce((s, w) => s + Number(w.tokensInputUsed ?? 0), 0);
-    const usedOut = ledger.reduce((s, w) => s + Number(w.tokensOutputUsed ?? 0), 0);
-    const spent = ledger.reduce((s, w) => s + w.costUsdAccrued, 0);
-    const used = Math.max(usedIn / cap.inputTokens, usedOut / cap.outputTokens);
-    if (!(used > 0) || !(spent > 0)) {
-      return null;
+    const usedIn = ledgers.reduce(
+      (s, w) => s + Number(w.tokensInputCountedUsed ?? w.tokensInputUsed ?? 0),
+      0
+    );
+    const usedOut = ledgers.reduce((s, w) => s + Number(w.tokensOutputUsed ?? 0), 0);
+    const binding =
+      usedOut / cap.outputTokens > usedIn / cap.inputTokens
+        ? { cap: cap.outputTokens, kind: 'output' as const, used: usedOut }
+        : { cap: cap.inputTokens, kind: 'input' as const, used: usedIn };
+    return { percentUsed: Math.round((binding.used / binding.cap) * 100), tokens: binding };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What is left of the tightest monthly USD budget among every team and organization that BILLS
+ * this orchestration: the named team and its organization, and, once a repository is attached,
+ * the repository's owning team and organization (children bill that team). Month to date,
+ * including runs still in flight; floors at zero. Null when none of them sets a budget, or on any
+ * read failure.
+ */
+async function monthlyRemainingUsd(
+  prisma: Db,
+  billers: Array<{ orgId?: string | null; teamId: string }>
+): Promise<number | null> {
+  try {
+    const teamIds = [...new Set(billers.map((b) => b.teamId))];
+    const orgIds = new Set(billers.map((b) => b.orgId).filter((id): id is string => !!id));
+    const remaining: number[] = [];
+    for (const teamId of teamIds) {
+      const team = await runUnscoped('the budget of a billing team', ['Team'], () =>
+        prisma.team.findFirst({
+          select: { monthlyBudgetUsdCents: true, orgId: true },
+          where: { id: teamId },
+        })
+      );
+      if (team?.orgId) {
+        orgIds.add(team.orgId);
+      }
+      if (team?.monthlyBudgetUsdCents != null) {
+        const spend = await teamMonthSpend(prisma, teamId);
+        remaining.push(team.monthlyBudgetUsdCents / 100 - spend.totalUsd);
+      }
     }
-    return used >= 1 ? 0 : (spent / used) * (1 - used);
+    for (const orgId of orgIds) {
+      const org = await prisma.organization.findFirst({
+        select: { monthlyBudgetUsdCents: true },
+        where: { id: orgId },
+      });
+      if (org?.monthlyBudgetUsdCents != null) {
+        const spend = await orgMonthSpend(prisma, orgId);
+        remaining.push(org.monthlyBudgetUsdCents / 100 - spend.totalUsd);
+      }
+    }
+    return remaining.length === 0 ? null : Math.max(0, Math.min(...remaining));
   } catch {
     return null;
   }
@@ -505,6 +639,10 @@ export async function buildDetail(
   const childrenUsd = childViews.reduce((s, c) => s + c.costUsd, 0);
   const ledger = row.workRequest?.activeWorkflows ?? [];
   const orchestratorUsd = ledger.reduce((s, w) => s + w.costUsdAccrued, 0);
+  const readout = await tokenReadout(row.budgetTier, [
+    ...ledger,
+    ...children.flatMap((c) => c.workRequest?.activeWorkflows ?? []),
+  ]);
   return {
     ...summaryView(
       row,
@@ -526,8 +664,15 @@ export async function buildDetail(
       orchestratorTeamName: row.team.name,
     },
     budget: {
-      remainingUsd: await remainingBudgetUsd(row.budgetTier, ledger),
+      monthlyRemainingUsd: await monthlyRemainingUsd(prisma, [
+        { orgId: row.orgId, teamId: row.teamId },
+        ...(row.repo?.teamId ? [{ orgId: row.repo.team?.orgId, teamId: row.repo.teamId }] : []),
+      ]),
+      percentUsed: readout?.percentUsed ?? null,
+      // Deprecated: it once carried the tier's USD estimate. Kept for older clients, always null.
+      remainingUsd: null,
       tier: row.budgetTier,
+      tokens: readout?.tokens ?? null,
     },
     budgetTier: row.budgetTier,
     canControl,

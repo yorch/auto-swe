@@ -46,6 +46,11 @@ import {
   sendRunCapRefusal,
 } from '../lib/mcpWriteGuard.js';
 import { authorizeTeamLaunch, checkPushPermission } from '../lib/orchestrationAccess.js';
+import {
+  resolveDefaultAllowlist,
+  resolveDefaults,
+  writeCapableRefs,
+} from '../lib/orchestrationDefaults.js';
 import type { OrchestrationWorkflowInput } from '../lib/orchestrationInput.js';
 import {
   buildDetail,
@@ -56,6 +61,8 @@ import {
   decodeCursor,
   encodeCursor,
   isHiddenMessage,
+  launchedByViewer,
+  launcherSeesRepo,
   messageView,
   ORCHESTRATION_LIVE_STATUSES,
   parseStoredScopes,
@@ -67,7 +74,6 @@ import {
   summaryView,
   type Viewer,
 } from '../lib/orchestrationService.js';
-import { orchestrationTokenTtlSeconds } from '../lib/orchestrationToken.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import {
   idempotencyCallerScope,
@@ -80,7 +86,7 @@ import {
   replyIfTemporalUnavailable,
   sendTemporalUnavailable,
 } from '../lib/temporalErrors.js';
-import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
+import { type LaunchGuard, launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireCaller, requireUser } from '../plugins/auth.js';
 
 /**
@@ -89,7 +95,7 @@ import { requireAuth, requireCaller, requireUser } from '../plugins/auth.js';
  *
  * Who may do what: the named team's members, the launcher and ADMIN can read. Only the launcher
  * sends messages, attaches a repository, approves an MCP write, cancels or ends. The worker calls
- * the child, message and cancel routes with an orchestration token (`lib/orchestrationToken.ts`),
+ * the child, message and cancel routes with an orchestration token (`@auto-swe/shared/lib/orchestrationTokenKey`),
  * which acts as the launcher and is admitted on those routes alone. This file never lets an agent
  * choose its own authority: attach and approvals take a person's session or PAT, and
  * `assistantPolicy.ts` refuses them to the in-app assistant.
@@ -118,7 +124,10 @@ const SpawnBody = z.object({
 const DELIVER_RANK = ['none', 'branch', 'draft_pr'];
 const STREAM_POLL_MS = 1500;
 const STREAM_HEARTBEAT_MS = 15_000;
+const STREAM_RETRY_MS = 3000;
 const STREAM_MAX_MS = 16 * 60 * 1000;
+// How often an open stream asks again whether its viewer may still see the orchestration.
+const STREAM_ACCESS_RECHECK_MS = 60_000;
 const MAX_STREAMS_PER_USER = 4;
 const openStreams = new Map<string, number>();
 
@@ -297,19 +306,28 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
   type Wake =
     | { kind: 'ok'; reopened: boolean; revived: boolean }
     | { kind: 'ended' }
-    | { kind: 'capped' };
+    | { kind: 'capped' }
+    | { kind: 'refused'; refusal: string };
 
   /**
    * Prepare a message that will start (or restart) the orchestrator's workflow, in ONE transaction
    * under the orchestration's row lock: re-read its status, revive a COMPLETED one for a direct
    * caller, and reopen the parked ledger row (COMPLETED to IMPLEMENTING). For a bridged caller the
    * launcher's `mcp.maxConcurrentRuns` cap is applied first, under the per-user advisory lock the
-   * launch path takes (`runCapGuard`): over the cap nothing is written. The signal is sent only
-   * after this commits, and `undoWake` puts back what it changed if the signal fails.
+   * launch path takes (`runCapGuard`): over the cap nothing is written. For a service principal
+   * the launch guard (`servicePrincipalLaunchGuard`: still enabled, repository still on its
+   * allowlist and its team's, in-flight and daily limits) runs under the principal's row lock
+   * before the ledger row is reopened or the orchestration revived: a refusal writes nothing. The
+   * signal is sent only after this commits, and `undoWake` puts back what it changed if the
+   * signal fails.
    */
   async function prepareWake(
     row: { id: string; teamId: string; workRequestId: string | null },
-    opts: { cap: { cap: number; userId: string } | null; revive: boolean }
+    opts: {
+      cap: { cap: number; userId: string } | null;
+      guard?: LaunchGuard | null;
+      revive: boolean;
+    }
   ): Promise<Wake> {
     return prisma.$transaction(async (tx) => {
       // CLAUDE.md §7 exception: the orchestration's row lock, so a concurrent cancel is ordered.
@@ -324,12 +342,24 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         return { kind: 'ended' } as const;
       }
       let reopened = false;
-      if (row.workRequestId) {
-        const parked = {
-          currentStatus: 'COMPLETED',
-          temporalWorkflowId: orchestrationWorkflowId(row.id),
-          workRequestId: row.workRequestId,
-        };
+      const parked = row.workRequestId
+        ? {
+            currentStatus: 'COMPLETED',
+            temporalWorkflowId: orchestrationWorkflowId(row.id),
+            workRequestId: row.workRequestId,
+          }
+        : null;
+      if (
+        opts.guard &&
+        (reviving || (parked && (await tx.activeWorkflow.count({ where: parked })) > 0))
+      ) {
+        // A new execution is about to start: a principal's launch limits and grants apply again.
+        const refusal = await opts.guard(tx);
+        if (refusal) {
+          return { kind: 'refused', refusal } as const;
+        }
+      }
+      if (row.workRequestId && parked) {
         if (opts.cap && (await tx.activeWorkflow.count({ where: parked })) > 0) {
           // A new execution is about to start: it counts as in flight, so the cap applies.
           if (await runCapGuard(opts.cap.userId, opts.cap.cap)(tx)) {
@@ -433,7 +463,14 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     launchedBy: { select: { name: true } },
     launchedById: true,
     orgId: true,
-    repo: { select: { organizationName: true, repoName: true, team: { select: { name: true } } } },
+    repo: {
+      select: {
+        organizationName: true,
+        repoName: true,
+        team: { select: { name: true, orgId: true } },
+        teamId: true,
+      },
+    },
     repoAttachedAt: true,
     repoId: true,
     serviceId: true,
@@ -445,7 +482,12 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     workRequest: {
       select: {
         activeWorkflows: {
-          select: { costUsdAccrued: true, tokensInputUsed: true, tokensOutputUsed: true },
+          select: {
+            costUsdAccrued: true,
+            tokensInputCountedUsed: true,
+            tokensInputUsed: true,
+            tokensOutputUsed: true,
+          },
         },
         payload: true,
       },
@@ -453,9 +495,25 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     workRequestId: true,
   } as const;
 
-  /** The orchestration if the caller may see it (named team, launcher, ADMIN), else null. */
+  /**
+   * The orchestration if the caller may see it, else null. A person sees what they launched, what
+   * their team's membership reaches (ADMIN: everything); a service principal sees only the
+   * orchestrations it launched, matched on its own id and on nothing else.
+   */
   async function visible(request: FastifyRequest, id: string) {
-    const user = requireUser(request);
+    const caller = requireCaller(request);
+    if (caller.kind === 'service') {
+      return runUnscoped(
+        'a service principal sees only the orchestrations it launched, matched by its own serviceId',
+        ['Orchestration'],
+        () =>
+          prisma.orchestration.findFirst({
+            select: DETAIL_SELECT,
+            where: { id, serviceId: caller.principal.servicePrincipalId },
+          })
+      );
+    }
+    const user = caller.user;
     return asPlatformAdmin(user, 'an admin may read any orchestration', ['Orchestration'], () =>
       prisma.orchestration.findFirst({
         select: DETAIL_SELECT,
@@ -475,22 +533,87 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
   }
 
   function viewerOf(request: FastifyRequest): Viewer {
-    const user = requireUser(request);
-    return { admin: user.role === Role.ADMIN, sub: user.sub };
+    const caller = requireCaller(request);
+    return caller.kind === 'service'
+      ? { admin: false, serviceId: caller.principal.servicePrincipalId, sub: '' }
+      : { admin: caller.user.role === Role.ADMIN, sub: caller.user.sub };
   }
 
-  /** The orchestration if the caller is its launcher (a person's session, PAT or token). */
+  /**
+   * The orchestration if the caller is its launcher and a person (a session, PAT or token): for
+   * the acts that stay human-only (attach, decline, approvals). A service principal is refused
+   * here whatever it launched.
+   */
   async function launcherOwned(request: FastifyRequest, reply: FastifyReply, id: string) {
     const row = await visible(request, id);
     if (!row) {
       sendError(reply, 404, 'NOT_FOUND', 'Orchestration not found');
       return null;
     }
-    if (!request.user || row.launchedById !== request.user.sub) {
+    if (request.principal || !request.user || row.launchedById !== request.user.sub) {
       sendError(reply, 403, 'NOT_LAUNCHER', 'Only the person who launched this can do that');
       return null;
     }
     return row;
+  }
+
+  /**
+   * The orchestration if the caller is its launcher: the person who launched it, or the service
+   * principal whose id it carries as `serviceId`. For the acts a launching principal may take
+   * (message, cancel, end). Anyone else is refused as `launcherOwned` refuses.
+   *
+   * With `emergencyStop` (cancel and end only) an ADMIN may also act on an orchestration that has
+   * no human launcher (`serviceId` set, `launchedById` null): an operator's stop for a runaway
+   * principal-launched orchestration. A person's orchestration stays its launcher's alone.
+   */
+  async function controlOwned(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    id: string,
+    opts: { emergencyStop?: boolean } = {}
+  ) {
+    const row = await visible(request, id);
+    if (!row) {
+      sendError(reply, 404, 'NOT_FOUND', 'Orchestration not found');
+      return null;
+    }
+    const caller = requireCaller(request);
+    const owns =
+      caller.kind === 'service'
+        ? row.serviceId === caller.principal.servicePrincipalId
+        : row.launchedById === caller.user.sub || (opts.emergencyStop && isAdminStop(request, row));
+    if (!owns) {
+      sendError(reply, 403, 'NOT_LAUNCHER', 'Only the launcher of this can do that');
+      return null;
+    }
+    return row;
+  }
+
+  /** Whether this is an ADMIN's emergency stop of an orchestration no person launched. */
+  function isAdminStop(
+    request: FastifyRequest,
+    row: { launchedById: string | null; serviceId: string | null }
+  ): boolean {
+    const caller = requireCaller(request);
+    return (
+      caller.kind === 'user' &&
+      caller.user.role === Role.ADMIN &&
+      row.launchedById === null &&
+      row.serviceId !== null
+    );
+  }
+
+  /** The audit fields that name an ADMIN's emergency stop: the actor is the ADMIN, the target the principal. */
+  function stopContext(
+    request: FastifyRequest,
+    row: { launchedById: string | null; serviceId: string | null }
+  ): Record<string, unknown> {
+    const caller = requireCaller(request);
+    return caller.kind === 'user' &&
+      row.launchedById !== caller.user.sub &&
+      isAdminStop(request, row)
+      ? { adminStop: true, targetServiceId: row.serviceId }
+      : {};
   }
 
   async function workflowInput(row: {
@@ -510,10 +633,6 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       pinned,
       serviceId: row.serviceId,
       teamId: row.teamId,
-      token: fastify.auth.signOrchestrationToken(
-        { orchestrationId: row.id, serviceId: row.serviceId, userId: row.launchedById },
-        orchestrationTokenTtlSeconds(pinned.maxWallClockSeconds)
-      ),
       userId: row.launchedById,
     };
   }
@@ -710,76 +829,12 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
 
-      // Allowlist: launchable (the version pin stripped first), present at GLOBAL or the org's
-      // scope, never the orchestrator itself; deduplicated.
-      const allowlist = [...new Set(body.allowlist)];
-      const nonLaunchable = new Set([...NON_LAUNCHABLE_AGENT_KEYS].map((k) => k.toLowerCase()));
-      const keys = new Set<string>();
-      for (const ref of allowlist) {
-        const { key } = splitRef(ref);
-        if (!isLaunchableAgentKey(key) || nonLaunchable.has(key.trim().toLowerCase())) {
-          return sendError(
-            reply,
-            400,
-            'AGENT_NOT_LAUNCHABLE',
-            `Agent '${key}' backs a platform mechanism and cannot be spawned`
-          );
-        }
-        keys.add(key);
-      }
-      const agents = await runUnscoped(
-        'an agent run resolves its agent at GLOBAL and ORGANIZATION scope only',
-        ['Agent'],
-        () =>
-          prisma.agent.findMany({
-            select: { key: true, scope: true, version: true },
-            where: { isActive: true, key: { in: [...keys] }, OR: agentScopeBranches(target.orgId) },
-          })
-      );
-      for (const ref of allowlist) {
-        const { key, version } = splitRef(ref);
-        const rows = agents.filter((a) => a.key === key);
-        const found =
-          version === undefined
-            ? rows.length > 0
-            : rows.some((a) => a.scope === 'GLOBAL' && a.version === version);
-        if (!found) {
-          return sendError(reply, 404, 'AGENT_NOT_FOUND', `No active agent '${ref}' to allow`);
-        }
-        if (version !== undefined && rows.some((a) => a.scope === 'ORGANIZATION')) {
-          return sendError(
-            reply,
-            400,
-            'AGENT_PIN_SHADOWED',
-            `'${key}' has an organization override, which a version pin cannot select`
-          );
-        }
-      }
-
-      // The MCP set: team-owned only.
-      const connectionIds = [...new Set(body.connectionIds ?? [])];
-      if (connectionIds.length > 0) {
-        const owned = await prisma.connection.findMany({
-          select: { id: true },
-          where: {
-            id: { in: connectionIds },
-            isActive: true,
-            teamId: target.teamId,
-            type: 'mcp',
-          },
-        });
-        if (owned.length !== connectionIds.length) {
-          return sendError(
-            reply,
-            400,
-            'CONNECTION_NOT_OWNED',
-            'Every MCP connection must be an active connection owned by the named team'
-          );
-        }
-      }
-
-      // Idempotency: scoped to the caller; a replay answers with the orchestration it made.
+      // Idempotency comes first, before the allowlist is resolved or refused: a retry of a launch
+      // that already exists answers with what it applied, even when the default has since changed.
+      // Scoped to the caller; a replay answers with the orchestration it made.
       const key = request.headers['idempotency-key'];
+      const connectionIds = [...new Set(body.connectionIds ?? [])];
+      const requestedAllowlist = [...new Set(body.allowlist ?? [])];
       const callerScope = idempotencyCallerScope(caller);
       const id = key ? uuidFromIdempotencyKey(`orchestration-${callerScope}`, key) : randomUUID();
       // What the caller asked for, as a digest stored with the launch: the same key with a
@@ -787,7 +842,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       const requestDigest = createHash('sha256')
         .update(
           JSON.stringify({
-            allowlist: [...allowlist].sort(),
+            allowlist: [...requestedAllowlist].sort(),
             budgetTier: body.budgetTier,
             connectionIds: [...connectionIds].sort(),
             deliveryDefault: body.deliveryDefault,
@@ -804,6 +859,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         }
         const existing = await prisma.orchestration.findFirst({
           select: {
+            allowlist: true,
             id: true,
             launchedById: true,
             serviceId: true,
@@ -837,17 +893,114 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
           );
           return true;
         }
+        const appliedRows = await runUnscoped(
+          'an agent run resolves its agent at GLOBAL and ORGANIZATION scope only',
+          ['Agent'],
+          () =>
+            prisma.agent.findMany({
+              select: { key: true, scope: true, toolKeys: true, version: true },
+              where: {
+                isActive: true,
+                key: { in: existing.allowlist.map((ref) => splitRef(ref).key) },
+                OR: agentScopeBranches(target.orgId),
+              },
+            })
+        );
         reply.status(200).send({
           data: {
+            allowlist: existing.allowlist,
             orchestrationId: existing.id,
             status: existing.status,
             workflowId: orchestrationWorkflowId(existing.id),
+            writeCapable: writeCapableRefs(existing.allowlist, appliedRows),
           },
         });
         return true;
       };
       if (await replay()) {
         return reply;
+      }
+
+      // Allowlist: launchable (the version pin stripped first), present at GLOBAL or the org's
+      // scope, never the orchestrator itself; deduplicated. None named: the operator's default
+      // for the org, already filtered to agents that exist; an empty result is refused.
+      const allowlistDefaulted = requestedAllowlist.length === 0;
+      const allowlist = allowlistDefaulted
+        ? await resolveDefaultAllowlist(prisma, { orgId: target.orgId, teamId: target.teamId })
+        : requestedAllowlist;
+      if (allowlist.length === 0) {
+        return sendError(
+          reply,
+          400,
+          'ALLOWLIST_REQUIRED',
+          'No allowlist was given and no default agents are available to this team. Pass an allowlist of agent keys.'
+        );
+      }
+      const nonLaunchable = new Set([...NON_LAUNCHABLE_AGENT_KEYS].map((k) => k.toLowerCase()));
+      const keys = new Set<string>();
+      for (const ref of allowlist) {
+        const { key } = splitRef(ref);
+        if (!isLaunchableAgentKey(key) || nonLaunchable.has(key.trim().toLowerCase())) {
+          return sendError(
+            reply,
+            400,
+            'AGENT_NOT_LAUNCHABLE',
+            `Agent '${key}' backs a platform mechanism and cannot be spawned`
+          );
+        }
+        keys.add(key);
+      }
+      const agents = await runUnscoped(
+        'an agent run resolves its agent at GLOBAL and ORGANIZATION scope only',
+        ['Agent'],
+        () =>
+          prisma.agent.findMany({
+            select: { key: true, scope: true, toolKeys: true, version: true },
+            where: { isActive: true, key: { in: [...keys] }, OR: agentScopeBranches(target.orgId) },
+          })
+      );
+      for (const ref of allowlist) {
+        const { key, version } = splitRef(ref);
+        const rows = agents.filter((a) => a.key === key);
+        const found =
+          version === undefined
+            ? rows.length > 0
+            : rows.some((a) => a.scope === 'GLOBAL' && a.version === version);
+        if (!found) {
+          return sendError(reply, 404, 'AGENT_NOT_FOUND', `No active agent '${ref}' to allow`);
+        }
+        if (version !== undefined && rows.some((a) => a.scope === 'ORGANIZATION')) {
+          return sendError(
+            reply,
+            400,
+            'AGENT_PIN_SHADOWED',
+            `'${key}' has an organization override, which a version pin cannot select`
+          );
+        }
+      }
+
+      // Which of the applied agents can change files, as their effective (org-resolved) definition.
+      const writeCapable = writeCapableRefs(allowlist, agents);
+
+      // The MCP set: team-owned only.
+      if (connectionIds.length > 0) {
+        const owned = await prisma.connection.findMany({
+          select: { id: true },
+          where: {
+            id: { in: connectionIds },
+            isActive: true,
+            teamId: target.teamId,
+            type: 'mcp',
+          },
+        });
+        if (owned.length !== connectionIds.length) {
+          return sendError(
+            reply,
+            400,
+            'CONNECTION_NOT_OWNED',
+            'Every MCP connection must be an active connection owned by the named team'
+          );
+        }
       }
 
       const pinned = await resolvePins({ orgId: target.orgId, teamId: target.teamId });
@@ -859,14 +1012,6 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         pinned,
         serviceId: service?.servicePrincipalId ?? null,
         teamId: target.teamId,
-        token: fastify.auth.signOrchestrationToken(
-          {
-            orchestrationId: id,
-            serviceId: service?.servicePrincipalId ?? null,
-            userId: user?.sub ?? null,
-          },
-          orchestrationTokenTtlSeconds(pinned.maxWallClockSeconds)
-        ),
         userId: user?.sub ?? null,
       };
       const title = body.task.split('\n')[0]?.slice(0, 80) || 'Orchestration';
@@ -987,14 +1132,21 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       }
       await audit(request, id, 'launch', {
         allowlist,
+        allowlistDefaulted,
         connectionIds,
         repoId: target.repoId,
         service: service?.servicePrincipalId ?? null,
         teamId: target.teamId,
       });
-      return reply
-        .status(201)
-        .send({ data: { orchestrationId: id, status: 'ACTIVE', workflowId } });
+      return reply.status(201).send({
+        data: {
+          allowlist,
+          orchestrationId: id,
+          status: 'ACTIVE',
+          workflowId,
+          writeCapable,
+        },
+      });
     }
   );
 
@@ -1003,62 +1155,87 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
-      config: { mcpScope: 'read' },
+      config: { mcpScope: 'read', serviceScopes: ['runs:agent'] },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { querystring: ListQuery },
     },
     async (request) => {
-      const user = requireUser(request);
+      const caller = requireCaller(request);
       const { limit, offset, status, teamId } = request.query;
       const where = {
         ...(status ? { status } : {}),
         ...(teamId ? { teamId } : {}),
-        ...(user.role === Role.ADMIN
-          ? {}
-          : {
-              OR: [
-                { launchedById: user.sub },
-                { team: { memberships: { some: { userId: user.sub } } } },
-              ],
-            }),
+        ...(caller.kind === 'service'
+          ? { serviceId: caller.principal.servicePrincipalId }
+          : caller.user.role === Role.ADMIN
+            ? {}
+            : {
+                OR: [
+                  { launchedById: caller.user.sub },
+                  { team: { memberships: { some: { userId: caller.user.sub } } } },
+                ],
+              }),
       };
-      const [rows, total] = await asPlatformAdmin(
-        user,
-        'an admin may list every orchestration',
-        ['Orchestration'],
-        () =>
-          Promise.all([
-            prisma.orchestration.findMany({
-              orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
-              select: {
-                budgetTier: true,
-                createdAt: true,
-                id: true,
-                launchedById: true,
-                repo: { select: { organizationName: true, repoName: true } },
-                repoAttachedAt: true,
-                repoId: true,
-                status: true,
-                team: { select: { name: true } },
-                teamId: true,
-                title: true,
-                updatedAt: true,
-                workRequest: { select: { activeWorkflows: { select: { costUsdAccrued: true } } } },
-              },
-              skip: offset,
-              take: limit,
-              where,
-            }),
-            prisma.orchestration.count({ where }),
-          ])
-      );
+      const listSelect = {
+        budgetTier: true,
+        createdAt: true,
+        id: true,
+        launchedById: true,
+        repo: { select: { organizationName: true, repoName: true } },
+        repoAttachedAt: true,
+        repoId: true,
+        serviceId: true,
+        status: true,
+        team: { select: { name: true } },
+        teamId: true,
+        title: true,
+        updatedAt: true,
+        workRequest: { select: { activeWorkflows: { select: { costUsdAccrued: true } } } },
+      } as const;
+      const orderBy = [{ updatedAt: 'desc' as const }, { id: 'desc' as const }];
+      // The call sites stay lexically inside their wrapper: the tenant-guard coverage test reads
+      // them that way. A person's listing is filtered by membership (or is an admin's); a
+      // principal's is filtered by its own id.
+      const [rows, total] =
+        caller.kind === 'service'
+          ? await runUnscoped(
+              'a service principal lists only the orchestrations it launched, matched by serviceId',
+              ['Orchestration'],
+              () =>
+                Promise.all([
+                  prisma.orchestration.findMany({
+                    orderBy,
+                    select: listSelect,
+                    skip: offset,
+                    take: limit,
+                    where,
+                  }),
+                  prisma.orchestration.count({ where }),
+                ])
+            )
+          : await asPlatformAdmin(
+              caller.user,
+              'an admin may list every orchestration',
+              ['Orchestration'],
+              () =>
+                Promise.all([
+                  prisma.orchestration.findMany({
+                    orderBy,
+                    select: listSelect,
+                    skip: offset,
+                    take: limit,
+                    where,
+                  }),
+                  prisma.orchestration.count({ where }),
+                ])
+            );
       const ids = rows.map((r) => r.id);
       // The repository's name is shown only to those who can reach the repository.
       const viewer = viewerOf(request);
       const reachable = await reachableRepoIds(
         prisma,
         viewer,
-        rows.filter((r) => r.repoId && r.launchedById !== viewer.sub).map((r) => r.repoId as string)
+        rows.filter((r) => r.repoId && !launcherSeesRepo(viewer, r)).map((r) => r.repoId as string)
       );
       const children = ids.length
         ? await prisma.orchestrationChild.findMany({
@@ -1080,7 +1257,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
           },
           {
             redactRepo:
-              !!r.repoId && r.launchedById !== viewer.sub && !reachable.has(r.repoId as string),
+              !!r.repoId && !launcherSeesRepo(viewer, r) && !reachable.has(r.repoId as string),
           }
         );
       });
@@ -1120,22 +1297,53 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // The allowlist a launch with none named would apply, for the launch form to pre-select. By
+  // team (for its organization's override) and only for a member; declared before `/:id`.
+  app.get(
+    '/defaults',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { querystring: z.object({ teamId: z.uuid() }) },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const { teamId } = request.query;
+      const team = await prisma.team.findFirst({
+        select: {
+          id: true,
+          isActive: true,
+          memberships: { select: { userId: true }, where: { userId: user.sub } },
+          orgId: true,
+        },
+        where: { id: teamId },
+      });
+      if (!team?.isActive || (team.memberships.length === 0 && user.role !== Role.ADMIN)) {
+        return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
+      }
+      const { allowlist, writeCapable } = await resolveDefaults(prisma, {
+        orgId: team.orgId,
+        teamId: team.id,
+      });
+      return { data: { allowlist, writeCapable } };
+    }
+  );
+
   app.get(
     '/:id',
     {
-      config: { mcpScope: 'read' },
+      config: { mcpScope: 'read', serviceScopes: ['runs:agent'] },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { params: IdParams },
     },
     async (request, reply) => {
-      const user = requireUser(request);
       const row = await visible(request, request.params.id);
       if (!row) {
         return sendError(reply, 404, 'NOT_FOUND', 'Orchestration not found');
       }
+      const viewer = viewerOf(request);
       const detail = await buildDetail(prisma, row, {
-        canControl: row.launchedById === user.sub,
-        viewer: viewerOf(request),
+        canControl: launchedByViewer(viewer, row),
+        viewer,
       });
       return { data: detail };
     }
@@ -1144,7 +1352,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/messages',
     {
-      config: { mcpScope: 'read' },
+      config: { mcpScope: 'read', serviceScopes: ['runs:agent'] },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { params: IdParams, querystring: MessagesQuery },
     },
@@ -1187,14 +1395,49 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
 
   // Server-sent events: `message`, `child` and `status` records as they change, `: ping`
   // comments as heartbeats. A client that cannot hold a stream polls the routes above instead.
+  // Every event carries `id:` = the transcript cursor (the one `GET /:id/messages` returns as
+  // `next`) at the point it was written, so `Last-Event-ID` (or `?after=`) resumes the transcript
+  // exactly: messages after that cursor are replayed, none twice. `child` and `status` are state,
+  // not history: a fresh stream opens with the current snapshot of each.
   app.get(
     '/:id/events',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: IdParams } },
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: {
+        params: IdParams,
+        querystring: z.object({ after: z.string().max(512).optional() }),
+      },
+    },
     async (request, reply) => {
       const user = requireUser(request);
+      // The close listener goes on before the first await: a client that disconnects while the
+      // handler is still looking the orchestration up must not be given a stream slot or polled.
+      let gone = request.raw.destroyed;
+      let onGone: (() => void) | undefined;
+      const markGone = () => {
+        gone = true;
+        onGone?.();
+      };
+      request.raw.once('close', markGone);
+      request.raw.once('error', markGone);
       const row = await visible(request, request.params.id);
+      if (gone || request.raw.destroyed) {
+        reply.hijack();
+        return;
+      }
       if (!row) {
         return sendError(reply, 404, 'NOT_FOUND', 'Orchestration not found');
+      }
+      const lastEventId = request.headers['last-event-id'];
+      // EventSource keeps the original URL on reconnect and adds Last-Event-ID, so the header is
+      // the newer position when both are present.
+      const resumeFrom =
+        (typeof lastEventId === 'string' && lastEventId ? lastEventId : undefined) ??
+        request.query.after ??
+        '';
+      const resume = resumeFrom ? decodeCursor(resumeFrom) : null;
+      if (resumeFrom && !resume) {
+        return sendError(reply, 400, 'INVALID_CURSOR', 'The resume cursor is not valid');
       }
       const openCount = openStreams.get(user.sub) ?? 0;
       if (openCount >= MAX_STREAMS_PER_USER) {
@@ -1206,6 +1449,19 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
       openStreams.set(user.sub, openCount + 1);
+      let slotHeld = true;
+      const releaseSlot = () => {
+        if (!slotHeld) {
+          return;
+        }
+        slotHeld = false;
+        const remaining = (openStreams.get(user.sub) ?? 1) - 1;
+        if (remaining <= 0) {
+          openStreams.delete(user.sub);
+        } else {
+          openStreams.set(user.sub, remaining);
+        }
+      };
       const orchestrationId = row.id;
       const teamId = row.teamId;
       const viewer = viewerOf(request);
@@ -1213,27 +1469,39 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
 
       reply.hijack();
       const res = reply.raw;
-      for (const [name, value] of Object.entries(reply.getHeaders())) {
-        if (value !== undefined) {
-          res.setHeader(name, value as string | number | string[]);
+      try {
+        for (const [name, value] of Object.entries(reply.getHeaders())) {
+          if (value !== undefined) {
+            res.setHeader(name, value as string | number | string[]);
+          }
         }
+        res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.flushHeaders();
+        // How long a client waits before it reconnects after a drop or the time limit.
+        res.write(`retry: ${STREAM_RETRY_MS}\n\n`);
+      } catch (err) {
+        // A write that fails before the stream is running must not keep the slot.
+        releaseSlot();
+        request.log.warn({ err }, 'orchestration stream: could not open');
+        res.destroy();
+        return;
       }
-      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-      res.setHeader('Cache-Control', 'no-cache, no-transform');
-      res.setHeader('Connection', 'keep-alive');
-      res.setHeader('X-Accel-Buffering', 'no');
-      res.flushHeaders();
 
       let closed = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const started = Date.now();
       let lastBeat = started;
-      let cursor: { createdAt: Date; id: string } | null = null;
+      let lastAccessCheck = started;
+      let cursor: { createdAt: Date; id: string } | null = resume;
       let lastStatus = '';
       const lastChild = new Map<string, string>();
       const write = (event: string, data: unknown) => {
         if (!res.writableEnded) {
-          res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+          const id = cursor ? `id: ${encodeCursor(cursor)}\n` : '';
+          res.write(`${id}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
         }
       };
 
@@ -1246,19 +1514,22 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
           if (timer) {
             clearTimeout(timer);
           }
-          const remaining = (openStreams.get(user.sub) ?? 1) - 1;
-          if (remaining <= 0) {
-            openStreams.delete(user.sub);
-          } else {
-            openStreams.set(user.sub, remaining);
-          }
-          if (!res.writableEnded) {
-            res.end();
+          releaseSlot();
+          try {
+            if (!res.writableEnded) {
+              res.end();
+            }
+          } catch {
+            // The socket is already gone; the slot and the timer are released either way.
           }
           resolve();
         };
-        request.raw.once('close', finish);
-        request.raw.once('error', finish);
+        onGone = finish;
+        res.once('close', finish);
+        if (gone || request.raw.destroyed) {
+          finish();
+          return;
+        }
 
         const poll = async () => {
           if (closed) {
@@ -1270,6 +1541,20 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
             return;
           }
           try {
+            if (Date.now() - lastAccessCheck >= STREAM_ACCESS_RECHECK_MS) {
+              // Authorization is not only a property of the open: a viewer removed from the team
+              // or the launch since then is told and cut off.
+              const stillVisible = await visible(request, orchestrationId);
+              if (closed) {
+                return;
+              }
+              if (!stillVisible) {
+                write('done', { reason: 'access' });
+                finish();
+                return;
+              }
+              lastAccessCheck = Date.now();
+            }
             const messages = await prisma.orchestrationMessage.findMany({
               orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
               take: 100,
@@ -1290,6 +1575,9 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
               select: { repoAttachedAt: true, repoId: true, status: true },
               where: { id: orchestrationId, teamId },
             });
+            if (closed) {
+              return;
+            }
             if (!live) {
               finish();
               return;
@@ -1298,14 +1586,18 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
               launchedById,
               repoId: live.repoId,
             });
+            if (closed) {
+              return;
+            }
             for (const m of messages) {
+              // The cursor moves first, so the event's id names this message.
+              cursor = { createdAt: m.createdAt, id: m.id };
               if (!isHiddenMessage(m)) {
                 write(
                   'message',
                   sees ? messageView(m) : redactMessage(messageView(m), live.repoAttachedAt)
                 );
               }
-              cursor = { createdAt: m.createdAt, id: m.id };
             }
             const children = await prisma.orchestrationChild.findMany({
               include: {
@@ -1327,6 +1619,9 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
                 })
               : [];
             const undelivered = new Map(steering.map((g) => [g.runId, g._count._all]));
+            if (closed) {
+              return;
+            }
             for (const [index, c] of children.entries()) {
               const view = childView(c as never, c.runId ? (undelivered.get(c.runId) ?? 0) : 0, {
                 ordinal: index + 1,
@@ -1348,6 +1643,11 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
             }
           } catch (err) {
             request.log.warn({ err }, 'orchestration stream: poll failed');
+            if (res.destroyed || res.writableEnded) {
+              // A write that threw mid-stream: the socket is gone, so stop polling it.
+              finish();
+              return;
+            }
           }
           if (!closed) {
             timer = setTimeout(poll, STREAM_POLL_MS);
@@ -1363,7 +1663,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/messages',
     {
-      config: { mcpScope: 'write' },
+      config: { mcpScope: 'write', serviceScopes: ['runs:agent'] },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       onSend: mcpWriteAuditHook,
       preValidation: mcpWriteBegin('orchestrations_message'),
@@ -1376,8 +1676,10 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       if (mcpWrite.refused) {
         return mcpWrite.refused;
       }
-      const user = requireUser(request);
-      const row = await launcherOwned(request, reply, request.params.id);
+      const caller = requireCaller(request);
+      // A service principal's message has no author: the launching principal is on the audit entry.
+      const authorId = caller.kind === 'user' ? caller.user.sub : null;
+      const row = await controlOwned(request, reply, request.params.id);
       if (!row) {
         return reply;
       }
@@ -1405,23 +1707,33 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       // bridged caller that counts against the launcher's cap, checked in the same transaction
       // that reopens the ledger row, before anything is sent.
       const wake = await prepareWake(row, {
-        cap: request.mcpBridge
-          ? {
-              cap: (await resolveSettings(['mcp.maxConcurrentRuns']))['mcp.maxConcurrentRuns'],
-              userId: user.sub,
-            }
-          : null,
+        cap:
+          request.mcpBridge && authorId
+            ? {
+                cap: (await resolveSettings(['mcp.maxConcurrentRuns']))['mcp.maxConcurrentRuns'],
+                userId: authorId,
+              }
+            : null,
+        guard:
+          caller.kind === 'service'
+            ? servicePrincipalLaunchGuard(caller.principal.servicePrincipalId, {
+                connectionId: row.repoId,
+              })
+            : null,
         revive: !request.mcpBridge,
       });
       if (wake.kind === 'capped') {
         return sendRunCapRefusal(reply);
+      }
+      if (wake.kind === 'refused') {
+        return sendServiceLaunchRefusal(reply, wake.refusal);
       }
       if (wake.kind === 'ended') {
         return refusal(reply, 409, 'ORCHESTRATION_NOT_ACTIVE', 'This orchestration has ended');
       }
       const message = await prisma.orchestrationMessage.create({
         data: {
-          authorId: user.sub,
+          authorId,
           body: request.body.body,
           kind: 'TEXT',
           orchestrationId: row.id,
@@ -1452,7 +1764,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/children/:childId/messages',
     {
-      config: { mcpScope: 'write', orchestrationToken: 'caller' },
+      config: { mcpScope: 'write', orchestrationToken: 'caller', serviceScopes: ['runs:agent'] },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       onSend: mcpWriteAuditHook,
       preValidation: mcpWriteBegin('orchestrations_message'),
@@ -1471,7 +1783,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
             select: { deliveryDefault: true, id: true, status: true, teamId: true },
             where: { id: request.params.id },
           })
-        : await launcherOwned(request, reply, request.params.id);
+        : await controlOwned(request, reply, request.params.id);
       if (!orch) {
         return byOrchestrator
           ? sendError(reply, 404, 'NOT_FOUND', 'Orchestration not found')
@@ -1502,8 +1814,13 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
       const authorId = byOrchestrator ? null : (request.user?.sub ?? null);
+      // A launching principal's word is the launcher's: it carries its id, so the child's drain
+      // labels it `launcher`, not the orchestrator's (a row with neither author).
+      const authorServiceId = byOrchestrator
+        ? null
+        : (request.principal?.servicePrincipalId ?? null);
       await prisma.runSteeringMessage.create({
-        data: { authorId, body: request.body.body, runId: child.runId },
+        data: { authorId, authorServiceId, body: request.body.body, runId: child.runId },
       });
       const message = await prisma.orchestrationMessage.create({
         data: {
@@ -1826,18 +2143,22 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
             if (!writer) {
               return null;
             }
-            // A service principal holds no GitHub identity, so a writer cannot be authorized.
-            const denied =
-              caller.kind === 'service'
-                ? 'a service principal cannot hold push permission'
-                : ((await checkPushPermission(prisma, caller.user.sub, repo)) as {
-                    ok: boolean;
-                    reason?: string;
-                  });
-            if (typeof denied === 'string' || !denied.ok) {
+            // A service principal holds no GitHub identity, so there is no push permission to ask
+            // about. What authorizes its writer is the launch decision that already ran for this
+            // child (`authorizeAgentRunRepo`: the repository is on its allowlist and its team owns
+            // it or has it shared) and its launch guard; the push policy, the path scopes and the
+            // security gate still apply to the delivery. Push permission is a person's check.
+            if (caller.kind === 'service') {
+              return null;
+            }
+            const denied = (await checkPushPermission(prisma, caller.user.sub, repo)) as {
+              ok: boolean;
+              reason?: string;
+            };
+            if (!denied.ok) {
               return {
                 code: 'PUSH_PERMISSION_REQUIRED',
-                message: `The launcher needs GitHub push permission to run a writer (${typeof denied === 'string' ? denied : denied.reason})`,
+                message: `The launcher needs GitHub push permission to run a writer (${denied.reason})`,
                 status: 409,
               };
             }
@@ -1956,7 +2277,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/children/:childId/cancel',
     {
-      config: { orchestrationToken: 'caller' },
+      config: { orchestrationToken: 'caller', serviceScopes: ['runs:agent'] },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { params: ChildParams },
     },
@@ -1967,7 +2288,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
             select: { id: true, status: true },
             where: { id: request.params.id },
           })
-        : await launcherOwned(request, reply, request.params.id);
+        : await controlOwned(request, reply, request.params.id);
       if (!orch) {
         return byOrchestrator
           ? sendError(reply, 404, 'NOT_FOUND', 'Orchestration not found')
@@ -2335,13 +2656,17 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // ── Cancel and end (launcher only) ─────────────────────────────────────────
+  // ── Cancel and end (launcher; an ADMIN also, for an orchestration no person launched) ──
 
   app.post(
     '/:id/cancel',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: IdParams } },
+    {
+      config: { serviceScopes: ['runs:agent'] },
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { params: IdParams },
+    },
     async (request, reply) => {
-      const row = await launcherOwned(request, reply, request.params.id);
+      const row = await controlOwned(request, reply, request.params.id, { emergencyStop: true });
       if (!row) {
         return reply;
       }
@@ -2374,6 +2699,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         children: children.size,
         failed,
         scope: 'orchestration',
+        ...stopContext(request, row),
       });
       return {
         data: {
@@ -2387,9 +2713,13 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.post(
     '/:id/end',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: IdParams } },
+    {
+      config: { serviceScopes: ['runs:agent'] },
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { params: IdParams },
+    },
     async (request, reply) => {
-      const row = await launcherOwned(request, reply, request.params.id);
+      const row = await controlOwned(request, reply, request.params.id, { emergencyStop: true });
       if (!row) {
         return reply;
       }
@@ -2409,6 +2739,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
           failed: stuck.length,
           scope: 'end',
           status: 'not ended',
+          ...stopContext(request, row),
         });
         return refusal(
           reply,
@@ -2437,6 +2768,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         children: new Set([...first.ids, ...retry.ids, ...second.ids]).size,
         failed: second.failed,
         scope: 'end',
+        ...stopContext(request, row),
       });
       return { data: { status: 'COMPLETED' } };
     }

@@ -9,6 +9,10 @@ import {
   ASSISTANT_TOKEN_TTL_SECONDS,
   assistantActionDigest,
 } from '@auto-swe/shared/lib/assistantAction';
+import {
+  ORCHESTRATION_TOKEN_PREFIX,
+  verifyOrchestrationToken,
+} from '@auto-swe/shared/lib/orchestrationTokenKey';
 import type { RepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
 import { SERVICE_TOKEN_SCOPES, type ServiceTokenScope } from '@auto-swe/shared/types/api';
@@ -19,11 +23,6 @@ import jwt from 'jsonwebtoken';
 import { type AssistantAccess, assistantAccess } from '../lib/assistantPolicy.js';
 import { MCP_BRIDGE_HEADER } from '../lib/mcp/bridge.js';
 import { MCP_SCOPE_ADMIN, MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../lib/mcpOAuth.js';
-import {
-  ORCHESTRATION_TOKEN_AUDIENCE,
-  ORCHESTRATION_TOKEN_PREFIX,
-  type OrchestrationTokenClaims,
-} from '../lib/orchestrationToken.js';
 
 // ── JWT Configuration ──
 
@@ -82,14 +81,6 @@ declare module 'fastify' {
       signAssistantToken: (claims: { userId: string; conversationId: string }) => string;
       /** Signature, expiry, audience and shape only — no database read, so not authorization. */
       verifyAssistantTokenClaims: (token: string) => { sub: string; conversationId: string };
-      /**
-       * Mint the token the orchestration worker acts with for one orchestration (see
-       * `lib/orchestrationToken.ts`). Only `requireAuth`'s orchestration path accepts it, and only
-       * on routes that declare `config.orchestrationToken`.
-       */
-      signOrchestrationToken: (claims: OrchestrationTokenClaims, ttlSeconds: number) => string;
-      /** Signature, expiry, audience and shape only — no database read, so not authorization. */
-      verifyOrchestrationTokenClaims: (token: string) => OrchestrationTokenClaims;
     };
   }
   interface FastifyRequest {
@@ -140,12 +131,12 @@ declare module 'fastify' {
   }
   interface FastifyContextConfig {
     /**
-     * Opt a route in to the orchestration token. `user`: the token's launcher must be a person.
-     * `caller`: a person or the service principal that launched the orchestration. A route that
-     * does not declare this refuses the token with 403 `ORCHESTRATION_TOKEN_NOT_ALLOWED`, and the
-     * route's `:id` must be the orchestration the token names.
+     * Opt a route in to the orchestration token. `caller`: a person or the service principal that
+     * launched the orchestration acts. A route that does not declare this refuses the token with
+     * 403 `ORCHESTRATION_TOKEN_NOT_ALLOWED`, and the route's `:id` must be the orchestration the
+     * token names.
      */
-    orchestrationToken?: 'user' | 'caller';
+    orchestrationToken?: 'caller';
     /**
      * Record a successful `GET` of this route as a user-activity event (`read` or `export`). A tag
      * on the route covers every mount of it, deprecated aliases included; see `activityEvents.ts`.
@@ -455,15 +446,6 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
       });
     },
 
-    signOrchestrationToken({ orchestrationId, serviceId, userId }, ttlSeconds) {
-      const signed = jwt.sign(
-        { oid: orchestrationId, ...(serviceId ? { sid: serviceId } : { uid: userId }) },
-        privateKey,
-        { algorithm, audience: ORCHESTRATION_TOKEN_AUDIENCE, expiresIn: ttlSeconds }
-      );
-      return `${ORCHESTRATION_TOKEN_PREFIX}${signed}`;
-    },
-
     async verifyAccessToken(token: string): Promise<JwtPayload> {
       const claims = fastify.auth.verifyAccessTokenClaims(token);
       // The role claim is a snapshot from mint time. Authorize on the user as
@@ -520,25 +502,6 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
       return {
         sub: decoded.sub,
         ...(typeof decoded.nonce === 'string' ? { nonce: decoded.nonce } : {}),
-      };
-    },
-
-    verifyOrchestrationTokenClaims(token) {
-      if (!token.startsWith(ORCHESTRATION_TOKEN_PREFIX)) {
-        throw new jwt.JsonWebTokenError('not an orchestration token');
-      }
-      const decoded = jwt.verify(token.slice(ORCHESTRATION_TOKEN_PREFIX.length), publicKey, {
-        algorithms: [algorithm],
-        audience: ORCHESTRATION_TOKEN_AUDIENCE,
-      }) as { oid?: unknown; uid?: unknown; sid?: unknown };
-      const isId = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v);
-      if (!isId(decoded.oid) || isId(decoded.uid) === isId(decoded.sid)) {
-        throw new jwt.JsonWebTokenError('malformed orchestration token');
-      }
-      return {
-        orchestrationId: decoded.oid,
-        serviceId: isId(decoded.sid) ? decoded.sid : null,
-        userId: isId(decoded.uid) ? decoded.uid : null,
       };
     },
   });
@@ -849,11 +812,8 @@ export function rateLimitKey(request: FastifyRequest): string {
       }
     }
     if (token.startsWith(ORCHESTRATION_TOKEN_PREFIX)) {
-      try {
-        return `orch:${request.server.auth.verifyOrchestrationTokenClaims(token).orchestrationId}`;
-      } catch {
-        return ipRateLimitKey(request);
-      }
+      const verified = verifyOrchestrationToken(token);
+      return verified.ok ? `orch:${verified.orchestrationId}` : ipRateLimitKey(request);
     }
     if (!token.startsWith(PAT_PREFIX)) {
       try {
@@ -1272,25 +1232,29 @@ async function spendConfirmation(
 type OrchestrationRefusal = { status: 401 | 403 | 503; code: string; message: string };
 
 /**
- * Admit an orchestration token. In order: signature, audience, expiry and shape (else 401); the
- * route declares `config.orchestrationToken` (else 403); the route's `:id` is the orchestration
- * the token names (else 403); the orchestration is ACTIVE or WAITING and was launched by the
- * token's person or principal (else 401, so ending an orchestration revokes its tokens); the
- * launcher is still active (a person) or enabled (a principal). The request then acts as the
- * launcher, with their current role, like any other credential.
+ * Admit an orchestration token (`@auto-swe/shared/lib/orchestrationTokenKey`: HMAC, key version,
+ * claim and lifetime checks, else 401). The token names only an orchestration; who acts is read
+ * from the orchestration's row. In order: the route declares `config.orchestrationToken` (else
+ * 403); the route's `:id` is the orchestration the token names (else 403); the orchestration is
+ * ACTIVE or WAITING (else 401, so ending an orchestration revokes its tokens); its launcher is
+ * still active (a person) or enabled and still holding `runs:agent` (a principal). The request
+ * then acts as the launcher, with their current role, like any other credential.
  */
 async function admitOrchestrationToken(
   request: FastifyRequest,
   token: string
 ): Promise<{ payload: JwtPayload } | { principal: ServicePrincipalCaller } | OrchestrationRefusal> {
-  let claims: OrchestrationTokenClaims;
-  try {
-    claims = request.server.auth.verifyOrchestrationTokenClaims(token);
-  } catch (err: unknown) {
-    return { code: 'TOKEN_INVALID', message: bearerRejectionMessage(err), status: 401 };
+  const verified = verifyOrchestrationToken(token);
+  if (!verified.ok) {
+    return {
+      code: 'TOKEN_INVALID',
+      message: verified.reason === 'expired' ? 'Orchestration token expired' : 'Invalid token',
+      status: 401,
+    };
   }
+  const claims = { orchestrationId: verified.orchestrationId };
   const mode = request.routeOptions.config?.orchestrationToken;
-  if (!mode || (mode === 'user' && claims.serviceId)) {
+  if (!mode) {
     return {
       code: 'ORCHESTRATION_TOKEN_NOT_ALLOWED',
       message: 'This route does not accept an orchestration token',
@@ -1317,8 +1281,7 @@ async function admitOrchestrationToken(
   if (
     !orchestration ||
     (orchestration.status !== 'ACTIVE' && orchestration.status !== 'WAITING') ||
-    orchestration.launchedById !== claims.userId ||
-    orchestration.serviceId !== claims.serviceId
+    (!orchestration.serviceId && !orchestration.launchedById)
   ) {
     return {
       code: 'TOKEN_INVALID',
@@ -1327,7 +1290,8 @@ async function admitOrchestrationToken(
     };
   }
   request.orchestration = { orchestrationId: claims.orchestrationId };
-  if (claims.serviceId) {
+  const serviceId = orchestration.serviceId;
+  if (serviceId) {
     const sp = await prisma.servicePrincipal
       .findUnique({
         select: {
@@ -1339,7 +1303,7 @@ async function admitOrchestrationToken(
           teamId: true,
           templateIds: true,
         },
-        where: { id: claims.serviceId },
+        where: { id: serviceId },
       })
       .catch((err: unknown) => {
         throw new TokenUserLookupError(err);
@@ -1362,7 +1326,7 @@ async function admitOrchestrationToken(
           expiresAt: { gt: new Date() },
           revokedAt: null,
           scopes: { has: 'runs:agent' },
-          servicePrincipalId: claims.serviceId,
+          servicePrincipalId: serviceId,
         },
       })
       .catch((err: unknown) => {
@@ -1388,9 +1352,11 @@ async function admitOrchestrationToken(
       },
     };
   }
-  const user = await loadTokenUser(prisma, claims.userId as string).catch((err: unknown) => {
-    throw new TokenUserLookupError(err);
-  });
+  const user = await loadTokenUser(prisma, orchestration.launchedById as string).catch(
+    (err: unknown) => {
+      throw new TokenUserLookupError(err);
+    }
+  );
   if (!user?.isActive) {
     return { code: 'TOKEN_INVALID', message: new TokenUserRevokedError().message, status: 401 };
   }
@@ -1401,7 +1367,7 @@ async function admitOrchestrationToken(
       iat: now,
       role: user.role,
       ...(user.slackId ? { slackId: user.slackId } : {}),
-      sub: claims.userId as string,
+      sub: orchestration.launchedById as string,
     },
   };
 }

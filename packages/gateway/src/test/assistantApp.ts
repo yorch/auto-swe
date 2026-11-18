@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { type Mock, vi } from 'vitest';
 import authPlugin from '../plugins/auth.js';
@@ -43,9 +43,10 @@ export type AssistantPrisma = ReturnType<typeof makeAssistantPrisma>;
 
 export async function buildAssistantApp(
   prisma: AssistantPrisma,
-  register: (app: FastifyInstance) => Promise<void> | void
+  register: (app: FastifyInstance) => Promise<void> | void,
+  serverOptions: FastifyServerOptions = {}
 ): Promise<FastifyInstance> {
-  const app = Fastify();
+  const app = Fastify(serverOptions);
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   app.decorate('prisma', prisma as never);
