@@ -267,7 +267,16 @@ deliberate behaviour change and goes in the upgrade note.
    installation binding, executor image build, PR-evaluation auto mode, eval-dataset link at ORG
    scope) stay platform-only capabilities with their own keys.
 7. **Human-error baselines** (platform `LEAD` + any org member today) become `org.baselines.manage`:
-   org `ADMIN` of the target org or platform `ADMIN`.
+   org `ADMIN` of the target org or platform `ADMIN`; reading them (`org.baselines.read`) is open to
+   any org member, a widening from platform `LEAD`.
+7a. **No silent widening.** A capability's minimum role is never lower than the rule it replaces
+   unless this section says so. Repository onboarding launch stays team `ADMIN` (it needed both
+   `canManageTeamRepos` and shell authorship); the onboarding routes that only needed
+   `canManageTeamRepos` keep `team.repos.manage`. Orchestration emergency stop stays platform
+   `ADMIN` only.
+7b. **Refusals do not reveal existence.** A person with no standing on a team gets the same `403`
+   whether the team exists or not, as `requiredTeamRole` did; a route that hid existence with a
+   `404` keeps it by declaring `hideAs404`.
 8. **The planner** (platform `ENGINEER` minimum today) needs only an active user; the check is
    removed, with the synthesized run-plan actor becoming a plain `USER`.
 9. **Platform-admin bypass idiom** (`user.role === 'ADMIN' ? {} : filter`, about 75 files) calls
