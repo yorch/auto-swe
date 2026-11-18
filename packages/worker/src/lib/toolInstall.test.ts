@@ -174,7 +174,7 @@ describe('toolInstallScript', () => {
         '  case "$a" in',
         '    --proto|--proto-redir) shift; n=$((n - 1)) ;;',
         '    --max-time|--retry) shift; n=$((n - 1)); set -- "$@" "$a" "$([ "$a" = --max-time ] && echo 1 || echo 0)" ;;',
-        '    https://*) rest=${a#https://}; set -- "$@" "http://127.0.0.1:$CURL_PORT/${rest#*/}" ;;',
+        `    https://*) rest=\${a#https://}; set -- "$@" "http://127.0.0.1:$CURL_PORT/\${rest#*/}" ;;`,
         '    *) set -- "$@" "$a" ;;',
         '  esac',
         'done',
