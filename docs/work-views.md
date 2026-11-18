@@ -439,7 +439,7 @@ ticket is fetched or stored, the submission still succeeds and the run continues
 description, and a fixed line is logged with ids only. Jira and Linear ids name no repository and are
 not checked against one. A Jira or Linear read is checked against the project keys an operator lists
 in `tracker.allowedProjectKeys` ([`configuration.md` §9](./configuration.md#jira-and-linear-project-allowlist)),
-which is unrestricted while the list is empty. Jira and Linear writes (a run's lifecycle comment or status transition, and `postTicketComment`) are checked against the same list, and a write to a ticket outside it is skipped.
+which is unrestricted while the list is empty. Jira and Linear writes (a run's lifecycle comment or status transition, and `postTicketComment`) are checked against the same list, and a write to a ticket outside it is skipped. A Jira or Linear PRD create is checked against its target project key the same way and is refused before anything is created.
 
 The check runs on the repository the ticket id names, and the request then stays there. The
 provider follows a redirect only while its target is still under

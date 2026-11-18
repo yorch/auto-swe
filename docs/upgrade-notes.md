@@ -1904,3 +1904,15 @@ that name the old key to the new one, so the list and its grants carry over.
 setting shows the same project keys or team keys the old setting held.
 
 ---
+
+### Jira or Linear deployments that set `tracker.allowedProjectKeys` (`<fixing-commit-sha>`)
+
+**Affected.** Jira or Linear deployments that set `tracker.allowedProjectKeys` at any scope, and deployments that run PRD workflows against Jira or Linear. A PRD run is checked only when the list is non-empty.
+
+**What changes.** The migration adds a nullable `tracker_scope_contexts` column to `run_inputs` and runs on deploy with nothing to do by hand. A launch with no repository and no template team now records the contexts the list resolves at: a service principal launch resolves at its own team, and an organization member with no team of their own resolves at that organization, where each used to resolve at `GLOBAL`. PRD epic and story creation in Jira or Linear now requires the target project key to be on the list. A refused create creates no issues, and the run continues with a warning on the `createTrackerItems` step.
+
+**Actions.** Add the PRD target Jira project keys and Linear team keys to `tracker.allowedProjectKeys` (Admin → Platform settings → Issue tracker), at the scope the PRD runs resolve. No migration and no environment-variable change is needed.
+
+**Verify.** Run a PRD workflow against a listed project and check that its epic is created in the tracker. A refusal shows as a warning on the `createTrackerItems` step and names the project key.
+
+---

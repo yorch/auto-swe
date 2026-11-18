@@ -64,6 +64,28 @@ describe('readTrackerWriteback', () => {
     ).toEqual({ event: 'workflow_failed', failure: 'forbidden' });
   });
 
+  it.each(['github', 'jira', 'linear'] as const)(
+    'reads the %s provider a record carries',
+    (provider) => {
+      expect(
+        readTrackerWriteback({
+          trackerWriteback: { event: 'workflow_completed', failure: 'out_of_scope', provider },
+        })
+      ).toEqual({ event: 'workflow_completed', failure: 'out_of_scope', provider });
+    }
+  );
+
+  it.each(['gitlab', 'constructor', 3, null])(
+    'reads a record with the unknown provider %s as one with none',
+    (provider) => {
+      expect(
+        readTrackerWriteback({
+          trackerWriteback: { event: 'workflow_completed', failure: 'out_of_scope', provider },
+        })
+      ).toEqual({ event: 'workflow_completed', failure: 'out_of_scope' });
+    }
+  );
+
   it.each(['no_repository', 'no_transition'])('accepts the %s class', (failure) => {
     expect(
       readTrackerWriteback({ trackerWriteback: { event: 'workflow_completed', failure } })

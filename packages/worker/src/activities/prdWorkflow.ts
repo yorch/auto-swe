@@ -23,11 +23,15 @@ import {
 } from '@auto-swe/shared/lib/trackerSync';
 import {
   type CreatedTrackerItem,
+  createTargetProjectKey,
   createTrackerEpic,
   createTrackerStory,
+  isTargetProjectKeyAllowed,
+  TRACKER_PROJECT_NOT_ALLOWED,
+  trackerProjectNotAllowedMessage,
 } from '@auto-swe/shared/lib/trackerWrite';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
-import { activityInfo, heartbeat } from '@temporalio/activity';
+import { ApplicationFailure, activityInfo, heartbeat } from '@temporalio/activity';
 import { WorkflowIdReusePolicy } from '@temporalio/client';
 import { WorkflowNotFoundError } from '@temporalio/common';
 import { z } from 'zod';
@@ -497,6 +501,25 @@ export async function createTrackerItems(
       scope = await loadRunTrackerScope(request.workRequestId);
     } catch {
       logWarn('Tracker scope lookup failed; continuing', { runInputId: request.workRequestId });
+    }
+  }
+  // Jira and Linear: the target project / team must be in `tracker.allowedProjectKeys`. The epic is
+  // the deliverable, so a refusal fails the step (non-retryable) instead of silently skipping it.
+  // A scope load that throws propagates and is retried: it is not a policy answer.
+  if (
+    (trackerConfig.provider === 'jira' || trackerConfig.provider === 'linear') &&
+    decomposition.epics.length > 0 &&
+    trackerCreateAttempted(trackerConfig, projectKey)
+  ) {
+    const target = createTargetProjectKey(trackerConfig, projectKey);
+    const projectScope = await loadRunTrackerScope(request.workRequestId, {
+      launcher: currentRunLauncherId,
+    });
+    if (!isTargetProjectKeyAllowed(target, projectScope)) {
+      throw ApplicationFailure.nonRetryable(
+        trackerProjectNotAllowedMessage(target),
+        TRACKER_PROJECT_NOT_ALLOWED
+      );
     }
   }
   const writeOpts = {

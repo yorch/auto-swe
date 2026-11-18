@@ -209,15 +209,20 @@ export function pinnedImplementerRuntime(pinned: unknown): string | null {
 }
 
 /**
- * The configured tracker provider, for a run whose recorded write-back failure is `out_of_scope`
- * (the only class the run page words per provider); null otherwise or when the config cannot be
- * read. Nothing is looked up for any other run.
+ * The tracker provider for a run whose recorded write-back failure is `out_of_scope` (the only
+ * class the run page words per provider); null otherwise. The provider recorded when the write was
+ * skipped wins; a record from before it was kept falls back to the currently configured one, or
+ * null when the config cannot be read. Nothing is looked up for any other run.
  */
 export async function trackerProviderForWriteback(
   snapshot: unknown
 ): Promise<'github' | 'jira' | 'linear' | null> {
-  if (readTrackerWriteback(snapshot)?.failure !== 'out_of_scope') {
+  const writeback = readTrackerWriteback(snapshot);
+  if (writeback?.failure !== 'out_of_scope') {
     return null;
+  }
+  if (writeback.provider) {
+    return writeback.provider;
   }
   try {
     return (await resolveIssueTrackerConfig()).provider;

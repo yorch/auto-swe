@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import {
   resolveEffectiveSettings,
   resolveSetting,
@@ -96,8 +97,13 @@ function launchTeamCtxs(scope: TrackerLaunchScope | undefined): SettingResolveCt
       : [scope as TrackerLaunchTeam];
   const ctxs: SettingResolveCtx[] = [];
   for (const team of teams) {
-    if (team?.teamId) {
-      const ctx: SettingResolveCtx = { teamId: team.teamId };
+    // A context may name only an organization (a member of an organization with no team of
+    // their own): it resolves at that organization, then GLOBAL.
+    if (team?.teamId || team?.orgId) {
+      const ctx: SettingResolveCtx = {};
+      if (team.teamId) {
+        ctx.teamId = team.teamId;
+      }
       if (team.orgId) {
         ctx.orgId = team.orgId;
       }
@@ -449,8 +455,8 @@ export type RunLauncherRef = string | null | (() => Promise<string | null>);
 
 /**
  * The teams a user belongs to, with each team's organization, as launch contexts. Only ACTIVE
- * teams whose organization is active count (the one rule every launch-context lookup applies); a
- * member of an organization with no team of their own has no context here and resolves at GLOBAL.
+ * teams whose organization is active count (the one rule every launch-context lookup applies). This
+ * is the fallback for a run that recorded no contexts of its own.
  * Throws on a database failure; the scope loaders' callers treat that as a refusal.
  */
 export async function loadUserTrackerTeams(userId: string): Promise<TrackerLaunchTeam[]> {
@@ -468,18 +474,56 @@ export async function loadUserTrackerTeams(userId: string): Promise<TrackerLaunc
 }
 
 /**
- * The contexts a run with no git repository resolves the project-key allowlist at: the team of
- * the template it was launched from (its latest run), else the launcher's own active teams, else
- * none (GLOBAL only: a global template launched by no platform user, which is every service
- * principal's launch, since `launchedById` names users only). The launcher's team lists override
- * GLOBAL where they set one; GLOBAL is not unioned in. `launcher` is {@link RunLauncherRef}.
- * Throws on a database failure; the scope loaders' callers treat that as a refusal.
+ * The shape of `RunInput.trackerScopeContexts`: the contexts a launch recorded for the run, one
+ * `{ teamId?, orgId? }` per context. A value that does not parse is unreadable, never "none".
+ */
+export const trackerScopeContextsSchema = z.array(
+  z.object({ orgId: z.string().min(1).optional(), teamId: z.string().min(1).optional() })
+);
+
+/**
+ * Reads a stored `RunInput.trackerScopeContexts`. `null` / `undefined` is "not recorded" (a run
+ * launched before the column, or through a path that does not record one); a value that fails the
+ * schema throws, so the scope loaders' callers refuse rather than widen to GLOBAL.
+ */
+export function parseTrackerScopeContexts(value: unknown): TrackerLaunchTeam[] | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const parsed = trackerScopeContextsSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error('Recorded tracker scope contexts are unreadable');
+  }
+  return parsed.data.map((ctx) => ({
+    ...(ctx.orgId ? { orgId: ctx.orgId } : {}),
+    ...(ctx.teamId ? { teamId: ctx.teamId } : {}),
+  }));
+}
+
+/**
+ * The contexts a run with no git repository resolves the project-key allowlist at. The contexts
+ * the launch RECORDED on the run (`RunInput.trackerScopeContexts`) win, and a recorded empty list
+ * is GLOBAL only. A run with none recorded (launched before the column, or through a path that
+ * records none) falls back to the team of the template it was launched from (its latest run),
+ * else the launcher's own active teams, else none (GLOBAL only: no launcher). The launcher's team
+ * lists override GLOBAL where they set one; GLOBAL is not unioned in. `launcher` is
+ * {@link RunLauncherRef}, used only on that fallback.
+ * Throws on a database failure or an unreadable recorded value; the scope loaders' callers treat
+ * that as a refusal.
  */
 export async function loadRunLaunchContexts(
   runInputId: string,
   launcher?: RunLauncherRef
 ): Promise<TrackerLaunchTeam[]> {
   const prisma = await db();
+  const recordedRow = await prisma.runInput.findUnique({
+    select: { trackerScopeContexts: true },
+    where: { id: runInputId },
+  });
+  const recorded = parseTrackerScopeContexts(recordedRow?.trackerScopeContexts);
+  if (recorded) {
+    return recorded;
+  }
   const run = await prisma.workflowRun.findFirst({
     orderBy: { startedAt: 'desc' },
     select: {
@@ -584,7 +628,7 @@ export async function syncTrackerOnEvent(
 ): Promise<TicketFailureClass | null> {
   const outcome = await syncTrackerOutcome(event, config, opts);
   try {
-    opts.onOutcome?.(outcome);
+    opts.onOutcome?.({ ...outcome, ...(config.provider ? { provider: config.provider } : {}) });
   } catch {
     // A reporting sink must not change the sync's result.
   }

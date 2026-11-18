@@ -336,14 +336,21 @@ Guided paths build on those pieces:
   The default is empty, so any launcher who can reach a repository can read any ticket the platform's
   tracker credential can see, through **Fetch title**, the brief and the worker's ticket read. Once an
   admin lists project keys, a ticket outside them reads as not found, and a Jira or Linear comment or
-  transition on it is skipped. The PRD flow's creation of epics and stories is not checked against
-  the list.
-- **A run with no launcher resolves the allowed-projects list at GLOBAL only.** A launch with no git
-  repository resolves the list at the launching template's team and organization. A template with
-  no team resolves it at the launcher's own active teams, whose lists override GLOBAL (GLOBAL is
-  not unioned in), and at GLOBAL for a launcher with no team. A run with no launcher (a webhook, a
-  schedule, or a service-principal run) has none, so a list set only at TEAM or ORGANIZATION does
-  not reach it. **Fetch title** is offered only once a repository is chosen.
+  transition on it is skipped. A PRD run's epic and story creation is checked against the list too, by its
+  target project key (see the next item).
+- **A PRD run's refused project creates no issues, and the run continues.** Before a Jira or Linear
+  create, the target project key (the PRD input's key, else the configured default, else `BACKLOG`) must
+  be on `tracker.allowedProjectKeys` for the run's scope. Otherwise the `createTrackerItems` step fails
+  with `TRACKER_PROJECT_NOT_ALLOWED`. That step has `onFail: warn`, so the refusal is a step warning, the
+  run still submits its work requests, and no epics or stories are created. Add the PRD's target project
+  keys to the list, then run a PRD workflow and check that the epic appears. Nothing is created for a
+  PRD with no epics.
+- **A run with no recorded launch contexts falls back to the earlier lookup.** A launch with no git
+  repository and no template team records the contexts it resolves the list at on the run. A run
+  launched before that record existed, or through a launch path that records none, resolves at the
+  launching template's team, else the launcher's own active teams, else GLOBAL. A run with no launcher on
+  such a path (a webhook or a schedule) resolves at GLOBAL only. **Fetch title** is offered only once a
+  repository is chosen.
 - **The Description scan is advisory and pattern-based.** It applies only the INJECTION patterns, not
   the EXFILTRATION set, which matches ordinary prose such as URLs. A reworded instruction can pass it, so it is not a security boundary, and the typed text
   still reaches the agent as the brief in the user message, unchanged.

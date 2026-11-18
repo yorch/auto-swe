@@ -613,6 +613,35 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
       expect(configMock.calls).toBe(0);
     });
 
+    it('reports the recorded provider over the configured one, and reads no config', async () => {
+      configMock.provider = 'linear';
+      configMock.calls = 0;
+      expect(
+        await detail({
+          trackerWriteback: {
+            event: 'workflow_completed',
+            failure: 'out_of_scope',
+            provider: 'jira',
+          },
+        })
+      ).toBe('jira');
+      expect(configMock.calls).toBe(0);
+    });
+
+    it('falls back to the configured provider for a record without one', async () => {
+      configMock.provider = 'linear';
+      expect(await detail(outOfScope)).toBe('linear');
+    });
+
+    it('ignores a malformed recorded provider and falls back', async () => {
+      configMock.provider = 'github';
+      expect(
+        await detail({
+          trackerWriteback: { event: 'workflow_failed', failure: 'out_of_scope', provider: 'x' },
+        })
+      ).toBe('github');
+    });
+
     it('is null when the tracker config cannot be read', async () => {
       configMock.provider = 'jira';
       configMock.fail = true;

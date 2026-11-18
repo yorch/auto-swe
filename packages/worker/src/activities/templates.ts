@@ -1669,10 +1669,12 @@ export async function finalizeRun(
               type: event,
             };
       let wrote: boolean | undefined;
+      let provider: TrackerWriteback['provider'];
       const failure = await syncTrackerOnEvent(trackerEvent, trackerConfig, {
         launcher: currentRunLauncherId,
         onOutcome: (outcome) => {
           wrote = outcome.wrote;
+          provider = outcome.provider;
         },
         runInputId: run?.workRequestId,
         warn: logWarn,
@@ -1681,7 +1683,7 @@ export async function finalizeRun(
       // Either event writes to the ticket (a failed run comments, a finished one moves its status
       // and links its PR), and the sync resolves the first write the tracker refused: say so.
       if (failure) {
-        await recordTrackerWriteback(runId, { event, failure });
+        await recordTrackerWriteback(runId, { event, failure, ...(provider ? { provider } : {}) });
       }
     } catch (err) {
       logError(`[finalizeRun] tracker sync failed for run ${runId}:`, {

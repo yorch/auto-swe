@@ -585,18 +585,9 @@ a launcher's ticket reads may use:
 
 Only an ADMIN can change it, at `TEAM`, `ORGANIZATION` or globally. The key is parsed from the
 ticket id (`PAY-12` names `PAY`); a ticket id with no parseable key is refused when a list is set,
-and so is a key that is not listed. A refused ticket reads as not found. Resolution follows the
-repositories a request targets: each repository's team and organization is read, and the lists are
-unioned, so a key is allowed when any non-empty list names it. The request is unrestricted only when
-every list is empty. A launch with no git repository resolves the setting at the launching
-template's team and organization. A template with no team resolves it at the launcher's own teams: a
-person's memberships, counting only active teams of active organizations, and their lists are
-unioned. Those team lists override `GLOBAL`; `GLOBAL` is not unioned in, so a person on team `T`
-listing `PAY` while `GLOBAL` lists `ENG` is held to `PAY`, and a person with no such team resolves
-at `GLOBAL`. In the worker the launcher is the run's `launchedById`, and a run with no launcher (a
-webhook, a schedule, a service-principal run) resolves at `GLOBAL` only. The launch contexts are
-loaded only when no targeted repository supplies a team of its own; a lookup that is needed and
-fails refuses the read or write. If a list cannot be read, or a stored `TEAM`, `ORGANIZATION` or `GLOBAL` value no longer
+and so is a key that is not listed. A refused ticket reads as not found. Resolution follows the repositories a request targets: each repository's team and organization is read, and the lists are unioned, so a key is allowed when any non-empty list names it. The request is unrestricted only when every list is empty.
+
+A launch with no git repository resolves the setting at the launching template's team and organization. A template with no team resolves it at the contexts the launch records on the run (`RunInput.trackerScopeContexts`), which the launch computes once when it starts: each active team the launcher belongs to (in an active organization), plus each active organization the launcher belongs to where none of those teams is of that organization, so an organization member with no team of their own resolves at that organization. A service principal's launch records its own team when that team and its organization are active. Each recorded context's list overrides `GLOBAL` where it sets one; `GLOBAL` is not unioned in, so a person on team `T` listing `PAY` while `GLOBAL` lists `ENG` is held to `PAY`. A recorded empty list resolves at `GLOBAL`. The worker reads the same recorded value, so a launcher who later leaves a team does not change a running run's decision. A recorded value that cannot be read refuses the read or write, and a launch whose own lookup fails is refused with `503 LAUNCH_SCOPE_UNAVAILABLE` rather than recording nothing. The launch contexts are loaded only when no targeted repository supplies a team of its own; a lookup that is needed and fails refuses the read or write. If a list cannot be read, or a stored `TEAM`, `ORGANIZATION` or `GLOBAL` value no longer
 satisfies the setting's schema, the read is refused, so the check fails closed (the generic resolver
 would otherwise fall through to the next, wider tier).
 
@@ -604,9 +595,7 @@ The check applies to the launch-time ticket brief, `GET /api/v1/tickets/preview`
 ticket read for a run, the ticket read made when a submission is enriched, and Jira and Linear
 writes: a run's lifecycle comment or status transition, and the worker's `postTicketComment`. A write
 to a ticket outside the list is skipped (`out_of_scope`, or `posted: false`) and the run continues.
-It does not apply to the PRD flow's creation of epics and stories, which create issues in an
-operator-supplied project, nor to the Jira poller automations, which carry their own project
-allowlist. It does not apply to the GitHub issue tracker, which keeps its own rules above. Reads and writes are described in
+The PRD flow's creation of epics and stories is checked too. Its target project key is the key in the PRD input, else the configured default, else `BACKLOG`. A key the list does not name is refused before anything is created: the `createTrackerItems` step fails with `TRACKER_PROJECT_NOT_ALLOWED`, and the run continues without the issues. Add the PRD target project keys to the list before a PRD run creates issues. It does not apply to the Jira poller automations, which carry their own project allowlist, nor to the GitHub issue tracker, which keeps its own rules above. Reads and writes are described in
 [`work-views.md`](./work-views.md).
 
 ---
@@ -758,16 +747,14 @@ an MCP write is held for the launcher's decision.
   not frozen per run. Template-code audit snapshots include baseline and team entries at sign-off;
   those snapshots do not pin execution. A later edit can affect a retry or newly created workspace
   or step in an existing run. Existing proxy registrations retain their registered list until teardown.
-- **A run with no launcher sees only the `GLOBAL` project-key list.**
-  `tracker.allowedProjectKeys` resolves at the launching template's team, or, for a template
-  with no team and no repository, at the launcher's own active teams. A run with no launcher (a
-  webhook, a schedule, or a service-principal run) has none, so only a `GLOBAL` list reaches it. A
-  service principal's connection-less launch with no template team resolves at `GLOBAL` only, in the
-  gateway and the worker alike, never at the principal's own team. Set the list globally to cover
-  such runs.
-- **A member of an organization who is in none of its teams resolves at `GLOBAL`.** Launch contexts
-  are teams, not organizations, so an organization-scope list does not reach a launch with no
-  repository and no template team unless the launcher belongs to a team of that organization.
+- **A run with no recorded launch contexts falls back to the earlier lookup.** A launch with no
+  repository and no template team records its contexts on the run, and the run reads that record. A
+  run launched before the record existed, or through a launch path that records none (a webhook or a
+  schedule, for example), resolves `tracker.allowedProjectKeys` at the launching template's team, or at
+  the launcher's own active teams when the template has none. A run with no launcher on such a path
+  resolves at `GLOBAL` only, so a list set only at `TEAM` or `ORGANIZATION` does not reach it. Set the
+  list globally to cover such runs.
+
 
 - **Conventional titles carry no scope and no breaking-change marker.** The title is `type: summary`.
   A scope such as `fix(gateway):` or a `!` would come from model or ticket text and change what
