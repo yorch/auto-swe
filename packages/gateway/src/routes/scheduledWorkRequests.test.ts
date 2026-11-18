@@ -65,6 +65,7 @@ describe('/api/v1/scheduled-work-requests', () => {
   let orgSpentUsd = 0;
   /** Team owning the explicit-override template; null = GLOBAL. */
   let overrideTemplateTeamId: string | null = null;
+  let versionRow: Record<string, unknown> = { id: 'tplv-1' };
   /** Team ids the caller belongs to, for the template-visibility filter. */
   const callerTeamIds = ['team-1'];
   let failScheduleUpdate = false;
@@ -300,7 +301,7 @@ describe('/api/v1/scheduled-work-requests', () => {
           args.where.id === TPL_ID ? { activeVersion: 7, id: TPL_ID } : null,
       },
       workflowTemplateVersion: {
-        findUnique: async () => ({ id: 'tplv-1' }),
+        findUnique: async () => versionRow,
       },
     };
     app.decorate('prisma', prismaMock as unknown as never);
@@ -354,6 +355,7 @@ describe('/api/v1/scheduled-work-requests', () => {
     isOrgMember = true;
     orgSpentUsd = 0;
     overrideTemplateTeamId = null;
+    versionRow = { id: 'tplv-1' };
     failScheduleUpdate = false;
     triggerShouldFail = false;
     rowMovedUnderneath = false;
@@ -530,6 +532,27 @@ describe('/api/v1/scheduled-work-requests', () => {
     expect(syncCalls[0].templateVersion).toBe(7);
   });
 
+  it('refuses an unreviewed AI-generated version at create, accepts a reviewed one', async () => {
+    versionRow = { generatedBy: 'run_plan', id: 'tplv-1', reviewedAt: null };
+    const refused = await inject({
+      method: 'POST',
+      payload: { ...validBody, templateId: TPL_ID, templateVersion: 7 },
+      token: 'lead-token',
+      url: '/api/v1/scheduled-work-requests',
+    });
+    expect(refused.statusCode).toBe(409);
+    expect(JSON.parse(refused.payload).error.code).toBe('REVIEW_REQUIRED');
+    expect(syncCalls).toHaveLength(0);
+    versionRow = { generatedBy: 'run_plan', id: 'tplv-1', reviewedAt: new Date() };
+    const ok = await inject({
+      method: 'POST',
+      payload: { ...validBody, templateId: TPL_ID, templateVersion: 7 },
+      token: 'lead-token',
+      url: '/api/v1/scheduled-work-requests',
+    });
+    expect(ok.statusCode).toBe(201);
+  });
+
   it('rejects an unknown explicit template', async () => {
     const res = await inject({
       method: 'POST',
@@ -553,6 +576,31 @@ describe('/api/v1/scheduled-work-requests', () => {
     expect(JSON.parse(res.payload).error.code).toBe('SCHEDULE_SYNC_FAILED');
     expect(deletedRowIds).toHaveLength(1);
     expect(deletedWorkRequestIds).toHaveLength(1);
+  });
+
+  it('refuses to retarget a schedule to an unreviewed AI-generated version', async () => {
+    scheduleRow = {
+      budgetTier: 'STANDARD',
+      cronExpression: '0 3 * * 1',
+      description: 'Update all dependencies',
+      externalTicketPrefix: 'DEPS',
+      id: SCHEDULE_ID,
+      isActive: true,
+      name: 'Weekly dependency update',
+      repoId: REPO_ID,
+      templateId: null,
+      templateVersion: null,
+      workRequestId: WR_ID,
+    };
+    versionRow = { generatedBy: 'run_plan', id: 'tplv-1', reviewedAt: null };
+    const res = await inject({
+      method: 'PATCH',
+      payload: { templateId: TPL_ID, templateVersion: 7 },
+      token: 'lead-token',
+      url: `/api/v1/scheduled-work-requests/${SCHEDULE_ID}`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.payload).error.code).toBe('REVIEW_REQUIRED');
   });
 
   it('pauses the Temporal Schedule when isActive is toggled off', async () => {

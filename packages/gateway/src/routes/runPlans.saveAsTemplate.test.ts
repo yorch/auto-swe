@@ -208,14 +208,14 @@ describe('POST /run-plans/:id/save-as-template', () => {
     expect((tpl.versions[0] as { spec: { entry: string } }).spec.entry).toBe('start');
   });
 
-  it('uses the requested name for the template and its spec, and leaves output-only plans without a workspace', async () => {
+  it('uses the requested name for the template and its spec, and gives output-only plans the same git_repo provider', async () => {
     s.plans = [planRow({ mode: 'output-only' })];
     const res = await save({ name: 'My template' });
     expect(res.statusCode).toBe(201);
     expect(res.json().data.name).toBe('My template');
     const tpl = s.templates[0] as TemplateRow;
     expect((tpl.versions[0] as { spec: { name: string } }).spec.name).toBe('My template');
-    expect(tpl.workspaceProvider).toBeNull();
+    expect(tpl.workspaceProvider).toBe('git_repo');
   });
 
   it('refuses a body that names a team or anything else', async () => {

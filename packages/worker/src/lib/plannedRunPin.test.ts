@@ -21,6 +21,16 @@ vi.mock('@auto-swe/shared/workflow/runPlan', async (importOriginal) => ({
   // plan's mode. The real policy is exercised by the "real policy" case below.
   checkSkeletonPolicy: vi.fn(() => ({ errors: policy.errors, ok: policy.ok })),
 }));
+const settings = vi.hoisted(() => ({ enabled: true, fail: false }));
+vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/config')>()),
+  resolveSettings: vi.fn(async () => {
+    if (settings.fail) {
+      throw new Error('settings unreadable');
+    }
+    return { 'runPlans.enabled': settings.enabled };
+  }),
+}));
 vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
 vi.mock('@temporalio/activity', () => ({
   ApplicationFailure: {
@@ -161,9 +171,44 @@ async function codeOf(promise: Promise<unknown>): Promise<string> {
 beforeEach(() => {
   access.gate.value = { mode: 'off' };
   access.verdict.value = { allowed: true, reason: 'permitted' };
+  settings.enabled = true;
+  settings.fail = false;
   policy.ok = true;
   policy.errors = [];
   vi.mocked(checkSkeletonPolicy).mockClear();
+});
+
+describe('loadApprovedPlan kill switch', () => {
+  it('refuses non-retryably with PLAN_FEATURE_DISABLED when run plans are disabled', async () => {
+    settings.enabled = false;
+    expect(await codeOf(loadApprovedPlan(input(), scope, NOW, dbWith(planRow())))).toBe(
+      'PLAN_FEATURE_DISABLED'
+    );
+  });
+
+  it('leaves a launch unchanged while run plans are enabled', async () => {
+    expect((await loadApprovedPlan(input(), scope, NOW, dbWith(planRow()))).planId).toBe(PLAN_ID);
+  });
+
+  it('does not re-check the switch on a retry of an attempt that already claimed', async () => {
+    settings.enabled = false;
+    const pinned = await loadApprovedPlan(
+      input(),
+      scope,
+      NOW,
+      dbWith(planRow({ launchedWorkflowRunId: 'run-1', status: 'LAUNCHED' }), {
+        existingRun: 'run-1',
+      })
+    );
+    expect(pinned.claimedByRunId).toBe('run-1');
+  });
+
+  it('lets a failed settings read surface as a retryable error, neither opening nor refusing', async () => {
+    settings.fail = true;
+    await expect(loadApprovedPlan(input(), scope, NOW, dbWith(planRow()))).rejects.toThrow(
+      'settings unreadable'
+    );
+  });
 });
 
 describe('loadApprovedPlan', () => {

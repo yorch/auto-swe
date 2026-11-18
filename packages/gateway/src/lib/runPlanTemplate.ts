@@ -153,8 +153,10 @@ export async function saveRunPlanAsTemplate(
       specJson: spec as object,
       status: 'DRAFT',
       teamId: plan.teamId,
-      // A delivering plan works in a repository checkout; an output-only plan has no workspace.
-      workspaceProvider: plan.mode === 'delivering' ? 'git_repo' : null,
+      // Planned runs always launch with a repository checkout (`git_repo`), output-only plans
+      // included, and an agent node of either may use `workspace: true`; a null provider would
+      // fail that at run time without a connection.
+      workspaceProvider: 'git_repo',
     });
   } catch (err) {
     if ((err as { code?: unknown } | null)?.code === 'P2002') {

@@ -66,6 +66,7 @@ export type ScheduledFireRefusalReason =
   | 'org-budget-exceeded'
   | 'team-budget-exceeded'
   | 'request-in-flight'
+  | 'template-unreviewed'
   | keyof typeof REPO_ACCESS_REFUSAL_MESSAGE;
 
 export interface ScheduledFireRefusal {
@@ -96,7 +97,13 @@ const ADVISORY_LOG: AccessLog = {
  */
 export async function scheduledFireRefusal(
   db: PrismaClient,
-  input: { workflowId: string; workRequestId?: string; launchedById?: string | null },
+  input: {
+    workflowId: string;
+    workRequestId?: string;
+    launchedById?: string | null;
+    templateId?: string;
+    templateVersion?: number;
+  },
   settled: SettledLookup = workflowSettledStatus
 ): Promise<ScheduledFireRefusal | null> {
   if (!input.workRequestId || !input.workflowId.startsWith('sched-')) {
@@ -181,6 +188,22 @@ export async function scheduledFireRefusal(
       'launcher-out-of-sync',
       "the schedule's stored identity is out of sync with its Temporal schedule; re-save the schedule (edit it or resume it) to repair it"
     );
+  }
+  // An AI-generated version serves no run until someone reviews it. A schedule saved before the
+  // gateway enforced that may still name an unreviewed one; refuse it here, whatever the row says.
+  if (input.templateId && input.templateVersion != null) {
+    const tv = await db.workflowTemplateVersion.findUnique({
+      select: { generatedBy: true, reviewedAt: true },
+      where: {
+        templateId_version: { templateId: input.templateId, version: input.templateVersion },
+      },
+    });
+    if (tv?.generatedBy && !tv.reviewedAt) {
+      return refuse(
+        'template-unreviewed',
+        "the schedule's template version is AI-generated and has not been reviewed; review it, or point the schedule at a reviewed version"
+      );
+    }
   }
   const actor = { role: owner.role as Role, sub: owner.id };
   // The fire must use the schedule's explicit acting user; there is no creator fallback.
@@ -660,6 +683,8 @@ export async function assertScheduledFireAuthorized(input: {
   workflowId: string;
   workRequestId?: string;
   launchedById?: string | null;
+  templateId?: string;
+  templateVersion?: number;
 }): Promise<void> {
   const refusal = await scheduledFireRefusal(prisma, input);
   if (!refusal) {

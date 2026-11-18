@@ -1,5 +1,5 @@
 import { Role } from '@auto-swe/shared';
-import { roleMeets } from '@auto-swe/shared/config';
+import { resolveSettings, roleMeets } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import type { AccessLog } from '@auto-swe/shared/lib/accessActor';
 import {
@@ -296,6 +296,18 @@ export async function loadApprovedPlan(
   // approval and launch. (A retry of an attempt that already claimed returned above: the run it
   // would pin has started.)
   await checkLauncher(db, input.launchedById, plan.connectionId);
+
+  // The kill switch, taken again at launch: an approval can wait up to the launch window, and an
+  // ADMIN who disabled run plans meanwhile means no approved plan starts. Resolved at the plan's
+  // team and organization, as the gateway does. A failed read is not caught: like the gateway's
+  // (which answers 500) it neither opens nor refuses, so Temporal retries the activity.
+  const switches = await resolveSettings(['runPlans.enabled'], {
+    ...(scope.orgId ? { orgId: scope.orgId } : {}),
+    teamId: plan.teamId,
+  });
+  if (!switches['runPlans.enabled']) {
+    throw refuse('PLAN_FEATURE_DISABLED', 'run plans are disabled');
+  }
 
   // Re-checked at pin time, not trusted from approval: the rules may have tightened since, and the
   // stored reports are the generator's word, not this process's.
