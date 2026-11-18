@@ -12,14 +12,24 @@ const m = vi.hoisted(() => ({
   settings: { value: {} as Record<string, unknown> },
   slots: { value: [] as unknown[] },
   validate: vi.fn(),
+  window: { fail: false, minutes: undefined as unknown, scopes: [] as unknown[] },
 }));
 
 vi.mock('@auto-swe/shared/config', async (original) => ({
   ...(await original<object>()),
-  resolveSettings: vi.fn(async () => ({
-    'workspace.agentRunMaxConcurrentGlobal': 10,
-    'workspace.agentRunMaxConcurrentPerTeam': 2,
-  })),
+  resolveSettings: vi.fn(async (keys: string[], scope: unknown) => {
+    if (keys.includes('runPlans.launchWindowMinutes')) {
+      m.window.scopes.push(scope);
+      if (m.window.fail) {
+        throw new Error('settings unavailable');
+      }
+      return { 'runPlans.launchWindowMinutes': m.window.minutes ?? 10 };
+    }
+    return {
+      'workspace.agentRunMaxConcurrentGlobal': 10,
+      'workspace.agentRunMaxConcurrentPerTeam': 2,
+    };
+  }),
   snapshotPinnedSettings: vi.fn(async () => m.settings.value),
 }));
 vi.mock('@auto-swe/shared/workflow/runPlan', async (original) => ({
@@ -196,6 +206,8 @@ function fakePrisma(
         table.plan && matches(table.plan, where) ? [{ id: table.plan.id }] : []
       ),
       findUnique: vi.fn(async () => (table.plan ? { ...table.plan } : null)),
+      // The retention sweep asks which teams have launched plans due for scrubbing; none do here.
+      groupBy: vi.fn(async () => []),
       updateMany: vi.fn(
         async ({
           data,
@@ -213,6 +225,7 @@ function fakePrisma(
         }
       ),
     },
+    team: { findMany: vi.fn(async () => []) },
     user: {
       findUnique: vi.fn(async () =>
         opts.user === undefined ? { id: OWNER.sub, isActive: true, role: 'ENGINEER' } : opts.user
@@ -261,6 +274,9 @@ beforeEach(() => {
   m.hostsOk.value = true;
   m.settings.value = SETTINGS;
   m.slots.value = [];
+  m.window.fail = false;
+  m.window.minutes = undefined;
+  m.window.scopes = [];
   m.validate.mockReset().mockResolvedValue({ ok: true });
   m.launch.mockReset().mockResolvedValue({ activeWorkflowId: 'aw-1', ok: true });
   vi.mocked(checkSkeletonPolicy).mockClear();
@@ -283,6 +299,35 @@ describe('createPlanRecord', () => {
     expect(table.plan?.validationReport).toMatchObject({ errors: [] });
     const expiresAt = table.plan?.expiresAt as Date;
     expect(expiresAt.getTime()).toBeGreaterThan(NOW.getTime());
+  });
+
+  describe('cleans model text inside the spec before hashing and checking it', () => {
+    const HOSTILE = 'Go\u202e [x](https://evil.example) <b>now</b>';
+    const specWith = (title: string) => ({
+      ...SPEC,
+      nodes: { a: { group: 'g\u200b', status: 'SUCCESS', title, type: 'terminate' } },
+    });
+
+    it('stores the cleaned spec, hashes that, and gives the policy the same text', async () => {
+      const { prisma, table } = fakePrisma(null);
+      const result = await createPlanRecord(deps(prisma), createInput({ spec: specWith(HOSTILE) }));
+      expect(result).toMatchObject({ ok: true });
+      const stored = table.plan?.spec as { nodes: { a: { title: string; group: string } } };
+      expect(stored.nodes.a.title).toBe('Go x now');
+      expect(stored.nodes.a.group).toBe('g');
+      expect(table.plan?.specHash).toBe(hashRunPlanSpec(stored));
+      const checked = vi.mocked(checkSkeletonPolicy).mock.calls[0]?.[0] as unknown as {
+        nodes: { a: { title: string } };
+      };
+      expect(checked.nodes.a.title).toBe('Go x now');
+    });
+
+    it('does not refuse a plan only because a title is hostile or over-long', async () => {
+      const { prisma } = fakePrisma(null);
+      expect(
+        await createPlanRecord(deps(prisma), createInput({ spec: specWith('t'.repeat(5000)) }))
+      ).toMatchObject({ ok: true });
+    });
   });
 
   it('decides the repository with the launch decision, as the owner', async () => {
@@ -1178,6 +1223,63 @@ describe('approvePlan: agent coverage, consistency and the launch window', () =>
     const after = new Date(NOW.getTime() + LAUNCH_WINDOW_MS + 1);
     await expirePlans({ now: () => after, prisma: prisma as never });
     expect(table.plan?.status).toBe('EXPIRED');
+  });
+
+  it('uses the window configured for the plan team and organization', async () => {
+    m.window.minutes = 45;
+    const { prisma, table } = fakePrisma(planRow({ expiresAt: new Date(NOW.getTime() + 1_000) }));
+    expect(await approvePlan(deps(prisma), OWNER, PLAN_ID)).toMatchObject({ ok: true });
+    expect(((table.plan as PlanRow).expiresAt as Date).getTime()).toBe(NOW.getTime() + 45 * 60_000);
+    expect(m.window.scopes).toEqual([{ orgId: 'org-1', teamId: 'team-1' }]);
+    // The sweep reads the same stored expiry: still approved at 44 minutes, expired after 45.
+    await expirePlans({
+      now: () => new Date(NOW.getTime() + 44 * 60_000),
+      prisma: prisma as never,
+    });
+    expect(table.plan?.status).toBe('APPROVED');
+    await expirePlans({
+      now: () => new Date(NOW.getTime() + 45 * 60_000 + 1),
+      prisma: prisma as never,
+    });
+    expect(table.plan?.status).toBe('EXPIRED');
+  });
+
+  it('falls back to ten minutes when the setting cannot be read', async () => {
+    m.window.fail = true;
+    const warn = vi.fn();
+    const { prisma, table } = fakePrisma(planRow({ expiresAt: new Date(NOW.getTime() + 1_000) }));
+    expect(
+      await approvePlan(deps(prisma, { log: { warn } as never }), OWNER, PLAN_ID)
+    ).toMatchObject({ ok: true });
+    expect(((table.plan as PlanRow).expiresAt as Date).getTime()).toBe(
+      NOW.getTime() + LAUNCH_WINDOW_MS
+    );
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it.each([
+    [0, 1],
+    [-5, 1],
+    [1000, 240],
+    [Number.NaN, 10],
+    ['30', 10],
+  ])('clamps a stray value %s to %s minutes', async (value, minutes) => {
+    m.window.minutes = value;
+    const { prisma, table } = fakePrisma(planRow({ expiresAt: new Date(NOW.getTime() + 1_000) }));
+    await approvePlan(deps(prisma), OWNER, PLAN_ID);
+    expect(((table.plan as PlanRow).expiresAt as Date).getTime()).toBe(
+      NOW.getTime() + minutes * 60_000
+    );
+  });
+
+  it('puts the original expiry back when the approval is reverted', async () => {
+    m.window.minutes = 60;
+    const original = new Date(NOW.getTime() + 1_000);
+    const { prisma, table } = fakePrisma(planRow({ expiresAt: original }));
+    m.launch.mockRejectedValueOnce(new Error('boom'));
+    await approveAndLaunchPlan(deps(prisma), OWNER, PLAN_ID).catch(() => undefined);
+    expect(table.plan?.status).toBe('PENDING');
+    expect(table.plan?.expiresAt).toEqual(original);
   });
 
   it('never shortens a lifetime that already outlasts the window', async () => {

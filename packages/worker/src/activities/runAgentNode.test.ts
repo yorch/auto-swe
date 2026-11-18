@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { buildKnowledgeTools } from '../agents/knowledgeTools.js';
 import { searchRunKnowledge } from '../lib/knowledgeBaseSearch.js';
 import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
@@ -141,7 +141,7 @@ vi.mock('../lib/pauseSnapshot.js', async (importOriginal) => ({
 }));
 vi.mock('../lib/activityLog.js', () => ({ logWarn: vi.fn() }));
 
-import { ApplicationFailure } from '@temporalio/activity';
+import { ApplicationFailure, Context } from '@temporalio/activity';
 import { createMastraBrowserTools } from '../agents/browserTools.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
 import { loadMcpTools } from '../agents/mcpTools.js';
@@ -558,7 +558,13 @@ describe('runAgentNode', () => {
       expect(options?.abortSignal?.aborted).toBe(false);
       expect(events).toHaveBeenCalledWith({
         name: 'agent.ceilings_applied',
-        outputJson: { agentKey: 'reviewer', maxSteps: 12, maxWallClockSeconds: 600 },
+        outputJson: {
+          activityBudgetSeconds: null,
+          agentKey: 'reviewer',
+          effectiveWallClockSeconds: 600,
+          maxSteps: 12,
+          maxWallClockSeconds: 600,
+        },
       });
       events.mockRestore();
     });
@@ -593,6 +599,108 @@ describe('runAgentNode', () => {
       }
     );
 
+    describe('activity timeout clamp', () => {
+      const withActivity = (startToCloseTimeoutMs: number | undefined) =>
+        vi.spyOn(Context, 'current').mockReturnValue({ info: { startToCloseTimeoutMs } } as never);
+      const configured = (seconds: number) =>
+        resolveSettingsMock.mockResolvedValueOnce({
+          'workspace.agentRunMaxSteps': 12,
+          'workspace.agentRunMaxWallClockSeconds': seconds,
+        });
+      afterEach(() => {
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+      });
+
+      it('clamps the default 1800 s to 600 - 90 s inside a 10 minute activity', async () => {
+        // The elapsed time is read from the clock, and the deadline is floored to whole seconds, so a
+        // real clock (a few ms of load) would give 509 s: freeze it.
+        vi.useFakeTimers({ toFake: ['Date'] });
+        await runPlanned();
+        configured(1800);
+        withActivity(600_000);
+        const events = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+        const spy = vi.spyOn(AbortSignal, 'timeout');
+        await runAgentNode({ agentRef: 'reviewer', userMessage: 'x' });
+        expect(spy).toHaveBeenCalledWith(510_000);
+        expect(events).toHaveBeenCalledWith({
+          name: 'agent.ceilings_applied',
+          outputJson: {
+            activityBudgetSeconds: 600,
+            agentKey: 'reviewer',
+            effectiveWallClockSeconds: 510,
+            maxSteps: 12,
+            maxWallClockSeconds: 1800,
+          },
+        });
+      });
+
+      it('shrinks the deadline by time already spent (a 30 minute activity, 20 minutes in)', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        await runPlanned();
+        configured(1800);
+        withActivity(1_800_000);
+        mockedRunAgent.mockImplementationOnce(
+          async () => ({ stepCount: 3, stoppedReason: 'wall_clock', text: 'part' }) as never
+        );
+        const spy = vi.spyOn(AbortSignal, 'timeout');
+        const events = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+        // Workspace-style setup: 20 minutes pass before the loop starts.
+        vi.mocked(resolveAgentRuntime).mockImplementationOnce(async () => {
+          vi.setSystemTime(Date.now() + 1_200_000);
+          return { runtime: 'mastra', source: 'run' };
+        });
+        const err = await runAgentNode({ agentRef: 'reviewer', userMessage: 'x' }).catch((e) => e);
+        expect(spy).toHaveBeenCalledWith(510_000);
+        expect(err).toMatchObject({ nonRetryable: true, type: 'AGENT_CEILING_REACHED' });
+        expect(events).toHaveBeenCalledWith({
+          name: 'agent.ceiling_reached',
+          outputJson: {
+            agentKey: 'reviewer',
+            ceiling: 'wall_clock',
+            clampedByActivityTimeout: true,
+            steps: 3,
+            value: 510,
+          },
+        });
+      });
+
+      it('uses a configured value below the activity budget as is', async () => {
+        await runPlanned();
+        configured(300);
+        withActivity(600_000);
+        const spy = vi.spyOn(AbortSignal, 'timeout');
+        await runAgentNode({ agentRef: 'reviewer', userMessage: 'x' });
+        expect(spy).toHaveBeenCalledWith(300_000);
+      });
+
+      it('falls back to the configured value when the activity info has no timeout', async () => {
+        await runPlanned();
+        configured(1800);
+        withActivity(undefined);
+        const spy = vi.spyOn(AbortSignal, 'timeout');
+        await runAgentNode({ agentRef: 'reviewer', userMessage: 'x' });
+        expect(spy).toHaveBeenCalledWith(1_800_000);
+      });
+
+      it('fails fast, non-retryably, when the activity budget is nearly spent', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        await runPlanned();
+        configured(1800);
+        withActivity(600_000);
+        vi.mocked(resolveAgentRuntime).mockImplementationOnce(async () => {
+          // 600 - 500 - 90 = 10 s of room, under the 30 s minimum.
+          vi.setSystemTime(Date.now() + 500_000);
+          return { runtime: 'mastra', source: 'run' };
+        });
+        const callsBefore = mockedRunAgent.mock.calls.length;
+        const err = await runAgentNode({ agentRef: 'reviewer', userMessage: 'x' }).catch((e) => e);
+        expect(err).toMatchObject({ nonRetryable: true, type: 'AGENT_CEILING_REACHED' });
+        expect(mockedRunAgent.mock.calls.length).toBe(callsBefore);
+        expect(persistActivityTrace).toHaveBeenCalled();
+      });
+    });
+
     it('lets a planned node that finishes under its ceilings return its output', async () => {
       await runPlanned();
       await expect(runAgentNode({ agentRef: 'reviewer', userMessage: 'x' })).resolves.toEqual({
@@ -619,7 +727,13 @@ describe('runAgentNode', () => {
       expect(mockedRunAgent.mock.calls[0][2]).toMatchObject({ maxSteps: 500 });
       expect(events).toHaveBeenCalledWith({
         name: 'agent.ceilings_applied',
-        outputJson: { agentKey: 'reviewer', maxSteps: 500, maxWallClockSeconds: 14_400 },
+        outputJson: {
+          activityBudgetSeconds: null,
+          agentKey: 'reviewer',
+          effectiveWallClockSeconds: 14_400,
+          maxSteps: 500,
+          maxWallClockSeconds: 14_400,
+        },
       });
       events.mockRestore();
     });
@@ -1205,6 +1319,52 @@ describe('runAgentNode', () => {
       expect(harness.build).toHaveBeenCalledWith(
         expect.objectContaining({ deadline: expect.any(AbortSignal), maxTurns: 7 })
       );
+    });
+
+    it("hands a planned run's harness the same clamped deadline as the Mastra loop", async () => {
+      // Frozen for the same reason as the clamp tests above: elapsed time is read from the clock.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.mocked(resolveAgentRuntime).mockResolvedValueOnce({
+        runtime: 'claude-code',
+        source: 'run',
+      });
+      vi.mocked(resolveAgent).mockResolvedValue({
+        id: 'row-3',
+        model: { apiKey: 'k', spec: 'anthropic/claude-sonnet-5-5', systemPrompt: 'Review.' },
+        runtime: 'claude-code',
+        skills: [],
+        toolKeys: ['readFile'],
+        version: 3,
+      } as never);
+      vi.mocked(currentRequestContext).mockResolvedValueOnce({
+        teamId: 'team-1',
+        workflowTemplateId: 'tpl-planned',
+      });
+      findTemplate.mockResolvedValueOnce({ origin: 'system:planned-run', teamId: null });
+      resolveSettingsMock.mockResolvedValueOnce({
+        'workspace.agentRunMaxSteps': 7,
+        'workspace.agentRunMaxWallClockSeconds': 1800,
+      });
+      vi.spyOn(Context, 'current').mockReturnValue({
+        info: { startToCloseTimeoutMs: 1_800_000 },
+      } as never);
+      const timeout = vi.spyOn(AbortSignal, 'timeout');
+      vi.mocked(runImplementerTurn).mockResolvedValueOnce({
+        steps: 2,
+        text: 'done',
+      } as never);
+      await runAgentNode({
+        agentRef: 'reviewer',
+        userMessage: 'audit',
+        workspace: { branch: 'auto/JIRA-1', repoId: 'repo-1', ticketId: 'JIRA-1' },
+      });
+      // 1800 s activity, nothing elapsed: the 1800 s setting is clamped to 1800 - 90.
+      expect(timeout).toHaveBeenCalledWith(1_710_000);
+      expect(harness.build).toHaveBeenCalledWith(
+        expect.objectContaining({ deadline: expect.any(AbortSignal) })
+      );
+      vi.restoreAllMocks();
+      vi.useRealTimers();
     });
 
     it('runs one harness turn in the checkout when the run pinned the agent to it', async () => {

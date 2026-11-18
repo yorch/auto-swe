@@ -72,7 +72,7 @@ function scrubbedCost(cost: unknown): Record<string, unknown> {
  * keeps its plan out of both the update and the list.
  */
 export async function expireRunPlans(
-  prisma: Pick<PrismaClient, 'runPlan'>,
+  prisma: Pick<PrismaClient, 'runPlan' | 'team'>,
   now: Date,
   opts: {
     retentionMs?: number;
@@ -129,7 +129,7 @@ export async function expireRunPlans(
 }
 
 async function scrubLaunchedPlans(
-  prisma: Pick<PrismaClient, 'runPlan'>,
+  prisma: Pick<PrismaClient, 'runPlan' | 'team'>,
   now: Date,
   retentionOf: ((scope: PlanRetentionScope) => Promise<number>) | undefined
 ): Promise<ExpirePlansResult['scrubbed']> {
@@ -142,24 +142,38 @@ async function scrubLaunchedPlans(
       }));
   // The shortest retention is one day, so only plans approved before then can be due anywhere.
   const earliest = new Date(now.getTime() - DAY_MS);
-  const teams = await runUnscoped(
+  // One aggregate row per team, computed in SQL: no plan row is loaded to find the teams.
+  const groups = await runUnscoped(
     'the plan sweeper finds the teams that hold launched plans',
     ['RunPlan'],
     () =>
-      prisma.runPlan.findMany({
-        distinct: ['teamId'],
-        select: { team: { select: { orgId: true } }, teamId: true },
+      prisma.runPlan.groupBy({
+        by: ['teamId'],
+        orderBy: { teamId: 'asc' },
         where: { approvedAt: { lt: earliest }, scrubbedAt: null, status: 'LAUNCHED' },
       })
   );
-  const scrubbed: ExpirePlansResult['scrubbed'] = [];
-  for (const team of teams) {
-    if (scrubbed.length >= SCRUB_BATCH) {
-      break;
+  // Resolve each team's retention first; a team that resolves to 0 (or cannot be read) is dropped
+  // here and its plans are never read.
+  const active: Array<{ teamId: string; cutoff: Date; exhausted: boolean }> = [];
+  const teamRows =
+    groups.length === 0
+      ? []
+      : await runUnscoped('the plan sweeper reads the organization of each team', ['Team'], () =>
+          prisma.team.findMany({
+            select: { id: true, orgId: true },
+            where: { id: { in: groups.map((g) => g.teamId) } },
+          })
+        );
+  const orgOf = new Map(teamRows.map((t) => [t.id, t.orgId]));
+  for (const { teamId } of groups) {
+    const orgId = orgOf.get(teamId);
+    if (orgId === undefined) {
+      continue;
     }
     let days: number;
     try {
-      days = await resolveDays({ orgId: team.team.orgId, teamId: team.teamId });
+      days = await resolveDays({ orgId, teamId });
     } catch {
       // An unreadable setting scrubs nothing: deleting text is never the safe guess.
       continue;
@@ -167,51 +181,71 @@ async function scrubLaunchedPlans(
     if (!Number.isFinite(days) || days <= 0) {
       continue;
     }
-    const cutoff = new Date(now.getTime() - days * DAY_MS);
-    const due = await runUnscoped(
-      'the plan sweeper finds launched plans past their retention',
-      ['RunPlan'],
-      () =>
-        prisma.runPlan.findMany({
-          orderBy: { approvedAt: 'asc' },
-          select: { costEstimate: true, id: true, mode: true },
-          take: SCRUB_BATCH - scrubbed.length,
-          where: {
-            approvedAt: { lt: cutoff },
-            scrubbedAt: null,
-            status: 'LAUNCHED',
-            teamId: team.teamId,
-          },
-        })
-    );
-    for (const plan of due) {
-      const result = await runUnscoped(
-        'the plan sweeper scrubs one launched plan past its retention',
+    active.push({ cutoff: new Date(now.getTime() - days * DAY_MS), exhausted: false, teamId });
+  }
+  const scrubbed: ExpirePlansResult['scrubbed'] = [];
+  // Round-robin passes so one team with a backlog cannot starve the others: each pass gives every
+  // team that is not yet drained an equal share of what is left of the batch.
+  while (scrubbed.length < SCRUB_BATCH) {
+    const live = active.filter((t) => !t.exhausted);
+    if (live.length === 0) {
+      break;
+    }
+    const share = Math.max(1, Math.floor((SCRUB_BATCH - scrubbed.length) / live.length));
+    for (const team of live) {
+      if (scrubbed.length >= SCRUB_BATCH) {
+        break;
+      }
+      const take = Math.min(share, SCRUB_BATCH - scrubbed.length);
+      const due = await runUnscoped(
+        'the plan sweeper finds launched plans past their retention',
         ['RunPlan'],
         () =>
-          prisma.runPlan.updateMany({
-            data: {
-              catalogHash: SCRUBBED_HASH,
-              costEstimate: scrubbedCost(plan.costEstimate) as object,
-              intent: '',
-              routerCandidates: {},
-              scrubbedAt: now,
-              skeletonReport: {},
-              spec: {},
-              specHash: SCRUBBED_HASH,
-              validationReport: {},
-            },
+          prisma.runPlan.findMany({
+            orderBy: { approvedAt: 'asc' },
+            select: { costEstimate: true, id: true, mode: true },
+            take,
             where: {
-              approvedAt: { lt: cutoff },
-              id: plan.id,
+              approvedAt: { lt: team.cutoff },
               scrubbedAt: null,
               status: 'LAUNCHED',
               teamId: team.teamId,
             },
           })
       );
-      if (result.count === 1) {
-        scrubbed.push({ id: plan.id, mode: plan.mode, teamId: team.teamId });
+      // Fewer rows than asked for means the team is drained; a full page may have more behind it.
+      if (due.length < take) {
+        team.exhausted = true;
+      }
+      for (const plan of due) {
+        const result = await runUnscoped(
+          'the plan sweeper scrubs one launched plan past its retention',
+          ['RunPlan'],
+          () =>
+            prisma.runPlan.updateMany({
+              data: {
+                catalogHash: SCRUBBED_HASH,
+                costEstimate: scrubbedCost(plan.costEstimate) as object,
+                intent: '',
+                routerCandidates: {},
+                scrubbedAt: now,
+                skeletonReport: {},
+                spec: {},
+                specHash: SCRUBBED_HASH,
+                validationReport: {},
+              },
+              where: {
+                approvedAt: { lt: team.cutoff },
+                id: plan.id,
+                scrubbedAt: null,
+                status: 'LAUNCHED',
+                teamId: team.teamId,
+              },
+            })
+        );
+        if (result.count === 1) {
+          scrubbed.push({ id: plan.id, mode: plan.mode, teamId: team.teamId });
+        }
       }
     }
   }

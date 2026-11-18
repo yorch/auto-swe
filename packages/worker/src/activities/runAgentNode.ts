@@ -47,7 +47,12 @@ import {
   resumeMessage,
 } from '../lib/pauseResume.js';
 import {
+  ACTIVITY_SLACK_SECONDS,
+  currentActivityTimeoutMs,
+  type EffectiveDeadline,
+  effectiveWallClock,
   isPlannedRunContext,
+  MIN_EFFECTIVE_WALL_CLOCK_SECONDS,
   type PlannedRunCeilings,
   resolvePlannedRunCeilings,
 } from '../lib/plannedRunCeilings.js';
@@ -131,6 +136,9 @@ export async function runAgentNode(
 async function runAgentNodeImpl(
   input: RunAgentNodeInput
 ): Promise<RunAgentNodeResult | NeedsInputResult> {
+  // The activity attempt's own clock: the planned-run deadline is clamped to what is left of
+  // its startToCloseTimeout (see `effectiveWallClock`).
+  const startedAtMs = Date.now();
   const baseCtx = await currentRequestContext();
   // Phase A: a channel-task run carries its originating channelId on the request
   // (not derivable from `currentRequestContext`, which keys on ActiveWorkflow).
@@ -164,7 +172,7 @@ async function runAgentNodeImpl(
     const loop = await resolveAgentRuntime(key, resolveCtx, 'agentRunSetting');
     // A planned run's agent nodes carry no step or time fields of their own, so they obey the
     // ceilings an agent run does. Decided here, in the activity, from the run's template row.
-    const limits = await plannedRunLimits(resolveCtx, key, tracer);
+    const limits = await plannedRunLimits(resolveCtx, key, tracer, startedAtMs);
     if (input.workspace) {
       return await runInCheckout({
         input,
@@ -609,19 +617,63 @@ interface PlannedRunLimits {
 async function plannedRunLimits(
   ctx: ResolveCtx,
   agentKey: string,
-  tracer: AgentTracer
+  tracer: AgentTracer,
+  startedAtMs: number = Date.now()
 ): Promise<PlannedRunLimits | undefined> {
   if (!(await isPlannedRunContext(ctx))) {
     return undefined;
   }
   const ceilings = await resolvePlannedRunCeilings(ctx);
+  const activityTimeoutMs = currentActivityTimeoutMs();
+  const measure = () =>
+    effectiveWallClock({
+      activityTimeoutMs,
+      configuredSeconds: ceilings.maxWallClockSeconds,
+      elapsedMs: Date.now() - startedAtMs,
+    });
+  const initial = measure();
   tracer.addActivityEvent({
     name: 'agent.ceilings_applied',
-    outputJson: { agentKey, ...ceilings },
+    outputJson: {
+      agentKey,
+      ...ceilings,
+      activityBudgetSeconds: initial.activityBudgetSeconds,
+      effectiveWallClockSeconds: initial.exhausted ? 0 : initial.effectiveSeconds,
+    },
   });
+  // Armed when the agent loop starts, so workspace setup has already been charged to the budget.
   let deadline: AbortSignal | undefined;
+  let effective: EffectiveDeadline = initial;
   const start = () => {
-    deadline ??= AbortSignal.timeout(ceilings.maxWallClockSeconds * 1000);
+    if (!deadline) {
+      effective = measure();
+      if (effective.exhausted) {
+        tracer.addActivityEvent({
+          name: 'agent.ceiling_reached',
+          outputJson: {
+            agentKey,
+            ceiling: 'activity_budget',
+            clampedByActivityTimeout: true,
+            value: effective.activityBudgetSeconds,
+          },
+        });
+        throw ApplicationFailure.nonRetryable(
+          `Agent node '${agentKey}' has too little of its activity time budget left to run (under ${MIN_EFFECTIVE_WALL_CLOCK_SECONDS} seconds after reserving ${ACTIVITY_SLACK_SECONDS} for cleanup); its output is incomplete.`,
+          'AGENT_CEILING_REACHED'
+        );
+      }
+      if (effective.clamped) {
+        tracer.addActivityEvent({
+          name: 'agent.deadline_started',
+          outputJson: {
+            activityBudgetSeconds: effective.activityBudgetSeconds,
+            agentKey,
+            effectiveWallClockSeconds: effective.effectiveSeconds,
+          },
+        });
+      }
+      deadline = AbortSignal.timeout(effective.effectiveSeconds * 1000);
+    }
     return deadline;
   };
   return {
@@ -630,13 +682,24 @@ async function plannedRunLimits(
         return;
       }
       const steppedOut = stoppedReason === 'max_steps';
-      const value = steppedOut ? ceilings.maxSteps : ceilings.maxWallClockSeconds;
+      const clamped = !steppedOut && effective.clamped;
+      const value = steppedOut
+        ? ceilings.maxSteps
+        : clamped
+          ? effective.effectiveSeconds
+          : ceilings.maxWallClockSeconds;
       tracer.addActivityEvent({
         name: 'agent.ceiling_reached',
-        outputJson: { agentKey, ceiling: steppedOut ? 'steps' : 'wall_clock', steps, value },
+        outputJson: {
+          agentKey,
+          ceiling: steppedOut ? 'steps' : 'wall_clock',
+          steps,
+          value,
+          ...(clamped ? { clampedByActivityTimeout: true } : {}),
+        },
       });
       throw ApplicationFailure.nonRetryable(
-        `Agent node '${agentKey}' stopped at the planned-run ${steppedOut ? `step ceiling (${value} steps)` : `wall-clock ceiling (${value} seconds)`}; its output is incomplete.`,
+        `Agent node '${agentKey}' stopped at the planned-run ${steppedOut ? `step ceiling (${value} steps)` : `wall-clock ceiling (${value} seconds${clamped ? ', limited by the activity timeout' : ''})`}; its output is incomplete.`,
         'AGENT_CEILING_REACHED'
       );
     },

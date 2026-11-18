@@ -18,6 +18,7 @@ function fake(due: string[], stillExpired: string[], deleted = 0) {
         .mockResolvedValueOnce(due.map((id) => ({ id })))
         .mockResolvedValueOnce(stillExpired.map((id) => ({ id })))
         .mockResolvedValue([]),
+      groupBy: vi.fn(async (_args: unknown) => []),
       updateMany: vi.fn(async (_args: unknown) => ({ count: due.length })),
     },
   };
@@ -68,7 +69,6 @@ interface Where {
 }
 interface Args {
   where: Where;
-  distinct?: string[];
   take?: number;
   data?: Partial<Row>;
 }
@@ -136,17 +136,14 @@ function table(rows: Row[]) {
       deleteMany: vi.fn(async (_args: unknown) => ({ count: 0 })),
       findMany: vi.fn(async (args: Args) => {
         const hit = rows.filter((r) => matches(r, args.where));
-        if (args.distinct) {
-          const seen = new Map<string, Row>();
-          for (const r of hit) {
-            seen.set(r.teamId, r);
-          }
-          return [...seen.values()].map((r) => ({ team: { orgId: r.orgId }, teamId: r.teamId }));
-        }
         return hit
           .sort((a, b) => a.approvedAt.getTime() - b.approvedAt.getTime())
           .slice(0, args.take ?? 1000)
           .map((r) => ({ costEstimate: r.costEstimate, id: r.id, mode: r.mode }));
+      }),
+      groupBy: vi.fn(async (args: Args) => {
+        const teams = [...new Set(rows.filter((r) => matches(r, args.where)).map((r) => r.teamId))];
+        return teams.sort().map((teamId) => ({ teamId }));
       }),
       updateMany: vi.fn(async (args: Args) => {
         const hit = rows.filter((r) => matches(r, args.where));
@@ -155,6 +152,14 @@ function table(rows: Row[]) {
         }
         return { count: hit.length };
       }),
+    },
+    team: {
+      findMany: vi.fn(async (args: { where: { id: { in: string[] } } }) =>
+        args.where.id.in.map((id) => ({
+          id,
+          orgId: rows.find((r) => r.teamId === id)?.orgId ?? 'o1',
+        }))
+      ),
     },
   };
 }
@@ -264,5 +269,38 @@ describe('expireRunPlans: scrubbing launched plans', () => {
     const db = table(Array.from({ length: SCRUB_BATCH + 5 }, (_, i) => row(`p${i}`)));
     const result = await expireRunPlans(db as never, NOW, { launchedRetentionDays: retention({}) });
     expect(result.scrubbed).toHaveLength(SCRUB_BATCH);
+  });
+
+  it('shares one batch fairly: a team with a backlog cannot starve the others', async () => {
+    const rows = [
+      ...Array.from({ length: 500 }, (_, i) => row(`a${i}`, { teamId: 'tA' })),
+      ...['b0', 'b1', 'b2'].map((id) => row(id, { teamId: 'tB' })),
+      ...['c0', 'c1', 'c2'].map((id) => row(id, { teamId: 'tC' })),
+    ];
+    const db = table(rows);
+    const result = await expireRunPlans(db as never, NOW, { launchedRetentionDays: retention({}) });
+    const byTeam = (t: string) => result.scrubbed.filter((p) => p.teamId === t).length;
+    expect(byTeam('tB')).toBe(3);
+    expect(byTeam('tC')).toBe(3);
+    expect(byTeam('tA')).toBe(SCRUB_BATCH - 6);
+    expect(result.scrubbed).toHaveLength(SCRUB_BATCH);
+  });
+
+  it('finds the teams with an aggregate, not by loading plan rows, and never reads a retention-0 team', async () => {
+    const db = table([row('keep', { teamId: 'tZero' }), row('old', { teamId: 't1' })]);
+    const result = await expireRunPlans(db as never, NOW, {
+      launchedRetentionDays: retention({ tZero: 0 }),
+    });
+    expect(result.scrubbed.map((p) => p.id)).toEqual(['old']);
+    expect(db.runPlan.groupBy).toHaveBeenCalledTimes(1);
+    const planReads = db.runPlan.findMany.mock.calls
+      .map((c) => (c[0] as Args).where)
+      .filter((w) => w.status === 'LAUNCHED');
+    expect(planReads.length).toBeGreaterThan(0);
+    // Every plan read names one team, and never the retention-0 team.
+    for (const where of planReads) {
+      expect(where.teamId).toBeDefined();
+      expect(where.teamId).not.toBe('tZero');
+    }
   });
 });
