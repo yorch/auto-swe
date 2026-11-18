@@ -614,10 +614,11 @@ describe('human step routes', () => {
       const qualified = {
         AND: [
           { organizationName: { endsWith: 'Acme', mode: 'insensitive' } },
-          { repoName: { startsWith: 'pay', mode: 'insensitive' } },
+          { repoName: { mode: 'insensitive', startsWith: 'pay' } },
         ],
       };
-      const or = (where.AND?.[1] as { OR: unknown[] }).OR;
+      const textTerm = where.AND?.[1] as { OR: unknown[] };
+      const or = textTerm.OR;
       expect(or).toContainEqual({ run: { connection: qualified } });
       expect(or).toContainEqual({ run: { workRequest: { connection: qualified } } });
     });

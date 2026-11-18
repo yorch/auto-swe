@@ -5225,12 +5225,7 @@
       "category": "Surfaces",
       "detail": "The trace stream distinguishes older events not loaded by the server from matching events held back by its rendering limit. Search sees the loaded payload representation, which may be trimmed. Assistant-failure search and common-cause summaries are page-local. Full-payload mode disables run-detail polling, not worker execution. Draft-discard prompts protect participating forms and ordinary same-origin link clicks or unloads; they are not a universal router interception or an authorization boundary. Role-conditioned controls and confirmations still rely on gateway permissions.",
       "id": "dashboardViewBounds",
-      "refs": [
-        "webTraceStream",
-        "webPayloadMode",
-        "webFailureFilter",
-        "webDraftGuard"
-      ],
+      "refs": ["webTraceStream", "webPayloadMode", "webFailureFilter", "webDraftGuard"],
       "status": "Confirmed boundary",
       "title": "Loaded views and UI safeguards have local boundaries"
     },
