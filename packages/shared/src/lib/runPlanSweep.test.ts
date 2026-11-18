@@ -69,6 +69,8 @@ interface Where {
 }
 interface Args {
   where: Where;
+  _min?: { approvedAt?: boolean };
+  orderBy?: { _min?: { approvedAt?: 'asc' | 'desc' }; teamId?: 'asc' | 'desc' };
   take?: number;
   data?: Partial<Row>;
 }
@@ -142,8 +144,27 @@ function table(rows: Row[]) {
           .map((r) => ({ costEstimate: r.costEstimate, id: r.id, mode: r.mode }));
       }),
       groupBy: vi.fn(async (args: Args) => {
-        const teams = [...new Set(rows.filter((r) => matches(r, args.where)).map((r) => r.teamId))];
-        return teams.sort().map((teamId) => ({ teamId }));
+        const hit = rows.filter((r) => matches(r, args.where));
+        const oldest = new Map<string, Date>();
+        for (const r of hit) {
+          const seen = oldest.get(r.teamId);
+          if (seen === undefined || r.approvedAt < seen) {
+            oldest.set(r.teamId, r.approvedAt);
+          }
+        }
+        const groups = [...oldest].map(([teamId, min]) => ({
+          ...(args._min?.approvedAt ? { _min: { approvedAt: min } } : {}),
+          min,
+          teamId,
+        }));
+        const dir = args.orderBy?._min?.approvedAt;
+        if (dir) {
+          const sign = dir === 'asc' ? 1 : -1;
+          return groups.sort(
+            (a, b) => sign * (a.min.getTime() - b.min.getTime()) || a.teamId.localeCompare(b.teamId)
+          );
+        }
+        return groups.sort((a, b) => a.teamId.localeCompare(b.teamId));
       }),
       updateMany: vi.fn(async (args: Args) => {
         const hit = rows.filter((r) => matches(r, args.where));
@@ -301,6 +322,55 @@ describe('expireRunPlans: scrubbing launched plans', () => {
     for (const where of planReads) {
       expect(where.teamId).toBeDefined();
       expect(where.teamId).not.toBe('tZero');
+    }
+  });
+
+  it('serves the teams whose oldest due plan is oldest first, so no team waits for ever', async () => {
+    // 300 teams with one due plan each; team N's plan is N+100 days old, so t299 is the oldest.
+    const rows = Array.from({ length: 300 }, (_, i) =>
+      row(`p${i}`, { approvedAt: daysAgo(100 + i), teamId: `t${String(299 - i).padStart(3, '0')}` })
+    );
+    // Team id order (t000...) is the opposite of age order: the oldest plans belong to t299 on down.
+    const byAge = [...rows].sort((a, b) => a.approvedAt.getTime() - b.approvedAt.getTime());
+    const db = table(rows);
+    const opts = { launchedRetentionDays: retention({}) };
+    const first = await expireRunPlans(db as never, NOW, opts);
+    expect(first.scrubbed).toHaveLength(SCRUB_BATCH);
+    expect(first.scrubbed.map((p) => p.id).sort()).toEqual(
+      byAge
+        .slice(0, SCRUB_BATCH)
+        .map((r) => r.id)
+        .sort()
+    );
+    const groupArgs = db.runPlan.groupBy.mock.calls[0]?.[0] as Args;
+    expect(groupArgs._min).toEqual({ approvedAt: true });
+    expect(groupArgs.orderBy).toEqual({ _min: { approvedAt: 'asc' } });
+    // The next sweep serves the remaining 100.
+    const second = await expireRunPlans(db as never, NOW, opts);
+    expect(second.scrubbed.map((p) => p.id).sort()).toEqual(
+      byAge
+        .slice(SCRUB_BATCH)
+        .map((r) => r.id)
+        .sort()
+    );
+    expect(rows.every((r) => r.scrubbedAt !== null)).toBe(true);
+  });
+
+  it('stops when a whole pass scrubbed nothing, and says so once without plan text', async () => {
+    const db = table([row('stuck'), row('stuck2', { teamId: 't2' })]);
+    db.runPlan.updateMany.mockImplementation(async () => ({ count: 0 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = await expireRunPlans(db as never, NOW, {
+        launchedRetentionDays: retention({}),
+      });
+      expect(result.scrubbed).toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).not.toMatch(/payroll|stuck/);
+      // One read and one write per team in the single pass, then it stops.
+      expect(db.runPlan.updateMany).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
     }
   });
 });

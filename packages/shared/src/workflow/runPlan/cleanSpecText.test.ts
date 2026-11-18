@@ -105,6 +105,62 @@ describe('cleanPlanSpecText', () => {
     expect(options.map((o) => o.value)).toEqual(['a', 'b']);
   });
 
+  it('keeps option labels unique after cleaning, deterministically and idempotently', () => {
+    const raw = clone(outputOnlyRaw());
+    const target = Object.keys(raw.nodes)[0] as string;
+    raw.nodes.ask = {
+      onTimeout: target,
+      options: [
+        { label: '**Yes**', next: target, value: 'a' },
+        { label: 'Yes', next: target, value: 'b' },
+        { label: ' yes ', next: target, value: 'c' },
+        { label: '\u200b', next: target, value: 'd' },
+        { label: 'Option 4', next: target, value: 'e' },
+        { label: 'x'.repeat(150), next: target, value: 'f' },
+        { label: 'x'.repeat(150), next: target, value: 'g' },
+      ],
+      timeout: '1h',
+      title: 'ask',
+      type: 'humanDecision',
+    };
+    const once = cleanPlanSpecText(raw);
+    const options = (once.nodes.ask as { options: Array<{ label: string; value: string }> })
+      .options;
+    const labels = options.map((o) => o.label);
+    expect(labels.slice(0, 3)).toEqual(['Yes', 'Yes (2)', 'yes (3)']);
+    // The empty label falls back to `Option 4`; the earlier of two equal labels keeps its text.
+    expect(labels[3]).toBe('Option 4');
+    expect(labels[4]).toBe('Option 4 (2)');
+    // Both long labels cut to 99 characters and an ellipsis; the base is shortened to fit the suffix.
+    expect(labels[6]).toBe(`${'x'.repeat(96)} (2)`);
+    expect(labels.every((l) => l.length <= 100)).toBe(true);
+    expect(new Set(labels.map((l) => l.toLowerCase())).size).toBe(labels.length);
+    expect(options.map((o) => o.value)).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g']);
+    expect(cleanPlanSpecText(once)).toEqual(once);
+  });
+
+  it('keeps input field labels unique after cleaning', () => {
+    const raw = clone(outputOnlyRaw());
+    const target = Object.keys(raw.nodes)[0] as string;
+    raw.nodes.form = {
+      fields: [
+        { key: 'a', label: '[Name](https://evil.example)', type: 'text' },
+        { key: 'b', label: 'Name', type: 'text' },
+        { key: 'c', label: '\u200b', type: 'text' },
+        { key: 'c', label: '`c`', type: 'text' },
+      ],
+      next: target,
+      title: 'form',
+      type: 'humanInput',
+    };
+    const once = cleanPlanSpecText(raw);
+    const labels = (once.nodes.form as { fields: Array<{ label: string }> }).fields.map(
+      (f) => f.label
+    );
+    expect(labels).toEqual(['Name', 'Name (2)', 'c', 'c (2)']);
+    expect(cleanPlanSpecText(once)).toEqual(once);
+  });
+
   it('cleans a terminal shorthand message but not its status', () => {
     const raw = clone(outputOnlyRaw());
     const first = 'draft';

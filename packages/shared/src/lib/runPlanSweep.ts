@@ -142,14 +142,17 @@ async function scrubLaunchedPlans(
       }));
   // The shortest retention is one day, so only plans approved before then can be due anywhere.
   const earliest = new Date(now.getTime() - DAY_MS);
-  // One aggregate row per team, computed in SQL: no plan row is loaded to find the teams.
+  // One aggregate row per team, computed in SQL: no plan row is loaded to find the teams. The
+  // teams whose OLDEST due plan is oldest come first, so with more teams than the batch holds the
+  // same few teams are not served every sweep while the rest wait for ever.
   const groups = await runUnscoped(
     'the plan sweeper finds the teams that hold launched plans',
     ['RunPlan'],
     () =>
       prisma.runPlan.groupBy({
+        _min: { approvedAt: true },
         by: ['teamId'],
-        orderBy: { teamId: 'asc' },
+        orderBy: { _min: { approvedAt: 'asc' } },
         where: { approvedAt: { lt: earliest }, scrubbedAt: null, status: 'LAUNCHED' },
       })
   );
@@ -187,6 +190,7 @@ async function scrubLaunchedPlans(
   // Round-robin passes so one team with a backlog cannot starve the others: each pass gives every
   // team that is not yet drained an equal share of what is left of the batch.
   while (scrubbed.length < SCRUB_BATCH) {
+    const scrubbedBefore = scrubbed.length;
     const live = active.filter((t) => !t.exhausted);
     if (live.length === 0) {
       break;
@@ -247,6 +251,14 @@ async function scrubLaunchedPlans(
           scrubbed.push({ id: plan.id, mode: plan.mode, teamId: team.teamId });
         }
       }
+    }
+    // A pass that scrubbed nothing will scrub nothing next time either (a write that matches no
+    // row while the read keeps returning it): stop instead of looping for ever.
+    if (scrubbed.length === scrubbedBefore) {
+      console.warn(
+        `run plan sweep: a scrub pass over ${live.length} team(s) wrote nothing; stopping this sweep`
+      );
+      break;
     }
   }
   return scrubbed;

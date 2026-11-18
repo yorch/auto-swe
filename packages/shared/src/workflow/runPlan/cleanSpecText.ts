@@ -30,6 +30,44 @@ const DESCRIPTION_MAX = 2000;
 const OPTION_LABEL_MAX = 100;
 const MESSAGE_MAX = 2000;
 
+/**
+ * Make the cleaned `label` of each entry unique within its node: a label equal (trimmed,
+ * case-insensitively) to an earlier one gets ` (2)`, ` (3)` ... appended, the base truncated so the
+ * whole stays within `max`. Deterministic and idempotent: a unique list is returned unchanged.
+ */
+function uniqueLabels(items: unknown[], max: number): unknown[] {
+  const taken = new Set<string>();
+  const key = (l: string) => l.trim().toLowerCase();
+  // Labels that are already unique keep their text; reserve them first so a suffix never lands on
+  // a later entry's own label.
+  const firstOwner = new Map<string, number>();
+  items.forEach((item, i) => {
+    if (isRecord(item) && typeof item.label === 'string' && !firstOwner.has(key(item.label))) {
+      firstOwner.set(key(item.label), i);
+    }
+  });
+  for (const k of firstOwner.keys()) {
+    taken.add(k);
+  }
+  return items.map((item, i) => {
+    if (!isRecord(item) || typeof item.label !== 'string') {
+      return item;
+    }
+    if (firstOwner.get(key(item.label)) === i) {
+      return item;
+    }
+    for (let n = 2; ; n += 1) {
+      const suffix = ` (${n})`;
+      const base = item.label.slice(0, Math.max(0, max - suffix.length)).trimEnd();
+      const candidate = `${base}${suffix}`;
+      if (!taken.has(key(candidate))) {
+        taken.add(key(candidate));
+        return { ...item, label: candidate };
+      }
+    }
+  });
+}
+
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -72,26 +110,32 @@ function cleanNode(id: string, raw: Record<string, unknown>): Record<string, unk
   cleanField(node, 'group', MAX_NODE_GROUP_LENGTH);
 
   if (type === 'humanDecision' && Array.isArray(node.options)) {
-    node.options = node.options.map((opt: unknown, i: number) => {
-      if (!isRecord(opt)) {
-        return opt;
-      }
-      const copy = { ...opt };
-      cleanField(copy, 'label', OPTION_LABEL_MAX, { fallback: `Option ${i + 1}` });
-      return copy;
-    });
+    node.options = uniqueLabels(
+      node.options.map((opt: unknown, i: number) => {
+        if (!isRecord(opt)) {
+          return opt;
+        }
+        const copy = { ...opt };
+        cleanField(copy, 'label', OPTION_LABEL_MAX, { fallback: `Option ${i + 1}` });
+        return copy;
+      }),
+      OPTION_LABEL_MAX
+    );
   }
   if (type === 'humanInput' && Array.isArray(node.fields)) {
-    node.fields = node.fields.map((f: unknown) => {
-      if (!isRecord(f)) {
-        return f;
-      }
-      const copy = { ...f };
-      cleanField(copy, 'label', OPTION_LABEL_MAX, {
-        fallback: typeof f.key === 'string' && f.key !== '' ? f.key : 'Field',
-      });
-      return copy;
-    });
+    node.fields = uniqueLabels(
+      node.fields.map((f: unknown) => {
+        if (!isRecord(f)) {
+          return f;
+        }
+        const copy = { ...f };
+        cleanField(copy, 'label', OPTION_LABEL_MAX, {
+          fallback: typeof f.key === 'string' && f.key !== '' ? f.key : 'Field',
+        });
+        return copy;
+      }),
+      OPTION_LABEL_MAX
+    );
   }
   for (const route of ['onFailure', 'onExhausted'] as const) {
     const target = node[route];
