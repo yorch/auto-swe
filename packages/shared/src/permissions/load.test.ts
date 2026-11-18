@@ -109,7 +109,7 @@ describe('heldScope', () => {
     });
     const held = await heldScope(m.db, USER, 'team.repos.manage');
     expect(held.teamIds.sort()).toEqual(['t-a', 't-b', 't-lead']);
-    expect(held.orgIds).toEqual(['o1']);
+    expect(held.orgIds).toEqual([]); // a team-scoped capability is filtered by teamIds
     expect(m.teamMembershipFindMany).toHaveBeenCalledTimes(1);
     expect(m.orgFindMany).toHaveBeenCalledTimes(1);
     expect(m.teamFindMany).toHaveBeenCalledTimes(1);

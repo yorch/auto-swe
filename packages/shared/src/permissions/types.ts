@@ -68,7 +68,7 @@ export type Decision<K extends string = CapabilityKey> =
   | { allowed: true; authority: Authority }
   | {
       allowed: false;
-      code: 'FORBIDDEN' | 'NOT_FOUND';
+      code: 'FORBIDDEN';
       reason: string;
       missing: K;
     };
@@ -104,6 +104,11 @@ export interface Standing {
   orgs: ReadonlyMap<string, OrgStanding>;
   /** Every team the actor belongs to. Loaded only for an `{ anyTeam: true }` question. */
   memberships?: readonly TeamStanding[];
+  /**
+   * Teams (organization and activity only) of the organizations the actor belongs to. Loaded only
+   * for an `{ anyTeam: true }` question, which asks whether org authority reaches at least one team.
+   */
+  orgTeams?: ReadonlyArray<{ orgId: string; isActive: boolean }>;
 }
 
 /** The set a list endpoint may filter by. */

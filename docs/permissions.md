@@ -78,8 +78,9 @@ A person who qualifies in more than one way is recorded under the first that app
 order: `org-admin` (an organization `ADMIN` on a governance capability, so being a team member
 never narrows what organization authority allows), `team-role`, `org-member`, `platform-admin`.
 Every decision that passes only because of the platform role is recorded as `platform-admin`, so a
-use of the bypass is distinguishable in the audit context. `request.authority` carries it for the
-handler. When one question names several resources, the decision reports the least exceptional
+use of the bypass is distinguishable in the audit context. A route's own
+capability check sets `request.authority`, which the audit context records; a handler that calls
+`can()` reads the authority from the decision it gets back. When one question names several resources, the decision reports the least exceptional
 authority for `anyOf` and the most exceptional for `allOf`.
 
 ### The organization admin rule
@@ -92,7 +93,9 @@ visible in the team's member list. It is a visible escalation, not a barrier.
 
 For the member-change hierarchy guard, a person acting under organization or platform authority
 with no membership in the team ranks `ADMIN`; a person acting through a team membership ranks as
-that role. `actingRank` computes it from the decision.
+that role. `actingRank(standing, teamId)` computes it per team from standing alone: platform
+`ADMIN`, or an organization `ADMIN` of that active team's own organization, ranks `ADMIN`; anyone
+else ranks as their membership. A check on another team never changes it.
 
 ### Platform admin
 
@@ -120,8 +123,10 @@ decide(standing, capability, resource?)    // Decision, with no database
   question such as "leads at least one active team". With no resource, a team or organization
   capability is platform admin only. Empty sets are refused.
 - A **decision** is `{ allowed: true, authority }` or `{ allowed: false, code, reason, missing }`,
-  where `code` is `FORBIDDEN` or `NOT_FOUND`. A route that hides existence answers a refusal as a
-  404 (`hideAs404`); each domain keeps the status it has always used.
+  where `code` is `FORBIDDEN`. A person with no standing gets the same refusal whether the team
+  exists or not, and is not told it is deactivated; platform admin passes on a team that does not
+  exist so the handler can answer 404. A route that hides existence sets `hideAs404`, and both
+  cases are then 404; each domain keeps the status it has always used.
 - `heldScope` is what a list endpoint filters by, so a list and the action behind it cannot
   disagree. Platform admin gets `all: true` with no query; everyone else costs one membership query
   and, where an organization role can confer the capability, one organization-membership query and
@@ -208,7 +213,7 @@ _Generated from `packages/shared/src/permissions/catalog/` by `scripts/gen-permi
 | Capability | Scope | Class | Team role | Org role | Platform admin | Needs active team | Allows |
 |---|---|---|---|---|---|---|---|
 | `org.baselines.manage` | org | governance | — | ADMIN | yes | — | Create and remove the organization's human-error baselines. |
-| `org.baselines.read` | org | governance | — | MEMBER | yes | — | Read the organization's human-error baselines. |
+| `org.baselines.read` | org | read | — | MEMBER | yes | — | Read the organization's human-error baselines. |
 | `org.budget.manage` | org | governance | — | ADMIN | yes | — | Read the organization's spend in dollars and set its budget cap. |
 | `org.digests.manage` | org | governance | — | ADMIN | yes | — | Manage report digests delivered at organization scope. |
 | `org.github.manage` | org | governance | — | ADMIN | yes | — | Link, change and unlink the organization's GitHub App. |
@@ -255,7 +260,7 @@ _Generated from `packages/shared/src/permissions/catalog/` by `scripts/gen-permi
 | `team.repos.eval-link` | team | sensitive | ADMIN | — | yes | yes | Link a team-scope eval dataset to a repository. |
 | `team.repos.gate-commands.author` | team | sensitive | ADMIN | — | yes | yes | Write a repository's gate commands, which run as code in the workspace. |
 | `team.repos.manage` | team | governance | LEAD | ADMIN | yes | yes | Edit, share, deactivate and test access to a repository, and change its pull-request evaluation settings. |
-| `team.repos.onboarding.manage` | team | sensitive | LEAD | — | yes | yes | Onboard a repository: propose gate commands and previews and start the onboarding run. |
+| `team.repos.onboarding.launch` | team | sensitive | ADMIN | — | yes | yes | Start a repository onboarding run, which proposes gate commands and previews that run as code. Other onboarding routes need team.repos.manage. |
 
 ### Templates, knowledge and lessons
 
@@ -278,7 +283,7 @@ _Generated from `packages/shared/src/permissions/catalog/` by `scripts/gen-permi
 | `team.approvals.nudge` | team | operation | LEAD | — | yes | yes | Nudge an overdue approval step. |
 | `team.launch` | team | operation | MEMBER | — | yes | yes | Start a run for a team, or as a team lead where a template requires one. |
 | `team.launch.multi-repo` | team | operation | LEAD | — | yes | yes | Start a campaign, epic or PRD run across repositories. Asked on every repository’s owning team. |
-| `team.orchestrations.stop` | team | operation | ADMIN | — | yes | yes | Emergency-stop an orchestration that a service principal launched. |
+| `team.orchestrations.stop` | team | operation | — | — | yes | yes | Emergency-stop an orchestration that a service principal launched. Platform admin only. |
 | `team.runs.control` | team | operation | MEMBER | — | yes | yes | Cancel or retry a team’s run. |
 
 ### Automations, reports and review
@@ -323,7 +328,11 @@ _Generated from `packages/shared/src/permissions/catalog/` by `scripts/gen-permi
   catalog.
 - A route still declared with the older role options is counted by the route-walk ratchet and is
   decided by its own check, not by the catalog, until it is converted.
-- `{ anyTeam: true }` considers team memberships and organization memberships only; it does not
-  extend organization authority to the teams an organization contains.
-- The audit log's `authority` field is the gateway's `request.authority`; an audit writer that
-  does not read it records a decision without its authority.
+- `{ anyTeam: true }` reaches organization authority only where the organization has a team the
+  capability's class and activity rule would let that authority act on.
+- The resolver does not consult an organization's or a team's `isActive` beyond a capability's
+  `requiresActiveTeam`. Organization deactivation is enforced by authentication (service tokens)
+  and by launch gates, not by capabilities.
+- The audit context's `authority` is the one decision of the route's own capability check. A
+  `handler-checked` route's handler passes the authority of its decision to the audit writer
+  itself; nothing records it for it.

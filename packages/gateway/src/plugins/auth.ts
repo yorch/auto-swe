@@ -144,6 +144,11 @@ declare module 'fastify' {
      */
     authz?: AuthzKind;
     /**
+     * The capabilities a `handler-checked` route's handler checks, copied from `requireAuth` at
+     * registration. Only an allowed check of one of these satisfies the backstop.
+     */
+    handlerChecked?: readonly CapabilityKey[];
+    /**
      * Opt a route in to the orchestration token. `caller`: a person or the service principal that
      * launched the orchestration acts. A route that does not declare this refuses the token with
      * 403 `ORCHESTRATION_TOKEN_NOT_ALLOWED`, and the route's `:id` must be the orchestration the
@@ -992,27 +997,36 @@ export const RBAC_OPTIONS = Symbol('requireAuth options');
  */
 export function assertServiceScopesAdmissible(routeOptions: {
   url?: string;
-  config?: { serviceScopes?: readonly string[] };
+  config?: { serviceScopes?: readonly string[]; orchestrationToken?: string };
   onRequest?: unknown;
+  preValidation?: unknown;
+  preHandler?: unknown;
 }): void {
-  if (!routeOptions.config?.serviceScopes?.length) {
+  const url = routeOptions.url ?? '?';
+  const serviceScopes = !!routeOptions.config?.serviceScopes?.length;
+  const orchestrationToken = !!routeOptions.config?.orchestrationToken;
+  if (!serviceScopes && !orchestrationToken) {
     return;
   }
-  const hooks = Array.isArray(routeOptions.onRequest)
-    ? routeOptions.onRequest
-    : routeOptions.onRequest
-      ? [routeOptions.onRequest]
-      : [];
+  const hooks = [
+    routeOptions.onRequest,
+    routeOptions.preValidation,
+    routeOptions.preHandler,
+  ].flatMap((phase) => (Array.isArray(phase) ? phase : phase ? [phase] : []));
   for (const hook of hooks) {
     const options = (hook as { [RBAC_OPTIONS]?: RBACOptions })[RBAC_OPTIONS];
-    if (options?.capability) {
+    // A service principal, and the principal an orchestration token resolves to, is admitted
+    // before any capability runs and can never pass `can()`. A route that names a capability
+    // beside either would look guarded and be closed to the machine, or worse, open to it.
+    const named = options?.capability ?? options?.handlerChecked?.[0];
+    if (named) {
       throw new Error(
-        `Route ${routeOptions.url ?? '?'} declares serviceScopes and the capability ${options.capability}: a service principal is judged by its scopes, never by a capability`
+        `Route ${url} declares ${serviceScopes ? 'serviceScopes' : 'an orchestration token'} and the capability ${named}: a principal is judged by its scopes, never by a capability`
       );
     }
-    if (options && !serviceAdmissible(options)) {
+    if (serviceScopes && options && !serviceAdmissible(options)) {
       throw new Error(
-        `Route ${routeOptions.url ?? '?'} declares serviceScopes behind a role a service principal cannot hold`
+        `Route ${url} declares serviceScopes behind a role a service principal cannot hold`
       );
     }
   }
@@ -1069,14 +1083,31 @@ export function authzKindOf(routeOptions: {
  * keeps whatever it declared, which is `'public'` or nothing.
  */
 export function annotateAuthz(routeOptions: {
-  config?: { authz?: AuthzKind; serviceScopes?: readonly string[] };
+  config?: {
+    authz?: AuthzKind;
+    handlerChecked?: readonly CapabilityKey[];
+    serviceScopes?: readonly string[];
+  };
   onRequest?: unknown;
   preHandler?: unknown;
   preValidation?: unknown;
 }): void {
   const kind = authzKindOf(routeOptions);
   if (kind) {
-    routeOptions.config = { ...routeOptions.config, authz: kind };
+    const handlerChecked = [
+      routeOptions.onRequest,
+      routeOptions.preValidation,
+      routeOptions.preHandler,
+    ]
+      .flatMap((phase) => (Array.isArray(phase) ? phase : phase ? [phase] : []))
+      .flatMap(
+        (hook) => (hook as { [RBAC_OPTIONS]?: RBACOptions })[RBAC_OPTIONS]?.handlerChecked ?? []
+      );
+    routeOptions.config = {
+      ...routeOptions.config,
+      authz: kind,
+      ...(handlerChecked.length ? { handlerChecked } : {}),
+    };
   }
 }
 

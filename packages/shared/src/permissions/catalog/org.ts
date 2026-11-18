@@ -12,7 +12,7 @@ export const orgCapabilities = defineCapabilities({
     scope: 'org',
   },
   'org.baselines.read': {
-    class: 'governance',
+    class: 'read',
     description: "Read the organization's human-error baselines.",
     org: 'MEMBER',
     scope: 'org',

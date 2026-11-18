@@ -172,15 +172,44 @@ describe('team-scoped capabilities by class and authority', () => {
   });
 
   describe('a team that is not found', () => {
-    it('is NOT_FOUND for a person and fine for platform ADMIN (the handler 404s)', () => {
-      const def = team('governance', { team: 'LEAD' });
-      const s = standing();
-      const d = decideWith(s, KEY, def, { teamId: 'missing' });
-      expect(!d.allowed && d.code).toBe('NOT_FOUND');
+    const def = team('governance', { team: 'LEAD' });
+    it('is refused exactly as a non-member of a real team, and fine for platform ADMIN', () => {
+      const missing = decideWith(standing(), KEY, def, { teamId: 'missing' });
+      const real = decideWith(standing(), KEY, def, T1);
+      expect(missing).toEqual(real);
+      expect(!missing.allowed && missing.code).toBe('FORBIDDEN');
       expect(
         authorityOf(decideWith(standing({ actor: ADMIN }), KEY, def, { teamId: 'missing' }))
       ).toBe('platform-admin');
     });
+    it('is refused alike for an org-scoped capability asked through a team', () => {
+      const orgDef: CapabilityDef = {
+        class: 'governance',
+        description: 'x',
+        org: 'ADMIN',
+        scope: 'org',
+      };
+      expect(decideWith(standing(), KEY, orgDef, { teamId: 'missing' })).toEqual(
+        decideWith(standing(), KEY, orgDef, T1)
+      );
+    });
+    it('does not say "deactivated" to someone with no standing, but does to a member', () => {
+      const outsider = decideWith(standing({ active: false }), KEY, def, T1);
+      expect(!outsider.allowed && outsider.reason).not.toMatch(/deactivated/);
+      expect(outsider).toEqual(decideWith(standing(), KEY, def, T1));
+      const member = decideWith(standing({ active: false, team: 'LEAD' }), KEY, def, T1);
+      expect(!member.allowed && member.reason).toMatch(/deactivated/);
+    });
+  });
+
+  it('refuses an anyOf with every leg denied the same way whatever the order', () => {
+    const def = team('operation', { team: 'LEAD' });
+    const s = standing({ team: 'MEMBER' });
+    const legs: Resource[] = [{ teamId: 't1' }, { teamId: 'missing' }, { teamId: 'other' }];
+    const forward = decideWith(s, KEY, def, { anyOf: legs });
+    const backward = decideWith(s, KEY, def, { anyOf: [...legs].reverse() });
+    expect(forward).toEqual(backward);
+    expect(!forward.allowed && forward.code).toBe('FORBIDDEN');
   });
 
   it('with no resource, a team capability is platform ADMIN only', () => {
@@ -360,15 +389,106 @@ describe('a service principal', () => {
 });
 
 describe('actingRank', () => {
-  it('ranks org and platform authority ADMIN with no membership', () => {
-    const s = standing({ org: 'ADMIN' });
-    expect(actingRank(s, 't1', 'org-admin')).toBe('ADMIN');
-    expect(actingRank(standing({ actor: ADMIN }), 't1', 'platform-admin')).toBe('ADMIN');
+  it('ranks an org ADMIN of the active team’s own org ADMIN, with no membership', () => {
+    expect(actingRank(standing({ org: 'ADMIN' }), 't1')).toBe('ADMIN');
   });
-  it('ranks a team-role decision by the membership', () => {
-    expect(actingRank(standing({ team: 'LEAD' }), 't1', 'team-role')).toBe('LEAD');
+  it('gives an org ADMIN of an inactive team’s org only the membership rank', () => {
+    expect(actingRank(standing({ active: false, org: 'ADMIN' }), 't1')).toBeNull();
+    expect(actingRank(standing({ active: false, org: 'ADMIN', team: 'LEAD' }), 't1')).toBe('LEAD');
   });
-  it('never narrows platform ADMIN, even through a lower membership', () => {
-    expect(actingRank(standing({ actor: ADMIN, team: 'MEMBER' }), 't1', 'team-role')).toBe('ADMIN');
+  it('ranks platform ADMIN ADMIN, even through a lower membership', () => {
+    expect(actingRank(standing({ actor: ADMIN }), 't1')).toBe('ADMIN');
+    expect(actingRank(standing({ actor: ADMIN, team: 'MEMBER' }), 't1')).toBe('ADMIN');
+  });
+  it('ranks a plain member by the membership, and a stranger null', () => {
+    expect(actingRank(standing({ team: 'LEAD' }), 't1')).toBe('LEAD');
+    expect(actingRank(standing(), 't1')).toBeNull();
+    expect(actingRank(standing({ team: 'LEAD' }), 'missing')).toBeNull();
+  });
+  it('gives an org ADMIN of a DIFFERENT org no elevated rank', () => {
+    const s = standing({ team: 'MEMBER' });
+    // t1 belongs to o1; the actor administers o2 only.
+    const other: Standing = {
+      ...s,
+      orgs: new Map([
+        ['o1', { orgId: 'o1', rank: 'MEMBER' }],
+        ['o2', { orgId: 'o2', rank: 'ADMIN' }],
+      ]),
+    };
+    expect(actingRank(other, 't1')).toBe('MEMBER');
+  });
+  it('is not changed by the decisions made on other teams (the review’s sequence)', () => {
+    // X: the actor leads it. Y: the actor administers its organization.
+    const s: Standing = {
+      actor: USER,
+      orgs: new Map([
+        ['ox', { orgId: 'ox', rank: null }],
+        ['oy', { orgId: 'oy', rank: 'ADMIN' }],
+      ]),
+      platformAdmin: false,
+      teams: new Map([
+        ['x', { isActive: true, orgId: 'ox', rank: 'LEAD', storedRole: null, teamId: 'x' }],
+        ['y', { isActive: true, orgId: 'oy', rank: null, storedRole: null, teamId: 'y' }],
+      ]),
+    };
+    const first = decide(s, 'team.repos.manage', { teamId: 'x' });
+    const second = decide(s, 'team.repos.manage', { teamId: 'y' });
+    const again = decide(s, 'team.repos.manage', { teamId: 'x' });
+    expect(first).toEqual({ allowed: true, authority: 'team-role' });
+    expect(second).toEqual({ allowed: true, authority: 'org-admin' });
+    expect(again).toEqual(first);
+    expect(actingRank(s, 'x')).toBe('LEAD');
+    expect(actingRank(s, 'y')).toBe('ADMIN');
+  });
+});
+
+describe('anyTeam with organization authority', () => {
+  const gov = team('governance', { org: 'ADMIN', team: 'LEAD' });
+  const base = standing({ org: 'ADMIN' });
+  const withTeams = (teams: Array<{ orgId: string; isActive: boolean }>): Standing => ({
+    ...base,
+    memberships: [],
+    orgTeams: teams,
+  });
+  it('lets an org ADMIN in when the org has an active team', () => {
+    expect(
+      authorityOf(
+        decideWith(withTeams([{ isActive: true, orgId: 'o1' }]), KEY, gov, { anyTeam: true })
+      )
+    ).toBe('org-admin');
+  });
+  it('refuses when the org has only inactive teams, or none, or another org’s', () => {
+    for (const teams of [
+      [{ isActive: false, orgId: 'o1' }],
+      [],
+      [{ isActive: true, orgId: 'o2' }],
+    ]) {
+      expect(authorityOf(decideWith(withTeams(teams), KEY, gov, { anyTeam: true }))).toBe('denied');
+    }
+  });
+  it('counts an inactive team for a capability that does not need an active one', () => {
+    const read = team('read', { org: 'ADMIN' });
+    expect(
+      authorityOf(
+        decideWith(withTeams([{ isActive: false, orgId: 'o1' }]), KEY, read, { anyTeam: true })
+      )
+    ).toBe('org-admin');
+  });
+  it('never lets org authority reach an operation or sensitive capability', () => {
+    const op = team('operation', { org: 'ADMIN', team: 'LEAD' });
+    expect(
+      authorityOf(
+        decideWith(withTeams([{ isActive: true, orgId: 'o1' }]), KEY, op, { anyTeam: true })
+      )
+    ).toBe('denied');
+  });
+  it('ignores an inactive membership when the capability needs an active team', () => {
+    const lead: Standing = {
+      ...standing(),
+      memberships: [{ isActive: false, orgId: 'o1', rank: 'LEAD', storedRole: null, teamId: 't1' }],
+    };
+    expect(
+      authorityOf(decideWith(lead, KEY, team('operation', { team: 'LEAD' }), { anyTeam: true }))
+    ).toBe('denied');
   });
 });

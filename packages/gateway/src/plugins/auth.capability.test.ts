@@ -51,6 +51,10 @@ interface World {
   /** Stored org-membership role in ORG, the organization owning TEAM. */
   orgRole?: string;
   active?: boolean;
+  /** Whether the team row exists. Default true. */
+  teamExists?: boolean;
+  /** The route's declared `handlerChecked` keys, as `annotateAuthz` copies them to its config. */
+  declared?: string[];
   params?: Record<string, string>;
 }
 
@@ -60,10 +64,22 @@ function makeRequest(world: World = {}) {
       findMany: vi.fn(async () => (world.orgRole ? [{ orgId: ORG, role: world.orgRole }] : [])),
     },
     team: {
-      findMany: vi.fn(async () => [{ id: TEAM, isActive: world.active ?? true, orgId: ORG }]),
+      findMany: vi.fn(async () =>
+        world.teamExists === false ? [] : [{ id: TEAM, isActive: world.active ?? true, orgId: ORG }]
+      ),
     },
     teamMembership: {
-      findMany: vi.fn(async () => (world.teamRole ? [{ role: world.teamRole, teamId: TEAM }] : [])),
+      findMany: vi.fn(async () =>
+        world.teamRole
+          ? [
+              {
+                role: world.teamRole,
+                team: { id: TEAM, isActive: world.active ?? true, orgId: ORG },
+                teamId: TEAM,
+              },
+            ]
+          : []
+      ),
       // The old `requiredTeamRole` path.
       findUnique: vi.fn(async () =>
         world.teamRole ? { role: world.teamRole, teamId: TEAM } : null
@@ -81,7 +97,7 @@ function makeRequest(world: World = {}) {
     log: { error: vi.fn(), warn: vi.fn() },
     method: 'GET',
     params: world.params ?? { id: TEAM },
-    routeOptions: { config: {}, url: '/x/:id' },
+    routeOptions: { config: { handlerChecked: world.declared ?? [] }, url: '/x/:id' },
     server: {
       auth: { hashToken: (t: string) => t, verifyAccessToken: () => user },
       prisma,
@@ -191,14 +207,27 @@ describe('requireAuth — capability', () => {
 });
 
 describe('can() from a handler', () => {
-  it('marks the request checked and caches the decision for the request', async () => {
-    const { prisma, request } = makeRequest({ teamRole: 'LEAD' });
+  const asUser = (request: FastifyRequest) => {
     request.user = { exp: 1, iat: 0, role: 'ENGINEER' as never, sub: 'u1' };
+  };
+
+  it('caches the decision for the request', async () => {
+    const { prisma, request } = makeRequest({ teamRole: 'LEAD' });
+    asUser(request);
     const first = await can(request, 'team.templates.write', { teamId: TEAM });
     const second = await can(request, 'team.templates.write', { teamId: TEAM });
     expect(first).toEqual({ allowed: true, authority: 'team-role' });
     expect(second).toBe(first);
     expect(prisma.team.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes no request-wide authority or team role', async () => {
+    const { request } = makeRequest({ orgRole: 'ORG_ADMIN', teamRole: 'LEAD' });
+    asUser(request);
+    await can(request, 'team.repos.manage', { teamId: TEAM });
+    await can(request, 'team.templates.write', { teamId: TEAM });
+    expect(request.authority).toBeUndefined();
+    expect(request.teamRole).toBeUndefined();
   });
 
   it('refuses a service principal', async () => {
@@ -211,21 +240,43 @@ describe('can() from a handler', () => {
 
 describe('the handler-checked backstop', () => {
   const reply = (statusCode: number) => ({ statusCode }) as unknown as FastifyReply;
+  const asUser = (request: FastifyRequest) => {
+    request.user = { exp: 1, iat: 0, role: 'ENGINEER' as never, sub: 'u1' };
+  };
 
   it('throws under test when a 2xx leaves with no check', async () => {
-    const { request } = makeRequest();
+    const { request } = makeRequest({ declared: ['team.templates.write'] });
     await expect(assertHandlerChecked(request, reply(200), 'ok')).rejects.toThrow(
       /handler-checked/
     );
   });
 
-  it('is quiet once the handler asked, and for a refusal', async () => {
-    const { request } = makeRequest({ teamRole: 'LEAD' });
-    request.user = { exp: 1, iat: 0, role: 'ENGINEER' as never, sub: 'u1' };
+  it('is quiet once the handler asked and was allowed, and for a refusal', async () => {
+    const { request } = makeRequest({ declared: ['team.templates.write'], teamRole: 'LEAD' });
+    asUser(request);
     await can(request, 'team.templates.write', { teamId: TEAM });
     await expect(assertHandlerChecked(request, reply(200), 'ok')).resolves.toBe('ok');
     const { request: other } = makeRequest();
     await expect(assertHandlerChecked(other, reply(403), 'no')).resolves.toBe('no');
+  });
+
+  it('fires when the handler asked, was refused, ignored it and answered 200', async () => {
+    const { request } = makeRequest({ declared: ['team.templates.write'], teamRole: 'ENGINEER' });
+    asUser(request);
+    const decision = await can(request, 'team.templates.write', { teamId: TEAM });
+    expect(decision.allowed).toBe(false);
+    await expect(assertHandlerChecked(request, reply(200), 'ok')).rejects.toThrow(
+      /handler-checked/
+    );
+  });
+
+  it('does not count an allowed check of a capability the route did not declare', async () => {
+    const { request } = makeRequest({ declared: ['team.templates.write'], teamRole: 'LEAD' });
+    asUser(request);
+    await can(request, 'team.launch', { teamId: TEAM });
+    await expect(assertHandlerChecked(request, reply(200), 'ok')).rejects.toThrow(
+      /handler-checked/
+    );
   });
 
   it('logs authz.unchecked instead of throwing outside test', async () => {
@@ -250,6 +301,54 @@ describe('the handler-checked backstop', () => {
     };
     appendHandlerCheckedBackstop(other);
     expect(other.onSend).toBeUndefined();
+  });
+
+  it('copies the declared keys to config.authz at registration', () => {
+    const route: { config?: { handlerChecked?: readonly string[] }; onRequest: unknown } = {
+      onRequest: requireAuth({ handlerChecked: ['team.templates.write', 'team.launch'] }),
+    };
+    annotateAuthz(route as never);
+    expect(route.config?.handlerChecked).toEqual(['team.templates.write', 'team.launch']);
+  });
+});
+
+describe('existence is not revealed', () => {
+  it('answers a non-member the same for a team that exists and one that does not', async () => {
+    const real = await run({ capability: 'team.templates.write' }, { teamRole: undefined });
+    const missing = await run({ capability: 'team.templates.write' }, { teamExists: false });
+    expect(real.reply.statusCode).toBe(403);
+    expect(missing.reply.statusCode).toBe(403);
+    expect(missing.reply.body).toEqual(real.reply.body);
+  });
+
+  it('answers 404 in both cases when the route hides existence', async () => {
+    const opts = { capability: 'team.templates.write', hideAs404: true } as const;
+    const real = await run(opts);
+    const missing = await run(opts, { teamExists: false });
+    expect(real.reply.statusCode).toBe(404);
+    expect(missing.reply.statusCode).toBe(404);
+    expect(missing.reply.body).toEqual(real.reply.body);
+  });
+
+  it('lets platform admin through on a team that does not exist, so the handler can 404', async () => {
+    const { reply } = await run(
+      { capability: 'team.secrets.manage' },
+      { role: 'ADMIN', teamExists: false }
+    );
+    expect(reply.statusCode).toBeUndefined();
+  });
+
+  it('admits a lead through a platform capability that leads also hold', async () => {
+    const lead = await run(
+      { capability: 'platform.users.directory.read' },
+      { params: {}, teamRole: 'LEAD' }
+    );
+    expect(lead.reply.statusCode).toBeUndefined();
+    const member = await run(
+      { capability: 'platform.users.directory.read' },
+      { params: {}, teamRole: 'ENGINEER' }
+    );
+    expect(member.reply.statusCode).toBe(403);
   });
 });
 
@@ -293,12 +392,43 @@ describe('route authz metadata', () => {
         url: '/x',
       })
     ).toThrow(/capability team\.launch/);
+    // A principal can never pass can(), so a handler-checked route may not admit one either.
     expect(() =>
       assertServiceScopesAdmissible({
         config: { serviceScopes: ['runs:read'] },
         onRequest: requireAuth({ handlerChecked: ['team.launch'] }),
         url: '/x',
       })
+    ).toThrow(/team\.launch/);
+  });
+
+  it('refuses at registration a capability or handlerChecked route that takes an orchestration token', () => {
+    for (const options of [
+      { capability: 'team.launch' },
+      { handlerChecked: ['team.launch'] },
+    ] as const) {
+      expect(() =>
+        assertServiceScopesAdmissible({
+          config: { orchestrationToken: 'caller' },
+          onRequest: requireAuth(options),
+          url: '/o',
+        })
+      ).toThrow(/orchestration token/);
+    }
+    expect(() =>
+      assertServiceScopesAdmissible({
+        config: { orchestrationToken: 'caller' },
+        onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+        url: '/o',
+      })
     ).not.toThrow();
+    // Also when the hook sits in preHandler.
+    expect(() =>
+      assertServiceScopesAdmissible({
+        config: { orchestrationToken: 'caller' },
+        preHandler: [requireAuth({ capability: 'team.launch' })],
+        url: '/o',
+      })
+    ).toThrow();
   });
 });

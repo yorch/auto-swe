@@ -8,6 +8,7 @@ import {
   heldScope as loadHeldScope,
   loadStanding,
   type Resource,
+  type Standing,
   userActor,
 } from '@auto-swe/shared/permissions';
 import type { FastifyReply, FastifyRequest } from 'fastify';
@@ -28,10 +29,15 @@ import type { JwtPayload, RBACOptions } from '../plugins/auth.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+interface Evaluated {
+  decision: Decision;
+  standing: Standing;
+}
+
 interface RequestChecks {
-  /** Capabilities asked about on this request, by key. */
-  asked: Set<CapabilityKey>;
-  cache: Map<string, Decision>;
+  /** Declared capabilities this request was ALLOWED, which is what the backstop counts. */
+  allowed: Set<CapabilityKey>;
+  cache: Map<string, Evaluated>;
 }
 
 const checks = new WeakMap<FastifyRequest, RequestChecks>();
@@ -39,20 +45,30 @@ const checks = new WeakMap<FastifyRequest, RequestChecks>();
 function checksOf(request: FastifyRequest): RequestChecks {
   let state = checks.get(request);
   if (!state) {
-    state = { asked: new Set(), cache: new Map() };
+    state = { allowed: new Set(), cache: new Map() };
     checks.set(request, state);
   }
   return state;
 }
 
-/** Whether any capability check (`can`, `heldScope`, or the route's own) ran for this request. */
-export function wasChecked(request: FastifyRequest): boolean {
-  return (checks.get(request)?.asked.size ?? 0) > 0;
+/** The capabilities this route's handler declared it checks (`requireAuth({ handlerChecked })`). */
+function declaredKeys(request: FastifyRequest): readonly CapabilityKey[] {
+  return request.routeOptions?.config?.handlerChecked ?? [];
 }
 
-/** Record a check that was made some other way (for example by an existing helper). */
-export function markChecked(request: FastifyRequest, capability: CapabilityKey): void {
-  checksOf(request).asked.add(capability);
+/**
+ * Record an allowed check. Only a capability the route declared counts, and only an allowed
+ * decision: a handler that asks, ignores a refusal and answers 200 has not checked anything.
+ */
+function recordAllowed(request: FastifyRequest, capability: CapabilityKey): void {
+  if (declaredKeys(request).includes(capability)) {
+    checksOf(request).allowed.add(capability);
+  }
+}
+
+/** Whether a declared capability was checked and allowed for this request. */
+export function wasChecked(request: FastifyRequest): boolean {
+  return (checks.get(request)?.allowed.size ?? 0) > 0;
 }
 
 /** The shared actor for this request: the person, or the service principal. */
@@ -66,37 +82,40 @@ export function actorOf(request: FastifyRequest) {
   return userActor(request.user);
 }
 
+async function evaluate(
+  request: FastifyRequest,
+  capability: CapabilityKey,
+  resource: Resource
+): Promise<Evaluated> {
+  const state = checksOf(request);
+  const cacheKey = `${capability}:${JSON.stringify(resource ?? null)}`;
+  let hit = state.cache.get(cacheKey);
+  if (!hit) {
+    const standing = await loadStanding(request.server.prisma, actorOf(request), resource);
+    hit = { decision: decide(standing, capability, resource), standing };
+    state.cache.set(cacheKey, hit);
+  }
+  if (hit.decision.allowed) {
+    recordAllowed(request, capability);
+  }
+  return hit;
+}
+
 /**
- * Whether the request's caller holds `capability` on `resource`. Marks the request as checked, sets
- * `request.authority` when it allows, and sets `request.teamRole` (the stored membership role,
- * as the older checks do) when the resource names one team the caller belongs to.
+ * Whether the request's caller holds `capability` on `resource`. Returns the decision and nothing
+ * else: it sets no request-wide authority or team role, because a handler may ask about several
+ * teams and a single field would carry the answer for whichever came last. A handler that needs the
+ * authority reads it from the decision; one that needs a rank uses `actingRank` on a loaded standing.
+ *
+ * An allowed decision for a capability the route declared in `handlerChecked` satisfies the
+ * `handler-checked` backstop; a refusal does not. The decision is cached for the request.
  */
 export async function can(
   request: FastifyRequest,
   capability: CapabilityKey,
   resource?: Resource
 ): Promise<Decision> {
-  const state = checksOf(request);
-  state.asked.add(capability);
-  const cacheKey = `${capability}:${JSON.stringify(resource ?? null)}`;
-  const cached = state.cache.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
-  const actor = actorOf(request);
-  const standing = await loadStanding(request.server.prisma, actor, resource);
-  const decision = decide(standing, capability, resource);
-  state.cache.set(cacheKey, decision);
-  if (decision.allowed) {
-    request.authority = decision.authority;
-    if (resource && 'teamId' in resource) {
-      const stored = standing.teams.get(resource.teamId)?.storedRole;
-      if (stored) {
-        request.teamRole = stored;
-      }
-    }
-  }
-  return decision;
+  return (await evaluate(request, capability, resource)).decision;
 }
 
 /** The set the caller may filter a list by. Marks the request as checked. */
@@ -104,16 +123,21 @@ export async function heldScope(
   request: FastifyRequest,
   capability: CapabilityKey
 ): Promise<HeldScope> {
-  markChecked(request, capability);
-  return loadHeldScope(request.server.prisma, actorOf(request), capability);
+  const held = await loadHeldScope(request.server.prisma, actorOf(request), capability);
+  // A scope applied to a list is the check: it is declared like any other.
+  recordAllowed(request, capability);
+  return held;
 }
 
-/** The status and body a refusal answers with. `hideAs404` answers a refusal as a missing thing. */
+/**
+ * The status and body a refusal answers with. `hideAs404` answers a refusal as a missing thing, for
+ * a route that hides existence: then a team that exists and one that does not answer alike.
+ */
 export function refusalOf(
   decision: Extract<Decision, { allowed: false }>,
   opts: { hideAs404?: boolean } = {}
 ): { status: 403 | 404; body: { error: { code: string; message: string; missing?: string } } } {
-  if (opts.hideAs404 || decision.code === 'NOT_FOUND') {
+  if (opts.hideAs404) {
     return { body: { error: { code: 'NOT_FOUND', message: 'Not found' } }, status: 404 };
   }
   return {
@@ -159,7 +183,11 @@ export async function enforceCapability(
   const def: CapabilityDef = CATALOG[capability];
 
   let resource: Resource;
-  if (def.scope !== 'platform') {
+  if (def.scope === 'platform') {
+    // A platform capability that a team role also confers (the user directory) is a person-level
+    // question: does the caller hold the role in any team.
+    resource = def.team ? { anyTeam: true } : undefined;
+  } else {
     // A team capability reads a team id; an org capability reads an org id, or the org of a team
     // when the route names one. The defaults match the old `teamIdParam`/`orgIdParam`.
     const useTeam =
@@ -188,9 +216,18 @@ export async function enforceCapability(
 
   // `can` reads the user from the request; the hook has just set it.
   request.user = payload;
-  const decision = await can(request, capability, resource);
+  const { decision, standing } = await evaluate(request, capability, resource);
   if (!decision.allowed) {
     return replyRefusal(reply, decision, { hideAs404: options.hideAs404 });
+  }
+  // The route's own single decision is unambiguous, so the hook alone records it for the handler
+  // and the audit context. A handler-level `can()` never writes these.
+  request.authority = decision.authority;
+  if (resource && 'teamId' in resource) {
+    const stored = standing.teams.get(resource.teamId)?.storedRole;
+    if (stored) {
+      request.teamRole = stored;
+    }
   }
   return undefined;
 }

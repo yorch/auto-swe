@@ -40,11 +40,11 @@ export const repoCapabilities = defineCapabilities({
     scope: 'team',
     team: 'LEAD',
   },
-  'team.repos.onboarding.manage': {
+  'team.repos.onboarding.launch': {
     class: 'sensitive',
     description:
-      'Onboard a repository: propose gate commands and previews and start the onboarding run.',
+      'Start a repository onboarding run, which proposes gate commands and previews that run as code. Other onboarding routes need team.repos.manage.',
     scope: 'team',
-    team: 'LEAD',
+    team: 'ADMIN',
   },
 });

@@ -33,9 +33,9 @@ export const runCapabilities = defineCapabilities({
   },
   'team.orchestrations.stop': {
     class: 'operation',
-    description: 'Emergency-stop an orchestration that a service principal launched.',
+    description:
+      'Emergency-stop an orchestration that a service principal launched. Platform admin only.',
     scope: 'team',
-    team: 'ADMIN',
   },
   'team.runs.control': {
     class: 'operation',

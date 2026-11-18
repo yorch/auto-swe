@@ -132,9 +132,19 @@ export async function loadStanding(
     orgs.set(row.orgId, { orgId: row.orgId, rank: orgRankOf(row.role as string) });
   }
 
+  // Whether organization authority reaches at least one team: the teams of the organizations the
+  // actor belongs to, so an `anyTeam` answer agrees with `heldScope`.
+  const orgTeams =
+    wanted.anyTeam && orgRows.length > 0
+      ? await prisma.team.findMany({
+          select: { isActive: true, orgId: true },
+          where: { orgId: { in: orgRows.map((r) => r.orgId) } },
+        })
+      : [];
+
   return {
     actor,
-    ...(wanted.anyTeam ? { memberships } : {}),
+    ...(wanted.anyTeam ? { memberships, orgTeams } : {}),
     orgs,
     platformAdmin,
     teams,
@@ -215,5 +225,11 @@ export async function heldScope(
     }
   }
 
-  return { all: false, orgIds: [...orgIds], teamIds: [...teamIds] };
+  // Organization ids are meaningful only for an org-scoped capability; a team-scoped one is
+  // filtered by `teamIds`, which already include the teams of organizations the actor governs.
+  return {
+    all: false,
+    orgIds: def.scope === 'org' ? [...orgIds] : [],
+    teamIds: [...teamIds],
+  };
 }

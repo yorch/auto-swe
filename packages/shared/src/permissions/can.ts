@@ -52,12 +52,8 @@ function allow(authority: Authority): Decision {
   return { allowed: true, authority };
 }
 
-function deny(
-  missing: CapabilityKey,
-  reason: string,
-  code: Denied['code'] = 'FORBIDDEN'
-): Decision {
-  return { allowed: false, code, missing, reason };
+function deny(missing: CapabilityKey, reason: string): Decision {
+  return { allowed: false, code: 'FORBIDDEN', missing, reason };
 }
 
 function orgRank(standing: Standing, orgId: string | null): OrgStanding['rank'] {
@@ -100,7 +96,10 @@ function evaluate(
           : best
       );
     }
-    return decisions[0] ?? deny(key, 'no resource was named');
+    // Every leg refused: the answer must not depend on the order the resources were listed in.
+    const refusals = decisions.filter((d): d is Denied => !d.allowed);
+    refusals.sort((a, b) => a.reason.localeCompare(b.reason));
+    return refusals[0] ?? deny(key, 'no resource was named');
   }
   if (resource && 'allOf' in resource) {
     if (resource.allOf.length === 0) {
@@ -153,8 +152,8 @@ function evaluateAnyTeam(
   def: CapabilityDef,
   platformAdmin: boolean
 ): Decision {
-  if (def.team) {
-    const needActive = requiresActiveTeam(def);
+  const needActive = requiresActiveTeam(def);
+  if (def.team && def.scope !== 'org') {
     const held = (standing.memberships ?? []).some(
       (m) => (!needActive || m.isActive) && teamRankMeets(m.rank, def.team as TeamRank)
     );
@@ -162,14 +161,30 @@ function evaluateAnyTeam(
       return allow('team-role');
     }
   }
-  if (def.org) {
+  // Org authority counts as the resolver counts it for one team: only where the class lets it
+  // reach, and, for a team-scoped capability, only if the organization has a team it may act on.
+  if (def.org && (def.scope === 'org' || orgRuleApplies(def))) {
+    let member = false;
     for (const org of standing.orgs.values()) {
-      if (orgRankMeets(org.rank, def.org)) {
-        return allow(org.rank === 'ADMIN' ? 'org-admin' : 'org-member');
+      if (!orgRankMeets(org.rank, def.org)) {
+        continue;
       }
+      const reaches =
+        def.scope === 'org' ||
+        (standing.orgTeams ?? []).some((t) => t.orgId === org.orgId && (!needActive || t.isActive));
+      if (!reaches) {
+        continue;
+      }
+      if (org.rank === 'ADMIN') {
+        return allow('org-admin');
+      }
+      member = true;
+    }
+    if (member) {
+      return allow('org-member');
     }
   }
-  return platformAdmin ? allow('platform-admin') : deny(key, 'requires a team role');
+  return platformAdmin ? allow('platform-admin') : deny(key, requirement(def));
 }
 
 function evaluateOrg(
@@ -183,11 +198,8 @@ function evaluateOrg(
   if (resource && 'orgId' in resource) {
     orgId = resource.orgId;
   } else if (resource && 'teamId' in resource) {
-    const team = standing.teams.get(resource.teamId);
-    if (!team && !platformAdmin) {
-      return deny(key, 'team not found', 'NOT_FOUND');
-    }
-    orgId = team?.orgId ?? null;
+    // An unknown team is refused as a non-member of a real one would be: no existence oracle.
+    orgId = standing.teams.get(resource.teamId)?.orgId ?? null;
   }
   const rank = orgRank(standing, orgId);
   if (def.org && orgRankMeets(rank, def.org)) {
@@ -198,7 +210,7 @@ function evaluateOrg(
   }
   return deny(
     key,
-    orgId
+    resource
       ? `requires ${def.org ?? 'platform admin'} in this organization`
       : 'requires platform admin'
   );
@@ -217,7 +229,9 @@ function evaluateTeam(
   }
   const team: TeamStanding | undefined = standing.teams.get(resource.teamId);
   if (!team) {
-    return platformAdmin ? allow('platform-admin') : deny(key, 'team not found', 'NOT_FOUND');
+    // Same refusal as a non-member of a real team gets, so the answer does not reveal whether the
+    // team exists. Platform admin passes and the handler answers 404.
+    return platformAdmin ? allow('platform-admin') : deny(key, requirement(def));
   }
   const activeOk = !requiresActiveTeam(def) || team.isActive;
   if (activeOk) {
@@ -238,7 +252,9 @@ function evaluateTeam(
   if (platformAdmin) {
     return allow('platform-admin');
   }
-  return deny(key, activeOk ? requirement(def) : 'the team is deactivated');
+  // Only someone with standing in the team (or its organization) is told it is deactivated.
+  const hasStanding = team.rank !== null || orgRank(standing, team.orgId) !== null;
+  return deny(key, !activeOk && hasStanding ? 'the team is deactivated' : requirement(def));
 }
 
 function requirement(def: CapabilityDef): string {
@@ -253,17 +269,21 @@ function requirement(def: CapabilityDef): string {
 }
 
 /**
- * The team rank the actor acts at for a member change, given how the capability check passed. Org
- * and platform authority rank `ADMIN` with no membership; a person acting through a team role
- * ranks as that role. Platform `ADMIN` ranks `ADMIN` even when they also hold a lower membership.
+ * The team rank the actor acts at for a member change in `teamId`, computed from standing alone
+ * and per team: platform `ADMIN` ranks `ADMIN`; an organization `ADMIN` of that active team's own
+ * organization ranks `ADMIN`; otherwise the membership's rank, or `null` for none. It does not
+ * read a decision's authority, so a check on another team cannot change it.
  */
-export function actingRank(
-  standing: Standing,
-  teamId: string,
-  authority: Authority
-): TeamRank | null {
-  if (standing.platformAdmin || authority === 'platform-admin' || authority === 'org-admin') {
+export function actingRank(standing: Standing, teamId: string): TeamRank | null {
+  if (standing.platformAdmin) {
     return 'ADMIN';
   }
-  return standing.teams.get(teamId)?.rank ?? null;
+  const team = standing.teams.get(teamId);
+  if (!team) {
+    return null;
+  }
+  if (team.isActive && orgRank(standing, team.orgId) === 'ADMIN') {
+    return 'ADMIN';
+  }
+  return team.rank;
 }
