@@ -6,7 +6,7 @@ import type { PlatformUsage } from '@/hooks/useAdmin';
 
 const nav = vi.hoisted(() => ({ params: '', replace: vi.fn() }));
 vi.mock('next/navigation', () => ({
-  usePathname: () => '/admin/usage',
+  usePathname: () => '/insights/usage',
   useRouter: () => ({ replace: nav.replace }),
   useSearchParams: () => new URLSearchParams(nav.params),
 }));
@@ -136,13 +136,13 @@ describe('UsagePage', () => {
     expect(screen.getByText('Model not resolved')).toBeTruthy();
     // The breakdown lives in the URL, so a shared link opens on it.
     fireEvent.click(screen.getByRole('button', { name: 'Team' }));
-    expect(nav.replace).toHaveBeenLastCalledWith('/admin/usage?by=team', { scroll: false });
+    expect(nav.replace).toHaveBeenLastCalledWith('/insights/usage?by=team', { scroll: false });
     nav.params = 'by=team';
     rerender(<UsagePage />);
     expect(screen.getByText('Not attributed to a team')).toBeTruthy();
     expect(screen.getByText('Payments')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Activity' }));
-    expect(nav.replace).toHaveBeenLastCalledWith('/admin/usage?by=activity', { scroll: false });
+    expect(nav.replace).toHaveBeenLastCalledWith('/insights/usage?by=activity', { scroll: false });
     nav.params = 'by=activity';
     rerender(<UsagePage />);
     expect(screen.getByText('Execute implementation')).toBeTruthy();
@@ -247,7 +247,7 @@ describe('UsagePage', () => {
     expect(usePlatformUsage).toHaveBeenLastCalledWith(P30, {}, true);
 
     fireEvent.click(screen.getByRole('button', { name: '7d' }));
-    expect(nav.replace).toHaveBeenCalledWith('/admin/usage?range=7', { scroll: false });
+    expect(nav.replace).toHaveBeenCalledWith('/insights/usage?range=7', { scroll: false });
 
     nav.params = 'range=90';
     render(<UsagePage />);

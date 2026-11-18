@@ -16,8 +16,8 @@ export function showsTeamSwitcher(pathname: string): boolean {
       '/start',
       '/library',
       '/knowledge',
-      '/admin/automations',
-      '/admin/reports',
+      '/automations',
+      '/insights/reports',
     ].includes(pathname.replace(/\/$/, '') || '/')
   );
 }
@@ -39,8 +39,8 @@ export function detailParent(pathname: string): DetailParent | null {
     [/^\/campaigns\/[^/]+\/?$/, { href: '/campaigns', label: 'Campaigns' }],
     [/^\/orchestrations\/[^/]+\/?$/, { href: '/orchestrations', label: 'Orchestrations' }],
     [/^\/docs\/[^/]+\/?$/, { href: '/docs', label: 'Docs' }],
-    [/^\/teams\/[^/]+(?:\/|$)/, { href: '/admin/teams', label: 'Teams', section: 'Teams' }],
-    [/^\/admin\/teams\/[^/]+\/?$/, { href: '/admin/teams', label: 'Teams' }],
+    [/^\/teams\/[^/]+(?:\/|$)/, { href: '/teams', label: 'Teams', section: 'Teams' }],
+    [/^\/admin\/teams\/[^/]+\/?$/, { href: '/teams', label: 'Teams' }],
     [
       /^\/admin\/organizations\/[^/]+\/?$/,
       { href: '/admin/organizations', label: 'Organizations' },
@@ -114,7 +114,6 @@ export const APPROVALS_HREF = '/approvals';
 
 const ADMIN_PAGES: NavItem[] = [
   { href: '/admin/users', icon: 'users', label: 'Users', minRole: 'ADMIN', section: 'Access' },
-  { href: '/admin/teams', icon: 'teams', label: 'Teams', minRole: 'ENGINEER', section: 'Access' },
   {
     href: '/admin/organizations',
     icon: 'building',
@@ -193,30 +192,6 @@ const ADMIN_PAGES: NavItem[] = [
     section: 'Security',
   },
   {
-    href: '/admin/analytics',
-    icon: 'analytics',
-    label: 'Analytics',
-    minRole: 'ENGINEER',
-    section: 'Spend & insights',
-  },
-  {
-    href: '/admin/reports',
-    icon: 'docs',
-    label: 'Reports',
-    minRole: 'ENGINEER',
-    section: 'Spend & insights',
-  },
-  // Gated on holding a usage scope (a led team, an administered org, or ADMIN), not on
-  // the platform role; the gateway enforces which scopes each may read.
-  {
-    href: '/admin/usage',
-    icon: 'coin',
-    label: 'LLM usage',
-    minRole: 'ENGINEER',
-    needsUsageScope: true,
-    section: 'Spend & insights',
-  },
-  {
     href: '/admin/assistant',
     icon: 'warning',
     label: 'Assistant failures',
@@ -249,16 +224,6 @@ const ADMIN_PAGES: NavItem[] = [
     icon: 'lock',
     label: 'Config grants',
     minRole: 'ADMIN',
-    section: 'Configuration',
-  },
-  // Every automation kind in one list; schedules are still edited on their own page, which
-  // keeps this entry lit. The APIs admit ENGINEERs (launch authorization is per repo).
-  {
-    alsoActiveFor: ['/admin/schedules'],
-    href: '/admin/automations',
-    icon: 'clock',
-    label: 'Automations',
-    minRole: 'ENGINEER',
     section: 'Configuration',
   },
   {
@@ -300,6 +265,34 @@ const ADMIN_PAGES: NavItem[] = [
   },
 ];
 
+/**
+ * Pages every role may open, which used to sit in Admin. What each shows is narrowed by the gateway
+ * to the caller's teams and scopes. A team's own page is `/teams/<slug>`, which the Teams entry owns.
+ */
+export const INSIGHTS_PAGES: NavItem[] = [
+  { href: '/teams', icon: 'teams', label: 'Teams', minRole: 'ENGINEER' },
+  { href: '/insights/analytics', icon: 'analytics', label: 'Analytics', minRole: 'ENGINEER' },
+  { href: '/insights/reports', icon: 'docs', label: 'Reports', minRole: 'ENGINEER' },
+  // Gated on holding a usage scope (a led team, an administered org, or ADMIN), not on
+  // the platform role; the gateway enforces which scopes each may read.
+  {
+    href: '/insights/usage',
+    icon: 'coin',
+    label: 'LLM usage',
+    minRole: 'ENGINEER',
+    needsUsageScope: true,
+  },
+  // Every automation kind in one list; schedules are still edited on their own page, which
+  // keeps this entry lit. The APIs admit ENGINEERs (launch authorization is per repo).
+  {
+    alsoActiveFor: ['/admin/schedules'],
+    href: '/automations',
+    icon: 'clock',
+    label: 'Automations',
+    minRole: 'ENGINEER',
+  },
+];
+
 export const KNOWLEDGE_PAGES: NavItem[] = [
   { href: '/knowledge', icon: 'repository', label: 'Knowledge', minRole: 'ENGINEER' },
   { href: '/knowledge-bases', icon: 'memory', label: 'Knowledge bases', minRole: 'ENGINEER' },
@@ -308,8 +301,11 @@ export const KNOWLEDGE_PAGES: NavItem[] = [
 
 export const NAV_GROUPS: NavGroup[] = [
   {
+    items: [{ href: '/', icon: 'dashboard', label: 'Home', minRole: 'ENGINEER' }],
+    label: 'Home',
+  },
+  {
     items: [
-      { href: '/', icon: 'dashboard', label: 'Home', minRole: 'ENGINEER' },
       { href: APPROVALS_HREF, icon: 'inbox', label: 'Approvals', minRole: 'ENGINEER' },
       {
         href: '/requests',
@@ -329,8 +325,9 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       { href: '/tickets', icon: 'ticket', label: 'Tickets', minRole: 'ENGINEER' },
     ],
-    label: 'Work',
+    label: 'All teams',
   },
+  { items: INSIGHTS_PAGES, label: 'Teams and insights' },
   {
     items: [
       { href: '/library', icon: 'templates', label: 'Workflow library', minRole: 'ENGINEER' },
@@ -484,7 +481,10 @@ const EXTRA_PAGE_TITLES: [string, string][] = [
   ['/runs/', 'Run'],
   ['/start', 'Start work'],
   ['/epics', 'Epics'],
-  ['/teams', 'Team'],
+  // A team's own space; the bare `/teams` is the directory and is titled by its nav entry.
+  ['/teams/', 'Team'],
+  // A team's admin page keeps its address; its list moved, so the title says which list it is.
+  ['/admin/teams/', 'Teams'],
   ['/docs', 'Docs'],
   ['/oauth/consent', 'Authorize app'],
 ];
@@ -526,8 +526,8 @@ export function navLabel(href: string): string {
 const EXTRA_PAGE_SECTIONS: [string, string][] = [
   ['/docs', 'Help'],
   ['/settings', 'Account'],
-  ['/start', 'Work'],
-  ['/epics', 'Work'],
+  ['/start', 'All teams'],
+  ['/epics', 'All teams'],
 ];
 
 /**

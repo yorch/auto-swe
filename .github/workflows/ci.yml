@@ -507,6 +507,14 @@ jobs:
           ME_SUMMARY_PG_TEST: '1'
         run: yarn test packages/gateway/src/routes/meSummary.pg.test.ts
 
+      # Failure assignment: the unowned-failure list with and without an assignment, and the unique
+      # constraint that keeps a run from being assigned twice. Relational predicates a mocked
+      # Prisma would only echo back.
+      - name: Team attention (database-backed tests)
+        env:
+          TEAM_ATTENTION_PG_TEST: '1'
+        run: yarn test packages/gateway/src/lib/teamAttention.pg.test.ts
+
       # The outcome report's loader: which runs fall in the cohort and window, and how
       # pull requests, fix-loop steps, pinned template versions and ledger rows join
       # to them, are relational selects a fake Prisma client only echoes back.

@@ -8,7 +8,6 @@ import type {
 } from '@auto-swe/shared/types/api';
 import { humanStepListWhere, humanStepTeamScope } from './humanStepFilters.js';
 import {
-  attemptWindowTerm,
   countRunningRequests,
   deskRunTerms,
   loadDeskEntries,
@@ -27,6 +26,7 @@ import {
   runMetricsTeamScope,
 } from './runTeamScope.js';
 import { buildWorkflowRunVisibilityFilter, type VisibilityActor } from './runVisibility.js';
+import { loadUnownedFailures } from './teamAttention.js';
 import { bindingBudgetStatuses } from './teamBudgetStatus.js';
 import { type MaybeGate, reachableConnections } from './tenantScope.js';
 
@@ -233,33 +233,6 @@ function toOverviewRepos(
   });
 }
 
-/** Failed latest attempts on the team's work whose launcher is not a current member (or is unknown). */
-async function countUnownedFailures(
-  deps: OverviewDeps,
-  teamId: string,
-  now: number
-): Promise<number> {
-  const { gate, prisma, user } = deps;
-  const [attempts, members] = await Promise.all([
-    latestAttempts(prisma, {
-      AND: [...deskRunTerms(user, gate, teamDeskScope(teamId)), attemptWindowTerm(now)],
-    }),
-    prisma.teamMembership.findMany({ select: { userId: true }, where: { teamId } }),
-  ]);
-  const memberIds = new Set(members.map((m) => m.userId));
-  const launcherOf = new Map(attempts.map((run) => [run.id, run.launchedById]));
-  let count = 0;
-  for (const group of groupRequestExecutions(attempts)) {
-    for (const failedId of group.failedRunIds) {
-      const launcher = launcherOf.get(failedId);
-      if (!launcher || !memberIds.has(launcher)) {
-        count++;
-      }
-    }
-  }
-  return count;
-}
-
 async function monthCostCents(
   deps: OverviewDeps,
   teamId: string,
@@ -347,6 +320,14 @@ export async function buildTeamOverview(
   const repos = toOverviewRepos(repoRows, team.id, budgets);
 
   const counts = countRunningRequests(desk.running);
+  // The caller's own share of the same rows, for "My work": the desk's own failed and merge items
+  // (so the team page and the desk cannot disagree) and the running requests they launched.
+  const mine = {
+    failed: desk.deduped.filter((entry) => entry.item.kind === 'failed_run').length,
+    prsAwaitingMerge: desk.deduped.filter((entry) => entry.item.kind === 'pr_merge').length,
+    running: countRunningRequests(desk.running.filter((run) => run.launchedById === user.sub))
+      .running,
+  };
   const groups = groupRequestExecutions(recent);
   const overview: TeamOverview = {
     activity,
@@ -356,6 +337,7 @@ export async function buildTeamOverview(
       started: groups.length,
       succeeded: groups.filter((g) => g.status === 'SUCCESS').length,
     },
+    mine,
     needsYou: { total: desk.deduped.length },
     pullRequests: {
       closedUnmerged: pullRequests.closedUnmerged,
@@ -386,7 +368,7 @@ export async function buildTeamOverview(
   }
 
   const [unownedFailures, staleApprovals, openPullRequests] = await Promise.all([
-    countUnownedFailures(deps, team.id, now),
+    loadUnownedFailures(deps, team.id, now).then((failures) => failures.length),
     prisma.workflowHumanStep.count({
       where: {
         AND: [

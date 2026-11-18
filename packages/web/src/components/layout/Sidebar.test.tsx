@@ -215,7 +215,7 @@ describe('Sidebar Teams group', () => {
     teamNav.entries = [entry('payments', 'Payments', 4), entry('platform', 'Platform')];
     resetNavigation('', '/');
     render(<Sidebar onClose={() => undefined} open />);
-    const group = screen.getByRole('list', { name: 'Teams' });
+    const group = screen.getByRole('list', { name: 'My teams' });
     const links = Array.from(group.querySelectorAll('a'));
     expect(links.map((a) => a.getAttribute('href'))).toEqual([
       '/teams/payments',
@@ -230,7 +230,7 @@ describe('Sidebar Teams group', () => {
     teamNav.pinned = ['c', 'a', 'gone'];
     resetNavigation('', '/');
     render(<Sidebar onClose={() => undefined} open />);
-    const links = Array.from(screen.getByRole('list', { name: 'Teams' }).querySelectorAll('a'));
+    const links = Array.from(screen.getByRole('list', { name: 'My teams' }).querySelectorAll('a'));
     expect(links.map((a) => a.getAttribute('href'))).toEqual(['/teams/c', '/teams/a']);
   });
 
@@ -240,7 +240,9 @@ describe('Sidebar Teams group', () => {
     for (const pinned of [[], ['gone']]) {
       teamNav.pinned = pinned;
       const { unmount } = render(<Sidebar onClose={() => undefined} open />);
-      const links = Array.from(screen.getByRole('list', { name: 'Teams' }).querySelectorAll('a'));
+      const links = Array.from(
+        screen.getByRole('list', { name: 'My teams' }).querySelectorAll('a')
+      );
       expect(links.map((a) => a.getAttribute('href'))).toEqual(['/teams/a', '/teams/b']);
       unmount();
     }
@@ -250,7 +252,7 @@ describe('Sidebar Teams group', () => {
     teamNav.entries = Array.from({ length: 11 }, (_, i) => entry(`t${i}`, `Team ${i}`));
     resetNavigation('', '/');
     render(<Sidebar onClose={() => undefined} open />);
-    expect(screen.getByRole('list', { name: 'Teams' }).querySelectorAll('a')).toHaveLength(8);
+    expect(screen.getByRole('list', { name: 'My teams' }).querySelectorAll('a')).toHaveLength(8);
   });
 
   it('lists every pinned team, beyond the default limit of eight', () => {
@@ -258,7 +260,7 @@ describe('Sidebar Teams group', () => {
     teamNav.pinned = teamNav.entries.slice(0, 10).map((e) => e.team.slug);
     resetNavigation('', '/');
     render(<Sidebar onClose={() => undefined} open />);
-    expect(screen.getByRole('list', { name: 'Teams' }).querySelectorAll('a')).toHaveLength(10);
+    expect(screen.getByRole('list', { name: 'My teams' }).querySelectorAll('a')).toHaveLength(10);
   });
 
   it('marks the team whose space is open', () => {
@@ -273,6 +275,6 @@ describe('Sidebar Teams group', () => {
   it('has no Teams group for someone in no team', () => {
     resetNavigation('', '/');
     render(<Sidebar onClose={() => undefined} open />);
-    expect(screen.queryByRole('list', { name: 'Teams' })).toBeNull();
+    expect(screen.queryByRole('list', { name: 'My teams' })).toBeNull();
   });
 });

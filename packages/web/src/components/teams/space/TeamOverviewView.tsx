@@ -64,6 +64,21 @@ function ActivityRow({ item }: { item: TeamOverviewActivityItem }) {
 }
 
 /**
+ * What a My work figure counts, and a link to the browsable list. The list filters by who made
+ * the request, so the link names an action and never promises the figure's number.
+ */
+function MineHint({ definition, href, link }: { definition: string; href: string; link: string }) {
+  return (
+    <span className="block space-y-0.5">
+      <span className="block">{definition}</span>
+      <Link className="underline-offset-2 hover:underline" href={href}>
+        {link}
+      </Link>
+    </span>
+  );
+}
+
+/**
  * A team's overview. The sections that depend on the caller's team role render only when the
  * server sent them (`lead`, `admin`): the platform role never decides what is shown here.
  */
@@ -72,15 +87,57 @@ export function TeamOverviewView({
   overview,
   slug,
 }: {
-  /** True for a caller who may open the Budget section without being the team's admin (ORG_ADMIN). */
-  canManageBudget?: boolean;
+  /** True for a caller who may open the Budget section without being the team's admin (ORG_ADMIN); null while unknown. */
+  canManageBudget?: boolean | null;
   overview: TeamOverview;
   slug: string;
 }) {
   const { last7d, pullRequests: pr } = overview;
   const q = `?team=${encodeURIComponent(slug)}`;
+  const teamParam = encodeURIComponent(slug);
   return (
     <div className="space-y-6">
+      <Card aria-label="My work" data-testid="my-work">
+        <CardHeader className="mb-3">
+          <CardTitle>My work</CardTitle>
+        </CardHeader>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Stat
+            hint={
+              <MineHint
+                definition="Requests you launched that are running"
+                href={`/requests?scope=MINE&state=active&team=${teamParam}`}
+                link="Browse active requests"
+              />
+            }
+            label="Running"
+            value={overview.mine.running}
+          />
+          <Stat
+            hint={
+              <MineHint
+                definition="Failed attempts you launched or were assigned, last 30 days"
+                href={`/requests?scope=MINE&state=failed&team=${teamParam}`}
+                link="Browse failed requests"
+              />
+            }
+            label="Failed"
+            value={overview.mine.failed}
+          />
+          <Stat
+            hint={
+              <MineHint
+                definition="Pull requests of your requests awaiting a merge"
+                href={`/pull-requests?scope=MINE&state=OPEN&team=${teamParam}`}
+                link="Browse open pull requests"
+              />
+            }
+            label="PRs awaiting merge"
+            value={overview.mine.prsAwaitingMerge}
+          />
+        </div>
+      </Card>
+
       <section aria-label="Team numbers" className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Stat
           hint={
@@ -246,7 +303,17 @@ export function TeamOverviewView({
                       </span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
-                      {!repo.canLaunch && (
+                      {repo.canLaunch ? (
+                        <Link
+                          className={cn(
+                            'text-xs text-paper-300 underline-offset-2 hover:underline',
+                            FOCUS_RING
+                          )}
+                          href={`/start?team=${teamParam}`}
+                        >
+                          Start work
+                        </Link>
+                      ) : (
                         <Badge
                           title="Owner team set this repository to view only for your team"
                           tone="muted"

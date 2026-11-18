@@ -44,6 +44,7 @@ export function useUpdateTeamBudget(teamId: string) {
       for (const queryKey of [
         ['team-budget', teamId],
         ['team-budget-status', teamId],
+        ['team-budget-requests', teamId],
         ['team-overview', teamId],
         ['teams'],
         ['me-summary'],

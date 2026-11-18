@@ -33,7 +33,7 @@ export const GOVERNANCE_GROUPS: GuideGroup[] = [
           'New sign-ups can wait here for your approval. A GitHub sign-in from an organization on the auto-approve list is approved automatically.',
       },
       {
-        href: '/admin/teams',
+        href: '/teams',
         label: 'Teams',
         reason: 'Teams own repositories, members, sandbox allowlists and per-team agent overrides.',
       },
@@ -90,13 +90,13 @@ export const GOVERNANCE_GROUPS: GuideGroup[] = [
   {
     links: [
       {
-        href: '/admin/usage',
+        href: '/insights/usage',
         label: 'LLM usage',
         reason:
           'Every LLM and embedding call, attributed to the team and organization whose spend it is.',
       },
       {
-        href: '/admin/analytics',
+        href: '/insights/analytics',
         label: 'Analytics',
         reason: 'Run volume, outcomes, cost and time saved across workflow templates.',
       },
@@ -106,7 +106,7 @@ export const GOVERNANCE_GROUPS: GuideGroup[] = [
   {
     links: [
       {
-        href: '/admin/automations',
+        href: '/automations',
         label: 'Automations',
         reason:
           'Everything that starts a run without a person pressing run: event rules, schedules and webhooks.',

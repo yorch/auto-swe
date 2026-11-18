@@ -16,6 +16,7 @@ import { hasRole } from '@/lib/roles';
 import { validateRouteParam } from '@/lib/routeParams';
 import { canManageTeamBudget } from '@/lib/teamPermissions';
 import {
+  canSeeTeamManage,
   TEAM_ROLE_LABEL,
   TEAM_TABS,
   type TeamTabId,
@@ -93,8 +94,14 @@ export default function TeamSpaceLayout({
     (o) => o.id === team.orgId && o.role === 'ORG_ADMIN'
   );
   const canSeeSettings = teamSettingsScope(platformRole, team.myRole, isOrgAdmin) !== null;
-  const canManageBudget = canManageTeamBudget(platformRole, team.myRole, isOrgAdmin);
-  const tabs = TEAM_TABS.filter((tab) => tab.id !== 'settings' || canSeeSettings).map((tab) => ({
+  // Until the organizations load, an ORG_ADMIN cannot be told from a lead who is not one.
+  const canManageBudget = userOrgs.isLoading
+    ? null
+    : canManageTeamBudget(platformRole, team.myRole, isOrgAdmin);
+  const canSeeManage = canSeeTeamManage(platformRole, team.myRole);
+  const tabs = TEAM_TABS.filter(
+    (tab) => (tab.id !== 'settings' || canSeeSettings) && (tab.id !== 'manage' || canSeeManage)
+  ).map((tab) => ({
     href: teamHref(team.slug, tab.id),
     id: tab.id,
     label: tab.label,

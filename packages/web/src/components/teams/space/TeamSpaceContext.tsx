@@ -7,8 +7,11 @@ export interface TeamSpace {
   team: TeamSummary;
   /** Whether the Settings tab is offered to the caller. */
   canSeeSettings: boolean;
-  /** Whether the caller may read and set the team's budget (team ADMIN, org ADMIN, platform ADMIN). */
-  canManageBudget: boolean;
+  /**
+   * Whether the caller may read and set the team's budget (team ADMIN, org ADMIN, platform ADMIN);
+   * null while the organizations that decide it are still loading.
+   */
+  canManageBudget: boolean | null;
 }
 
 const TeamSpaceContext = createContext<TeamSpace | null>(null);

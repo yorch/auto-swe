@@ -57,6 +57,8 @@ interface State {
   shareQueries?: Array<{ where: Record<string, unknown> }>;
   /** The `findMany` arguments `GET /teams` passed to prisma. */
   teamQueries?: Array<{ include: Record<string, unknown>; where: Record<string, unknown> }>;
+  /** The `include` the team detail read passed to `team.findUnique`. */
+  detailIncludes?: Array<Record<string, unknown>>;
   /** Rows written to the configuration audit log. */
   audits?: Array<{ action: string; entityType: string; [key: string]: unknown }>;
 }
@@ -220,8 +222,20 @@ function buildApp(state: State): FastifyInstance {
             orgId: t.orgId ?? 'org-1',
           }));
       },
-      findUnique: async ({ where }: { where: { id?: string; slug?: string } }) =>
-        state.teams.find((t) => (where.id ? t.id === where.id : t.slug === where.slug)) ?? null,
+      findUnique: async ({
+        include,
+        where,
+      }: {
+        include?: Record<string, unknown>;
+        where: { id?: string; slug?: string };
+      }) => {
+        if (include) {
+          state.detailIncludes?.push(include);
+        }
+        return (
+          state.teams.find((t) => (where.id ? t.id === where.id : t.slug === where.slug)) ?? null
+        );
+      },
       findUniqueOrThrow: async () => ({ orgId: TEAM_ID }),
       update: async ({
         where,
@@ -508,6 +522,23 @@ describe('GET /api/v1/teams/:id shared repositories', () => {
     expect(state.shareQueries?.[0]?.where).toMatchObject({
       connection: { isActive: true, type: 'git_repo' },
       teamId: TEAM_ID,
+    });
+  });
+});
+
+describe('GET /api/v1/teams/:id members', () => {
+  it("selects each member's isActive so a deactivated user can be told apart", async () => {
+    const state = freshState({ detailIncludes: [], userRole: 'ADMIN' });
+    const res = await buildApp(state).inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'GET',
+      url: `/api/v1/teams/${TEAM_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(state.detailIncludes?.[0]).toMatchObject({
+      memberships: {
+        include: { user: { select: { email: true, id: true, isActive: true, role: true } } },
+      },
     });
   });
 });

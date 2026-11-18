@@ -53,7 +53,7 @@ export default function TeamsPage() {
       <PageHeader
         actions={newTeamButton('md')}
         subtitle="Teams own repositories, members, sandbox allowlists and per-team agent overrides."
-        title={navLabel('/admin/teams')}
+        title={navLabel('/teams')}
       />
       <QueryBoundary
         error={loadError}

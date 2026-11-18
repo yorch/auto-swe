@@ -37,25 +37,28 @@ describe('AdminNav', () => {
 
   it('keeps the role gating of the sidebar: an ENGINEER sees only ENGINEER pages', () => {
     useRole('ENGINEER');
-    resetNavigation('', '/admin/teams');
+    resetNavigation('', '/admin/organizations');
     render(<AdminNav />);
     const hrefs = links();
-    expect(hrefs).toContain('/admin/teams');
-    expect(hrefs).toContain('/admin/automations');
+    expect(hrefs).toContain('/admin/organizations');
+    expect(hrefs).toContain('/admin/slack-channels');
+    // Teams and Automations left Admin for the Teams and insights group.
+    expect(hrefs).not.toContain('/admin/teams');
+    expect(hrefs).not.toContain('/automations');
     expect(hrefs).not.toContain('/admin/users');
     expect(hrefs).not.toContain('/admin/platform-settings');
-    expect(hrefs).not.toContain('/admin/usage');
+    expect(hrefs).not.toContain('/insights/usage');
     expect(screen.queryByRole('list', { hidden: true, name: 'Security' })).toBeNull();
   });
 
   it('marks the current page, and the parent entry on a page without its own', () => {
     useRole('ADMIN');
-    resetNavigation('', '/admin/schedules');
+    resetNavigation('', '/admin/organizations/abc');
     render(<AdminNav />);
     const current = screen
       .getAllByRole('link', { hidden: true })
       .filter((a) => a.getAttribute('aria-current') === 'page');
-    expect(current.map((a) => a.getAttribute('href'))).toEqual(['/admin/automations']);
+    expect(current.map((a) => a.getAttribute('href'))).toEqual(['/admin/organizations']);
   });
 
   it('folds into a disclosure naming the current page on narrow screens', () => {

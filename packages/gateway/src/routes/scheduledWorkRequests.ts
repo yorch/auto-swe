@@ -17,6 +17,7 @@ import { auditContextData } from '../lib/auditContext.js';
 import { sendError } from '../lib/httpErrors.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
+import { assertTeamParam } from '../lib/teamParam.js';
 import {
   isTemporalUnavailable,
   sendTemporalUnavailable,
@@ -719,9 +720,17 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
   // Temporal Schedule (best-effort — DB columns are only bookkeeping).
   app.get(
     '/',
-    { config: { mcpScope: 'read' }, onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
+    {
+      config: { mcpScope: 'read' },
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { querystring: z.object({ teamId: z.string().uuid().optional() }) },
+    },
     async (request) => {
       const user = requireUser(request);
+      const { teamId } = request.query;
+      if (teamId) {
+        await assertTeamParam(fastify.prisma, user, teamId);
+      }
       // A schedule is visible through the repository it runs on (owner or shared
       // team), not through its own team: the owner sees every team's schedules on
       // its repository, so the scope is the repository relation.
@@ -732,10 +741,13 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           fastify.prisma.scheduledWorkRequest.findMany({
             include: scheduleListInclude(user.sub),
             orderBy: { createdAt: 'desc' },
-            where:
-              user.role === 'ADMIN'
+            // `teamId` only narrows to the schedules one team owns; the visibility scope stays.
+            where: {
+              ...(user.role === 'ADMIN'
                 ? {}
-                : { repository: reachableConnections(user, request.repoAccessGate) },
+                : { repository: reachableConnections(user, request.repoAccessGate) }),
+              ...(teamId ? { teamId } : {}),
+            },
           })
       );
       // Not connected: the live state is unknown, which is not the same as "no schedule".

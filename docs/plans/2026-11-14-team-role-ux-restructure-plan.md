@@ -25,20 +25,20 @@ Conventions for every task:
 - [x] Task 3: Repository dependency and onboarding routes drop the platform LEAD floor — `47066c4d`
 - [x] Task 4: Workflow template routes drop the platform LEAD floor — `4301d7c8`
 - [x] Task 5: Web permissions use the team role alone, with explained disabled controls — `ec3637d4`
-- [ ] Task 6: Move Analytics, Reports and LLM usage to `/insights/*` with redirects
-- [ ] Task 7: Move Automations and the Teams directory, then reorder the sidebar
-- [ ] Task 8: Team overview returns a `mine` block
-- [ ] Task 9: "My work" card and Start work links on the team Overview
-- [ ] Task 10: Manage tab with Repositories, Budget and Service principals
-- [ ] Task 11: Manage tab Schedules and Automations sections
-- [ ] Task 12: Unowned failures list and `FailureAssignment` storage
-- [ ] Task 13: Assign a failure and show it on the assignee's desk
-- [ ] Task 14: Nudge a stale approval
-- [ ] Task 15: Budget change requests
-- [ ] Task 16: Attention section: failures and assignment
-- [ ] Task 17: Attention section: stale approvals and nudge
-- [ ] Task 18: Budget request UI
-- [ ] Task 19: Docs, upgrade note and full quality gates
+- [x] Task 6: Move Analytics, Reports and LLM usage to `/insights/*` with redirects — `c810c18a`
+- [x] Task 7: Move Automations and the Teams directory, then reorder the sidebar — `193532bc`; follow-ups `fix(gateway)` allowlist and `docs(site)` explorer locators
+- [x] Task 8: Team overview returns a `mine` block — `7f84e290`
+- [x] Task 9: "My work" card and Start work links on the team Overview — `7e7e1d43`
+- [x] Task 10: Manage tab with Repositories, Budget and Service principals — `b5b0a127`
+- [x] Task 11: Manage tab Schedules and Automations sections — `b5b0a127`
+- [x] Task 12: Unowned failures list and `FailureAssignment` storage — `6df422e3`, `16fb39f1`; review fixes `983a3946`, `0a2ee044`, `11f0dc7a`
+- [x] Task 13: Assign a failure and show it on the assignee's desk — `16fb39f1`
+- [x] Task 14: Nudge a stale approval — `b7edc9d3`, `36b33f72`
+- [x] Task 15: Budget change requests — `5c9c1891`; review fixes `983a3946`, `0a2ee044`, `11f0dc7a`
+- [x] Task 16: Attention section: failures and assignment — `976633c2`; review fixes `983a3946`, `0a2ee044`, `11f0dc7a`
+- [x] Task 17: Attention section: stale approvals and nudge — `976633c2`
+- [x] Task 18: Budget request UI — `976633c2`
+- [x] Task 19: Docs, upgrade note and full quality gates — `22cb7e08`
 - [x] Task 20: User lookup is open to any team lead — `07817987`
 - [x] Task 21: Slack approval needs LEAD on the run's owning team — `71fbcf7a`
 - [x] Task 22: Code review presets and webhook management follow the team role — `57466a58`
@@ -132,7 +132,9 @@ control shows the title above.
 `app/insights/{analytics,reports,usage}` with `git mv`. Each moved page keeps an equivalent role
 guard (`RoleLayout`) because it leaves the admin layout. Add permanent redirects (308, query string
 kept) from each old address in `next.config`. Update internal links and the page map entries in
-`lib/navigation.ts`, `GovernanceGuide.tsx` and `lib/auditEntity.ts`. Keep `showsTeamSwitcher()` correct
+`lib/navigation.ts`, `GovernanceGuide.tsx` and `lib/auditEntity.ts`. The moved pages need a home in
+the sidebar, so this task also adds the "Teams and insights" group after Work with these three
+items; Task 7 adds Teams and Automations to it and sets the final order. Keep `showsTeamSwitcher()` correct
 for the new paths.
 **Files**: `packages/web/src/app/admin/{analytics,reports,usage}/` → `packages/web/src/app/insights/`,
 `packages/web/next.config.*`, `packages/web/src/lib/navigation.ts`,
@@ -165,11 +167,10 @@ viewer level. Reuse the desk's rules: a failure counts when the caller launched 
 a pull request counts when the caller requested it and it awaits a human merge. Add the type to the
 shared API types. Update the existing overview and desk tests to the new shape.
 **Files**: `packages/gateway/src/lib/teamOverview.ts`, `packages/shared/src/types/api.ts`,
-`packages/gateway/src/lib/teamOverview.test.ts`, `packages/gateway/src/lib/teamAttention.pg.test.ts` (new,
-listed in `ci.yml`)
+`packages/gateway/src/routes/teamOverview.test.ts` (the overview's route tests; no Postgres suite here: the
+counts reuse the desk's own queries and this task adds none, and the first new query lands in Task 12)
 **Depends on**: none
-**Verify**: `yarn vitest run packages/gateway/src/lib/teamOverview.test.ts` and the new pg test with its
-flag set as `ci.yml` does. For an `ENGINEER` caller, `mine` counts only their own items and the `lead`
+**Verify**: `yarn vitest run packages/gateway/src/routes/teamOverview.test.ts`. For an `ENGINEER` caller, `mine` counts only their own items and the `lead`
 block is still absent.
 
 ### Task 9: "My work" card and Start work links on the team Overview
