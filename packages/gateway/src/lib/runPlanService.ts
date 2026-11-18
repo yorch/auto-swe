@@ -77,13 +77,13 @@ import { launchTrackedWorkflow } from './workflowLaunch.js';
  * the same `expireRunPlans` as {@link expirePlans}). An `APPROVED` plan that was never launched is
  * expired by the same pass, using the same `expiresAt` the launch window below extends.
  *
- * **Library-agent plans are bounded by concurrency, the budget and the transition cap, not by the
- * agent-run step and wall-clock ceilings.** `workspace.agentRunMaxSteps` and
- * `workspace.agentRunMaxWallClockSeconds` are applied by `runAgentTask` to the one agent that task
- * runs. An `agent` node of a spec has no step or wall-clock field to clamp (its retry and timeout
- * fields are parsed and ignored), so there is nothing to compare against those ceilings at
- * creation or approval; the run takes the agent-run concurrency admission, the team's budget
- * and the interpreter's transition cap instead.
+ * **Library-agent plans take the agent-run concurrency admission here, and the agent-run step
+ * and wall-clock ceilings at run time.** An `agent` node of a spec has no step or wall-clock field
+ * (its retry and timeout fields are parsed and ignored), so there is nothing to compare against
+ * `workspace.agentRunMaxSteps` and `workspace.agentRunMaxWallClockSeconds` at creation or
+ * approval. The worker enforces them instead: every `agent` node of a planned run is held to both
+ * ceilings (`plannedRunCeilings.ts`), and the team's budget and the interpreter's transition cap
+ * apply as well.
  */
 
 /** How long a plan may sit unapproved before it expires. */

@@ -224,7 +224,9 @@ describe('auto-swe plan', () => {
     });
     expect(await runPlanCommand(['show', PLAN_ID], ENV)).toBe(0);
     const text = stdout();
-    expect(text).toContain('The goal and plan were removed after the retention period.');
+    expect(text).toContain(
+      'The goal and plan body were removed from this plan record after the retention period. The run keeps its own records.'
+    );
     expect(text).toContain('LAUNCHED');
     expect(text).toContain('$0.50');
     expect(text).not.toContain('Goal:');
@@ -258,7 +260,9 @@ describe('auto-swe plan', () => {
     });
     expect(await runPlanCommand(['list'], ENV)).toBe(0);
     const lines = stdout().trim().split('\n');
-    expect(lines[0]).toContain('(the goal and plan were removed after the retention period)');
+    expect(lines[0]).toContain(
+      '(The goal and plan body were removed from this plan record after the retention period. The run keeps its own records)'
+    );
     expect(lines[1]).toContain('live goal');
   });
 

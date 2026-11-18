@@ -218,7 +218,9 @@ describe('RunPlanPreview', () => {
     mount();
     await screen.findByTestId('plan-scrubbed');
     expect(
-      screen.getByText('The goal and plan were removed after the retention period.')
+      screen.getByText(
+        'The goal and plan body were removed from this plan record after the retention period. The run keeps its own records.'
+      )
     ).toBeTruthy();
     expect(screen.getByText('acme/api')).toBeTruthy();
     expect(screen.getByText('anthropic/x')).toBeTruthy();

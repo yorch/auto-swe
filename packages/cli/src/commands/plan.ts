@@ -123,7 +123,7 @@ interface PlanView {
   expiresAt: string;
   approvedAt?: string | null;
   launchedWorkflowRunId?: string | null;
-  /** The goal and plan body were removed after the retention period. */
+  /** The goal and plan body were removed from this plan record after the retention period. */
   scrubbed?: boolean;
 }
 interface PlanListRow {
@@ -472,7 +472,8 @@ function describeNodeReads(n: PlanNode): string | null {
     .join(', ')}`;
 }
 
-const SCRUBBED_NOTICE = 'The goal and plan were removed after the retention period';
+const SCRUBBED_NOTICE =
+  'The goal and plan body were removed from this plan record after the retention period. The run keeps its own records';
 
 /** What is left of a plan whose goal and body were scrubbed: its metadata and cost, no outline. */
 function printScrubbedPlan(plan: PlanView): void {
@@ -624,7 +625,7 @@ async function cmdList(rawArgs: string[], env: CliEnv): Promise<number> {
   }
   for (const p of data) {
     const headline = p.scrubbed
-      ? `(${SCRUBBED_NOTICE.toLowerCase()})`
+      ? `(${SCRUBBED_NOTICE})`
       : clean(p.intent).replace(/\s+/g, ' ').slice(0, 60);
     process.stdout.write(
       `${p.id}  ${pad(p.status, 9)} ${pad(p.mode, 11)} ${pad(usd(p.totalUsd), 8)} ${headline}\n`

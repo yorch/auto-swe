@@ -55,7 +55,9 @@ describe('MyPlans', () => {
     await screen.findByText('Fix the login bug');
     const marks = screen.getAllByTestId('plan-scrubbed');
     expect(marks).toHaveLength(1);
-    expect(marks[0]?.textContent).toBe('The goal and plan were removed after the retention period');
+    expect(marks[0]?.textContent).toBe(
+      'The goal and plan body were removed from this plan record after the retention period. The run keeps its own records'
+    );
     expect(screen.getAllByRole('button', { name: 'Open' })).toHaveLength(2);
   });
 });

@@ -105,12 +105,13 @@ export interface RunPlanListItem {
   createdAt: string;
   expiresAt: string;
   totalUsd: number | null;
-  /** The goal and plan were removed after the retention period; `intent` is empty. */
+  /** The goal and plan body were removed from this plan record after the retention period; `intent` is empty. */
   scrubbed?: boolean;
 }
 
 /** What the dashboard says wherever it meets a plan whose goal and body were removed. */
-export const SCRUBBED_PLAN_NOTICE = 'The goal and plan were removed after the retention period';
+export const SCRUBBED_PLAN_NOTICE =
+  'The goal and plan body were removed from this plan record after the retention period. The run keeps its own records';
 
 export type PlanJob =
   | { status: 'running' }

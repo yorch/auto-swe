@@ -113,7 +113,11 @@ disables the feature for them. The counts come from the audit log and the plan t
 across gateway replicas. Plans nobody
 approved in time are expired by a scheduled sweep, `RUN_PLAN_SWEEP_ENABLED` (default `true`) and
 `RUN_PLAN_SWEEP_CRON` (default `*/15 * * * *`), which also deletes expired and rejected plans after a
-week; approval refuses an expired plan on its own, so the sweep is housekeeping.
+week; approval refuses an expired plan on its own, so the sweep is housekeeping. `runPlans.launchWindowMinutes`
+(default 10, 1 to 240) is how long after approval a worker may still start the plan's run, resolved at the
+plan's team and organization when the plan is approved. `runPlans.launchedRetentionDays` (default 90, 0 to
+3650; `0` keeps launched plans forever) is how long a launched plan keeps its goal and plan body before the
+sweep scrubs the plan record; the run's own records follow run retention. See [run-plans.md](./run-plans.md#retention-of-launched-plans).
 
 The `models` group holds `models.privateNetworkHosts` (ADMIN-only, GLOBAL only, default empty): hosts a
 provider credential's `apiBase` may name even though they are, or resolve to, a private address. It lifts

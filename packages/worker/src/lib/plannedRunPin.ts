@@ -216,7 +216,10 @@ export async function loadApprovedPlan(
   // A scrubbed plan kept its row (a run names it) but not its goal or its spec. Refused ahead of
   // every other check, a retry of a long-finished launch included: there is nothing to pin.
   if (plan.scrubbedAt !== null && plan.scrubbedAt !== undefined) {
-    throw refuse('PLAN_SCRUBBED', 'the goal and plan were removed after the retention period');
+    throw refuse(
+      'PLAN_SCRUBBED',
+      'the goal and plan body were removed from the plan record after the retention period'
+    );
   }
 
   // A Temporal retry of an attempt whose claim committed finds the plan LAUNCHED by the run row
