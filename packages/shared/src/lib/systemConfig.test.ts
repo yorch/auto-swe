@@ -1283,6 +1283,7 @@ describe('systemConfig resolvers', () => {
         repoAccess: { cronExpression: '23 * * * *', enabled: false },
         repoDependency: { cronExpression: '0 4 * * *', enabled: true },
         reportDigest: { cronExpression: '0 13 * * 1', enabled: true },
+        runPlanSweep: { cronExpression: '*/15 * * * *', enabled: true },
         runReaper: { cronExpression: '*/15 * * * *', enabled: true },
         skillSourceSync: { cronExpression: '41 5 * * *', enabled: true },
         slackChannelSync: { cronExpression: '29 * * * *', enabled: false, staleAfterHours: 6 },
@@ -1332,6 +1333,8 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS', '45');
       vi.stubEnv('AUDIT_ACTIVITY_PRUNE_ENABLED', 'false');
       vi.stubEnv('AUDIT_ACTIVITY_PRUNE_CRON', '8 8 * * *');
+      vi.stubEnv('RUN_PLAN_SWEEP_ENABLED', 'false');
+      vi.stubEnv('RUN_PLAN_SWEEP_CRON', '3 3 * * *');
       vi.stubEnv('SLACK_CHANNEL_SYNC_ENABLED', 'true');
       vi.stubEnv('SLACK_CHANNEL_SYNC_CRON', '4 */2 * * *');
       vi.stubEnv('SLACK_CHANNEL_SYNC_STALE_HOURS', '12');
@@ -1349,6 +1352,7 @@ describe('systemConfig resolvers', () => {
         repoAccess: { cronExpression: '5 * * * *', enabled: true },
         repoDependency: { cronExpression: '30 2 * * 1', enabled: false },
         reportDigest: { cronExpression: '0 14 * * 1', enabled: false },
+        runPlanSweep: { cronExpression: '3 3 * * *', enabled: false },
         runReaper: { cronExpression: '*/5 * * * *', enabled: false },
         skillSourceSync: { cronExpression: '7 6 * * 2', enabled: false },
         slackChannelSync: { cronExpression: '4 */2 * * *', enabled: true, staleAfterHours: 12 },

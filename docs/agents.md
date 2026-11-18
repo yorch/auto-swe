@@ -35,7 +35,7 @@ library at `/agents`.
 | `commitToMemory` | `commitToMemory` | `anthropic/claude-opus-5-5` |
 | `channelAssistant` | Channel turns, ambient and reactive modes, `planChannelTask` / `runChannelSubtasks` | `anthropic/claude-opus-5-5` |
 | `evalJudge` | `runEvalNode` judge scorer | `anthropic/claude-haiku-4-5-20251001` |
-| `workflowAuthor` | NL workflow generation | `anthropic/claude-opus-5-5` |
+| `workflowAuthor` | NL workflow generation; also launch-time run-plan generation (`generateRunPlanSpec`), where the same agent and model run with the run-plan author prompt as a per-call override | `anthropic/claude-opus-5-5` |
 | `workflowExplainer` | NL workflow explanation | `anthropic/claude-sonnet-5-5` |
 | `repoDependencyInferrer` | `inferRepoDependencies` — proposes repo dependency edges for human confirmation | `anthropic/claude-haiku-4-5-20251001` |
 | `contentWriter` | Generic document-workflow drafting (e.g. Notion) | `anthropic/claude-sonnet-5-5` |
@@ -51,6 +51,7 @@ library at `/agents`.
 | `assistantTitler` | `nameAssistantConversation` — names an in-app assistant conversation from the user's first messages, alongside its turn; no tools | `anthropic/claude-haiku-4-5-20251001` |
 | `prTitler` | `resolvePrTitle` — picks the Conventional Commits type and a summary for a pull request title, from the request and the changed file paths, when a repository's format is `conventional` and no type is fixed; no tools; best-effort, so a failure falls back to `chore` rather than failing the run | `anthropic/claude-haiku-4-5-20251001` |
 | `orchestrator` | `runOrchestratorTurn`, the orchestration workflow's turn activity — talks to the launcher and records intents through four tools (`spawnAgent`, `messageAgent`, `cancelAgent`, `requestRepo`) that fixed code validates and applies; it reads children's results only as fenced, escaped data (`fenceChildResult`); no workspace tools, no MCP binding; not launchable as an agent run and never on an orchestration's own allowlist | `anthropic/claude-opus-5-5` |
+| `runPlanRouter` | `routeRunPlan` — ranks the workflow templates a requester may launch for a stated goal, from each template's id, name and description (supplied by the gateway, which has already filtered by launch authorization); no tools; its answer is intersected with the supplied ids, so template text can reorder candidates but never add one | `anthropic/claude-haiku-4-5-20251001` |
 
 `assertConfigReady()` gates worker boot on the agents the **installed templates** can reach:
 `requiredAgentKeysForDeployment()` walks the active (and experiment) version of every `ACTIVE`

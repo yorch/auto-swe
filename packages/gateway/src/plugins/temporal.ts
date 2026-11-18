@@ -21,10 +21,16 @@ import {
   type OnboardingPrResult,
 } from '@auto-swe/shared/lib/onboardingPr';
 import { orchestrationWorkflowId } from '@auto-swe/shared/lib/orchestration';
+import type { RunPlanMode } from '@auto-swe/shared/lib/plannedRun';
 import {
   PR_EVALUATION_WORKFLOW_TYPE,
   type PrEvaluationInput,
 } from '@auto-swe/shared/lib/prEvaluationWorkflow';
+import type { RunPlanAgentPins } from '@auto-swe/shared/lib/runPlanAgentPins';
+import {
+  RUN_PLAN_GENERATION_WORKFLOW,
+  RUN_PLAN_ROUTE_WORKFLOW,
+} from '@auto-swe/shared/lib/runPlanWorkflows';
 import { resolveTemporalAddress } from '@auto-swe/shared/lib/systemConfig';
 import { traceContextClientInterceptor } from '@auto-swe/shared/lib/temporalTracing';
 import type {
@@ -46,10 +52,16 @@ import {
   type ScheduledEvalInput,
   type ScheduledRevalidationInput,
 } from '@auto-swe/shared/types/workflow';
-import type { WorkflowSpec } from '@auto-swe/shared/workflow';
+import type {
+  RunPlanCostEstimate,
+  SkeletonReport,
+  ValidationReport,
+  WorkflowSpec,
+} from '@auto-swe/shared/workflow';
 import {
   Client,
   Connection,
+  defaultPayloadConverter,
   ScheduleClient,
   type ScheduleHandle,
   ScheduleNotFoundError,
@@ -94,6 +106,7 @@ export const AGENT_TRACE_ROLLUP_SCHEDULE_ID = 'auto-swe-agent-trace-rollup';
 export const WORKFLOW_RUN_ROLLUP_SCHEDULE_ID = 'auto-swe-workflow-run-rollup';
 export const REPORT_DIGEST_SCHEDULE_ID = 'auto-swe-report-digest';
 export const AUDIT_ACTIVITY_PRUNE_SCHEDULE_ID = 'auto-swe-audit-activity-prune';
+export const RUN_PLAN_SWEEP_SCHEDULE_ID = 'auto-swe-run-plan-sweep';
 
 /** Temporal Schedule ID for a ScheduledWorkRequest row. */
 export function workRequestScheduleId(scheduleRowId: string): string {
@@ -203,6 +216,91 @@ export type WorkflowAuthorJobStatus =
     }
   | { status: 'failed'; code: string; message: string };
 
+/**
+ * Input of `RunPlanGenerationWorkflow`, as the worker's `generateRunPlanSpec` activity reads it.
+ * The gateway computes every field itself; none of it comes from the client.
+ */
+export interface RunPlanGenerationInput {
+  intent: string;
+  mode: RunPlanMode;
+  teamId: string;
+  orgId?: string | null;
+  launchableAgentKeys: string[];
+  agentKey?: string | null;
+}
+
+/**
+ * What the generation workflow records in its Temporal memo, so a poll can tell whose job it is
+ * without trusting the job id. The intent is deliberately not here, only its hash.
+ */
+export interface RunPlanGenerationMemo {
+  ownerUserId: string;
+  teamId: string;
+  repoId: string;
+  mode: RunPlanMode;
+  intentHash: string;
+}
+
+/** The result of `RunPlanGenerationWorkflow` (the worker's `GenerateRunPlanSpecResult`). */
+export interface RunPlanGenerationOutput {
+  spec: WorkflowSpec;
+  mode: RunPlanMode;
+  summary: string;
+  attempts: number;
+  agentPins: RunPlanAgentPins;
+  catalogHash: string;
+  costEstimate: RunPlanCostEstimate;
+  skeletonReport: SkeletonReport;
+  validationReport: ValidationReport;
+  injected: string[];
+  model: string;
+}
+
+/** The ApplicationFailure types the generation activity throws, plus the bridge's own fallback. */
+export type RunPlanJobFailureCode =
+  | 'GENERATION_FAILED'
+  | 'PLAN_INPUT_INVALID'
+  | 'PLANNED_RUN_TEMPLATE_MISSING'
+  | 'AGENTS_UNAVAILABLE'
+  | 'GENERATION_UNAVAILABLE';
+
+const RUN_PLAN_JOB_FAILURE_CODES: ReadonlySet<string> = new Set<RunPlanJobFailureCode>([
+  'AGENTS_UNAVAILABLE',
+  'GENERATION_FAILED',
+  'PLAN_INPUT_INVALID',
+  'PLANNED_RUN_TEMPLATE_MISSING',
+]);
+
+/** Where one generation job stands. `memo` is whatever the workflow was started with. */
+export type RunPlanJobState =
+  | { status: 'not_found' }
+  | { status: 'running'; memo: Record<string, unknown> }
+  | {
+      status: 'done';
+      memo: Record<string, unknown>;
+      /** When the workflow closed; a job closed long ago is no longer turned into a plan. */
+      closedAt: Date | null;
+      /** The input the workflow ran with, read back from its history (the memo has no intent). */
+      input: RunPlanGenerationInput;
+      result: RunPlanGenerationOutput;
+    }
+  | { status: 'failed'; memo: Record<string, unknown>; code: RunPlanJobFailureCode };
+
+/** One candidate the router may rank: the gateway has already filtered them by launch rights. */
+export interface RunPlanRouteInput {
+  intent: string;
+  candidates: Array<{ id: string; name: string; description: string }>;
+  maxResults: number;
+  /** Required: ranking spend is always a team's. */
+  teamId: string;
+  orgId?: string | null;
+}
+
+export interface RunPlanRouteResult {
+  matches: Array<{ templateId: string; reason: string; score: number }>;
+  noneFit: boolean;
+}
+
 export interface RevalidationScheduleConfig {
   enabled: boolean;
   cronExpression: string;
@@ -291,6 +389,12 @@ export interface AgentTranscriptPruneScheduleConfig {
 
 /** The audit-log and activity-event retention sweep; the workflow reads its settings itself. */
 export interface AuditActivityPruneScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
+/** The run-plan expiry sweep; the workflow takes no arguments. */
+export interface RunPlanSweepScheduleConfig {
   enabled: boolean;
   cronExpression: string;
 }
@@ -457,6 +561,20 @@ declare module 'fastify' {
       getRepoSetupFileProposalStatus: (workflowId: string) => Promise<RepoSetupFileProposalStatus>;
       /** Start an async NL-generation job (does NOT await the result). */
       startWorkflowAuthorJob: (workflowId: string, input: WorkflowAuthorJobInput) => Promise<void>;
+      /**
+       * Start a run-plan generation job under `workflowId` (does NOT await it). `memo` is stored
+       * on the execution so a poll can verify ownership. `started: false` means the id is taken
+       * (a retried `Idempotency-Key`): nothing new was started.
+       */
+      startRunPlanGeneration: (
+        workflowId: string,
+        input: RunPlanGenerationInput,
+        memo: RunPlanGenerationMemo
+      ) => Promise<{ started: boolean }>;
+      /** Where a generation job stands; never blocks on a running one. */
+      getRunPlanJob: (workflowId: string) => Promise<RunPlanJobState>;
+      /** Rank launchable templates for a goal (request/response, bounded to a few minutes). */
+      routeRunPlan: (workflowId: string, input: RunPlanRouteInput) => Promise<RunPlanRouteResult>;
       /** Poll an async NL-generation job's status/progress/result. */
       getWorkflowAuthorJobStatus: (workflowId: string) => Promise<WorkflowAuthorJobStatus>;
       startChannelAssistant: (
@@ -553,6 +671,7 @@ declare module 'fastify' {
       syncReportDigestSchedule: (config: ReportDigestScheduleConfig) => Promise<void>;
       triggerReportDigestTest: (subscriptionId: string) => Promise<void>;
       syncAuditActivityPruneSchedule: (config: AuditActivityPruneScheduleConfig) => Promise<void>;
+      syncRunPlanSweepSchedule: (config: RunPlanSweepScheduleConfig) => Promise<void>;
       syncSkillSourceSyncSchedule: (config: SkillSourceSyncScheduleConfig) => Promise<void>;
       syncMarketplaceSyncSchedule: (config: MarketplaceSyncScheduleConfig) => Promise<void>;
       syncOutcomeReportSchedule: (config: OutcomeReportScheduleConfig) => Promise<void>;
@@ -575,6 +694,28 @@ declare module 'fastify' {
       deleteChannelReactiveSchedule: (channelId: string) => Promise<void>;
     };
   }
+}
+
+/**
+ * The input a closed generation workflow was started with, from the first event of its history.
+ * The memo holds no intent text, and the plan record needs it; Temporal already keeps it.
+ */
+async function readRunPlanJobInput(handle: {
+  fetchHistory: () => Promise<{
+    events?: Array<{
+      workflowExecutionStartedEventAttributes?: {
+        input?: { payloads?: unknown[] | null } | null;
+      } | null;
+    }> | null;
+  }>;
+}): Promise<RunPlanGenerationInput> {
+  const history = await handle.fetchHistory();
+  const payload =
+    history.events?.[0]?.workflowExecutionStartedEventAttributes?.input?.payloads?.[0];
+  if (!payload) {
+    throw new Error('the generation workflow has no recorded input');
+  }
+  return defaultPayloadConverter.fromPayload(payload as never) as RunPlanGenerationInput;
 }
 
 const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify, opts) => {
@@ -1137,6 +1278,56 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       }
     },
 
+    async getRunPlanJob(workflowId: string): Promise<RunPlanJobState> {
+      const handle = client.workflow.getHandle(workflowId);
+      let desc: Awaited<ReturnType<typeof handle.describe>>;
+      try {
+        desc = await handle.describe();
+      } catch (err) {
+        // Only "no such execution" means the job is gone; an unreachable server says nothing.
+        if (getErrorName(err) === 'WorkflowNotFoundError') {
+          return { status: 'not_found' };
+        }
+        throw err;
+      }
+      const memo = (desc.memo ?? {}) as Record<string, unknown>;
+      const name = desc.status.name;
+      if (name === 'RUNNING') {
+        return { memo, status: 'running' };
+      }
+      if (name === 'COMPLETED') {
+        try {
+          const result = (await handle.result()) as RunPlanGenerationOutput;
+          const input = await readRunPlanJobInput(handle);
+          return {
+            closedAt: desc.closeTime ?? null,
+            input,
+            memo,
+            result,
+            status: 'done',
+          };
+        } catch {
+          return { code: 'GENERATION_UNAVAILABLE', memo, status: 'failed' };
+        }
+      }
+      // Terminal non-success: the structured ApplicationFailure type, anywhere in the cause chain.
+      let code: RunPlanJobFailureCode = 'GENERATION_UNAVAILABLE';
+      try {
+        await handle.result();
+      } catch (err) {
+        let cur: unknown = err;
+        for (let i = 0; i < 6 && cur instanceof Error; i++) {
+          const t = (cur as { type?: unknown }).type;
+          if (typeof t === 'string' && RUN_PLAN_JOB_FAILURE_CODES.has(t)) {
+            code = t as RunPlanJobFailureCode;
+            break;
+          }
+          cur = (cur as { cause?: unknown }).cause;
+        }
+      }
+      return { code, memo, status: 'failed' };
+    },
+
     async getWorkflowAuthorJobStatus(workflowId: string): Promise<WorkflowAuthorJobStatus> {
       const handle = client.workflow.getHandle(workflowId);
       let desc: Awaited<ReturnType<typeof handle.describe>>;
@@ -1323,6 +1514,15 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
         workflowExecutionTimeout: '6m',
         workflowId: `eval-corpus-${randomUUID()}`,
       })) as number;
+    },
+
+    async routeRunPlan(workflowId: string, input: RunPlanRouteInput): Promise<RunPlanRouteResult> {
+      return (await client.workflow.execute(RUN_PLAN_ROUTE_WORKFLOW, {
+        args: [input],
+        taskQueue: 'engineering-workflow',
+        workflowExecutionTimeout: '4 minutes',
+        workflowId,
+      })) as RunPlanRouteResult;
     },
 
     async sendAssistantTurn(input, turn) {
@@ -1595,6 +1795,31 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       });
     },
 
+    async startRunPlanGeneration(
+      workflowId: string,
+      input: RunPlanGenerationInput,
+      memo: RunPlanGenerationMemo
+    ): Promise<{ started: boolean }> {
+      try {
+        await client.workflow.start(RUN_PLAN_GENERATION_WORKFLOW, {
+          args: [input],
+          memo: { ...memo },
+          taskQueue: 'engineering-workflow',
+          // Above the activity's own bound (three model rounds), so the activity fails first.
+          workflowExecutionTimeout: '12 minutes',
+          workflowId,
+          // A retried Idempotency-Key finds its job, finished or not; it never starts a second.
+          workflowIdReusePolicy: WorkflowIdReusePolicy.REJECT_DUPLICATE,
+        });
+        return { started: true };
+      } catch (err) {
+        if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
+          return { started: false };
+        }
+        throw err;
+      }
+    },
+
     async startWorkflowAuthorJob(workflowId: string, input: WorkflowAuthorJobInput): Promise<void> {
       // Start without awaiting — the caller returns a job id and the client polls
       // getWorkflowAuthorJobStatus. 6m ceiling > the 5m generate activity.
@@ -1786,6 +2011,14 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       };
       await upsertSchedule(REVALIDATION_SCHEDULE_ID, {
         action: makeRevalidationScheduleAction(input),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
+    async syncRunPlanSweepSchedule(config: RunPlanSweepScheduleConfig): Promise<void> {
+      await upsertSchedule(RUN_PLAN_SWEEP_SCHEDULE_ID, {
+        action: makeSweepAction('ScheduledRunPlanSweepWorkflow'),
         cronExpression: config.cronExpression,
         paused: !config.enabled,
       });

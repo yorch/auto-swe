@@ -586,7 +586,7 @@ const CHECKOUT_PREAMBLE = [
  * Anything else (multiple inputs, non-string values) keeps the structured JSON
  * payload so multi-input agent nodes still get the full object.
  */
-function inputsToMessage(inputs: Record<string, unknown> | undefined): string {
+export function inputsToMessage(inputs: Record<string, unknown> | undefined): string {
   if (!inputs) {
     return '{}';
   }

@@ -161,6 +161,8 @@ export async function handleAskMessageShortcut(
   // Reply in the message's thread (or thread under it when it's a top-level message).
   const threadTs = payload.message?.thread_ts ?? messageTs;
   const input: ChannelAssistantTurnInput = {
+    // The text is someone else's message: it must never become a plan goal for the clicker.
+    askedAboutMessage: true,
     channelId: channelRow.id,
     followup: false,
     orgId: channelRow.orgId,

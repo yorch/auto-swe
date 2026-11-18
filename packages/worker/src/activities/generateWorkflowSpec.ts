@@ -24,20 +24,16 @@ import {
   findAuthoredCommandNodes,
   findContainerCodeNodes,
   formatValidationIssue,
-  materializeUses,
-  parseWorkflowSpec,
   stripMacroTags,
   validateSpec,
-  type WorkflowAuthorOutput,
   WorkflowAuthorOutputSchema,
   type WorkflowSpec,
 } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
-import { ZodError } from 'zod';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { ownerOfTeam, withSpendOwner } from '../lib/spendOwner.js';
-import { runAgent } from './runAgent.js';
+import { runAuthorLoop } from './specAuthorLoop.js';
 
 export interface GenerateWorkflowSpecInput {
   /**
@@ -69,17 +65,6 @@ export interface GenerateWorkflowSpecResult {
 
 /** Hard cap on generate→repair rounds. Each round is one (costly) LLM call. */
 const MAX_ATTEMPTS = 3;
-
-/** Format a thrown validation error into a flat list of human-readable issues. */
-function formatErrors(err: unknown): string[] {
-  if (err instanceof ZodError) {
-    return err.issues.map((i) => {
-      const path = i.path.join('.');
-      return path ? `${path}: ${i.message}` : i.message;
-    });
-  }
-  return [err instanceof Error ? err.message : String(err)];
-}
 
 /**
  * Repair issues for code an author wrote that this requester may not author: container
@@ -204,91 +189,48 @@ async function generateWorkflowSpecImpl(
   );
 
   // Refinement seeds the model with the current spec; a fresh generation starts
-  // from the description alone. The repair loop below is identical either way —
+  // from the description alone. The repair loop is identical either way —
   // it echoes the model's own last attempt (already a refined spec) + the errors.
-  let message = input.baseSpec
+  const initialMessage = input.baseSpec
     ? buildRefineRequestMessage({
         baseSpec: input.baseSpec,
         catalog,
         instruction: input.prompt,
       })
     : buildAuthorRequestMessage(input.prompt, catalog);
-  let lastErrors: string[] = ['model produced no output'];
 
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    heartbeat(`generate workflow: attempt ${attempt}/${MAX_ATTEMPTS}`);
-    const result = await runAgent<WorkflowAuthorOutput>(spec, message, {
-      spanName: 'llm.workflow_author',
-    });
-
-    const specJson = result.object?.specJson;
-    const summary = result.object?.summary ?? '';
-    if (!specJson) {
-      // Tell the model what went wrong rather than re-sending the identical
-      // request — a stateless re-issue would just reproduce the same omission.
-      lastErrors = [
-        'You did not return a non-empty `specJson` field. Return the full ' +
-          'WorkflowSpec as a JSON string in the `specJson` field.',
-      ];
-      message = buildRepairRequestMessage({
+  const loop = await runAuthorLoop<WorkflowSpec>({
+    accept: (validated) => {
+      // Static pre-execution validation beyond the schema (unparseable exprs,
+      // unreachable nodes, no terminal path, …). Feed errors back so the author
+      // self-corrects an unrunnable graph rather than us persisting one.
+      const report = validateSpec(validated);
+      // A requester who may not author shell gets authored code repaired away here rather
+      // than refused when the draft is persisted.
+      const refusals = input.allowShell ? [] : authoredCodeIssues(validated, input.baseSpec);
+      if (report.errors.length === 0 && refusals.length === 0) {
+        return { ok: true, value: validated };
+      }
+      return { errors: [...report.errors.map(formatValidationIssue), ...refusals], ok: false };
+    },
+    agentSpec: spec,
+    buildRepair: (errors, previousSpecJson) =>
+      buildRepairRequestMessage({
         catalog,
-        errors: lastErrors,
+        errors,
         intent: input.prompt,
-        previousSpecJson: '(no specJson field was returned)',
-      });
-      continue;
-    }
+        previousSpecJson,
+      }),
+    heartbeatLabel: 'generate workflow',
+    initialMessage,
+    maxAttempts: MAX_ATTEMPTS,
+    spanName: 'llm.workflow_author',
+  });
 
-    let parsedUnknown: unknown;
-    try {
-      parsedUnknown = JSON.parse(specJson);
-    } catch (e) {
-      lastErrors = [`specJson is not valid JSON: ${(e as Error).message}`];
-      message = buildRepairRequestMessage({
-        catalog,
-        errors: lastErrors,
-        intent: input.prompt,
-        previousSpecJson: specJson,
-      });
-      continue;
-    }
-
-    let validated: WorkflowSpec;
-    try {
-      // The model may write `uses` instead of (or beside) nodes: expand to the flat form that
-      // is stored and run. A MacroUseError is a repairable finding like a schema error.
-      validated = parseWorkflowSpec(materializeUses(parsedUnknown));
-    } catch (e) {
-      lastErrors = formatErrors(e);
-      message = buildRepairRequestMessage({
-        catalog,
-        errors: lastErrors,
-        intent: input.prompt,
-        previousSpecJson: specJson,
-      });
-      continue;
-    }
-
-    // Static pre-execution validation beyond the schema (unparseable exprs,
-    // unreachable nodes, no terminal path, …). Feed errors back so the author
-    // self-corrects an unrunnable graph rather than us persisting one.
-    const report = validateSpec(validated);
-    // A requester who may not author shell gets authored code repaired away here rather
-    // than refused when the draft is persisted.
-    const refusals = input.allowShell ? [] : authoredCodeIssues(validated, input.baseSpec);
-    if (report.errors.length === 0 && refusals.length === 0) {
-      return { attempts: attempt, spec: validated, summary };
-    }
-    lastErrors = [...report.errors.map(formatValidationIssue), ...refusals];
-    message = buildRepairRequestMessage({
-      catalog,
-      errors: lastErrors,
-      intent: input.prompt,
-      previousSpecJson: specJson,
-    });
+  if (loop.ok) {
+    return { attempts: loop.attempts, spec: loop.value, summary: loop.summary };
   }
-
   throw new Error(
-    `workflowAuthor could not produce a valid WorkflowSpec after ${MAX_ATTEMPTS} attempts: ${lastErrors.join('; ')}`
+    `workflowAuthor could not produce a valid WorkflowSpec after ${MAX_ATTEMPTS} attempts: ${loop.errors.join('; ')}`
   );
 }

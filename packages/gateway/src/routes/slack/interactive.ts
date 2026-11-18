@@ -15,6 +15,10 @@ import {
   buildRunModalView,
   handleRunModalSubmission,
 } from '../../lib/slack/runModal.js';
+import {
+  handleRunPlanGenerateAction,
+  SLACK_RUN_PLAN_ACTION_ID,
+} from '../../lib/slack/runPlanActions.js';
 import type { SlackInteractivePayload } from '../../lib/slack/types.js';
 import { openSlackView, verifySlackSignature } from '../../lib/slack.js';
 
@@ -118,6 +122,7 @@ export async function registerInteractiveRoutes(fastify: FastifyInstance): Promi
 
       const actionId = payload.actions?.[0]?.action_id ?? '';
       const isHitlResolve = actionId === 'hitl_resolve' || actionId.startsWith('hitl_resolve:');
+      const isRunPlanGenerate = actionId === SLACK_RUN_PLAN_ACTION_ID;
       const isHitlModalSubmission =
         payload.type === 'view_submission' && payload.view?.callback_id === HITL_MODAL_CALLBACK_ID;
       const isRunShortcut =
@@ -171,6 +176,16 @@ export async function registerInteractiveRoutes(fastify: FastifyInstance): Promi
           await respondToInteraction(
             payload,
             ':lock: Link your Slack account in Settings first — then you can resolve steps from Slack.',
+            { ephemeral: true }
+          );
+          return { data: { ignored: true, reason: 'slack_user_not_linked' } };
+        }
+        if (isRunPlanGenerate) {
+          // Generating a plan acts as the platform user the clicker links to; an unlinked or
+          // deactivated one is told how to link, privately, and nothing starts.
+          await respondToInteraction(
+            payload,
+            ':lock: Link your Slack account in Settings first — generating a plan acts as you.',
             { ephemeral: true }
           );
           return { data: { ignored: true, reason: 'slack_user_not_linked' } };
@@ -236,6 +251,12 @@ export async function registerInteractiveRoutes(fastify: FastifyInstance): Promi
       // visibility, action validation, atomic guard, and signal rollback.
       if (isHitlResolve) {
         return handleHitlResolveAction(fastify, request, user, payload, signingSecret);
+      }
+
+      // "Generate plan" button posted by the channel assistant: starts plan generation as the
+      // clicker. It never approves a plan or launches a run; that is the dashboard's.
+      if (isRunPlanGenerate) {
+        return handleRunPlanGenerateAction(fastify, request, user, payload, signingSecret);
       }
 
       // Handle known actions

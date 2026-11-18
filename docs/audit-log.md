@@ -66,6 +66,17 @@ when the system acted, such as a webhook or a sweep), `beforeJson`, `afterJson`,
   commits in one transaction with the deletion of the drafts it sent; a refused or failed send, and
   one whose outcome is unknown, leaves no row until a check finds the review on the host, and a
   failed audit write is logged without failing a send that already happened.
+- **Run plans.** Launch-time plan generation writes `RunPlan` rows, with the plan's id as `entityId`
+  (a generation job's plan id is derived from its job id, so the start and the finished plan share
+  one) and the person as actor. `afterJson.event` names what happened: `run_plan.generation_started`
+  (a `CREATE` when a generation job starts, in the same transaction as the per-user limit check, so
+  it is also what that limit counts), `run_plan.route_requested` (a template ranking, counted the
+  same way), `run_plan.created` (the finished job stored as a plan), `run_plan.approved` (written before the
+  run starts, with a digest of the `Idempotency-Key` when there was one), `run_plan.launched` (after
+  it started), `run_plan.approval_reverted` (the launch failed and the plan went back to pending)
+  and `run_plan.rejected` (an `UPDATE`) and `run_plan.expired` (an `UPDATE` with no actor, written by the
+  sweep). Rows carry ids, the mode and the team, never the goal text or the spec. See
+  [configuration.md](./configuration.md) for the limits.
 - **Sign-ins.** Each session created by better-auth writes a `CREATE` row of entity type `Session`
   with `afterJson` `{ "event": "sign_in" }`, the user as actor, and a context of `via: "session"`
   plus the request id and truncated address. The address is the request's (`request.ip`), not the

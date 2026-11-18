@@ -66,6 +66,13 @@ const { pinDetectionsOnRun } = vi.hoisted(() => ({
 }));
 vi.mock('../lib/runDetection.js', () => ({ pinDetectionsOnRun }));
 
+// Covered by its own suite; here only the wiring of a Planned Run into createWorkflowRun.
+const { loadApprovedPlan } = vi.hoisted(() => ({ loadApprovedPlan: vi.fn() }));
+vi.mock('../lib/plannedRunPin.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/plannedRunPin.js')>()),
+  loadApprovedPlan,
+}));
+
 vi.mock('../lib/slackNotify.js', () => ({
   notifySlackRunComplete: vi.fn(),
   notifySlackStepFailure: vi.fn(),
@@ -180,6 +187,7 @@ vi.mock('@auto-swe/shared/db', () => {
     runInput: {
       findUnique: vi.fn(async () => null),
     },
+    runPlan: { findUnique: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) },
     scheduledWorkRequest: { findFirst: vi.fn(async () => ({ id: 'sched-row-1' })) },
     servicePrincipal: { count: vi.fn(async () => 1) },
     // Run-start skill-revision snapshot: no skills means an empty pin map.
@@ -2901,5 +2909,179 @@ describe('narrowPinnedEgressPolicy', () => {
   it('falls back to the cascade pin, with a warning, when the request is looser', () => {
     expect(narrowPinnedEgressPolicy(pins, 'open', 'wf-1')).toBe(pins);
     expect(vi.mocked(logWarn)).toHaveBeenCalled();
+  });
+});
+
+describe('createWorkflowRun: a run of the Planned Run template', () => {
+  const PLAN_ID = '0b1c2d3e-0000-4000-8000-000000000001';
+  const planSpec = { ...validSpec, name: 'the approved plan' };
+  const placeholder = {
+    ...validSpec,
+    name: 'Planned Run',
+    nodes: { a: { status: 'FAILED' as const, type: 'terminate' as const } },
+  };
+  const claimPlan = vi.mocked(prisma.runPlan.updateMany);
+  const input = {
+    launchedById: 'user-admin',
+    payload: { planId: PLAN_ID },
+    runConnectionId: 'repo-1',
+    templateId: 'tpl-planned',
+    templateVersion: 1,
+    workflowId: 'plan-run-1',
+    workRequestId: 'wr-1',
+  };
+
+  beforeEach(() => {
+    findAgents.mockResolvedValue([] as never);
+    findVersion.mockResolvedValue({
+      spec: placeholder,
+      template: { origin: 'system:planned-run', team: null },
+    } as never);
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
+    loadApprovedPlan.mockReset().mockResolvedValue({
+      claimedByRunId: null,
+      mode: 'delivering',
+      planId: PLAN_ID,
+      spec: planSpec,
+      teamId: 'team-1',
+    });
+    claimPlan.mockClear().mockResolvedValue({ count: 1 } as never);
+    upsertRun.mockImplementation((async (args: { create: Record<string, unknown> }) => ({
+      id: args.create.id,
+      pinnedSettings: args.create.pinnedSettings,
+      specSnapshot: args.create.specSnapshot,
+    })) as never);
+  });
+
+  it("pins the plan's spec instead of the placeholder, and names the plan as the trigger", async () => {
+    const result = (await createWorkflowRun(input)) as { spec: { name: string } };
+    const create = upsertRun.mock.calls.at(-1)?.[0]?.create as Record<string, unknown>;
+    expect(create.specSnapshot).toEqual(planSpec);
+    expect(result.spec.name).toBe('the approved plan');
+    expect(create.trigger).toBe('planned-run');
+    expect(create.triggerRefId).toBe(PLAN_ID);
+    // The plan is read with the run's own scope and launcher, never trusted from the payload.
+    expect(loadApprovedPlan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        launchedById: 'user-admin',
+        runConnectionId: 'repo-1',
+        workflowId: 'plan-run-1',
+      }),
+      // The template's own id is the WORKFLOW_TEMPLATE tier of the agent pin cascade.
+      expect.objectContaining({ workflowTemplateId: 'tpl-planned' })
+    );
+  });
+
+  it('overrides a trigger the launcher claimed', async () => {
+    await createWorkflowRun({ ...input, trigger: 'agent-run', triggerRefId: 'something-else' });
+    const create = upsertRun.mock.calls.at(-1)?.[0]?.create as Record<string, unknown>;
+    expect(create.trigger).toBe('planned-run');
+    expect(create.triggerRefId).toBe(PLAN_ID);
+  });
+
+  it('claims the plan APPROVED -> LAUNCHED in the transaction that writes the run row', async () => {
+    await createWorkflowRun(input);
+    expect(claimPlan).toHaveBeenCalledTimes(1);
+    expect(claimPlan).toHaveBeenCalledWith({
+      data: { launchedWorkflowRunId: expect.any(String), status: 'LAUNCHED' },
+      where: { id: PLAN_ID, status: 'APPROVED', teamId: 'team-1' },
+    });
+    const create = upsertRun.mock.calls.at(-1)?.[0]?.create as Record<string, unknown>;
+    expect(claimPlan.mock.calls[0]?.[0]?.data.launchedWorkflowRunId).toBe(create.id);
+    // Run row first (the claim's foreign key needs it), claim second.
+    expect(upsertRun.mock.invocationCallOrder[0]).toBeLessThan(
+      claimPlan.mock.invocationCallOrder[0] as number
+    );
+  });
+
+  it('refuses when another execution already claimed the plan: the run row is rolled back with it', async () => {
+    claimPlan.mockResolvedValue({ count: 0 } as never);
+    await expect(createWorkflowRun(input)).rejects.toThrow(/PLAN_ALREADY_LAUNCHED/);
+  });
+
+  describe('the ledger row of a refused launch', () => {
+    const retired = () =>
+      vi
+        .mocked(prisma.activeWorkflow.updateMany)
+        .mock.calls.filter(
+          ([a]) => (a as { data?: { currentStatus?: string } }).data?.currentStatus === 'FAILED'
+        );
+    const refusal = () =>
+      Object.assign(new Error('PLAN_NOT_APPROVED: the plan is PENDING'), {
+        type: 'PLANNED_RUN_REFUSED',
+      });
+
+    beforeEach(() => {
+      vi.mocked(prisma.activeWorkflow.updateMany).mockClear();
+    });
+
+    it('is retired from IMPLEMENTING as well as STARTING when the pin refuses', async () => {
+      loadApprovedPlan.mockRejectedValue(refusal());
+      await expect(createWorkflowRun(input)).rejects.toThrow(/PLAN_NOT_APPROVED/);
+      expect(retired()).toHaveLength(1);
+      expect(retired()[0]?.[0]).toEqual({
+        data: { currentStatus: 'FAILED' },
+        where: {
+          currentStatus: { in: ['STARTING', 'IMPLEMENTING'] },
+          temporalWorkflowId: 'plan-run-1',
+          workRequestId: 'wr-1',
+        },
+      });
+    });
+
+    it('is retired when the claim is lost to a duplicate launch', async () => {
+      claimPlan.mockResolvedValue({ count: 0 } as never);
+      await expect(createWorkflowRun(input)).rejects.toThrow(/PLAN_ALREADY_LAUNCHED/);
+      expect(retired()).toHaveLength(1);
+    });
+
+    it('is left alone by an error Temporal will retry', async () => {
+      loadApprovedPlan.mockRejectedValue(new Error('connection reset'));
+      await expect(createWorkflowRun(input)).rejects.toThrow(/connection reset/);
+      expect(retired()).toHaveLength(0);
+    });
+
+    it('is not touched when the plan is pinned', async () => {
+      await createWorkflowRun(input);
+      expect(retired()).toHaveLength(0);
+    });
+  });
+
+  it('does not claim again on a Temporal retry of the attempt that did', async () => {
+    loadApprovedPlan.mockResolvedValue({
+      claimedByRunId: 'run-first-attempt',
+      mode: 'delivering',
+      planId: PLAN_ID,
+      spec: planSpec,
+      teamId: 'team-1',
+    });
+    await createWorkflowRun(input);
+    expect(claimPlan).not.toHaveBeenCalled();
+  });
+
+  it('writes no run row when the plan is refused', async () => {
+    loadApprovedPlan.mockRejectedValue(new Error('PLAN_NOT_APPROVED: the plan is PENDING'));
+    await expect(createWorkflowRun(input)).rejects.toThrow(/PLAN_NOT_APPROVED/);
+    expect(upsertRun).not.toHaveBeenCalled();
+    expect(claimPlan).not.toHaveBeenCalled();
+  });
+
+  it('never loads a plan for a template without the system origin, whatever the payload says', async () => {
+    findVersion.mockResolvedValue({
+      spec: validSpec,
+      template: { origin: 'swe-starter' },
+    } as never);
+    await createWorkflowRun(input);
+    expect(loadApprovedPlan).not.toHaveBeenCalled();
+    expect(upsertRun.mock.calls.at(-1)?.[0]?.create.specSnapshot).toEqual(validSpec);
+  });
+
+  it('never loads a plan for a same-origin template that has an owning team', async () => {
+    findVersion.mockResolvedValue({
+      spec: validSpec,
+      template: { origin: 'system:planned-run', team: { id: 'team-1' } },
+    } as never);
+    await createWorkflowRun(input);
+    expect(loadApprovedPlan).not.toHaveBeenCalled();
   });
 });

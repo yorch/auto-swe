@@ -256,6 +256,30 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/budgetForecast.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/plainText',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/plainText.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/runPlanAgentPins',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/runPlanAgentPins.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/runPlanSweep',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/runPlanSweep.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/slackRunPlanToken',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/slackRunPlanToken.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/runPlanWorkflows',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/runPlanWorkflows.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/plannedRun',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/plannedRun.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/agentRunFailure',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/agentRunFailure.ts'),
       },
@@ -641,6 +665,10 @@ export default defineConfig({
       {
         find: '@auto-swe/shared/workflow/runAttribution',
         replacement: path.resolve(__dirname, 'packages/shared/src/workflow/runAttribution.ts'),
+      },
+      {
+        find: '@auto-swe/shared/workflow/runPlan',
+        replacement: path.resolve(__dirname, 'packages/shared/src/workflow/runPlan/index.ts'),
       },
       {
         find: '@auto-swe/shared/workflow',

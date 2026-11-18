@@ -367,6 +367,19 @@ describe('POST /work-requests/:id/retry', () => {
     expect(started).toHaveLength(0);
   });
 
+  it('refuses to retry a planned run: an approved plan runs once', async () => {
+    snapshotTemplate = { origin: 'system:planned-run', teamId: null };
+    const res = await app.inject({
+      headers: { authorization: 'Bearer t' },
+      method: 'POST',
+      payload: {},
+      url: `/api/v1/work-requests/${WORK_REQUEST_ID}/retry`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('USE_PLAN_RERUN');
+    expect(started).toHaveLength(0);
+  });
+
   it('starts a retry whose payload names only its own repository', async () => {
     // The regression this guards: the default template declares `connectionId` as a `git_repo`
     // connection, and a field repeating the run's own id is type-checked against the row the

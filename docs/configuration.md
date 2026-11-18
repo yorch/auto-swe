@@ -6,7 +6,7 @@ everything else is data an operator can change without a deploy.**
 
 | Tier | Lives in | Contents | Changed by |
 |---|---|---|---|
-| Bootstrap | Environment, permanently | `DATABASE_URL`, `CONFIG_ENCRYPTION_KEY`, `TEMPORAL_ADDRESS`, `PORT`, JWT/auth secrets, `BUNDLE_TRUSTED_KEYS`, `NEXT_PUBLIC_*`; sign-in credentials (`GITHUB_CLIENT_*`, `GOOGLE_CLIENT_*`, `OKTA_*`); artifact storage (`ARTIFACT_S3_*`, `ARTIFACT_FS_DIR`, `ARTIFACT_WRITE_BACKEND`, `AWS_*`); workspace sizing defaults, images and network (`WORKSPACE_*`); the harness model proxy (`HARNESS_MODEL_PROXY_*`, `REGISTRY_PROXY_*`); `WORKER_MAX_CONCURRENT_ACTIVITIES`; `SCANNER_REGEX_BUDGET_MS`; the scheduled sweeps (`REPO_ACCESS_SYNC_*`, `REPO_DEPENDENCY_SCAN_*`, `MODEL_DISCOVERY_*`, `RUN_REAPER_*`, `WORKSPACE_REAPER_*`, `AUTOMATION_DECISION_PRUNE_*`, `SKILL_SOURCE_SYNC_*`, `SLACK_CHANNEL_SYNC_*`, `CALLBACK_DELIVERY_*`, `CALLBACK_DELIVERY_PRUNE_*`, `AGENT_TRANSCRIPT_PRUNE_*`, `AGENT_TRACE_ROLLUP_*`, `AUDIT_ACTIVITY_PRUNE_*`) | The deploy pipeline |
+| Bootstrap | Environment, permanently | `DATABASE_URL`, `CONFIG_ENCRYPTION_KEY`, `TEMPORAL_ADDRESS`, `PORT`, JWT/auth secrets, `BUNDLE_TRUSTED_KEYS`, `NEXT_PUBLIC_*`; sign-in credentials (`GITHUB_CLIENT_*`, `GOOGLE_CLIENT_*`, `OKTA_*`); artifact storage (`ARTIFACT_S3_*`, `ARTIFACT_FS_DIR`, `ARTIFACT_WRITE_BACKEND`, `AWS_*`); workspace sizing defaults, images and network (`WORKSPACE_*`); the harness model proxy (`HARNESS_MODEL_PROXY_*`, `REGISTRY_PROXY_*`); `WORKER_MAX_CONCURRENT_ACTIVITIES`; `SCANNER_REGEX_BUDGET_MS`; the scheduled sweeps (`REPO_ACCESS_SYNC_*`, `REPO_DEPENDENCY_SCAN_*`, `MODEL_DISCOVERY_*`, `RUN_REAPER_*`, `WORKSPACE_REAPER_*`, `AUTOMATION_DECISION_PRUNE_*`, `SKILL_SOURCE_SYNC_*`, `SLACK_CHANNEL_SYNC_*`, `CALLBACK_DELIVERY_*`, `CALLBACK_DELIVERY_PRUNE_*`, `AGENT_TRANSCRIPT_PRUNE_*`, `AGENT_TRACE_ROLLUP_*`, `AUDIT_ACTIVITY_PRUNE_*`, `RUN_PLAN_SWEEP_*`) | The deploy pipeline |
 | Integrations | Singleton config tables | GitHub, the GitHub approver App (database only, no environment fallback), Slack, issue tracker, knowledge base, Figma, workflow defaults | Admins, at `/admin/integrations` and `/admin/workflow-defaults`; the approver App in its own card on the GitHub tab of `/admin/integrations` (or `PUT /api/v1/integrations/github-approver-app`) |
 | Policy | The setting registry | Operator knobs, not constants in the worker | Admins and grant holders, at `/admin/platform-settings` |
 
@@ -94,6 +94,26 @@ only, read where they are used rather than pinned to a run.
 allows the PR body to inline screenshots, which requires `UI_EVIDENCE_PUBLIC_BUCKET` and
 `UI_EVIDENCE_PUBLIC_BASE_URL` in the worker's environment as well. See
 [ui-validation.md](./ui-validation.md).
+
+The `runPlans` group holds the kill switch and the per-user limits of launch-time plan generation, all
+ADMIN-only, overridable per team and organization, and read where they are used rather than pinned to a
+run. `runPlans.enabled` (default on) switches generating, ranking and approving plans; with it off, plans
+already launched keep running. `runPlans.createPerUserPerHour` (default 10; 0 disables generation) counts
+generation jobs a person has started in the last hour, whether or not a job produced a plan;
+`runPlans.maxPendingPerUser` (default 5) caps the plans a person holds waiting for approval;
+`runPlans.generationMaxAttempts` (default 3, 1 to 5) caps the author-model rounds one generation may spend, the first draft
+plus repairs, so it bounds what a single goal can cost; and
+`runPlans.routePerUserPerHour` (default 30; 0 disables ranking) bounds template-ranking requests. The
+three per-user limits (`runPlans.createPerUserPerHour`, `runPlans.maxPendingPerUser` and
+`runPlans.routePerUserPerHour`) apply to a person across every team, so each is resolved at the
+repository's team and organization and at every active team and organization the person belongs to
+(at most 50 scopes, in a fixed order), and the smallest value wins: choosing a repository of a more
+generous team does not raise a person's limit, and a 0 set by any one of their teams or organizations
+disables the feature for them. The counts come from the audit log and the plan table, so they hold
+across gateway replicas. Plans nobody
+approved in time are expired by a scheduled sweep, `RUN_PLAN_SWEEP_ENABLED` (default `true`) and
+`RUN_PLAN_SWEEP_CRON` (default `*/15 * * * *`), which also deletes expired and rejected plans after a
+week; approval refuses an expired plan on its own, so the sweep is housekeeping.
 
 The `models` group holds `models.privateNetworkHosts` (ADMIN-only, GLOBAL only, default empty): hosts a
 provider credential's `apiBase` may name even though they are, or resolve to, a private address. It lifts

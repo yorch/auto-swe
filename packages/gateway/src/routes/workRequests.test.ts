@@ -288,6 +288,7 @@ describe('POST /api/v1/work-requests', () => {
         nextRunAt: null,
         paused: false,
       }),
+      getRunPlanJob: async () => ({ status: 'not_found' }),
       getWorkflowAuthorJobStatus: async () => ({ phase: 'generating', status: 'running' }),
       getWorkRequestScheduleStatus: async () => ({
         exists: false,
@@ -301,6 +302,7 @@ describe('POST /api/v1/work-requests', () => {
       nameAssistantConversation: async () => {},
       probeExecutorImage: async () => ({ checks: [], image: 'x', ok: true }),
       replaceEvalLessons: async () => 0,
+      routeRunPlan: async () => ({ matches: [], noneFit: true }),
       sendAssistantTurn: async () => {},
       signalCampaignCancel: async () => 'signalled' as const,
       signalWithStartOrchestration: async () => {},
@@ -324,6 +326,7 @@ describe('POST /api/v1/work-requests', () => {
         startedRequests.push(input.request);
         startedWorkflowIds.push(id);
       },
+      startRunPlanGeneration: async () => ({ started: true }),
       startWorkflowAuthorJob: async () => {},
       syncAgentTraceRollupSchedule: async () => {},
       syncAgentTranscriptPruneSchedule: async () => {},
@@ -343,6 +346,7 @@ describe('POST /api/v1/work-requests', () => {
       syncRepoDependencyScanSchedule: async () => {},
       syncReportDigestSchedule: async () => {},
       syncRevalidationSchedule: async () => {},
+      syncRunPlanSweepSchedule: async () => {},
       syncRunReaperSchedule: async () => {},
       syncSkillSourceSyncSchedule: async () => {},
       syncSlackChannelSyncSchedule: async () => {},

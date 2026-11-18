@@ -22,6 +22,7 @@ import {
   DELEGATE_TOOL_PROMPT_NOTE,
   FOLLOWUP_INTENT_PROMPT_NOTE,
   GENERATE_WORKFLOW_TOOL_PROMPT_NOTE,
+  PROPOSE_RUN_TOOL_PROMPT_NOTE,
   REFINE_WORKFLOW_TOOL_PROMPT_NOTE,
 } from '../lib/channelTurnPrompts.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
@@ -51,6 +52,7 @@ import {
   isSpendRefusal,
 } from '../lib/usdCapGuard.js';
 import { SKIP_SENTINEL } from './channelConstants.js';
+import type { ProposeRunIntent } from './channelRunPlan.js';
 import { runAgent } from './runAgent.js';
 
 /** Fallback when a channel row has no explicit agent key (should never happen — the
@@ -237,6 +239,81 @@ function buildRefineWorkflowTool(onRefine: (intent: RefineWorkflowIntent) => voi
     id: 'refineWorkflow',
     inputSchema: RefineWorkflowInputSchema,
     outputSchema: GenerateWorkflowOutputSchema,
+  });
+}
+
+export type { ProposeRunIntent } from './channelRunPlan.js';
+
+/**
+ * Schema for the `proposeRun` tool's input. It is deliberately tiny and strict: there is no field
+ * for the goal, so a model cannot write one. The goal is the invoking person's own message, taken by
+ * fixed code after the turn; a model chooses only a mode, an agent key for an output-only plan, and
+ * a repository hint (honoured only when that person's own message names the repository).
+ */
+export const ProposeRunInputSchema = z
+  .object({
+    agentKey: z
+      .string()
+      .regex(/^[A-Za-z0-9_.-]{1,100}$/)
+      .optional()
+      .describe(
+        'Only for mode "output-only": the key of the library agent the plan is built on. ' +
+          'Leave unset for mode "delivering".'
+      ),
+    mode: z
+      .enum(['delivering', 'output-only'])
+      .describe(
+        "'delivering' for a plan that changes the repository and ends in a reviewed draft " +
+          "pull request; 'output-only' for a plan that produces a reviewed document or answer."
+      ),
+    repoHint: z
+      .string()
+      .max(200)
+      .optional()
+      .describe(
+        'The repository the user named in their message, if any (e.g. "payments-api"). ' +
+          'Leave unset if they named none.'
+      ),
+  })
+  .strict();
+
+const ProposeRunOutputSchema = z.object({
+  note: z.string(),
+  queued: z.boolean(),
+});
+
+/**
+ * Build the `proposeRun` Mastra tool. Like `delegateTask` it only RECORDS an intent. After the turn
+ * fixed code resolves the repository, checks the person, and posts a confirmation with a
+ * "Generate plan" button that only the person who asked can use. The tool takes no goal text, starts
+ * nothing and approves nothing.
+ */
+function buildProposeRunTool(onPropose: (intent: ProposeRunIntent) => void) {
+  return createTool({
+    description:
+      "Offer to turn the user's request into a deterministic, reviewable plan (a generated " +
+      'workflow they approve in the dashboard before anything runs). Use when the user asks to ' +
+      'get something done with a plan or a deterministic workflow. You do not write the goal: ' +
+      'it is taken from their own message.',
+    execute: async ({ agentKey, mode, repoHint }) => {
+      if ((mode === 'output-only') !== (agentKey !== undefined)) {
+        return {
+          note:
+            mode === 'output-only'
+              ? 'An output-only plan needs the agentKey of the library agent to build it on.'
+              : 'Only an output-only plan takes an agentKey; leave it unset for a delivering plan.',
+          queued: false,
+        };
+      }
+      onPropose({ agentKey, mode, repoHint });
+      return {
+        note: 'Proposal queued — a confirmation with a button follows in this thread.',
+        queued: true,
+      };
+    },
+    id: 'proposeRun',
+    inputSchema: ProposeRunInputSchema,
+    outputSchema: ProposeRunOutputSchema,
   });
 }
 
@@ -854,6 +931,8 @@ export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput):
   delegate?: DelegateIntent;
   generate?: GenerateWorkflowIntent;
   refine?: RefineWorkflowIntent;
+  /** A plan the assistant offered to generate; the workflow has fixed code build the proposal. */
+  proposeRun?: ProposeRunIntent;
   /** Gap H: set when a follow-up turn decided the message wasn't addressed to it
    *  (SKIP) — the workflow then delivers nothing. */
   suppressed?: boolean;
@@ -870,6 +949,8 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
   delegate?: DelegateIntent;
   generate?: GenerateWorkflowIntent;
   refine?: RefineWorkflowIntent;
+  /** A plan the assistant offered to generate; the workflow has fixed code build the proposal. */
+  proposeRun?: ProposeRunIntent;
   /** Gap H: set when a follow-up turn decided the message wasn't addressed to it
    *  (SKIP) — the workflow then delivers nothing. */
   suppressed?: boolean;
@@ -980,6 +1061,16 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
     refine = intent;
   });
 
+  // `proposeRun` offers a plan for the invoker's own request. It is not bound when the text is
+  // another person's message (the message shortcut), because a plan's goal is only ever the
+  // invoker's own words. Records the intent; fixed code builds the proposal after the turn.
+  let proposeRun: ProposeRunIntent | undefined;
+  const proposeRunTool = input.askedAboutMessage
+    ? undefined
+    : buildProposeRunTool((intent) => {
+        proposeRun = intent;
+      });
+
   // Give the agent a `postCard` tool so it can answer with a structured Slack card. The tool
   // validates the spec itself (a refusal goes back to the model to fix) and records an accepted
   // card here; the workflow delivers it as the reply's blocks after the turn.
@@ -1000,7 +1091,7 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
   // base note advertises delegate + generate + refine tools; a follow-up
   // continuation turn (Gap H) also appends the SKIP-aware intent note so the
   // agent stays out of conversations that aren't addressed to it.
-  const baseToolNote = `${DELEGATE_TOOL_PROMPT_NOTE}${GENERATE_WORKFLOW_TOOL_PROMPT_NOTE}${REFINE_WORKFLOW_TOOL_PROMPT_NOTE}${cardToolPromptNote(slackCardPrompt({ linkHosts: cardLinkHosts }))}`;
+  const baseToolNote = `${DELEGATE_TOOL_PROMPT_NOTE}${GENERATE_WORKFLOW_TOOL_PROMPT_NOTE}${REFINE_WORKFLOW_TOOL_PROMPT_NOTE}${proposeRunTool ? PROPOSE_RUN_TOOL_PROMPT_NOTE : ''}${cardToolPromptNote(slackCardPrompt({ linkHosts: cardLinkHosts }))}`;
   const promptNote = input.followup
     ? `${baseToolNote}${FOLLOWUP_INTENT_PROMPT_NOTE}`
     : baseToolNote;
@@ -1027,6 +1118,7 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
           delegateTask: delegateTool,
           generateWorkflow: generateWorkflowTool,
           postCard: postCardTool,
+          ...(proposeRunTool ? { proposeRun: proposeRunTool } : {}),
           refineWorkflow: refineWorkflowTool,
         } as AgentTools,
       }
@@ -1050,7 +1142,15 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
   // (and didn't fire a tool) is suppressed — the cost already happened (budget
   // bounds it) but nothing is posted, so the assistant doesn't inject itself into
   // human-to-human chatter. Settle before returning so the budget still sees it.
-  if (input.followup && !delegate && !generate && !refine && !card && SKIP_SENTINEL.test(reply)) {
+  if (
+    input.followup &&
+    !delegate &&
+    !generate &&
+    !refine &&
+    !proposeRun &&
+    !card &&
+    SKIP_SENTINEL.test(reply)
+  ) {
     await turn.hold.settle(costUsd);
     return { reply: '', suppressed: true };
   }
@@ -1078,23 +1178,32 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
   // The action intents are mutually exclusive — the workflow handles each with an
   // early return, so a co-fired lower-precedence intent would be silently dropped.
   // Resolve to one by precedence: generate (new) > refine (change existing) >
-  // delegate (one-off task), keeping the most specific authoring intent.
-  if (generate && (refine || delegate)) {
+  // proposeRun (a plan the person confirms) > delegate (a task that starts at once),
+  // keeping the most specific authoring intent and, between the two that run work,
+  // the one that waits for a human.
+  if (generate && (refine || delegate || proposeRun)) {
     console.warn(
       `[channelAssistant] generateWorkflow co-fired with another intent for ${input.channelId}; preferring generateWorkflow`
     );
     refine = undefined;
     delegate = undefined;
-  } else if (refine && delegate) {
+    proposeRun = undefined;
+  } else if (refine && (delegate || proposeRun)) {
     console.warn(
-      `[channelAssistant] refineWorkflow co-fired with delegateTask for ${input.channelId}; preferring refineWorkflow`
+      `[channelAssistant] refineWorkflow co-fired with another intent for ${input.channelId}; preferring refineWorkflow`
+    );
+    delegate = undefined;
+    proposeRun = undefined;
+  } else if (proposeRun && delegate) {
+    console.warn(
+      `[channelAssistant] proposeRun co-fired with delegateTask for ${input.channelId}; preferring proposeRun`
     );
     delegate = undefined;
   }
 
   // The workflow answers an action intent with its own text, so a card posted alongside one would
   // be dropped silently; say so here instead and send no card.
-  if (card && (generate || refine || delegate)) {
+  if (card && (generate || refine || delegate || proposeRun)) {
     console.warn(
       `[channelAssistant] postCard co-fired with an action intent for ${input.channelId}; dropping the card`
     );
@@ -1102,12 +1211,12 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
   }
 
   const ackFallback =
-    delegate || generate || refine
+    delegate || generate || refine || proposeRun
       ? "On it — I'll follow up in this thread when it's done."
       : card
         ? card.text
         : "I wasn't able to come up with a response. Could you rephrase?";
-  return { card, delegate, generate, refine, reply: reply || ackFallback };
+  return { card, delegate, generate, proposeRun, refine, reply: reply || ackFallback };
 }
 
 /**

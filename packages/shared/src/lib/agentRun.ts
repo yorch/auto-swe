@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { egressPolicySchema } from './egressPolicy.js';
 import { BaseBranchSchema } from './gitRef.js';
 import { PATH_SCOPE_MAX_LENGTH, PATH_SCOPES_MAX, parsePathScope } from './pathScope.js';
+import { PLANNED_RUN_TEMPLATE_NAME } from './plannedRun.js';
 
 /**
  * Agent runs: an ad-hoc "run this library Agent on this repository" launch.
@@ -32,9 +33,16 @@ export const AGENT_RUN_TEMPLATE_ORIGIN = 'system:agent-run';
 /** The internal step that owns the workspace, gate and push. System template only. */
 export const AGENT_RUN_STEP = 'runAgentTask';
 
+/** Every hidden system template's name. Each is matched by name by its seed. */
+export const RESERVED_TEMPLATE_NAMES: readonly string[] = [
+  AGENT_RUN_TEMPLATE_NAME,
+  PLANNED_RUN_TEMPLATE_NAME,
+];
+
 /** Case-insensitive: the seed matches by name and a near-miss must not slip through. */
 export function isReservedTemplateName(name: string): boolean {
-  return name.trim().toLowerCase() === AGENT_RUN_TEMPLATE_NAME.toLowerCase();
+  const normalised = name.trim().toLowerCase();
+  return RESERVED_TEMPLATE_NAMES.some((reserved) => reserved.toLowerCase() === normalised);
 }
 
 /** `true` for an origin no bundle or API write may set. */
@@ -67,6 +75,7 @@ export const NON_LAUNCHABLE_AGENT_KEYS: ReadonlySet<string> = new Set([
   'assistantTitler',
   'ciTriager',
   'prFeedbackResponder',
+  'runPlanRouter',
   'prTitler',
   'orchestrator',
 ]);

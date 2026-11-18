@@ -1515,6 +1515,8 @@ export interface ScheduledSweepsConfig {
   /// Deletes audit-log rows past `audit.configLogRetentionDays` and activity events past
   /// `analytics.activityRetentionDays`.
   auditActivityPrune: SweepSchedule;
+  /// Expires run plans nobody approved in time and deletes old expired and rejected ones.
+  runPlanSweep: SweepSchedule;
   /// Sends due run callbacks (docs/run-callbacks.md).
   callbackDelivery: SweepSchedule;
   /// Deletes delivered and dead run callbacks past their retention.
@@ -1610,6 +1612,8 @@ function envCron(name: string, fallback: string): string {
 ///   WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS default 0 — read by the worker running the sweep
 ///   AUDIT_ACTIVITY_PRUNE_ENABLED  default true — a no-op for the audit log until a retention is set
 ///   AUDIT_ACTIVITY_PRUNE_CRON     default `7 5 * * *`
+///   RUN_PLAN_SWEEP_ENABLED        default true — hygiene only: approval refuses an expired plan itself
+///   RUN_PLAN_SWEEP_CRON           default `*/15 * * * *`
 ///
 /// Lenient, like `resolveWorkspaceInfra`: a bad value falls back to its default.
 /// `assertScheduledSweepsEnv()` is the strict check the gateway runs at boot.
@@ -1667,6 +1671,10 @@ export function resolveScheduledSweeps(): ScheduledSweepsConfig {
     reportDigest: {
       cronExpression: envCron('REPORT_DIGEST_CRON', '0 13 * * 1'),
       enabled: envFlag('REPORT_DIGEST_ENABLED', true),
+    },
+    runPlanSweep: {
+      cronExpression: envCron('RUN_PLAN_SWEEP_CRON', '*/15 * * * *'),
+      enabled: envFlag('RUN_PLAN_SWEEP_ENABLED', true),
     },
     runReaper: {
       cronExpression: envCron('RUN_REAPER_CRON', '*/15 * * * *'),
@@ -1761,6 +1769,8 @@ export function validateScheduledSweepsEnv(): string[] {
   check('REPORT_DIGEST_CRON', cron, 'a five-field cron expression such as "0 13 * * 1"');
   check('AUDIT_ACTIVITY_PRUNE_ENABLED', flag, "'true' or 'false'");
   check('AUDIT_ACTIVITY_PRUNE_CRON', cron, 'a five-field cron expression such as "7 5 * * *"');
+  check('RUN_PLAN_SWEEP_ENABLED', flag, "'true' or 'false'");
+  check('RUN_PLAN_SWEEP_CRON', cron, 'a five-field cron expression such as "*/15 * * * *"');
   check('SLACK_CHANNEL_SYNC_ENABLED', flag, "'true' or 'false'");
   check('SLACK_CHANNEL_SYNC_CRON', cron, 'a five-field cron expression such as "29 * * * *"');
   check(

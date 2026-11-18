@@ -39,6 +39,7 @@ export const SETTING_GROUPS = [
   'repoAccess',
   'repoDependency',
   'review',
+  'runPlans',
   'skills',
   'tracker',
   'uiValidation',

@@ -161,6 +161,7 @@ export {
   resolveWorkflowRunAttribution,
   runInputAttributionSelect,
 } from './runAttribution.js';
+export * from './runPlan/index.js';
 export {
   assertShellImageAllowed,
   BUILTIN_SHELL_IMAGES,

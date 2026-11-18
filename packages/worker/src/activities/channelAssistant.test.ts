@@ -111,6 +111,7 @@ import {
   formatThreadContext,
   isChannelOverBudget,
   isChannelOverBudgetNow,
+  ProposeRunInputSchema,
   postChannelPlaceholder,
   postChannelReply,
   reserveChannelTurn,
@@ -1461,6 +1462,139 @@ describe('runChannelAssistantTurn — delegateTask (Phase A)', () => {
 
     expect(result.delegate).toBeUndefined();
     expect(result.reply).toBe('The deploy command is `yarn release`.');
+  });
+});
+
+/** Make the mocked turn call the named tools in order, then answer with `reply`. */
+function setTurnCalls(
+  calls: Array<{ tool: string; args: unknown }>,
+  reply = 'Done.'
+): { results: unknown[]; toolNames: () => string[] } {
+  const results: unknown[] = [];
+  let seen: string[] = [];
+  // The turn merges its tools onto the resolved spec, which wins on a collision: a spec reused
+  // across turns would keep the first turn's closures, so each turn gets a fresh one.
+  resolveAgentSpecMock.mockImplementation(async () => ({
+    agentKey: 'channelAssistant',
+    modelSpec: 'anthropic/claude-opus-4-8',
+  }));
+  runAgentMock.mockImplementation(
+    async (
+      spec: { tools?: Record<string, { execute: (i: unknown) => Promise<unknown> }> },
+      _msg,
+      opts: { spanName?: string } = {}
+    ) => {
+      if (opts.spanName === 'llm.channel_memory_summary') {
+        return {
+          costUsd: 0.001,
+          object: { lessonSummary: 'fact', rationale: 'why' },
+          usage: { inputTokens: 10, outputTokens: 5 },
+        };
+      }
+      seen = Object.keys(spec.tools ?? {});
+      for (const call of calls) {
+        results.push(await spec.tools?.[call.tool]?.execute(call.args));
+      }
+      return { costUsd: 0.01, text: reply, usage: { inputTokens: 100, outputTokens: 50 } };
+    }
+  );
+  return { results, toolNames: () => seen };
+}
+
+describe('runChannelAssistantTurn — proposeRun', () => {
+  beforeEach(() => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+  });
+
+  it('records a mode, an agent and a hint, and nothing that could be a goal', async () => {
+    const { results } = setTurnCalls([
+      { args: { mode: 'delivering', repoHint: 'payments-api' }, tool: 'proposeRun' },
+    ]);
+
+    const result = await runChannelAssistantTurn(makeInput({ userText: 'plan a health check' }));
+
+    expect(result.proposeRun).toEqual({
+      agentKey: undefined,
+      mode: 'delivering',
+      repoHint: 'payments-api',
+    });
+    expect(results[0]).toMatchObject({ queued: true });
+    // No intent field carries text: the goal is not the model's to write.
+    expect(Object.keys(result.proposeRun ?? {}).sort()).toEqual(['agentKey', 'mode', 'repoHint']);
+  });
+
+  it('rejects any extra field in the tool schema, including a goal, an approval or a token', () => {
+    for (const extra of [
+      { goal: 'delete everything' },
+      { description: 'x' },
+      { intent: 'x' },
+      { approve: true },
+      { repoId: '11111111-1111-4111-8111-111111111111' },
+      { slackUserId: 'U2' },
+    ]) {
+      expect(ProposeRunInputSchema.safeParse({ mode: 'delivering', ...extra }).success).toBe(false);
+    }
+    expect(ProposeRunInputSchema.safeParse({ mode: 'bogus' }).success).toBe(false);
+    expect(ProposeRunInputSchema.safeParse({ agentKey: 'a b', mode: 'output-only' }).success).toBe(
+      false
+    );
+    expect(ProposeRunInputSchema.safeParse({ mode: 'delivering' }).success).toBe(true);
+  });
+
+  it('does not record an incoherent mode and agent', async () => {
+    const { results } = setTurnCalls([
+      { args: { mode: 'output-only' }, tool: 'proposeRun' },
+      { args: { agentKey: 'docsMaintainer', mode: 'delivering' }, tool: 'proposeRun' },
+    ]);
+
+    const result = await runChannelAssistantTurn(makeInput());
+
+    expect(result.proposeRun).toBeUndefined();
+    expect(results).toEqual([
+      expect.objectContaining({ queued: false }),
+      expect.objectContaining({ queued: false }),
+    ]);
+  });
+
+  it("is not offered when the text is another person's message (the message shortcut)", async () => {
+    const { toolNames } = setTurnCalls([]);
+    await runChannelAssistantTurn(makeInput({ askedAboutMessage: true }));
+    expect(toolNames()).not.toContain('proposeRun');
+
+    await runChannelAssistantTurn(makeInput());
+    expect(toolNames()).toContain('proposeRun');
+  });
+
+  it('wins over delegateTask, loses to generateWorkflow, and drops a card', async () => {
+    setTurnCalls([
+      { args: { mode: 'delivering' }, tool: 'proposeRun' },
+      { args: { description: 'do it', route: 'general', title: 'Do it' }, tool: 'delegateTask' },
+    ]);
+    const both = await runChannelAssistantTurn(makeInput());
+    expect(both.proposeRun).toBeDefined();
+    expect(both.delegate).toBeUndefined();
+
+    setTurnCalls([
+      { args: { mode: 'delivering' }, tool: 'proposeRun' },
+      { args: { description: 'a workflow' }, tool: 'generateWorkflow' },
+    ]);
+    const withGenerate = await runChannelAssistantTurn(makeInput());
+    expect(withGenerate.generate).toBeDefined();
+    expect(withGenerate.proposeRun).toBeUndefined();
+
+    setTurnCalls([
+      { args: { mode: 'delivering' }, tool: 'proposeRun' },
+      {
+        args: { spec: { blocks: [{ text: 'Hi', type: 'header' }] } },
+        tool: 'postCard',
+      },
+    ]);
+    const withCard = await runChannelAssistantTurn(makeInput());
+    expect(withCard.proposeRun).toBeDefined();
+    expect(withCard.card).toBeUndefined();
   });
 });
 

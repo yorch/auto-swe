@@ -19,6 +19,11 @@
  *                          version, refused arguments, a node tagged with an undeclared use,
  *                          a use with no nodes, or drift between a use's nodes and a fresh
  *                          expansion (`macros.ts`, `collectUseProblems`)
+ *     - NON_LAUNCHABLE_AGENT  (only with `rejectNonLaunchableAgents`) an `agent` node names an
+ *                          agent on `NON_LAUNCHABLE_AGENT_KEYS`, which backs a platform
+ *                          mechanism. Opt-in because platform templates (Channel Task) and
+ *                          existing team templates legitimately name such agents; only run-plan
+ *                          paths, whose agents are chosen by a model, turn it on
  *   warnings (advisory):
  *     - UNKNOWN_NODE_REF   a `{ from: "nodes.<id>..." }` binding names a node
  *                          that doesn't exist (may reference a not-yet-added node)
@@ -56,6 +61,7 @@
  * (`validateSpecRefs`, shell gating) and compose on top.
  */
 
+import { NON_LAUNCHABLE_AGENT_KEYS } from '../lib/agentRun.js';
 import { checkExprSyntax, RESERVED_SEGMENTS } from './expr.js';
 import { collectUseProblems } from './macros.js';
 import {
@@ -258,6 +264,12 @@ export interface ValidateSpecOptions {
    * checked with the default and may not name one.
    */
   allowInternalSteps?: boolean;
+  /**
+   * Refuse an `agent` node naming an agent on `NON_LAUNCHABLE_AGENT_KEYS`. Off by default: the
+   * seeded Channel Task template and team templates naming platform agents are valid. The
+   * run-plan paths (generation, approval, the worker's pin) pass true.
+   */
+  rejectNonLaunchableAgents?: boolean;
 }
 
 /** Nodes of `spec` that name an internal step. */
@@ -389,6 +401,18 @@ export function validateSpec(
         nodeId: id,
         severity: 'error',
       });
+    }
+    if (node.type === 'agent') {
+      const key = node.agentRef.split('@')[0] ?? node.agentRef;
+      if (options.rejectNonLaunchableAgents && NON_LAUNCHABLE_AGENT_KEYS.has(key)) {
+        errors.push({
+          code: 'NON_LAUNCHABLE_AGENT',
+          field: 'agentRef',
+          message: `agent '${key}' backs a platform mechanism and cannot be named by a workflow node`,
+          nodeId: id,
+          severity: 'error',
+        });
+      }
     }
     if (node.maxVisits !== undefined && node.onExhausted === undefined) {
       errors.push({

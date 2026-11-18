@@ -145,7 +145,10 @@ Top-level files that matter:
 | CI-failure automation workflow ID / branch | `ci-<automation8>-<runId12>-<attempt>` / `<BRANCH_PREFIX>/ci-<runId>-<attempt>` | `ci-1a2b3c4d-123456789012-1` / `auto/ci-123456789012-1` |
 | PR-feedback automation workflow ID / branch | `prfb-<automation8>-<pr>-<eventId>` / `<BRANCH_PREFIX>/prfb-<pr>-<eventId>` | `prfb-1a2b3c4d-9-777` / `auto/prfb-9-777` |
 | Jira status-change automation workflow ID / branch | `jirapoll-<automation8>-<ticket>-<status8>` / `<BRANCH_PREFIX>/<ticketId>-<status8>` (`<status8>`: 8 hex digits of the lower-cased status) | `jirapoll-1a2b3c4d-pay-12-3fa2c1d9` / `auto/PAY-12-3fa2c1d9` |
+| Run-plan generation / routing workflow ID | `runplan-<key>` / `runplan-route-<key>` (`<key>`: a caller-unique token; request/response workflows, no branch) | `runplan-0b1c2d3e-…` / `runplan-route-0b1c2d3e-…` |
 | Campaign workflow ID / child workflow ID / branch | `campaign-<campaignId>` / `campaign-<campaignId>-<connectionId>` / `<BRANCH_PREFIX>/CAMPAIGN-<id12>` (`<id12>`: the first 12 hex digits of the campaign id; the children's ticket id is `CAMPAIGN-<id12>` and no child sets a `branchName`, so each pushes that one branch in its own repository; with an `Idempotency-Key`, `<campaignId>` is a version-8 UUID derived from SHA-256 of the caller, the owning team and the key instead of a random one) | `campaign-0b1c2d3e-…` / `campaign-0b1c2d3e-…-9f8e7d6c-…` / `auto/CAMPAIGN-0b1c2d3e4f5a` |
+| Planned-run workflow ID / branch | `plan-<plan8>-<hex16>` (`<plan8>`: the first 8 hex digits of the plan id, `<hex16>` 16 random hex digits) / `<BRANCH_PREFIX>/plan-<32hex>` (the whole plan id without dashes; the run's ticket id is `plan-<32hex>`; an output-only plan has no branch) | `plan-1a2b3c4d-9f8e7d6c5b4a3f2e` / `auto/plan-1a2b3c4d5e6f47a8b9c0d1e2f3a4b5c6` |
+| Run-plan generation / routing workflow ID | `runplan-<user8>-<hex16>` / `runplan-route-<key>` (with an `Idempotency-Key`, the key part is derived from the caller and the key) | `runplan-0a1b2c3d-9f8e7d6c5b4a3f2e` / `runplan-route-…` |
 | Docker workspace container    | `workspace-<random-hex>`          | `workspace-a1b2c3d4`                      |
 | Prisma table mapping          | `snake_case` via `@@map`          | `active_workflows`                        |
 | Team slug                     | `lowercase-kebab-case`            | `payments`, `platform-eng`                |
@@ -530,7 +533,7 @@ are added as data, not code. Seeded built-ins split by how they bind a model:
   `planner`, `securityReview`, `validateContext`, `commitToMemory`, `channelAssistant`, `evalJudge`,
   `workflowAuthor`, `workflowExplainer`, `repoDependencyInferrer`. `appAssistant` answers in the
   dashboard's assistant panel, acting as the signed-in user, and `assistantTitler` names its
-  conversations. `prTitler` picks the type and summary of a Conventional Commits pull request title. `orchestrator` records intents that start sub-agent runs. The rest exist because the
+  conversations. `prTitler` picks the type and summary of a Conventional Commits pull request title. `orchestrator` records intents that start sub-agent runs. `runPlanRouter` ranks the templates a requester may launch for a stated goal. The rest exist because the
   platform is not only for engineering teams: `contentWriter`, `brandReviewer` (content and comms),
   `supportResponder` (support and ops), `productAnalyst`, `prdWriter`, `issueDrafter` (product),
   `docsMaintainer`, `docReviewer`, `ticketPlanner` (documentation and document review), and
@@ -789,7 +792,7 @@ Seeded model defaults (applied to the GLOBAL Agents by `syncBuiltins`):
 | ----- | ------- |
 | `implementer`, `reviewer`, `commitToMemory`, `channelAssistant`, `workflowAuthor` | `anthropic/claude-opus-5-5` |
 | `planner`, `securityReview`, `validateContext`, `workflowExplainer` | `anthropic/claude-sonnet-5-5` |
-| `evalJudge`, `assistantTitler`, `prTitler` | `anthropic/claude-haiku-4-5-20251001` |
+| `evalJudge`, `assistantTitler`, `prTitler`, `runPlanRouter` | `anthropic/claude-haiku-4-5-20251001` |
 | (embedding) | `openai/text-embedding-3-large` |
 
 When a default changes, `syncAgents` moves a GLOBAL built-in Agent forward **only** if its latest

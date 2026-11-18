@@ -38,6 +38,7 @@ import {
   PRODUCT_ANALYST_PROMPT,
   REPO_ONBOARDER_PROMPT,
   REVIEW_FIX_SYSTEM_PROMPT,
+  RUN_PLAN_ROUTER_PROMPT,
   SECURITY_AUDITOR_PROMPT,
   SECURITY_REVIEW_PROMPT,
   SUPPORT_RESPONDER_PROMPT,
@@ -54,6 +55,11 @@ import {
   CHANNEL_TASK_TEMPLATE_NAME,
 } from './channelTask.js';
 import type { InputSchema } from './inputSchema.js';
+import {
+  PLANNED_RUN_SPEC,
+  PLANNED_RUN_TEMPLATE_NAME,
+  PLANNED_RUN_TEMPLATE_ORIGIN,
+} from './plannedRun.js';
 import { findUnauditedNodes, recordShellAudit } from './shellAudit.js';
 import {
   initialRevision,
@@ -325,6 +331,7 @@ export async function seedSweStarter(prisma: PrismaClient): Promise<void> {
   await syncChannelAssistantTemplate(prisma);
   await syncChannelTaskTemplate(prisma);
   await syncAgentRunTemplate(prisma);
+  await syncPlannedRunTemplate(prisma);
   const newSkillNames = await syncSkills(prisma);
   await syncScannerPatterns(prisma, 'swe');
   await syncAgents(prisma, newSkillNames);
@@ -375,9 +382,50 @@ async function syncChannelTaskTemplate(prisma: PrismaClient): Promise<void> {
  * and the gateway answers a launch with a clear "template missing" instead.
  */
 export async function syncAgentRunTemplate(prisma: PrismaClient): Promise<void> {
-  const spec = AGENT_RUN_SPEC as unknown as object;
+  await syncSystemTemplate(prisma, {
+    description: AGENT_RUN_SPEC.description,
+    name: AGENT_RUN_TEMPLATE_NAME,
+    origin: AGENT_RUN_TEMPLATE_ORIGIN,
+    spec: AGENT_RUN_SPEC,
+    unavailableNote: 'agent runs are unavailable',
+  });
+}
+
+/**
+ * Seed the hidden "Planned Run" system template behind approved run plans. The same rules as
+ * {@link syncAgentRunTemplate}: platform-owned, `system:planned-run` origin, never touches a
+ * same-named row it does not own. Unlike that one, a same-named row it does not own makes the sync
+ * throw, so startup fails with the conflict named rather than leaving plans silently unapprovable. Its spec is a failing placeholder; `createWorkflowRun` pins the
+ * plan's own spec in its place.
+ */
+export async function syncPlannedRunTemplate(prisma: PrismaClient): Promise<void> {
+  await syncSystemTemplate(prisma, {
+    description: PLANNED_RUN_SPEC.description,
+    // Run plans cannot be approved without this row, and a deployment that never notices would
+    // find out only when a person approves a plan: the sync stops the process instead.
+    failOnConflict: true,
+    name: PLANNED_RUN_TEMPLATE_NAME,
+    origin: PLANNED_RUN_TEMPLATE_ORIGIN,
+    spec: PLANNED_RUN_SPEC,
+    unavailableNote: 'planned runs are unavailable',
+  });
+}
+
+async function syncSystemTemplate(
+  prisma: PrismaClient,
+  def: {
+    description: string;
+    name: string;
+    origin: string;
+    /** Throw, instead of logging, when a same-named template the platform does not own exists. */
+    failOnConflict?: boolean;
+    spec: { readonly description: string };
+    unavailableNote: string;
+  }
+): Promise<void> {
+  const spec = def.spec as unknown as object;
   const existing = await prisma.workflowTemplate.findFirst({
-    where: { name: AGENT_RUN_TEMPLATE_NAME, teamId: null },
+    where: { name: def.name, teamId: null },
   });
 
   if (!existing) {
@@ -385,10 +433,10 @@ export async function syncAgentRunTemplate(prisma: PrismaClient): Promise<void> 
       await prisma.workflowTemplate.create({
         data: {
           activeVersion: 1,
-          description: AGENT_RUN_SPEC.description,
+          description: def.description,
           isDefault: false,
-          name: AGENT_RUN_TEMPLATE_NAME,
-          origin: AGENT_RUN_TEMPLATE_ORIGIN,
+          name: def.name,
+          origin: def.origin,
           status: 'ACTIVE',
           teamId: null,
           versions: { create: { spec, version: 1 } },
@@ -403,10 +451,18 @@ export async function syncAgentRunTemplate(prisma: PrismaClient): Promise<void> 
     return;
   }
 
-  if (existing.origin !== AGENT_RUN_TEMPLATE_ORIGIN) {
+  if (existing.origin !== def.origin) {
+    if (def.failOnConflict) {
+      throw new Error(
+        `[syncBuiltins] a GLOBAL workflow template named '${def.name}' already exists and is not ` +
+          `the platform's (origin '${existing.origin ?? 'none'}'), so ${def.unavailableNote}. ` +
+          `Rename or delete that template (it is not an auto-swe system template), then restart; ` +
+          'see docs/upgrade-notes.md.'
+      );
+    }
     console.error(
-      `[syncBuiltins] a GLOBAL template named '${AGENT_RUN_TEMPLATE_NAME}' exists without the system origin; ` +
-        'agent runs are unavailable until it is renamed or removed'
+      `[syncBuiltins] a GLOBAL template named '${def.name}' exists without the system origin; ` +
+        `${def.unavailableNote} until it is renamed or removed`
     );
     return;
   }
@@ -945,6 +1001,16 @@ export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     modelSpec: 'anthropic/claude-haiku-4-5-20251001',
     name: 'PR Titler',
     systemPrompt: PR_TITLER_PROMPT,
+  },
+  {
+    // Launch-time generation: ranks the templates a requester may launch for a stated goal. Its
+    // output is intersected with the supplied ids by the activity, so template text can only
+    // reorder. Resolved on demand (not in MODEL_BACKED_AGENT_KEYS), so it never gates worker boot.
+    description: 'Ranks launchable workflow templates for a stated goal. No tools.',
+    key: 'runPlanRouter',
+    modelSpec: 'anthropic/claude-haiku-4-5-20251001',
+    name: 'Run Plan Router',
+    systemPrompt: RUN_PLAN_ROUTER_PROMPT,
   },
 ];
 

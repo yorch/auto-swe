@@ -111,6 +111,19 @@ orchestrate attach <id> --repo=<org/name>
 orchestrate decline <id>             Human acts: answer the orchestrator's repository request
 orchestrate approve <id> <approvalId>
 orchestrate deny <id> <approvalId>   Human acts: decide one held MCP write
+plan route "<goal>" --repo=<org/name>
+                                     Rank the templates you may launch for a goal
+plan create "<goal>" --repo=<org/name> [--agent=<key>] [--wait] [--timeout=SECONDS]
+                                     Generate a plan for a goal; --wait polls to the plan id
+plan wait <jobId> [--timeout=SECONDS]  Poll a generation job to its plan id
+plan show <planId> [--json]          Print the plan outline (the spec only with --json)
+plan list [--status=S] [--limit=N] [--json]
+                                     List your plans
+plan approve <planId> [--budget-tier=T] [--yes]
+                                     Approve the stored plan and start its run
+plan reject <planId>                 Reject a pending plan
+plan run "<goal>" --repo=<org/name> [--agent=<key>] [--budget-tier=T] --yes
+                                     Create, wait, show and approve in one step
 
 workflows list                       List workflow templates visible to you
 workflows show <name> [--version=N]  Print one template's active (or given) spec (JSON)
@@ -300,7 +313,28 @@ unrecognised code prints the gateway's own message.
 | ---- | ----------------------------------------- |
 | `0`  | Success                                   |
 | `1`  | User error (missing arg, no token, etc.); `evals run` also exits 1 on a regression, and `connections test` and `repos test-access` when a connection or step fails |
-| `2`  | Remote error (HTTP non-2xx from gateway); `runs tail`, `agent run --wait` and `orchestrate start --wait` also exit 2 when the run or orchestration ends in a non-success status (`orchestrate` cancelled or failed), and `evals run` when the eval run fails without reaching a verdict, ends `INCONCLUSIVE` (no case had passed its flake screen, so none was scored), or passes over only the cases its budget reached (`summary.partial`; a partial run that regressed exits 1) |
+| `2`  | Remote error (HTTP non-2xx from gateway); `runs tail`, `agent run --wait` and `orchestrate start --wait` also exit 2 when the run or orchestration ends in a non-success status (`orchestrate` cancelled or failed), and `evals run` when the eval run fails without reaching a verdict, ends `INCONCLUSIVE` (no case had passed its flake screen, so none was scored), or passes over only the cases its budget reached (`summary.partial`; a partial run that regressed exits 1); `plan create --wait` and `plan run` exit 2 when generation fails. `plan approve` exits 1 when it is not confirmed, and `plan create --wait` exits 1 when generation outlasts `--timeout` |
+
+
+### `auto-swe plan`
+
+`plan` describes a goal and runs the workflow the platform generates for it. `plan route` ranks the
+templates you may already launch; `plan create` starts a generation job, and `--wait` polls it with a
+growing delay (default limit 600 seconds, `--timeout`) until it prints the plan id. A failed job exits `2`
+with its stable error code on stderr (`PLAN_GENERATION_FAILED`, `PLAN_AGENTS_UNAVAILABLE`, and so on); a
+timeout exits `1` and names `plan wait <jobId>` to resume.
+
+`plan show` prints an outline: mode, each step marked `core`, `injected`, `mandatory` or `free`, the
+estimated cost with the steps it could not price, warnings, pinned agent versions, expiry and status.
+The generated spec is printed only by `plan show --json`. Plans are private to the person who
+created them, and nothing runs until that person approves exactly the stored plan.
+
+`plan approve` sends a fresh `Idempotency-Key`. Without `--yes` it prints the outline and asks for
+confirmation on a terminal; in a non-interactive session it refuses (exit `1`) unless `--yes` is given.
+If the repository, agent catalog, settings or the plan itself changed since generation, the gateway
+refuses with `409` and the CLI says to generate a new plan. `plan run` does create, wait, show and approve;
+it requires `--yes` and otherwise stops after printing the plan and the approve command. Plans can be
+generated and approved only by the user who owns them; a service token cannot.
 
 ## Examples
 
@@ -310,6 +344,9 @@ auto-swe workflows list
 auto-swe run --ticket=JIRA-1 --description="Add GET /health" --repo=acme/payments-api
 auto-swe runs tail <runId> --interval=5
 auto-swe agent run contentWriter "Fix the typos in the README" --repo=acme/docs --deliver=draft_pr --wait
+auto-swe plan create "Add a /health endpoint" --repo=acme/payments-api --wait
+auto-swe plan show <planId>
+auto-swe plan approve <planId>
 ```
 
 ## `auto-swe transcripts`

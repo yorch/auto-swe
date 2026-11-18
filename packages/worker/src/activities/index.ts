@@ -55,6 +55,9 @@ export type {
   TouchChannelThreadSessionInput,
 } from './channelRun.js';
 export { finalizeChannelRun, startChannelRun, touchChannelThreadSession } from './channelRun.js';
+// Channel assistant — offer a plan proposal (a signed, single-use Slack button) for a request
+export type { ProposeChannelRunPlanInput, ProposeRunIntent } from './channelRunPlan.js';
+export { proposeChannelRunPlan } from './channelRunPlan.js';
 // Channel assistant (Phase A) — general agentic task launch from a mention
 // Channel assistant (Phase B) — code-task route via the default SWE workflow
 export type {
@@ -158,6 +161,12 @@ export { flagOrgSignals } from './flagOrgSignals.js';
 export { gatherTicketContext } from './gatherTicketContext.js';
 export type { GenerateOutcomeReportResult } from './generateOutcomeReport.js';
 export { generateOutcomeReport } from './generateOutcomeReport.js';
+// Launch-time run plans: generate a plan's spec, and rank launchable templates for a goal
+export type {
+  GenerateRunPlanSpecInput,
+  GenerateRunPlanSpecResult,
+} from './generateRunPlanSpec.js';
+export { generateRunPlanSpec } from './generateRunPlanSpec.js';
 // Natural-language workflow authoring (generate a WorkflowSpec from a description)
 export type {
   GenerateWorkflowSpecInput,
@@ -297,6 +306,8 @@ export { resolveWorkspace } from './resolveWorkspace.js';
 export type { RollupAgentTraceUsageResult } from './rollupAgentTraceUsage.js';
 export { rollupAgentTraceUsage } from './rollupAgentTraceUsage.js';
 export { rollupWorkflowRuns } from './rollupWorkflowRuns.js';
+export type { RouteRunPlanInput, RouteRunPlanResult } from './routeRunPlan.js';
+export { routeRunPlan } from './routeRunPlan.js';
 export type { RunAgentNodeInput, RunAgentNodeResult } from './runAgentNode.js';
 export { runAgentNode } from './runAgentNode.js';
 export type { RunAgentTaskInput, RunAgentTaskResult } from './runAgentTask.js';
@@ -315,6 +326,8 @@ export {
   resolveHumanStep,
   updateDomainState,
 } from './state.js';
+export type { SweepRunPlansResult } from './sweepRunPlans.js';
+export { sweepRunPlans } from './sweepRunPlans.js';
 export type { SyncMarketplacesResult } from './syncMarketplaces.js';
 export { syncMarketplaces } from './syncMarketplaces.js';
 export type { SyncRepoAccessInput, SyncRepoAccessResult } from './syncRepoAccess.js';

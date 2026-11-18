@@ -245,6 +245,12 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/repositories/dependencies/unresolved': 'read',
   'GET /api/v1/repositories/github/available': 'read',
   'GET /api/v1/review-presets': 'read',
+  'GET /api/v1/run-plans': 'read',
+  'GET /api/v1/run-plans/:id': 'read',
+  // A poll of a finished job stores it as a PENDING plan (and an audit row) for its own requester,
+  // once. The write is the requester's own job, already authorized by the `POST /run-plans` they
+  // confirmed, and it launches nothing; so it stays a read.
+  'GET /api/v1/run-plans/jobs/:jobId': 'read',
   'GET /api/v1/scheduled-work-requests': 'read',
   'GET /api/v1/teams': 'read',
   'GET /api/v1/teams/:id': 'read',
@@ -498,6 +504,12 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/repositories/:id/test-pagerduty-events': 'confirm',
   'POST /api/v1/repositories/dependencies/scan': 'confirm',
   'POST /api/v1/repositories/import': 'confirm',
+  'POST /api/v1/run-plans': 'confirm',
+  'POST /api/v1/run-plans/:id/approve': { never: 'humanDecision' },
+  'POST /api/v1/run-plans/:id/reject': 'confirm',
+  // Not a read: it writes an audit row (the rate-limit count), starts a ranking workflow and spends
+  // model tokens charged to the repository's team. The ranking launches nothing.
+  'POST /api/v1/run-plans/route': 'confirm',
   'POST /api/v1/scheduled-work-requests': 'confirm',
   'POST /api/v1/scheduled-work-requests/:id/fire': 'confirm',
   'POST /api/v1/teams': 'confirm',

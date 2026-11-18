@@ -17,6 +17,7 @@ export const GROUP_TITLES: Record<string, string> = {
   repoAccess: 'Repository access',
   repoDependency: 'Repo dependency graph',
   review: 'Code reviews',
+  runPlans: 'Run plans',
   skills: 'Skill imports',
   tracker: 'Issue tracker',
   uiValidation: 'UI validation',
@@ -52,6 +53,8 @@ export const GROUP_BLURBS: Record<string, string> = {
     'How confidently an LLM-inferred repo-to-repo dependency edge must be evidenced before it is promoted straight to active instead of waiting for a human confirm.',
   review:
     'Whether finished workflow and agent runs may receive manual or automatically attached code reviews.',
+  runPlans:
+    'Whether people may describe a goal and have a plan generated for it, and how many plans and rankings one person may start or hold.',
   skills: 'How skills imported from external repositories are screened and fetched.',
   tracker:
     'Which Jira projects and Linear teams runs may read tickets from and write to. Overridable per team and organization.',

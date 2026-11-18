@@ -381,6 +381,20 @@ export function isChannelTaskRefusal(
 }
 
 /**
+ * The repository-access verdict every Slack path that starts work takes: the code task and the
+ * plan proposal share it, so a channel's `repoAccess.mode` means the same for both.
+ */
+export function decideChannelRepoAccess(requesterSlackId: string, connectionId: string) {
+  return decideSlackRepoAccess(
+    prisma,
+    requesterSlackId,
+    connectionId,
+    'start-new-work',
+    ADVISORY_LOG
+  );
+}
+
+/**
  * May the person who asked start a code task against this repository?
  *
  * Returns null when they may, and the thread reply when they may not.
@@ -399,13 +413,7 @@ async function refuseChannelCodeTask(
   requesterSlackId: string,
   connectionId: string
 ): Promise<ChannelTaskRefusal | null> {
-  const verdict = await decideSlackRepoAccess(
-    prisma,
-    requesterSlackId,
-    connectionId,
-    'start-new-work',
-    ADVISORY_LOG
-  );
+  const verdict = await decideChannelRepoAccess(requesterSlackId, connectionId);
   if (verdict.allowed) {
     return null;
   }
@@ -451,7 +459,7 @@ const ADVISORY_LOG: AccessLog = {
  * do, and none of them mentions a repository they may not know they were being
  * checked against.
  */
-const SLACK_TASK_REFUSAL_MESSAGE: Record<SlackAccessRefusal, string> = {
+export const SLACK_TASK_REFUSAL_MESSAGE: Record<SlackAccessRefusal, string> = {
   // Spread rather than re-typed, so this map stays exhaustive by construction:
   // a new `RepoAccessRefusal` has to be added to the shared message map, which
   // makes it appear here too. Writing the strings out again would compile

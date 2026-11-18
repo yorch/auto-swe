@@ -27,6 +27,7 @@ import {
   repoHostFamily,
 } from '@auto-swe/shared/lib/githubHostScope';
 import { permissionMeets } from '@auto-swe/shared/lib/githubPermission';
+import { PLANNED_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/plannedRun';
 import {
   type ApprovalState,
   approvalState,
@@ -1226,6 +1227,30 @@ async function recountMergedApprovals(
 type StatusPublished = { ok: boolean; reason?: 'refused' | 'error' };
 
 /** The activity body with its collaborators passed in, so a test can supply fakes. */
+/**
+ * Whether a run of the hidden Planned Run template opened this pull request. Keyed on the
+ * template's reserved origin (a team template can carry any name but not that origin), over every
+ * run that could be the PR's: the linked run, the workflow's own run and any run of the same work
+ * request, because `PullRequest.runId` is a mutable pointer (a re-run that adopts the PR moves it).
+ */
+export async function isPlannedRunPullRequest(ids: {
+  runId: string | null;
+  temporalWorkflowId: string;
+  workRequestId: string | null;
+}): Promise<boolean> {
+  const any: Array<Record<string, string>> = [{ workflowId: ids.temporalWorkflowId }];
+  if (ids.runId) {
+    any.push({ id: ids.runId });
+  }
+  if (ids.workRequestId) {
+    any.push({ workRequestId: ids.workRequestId });
+  }
+  const planned = await prisma.workflowRun.count({
+    where: { OR: any, template: { origin: PLANNED_RUN_TEMPLATE_ORIGIN, teamId: null } },
+  });
+  return planned > 0;
+}
+
 export async function evaluatePullRequestWith(
   input: PrEvaluationInput,
   baseDeps: EvaluatePullRequestDeps
@@ -1298,7 +1323,6 @@ export async function evaluatePullRequestWith(
   // rules (pending until approved), it only never arms.
   const statusMode: PrEvaluationMode = chosen;
   const autoGloballyOff = chosen === 'auto' && !settings['prEvaluation.autoMergeAllowed'];
-  const effectiveMode: PrEvaluationMode = autoGloballyOff ? 'advisory' : chosen;
 
   // The platform's own pull request is one a run opened: its row links the run, exactly as the
   // PR-feedback automation decides it (`origin !== 'other'`). The host's branch name is not
@@ -1309,6 +1333,18 @@ export async function evaluatePullRequestWith(
     return { outcome: 'skipped', reason: 'not a pull request the platform opened' };
   }
   const temporalWorkflowId = platformPr.workflow.temporalWorkflowId;
+  // A pull request opened by a run of an approved run plan is never armed or approved by the
+  // platform: its workflow was generated at launch, so the evidence the auto gates count (runs of
+  // reviewed templates) does not describe it. It is evaluated like an advisory repository's, with
+  // the status still following the chosen mode's rules, and a human merges.
+  const plannedRun =
+    chosen === 'auto' &&
+    (await isPlannedRunPullRequest({
+      runId: platformPr.runId,
+      temporalWorkflowId,
+      workRequestId: platformPr.workflow.workRequestId,
+    }));
+  const effectiveMode: PrEvaluationMode = autoGloballyOff || plannedRun ? 'advisory' : chosen;
   // Everyone who launched a run of this work, and whoever asked for it: their own approval never
   // counts, and unless every one of them is matched by id on this repository's host the pull
   // request is never armed. Only a count reaches the row and the logs, never who they were.
@@ -1444,6 +1480,14 @@ export async function evaluatePullRequestWith(
               infoReason(
                 'auto-merge-globally-disabled',
                 'Auto mode is chosen but auto-merge is not allowed on this deployment; the status follows auto rules and nothing is armed.'
+              ),
+            ]
+          : []),
+        ...(plannedRun
+          ? [
+              infoReason(
+                'planned-run-never-auto-merged',
+                'This pull request was opened by a run of a generated plan; the platform never arms auto-merge or approves it. A person merges.'
               ),
             ]
           : []),

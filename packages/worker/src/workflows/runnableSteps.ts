@@ -480,8 +480,14 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       // `subtask` is already `Subtask | undefined`, so both arms of the ternary
       // this replaced passed the same thing.
       const guidance = formatGuidance(inputs.guidance);
+      // Guidance that is the run plan's notes was written by generated steps, not by the
+      // requester, and says so; every other flow's guidance keeps the requester heading.
+      const heading =
+        guidance !== '' && guidance === formatGuidance(lookupPath(ctx, PLAN_NOTES_CONTEXT_PATH))
+          ? PLAN_NOTES_GUIDANCE_HEADING
+          : 'Guidance from the requester';
       const withGuidance = guidance
-        ? `${request.description}\n\n## Guidance from the requester\n${guidance}`
+        ? `${request.description}\n\n## ${heading}\n${guidance}`
         : request.description;
       // Text derived from CI logs is never the requester's guidance: it is fenced and labelled
       // as untrusted data, so the implementer reads it as a description of the failure.
@@ -1324,6 +1330,11 @@ export async function dispatchStepImpl(
 }
 
 // ── Helpers ──
+
+/** Where a run plan's generated steps leave notes for the implementer. */
+const PLAN_NOTES_CONTEXT_PATH = 'context.planNotes';
+const PLAN_NOTES_GUIDANCE_HEADING =
+  'Notes from earlier plan steps (generated, not written by the requester)';
 
 /**
  * Render a human-supplied `guidance` input (free text, or the field map a

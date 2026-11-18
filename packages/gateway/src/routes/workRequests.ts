@@ -9,6 +9,7 @@ import {
   createFigmaDesignProvider,
   createKnowledgeBaseProvider,
 } from '@auto-swe/shared/lib/integrations/registry';
+import { isPlannedRunTemplate } from '@auto-swe/shared/lib/plannedRun';
 import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { confirmInFlight, liveInFlightExecution } from '@auto-swe/shared/lib/requestInFlight';
 import {
@@ -1097,6 +1098,16 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: workRequest.templateId },
       });
       if (snapshotTemplate && isSystemTemplate(snapshotTemplate)) {
+        // A planned run holds a single-use approved plan; there is nothing to replay, and a
+        // second run of the same plan is exactly what the plan's claim forbids.
+        if (isPlannedRunTemplate(snapshotTemplate)) {
+          return sendError(
+            reply,
+            409,
+            'USE_PLAN_RERUN',
+            'This run came from an approved plan, which runs once; create and approve a new plan'
+          );
+        }
         return sendError(
           reply,
           409,

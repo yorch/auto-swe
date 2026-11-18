@@ -54,6 +54,7 @@ import { reportDigestRoutes } from './reportDigests.js';
 import { reportsRoutes } from './reports.js';
 import { repositoryRoutes } from './repositories.js';
 import { repositoryOnboardingRoutes } from './repositoryOnboarding.js';
+import { runPlanRoutes } from './runPlans.js';
 import { scannerPatternRoutes } from './scannerPatterns.js';
 import { scheduledWorkRequestRoutes } from './scheduledWorkRequests.js';
 import { securityEventRoutes } from './securityEvents.js';
@@ -97,6 +98,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });
   await app.register(agentRunRoutes, { prefix: '/api/v1/agent-runs' });
   await app.register(orchestrationRoutes, { prefix: '/api/v1/orchestrations' });
+  await app.register(runPlanRoutes, { prefix: '/api/v1/run-plans' });
   await app.register(codeReviewRoutes, { prefix: '/api/v1' });
   await app.register(scheduledWorkRequestRoutes, { prefix: '/api/v1/scheduled-work-requests' });
   await app.register(workflowRoutes, { prefix: '/api/v1/workflows' });

@@ -1,0 +1,375 @@
+{
+  "entry": "implement",
+  "hookTarget": "commitLesson",
+  "nodes": {
+    "checkApproval": {
+      "expr": "nodes.review.output.approved == true",
+      "group": "review loop",
+      "onFalse": "storeRejection",
+      "onTrue": "forgetRejection",
+      "title": "Approved?",
+      "type": "cond"
+    },
+    "checkCI": {
+      "expr": "context.ciResultPayload.passed == true",
+      "group": "CI loop",
+      "onFalse": "fetchLogs",
+      "onTrue": "waitForHumanMerge",
+      "title": "CI passed?",
+      "type": "cond"
+    },
+    "checkStalled": {
+      "expr": "nodes.review.output.stalled == true",
+      "group": "review loop",
+      "onFalse": "reviewFix",
+      "onTrue": "lessonReviewFailed",
+      "title": "Same findings as last round?",
+      "type": "cond"
+    },
+    "ciFix": {
+      "group": "CI loop",
+      "inputs": {
+        "failureContext": {
+          "from": "context.lastCILogs"
+        },
+        "previousCodeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "clearCiResult",
+      "onError": "fail",
+      "step": "executeCIFixImplementation",
+      "storeAs": "context.currentCodeResult",
+      "title": "Fix the CI failure",
+      "type": "step"
+    },
+    "clearCiResult": {
+      "group": "review loop",
+      "next": "review",
+      "title": "Clear the stale CI result",
+      "type": "set",
+      "values": {
+        "context.ciResultPayload": {
+          "literal": null
+        }
+      }
+    },
+    "commitLesson": {
+      "group": "human merge",
+      "inputs": {
+        "outcome": {
+          "literal": "MERGED"
+        }
+      },
+      "next": "done",
+      "onError": "continue",
+      "step": "commitToMemory",
+      "title": "Store the lesson",
+      "type": "step"
+    },
+    "done": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "SUCCESS",
+      "title": "Done",
+      "type": "terminate"
+    },
+    "fetchLogs": {
+      "group": "CI loop",
+      "inputs": {
+        "logsUrl": {
+          "from": "context.ciResultPayload.logsUrl"
+        }
+      },
+      "maxVisits": 2,
+      "next": "ciFix",
+      "onError": "fail",
+      "onExhausted": "lessonCIFailed",
+      "step": "fetchCILogs",
+      "storeAs": "context.lastCILogs",
+      "title": "Fetch the CI logs",
+      "type": "step"
+    },
+    "forgetRejection": {
+      "group": "review loop",
+      "next": "openPR",
+      "title": "Forget the last rejection",
+      "type": "set",
+      "values": {
+        "context.lastReviewFingerprint": {
+          "literal": ""
+        }
+      }
+    },
+    "implement": {
+      "group": "implement",
+      "inputs": {
+        "successCriteria": {
+          "default": [],
+          "from": "context.successCriteria"
+        },
+        "ticket": {
+          "from": "context.ticket"
+        }
+      },
+      "next": "uiVerify",
+      "onError": "fail",
+      "status": "IMPLEMENTING",
+      "step": "executeImplementation",
+      "storeAs": "context.currentCodeResult",
+      "title": "Implement the ticket",
+      "type": "step"
+    },
+    "lessonCIFailed": {
+      "group": "CI loop",
+      "inputs": {
+        "outcome": {
+          "literal": "CI_FAILED"
+        }
+      },
+      "next": "terminateCIFailed",
+      "onError": "continue",
+      "step": "commitToMemory",
+      "title": "Store what failed CI",
+      "type": "step"
+    },
+    "lessonMergeTimedOut": {
+      "group": "human merge",
+      "inputs": {
+        "outcome": {
+          "literal": "MERGE_TIMED_OUT"
+        }
+      },
+      "next": "terminateMergeTimedOut",
+      "onError": "continue",
+      "step": "commitToMemory",
+      "title": "Store that nobody merged it",
+      "type": "step"
+    },
+    "lessonReviewFailed": {
+      "group": "review loop",
+      "inputs": {
+        "outcome": {
+          "literal": "REVIEW_FAILED"
+        }
+      },
+      "next": "terminateReviewFailed",
+      "onError": "continue",
+      "step": "commitToMemory",
+      "title": "Store what the review rejected",
+      "type": "step"
+    },
+    "loadCiWaitConfig": {
+      "group": "CI wait",
+      "next": "routeCiWait",
+      "onError": "fail",
+      "step": "resolveCiWaitConfig",
+      "title": "Read the CI wait settings",
+      "type": "step"
+    },
+    "openPR": {
+      "group": "pull request",
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "savePrInfo",
+      "onError": "fail",
+      "status": "AWAITING_CI",
+      "step": "createOrUpdatePullRequest",
+      "title": "Open the pull request",
+      "type": "step"
+    },
+    "pollForCI": {
+      "group": "CI wait",
+      "inputs": {
+        "deadlineSec": {
+          "from": "nodes.loadCiWaitConfig.output.deadlineSec"
+        },
+        "graceSec": {
+          "from": "nodes.loadCiWaitConfig.output.graceSec"
+        },
+        "intervalSec": {
+          "from": "nodes.loadCiWaitConfig.output.intervalSec"
+        },
+        "ref": {
+          "from": "context.currentCodeResult.branch"
+        }
+      },
+      "next": "storePollResult",
+      "onError": "fail",
+      "step": "waitForCiByPolling",
+      "title": "Poll GitHub for CI",
+      "type": "step"
+    },
+    "review": {
+      "group": "review loop",
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        },
+        "previousFingerprint": {
+          "default": "",
+          "from": "context.lastReviewFingerprint"
+        },
+        "successCriteria": {
+          "from": "context.successCriteria"
+        }
+      },
+      "next": "checkApproval",
+      "onError": "fail",
+      "status": "IN_REVIEW",
+      "step": "runReviewNetwork",
+      "title": "Review network",
+      "type": "step"
+    },
+    "reviewFix": {
+      "group": "review loop",
+      "inputs": {
+        "previousCodeResult": {
+          "from": "context.currentCodeResult"
+        },
+        "rejectionSummary": {
+          "from": "context.lastRejectionSummary"
+        }
+      },
+      "maxVisits": 2,
+      "next": "clearCiResult",
+      "onError": "fail",
+      "onExhausted": "lessonReviewFailed",
+      "step": "executeReviewFixImplementation",
+      "storeAs": "context.currentCodeResult",
+      "title": "Fix the review findings",
+      "type": "step"
+    },
+    "routeCiWait": {
+      "expr": "nodes.loadCiWaitConfig.output.mode == 'poll'",
+      "group": "CI wait",
+      "onFalse": "waitForCI",
+      "onTrue": "pollForCI",
+      "title": "Poll instead of waiting?",
+      "type": "cond"
+    },
+    "savePrInfo": {
+      "group": "pull request",
+      "next": "loadCiWaitConfig",
+      "title": "Record the pull request",
+      "type": "set",
+      "values": {
+        "context.prNumber": {
+          "from": "nodes.openPR.output.prNumber"
+        },
+        "context.prUrl": {
+          "from": "nodes.openPR.output.prUrl"
+        }
+      }
+    },
+    "storePollResult": {
+      "group": "CI wait",
+      "next": "checkCI",
+      "title": "Normalise the poll result",
+      "type": "set",
+      "values": {
+        "context.ciResultPayload.logsUrl": {
+          "from": "nodes.pollForCI.output.logsUrl"
+        },
+        "context.ciResultPayload.passed": {
+          "from": "nodes.pollForCI.output.ciPassed"
+        }
+      }
+    },
+    "storeRejection": {
+      "group": "review loop",
+      "next": "checkStalled",
+      "title": "Record why it was rejected",
+      "type": "set",
+      "values": {
+        "context.lastRejectionSummary": {
+          "default": "",
+          "from": "nodes.review.output.rejectionSummary"
+        },
+        "context.lastReviewFingerprint": {
+          "default": "",
+          "from": "nodes.review.output.rejectionFingerprint"
+        }
+      }
+    },
+    "terminateCIFailed": {
+      "group": "CI loop",
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "FAILED",
+      "title": "CI failed",
+      "type": "terminate"
+    },
+    "terminateCITimedOut": {
+      "group": "CI wait",
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "TIMED_OUT",
+      "title": "CI timed out",
+      "type": "terminate"
+    },
+    "terminateMergeTimedOut": {
+      "group": "human merge",
+      "result": {},
+      "status": "TIMED_OUT",
+      "title": "Merge timed out",
+      "type": "terminate"
+    },
+    "terminateReviewFailed": {
+      "group": "review loop",
+      "status": "FAILED",
+      "title": "Review failed",
+      "type": "terminate"
+    },
+    "uiVerify": {
+      "group": "implement",
+      "next": "clearCiResult",
+      "onError": "fail",
+      "onFail": "warn",
+      "step": "uiVerify",
+      "title": "Verify the app preview",
+      "type": "step"
+    },
+    "waitForCI": {
+      "group": "CI wait",
+      "name": "ciPipelineSignal",
+      "onReceive": "checkCI",
+      "onTimeout": "terminateCITimedOut",
+      "storeAs": "context.ciResultPayload",
+      "timeout": "4h",
+      "title": "Wait for CI",
+      "type": "signal"
+    },
+    "waitForHumanMerge": {
+      "group": "human merge",
+      "name": "humanMergeSignal",
+      "onReceive": "commitLesson",
+      "onTimeout": "lessonMergeTimedOut",
+      "status": "AWAITING_HUMAN_MERGE",
+      "timeout": "7d",
+      "title": "Wait for a person to merge",
+      "type": "signal"
+    }
+  }
+}

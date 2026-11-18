@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
 import { isInputSchema } from '@auto-swe/shared/lib/inputSchema';
+import { isPlannedRunTemplate } from '@auto-swe/shared/lib/plannedRun';
 import {
   getWorkspaceProviderMetadata,
   isWorkspaceProviderType,
@@ -76,6 +77,15 @@ export async function retryTemplateRequest(
   });
   if (!template) {
     return sendTemplateNotLaunchable(reply);
+  }
+  if (isPlannedRunTemplate(template)) {
+    return reply.status(409).send({
+      error: {
+        code: 'USE_PLAN_RERUN',
+        message:
+          'This run came from an approved plan, which runs once; create and approve a new plan',
+      },
+    });
   }
   if (isSystemTemplate(template)) {
     return reply.status(409).send({
