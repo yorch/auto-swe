@@ -58,8 +58,24 @@ export function useApprovals(
   }
   const qs = params.toString();
 
+  const queryKeyHead = [
+    'approvals',
+    filter,
+    sort,
+    overdueOnly,
+    runId,
+    actionable,
+    options.teamId ?? null,
+  ].join('|');
+
   return useQuery({
     enabled: options.enabled ?? true,
+    // While a new search or kind loads, keep the rows on screen so an open card (and any note
+    // typed into it) survives; a different tab, sort, deadline or team starts from the skeleton.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery && previousQuery.queryKey.slice(0, 7).join('|') === queryKeyHead
+        ? previous
+        : undefined,
     queryFn: () =>
       api
         .get<{ data: HumanStepSummary[] }>(`/api/v1/human-steps${qs ? `?${qs}` : ''}`)

@@ -595,6 +595,8 @@ describe('human step routes', () => {
       const where = await listWhere('/api/v1/human-steps?q=%20Pay%20');
       const match = { contains: 'Pay', mode: 'insensitive' };
       const repo = { OR: [{ organizationName: match }, { repoName: match }] };
+      // The visibility and status term stays first: the text term can only narrow it.
+      expect(where.AND?.[0]).toMatchObject({ status: 'PENDING' });
       expect(where.AND?.[1]).toEqual({
         OR: [
           { title: match },
@@ -605,6 +607,19 @@ describe('human step routes', () => {
           { run: { workRequest: { connection: repo } } },
         ],
       });
+    });
+
+    it('finds a repository typed as org/repo, as the card names it', async () => {
+      const where = await listWhere('/api/v1/human-steps?q=Acme%2Fpay');
+      const qualified = {
+        AND: [
+          { organizationName: { endsWith: 'Acme', mode: 'insensitive' } },
+          { repoName: { startsWith: 'pay', mode: 'insensitive' } },
+        ],
+      };
+      const or = (where.AND?.[1] as { OR: unknown[] }).OR;
+      expect(or).toContainEqual({ run: { connection: qualified } });
+      expect(or).toContainEqual({ run: { workRequest: { connection: qualified } } });
     });
 
     it('ANDs the kind, and counts under the same where', async () => {

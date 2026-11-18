@@ -142,7 +142,7 @@ function GovernApprovals() {
           isLoading || isError
             ? INTRO
             : atCap
-              ? `Showing ${loaded} ${filter === 'PENDING' ? 'pending ' : ''}${narrowed ? 'matching ' : ''}steps, the most this list loads. Narrow the search or filters to see others.`
+              ? `Showing ${loaded} ${narrowed ? 'matching ' : ''}${filter === 'PENDING' ? 'pending ' : ''}steps, the most this list loads. Narrow the search or filters to see others.`
               : filter === 'PENDING'
                 ? loaded === 0
                   ? INTRO

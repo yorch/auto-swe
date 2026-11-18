@@ -189,7 +189,7 @@ describe('approvals page filters and state', () => {
     render(<GovernApprovalsPage />);
     expect(screen.queryByText(/Searching the/)).toBeNull();
     expect(
-      screen.getByText(/Showing 100 pending matching steps, the most this list loads/)
+      screen.getByText(/Showing 100 matching pending steps, the most this list loads/)
     ).toBeTruthy();
   });
 

@@ -125,8 +125,29 @@ export function humanStepTeamScope(teamId: string): Prisma.WorkflowHumanStepWher
 export function humanStepSearchWhere(q: string): Prisma.WorkflowHumanStepWhereInput {
   const match = { contains: q, mode: 'insensitive' as const };
   const repo = { OR: [{ organizationName: match }, { repoName: match }] };
+  // The card names a repository `org/repo`, so a search typed the same way has to find it: the part
+  // before the first slash ends the organization and the part after starts the repository.
+  const slash = q.indexOf('/');
+  const orgPart = slash > 0 ? q.slice(0, slash) : '';
+  const repoPart = slash >= 0 ? q.slice(slash + 1) : '';
+  const qualified =
+    slash >= 0
+      ? {
+          AND: [
+            ...(orgPart
+              ? [{ organizationName: { endsWith: orgPart, mode: 'insensitive' as const } }]
+              : []),
+            ...(repoPart
+              ? [{ repoName: { mode: 'insensitive' as const, startsWith: repoPart } }]
+              : []),
+          ],
+        }
+      : null;
   return {
     OR: [
+      ...(qualified && qualified.AND.length > 0
+        ? [{ run: { connection: qualified } }, { run: { workRequest: { connection: qualified } } }]
+        : []),
       { title: match },
       { description: match },
       { run: { workRequest: { externalTicketId: match } } },
