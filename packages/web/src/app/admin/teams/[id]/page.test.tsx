@@ -43,6 +43,15 @@ describe('/admin/teams/[id] redirect', () => {
     await waitFor(() => expect(nav.replace).toEqual(['/teams/payments/settings?tab=sandbox']));
   });
 
+  it('sends the service principals section to the Manage tab, where it now lives', async () => {
+    resetNavigation('tab=service-principals', `/admin/teams/${TEAM_ID}`);
+    setupFetchMock({ '/api/v1/teams': teams([{ id: TEAM_ID, slug: 'payments' }]) });
+    renderPage();
+    // The first replace is the redirect; the router mock then drops the query, as the page it left
+    // would not be mounted to see.
+    await waitFor(() => expect(nav.replace[0]).toBe('/teams/payments/manage'));
+  });
+
   it('resolves a deactivated team, which the active list lacks, through its own record', async () => {
     setupFetchMock({
       '/api/v1/teams': teams([{ id: 'other', slug: 'other' }]),

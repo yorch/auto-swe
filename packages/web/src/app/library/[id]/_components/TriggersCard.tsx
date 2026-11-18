@@ -155,7 +155,7 @@ export function TriggersCard({
             ; a listed automation fires only while its source is on.
           </p>
           <p className="flex gap-3 text-xs">
-            <Link className="text-accent-400 hover:underline" href="/admin/automations">
+            <Link className="text-accent-400 hover:underline" href="/automations">
               Manage automations
             </Link>
             <Link className="text-accent-400 hover:underline" href="/admin/schedules">

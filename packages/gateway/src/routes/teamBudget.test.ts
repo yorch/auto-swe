@@ -44,7 +44,9 @@ function build(opts: Opts = {}) {
     monthlyBudgetUsdCents: teamCap,
     ...data,
   }));
+  const resolvePending = vi.fn(async () => ({ count: 1 }));
   const prisma = {
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     organization: {
       findMany: vi.fn(async () => [
@@ -69,11 +71,12 @@ function build(opts: Opts = {}) {
       findUnique: vi.fn(async () => (opts.unknownTeam ? null : row)),
       update,
     },
+    teamBudgetRequest: { updateMany: resolvePending },
     teamSpendUsd: { [TEAM]: opts.teamSpentUsd ?? 0 },
   };
   const app = makeAuthedApp({ prisma, role: opts.platformRole ?? 'ENGINEER', sub: USER });
   app.register(teamBudgetRoutes, { prefix: PREFIX });
-  return { app, prisma, update };
+  return { app, prisma, resolvePending, update };
 }
 
 afterEach(() => vi.clearAllMocks());
@@ -170,6 +173,54 @@ describe('PATCH /teams/:id/budget', () => {
     );
     expect(res.json().data).toMatchObject({ monthlyBudgetUsdCents: 2500 });
     expect(prisma.configAuditLog.create).toHaveBeenCalled();
+  });
+
+  it('resolves the pending budget requests when the cap is saved, set or cleared', async () => {
+    const set = build({ teamRole: 'ADMIN' });
+    await set.app.ready();
+    await patch(set.app, { monthlyBudgetUsdCents: 2500 });
+    expect(set.resolvePending).toHaveBeenCalledWith({
+      data: { resolvedAt: expect.any(Date) },
+      where: { resolvedAt: null, teamId: TEAM },
+    });
+
+    const cleared = build({ teamCap: 100, teamRole: 'ADMIN' });
+    await cleared.app.ready();
+    await patch(cleared.app, { monthlyBudgetUsdCents: null });
+    expect(cleared.resolvePending).toHaveBeenCalledTimes(1);
+  });
+
+  it('saves the cap and resolves the requests in one transaction', async () => {
+    const { app, prisma, resolvePending, update } = build({ teamRole: 'ADMIN' });
+    await app.ready();
+    await patch(app, { monthlyBudgetUsdCents: 2500 });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(resolvePending).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves the pending requests when the saved cap is the stored one', async () => {
+    const same = build({ teamCap: 2500, teamRole: 'ADMIN' });
+    await same.app.ready();
+    expect((await patch(same.app, { monthlyBudgetUsdCents: 2500 })).statusCode).toBe(200);
+    expect(same.resolvePending).toHaveBeenCalledTimes(1);
+
+    const sameNull = build({ teamCap: null, teamRole: 'ADMIN' });
+    await sameNull.app.ready();
+    await patch(sameNull.app, { monthlyBudgetUsdCents: null });
+    expect(sameNull.resolvePending).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves pending requests alone when only the threshold changes or the save is refused', async () => {
+    const threshold = build({ teamRole: 'ADMIN' });
+    await threshold.app.ready();
+    await patch(threshold.app, { budgetAlertThresholdPercent: 70 });
+    expect(threshold.resolvePending).not.toHaveBeenCalled();
+
+    const refused = build({ teamRole: 'LEAD' });
+    await refused.app.ready();
+    await patch(refused.app, { monthlyBudgetUsdCents: 100 });
+    expect(refused.resolvePending).not.toHaveBeenCalled();
   });
 
   it('clears with null and leaves an omitted key alone', async () => {

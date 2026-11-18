@@ -392,7 +392,9 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
 
       const team = await fastify.prisma.team.findUnique({
         include: {
-          memberships: { include: { user: { select: { email: true, id: true, role: true } } } },
+          memberships: {
+            include: { user: { select: { email: true, id: true, isActive: true, role: true } } },
+          },
           repositories: {
             select: { id: true, isActive: true, organizationName: true, repoName: true },
           },

@@ -120,7 +120,7 @@ automation whose filters do not parse matches nothing.
 
 ### The Automations page
 
-**Automations** (`/admin/automations`, in the Configuration section of the navigation) lists every
+**Automations** (`/automations`, in the Teams and insights group of the navigation) lists every
 automation the caller may see, of every kind (§5). Each row says:
 
 - when it fires;

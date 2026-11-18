@@ -65,7 +65,7 @@ const schedule = {
 };
 
 beforeEach(() => {
-  resetNavigation('', '/admin/automations');
+  resetNavigation('', '/automations');
   stubDialogPrototype();
   useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
   setupFetchMock({
@@ -190,7 +190,7 @@ describe('GovernAutomationsPage', () => {
   });
 
   it('keeps only the ?team= team’s automations, with a removable chip', async () => {
-    resetNavigation('team=payments', '/admin/automations');
+    resetNavigation('team=payments', '/automations');
     const other = {
       ...eventRow,
       id: 'a2',
@@ -214,11 +214,11 @@ describe('GovernAutomationsPage', () => {
     expect(screen.queryByText('other team CI')).toBeNull();
     expect(screen.getByTestId('team-chip').textContent).toContain('Payments');
     fireEvent.click(screen.getByRole('button', { name: 'Remove the Payments team filter' }));
-    expect(nav.replace.at(-1)).toBe('/admin/automations');
+    expect(nav.replace.at(-1)).toBe('/automations');
   });
 
   it('includes a repository shared into the ?team= team, read-only', async () => {
-    resetNavigation('team=payments', '/admin/automations');
+    resetNavigation('team=payments', '/automations');
     const shared = {
       ...eventRow,
       id: 'a2',
@@ -249,7 +249,7 @@ describe('GovernAutomationsPage', () => {
   });
 
   it('shows an error, not every team’s rows, when the team detail cannot be read', async () => {
-    resetNavigation('team=payments', '/admin/automations');
+    resetNavigation('team=payments', '/automations');
     setupFetchMock({
       'GET /api/v1/automations': () => ({ data: [eventRow] }),
       'GET /api/v1/repositories': () => ({ data: [REPO] }),

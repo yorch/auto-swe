@@ -4,12 +4,11 @@ import type { TeamSummary } from '@auto-swe/shared/types/api';
 import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { KnowledgeBaseLinksPanel } from '@/components/knowledgeBases/KnowledgeBaseLinksSection';
 import { RepoShareAccess } from '@/components/repositories/RepoShareAccess';
 import { EgressAllowlistEditor } from '@/components/teams/EgressAllowlistEditor';
 import { EventEndpointsCard } from '@/components/teams/EventEndpointsCard';
-import { ServicePrincipalsSection } from '@/components/teams/ServicePrincipalsSection';
 import { ShellAllowlistEditor } from '@/components/teams/ShellAllowlistEditor';
 import { TeamAgentLibrarySection } from '@/components/teams/TeamAgentLibrarySection';
 import { TeamBudgetSection } from '@/components/teams/TeamBudgetSection';
@@ -25,11 +24,13 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { Textarea } from '@/components/ui/Textarea';
 import { useUserOrgs } from '@/hooks/useAdmin';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { useRepositories } from '@/hooks/useRepositories';
+import { useDismissBudgetRequest, useTeamBudgetRequests } from '@/hooks/useTeamBudgetRequests';
 import { useTeam, useUpdateTeam } from '@/hooks/useTeams';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { api } from '@/lib/api';
@@ -40,14 +41,7 @@ import { canManageTeamBudget, teamPermissions } from '@/lib/teamPermissions';
 import { hasFullTeamSettings } from '@/lib/teamSpace';
 import { useAuthStore } from '@/stores/authStore';
 
-type SettingsTab =
-  | 'general'
-  | 'budget'
-  | 'service-principals'
-  | 'automation'
-  | 'plugins'
-  | 'secrets'
-  | 'sandbox';
+type SettingsTab = 'general' | 'budget' | 'automation' | 'plugins' | 'secrets' | 'sandbox';
 
 /** Persona text beyond this many characters is probably unintended; shown as a counter, not enforced. */
 const PERSONA_SOFT_LIMIT = 4000;
@@ -68,8 +62,51 @@ function RepoLine({ name, trailing }: { name: string; trailing: React.ReactNode 
 }
 
 /**
- * A team's configuration: its details, repositories, persona, service principals, event
- * endpoints and agents, and sandbox policy. Offered to a team LEAD or ADMIN and to a platform
+ * The requests a lead has made to change the team's cap, for a caller who can act on them. Shows
+ * nothing until they load, and nothing when none are pending.
+ */
+function PendingBudgetRequests({ teamId }: { teamId: string }) {
+  const { data } = useTeamBudgetRequests(teamId);
+  const dismiss = useDismissBudgetRequest(teamId);
+  if (!data || data.length === 0) {
+    return null;
+  }
+  return (
+    <Card data-testid="budget-requests">
+      <CardHeader className="mb-2">
+        <CardTitle>Pending requests</CardTitle>
+      </CardHeader>
+      {dismiss.isError ? (
+        <Alert variant="error">{errMsg(dismiss.error, 'Failed to dismiss the request')}</Alert>
+      ) : null}
+      <ul className="divide-y divide-ink-600">
+        {data.map((r) => (
+          <li className="flex items-start justify-between gap-3 py-2.5" key={r.id}>
+            <div>
+              <p className="text-sm text-paper-100">{r.reason}</p>
+              <p className="text-xs text-paper-500">
+                {r.requestedBy.name ?? 'A team member'} · <RelativeTime value={r.createdAt} />
+              </p>
+            </div>
+            <Button
+              aria-label={`Dismiss request: ${r.reason.slice(0, 30)}`}
+              disabled={dismiss.isPending}
+              onClick={() => dismiss.mutate(r.id)}
+              size="sm"
+              variant="secondary"
+            >
+              Dismiss
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+/**
+ * A team's configuration: its details, repositories, persona, event endpoints and agents, and
+ * sandbox policy. Offered to a team LEAD or ADMIN and to a platform
  * ADMIN; each section still shows only what `teamPermissions` says the caller may change.
  */
 export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
@@ -105,6 +142,13 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { params: urlParams, update: updateUrl } = useUrlFilters();
+  // Service principals moved to the Manage tab; an old bookmark follows them.
+  const movedToManage = urlParams.get('tab') === 'service-principals';
+  useEffect(() => {
+    if (movedToManage) {
+      router.replace(`/teams/${encodeURIComponent(summary.slug)}/manage`);
+    }
+  }, [movedToManage, router, summary.slug]);
 
   const [editing, setEditing] = useState(false);
   const [personaInput, setPersonaInput] = usePrefilledField(team?.defaultPersonaPrompt);
@@ -133,7 +177,8 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
 
   if (!fullSettings && (userOrgs.isLoading || budgetOnly)) {
     return budgetOnly ? (
-      <div {...tabPanelProps('team-settings', 'budget')}>
+      <div className="space-y-6" {...tabPanelProps('team-settings', 'budget')}>
+        <PendingBudgetRequests teamId={id} />
         <TeamBudgetSection canManageCredentials={false} teamId={id} />
       </div>
     ) : null;
@@ -161,7 +206,6 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: 'general', label: 'General' },
     ...(canManageBudget ? [{ id: 'budget' as const, label: 'Budget' }] : []),
-    ...(canManage ? [{ id: 'service-principals' as const, label: 'Service principals' }] : []),
     { id: 'automation', label: 'Events & agents' },
     { id: 'plugins', label: 'Plugins' },
     ...(canManageTeamSecrets ? [{ id: 'secrets' as const, label: 'Secrets' }] : []),
@@ -176,8 +220,7 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-paper-400">
-          {team.description ||
-            'Repositories, persona, service principals, sandbox allowlists and agent overrides.'}
+          {team.description || 'Repositories, persona, sandbox allowlists and agent overrides.'}
           <span className="mt-1 block font-mono text-xs text-paper-500">{team.slug}</span>
         </p>
         {canManage && (
@@ -378,20 +421,9 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
       )}
 
       {tab === 'budget' && canManageBudget && (
-        <div {...tabPanelProps('team-settings', 'budget')}>
+        <div className="space-y-6" {...tabPanelProps('team-settings', 'budget')}>
+          <PendingBudgetRequests teamId={id} />
           <TeamBudgetSection canManageCredentials={isPlatformAdmin} teamId={id} />
-        </div>
-      )}
-
-      {tab === 'service-principals' && canManage && (
-        <div {...tabPanelProps('team-settings', 'service-principals')}>
-          <ServicePrincipalsSection
-            repositories={[...repositories.filter((r) => r.isActive), ...shared].map((r) => ({
-              id: r.id,
-              label: `${r.organizationName}/${r.repoName}`,
-            }))}
-            teamId={id}
-          />
         </div>
       )}
 
@@ -450,7 +482,7 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
         onConfirm={async () => {
           await api.delete(`/api/v1/teams/${id}`);
           await queryClient.invalidateQueries({ queryKey: ['teams'] });
-          router.push('/admin/teams');
+          router.push('/teams');
         }}
         open={confirmDelete}
         title="Delete team?"

@@ -223,7 +223,8 @@ export interface WorkflowDetail extends WorkflowSummary {
 export interface TeamMember {
   id: string;
   role: string;
-  user: { id: string; email: string; role: string };
+  /** `isActive` is false for a deactivated account, whose membership is kept. Absent on older payloads. */
+  user: { id: string; email: string; role: string; isActive?: boolean };
 }
 
 /** Shape returned by GET /api/v1/teams (list) */
@@ -365,6 +366,12 @@ export interface TeamOverview {
   budget: BudgetStatus | null;
   /** The caller's own actionable items on this team's repositories. */
   needsYou: { total: number };
+  /**
+   * The caller's own work on this team, for every viewer level: requests they launched that are
+   * running, failed attempts they launched, and pull requests of their requests that await a human
+   * merge. The last two are the desk's own items, so the two pages agree.
+   */
+  mine: { running: number; failed: number; prsAwaitingMerge: number };
   running: number;
   queued: number;
   /** Requests started in the last 7 days on this team's repositories (owned or shared). */
@@ -1320,6 +1327,19 @@ export interface HumanStepSummary {
    * team the repository is shared to can see a step they cannot answer. Absent on payloads that predate it.
    */
   canAnswer?: boolean;
+  /**
+   * Whether the step's Slack announcement can be replied to, which a nudge needs. The stored message
+   * is never returned. Absent on payloads that predate it.
+   */
+  hasSlackThread?: boolean;
+  /**
+   * Whether the caller may nudge this step now: it is pending, overdue and has a Slack thread, and
+   * the caller leads a team that owns the run (or is a platform ADMIN). The stale-approvals list is
+   * wider than the set a caller may nudge, because it includes work shared to the caller's team.
+   */
+  canNudge?: boolean;
+  /** When the step was last nudged, ISO 8601; null when never. */
+  lastNudgedAt?: string | null;
   /** Every recorded answer with its optional comment, oldest first. */
   responses?: HumanStepResponse[];
   run: {
@@ -2364,4 +2384,56 @@ export interface HarnessProfilePreview {
   /** For an update: the profile's hook switch and the hook files the update changes. */
   hooksEnabled?: boolean;
   hookChanges?: HarnessProfileHookChanges;
+}
+
+/**
+ * One failure on a team's work whose launcher is no longer a member of the team and that nobody
+ * has been assigned yet, as a lead sees it in the Manage tab. `GET /api/v1/teams/:id/attention/failures`.
+ */
+export interface TeamAttentionFailure {
+  runId: string;
+  requestId: string | null;
+  title: string;
+  /** `organization/repository`. */
+  repoName: string;
+  /** When the attempt ended, ISO 8601. */
+  failedAt: string;
+  /** Display name of the former launcher; null when the account is gone or there was none. */
+  formerLauncherName: string | null;
+  /** True when no person launched it: a schedule, webhook or other automation. */
+  launchedByAutomation: boolean;
+}
+
+/** Body of `POST /api/v1/teams/:id/failure-assignments`. */
+export interface CreateFailureAssignmentBody {
+  runId: string;
+  assigneeId: string;
+}
+
+/** The `data` of a created failure assignment (201). `WorkflowRun.launchedById` is never changed. */
+export interface FailureAssignmentResult {
+  runId: string;
+  assigneeId: string;
+  /** ISO 8601. */
+  assignedAt: string;
+}
+
+/** The `data` of `POST /api/v1/human-steps/:id/nudge` (200). */
+export interface HumanStepNudgeResult {
+  /** ISO 8601. */
+  nudgedAt: string;
+}
+
+/** A pending request that an admin change a team's monthly cap. It carries no amount. */
+export interface TeamBudgetRequestSummary {
+  id: string;
+  reason: string;
+  requestedBy: { id: string; name: string | null };
+  /** ISO 8601. */
+  createdAt: string;
+}
+
+/** Body of `POST /api/v1/teams/:id/budget-requests`: a reason of 1 to 500 characters. */
+export interface CreateTeamBudgetRequestBody {
+  reason: string;
 }

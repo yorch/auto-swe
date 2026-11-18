@@ -284,12 +284,12 @@ A new provider is a registry entry plus a class that implements the whole interf
 | `src/app/page.tsx` | Dashboard home — KPIs, "needs attention" queue, recent activity |
 | `src/app/runs/[id]/` | Linked investigation workspace — anchored verdict and shared branch/attempt selection across Events, Graph, Timing and Transcript; supporting Overview, Evidence, Activity and Details panels. Graph viewport and trace filters/expansion survive view changes. Events includes exact execution timestamps; replay shows active executions, phases and historically reached step bands. Live elapsed timing and historical playback use `src/lib/runPlayback.ts`; trace linkage uses `src/lib/traceLinkage.ts`. Legacy layout preferences remain readable by the API but do not switch the workspace. |
 | `src/app/requests/`, `src/app/approvals/`, `src/app/pull-requests/`, `src/app/tickets/` | Work — requests with their attempts, pending human steps with respond forms, and the pull-request and ticket views |
-| `src/app/teams/[slug]/` | The team space — Overview, Work, Automations, Reports, Knowledge, Members and Settings tabs for one team, taken from the route slug; the team switcher and the sidebar Teams group link here ([teams.md](./teams.md#3-the-team-space)) |
+| `src/app/teams/[slug]/` | The team space — Overview, Work, Automations, Reports, Knowledge, Members, Manage and Settings tabs for one team, taken from the route slug; the team switcher and the sidebar's My teams group link here ([teams.md](./teams.md#3-the-team-space)) |
 | `src/app/library/[id]/` | Canvas-first workflow workspace — compact version selector, alternate outline/palette, collapsible edit/read-only node inspection; separate Settings and Versions panels retain the read-only description, triggers, A/B experiments and analytics. Removal is canvas-scoped, confirmed and undoable until another edit. |
 | `src/app/{agents,skills,review-presets}/` | Build — agents and the agent library, skills and Review presets; the Workflow library also belongs to Build |
 | `src/app/{models,mcp,bundles,connections}/` | Connect — model configuration, MCP connections, bundles, repositories and other connections |
 | `src/app/{knowledge,knowledge-bases,lessons}/` | One Knowledge destination with a shared header and role-filtered tabs, retaining each route's URL |
-| `src/app/admin/` | Admin — one area with its own sub-navigation (`layout.tsx` renders `components/layout/AdminNav.tsx`): users, teams, organizations, sessions, API tokens, scanner patterns, autonomy policies, security events, audit, analytics, LLM usage, platform settings, workflow defaults, config grants, automations and schedules, Slack channels, integrations, GitHub installations, Platform review presets, error baselines, evals |
+| `src/app/admin/` | Admin — one area with its own sub-navigation (`layout.tsx` renders `components/layout/AdminNav.tsx`): users, organizations, sessions, API tokens, scanner patterns, harness profiles, PR evaluations, autonomy policies and decisions, security events, audit log, user activity, assistant failures, platform settings, workflow defaults, platform review presets, config grants, Slack channels, integrations, GitHub installations, error baselines, evals. The Teams directory, Analytics, Reports, LLM usage and Automations are top-level pages under Teams, Insights and Automations, not Admin pages; `/admin/teams/:id` is still the Admin page of one team |
 | `src/lib/navigation.ts` | The page map: sidebar groups, Admin sub-navigation, page titles and breadcrumbs. Old addresses redirect permanently through `LEGACY_REDIRECTS` in `next.config.ts` |
 | `src/hooks/` | TanStack Query hooks split by resource domain |
 | `src/stores/` | Zustand — `authStore` (identity), `themeStore` (theme and palette preference), `sidebarStore` (persisted desktop collapse preference), `entityTitleStore` (detail breadcrumb titles), `assistantStore` (assistant panel) |
@@ -766,7 +766,7 @@ flowchart LR
 |------|-------------|---------|-----------|
 | better-auth cookie | HTTP-only session cookie | `sessions` (60 s in-memory cache) | `POST /api/auth/sign-in/*` — email+password, GitHub, Google, magic-link |
 | PAT bearer | `ats_<base64url-32B>` | `api_tokens` (hash only) | Settings → API tokens |
-| Service principal bearer | `ats_<base64url-32B>` | `api_tokens` (hash only), owned by a `ServicePrincipal` | A team's Service principals card — see [service-principals.md](./service-principals.md) |
+| Service principal bearer | `ats_<base64url-32B>` | `api_tokens` (hash only), owned by a `ServicePrincipal` | A team's Manage tab, Service principals section — see [service-principals.md](./service-principals.md) |
 | JWT bearer | `eyJ…` (HS256/RS256) | — | `POST /api/v1/auth/session-token`, which exchanges an active session cookie for a short-lived JWT |
 | Assistant bearer | `asst_` + a JWT of its own audience | — | `app.auth.signAssistantToken`, for one user and one in-app assistant conversation, 15 minutes |
 
@@ -1257,7 +1257,7 @@ run, and the ten runs that spent most inside the window. With no filter the repo
 platform-wide and ADMIN-only, since it includes spend no team owns; a team LEAD (by team
 membership) may read their team and an ORG_ADMIN their organization, and every query of a scoped
 report carries the `teamId`/`orgId` predicate the tenant guard checks. The dashboard renders it at
-`/admin/usage` with a scope picker. `GET /api/v1/platform/usage/scopes` returns what the caller may
+`/insights/usage` with a scope picker. `GET /api/v1/platform/usage/scopes` returns what the caller may
 read — `platform` (ADMIN), the teams they lead, the organizations they administer — by the same rules
 as the report. The page, its layout, and the sidebar entry all gate on that list being non-empty
 rather than on the platform role, so a team LEAD or ORG_ADMIN whose platform role is ENGINEER reaches
@@ -1295,7 +1295,7 @@ LEAD or ORG_ADMIN sees names only, and only for launchers who belong to the team
 report is scoped to; every other launcher is folded into one unnamed `outsideScope` row so a scoped
 report does not reveal who else spends elsewhere.
 
-`/admin/usage` renders it as a "Top N users" table, N being the rows the API returned: the name, and the email only when the API sent
+`/insights/usage` renders it as a "Top N users" table, N being the rows the API returned: the name, and the email only when the API sent
 one, with "Unknown user" for a launcher without a name, an "Outside this scope" row, and a line for
 the unattributed spend. Only the top ten are named, so the rows and that line do not add up to the
 headline spend.
@@ -1345,7 +1345,7 @@ and per template (`computeApprovalLatency()` in `shared/src/workflow/analytics.t
 `requestedAt` to `resolvedAt` and is measured for `RESOLVED` steps only, as `resolved.count`,
 `p50Ms` and `p95Ms`. `TIMED_OUT`, `CANCELLED` and `PENDING` steps are counted separately and are in
 no percentile. It reads at most 10,000 steps, newest first, and sets `isTruncated` when the cap cut
-into the window. `/admin/analytics` renders it as the Approval latency card, and its pull-request
+into the window. `/insights/analytics` renders it as the Approval latency card, and its pull-request
 outcomes card reads `GET /api/v1/pull-requests/outcomes` ([work-views.md](./work-views.md)).
 
 ### Workspace hardening

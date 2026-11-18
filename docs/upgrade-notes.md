@@ -1916,3 +1916,34 @@ setting shows the same project keys or team keys the old setting held.
 **Verify.** Run a PRD workflow against a listed project and check that its epic is created in the tracker. A refusal shows as a warning on the `createTrackerItems` step and names the project key.
 
 ---
+
+### Team attention, budget requests and nudges need the migration `20261117500000_team_attention`
+
+**Affected.** Every deployment that runs the gateway from a commit containing the migration
+`20261117500000_team_attention`.
+
+**Fix commit.** Identified before its SHA is assigned by the migration
+`20261117500000_team_attention`; compare the source when commit ancestry is unavailable.
+
+**Actions.** Apply the migration before starting the updated gateway or worker. The gateway image's
+entrypoint runs `prisma migrate deploy` before it starts, and the Helm migrate Job runs it before any
+new pod of the release starts, so those deployments apply it automatically. Only an operator who runs
+migrations by hand needs to run `yarn db:deploy`. The migration creates the tables
+`failure_assignments` and `team_budget_requests`, and adds the nullable column
+`workflow_human_steps.last_nudged_at`. `team_budget_requests` carries a partial unique index that
+allows one pending request per team, and a `CHECK` that a reason is 1 to 500 characters. The
+migration changes no existing row and leaves the HNSW indexes alone. Starting the gateway before it
+is applied fails every request that reads the new tables, including the desk and the human-step
+lists, because those reads select every column of `workflow_human_steps`.
+
+**Verify.** The three objects exist:
+
+```sql
+SELECT to_regclass('public.failure_assignments') AS failure_assignments,
+       to_regclass('public.team_budget_requests') AS team_budget_requests;
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'workflow_human_steps' AND column_name = 'last_nudged_at';
+```
+
+Both `to_regclass` values are non-null and the column query returns one row.
+

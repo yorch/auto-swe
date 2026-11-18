@@ -53,7 +53,7 @@ export function usePullRequests(
 export const MAX_ENGAGEMENT_DAYS = 365;
 
 /**
- * Whether reviewers act on the brief, over the last `days` days (`/admin/analytics`). The window is
+ * Whether reviewers act on the brief, over the last `days` days (`/insights/analytics`). The window is
  * clamped to what the route accepts, so a long custom range asks for the longest it can answer.
  */
 export function usePrEngagement(days: number, repoId?: string) {

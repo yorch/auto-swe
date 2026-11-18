@@ -12,7 +12,7 @@ interface EntityTarget {
 const TARGETS: Record<string, EntityTarget> = {
   ActiveWorkflow: { list: '/runs' },
   Agent: { list: '/agents' },
-  Automation: { list: '/admin/automations' },
+  Automation: { list: '/automations' },
   AutonomyPolicy: { list: '/admin/policies' },
   ConfigPermission: { list: '/admin/config-grants' },
   ConfigSetting: { list: '/admin/platform-settings' },

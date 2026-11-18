@@ -20,6 +20,7 @@ const base: TeamOverview = {
   ],
   budget: null,
   last7d: { failed: 1, started: 4, succeeded: 3 },
+  mine: { failed: 0, prsAwaitingMerge: 0, running: 0 },
   needsYou: { total: 2 },
   pullRequests: {
     closedUnmerged: 1,
@@ -239,5 +240,79 @@ describe('TeamOverviewView', () => {
     unmount();
     render(<TeamOverviewView overview={base} slug="payments" />);
     expect(screen.queryByTestId('repo-launch-budget')).toBeNull();
+  });
+
+  it('renders My work before Team numbers at every viewer level', () => {
+    const levels: TeamOverview[] = [
+      { ...base, viewerLevel: 'engineer' },
+      {
+        ...base,
+        lead: { openPullRequests: 0, staleApprovals: 0, unownedFailures: 0 },
+        viewerLevel: 'lead',
+      },
+      {
+        ...base,
+        admin: { monthCostUsdCents: 100 },
+        lead: { openPullRequests: 0, staleApprovals: 0, unownedFailures: 0 },
+        viewerLevel: 'admin',
+      },
+    ];
+    for (const overview of levels) {
+      const { unmount } = render(<TeamOverviewView overview={overview} slug="payments" />);
+      const mine = screen.getByLabelText('My work');
+      const numbers = screen.getByLabelText('Team numbers');
+      expect(mine.compareDocumentPosition(numbers) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      unmount();
+    }
+  });
+
+  it('shows the caller own running, failed and PR figures, each with a browse link and a definition', () => {
+    render(
+      <TeamOverviewView
+        overview={{ ...base, mine: { failed: 2, prsAwaitingMerge: 1, running: 3 } }}
+        slug="payments"
+      />
+    );
+    const card = within(screen.getByTestId('my-work'));
+    expect(card.getByText('3')).toBeTruthy();
+    expect(card.getByText('2')).toBeTruthy();
+    expect(card.getByText('1')).toBeTruthy();
+    expect(card.getByRole('link', { name: 'Browse active requests' }).getAttribute('href')).toBe(
+      '/requests?scope=MINE&state=active&team=payments'
+    );
+    expect(card.getByRole('link', { name: 'Browse failed requests' }).getAttribute('href')).toBe(
+      '/requests?scope=MINE&state=failed&team=payments'
+    );
+    expect(card.getByRole('link', { name: 'Browse open pull requests' }).getAttribute('href')).toBe(
+      '/pull-requests?scope=MINE&state=OPEN&team=payments'
+    );
+    expect(card.getByText('Requests you launched that are running')).toBeTruthy();
+    expect(
+      card.getByText('Failed attempts you launched or were assigned, last 30 days')
+    ).toBeTruthy();
+    expect(card.getByText('Pull requests of your requests awaiting a merge')).toBeTruthy();
+    for (const link of card.getAllByRole('link')) {
+      expect(link.textContent).not.toMatch(/\d/);
+      expect(link.textContent).not.toMatch(/^View /);
+    }
+  });
+
+  it('shows Start work on a launchable repository, linked to the team start page', () => {
+    render(<TeamOverviewView overview={base} slug="payments" />);
+    const launchable = screen.getByTitle('acme/api').closest('li');
+    expect(
+      within(launchable as HTMLElement).getByRole('link', { name: 'Start work' })
+    ).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Start work' }).getAttribute('href')).toBe(
+      '/start?team=payments'
+    );
+  });
+
+  it('shows the view-only badge and no Start work link on a repository that cannot launch', () => {
+    render(<TeamOverviewView overview={base} slug="payments" />);
+    const viewOnly = screen.getByText('acme/shared-ui').closest('li') as HTMLElement;
+    expect(within(viewOnly).getByText('View only')).toBeTruthy();
+    expect(within(viewOnly).queryByRole('link', { name: 'Start work' })).toBeNull();
+    expect(screen.getAllByRole('link', { name: 'Start work' })).toHaveLength(1);
   });
 });

@@ -58,6 +58,20 @@ export const LEGACY_REDIRECTS: { source: string; destination: string }[] = [
   { destination: '/knowledge', source: '/admin/knowledge' },
   { destination: '/lessons', source: '/govern/lessons' },
   { destination: '/knowledge', source: '/govern/knowledge' },
+  // Insights: the three pages every role may open left Admin for their own group. The `/govern/…`
+  // rules come before the `/govern/:path*` prefix rule, so an old Govern link lands in one hop.
+  // Automations and the Teams directory left Admin as well. Only the list moves: a team's own page
+  // (`/admin/teams/:id`) stays, so the Teams rule matches the bare address and nothing under it.
+  { destination: '/automations', source: '/admin/automations' },
+  { destination: '/teams', source: '/admin/teams' },
+  { destination: '/automations', source: '/govern/automations' },
+  { destination: '/teams', source: '/govern/teams' },
+  { destination: '/insights/analytics', source: '/admin/analytics' },
+  { destination: '/insights/reports', source: '/admin/reports' },
+  { destination: '/insights/usage', source: '/admin/usage' },
+  { destination: '/insights/analytics', source: '/govern/analytics' },
+  { destination: '/insights/reports', source: '/govern/reports' },
+  { destination: '/insights/usage', source: '/govern/usage' },
   { destination: '/admin', source: '/govern' },
   { destination: '/admin/:path*', source: '/govern/:path*' },
 ];

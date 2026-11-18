@@ -17,7 +17,7 @@ vi.mock('@/components/charts/WorkflowsOverTimeChart', () => ({
 
 import GlobalAnalyticsPage from './page';
 
-beforeEach(() => resetNavigation('', '/admin/analytics'));
+beforeEach(() => resetNavigation('', '/insights/analytics'));
 afterEach(() => {
   vi.unstubAllGlobals();
   chartData.mockReset();
@@ -170,7 +170,7 @@ describe('GlobalAnalyticsPage', () => {
     expect(screen.getByText(/−50% vs previous 30 days/)).toBeTruthy();
     expect(screen.getByText(/−12\.2 pts vs previous 30 days/)).toBeTruthy();
     expect(screen.getByRole('link', { name: 'See all spend' }).getAttribute('href')).toBe(
-      '/admin/usage'
+      '/insights/usage'
     );
   });
 
@@ -224,7 +224,7 @@ describe('GlobalAnalyticsPage', () => {
   });
 
   it('asks the gateway for a custom range from the link', async () => {
-    resetNavigation('range=custom&from=2026-09-01&to=2026-09-14', '/admin/analytics');
+    resetNavigation('range=custom&from=2026-09-01&to=2026-09-14', '/insights/analytics');
     const spy = mock();
     render(withQuery(<GlobalAnalyticsPage />));
     await screen.findByText('Run cost');

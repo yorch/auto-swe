@@ -1098,6 +1098,44 @@ model TeamSecret {
   @@map("team_secrets")
 }
 
+/// A team lead's hand-off of a failed run whose launcher left the team to a current member. It
+/// records who is to look at the failure, nothing more: `WorkflowRun.launchedById` is a credential
+/// key and is never rewritten by it.
+model FailureAssignment {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workflowRunId String      @unique @map("workflow_run_id") @db.Uuid
+  workflowRun   WorkflowRun @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+  /// The team that owns the run's repository, whose lead made the assignment.
+  teamId        String      @map("team_id") @db.Uuid
+  team          Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  assigneeId    String      @map("assignee_id") @db.Uuid
+  assignee      User        @relation("FailureAssignee", fields: [assigneeId], references: [id], onDelete: Cascade)
+  assignedById  String      @map("assigned_by_id") @db.Uuid
+  assignedBy    User        @relation("FailureAssigner", fields: [assignedById], references: [id], onDelete: Cascade)
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([teamId])
+  @@index([assigneeId])
+  @@map("failure_assignments")
+}
+
+/// A team lead's request, with a reason, that an admin change the team's monthly cap. It carries no
+/// amount. At most one is pending per team (a partial unique index in the migration); saving the
+/// cap resolves it.
+model TeamBudgetRequest {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId        String    @map("team_id") @db.Uuid
+  team          Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  requestedById String    @map("requested_by_id") @db.Uuid
+  requestedBy   User      @relation("TeamBudgetRequester", fields: [requestedById], references: [id], onDelete: Cascade)
+  reason        String
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  resolvedAt    DateTime? @map("resolved_at") @db.Timestamptz
+
+  @@index([teamId, resolvedAt])
+  @@map("team_budget_requests")
+}
+
 /// Permission for one repository to read one `TeamSecret`. The loader also requires the
 /// repository's current team to be the secret's team, so a repository moved to another team loses
 /// access without the grant being touched.
@@ -1400,6 +1438,8 @@ model Team {
   reviewPresets         ReviewPreset[]
   /// Named secrets the team holds and grants to its repositories (see `TeamSecret`).
   secrets               TeamSecret[]
+  failureAssignments    FailureAssignment[]
+  budgetRequests        TeamBudgetRequest[]
   /// URLs other services post signed events to (`EventEndpoint`).
   eventEndpoints        EventEndpoint[]
   workflowTemplates     WorkflowTemplate[]
@@ -1806,6 +1846,9 @@ model User {
   runSteeringMessages RunSteeringMessage[] @relation("RunSteeringAuthor")
   createdTeamSecrets        TeamSecret[]       @relation("TeamSecretCreator")
   createdTeamSecretGrants   TeamSecretGrant[]  @relation("TeamSecretGrantCreator")
+  failuresAssigned          FailureAssignment[] @relation("FailureAssignee")
+  failureAssignmentsMade    FailureAssignment[] @relation("FailureAssigner")
+  budgetRequestsMade        TeamBudgetRequest[] @relation("TeamBudgetRequester")
   createdReviewPresets           ReviewPreset[]           @relation("ReviewPresetCreator")
   createdReviewPresetAttachments ReviewPresetAttachment[] @relation("ReviewPresetAttachmentCreator")
   createdKnowledgeBases     KnowledgeBase[]
@@ -2637,6 +2680,7 @@ model WorkflowRun {
   httpCalls         WorkflowHttpCall[]
   memoryItems       MemoryItem[]
   humanSteps        WorkflowHumanStep[]
+  failureAssignment FailureAssignment?
   evalResults       EvalResult[]
   outcomeReferences WorkflowOutcomeReference[]
   autonomyDecisions AutonomyDecision[]
@@ -3538,6 +3582,9 @@ model WorkflowHumanStep {
   /// message header (no buttons). It lets the step's resolution, from the web or from Slack,
   /// edit that message to show the decision. Null when nothing was posted.
   slackMessage      Json?           @map("slack_message")
+  /// When a team lead last nudged this step in its Slack thread; null when never. Limits a
+  /// nudge to one per four hours.
+  lastNudgedAt      DateTime?       @map("last_nudged_at") @db.Timestamptz
 
   humanApprovals HumanApproval[]
 

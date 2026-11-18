@@ -14,11 +14,9 @@ import { cn, FOCUS_RING, plural } from '@/lib/utils';
 /** One line on what each Admin page is for, so a label like "Baselines" is not a guess. */
 const PAGE_DESCRIPTIONS: Record<string, string> = {
   '/admin/activity': 'What people have been doing in the dashboard.',
-  '/admin/analytics': 'Trends across runs, cost and outcomes.',
   '/admin/api-tokens': 'Every personal and service-principal token; revoke any of them.',
   '/admin/assistant': 'Where the in-app assistant failed to answer.',
   '/admin/audit': 'The record of who changed what, and when.',
-  '/admin/automations': 'Rules that start runs on schedules and events.',
   '/admin/baselines': 'Known error patterns, so new failures stand out.',
   '/admin/config-grants': 'Let a role or person change specific platform settings.',
   '/admin/evals': 'Evaluation runs for agents and workflows.',
@@ -28,13 +26,10 @@ const PAGE_DESCRIPTIONS: Record<string, string> = {
   '/admin/platform-settings': 'Operator policy settings, by scope.',
   '/admin/policies': 'Rules for what agents may do without a human.',
   '/admin/policies/decisions': 'Each autonomy decision and the reason behind it.',
-  '/admin/reports': 'Reports and scheduled digests.',
   '/admin/scanner': 'Security scanner patterns that block or flag agent actions.',
   '/admin/security': 'Events raised by the security scanners.',
   '/admin/sessions': 'Browser sessions that are signed in; sign people out.',
   '/admin/slack-channels': 'Channels the assistant answers in, with their spend.',
-  '/admin/teams': 'Team members, repositories, sandbox policy and agent overrides.',
-  '/admin/usage': 'Model spend and token usage.',
   '/admin/users': 'Invite people, approve sign-ups, set roles, suspend accounts.',
   '/admin/workflow-defaults': 'Branch prefix, templates, budgets and iteration limits.',
 };

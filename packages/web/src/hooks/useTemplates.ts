@@ -273,7 +273,7 @@ export function useGlobalAnalytics(range: DateRange = { days: 30, kind: 'preset'
   });
 }
 
-/** Delivery outcomes of the pull requests opened in the window (`/admin/analytics`). */
+/** Delivery outcomes of the pull requests opened in the window (`/insights/analytics`). */
 export function usePullRequestOutcomes(
   range: DateRange = { days: 30, kind: 'preset' },
   repoId?: string

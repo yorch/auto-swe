@@ -20,12 +20,12 @@ describe('access denied notice', () => {
   });
 
   it('words the usage and inactive reasons without naming a role', () => {
-    expect(deniedMessage('/admin/usage', null, 'usage')).toBe(
+    expect(deniedMessage('/insights/usage', null, 'usage')).toBe(
       'You need access to usage data to open LLM usage. Ask an administrator if you think you should have access.'
     );
-    expect(deniedMessage('/admin/usage', null, 'inactive')).toMatch(/waiting for approval/);
-    expect(deniedReasonHref('/admin/usage', 'inactive')).toBe(
-      '/?denied=%2Fadmin%2Fusage&reason=inactive'
+    expect(deniedMessage('/insights/usage', null, 'inactive')).toMatch(/waiting for approval/);
+    expect(deniedReasonHref('/insights/usage', 'inactive')).toBe(
+      '/?denied=%2Finsights%2Fusage&reason=inactive'
     );
   });
 

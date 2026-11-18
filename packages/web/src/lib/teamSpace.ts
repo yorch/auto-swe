@@ -8,6 +8,7 @@ export const TEAM_TABS = [
   { id: 'reports', label: 'Reports', path: 'reports' },
   { id: 'knowledge', label: 'Knowledge', path: 'knowledge' },
   { id: 'members', label: 'Members', path: 'members' },
+  { id: 'manage', label: 'Manage', path: 'manage' },
   { id: 'settings', label: 'Settings', path: 'settings' },
 ] as const;
 
@@ -62,6 +63,14 @@ export function teamSettingsScope(
     return 'full';
   }
   return isOrgAdmin ? 'budget' : null;
+}
+
+/** Whether the Manage tab is offered: a team LEAD or ADMIN, or a platform ADMIN. */
+export function canSeeTeamManage(
+  platformRole: string | null | undefined,
+  myRole: string | null | undefined
+): boolean {
+  return hasFullTeamSettings(platformRole, myRole);
 }
 
 /** Whether the Settings tab is offered at all. */

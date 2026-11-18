@@ -73,7 +73,7 @@ describe('TriggersCard', () => {
     expect(screen.queryByText('Elsewhere')).toBeNull();
     expect(screen.getByText('Signed webhook URL exists')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Manage automations' }).getAttribute('href')).toBe(
-      '/admin/automations'
+      '/automations'
     );
     expect(screen.getByRole('link', { name: 'Manage schedules' }).getAttribute('href')).toBe(
       '/admin/schedules'

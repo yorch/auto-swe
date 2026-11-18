@@ -111,15 +111,22 @@ describe('TeamSettingsPanel sections', () => {
     expect(screen.queryByLabelText('Persona')).toBeNull();
   });
 
-  it('offers a team lead who is not a platform ADMIN neither sandbox nor service principals by rule', async () => {
+  it('sends an old service-principals bookmark to the Manage tab', async () => {
+    mockTeam();
+    resetNavigation('tab=service-principals', '/teams/payments/settings');
+    renderPanel();
+    await waitFor(() => expect(nav.replace.at(-1)).toBe('/teams/payments/manage'));
+  });
+
+  it('offers a team lead who is not a platform ADMIN no sandbox section, and lists no service principals', async () => {
     useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
     mockTeam();
     renderPanel('LEAD');
     await screen.findByRole('tab', { name: 'General' });
     // Allowlists are platform-ADMIN only (teamPermissions), whatever the team role.
     expect(screen.queryByRole('tab', { name: 'Sandbox policy' })).toBeNull();
-    // A platform LEAD who leads the team manages members and so service principals.
-    expect(screen.getByRole('tab', { name: 'Service principals' })).toBeTruthy();
+    // Service principals moved to the Manage tab.
+    expect(screen.queryByRole('tab', { name: 'Service principals' })).toBeNull();
   });
 
   it('offers no member-management section when the team role is below lead', async () => {
@@ -224,6 +231,102 @@ describe('TeamSettingsPanel budget and sharing', () => {
     renderPanel('ADMIN');
     await screen.findByTestId('team-budget-section');
     expect(screen.queryByRole('link', { name: 'Model configuration' })).toBeNull();
+  });
+
+  it('lists the pending budget requests above the editor for a caller who may edit the cap', async () => {
+    mock({
+      [`GET /api/v1/teams/${TEAM_ID}/budget-requests`]: () => ({
+        data: [
+          {
+            createdAt: '2026-11-15T10:00:00.000Z',
+            id: 'b1',
+            reason: 'Launch month needs more headroom',
+            requestedBy: { id: 'u1', name: 'Dana Lead' },
+          },
+        ],
+      }),
+    });
+    resetNavigation('tab=budget', '/teams/payments/settings');
+    renderPanel('ADMIN');
+    const requests = await screen.findByTestId('budget-requests');
+    expect(within(requests).getByText('Launch month needs more headroom')).toBeTruthy();
+    expect(within(requests).getByText(/Dana Lead/)).toBeTruthy();
+    const section = await screen.findByTestId('team-budget-section');
+    expect(
+      requests.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it('dismisses a pending request and refetches the list', async () => {
+    let pending = [
+      {
+        createdAt: '2026-11-15T10:00:00.000Z',
+        id: 'b1',
+        reason: 'Launch month needs more headroom',
+        requestedBy: { id: 'u1', name: 'Dana Lead' },
+      },
+    ];
+    const spy = mock({
+      [`GET /api/v1/teams/${TEAM_ID}/budget-requests`]: () => ({ data: pending }),
+      [`POST /api/v1/teams/${TEAM_ID}/budget-requests/b1/dismiss`]: () => {
+        pending = [];
+        return { data: { id: 'b1' } };
+      },
+    });
+    resetNavigation('tab=budget', '/teams/payments/settings');
+    renderPanel('ADMIN');
+    const requests = await screen.findByTestId('budget-requests');
+    fireEvent.click(
+      within(requests).getByRole('button', {
+        name: 'Dismiss request: Launch month needs more headro',
+      })
+    );
+    await waitFor(() => expect(screen.queryByTestId('budget-requests')).toBeNull());
+    expect(
+      spy.mock.calls.filter(([url]) => String(url).endsWith('/budget-requests')).length
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it('shows the error and keeps the request when the dismissal fails', async () => {
+    const spy = mock({
+      [`GET /api/v1/teams/${TEAM_ID}/budget-requests`]: () => ({
+        data: [
+          {
+            createdAt: '2026-11-15T10:00:00.000Z',
+            id: 'b1',
+            reason: 'More',
+            requestedBy: { id: 'u1', name: 'Dana Lead' },
+          },
+        ],
+      }),
+    });
+    const base = spy.getMockImplementation() as (
+      input: RequestInfo | URL,
+      init?: RequestInit
+    ) => Promise<Response>;
+    spy.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).endsWith('/dismiss')
+        ? new Response(JSON.stringify({ error: { message: 'No pending budget request' } }), {
+            headers: { 'content-type': 'application/json' },
+            status: 404,
+          })
+        : base(input, init)
+    );
+    resetNavigation('tab=budget', '/teams/payments/settings');
+    renderPanel('ADMIN');
+    const requests = await screen.findByTestId('budget-requests');
+    fireEvent.click(within(requests).getByRole('button', { name: 'Dismiss request: More' }));
+    expect(await within(requests).findByText('No pending budget request')).toBeTruthy();
+    expect(within(requests).getByText('More')).toBeTruthy();
+  });
+
+  it('renders nothing for the budget requests when there are none', async () => {
+    mock({ [`GET /api/v1/teams/${TEAM_ID}/budget-requests`]: () => ({ data: [] }) });
+    resetNavigation('tab=budget', '/teams/payments/settings');
+    renderPanel('ADMIN');
+    await screen.findByTestId('team-budget-section');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByTestId('budget-requests')).toBeNull();
   });
 
   it('lets the owning team set who may launch on each shared repository', async () => {

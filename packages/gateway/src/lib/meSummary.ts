@@ -113,7 +113,21 @@ function deskAttemptWhere(
       ...deskRunTerms(user, gate, scope),
       {
         workRequest: {
-          OR: [{ requestedById: user.sub }, { workflowRuns: { some: { launchedById: user.sub } } }],
+          OR: [
+            { requestedById: user.sub },
+            { workflowRuns: { some: { launchedById: user.sub } } },
+            {
+              workflowRuns: {
+                some: {
+                  // An assignment lapses once the assignee leaves the team that made it.
+                  failureAssignment: {
+                    assigneeId: user.sub,
+                    team: { memberships: { some: { userId: user.sub } } },
+                  },
+                },
+              },
+            },
+          ],
         },
       },
       attemptWindowTerm(now),
@@ -210,7 +224,12 @@ export async function loadDeskEntries({
   user,
 }: DeskDeps & { scope: DeskScope }): Promise<{
   deduped: DeskEntry[];
-  running: (RunTeamRow & { id: string; status: string; workRequestId: string | null })[];
+  running: (RunTeamRow & {
+    id: string;
+    launchedById: string | null;
+    status: string;
+    workRequestId: string | null;
+  })[];
 }> {
   const now = Date.now();
   const dueSoonUntil = now + dueSoonHours * 60 * 60 * 1000;
@@ -241,7 +260,17 @@ export async function loadDeskEntries({
       select: {
         ...RUN_TEAM_SELECT,
         _count: { select: { humanSteps: { where: { status: 'PENDING' } } } },
+        attributedTeamId: true,
         endedAt: true,
+        failureAssignment: {
+          select: {
+            assigneeId: true,
+            team: {
+              select: { memberships: { select: { userId: true }, where: { userId: user.sub } } },
+            },
+            teamId: true,
+          },
+        },
         id: true,
         launchedById: true,
         startedAt: true,
@@ -271,7 +300,13 @@ export async function loadDeskEntries({
     prisma.workflowRun.findMany({
       distinct: ['workRequestId', 'connectionId'],
       orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
-      select: { ...RUN_TEAM_SELECT, id: true, status: true, workRequestId: true },
+      select: {
+        ...RUN_TEAM_SELECT,
+        id: true,
+        launchedById: true,
+        status: true,
+        workRequestId: true,
+      },
       where: deskRunningWhere(user, gate, scope),
     }),
   ]);
@@ -303,8 +338,15 @@ export async function loadDeskEntries({
     // person who launched it, and the first one need not be the caller's.
     for (const failedId of group.failedRunIds) {
       const failed = rows.get(failedId);
-      // Only a failure of an attempt the caller launched is theirs to act on.
-      if (failed && failed.launchedById === user.sub) {
+      // A failure is theirs to act on when they launched the attempt, or a lead assigned it to
+      // them while they are still on the assigning team (the assignment never rewrites the
+      // launcher). The assignment counts only when the team that made it is the run's attributed
+      // team, as the owner's attention list reads it: a legacy row from a sharee team does not.
+      const assigned =
+        failed?.failureAssignment?.assigneeId === user.sub &&
+        failed.failureAssignment.teamId === failed.attributedTeamId &&
+        failed.failureAssignment.team.memberships.length > 0;
+      if (failed && (failed.launchedById === user.sub || assigned)) {
         entries.push({
           item: {
             ...placement(failed),

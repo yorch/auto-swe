@@ -8,7 +8,7 @@ export default function TeamAutomationsPage() {
   return (
     <TeamLinkPanel
       hint="Event automations, schedules and webhooks that start runs on this team's repositories."
-      href="/admin/automations"
+      href="/automations"
       icon="clock"
       linkLabel="Open the team's automations"
       slug={team.slug}

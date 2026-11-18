@@ -77,11 +77,14 @@ describe('/api/v1/scheduled-work-requests', () => {
   /** Nth (1-based) conditional row write finds the row deactivated meanwhile (count 0). */
   let deactivateAtUpdateMany: number | null = null;
   const updateManyWheres: Array<Record<string, unknown>> = [];
+  const listWheres: Array<Record<string, unknown>> = [];
   /** Runs just before the Nth (1-based) conditional write: another writer's change landing. */
   let concurrentWriter: ((call: number) => void) | null = null;
   let repoActive = true;
   /** Teams the repo is shared with, and the caller's role in each (null = not a member). */
   let sharedTeams: Array<{ teamId: string; role: string | null }> = [];
+  /** Whether the `teamId` filter names a team the caller belongs to. */
+  let callerInFilterTeam = true;
 
   const syncCalls: WorkRequestScheduleInput[] = [];
   const triggeredIds: string[] = [];
@@ -230,7 +233,10 @@ describe('/api/v1/scheduled-work-requests', () => {
           deletedRowIds.push(args.where.id);
           return scheduleRow;
         },
-        findMany: async () => (scheduleRow ? [rowWithInclude(scheduleRow)] : []),
+        findMany: async (args: { where: Record<string, unknown> }) => {
+          listWheres.push(args.where);
+          return scheduleRow ? [rowWithInclude(scheduleRow)] : [];
+        },
         // Every real row has an updatedAt; fixtures that leave it out get one.
         findUnique: async (args: { where: { id: string } }) =>
           scheduleRow && args.where.id === SCHEDULE_ID
@@ -271,6 +277,9 @@ describe('/api/v1/scheduled-work-requests', () => {
           scheduleUpdates.push(args.data);
           return { count: 1 };
         },
+      },
+      team: {
+        findFirst: async () => (callerInFilterTeam ? { id: 'team-filter' } : null),
       },
       teamMembership: {
         findUnique: async () => (membershipRole ? { role: membershipRole } : null),
@@ -365,6 +374,7 @@ describe('/api/v1/scheduled-work-requests', () => {
     updateManyWheres.length = 0;
     lastUpdateData = {};
     sharedTeams = [];
+    callerInFilterTeam = true;
     syncCalls.length = 0;
     triggeredIds.length = 0;
     deletedScheduleIds.length = 0;
@@ -1458,6 +1468,56 @@ describe('/api/v1/scheduled-work-requests', () => {
     expect(body.data).toHaveLength(1);
     expect(body.data[0].schedule.exists).toBe(true);
     expect(body.data[0].schedule.nextRunAt).toBe('2026-06-17T03:00:00.000Z');
+  });
+
+  it('narrows the list to one owning team with ?teamId, keeping the visibility scope', async () => {
+    listWheres.length = 0;
+    const teamId = '22222222-2222-4222-8222-222222222222';
+    const res = await inject({
+      method: 'GET',
+      token: 'eng-token',
+      url: `/api/v1/scheduled-work-requests?teamId=${teamId}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(listWheres.at(-1)).toMatchObject({ repository: expect.anything(), teamId });
+  });
+
+  it('answers 404 TEAM_NOT_FOUND for a ?teamId the caller is not a member of, and lists nothing', async () => {
+    callerInFilterTeam = false;
+    listWheres.length = 0;
+    const res = await inject({
+      method: 'GET',
+      token: 'eng-token',
+      url: '/api/v1/scheduled-work-requests?teamId=22222222-2222-4222-8222-222222222222',
+    });
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.payload).code).toBe('TEAM_NOT_FOUND');
+    expect(listWheres).toHaveLength(0);
+  });
+
+  it('lets a platform ADMIN filter by any team without a membership lookup', async () => {
+    callerInFilterTeam = false;
+    const res = await inject({
+      method: 'GET',
+      token: 'admin-token',
+      url: '/api/v1/scheduled-work-requests?teamId=22222222-2222-4222-8222-222222222222',
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('does not filter by team without ?teamId', async () => {
+    listWheres.length = 0;
+    await inject({ method: 'GET', token: 'eng-token', url: '/api/v1/scheduled-work-requests' });
+    expect(listWheres.at(-1)).not.toHaveProperty('teamId');
+  });
+
+  it('refuses a malformed ?teamId', async () => {
+    const res = await inject({
+      method: 'GET',
+      token: 'eng-token',
+      url: '/api/v1/scheduled-work-requests?teamId=nope',
+    });
+    expect(res.statusCode).toBe(400);
   });
 
   it('reports an unknown schedule state, not "no schedule", while Temporal is not connected', async () => {

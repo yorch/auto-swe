@@ -150,9 +150,9 @@ principal itself reads and cancels only the runs it started.
 
 ## 6. Managing principals and tokens
 
-On the dashboard, a team's page (**Admin → Teams → the team**) has a **Service principals** card for
-those who may manage the team: create, edit the lists and limits, disable and enable, delete, and
-manage tokens.
+On the dashboard, a team's **Manage** tab (`/teams/<slug>/manage`) has a **Service principals**
+section for those who may manage the team: create, edit the lists and limits, disable and enable,
+delete, and manage tokens. It is not in the team's Settings tab ([teams.md](./teams.md#manage)).
 
 | Route | Purpose |
 |---|---|

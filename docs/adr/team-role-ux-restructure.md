@@ -107,3 +107,39 @@
 - A generation job is readable by any team lead holding its id (D6). Binding the job to its creator is the stronger fix.
 - `checkSettingWrite` in `packages/shared/src/config/permissions.ts` decides team-scope setting writes by a platform role floor plus ADMIN-issued grants, not by the team role. It only narrows what an ADMIN granted, so it widens nothing, and "the team role decides" in this log does not cover settings.
 - The Slack Approve button treats the template's team as an owner of a run (D8). Requiring LEAD on the repository's team when the run has one would be stricter.
+
+## D13 — 2026-11-14 — Task 6: Insights pages move with one-hop redirects, and the group is created early
+
+**Status**: Accepted
+**Decision**: Analytics, Reports and LLM usage moved from `app/admin/` to `app/insights/` with `git mv`. They no longer inherit the Admin layout, so `app/insights/layout.tsx` carries the role guard (every role) and the usage page keeps its own usage-scope layout. The old `/admin/<page>` addresses and the older `/govern/<page>` addresses redirect permanently in one hop through `LEGACY_REDIRECTS`; the `/govern/analytics`, `/govern/reports` and `/govern/usage` rules come before the `/govern/:path*` prefix rule so they do not chain. The sidebar group "Teams and insights" is created in this task, with these three pages, so they stay reachable. The plan assigned the group to Task 7.
+**Reason**: A page that moved out of the Admin layout needs both a guard and a place in the navigation, or it is either unguarded or unreachable. `docs:check` and `legacyRedirects.test.ts` already enforce that every old address maps to a real page.
+**Alternatives considered**: Route groups that keep the `/admin/...` URLs were rejected: they would leave ordinary pages under an address that says Admin, which is what this restructure removes.
+
+## D14 — 2026-11-14 — Task 7: Home leads as its own group, and a team's own admin page stays put
+
+**Status**: Accepted
+**Decision**: The sidebar's first group is Home alone, which the existing rule renders without a heading. The My teams block therefore follows Home with no change to where it is drawn, and the old Work group becomes All teams. Teams (the directory, now `/teams`) and Automations (`/automations`) joined Analytics, Reports and LLM usage in Teams and insights. Only the bare `/admin/teams` list redirects: `/admin/teams/:id`, a team's admin page, keeps its address and is titled Teams, with its detail parent now the directory. The command palette and the sidebar read the same `useVisibleNavGroups` hook, so they offer the same pages by construction.
+**Reason**: The sidebar already drew My teams before its second group; making Home a group of one gives the order the spec asks for without a second place that decides it. A team's admin page is reached by id from lists and the audit log, and moving it would need an id-to-slug lookup in a redirect for no gain.
+**Alternatives considered**: Moving the team admin page into the team space was rejected as a larger change than this restructure needs. Hand-ordering the sidebar in `Sidebar.tsx` was rejected because the page map is the one place that owns the order.
+
+## D15 — 2026-11-14 — Task 8: `mine` is derived from the desk, and the explorer baselines stay
+
+**Status**: Accepted
+**Decision**: `mine.failed` and `mine.prsAwaitingMerge` are the counts of the desk's own `failed_run` and `pr_merge` entries on the team, and `mine.running` counts the running requests whose latest attempt the caller launched, using the same grouping as the team's `running`. The desk query now also selects `launchedById` on its running rows. The Task 8 plan named a Postgres suite; the route tests cover it instead, because no new query was added. The Task 6 and 7 page moves also forced an update of the public explorer's evidence locators (`"path"` fields and the `reportsNav` anchor in `site/src/explorer/analysis.json`). Its `codeHashes` and `sourceHashes` baselines and `reviewedCommit` are untouched, so the explorer keeps showing "Narrative review needed", as the platform-explorer skill requires for a bounded correction.
+**Reason**: Deriving from the desk makes it impossible for the team page and the desk to disagree. Re-attesting the explorer would claim a review nobody did.
+**Alternatives considered**: A separate count query was rejected as a second definition of the same thing. Running `explorer:review` was rejected for the reason above.
+
+
+## D16 — 2026-11-16 — Tasks 12 to 15: one migration, and the contract is written first
+
+**Status**: Accepted
+**Decision**: The three schema changes of Tasks 12, 14 and 15 (`failure_assignments`, `workflow_human_steps.last_nudged_at`, `team_budget_requests`) ship as one migration, `20261117500000_team_attention`, written before the implementation. It carries two hand-written statements Prisma cannot express: a partial unique index that allows one pending budget request per team, and a `CHECK` that a reason is 1 to 500 characters. `FailureAssignment` and `TeamBudgetRequest` are in the tenant guard's list, so every mass query on them must carry a team filter. The API types the three features share are in `packages/shared/src/types/api.ts`.
+**Reason**: The three features are built in parallel against one schema, so a single migration generated up front avoids three migrations racing for a timestamp and lets every implementer start from generated client types. `yarn migrations:check` confirms it applies and matches `schema.prisma`.
+**Alternatives considered**: Three migrations, one per task, as the plan said, were rejected for the reason above.
+
+## D17 — 2026-11-16 — Review of the Manage tab: what was fixed, and what is accepted
+
+**Status**: Accepted
+**Decision**: Review of the attention features led to four rules. An "unowned" failure is attributed to the team that owns the run's repository or template, never to a team it is merely shared with, and its launcher counts as gone when the launcher is absent, is not an active member of that team, or never existed because automation launched it. A failure assignment holds only while its assignee is an active member of the assigning team; when it lapses the run is unowned again and a new assignment replaces the old one in one transaction. A pending budget request is resolved by a save that names the cap, or by an explicit dismissal, so an admin who declines one can close it; a threshold-only save leaves it pending. The Nudge button follows a server-computed `canNudge`, so it never offers an action the route will refuse. Accepted as they are: user foreign keys on the new tables cascade on user deletion; an inactive team is not refused (as on every team route); a team ADMIN may file a budget request; a nudge replies in the step's Slack thread, so it reaches thread followers and not the named approvers; the Start work link cannot carry a repository id; the My work counts follow the desk's rules and the lists they link to filter differently, with a matching filter left as a follow-up.
+**Reason**: Counting shared runs as the sharee's let a lead claim another team's failures. An assignment that outlives its assignee's membership hid a run nobody owned. Resolving a request on a threshold-only save hid it, and resolving only on a changed cap left a declined request open for good, blocking the lead's next one. A button that offers a refused action teaches users to ignore it.
+**Alternatives considered**: Nudging named approvers by direct message was rejected because the original announcement records no approvers. Keeping a lapsed assignment visible with a warning was rejected because it leaves the run in no list a lead acts on.
