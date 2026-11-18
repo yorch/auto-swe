@@ -85,11 +85,42 @@ their organization at any team role. The step is explicit, audited with `authori
 and visible in the team's member list. It is a visible, deliberate escalation, not a barrier: an
 org admin who wants team powers can have them. The point is that no one acquires them silently.
 
+**Effective rank.** The hierarchy guard on member changes ("no change to a member above your rank,
+no grant above your rank") ranks the actor by a `TeamRank` value, a `TeamRole` only, never a
+platform role. A person acting under org or platform authority with no membership in that team has
+effective rank `ADMIN`; a person acting through a team membership has that role's rank. A person
+who is both an org `ADMIN` and a team `LEAD` acts under whichever authority the capability check
+returned (`Decision.authority`), so being a member never narrows what org authority allows.
+Self-removal and self-demotion remain refused for everyone (4.4).
+
+**One path.** Adding a member, inviting by email with a team role, and the organization's invite
+with `teamId`/`teamRole` all require `team.members.manage` on the target team, apply the same rank
+rule and write the same audit record with `authority`. No invitation code is exempt.
+
 ### 4.3 Platform admin
 
 Platform `ADMIN` holds every capability, with no membership. It is the instance operator. Every
 decision that platform admin passes only because of their platform role (they hold no role in the
 team or org concerned) is recorded as `authority: 'platform-admin'` in the audit context.
+
+### 4.4 Constraints are not capabilities
+
+Some current checks are not "may this role do this" but separation of duties or ownership: only the
+launcher may steer an orchestration (an admin gets an emergency stop only on a run a service
+principal launched), a template's author may not review their own change (`SELF_REVIEW_FORBIDDEN`),
+nobody removes or demotes themselves (`SELF_REMOVAL`, `SELF_DEMOTION`), a failure assigned to
+someone, a run's launcher. Platform `ADMIN` does **not** satisfy these. They are written as named
+constraints in `packages/shared/src/permissions/constraints.ts` (`notSelf`, `isLauncher`,
+`notAuthor`, `isAssignee`), composed with a capability by the domain code
+(`can(...)` AND `constraint(...)`), and listed in the generated reference beside the capabilities
+they accompany. A constraint never widens access.
+
+### 4.5 Reach is not a capability
+
+Which repositories a person reaches (team membership or a share, `canLaunch` on a share, the GitHub
+gate), run visibility, budgets and service-principal allowlists are separate gates. They keep their
+mechanisms. Where they today read a role value (for example "member of the owning team"), they read
+the team membership, and where they test "may lead", they call `can()` for the matching capability.
 
 ## 5. The resolver
 
@@ -99,9 +130,22 @@ type Decision = { allowed: true; authority: 'platform-admin' | 'org-admin' | 'te
               | { allowed: false; code: 'FORBIDDEN' | 'NOT_FOUND'; reason: string; missing: CapabilityKey }
 ```
 
-- Lives in `packages/shared/src/permissions/can.ts` (pure decision over loaded standing) with a
-  Prisma loader in the gateway. The decision function takes already-loaded standing so it is
-  unit-testable without a database.
+- The pure decision (`decide`) is in `packages/shared/src/permissions/can.ts` and takes
+  already-loaded standing, so it is unit-testable without a database. The Prisma loader and `can()`
+  are in `packages/shared/src/permissions/load.ts`, so the gateway **and the worker** use one
+  implementation. The worker's execution-time re-checks (scheduled fires, campaigns, planned
+  runs, PRD workflow, template runs, channel run plans) call it, so a launch and a fire cannot
+  disagree about the same person.
+- A resource names one thing or several: `{ teamId }`, `{ orgId }`, `{ anyOf: Resource[] }` (the
+  actor needs the capability on at least one, as in "a lead of any owning team"), `{ allOf:
+  Resource[] }` (every one, as in a campaign naming several repositories), or no resource at all
+  for a person-level question ("leads at least one active team", used by the user lookup:
+  `{ anyTeam: true }`).
+- `heldScope(actor, capability)` returns `{ all: boolean; teamIds: string[]; orgIds: string[] }`,
+  the set a list endpoint may filter by, so a list and the action behind it cannot disagree. It
+  replaces every hand-written Prisma `role: { in: ['LEAD','ADMIN'] }` filter.
+- A service principal calling a route that admits both people and principals is judged by its
+  `serviceScopes`, never by `can()`: `can()` called with a principal actor returns `FORBIDDEN`.
 - For a team-scoped capability the resolver loads the actor's `TeamMembership` for `teamId` and the
   team's `{ isActive, orgId }`; for org-scoped, the `OrganizationMembership`. When `teamId` is given
   and the capability grants an org role, the team's org is looked up so the org rule in 4.2 applies.
@@ -120,9 +164,14 @@ requireAuth({ capability: 'team.repos.manage', team: { param: 'id' } })
 requireAuth({ capability: 'platform.users.manage' })
 ```
 
-A handler whose resource is derived from the body or a lookup calls `can()` itself. The
-`RBAC_OPTIONS` symbol and the registration-time checks stay: a route that declares `serviceScopes`
-may not declare a capability (service principals hold no role), and the route walk test asserts it.
+A handler whose resource is derived from the body or a lookup calls `can()` itself and declares so:
+`requireAuth({ handlerChecked: ['team.repos.manage'] })`. Every route's `config.authz` is then one
+of `capability`, `authenticated` (any signed-in person, nothing sensitive), `handler-checked`,
+`service` or `public`, set by `requireAuth` from its options. `can()` marks the request as checked;
+an `onSend` hook on a `handler-checked` route that answers 2xx without a recorded check throws in
+test and logs `authz.unchecked` in production. The route walk asserts every route has a value, that a
+`service` route has no capability, and that the set of `handler-checked` capabilities names only
+catalog keys. The `RBAC_OPTIONS` symbol and the registration-time checks stay.
 
 `request.teamRole` and `request.authority` are set by the hook for handlers that need them.
 
@@ -131,19 +180,36 @@ may not declare a capability (service principals hold no role), and the route wa
 The registry's `requiredRole` floor (`'ADMIN' | 'LEAD'`) becomes `writeAccess: 'admin' | 'grantable'`.
 `'admin'` means only platform `ADMIN`; `'grantable'` means platform `ADMIN` or a covering grant.
 Former `LEAD` floors become `'grantable'`. Grants are `config_permissions` rows keyed by
-`userId` or by a **team role**, matched against the actor's role in the grant's team, so a
-role-grantee grant requires `scope = TEAM`. Existing role-grantee rows at GLOBAL or ORGANIZATION
-scope are deleted by the migration (they matched a platform role that no longer exists); TEAM-scope
-rows map `ENGINEER` to `MEMBER`. The CHECK constraint on the table is updated by a hand-written
-migration step (see the `prisma-pgvector-hnsw` skill).
+`userId` or by a **team role**, matched against the actor's role in the grant's team (a TEAM-scope
+`LEAD` grant now means "this team's leads"), so a role-grantee grant requires `scope = TEAM`,
+enforced by `CHECK (role IS NULL OR scope = 'TEAM')`; the `role_global` and `role_org` partial
+unique indexes are dropped.
+
+**The migration does not reinterpret old grants; it keeps only those that worked.** Today the
+role floor is checked before any grant, so a grant on a key whose floor the actor's platform role did
+not meet did nothing, and a role grant matched the platform role, not a team's. The migration
+therefore deletes: every role-grantee row (they matched a role that no longer exists in that
+meaning); every user grant on a key whose old floor was `ADMIN`; and every user grant whose user did
+not hold platform `LEAD` or `ADMIN` at migration time. The remaining user grants (live before, live
+after) are kept. It reports the count deleted. Operators re-issue team-role grants through the
+settings API.
+
+The sensitive-setting redaction in `configSettingsService` keys on `writeAccess: 'admin'` where it
+keyed on the `ADMIN` floor.
 
 ## 7. Lifecycle
 
 - Removing an organization membership removes the user's memberships in every team of that
-  organization, in the same transaction, with an audit row per removal. Refused with
-  `409 LAST_TEAM_ADMIN` when it would leave a team with no `ADMIN`, unless the actor is platform
-  `ADMIN`; refused with `409 LAST_ORG_ADMIN` when it removes the organization's last `ADMIN`
-  (platform `ADMIN` is exempt).
+  organization, in the same transaction, with an audit row per removal.
+- **Locking.** The transaction takes the organization's row lock first, then the affected teams'
+  row locks in ascending id order (the existing `FOR UPDATE` convention, marked
+  `// CLAUDE.md §7 exception:`), and adding a team member re-reads the org membership under the
+  same org lock. A concurrent add can therefore not leave someone on a team with no org membership.
+- **Last-admin rules.** Refused with `409 LAST_ORG_ADMIN` when it removes the organization's last
+  `ADMIN`, unless the actor is platform `ADMIN`. The cascade may leave a team with no `ADMIN` only
+  when the actor holds org or platform authority (they govern the team and can appoint another);
+  a team-level removal still refuses `409 LAST_TEAM_ADMIN`. A team without an `ADMIN` shows
+  `needsAdmin: true` on its overview so org admins see it.
 - Deactivating a user already ends their access; unchanged.
 
 ## 8. Effective permissions
@@ -158,16 +224,51 @@ carry `error.missing` naming the capability. The dashboard reads `me/permissions
 
 ## 9. Invariants and generated documentation
 
-- `yarn invariants:check` fails on a comparison of a role value to `'ADMIN'`, `'LEAD'`,
-  `ORG_ADMIN` or `role ===` outside `packages/shared/src/permissions/`, the Prisma seed, the
-  sign-in and invitation code, and tests.
+- `yarn invariants:check` fails when source under `packages/*/src` (tests, generated Prisma code and
+  `packages/shared/src/permissions/` excluded) does any of: compare a `.role` or `Role`-typed value
+  with `===`, `!==`, `in`, `.has(`, `.includes(` against a role literal or `*Role.*` member; call
+  `hasRole`/`roleMeets`/`isOrgAdmin`; name `LEAD_ROLES`/`TEAM_LEAD_ROLES`; write a Prisma filter
+  `role: { in: [...] }` or `role: 'ADMIN'` on a membership; or declare `z.enum([...])` over role
+  literals. A role literal means any of `ADMIN`, `LEAD`, `MEMBER`, `USER`, `ENGINEER`, `ORG_ADMIN`,
+  `ORG_MEMBER` appearing next to the word `role`. The few allowed places (the Prisma seed, sign-up
+  default, the member-role request schemas that import `TEAM_ROLES` from the permissions module)
+  are listed by file in the script with a reason. A tripwire over source text, like its siblings.
 - `docs/permissions.md` is the reference; its capability matrix is generated from the catalog by
   `scripts/gen-permissions-doc.mjs` and `yarn docs:check` fails when the committed matrix differs
   from the generated one.
 - A route walk test asserts every non-public route declares either a capability, a documented
   `requireAuth()` (any signed-in person), or `serviceScopes`.
 
-## 10. Migration order
+## 10. Persisted and serialized role values
+
+All of these change with the enums, and each is a place a missed update breaks sign-in or a gate:
+
+- `users.role`, `team_memberships.role`, `config_permissions.role` (three columns on one Postgres
+  type, `Role`), `organization_memberships.role`; the better-auth `additionalFields` default in
+  `betterAuth.ts` (`'ENGINEER'` becomes `'USER'`); the Prisma seed.
+- `JwtPayload.role`, the session cache, `MCP_ROLES` in `plugins/auth.ts` (must contain `USER`, or
+  every non-admin MCP call is a 401), `serviceAdmissible` (compares to `'ENGINEER'`).
+- `shared/types/api.ts` role schemas, `teamOverview.ts` view levels, the MCP team tools' enum, the
+  configuration settings API schemas, CLI output, and the web's role types and labels.
+- `transcript_access_log.actor_role` (text) and audit `context` JSON hold historical values. They are
+  not rewritten; readers treat unknown values as opaque, new rows carry the new names, and the
+  upgrade note says so.
+- The three routes in `humanErrorBaselines.ts` that ask for platform `LEAD` become org-scoped
+  capabilities (`org.baselines.read` / `org.baselines.manage`, class `governance`), decided by
+  organization membership as their handlers already do.
+
+### 10.1 Prisma migration
+
+Prisma's generated diff cannot cast a populated enum column to a new enum type and the hand-written
+DDL (CHECK constraints, partial indexes) reads as drift, so the migration is hand-written SQL, in
+this order, in one transaction: drop the `ENGINEER` column defaults; delete the grants the settings
+section removes; add `CHECK (role IS NULL OR scope = 'TEAM')`; drop the `role_global` and
+`role_org` partial unique indexes; create `PlatformRole` and `TeamRole`; `ALTER COLUMN … TYPE …
+USING (CASE role::text … END)` on each column; set the new defaults; `ALTER TYPE "OrgRole" RENAME
+VALUE`; drop the old `Role` type. It is checked by `yarn db:deploy` on a fresh database and on a
+database seeded from the previous schema, per the `prisma-pgvector-hnsw` skill (never `migrate dev`).
+
+## 11. Migration order
 
 1. Core: enums, catalog, `can()`, `requireAuth` capability option, generated doc, Prisma migration.
 2. Domains, in parallel, each owning disjoint files: teams and members; repositories; templates and
@@ -175,8 +276,10 @@ carry `error.missing` naming the capability. The dashboard reads `me/permissions
    automations and the rest.
 3. Web, CLI, SDK, worker: role values and labels; web reads `me/permissions`.
 4. Invariant, lifecycle cascade, `me/permissions`, audit authority.
-5. Upgrade note: an operator deploying earlier code has roles renamed by the migration; role-grantee
-   settings grants at GLOBAL or ORGANIZATION scope are deleted and must be re-issued per user.
+5. Upgrade note: an operator deploying earlier code has roles renamed by the migration; every
+   role-grantee settings grant, and every user grant that was inert before, is deleted (the
+   migration reports the count) and must be re-issued; historical `actor_role` and audit values keep
+   their old spelling.
 
 ## Limitations
 
