@@ -177,7 +177,7 @@ const SUGARED: Record<string, string> = {
   'repo-onboarding':
     'the configuration PR includes the latest trial report without changing its file hash; the ' +
     'review status and trial outcome are derived from the trial result instead of always saying ' +
-    'the draft was validated;',
+    'the draft was validated; the delivered pull request link is recorded as the run result prUrl;',
   'scope-clarification': `${STALL};`,
   'security-triage': '',
   'staged-deploy-signals': `${STALL};`,

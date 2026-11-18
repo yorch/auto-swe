@@ -20,6 +20,7 @@ async function run(
     parses?: Record<string, unknown>[];
     trials?: Record<string, unknown>[];
     signals?: unknown[];
+    delivery?: Record<string, unknown>;
   } = {}
 ) {
   const calls: Array<{
@@ -52,7 +53,13 @@ async function run(
         return outputs[Math.min(trialRound++, outputs.length - 1)];
       }
       if (nodeId === 'deliver') {
-        return { prUrl: 'https://example.test/pull/1' };
+        return (
+          options.delivery ?? {
+            status: 'opened',
+            pullRequestNumber: 1,
+            pullRequestUrl: 'https://example.test/pull/1',
+          }
+        );
       }
       throw new Error(`Unexpected dispatch ${nodeId}`);
     },
@@ -153,6 +160,20 @@ describe('repository onboarding', () => {
     for (const outcome of [passed, blocked, failed]) {
       expect(JSON.stringify(outcome.reviews)).not.toContain('Validated');
     }
+  });
+
+  it("records the delivered pull request's link as the run result's prUrl, which the run page reads", async () => {
+    const outcome = await run();
+    expect(outcome.result.result).toMatchObject({
+      prUrl: 'https://example.test/pull/1',
+      delivery: { pullRequestNumber: 1 },
+    });
+  });
+
+  it('records a null prUrl when delivery returned no link', async () => {
+    const outcome = await run({ delivery: { status: 'nothing_to_do', changed: [], skipped: [] } });
+    expect(outcome.result.status).toBe('SUCCESS');
+    expect(outcome.result.result).toMatchObject({ prUrl: null });
   });
 
   it('returns invalid output to draft with the parse error in resolved inputs', async () => {
