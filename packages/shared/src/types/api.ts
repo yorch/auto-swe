@@ -1351,6 +1351,8 @@ export interface HumanStepSummary {
     workRequest?: { externalTicketId: string; description: string } | null;
     /** The team that owns the run's repository; null when the run has none. */
     ownerTeam?: { id: string; name: string; slug: string } | null;
+    /** The run's repository as `org/repo`; null when it has none. */
+    repository?: string | null;
   };
 }
 

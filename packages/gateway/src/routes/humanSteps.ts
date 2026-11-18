@@ -31,6 +31,33 @@ import { assertTeamParam } from '../lib/teamParam.js';
 import { sendTemporalUnavailable } from '../lib/temporalErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
+/** The run's repository: its owning team (for `ownerTeam`) and the name shown beside a step. */
+const STEP_REPO_SELECT = {
+  select: {
+    organizationName: true,
+    repoName: true,
+    team: RUN_OWNER_TEAM_SELECT.connection.select.team,
+  },
+} as const;
+
+type RepoRef = {
+  organizationName?: string | null;
+  repoName?: string | null;
+  team: { id: string; name: string; slug: string };
+};
+
+/** `org/repo` for a git repository, or null when the run has none or it records no name. */
+function repositoryOf(run: {
+  connection?: RepoRef | null;
+  workRequest?: { connection?: RepoRef | null } | null;
+}): string | null {
+  const repo = run.connection ?? run.workRequest?.connection;
+  if (!repo?.repoName) {
+    return null;
+  }
+  return repo.organizationName ? `${repo.organizationName}/${repo.repoName}` : repo.repoName;
+}
+
 const StepIdParam = z.object({ id: z.string().uuid() });
 
 const ListQuery = z.object({
@@ -82,6 +109,8 @@ const HumanStepRunSchema = z.object({
   id: z.string().uuid(),
   /** The team that owns the run's repository; null when the run has none. */
   ownerTeam: z.object({ id: z.string(), name: z.string(), slug: z.string() }).nullable(),
+  /** The run's repository as `org/repo`; null when it has none. */
+  repository: z.string().nullable(),
   status: z.string(),
   workflowId: z.string(),
   workRequest: z
@@ -208,9 +237,9 @@ function projectStepRun<
     workRequest: {
       description: string | null;
       externalTicketId: string | null;
-      connection?: { team: { id: string; name: string; slug: string } } | null;
+      connection?: RepoRef | null;
     } | null;
-    connection?: { team: { id: string; name: string; slug: string } } | null;
+    connection?: RepoRef | null;
   },
 >(run: R | null) {
   if (!run) {
@@ -219,6 +248,7 @@ function projectStepRun<
   return {
     id: run.id,
     ownerTeam: ownerTeamOfRun(run),
+    repository: repositoryOf(run),
     status: run.status,
     workflowId: run.workflowId,
     workRequest: run.workRequest
@@ -431,13 +461,14 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
             run: {
               select: {
                 ...RUN_OWNER_TEAM_SELECT,
+                connection: STEP_REPO_SELECT,
                 id: true,
                 status: true,
                 template: { select: { teamId: true } },
                 workflowId: true,
                 workRequest: {
                   select: {
-                    ...RUN_OWNER_TEAM_SELECT.workRequest.select,
+                    connection: STEP_REPO_SELECT,
                     description: true,
                     externalTicketId: true,
                   },
@@ -576,43 +607,10 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         return new Set(rows.map((r) => r.id));
       };
 
-      let knownIds: Set<string>;
-      try {
-        knownIds = await fetchPendingIds();
-      } catch (err) {
-        // After hijack() Fastify cannot answer for us; end the stream so the
-        // browser EventSource reconnects instead of hanging on a dead socket.
-        request.log.warn({ err }, 'inbox stream: initial fetch failed');
-        releaseStream();
-        res.end();
-        return;
-      }
+      let knownIds: Set<string> = new Set();
       let pollTimeout: ReturnType<typeof setTimeout> | null = null;
+      let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
       let closed = false;
-
-      const poll = async () => {
-        try {
-          const currentIds = await fetchPendingIds();
-          const added = [...currentIds].filter((id) => !knownIds.has(id));
-          const removed = [...knownIds].filter((id) => !currentIds.has(id));
-          if (added.length > 0 || removed.length > 0) {
-            write(`event: change\ndata: ${JSON.stringify({ added, removed })}\n\n`);
-            knownIds = currentIds;
-          }
-        } catch (err) {
-          // Keep the stream open (the next poll may succeed) but say so — a
-          // persistently failing DB otherwise looks like a silently frozen inbox.
-          request.log.warn({ err }, 'inbox stream: poll failed');
-        }
-        if (!closed) {
-          pollTimeout = setTimeout(poll, 3000);
-        }
-      };
-      pollTimeout = setTimeout(poll, 3000);
-
-      const keepAliveInterval = setInterval(() => {
-        write(': keepalive\n\n');
-      }, 25000);
 
       return new Promise<void>((resolve) => {
         const cleanup = () => {
@@ -624,14 +622,57 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           if (pollTimeout) {
             clearTimeout(pollTimeout);
           }
-          clearInterval(keepAliveInterval);
+          if (keepAliveInterval) {
+            clearInterval(keepAliveInterval);
+          }
           if (!res.writableEnded) {
             res.end();
           }
           resolve();
         };
+        // Registered before the first await: a client that disconnects during the initial query
+        // would otherwise never fire 'close' for a listener added after it, leaking the per-user
+        // slot and, once started, a 3 s database poll that nothing stops.
         request.raw.once('close', cleanup);
         request.raw.once('error', cleanup);
+
+        const poll = async () => {
+          try {
+            const currentIds = await fetchPendingIds();
+            const added = [...currentIds].filter((id) => !knownIds.has(id));
+            const removed = [...knownIds].filter((id) => !currentIds.has(id));
+            if (!closed && (added.length > 0 || removed.length > 0)) {
+              write(`event: change\ndata: ${JSON.stringify({ added, removed })}\n\n`);
+              knownIds = currentIds;
+            }
+          } catch (err) {
+            // Keep the stream open (the next poll may succeed) but say so — a
+            // persistently failing DB otherwise looks like a silently frozen inbox.
+            request.log.warn({ err }, 'inbox stream: poll failed');
+          }
+          if (!closed) {
+            pollTimeout = setTimeout(poll, 3000);
+          }
+        };
+
+        void (async () => {
+          try {
+            knownIds = await fetchPendingIds();
+          } catch (err) {
+            // After hijack() Fastify cannot answer for us; end the stream so the
+            // browser EventSource reconnects instead of hanging on a dead socket.
+            request.log.warn({ err }, 'inbox stream: initial fetch failed');
+            cleanup();
+            return;
+          }
+          if (closed) {
+            return;
+          }
+          pollTimeout = setTimeout(poll, 3000);
+          keepAliveInterval = setInterval(() => {
+            write(': keepalive\n\n');
+          }, 25000);
+        })();
       });
     }
   );
@@ -655,12 +696,13 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           run: {
             select: {
               ...RUN_OWNER_TEAM_SELECT,
+              connection: STEP_REPO_SELECT,
               id: true,
               status: true,
               workflowId: true,
               workRequest: {
                 select: {
-                  ...RUN_OWNER_TEAM_SELECT.workRequest.select,
+                  connection: STEP_REPO_SELECT,
                   description: true,
                   externalTicketId: true,
                 },

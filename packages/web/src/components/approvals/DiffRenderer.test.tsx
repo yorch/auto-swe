@@ -63,3 +63,13 @@ describe('DiffRenderer files', () => {
     expect(container.textContent).toBe('');
   });
 });
+
+describe('DiffRenderer plain text', () => {
+  it('shows a long plain-text context in part until asked for all of it', () => {
+    const long = 'x'.repeat(150_000);
+    const { container } = render(<DiffRenderer content={long} />);
+    expect(container.querySelector('pre')?.textContent?.length).toBe(100_000);
+    fireEvent.click(screen.getByRole('button', { name: 'Show all' }));
+    expect(container.querySelector('pre')?.textContent?.length).toBe(150_000);
+  });
+});
