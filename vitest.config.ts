@@ -619,6 +619,11 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/config'),
       },
       {
+        // Must come before the bare @auto-swe/shared catch-all.
+        find: '@auto-swe/shared/permissions',
+        replacement: path.resolve(__dirname, 'packages/shared/src/permissions'),
+      },
+      {
         find: '@auto-swe/shared/types/api',
         replacement: path.resolve(__dirname, 'packages/shared/src/types/api.ts'),
       },

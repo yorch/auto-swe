@@ -18,6 +18,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { matrixDrift } from './gen-permissions-doc.mjs';
 import { walkMarkdown } from './walkMarkdown.mjs';
 
 // `DOC_DRIFT_ROOT` points the check at a fixture tree; the test suite uses it.
@@ -789,10 +790,21 @@ for (const file of walk('.')) {
 }
 
 // ---------------------------------------------------------------------------
+// The capability matrix in docs/permissions.md
+//
+// The matrix is generated from the catalog (`scripts/gen-permissions-doc.mjs`), so a catalog edit
+// that is not followed by a regeneration leaves the reference stating who may do what wrongly.
+// Run here, not behind tsx, because the CI docs job has no install.
+// ---------------------------------------------------------------------------
+
+const permissionsDrift = matrixDrift(ROOT, { allowMissingDoc: !!process.env.DOC_DRIFT_ROOT });
+
+// ---------------------------------------------------------------------------
 // Report
 // ---------------------------------------------------------------------------
 
 const clean =
+  permissionsDrift === null &&
   brokenLinks.length === 0 &&
   missingGaps.length === 0 &&
   staleExemptions.length === 0 &&
@@ -821,6 +833,7 @@ if (clean) {
   );
   console.log('  every repository path named in prose exists.');
   console.log(`  the agent roster names all ${seededAgentKeys.length} seeded agents.`);
+  console.log('  the capability matrix in docs/permissions.md matches the catalog.');
   process.exit(0);
 }
 
@@ -833,6 +846,10 @@ if (staleExemptions.length > 0) {
     '\nRemove it from GAP_EXEMPT_DOCS. Left behind, it silently exempts a future' +
       ' doc that reuses the name.\n'
   );
+}
+
+if (permissionsDrift !== null) {
+  console.error(`Stale capability matrix — ${permissionsDrift}.\n`);
 }
 
 if (missingGaps.length > 0) {

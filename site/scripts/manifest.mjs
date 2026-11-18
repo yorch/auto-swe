@@ -157,6 +157,7 @@ export const SIDEBAR = [
     label: 'Configuration & operations',
     slugs: [
       'docs/configuration',
+      'docs/permissions',
       'docs/deployment',
       'docs/kubernetes-helm',
       'docs/upgrade-notes',

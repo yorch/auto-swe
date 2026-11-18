@@ -15,12 +15,14 @@ import {
 } from '@auto-swe/shared/lib/orchestrationTokenKey';
 import type { RepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
+import { type Authority, type CapabilityKey, isCapabilityKey } from '@auto-swe/shared/permissions';
 import { SERVICE_TOKEN_SCOPES, type ServiceTokenScope } from '@auto-swe/shared/types/api';
 import { normalizeIP } from '@fastify/rate-limit';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import jwt from 'jsonwebtoken';
 import { type AssistantAccess, assistantAccess } from '../lib/assistantPolicy.js';
+import { assertHandlerChecked, enforceCapability } from '../lib/authz.js';
 import { MCP_BRIDGE_HEADER } from '../lib/mcp/bridge.js';
 import { MCP_SCOPE_ADMIN, MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../lib/mcpOAuth.js';
 
@@ -97,6 +99,12 @@ declare module 'fastify' {
     assistantBodyDigest?: string;
     teamRole?: string;
     /**
+     * The ground on which the most recent capability check allowed this request: `team-role`,
+     * `org-member`, `org-admin` or `platform-admin`. Absent until a check allows. The audit log
+     * records it so a use of org or platform authority is distinguishable.
+     */
+    authority?: Authority;
+    /**
      * How the GitHub permission gate is configured for this request.
      *
      * Resolved once here rather than in each handler: the visibility filters
@@ -130,6 +138,11 @@ declare module 'fastify' {
     orchestration?: { orchestrationId: string };
   }
   interface FastifyContextConfig {
+    /**
+     * How the route is authorized, set at registration from the route's `requireAuth` options
+     * (see `authzKindOf`). A route with no `requireAuth` hook declares `'public'` here itself.
+     */
+    authz?: AuthzKind;
     /**
      * Opt a route in to the orchestration token. `caller`: a person or the service principal that
      * launched the orchestration acts. A route that does not declare this refuses the token with
@@ -410,6 +423,8 @@ export async function loadTokenUser(
 
 const authPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.addHook('onRoute', assertServiceScopesAdmissible);
+  fastify.addHook('onRoute', annotateAuthz);
+  fastify.addHook('onRoute', appendHandlerCheckedBackstop);
   fastify.addHook('onRoute', appendAssistantBackstop);
   fastify.addHook('preValidation', checkAssistantGrantOnceParsed);
   const privateKey = getPrivateKey();
@@ -518,7 +533,33 @@ export interface RBACOptions {
   teamIdParam?: string; // Route param name containing the team ID (default: 'id')
   requiredOrgRole?: string; // Org-scoped role check (resolves via org membership)
   orgIdParam?: string; // Route param name containing the org ID (default: 'orgId')
+  /**
+   * The capability the route needs, decided after authentication by `can()`. A refusal is 403
+   * `FORBIDDEN` with `error.missing`. A platform-scoped capability needs no resource; a team-scoped
+   * one reads the team id from `team.param` (default `id`); an org-scoped one reads the org id from
+   * `org.param` (default `orgId`), or the org of the team named by `team.param`.
+   */
+  capability?: CapabilityKey;
+  team?: { param?: string };
+  org?: { param?: string };
+  /**
+   * The capabilities the handler checks itself with `can()` from `lib/authz.ts`, because its
+   * resource comes from the body or a lookup. A 2xx answer with no check fails a test and logs
+   * `authz.unchecked` elsewhere.
+   */
+  handlerChecked?: readonly CapabilityKey[];
+  /** Answer a capability refusal as `404 NOT_FOUND`, for a route that hides existence. */
+  hideAs404?: boolean;
 }
+
+/** How a route is authorized, as `config.authz` records it. */
+export type AuthzKind =
+  | 'capability'
+  | 'handler-checked'
+  | 'service'
+  | 'authenticated'
+  | 'legacy'
+  | 'public';
 
 /**
  * Creates a Fastify onRequest hook that enforces JWT authentication
@@ -930,6 +971,7 @@ async function authenticateBridgedCall(
  */
 export function serviceAdmissible(options: RBACOptions): boolean {
   return (
+    !options.capability &&
     (!options.requiredRole || options.requiredRole === 'ENGINEER') &&
     !options.requiredTeamRole &&
     !options.requiredOrgRole
@@ -963,12 +1005,91 @@ export function assertServiceScopesAdmissible(routeOptions: {
       : [];
   for (const hook of hooks) {
     const options = (hook as { [RBAC_OPTIONS]?: RBACOptions })[RBAC_OPTIONS];
+    if (options?.capability) {
+      throw new Error(
+        `Route ${routeOptions.url ?? '?'} declares serviceScopes and the capability ${options.capability}: a service principal is judged by its scopes, never by a capability`
+      );
+    }
     if (options && !serviceAdmissible(options)) {
       throw new Error(
         `Route ${routeOptions.url ?? '?'} declares serviceScopes behind a role a service principal cannot hold`
       );
     }
   }
+}
+
+const AUTHZ_PRIORITY: readonly AuthzKind[] = [
+  'capability',
+  'handler-checked',
+  'service',
+  'legacy',
+  'authenticated',
+];
+
+/**
+ * How a route is authorized, from its `requireAuth` options: `capability` (declares one),
+ * `handler-checked` (the handler checks), `service` (declares `serviceScopes`), `legacy` (any of
+ * the old role options), `authenticated` (a bare `requireAuth()`). `undefined` when the route has
+ * no `requireAuth` hook; such a route is `public` only if it says so in `config.authz`.
+ */
+export function authzKindOf(routeOptions: {
+  config?: { authz?: AuthzKind; serviceScopes?: readonly string[] };
+  onRequest?: unknown;
+  preHandler?: unknown;
+  preValidation?: unknown;
+}): AuthzKind | undefined {
+  const hooks = [
+    routeOptions.onRequest,
+    routeOptions.preValidation,
+    routeOptions.preHandler,
+  ].flatMap((phase) => (Array.isArray(phase) ? phase : phase ? [phase] : []));
+  const kinds = new Set<AuthzKind>();
+  for (const hook of hooks) {
+    const options = (hook as { [RBAC_OPTIONS]?: RBACOptions })[RBAC_OPTIONS];
+    if (!options) {
+      continue;
+    }
+    if (options.capability) {
+      kinds.add('capability');
+    } else if (options.handlerChecked?.length) {
+      kinds.add('handler-checked');
+    } else if (routeOptions.config?.serviceScopes?.length) {
+      kinds.add('service');
+    } else if (options.requiredRole || options.requiredTeamRole || options.requiredOrgRole) {
+      kinds.add('legacy');
+    } else {
+      kinds.add('authenticated');
+    }
+  }
+  return AUTHZ_PRIORITY.find((kind) => kinds.has(kind));
+}
+
+/**
+ * `onRoute` hook: record `config.authz` from the route's hooks. A route with no `requireAuth` hook
+ * keeps whatever it declared, which is `'public'` or nothing.
+ */
+export function annotateAuthz(routeOptions: {
+  config?: { authz?: AuthzKind; serviceScopes?: readonly string[] };
+  onRequest?: unknown;
+  preHandler?: unknown;
+  preValidation?: unknown;
+}): void {
+  const kind = authzKindOf(routeOptions);
+  if (kind) {
+    routeOptions.config = { ...routeOptions.config, authz: kind };
+  }
+}
+
+/** `onRoute` hook: a `handler-checked` route gets the `onSend` backstop. */
+export function appendHandlerCheckedBackstop(routeOptions: {
+  config?: { authz?: AuthzKind };
+  onSend?: unknown;
+}): void {
+  if (routeOptions.config?.authz !== 'handler-checked') {
+    return;
+  }
+  const own = routeOptions.onSend;
+  routeOptions.onSend = [...(Array.isArray(own) ? own : own ? [own] : []), assertHandlerChecked];
 }
 
 /**
@@ -1373,6 +1494,14 @@ async function admitOrchestrationToken(
 }
 
 export function requireAuth(options: RBACOptions = {}) {
+  for (const key of [options.capability, ...(options.handlerChecked ?? [])]) {
+    if (key !== undefined && !isCapabilityKey(key)) {
+      throw new Error(`requireAuth names the unknown capability '${key}'`);
+    }
+  }
+  if (options.capability && options.handlerChecked?.length) {
+    throw new Error('requireAuth takes a capability or handlerChecked, not both');
+  }
   const hook = async (request: FastifyRequest, reply: FastifyReply) => {
     const authHeader = request.headers.authorization;
     let payload: JwtPayload | null = null;
@@ -1482,6 +1611,12 @@ export function requireAuth(options: RBACOptions = {}) {
       request.log.warn('repo access gate config has never been readable; treating as off');
     }
     request.repoAccessGate = gate ?? { mode: 'off', staleAfterHours: 0 };
+
+    // Capability check: the new declaration, beside the role options below.
+    const refused = await enforceCapability(request, reply, payload, options);
+    if (refused) {
+      return refused;
+    }
 
     // Platform role check
     if (options.requiredRole && !hasRole(payload.role, options.requiredRole)) {
