@@ -482,14 +482,18 @@ function dedupeBy<T>(values: readonly T[], key: (v: T) => string): T[] {
  */
 export const OrchestrationLaunchSchema = z
   .object({
+    /**
+     * The agents the orchestrator may spawn. Omitted or empty: the gateway applies the
+     * `orchestration.defaultAllowlist` setting and answers with the list it applied.
+     */
     allowlist: z
       .array(agentRefSchema)
-      .min(1)
       .max(20)
       .refine((refs) => !refs.some(isOrchestratorRef), {
         message: 'the orchestrator cannot be on its own allowlist',
       })
-      .transform((refs) => dedupeBy(refs, (r) => r)),
+      .transform((refs) => dedupeBy(refs, (r) => r))
+      .optional(),
     budgetTier: z.enum(ORCHESTRATION_BUDGET_TIERS).default('STANDARD'),
     connectionIds: z
       .array(z.string().uuid())

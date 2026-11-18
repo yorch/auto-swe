@@ -635,6 +635,7 @@ model ApiToken {
 /// Its runs use the platform credential.
 model ServicePrincipal {
   orchestrations Orchestration[] @relation("OrchestrationService")
+  steeringMessages RunSteeringMessage[] @relation("RunSteeringAuthorService")
   id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   teamId        String     @map("team_id") @db.Uuid
   team          Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
@@ -5645,12 +5646,17 @@ model RunSteeringMessage {
   run         WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
   authorId    String?     @map("author_id") @db.Uuid
   author      User?       @relation("RunSteeringAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  /// The service principal that steered, when a principal launched the orchestration. With
+  /// `authorId` it is the launcher's word; a row with neither is the orchestrator's.
+  authorServiceId String? @map("author_service_id") @db.Uuid
+  authorService   ServicePrincipal? @relation("RunSteeringAuthorService", fields: [authorServiceId], references: [id], onDelete: SetNull)
   body        String
   createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz
   deliveredAt DateTime?   @map("delivered_at") @db.Timestamptz
 
   @@index([runId, createdAt])
   @@index([authorId])
+  @@index([authorServiceId])
   @@map("run_steering_messages")
 }
 

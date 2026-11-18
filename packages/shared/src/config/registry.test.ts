@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
+import { agentRunGrantsWriteTools, isLaunchableAgentKey } from '../lib/agentRun.js';
+import { SWE_AGENTS } from '../lib/syncBuiltins.js';
 import { SETTING_DEFINITIONS } from './registry.js';
 
 describe('automatic onboarding', () => {
@@ -741,9 +743,10 @@ describe('orchestration settings', () => {
     (k) => k.startsWith('orchestration.')
   );
 
-  it('defines the seven keys, all ADMIN-only, GLOBAL only and valid by default', () => {
+  it('defines the eight keys, all ADMIN-only, valid by default and overridable only where stated', () => {
     expect([...keys].sort()).toEqual([
       'orchestration.approvalTimeoutSeconds',
+      'orchestration.defaultAllowlist',
       'orchestration.enabled',
       'orchestration.maxChildren',
       'orchestration.maxConcurrentChildren',
@@ -755,9 +758,37 @@ describe('orchestration settings', () => {
       const def = SETTING_DEFINITIONS[key];
       expect(def.group, key).toBe('orchestration');
       expect(def.requiredRole, key).toBe('ADMIN');
-      expect(def.overridableAt, key).toEqual([]);
+      expect(def.overridableAt, key).toEqual(
+        key === 'orchestration.defaultAllowlist' ? ['ORGANIZATION'] : []
+      );
       expect(def.schema.safeParse(def.defaultValue).success, key).toBe(true);
     }
+  });
+
+  describe('orchestration.defaultAllowlist', () => {
+    const def = SETTING_DEFINITIONS['orchestration.defaultAllowlist'];
+
+    it('holds only launchable seeded agents, with exactly one write-capable agent', () => {
+      const seeded = new Set(SWE_AGENTS.map((a) => a.key));
+      for (const key of def.defaultValue) {
+        expect(seeded.has(key), key).toBe(true);
+        expect(isLaunchableAgentKey(key), key).toBe(true);
+      }
+      // The worker grants an agent run `writeFile` AND `bash` as write-capable, so both count.
+      const writers = def.defaultValue.filter((key) => {
+        const seed = SWE_AGENTS.find((a) => a.key === key);
+        return agentRunGrantsWriteTools(seed?.toolKeys ?? null);
+      });
+      expect(writers).toEqual(['implementer']);
+    });
+
+    it('refuses the orchestrator and any key that backs a platform mechanism', () => {
+      expect(def.schema.safeParse(['orchestrator']).success).toBe(false);
+      expect(def.schema.safeParse(['implementer', 'securityReview']).success).toBe(false);
+      expect(def.schema.safeParse(['reviewer@2']).success).toBe(false);
+      expect(def.schema.safeParse(['reviewer']).success).toBe(true);
+      expect(def.schema.safeParse([]).success).toBe(true);
+    });
   });
 
   it('is off by default and pins nothing, because an orchestration has no run to pin on', () => {

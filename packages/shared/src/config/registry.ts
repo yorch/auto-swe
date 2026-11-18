@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AGENT_RUN_MAX_WALL_CLOCK_SECONDS } from '../lib/agentRun.js';
+import { AGENT_RUN_MAX_WALL_CLOCK_SECONDS, isLaunchableAgentKey } from '../lib/agentRun.js';
 import { GlobListSchema } from '../lib/ciTrigger.js';
 import { DOCKER_MEMORY_RE, parseDockerMemoryBytes } from '../lib/dockerMemory.js';
 import {
@@ -922,6 +922,34 @@ export const SETTING_DEFINITIONS = {
   // the bounds once at launch and freezes them into the workflow input (the workflow isolate cannot
   // read the database, and a replay must not take a different path because an operator edited a
   // knob), so an edit reaches only orchestrations launched after it.
+  'orchestration.defaultAllowlist': defineSetting({
+    defaultValue: [
+      'implementer',
+      'reviewer',
+      'planner',
+      'securityReviewer',
+      'domainLogicReviewer',
+      'performanceReviewer',
+    ],
+    description:
+      'Agent keys an orchestration may spawn when its launcher names none. Read at launch only, then filtered to the agents that exist and are launchable at the launch scope; the launcher can replace it. Keys that back a platform mechanism, the orchestrator included, are refused.',
+    group: 'orchestration',
+    label: 'Orchestration: default allowlist',
+    overridableAt: ['ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z
+      .array(
+        z
+          .string()
+          .min(1)
+          .max(100)
+          .regex(/^[A-Za-z0-9_.-]+$/)
+          .refine(isLaunchableAgentKey, { message: 'this agent cannot be spawned' })
+      )
+      .max(20),
+  }),
   'orchestration.enabled': defineSetting({
     defaultValue: false,
     description:
