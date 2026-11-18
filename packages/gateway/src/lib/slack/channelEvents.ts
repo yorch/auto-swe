@@ -4,12 +4,74 @@ import { provisionChannel, startChannelTurn } from './channelProvision.js';
 import { isLiveThreadSession, trySteerThreadTask } from './threadSteering.js';
 import type { SlackEventCallback, SlackEventInner, SlackInteractivePayload } from './types.js';
 
-/** Strip Slack mention tokens (`<@U…>`, `<@U…|name>`) and collapse whitespace. */
+function isAsciiAlnum(code: number): boolean {
+  return (
+    (code >= 0x30 && code <= 0x39) || // 0-9
+    (code >= 0x41 && code <= 0x5a) || // A-Z
+    (code >= 0x61 && code <= 0x7a) // a-z
+  );
+}
+
+/**
+ * Strip Slack mention tokens (`<@U…>`, `<@U…|name>`) and collapse whitespace.
+ *
+ * A token is `<@` + one or more ASCII alphanumerics, then either `>` or `|` followed by
+ * anything up to the next `>`. Each token becomes a space; a `<@` that never closes is
+ * ordinary text. This is a single left-to-right pass, linear in the input length: the
+ * equivalent regex `/<@[A-Z0-9]+(\|[^>]*)?>/gi` rescans to the end of the string for
+ * every `<@` on hostile input (e.g. `'<@A|'.repeat(n)`), and this runs before any length cap.
+ */
 export function stripMentions(text: string): string {
-  return text
-    .replace(/<@[A-Z0-9]+(\|[^>]*)?>/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  let out = '';
+  let copied = 0;
+
+  // Cached `text.indexOf('>', gtFrom)` result (-2 = nothing cached, -1 = no '>' at or after
+  // gtFrom). Valid for any position in [gtFrom, gtAt], or [gtFrom, ∞) when gtAt is -1.
+  // Positions only move forward, so each stretch of text is searched for '>' at most once.
+  let gtFrom = 0;
+  let gtAt = -2;
+  const firstGtFrom = (pos: number): number => {
+    if (gtAt !== -2 && pos >= gtFrom && (gtAt === -1 || pos <= gtAt)) {
+      return gtAt;
+    }
+    gtFrom = pos;
+    gtAt = text.indexOf('>', pos);
+    return gtAt;
+  };
+
+  let start = text.indexOf('<@');
+  while (start !== -1) {
+    let idEnd = start + 2;
+    while (idEnd < text.length && isAsciiAlnum(text.charCodeAt(idEnd))) {
+      idEnd++;
+    }
+
+    let tokenEnd = -1;
+    if (idEnd > start + 2) {
+      const next = text.charCodeAt(idEnd);
+      if (next === 0x3e) {
+        // '>' directly after the id: `<@U1>`
+        tokenEnd = idEnd + 1;
+      } else if (next === 0x7c) {
+        // '|' then anything but '>' up to the first '>': `<@U1|name>`
+        const close = firstGtFrom(idEnd + 1);
+        if (close !== -1) {
+          tokenEnd = close + 1;
+        }
+      }
+    }
+
+    if (tokenEnd === -1) {
+      start = text.indexOf('<@', start + 1);
+    } else {
+      out += `${text.slice(copied, start)} `;
+      copied = tokenEnd;
+      start = text.indexOf('<@', tokenEnd);
+    }
+  }
+  out += text.slice(copied);
+
+  return out.replace(/\s+/g, ' ').trim();
 }
 
 /**
