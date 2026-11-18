@@ -76,8 +76,8 @@ function GovernApprovals() {
   const listRef = useRef<HTMLDivElement>(null);
   const allTeamsPending = useApprovalsCount();
   const teamFilter = useTeamParam();
-  // `?actionable=1` narrows to the steps the caller can answer, the set the team overview's
-  // "Needs you" number counts.
+  // `?actionable=1` narrows to the steps the caller can answer, the set the tab's number and the
+  // team overview's "Needs you" number count.
   const actionableOnly = params.get('actionable') === '1';
   const teamPending = useTeamApprovalsCount(teamFilter.teamId, !teamFilter.blocked);
   // A team filter narrows the list, so the tab's number narrows with it; the sidebar badge
@@ -111,9 +111,13 @@ function GovernApprovals() {
         return true;
       }
       const request = s.run.workRequest;
-      return [s.title, s.description, request?.externalTicketId, request?.description].some(
-        (field) => typeof field === 'string' && field.toLowerCase().includes(needle)
-      );
+      return [
+        s.title,
+        s.description,
+        s.run.repository,
+        request?.externalTicketId,
+        request?.description,
+      ].some((field) => typeof field === 'string' && field.toLowerCase().includes(needle));
     });
   }, [allSteps, kind, q]);
   const count = steps.length;
@@ -164,19 +168,6 @@ function GovernApprovals() {
         title={navLabel('/approvals')}
       />
       <TeamChip onRemove={teamFilter.clear} team={teamFilter.team} />
-      {actionableOnly && (
-        <p className="flex flex-wrap items-center gap-2 text-sm text-paper-400">
-          Showing only the steps you can answer.
-          <Button
-            onClick={() => update({ actionable: null, page: null })}
-            size="sm"
-            variant="ghost"
-          >
-            Show all pending
-          </Button>
-        </p>
-      )}
-
       <PageHelp>
         <section className="space-y-3">
           <h3 className="text-sm font-semibold text-paper-100">What these steps are</h3>
@@ -223,7 +214,7 @@ function GovernApprovals() {
             <SearchInput
               label="Search approvals"
               onChange={(value) => setSearchDraft(value.slice(0, 200))}
-              placeholder="Search by title or ticket…"
+              placeholder="Search by title, repository or ticket…"
               value={searchDraft}
             />
             <Select
@@ -243,6 +234,14 @@ function GovernApprovals() {
               value={sort}
             />
 
+            {filter === 'PENDING' && (
+              <Checkbox
+                checked={actionableOnly}
+                className="items-center text-sm"
+                label="Only what I can answer"
+                onChange={(e) => update({ actionable: e.target.checked ? '1' : null, page: null })}
+              />
+            )}
             <Checkbox
               checked={overdueOnly}
               className="items-center text-sm"

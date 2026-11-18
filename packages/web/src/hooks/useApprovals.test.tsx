@@ -5,7 +5,12 @@ import { renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock } from '@/test/rtl-helpers';
-import { useApprovals, useApprovalsCount, useRespondToApproval } from './useApprovals';
+import {
+  useApprovals,
+  useApprovalsCount,
+  useApprovalsStream,
+  useRespondToApproval,
+} from './useApprovals';
 import { ME_SUMMARY_KEY } from './useMeSummary';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -84,5 +89,54 @@ describe('useRespondToApproval', () => {
     const { result } = renderHook(() => useRespondToApproval(), { wrapper });
     result.current.mutate({ action: 'approve', id: 's1' });
     await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ME_SUMMARY_KEY }));
+  });
+});
+
+describe('useApprovalsStream', () => {
+  class FakeEventSource {
+    static last: FakeEventSource;
+    closed = false;
+    onopen: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    private listeners = new Map<string, () => void>();
+    constructor() {
+      FakeEventSource.last = this;
+    }
+    addEventListener(name: string, fn: () => void) {
+      this.listeners.set(name, fn);
+    }
+    emit(name: string) {
+      this.listeners.get(name)?.();
+    }
+    close() {
+      this.closed = true;
+    }
+  }
+
+  function mount() {
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const qc = new QueryClient();
+    const invalidate = vi.spyOn(qc, 'invalidateQueries');
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const view = renderHook(() => useApprovalsStream(), { wrapper });
+    return { invalidate, view };
+  }
+
+  it('refreshes the approvals on a change event, and closes on unmount', () => {
+    const { invalidate, view } = mount();
+    FakeEventSource.last.emit('change');
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['approvals'] });
+    view.unmount();
+    expect(FakeEventSource.last.closed).toBe(true);
+  });
+
+  it('refreshes after a reconnect but not after the first open', () => {
+    const { invalidate } = mount();
+    FakeEventSource.last.onopen?.();
+    expect(invalidate).not.toHaveBeenCalled();
+    FakeEventSource.last.onopen?.();
+    expect(invalidate).toHaveBeenCalledTimes(1);
   });
 });

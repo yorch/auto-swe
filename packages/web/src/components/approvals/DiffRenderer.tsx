@@ -7,6 +7,9 @@ import { Modal } from '@/components/ui/Modal';
 import { cn, plural } from '@/lib/utils';
 import { isUnifiedDiff, type ParsedDiffFile, parseUnifiedDiff } from './diffParse';
 
+/** Plain-text context shown before "Show all": one text node of megabytes stalls the page. */
+const MAX_PLAIN_CHARS = 100_000;
+
 function DiffBody({ files, maxHeight }: { files: ParsedDiffFile[]; maxHeight: string }) {
   const [closed, setClosed] = useState<Record<string, boolean>>({});
   return (
@@ -44,6 +47,7 @@ function DiffStats({ files }: { files: ParsedDiffFile[] }) {
 
 export function DiffRenderer({ content }: { content: string }) {
   const [full, setFull] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const isDiff = isUnifiedDiff(content);
   const files = useMemo(() => (isDiff ? parseUnifiedDiff(content) : []), [content, isDiff]);
   if (!content) {
@@ -70,9 +74,21 @@ export function DiffRenderer({ content }: { content: string }) {
     );
   }
 
+  const truncated = !showAll && content.length > MAX_PLAIN_CHARS;
   return (
-    <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-ink-500/60 bg-ink-950/50 p-3 font-mono text-xs leading-relaxed text-paper-300">
-      {content}
-    </pre>
+    <div className="space-y-2">
+      <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-ink-500/60 bg-ink-950/50 p-3 font-mono text-xs leading-relaxed text-paper-300">
+        {truncated ? content.slice(0, MAX_PLAIN_CHARS) : content}
+      </pre>
+      {truncated && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-paper-400">
+          Showing the first {MAX_PLAIN_CHARS.toLocaleString()} of {content.length.toLocaleString()}{' '}
+          characters.
+          <Button onClick={() => setShowAll(true)} size="sm" variant="ghost">
+            Show all
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }

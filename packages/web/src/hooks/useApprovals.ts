@@ -75,6 +75,15 @@ export function useApprovalsStream() {
     es.addEventListener('change', () => {
       qc.invalidateQueries({ queryKey: ['approvals'] });
     });
+    // Changes made while the connection was down were never announced: refresh on a reconnect
+    // (every open after the first) rather than waiting for the next poll.
+    let opened = false;
+    es.onopen = () => {
+      if (opened) {
+        qc.invalidateQueries({ queryKey: ['approvals'] });
+      }
+      opened = true;
+    };
     // Suppress noise — EventSource auto-reconnects on error.
     es.onerror = () => {};
     return () => es.close();

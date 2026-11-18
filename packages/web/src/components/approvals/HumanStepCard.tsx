@@ -3,7 +3,7 @@
 import type { HumanStepSummary } from '@auto-swe/shared/types/api';
 import { approvalAllowsRequestChanges } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { GuardedButton } from '@/components/teams/GuardedButton';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
@@ -15,6 +15,7 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { useRespondToApproval } from '@/hooks/useApprovals';
+import { useTick } from '@/hooks/useTick';
 import { errMsg } from '@/lib/errors';
 import { requestHref } from '@/lib/requestDisplay';
 import { cn, FOCUS_RING, formatDate, formatDuration, formatRelativeTime } from '@/lib/utils';
@@ -229,18 +230,6 @@ const ANSWERED_LABEL: Record<string, string> = {
   submit: 'Response submitted for',
 };
 
-/** Re-renders on an interval, so a deadline countdown and its colour do not go stale. */
-function useTick(active: boolean, intervalMs = 30_000) {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    if (!active) {
-      return;
-    }
-    const timer = setInterval(() => setTick((n) => n + 1), intervalMs);
-    return () => clearInterval(timer);
-  }, [active, intervalMs]);
-}
-
 export interface HumanStepCardProps {
   step: HumanStepSummary;
   showRunLink?: boolean;
@@ -263,7 +252,8 @@ export function HumanStepCard({
   ownerName,
 }: HumanStepCardProps) {
   const respond = useRespondToApproval();
-  useTick(step.status === 'PENDING' && !!step.timeoutAt);
+  // Pending cards show "requested 5m ago", and a deadline too when there is one.
+  useTick(step.status === 'PENDING');
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [choice, setChoice] = useState<DecisionOption | null>(null);
   const [inputValues, setInputValues] = useState<Record<string, unknown>>({});
@@ -347,7 +337,8 @@ export function HumanStepCard({
     setDialog(next);
   }
 
-  const contextStr = contextToString(step.context);
+  // Stringifying and parsing a large diff is not cheap, and the card re-renders on every tick.
+  const contextStr = useMemo(() => contextToString(step.context), [step.context]);
   const hasContext = contextStr.length > 0;
   const expired = isExpired(step);
   const youApproved = step.status === 'PENDING' && step.myResponse === 'approve';
@@ -367,7 +358,11 @@ export function HumanStepCard({
   const request = requestLabel(step.run.workRequest);
   const requestedAt = new Date(step.requestedAt);
   // What a person would decide on, shown before the card is opened.
-  const excerpt = step.status === 'PENDING' && !expanded ? summarizeContext(contextStr) : null;
+  const wantsExcerpt = step.status === 'PENDING' && !expanded;
+  const excerpt = useMemo(
+    () => (wantsExcerpt ? summarizeContext(contextStr) : null),
+    [wantsExcerpt, contextStr]
+  );
 
   return (
     <Card className="space-y-3 p-4" variant="inset">
@@ -376,6 +371,16 @@ export function HumanStepCard({
           {KIND_LABEL[step.kind] ?? step.kind}
         </Badge>
         <div className="min-w-0 flex-1 basis-[14rem]">
+          {step.run.repository && (
+            <div
+              className="mb-1 flex min-w-0 items-center gap-1 font-mono text-xs text-paper-300"
+              data-testid="step-repository"
+              title={`Repository: ${step.run.repository}`}
+            >
+              <Icon className="shrink-0 text-paper-500" name="github" size={12} />
+              <span className="truncate">{step.run.repository}</span>
+            </div>
+          )}
           <div className="break-words text-sm font-semibold leading-snug text-paper-50">
             {step.title}
           </div>

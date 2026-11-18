@@ -118,7 +118,10 @@ const step = (id: string, kind: string, title: string, ticket = 'T-1') => ({
   description: null,
   id,
   kind,
-  run: { workRequest: { description: '', externalTicketId: ticket } },
+  run: {
+    repository: null as string | null,
+    workRequest: { description: '', externalTicketId: ticket },
+  },
   title,
 });
 
@@ -158,6 +161,16 @@ describe('approvals page filters and state', () => {
     expect(screen.getByText('Pick a route')).toBeTruthy();
     first.unmount();
     nav.search = 'q=pay-1';
+    render(<GovernApprovalsPage />);
+    expect(screen.getByText('Approve the plan')).toBeTruthy();
+    expect(screen.queryByText('Pick a route')).toBeNull();
+  });
+
+  it('finds a step by the repository it belongs to', () => {
+    const inRepo = step('a', 'APPROVAL', 'Approve the plan', 'PAY-1');
+    inRepo.run.repository = 'acme/payments-api';
+    steps.rows = [inRepo, step('b', 'DECISION', 'Pick a route', 'OPS-2')];
+    nav.search = 'q=payments-api';
     render(<GovernApprovalsPage />);
     expect(screen.getByText('Approve the plan')).toBeTruthy();
     expect(screen.queryByText('Pick a route')).toBeNull();
@@ -231,7 +244,7 @@ describe('approvals page team filter', () => {
     steps.teamCount = null;
   });
 
-  it('lists only the steps the caller can answer for ?actionable=1, and says so', () => {
+  it('lists only the steps the caller can answer for ?actionable=1, and offers a toggle to undo it', () => {
     nav.search = 'team=payments&actionable=1';
     steps.rows = [];
     render(<GovernApprovalsPage />);
@@ -243,8 +256,18 @@ describe('approvals page team filter', () => {
       true,
       expect.anything()
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Show all pending' }));
+    const toggle = screen.getByRole('checkbox', { name: /Only what I can answer/ });
+    expect((toggle as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(toggle);
     expect(nav.replace.mock.calls.at(-1)?.[0]).not.toContain('actionable');
+  });
+
+  it('turns the answerable-only filter on from the toolbar', () => {
+    nav.search = '';
+    steps.rows = [];
+    render(<GovernApprovalsPage />);
+    fireEvent.click(screen.getByRole('checkbox', { name: /Only what I can answer/ }));
+    expect(nav.replace.mock.calls.at(-1)?.[0]).toContain('actionable=1');
   });
 
   it('hands each inbox card its own step, which names the owner, with no ownerName override', () => {

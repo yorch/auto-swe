@@ -454,3 +454,17 @@ describe('HumanStepCard owner name in the answer guard', () => {
     }
   );
 });
+
+describe('HumanStepCard repository', () => {
+  it('names the repository the run belongs to', () => {
+    const step = inputStep([]);
+    step.run.repository = 'acme/payments-api';
+    render(<HumanStepCard step={step} />);
+    expect(screen.getByTestId('step-repository').textContent).toBe('acme/payments-api');
+  });
+
+  it('shows no repository line when the run has none', () => {
+    render(<HumanStepCard step={inputStep([])} />);
+    expect(screen.queryByTestId('step-repository')).toBeNull();
+  });
+});
