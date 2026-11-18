@@ -70,11 +70,17 @@ class limits how far.
 |---|---|---|
 | `governance` | Shapes who and what belongs to a team: members, repositories, shares, budget cap, team creation, templates' ownership | team role, org `ADMIN` of the owning org, platform `ADMIN` |
 | `operation` | Does the team's work: launch, answer approvals, nudge, author workflow templates and prompts | team role, platform `ADMIN`. Org `ADMIN` does **not** |
-| `sensitive` | Runs code or holds credentials: team secrets, shell, container and gate-command steps, repository onboarding, sandbox policy | team `ADMIN` (or platform `ADMIN` only), platform `ADMIN`. Org `ADMIN` does **not** |
+| `sensitive` | Runs code or mints/holds credentials: team secrets, shell, container and gate-command steps, repository onboarding, sandbox policy, service principals, callback endpoints | the capability's own minimum team role (most are team `ADMIN`; service principals and callbacks stay `LEAD`, as today), platform `ADMIN`. Org `ADMIN` does **not** on a team-scoped capability |
 | `read` | Reads state | any of the above, plus org `MEMBER` where the data is org-wide |
 
-A test walks the catalog and fails when a `sensitive` or `operation` capability grants an org role,
-or when a capability has no way to be held.
+A test walks the catalog and fails when a **team-scoped** `sensitive` or `operation` capability grants
+an org role, or when a capability has no way to be held. Org-scoped and platform-scoped capabilities
+are classed by who they are for (org `ADMIN` holds the org's own governance, including org GitHub
+App linking and org budget).
+
+The class decides only whether org authority reaches a team capability; the minimum team role is
+always per capability. Moving a capability between classes changes who holds it, so the catalog
+records both and the generated reference shows both.
 
 ### 4.2 The organization admin rule
 
@@ -239,6 +245,41 @@ carry `error.missing` naming the capability. The dashboard reads `me/permissions
 - A route walk test asserts every non-public route declares either a capability, a documented
   `requireAuth()` (any signed-in person), or `serviceScopes`.
 
+## 9.1 Decisions on today's inconsistencies
+
+The inventory found places where one action has several rules. They resolve as follows; each is a
+deliberate behaviour change and goes in the upgrade note.
+
+1. **Create a team** is one capability, `org.teams.create`: org `ADMIN` of the target organization or
+   platform `ADMIN`, on both `POST /teams` and `POST /platform/organizations/:orgId/teams`.
+2. **Org admin on team capabilities** follows the class rule (4.1) everywhere: governance includes
+   org `ADMIN` (members, settings, repositories, budget, shares, lessons, knowledge bases); operation
+   and sensitive do not (templates, automations, schedules, secrets, agents, plugins, callbacks,
+   service principals). The web reads the same answer from `/me/permissions`.
+3. **A deactivated team confers nothing** on a non-platform-admin for any non-read capability
+   (`requiresActiveTeam` defaults to true, false only for `read` capabilities). `requiredTeamRole`
+   routes used to ignore `isActive`.
+4. **"May lead"** is one expression per capability (`team: 'LEAD'`); `LEAD_ROLES`, `TEAM_LEAD_ROLES`,
+   `isLead()`, `role in ['LEAD','ADMIN']` and `roleMeets(…, 'LEAD')` all disappear.
+5. **Sandbox policy PUTs** are `team.sandbox-policy.manage`, platform `ADMIN` only, declared as such
+   (the team-role half of the old declaration never ran).
+6. **Platform-admin sub-rules** inside team routes (private-network callbacks, agent runtime,
+   installation binding, executor image build, PR-evaluation auto mode, eval-dataset link at ORG
+   scope) stay platform-only capabilities with their own keys.
+7. **Human-error baselines** (platform `LEAD` + any org member today) become `org.baselines.manage`:
+   org `ADMIN` of the target org or platform `ADMIN`.
+8. **The planner** (platform `ENGINEER` minimum today) needs only an active user; the check is
+   removed, with the synthesized run-plan actor becoming a plain `USER`.
+9. **Platform-admin bypass idiom** (`user.role === 'ADMIN' ? {} : filter`, about 75 files) calls
+   `isPlatformAdmin(actor)` from the permissions module, which records nothing by itself; list
+   endpoints use `heldScope` instead where a capability applies, and the visibility filters (reach,
+   non-goal) keep their shape.
+10. **Per-resource rules** (a lead of a shared team may create schedules on the shared repository, a
+    schedule's own team may manage it, an edge between repositories needs both teams to create and
+    either to delete) are `anyOf`/`allOf` resource sets over the same capability. Run control (the
+    launcher may steer their own run) and the answering of approvals stay in the run-control filter
+    (reach, non-goal), reading `can('team.launch', …)` where they test "may lead".
+
 ## 10. Persisted and serialized role values
 
 All of these change with the enums, and each is a place a missed update breaks sign-in or a gate:
@@ -270,12 +311,20 @@ database seeded from the previous schema, per the `prisma-pgvector-hnsw` skill (
 
 ## 11. Migration order
 
-1. Core: enums, catalog, `can()`, `requireAuth` capability option, generated doc, Prisma migration.
-2. Domains, in parallel, each owning disjoint files: teams and members; repositories; templates and
-   agents; runs and approvals; org, platform and admin; settings and config; usage, reports,
-   automations and the rest.
-3. Web, CLI, SDK, worker: role values and labels; web reads `me/permissions`.
-4. Invariant, lifecycle cascade, `me/permissions`, audit authority.
+The rename of stored role values is last, so it is small: by then no code outside the permissions
+module compares a role value.
+
+1. Core (additive, old enum untouched): the permissions module with the catalog, `decide`/`can`,
+   `heldScope`, constraints, `isPlatformAdmin`; `requireAuth` accepts `capability`/`handlerChecked`
+   beside the old options; route `authz` metadata and walk test; generated reference.
+2. Domains, in parallel, each owning disjoint files (six packages, below). Each replaces its role
+   comparisons with capabilities, constraints, `heldScope` or `isPlatformAdmin`, and keeps its tests
+   green. Nothing here changes a stored value.
+3. Settings registry and grants, the lifecycle cascade and last-admin rules, `me/permissions`, the
+   `authority` audit field, the invariant (now enforceable because step 2 is done).
+4. The rename: three enums, hand-written Prisma migration, seed, better-auth default, `MCP_ROLES`,
+   JWT and API types, worker, CLI, web labels and a `useCan` hook backed by `me/permissions`.
+5. Documentation, upgrade note, adversarial review, all quality gates.
 5. Upgrade note: an operator deploying earlier code has roles renamed by the migration; every
    role-grantee settings grant, and every user grant that was inert before, is deleted (the
    migration reports the count) and must be re-issued; historical `actor_role` and audit values keep
