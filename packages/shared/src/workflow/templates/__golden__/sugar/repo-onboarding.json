@@ -1,0 +1,218 @@
+{
+  "description": "Explore a repository, try its installation, checks and optional preview in a fresh checkout, then ask a person before proposing the configuration in a pull request.",
+  "entry": "initialize",
+  "name": "repo-onboarding",
+  "nodes": {
+    "canDeliver": {
+      "expr": "nodes.parse.output.valid == true",
+      "onFalse": "rejected",
+      "onTrue": "deliver",
+      "type": "cond"
+    },
+    "deliver": {
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.connectionId"
+        },
+        "draft": {
+          "from": "nodes.parse.output.draft"
+        },
+        "trialReport": {
+          "default": "",
+          "from": "nodes.trial.output.markdown"
+        }
+      },
+      "next": "done",
+      "step": "repoOnboardingPr",
+      "type": "step"
+    },
+    "done": {
+      "result": {
+        "delivery": {
+          "from": "nodes.deliver.output"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "draft": {
+      "agentRef": "repo-onboarder",
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.connectionId"
+        },
+        "humanFeedback": {
+          "default": null,
+          "from": "nodes.review.output"
+        },
+        "parseError": {
+          "default": "",
+          "from": "nodes.parse.output.error"
+        },
+        "previousDraft": {
+          "default": null,
+          "from": "nodes.parse.output.draft"
+        },
+        "task": {
+          "literal": "Explore this repository, try setup and checks, and return the complete onboarding draft as exactly one final fenced JSON block. Repair the previous proposal using the parse error, trial report and human feedback when supplied."
+        },
+        "trialReport": {
+          "default": "",
+          "from": "nodes.trial.output.markdown"
+        }
+      },
+      "maxVisits": 3,
+      "next": "parse",
+      "onExhausted": "review",
+      "type": "agent",
+      "workspace": true
+    },
+    "initialize": {
+      "next": "draft",
+      "type": "set",
+      "values": {
+        "context.onboardingReview.draftMarkdown": {
+          "literal": "No valid draft."
+        },
+        "context.onboardingReview.status": {
+          "literal": "No valid draft."
+        },
+        "context.onboardingReview.trialMarkdown": {
+          "literal": "No trial has run."
+        },
+        "context.onboardingReview.trialOutcome": {
+          "literal": "not_run"
+        }
+      }
+    },
+    "invalidDraft": {
+      "next": "draft",
+      "type": "set",
+      "values": {
+        "context.onboardingReview.draftMarkdown": {
+          "from": "nodes.parse.output.markdown"
+        },
+        "context.onboardingReview.status": {
+          "literal": "No valid draft. Approval cannot open a pull request. Any previous trial is not a trial of this invalid draft."
+        },
+        "context.onboardingReview.trialAppliesToCurrentDraft": {
+          "literal": false
+        },
+        "context.onboardingReview.trialOutcome": {
+          "literal": "not_run"
+        }
+      }
+    },
+    "parse": {
+      "config": {
+        "kind": "repoOnboardingDraft"
+      },
+      "inputs": {
+        "text": {
+          "from": "nodes.draft.output.text"
+        }
+      },
+      "next": "validDraft",
+      "step": "parseAgentOutput",
+      "type": "step"
+    },
+    "rejected": {
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "repairable": {
+      "expr": "nodes.trial.output.repairable == true",
+      "onFalse": "statusBlocked",
+      "onTrue": "statusFailed",
+      "type": "cond"
+    },
+    "review": {
+      "contextFrom": "context.onboardingReview",
+      "description": "Review the proposed repository configuration and the result of its trial. Approving opens a pull request with the files even when the trial failed or was blocked. The files take effect only when that pull request is merged, and settings saved on the connection still take precedence. If there is no valid draft, approving opens nothing.",
+      "onApprove": "canDeliver",
+      "onReject": "rejected",
+      "onRequestChanges": "draft",
+      "onTimeout": "rejected",
+      "timeout": "7d",
+      "title": "Review repository onboarding",
+      "type": "humanApproval"
+    },
+    "statusBlocked": {
+      "next": "review",
+      "type": "set",
+      "values": {
+        "context.onboardingReview.status": {
+          "literal": "Draft not verified: the trial is blocked and needs operator action. Review the blockers before approving."
+        },
+        "context.onboardingReview.trialOutcome": {
+          "literal": "blocked"
+        }
+      }
+    },
+    "statusFailed": {
+      "next": "draft",
+      "type": "set",
+      "values": {
+        "context.onboardingReview.status": {
+          "literal": "Draft not verified: the trial failed. Review the failures before approving."
+        },
+        "context.onboardingReview.trialOutcome": {
+          "literal": "failed"
+        }
+      }
+    },
+    "statusPassed": {
+      "next": "review",
+      "type": "set",
+      "values": {
+        "context.onboardingReview.status": {
+          "literal": "Draft verified: the trial passed. Review the draft before approving."
+        },
+        "context.onboardingReview.trialOutcome": {
+          "literal": "passed"
+        }
+      }
+    },
+    "trial": {
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.connectionId"
+        },
+        "draft": {
+          "from": "nodes.parse.output.draft"
+        }
+      },
+      "next": "trialReport",
+      "step": "repoOnboardingTrial",
+      "type": "step"
+    },
+    "trialPassed": {
+      "expr": "nodes.trial.output.trialPassed == true",
+      "onFalse": "repairable",
+      "onTrue": "statusPassed",
+      "type": "cond"
+    },
+    "trialReport": {
+      "next": "trialPassed",
+      "type": "set",
+      "values": {
+        "context.onboardingReview.draftMarkdown": {
+          "from": "nodes.parse.output.markdown"
+        },
+        "context.onboardingReview.trialAppliesToCurrentDraft": {
+          "literal": true
+        },
+        "context.onboardingReview.trialMarkdown": {
+          "from": "nodes.trial.output.markdown"
+        }
+      }
+    },
+    "validDraft": {
+      "expr": "nodes.parse.output.valid == true",
+      "onFalse": "invalidDraft",
+      "onTrue": "trial",
+      "type": "cond"
+    }
+  },
+  "schemaVersion": 1
+}

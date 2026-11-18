@@ -174,6 +174,10 @@ const SUGARED: Record<string, string> = {
   'model-catalog-refresh': `the guidance carries price-list figures, checked in code after the review; ${STALL};`,
   'parallel-fan-out': '',
   'prd-decomposition': '',
+  'repo-onboarding':
+    'the configuration PR includes the latest trial report without changing its file hash; the ' +
+    'review status and trial outcome are derived from the trial result instead of always saying ' +
+    'the draft was validated;',
   'scope-clarification': `${STALL};`,
   'security-triage': '',
   'staged-deploy-signals': `${STALL};`,
@@ -190,29 +194,6 @@ const INTENDED_CHANGES: Record<
   string,
   { reason: string; apply: (g: WorkflowSpec) => WorkflowSpec }
 > = {
-  'repo-onboarding': {
-    reason:
-      'include the latest trial report in the configuration PR without changing its file hash',
-    apply: (g) => {
-      const deliver = g.nodes.deliver;
-      if (deliver?.type !== 'step') {
-        throw new Error('Expected onboarding delivery step');
-      }
-      return {
-        ...g,
-        nodes: {
-          ...g.nodes,
-          deliver: {
-            ...deliver,
-            inputs: {
-              ...deliver.inputs,
-              trialReport: { from: 'nodes.trial.output.markdown', default: '' },
-            },
-          },
-        },
-      };
-    },
-  },
   'notion-content-draft': {
     apply: withNotionDraftPolicyGate,
     reason:
