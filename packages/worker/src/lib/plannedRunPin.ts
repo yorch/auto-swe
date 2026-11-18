@@ -213,6 +213,11 @@ export async function loadApprovedPlan(
   if (!plan) {
     throw refuse('PLAN_NOT_FOUND', 'the plan does not exist');
   }
+  // A scrubbed plan kept its row (a run names it) but not its goal or its spec. Refused ahead of
+  // every other check, a retry of a long-finished launch included: there is nothing to pin.
+  if (plan.scrubbedAt !== null && plan.scrubbedAt !== undefined) {
+    throw refuse('PLAN_SCRUBBED', 'the goal and plan were removed after the retention period');
+  }
 
   // A Temporal retry of an attempt whose claim committed finds the plan LAUNCHED by the run row
   // that attempt wrote. That is the one way past APPROVED.

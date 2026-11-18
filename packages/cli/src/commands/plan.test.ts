@@ -203,6 +203,65 @@ describe('auto-swe plan', () => {
     expect(stdout()).toContain('SECRET_SPEC_MARKER');
   });
 
+  it('show prints a notice for a scrubbed plan, no outline, and exits 0', async () => {
+    responder = () => ({
+      body: {
+        data: {
+          approvedAt: '2026-08-01T00:00:00.000Z',
+          cost: { totalUsd: 0.5 },
+          expiresAt: '2026-08-01T01:00:00.000Z',
+          id: PLAN_ID,
+          intent: '',
+          mode: 'delivering',
+          model: 'anthropic/x',
+          nodes: [],
+          scrubbed: true,
+          spec: null,
+          status: 'LAUNCHED',
+          warnings: [],
+        },
+      },
+    });
+    expect(await runPlanCommand(['show', PLAN_ID], ENV)).toBe(0);
+    const text = stdout();
+    expect(text).toContain('The goal and plan were removed after the retention period.');
+    expect(text).toContain('LAUNCHED');
+    expect(text).toContain('$0.50');
+    expect(text).not.toContain('Goal:');
+    expect(text).not.toContain('Steps');
+    expect(stderr()).toBe('');
+  });
+
+  it('list marks a scrubbed plan instead of printing an empty goal', async () => {
+    responder = () => ({
+      body: {
+        data: [
+          {
+            id: PLAN_ID,
+            intent: '',
+            mode: 'delivering',
+            scrubbed: true,
+            status: 'LAUNCHED',
+            totalUsd: 1,
+          },
+          {
+            id: 'b',
+            intent: 'live goal',
+            mode: 'delivering',
+            scrubbed: false,
+            status: 'PENDING',
+            totalUsd: 1,
+          },
+        ],
+        meta: {},
+      },
+    });
+    expect(await runPlanCommand(['list'], ENV)).toBe(0);
+    const lines = stdout().trim().split('\n');
+    expect(lines[0]).toContain('(the goal and plan were removed after the retention period)');
+    expect(lines[1]).toContain('live goal');
+  });
+
   it('never sends the token anywhere but the header', async () => {
     responder = () => ({ body: { data: PLAN } });
     await runPlanCommand(['show', PLAN_ID], ENV);

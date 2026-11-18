@@ -807,6 +807,7 @@ describe('run plan settings', () => {
     'runPlans.createPerUserPerHour',
     'runPlans.enabled',
     'runPlans.generationMaxAttempts',
+    'runPlans.launchedRetentionDays',
     'runPlans.maxPendingPerUser',
     'runPlans.routePerUserPerHour',
   ] as const;
@@ -840,6 +841,16 @@ describe('run plan settings', () => {
     expect(perHour.safeParse(-1).success).toBe(false);
     expect(perHour.safeParse(1.5).success).toBe(false);
     expect(perHour.safeParse(1_000_000).success).toBe(false);
+    expect(SETTING_DEFINITIONS['runPlans.launchedRetentionDays'].defaultValue).toBe(90);
+    const retention = SETTING_DEFINITIONS['runPlans.launchedRetentionDays'].schema;
+    expect(retention.safeParse(0).success).toBe(true); // 0 keeps launched plans forever
+    expect(retention.safeParse(3650).success).toBe(true);
+    expect(retention.safeParse(3651).success).toBe(false);
+    expect(retention.safeParse(-1).success).toBe(false);
+    expect(retention.safeParse(1.5).success).toBe(false);
+    expect(SETTING_DEFINITIONS['runPlans.launchedRetentionDays'].description).toContain(
+      '0 keeps launched plans forever'
+    );
     // A cap of zero pending plans would make every generation unusable; use the kill switch.
     expect(SETTING_DEFINITIONS['runPlans.maxPendingPerUser'].schema.safeParse(0).success).toBe(
       false

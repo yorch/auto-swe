@@ -5702,6 +5702,10 @@ model RunPlan {
   launchedWorkflowRun WorkflowRun?  @relation("RunPlanLaunchedRun", fields: [launchedWorkflowRunId], references: [id], onDelete: SetNull)
   createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamptz
   expiresAt           DateTime      @map("expires_at") @db.Timestamptz
+  /// Set when the retention sweep removed the goal and the plan body of a LAUNCHED plan (CHECK in
+  /// the migration: only a LAUNCHED row may carry it). The row itself stays, because a run's
+  /// `triggerRefId` names it. See `runPlans.launchedRetentionDays`.
+  scrubbedAt          DateTime?     @map("scrubbed_at") @db.Timestamptz
 
   @@index([ownerUserId, status])
   @@index([status, expiresAt])

@@ -75,17 +75,23 @@ export interface RunPlanView {
   teamId: string;
   intent: string;
   spec: unknown;
-  specHash: string;
+  specHash: string | null;
   nodes: PlanNode[];
   cost: unknown;
   warnings: PlanWarning[];
   agentPins: Record<string, string> | null;
   model: string | null;
-  summary: string;
+  summary: string | null;
   createdAt: string;
   expiresAt: string;
   approvedAt: string | null;
   launchedWorkflowRunId: string | null;
+  /**
+   * True once the retention sweep removed the goal and the plan body of a launched plan: `intent`
+   * is empty, `nodes` is empty and `spec` is null. The metadata is all that is left.
+   */
+  scrubbed?: boolean;
+  scrubbedAt?: string | null;
 }
 
 export interface RunPlanListItem {
@@ -99,7 +105,12 @@ export interface RunPlanListItem {
   createdAt: string;
   expiresAt: string;
   totalUsd: number | null;
+  /** The goal and plan were removed after the retention period; `intent` is empty. */
+  scrubbed?: boolean;
 }
+
+/** What the dashboard says wherever it meets a plan whose goal and body were removed. */
+export const SCRUBBED_PLAN_NOTICE = 'The goal and plan were removed after the retention period';
 
 export type PlanJob =
   | { status: 'running' }

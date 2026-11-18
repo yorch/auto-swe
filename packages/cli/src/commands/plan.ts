@@ -113,6 +113,8 @@ interface PlanView {
   expiresAt: string;
   approvedAt?: string | null;
   launchedWorkflowRunId?: string | null;
+  /** The goal and plan body were removed after the retention period. */
+  scrubbed?: boolean;
 }
 interface PlanListRow {
   id: string;
@@ -122,6 +124,7 @@ interface PlanListRow {
   intent: string;
   expiresAt: string;
   totalUsd?: number | null;
+  scrubbed?: boolean;
 }
 interface ApproveResult {
   planId: string;
@@ -456,7 +459,35 @@ function describeNodeReads(n: PlanNode): string | null {
     .join(', ')}`;
 }
 
+const SCRUBBED_NOTICE = 'The goal and plan were removed after the retention period';
+
+/** What is left of a plan whose goal and body were scrubbed: its metadata and cost, no outline. */
+function printScrubbedPlan(plan: PlanView): void {
+  const w = (s: string) => process.stdout.write(`${s}\n`);
+  w(`Plan ${plan.id}`);
+  w(`  Status:   ${plan.status}`);
+  w(
+    `  Mode:     ${plan.mode}${plan.agentKey ? ` (agent ${clean(plan.agentKey)})` : ''}` +
+      (plan.mode === 'output-only'
+        ? ' - produces output, delivers nothing'
+        : ' - delivers a draft pull request')
+  );
+  if (plan.model) {
+    w(`  Model:    ${clean(plan.model)}`);
+  }
+  if (plan.approvedAt) {
+    w(`  Approved: ${plan.approvedAt}`);
+  }
+  w(`  Cost:     ${usd(plan.cost?.totalUsd)} (estimated)`);
+  w('');
+  w(`${SCRUBBED_NOTICE}.`);
+}
+
 function printPlan(plan: PlanView): void {
+  if (plan.scrubbed) {
+    printScrubbedPlan(plan);
+    return;
+  }
   const w = (s: string) => process.stdout.write(`${s}\n`);
   w(`Plan ${plan.id}`);
   w(`  Status:   ${plan.status}`);
@@ -579,8 +610,11 @@ async function cmdList(rawArgs: string[], env: CliEnv): Promise<number> {
     return 0;
   }
   for (const p of data) {
+    const headline = p.scrubbed
+      ? `(${SCRUBBED_NOTICE.toLowerCase()})`
+      : clean(p.intent).replace(/\s+/g, ' ').slice(0, 60);
     process.stdout.write(
-      `${p.id}  ${pad(p.status, 9)} ${pad(p.mode, 11)} ${pad(usd(p.totalUsd), 8)} ${clean(p.intent).replace(/\s+/g, ' ').slice(0, 60)}\n`
+      `${p.id}  ${pad(p.status, 9)} ${pad(p.mode, 11)} ${pad(usd(p.totalUsd), 8)} ${headline}\n`
     );
   }
   return 0;

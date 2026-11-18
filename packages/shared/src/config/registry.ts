@@ -1532,6 +1532,19 @@ export const SETTING_DEFINITIONS = {
     schema: z.number().int().min(1).max(5),
     unit: 'attempts',
   }),
+  'runPlans.launchedRetentionDays': defineSetting({
+    defaultValue: 90,
+    description:
+      "How many days after a plan was approved and launched its goal and plan body are kept. After that the sweep scrubs the plan: the goal text and the plan body are removed, while the row (its owner, team, repository, mode, status, cost numbers, model and the run it launched) stays, so the run still names its plan and the owner still sees it in their list. 0 keeps launched plans forever. Resolved at the plan's own team and organization; a change applies to plans already launched.",
+    group: 'runPlans',
+    label: 'Launched plan retention',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(0).max(3650),
+    unit: 'days',
+  }),
   'runPlans.maxPendingPerUser': defineSetting({
     defaultValue: 5,
     description:

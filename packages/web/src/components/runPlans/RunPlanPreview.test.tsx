@@ -62,7 +62,7 @@ const PLAN = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' }, status });
 
-function gateway(approve?: () => Response) {
+function gateway(approve?: () => Response, plan: unknown = PLAN) {
   const calls: { path: string; method: string; headers: Record<string, string> }[] = [];
   vi.stubGlobal(
     'fetch',
@@ -75,7 +75,7 @@ function gateway(approve?: () => Response) {
       const method = (init?.method ?? 'GET').toUpperCase();
       calls.push({ headers: (init?.headers ?? {}) as Record<string, string>, method, path });
       if (path === '/api/v1/run-plans/plan-1' && method === 'GET') {
-        return json({ data: PLAN });
+        return json({ data: plan });
       }
       if (path === '/api/v1/repositories') {
         return json({
@@ -185,5 +185,37 @@ describe('RunPlanPreview', () => {
     expect(screen.queryByRole('button', { name: /approve & start/i })).toBeNull();
     expect(screen.getByRole('button', { name: 'Regenerate' })).toBeTruthy();
     expect(onApproved).not.toHaveBeenCalled();
+  });
+
+  it('says a scrubbed plan was removed, shows its metadata, and offers no decision or regeneration', async () => {
+    const calls = gateway(undefined, {
+      ...PLAN,
+      approvedAt: '2026-01-01T00:01:00Z',
+      intent: '',
+      launchedWorkflowRunId: 'run-1',
+      nodes: [],
+      scrubbed: true,
+      scrubbedAt: '2026-06-01T00:00:00Z',
+      spec: null,
+      specHash: null,
+      status: 'LAUNCHED',
+      summary: null,
+      warnings: [],
+    });
+    mount();
+    await screen.findByTestId('plan-scrubbed');
+    expect(
+      screen.getByText('The goal and plan were removed after the retention period.')
+    ).toBeTruthy();
+    expect(screen.getByText('acme/api')).toBeTruthy();
+    expect(screen.getByText('anthropic/x')).toBeTruthy();
+    expect(screen.getByText('$1.50')).toBeTruthy();
+    expect(screen.queryByTestId('plan-preview')).toBeNull();
+    expect(screen.queryByTestId('plan-node')).toBeNull();
+    expect(screen.queryByRole('button', { name: /approve/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /reject/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /regenerate/i })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Back' })).toBeTruthy();
+    expect(calls.some((c) => c.method === 'POST')).toBe(false);
   });
 });

@@ -439,6 +439,21 @@ describe('approvePlan', () => {
     });
   });
 
+  it('refuses a scrubbed launched plan: nothing is left to approve or reject', async () => {
+    const { prisma, table } = fakePrisma(
+      planRow({ intent: '', scrubbedAt: new Date(NOW.getTime() - 1), spec: {}, status: 'LAUNCHED' })
+    );
+    expect(await approvePlan(deps(prisma), OWNER, PLAN_ID)).toMatchObject({
+      code: 'PLAN_NOT_PENDING',
+      status: 409,
+    });
+    expect(await rejectPlan(deps(prisma), OWNER, PLAN_ID)).toMatchObject({
+      code: 'PLAN_NOT_REJECTABLE',
+      status: 409,
+    });
+    expect(table.plan?.status).toBe('LAUNCHED');
+  });
+
   it('refuses an expired plan and marks it EXPIRED', async () => {
     const { prisma, table } = fakePrisma(planRow({ expiresAt: new Date(NOW.getTime() - 1) }));
     expect(await approvePlan(deps(prisma), OWNER, PLAN_ID)).toMatchObject({
@@ -613,7 +628,7 @@ describe('expirePlans', () => {
       { retentionMs: 1000 }
     );
     // The ids come back so the sweep can write one audit row per expired plan.
-    expect(result).toEqual({ deleted: 2, expired: 1, expiredIds: [PLAN_ID] });
+    expect(result).toEqual({ deleted: 2, expired: 1, expiredIds: [PLAN_ID], scrubbed: [] });
     expect(table.plan?.status).toBe('EXPIRED');
     expect(prisma.runPlan.updateMany).toHaveBeenCalledWith({
       data: { status: 'EXPIRED' },

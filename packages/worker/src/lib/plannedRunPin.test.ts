@@ -62,6 +62,7 @@ function planRow(over: Record<string, unknown> = {}) {
     launchedWorkflowRunId: null,
     mode: 'delivering',
     ownerUserId: USER,
+    scrubbedAt: null,
     spec: SPEC,
     specHash: hashRunPlanSpec(SPEC),
     status: 'APPROVED',
@@ -196,6 +197,18 @@ describe('loadApprovedPlan', () => {
   it('refuses a plan that does not exist', async () => {
     expect(await codeOf(loadApprovedPlan(input(), scope, NOW, dbWith(null)))).toBe(
       'PLAN_NOT_FOUND'
+    );
+  });
+
+  it('refuses a scrubbed plan with a non-retryable PLAN_SCRUBBED, ahead of every other check', async () => {
+    const scrubbed = planRow({
+      scrubbedAt: new Date('2026-09-01T00:00:00Z'),
+      spec: {},
+      specHash: 'scrubbed',
+      status: 'LAUNCHED',
+    });
+    expect(await codeOf(loadApprovedPlan(input(), scope, NOW, dbWith(scrubbed)))).toBe(
+      'PLAN_SCRUBBED'
     );
   });
 

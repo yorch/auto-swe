@@ -238,8 +238,38 @@ function warningsOf(plan: { skeletonReport: unknown; validationReport: unknown }
 
 type PlanRow = Prisma.RunPlanGetPayload<object>;
 
-/** The whole plan, for its owner. The spec is here and only here. */
+/**
+ * The whole plan, for its owner. The spec is here and only here. A scrubbed plan (its goal and
+ * body removed after `runPlans.launchedRetentionDays`) answers with its metadata and no text:
+ * `intent` is empty, `nodes` is empty and `spec` is null. Nothing is read out of the stored
+ * columns for it, so a row scrubbed only in part could never leak what is left.
+ */
 function planView(plan: PlanRow) {
+  if (plan.scrubbedAt) {
+    return {
+      agentKey: plan.agentKey,
+      agentPins: plan.agentPins,
+      approvedAt: plan.approvedAt?.toISOString() ?? null,
+      connectionId: plan.connectionId,
+      cost: plan.costEstimate,
+      createdAt: plan.createdAt.toISOString(),
+      expiresAt: plan.expiresAt.toISOString(),
+      id: plan.id,
+      intent: '',
+      launchedWorkflowRunId: plan.launchedWorkflowRunId,
+      mode: plan.mode,
+      model: plan.model,
+      nodes: [] as ReturnType<typeof markNodes>,
+      scrubbed: true,
+      scrubbedAt: plan.scrubbedAt.toISOString(),
+      spec: null,
+      specHash: null,
+      status: plan.status,
+      summary: null,
+      teamId: plan.teamId,
+      warnings: [] as ReturnType<typeof warningsOf>,
+    };
+  }
   return {
     agentKey: plan.agentKey,
     agentPins: plan.agentPins,
@@ -254,6 +284,8 @@ function planView(plan: PlanRow) {
     mode: plan.mode,
     model: plan.model,
     nodes: markNodes(plan),
+    scrubbed: false,
+    scrubbedAt: null,
     spec: cleanSpecDisplayText(plan.spec),
     specHash: plan.specHash,
     status: plan.status,
@@ -639,6 +671,7 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
                 id: true,
                 intent: true,
                 mode: true,
+                scrubbedAt: true,
                 status: true,
                 teamId: true,
               },
@@ -656,9 +689,15 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
           createdAt: r.createdAt.toISOString(),
           expiresAt: r.expiresAt.toISOString(),
           id: r.id,
-          // The list shows a headline, not the whole text; `GET /:id` has all of it.
-          intent: r.intent.length > 200 ? `${r.intent.slice(0, 200)}…` : r.intent,
+          // The list shows a headline, not the whole text; `GET /:id` has all of it. A scrubbed
+          // plan has none: its goal was removed, and the row is not read for text.
+          intent: r.scrubbedAt
+            ? ''
+            : r.intent.length > 200
+              ? `${r.intent.slice(0, 200)}…`
+              : r.intent,
           mode: r.mode,
+          scrubbed: Boolean(r.scrubbedAt),
           status: r.status,
           teamId: r.teamId,
           totalUsd: asRecord(r.costEstimate).totalUsd ?? null,

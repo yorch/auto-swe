@@ -28,6 +28,7 @@ import {
   parseCost,
   parsePins,
   type RunPlanView,
+  SCRUBBED_PLAN_NOTICE,
 } from '@/lib/runPlan';
 
 const MARKER_TONE: Record<NodeMarker, BadgeTone> = {
@@ -196,7 +197,41 @@ export function RunPlanPreview({
       label="plan"
       onRetry={() => void plan.refetch()}
     >
-      {data && (
+      {data?.scrubbed && (
+        <Card className="space-y-5" data-testid="plan-scrubbed">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-ink-600 pb-4">
+            <h2 className="text-lg font-semibold tracking-tight text-paper-50">Plan</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone={data.mode === 'delivering' ? 'accent' : 'accent2'} variant="outline">
+                {data.mode === 'delivering' ? 'Delivers a pull request' : 'Output only'}
+              </Badge>
+              <Badge tone={STATUS_TONE[data.status] ?? 'neutral'} variant="outline">
+                {data.status}
+              </Badge>
+            </div>
+          </div>
+          <Alert variant="info">{SCRUBBED_PLAN_NOTICE}.</Alert>
+          <ReviewList
+            items={[
+              { label: 'Repository', value: repoName },
+              ...(data.agentKey ? [{ label: 'Library agent', value: data.agentKey }] : []),
+              { label: 'Delivery', value: deliveryEffect(data.mode) },
+              { label: 'Model', value: data.model ?? 'Unknown' },
+              { label: 'Estimated cost', value: formatUsd(parseCost(data.cost).totalUsd) },
+              {
+                label: 'Made',
+                value: <RelativeTime value={data.createdAt} />,
+              },
+            ]}
+          />
+          <div className="flex flex-wrap justify-end gap-3 border-t border-ink-600 pt-4">
+            <Button onClick={onBack} variant="ghost">
+              Back
+            </Button>
+          </div>
+        </Card>
+      )}
+      {data && !data.scrubbed && (
         <Card className="space-y-5" data-testid="plan-preview">
           <div className="flex flex-wrap items-start justify-between gap-3 border-b border-ink-600 pb-4">
             <div className="min-w-0">
