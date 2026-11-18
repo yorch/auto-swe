@@ -62,8 +62,13 @@ const PLAN = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' }, status });
 
-function gateway(approve?: () => Response, plan: unknown = PLAN) {
-  const calls: { path: string; method: string; headers: Record<string, string> }[] = [];
+function gateway(approve?: () => Response, plan: unknown = PLAN, save?: () => Response) {
+  const calls: {
+    path: string;
+    method: string;
+    headers: Record<string, string>;
+    body?: string;
+  }[] = [];
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -73,7 +78,12 @@ function gateway(approve?: () => Response, plan: unknown = PLAN) {
           .replace(/^https?:\/\/[^/]+/, '')
           .split('?')[0] ?? '';
       const method = (init?.method ?? 'GET').toUpperCase();
-      calls.push({ headers: (init?.headers ?? {}) as Record<string, string>, method, path });
+      calls.push({
+        body: typeof init?.body === 'string' ? init.body : undefined,
+        headers: (init?.headers ?? {}) as Record<string, string>,
+        method,
+        path,
+      });
       if (path === '/api/v1/run-plans/plan-1' && method === 'GET') {
         return json({ data: plan });
       }
@@ -82,6 +92,9 @@ function gateway(approve?: () => Response, plan: unknown = PLAN) {
           data: [{ id: 'repo-1', organizationName: 'acme', repoName: 'api', type: 'git_repo' }],
           meta: { limit: 500, offset: 0, total: 1 },
         });
+      }
+      if (path === '/api/v1/run-plans/plan-1/save-as-template' && save) {
+        return save();
       }
       if (path === '/api/v1/run-plans/plan-1/approve' && approve) {
         return approve();
@@ -217,5 +230,90 @@ describe('RunPlanPreview', () => {
     expect(screen.queryByRole('button', { name: /regenerate/i })).toBeNull();
     expect(screen.getByRole('button', { name: 'Back' })).toBeTruthy();
     expect(calls.some((c) => c.method === 'POST')).toBe(false);
+  });
+  describe('save as a workflow template', () => {
+    const SPEC_PLAN = { ...PLAN, spec: { name: 'Fix the bug', nodes: {} } };
+    const openDialog = async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /save as workflow template/i }));
+      return screen.findByRole('dialog', { hidden: true, name: /save as a workflow template/i });
+    };
+    const confirmSave = (dialog: HTMLElement) =>
+      fireEvent.click(within(dialog).getByRole('button', { name: /save draft/i }));
+
+    it('prefills the name from the spec, saves, and links to the new draft', async () => {
+      const calls = gateway(undefined, SPEC_PLAN, () =>
+        json(
+          { data: { name: 'Fix the bug', status: 'DRAFT', templateId: 'tpl-9', version: 1 } },
+          201
+        )
+      );
+      mount();
+      const dialog = await openDialog();
+      expect((within(dialog).getByLabelText('Template name') as HTMLInputElement).value).toBe(
+        'Fix the bug'
+      );
+      expect(calls.some((c) => c.path.endsWith('/save-as-template'))).toBe(false);
+      fireEvent.change(within(dialog).getByLabelText('Template name'), {
+        target: { value: 'Bug fixer' },
+      });
+      confirmSave(dialog);
+      const saved = await screen.findByTestId('saved-template');
+      expect(saved.querySelector('a')?.getAttribute('href')).toBe('/library/tpl-9');
+      expect(saved.textContent).toMatch(/another person must review/i);
+      const call = calls.find((c) => c.path.endsWith('/save-as-template'));
+      expect(call?.method).toBe('POST');
+      expect(JSON.parse(call?.body ?? '{}')).toEqual({ name: 'Bug fixer' });
+    });
+
+    it.each([
+      [403, 'FORBIDDEN', /only team leads can save templates/i],
+      [409, 'NAME_CONFLICT', /choose another name/i],
+      [409, 'PLAN_SCRUBBED', /removed after it launched/i],
+      [409, 'PLAN_NOT_SAVEABLE', /rejected or expired/i],
+    ])('explains a %s %s refusal in the dialog and keeps it open', async (status, code, text) => {
+      gateway(undefined, SPEC_PLAN, () =>
+        json({ error: { code, message: 'raw gateway text' } }, status)
+      );
+      mount();
+      const dialog = await openDialog();
+      confirmSave(dialog);
+      const failure = await within(dialog).findByTestId('save-failure');
+      expect(failure.textContent).toMatch(text);
+      expect(failure.textContent).not.toMatch(/raw gateway text/);
+      expect(screen.queryByTestId('saved-template')).toBeNull();
+    });
+
+    it.each(['REJECTED', 'EXPIRED'])('offers no save for a %s plan', async (status) => {
+      gateway(undefined, { ...SPEC_PLAN, status });
+      mount();
+      await screen.findByTestId('plan-preview');
+      expect(screen.queryByRole('button', { name: /save as workflow template/i })).toBeNull();
+    });
+
+    it('offers no save for a scrubbed plan', async () => {
+      gateway(undefined, {
+        ...SPEC_PLAN,
+        intent: '',
+        nodes: [],
+        scrubbed: true,
+        scrubbedAt: '2026-06-01T00:00:00Z',
+        spec: null,
+        specHash: null,
+        status: 'LAUNCHED',
+        summary: null,
+        warnings: [],
+      });
+      mount();
+      await screen.findByTestId('plan-scrubbed');
+      expect(screen.queryByRole('button', { name: /save as workflow template/i })).toBeNull();
+    });
+
+    it('offers a save for an approved or launched plan', async () => {
+      gateway(undefined, { ...SPEC_PLAN, status: 'LAUNCHED' });
+      mount();
+      expect(
+        await screen.findByRole('button', { name: /save as workflow template/i })
+      ).toBeTruthy();
+    });
   });
 });

@@ -8,6 +8,7 @@ import {
   deliveryEffect,
   describeJobFailure,
   describePlanError,
+  describeSaveError,
   expiryLabel,
   FEEDS_IMPLEMENTER_LABEL,
   formatUsd,
@@ -17,6 +18,7 @@ import {
   nodeReads,
   outlineGroups,
   parseCost,
+  planSaveable,
   pollDelayMs,
   RUN_PLAN_INTENT_MAX_CHARS,
   workflowLaunchHref,
@@ -114,6 +116,7 @@ describe('error code coverage', () => {
     'lib/runPlanService.ts',
     'lib/runPlanStart.ts',
     'lib/runPlanQuotas.ts',
+    'lib/runPlanTemplate.ts',
   ];
   const emitted = (): string[] => {
     const codes = new Set<string>();
@@ -226,5 +229,41 @@ describe('node action and feeding label', () => {
       action: 'runs agent planner on the goal',
       feedsImplementer: true,
     });
+  });
+});
+
+describe('saving a plan as a template', () => {
+  const live = new Date(Date.now() + 60_000).toISOString();
+  it('explains each refusal in fixed wording', () => {
+    expect(describeSaveError(new ApiError('x', 403, 'FORBIDDEN')).message).toBe(
+      'Only team leads can save templates.'
+    );
+    for (const [status, code] of [
+      [409, 'NAME_CONFLICT'],
+      [409, 'PLAN_SCRUBBED'],
+      [409, 'PLAN_NOT_SAVEABLE'],
+      [400, 'RESERVED_TEMPLATE_NAME'],
+      [400, 'TEMPLATE_NAME_INVALID'],
+      [400, 'INVALID_SPEC'],
+    ] as const) {
+      const view = describeSaveError(new ApiError('raw gateway text', status, code));
+      expect(view.message, code).not.toBe('raw gateway text');
+    }
+  });
+  it('is saveable only for a live plan with a body', () => {
+    const base: Parameters<typeof planSaveable>[0] = {
+      expiresAt: live,
+      scrubbed: false,
+      status: 'PENDING',
+    };
+    expect(planSaveable(base, Date.now())).toBe(true);
+    expect(planSaveable({ ...base, status: 'APPROVED' }, Date.now())).toBe(true);
+    expect(planSaveable({ ...base, status: 'LAUNCHED' }, Date.now())).toBe(true);
+    expect(planSaveable({ ...base, status: 'REJECTED' }, Date.now())).toBe(false);
+    expect(planSaveable({ ...base, status: 'EXPIRED' }, Date.now())).toBe(false);
+    expect(planSaveable({ ...base, scrubbed: true }, Date.now())).toBe(false);
+    expect(planSaveable(base, Date.now() + 3_600_000)).toBe(false);
+    // A launched plan never expires.
+    expect(planSaveable({ ...base, status: 'LAUNCHED' }, Date.now() + 3_600_000)).toBe(true);
   });
 });

@@ -22,10 +22,11 @@ const SUB_HELP = `auto-swe plan — describe a goal, review a generated workflow
   plan wait <jobId> [--timeout=SECONDS]
   plan show <planId> [--json]
   plan list [--status=PENDING|APPROVED|LAUNCHED|REJECTED|EXPIRED] [--limit=N] [--json]
-  plan approve <planId> [--budget-tier=STANDARD|LARGE|EPIC] [--yes]
+  plan approve <planId> [--budget-tier=STANDARD|LARGE|EPIC] [--idempotency-key=KEY] [--yes]
   plan reject <planId>
+  plan save <planId> [--name=NAME]
   plan run "<goal>" --repo=<org/name>|--repo-id=<uuid> [--agent=<key>] [--budget-tier=T]
-           [--timeout=SECONDS] --yes
+           [--timeout=SECONDS] [--idempotency-key=KEY] --yes
 
   route ranks the templates you may already launch for the goal. create starts a
   generation job (no model spend is recorded against a run until you approve); --wait
@@ -34,9 +35,18 @@ const SUB_HELP = `auto-swe plan — describe a goal, review a generated workflow
   terminal and refuses to continue non-interactively without --yes. run does create,
   wait, show and approve in one go and requires --yes; without it, it stops after
   printing the plan. The generated spec is only printed by show --json.
+  save stores the plan's spec as a DRAFT workflow template in the plan's team; it needs
+  team lead rights, and another person must review the draft before it can be promoted.
+  An --idempotency-key makes a retried approval (in approve, or the approval step of run)
+  find the run it already started instead of failing; without one, each call sends a
+  fresh key. run also uses the key for the generation job, so a retried run finds the
+  same plan.
 
   --agent=<key>   Build an output-only plan on this library agent
   --timeout=S     Give up waiting for generation after S seconds (default 600)
+  --name=NAME     Name the saved template (default: the plan's own name)
+
+  auto-swe run --describe "<goal>" --repo=<org/name> [--agent=<key>] --yes is the same as plan run.
 `;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -178,6 +188,9 @@ export async function runPlanCommand(
     }
     if (sub === 'reject') {
       return await cmdReject(rest, env);
+    }
+    if (sub === 'save') {
+      return await cmdSave(rest, env);
     }
     if (sub === 'run') {
       return await cmdRun(rest, env);
@@ -654,7 +667,8 @@ function explainDrift(err: unknown): never {
 async function approvePlan(
   env: CliEnv,
   id: string,
-  budgetTier: string | undefined
+  budgetTier: string | undefined,
+  idempotencyKey: string | undefined
 ): Promise<number> {
   let result: ApproveResult;
   try {
@@ -663,12 +677,16 @@ async function approvePlan(
       'POST',
       `/api/v1/run-plans/${id}/approve`,
       budgetTier ? { budgetTier } : {},
-      { 'Idempotency-Key': randomUUID() }
+      { 'Idempotency-Key': idempotencyKey ?? randomUUID() }
     );
   } catch (err) {
     explainDrift(err);
   }
-  process.stdout.write('Plan approved; the run is starting.\n');
+  process.stdout.write(
+    result.deduplicated
+      ? 'Plan already approved with this key; its run was started earlier.\n'
+      : 'Plan approved; the run is starting.\n'
+  );
   process.stdout.write(`  Work request: ${result.workRequestId}\n`);
   process.stdout.write(
     `Monitor it:\n  auto-swe runs list --work-request-id=${result.workRequestId}\n`
@@ -684,13 +702,20 @@ async function cmdApprove(
 ): Promise<number> {
   const { args, set } = takeBooleans(rawArgs, ['yes']);
   const { flags, positional } = parseFlags(args);
-  if (missingValue(flags, 'budget-tier')) {
-    process.stderr.write('--budget-tier requires a value\n');
+  const bare = missingValue(flags, 'budget-tier', 'idempotency-key');
+  if (bare) {
+    process.stderr.write(`--${bare} requires a value\n`);
+    return 1;
+  }
+  if (flags['idempotency-key'] === '') {
+    process.stderr.write('--idempotency-key requires a non-empty value\n');
     return 1;
   }
   const id = positional[0];
   if (!id || !UUID_RE.test(id)) {
-    process.stderr.write('Usage: plan approve <planId> [--budget-tier=T] [--yes]\n');
+    process.stderr.write(
+      'Usage: plan approve <planId> [--budget-tier=T] [--idempotency-key=KEY] [--yes]\n'
+    );
     return 1;
   }
   const tier = checkBudgetTier(flags['budget-tier']);
@@ -714,7 +739,7 @@ async function cmdApprove(
       return 1;
     }
   }
-  return approvePlan(env, id, tier);
+  return approvePlan(env, id, tier, flags['idempotency-key']);
 }
 
 async function cmdReject(rawArgs: string[], env: CliEnv): Promise<number> {
@@ -733,11 +758,15 @@ async function cmdRun(rawArgs: string[], env: CliEnv): Promise<number> {
   const parsed = await parseGoal(
     rawArgs,
     env,
-    'plan run "<goal>" --repo=<org/name> [--agent=<key>] --yes',
+    'plan run "<goal>" --repo=<org/name> [--agent=<key>] [--idempotency-key=KEY] --yes',
     ['yes']
   );
   if ('exit' in parsed) {
     return parsed.exit;
+  }
+  if (parsed.flags['idempotency-key'] === '') {
+    process.stderr.write('--idempotency-key requires a non-empty value\n');
+    return 1;
   }
   const timeout = parseTimeout(parsed.flags);
   if (timeout === 'invalid') {
@@ -765,5 +794,95 @@ async function cmdRun(rawArgs: string[], env: CliEnv): Promise<number> {
     );
     return 0;
   }
-  return approvePlan(env, done.planId, tier);
+  return approvePlan(env, done.planId, tier, parsed.flags['idempotency-key']);
+}
+
+interface SaveResult {
+  templateId: string;
+  name: string;
+  version: number;
+  status: string;
+}
+
+async function cmdSave(rawArgs: string[], env: CliEnv): Promise<number> {
+  const { flags, positional } = parseFlags(rawArgs);
+  if (missingValue(flags, 'name')) {
+    process.stderr.write('--name requires a value\n');
+    return 1;
+  }
+  const id = positional[0];
+  if (!id || !UUID_RE.test(id)) {
+    process.stderr.write('Usage: plan save <planId> [--name=NAME]\n');
+    return 1;
+  }
+  const name = flags.name?.trim();
+  if (flags.name !== undefined && (!name || name.length > 120)) {
+    process.stderr.write('--name must be 1 to 120 characters\n');
+    return 1;
+  }
+  const saved = await apiRequest<SaveResult>(
+    env,
+    'POST',
+    `/api/v1/run-plans/${id}/save-as-template`,
+    name ? { name } : {}
+  );
+  process.stdout.write(`Saved plan ${id} as a workflow template.\n`);
+  process.stdout.write(`  Template: ${clean(saved.templateId)}\n`);
+  process.stdout.write(`  Name:     ${clean(saved.name)}\n`);
+  process.stdout.write(`  Status:   ${clean(saved.status)} (version ${saved.version})\n`);
+  process.stdout.write(
+    'It is a DRAFT: it runs nothing until another person reviews it, so ask a teammate to\n' +
+      'review and promote it from the workflow library.\n'
+  );
+  return 0;
+}
+
+/**
+ * `auto-swe run --describe "<goal>" --repo=<org/name> ...`: the goal-first spelling of
+ * `plan run`. The goal moves from the flag to the position `plan run` reads it from; every other
+ * flag is passed on as it is.
+ */
+export function describeAlias(args: string[]): string[] | { error: string } {
+  const rest: string[] = [];
+  let goal: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string;
+    if (a.startsWith('--describe=')) {
+      goal = a.slice('--describe='.length);
+    } else if (a === '--describe') {
+      const next = args[i + 1];
+      if (next === undefined || next.startsWith('--')) {
+        return { error: '--describe requires a value' };
+      }
+      goal = next;
+      i++;
+    } else {
+      rest.push(a);
+    }
+  }
+  if (!goal?.trim()) {
+    return { error: '--describe requires a value' };
+  }
+  if (rest.some((a) => a === '--ticket' || a.startsWith('--ticket='))) {
+    return { error: '--describe starts a plan and cannot be combined with --ticket' };
+  }
+  return ['run', goal, ...rest];
+}
+
+/** True when `auto-swe run` was given `--describe`, which selects the plan path. */
+export function hasDescribeFlag(args: string[]): boolean {
+  return args.some((a) => a === '--describe' || a.startsWith('--describe='));
+}
+
+export async function runDescribeAlias(
+  args: string[],
+  env: CliEnv,
+  deps: PlanDeps = {}
+): Promise<number> {
+  const mapped = describeAlias(args);
+  if (!Array.isArray(mapped)) {
+    process.stderr.write(`${mapped.error}\n`);
+    return 1;
+  }
+  return runPlanCommand(mapped, env, deps);
 }

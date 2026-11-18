@@ -196,7 +196,7 @@ async function findTemplateAuthorMembership(
  * team they lead and may not author global templates. Returns the
  * `allowShell` hint (admin or team-admin) on success, or a reply to send.
  */
-async function resolveTemplateAuthScope(
+export async function resolveTemplateAuthScope(
   fastify: FastifyInstance,
   user: JwtPayload,
   teamId: string | null
@@ -371,7 +371,7 @@ type TemplateWithIncludes = Prisma.WorkflowTemplateGetPayload<{ include: typeof 
  * (status DRAFT) so the persist/audit shape lives in one place.
  */
 /// Auditable subset of a template row: what it is and what it serves, never its spec text.
-function templateAuditFields(row: {
+export function templateAuditFields(row: {
   activeVersion: number | null;
   description: string;
   experimentSplit: number | null;
@@ -397,7 +397,7 @@ function templateAuditFields(row: {
   };
 }
 
-async function createTemplateWithInitialVersion(
+export async function createTemplateWithInitialVersion(
   prisma: FastifyInstance['prisma'],
   args: {
     name: string;

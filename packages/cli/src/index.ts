@@ -8,7 +8,7 @@ import { runConnectionsCommand } from './commands/connections.js';
 import { runEvalsCommand } from './commands/evals.js';
 import { runMcpCommand } from './commands/mcp.js';
 import { runOrchestrateCommand } from './commands/orchestrate.js';
-import { runPlanCommand } from './commands/plan.js';
+import { hasDescribeFlag, runDescribeAlias, runPlanCommand } from './commands/plan.js';
 import { runPrPolicyCommand } from './commands/prPolicy.js';
 import { runReposCommand, runReposSetupInit } from './commands/repos.js';
 import { runRunsCommand } from './commands/runs.js';
@@ -55,13 +55,18 @@ COMMANDS
   plan wait <jobId>                    Poll a generation job to its plan id
   plan show <planId> [--json]          Print the plan outline (the spec only with --json)
   plan list [--status=S] [--limit=N]   List your plans
-  plan approve <planId> [--budget-tier=T] [--yes]
+  plan approve <planId> [--budget-tier=T] [--idempotency-key=KEY] [--yes]
                                        Approve the stored plan and start its run; asks first on
-                                       a terminal, refuses non-interactively without --yes
+                                       a terminal, refuses non-interactively without --yes; the
+                                       key makes a retried approval find its run
   plan reject <planId>                 Reject a pending plan
-  plan run "<goal>" --repo=<org/name> [--agent=<key>] --yes
+  plan save <planId> [--name=NAME]     Save the plan as a DRAFT workflow template in its team
+                                       (team lead); another person must review the draft
+  plan run "<goal>" --repo=<org/name> [--agent=<key>] [--idempotency-key=KEY] --yes
                                        Create, wait, show and approve in one step (without --yes
                                        it stops after printing the plan)
+  run --describe "<goal>" --repo=<org/name> [--agent=<key>] --yes
+                                       The same as plan run
 
   workflows list                       List workflow templates visible to you
   workflows show <name> [--version=N]  Print one template's active (or given) spec (JSON)
@@ -185,6 +190,10 @@ async function main(argv: string[]): Promise<number> {
     return 1;
   }
   if (cmd === 'run') {
+    // `run --describe "<goal>"` is `plan run`; without it `run` submits a ticket as before.
+    if (hasDescribeFlag(rest)) {
+      return await runDescribeAlias(rest, env);
+    }
     return await runWorkRequestsCommand(rest, env);
   }
   if (cmd === 'agent') {

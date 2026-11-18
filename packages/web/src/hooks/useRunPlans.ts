@@ -9,6 +9,7 @@ import {
   type RouteResult,
   type RunPlanListItem,
   type RunPlanView,
+  type SavedTemplate,
 } from '@/lib/runPlan';
 
 const PLANS_KEY = ['run-plans'] as const;
@@ -119,5 +120,18 @@ export function useRejectPlan() {
         method: 'POST',
       }),
     onSettled: () => qc.invalidateQueries({ queryKey: PLANS_KEY }),
+  });
+}
+
+/** Save a plan as a DRAFT workflow template in the plan's team. */
+export function useSaveAsTemplate() {
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name?: string }) =>
+      api
+        .fetch<{ data: SavedTemplate }>(
+          `/api/v1/run-plans/${encodeURIComponent(id)}/save-as-template`,
+          { body: JSON.stringify(name ? { name } : {}), method: 'POST' }
+        )
+        .then((r) => r.data),
   });
 }

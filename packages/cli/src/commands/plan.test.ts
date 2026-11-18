@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runPlanCommand } from './plan.js';
+import { describeAlias, hasDescribeFlag, runDescribeAlias, runPlanCommand } from './plan.js';
 
 vi.mock('../lib/time.js', () => ({ sleep: vi.fn(async () => undefined) }));
 
@@ -373,6 +373,170 @@ describe('auto-swe plan', () => {
       expect(calls.some((c) => c.url.includes('/approve'))).toBe(false);
       expect(stdout()).toContain(`plan approve ${PLAN_ID}`);
     });
+  });
+
+  it('approve --idempotency-key sends that key instead of a fresh one', async () => {
+    responder = () => ({ body: { data: { planId: PLAN_ID, workRequestId: 'wr-1' } }, status: 201 });
+    expect(
+      await runPlanCommand(['approve', PLAN_ID, '--yes', '--idempotency-key=my-key-1'], ENV)
+    ).toBe(0);
+    expect(calls[0]?.headers['Idempotency-Key']).toBe('my-key-1');
+  });
+
+  it('approve says so when the key finds an earlier approval', async () => {
+    responder = () => ({
+      body: { data: { deduplicated: true, planId: PLAN_ID, workRequestId: 'wr-1' } },
+    });
+    expect(await runPlanCommand(['approve', PLAN_ID, '--yes', '--idempotency-key=k'], ENV)).toBe(0);
+    expect(stdout()).toContain('already approved');
+    expect(stdout()).toContain('wr-1');
+  });
+
+  it('approve refuses an empty or valueless --idempotency-key', async () => {
+    expect(await runPlanCommand(['approve', PLAN_ID, '--yes', '--idempotency-key='], ENV)).toBe(1);
+    expect(await runPlanCommand(['approve', PLAN_ID, '--yes', '--idempotency-key'], ENV)).toBe(1);
+    expect(calls).toHaveLength(0);
+  });
+
+  describe('save', () => {
+    it('saves the plan as a draft template and says it needs another reviewer', async () => {
+      responder = () => ({
+        body: { data: { name: 'My tpl', status: 'DRAFT', templateId: 'tpl-1', version: 1 } },
+        status: 201,
+      });
+      expect(await runPlanCommand(['save', PLAN_ID, '--name=My tpl'], ENV)).toBe(0);
+      expect(calls[0]?.method).toBe('POST');
+      expect(calls[0]?.url).toContain(`/run-plans/${PLAN_ID}/save-as-template`);
+      expect(calls[0]?.body).toEqual({ name: 'My tpl' });
+      expect(stdout()).toContain('tpl-1');
+      expect(stdout()).toContain('My tpl');
+      expect(stdout()).toMatch(/DRAFT/);
+      expect(stdout()).toMatch(/another person/);
+    });
+
+    it('sends no name when none is given', async () => {
+      responder = () => ({
+        body: { data: { name: 'x', status: 'DRAFT', templateId: 't', version: 1 } },
+        status: 201,
+      });
+      expect(await runPlanCommand(['save', PLAN_ID], ENV)).toBe(0);
+      expect(calls[0]?.body).toEqual({});
+    });
+
+    it('exits 2 with the gateway code on a refusal', async () => {
+      responder = () => ({
+        body: { error: { code: 'NAME_CONFLICT', message: 'A template named "x" already exists' } },
+        status: 409,
+      });
+      expect(await runPlanCommand(['save', PLAN_ID, '--name=x'], ENV)).toBe(2);
+      expect(stderr()).toContain('NAME_CONFLICT');
+    });
+
+    it('exits 2 for a caller below team lead', async () => {
+      responder = () => ({
+        body: { error: { code: 'FORBIDDEN', message: 'Requires LEAD membership' } },
+        status: 403,
+      });
+      expect(await runPlanCommand(['save', PLAN_ID], ENV)).toBe(2);
+      expect(stderr()).toContain('FORBIDDEN');
+    });
+
+    it('checks its arguments before calling the gateway', async () => {
+      expect(await runPlanCommand(['save'], ENV)).toBe(1);
+      expect(await runPlanCommand(['save', 'not-a-uuid'], ENV)).toBe(1);
+      expect(await runPlanCommand(['save', PLAN_ID, '--name'], ENV)).toBe(1);
+      expect(await runPlanCommand(['save', PLAN_ID, `--name=${'x'.repeat(121)}`], ENV)).toBe(1);
+      expect(calls).toHaveLength(0);
+    });
+  });
+
+  describe('run --describe alias', () => {
+    const flow = () => {
+      responder = (c) => {
+        if (c.method === 'POST' && c.url.endsWith('/run-plans')) {
+          return { body: { data: { jobId: JOB } }, status: 202 };
+        }
+        if (c.url.includes('/jobs/')) {
+          return { body: { data: { planId: PLAN_ID, status: 'done' } } };
+        }
+        if (c.method === 'GET') {
+          return { body: { data: PLAN } };
+        }
+        return { body: { data: { planId: PLAN_ID, workRequestId: 'wr-1' } }, status: 201 };
+      };
+    };
+
+    it('maps the flag to plan run', () => {
+      expect(describeAlias(['--describe', 'do it', '--repo=a/b', '--yes'])).toEqual([
+        'run',
+        'do it',
+        '--repo=a/b',
+        '--yes',
+      ]);
+      expect(describeAlias(['--repo=a/b', '--describe=do it'])).toEqual([
+        'run',
+        'do it',
+        '--repo=a/b',
+      ]);
+      expect(describeAlias(['--describe'])).toEqual({ error: '--describe requires a value' });
+      expect(describeAlias(['--describe', '--yes'])).toEqual({
+        error: '--describe requires a value',
+      });
+      expect(describeAlias(['--describe=g', '--ticket=X-1'])).toHaveProperty('error');
+      expect(hasDescribeFlag(['--describe', 'x'])).toBe(true);
+      expect(hasDescribeFlag(['--describe=x'])).toBe(true);
+      expect(hasDescribeFlag(['--description=x', '--ticket=T'])).toBe(false);
+    });
+
+    it('runs the same path as plan run, with the agent and the approval key', async () => {
+      flow();
+      expect(
+        await runDescribeAlias(
+          [
+            '--describe',
+            'Add health',
+            `--repo=${REPO_ID}`,
+            '--agent=docsMaintainer',
+            '--idempotency-key=k1',
+            '--yes',
+          ],
+          ENV
+        )
+      ).toBe(0);
+      const create = calls.find((c) => c.method === 'POST' && c.url.endsWith('/run-plans'));
+      expect(create?.body).toEqual({
+        agent: 'docsMaintainer',
+        intent: 'Add health',
+        repoId: REPO_ID,
+      });
+      expect(create?.headers['Idempotency-Key']).toBe('k1');
+      const approve = calls.at(-1);
+      expect(approve?.url).toContain('/approve');
+      expect(approve?.headers['Idempotency-Key']).toBe('k1');
+    });
+
+    it('without --yes stops after the plan', async () => {
+      flow();
+      expect(await runDescribeAlias(['--describe', 'g', `--repo=${REPO_ID}`], ENV)).toBe(0);
+      expect(calls.some((c) => c.url.includes('/approve'))).toBe(false);
+    });
+  });
+
+  it('run uses a fresh approval key without --idempotency-key', async () => {
+    responder = (c) => {
+      if (c.method === 'POST' && c.url.endsWith('/run-plans')) {
+        return { body: { data: { jobId: JOB } }, status: 202 };
+      }
+      if (c.url.includes('/jobs/')) {
+        return { body: { data: { planId: PLAN_ID, status: 'done' } } };
+      }
+      if (c.method === 'GET') {
+        return { body: { data: PLAN } };
+      }
+      return { body: { data: { planId: PLAN_ID, workRequestId: 'wr-1' } }, status: 201 };
+    };
+    expect(await runPlanCommand(['run', 'g', `--repo=${REPO_ID}`, '--yes'], ENV)).toBe(0);
+    expect(calls.at(-1)?.headers['Idempotency-Key']).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it('requires a goal and a repository', async () => {
