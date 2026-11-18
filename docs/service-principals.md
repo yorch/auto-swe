@@ -43,6 +43,30 @@ the caller's choosing (the implementer has a shell), so a repository grant with 
 do anything an agent can on that repository. `runs:launch` starts only the templates on the
 principal's template list. Grant `runs:agent` only to a caller trusted with that.
 
+The same scope launches and controls an [orchestration](./orchestrations.md#service-principals):
+`POST /api/v1/orchestrations` (repository-bound only), and, on the orchestrations whose `serviceId` is the
+principal's own and no others, the list, detail and transcript reads, `POST …/:id/messages`,
+`POST …/:id/children/:childId/messages`, `POST …/:id/children/:childId/cancel`, `POST …/:id/cancel` and
+`POST …/:id/end`. A principal's orchestration can run a writer child without a GitHub push-permission
+check, because a principal holds no GitHub identity: the repository must be on the principal's allowlist
+and owned by, or shared with, its team, and each child spawn takes the launch guard of a direct agent run.
+Attaching a repository, declining an attach request and approving a tool call are a person's acts and stay
+closed to a service token.
+
+**An orchestration's writers act with no person behind them.** They run with no `launchedById`, on the
+platform credential, and the principal's repository allowlist is the governance: a repository on it lets
+the token holder have an agent change files there. `deliveryDefault` is a ceiling only for MCP launches;
+a principal launches through REST, so it does not limit it, and a launch that names no `allowlist` gets
+the default list, which includes the `implementer`, a writer-capable agent. Pass an explicit read-only
+allowlist when the principal must not write. A message that wakes a `WAITING` orchestration or revives a
+`COMPLETED` one takes the same launch guard as a launch (enabled, repository still on the allowlist and
+its team's, in-flight and daily limits) and is refused with the launch's refusal otherwise.
+
+**Stopping a principal's orchestration.** Disabling the principal stops new spawns and ends the
+orchestration's authority to act, but children that are already running keep running. An ADMIN stops one
+at once by cancelling or ending the orchestration, which an ADMIN may do only for an orchestration no
+person launched; the audit entry names the ADMIN as actor and the principal as `targetServiceId`.
+
 Every other route answers a service token with `401 SERVICE_TOKEN_NOT_ALLOWED`, including the MCP
 endpoint, which accepts only its own OAuth tokens. A route that has opted in but whose scope the token
 lacks answers `403 INSUFFICIENT_SCOPE`.
