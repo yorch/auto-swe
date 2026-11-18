@@ -154,7 +154,7 @@ export async function OrchestrationWorkflow(input: OrchestrationWorkflowInput): 
     // Runs to completion even when the workflow's own scope was cancelled.
     await CancellationScope.nonCancellable(async () => {
       try {
-        await cancelOrchestrationChildren({ orchestrationId, token: input.token });
+        await cancelOrchestrationChildren({ orchestrationId });
       } catch (err) {
         log.warn('OrchestrationWorkflow: cancelling children failed', {
           err: err instanceof Error ? err.message : String(err),
@@ -321,7 +321,6 @@ export async function OrchestrationWorkflow(input: OrchestrationWorkflowInput): 
           const applied = await applyOrchestrationIntents({
             intents,
             orchestrationId,
-            token: input.token,
             turnKey,
           });
           state.runningChildren = applied.runningChildren;
@@ -344,8 +343,10 @@ export async function OrchestrationWorkflow(input: OrchestrationWorkflowInput): 
         state.turns - executionStartTurns >= MAX_TURNS_PER_EXECUTION ||
         workflowInfo().continueAsNewSuggested
       ) {
+        // `token` is dropped here: a workflow started with one never carries it forward.
+        const { token: _ignoredToken, ...rest } = input;
         await continueAsNew<typeof OrchestrationWorkflow>({
-          ...input,
+          ...rest,
           carried: { ...state, cancelRequested },
           pending: queue,
         });

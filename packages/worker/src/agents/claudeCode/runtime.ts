@@ -16,6 +16,7 @@ import {
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ApplicationFailure } from '@temporalio/activity';
 import type { Workspace } from '../../activities/workspace.js';
+import { createSteeringDrain } from '../../lib/runSteering.js';
 import {
   currentTranscriptRecorder,
   type HarnessSessionFileRecord,
@@ -468,6 +469,11 @@ export function claudeCodeAdapter(
   };
   const profilePlugins = profiles.flatMap((profile) => profilePluginDirs(profile));
   let profileAnnounced = false;
+  // Steering: only a run an orchestration started carries an id, and any other run reads nothing.
+  const steer =
+    options.steeringRunId && options.tracer
+      ? createSteeringDrain(options.steeringRunId, options.tracer)
+      : undefined;
   const profileMaterialization =
     profiles.length > 0 ? profileMaterializer(workspace, profiles) : undefined;
   // The harness reports usage as running totals per model, and a resumed session
@@ -651,6 +657,26 @@ export function claudeCodeAdapter(
       return {};
     };
 
+    // Steering is drained once per tool batch, before the model's next request: PostToolUse can
+    // fire concurrently for parallel calls, PostToolBatch fires exactly once. The text is DATA the
+    // model sees, framed by the platform; it never reaches the policy hook. A hook that fires
+    // inside a sub-agent (`agent_id` set) drains nothing: the messages are for the main agent, and
+    // its additionalContext would land in the sub-agent's context and mark them delivered.
+    const postToolBatch: HookCallback = async (input) => {
+      if ((input as { agent_id?: string }).agent_id) {
+        return {};
+      }
+      const steering = paused ? null : await steer?.();
+      return steering
+        ? {
+            hookSpecificOutput: {
+              additionalContext: steering,
+              hookEventName: 'PostToolBatch' as const,
+            },
+          }
+        : {};
+    };
+
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
 
     // The prompt rides the command line; past the per-argument cap it is staged
@@ -732,6 +758,7 @@ export function claudeCodeAdapter(
         }),
         cwd: WORKSPACE_DIR,
         hooks: {
+          PostToolBatch: [{ hooks: [postToolBatch] }],
           PostToolUse: [{ hooks: [postToolUse] }],
           PostToolUseFailure: [{ hooks: [postToolUseFailure] }],
           PreToolUse: [{ hooks: [preToolUse], timeout: PRE_TOOL_USE_TIMEOUT_S }],

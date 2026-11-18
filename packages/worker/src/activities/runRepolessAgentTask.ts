@@ -1,6 +1,7 @@
 import { AGENT_RUN_MAX_TEXT_CHARS } from '@auto-swe/shared/lib/agentRun';
 import { ApplicationFailure } from '@temporalio/activity';
 import { grantsBrowserTool } from '../agents/agentRunTools.js';
+import { BrowserToolset, createMastraBrowserTools } from '../agents/browserTools.js';
 import { buildKnowledgeTools } from '../agents/knowledgeTools.js';
 import { loadMcpTools } from '../agents/mcpTools.js';
 import { persistActivityTrace, startTraceFlushing } from '../lib/activityContext.js';
@@ -14,15 +15,25 @@ import type { ModelBackedAgentKey, ResolveCtx } from '../lib/config/types.js';
 import { throwIfActivityCancelled } from '../lib/execUtils.js';
 import { withMcpApproval } from '../lib/mcpApproval.js';
 import { createSteeringPrepareStep } from '../lib/runSteering.js';
+import {
+  createScratchBrowserWorkspace,
+  type ScratchBrowserWorkspace,
+} from '../lib/scratchBrowserWorkspace.js';
 import { assertModelPricedForUsdCap } from '../lib/usdCapGuard.js';
 import { runAgent } from './runAgent.js';
 import type { RunAgentTaskResult } from './runAgentTask.js';
 
 /**
  * The repo-less agent run: a READER child of a repo-less orchestration. It has no repository, no
- * container, no clone, no push policy, no gate and no delivery — its tools are exactly what the
- * agent's own definition grants of MCP, knowledge search and (not available here) the browser.
+ * workspace, no clone, no push policy, no gate and no delivery — its tools are exactly what the
+ * agent's own definition grants of MCP, knowledge search and the browser.
  * No workspace tool is ever bound, whatever `toolKeys` says.
+ *
+ * The one container a repo-less run may have is a throwaway one for the browser, made only when
+ * the agent grants `browser` and only when restricted egress can be enforced
+ * (`lib/scratchBrowserWorkspace.ts`); it holds no repository and no credential, binds no workspace
+ * tool, and is removed in the `finally` below. Where it cannot be made the child runs without a
+ * browser and records why.
  *
  * The caller (`runAgentTask`) has already proved this is the Agent Run template, that the ledger
  * row names no repository, that the run is a confirmed orchestration child that delivers nothing,
@@ -35,6 +46,23 @@ const REPOLESS_PREAMBLE = [
   'You have no repository and no workspace: there are no files to read or write.',
   'Use only the tools you were given. Answer with your findings as your final message; it is returned to the orchestrator as your one result.',
 ].join('\n');
+
+const BROWSER_PREAMBLE =
+  'You have a browser. Its network access is restricted to an allowlist of hosts; a page outside it will not load.';
+
+/** Never throws: any failure is a reason the child runs without a browser. */
+async function createBrowserScratch(teamId: string | null) {
+  try {
+    return await createScratchBrowserWorkspace({ teamId });
+  } catch (error) {
+    return {
+      ok: false as const,
+      reason: `the scratch container could not be started: ${redactString(
+        error instanceof Error ? error.message : String(error)
+      ).slice(0, 300)}`,
+    };
+  }
+}
 
 export interface RepolessAgentInput {
   /** The launch ref (`key` or `key@version`), echoed in the result. */
@@ -80,18 +108,45 @@ export async function runRepolessAgent(input: RepolessAgentInput): Promise<RunAg
 
   const tracer = new AgentTracer();
   const closeFns: Array<() => Promise<void>> = [];
+  let browserToolset: BrowserToolset | undefined;
+  let scratch: ScratchBrowserWorkspace | undefined;
   const stopTraceFlushing = startTraceFlushing(tracer, resolved.key);
   try {
     tracer.addActivityEvent({
       name: 'agent.runtime',
       outputJson: { agentKey: key, runtime: loop.runtime, source: loop.source, workspace: false },
     });
+    let browserTools: ReturnType<typeof createMastraBrowserTools> | undefined;
     if (grantsBrowserTool(resolved.toolKeys)) {
-      // The browser runs inside a workspace container; there is none here.
-      tracer.addActivityEvent({
-        name: 'agent.browser_unavailable',
-        outputJson: { agentKey: key, reason: 'a run with no repository has no workspace' },
-      });
+      // The browser runs in a container. A repo-less run has no workspace, so it gets a throwaway
+      // one that holds only a browser, behind restricted egress; refused (and the child carries on
+      // without a browser) wherever that cannot be enforced. Created before the loop starts so a
+      // missing browser image or proxy is known up front, and the finally below removes it.
+      const created = await createBrowserScratch(settingsCtx.teamId ?? null);
+      if (created.ok) {
+        scratch = created.workspace;
+        browserToolset = new BrowserToolset({
+          allowedHosts: created.allowedHosts,
+          containerId: created.workspace.containerId,
+          repoId: null,
+          tracer,
+          workspace: created.workspace,
+        });
+        browserTools = createMastraBrowserTools(browserToolset);
+        tracer.addActivityEvent({
+          name: 'agent.browser_egress',
+          outputJson: {
+            agentKey: key,
+            allowedHostCount: created.allowedHostCount,
+            egressPolicy: 'restricted',
+          },
+        });
+      } else {
+        tracer.addActivityEvent({
+          name: 'agent.browser_unavailable',
+          outputJson: { agentKey: key, reason: created.reason },
+        });
+      }
     }
 
     const grantsSearch = resolved.toolKeys?.includes('searchKnowledge') === true;
@@ -109,7 +164,13 @@ export async function runRepolessAgent(input: RepolessAgentInput): Promise<RunAg
       },
       agentCtx
     );
-    spec.systemPrompt = `${spec.systemPrompt}\n\n${REPOLESS_PREAMBLE}`.trim();
+    // `toolKeys` names the grant (`browser`), not the tool ids, so the intersection above dropped
+    // them; the grant was checked by `grantsBrowserTool` and the toolset exists only if it held.
+    if (browserTools) {
+      spec.tools = { ...browserTools, ...spec.tools } as AgentTools;
+    }
+    spec.systemPrompt =
+      `${spec.systemPrompt}\n\n${REPOLESS_PREAMBLE}${browserTools ? `\n${BROWSER_PREAMBLE}` : ''}`.trim();
 
     // MCP per the agent's own configuration, checked against the team the run is billed to (the
     // repository path checks the repository's team).
@@ -136,7 +197,7 @@ export async function runRepolessAgent(input: RepolessAgentInput): Promise<RunAg
       maxSteps: effective.maxSteps,
       perStepAccounting: true,
       prepareStep: createSteeringPrepareStep(input.runId, tracer),
-      selfRecordingTools: boundToolKeys(spec.tools, mcpTools, knowledgeTools),
+      selfRecordingTools: boundToolKeys(spec.tools, mcpTools, knowledgeTools, browserTools),
       spanName: 'llm.agent_run',
       tracer,
     });
@@ -159,6 +220,10 @@ export async function runRepolessAgent(input: RepolessAgentInput): Promise<RunAg
   } finally {
     stopTraceFlushing();
     await Promise.allSettled(closeFns.map((close) => close()));
+    // The toolset first: closing it reads the recording and trace out of the container. Then the
+    // container goes, whatever happened above (an abort, the deadline, a cancel, a model error).
+    await browserToolset?.close().catch(() => {});
+    await scratch?.destroy().catch(() => {});
     await persistActivityTrace(tracer, resolved.key);
   }
 }

@@ -1529,6 +1529,25 @@ describe('the Claude Code harness, for an agent that asks for it', () => {
     expect(m.claudeCodeRuntime).not.toHaveBeenCalled();
   });
 
+  it('gives a run no orchestration owns no steering run id', async () => {
+    await runAgentTask({ request: request() });
+    expect(m.claudeCodeRuntime.mock.calls[0]?.[0]).not.toHaveProperty('steeringRunId');
+  });
+
+  it('hands an orchestration child’s run id to the harness for steering', async () => {
+    m.runLink = { orchestrationId: '0b1c2d3e-0000-4000-8000-000000000001' };
+    await runAgentTask({
+      request: request({
+        payload: {
+          agentRef: 'contentWriter',
+          deliver: 'none',
+          orchestrationId: '0b1c2d3e-0000-4000-8000-000000000001',
+        },
+      }),
+    });
+    expect(m.claudeCodeRuntime.mock.calls[0]?.[0]).toMatchObject({ steeringRunId: 'run-1' });
+  });
+
   it('runs one bounded harness turn in the agent container instead of the Mastra loop', async () => {
     const result = await runAgentTask({ request: request() });
 

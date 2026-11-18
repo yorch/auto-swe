@@ -72,8 +72,11 @@ export interface OrchestrationWorkflowInput {
   /** The launcher. Informational: every activity reads the authoritative launcher from the row. */
   userId: string;
   teamId: string;
-  /** The orchestration token the apply activity calls the gateway with. Never logged, never stored. */
-  token: string;
+  /**
+   * Ignored. Workflows started before the worker minted a token per call carry one here; it is
+   * never read, passed to an activity or carried across a `continueAsNew`.
+   */
+  token?: string;
   pinned: OrchestrationPinned;
   /** Events queued across a `continueAsNew`. */
   pending?: OrchestrationEvent[];
@@ -119,7 +122,6 @@ export interface RunOrchestratorTurnResult {
 
 export interface ApplyOrchestrationIntentsInput {
   orchestrationId: string;
-  token: string;
   turnKey: string;
   intents: OrchestratorIntent[];
 }
@@ -157,7 +159,6 @@ export interface RecordOrchestrationStatusInput {
 
 export interface CancelOrchestrationChildrenInput {
   orchestrationId: string;
-  token: string;
 }
 
 export interface CancelOrchestrationChildrenResult {

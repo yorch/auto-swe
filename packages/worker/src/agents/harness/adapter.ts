@@ -292,6 +292,11 @@ export interface HarnessRuntimeOptions<Access> {
    * unattended. Ignored by a harness that cannot pause.
    */
   allowPause?: boolean;
+  /**
+   * The run's id when an orchestration started it: the harness drains the run's steering
+   * messages at its tool boundaries (`lib/runSteering.ts`). Absent, nothing is read.
+   */
+  steeringRunId?: string;
   tracer: AgentTracer;
   workspace: Workspace;
 }

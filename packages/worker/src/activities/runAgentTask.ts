@@ -436,13 +436,6 @@ export async function runAgentTaskCore(
       tracer,
       workspace: agentWs,
     };
-    if (input.steeringRunId && harness) {
-      // A harness loop is one turn: it cannot take a message mid-run. Messages stay queued.
-      tracer.addActivityEvent({
-        name: 'agent.steering_not_supported',
-        outputJson: { runtime: loop.runtime },
-      });
-    }
     const result = harness
       ? await runOnHarness(loopInput, harness)
       : await runOnMastra(loopInput, (close) => {
@@ -747,7 +740,7 @@ async function runAgentTaskImpl({
   let pr: { prNumber: number; prUrl: string } | undefined;
   const repoRef = toRepoRef(repo);
   const scm = getScmProvider(repoRef);
-  // A run an orchestration started takes steering messages at step boundaries (Mastra loop only).
+  // A run an orchestration started takes steering messages at step or tool boundaries.
   const steeringRunId = orchestrationRunId;
   const core = await runAgentTaskCore({
     agentVersions: baseCtx.agentVersions,
@@ -894,7 +887,7 @@ interface AgentLoopInput {
   settingsCtx: ResolveCtx;
   tracer: AgentTracer;
   repoId: string;
-  /** Drain this run's steering messages at step boundaries (Mastra loop only). */
+  /** Drain this run's steering messages at step (Mastra) or tool (Claude Code, Pi) boundaries. */
   steeringRunId?: string;
   workspace: Workspace;
 }
@@ -1071,6 +1064,8 @@ async function runOnHarness(
         ),
     ...(input.allowPause ? { allowPause: true } : {}),
     ...(input.profiles ? { profiles: input.profiles } : {}),
+    // Claude Code and Pi drain steering at their tool boundaries.
+    ...(input.steeringRunId ? { steeringRunId: input.steeringRunId } : {}),
     tracer,
     workspace: input.workspace,
   });

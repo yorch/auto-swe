@@ -1,3 +1,4 @@
+import { AGENT_RUN_WRITE_TOOL_IDS } from '@auto-swe/shared/lib/agentRun';
 import { IMPLEMENTER_TOOL_IDS } from '@auto-swe/shared/workflow/stepRegistry';
 
 /**
@@ -24,7 +25,7 @@ import { IMPLEMENTER_TOOL_IDS } from '@auto-swe/shared/workflow/stepRegistry';
  * list does not name. MCP is a separate decision (`isMcpToolEnabled`).
  */
 export const READ_TOOL_IDS = ['readFile', 'listDirectory'] as const;
-export const WRITE_TOOL_IDS = ['writeFile', 'bash'] as const;
+export const WRITE_TOOL_IDS = AGENT_RUN_WRITE_TOOL_IDS;
 
 export type WorkspaceToolId = (typeof IMPLEMENTER_TOOL_IDS)[number];
 

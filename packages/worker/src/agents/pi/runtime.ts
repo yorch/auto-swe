@@ -4,6 +4,7 @@ import type { AgentMessage, AgentTool } from '@earendil-works/pi-agent-core';
 import type { AssistantMessage, Message, ToolResultMessage } from '@earendil-works/pi-ai';
 import type { LanguageModel } from 'ai';
 import { resolveModel } from '../../lib/models.js';
+import { createSteeringDrain } from '../../lib/runSteering.js';
 import { BROWSER_TOOLS, type BrowserToolset } from '../browserTools.js';
 import {
   type HarnessAdapter,
@@ -205,6 +206,9 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
     projectContextLoaded: loadProjectSettings,
     tools,
   };
+  const steer = options.steeringRunId
+    ? createSteeringDrain(options.steeringRunId, options.tracer)
+    : undefined;
   const holder: TurnHolder = {};
   let session:
     | {
@@ -377,6 +381,21 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
             return verdict.allow ? undefined : { block: true, reason: verdict.reason };
           },
           convertToLlm: (messages) => messages as Message[],
+          // Called by the library after EVERY turn (a text-only reply too) and the loop goes on
+          // while it returns messages, so steering can extend a run past its turn cap. Once the
+          // cap is reached it returns nothing and leaves the messages queued, so the loop ends.
+          // Never throws.
+          ...(steer
+            ? {
+                getSteeringMessages: async (): Promise<AgentMessage[]> => {
+                  if (steps >= maxTurns) {
+                    return [];
+                  }
+                  const block = await steer();
+                  return block ? [{ content: block, role: 'user', timestamp: Date.now() }] : [];
+                },
+              }
+            : {}),
           finishTurn: ({ message }) => {
             steps += 1;
             const wantsMore = (message as AssistantMessage).content.some(

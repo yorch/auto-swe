@@ -18,6 +18,7 @@ const m = vi.hoisted(() => ({
   unseen: [] as string[],
   unseenGrace: [] as number[],
   warn: vi.fn(),
+  workflowId: null as string | null,
 }));
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
@@ -66,6 +67,18 @@ vi.mock('../lib/orchestrationChildren.js', () => ({
   }),
   recordChildResult: vi.fn(async () => null),
 }));
+vi.mock('../lib/orchestrationIdentity.js', async (orig) => {
+  const real = await orig<typeof import('../lib/orchestrationIdentity.js')>();
+  return {
+    ...real,
+    // Stands in for the activity context: `null` is "not inside an activity".
+    assertCurrentWorkflowOwns: (orchestrationId: string) => {
+      if (m.workflowId !== null) {
+        real.assertOwnWorkflowId(orchestrationId, m.workflowId);
+      }
+    },
+  };
+});
 vi.mock('../lib/orchestrationGateway.js', () => ({
   createOrchestrationGateway: () => ({ post: m.gatewayPost }),
 }));
@@ -98,6 +111,7 @@ beforeEach(() => {
   m.markerCount = 7;
   m.textTurnCount = 0;
   m.notices = [];
+  m.workflowId = null;
   m.complete.mockReset();
 });
 
@@ -137,6 +151,40 @@ describe('refreshOrchestrationChildren (the lost-signal backstop)', () => {
       .mockResolvedValueOnce({ childId: 'c2', orchestrationId: ORCH });
     const out = await refreshOrchestrationChildren({ orchestrationId: ORCH });
     expect(out.finishedChildIds).toEqual(['c2']);
+  });
+});
+
+describe('the workflow that drives an orchestration', () => {
+  const FOREIGN = 'my-own-workflow';
+
+  it.each([
+    ['beginOrchestrationRun', () => beginOrchestrationRun({ orchestrationId: ORCH })],
+    ['refreshOrchestrationChildren', () => refreshOrchestrationChildren({ orchestrationId: ORCH })],
+    [
+      'recordOrchestrationStatus',
+      () => recordOrchestrationStatus({ orchestrationId: ORCH, status: 'WAITING' }),
+    ],
+    ['cancelOrchestrationChildren', () => cancelOrchestrationChildren({ orchestrationId: ORCH })],
+  ])(
+    '%s refuses a workflow that is not orch-<id>, before reading or writing anything',
+    async (_n, run) => {
+      m.workflowId = FOREIGN;
+      await expect(run()).rejects.toMatchObject({ nonRetryable: true });
+      expect(m.orchUpdates).toEqual([]);
+      expect(m.ledger).toEqual([]);
+      expect(m.complete).not.toHaveBeenCalled();
+      expect(m.gatewayPost).not.toHaveBeenCalled();
+    }
+  );
+
+  it('refuses the workflow of another orchestration', async () => {
+    m.workflowId = 'orch-0b1c2d3e-0000-4000-8000-000000000002';
+    await expect(beginOrchestrationRun({ orchestrationId: ORCH })).rejects.toThrow();
+  });
+
+  it('proceeds under its own id', async () => {
+    m.workflowId = `orch-${ORCH}`;
+    expect((await beginOrchestrationRun({ orchestrationId: ORCH })).proceed).toBe(true);
   });
 });
 
@@ -287,7 +335,7 @@ describe('cancelOrchestrationChildren', () => {
   it('cancels each running child through the gateway and survives a failure', async () => {
     m.children = [child('a', 'w1'), child('b', 'w2')];
     m.gatewayPost.mockRejectedValueOnce(new Error('down')).mockResolvedValueOnce({ status: 200 });
-    const out = await cancelOrchestrationChildren({ orchestrationId: ORCH, token: 't' });
+    const out = await cancelOrchestrationChildren({ orchestrationId: ORCH });
     expect(out.cancelled).toBe(1);
     expect(m.gatewayPost).toHaveBeenCalledWith(
       `/api/v1/orchestrations/${ORCH}/children/b/cancel`,
@@ -300,7 +348,7 @@ describe('cancelOrchestrationChildren', () => {
     async (status) => {
       m.children = [child('a', 'w1')];
       m.gatewayPost.mockResolvedValueOnce({ status });
-      const out = await cancelOrchestrationChildren({ orchestrationId: ORCH, token: 't' });
+      const out = await cancelOrchestrationChildren({ orchestrationId: ORCH });
       expect(out.cancelled).toBe(0);
       expect(m.warn).toHaveBeenCalledWith(
         expect.stringContaining('already stopped'),
@@ -312,7 +360,7 @@ describe('cancelOrchestrationChildren', () => {
   it('logs any other refusal as a refusal rather than swallowing it', async () => {
     m.children = [child('a', 'w1')];
     m.gatewayPost.mockResolvedValueOnce({ status: 500 });
-    const out = await cancelOrchestrationChildren({ orchestrationId: ORCH, token: 't' });
+    const out = await cancelOrchestrationChildren({ orchestrationId: ORCH });
     expect(out.cancelled).toBe(0);
     expect(m.warn).toHaveBeenCalledWith(
       expect.stringContaining('refused'),

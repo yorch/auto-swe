@@ -8,6 +8,34 @@ const { checkSensitiveFilePath, openMcpRelay, scanShellCommand } = vi.hoisted(()
   scanShellCommand: vi.fn(async (_c: string): Promise<string | null> => null),
 }));
 
+const steeringDb = vi.hoisted(() => ({
+  onRead: undefined as (() => void) | undefined,
+  queries: 0,
+  rows: [] as { authorId: string | null; body: string; deliveredAt: Date | null; id: string }[],
+}));
+vi.mock('@auto-swe/shared/db', () => ({
+  prisma: {
+    runSteeringMessage: {
+      findMany: vi.fn(async () => {
+        steeringDb.queries += 1;
+        steeringDb.onRead?.();
+        return steeringDb.rows.filter((r) => r.deliveredAt === null);
+      }),
+      updateMany: vi.fn(async ({ where }: { where: { id: string | { in: string[] } } }) => {
+        const ids = typeof where.id === 'string' ? [where.id] : where.id.in;
+        let count = 0;
+        for (const r of steeringDb.rows) {
+          if (ids.includes(r.id) && r.deliveredAt === null) {
+            r.deliveredAt = new Date();
+            count += 1;
+          }
+        }
+        return { count };
+      }),
+    },
+  },
+}));
+
 vi.mock('../../lib/sensitiveFileScanner.js', () => ({ checkSensitiveFilePath }));
 vi.mock('../../lib/shellCommandScanner.js', () => ({ scanShellCommand }));
 vi.mock('../harness/mcpRelay.js', () => ({ openMcpRelay }));
@@ -170,6 +198,94 @@ beforeEach(() => {
   vi.clearAllMocks();
   checkSensitiveFilePath.mockResolvedValue(null);
   scanShellCommand.mockResolvedValue(null);
+  steeringDb.onRead = undefined;
+  steeringDb.queries = 0;
+  steeringDb.rows = [];
+});
+
+describe('steering a Pi turn', () => {
+  const queued = (id: string, body: string) => ({
+    authorId: 'user-1' as string | null,
+    body,
+    deliveredAt: null as Date | null,
+    id,
+  });
+
+  it('hands a message written during tool call 1 to the model request for call 2, once', async () => {
+    const { model, prompts } = scriptedModel([
+      { calls: [{ input: { command: 'ls' }, name: 'bash' }] },
+      { calls: [{ input: { command: 'pwd' }, name: 'bash' }] },
+      { text: 'done' },
+    ]);
+    const events: { name: string }[] = [];
+    const adapter = adapterFor(model, {
+      steeringRunId: 'run-1',
+      tracer: {
+        addActivityEvent: (e: { name: string }) => events.push(e),
+      } as unknown as AgentTracer,
+    });
+    const container = fakeContainer();
+    const turn = fakeTurn(adapter, async (e) => {
+      // The launcher writes while the first tool call runs.
+      if (steeringDb.rows.length === 0) {
+        steeringDb.rows = [queued('a', 'use the v2 endpoint')];
+      }
+      return container.exec(e);
+    });
+    await adapter.runTurn(turn as unknown as HarnessTurn, { system: 'S', user: 'U' });
+
+    const sent = prompts.map((p) => JSON.stringify(p));
+    expect(sent[0]).not.toContain('use the v2 endpoint');
+    expect(sent[1]).toContain('from: launcher | text: \\"use the v2 endpoint\\"');
+    expect(sent[2]?.split('use the v2 endpoint')).toHaveLength(2);
+    expect(steeringDb.rows[0]?.deliveredAt).not.toBeNull();
+    expect(events.filter((e) => e.name === 'agent.steered')).toHaveLength(1);
+    // The call the model made after it was steered still went through the policy.
+    expect(turn.decide).toHaveBeenCalledTimes(2);
+    await adapter.close?.();
+  });
+
+  it('ends at maxTurns when the model keeps answering in text while a message is queued at each boundary', async () => {
+    // A run that is not capped would ask for a ninth answer, which is an error here.
+    const answers = [
+      ...Array.from({ length: 8 }, (_, i) => ({ text: `answer ${i}` })),
+      { error: new Error('the loop went past maxTurns') },
+    ];
+    const { model, prompts } = scriptedModel(answers);
+    const adapter = adapterFor(model, { maxTurns: 3, steeringRunId: 'run-1' });
+    let n = 0;
+    // Every read finds a fresh message, as a person or orchestrator keeping on steering would.
+    steeringDb.onRead = () => {
+      n += 1;
+      steeringDb.rows.push(queued(`m${n}`, `more ${n}`));
+    };
+    const turn = fakeTurn(adapter, fakeContainer().exec);
+
+    const result = await adapter.runTurn(turn as unknown as HarnessTurn, {
+      system: '',
+      user: 'go',
+    });
+
+    expect(prompts).toHaveLength(3);
+    expect(result).toMatchObject({ steps: 3 });
+    await adapter.close?.();
+  });
+
+  it('reads nothing for a run with no steering run id', async () => {
+    const { model, prompts } = scriptedModel([
+      { calls: [{ input: { command: 'ls' }, name: 'bash' }] },
+      { text: 'done' },
+    ]);
+    const adapter = adapterFor(model);
+    steeringDb.rows = [queued('a', 'hello')];
+    await adapter.runTurn(fakeTurn(adapter, fakeContainer().exec) as unknown as HarnessTurn, {
+      system: 'S',
+      user: 'U',
+    });
+    expect(steeringDb.queries).toBe(0);
+    expect(JSON.stringify(prompts)).not.toContain('hello');
+    await adapter.close?.();
+  });
 });
 
 describe('a Pi turn', () => {
