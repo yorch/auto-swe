@@ -3492,7 +3492,7 @@
     {
       "body": "Approval, decision, input form and review nodes pause a run until response or timeout.",
       "category": "Governance",
-      "detail": "WorkflowHumanStep stores context, deadlines and response data. A review node’s response is a note; it does not edit the content it shows. Creating a step also queues a run.waiting_for_human callback when the launch asked for one. HumanApproval supports distinct-approver counting. Workflow status remains RUNNING while it waits. When a step was announced in Slack, fully resolving it through the REST route (the Approvals page and other API clients) or Slack edits that message to show the decision and any note and drops its buttons. The edit is best effort and never undoes the recorded answer: a Slack error is logged, while a missing bot token or an unreadable stored message skips the edit silently. In Slack, a button for a decision option resolves the step in one click, while Approve and Reject open a modal for a note first. Opening it looks the step up among the steps the clicker may act on, tells a user whose Slack id is not linked to an account to link it, and tells the clicker to use the inbox if Slack cannot open the form. The submission is what resolves the step, through the same resolve core as the REST route, which checks access again. The modal’s private metadata round-trips through the client, so it carries the step, action and Slack user under an HMAC made with the Slack signing secret, and a submission whose signature fails or whose Slack user differs is refused, with the error shown in the form. For an approval step a rejection needs a reason of at least five characters after trimming, enforced in that shared core for the Approvals page, the API and Slack alike: the REST route answers 400 REASON_REQUIRED and the Slack modal shows the error in the form. An approver’s comment is optional, recorded with the response and shown, but never sent to the workflow in the signal. The REST list of steps shows pending steps by default, so resolved answers need status=ALL; actionable narrows it to pending, unexpired steps the caller may answer and has not yet answered, and answeredByMe (with status=ALL, or it finds only pending steps the caller has approved) to steps the caller resolved or approved. limit and offset page the list, and a total is counted and returned in meta only when one of those three is asked for, or when count=true asks for the total alone (the sidebar badge sends it with limit=1). myResponse is the caller’s own answer: their approval row, else the stored action when they resolved the step, and null for a step resolved by a timeout or by someone else. The Approvals page loads one capped list from the gateway, which filters by tab, sort, deadline and, when set, team and answerable-by-you; its kind and text search narrow just the steps already loaded and say so when the cap is reached. An agent can also open an INPUT step: when a Claude Code agent asks a question, the workflow loop creates an INPUT step titled for the asking agent, and the answer resumes the same activity (see the ask-and-resume card).",
+      "detail": "WorkflowHumanStep stores context, deadlines and response data. A review node’s response is a note; it does not edit the content it shows. Creating a step also queues a run.waiting_for_human callback when the launch asked for one. HumanApproval supports distinct-approver counting. Workflow status remains RUNNING while it waits. When a step was announced in Slack, fully resolving it through the REST route (the Approvals page and other API clients) or Slack edits that message to show the decision and any note and drops its buttons. The edit is best effort and never undoes the recorded answer: a Slack error is logged, while a missing bot token or an unreadable stored message skips the edit silently. In Slack, a button for a decision option resolves the step in one click, while Approve and Reject open a modal for a note first. Opening it looks the step up among the steps the clicker may act on, tells a user whose Slack id is not linked to an account to link it, and tells the clicker to use the inbox if Slack cannot open the form. The submission is what resolves the step, through the same resolve core as the REST route, which checks access again. The modal’s private metadata round-trips through the client, so it carries the step, action and Slack user under an HMAC made with the Slack signing secret, and a submission whose signature fails or whose Slack user differs is refused, with the error shown in the form. For an approval step a rejection needs a reason of at least five characters after trimming, enforced in that shared core for the Approvals page, the API and Slack alike: the REST route answers 400 REASON_REQUIRED and the Slack modal shows the error in the form. An approver’s comment is optional, recorded with the response and shown, but never sent to the workflow in the signal. The REST list of steps shows pending steps by default, so resolved answers need status=ALL; actionable narrows it to pending, unexpired steps the caller may answer and has not yet answered, and answeredByMe (with status=ALL, or it finds only pending steps the caller has approved) to steps the caller resolved or approved. limit and offset page the list, and a total is counted and returned in meta only when one of those three is asked for, or when count=true asks for the total alone (the sidebar badge sends it with limit=1). myResponse is the caller’s own answer: their approval row, else the stored action when they resolved the step, and null for a step resolved by a timeout or by someone else. The Approvals page loads one capped list from the gateway, which filters by tab, sort, deadline and, when set, team and answerable-by-you; its kind and text search are sent to the gateway too (q matches title, description, request ticket and description, and repository as org, repo or org/repo), so a match past the cap is still found, and the page says when the matches themselves reach the cap. An agent can also open an INPUT step: when a Claude Code agent asks a question, the workflow loop creates an INPUT step titled for the asking agent, and the answer resumes the same activity (see the ask-and-resume card).",
       "id": "hitl",
       "refs": [
         "spec",
@@ -5223,15 +5223,9 @@
     {
       "body": "A dashboard filter can narrow only the data its view has loaded; an empty view is not proof of an idle or healthy platform.",
       "category": "Surfaces",
-      "detail": "The trace stream distinguishes older events not loaded by the server from matching events held back by its rendering limit. Search sees the loaded payload representation, which may be trimmed. Approval kind/text filtering works over a capped server list, and assistant-failure search and common-cause summaries are page-local. Full-payload mode disables run-detail polling, not worker execution. Draft-discard prompts protect participating forms and ordinary same-origin link clicks or unloads; they are not a universal router interception or an authorization boundary. Role-conditioned controls and confirmations still rely on gateway permissions.",
+      "detail": "The trace stream distinguishes older events not loaded by the server from matching events held back by its rendering limit. Search sees the loaded payload representation, which may be trimmed. Assistant-failure search and common-cause summaries are page-local. Full-payload mode disables run-detail polling, not worker execution. Draft-discard prompts protect participating forms and ordinary same-origin link clicks or unloads; they are not a universal router interception or an authorization boundary. Role-conditioned controls and confirmations still rely on gateway permissions.",
       "id": "dashboardViewBounds",
-      "refs": [
-        "webTraceStream",
-        "webPayloadMode",
-        "webApprovalFilter",
-        "webFailureFilter",
-        "webDraftGuard"
-      ],
+      "refs": ["webTraceStream", "webPayloadMode", "webFailureFilter", "webDraftGuard"],
       "status": "Confirmed boundary",
       "title": "Loaded views and UI safeguards have local boundaries"
     },
@@ -7517,12 +7511,12 @@
       "title": "Playwright trace viewer assets are copied into the web app"
     },
     {
-      "anchor": "const steps = useMemo(() =>",
-      "before": 4,
+      "anchor": "// Kind and text are applied by the gateway",
+      "before": 8,
       "id": "webApprovalFilter",
-      "lines": 35,
+      "lines": 12,
       "path": "packages/web/src/app/approvals/page.tsx",
-      "title": "Approval kind and text narrow the loaded list"
+      "title": "Approval kind and text are applied by the gateway before the cap"
     },
     {
       "anchor": "const allFailures = page?.data ?? [];",
@@ -16524,12 +16518,12 @@
       "title": "The dashboard asks for the provider name when a delete would strand an agent or remove the last credential"
     },
     {
-      "anchor": "const steps = useMemo(() => {",
-      "before": 4,
+      "anchor": "// Kind and text are applied by the gateway",
+      "before": 8,
       "id": "approvalsClientFilter",
-      "lines": 16,
+      "lines": 12,
       "path": "packages/web/src/app/approvals/page.tsx",
-      "title": "The Approvals page’s kind and text filters run over the steps the capped list already loaded"
+      "title": "The Approvals page sends its kind and text filters to the gateway, so they apply before the cap"
     },
     {
       "anchor": "const causes = useMemo(() => {",

@@ -14,7 +14,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveSlackBotTokenForSlackChannel: vi.fn(),
 }));
 
-import { humanStepRoutes } from './humanSteps.js';
+import { humanStepRoutes, inboxStreamTuning } from './humanSteps.js';
 
 /** Opens the stream and resolves with the request once the response head (or a 429) arrives. */
 function openStream(port: number): Promise<{ req: http.ClientRequest; status: number }> {
@@ -37,6 +37,20 @@ describe('GET /human-steps/stream', () => {
   let release: (() => void) | null = null;
   // The first stream's initial query stays open until the test lets it finish.
   let hold = false;
+  let signature = { count: 0, newest: null as Date | null, oldest: null as Date | null };
+  const aggregate = vi.fn(async () => {
+    if (hold) {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    }
+    return {
+      _count: { _all: signature.count },
+      _max: { requestedAt: signature.newest },
+      _min: { requestedAt: signature.oldest },
+    };
+  });
+  const findMany = vi.fn(async () => []);
 
   beforeAll(async () => {
     app.setValidatorCompiler(validatorCompiler);
@@ -45,16 +59,7 @@ describe('GET /human-steps/stream', () => {
       verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: 'ENGINEER', sub: 'user-1' }),
     } as unknown as never);
     app.decorate('prisma', {
-      workflowHumanStep: {
-        findMany: async () => {
-          if (hold) {
-            await new Promise<void>((resolve) => {
-              release = resolve;
-            });
-          }
-          return [];
-        },
-      },
+      workflowHumanStep: { aggregate, findMany },
     } as unknown as never);
     await app.register(humanStepRoutes, { prefix: '/api/v1/human-steps' });
     await app.listen({ host: '127.0.0.1', port: 0 });
@@ -81,5 +86,50 @@ describe('GET /human-steps/stream', () => {
     const { req, status } = await openStream(port);
     expect(status).toBe(200);
     req.destroy();
+  });
+
+  it('emits change only when the signature changes, and never lists ids', async () => {
+    const original = inboxStreamTuning.pollMs;
+    inboxStreamTuning.pollMs = 25;
+    signature = { count: 1, newest: new Date(1000), oldest: new Date(1000) };
+    findMany.mockClear();
+    const chunks: string[] = [];
+    const req = await new Promise<http.ClientRequest>((resolve, reject) => {
+      const r = http.get(
+        {
+          headers: { authorization: 'Bearer test-token' },
+          path: '/api/v1/human-steps/stream',
+          port,
+        },
+        (res) => {
+          res.setEncoding('utf8');
+          res.on('data', (c: string) => chunks.push(c));
+          resolve(r);
+        }
+      );
+      r.on('error', reject);
+    });
+    const changes = () => chunks.join('').split('event: change').length - 1;
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(aggregate.mock.calls.length).toBeGreaterThan(2);
+      expect(changes()).toBe(0);
+
+      // One step resolved and one added: the count is the same, the newest timestamp moves.
+      signature = { count: 1, newest: new Date(2000), oldest: new Date(2000) };
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(changes()).toBe(1);
+
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(changes()).toBe(1);
+
+      signature = { count: 0, newest: null, oldest: null };
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(changes()).toBe(2);
+      expect(findMany).not.toHaveBeenCalled();
+    } finally {
+      inboxStreamTuning.pollMs = original;
+      req.destroy();
+    }
   });
 });

@@ -15,6 +15,7 @@ import {
   answerableStepIds,
   humanStepListWhere,
   humanStepMineScope,
+  humanStepSearchWhere,
   humanStepTeamScope,
 } from '../lib/humanStepFilters.js';
 import { NUDGE_INTERVAL_MS, nudgeSlackMessage, nudgeText } from '../lib/humanStepNudge.js';
@@ -71,6 +72,8 @@ const ListQuery = z.object({
   answeredByMe: booleanQueryParam(false),
   /** Include `meta.total` even when no page parameter is given (the sidebar badge reads it). */
   count: booleanQueryParam(false),
+  /** Only steps of this kind. */
+  kind: z.enum(['APPROVAL', 'DECISION', 'INPUT', 'REVIEW']).optional(),
   /** Page size; defaults to 100 for `PENDING` and 200 for `ALL`. */
   limit: z.coerce.number().int().min(1).max(200).optional(),
   /**
@@ -81,6 +84,11 @@ const ListQuery = z.object({
   mine: booleanQueryParam(false),
   offset: z.coerce.number().int().min(0).optional(),
   overdue: booleanQueryParam(false),
+  /**
+   * Case-insensitive text search over the step's title and description, the run's ticket id and
+   * request description, and its repository (`org/repo`). Only narrows the list.
+   */
+  q: z.string().trim().max(200).optional(),
   runId: z.string().uuid().optional(),
   sort: z
     .enum(['requestedAt:asc', 'requestedAt:desc', 'timeoutAt:asc', 'timeoutAt:desc'])
@@ -299,6 +307,8 @@ const STATUS_BY_CODE: Record<HitlResolveErrorCode, 200 | 400 | 404 | 409 | 502 |
 };
 
 const MAX_INBOX_STREAMS_PER_USER = 5;
+/** Poll cadence of an open inbox stream. Mutable only so a test can shorten it. */
+export const inboxStreamTuning = { pollMs: 3000 };
 /** user id → number of currently open `/inbox/stream` connections. */
 const openInboxStreams = new Map<string, number>();
 
@@ -403,10 +413,12 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         actionable,
         answeredByMe,
         count,
+        kind,
         limit,
         mine,
         offset,
         overdue,
+        q,
         sort,
         status,
         runId,
@@ -435,6 +447,8 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       const narrowing: Prisma.WorkflowHumanStepWhereInput[] = [
         ...(mine ? [humanStepMineScope(user)] : []),
         ...(teamId ? [humanStepTeamScope(teamId)] : []),
+        ...(kind ? [{ kind }] : []),
+        ...(q ? [humanStepSearchWhere(q)] : []),
       ];
       const where: Prisma.WorkflowHumanStepWhereInput =
         narrowing.length > 0 ? { AND: [listWhere, ...narrowing] } : listWhere;
@@ -596,18 +610,32 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
 
       write(`event: ping\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
 
-      const fetchPendingIds = async (): Promise<Set<string>> => {
-        const rows = await fastify.prisma.workflowHumanStep.findMany({
-          select: { id: true },
+      // A change signature for the user's visible pending set, from one aggregate over the same
+      // `where` as the inbox list, so a poll costs a bounded index read however large the inbox
+      // is (the ids are never loaded). It is `count|oldest requestedAt|newest requestedAt`.
+      // Detected: any net change in the number of visible pending steps, and any change of the
+      // oldest or newest pending step. A step resolved while another is added in the same window
+      // keeps the count, but new steps are stamped `requestedAt = now()` and so move the newest
+      // timestamp. Residual gaps: removing an interior step while adding one whose requestedAt
+      // falls inside the existing range (not produced by the platform, which never backdates),
+      // and a visibility change that swaps equal-sized sets with identical bounds. The web client's
+      // 30 s fallback poll covers both. The `change` payload carries no ids; clients refetch.
+      const fetchSignature = async (): Promise<string> => {
+        const agg = await fastify.prisma.workflowHumanStep.aggregate({
+          _count: { _all: true },
+          _max: { requestedAt: true },
+          _min: { requestedAt: true },
           where: {
             status: 'PENDING',
             ...buildWorkflowHumanStepVisibilityFilter(user, request.repoAccessGate),
           },
         });
-        return new Set(rows.map((r) => r.id));
+        return `${agg._count._all}|${agg._min.requestedAt?.getTime() ?? ''}|${
+          agg._max.requestedAt?.getTime() ?? ''
+        }`;
       };
 
-      let knownIds: Set<string> = new Set();
+      let knownSignature = '';
       let pollTimeout: ReturnType<typeof setTimeout> | null = null;
       let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
       let closed = false;
@@ -638,12 +666,10 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
 
         const poll = async () => {
           try {
-            const currentIds = await fetchPendingIds();
-            const added = [...currentIds].filter((id) => !knownIds.has(id));
-            const removed = [...knownIds].filter((id) => !currentIds.has(id));
-            if (!closed && (added.length > 0 || removed.length > 0)) {
-              write(`event: change\ndata: ${JSON.stringify({ added, removed })}\n\n`);
-              knownIds = currentIds;
+            const current = await fetchSignature();
+            if (!closed && current !== knownSignature) {
+              write(`event: change\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
+              knownSignature = current;
             }
           } catch (err) {
             // Keep the stream open (the next poll may succeed) but say so — a
@@ -651,13 +677,13 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
             request.log.warn({ err }, 'inbox stream: poll failed');
           }
           if (!closed) {
-            pollTimeout = setTimeout(poll, 3000);
+            pollTimeout = setTimeout(poll, inboxStreamTuning.pollMs);
           }
         };
 
         void (async () => {
           try {
-            knownIds = await fetchPendingIds();
+            knownSignature = await fetchSignature();
           } catch (err) {
             // After hijack() Fastify cannot answer for us; end the stream so the
             // browser EventSource reconnects instead of hanging on a dead socket.
@@ -668,7 +694,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           if (closed) {
             return;
           }
-          pollTimeout = setTimeout(poll, 3000);
+          pollTimeout = setTimeout(poll, inboxStreamTuning.pollMs);
           keepAliveInterval = setInterval(() => {
             write(': keepalive\n\n');
           }, 25000);

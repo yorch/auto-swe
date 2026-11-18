@@ -14,6 +14,8 @@ export type ApprovalSort =
   | 'timeoutAt:asc'
   | 'timeoutAt:desc';
 
+export type ApprovalKind = 'APPROVAL' | 'DECISION' | 'INPUT' | 'REVIEW';
+
 export function useApprovals(
   filter: ApprovalFilter = 'PENDING',
   sort: ApprovalSort = 'requestedAt:desc',
@@ -21,9 +23,14 @@ export function useApprovals(
   runId?: string,
   /** Only steps the current user can answer and has not already answered. */
   actionable = false,
-  /** `teamId` narrows to one team's steps; `enabled: false` waits for the team to resolve. */
-  options: { enabled?: boolean; teamId?: string } = {}
+  /**
+   * `teamId` narrows to one team's steps; `enabled: false` waits for the team to resolve. `kind`
+   * and `q` (title, description, ticket, request description, repository) are applied by the
+   * gateway, so they reach steps beyond the list cap.
+   */
+  options: { enabled?: boolean; kind?: ApprovalKind; q?: string; teamId?: string } = {}
 ) {
+  const q = options.q?.trim().slice(0, 200) || undefined;
   const params = new URLSearchParams();
   if (actionable) {
     params.set('actionable', 'true');
@@ -43,15 +50,47 @@ export function useApprovals(
   if (options.teamId) {
     params.set('teamId', options.teamId);
   }
+  if (options.kind) {
+    params.set('kind', options.kind);
+  }
+  if (q) {
+    params.set('q', q);
+  }
   const qs = params.toString();
+
+  const queryKeyHead = [
+    'approvals',
+    filter,
+    sort,
+    overdueOnly,
+    runId,
+    actionable,
+    options.teamId ?? null,
+  ].join('|');
 
   return useQuery({
     enabled: options.enabled ?? true,
+    // While a new search or kind loads, keep the rows on screen so an open card (and any note
+    // typed into it) survives; a different tab, sort, deadline or team starts from the skeleton.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery && previousQuery.queryKey.slice(0, 7).join('|') === queryKeyHead
+        ? previous
+        : undefined,
     queryFn: () =>
       api
         .get<{ data: HumanStepSummary[] }>(`/api/v1/human-steps${qs ? `?${qs}` : ''}`)
         .then((r) => r.data),
-    queryKey: ['approvals', filter, sort, overdueOnly, runId, actionable, options.teamId ?? null],
+    queryKey: [
+      'approvals',
+      filter,
+      sort,
+      overdueOnly,
+      runId,
+      actionable,
+      options.teamId ?? null,
+      options.kind ?? null,
+      q ?? null,
+    ],
     // Keep a fallback poll (30 s for pending, and for one run's steps, which show
     // live status; the unscoped history view does not poll).
     refetchInterval: filter === 'PENDING' || runId ? 30_000 : false,

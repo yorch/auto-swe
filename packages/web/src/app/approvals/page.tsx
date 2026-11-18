@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useMemo, useRef, useState } from 'react';
+import { Suspense, useRef, useState } from 'react';
 import { HumanStepCard } from '@/components/approvals/HumanStepCard';
 import { PageHelp } from '@/components/help/PageHelp';
 import { TeamChip } from '@/components/teams/TeamChip';
@@ -19,6 +19,7 @@ import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import {
   type ApprovalFilter,
+  type ApprovalKind,
   type ApprovalSort,
   useApprovals,
   useApprovalsCount,
@@ -93,33 +94,16 @@ function GovernApprovals() {
     isFetching,
   } = useApprovals(filter, sort, overdueOnly, undefined, actionableOnly, {
     enabled: !teamFilter.blocked,
+    kind: kind === 'all' ? undefined : (kind as ApprovalKind),
+    q: q.trim() || undefined,
     teamId: teamFilter.teamId,
   });
 
   const loaded = allSteps?.length ?? 0;
   const atCap = loaded >= SERVER_CAP[filter];
   const narrowed = kind !== 'all' || q.trim() !== '';
-  // Kind and text narrow the steps already loaded: the gateway filters by tab, sort and
-  // deadline only, so the list below is of the loaded steps and says so at the cap.
-  const steps = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    return (allSteps ?? []).filter((s) => {
-      if (kind !== 'all' && s.kind !== kind) {
-        return false;
-      }
-      if (!needle) {
-        return true;
-      }
-      const request = s.run.workRequest;
-      return [
-        s.title,
-        s.description,
-        s.run.repository,
-        request?.externalTicketId,
-        request?.description,
-      ].some((field) => typeof field === 'string' && field.toLowerCase().includes(needle));
-    });
-  }, [allSteps, kind, q]);
+  // Kind and text are applied by the gateway, so the list is every match up to the cap.
+  const steps = allSteps ?? [];
   const count = steps.length;
   const pageCount = Math.max(1, Math.ceil(count / PAGE_SIZE));
   const current = Math.min(page, pageCount - 1);
@@ -139,7 +123,7 @@ function GovernApprovals() {
     tab.id === 'PENDING' && pendingTotal > 0
       ? {
           ...tab,
-          label: `Pending (${pendingTotal})`,
+          label: `Pending (${pendingTotal} for you)`,
         }
       : tab
   );
@@ -158,11 +142,11 @@ function GovernApprovals() {
           isLoading || isError
             ? INTRO
             : atCap
-              ? `Showing ${loaded} ${filter === 'PENDING' ? 'pending ' : ''}steps, the most this list loads. Sort or filter to see others.`
+              ? `Showing ${loaded} ${narrowed ? 'matching ' : ''}${filter === 'PENDING' ? 'pending ' : ''}steps, the most this list loads. Narrow the search or filters to see others.`
               : filter === 'PENDING'
                 ? loaded === 0
                   ? INTRO
-                  : `${loaded} pending action${loaded !== 1 ? 's' : ''}`
+                  : `${loaded} pending step${loaded !== 1 ? 's' : ''}`
                 : `${loaded} step${loaded !== 1 ? 's' : ''} total`
         }
         title={navLabel('/approvals')}
@@ -271,11 +255,6 @@ function GovernApprovals() {
           >
             {count > 0 && (
               <div className="scroll-mt-6 space-y-3 outline-none" ref={listRef} tabIndex={-1}>
-                {narrowed && atCap && (
-                  <p className="text-xs text-paper-500">
-                    Searching the {loaded} steps this list loads; others may match.
-                  </p>
-                )}
                 {visible.map((step) => (
                   <HumanStepCard
                     defaultExpanded={filter === 'PENDING' && loaded === 1 && !narrowed}

@@ -115,3 +115,45 @@ export function humanStepMineScope(user: VisibilityActor): Prisma.WorkflowHumanS
 export function humanStepTeamScope(teamId: string): Prisma.WorkflowHumanStepWhereInput {
   return { run: runListTeamScope(teamId) };
 }
+
+/**
+ * The text term of `GET /human-steps?q=`: a case-insensitive contains match over the step's title
+ * and description, the run's request (ticket id, description) and the run's repository
+ * (`organizationName` / `repoName`, from the run's connection or its request's). AND it beside
+ * {@link humanStepListWhere}; it narrows only.
+ */
+export function humanStepSearchWhere(q: string): Prisma.WorkflowHumanStepWhereInput {
+  const match = { contains: q, mode: 'insensitive' as const };
+  const repo = { OR: [{ organizationName: match }, { repoName: match }] };
+  // The card names a repository `org/repo`, so a search typed the same way has to find it: the part
+  // before the first slash ends the organization and the part after starts the repository.
+  const slash = q.indexOf('/');
+  const orgPart = slash > 0 ? q.slice(0, slash) : '';
+  const repoPart = slash >= 0 ? q.slice(slash + 1) : '';
+  const qualified =
+    slash >= 0
+      ? {
+          AND: [
+            ...(orgPart
+              ? [{ organizationName: { endsWith: orgPart, mode: 'insensitive' as const } }]
+              : []),
+            ...(repoPart
+              ? [{ repoName: { mode: 'insensitive' as const, startsWith: repoPart } }]
+              : []),
+          ],
+        }
+      : null;
+  return {
+    OR: [
+      ...(qualified && qualified.AND.length > 0
+        ? [{ run: { connection: qualified } }, { run: { workRequest: { connection: qualified } } }]
+        : []),
+      { title: match },
+      { description: match },
+      { run: { workRequest: { externalTicketId: match } } },
+      { run: { workRequest: { description: match } } },
+      { run: { connection: repo } },
+      { run: { workRequest: { connection: repo } } },
+    ],
+  };
+}

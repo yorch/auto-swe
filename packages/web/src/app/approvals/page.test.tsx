@@ -130,14 +130,14 @@ describe('approvals page filters and state', () => {
     steps.rows = Array.from({ length: 100 }, (_, i) => step(String(i), 'APPROVAL', `S${i}`));
     render(<GovernApprovalsPage />);
     expect(screen.getByText(/Showing 100 pending steps, the most this list loads/)).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Pending (100)' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Pending (100 for you)' })).toBeTruthy();
   });
 
   it('shows the exact gateway total on the tab, past the list cap, with no plus', () => {
     steps.rows = Array.from({ length: 100 }, (_, i) => step(String(i), 'APPROVAL', `S${i}`));
     steps.count = 150;
     render(<GovernApprovalsPage />);
-    expect(screen.getByRole('tab', { name: 'Pending (150)' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Pending (150 for you)' })).toBeTruthy();
   });
 
   it('keeps the tab, kind and overdue choices in the address', () => {
@@ -150,34 +150,51 @@ describe('approvals page filters and state', () => {
     expect(nav.replace).toHaveBeenLastCalledWith('/approvals?overdue=1', { scroll: false });
   });
 
-  it('narrows the loaded steps by kind and by title or ticket', () => {
+  it('hands the kind and the search text to the gateway instead of filtering the loaded steps', () => {
     steps.rows = [
       step('a', 'APPROVAL', 'Approve the plan', 'PAY-1'),
       step('b', 'DECISION', 'Pick a route', 'OPS-2'),
     ];
-    nav.search = 'kind=DECISION';
-    const first = render(<GovernApprovalsPage />);
-    expect(screen.queryByText('Approve the plan')).toBeNull();
-    expect(screen.getByText('Pick a route')).toBeTruthy();
-    first.unmount();
-    nav.search = 'q=pay-1';
+    nav.search = 'kind=DECISION&q=%20pay-1%20';
     render(<GovernApprovalsPage />);
+    expect(useApprovalsSpy).toHaveBeenLastCalledWith(
+      'PENDING',
+      'requestedAt:desc',
+      false,
+      undefined,
+      false,
+      expect.objectContaining({ kind: 'DECISION', q: 'pay-1' })
+    );
+    // Whatever the gateway returned is shown as is.
     expect(screen.getByText('Approve the plan')).toBeTruthy();
-    expect(screen.queryByText('Pick a route')).toBeNull();
+    expect(screen.getByText('Pick a route')).toBeTruthy();
   });
 
-  it('finds a step by the repository it belongs to', () => {
-    const inRepo = step('a', 'APPROVAL', 'Approve the plan', 'PAY-1');
-    inRepo.run.repository = 'acme/payments-api';
-    steps.rows = [inRepo, step('b', 'DECISION', 'Pick a route', 'OPS-2')];
-    nav.search = 'q=payments-api';
+  it('sends no kind or q when neither is chosen', () => {
+    steps.rows = [step('a', 'APPROVAL', 'One')];
     render(<GovernApprovalsPage />);
-    expect(screen.getByText('Approve the plan')).toBeTruthy();
-    expect(screen.queryByText('Pick a route')).toBeNull();
+    expect(useApprovalsSpy).toHaveBeenLastCalledWith(
+      'PENDING',
+      'requestedAt:desc',
+      false,
+      undefined,
+      false,
+      expect.objectContaining({ kind: undefined, q: undefined })
+    );
+  });
+
+  it('no longer warns that a search covers only the loaded steps', () => {
+    steps.rows = Array.from({ length: 100 }, (_, i) => step(String(i), 'APPROVAL', `S${i}`));
+    nav.search = 'q=S';
+    render(<GovernApprovalsPage />);
+    expect(screen.queryByText(/Searching the/)).toBeNull();
+    expect(
+      screen.getByText(/Showing 100 matching pending steps, the most this list loads/)
+    ).toBeTruthy();
   });
 
   it('offers to clear filters when none match', () => {
-    steps.rows = [step('a', 'APPROVAL', 'One')];
+    steps.rows = [];
     nav.search = 'q=zzz';
     render(<GovernApprovalsPage />);
     expect(screen.getByText('No steps match')).toBeTruthy();
@@ -240,7 +257,7 @@ describe('approvals page team filter', () => {
     steps.count = 40;
     steps.teamCount = 3;
     render(<GovernApprovalsPage />);
-    expect(screen.getByRole('tab', { name: /Pending \(3\)/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Pending \(3 for you\)/ })).toBeTruthy();
     steps.teamCount = null;
   });
 

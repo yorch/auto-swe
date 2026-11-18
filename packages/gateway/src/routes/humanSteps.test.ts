@@ -585,6 +585,71 @@ describe('human step routes', () => {
     });
   });
 
+  describe('GET / q and kind', () => {
+    const listWhere = async (url: string) => {
+      await app.inject({ headers: AUTH, method: 'GET', url });
+      return findManyCalls.at(-1)?.where as { AND?: Array<Record<string, unknown>> };
+    };
+
+    it('ANDs a case-insensitive text match over the step, its request and its repository', async () => {
+      const where = await listWhere('/api/v1/human-steps?q=%20Pay%20');
+      const match = { contains: 'Pay', mode: 'insensitive' };
+      const repo = { OR: [{ organizationName: match }, { repoName: match }] };
+      // The visibility and status term stays first: the text term can only narrow it.
+      expect(where.AND?.[0]).toMatchObject({ status: 'PENDING' });
+      expect(where.AND?.[1]).toEqual({
+        OR: [
+          { title: match },
+          { description: match },
+          { run: { workRequest: { externalTicketId: match } } },
+          { run: { workRequest: { description: match } } },
+          { run: { connection: repo } },
+          { run: { workRequest: { connection: repo } } },
+        ],
+      });
+    });
+
+    it('finds a repository typed as org/repo, as the card names it', async () => {
+      const where = await listWhere('/api/v1/human-steps?q=Acme%2Fpay');
+      const qualified = {
+        AND: [
+          { organizationName: { endsWith: 'Acme', mode: 'insensitive' } },
+          { repoName: { mode: 'insensitive', startsWith: 'pay' } },
+        ],
+      };
+      const textTerm = where.AND?.[1] as { OR: unknown[] };
+      const or = textTerm.OR;
+      expect(or).toContainEqual({ run: { connection: qualified } });
+      expect(or).toContainEqual({ run: { workRequest: { connection: qualified } } });
+    });
+
+    it('ANDs the kind, and counts under the same where', async () => {
+      const where = await listWhere('/api/v1/human-steps?kind=REVIEW&count=true&q=x');
+      expect(where.AND).toContainEqual({ kind: 'REVIEW' });
+      expect(countCalls.at(-1)?.where).toEqual(findManyCalls.at(-1)?.where);
+    });
+
+    it('treats a blank q as no search', async () => {
+      const where = await listWhere('/api/v1/human-steps?q=%20%20');
+      expect(where.AND).toBeUndefined();
+    });
+
+    it('refuses an unknown kind and an over-long q', async () => {
+      const bad = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/human-steps?kind=NOPE',
+      });
+      expect(bad.statusCode).toBe(400);
+      const long = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `/api/v1/human-steps?q=${'a'.repeat(201)}`,
+      });
+      expect(long.statusCode).toBe(400);
+    });
+  });
+
   describe('GET / answeredByMe', () => {
     const OTHER = 'user-2';
     const resolved = (resolvedBy: string | null, payload: unknown, extra = {}) =>
