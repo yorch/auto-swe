@@ -1,4 +1,5 @@
 import type { Prisma } from '@auto-swe/shared';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import { privateChannelMemberWhere } from './privateChannelMembers.js';
 import {
   type MaybeGate,
@@ -80,7 +81,7 @@ export function buildWorkflowRunVisibilityFilter(
   actor: VisibilityActor,
   gate: MaybeGate
 ): Prisma.WorkflowRunWhereInput {
-  if (actor.role === 'ADMIN') {
+  if (isPlatformAdmin(actor)) {
     return {};
   }
   return {
@@ -134,7 +135,7 @@ export function buildWorkflowRunControlFilter(
   actor: VisibilityActor,
   gate: MaybeGate
 ): Prisma.WorkflowRunWhereInput {
-  if (actor.role === 'ADMIN') {
+  if (isPlatformAdmin(actor)) {
     return {};
   }
   const ownedRepository = {
@@ -179,7 +180,7 @@ export function buildWorkflowHumanStepControlFilter(
   actor: VisibilityActor,
   gate: MaybeGate
 ): Prisma.WorkflowHumanStepWhereInput {
-  if (actor.role === 'ADMIN') {
+  if (isPlatformAdmin(actor)) {
     return {};
   }
   return { run: buildWorkflowRunControlFilter(actor, gate) };
@@ -190,7 +191,7 @@ export function buildWorkflowHumanStepVisibilityFilter(
   actor: VisibilityActor,
   gate: MaybeGate
 ): Prisma.WorkflowHumanStepWhereInput {
-  if (actor.role === 'ADMIN') {
+  if (isPlatformAdmin(actor)) {
     return {};
   }
   return { run: buildWorkflowRunVisibilityFilter(actor, gate) };

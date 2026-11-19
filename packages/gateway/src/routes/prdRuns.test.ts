@@ -77,8 +77,9 @@ async function buildHarness(): Promise<Harness> {
           repoName: 'payments',
           shares: [],
           team: {
+            id: 'team-1',
             isActive: true,
-            memberships: [{ role: h.teamRole, userId: 'user-1' }],
+            memberships: [{ userId: 'user-1' }],
             organization: { id: 'org-1', isActive: true, monthlyBudgetUsdCents: 1000 },
             orgId: 'org-1',
           },
@@ -117,7 +118,14 @@ async function buildHarness(): Promise<Harness> {
         return {};
       },
     },
-    teamMembership: { findUnique: async () => ({ role: 'LEAD' }) },
+    // The capability resolver loads the named team and the caller's role on it.
+    team: {
+      findMany: async () => [{ id: 'team-1', isActive: true, orgId: null }],
+    },
+    teamMembership: {
+      findMany: async () => [{ role: h.teamRole, teamId: 'team-1' }],
+      findUnique: async () => ({ role: 'LEAD' }),
+    },
     user: { findUnique: async () => ({ id: 'user-1', isActive: true, role: h.role }) },
     workflowTemplate: {
       findFirst: async () => ({ activeVersion: 1, id: 'tpl-prd' }),

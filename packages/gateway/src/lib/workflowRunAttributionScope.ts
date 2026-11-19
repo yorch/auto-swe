@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from '@auto-swe/shared';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { heldScope, isPlatformAdmin, userActor } from '@auto-swe/shared/permissions';
 import { type MaybeGate, reachableConnections } from './tenantScope.js';
 
 export interface WorkflowRunAttributionScope {
@@ -27,7 +28,7 @@ export async function resolveWorkflowRunAttributionScope(
   repoAccessGate: MaybeGate,
   teamId?: string
 ): Promise<WorkflowRunAttributionScope> {
-  if (user.role === 'ADMIN') {
+  if (isPlatformAdmin(user)) {
     return {
       authorized: true,
       isAdmin: true,
@@ -38,7 +39,7 @@ export async function resolveWorkflowRunAttributionScope(
       userId: user.sub,
     };
   }
-  const [teamMemberships, organizationMemberships, connections] = await Promise.all([
+  const [teamMemberships, orgReports, connections] = await Promise.all([
     runUnscoped(
       'report visibility is derived from the caller’s own team memberships',
       ['TeamMembership'],
@@ -51,11 +52,8 @@ export async function resolveWorkflowRunAttributionScope(
     runUnscoped(
       'report visibility is derived from the caller’s own organization memberships',
       ['OrganizationMembership'],
-      () =>
-        prisma.organizationMembership.findMany({
-          select: { orgId: true },
-          where: { role: 'ORG_ADMIN', userId: user.sub },
-        })
+      // The organizations the caller reads reports of: the same set `org.reports.read` decides.
+      () => heldScope(prisma, userActor(user), 'org.reports.read')
     ),
     runUnscoped(
       'report repository visibility uses the caller memberships and GitHub permission gate',
@@ -70,7 +68,7 @@ export async function resolveWorkflowRunAttributionScope(
   const teamIds = teamMemberships.map((membership) => membership.teamId);
   const orgIds = (
     await Promise.all(
-      organizationMemberships.map(async ({ orgId }) =>
+      orgReports.orgIds.map(async (orgId) =>
         (await resolveSetting('analytics.orgWideReports', { orgId })) ? orgId : null
       )
     )
@@ -160,7 +158,7 @@ export function workflowRunWithLegacyVisibility(
 ): Prisma.WorkflowRunWhereInput {
   return {
     AND: [
-      user.role === 'ADMIN' ? {} : legacyVisibility,
+      isPlatformAdmin(user) ? {} : legacyVisibility,
       ...(teamId ? [{ attributedTeamId: teamId }] : []),
     ],
   };

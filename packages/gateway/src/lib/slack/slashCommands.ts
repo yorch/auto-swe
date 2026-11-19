@@ -1,4 +1,5 @@
 import type { Role } from '@auto-swe/shared';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyInstance } from 'fastify';
 import { asPlatformAdmin } from '../platformAdminScope.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../systemTemplate.js';
@@ -33,12 +34,11 @@ export async function listVisibleTemplates(
   fastify: FastifyInstance,
   user: { id: string; role: Role }
 ): Promise<SimpleTemplateRow[]> {
-  const visible =
-    user.role === 'ADMIN'
-      ? {}
-      : {
-          OR: [{ teamId: null }, { team: memberTeams({ sub: user.id }) }],
-        };
+  const visible = isPlatformAdmin(user)
+    ? {}
+    : {
+        OR: [{ teamId: null }, { team: memberTeams({ sub: user.id }) }],
+      };
   // System templates ("Agent Run") are never offered, whoever is asking.
   const where = { AND: [visible, EXCLUDE_SYSTEM_TEMPLATES] };
   // `where` is only the visibility rule for a platform admin — the deliberate cross-tenant branch.

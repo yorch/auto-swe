@@ -24,7 +24,7 @@ import {
   loadPlannedRunTemplate,
   type PlanRefusal,
   rejectPlan,
-  requireEngineer,
+  requireActivePlanUser,
   snapshotPlanSettings,
 } from '../lib/runPlanService.js';
 import { planIdForJob, RunPlanMemoSchema, startRunPlan, user8Of } from '../lib/runPlanStart.js';
@@ -334,7 +334,7 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
     reply: FastifyReply,
     userId: string
   ): Promise<boolean> {
-    const engineer = await requireEngineer(deps(request), { sub: userId });
+    const engineer = await requireActivePlanUser(deps(request), { sub: userId });
     if (!engineer.ok) {
       sendRefusal(reply, engineer);
       return true;
@@ -358,7 +358,7 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/route',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { body: RouteBody },
     },
     async (request, reply) => {
@@ -465,7 +465,7 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { body: CreateBody, headers: IdempotencyHeaderSchema },
     },
     async (request, reply) => {
@@ -501,7 +501,7 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/jobs/:jobId',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: JobParam },
     },
     async (request, reply) => {
@@ -647,7 +647,7 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: ListQuery },
     },
     async (request, reply) => {
@@ -713,7 +713,7 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: IdParam },
     },
     async (request, reply) => {
@@ -821,7 +821,7 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/approve',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { body: ApproveBody, headers: IdempotencyHeaderSchema, params: IdParam },
     },
     async (request, reply) => {
@@ -948,7 +948,7 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/reject',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: IdParam },
     },
     async (request, reply) => {
@@ -986,7 +986,7 @@ export const runPlanRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/save-as-template',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { body: SaveAsTemplateBody, params: IdParam },
     },
     async (request, reply) => {

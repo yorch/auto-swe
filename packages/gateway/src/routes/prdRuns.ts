@@ -4,9 +4,10 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { can } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
-import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
+import { allOfTeams, authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { runProvenance } from '../lib/runProvenance.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -44,7 +45,7 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.launch.multi-repo'] }),
       schema: { body: CreatePrdRunSchema, headers: IdempotencyHeaderSchema },
     },
     async (request, reply) => {
@@ -74,7 +75,7 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
                 select: {
                   id: true,
                   memberships: {
-                    select: { role: true, userId: true },
+                    select: { userId: true },
                     where: { userId: user.sub },
                   },
                   monthlyBudgetUsdCents: true,
@@ -106,6 +107,10 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
       // orgs, so it takes the same launch decision as an epic, owning-team LEAD
       // requirement included. Every repository refusal is collected so the
       // response names all of them.
+      // `authorizeLaunch` enforces the lead requirement below and names the repositories it refuses.
+      // This asks the same question of the same owning teams so the route records its check; the
+      // answer is not used to refuse, because that body is the one `authorizeLaunch` builds.
+      await can(request, 'team.launch.multi-repo', allOfTeams(repos.map((repo) => repo.team.id)));
       const authorization = await authorizeLaunch(fastify.prisma, user, {
         gate: request.repoAccessGate,
         log: request.log,

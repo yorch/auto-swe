@@ -7,6 +7,7 @@ import {
   type WorkflowIdOwner,
   workflowIdFamilyBases,
 } from '@auto-swe/shared/lib/workflowId';
+import { isPlatformAdmin, can as sharedCan, userActor } from '@auto-swe/shared/permissions';
 import type { FastifyInstance } from 'fastify';
 import { getErrorName } from '../plugins/auth.js';
 import { auditContextData } from './auditContext.js';
@@ -255,7 +256,7 @@ export async function snapshotAuthorizedRepositorySource(
     return null;
   }
 
-  if (actor && actor.role !== 'ADMIN') {
+  if (actor && !isPlatformAdmin(actor)) {
     const repoMember =
       repo.team.memberships.some((membership) => membership.userId === actor.sub) ||
       repo.shares.some(
@@ -284,18 +285,16 @@ export async function snapshotAuthorizedRepositorySource(
     if (!selectedTeamIsVisible) {
       return null;
     }
-    if (actor?.role !== 'ADMIN') {
-      const membership = actor
-        ? await tx.teamMembership.findUnique({
-            select: { role: true },
-            where: {
-              userId_teamId: { teamId: authorization.requiredTeamId, userId: actor.sub },
-            },
-          })
-        : null;
-      if (membership?.role !== 'LEAD' && membership?.role !== 'ADMIN') {
-        return null;
-      }
+    // Platform admin holds the capability too; a launch with no actor holds nothing.
+    if (
+      !actor ||
+      !(
+        await sharedCan(tx, userActor(actor), 'team.launch.as-lead', {
+          teamId: authorization.requiredTeamId,
+        })
+      ).allowed
+    ) {
+      return null;
     }
   }
 
@@ -355,12 +354,12 @@ async function snapshotAuthorizedTeamSource(
     team.id !== expected.teamId ||
     team.orgId !== expected.orgId ||
     (actor &&
-      actor.role !== 'ADMIN' &&
+      !isPlatformAdmin(actor) &&
       !team.memberships.some((membership) => membership.userId === actor.sub))
   ) {
     return null;
   }
-  if (actor && actor.role !== 'ADMIN') {
+  if (actor && !isPlatformAdmin(actor)) {
     const membership = await tx.organizationMembership.findUnique({
       select: { userId: true },
       where: { userId_orgId: { orgId: team.orgId, userId: actor.sub } },

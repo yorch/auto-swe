@@ -11,6 +11,7 @@ import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputS
 import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { stableStringify } from '@auto-swe/shared/lib/stableJson';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isLauncher, isPlatformAdmin } from '@auto-swe/shared/permissions';
 import {
   BUDGET_TIERS,
   CAMPAIGN_DESCRIPTION_MAX_LENGTH,
@@ -21,6 +22,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { can } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, uuidFromIdempotencyKey } from '../lib/idempotency.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
@@ -107,8 +109,6 @@ function emptyCounts(): TargetCounts {
   return Object.fromEntries(TARGET_STATES.map((s) => [s, 0])) as TargetCounts;
 }
 
-const LEAD_ROLES = new Set(['LEAD', 'ADMIN']);
-
 /**
  * Whether a stored launch request and a new one are the same request, compared in a canonical
  * form (keys sorted at every depth): a client that serialises `recipe.params` in another key order
@@ -174,7 +174,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.launch.multi-repo'] }),
       schema: { body: CreateCampaignSchema, headers: IdempotencyHeaderSchema },
     },
     async (request, reply) => {
@@ -241,7 +241,6 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         select: {
           id: true,
           isActive: true,
-          memberships: { select: { role: true }, where: { userId: user.sub } },
           name: true,
           orgId: true,
         },
@@ -250,8 +249,8 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
       if (!ownerTeam?.isActive) {
         return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Owner team not found');
       }
-      const leadsOwner = ownerTeam.memberships.some((m) => LEAD_ROLES.has(m.role));
-      if (user.role !== 'ADMIN' && !leadsOwner) {
+      const leadsOwner = await can(request, 'team.launch.multi-repo', { teamId: ownerTeamId });
+      if (!leadsOwner.allowed) {
         return sendError(
           reply,
           403,
@@ -288,7 +287,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
                 select: {
                   id: true,
                   memberships: {
-                    select: { role: true, userId: true },
+                    select: { userId: true },
                     where: { userId: user.sub },
                   },
                   monthlyBudgetUsdCents: true,
@@ -322,8 +321,14 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
       //    are in another organization or have campaigns turned off. A repository is named only to
       //    a member of its team; the rest are counted. The full launch decision (repository access,
       //    organization membership, budgets) still runs in step 9.
-      if (user.role !== 'ADMIN') {
-        const notLed = repos.filter((r) => !r.team.memberships.some((m) => LEAD_ROLES.has(m.role)));
+      {
+        // One decision per owning team, each over every repository of it: platform admin holds the
+        // capability everywhere, and a lead of a deactivated team does not.
+        const ledTeams = new Map<string, boolean>();
+        for (const teamId of new Set(repos.map((r) => r.team.id))) {
+          ledTeams.set(teamId, (await can(request, 'team.launch.multi-repo', { teamId })).allowed);
+        }
+        const notLed = repos.filter((r) => ledTeams.get(r.team.id) !== true);
         if (notLed.length > 0) {
           const named = notLed
             .filter((r) => r.team.memberships.length > 0)
@@ -390,7 +395,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
       const disabledRepos = repos.filter((r) => enabledByTeam.get(r.team.id) === false);
       if (ownerDisabled || disabledRepos.length > 0) {
         const named = disabledRepos
-          .filter((r) => user.role === 'ADMIN' || r.team.memberships.length > 0)
+          .filter((r) => isPlatformAdmin(user) || r.team.memberships.length > 0)
           .map((r) => `${r.organizationName ?? '?'}/${r.repoName ?? r.id}`);
         const unnamed = disabledRepos.length - named.length;
         const parts = [
@@ -632,7 +637,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: ListCampaignsQuery },
     },
     async (request) => {
@@ -660,70 +665,69 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         take: limit,
       };
 
-      const [rows, total] =
-        user.role === 'ADMIN'
-          ? await runUnscoped('admin lists every campaign', ['Campaign'], () =>
-              Promise.all([
-                fastify.prisma.campaign.findMany({ ...page, select, where: filters }),
-                fastify.prisma.campaign.count({ where: filters }),
-              ])
-            )
-          : await Promise.all([
-              fastify.prisma.campaign.findMany({
-                ...page,
-                select,
-                where: {
-                  ...filters,
-                  // Owner-team member, or a reachable target. Spelled out (not
-                  // `visibleToMember(…)`) so the tenant-guard audit reads the keys.
-                  OR: [
-                    { ownerTeam: { memberships: { some: { userId: user.sub } } } },
-                    {
-                      targets: {
-                        some: {
-                          connection: {
-                            AND: [
-                              {
-                                OR: [
-                                  { team: memberTeams(user) },
-                                  { shares: { some: { team: memberTeams(user) } } },
-                                ],
-                              },
-                              permissionRequirement(user, gate),
-                            ],
-                          },
+      const [rows, total] = isPlatformAdmin(user)
+        ? await runUnscoped('admin lists every campaign', ['Campaign'], () =>
+            Promise.all([
+              fastify.prisma.campaign.findMany({ ...page, select, where: filters }),
+              fastify.prisma.campaign.count({ where: filters }),
+            ])
+          )
+        : await Promise.all([
+            fastify.prisma.campaign.findMany({
+              ...page,
+              select,
+              where: {
+                ...filters,
+                // Owner-team member, or a reachable target. Spelled out (not
+                // `visibleToMember(…)`) so the tenant-guard audit reads the keys.
+                OR: [
+                  { ownerTeam: { memberships: { some: { userId: user.sub } } } },
+                  {
+                    targets: {
+                      some: {
+                        connection: {
+                          AND: [
+                            {
+                              OR: [
+                                { team: memberTeams(user) },
+                                { shares: { some: { team: memberTeams(user) } } },
+                              ],
+                            },
+                            permissionRequirement(user, gate),
+                          ],
                         },
                       },
                     },
-                  ],
-                },
-              }),
-              fastify.prisma.campaign.count({
-                where: {
-                  ...filters,
-                  OR: [
-                    { ownerTeam: { memberships: { some: { userId: user.sub } } } },
-                    {
-                      targets: {
-                        some: {
-                          connection: {
-                            AND: [
-                              {
-                                OR: [
-                                  { team: memberTeams(user) },
-                                  { shares: { some: { team: memberTeams(user) } } },
-                                ],
-                              },
-                              permissionRequirement(user, gate),
-                            ],
-                          },
+                  },
+                ],
+              },
+            }),
+            fastify.prisma.campaign.count({
+              where: {
+                ...filters,
+                OR: [
+                  { ownerTeam: { memberships: { some: { userId: user.sub } } } },
+                  {
+                    targets: {
+                      some: {
+                        connection: {
+                          AND: [
+                            {
+                              OR: [
+                                { team: memberTeams(user) },
+                                { shares: { some: { team: memberTeams(user) } } },
+                              ],
+                            },
+                            permissionRequirement(user, gate),
+                          ],
                         },
                       },
                     },
-                  ],
-                },
-              }),
-            ]);
+                  },
+                ],
+              },
+            }),
+          ]);
 
       const counts = await countsFor(rows.map((r) => r.id));
       return {
@@ -736,14 +740,14 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: CampaignParams },
     },
     async (request, reply) => {
       const user = requireUser(request);
       const gate = request.repoAccessGate;
       const { id } = request.params;
-      const isAdmin = user.role === 'ADMIN';
+      const isAdmin = isPlatformAdmin(user);
 
       // Never 403: a campaign the caller cannot see does not exist as far as they are told.
       const campaign = await fastify.prisma.campaign.findFirst({
@@ -854,14 +858,14 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/cancel',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: CampaignParams },
     },
     async (request, reply) => {
       const user = requireUser(request);
       const gate = request.repoAccessGate;
       const { id } = request.params;
-      const isAdmin = user.role === 'ADMIN';
+      const isAdmin = isPlatformAdmin(user);
 
       const campaign = await fastify.prisma.campaign.findFirst({
         select: {
@@ -877,12 +881,11 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 404, 'CAMPAIGN_NOT_FOUND', 'Campaign not found');
       }
 
-      if (!isAdmin && campaign.createdById !== user.sub) {
-        const membership = await fastify.prisma.teamMembership.findUnique({
-          select: { role: true },
-          where: { userId_teamId: { teamId: campaign.ownerTeamId, userId: user.sub } },
+      if (!isAdmin && !isLauncher(user.sub, campaign.createdById)) {
+        const leads = await can(request, 'team.launch.multi-repo', {
+          teamId: campaign.ownerTeamId,
         });
-        if (!membership || !LEAD_ROLES.has(membership.role)) {
+        if (!leads.allowed) {
           return sendError(
             reply,
             403,

@@ -1,5 +1,4 @@
 import type { Prisma } from '@auto-swe/shared';
-import { Role } from '@auto-swe/shared';
 import { AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
 import {
   CHANNEL_ASSISTANT_TEMPLATE_NAME,
@@ -8,6 +7,7 @@ import {
 import { PLANNED_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/plannedRun';
 import { type PullRequestState, pullRequestUrl } from '@auto-swe/shared/lib/pullRequest';
 import { resolveGitHubBaseUrl } from '@auto-swe/shared/lib/systemConfig';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { TicketGroup, WorkflowRunStatus } from '@auto-swe/shared/types/api';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -87,13 +87,13 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: Query },
     },
     async (request) => {
       const user = requireUser(request);
       const { includeAutomated, limit, offset, scope, search, teamId } = request.query;
-      const isAdmin = user.role === 'ADMIN';
+      const isAdmin = isPlatformAdmin(user);
       const reachable = reachableConnections(user, request.repoAccessGate);
       const runVisibility = buildWorkflowRunVisibilityFilter(user, request.repoAccessGate);
       /** A repository predicate that a non-ADMIN also has to reach, in ONE clause. */
@@ -292,7 +292,7 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
     '/preview',
     {
       config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: PreviewQuery },
     },
     async (request, reply) => {
@@ -301,8 +301,9 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
       if (!isValidTicketId(ticketId)) {
         return sendError(reply, 400, 'INVALID_TICKET_ID', 'ticketId is not a valid ticket id');
       }
-      const reach =
-        user.role === Role.ADMIN ? null : reachableConnections(user, request.repoAccessGate);
+      const reach = isPlatformAdmin(user)
+        ? null
+        : reachableConnections(user, request.repoAccessGate);
       const repo = await asPlatformAdmin(
         user,
         'an admin may read a ticket for any repository',

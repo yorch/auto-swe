@@ -515,7 +515,7 @@ async function readPage(app: FastifyInstance, runId: string, query: ActivityQuer
 
 export const runActivityRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const auth = requireAuth({ requiredRole: 'ENGINEER' });
+  const auth = requireAuth();
   app.get(
     '/:id/activity',
     {

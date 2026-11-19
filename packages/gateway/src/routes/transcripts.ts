@@ -8,6 +8,7 @@ import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAcces
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { normalizeTranscriptRecord } from '@auto-swe/shared/lib/transcripts/normalize';
 import { scrubPii } from '@auto-swe/shared/lib/transcripts/piiScrub';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -28,7 +29,6 @@ import {
   verifyDownloadLink,
 } from '../lib/transcriptDownloadLink.js';
 import {
-  hasRole,
   type JwtPayload,
   loadTokenUser,
   RBAC_OPTIONS,
@@ -261,9 +261,13 @@ const downloadLinks = new WeakMap<FastifyRequest, DownloadLinkClaims>();
  * check that refuses `serviceScopes` behind an unreachable role sees it exactly
  * as it would see the `requireAuth` hook itself.
  */
-export function contentAuthHook(fallback: RBACOptions) {
+export function contentAuthHook(fallback: RBACOptions = {}) {
+  if (fallback.capability || fallback.handlerChecked?.length) {
+    // The download link carries a person's identity and nothing else, so it cannot answer a
+    // capability: a route that needs one does not take a link.
+    throw new Error('contentAuthHook admits a download link and so declares no capability');
+  }
   const authenticate = requireAuth(fallback);
-  const requiredRole = fallback.requiredRole ?? 'ENGINEER';
   const hook = async (request: FastifyRequest, reply: FastifyReply) => {
     const dl = (request.query as Record<string, unknown> | undefined)?.dl;
     if (dl === undefined) {
@@ -284,7 +288,7 @@ export function contentAuthHook(fallback: RBACOptions) {
       return sendError(reply, 401, 'DOWNLOAD_LINK_INVALID', 'This download link is not valid');
     }
     const user = await loadTokenUser(request.server.prisma, claims.sub);
-    if (!user?.isActive || !hasRole(user.role, requiredRole)) {
+    if (!user?.isActive) {
       return sendError(
         reply,
         401,
@@ -542,7 +546,7 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
       }
       return transcript;
     }
-    if (user.role !== 'ADMIN') {
+    if (!isPlatformAdmin(user)) {
       await sendError(reply, 404, 'TRANSCRIPT_NOT_FOUND', 'Transcript not found');
       return null;
     }
@@ -601,7 +605,7 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
     '/api/v1/workflow-runs/:id/transcripts',
     {
       config: { serviceScopes: ['runs:read'] },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: {
         params: RunIdParam,
         response: { 200: z.object({ data: z.array(TranscriptMetaSchema) }) },
@@ -640,7 +644,7 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
     '/api/v1/transcripts/:id',
     {
       config: { serviceScopes: ['runs:read'] },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: {
         params: TranscriptIdParam,
         response: {
@@ -682,7 +686,7 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
     '/api/v1/transcripts/:id/content',
     {
       config: { serviceScopes: ['runs:read'] },
-      onRequest: contentAuthHook({ requiredRole: 'ENGINEER' }),
+      onRequest: contentAuthHook(),
       onResponse: logDenied('content_read'),
       schema: { params: TranscriptIdParam, querystring: ContentQuery },
     },
@@ -750,7 +754,7 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
     '/api/v1/transcripts/:id/download-link',
     {
       config: { serviceScopes: ['runs:read'] },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       onResponse: logDenied('download_link'),
       schema: {
         body: DownloadLinkBody,
@@ -793,7 +797,7 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/api/v1/transcripts/:id/verify',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.transcripts.retention.manage' }),
       schema: { params: TranscriptIdParam },
     },
     async (request, reply) => {
@@ -946,7 +950,7 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
   app.put(
     '/api/v1/workflow-runs/:id/transcripts/legal-hold',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.transcripts.retention.manage' }),
       schema: { body: LegalHoldBody, params: RunIdParam },
     },
     (request, reply) =>
@@ -955,7 +959,7 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
   app.delete(
     '/api/v1/workflow-runs/:id/transcripts/legal-hold',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.transcripts.retention.manage' }),
       schema: { params: RunIdParam },
     },
     (request, reply) => applyHold(request, reply, { runId: request.params.id }, false, null)
@@ -963,7 +967,7 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
   app.put(
     '/api/v1/transcripts/:id/legal-hold',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.transcripts.retention.manage' }),
       schema: { body: LegalHoldBody, params: TranscriptIdParam },
     },
     (request, reply) =>
@@ -972,7 +976,7 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
   app.delete(
     '/api/v1/transcripts/:id/legal-hold',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.transcripts.retention.manage' }),
       schema: { params: TranscriptIdParam },
     },
     (request, reply) => applyHold(request, reply, { transcriptId: request.params.id }, false, null)
@@ -982,7 +986,7 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/api/v1/platform/transcripts/export',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.audit.read' }),
       schema: { querystring: ExportQuery },
     },
     async (request, reply) => {
@@ -1106,7 +1110,7 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/api/v1/platform/transcripts/access-log',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.audit.read' }),
       schema: {
         querystring: AccessLogQuery,
         response: { 200: z.object({ data: z.array(AccessLogRowSchema), total: z.number() }) },

@@ -580,11 +580,6 @@ describe('approvePlan', () => {
       },
     ],
     [
-      'a user who lost the ENGINEER floor',
-      () => fakePrisma(planRow(), { user: { id: 'user-1', isActive: true, role: 'VIEWER' } }),
-      'FORBIDDEN',
-    ],
-    [
       'a deactivated user',
       () => fakePrisma(planRow(), { user: { id: 'user-1', isActive: false, role: 'ENGINEER' } }),
       'FORBIDDEN',

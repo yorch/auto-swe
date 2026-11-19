@@ -14,14 +14,14 @@ import {
   authorizeRepository,
   type PlanRefusal,
   refuse,
-  requireEngineer,
+  requireActivePlanUser,
 } from './runPlanService.js';
 
 /**
  * Starting a plan-generation job: the one function behind `POST /run-plans` and the Slack
  * "Generate plan" button, so both take identical decisions. Order of checks:
  *
- * 1. the person is an active ENGINEER (read from the database, never from a token);
+ * 1. the person is an active user (read from the database, never from a token);
  * 2. the repository: reach, GitHub permission, org membership and cap, host allowlist;
  * 3. the library agent (output-only plans): launchable, and active for the repository's organization;
  * 4. the Idempotency-Key: a retry finds its job (or is refused when it names another goal);
@@ -88,7 +88,7 @@ export async function startRunPlan(
   const { agent, idempotencyKey, intent, repoId, source, user } = args;
   const serviceDeps = { gate: deps.gate, log: deps.log, prisma: fastify.prisma };
 
-  const engineer = await requireEngineer(serviceDeps, { sub: user.sub });
+  const engineer = await requireActivePlanUser(serviceDeps, { sub: user.sub });
   if (!engineer.ok) {
     return engineer;
   }

@@ -42,6 +42,9 @@ interface ActiveWorkflowFixture {
   updatedAt: Date;
 }
 
+/** The id of a repository's owning team: the fixture's, or one made from the repository's. */
+const teamIdOf = (r: RepoFixture): string => r.teamId ?? `team-of-${r.id}`;
+
 const repoFixtures: RepoFixture[] = [
   {
     id: REPO_A,
@@ -295,9 +298,10 @@ describe('epic routes', () => {
                 ? [{ team: { memberships: [{ userId: currentSub }] } }]
                 : [],
               team: {
+                id: teamIdOf(r),
                 memberships:
                   r.memberIds.includes(currentSub) && !sharedOnlyRepos.has(r.id)
-                    ? [{ role: teamRoleByRepo[r.id] ?? currentTeamRole, userId: currentSub }]
+                    ? [{ userId: currentSub }]
                     : [],
                 organization: { id: r.orgId, monthlyBudgetUsdCents: r.monthlyBudgetUsdCents },
                 orgId: r.orgId,
@@ -353,6 +357,24 @@ describe('epic routes', () => {
           const start = args.skip ?? 0;
           return rows.slice(start, args.take === undefined ? undefined : start + args.take);
         },
+      },
+      // The capability resolver: the teams a resource names, and the caller's role on each. A
+      // repository's team is the one `teamIdOf` names; a share confers no role on the owner.
+      team: {
+        findMany: async (args: { where: { id: { in: string[] } } }) =>
+          args.where.id.in.map((id) => ({ id, isActive: true, orgId: null })),
+      },
+      teamMembership: {
+        findMany: async (args: { where: { teamId: { in: string[] } } }) =>
+          args.where.teamId.in.flatMap((teamId) => {
+            const repo = repoFixtures.find((r) => teamIdOf(r) === teamId);
+            if (!repo) {
+              return [];
+            }
+            return repo.memberIds.includes(currentSub) && !sharedOnlyRepos.has(repo.id)
+              ? [{ role: teamRoleByRepo[repo.id] ?? currentTeamRole, teamId }]
+              : [];
+          }),
       },
     };
 

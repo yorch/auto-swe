@@ -24,7 +24,7 @@ function mockPrisma() {
   return {
     connection: { findMany: vi.fn().mockResolvedValue([{ id: REPO }]) },
     organizationMembership: {
-      findMany: vi.fn().mockResolvedValue([{ orgId: ORG }]),
+      findMany: vi.fn().mockResolvedValue([{ orgId: ORG, role: 'ADMIN' }]),
     },
     team: { findUnique: vi.fn().mockResolvedValue({ orgId: ORG }) },
     teamMembership: { findMany: vi.fn().mockResolvedValue([{ teamId: 'member-team' }]) },

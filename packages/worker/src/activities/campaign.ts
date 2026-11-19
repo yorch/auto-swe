@@ -22,6 +22,7 @@ import {
   campaignFinalState,
   campaignTargetOutcome,
 } from '@auto-swe/shared/lib/campaignOutcome';
+import { can, isPlatformAdmin, userActor } from '@auto-swe/shared/permissions';
 import type { CampaignTargetInput, WorkflowResult } from '@auto-swe/shared/types/workflow';
 import { maskCredentialShapes } from '../lib/redactToken.js';
 
@@ -220,8 +221,6 @@ export interface AuthorizeCampaignTargetsResult {
   verdicts: Array<{ connectionId: string; allowed: boolean; reason?: string }>;
 }
 
-const TEAM_LEAD_ROLES: ReadonlySet<string> = new Set(['LEAD', 'ADMIN']);
-
 /**
  * The campaign states in which a child may still start. STARTING is included because the
  * workflow's own STARTING-to-RUNNING write is best effort; every other state stops the campaign:
@@ -284,7 +283,8 @@ export async function authorizeCampaignTargets(
   if (!launcher?.isActive) {
     return stop("the launcher's account is no longer active");
   }
-  const isAdmin = launcher.role === 'ADMIN';
+  const isAdmin = isPlatformAdmin(launcher);
+  const launcherActor = userActor({ role: launcher.role, sub: input.launchedById });
   if (!campaign.ownerTeam.isActive) {
     return stop('the owning team was deactivated');
   }
@@ -312,11 +312,9 @@ export async function authorizeCampaignTargets(
     if (known !== undefined) {
       return known;
     }
-    const membership = await prisma.teamMembership.findUnique({
-      select: { role: true },
-      where: { userId_teamId: { teamId, userId: input.launchedById } },
-    });
-    const ok = membership !== null && TEAM_LEAD_ROLES.has(membership.role);
+    // The same decision the launch route took (`team.launch.multi-repo`), so a launch and a
+    // child's start cannot disagree about the same person.
+    const ok = (await can(prisma, launcherActor, 'team.launch.multi-repo', { teamId })).allowed;
     leads.set(teamId, ok);
     return ok;
   };

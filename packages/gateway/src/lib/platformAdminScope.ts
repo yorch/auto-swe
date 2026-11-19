@@ -1,4 +1,5 @@
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 
 /**
  * Runs `fn` unscoped **only** when the caller is a platform admin.
@@ -20,5 +21,5 @@ export function asPlatformAdmin<T>(
   models: readonly string[],
   fn: () => T
 ): T {
-  return user.role === 'ADMIN' ? runUnscoped(reason, models, fn) : fn();
+  return isPlatformAdmin(user) ? runUnscoped(reason, models, fn) : fn();
 }

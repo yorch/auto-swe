@@ -14,6 +14,7 @@ import {
   generateWorkflowId,
   legacyWorkflowIdBases,
 } from '@auto-swe/shared/lib/workflowId';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance } from 'fastify';
 import { resolveDefaultTemplate } from '../../routes/workRequests.js';
@@ -82,7 +83,7 @@ export async function buildRunModalView(
     isActive: true,
     // Only git_repo connections are valid run targets; exclude non-git types (e.g. mcp).
     type: 'git_repo',
-    ...(user.role !== 'ADMIN' && reachableConnections({ sub: user.id }, gate)),
+    ...(!isPlatformAdmin(user) && reachableConnections({ sub: user.id }, gate)),
   };
   const accessibleRepos = await asPlatformAdmin(
     user,
@@ -317,7 +318,7 @@ export async function handleRunModalSubmission(
         id: templateId,
         status: 'ACTIVE',
         ...EXCLUDE_SYSTEM_TEMPLATES,
-        ...(user.role === 'ADMIN'
+        ...(isPlatformAdmin(user)
           ? {}
           : { AND: [{ OR: [{ teamId: null }, { team: memberTeams({ sub: user.id }) }] }] }),
       },

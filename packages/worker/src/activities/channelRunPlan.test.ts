@@ -126,16 +126,11 @@ describe('proposeChannelRunPlan', () => {
     expect(out.text).toContain("couldn't tell which repository");
   });
 
-  it('refuses an unlinked user and a VIEWER without a button', async () => {
+  it('refuses an unlinked user without a button', async () => {
     vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
     const unlinked = await proposeChannelRunPlan(input());
     expect(unlinked.blocks).toBeUndefined();
     expect(unlinked.text).toContain('linked');
-
-    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'u', role: 'VIEWER' } as never);
-    const viewer = await proposeChannelRunPlan(input());
-    expect(viewer.blocks).toBeUndefined();
-    expect(viewer.text).toContain('ENGINEER');
   });
 
   it('respects the repository access decision and says why', async () => {

@@ -4,7 +4,9 @@ import {
   resolveSlackBotTokenForWorkspace,
   resolveSlackConfig,
 } from '@auto-swe/shared/lib/systemConfig';
+import { can, userActor } from '@auto-swe/shared/permissions';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { anyOfTeams } from '../../lib/launchAuthorization.js';
 import { buildWorkflowRunControlFilter } from '../../lib/runVisibility.js';
 import { handleAskMessageShortcut } from '../../lib/slack/channelEvents.js';
 import { handleHitlModalSubmission, handleHitlResolveAction } from '../../lib/slack/hitlActions.js';
@@ -273,27 +275,22 @@ export async function registerInteractiveRoutes(fastify: FastifyInstance): Promi
             .status(404)
             .send({ error: { code: 'RUN_NOT_FOUND', message: 'Run not found' } });
         }
-        // Only a LEAD or ADMIN of a team that owns the run can approve it; the platform role
-        // decides nothing but the ADMIN bypass. Checked after control, so a refusal tells the
+        // Only a lead of a team that owns the run can approve it (`team.approvals.merge`, any one of
+        // its owning teams, or a platform admin). Checked after control, so a refusal tells the
         // clicker nothing about a run they cannot see.
-        if (user.role !== 'ADMIN') {
-          const leadsOwner = await fastify.prisma.teamMembership.findFirst({
-            select: { teamId: true },
-            where: {
-              role: { in: ['LEAD', 'ADMIN'] },
-              team: { isActive: true },
-              teamId: { in: controlled.ownerTeamIds },
-              userId: user.id,
+        const mayApprove = await can(
+          fastify.prisma,
+          userActor({ role: user.role, sub: user.id }),
+          'team.approvals.merge',
+          anyOfTeams(controlled.ownerTeamIds)
+        );
+        if (!mayApprove.allowed) {
+          return reply.status(403).send({
+            error: {
+              code: 'FORBIDDEN',
+              message: 'Only a LEAD or ADMIN of the team that owns the run can approve it',
             },
           });
-          if (!leadsOwner) {
-            return reply.status(403).send({
-              error: {
-                code: 'FORBIDDEN',
-                message: 'Only a LEAD or ADMIN of the team that owns the run can approve it',
-              },
-            });
-          }
         }
         await fastify.temporal.signalWorkflow(workflowId, 'humanMergeSignal', [true]);
         return { data: { action: 'approved', workflowId } };

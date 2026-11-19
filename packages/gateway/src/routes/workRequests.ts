@@ -25,6 +25,7 @@ import {
   generateWorkflowId,
   legacyWorkflowIdBases,
 } from '@auto-swe/shared/lib/workflowId';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import { BUDGET_TIERS, type RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -403,7 +404,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
     '/',
     {
       config: { mcpScope: 'read' },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: ListWorkRequestsQuery },
     },
     async (request) => {
@@ -411,7 +412,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       const { limit, offset, ticket } = request.query;
       const where = {
         ...(ticket ? { externalTicketId: { contains: ticket, mode: 'insensitive' as const } } : {}),
-        ...(user.role === 'ADMIN'
+        ...(isPlatformAdmin(user)
           ? {}
           : {
               activeWorkflows: {
@@ -458,7 +459,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // An MCP write tool reaches this route through the bridge; `assertMcpWriteAllowed` below
       // is what bounds it, and the hook writes its audit row.
       config: { mcpScope: 'write' },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       onSend: mcpWriteAuditHook,
       preValidation: mcpWriteBegin('submit_work_request'),
       schema: {
@@ -1003,7 +1004,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
   }>(
     '/:id/retry',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: {
         body: z
           .object({

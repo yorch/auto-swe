@@ -1,6 +1,4 @@
 import crypto from 'node:crypto';
-import { Role } from '@auto-swe/shared';
-import { roleMeets } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { isLaunchableAgentKey } from '@auto-swe/shared/lib/agentRun';
 import {
@@ -90,17 +88,14 @@ export async function proposeChannelRunPlan(
     return explain(PROPOSAL_TEXT.agentNotLaunchable);
   }
 
-  // Who is asking: a linked, active platform user, at least an ENGINEER. The gateway checks this
-  // again when the button is clicked; asking now saves the person a click that cannot work.
+  // Who is asking: a linked, active platform user. The gateway checks this again when the button
+  // is clicked; asking now saves the person a click that cannot work.
   const user = await prisma.user.findFirst({
-    select: { id: true, role: true },
+    select: { id: true },
     where: { isActive: true, slackId: input.userSlackId },
   });
   if (!user) {
     return explain(PROPOSAL_TEXT.linkAccount);
-  }
-  if (!roleMeets(user.role as Role, Role.ENGINEER)) {
-    return explain(PROPOSAL_TEXT.needsEngineer);
   }
 
   // The repository comes from the channel's own binding rules. A model's hint is honoured only

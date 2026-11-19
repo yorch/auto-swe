@@ -66,7 +66,7 @@ function postedWhereTokenSays(payload: SlackInteractivePayload, claims: SlackRun
  *    in the channel and thread it was posted in;
  * 3. starts generation through `startRunPlan`, the function `POST /run-plans` calls, as the platform
  *    user the clicker's Slack id links to (the interactivity route has already refused an unlinked
- *    or deactivated one): role, repository reach, quotas, kill switch and launchable agents are the
+ *    or deactivated one): repository reach, quotas, kill switch and launchable agents are the
  *    route's own, and never the channel's or a service identity;
  * 4. consumes the token by starting the job under an Idempotency-Key derived from its id. Temporal
  *    allows one job per workflow id, so a second click finds the first one's job and is answered

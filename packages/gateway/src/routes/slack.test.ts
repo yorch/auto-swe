@@ -412,14 +412,19 @@ function buildApp(state: FakeState): FastifyInstance {
       upsert: async () => ({ id: 'ws-1', orgId: 'org-1', slackTeamId: 'T1' }),
     },
     team: {
+      // The capability resolver loads the teams a resource names.
+      findMany: async (args: { where: { id: { in: string[] } } }) =>
+        args.where.id.in.map((id) => ({ id, isActive: true, orgId: null })),
       findUnique: async () => ({ id: 'team-default', orgId: 'org-1', slug: 'default' }),
     },
     teamMembership: {
-      findFirst: async (args: { where?: { teamId?: { in?: string[] } } }) => {
+      findMany: async (args: { where?: { teamId?: { in?: string[] } } }) => {
         state.leadLookups = [...(state.leadLookups ?? []), args];
         // The caller leads `team-led` only, so the answer follows the teams the route names.
         const named = args.where?.teamId?.in ?? [];
-        return state.leadsRunTeam && named.includes('team-led') ? { teamId: 'team-led' } : null;
+        return state.leadsRunTeam && named.includes('team-led')
+          ? [{ role: 'LEAD', teamId: 'team-led' }]
+          : [];
       },
       findUnique: async () => ({ role: 'LEAD' }),
     },
@@ -2861,18 +2866,13 @@ describe('Slack buttons respect run visibility', () => {
       expect(state.signalCalls).toHaveLength(0);
     });
 
-    it("asks for LEAD or ADMIN on an active team among the run's owning teams", async () => {
+    it("asks team.approvals.merge among the run's owning teams", async () => {
       (state.users[0] as { role: string }).role = 'ENGINEER';
       state.leadsRunTeam = true;
       await inject(buttonPayload('approve_merge', 'wf-mine'));
       expect(state.leadLookups).toContainEqual({
-        select: { teamId: true },
-        where: {
-          role: { in: ['LEAD', 'ADMIN'] },
-          team: { isActive: true },
-          teamId: { in: ['team-led'] },
-          userId: 'u1',
-        },
+        select: { role: true, teamId: true },
+        where: { teamId: { in: ['team-led'] }, userId: 'u1' },
       });
     });
 

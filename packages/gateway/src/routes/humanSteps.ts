@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { can, heldScope } from '../lib/authz.js';
 import {
   type HitlResolveErrorCode,
   resolvedViaForAuthMethod,
@@ -19,11 +20,8 @@ import {
   humanStepTeamScope,
 } from '../lib/humanStepFilters.js';
 import { NUDGE_INTERVAL_MS, nudgeSlackMessage, nudgeText } from '../lib/humanStepNudge.js';
-import {
-  leadTeamIdsAmong,
-  ownerTeamIdsOfStepRun,
-  STEP_RUN_OWNER_SELECT,
-} from '../lib/humanStepOwners.js';
+import { ownerTeamIdsOfStepRun, STEP_RUN_OWNER_SELECT } from '../lib/humanStepOwners.js';
+import { anyOfTeams } from '../lib/launchAuthorization.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { ownerTeamOfRun, RUN_OWNER_TEAM_SELECT } from '../lib/runTeamScope.js';
 import { buildWorkflowHumanStepVisibilityFilter } from '../lib/runVisibility.js';
@@ -404,7 +402,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
     '/',
     {
       config: { mcpScope: 'read' },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: ListQuery, response: { 200: StepListResponseSchema } },
     },
     async (request) => {
@@ -514,19 +512,19 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         s.timeoutAt !== null &&
         s.timeoutAt.getTime() < nudgeNow &&
         nudgeSlackMessage(s.slackMessage) !== null;
-      const leadTeams =
-        user.role === 'ADMIN'
-          ? new Set<string>()
-          : await leadTeamIdsAmong(fastify.prisma, user.sub, [
-              ...new Set(steps.filter(nudgeable).flatMap((s) => ownerTeamIdsOfStepRun(s.run))),
-            ]);
+      // The set the nudge route's own decision reads, so the button and the action agree. Asked
+      // only when some step on the page can be nudged at all.
+      const nudgeScope = steps.some(nudgeable)
+        ? await heldScope(request, 'team.approvals.nudge')
+        : { all: false, orgIds: [], teamIds: [] as string[] };
+      const leadTeams = new Set(nudgeScope.teamIds);
       return {
         data: steps.map((s) => ({
           approvalsRemaining: Math.max(0, s.requiredApprovers - s._count.humanApprovals),
           canAnswer: answerable.has(s.id),
           canNudge:
             nudgeable(s) &&
-            (user.role === 'ADMIN' ||
+            (nudgeScope.all ||
               ownerTeamIdsOfStepRun(s.run).some((teamId) => leadTeams.has(teamId))),
           context: s.context,
           currentApprovers: s._count.humanApprovals,
@@ -555,159 +553,155 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // SSE stream — emits 'change' events when the pending-step set changes
-  app.get(
-    '/stream',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
-    async (request, reply) => {
-      const user = requireUser(request);
+  app.get('/stream', { onRequest: requireAuth() }, async (request, reply) => {
+    const user = requireUser(request);
 
-      // Each stream polls the DB every 3 s for as long as it stays open and the
-      // global rate limiter only sees the initial request, so bound how many a
-      // single user may hold before the response is hijacked.
-      const openCount = openInboxStreams.get(user.sub) ?? 0;
-      if (openCount >= MAX_INBOX_STREAMS_PER_USER) {
-        return sendError(
-          reply,
-          429,
-          'TOO_MANY_STREAMS',
-          `At most ${MAX_INBOX_STREAMS_PER_USER} concurrent inbox streams per user`
-        );
-      }
-      openInboxStreams.set(user.sub, openCount + 1);
-      const releaseStream = () => {
-        const remaining = (openInboxStreams.get(user.sub) ?? 1) - 1;
-        if (remaining <= 0) {
-          openInboxStreams.delete(user.sub);
-        } else {
-          openInboxStreams.set(user.sub, remaining);
-        }
-      };
-
-      reply.hijack();
-
-      const res = reply.raw;
-      // Hijacking bypasses Fastify's send path, so headers other plugins set on
-      // the *reply* (notably @fastify/cors's Access-Control-Allow-Origin from
-      // its onRequest hook) would never reach the socket. Without them the
-      // browser's EventSource is blocked by CORS on every cross-origin
-      // deployment, reconnects in a tight loop and trips the rate limiter.
-      for (const [name, value] of Object.entries(reply.getHeaders())) {
-        if (value !== undefined) {
-          res.setHeader(name, value as string | number | string[]);
-        }
-      }
-      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-      res.setHeader('Cache-Control', 'no-cache, no-transform');
-      res.setHeader('Connection', 'keep-alive');
-      res.setHeader('X-Accel-Buffering', 'no');
-      res.flushHeaders();
-
-      const write = (chunk: string) => {
-        if (!res.writableEnded) {
-          res.write(chunk);
-        }
-      };
-
-      write(`event: ping\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
-
-      // A change signature for the user's visible pending set, from one aggregate over the same
-      // `where` as the inbox list, so a poll costs a bounded index read however large the inbox
-      // is (the ids are never loaded). It is `count|oldest requestedAt|newest requestedAt`.
-      // Detected: any net change in the number of visible pending steps, and any change of the
-      // oldest or newest pending step. A step resolved while another is added in the same window
-      // keeps the count, but new steps are stamped `requestedAt = now()` and so move the newest
-      // timestamp. Residual gaps: removing an interior step while adding one whose requestedAt
-      // falls inside the existing range (not produced by the platform, which never backdates),
-      // and a visibility change that swaps equal-sized sets with identical bounds. The web client's
-      // 30 s fallback poll covers both. The `change` payload carries no ids; clients refetch.
-      const fetchSignature = async (): Promise<string> => {
-        const agg = await fastify.prisma.workflowHumanStep.aggregate({
-          _count: { _all: true },
-          _max: { requestedAt: true },
-          _min: { requestedAt: true },
-          where: {
-            status: 'PENDING',
-            ...buildWorkflowHumanStepVisibilityFilter(user, request.repoAccessGate),
-          },
-        });
-        return `${agg._count._all}|${agg._min.requestedAt?.getTime() ?? ''}|${
-          agg._max.requestedAt?.getTime() ?? ''
-        }`;
-      };
-
-      let knownSignature = '';
-      let pollTimeout: ReturnType<typeof setTimeout> | null = null;
-      let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
-      let closed = false;
-
-      return new Promise<void>((resolve) => {
-        const cleanup = () => {
-          if (closed) {
-            return;
-          }
-          closed = true;
-          releaseStream();
-          if (pollTimeout) {
-            clearTimeout(pollTimeout);
-          }
-          if (keepAliveInterval) {
-            clearInterval(keepAliveInterval);
-          }
-          if (!res.writableEnded) {
-            res.end();
-          }
-          resolve();
-        };
-        // Registered before the first await: a client that disconnects during the initial query
-        // would otherwise never fire 'close' for a listener added after it, leaking the per-user
-        // slot and, once started, a 3 s database poll that nothing stops.
-        request.raw.once('close', cleanup);
-        request.raw.once('error', cleanup);
-
-        const poll = async () => {
-          try {
-            const current = await fetchSignature();
-            if (!closed && current !== knownSignature) {
-              write(`event: change\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
-              knownSignature = current;
-            }
-          } catch (err) {
-            // Keep the stream open (the next poll may succeed) but say so — a
-            // persistently failing DB otherwise looks like a silently frozen inbox.
-            request.log.warn({ err }, 'inbox stream: poll failed');
-          }
-          if (!closed) {
-            pollTimeout = setTimeout(poll, inboxStreamTuning.pollMs);
-          }
-        };
-
-        void (async () => {
-          try {
-            knownSignature = await fetchSignature();
-          } catch (err) {
-            // After hijack() Fastify cannot answer for us; end the stream so the
-            // browser EventSource reconnects instead of hanging on a dead socket.
-            request.log.warn({ err }, 'inbox stream: initial fetch failed');
-            cleanup();
-            return;
-          }
-          if (closed) {
-            return;
-          }
-          pollTimeout = setTimeout(poll, inboxStreamTuning.pollMs);
-          keepAliveInterval = setInterval(() => {
-            write(': keepalive\n\n');
-          }, 25000);
-        })();
-      });
+    // Each stream polls the DB every 3 s for as long as it stays open and the
+    // global rate limiter only sees the initial request, so bound how many a
+    // single user may hold before the response is hijacked.
+    const openCount = openInboxStreams.get(user.sub) ?? 0;
+    if (openCount >= MAX_INBOX_STREAMS_PER_USER) {
+      return sendError(
+        reply,
+        429,
+        'TOO_MANY_STREAMS',
+        `At most ${MAX_INBOX_STREAMS_PER_USER} concurrent inbox streams per user`
+      );
     }
-  );
+    openInboxStreams.set(user.sub, openCount + 1);
+    const releaseStream = () => {
+      const remaining = (openInboxStreams.get(user.sub) ?? 1) - 1;
+      if (remaining <= 0) {
+        openInboxStreams.delete(user.sub);
+      } else {
+        openInboxStreams.set(user.sub, remaining);
+      }
+    };
+
+    reply.hijack();
+
+    const res = reply.raw;
+    // Hijacking bypasses Fastify's send path, so headers other plugins set on
+    // the *reply* (notably @fastify/cors's Access-Control-Allow-Origin from
+    // its onRequest hook) would never reach the socket. Without them the
+    // browser's EventSource is blocked by CORS on every cross-origin
+    // deployment, reconnects in a tight loop and trips the rate limiter.
+    for (const [name, value] of Object.entries(reply.getHeaders())) {
+      if (value !== undefined) {
+        res.setHeader(name, value as string | number | string[]);
+      }
+    }
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+
+    const write = (chunk: string) => {
+      if (!res.writableEnded) {
+        res.write(chunk);
+      }
+    };
+
+    write(`event: ping\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
+
+    // A change signature for the user's visible pending set, from one aggregate over the same
+    // `where` as the inbox list, so a poll costs a bounded index read however large the inbox
+    // is (the ids are never loaded). It is `count|oldest requestedAt|newest requestedAt`.
+    // Detected: any net change in the number of visible pending steps, and any change of the
+    // oldest or newest pending step. A step resolved while another is added in the same window
+    // keeps the count, but new steps are stamped `requestedAt = now()` and so move the newest
+    // timestamp. Residual gaps: removing an interior step while adding one whose requestedAt
+    // falls inside the existing range (not produced by the platform, which never backdates),
+    // and a visibility change that swaps equal-sized sets with identical bounds. The web client's
+    // 30 s fallback poll covers both. The `change` payload carries no ids; clients refetch.
+    const fetchSignature = async (): Promise<string> => {
+      const agg = await fastify.prisma.workflowHumanStep.aggregate({
+        _count: { _all: true },
+        _max: { requestedAt: true },
+        _min: { requestedAt: true },
+        where: {
+          status: 'PENDING',
+          ...buildWorkflowHumanStepVisibilityFilter(user, request.repoAccessGate),
+        },
+      });
+      return `${agg._count._all}|${agg._min.requestedAt?.getTime() ?? ''}|${
+        agg._max.requestedAt?.getTime() ?? ''
+      }`;
+    };
+
+    let knownSignature = '';
+    let pollTimeout: ReturnType<typeof setTimeout> | null = null;
+    let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
+    let closed = false;
+
+    return new Promise<void>((resolve) => {
+      const cleanup = () => {
+        if (closed) {
+          return;
+        }
+        closed = true;
+        releaseStream();
+        if (pollTimeout) {
+          clearTimeout(pollTimeout);
+        }
+        if (keepAliveInterval) {
+          clearInterval(keepAliveInterval);
+        }
+        if (!res.writableEnded) {
+          res.end();
+        }
+        resolve();
+      };
+      // Registered before the first await: a client that disconnects during the initial query
+      // would otherwise never fire 'close' for a listener added after it, leaking the per-user
+      // slot and, once started, a 3 s database poll that nothing stops.
+      request.raw.once('close', cleanup);
+      request.raw.once('error', cleanup);
+
+      const poll = async () => {
+        try {
+          const current = await fetchSignature();
+          if (!closed && current !== knownSignature) {
+            write(`event: change\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
+            knownSignature = current;
+          }
+        } catch (err) {
+          // Keep the stream open (the next poll may succeed) but say so — a
+          // persistently failing DB otherwise looks like a silently frozen inbox.
+          request.log.warn({ err }, 'inbox stream: poll failed');
+        }
+        if (!closed) {
+          pollTimeout = setTimeout(poll, inboxStreamTuning.pollMs);
+        }
+      };
+
+      void (async () => {
+        try {
+          knownSignature = await fetchSignature();
+        } catch (err) {
+          // After hijack() Fastify cannot answer for us; end the stream so the
+          // browser EventSource reconnects instead of hanging on a dead socket.
+          request.log.warn({ err }, 'inbox stream: initial fetch failed');
+          cleanup();
+          return;
+        }
+        if (closed) {
+          return;
+        }
+        pollTimeout = setTimeout(poll, inboxStreamTuning.pollMs);
+        keepAliveInterval = setInterval(() => {
+          write(': keepalive\n\n');
+        }, 25000);
+      })();
+    });
+  });
 
   // Get one step
   app.get(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: {
         params: StepIdParam,
         response: { 200: StepDetailResponseSchema, 404: ErrorResponseSchema },
@@ -772,7 +766,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/respond',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: {
         body: RespondBody,
         params: StepIdParam,
@@ -860,7 +854,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/nudge',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.approvals.nudge'] }),
       schema: {
         params: StepIdParam,
         response: {
@@ -895,20 +889,18 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       }
       // Only a LEAD or ADMIN of a team that owns the run may nudge; checked after visibility, so
       // a refusal tells the caller nothing about a step they cannot see.
-      if (user.role !== 'ADMIN') {
-        const leads = await leadTeamIdsAmong(
-          fastify.prisma,
-          user.sub,
-          ownerTeamIdsOfStepRun(step.run)
+      const nudgeDecision = await can(
+        request,
+        'team.approvals.nudge',
+        anyOfTeams(ownerTeamIdsOfStepRun(step.run))
+      );
+      if (!nudgeDecision.allowed) {
+        return sendError(
+          reply,
+          403,
+          'FORBIDDEN',
+          'Only a LEAD or ADMIN of the team that owns the run can nudge its approvers'
         );
-        if (leads.size === 0) {
-          return sendError(
-            reply,
-            403,
-            'FORBIDDEN',
-            'Only a LEAD or ADMIN of the team that owns the run can nudge its approvers'
-          );
-        }
       }
       const message = nudgeSlackMessage(step.slackMessage);
       const now = new Date();

@@ -24,6 +24,7 @@ import {
 } from '@auto-swe/shared/lib/repoAccessDecision';
 import type { RepoAccessGate, RunIdentity } from '@auto-swe/shared/lib/repoAccessGate';
 import { canTeamLaunchOnRepo } from '@auto-swe/shared/lib/repoMembership';
+import { decide, loadStanding, type Resource, userActor } from '@auto-swe/shared/permissions';
 import type { FastifyReply } from 'fastify';
 import {
   isOrgMember,
@@ -49,10 +50,9 @@ export interface LaunchOrg {
 export interface LaunchRepo extends RepoAccessSubject {
   team: {
     /**
-     * The acting user's memberships of the owning team, with the role when
-     * {@link AuthorizeLaunchInput.requireOwningTeamLead} is set.
+     * The acting user's memberships of the owning team.
      */
-    memberships: Array<{ userId: string; role?: string }>;
+    memberships: Array<{ userId: string }>;
     orgId: string;
     organization: { monthlyBudgetUsdCents: number | null } | null;
     /**
@@ -119,16 +119,27 @@ export interface AuthorizeLaunchInput {
    */
   runIdentity?: RunIdentity;
   /**
-   * Also require LEAD or ADMIN membership of each repository's OWNING team (platform ADMIN
+   * Also require `team.launch.multi-repo` on each repository's OWNING team (platform admin
    * passes). Team membership via a share does not count. For a launch that fans out across
-   * repositories (an epic, a PRD run), where the platform role alone is not enough. The repository
-   * `select` must then include `role` on `team.memberships`; a missing role refuses.
+   * repositories (an epic, a PRD run), where reaching the repositories is not enough.
    */
   requireOwningTeamLead?: boolean;
 }
 
-/** Roles that may lead work on a team. */
-const TEAM_LEAD_ROLES = new Set(['LEAD', 'ADMIN']);
+/**
+ * A resource naming any one of `teamIds`. With none, no resource at all: a run that no team owns
+ * is the operator's alone, and an empty `anyOf` would refuse even platform admin.
+ */
+export function anyOfTeams(teamIds: readonly string[]): Resource {
+  const unique = [...new Set(teamIds)];
+  return unique.length > 0 ? { anyOf: unique.map((teamId) => ({ teamId })) } : undefined;
+}
+
+/** A resource naming every one of `teamIds` (a launch across several repositories). */
+export function allOfTeams(teamIds: readonly string[]): Resource {
+  const unique = [...new Set(teamIds)];
+  return unique.length > 0 ? { allOf: unique.map((teamId) => ({ teamId })) } : undefined;
+}
 
 /**
  * May `actor` start this launch? Repository access (team membership, GitHub
@@ -178,14 +189,14 @@ export async function authorizeLaunch(
     };
   }
 
-  if (input.requireOwningTeamLead && actor.role !== 'ADMIN') {
+  if (input.requireOwningTeamLead) {
     // Every repository here already passed the membership check, so naming it reveals nothing the
-    // caller cannot see; the owning team is never named.
+    // caller cannot see; the owning team is never named. One load of the standing across every
+    // owning team, then a decision per repository so the refusal can name the ones not led.
+    const teamIds = [...new Set(input.repos.map((repo) => repo.team.id))];
+    const standing = await loadStanding(prisma, userActor(actor), allOfTeams(teamIds));
     const notLed = input.repos.filter(
-      (repo) =>
-        !repo.team.memberships.some(
-          (m) => m.userId === actor.sub && m.role !== undefined && TEAM_LEAD_ROLES.has(m.role)
-        )
+      (repo) => !decide(standing, 'team.launch.multi-repo', { teamId: repo.team.id }).allowed
     );
     if (notLed.length > 0) {
       const labels = notLed.map((r) => `${r.organizationName ?? '?'}/${r.repoName ?? r.id}`);
