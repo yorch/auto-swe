@@ -48,7 +48,7 @@ export const teamSecretRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   // Platform ADMINs pass the team check; any other caller must be an ADMIN of this team.
   const teamAdmin = () =>
-    requireAuth({ requiredRole: 'ENGINEER', requiredTeamRole: 'ADMIN', teamIdParam: 'teamId' });
+    requireAuth({ capability: 'team.secrets.manage', team: { param: 'teamId' } });
 
   app.get(
     '/:teamId/secrets',

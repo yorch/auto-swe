@@ -133,6 +133,8 @@ async function build(fx: Fixture) {
       ),
     },
     organizationMembership: {
+      // The permissions loader's read of the viewer's standing in the organizations it names.
+      findMany: vi.fn(async () => (fx.orgRole ? [{ orgId: 'org-1', role: fx.orgRole }] : [])),
       findUnique: vi.fn(async () => (fx.orgRole ? { role: fx.orgRole } : null)),
     },
     orgMonthlyUsage: {

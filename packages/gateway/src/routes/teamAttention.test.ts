@@ -80,8 +80,16 @@ async function build(fx: Fixture) {
       }),
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
+    organizationMembership: { findMany: vi.fn().mockResolvedValue([]) },
+    // The permissions loader's read of the team itself.
+    team: { findMany: vi.fn().mockResolvedValue([{ id: TEAM, isActive: true, orgId: 'org-1' }]) },
     teamMembership: {
-      findMany: vi.fn().mockResolvedValue([{ userId: ME }, { userId: ASSIGNEE }]),
+      findMany: vi.fn(async (args: { where: { teamId: string | { in: string[] } } }) =>
+        // The loader names the team in a list and reads the caller's own role.
+        typeof args.where.teamId === 'object'
+          ? [{ role: fx.teamRole, teamId: TEAM }]
+          : [{ userId: ME }, { userId: ASSIGNEE }]
+      ),
       findUnique: vi.fn(async (args: { where: { userId_teamId: { userId: string } } }) => {
         const { userId } = args.where.userId_teamId;
         if (userId === ME) {

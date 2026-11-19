@@ -157,6 +157,10 @@ function buildApp(state: State): FastifyInstance {
         state.orgMemberships = [...(state.orgMemberships ?? []), { id: 'auto-org', ...data }];
         return { count: 1 };
       },
+      findMany: async ({ where }: { where: { orgId: { in: string[] }; userId: string } }) =>
+        (state.orgMemberships ?? [])
+          .filter((m) => m.userId === where.userId && where.orgId.in.includes(m.orgId))
+          .map((m) => ({ orgId: m.orgId, role: m.role })),
       findUnique: async ({
         where,
       }: {
@@ -190,9 +194,17 @@ function buildApp(state: State): FastifyInstance {
         );
       },
       findMany: async (args: {
-        where: { AND?: Array<TeamClause> };
+        where: { AND?: Array<TeamClause>; id?: { in: string[] } };
         include: { memberships: { where: { userId: string } } };
+        select?: Record<string, boolean>;
       }) => {
+        // The permissions loader's read of the teams a capability check names.
+        if (args.where.id && args.select) {
+          const wanted = args.where.id.in;
+          return state.teams
+            .filter((t) => wanted.includes(t.id))
+            .map((t) => ({ id: t.id, isActive: t.isActive ?? true, orgId: t.orgId ?? 'org-1' }));
+        }
         const { where, include } = args;
         state.teamQueries = [...(state.teamQueries ?? []), args];
         const clauses = where.AND ?? [];
@@ -288,6 +300,19 @@ function buildApp(state: State): FastifyInstance {
         const [removed] = state.memberships.splice(idx, 1);
         return removed;
       },
+      findMany: async ({
+        where,
+      }: {
+        where: { teamId: string | { in: string[] }; userId?: string };
+      }) => {
+        const wanted = typeof where.teamId === 'string' ? [where.teamId] : where.teamId.in;
+        return state.memberships
+          .filter(
+            (m) =>
+              wanted.includes(m.teamId) && (where.userId === undefined || m.userId === where.userId)
+          )
+          .map((m) => ({ role: m.role, teamId: m.teamId }));
+      },
       findUnique: async ({
         where,
       }: {
@@ -353,7 +378,7 @@ describe('organization-bounded team creation', () => {
     await app.close();
   });
 
-  it('keeps the unscoped create route platform-ADMIN-only', async () => {
+  it('refuses the unscoped create route to someone who is not an organization admin of the target', async () => {
     const app = buildApp(freshState());
     const res = await app.inject({
       headers: { authorization: 'Bearer test' },
@@ -362,6 +387,37 @@ describe('organization-bounded team creation', () => {
       url: '/api/v1/teams',
     });
     expect(res.statusCode).toBe(403);
+    expect(res.json().error.missing).toBe('org.teams.create');
+    await app.close();
+  });
+
+  it('refuses before saying whether the team name is taken', async () => {
+    const app = buildApp(freshState());
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test' },
+      method: 'POST',
+      payload: { name: 'platform', slug: 'platform' },
+      url: '/api/v1/teams',
+    });
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it('lets an organization admin create through the unscoped route, as through the org route', async () => {
+    const state = freshState({
+      orgMemberships: [
+        { id: 'org', orgId: 'org-default', role: 'ORG_ADMIN', userId: ADMIN_USER_ID },
+      ],
+    });
+    const app = buildApp(state);
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test' },
+      method: 'POST',
+      payload: { name: 'New', slug: 'new' },
+      url: '/api/v1/teams',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(state.audits?.map((a) => a.entityType)).toEqual(['Team', 'TeamMembership']);
     await app.close();
   });
 
@@ -856,7 +912,9 @@ describe('the team role alone decides team management', () => {
       url: `/api/v1/teams/${TEAM_ID}`,
     });
     expect(res.statusCode).toBe(403);
-    expect(res.json().error.message).toBe('Requires LEAD role in this team');
+    // The platform-role-free capability refusal, naming what was missing.
+    expect(res.json().error.code).toBe('FORBIDDEN');
+    expect(res.json().error.missing).toBe('team.settings.manage');
     expect(state.teams[0].name).toBe('platform');
   });
 
@@ -881,6 +939,130 @@ describe('the team role alone decides team management', () => {
     });
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe('PRIVILEGE_ESCALATION');
+  });
+});
+
+describe('organization authority over a team', () => {
+  const NEW_USER_ID = '00000000-0000-4000-8000-0000000000cc';
+  const headers = { authorization: 'Bearer fake-jwt' };
+
+  /** The caller is an org ADMIN of the team's organization with `membership` (if any) in the team. */
+  function orgAdminState(
+    membership: MembershipRow['role'] | null,
+    team: Partial<TeamRow> = {}
+  ): State {
+    const state = freshState({
+      memberships: [
+        ...(membership
+          ? [{ id: 'm-caller', role: membership, teamId: TEAM_ID, userId: ADMIN_USER_ID }]
+          : []),
+        { id: 'm-target', role: 'ENGINEER', teamId: TEAM_ID, userId: TARGET_USER_ID },
+      ],
+      orgMemberships: [
+        { id: 'org-caller', orgId: TEAM_ID, role: 'ORG_ADMIN', userId: ADMIN_USER_ID },
+        { id: 'org-new', orgId: TEAM_ID, role: 'ORG_MEMBER', userId: NEW_USER_ID },
+      ],
+      userRole: 'ENGINEER',
+    });
+    Object.assign(state.teams[0] as TeamRow, { orgId: TEAM_ID, ...team });
+    return state;
+  }
+
+  it.each([null, 'ENGINEER', 'LEAD'] as const)(
+    'ranks an org ADMIN as ADMIN, so they grant ADMIN (team membership: %s)',
+    async (membership) => {
+      const state = orgAdminState(membership);
+      const res = await buildApp(state).inject({
+        headers,
+        method: 'POST',
+        payload: { role: 'ADMIN', userId: NEW_USER_ID },
+        url: `/api/v1/teams/${TEAM_ID}/members`,
+      });
+      expect(res.statusCode).toBe(201);
+    }
+  );
+
+  it('lets an org ADMIN rename the team and change a member, without a membership', async () => {
+    const state = orgAdminState(null);
+    const app = buildApp(state);
+    const rename = await app.inject({
+      body: { name: 'platform-eng' },
+      headers,
+      method: 'PATCH',
+      url: `/api/v1/teams/${TEAM_ID}`,
+    });
+    expect(rename.statusCode).toBe(200);
+    const promote = await app.inject({
+      headers,
+      method: 'PATCH',
+      payload: { role: 'ADMIN' },
+      url: `/api/v1/teams/${TEAM_ID}/members/${TARGET_USER_ID}`,
+    });
+    expect(promote.statusCode).toBe(200);
+  });
+
+  it('still refuses an org ADMIN who removes themselves from the team', async () => {
+    const state = orgAdminState('ADMIN');
+    state.memberships.push({ id: 'm-other', role: 'ADMIN', teamId: TEAM_ID, userId: NEW_USER_ID });
+    const res = await buildApp(state).inject({
+      headers,
+      method: 'DELETE',
+      url: `/api/v1/teams/${TEAM_ID}/members/${ADMIN_USER_ID}`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('SELF_REMOVAL');
+  });
+
+  it('still refuses to remove the last team ADMIN for an org ADMIN', async () => {
+    const state = orgAdminState(null);
+    state.memberships = [{ id: 'm-only', role: 'ADMIN', teamId: TEAM_ID, userId: TARGET_USER_ID }];
+    const res = await buildApp(state).inject({
+      headers,
+      method: 'DELETE',
+      url: `/api/v1/teams/${TEAM_ID}/members/${TARGET_USER_ID}`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('LAST_TEAM_ADMIN');
+  });
+
+  it('confers nothing on a deactivated team', async () => {
+    const state = orgAdminState(null, { isActive: false });
+    const res = await buildApp(state).inject({
+      body: { name: 'platform-eng' },
+      headers,
+      method: 'PATCH',
+      url: `/api/v1/teams/${TEAM_ID}`,
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('does not let an org ADMIN set the sandbox policy: that is the operator’s alone', async () => {
+    const state = orgAdminState('ADMIN');
+    const res = await buildApp(state).inject({
+      headers,
+      method: 'PUT',
+      payload: { shellImageAllowlist: ['docker.io/library/node:22'] },
+      url: `/api/v1/teams/${TEAM_ID}/shell-image-allowlist`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.missing).toBe('team.sandbox-policy.manage');
+  });
+
+  it('records the authority a team creation was allowed on', async () => {
+    const state = freshState({
+      orgMemberships: [{ id: 'org', orgId: TEAM_ID, role: 'ORG_ADMIN', userId: ADMIN_USER_ID }],
+    });
+    const app = buildApp(state);
+    const res = await app.inject({
+      headers,
+      method: 'POST',
+      payload: { name: 'New', orgId: TEAM_ID, slug: 'new' },
+      url: '/api/v1/teams',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(
+      state.audits?.every((a) => (a.context as { authority?: string })?.authority === 'org-admin')
+    ).toBe(true);
   });
 });
 

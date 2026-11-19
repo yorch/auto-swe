@@ -1,4 +1,5 @@
 import type { Role } from '@auto-swe/shared';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyInstance } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
 import { writeAuditLog } from './auditLog.js';
@@ -42,7 +43,7 @@ export async function inviteUser(
       if (existing) {
         return refusal(409, 'USER_EXISTS', 'User with this email already exists');
       }
-      let approvalSource: string | null = actor.role === 'ADMIN' ? 'admin' : null;
+      let approvalSource: string | null = isPlatformAdmin(actor) ? 'admin' : null;
       if (!approvalSource) {
         const org = await tx.organization.findUnique({
           select: { isActive: true, trustedInvites: true },

@@ -221,7 +221,7 @@ async function deleteCredentialAndAudit(
 
 export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.catalog.manage' });
 
   // ── Provider credentials ───────────────────────────────────────────────
 
@@ -497,16 +497,12 @@ const TeamCredParams = z.object({ credId: z.string().uuid(), id: z.string().uuid
 /**
  * Team-scoped credential management. Registered as a child plugin from
  * `teams.ts` so all team URLs share one `/api/v1/teams/:id` prefix. Permission
- * is `requiredTeamRole: 'ADMIN'` — team owners only. (Per-role model config is
+ * is `team.credentials.manage` — team owners only. (Per-role model config is
  * now in the Agent library; team owners edit TEAM-scope agents there.)
  */
 export const teamScopedConfigRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const teamAdmin = requireAuth({
-    requiredRole: 'ENGINEER',
-    requiredTeamRole: 'ADMIN',
-    teamIdParam: 'id',
-  });
+  const teamAdmin = requireAuth({ capability: 'team.credentials.manage', team: { param: 'id' } });
 
   app.get(
     '/:id/credentials',

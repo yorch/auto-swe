@@ -1,4 +1,5 @@
 import type { Prisma } from '@auto-swe/shared';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import { memberTeams, type ScopeActor } from './tenantScope.js';
 
 /** The slice of the Prisma client the check reads; keeps the helper testable without a database. */
@@ -34,7 +35,7 @@ export async function assertTeamParam(
   user: ScopeActor & { role: string },
   teamId: string
 ): Promise<void> {
-  if (user.role === 'ADMIN') {
+  if (isPlatformAdmin(user)) {
     return;
   }
   const team = await prisma.team.findFirst({

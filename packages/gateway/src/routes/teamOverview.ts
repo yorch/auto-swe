@@ -16,7 +16,7 @@ export const teamOverviewRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/overview',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: z.object({ id: z.string().uuid() }) },
     },
     async (request, reply) => {

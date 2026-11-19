@@ -3,6 +3,7 @@ import type { BudgetStatus, TeamBudgetSettings } from '@auto-swe/shared/types/ap
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { auditContextOf } from '../lib/auditContext.js';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
 import { PG_INT_MAX } from '../lib/pgInt.js';
@@ -45,17 +46,17 @@ export const teamBudgetRoutes: FastifyPluginAsync = async (fastify) => {
   }
 
   // GET /api/v1/teams/:id/budget — the cap, threshold and month-to-date spend in dollars. Team
-  // ADMIN, ORG_ADMIN of the team's organization, or platform ADMIN; anyone else with no standing
+  // `team.budget.manage` (a team ADMIN, an org ADMIN of the team's organization, or a platform
+  // ADMIN); anyone else with no standing
   // on the team gets the 404 an unknown team gets, and a member without the role gets a 403.
   app.get(
     '/:id/budget',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: TeamParamsSchema } },
+    {
+      onRequest: requireAuth({ handlerChecked: ['team.budget.manage', 'team.budget.read'] }),
+      schema: { params: TeamParamsSchema },
+    },
     async (request, reply) => {
-      const access = await teamBudgetAccess(
-        fastify.prisma,
-        requireUser(request),
-        request.params.id
-      );
+      const access = await teamBudgetAccess(request, fastify.prisma, request.params.id);
       if (!access) {
         return sendError(reply, 404, ...NOT_FOUND);
       }
@@ -70,12 +71,12 @@ export const teamBudgetRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:id/budget',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.budget.manage', 'team.budget.read'] }),
       schema: { body: UpdateTeamBudgetSchema, params: TeamParamsSchema },
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const access = await teamBudgetAccess(fastify.prisma, user, request.params.id);
+      const access = await teamBudgetAccess(request, fastify.prisma, request.params.id);
       if (!access) {
         return sendError(reply, 404, ...NOT_FOUND);
       }
@@ -114,6 +115,7 @@ export const teamBudgetRoutes: FastifyPluginAsync = async (fastify) => {
           budgetAlertThresholdPercent: access.team.budgetAlertThresholdPercent,
           monthlyBudgetUsdCents: access.team.monthlyBudgetUsdCents,
         },
+        context: { ...auditContextOf(request), authority: access.authority },
         entityId: access.team.id,
         entityType: 'Team',
       });
@@ -123,16 +125,16 @@ export const teamBudgetRoutes: FastifyPluginAsync = async (fastify) => {
 
   // GET /api/v1/teams/:id/budget/status — the budget that binds the team's work, as a state and a
   // percentage and never an amount: the tighter of the team's own cap and its organization's, with
-  // `scope` naming which. Any team member (and an ORG_ADMIN or platform ADMIN).
+  // `scope` naming which. `team.budget.read`: a team member, an org ADMIN of the organization, or
+  // a platform ADMIN.
   app.get(
     '/:id/budget/status',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: TeamParamsSchema } },
+    {
+      onRequest: requireAuth({ handlerChecked: ['team.budget.read'] }),
+      schema: { params: TeamParamsSchema },
+    },
     async (request, reply) => {
-      const access = await teamBudgetAccess(
-        fastify.prisma,
-        requireUser(request),
-        request.params.id
-      );
+      const access = await teamBudgetAccess(request, fastify.prisma, request.params.id);
       if (!access) {
         return sendError(reply, 404, ...NOT_FOUND);
       }

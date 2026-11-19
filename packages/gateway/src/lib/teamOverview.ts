@@ -1,5 +1,13 @@
 import type { Prisma, PrismaClient } from '@auto-swe/shared';
 import { usdToCents } from '@auto-swe/shared/lib/billing';
+import {
+  can,
+  isPlatformAdmin,
+  isPlatformAdminRole,
+  teamRankMeets,
+  teamRankOf,
+  userActor,
+} from '@auto-swe/shared/permissions';
 import type {
   BudgetStatus,
   TeamOverview,
@@ -14,7 +22,6 @@ import {
   requestTitle,
   teamDeskScope,
 } from './meSummary.js';
-import { isOrgAdmin } from './orgAccess.js';
 import { asPlatformAdmin } from './platformAdminScope.js';
 import { teamPullRequestOutcomes } from './pullRequestOutcomesQuery.js';
 import { groupRequestExecutions } from './requestExecutions.js';
@@ -48,14 +55,15 @@ interface OverviewDeps {
 }
 
 /** The view a team role gets. The platform role never decides it, except for an ADMIN outside the team. */
-export function viewerLevelFor(
-  teamRole: 'ADMIN' | 'LEAD' | 'ENGINEER' | null,
-  platformRole: string
-): ViewerLevel {
-  if (teamRole === null) {
-    return platformRole === 'ADMIN' ? 'admin' : 'engineer';
+export function viewerLevelFor(teamRole: string | null, platformRole: string): ViewerLevel {
+  const rank = teamRankOf(teamRole);
+  if (rank === null) {
+    return isPlatformAdminRole(platformRole) ? 'admin' : 'engineer';
   }
-  return teamRole === 'ADMIN' ? 'admin' : teamRole === 'LEAD' ? 'lead' : 'engineer';
+  if (teamRankMeets(rank, 'ADMIN')) {
+    return 'admin';
+  }
+  return teamRankMeets(rank, 'LEAD') ? 'lead' : 'engineer';
 }
 
 function startOfMonthUtc(now: number): Date {
@@ -201,7 +209,7 @@ async function loadRepoRows(deps: OverviewDeps, team: { id: string }) {
         take: REPO_LIMIT,
         where: {
           AND: [
-            user.role === 'ADMIN' ? {} : reachableConnections(user, gate),
+            isPlatformAdmin(user) ? {} : reachableConnections(user, gate),
             repositoryTeamScope(team.id),
             { isActive: true, type: 'git_repo' },
           ],
@@ -281,7 +289,7 @@ export async function buildTeamOverview(
     where: { id: teamId },
   });
   const myRole = team?.memberships[0]?.role ?? null;
-  if (!team || (myRole === null && user.role !== 'ADMIN')) {
+  if (!team || (myRole === null && !isPlatformAdmin(user))) {
     return null;
   }
   const viewerLevel = viewerLevelFor(myRole, user.role);
@@ -386,7 +394,7 @@ export async function buildTeamOverview(
     prisma.pullRequest.count({
       where: {
         AND: [
-          user.role === 'ADMIN' ? {} : { repository: reachableConnections(user, gate) },
+          isPlatformAdmin(user) ? {} : { repository: reachableConnections(user, gate) },
           { repository: repositoryTeamScope(team.id) },
           { status: 'OPEN' },
         ],
@@ -408,7 +416,7 @@ export async function buildTeamOverview(
   if (
     overview.budget !== null &&
     overview.budget.scope !== 'team' &&
-    !(await isOrgAdmin(prisma, user, team.orgId))
+    !(await can(prisma, userActor(user), 'org.budget.manage', { orgId: team.orgId })).allowed
   ) {
     return { ...withLead, admin: {} };
   }

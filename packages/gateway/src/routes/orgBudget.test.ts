@@ -36,6 +36,10 @@ function buildApp(role: string, membershipRole: string | null = 'ORG_MEMBER') {
         update: vi.fn().mockResolvedValue({ ...ORG_ROW, monthlyBudgetUsdCents: 5000 }),
       },
       organizationMembership: {
+        // The permissions loader reads the caller's standing in the organization.
+        findMany: vi
+          .fn()
+          .mockResolvedValue(membershipRole ? [{ orgId: ORG_ID, role: membershipRole }] : []),
         findUnique: vi.fn().mockResolvedValue(membershipRole ? { role: membershipRole } : null),
       },
       orgMonthlyUsage: {
