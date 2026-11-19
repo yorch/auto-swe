@@ -94,15 +94,20 @@ async function build(opts: { listening?: number } = {}) {
         }
       ),
     },
+    // The capability resolver reads the caller's standing in the team and its organization.
+    organizationMembership: { findMany: vi.fn(async () => []) },
     team: {
+      findMany: vi.fn(async () => [{ id: TEAM, isActive: true, orgId: 'org-1' }]),
       findUnique: vi.fn(async () => ({
         id: TEAM,
         isActive: true,
-        memberships: state.role ? [{ role: state.role }] : [],
         name: 'Platform',
         organization: { id: 'org-1', monthlyBudgetUsdCents: null },
         orgId: 'org-1',
       })),
+    },
+    teamMembership: {
+      findMany: vi.fn(async () => (state.role ? [{ role: state.role, teamId: TEAM }] : [])),
     },
   };
   app.decorate('prisma', prisma as never);

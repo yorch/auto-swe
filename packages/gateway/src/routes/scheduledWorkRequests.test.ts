@@ -207,6 +207,8 @@ describe('/api/v1/scheduled-work-requests', () => {
         }),
       },
       organizationMembership: {
+        // The capability loader reads the caller's organization standing.
+        findMany: async () => [],
         findUnique: async () => (isOrgMember ? { role: 'ORG_MEMBER' } : null),
       },
       orgMonthlyUsage: {
@@ -281,8 +283,23 @@ describe('/api/v1/scheduled-work-requests', () => {
       },
       team: {
         findFirst: async () => (callerInFilterTeam ? { id: 'team-filter' } : null),
+        // The capability loader: every team it names exists, is active and sits in `org-1`.
+        findMany: async (args: { where: { id: { in: string[] } } }) =>
+          args.where.id.in.map((id) => ({ id, isActive: true, orgId: 'org-1' })),
       },
       teamMembership: {
+        // The capability loader, by team ids (a decision) or for the caller's every team (a held
+        // scope). The caller's standing is the owning team's role plus each shared team's.
+        findMany: async (args: { where: { teamId?: { in: string[] } } }) => {
+          const rows = [
+            ...(membershipRole === 'NONE' ? [] : [{ role: membershipRole, teamId: 'team-1' }]),
+            ...sharedTeams.flatMap((t) => (t.role ? [{ role: t.role, teamId: t.teamId }] : [])),
+          ];
+          const ids = args.where.teamId?.in;
+          return ids
+            ? rows.filter((r) => ids.includes(r.teamId))
+            : rows.map((r) => ({ role: r.role, team: { id: r.teamId, isActive: true } }));
+        },
         findUnique: async () => (membershipRole ? { role: membershipRole } : null),
       },
       user: {

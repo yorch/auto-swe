@@ -306,9 +306,9 @@ describe('agent run form support (agents, limits)', () => {
       expect(teamLookups).toEqual([]);
     });
 
-    it('requires ENGINEER', async () => {
-      user = { role: 'VIEWER', sub: OWNER };
-      expect((await get('/api/v1/agent-runs/agents')).statusCode).toBe(403);
+    it('requires a signed-in person', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/v1/agent-runs/agents' });
+      expect(res.statusCode).toBe(401);
     });
 
     it('rejects a malformed repoId', async () => {
@@ -356,9 +356,9 @@ describe('agent run form support (agents, limits)', () => {
       expect(cfg.settingsCtx).toEqual([]);
     });
 
-    it('requires ENGINEER', async () => {
-      user = { role: 'VIEWER', sub: OWNER };
-      expect((await get('/api/v1/agent-runs/limits')).statusCode).toBe(403);
+    it('requires a signed-in person', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/v1/agent-runs/limits' });
+      expect(res.statusCode).toBe(401);
     });
   });
 });

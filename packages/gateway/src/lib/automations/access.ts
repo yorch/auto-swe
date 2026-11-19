@@ -1,14 +1,17 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import type { RepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
 import { isRepoMember, repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
+import type { FastifyRequest } from 'fastify';
 import type { JwtPayload } from '../../plugins/auth.js';
+import { can } from '../authz.js';
 import { permissionRequirement } from '../tenantScope.js';
 
 /**
  * The repository an event-automation route acts on, with whether the caller may read its
- * automations (a member of the owning team or of a team it is shared with, or ADMIN; under an
- * enforcing access gate also holding a current host permission) and manage them (ADMIN, or a
- * LEAD of the OWNING team: an event automation starts runs with the platform credential on the
+ * automations (a member of the owning team or of a team it is shared with, or the platform operator; under
+ * an enforcing access gate also holding a current host permission) and manage them
+ * (`team.automations.manage` on the OWNING team: an event automation starts runs with the platform credential on the
  * team's repository, so a shared team reads but does not manage). Null when it is not a git
  * repository or the caller may not read it — answered 404 either way.
  */
@@ -52,12 +55,13 @@ export async function findLaunchRepo(prisma: PrismaClient, connectionId: string,
 }
 
 export async function repoAutomationAccess(
-  prisma: PrismaClient,
+  request: FastifyRequest,
   connectionId: string,
   user: JwtPayload,
   gate: RepoAccessGate | undefined
 ) {
-  const admin = user.role === 'ADMIN';
+  const prisma = request.server.prisma;
+  const admin = isPlatformAdmin(user);
   const repo = await prisma.connection.findFirst({
     select: launchRepoSelect(user.sub),
     where: { id: connectionId, ...(admin ? {} : permissionRequirement(user, gate)) },
@@ -68,25 +72,35 @@ export async function repoAutomationAccess(
   if (!admin && !isRepoMember(repo, user.sub)) {
     return null;
   }
-  const role = repo.team.memberships[0]?.role;
-  return { canManage: admin || role === 'LEAD' || role === 'ADMIN', repo };
+  // Reading is reach (membership of the owning team or a share, and the access gate); managing is
+  // the capability on the OWNING team only, since a shared team reads but does not manage.
+  const decision = await can(request, 'team.automations.manage', { teamId: repo.teamId });
+  return {
+    authority: decision.allowed ? decision.authority : undefined,
+    canManage: decision.allowed,
+    repo,
+  };
 }
 
 export type RepoAutomationAccess = NonNullable<Awaited<ReturnType<typeof repoAutomationAccess>>>;
 
 /**
- * The team a team automation belongs to, with whether the caller may read its automations (a
- * member of the team, or ADMIN) and manage them (ADMIN, or a LEAD of the team). Null when there
+ * The team a team automation belongs to, with whether the caller may read its automations
+ * (`team.automations.read`) and manage them (`team.automations.manage`, or the capability the
+ * caller names). Null when there
  * is no such team or the caller is not a member — answered 404 either way.
  */
-export async function teamAutomationAccess(prisma: PrismaClient, teamId: string, user: JwtPayload) {
-  const admin = user.role === 'ADMIN';
-  // One team by id, then the membership check below: the fetch-then-check shape.
-  const team = await prisma.team.findUnique({
+export async function teamAutomationAccess(
+  request: FastifyRequest,
+  teamId: string,
+  /** The capability that manages what this team access is for (its automations by default). */
+  manage: 'team.automations.manage' | 'team.event-endpoints.manage' = 'team.automations.manage'
+) {
+  // One team by id, then the read check below: the fetch-then-check shape.
+  const team = await request.server.prisma.team.findUnique({
     select: {
       id: true,
       isActive: true,
-      memberships: { select: { role: true }, where: { userId: user.sub } },
       monthlyBudgetUsdCents: true,
       name: true,
       organization: { select: { id: true, monthlyBudgetUsdCents: true } },
@@ -97,11 +111,16 @@ export async function teamAutomationAccess(prisma: PrismaClient, teamId: string,
   if (!team) {
     return null;
   }
-  const role = team.memberships[0]?.role;
-  if (!admin && !role) {
+  const read = await can(request, 'team.automations.read', { teamId });
+  if (!read.allowed) {
     return null;
   }
-  return { canManage: admin || role === 'LEAD' || role === 'ADMIN', team };
+  const decision = await can(request, manage, { teamId });
+  return {
+    authority: decision.allowed ? decision.authority : undefined,
+    canManage: decision.allowed,
+    team,
+  };
 }
 
 export type TeamAutomationAccess = NonNullable<Awaited<ReturnType<typeof teamAutomationAccess>>>;
@@ -117,17 +136,17 @@ export type AutomationOwnerAccess =
  * when the caller may not read it.
  */
 export async function automationOwnerAccess(
-  prisma: PrismaClient,
+  request: FastifyRequest,
   owner: { connectionId: string | null; teamId: string | null },
   user: JwtPayload,
   gate: RepoAccessGate | undefined
 ): Promise<AutomationOwnerAccess | null> {
   if (owner.connectionId !== null) {
-    const access = await repoAutomationAccess(prisma, owner.connectionId, user, gate);
+    const access = await repoAutomationAccess(request, owner.connectionId, user, gate);
     return access ? { kind: 'repository', ...access } : null;
   }
   if (owner.teamId !== null) {
-    const access = await teamAutomationAccess(prisma, owner.teamId, user);
+    const access = await teamAutomationAccess(request, owner.teamId);
     return access ? { kind: 'team', ...access } : null;
   }
   return null;

@@ -35,6 +35,17 @@ function newMockPrisma() {
   };
 }
 
+/**
+ * Make the caller hold `role` in `teamId`, as the capability resolver reads it: the team exists
+ * (active) and the caller's membership names it.
+ */
+function leadOf(prisma: ReturnType<typeof newMockPrisma>, teamId: string, role: string) {
+  prisma.team.findMany.mockResolvedValue([{ id: teamId, isActive: true, orgId: null }] as never);
+  prisma.teamMembership.findMany.mockResolvedValue([
+    { role, team: { id: teamId, isActive: true }, teamId },
+  ] as never);
+}
+
 async function buildApp(role: 'ADMIN' | 'LEAD' | 'ORG_ADMIN' | 'ENGINEER' = 'ADMIN') {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
@@ -86,7 +97,7 @@ describe('usageRoutes GET /usage', () => {
 
   it("lets a team LEAD read their team's report, and scopes every trace query to it", async () => {
     const { app, prisma } = await buildApp('ENGINEER');
-    prisma.teamMembership.findUnique.mockResolvedValue({ role: 'LEAD' });
+    leadOf(prisma, TEAM_A, 'LEAD');
     const res = await app.inject({
       headers: AUTH,
       method: 'GET',
@@ -95,9 +106,9 @@ describe('usageRoutes GET /usage', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json().data.scope).toEqual({ teamId: TEAM_A });
-    expect(prisma.teamMembership.findUnique).toHaveBeenCalledWith({
-      where: { userId_teamId: { teamId: TEAM_A, userId: 'admin-1' } },
-    });
+    expect(prisma.teamMembership.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { teamId: { in: [TEAM_A] }, userId: 'admin-1' } })
+    );
     const wheres = [
       ...prisma.agentTrace.groupBy.mock.calls.map(([a]) => a.where),
       ...prisma.agentTrace.aggregate.mock.calls.map(([a]) => a.where),
@@ -110,7 +121,7 @@ describe('usageRoutes GET /usage', () => {
 
   it('refuses a team member below LEAD, and a non-member', async () => {
     const { app, prisma } = await buildApp('LEAD');
-    prisma.teamMembership.findUnique.mockResolvedValueOnce({ role: 'ENGINEER' });
+    leadOf(prisma, TEAM_A, 'ENGINEER');
     const url = `/api/v1/platform/usage?teamId=${TEAM_A}`;
     expect((await app.inject({ headers: AUTH, method: 'GET', url })).statusCode).toBe(403);
     expect((await app.inject({ headers: AUTH, method: 'GET', url })).statusCode).toBe(403);
@@ -120,10 +131,14 @@ describe('usageRoutes GET /usage', () => {
   it('lets an ORG_ADMIN read their organization, not an ORG_MEMBER', async () => {
     const { app, prisma } = await buildApp('ENGINEER');
     const url = `/api/v1/platform/usage?orgId=${ORG_A}`;
-    prisma.organizationMembership.findUnique.mockResolvedValueOnce({ role: 'ORG_MEMBER' });
+    prisma.organizationMembership.findMany.mockResolvedValueOnce([
+      { orgId: ORG_A, role: 'ORG_MEMBER' },
+    ]);
     expect((await app.inject({ headers: AUTH, method: 'GET', url })).statusCode).toBe(403);
 
-    prisma.organizationMembership.findUnique.mockResolvedValueOnce({ role: 'ORG_ADMIN' });
+    prisma.organizationMembership.findMany.mockResolvedValueOnce([
+      { orgId: ORG_A, role: 'ORG_ADMIN' },
+    ]);
     const res = await app.inject({ headers: AUTH, method: 'GET', url });
     expect(res.statusCode).toBe(200);
     for (const [args] of prisma.agentTrace.groupBy.mock.calls) {
@@ -444,19 +459,19 @@ describe('usageRoutes GET /usage/export', () => {
 
   it('denies an organization admin who requests another organization', async () => {
     const { app, prisma } = await buildApp('ORG_ADMIN');
-    prisma.organizationMembership.findUnique.mockImplementation(
-      async (args: { where: { userId_orgId: { orgId: string } } }) =>
-        args.where.userId_orgId.orgId === ORG_B ? { role: 'ORG_ADMIN' } : null
-    );
+    prisma.organizationMembership.findMany.mockImplementation((async (args: {
+      where: { orgId: { in: string[] } };
+    }) =>
+      args.where.orgId.in.includes(ORG_B) ? [{ orgId: ORG_B, role: 'ORG_ADMIN' }] : []) as never);
     const response = await app.inject({
       headers: AUTH,
       method: 'GET',
       url: `/api/v1/platform/usage/export?orgId=${ORG_A}`,
     });
     expect(response.statusCode).toBe(403);
-    expect(prisma.organizationMembership.findUnique).toHaveBeenCalledWith({
-      where: { userId_orgId: { orgId: ORG_A, userId: 'admin-1' } },
-    });
+    expect(prisma.organizationMembership.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { orgId: { in: [ORG_A] }, userId: 'admin-1' } })
+    );
   });
 
   it('exports model, agent and node breakdowns as CSV', async () => {
@@ -501,12 +516,17 @@ describe('usageRoutes GET /usage/scopes', () => {
   it('gives a non-admin only the teams they lead and the organizations they administer', async () => {
     const { app, prisma } = await buildApp('ENGINEER');
     prisma.teamMembership.findMany.mockResolvedValue([
-      { role: 'ENGINEER', team: { id: TEAM_B, name: 'Beta' } },
-      { role: 'LEAD', team: { id: TEAM_A, name: 'Alpha' } },
+      { role: 'ENGINEER', team: { id: TEAM_B, isActive: true } },
+      { role: 'LEAD', team: { id: TEAM_A, isActive: true } },
     ]);
-    prisma.organizationMembership.findMany.mockResolvedValue([
-      { organization: { id: ORG_A, name: 'Org' }, role: 'ORG_ADMIN' },
-    ]);
+    prisma.organizationMembership.findMany.mockResolvedValue([{ orgId: ORG_A, role: 'ORG_ADMIN' }]);
+    // The names of the teams and organizations the held scope selected.
+    prisma.team.findMany.mockImplementation((async (args: { where: { id: { in: string[] } } }) =>
+      [
+        { id: TEAM_A, name: 'Alpha' },
+        { id: TEAM_B, name: 'Beta' },
+      ].filter((t) => args.where.id.in.includes(t.id))) as never);
+    prisma.organization.findMany.mockResolvedValue([{ id: ORG_A, name: 'Org' }]);
 
     const res = await app.inject({ headers: AUTH, method: 'GET', url });
 
@@ -515,8 +535,9 @@ describe('usageRoutes GET /usage/scopes', () => {
       platform: false,
       teams: [{ id: TEAM_A, name: 'Alpha' }],
     });
+    // Held scope asks for the caller's own organization memberships, and nothing is read by org.
     expect(prisma.organizationMembership.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { role: 'ORG_ADMIN', userId: 'admin-1' } })
+      expect.objectContaining({ where: { userId: 'admin-1' } })
     );
   });
 

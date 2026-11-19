@@ -35,11 +35,15 @@ const URL = '/api/v1/automations/events';
 const AUTH = { authorization: 'Bearer fake' };
 const ORG = { id: 'org-1', monthlyBudgetUsdCents: 5000 };
 
+/** The caller's role in the team and whether it is active, as the capability resolver reads them. */
+const standing = { isActive: true, role: null as string | null };
+
 function teamRow(role: string | null, isActive = true) {
+  standing.role = role;
+  standing.isActive = isActive;
   return {
     id: TEAM,
     isActive,
-    memberships: role ? [{ role }] : [],
     name: 'Platform',
     organization: ORG,
     orgId: ORG.id,
@@ -90,7 +94,26 @@ async function buildApp() {
     },
     configAuditLog: { create: vi.fn(async () => ({})) },
     connection: { findFirst: vi.fn(async () => null) },
-    team: { findUnique: vi.fn() },
+    organizationMembership: { findMany: vi.fn(async () => []) },
+    team: {
+      findMany: vi.fn(async (args: { where: { id: { in: string[] } } }) =>
+        args.where.id.in.map((id) => ({ id, isActive: standing.isActive, orgId: ORG.id }))
+      ),
+      findUnique: vi.fn(),
+    },
+    teamMembership: {
+      // The caller holds the same role in every team a decision names (a repository's owning team
+      // included), which is all these tests need.
+      findMany: vi.fn(async (args: { where: { teamId?: { in: string[] } } }) =>
+        standing.role
+          ? (args.where.teamId?.in ?? [TEAM]).map((teamId) => ({
+              role: standing.role as string,
+              team: { id: teamId, isActive: standing.isActive },
+              teamId,
+            }))
+          : []
+      ),
+    },
     workflowRun: { findFirst: vi.fn(async () => null) },
     workflowTemplate: {
       findFirst: vi.fn(async () => TEMPLATE),
@@ -165,13 +188,14 @@ describe('automationRoutes (team automations)', () => {
     });
 
     it('lists a team automation with its team instead of a repository', async () => {
+      teamRow('LEAD');
       ctx.prisma.automation.findMany.mockResolvedValue([
         {
           ...stored(),
           connection: null,
           createdAt: new Date(0),
           name: 'deploys',
-          team: { id: TEAM, memberships: [{ role: 'LEAD' }], name: 'Platform' },
+          team: { id: TEAM, name: 'Platform' },
           template: null,
         },
       ]);
@@ -224,10 +248,17 @@ describe('automationRoutes (team automations)', () => {
     });
 
     it('refuses an inactive team', async () => {
+      // A deactivated team confers nothing on its lead; only the platform operator still reaches it.
+      ctx.auth.role = 'ADMIN';
       ctx.prisma.team.findUnique.mockResolvedValue(teamRow('LEAD', false));
       const res = await post({ ...VALID, teamId: TEAM });
       expect(res.statusCode).toBe(409);
       expect(res.json().error.code).toBe('TEAM_INACTIVE');
+    });
+
+    it('gives the lead of an inactive team no standing to manage it', async () => {
+      ctx.prisma.team.findUnique.mockResolvedValue(teamRow('LEAD', false));
+      expect((await post({ ...VALID, teamId: TEAM })).statusCode).toBe(403);
     });
 
     it('keeps every shipped source on a repository, and a team source off one', async () => {

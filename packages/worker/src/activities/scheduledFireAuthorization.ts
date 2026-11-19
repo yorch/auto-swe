@@ -36,6 +36,7 @@ import {
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
 import { canTeamLaunchOnRepo, repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { liveInFlightExecution, type SettledLookup } from '@auto-swe/shared/lib/requestInFlight';
+import { isPlatformAdmin, userActor } from '@auto-swe/shared/permissions';
 import { ApplicationFailure, log } from '@temporalio/activity';
 import { workflowSettledStatus } from '../lib/agentRunSlots.js';
 
@@ -306,7 +307,7 @@ export async function scheduledFireRefusal(
     return refuse(verdict.reason, REPO_ACCESS_REFUSAL_MESSAGE[verdict.reason]);
   }
 
-  if (actor.role !== 'ADMIN') {
+  if (!isPlatformAdmin(userActor({ role: actor.role, sub: actor.sub }))) {
     const membership = await db.organizationMembership.findUnique({
       where: { userId_orgId: { orgId: repo.team.orgId, userId: owner.id } },
     });
@@ -655,7 +656,7 @@ export async function assertScheduledFireSourceSnapshot(
     return fail('share-view-only', VIEW_ONLY_SCHEDULE_MESSAGE);
   }
 
-  if (owner.role !== 'ADMIN') {
+  if (!isPlatformAdmin(userActor({ role: owner.role, sub: owner.id }))) {
     const hasMembership =
       repo.team.memberships.some((membership) => membership.userId === owner.id) ||
       repo.shares.some(

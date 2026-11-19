@@ -42,6 +42,24 @@ function deliveryKey(subscriptionId: string, periodStart: Date, target: string):
 
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
+    // The budget-dollars check asks the capability resolver, which reads the caller's organization
+    // standing: the creator (`creatorMayReadBudget`) or an email-keyed user (`budgetReaderEmails`)
+    // is an organization administrator, anyone else a plain member.
+    organizationMembership: {
+      findMany: async ({ where }: { where: { userId: string } }) => [
+        {
+          orgId: 'org-1',
+          role:
+            where.userId === 'creator'
+              ? mocks.creatorMayReadBudget
+                ? 'ORG_ADMIN'
+                : 'ORG_MEMBER'
+              : mocks.budgetReaderEmails.includes(where.userId)
+                ? 'ORG_ADMIN'
+                : 'ORG_MEMBER',
+        },
+      ],
+    },
     reportDigestDelivery: {
       createMany: async ({
         data,
@@ -134,13 +152,11 @@ vi.mock('@auto-swe/shared/db', () => ({
         })),
     },
     user: {
-      // The budget-dollars check (`where.OR`) asks who may read the cap; the scope check does not.
-      findFirst: async () => (mocks.creatorMayReadBudget ? { id: 'creator' } : null),
-      findMany: async ({ where }: { where: { OR?: unknown; email: { in: string[] } } }) =>
+      findFirst: async () => ({ id: 'creator', role: 'ENGINEER' }),
+      findMany: async ({ where }: { where: { email: { in: string[] } } }) =>
         where.email.in
           .filter((email) => !mocks.inactiveEmails.includes(email))
-          .filter((email) => !where.OR || mocks.budgetReaderEmails.includes(email))
-          .map((email) => ({ email })),
+          .map((email) => ({ email, id: email, role: 'ENGINEER' })),
     },
     workflowHumanStep: { count: async () => 0, findFirst: async () => null },
     workflowRunDailyRollup: { findMany: async () => [] },

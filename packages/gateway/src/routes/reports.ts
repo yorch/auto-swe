@@ -5,6 +5,7 @@ import {
   withMatchingActiveWorkflow,
 } from '@auto-swe/shared/lib/runActiveWorkflows';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import {
   buildHumanStepDailyRollups,
   buildReviewVerdictDailyRollups,
@@ -22,6 +23,7 @@ import {
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { heldScope } from '../lib/authz.js';
 import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/dateWindow.js';
 import { mapLimited } from '../lib/mapLimited.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
@@ -85,7 +87,7 @@ function numericCategoryCounts(value: unknown): Record<string, number> {
 
 export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const readAnalytics = requireAuth({ requiredRole: 'ENGINEER' });
+  const readAnalytics = requireAuth();
 
   app.get(
     '/delivery',
@@ -293,7 +295,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                   {
                     id: { in: unique(allRows.flatMap((row) => (row.teamId ? [row.teamId] : []))) },
                   },
-                  user.role === 'ADMIN'
+                  isPlatformAdmin(user)
                     ? {}
                     : {
                         OR: [{ id: { in: scope.teamIds } }, { orgId: { in: scope.orgIds } }],
@@ -779,41 +781,42 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
     '/budget',
     {
       config: { mcpScope: 'admin' },
-      onRequest: requireAuth(),
+      onRequest: requireAuth({ handlerChecked: ['org.reports.read'] }),
       schema: { querystring: ReportQuery },
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const organizations =
-        user.role === 'ADMIN'
-          ? await asPlatformAdmin(
-              user,
-              'admin budget report spans every organization',
-              ['Organization'],
-              () =>
-                fastify.prisma.organization.findMany({
-                  orderBy: { name: 'asc' },
-                  select: {
-                    budgetAlertThresholdPercent: true,
-                    id: true,
-                    monthlyBudgetUsdCents: true,
-                    name: true,
-                  },
-                  take: REPORT_ROW_CAP + 1,
-                })
-            )
-          : await fastify.prisma.organization.findMany({
-              orderBy: { name: 'asc' },
-              select: {
-                budgetAlertThresholdPercent: true,
-                id: true,
-                monthlyBudgetUsdCents: true,
-                name: true,
-              },
-              take: REPORT_ROW_CAP + 1,
-              where: { memberships: { some: { role: 'ORG_ADMIN', userId: user.sub } } },
-            });
-      if (user.role !== 'ADMIN' && organizations.length === 0) {
+      // The organizations whose reports the caller holds (`org.reports.read`); the operator all.
+      const orgScope = await heldScope(request, 'org.reports.read');
+      const organizations = orgScope.all
+        ? await asPlatformAdmin(
+            user,
+            'admin budget report spans every organization',
+            ['Organization'],
+            () =>
+              fastify.prisma.organization.findMany({
+                orderBy: { name: 'asc' },
+                select: {
+                  budgetAlertThresholdPercent: true,
+                  id: true,
+                  monthlyBudgetUsdCents: true,
+                  name: true,
+                },
+                take: REPORT_ROW_CAP + 1,
+              })
+          )
+        : await fastify.prisma.organization.findMany({
+            orderBy: { name: 'asc' },
+            select: {
+              budgetAlertThresholdPercent: true,
+              id: true,
+              monthlyBudgetUsdCents: true,
+              name: true,
+            },
+            take: REPORT_ROW_CAP + 1,
+            where: { id: { in: orgScope.orgIds } },
+          });
+      if (!orgScope.all && organizations.length === 0) {
         return reply.status(403).send({ error: 'ORG_ADMIN membership is required' });
       }
       const scope = await resolveWorkflowRunAttributionScope(
@@ -911,7 +914,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       // A non-member team filter is authorized only through an org with analytics.orgWideReports
       // enabled, so that org-wide grant (like ADMIN) sees every automation of the filtered team.
       const teamWide =
-        user.role === 'ADMIN' ||
+        isPlatformAdmin(user) ||
         (!!request.query.teamId && !scope.teamIds.includes(request.query.teamId));
       const accessibleAutomations = await runUnscoped(
         'automation reports follow the automation list repository and team scopes',
@@ -967,7 +970,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             take: REPORT_ROW_CAP + 1,
             where: {
               createdAt: { gte: range.start, lt: range.end },
-              ...(user.role === 'ADMIN' && !request.query.teamId
+              ...(isPlatformAdmin(user) && !request.query.teamId
                 ? {}
                 : { automationId: { in: visibleAutomationIds } }),
             },
@@ -1138,7 +1141,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
         ...windowSteps.flatMap((step) => (step.resolvedBy ? [step.resolvedBy] : [])),
       ]);
       const approverNames = new Map<string, string | null>(
-        approverIds.map((id) => [id, user.role === 'ADMIN' ? 'Unknown approver' : 'Other approver'])
+        approverIds.map((id) => [id, isPlatformAdmin(user) ? 'Unknown approver' : 'Other approver'])
       );
       const visibleApproverIds = new Set<string>();
       if (approverIds.length) {
@@ -1151,7 +1154,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
               where: {
                 AND: [
                   { id: { in: approverIds } },
-                  user.role === 'ADMIN'
+                  isPlatformAdmin(user)
                     ? {}
                     : {
                         OR: [
@@ -1174,11 +1177,11 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
       const otherApproverId = '__other_approver__';
-      if (user.role !== 'ADMIN') {
+      if (!isPlatformAdmin(user)) {
         approverNames.set(otherApproverId, 'Other approver');
       }
       const reportApproverId = (id: string | null) =>
-        user.role !== 'ADMIN' && id && !visibleApproverIds.has(id) ? otherApproverId : id;
+        !isPlatformAdmin(user) && id && !visibleApproverIds.has(id) ? otherApproverId : id;
       const liveWindowSteps = windowSteps.slice(0, REPORT_ROW_CAP).map((step) => ({
         kind: step.kind,
         requestedAt: step.requestedAt,
@@ -1188,13 +1191,12 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
         resolvedVia: step.resolvedVia,
         status: step.status,
       }));
-      const reportHitlRollupRows =
-        user.role === 'ADMIN'
-          ? hitlRollupRows
-          : hitlRollupRows.map((row) => ({
-              ...row,
-              resolvedBy: reportApproverId(row.resolvedBy),
-            }));
+      const reportHitlRollupRows = isPlatformAdmin(user)
+        ? hitlRollupRows
+        : hitlRollupRows.map((row) => ({
+            ...row,
+            resolvedBy: reportApproverId(row.resolvedBy),
+          }));
       const report = computeHitlReport({
         autonomyDecisions: decisions.slice(0, REPORT_ROW_CAP),
         now: new Date(),

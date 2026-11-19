@@ -32,14 +32,19 @@ const URL = '/api/v1/automations/events';
 const AUTH = { authorization: 'Bearer fake' };
 const ORG = { id: 'org-1', monthlyBudgetUsdCents: 5000 };
 
-const teamRow = (role: string | null) => ({
-  id: TEAM,
-  isActive: true,
-  memberships: role ? [{ role }] : [],
-  name: 'Platform',
-  organization: ORG,
-  orgId: ORG.id,
-});
+/** The caller's role in the team, as the capability resolver reads it. */
+const standing = { role: null as string | null };
+
+const teamRow = (role: string | null) => {
+  standing.role = role;
+  return {
+    id: TEAM,
+    isActive: true,
+    name: 'Platform',
+    organization: ORG,
+    orgId: ORG.id,
+  };
+};
 
 const FILTERS = {
   endpointId: ENDPOINT,
@@ -119,7 +124,24 @@ async function buildApp() {
     eventEndpoint: {
       findFirst: vi.fn(async (_args: unknown) => ({ enabled: true, id: ENDPOINT }) as unknown),
     },
-    team: { findUnique: vi.fn(async () => teamRow('LEAD')) },
+    organizationMembership: { findMany: vi.fn(async () => []) },
+    team: {
+      findMany: vi.fn(async (args: { where: { id: { in: string[] } } }) =>
+        args.where.id.in.map((id) => ({ id, isActive: true, orgId: ORG.id }))
+      ),
+      findUnique: vi.fn(async () => teamRow('LEAD')),
+    },
+    teamMembership: {
+      findMany: vi.fn(async (args: { where: { teamId?: { in: string[] } } }) =>
+        standing.role
+          ? (args.where.teamId?.in ?? [TEAM]).map((teamId) => ({
+              role: standing.role as string,
+              team: { id: teamId, isActive: true },
+              teamId,
+            }))
+          : []
+      ),
+    },
     workflowTemplate: { findFirst: vi.fn(async () => TEMPLATE) },
   };
   app.decorate('prisma', prisma as unknown as never);

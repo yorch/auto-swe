@@ -7,6 +7,7 @@ import { createReportDigestUnsubscribeToken } from '@auto-swe/shared/lib/reportD
 import { builtRollupDays } from '@auto-swe/shared/lib/rollupBuiltDays';
 import { resolvePublicUrl, resolveWebUrl } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { can, userActor } from '@auto-swe/shared/permissions';
 import {
   buildReportDigest,
   QUALITY_GATE_STEPS,
@@ -690,10 +691,9 @@ async function teamBudget(
 }
 
 /**
- * May this organization digest carry the budget in dollars? The cap is an ORG_ADMIN's to read, and
- * a digest is a single body sent to every target, so it may only when its creator is still an
- * ORG_ADMIN (or a platform ADMIN) and every target is an email to an ORG_ADMIN (or platform ADMIN)
- * of the organization. A Slack channel, a plain member or no recipient at all gets percent-only.
+ * May this organization digest carry the budget in dollars? The cap is an organization administrator's to read
+ * (`org.budget.manage`), and a digest is a single body sent to every target, so it may only when
+ * its creator still holds that on the organization and every target is an email to someone who does. A Slack channel, a plain member or no recipient at all gets percent-only.
  */
 async function budgetDollarsAllowed(
   subscription: {
@@ -708,35 +708,41 @@ async function budgetDollarsAllowed(
   if (subscription.slackChannel || emails.length === 0) {
     return false;
   }
-  const mayReadDollars = {
-    isActive: true,
-    OR: [
-      { role: 'ADMIN' as const },
-      { orgMemberships: { some: { orgId, role: 'ORG_ADMIN' as const } } },
-    ],
-  };
+  // The same capability as the gateway's dollars rule: org `ADMIN` of this organization, or the
+  // platform operator. A deactivated person holds nothing.
+  const mayReadDollars = async (user: { id: string; role: string }): Promise<boolean> =>
+    (
+      await can(prisma, userActor({ role: user.role, sub: user.id }), 'org.budget.manage', {
+        orgId,
+      })
+    ).allowed;
   const creator = await runUnscoped(
     'the report digest checks that its creator may still read the budget in dollars',
     ['User'],
     () =>
       prisma.user.findFirst({
-        select: { id: true },
-        where: { id: subscription.createdById, ...mayReadDollars },
+        select: { id: true, role: true },
+        where: { id: subscription.createdById, isActive: true },
       })
   );
-  if (!creator) {
+  if (!creator || !(await mayReadDollars(creator))) {
     return false;
   }
-  const readers = await runUnscoped(
+  const recipients = await runUnscoped(
     'the report digest checks that every email recipient may read the budget in dollars',
     ['User'],
     () =>
       prisma.user.findMany({
-        select: { email: true },
-        where: { email: { in: emails }, ...mayReadDollars },
+        select: { email: true, id: true, role: true },
+        where: { email: { in: emails }, isActive: true },
       })
   );
-  const readerEmails = new Set(readers.map(({ email }) => email.toLowerCase()));
+  const readerEmails = new Set<string>();
+  for (const recipient of recipients) {
+    if (await mayReadDollars(recipient)) {
+      readerEmails.add(recipient.email.toLowerCase());
+    }
+  }
   return emails.every((email) => readerEmails.has(email));
 }
 

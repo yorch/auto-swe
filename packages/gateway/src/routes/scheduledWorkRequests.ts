@@ -9,11 +9,13 @@ import type { RunIdentity } from '@auto-swe/shared/lib/repoAccessGate';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { generateBranchName } from '@auto-swe/shared/lib/workflowId';
+import { type HeldScope, isPlatformAdmin } from '@auto-swe/shared/permissions';
 import { BUDGET_TIERS, type RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { auditContextData } from '../lib/auditContext.js';
+import { can, heldScope } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
@@ -128,21 +130,19 @@ async function loadRepoWithMembership(prisma: Prisma, repoId: string, userId: st
     include: {
       installation: { select: { host: true, installationId: true, isActive: true } },
       // Shared-team membership satisfies the launch decision, and a LEAD of a
-      // shared team may schedule on the repository (see `canCreate`). The share's
+      // shared team may schedule on the repository (see `creatableTeamIds`). The share's
       // `teamId` is what a schedule's own `teamId` is matched against.
       shares: {
         select: {
           canLaunch: true,
-          team: {
-            select: { memberships: { select: { role: true, userId: true }, where: { userId } } },
-          },
+          team: { select: { memberships: { select: { userId: true }, where: { userId } } } },
           teamId: true,
         },
       },
       team: {
         select: {
           id: true,
-          memberships: { select: { role: true, userId: true }, where: { userId } },
+          memberships: { select: { userId: true }, where: { userId } },
           monthlyBudgetUsdCents: true,
           name: true,
           organization: { select: { id: true, monthlyBudgetUsdCents: true } },
@@ -195,62 +195,63 @@ async function passesLaunchAuthorization(
   return false;
 }
 
-const isLead = (m: { role: string } | undefined): boolean =>
-  !!m && (m.role === 'LEAD' || m.role === 'ADMIN');
-
 /**
- * What the management rules read from a repository: the caller's membership in
- * its owning team and in each team it is shared with. Both the launch-path row
- * (`RepoWithMembership`) and a listed schedule's repository satisfy it.
+ * What the management rules read from a repository: its owning team and each team it is shared
+ * with. Both the launch-path row (`RepoWithMembership`) and a listed schedule's repository satisfy
+ * it.
  */
 interface RepoManagementView {
-  shares: { team: { memberships: { role: string }[] }; teamId: string }[];
-  team: { memberships: { role: string }[] };
+  shares: { teamId: string }[];
   teamId: string;
 }
 
-/** Whether the caller leads the repository's owning team. */
-function leadsOwner(repo: RepoManagementView): boolean {
-  return isLead(repo.team.memberships[0]);
-}
-
 /**
- * The teams the caller leads that may own a schedule on this repository: its
- * owning team and the teams it is shared with. Platform ADMIN's own membership
- * is irrelevant here; callers check the role first.
- */
-function ledScheduleTeamIds(repo: RepoManagementView): string[] {
-  return [
-    ...(leadsOwner(repo) ? [repo.teamId] : []),
-    ...repo.shares.filter((s) => isLead(s.team.memberships[0])).map((s) => s.teamId),
-  ];
-}
-
-/** Who may create a schedule: ADMIN, or a LEAD of the owning team or of a shared team. */
-function canCreate(user: { role: string }, repo: RepoWithMembership): boolean {
-  return user.role === 'ADMIN' || ledScheduleTeamIds(repo).length > 0;
-}
-
-/**
- * Who may edit, fire or delete a schedule: ADMIN; a LEAD of the schedule's own
- * team; or a LEAD of the repository's owning team, which keeps authority over
- * every schedule on its repository. A shared team's lead cannot touch another
- * team's schedule, and a team no longer shared has no standing at all: it is no
- * longer in `repo.shares`.
+ * The teams whose `team.schedules.manage` covers a schedule: the repository's owning team, which
+ * keeps authority over every schedule on its repository, and the schedule's own team while the
+ * repository is still shared with it. A shared team's lead cannot touch another team's schedule,
+ * and a team no longer shared has no standing at all: it is no longer in `repo.shares`.
  *
- * A null `teamId` is a schedule whose team was deleted (the migration backfills
- * every earlier row). Nobody can say whose it was, so it is managed
- * conservatively: ADMIN or the owning team's lead only, never a shared team's.
+ * A null `teamId` is a schedule whose team was deleted (the migration backfills every earlier
+ * row). Nobody can say whose it was, so only the owning team's authority (and the platform
+ * operator's) applies, never a shared team's.
  */
-function canManage(
-  user: { role: string },
+function manageTeamIds(repo: RepoManagementView, schedule: { teamId: string | null }): string[] {
+  const own = schedule.teamId;
+  return own && own !== repo.teamId && repo.shares.some((s) => s.teamId === own)
+    ? [repo.teamId, own]
+    : [repo.teamId];
+}
+
+/** The teams a schedule on this repository may belong to: the owner and each shared team. */
+function createTeamIds(repo: RepoManagementView): string[] {
+  return [repo.teamId, ...repo.shares.map((s) => s.teamId)];
+}
+
+/**
+ * The teams of this repository the caller may create a schedule for: the ones whose
+ * `team.schedules.create` they hold (the operator holds all of them).
+ */
+async function creatableTeamIds(
+  request: FastifyRequest,
+  repo: RepoManagementView
+): Promise<string[]> {
+  const held = await heldScope(request, 'team.schedules.create');
+  return createTeamIds(repo).filter((id) => held.all || held.teamIds.includes(id));
+}
+
+/**
+ * Who may edit, fire or delete a schedule: `team.schedules.manage` on the repository's owning team
+ * or on the schedule's own team (see `manageTeamIds`).
+ */
+async function canManage(
+  request: FastifyRequest,
   repo: RepoManagementView,
   schedule: { teamId: string | null }
-): boolean {
-  if (user.role === 'ADMIN' || leadsOwner(repo)) {
-    return true;
-  }
-  return !!schedule.teamId && ledScheduleTeamIds(repo).includes(schedule.teamId);
+): Promise<boolean> {
+  const decision = await can(request, 'team.schedules.manage', {
+    anyOf: manageTeamIds(repo, schedule).map((teamId) => ({ teamId })),
+  });
+  return decision.allowed;
 }
 
 const FORBIDDEN_MESSAGE =
@@ -263,12 +264,10 @@ const FORBIDDEN_MESSAGE =
  * team they lead.
  */
 function resolveCreateTeam(
-  user: { role: string },
   repo: RepoWithMembership,
+  led: string[],
   requested: string | undefined
 ): { teamId: string } | { status: 400 | 403; code: string; message: string } {
-  const admin = user.role === 'ADMIN';
-  const led = ledScheduleTeamIds(repo);
   if (requested) {
     const eligible = requested === repo.teamId || repo.shares.some((s) => s.teamId === requested);
     if (!eligible) {
@@ -278,11 +277,11 @@ function resolveCreateTeam(
         status: 400,
       };
     }
-    return admin || led.includes(requested)
+    return led.includes(requested)
       ? { teamId: requested }
       : { code: 'FORBIDDEN', message: 'Requires LEAD membership on that team', status: 403 };
   }
-  if (admin || led.includes(repo.teamId)) {
+  if (led.includes(repo.teamId)) {
     return { teamId: repo.teamId };
   }
   if (led.length === 1) {
@@ -325,7 +324,7 @@ async function resolveScheduleTemplate(
       where: {
         id: templateId,
         ...EXCLUDE_SYSTEM_TEMPLATES,
-        ...(viewer && viewer.role !== 'ADMIN'
+        ...(viewer && !isPlatformAdmin(viewer)
           ? { AND: [{ OR: [{ teamId: null }, { team: memberTeams(viewer) }] }] }
           : {}),
       },
@@ -422,11 +421,10 @@ const scheduleInclude = {
 } as const;
 
 /**
- * `scheduleInclude` plus what `canManage` reads: the owning team, the shared
- * teams and the caller's own membership in each. Used by the list, so every row
- * can say whether this caller may act on it.
+ * `scheduleInclude` plus what `canManage` reads: the owning team and the shared
+ * teams. Used by the list, so every row can say whether this caller may act on it.
  */
-const scheduleListInclude = (userId: string) =>
+const scheduleListInclude = () =>
   ({
     ...scheduleInclude,
     repository: {
@@ -434,17 +432,7 @@ const scheduleListInclude = (userId: string) =>
         id: true,
         organizationName: true,
         repoName: true,
-        shares: {
-          select: {
-            team: {
-              select: { memberships: { select: { role: true, userId: true }, where: { userId } } },
-            },
-            teamId: true,
-          },
-        },
-        team: {
-          select: { memberships: { select: { role: true, userId: true }, where: { userId } } },
-        },
+        shares: { select: { teamId: true } },
         teamId: true,
       },
     },
@@ -463,8 +451,11 @@ type ScheduleListRow = PrismaTypes.ScheduledWorkRequestGetPayload<{
  * same `canManage` rule the write routes apply, so the dashboard can offer only
  * what will not 403.
  */
-function rowCanManage(user: { role: string }, row: ScheduleListRow): boolean {
-  return canManage(user, row.repository, { teamId: row.teamId });
+function rowCanManage(held: HeldScope, row: ScheduleListRow): boolean {
+  return (
+    held.all ||
+    manageTeamIds(row.repository, { teamId: row.teamId }).some((id) => held.teamIds.includes(id))
+  );
 }
 
 function serializeSchedule(
@@ -722,7 +713,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
     '/',
     {
       config: { mcpScope: 'read' },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: z.object({ teamId: z.string().uuid().optional() }) },
     },
     async (request) => {
@@ -739,11 +730,11 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         ['ScheduledWorkRequest'],
         () =>
           fastify.prisma.scheduledWorkRequest.findMany({
-            include: scheduleListInclude(user.sub),
+            include: scheduleListInclude(),
             orderBy: { createdAt: 'desc' },
             // `teamId` only narrows to the schedules one team owns; the visibility scope stays.
             where: {
-              ...(user.role === 'ADMIN'
+              ...(isPlatformAdmin(user)
                 ? {}
                 : { repository: reachableConnections(user, request.repoAccessGate) }),
               ...(teamId ? { teamId } : {}),
@@ -774,6 +765,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           }
         })
       );
+      const held = await heldScope(request, 'team.schedules.manage');
       // The rows are the caller's to see; so is what their fires decided.
       const decisions = await latestActivity(
         fastify.prisma,
@@ -785,7 +777,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           serializeSchedule(
             row,
             statuses[i],
-            rowCanManage(user, row),
+            rowCanManage(held, row),
             decisions.get(row.id) ?? null
           )
         ),
@@ -796,7 +788,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.schedules.create'] }),
       schema: { body: CreateScheduleSchema },
     },
     async (request, reply) => {
@@ -812,7 +804,8 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           `Repository ${body.repoId} not found or inactive`
         );
       }
-      if (!canCreate(user, repo)) {
+      const led = await creatableTeamIds(request, repo);
+      if (led.length === 0) {
         return sendError(
           reply,
           403,
@@ -820,7 +813,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           'Requires ADMIN role, or LEAD membership on the repository team or a team it is shared with'
         );
       }
-      const owner = resolveCreateTeam(user, repo, body.teamId);
+      const owner = resolveCreateTeam(repo, led, body.teamId);
       if ('status' in owner) {
         return sendError(reply, owner.status, owner.code, owner.message);
       }
@@ -956,7 +949,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
   app.patch(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.schedules.manage'] }),
       schema: { body: UpdateScheduleSchema, params: IdParams },
     },
     async (request, reply) => {
@@ -973,7 +966,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         if (!repo) {
           return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
         }
-        if (!canManage(user, repo, existing)) {
+        if (!(await canManage(request, repo, existing))) {
           return sendError(reply, 403, 'FORBIDDEN', FORBIDDEN_MESSAGE);
         }
 
@@ -1254,7 +1247,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
   app.post(
     '/:id/fire',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.schedules.manage'] }),
       schema: { params: IdParams },
     },
     async (request, reply) => {
@@ -1266,7 +1259,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         return sendError(reply, 404, 'SCHEDULE_NOT_FOUND', 'Scheduled work request not found');
       }
       const repo = await loadRepoWithMembership(fastify.prisma, existing.repoId, user.sub);
-      if (!repo || !canManage(user, repo, existing)) {
+      if (!repo || !(await canManage(request, repo, existing))) {
         return sendError(reply, 403, 'FORBIDDEN', FORBIDDEN_MESSAGE);
       }
       // A paused schedule cannot be fired by hand: Temporal would accept the
@@ -1491,7 +1484,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
   app.delete(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.schedules.manage'] }),
       schema: { params: IdParams },
     },
     async (request, reply) => {
@@ -1503,7 +1496,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         return sendError(reply, 404, 'SCHEDULE_NOT_FOUND', 'Scheduled work request not found');
       }
       const repo = await loadRepoWithMembership(fastify.prisma, existing.repoId, user.sub);
-      if (!repo || !canManage(user, repo, existing)) {
+      if (!repo || !(await canManage(request, repo, existing))) {
         return sendError(reply, 403, 'FORBIDDEN', FORBIDDEN_MESSAGE);
       }
 

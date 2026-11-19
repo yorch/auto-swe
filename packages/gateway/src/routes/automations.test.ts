@@ -93,7 +93,14 @@ const AUTH = { authorization: 'Bearer fake' };
 
 type Membership = { role: string; userId: string } | null;
 
+/**
+ * The caller's team roles as the capability resolver reads them (team id to stored role). A
+ * fixture that says who the caller is in a team records it here, so `can()` and the row agree.
+ */
+const standing = { roles: {} as Record<string, string> };
+
 function repoRow(owning: Membership, shared: Membership = null, isActive = true) {
+  standing.roles = owning ? { 'team-1': owning.role } : {};
   return {
     githubApiUrl: null,
     githubUrl: null,
@@ -169,6 +176,21 @@ async function buildApp() {
       // The declared-connection check at save: nothing answers for an id, which is the refusal.
       findMany: vi.fn(async (_args: unknown) => [] as unknown[]),
     },
+    organizationMembership: { findMany: vi.fn(async () => []) },
+    team: {
+      findMany: vi.fn(async (args: { where: { id: { in: string[] } } }) =>
+        args.where.id.in.map((id) => ({ id, isActive: true, orgId: 'org-1' }))
+      ),
+    },
+    teamMembership: {
+      findMany: vi.fn(async (args: { where: { teamId?: { in: string[] } } }) => {
+        const ids = args.where.teamId?.in;
+        const rows = Object.entries(standing.roles).map(([teamId, role]) => ({ role, teamId }));
+        return ids
+          ? rows.filter((r) => ids.includes(r.teamId))
+          : rows.map((r) => ({ role: r.role, team: { id: r.teamId, isActive: true } }));
+      }),
+    },
     workflowRun: {
       findFirst: vi.fn(async () => null),
       findMany: vi.fn(async (_args: unknown) => [] as unknown[]),
@@ -197,6 +219,7 @@ describe('automationRoutes (event automations)', () => {
   beforeEach(() => {
     ctx.auth.role = 'ENGINEER';
     ctx.auth.sub = 'user-1';
+    standing.roles = {};
     gateState.gate = undefined;
     launch.decision = { ok: true };
     settings.otherPrsAllowed = false;
@@ -447,13 +470,19 @@ describe('automationRoutes (event automations)', () => {
   });
 
   describe('the list of every kind', () => {
-    const listed = (role: string | null) => ({
+    const listed = (role: string | null, teamId = 'team-1') => {
+      if (role) {
+        standing.roles[teamId] = role;
+      }
+      return listedRow(teamId);
+    };
+    const listedRow = (teamId: string) => ({
       ...stored(),
       connection: {
         id: REPO,
         organizationName: 'acme',
         repoName: 'api',
-        team: { id: 'team-1', memberships: role ? [{ role }] : [], name: 'Payments' },
+        team: { id: teamId, name: 'Payments' },
       },
       createdAt: new Date(0),
       name: 'mainline',
@@ -464,7 +493,7 @@ describe('automationRoutes (event automations)', () => {
     it('lists event automations on reachable repositories, with who may manage each', async () => {
       ctx.prisma.automation.findMany.mockResolvedValue([
         listed('LEAD'),
-        { ...listed(null), id: 'x' },
+        { ...listed(null, 'team-2'), id: 'x' },
       ] as never);
       // The newest decision per automation: a groupBy, then just those rows.
       ctx.prisma.automationFire.groupBy.mockResolvedValue([
@@ -486,9 +515,6 @@ describe('automationRoutes (event automations)', () => {
       });
       expect(plain).toMatchObject({ canManage: false, lastActivity: null });
       expect(ctx.prisma.automationFire.findMany.mock.calls[0]?.[0]).not.toHaveProperty('take');
-      expect(
-        JSON.stringify((ctx.prisma.automation.findMany.mock.calls as unknown[][])[0]?.[0])
-      ).toContain('memberships');
     });
 
     it('lists template webhooks the caller can read, editable only where they may write', async () => {

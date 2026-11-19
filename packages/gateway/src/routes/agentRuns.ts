@@ -1,4 +1,3 @@
-import { Role } from '@auto-swe/shared';
 import { resolveSettings } from '@auto-swe/shared/config';
 import {
   AGENT_REF_RE,
@@ -10,6 +9,7 @@ import {
   NON_LAUNCHABLE_AGENT_KEYS,
 } from '@auto-swe/shared/lib/agentRun';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -67,8 +67,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     repoId: string
   ) {
     const user = requireUser(request);
-    const reach =
-      user.role === Role.ADMIN ? null : reachableConnections(user, request.repoAccessGate);
+    const reach = isPlatformAdmin(user) ? null : reachableConnections(user, request.repoAccessGate);
     const repo = await asPlatformAdmin(
       user,
       'an admin may launch on any repository',
@@ -97,7 +96,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     '/agents',
     {
       config: { mcpScope: 'read' },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: RepoContextQuery },
     },
     async (request, reply) => {
@@ -125,7 +124,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
         // gets the answer a team that does not exist gets.
         if (
           !team?.isActive ||
-          (team.memberships.length === 0 && user.role !== Role.ADMIN) ||
+          (team.memberships.length === 0 && !isPlatformAdmin(user)) ||
           !(await isOrgMember(fastify.prisma, user, team.orgId))
         ) {
           return error(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
@@ -181,7 +180,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     '/limits',
     {
       config: { mcpScope: 'read' },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: RepoContextQuery },
     },
     async (request, reply) => {
@@ -230,7 +229,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       // Open to service principals: docs/service-principals.md.
       // `runs:agent`, not `runs:launch`: a free-form prompt to an agent of the caller's choosing.
       config: { mcpScope: 'write', serviceScopes: ['runs:agent'] },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       onSend: mcpWriteAuditHook,
       preValidation: mcpWriteBegin('start_agent_run'),
       schema: { body: CreateAgentRunBody, headers: IdempotencyHeaderSchema },
@@ -262,7 +261,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:workRequestId/rerun',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: {
         body: z.object({ instructions: z.string().trim().max(4000).optional() }).nullish(),
         headers: IdempotencyHeaderSchema,

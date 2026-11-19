@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from '@auto-swe/shared';
 import { summarizePullRequestOutcomes } from '@auto-swe/shared/lib/pullRequestOutcomes';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { PullRequestOutcomeSummary } from '@auto-swe/shared/types/api';
 import { runMetricsTeamScope } from './runTeamScope.js';
 import type { VisibilityActor } from './runVisibility.js';
@@ -26,7 +27,7 @@ export function outcomesFilters(
   end: Date
 ): Prisma.PullRequestWhereInput[] {
   const filters: Prisma.PullRequestWhereInput[] = [
-    user.role === 'ADMIN' ? {} : { repository: reachableConnections(user, gate) },
+    isPlatformAdmin(user) ? {} : { repository: reachableConnections(user, gate) },
     { openedAt: { gte: openedFrom, lt: end } },
   ];
   if (query.repoId) {

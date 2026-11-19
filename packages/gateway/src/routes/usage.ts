@@ -8,9 +8,11 @@ import {
   rollupHorizonMs,
 } from '@auto-swe/shared/lib/agentTraceRollup';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { can, heldScope } from '../lib/authz.js';
 import { csvRow } from '../lib/csv.js';
 import {
   customRangeFields,
@@ -29,7 +31,7 @@ import {
   timeWhere,
   type WindowPlan,
 } from '../lib/usageWindows.js';
-import { hasRole, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
+import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
  * LLM usage, aggregated from `agent_traces`.
@@ -40,10 +42,10 @@ import { hasRole, type JwtPayload, requireAuth, requireUser } from '../plugins/a
  * recorded for every workflow. Run-level totals (`WorkflowRun.costUsdAccrued`)
  * miss workflows that keep no run.
  *
- * Scoped by `teamId` or `orgId`, or platform-wide. An ADMIN may read any of
- * them; a team LEAD (by team membership) their team; an ORG_ADMIN their
- * organization. The platform-wide report is ADMIN-only, because it includes
- * spend no team owns.
+ * Scoped by `teamId` or `orgId`, or platform-wide. The platform operator may read any of
+ * them; whoever holds `team.usage.read` their team; whoever holds `org.reports.read` their
+ * organization. The platform-wide report (`platform.reports.read-all`) is the operator's alone,
+ * because it includes spend no team owns.
  */
 
 const WINDOWS = [7, 30, 90] as const;
@@ -200,28 +202,19 @@ function addAcc(accs: Acc[], x: Acc): void {
   }
 }
 
-/** May `user` read the report for `scope`? See the module comment. */
-async function mayReadUsage(
-  prisma: FastifyInstance['prisma'],
-  user: JwtPayload,
-  scope: UsageScope
-): Promise<boolean> {
-  if (user.role === 'ADMIN') {
-    return true;
-  }
+/**
+ * May the caller read the report for `scope`? A team's report is `team.usage.read`, an
+ * organization's `org.reports.read`, and the platform-wide one `platform.reports.read-all`. See
+ * the module comment.
+ */
+async function mayReadUsage(request: FastifyRequest, scope: UsageScope): Promise<boolean> {
   if (scope.teamId) {
-    const membership = await prisma.teamMembership.findUnique({
-      where: { userId_teamId: { teamId: scope.teamId, userId: user.sub } },
-    });
-    return membership !== null && hasRole(membership.role, 'LEAD');
+    return (await can(request, 'team.usage.read', { teamId: scope.teamId })).allowed;
   }
   if (scope.orgId) {
-    const membership = await prisma.organizationMembership.findUnique({
-      where: { userId_orgId: { orgId: scope.orgId, userId: user.sub } },
-    });
-    return membership?.role === 'ORG_ADMIN';
+    return (await can(request, 'org.reports.read', { orgId: scope.orgId })).allowed;
   }
-  return false;
+  return (await can(request, 'platform.reports.read-all')).allowed;
 }
 
 /**
@@ -334,7 +327,7 @@ async function usageByUser(args: {
   const launcherIds = [...sums.keys()];
   // Who belongs to the report's team or organization. An ADMIN needs no such limit.
   let inScope: Set<string>;
-  if (user.role === 'ADMIN' || launcherIds.length === 0) {
+  if (isPlatformAdmin(user) || launcherIds.length === 0) {
     inScope = new Set(launcherIds);
   } else if (scope.teamId) {
     const members = await prisma.teamMembership.findMany({
@@ -389,7 +382,7 @@ async function usageByUser(args: {
   const userById = new Map(users.map((u) => [u.id, u]));
   const byUser: UserRow[] = top.map(([id, x]) => ({
     ...x,
-    email: user.role === 'ADMIN' ? (userById.get(id)?.email ?? null) : null,
+    email: isPlatformAdmin(user) ? (userById.get(id)?.email ?? null) : null,
     name: userById.get(id)?.name ?? null,
     outsideScope: false,
     userId: id,
@@ -423,10 +416,15 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
   const prisma = fastify.prisma;
   type UsageReportRequest = FastifyRequest<{ Querystring: z.infer<typeof UsageQuery> }>;
 
+  // The report's scope is a query parameter, so the handler decides the matching capability.
+  const reporting = requireAuth({
+    handlerChecked: ['team.usage.read', 'org.reports.read', 'platform.reports.read-all'],
+  });
+
   app.get(
     '/usage/export',
     {
-      onRequest: requireAuth(),
+      onRequest: reporting,
       schema: { querystring: UsageExportQuery },
     },
     async (request, reply) => {
@@ -489,50 +487,36 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
   // The page gates on this being non-empty, so the two cannot disagree; the
   // report route still checks every request itself.
   app.get('/usage/scopes', { onRequest: requireAuth() }, async (request) => {
-    const user = requireUser(request);
     const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
-    if (user.role === 'ADMIN') {
-      const [teams, orgs] = await Promise.all([
-        runUnscoped('an ADMIN lists every team they may report on', ['Team'], () =>
-          prisma.team.findMany({ select: { id: true, name: true } })
-        ),
-        prisma.organization.findMany({ select: { id: true, name: true } }),
-      ]);
-      return {
-        data: { orgs: orgs.sort(byName), platform: true, teams: teams.sort(byName) },
-      };
-    }
-    const [teamMemberships, orgMemberships] = await runUnscoped(
-      "the caller's own memberships",
-      ['TeamMembership', 'OrganizationMembership'],
+    const [teamScope, orgScope, platformScope] = await Promise.all([
+      heldScope(request, 'team.usage.read'),
+      heldScope(request, 'org.reports.read'),
+      heldScope(request, 'platform.reports.read-all'),
+    ]);
+    const [teams, orgs] = await runUnscoped(
+      'the teams and organizations the caller holds a report capability on',
+      ['Team'],
       () =>
         Promise.all([
-          prisma.teamMembership.findMany({
-            select: { role: true, team: { select: { id: true, name: true } } },
-            where: { userId: user.sub },
+          prisma.team.findMany({
+            select: { id: true, name: true },
+            where: teamScope.all ? {} : { id: { in: teamScope.teamIds } },
           }),
-          prisma.organizationMembership.findMany({
-            select: { organization: { select: { id: true, name: true } }, role: true },
-            where: { role: 'ORG_ADMIN', userId: user.sub },
+          prisma.organization.findMany({
+            select: { id: true, name: true },
+            where: orgScope.all ? {} : { id: { in: orgScope.orgIds } },
           }),
         ])
     );
     return {
-      data: {
-        orgs: orgMemberships.map((m) => m.organization).sort(byName),
-        platform: false,
-        teams: teamMemberships
-          .filter((m) => hasRole(m.role, 'LEAD'))
-          .map((m) => m.team)
-          .sort(byName),
-      },
+      data: { orgs: orgs.sort(byName), platform: platformScope.all, teams: teams.sort(byName) },
     };
   });
 
   app.get(
     '/usage',
     {
-      onRequest: requireAuth(),
+      onRequest: reporting,
       schema: { querystring: UsageQuery },
     },
     async (request, reply) => buildUsageReport(request, reply)
@@ -544,7 +528,7 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
     const custom = resolveCustomRange(request.query);
     const windowDays = custom?.days ?? request.query.window;
     const scope: UsageScope = teamId ? { teamId } : orgId ? { orgId } : {};
-    if (!(await mayReadUsage(prisma, user, scope))) {
+    if (!(await mayReadUsage(request, scope))) {
       return sendError(
         reply,
         403,

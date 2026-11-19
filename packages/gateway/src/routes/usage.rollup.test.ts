@@ -164,7 +164,11 @@ function newFake(f: Fixture, memberships: { team: Row[]; org: Row[] }, users: Ro
           (m) => m.userId === a.where.userId_orgId.userId && m.orgId === a.where.userId_orgId.orgId
         ) ?? null,
     },
-    team: { findMany: async () => [] },
+    team: {
+      // The capability resolver asks about teams by id: each exists, active.
+      findMany: async (a: { where?: { id?: { in: string[] } } }) =>
+        (a.where?.id?.in ?? []).map((id) => ({ id, isActive: true, orgId: null })),
+    },
     teamMembership: {
       findMany: async (a: { where: Row }) => {
         const { team, ...rest } = a.where as { team?: { orgId: string } } & Row;

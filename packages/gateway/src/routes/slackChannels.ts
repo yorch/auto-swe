@@ -3,6 +3,7 @@ import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { releaseChannelBudgetHolds } from '@auto-swe/shared/lib/channelBudget';
 import { forgetMemoryItems } from '@auto-swe/shared/lib/memoryForget';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -247,7 +248,7 @@ async function assertChannelAccess(
   teamId: string,
   reply: FastifyReply
 ): Promise<boolean> {
-  if (user.role === 'ADMIN') {
+  if (isPlatformAdmin(user)) {
     return true;
   }
   const member = await fastify.prisma.teamMembership.findUnique({
@@ -277,7 +278,7 @@ async function assertChannelContentAccess(
   if (!(await assertChannelAccess(fastify, user, channel.teamId, reply))) {
     return false;
   }
-  if (!channel.isPrivate || user.role === 'ADMIN') {
+  if (!channel.isPrivate || isPlatformAdmin(user)) {
     return true;
   }
   const member = user.slackId
@@ -321,8 +322,8 @@ const EraseUserBody = z.object({
 
 export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
-  const authed = requireAuth({ requiredRole: 'ENGINEER' });
+  const adminOnly = requireAuth({ capability: 'platform.slack-channels.manage' });
+  const authed = requireAuth();
 
   // POST /memory/erase-user — forget every channel memory written from one
   // Slack user's turns, in every channel, with everything merged from them
@@ -375,8 +376,9 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
   // owning team they belong to.
   app.get('/', { onRequest: authed }, async (request) => {
     const user = requireUser(request);
-    const where: Prisma.SlackChannelWhereInput =
-      user.role === 'ADMIN' ? {} : { team: memberTeams(user) };
+    const where: Prisma.SlackChannelWhereInput = isPlatformAdmin(user)
+      ? {}
+      : { team: memberTeams(user) };
     const rows = await asPlatformAdmin(
       user,
       "admin lists every team's channels",
