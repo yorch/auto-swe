@@ -45,9 +45,11 @@ export {
   orgIsAdmin,
   orgRankMeets,
   orgRankOf,
+  orgRolesAtLeast,
   TEAM_ROLE_RANK,
   teamRankMeets,
   teamRankOf,
+  teamRolesAtLeast,
 } from './standing.js';
 export type {
   Actor,

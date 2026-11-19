@@ -27,7 +27,7 @@
  * exactly how the GLOBAL workflow templates would vanish from an admin's list.
  */
 import type { Prisma } from '@auto-swe/shared';
-import type { HeldScope } from '@auto-swe/shared/permissions';
+import { type HeldScope, orgRolesAtLeast, teamRolesAtLeast } from '@auto-swe/shared/permissions';
 
 /** The subset of an authenticated caller these predicates read. */
 export interface ScopeActor {
@@ -209,7 +209,7 @@ export function managedTeams(managed: HeldScope): Prisma.TeamWhereInput {
  * `teamsHeldIn` instead. Deleted once nothing imports it.
  */
 export function ledTeams(actor: ScopeActor): Prisma.TeamWhereInput {
-  return { memberships: { some: { role: { in: ['LEAD', 'ADMIN'] }, userId: actor.sub } } };
+  return { memberships: { some: { role: { in: teamRolesAtLeast('LEAD') }, userId: actor.sub } } };
 }
 
 /**
@@ -225,7 +225,11 @@ export function repositoryManagementTeams(actor: ScopeActor): Prisma.TeamWhereIn
       {
         OR: [
           ledTeams(actor),
-          { organization: { memberships: { some: { role: 'ADMIN', userId: actor.sub } } } },
+          {
+            organization: {
+              memberships: { some: { role: { in: orgRolesAtLeast('ADMIN') }, userId: actor.sub } },
+            },
+          },
         ],
       },
     ],

@@ -16,7 +16,7 @@ import {
   orgMonthSpend,
   usdToCents,
 } from '@auto-swe/shared/lib/billing';
-import { isPlatformAdmin, orgIsAdmin } from '@auto-swe/shared/permissions';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyReply } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
 
@@ -57,21 +57,6 @@ export function teamBudgetRefusal(team: { memberName: string | null }): {
       ? `Team "${team.memberName}" has exceeded its monthly budget cap`
       : 'The team that owns this repository has exceeded its monthly budget cap',
   };
-}
-
-/** Is the user an administrator of `orgId`? A platform administrator always is. */
-export async function isOrgAdmin(
-  prisma: PrismaClient,
-  user: { role: string; sub: string },
-  orgId: string
-): Promise<boolean> {
-  if (isPlatformAdmin(user)) {
-    return true;
-  }
-  const membership = await prisma.organizationMembership.findUnique({
-    where: { userId_orgId: { orgId, userId: user.sub } },
-  });
-  return orgIsAdmin(membership?.role);
 }
 
 /** Is the user a member of `orgId`? Platform ADMINs always are. */

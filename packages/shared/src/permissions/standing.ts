@@ -1,3 +1,4 @@
+import { ORG_ROLES, type OrgRoleValue, TEAM_ROLES, type TeamRoleValue } from './roles.js';
 import type { OrgRank, TeamRank } from './types.js';
 
 /**
@@ -71,4 +72,18 @@ export function teamRankMeets(actual: TeamRank | null, required: TeamRank): bool
 /** `actual` is at least `required`. A non-member (`null`) meets nothing. */
 export function orgRankMeets(actual: OrgRank | null, required: OrgRank): boolean {
   return actual !== null && ORG_ROLE_RANK[actual] >= ORG_ROLE_RANK[required];
+}
+
+/**
+ * The stored team-membership roles at or above `minimum`, for a Prisma `role: { in: … }` filter.
+ * A filter that must say "leads and above" asks here instead of spelling role literals, so a
+ * renamed or added role edits this module alone.
+ */
+export function teamRolesAtLeast(minimum: TeamRank): TeamRoleValue[] {
+  return TEAM_ROLES.filter((role) => TEAM_ROLE_RANK[role] >= TEAM_ROLE_RANK[minimum]);
+}
+
+/** The stored organization-membership roles at or above `minimum`, for a `role: { in: … }` filter. */
+export function orgRolesAtLeast(minimum: OrgRank): OrgRoleValue[] {
+  return ORG_ROLES.filter((role) => ORG_ROLE_RANK[role] >= ORG_ROLE_RANK[minimum]);
 }

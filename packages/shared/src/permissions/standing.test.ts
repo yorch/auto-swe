@@ -4,9 +4,11 @@ import {
   orgIsAdmin,
   orgRankMeets,
   orgRankOf,
+  orgRolesAtLeast,
   TEAM_ROLE_RANK,
   teamRankMeets,
   teamRankOf,
+  teamRolesAtLeast,
 } from './standing.js';
 
 describe('standing', () => {
@@ -35,6 +37,13 @@ describe('standing', () => {
     expect(orgRankMeets('ADMIN', 'MEMBER')).toBe(true);
     expect(orgRankMeets('MEMBER', 'ADMIN')).toBe(false);
     expect(orgRankMeets(null, 'MEMBER')).toBe(false);
+  });
+  it('lists the stored roles at or above a rank', () => {
+    expect(teamRolesAtLeast('LEAD').sort()).toEqual(['ADMIN', 'LEAD']);
+    expect(teamRolesAtLeast('ADMIN')).toEqual(['ADMIN']);
+    expect(teamRolesAtLeast('MEMBER')).toHaveLength(3);
+    expect(orgRolesAtLeast('ADMIN')).toEqual(['ADMIN']);
+    expect(orgRolesAtLeast('MEMBER')).toHaveLength(2);
   });
   it('knows platform admin, and a principal is never one', () => {
     expect(isPlatformAdmin({ role: 'ADMIN' })).toBe(true);

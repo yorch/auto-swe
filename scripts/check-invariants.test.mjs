@@ -10,6 +10,8 @@ import {
   liveSuiteViolations,
   optInSuiteViolations,
   providerCodeOutsideScmViolations,
+  ROLE_DECISION_ALLOWLIST,
+  roleDecisionViolations,
   scmProviderFiles,
   slackWriterViolations,
   stripComments,
@@ -946,5 +948,144 @@ describe('slackWriterViolations', () => {
       'await fetch(SLACK_POST_URL, { body: JSON.stringify({ text }) });',
     ].join('\n');
     expect(slackWriterViolations(NOTIFY, src)).toHaveLength(1);
+  });
+});
+
+describe('roleDecisionViolations', () => {
+  const GW = 'packages/gateway/src/routes/x.ts';
+  const kinds = (src, file = GW, allow = new Map()) =>
+    roleDecisionViolations(file, src, allow).map((v) => v.kind);
+
+  it('reports a comparison of a role expression with a role literal (a)', () => {
+    for (const src of [
+      "if (user.role === 'ADMIN') go();",
+      "if (membership?.role !== 'LEAD') stop();",
+      'if (actor.role == "ORG_ADMIN") go();',
+      "const lead = orgRole != 'MEMBER';",
+      "if ('ADMIN' === req.user.role) go();",
+      'if (m.role === TeamRole.ADMIN) go();',
+      'if (PlatformRole.ADMIN !== user.role) stop();',
+      "if (getRole(user) === 'ENGINEER') go();",
+      "if (['LEAD', 'ADMIN'].includes(x)) go();",
+      "if (new Set(['ADMIN', 'LEAD']).has(x)) go();",
+      "switch (m.role) {\n case 'ADMIN':\n  return 1;\n}",
+    ]) {
+      expect(kinds(src).length, src).toBeGreaterThan(0);
+    }
+  });
+
+  it('reports the role helpers (b) and the lead-role lists (c)', () => {
+    expect(kinds("if (hasRole(user.role, 'LEAD')) go();")).toContain('role-helper');
+    expect(kinds('if (roleMeets(a, b)) go();')).toContain('role-helper');
+    expect(kinds('const ok = await isOrgAdmin(prisma, user, orgId);')).toContain('role-helper');
+    expect(kinds('if (hasOrgRole(u, o)) go();')).toContain('role-helper');
+    expect(kinds('if (LEAD_ROLES.includes(x)) go();')).toContain('lead-roles');
+    expect(kinds('const r = TEAM_LEAD_ROLES;')).toContain('lead-roles');
+  });
+
+  it('reports a Prisma filter on a role literal (d), in where, some and nested keys', () => {
+    for (const src of [
+      "prisma.teamMembership.findMany({ where: { role: 'ADMIN' } });",
+      "const w = { memberships: { some: { role: { in: ['LEAD', 'ADMIN'] }, userId } } };",
+      "prisma.x.count({ where: { OR: [{ teamId }, { role: 'MEMBER' }] } });",
+      "prisma.x.count({ where: { team: { memberships: { every: { role: { not: 'MEMBER' } } } } } });",
+    ]) {
+      expect(kinds(src), src).toContain('filter');
+    }
+  });
+
+  it('reports z.enum over role literals only (e)', () => {
+    expect(kinds("const s = z.enum(['ADMIN', 'LEAD', 'MEMBER']);")).toContain('zod-enum');
+    expect(kinds("const s = z.enum(['ADMIN', 'MEMBER']).optional();")).toContain('zod-enum');
+    expect(kinds("const s = z.enum(['USER', 'ASSISTANT']);")).toEqual([]);
+    expect(kinds('const s = z.enum(TEAM_ROLES);')).toEqual([]);
+  });
+
+  it('allows a role written in a create, data or update object', () => {
+    for (const src of [
+      "await prisma.teamMembership.create({ data: { role: 'ADMIN', teamId, userId } });",
+      "await prisma.organizationMembership.upsert({ create: { orgId, role: 'ADMIN', userId }, update: {}, where: { id } });",
+      "await prisma.user.update({ where: { id }, data: { role: 'USER' } });",
+      "await prisma.x.createMany({ data: [{ role: 'MEMBER', userId }] });",
+      "const after = { orgId, role: 'MEMBER', userId };",
+      "const invite = { orgRole: 'MEMBER', teamRole: body.role };",
+    ]) {
+      expect(kinds(src), src).toEqual([]);
+    }
+  });
+
+  it('allows the permissions-module spellings and unrelated comparisons', () => {
+    for (const src of [
+      'if (isPlatformAdmin(user)) go();',
+      "prisma.x.findMany({ where: { role: { in: teamRolesAtLeast('LEAD') } } });",
+      'const s = z.enum(TEAM_ROLES);',
+      "if (user.status === 'ADMIN_HOLD') go();",
+      "if (kind === 'ADMIN') go();",
+      "if (m.roleName === 'viewer') go();",
+    ]) {
+      expect(kinds(src), src).toEqual([]);
+    }
+  });
+
+  it('ignores comments but still reads code after a glob string', () => {
+    const src = [
+      "// if (user.role === 'ADMIN') go();",
+      "/* hasRole(user.role, 'LEAD') */",
+      '/** LEAD_ROLES is gone */',
+      "const g = 'packages/*';",
+    ].join('\n');
+    expect(kinds(src)).toEqual([]);
+    expect(kinds(`${src}\nif (user.role === 'ADMIN') go();`)).toEqual(['comparison']);
+  });
+
+  it('reports the line and text of an offender', () => {
+    const found = roleDecisionViolations(GW, "const a = 1;\nif (u.role === 'ADMIN') go();\n");
+    expect(found).toEqual([{ kind: 'comparison', line: 2, text: "if (u.role === 'ADMIN') go();" }]);
+  });
+
+  it('skips tests, test helpers, generated code and the permissions module', () => {
+    const src = "if (user.role === 'ADMIN') go();";
+    for (const file of [
+      'packages/gateway/src/routes/x.test.ts',
+      'packages/gateway/src/routes/x.pg.test.ts',
+      'packages/worker/src/lib/x.docker.test.ts',
+      'packages/worker/src/live/x.live.test.ts',
+      'packages/web/src/components/X.test.tsx',
+      'packages/gateway/src/test/helpers.ts',
+      'packages/gateway/src/lib/__tests__/helpers.ts',
+      'packages/shared/src/generated/prisma/index.ts',
+      'packages/shared/src/permissions/standing.ts',
+      'packages/shared/src/permissions/catalog/org.ts',
+      'scripts/anything.mjs',
+    ]) {
+      expect(roleDecisionViolations(file, src), file).toEqual([]);
+    }
+  });
+
+  it('scans every package that has a src directory', () => {
+    const src = "if (user.role === 'ADMIN') go();";
+    for (const pkg of ['gateway', 'shared', 'worker', 'web', 'cli', 'sdk']) {
+      expect(roleDecisionViolations(`packages/${pkg}/src/x.ts`, src), pkg).toHaveLength(1);
+    }
+    expect(roleDecisionViolations('packages/web/src/components/X.tsx', src)).toHaveLength(1);
+  });
+
+  it('honours a per-file allowlist count, and fails on more or fewer', () => {
+    const src = "const mine = m.role === 'USER';";
+    const two = `${src}\n${src}`;
+    const allow = new Map([[GW, { count: 1, reason: 'chat author' }]]);
+    expect(roleDecisionViolations(GW, src, allow)).toEqual([]);
+    expect(roleDecisionViolations(GW, two, allow)).toHaveLength(2);
+    expect(roleDecisionViolations(GW, 'const x = 1;', allow).map((v) => v.kind)).toEqual([
+      'stale-allowlist',
+    ]);
+  });
+
+  it('gives every shipped allowlist entry a count and a reason', () => {
+    for (const [file, entry] of ROLE_DECISION_ALLOWLIST) {
+      expect(file).toMatch(/^packages\/[^/]+\/src\//);
+      expect(entry.count).toBeGreaterThan(0);
+      expect(entry.reason.length).toBeGreaterThan(10);
+    }
   });
 });
