@@ -42,13 +42,13 @@ async function routes(app: FastifyInstance) {
   // confirm, authenticated twice: a plugin-wide hook and the route's own
   app.patch(
     '/api/v1/repositories/:id',
-    { onRequest: requireAuth(), preHandler: requireAuth({ requiredRole: 'ENGINEER' }) },
+    { onRequest: requireAuth(), preHandler: requireAuth() },
     handler
   );
-  // confirm, behind a role the user lacks
+  // confirm, behind a capability the user lacks
   app.post(
     '/api/v1/platform/skills',
-    { onRequest: requireAuth({ requiredRole: 'ADMIN' }) },
+    { onRequest: requireAuth({ capability: 'platform.users.manage' }) },
     handler
   );
   // never
@@ -203,7 +203,7 @@ describe('requireAuth — assistant tokens', () => {
       expect(res.statusCode).toBe(401);
     });
 
-    it('still applies the route’s role check to the user', async () => {
+    it('still applies the route’s capability check to the user', async () => {
       const res = await app.inject({
         headers: { authorization: assistantBearer(app), 'x-assistant-action': ACTION_ID },
         method: 'POST',

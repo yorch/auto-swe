@@ -37,7 +37,12 @@ export const inboundEventRoutes: FastifyPluginAsync = async (fastify) => {
     '/:endpointId',
     {
       bodyLimit: MAX_EVENT_BODY_BYTES,
-      config: { rateLimit: { max: 120, timeWindow: '1 minute' } },
+      config: {
+        authz: 'public',
+        publicReason:
+          'the endpoint signature scheme, verified over the raw body before anything is parsed',
+        rateLimit: { max: 120, timeWindow: '1 minute' },
+      },
     },
     async (request, reply) => {
       // A call the platform itself sent (a completion callback pointed back here) is never an

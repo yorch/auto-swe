@@ -1,5 +1,4 @@
 import type { Role } from '@auto-swe/shared';
-import { roleMeets } from '@auto-swe/shared/config/permissions';
 import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { deniedHref, deniedReasonHref } from '@/lib/accessDenied';
@@ -10,6 +9,7 @@ import {
   SEARCH_HEADER,
 } from '@/lib/config';
 import { apiInternalUrl } from '@/lib/env';
+import { roleMeets } from './roles';
 
 interface SessionUser {
   id: string;

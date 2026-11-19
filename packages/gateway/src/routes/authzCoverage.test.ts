@@ -7,12 +7,12 @@ import { registerApiRoutes } from './register.js';
 
 /**
  * Every route says how it is authorized. `requireAuth` records that in `config.authz` at
- * registration (`annotateAuthz`): `capability`, `handler-checked`, `service`, `authenticated`, or
- * `legacy` (still on the old role options). A route with no `requireAuth` hook is `public` only if
- * it declares so.
+ * registration (`annotateAuthz`): `capability`, `handler-checked`, `service` or `authenticated`.
+ * A route with no `requireAuth` hook is `public` only if it declares `config.authz = 'public'` with
+ * a `publicReason` naming what authenticates it (or why nothing needs to).
  *
- * The ratchet below counts the routes that are not yet on the new declaration. It only goes down:
- * lower `BASELINE` when a route is converted, never raise it. A new route must declare a
+ * The set of public routes is a reviewed list, `REVIEWED_PUBLIC` below: adding a public route means
+ * adding it there, in the same change, where a reviewer sees it. A new route must declare a
  * capability, `requireAuth()`, `serviceScopes` or `config.authz = 'public'`, or this test fails.
  *
  * A tripwire, not a proof: it reads only hooks that carry `RBAC_OPTIONS`. A wrapper around
@@ -24,6 +24,7 @@ interface WalkedRoute {
   hasServiceScopes: boolean;
   keys: string[];
   label: string;
+  publicReason: string | undefined;
 }
 
 let routes: WalkedRoute[] = [];
@@ -56,6 +57,7 @@ beforeAll(async () => {
         hasServiceScopes: !!route.config?.serviceScopes?.length,
         keys,
         label: `${method} ${route.url}`,
+        publicReason: route.config?.publicReason,
       });
     }
   });
@@ -66,13 +68,26 @@ beforeAll(async () => {
 }, 60_000);
 
 /**
- * Routes not yet on the new declaration: `legacy`, plus those with no `requireAuth` hook that do
- * not declare `public`. Lower it as each domain converts; the end state is 0.
+ * Every route that is public: no `requireAuth` hook, so whatever protects it is in its handler.
+ * Each is reviewed: a webhook or callback proves itself with a signature or a signed state, a
+ * public link carries a signed token. A route added here needs the same kind of reason.
  */
-const BASELINE = 674;
-// At the time it was set: legacy 588, undeclared 86 (public receivers and hook-less routes);
-// capability 0, handler-checked 0, service 18, authenticated 26. Deprecated alias mounts count
-// once per mount.
+const REVIEWED_PUBLIC = [
+  'GET /api/v1/auth/slack/callback',
+  'GET /api/v1/auth/slack/install/callback',
+  'GET /api/v1/integrations/github-app-manifest/callback',
+  'GET /api/v1/report-digests/unsubscribe',
+  'POST /api/v1/auth/slack/commands',
+  'POST /api/v1/auth/slack/events',
+  'POST /api/v1/auth/slack/interactive',
+  'POST /api/v1/report-digests/unsubscribe',
+  'POST /api/v1/webhooks/:token',
+  'POST /api/v1/webhooks/access',
+  'POST /api/v1/webhooks/ci',
+  'POST /api/v1/webhooks/events/:endpointId',
+  'POST /api/v1/webhooks/git',
+  'POST /api/v1/webhooks/jira',
+];
 
 function tally(): Record<string, number> {
   const counts: Record<string, number> = {};
@@ -112,11 +127,31 @@ describe('route authorization metadata', () => {
     expect(offenders).toEqual([]);
   });
 
-  it(`ratchet: routes on the legacy role options or undeclared stay at or under ${BASELINE}`, () => {
-    const counts = tally();
-    const notConverted = (counts.legacy ?? 0) + (counts.undeclared ?? 0);
-    // The breakdown, so a failing run says where the routes are.
-    console.info(`authz routes: ${JSON.stringify(counts)} (ratchet BASELINE ${BASELINE})`);
-    expect(notConverted).toBeLessThanOrEqual(BASELINE);
+  it('gives every route an authorization kind', () => {
+    const undeclared = routes.filter((r) => !r.authz).map((r) => r.label);
+    expect(undeclared).toEqual([]);
+  });
+
+  it('gives every public route a non-empty publicReason, and no other route one', () => {
+    const missing = routes
+      .filter((r) => r.authz === 'public' && !r.publicReason?.trim())
+      .map((r) => r.label);
+    expect(missing).toEqual([]);
+    const stray = routes.filter((r) => r.authz !== 'public' && r.publicReason).map((r) => r.label);
+    expect(stray).toEqual([]);
+  });
+
+  it('has exactly the reviewed set of public routes', () => {
+    const open = routes
+      .filter((r) => r.authz === 'public')
+      .map((r) => r.label)
+      .sort();
+    expect(open).toEqual([...REVIEWED_PUBLIC].sort());
+  });
+
+  it('declares no authorization kind outside the known set', () => {
+    const known = new Set(['capability', 'handler-checked', 'service', 'authenticated', 'public']);
+    expect(routes.filter((r) => r.authz && !known.has(r.authz)).map((r) => r.label)).toEqual([]);
+    console.info(`authz routes: ${JSON.stringify(tally())}`);
   });
 });

@@ -1,7 +1,7 @@
 import type { Role } from '@auto-swe/shared';
-import { roleMeets } from '@auto-swe/shared/config/permissions';
 import { knownPageTitle } from '@/lib/navigation';
 import { isRole } from '@/lib/roles';
+import { roleMeets } from './roles';
 
 /**
  * A signed-in user who opens a page above their role is sent Home with

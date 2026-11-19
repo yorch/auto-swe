@@ -92,7 +92,7 @@ async function harness(
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: 'ENGINEER', sub: 'retry-caller' }),
   } as never);
-  app.post('/retry', { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) }, (req, reply) =>
+  app.post('/retry', { onRequest: requireAuth() }, (req, reply) =>
     retryTemplateRequest(
       app,
       req,

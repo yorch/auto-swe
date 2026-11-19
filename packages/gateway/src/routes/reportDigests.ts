@@ -94,7 +94,12 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/unsubscribe',
     {
-      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+      config: {
+        authz: 'public',
+        publicReason:
+          'signed unsubscribe token (HMAC) per subscription and recipient, verified in the handler',
+        rateLimit: { max: 30, timeWindow: '1 minute' },
+      },
       schema: { querystring: unsubscribeQuerySchema },
     },
     async (request, reply) => {
@@ -115,7 +120,12 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/unsubscribe',
     {
-      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+      config: {
+        authz: 'public',
+        publicReason:
+          'signed unsubscribe token (HMAC) per subscription and recipient, verified in the handler',
+        rateLimit: { max: 30, timeWindow: '1 minute' },
+      },
       schema: { body: unsubscribeBodySchema, querystring: unsubscribeQuerySchema },
     },
     async (request, reply) => {

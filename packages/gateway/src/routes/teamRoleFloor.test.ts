@@ -36,8 +36,9 @@ function definitionOf(capability: string): {
 }
 
 let capabilityRoutes: CapabilityRoute[] = [];
-/** Every route that still asks for a platform role above the lowest, however it decides the rest. */
+/** Every route whose hook carries an option outside the declared set: a stacked role floor. */
 let platformFloor: string[] = [];
+const DECLARED_OPTIONS = new Set(['capability', 'handlerChecked', 'hideAs404', 'team', 'org']);
 
 beforeAll(async () => {
   const app = Fastify();
@@ -57,9 +58,10 @@ beforeAll(async () => {
       }
       // Fastify adds a HEAD twin of every GET; it says nothing the GET does not.
       const methods = [route.method].flat().filter((m) => m !== 'HEAD');
-      if (options.requiredRole && options.requiredRole !== 'ENGINEER') {
+      const undeclared = Object.keys(options).filter((key) => !DECLARED_OPTIONS.has(key));
+      if (undeclared.length > 0) {
         for (const method of methods) {
-          floors.push(`${method} ${route.url} requires platform ${options.requiredRole}`);
+          floors.push(`${method} ${route.url} carries ${undeclared.join(', ')}`);
         }
       }
       if (options.capability) {
@@ -116,7 +118,7 @@ describe('capability routes', () => {
 });
 
 describe('platform role floors', () => {
-  it('no route asks for a platform role above the lowest', () => {
+  it('no route stacks a role floor or any option beyond the declared ones', () => {
     expect(platformFloor).toEqual([]);
   });
 });

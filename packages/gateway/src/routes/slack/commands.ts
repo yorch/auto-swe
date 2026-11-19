@@ -26,7 +26,11 @@ export async function registerCommandRoutes(fastify: FastifyInstance): Promise<v
   fastify.post(
     '/commands',
     {
-      config: { rawBody: true },
+      config: {
+        authz: 'public',
+        publicReason: 'Slack request signature (signing secret) verified by verifySlackSignature',
+        rawBody: true,
+      },
     },
     async (request, reply) => {
       const { signingSecret } = await resolveSlackConfig();

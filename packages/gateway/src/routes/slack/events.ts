@@ -19,7 +19,12 @@ export async function registerEventRoutes(fastify: FastifyInstance): Promise<voi
   fastify.post(
     '/events',
     {
-      config: { rawBody: true },
+      config: {
+        authz: 'public',
+        publicReason:
+          'Slack request signature (signing secret) verified by verifySlackSignature, handshake included',
+        rawBody: true,
+      },
     },
     async (request, reply) => {
       const body = (request.body ?? {}) as SlackEventCallback;

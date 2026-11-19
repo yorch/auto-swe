@@ -2,7 +2,6 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type { Role } from '@auto-swe/shared';
 import { resolveSetting } from '@auto-swe/shared/config';
-import { roleMeets } from '@auto-swe/shared/config/permissions';
 import {
   ASSISTANT_ACTION_HEADER,
   ASSISTANT_TOKEN_PREFIX,
@@ -143,6 +142,8 @@ declare module 'fastify' {
      * (see `authzKindOf`). A route with no `requireAuth` hook declares `'public'` here itself.
      */
     authz?: AuthzKind;
+    /** Required with `authz: 'public'`: what authenticates the route, or why nothing needs to. */
+    publicReason?: string;
     /**
      * The capabilities a `handler-checked` route's handler checks, copied from `requireAuth` at
      * registration. Only an allowed check of one of these satisfies the backstop.
@@ -206,24 +207,6 @@ export interface AssistantCaller {
 export type RouteCaller =
   | { kind: 'user'; user: JwtPayload }
   | { kind: 'service'; principal: ServicePrincipalCaller };
-
-// Role hierarchy: ADMIN > LEAD > ENGINEER. The ladder itself lives in
-// `@auto-swe/shared/config/permissions`, because the settings registry's
-// `requiredRole` floor has to rank roles the same way every other check in this
-// file does — two copies would let the two drift apart silently.
-function hasRole(userRole: string, requiredRole: string): boolean {
-  return roleMeets(userRole as Role, requiredRole as Role);
-}
-
-// Org role hierarchy: ORG_ADMIN > ORG_MEMBER (P5 multi-org RBAC).
-const ORG_ROLE_HIERARCHY: Record<string, number> = {
-  ORG_ADMIN: 2,
-  ORG_MEMBER: 1,
-};
-
-function hasOrgRole(userRole: string, requiredRole: string): boolean {
-  return (ORG_ROLE_HIERARCHY[userRole] ?? 0) >= (ORG_ROLE_HIERARCHY[requiredRole] ?? 0);
-}
 
 /**
  * Asserts that requireAuth middleware ran and narrows request.user to JwtPayload.
@@ -527,17 +510,12 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
   });
 };
 
-export { authPlugin, hasRole };
+export { authPlugin };
 export default fp(authPlugin, { fastify: '5.x', name: 'auth' });
 
 // ── RBAC Hook Factory ──
 
 export interface RBACOptions {
-  requiredRole?: string; // Platform role check
-  requiredTeamRole?: string; // Team-scoped role check (resolves via team membership)
-  teamIdParam?: string; // Route param name containing the team ID (default: 'id')
-  requiredOrgRole?: string; // Org-scoped role check (resolves via org membership)
-  orgIdParam?: string; // Route param name containing the org ID (default: 'orgId')
   /**
    * The capability the route needs, decided after authentication by `can()`. A refusal is 403
    * `FORBIDDEN` with `error.missing`. A platform-scoped capability needs no resource; a team-scoped
@@ -558,23 +536,8 @@ export interface RBACOptions {
 }
 
 /** How a route is authorized, as `config.authz` records it. */
-export type AuthzKind =
-  | 'capability'
-  | 'handler-checked'
-  | 'service'
-  | 'authenticated'
-  | 'legacy'
-  | 'public';
+export type AuthzKind = 'capability' | 'handler-checked' | 'service' | 'authenticated' | 'public';
 
-/**
- * Creates a Fastify onRequest hook that enforces JWT authentication
- * and optional role-based access control.
- *
- * When `requiredTeamRole` is set with a `teamIdParam`, the middleware resolves
- * the user's membership in that team and checks their team role. Likewise,
- * `requiredOrgRole` with `orgIdParam` resolves org membership and checks the
- * org role (ORG_ADMIN > ORG_MEMBER). Platform ADMINs bypass team/org checks.
- */
 /** Phase-8 personal access tokens are prefixed with `ats_`. The remainder is
  * 32 bytes of base64url entropy (~43 chars). Anything starting with this
  * prefix bypasses JWT verification and hashes through ApiToken
@@ -971,16 +934,11 @@ async function authenticateBridgedCall(
 
 /**
  * Whether a route guarded by these options may admit a service principal at all. A principal
- * holds no role, so only a route whose bar is the lowest platform role (or none) and that asks
- * for no team or organization role can opt in.
+ * holds no role and passes no capability, so only a route that declares neither a capability nor
+ * a handler check can opt in.
  */
 export function serviceAdmissible(options: RBACOptions): boolean {
-  return (
-    !options.capability &&
-    (!options.requiredRole || options.requiredRole === 'ENGINEER') &&
-    !options.requiredTeamRole &&
-    !options.requiredOrgRole
-  );
+  return !options.capability && !options.handlerChecked?.length;
 }
 
 /**
@@ -1036,14 +994,13 @@ const AUTHZ_PRIORITY: readonly AuthzKind[] = [
   'capability',
   'handler-checked',
   'service',
-  'legacy',
   'authenticated',
 ];
 
 /**
  * How a route is authorized, from its `requireAuth` options: `capability` (declares one),
- * `handler-checked` (the handler checks), `service` (declares `serviceScopes`), `legacy` (any of
- * the old role options), `authenticated` (a bare `requireAuth()`). `undefined` when the route has
+ * `handler-checked` (the handler checks), `service` (declares `serviceScopes`),
+ * `authenticated` (a bare `requireAuth()`). `undefined` when the route has
  * no `requireAuth` hook; such a route is `public` only if it says so in `config.authz`.
  */
 export function authzKindOf(routeOptions: {
@@ -1069,8 +1026,6 @@ export function authzKindOf(routeOptions: {
       kinds.add('handler-checked');
     } else if (routeOptions.config?.serviceScopes?.length) {
       kinds.add('service');
-    } else if (options.requiredRole || options.requiredTeamRole || options.requiredOrgRole) {
-      kinds.add('legacy');
     } else {
       kinds.add('authenticated');
     }
@@ -1643,91 +1598,10 @@ export function requireAuth(options: RBACOptions = {}) {
     }
     request.repoAccessGate = gate ?? { mode: 'off', staleAfterHours: 0 };
 
-    // Capability check: the new declaration, beside the role options below.
+    // Capability check, when the route declares one.
     const refused = await enforceCapability(request, reply, payload, options);
     if (refused) {
       return refused;
-    }
-
-    // Platform role check
-    if (options.requiredRole && !hasRole(payload.role, options.requiredRole)) {
-      return reply.status(403).send({
-        error: { code: 'FORBIDDEN', message: `Requires ${options.requiredRole} role` },
-      });
-    }
-
-    // Team role check: resolve membership and enforce
-    if (options.requiredTeamRole) {
-      // Platform ADMIN bypasses team checks
-      if (payload.role === 'ADMIN') {
-        return;
-      }
-
-      const teamId = (request.params as Record<string, string>)?.[options.teamIdParam ?? 'id'];
-      if (!teamId) {
-        // The route promised a team ID param but did not declare one. This is a
-        // server misconfiguration, not a client error, so it stays a 500.
-        return reply.status(500).send({
-          error: { code: 'SERVER_ERROR', message: 'Team ID route parameter missing' },
-        });
-      }
-      if (!UUID_RE.test(teamId)) {
-        return reply.status(400).send({
-          error: { code: 'INVALID_ID', message: 'Team ID must be a valid UUID' },
-        });
-      }
-
-      const prisma = request.server.prisma;
-      const membership = await prisma.teamMembership.findUnique({
-        where: { userId_teamId: { teamId, userId: payload.sub } },
-      });
-
-      if (!membership || !hasRole(membership.role, options.requiredTeamRole)) {
-        return reply.status(403).send({
-          error: {
-            code: 'FORBIDDEN',
-            message: `Requires ${options.requiredTeamRole} role in this team`,
-          },
-        });
-      }
-
-      request.teamRole = membership.role;
-    }
-
-    // Org role check: resolve org membership and enforce (P5 multi-org RBAC)
-    if (options.requiredOrgRole) {
-      // Platform ADMIN bypasses org checks
-      if (payload.role === 'ADMIN') {
-        return;
-      }
-
-      const orgId = (request.params as Record<string, string>)?.[options.orgIdParam ?? 'orgId'];
-      if (!orgId) {
-        // The route promised an org ID param but did not declare one. This is a
-        // server misconfiguration, not a client error, so it stays a 500.
-        return reply.status(500).send({
-          error: { code: 'SERVER_ERROR', message: 'Organization ID route parameter missing' },
-        });
-      }
-      if (!UUID_RE.test(orgId)) {
-        return reply.status(400).send({
-          error: { code: 'INVALID_ID', message: 'Organization ID must be a valid UUID' },
-        });
-      }
-
-      const prisma = request.server.prisma;
-      const membership = await prisma.organizationMembership.findUnique({
-        where: { userId_orgId: { orgId, userId: payload.sub } },
-      });
-
-      if (!membership || !hasOrgRole(membership.role, options.requiredOrgRole)) {
-        return reply.status(403).send({
-          error: {
-            code: 'FORBIDDEN',
-            message: `Requires ${options.requiredOrgRole} role in this organization`,
-          },
-        });
-      }
     }
   };
   return Object.assign(hook, { [RBAC_OPTIONS]: options });

@@ -80,10 +80,6 @@ function makeRequest(world: World = {}) {
             ]
           : []
       ),
-      // The old `requiredTeamRole` path.
-      findUnique: vi.fn(async () =>
-        world.teamRole ? { role: world.teamRole, teamId: TEAM } : null
-      ),
     },
   };
   const user: JwtPayload = {
@@ -190,11 +186,13 @@ describe('requireAuth — capability', () => {
     expect(no.reply.statusCode).toBe(403);
   });
 
-  it('keeps the old role options working beside it', async () => {
-    const { reply } = await run({ requiredTeamRole: 'LEAD' }, { teamRole: 'ENGINEER' });
-    expect(reply.statusCode).toBe(403);
-    expect((reply.body as { error: { message: string } }).error.message).toMatch(
-      /LEAD role in this team/
+  it('a bare requireAuth() asks for no role: a team ENGINEER passes where a LEAD capability refuses', async () => {
+    const bare = await run({}, { teamRole: 'ENGINEER' });
+    expect(bare.reply.statusCode).toBeUndefined();
+    const guarded = await run({ capability: 'team.templates.write' }, { teamRole: 'ENGINEER' });
+    expect(guarded.reply.statusCode).toBe(403);
+    expect((guarded.reply.body as { error: { missing: string } }).error.missing).toBe(
+      'team.templates.write'
     );
   });
 
@@ -360,15 +358,14 @@ describe('route authz metadata', () => {
     expect(kind({ capability: 'team.read' })).toBe('capability');
     expect(kind({ handlerChecked: ['team.read'] })).toBe('handler-checked');
     expect(kind({}, { serviceScopes: ['runs:read'] })).toBe('service');
-    expect(kind({ requiredRole: 'ADMIN' })).toBe('legacy');
-    expect(kind({ requiredRole: 'ENGINEER' })).toBe('legacy');
-    expect(kind({ requiredTeamRole: 'LEAD' })).toBe('legacy');
     expect(kind({})).toBe('authenticated');
   });
 
   it('is undefined with no requireAuth hook, and reads preHandler hooks too', () => {
     expect(authzKindOf({ onRequest: () => {} })).toBeUndefined();
-    expect(authzKindOf({ preHandler: [requireAuth({ requiredRole: 'ADMIN' })] })).toBe('legacy');
+    expect(
+      authzKindOf({ preHandler: [requireAuth({ capability: 'platform.users.manage' })] })
+    ).toBe('capability');
   });
 
   it('writes config.authz and keeps a declared public', () => {
@@ -418,7 +415,7 @@ describe('route authz metadata', () => {
     expect(() =>
       assertServiceScopesAdmissible({
         config: { orchestrationToken: 'caller' },
-        onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+        onRequest: requireAuth(),
         url: '/o',
       })
     ).not.toThrow();

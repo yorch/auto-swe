@@ -265,23 +265,20 @@ describe('POST /api/v1/agent-runs', () => {
     app.register(agentRunRoutes, { prefix: '/api/v1/agent-runs' });
     // A stand-in for the orchestration child route: the REAL launcher, driven with the
     // orchestration seam the route would pass.
-    app.post(
-      '/__orchestration-child',
-      { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
-      async (request, reply) =>
-        createAgentRunLauncher(app)(request, reply, {
-          agent: 'contentWriter',
-          budgetTier: 'STANDARD',
-          caller: requireCaller(request),
-          deliver: 'none',
-          idempotencyKey: 'orch:turn-1',
-          ...((request.body as { maxSteps?: number }).maxSteps
-            ? { maxSteps: (request.body as { maxSteps: number }).maxSteps }
-            : {}),
-          orchestration: seam,
-          prompt: 'look around',
-          repoId: REPO,
-        })
+    app.post('/__orchestration-child', { onRequest: requireAuth() }, async (request, reply) =>
+      createAgentRunLauncher(app)(request, reply, {
+        agent: 'contentWriter',
+        budgetTier: 'STANDARD',
+        caller: requireCaller(request),
+        deliver: 'none',
+        idempotencyKey: 'orch:turn-1',
+        ...((request.body as { maxSteps?: number }).maxSteps
+          ? { maxSteps: (request.body as { maxSteps: number }).maxSteps }
+          : {}),
+        orchestration: seam,
+        prompt: 'look around',
+        repoId: REPO,
+      })
     );
     await app.ready();
   });

@@ -199,7 +199,7 @@ async function build(
     serverVersion: '1.0.0',
     verifier,
   });
-  const gate = requireAuth({ requiredRole: 'ENGINEER' });
+  const gate = requireAuth();
   const reply = (r: { body: unknown; status: number }) => ({ body: r.body, status: r.status });
   const read = (url: string, which: keyof typeof reads) =>
     app.get(url, { config: { mcpScope: 'read' }, onRequest: gate }, async (request, res) => {

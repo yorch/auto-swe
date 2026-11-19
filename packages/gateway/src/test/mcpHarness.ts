@@ -25,7 +25,7 @@ import {
  * show that a field the tool must not pass on does not reach the agent. Domain tests use it.
  */
 
-/** Stand-in for one route: what it answers, and the `requiredRole` its real gate declares. */
+/** Stand-in for one route: what it answers, and what its real gate declares. */
 export interface StubRoute {
   body: unknown | (() => unknown);
   status?: number;
@@ -89,7 +89,7 @@ export async function buildMcpTestApp(
           seen.queries.push({ ...(request.query as Record<string, unknown>) });
           seen.urls.push(request.url);
         },
-        requireAuth({ requiredRole: 'ENGINEER' }),
+        requireAuth(),
       ],
       url: path,
     });

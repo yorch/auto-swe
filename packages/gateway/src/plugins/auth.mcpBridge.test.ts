@@ -65,22 +65,25 @@ describe('requireAuth and the MCP bridge', () => {
     });
     app.get(
       '/probe/read',
-      { config: { mcpScope: 'read' }, onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
+      { config: { mcpScope: 'read' }, onRequest: requireAuth() },
       async (request) => probe(request)
     );
     app.post(
       '/probe/write',
-      { config: { mcpScope: 'write' }, onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
+      { config: { mcpScope: 'write' }, onRequest: requireAuth() },
       async (request) => probe(request)
     );
     app.get(
       '/probe/admin',
-      { config: { mcpScope: 'admin' }, onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
+      { config: { mcpScope: 'admin' }, onRequest: requireAuth() },
       async (request) => probe(request)
     );
     app.get(
       '/probe/lead-only',
-      { config: { mcpScope: 'read' }, onRequest: requireAuth({ requiredRole: 'LEAD' }) },
+      {
+        config: { mcpScope: 'read' },
+        onRequest: requireAuth({ capability: 'platform.users.manage' }),
+      },
       async (request) => probe(request)
     );
     // A route that never opted in: the REST surface as it is today.
@@ -295,7 +298,7 @@ describe('requireAuth and the MCP bridge', () => {
     });
   });
 
-  it('keeps the route role check: a bridged ENGINEER is not a LEAD', async () => {
+  it('keeps the route capability check: a bridged ENGINEER lacks platform.users.manage', async () => {
     expect((await bridged('/probe/lead-only', readToken)).statusCode).toBe(403);
   });
 

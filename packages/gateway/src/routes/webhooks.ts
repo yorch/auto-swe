@@ -1143,7 +1143,11 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       '/git',
       {
         bodyLimit: GITHUB_WEBHOOK_MAX_BODY_BYTES,
-        config: { rateLimit: signedRateLimit },
+        config: {
+          authz: 'public',
+          publicReason: 'GitHub webhook HMAC signature, verified by verifiedGitDeliveryOrReject',
+          rateLimit: signedRateLimit,
+        },
         preParsing: resolveGitDeliveryCredential,
       },
       async (request, reply) => {
@@ -1528,7 +1532,12 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post(
     '/access',
     {
-      config: { rateLimit: signedRateLimit, rawBody: true },
+      config: {
+        authz: 'public',
+        publicReason: 'GitHub webhook HMAC signature, verified by verifyWebhookOrReject',
+        rateLimit: signedRateLimit,
+        rawBody: true,
+      },
     },
     async (request, reply) => {
       const verified = await verifyWebhookOrReject(request, reply);
@@ -1583,7 +1592,12 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post(
     '/ci',
     {
-      config: { rateLimit: signedRateLimit, rawBody: true },
+      config: {
+        authz: 'public',
+        publicReason: 'GitHub webhook HMAC signature, verified by verifyWebhookOrReject',
+        rateLimit: signedRateLimit,
+        rawBody: true,
+      },
     },
     async (request, reply) => {
       const verified = await verifyWebhookOrReject(request, reply);
@@ -1608,7 +1622,12 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
     '/:token',
     {
       bodyLimit: 128 * 1024,
-      config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+      config: {
+        authz: 'public',
+        publicReason:
+          'opaque per-template webhook token in the URL, plus the optional request signature',
+        rateLimit: { max: 60, timeWindow: '1 minute' },
+      },
       // The exact bytes, for the signature: it is computed over the body as sent, not as parsed.
       preParsing: captureRawBodyBytes,
       schema: {
@@ -1932,7 +1951,13 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post(
     '/jira',
     {
-      config: { rawBody: true, skipAuth: true },
+      config: {
+        authz: 'public',
+        publicReason:
+          'Jira webhook HMAC-SHA256 signature against the configured secret; fails closed',
+        rawBody: true,
+        skipAuth: true,
+      },
       schema: { body: z.object({}).passthrough() },
     },
     async (request, reply) => {

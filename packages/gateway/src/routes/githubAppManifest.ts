@@ -160,7 +160,14 @@ export const githubAppManifestRoutes: FastifyPluginAsync<GitHubAppManifestRouteO
 
   app.get(
     '/github-app-manifest/callback',
-    { schema: { querystring: CallbackQuery } },
+    {
+      config: {
+        authz: 'public',
+        publicReason:
+          'GitHub redirect: signed state bound to the browser by a cookie nonce; starter re-checked as an active platform ADMIN',
+      },
+      schema: { querystring: CallbackQuery },
+    },
     async (request, reply) => {
       const { code, state } = request.query;
       // One use only: the cookie is cleared whatever the outcome, a cancelled flow included.

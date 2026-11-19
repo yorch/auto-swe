@@ -109,11 +109,7 @@ describe('the write guards, enforced in the bridged route', () => {
         leaked = header;
       }
     });
-    app.get(
-      '/probe',
-      { config: { mcpScope: 'read' }, onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
-      async () => ({})
-    );
+    app.get('/probe', { config: { mcpScope: 'read' }, onRequest: requireAuth() }, async () => ({}));
     await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });
     await app.register(agentRunRoutes, { prefix: '/api/v1/agent-runs' });
     await app.register(workflowRunRoutes, { prefix: '/api/v1/workflow-runs' });

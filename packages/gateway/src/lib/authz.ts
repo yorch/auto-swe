@@ -189,7 +189,7 @@ export async function enforceCapability(
     resource = def.team ? { anyTeam: true } : undefined;
   } else {
     // A team capability reads a team id; an org capability reads an org id, or the org of a team
-    // when the route names one. The defaults match the old `teamIdParam`/`orgIdParam`.
+    // when the route names one. The defaults are `id` for a team and `orgId` for an organization.
     const useTeam =
       def.scope === 'team' || (options.team !== undefined && options.org === undefined);
     const name = useTeam ? (options.team?.param ?? 'id') : (options.org?.param ?? 'orgId');
