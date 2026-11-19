@@ -173,7 +173,7 @@ describe('the write guards, enforced in the bridged route', () => {
   const agentRun = (body: Record<string, unknown> = {}, bridged = true, key = 'agent-key-0001') =>
     app.inject({
       headers: {
-        authorization: `Bearer ${bridged ? writeToken : app.auth.signAccessToken({ role: 'ENGINEER', sub: TEST_USER })}`,
+        authorization: `Bearer ${bridged ? writeToken : app.auth.signAccessToken({ role: 'USER', sub: TEST_USER })}`,
         ...(bridged ? { [MCP_BRIDGE_HEADER]: leaked } : {}),
         ...(key ? { 'idempotency-key': key } : {}),
       },
@@ -287,7 +287,7 @@ describe('the write guards, enforced in the bridged route', () => {
     settings['mcp.writeToolsEnabled'] = false;
     const res = await app.inject({
       headers: {
-        authorization: `Bearer ${app.auth.signAccessToken({ role: 'ENGINEER', sub: TEST_USER })}`,
+        authorization: `Bearer ${app.auth.signAccessToken({ role: 'USER', sub: TEST_USER })}`,
       },
       method: 'POST',
       payload: { budgetTier: 'LARGE', description: 'x', externalTicketId: 'T-9', repoIds: [REPO] },

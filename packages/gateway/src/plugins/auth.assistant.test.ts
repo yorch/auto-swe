@@ -184,7 +184,7 @@ describe('requireAuth — assistant tokens', () => {
     });
 
     it('refuses an API access token dressed in the assistant prefix', async () => {
-      const apiToken = app.auth.signAccessToken({ role: 'ENGINEER', sub: USER_ID });
+      const apiToken = app.auth.signAccessToken({ role: 'USER', sub: USER_ID });
       const res = await app.inject({
         headers: { authorization: `Bearer asst_${apiToken}` },
         method: 'GET',

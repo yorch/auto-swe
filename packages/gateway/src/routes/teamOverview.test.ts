@@ -23,7 +23,7 @@ const OTHER_TEAM = '33333333-3333-4333-8333-333333333333';
 const AUTH = { authorization: 'Bearer fake' };
 const URL = `/api/v1/teams/${TEAM}/overview`;
 
-type TeamRole = 'ADMIN' | 'LEAD' | 'ENGINEER' | null;
+type TeamRole = 'ADMIN' | 'LEAD' | 'MEMBER' | null;
 
 const teamRef = { id: TEAM, name: 'Alpha', orgId: 'org-1', slug: 'alpha' };
 const repository = {
@@ -65,7 +65,7 @@ interface Fixture {
   /** The team's org cap in cents (null: none) and its month-to-date spend in USD. */
   orgCapCents?: number | null;
   /** The viewer's role in the team's org (null: not a member). */
-  orgRole?: 'ORG_ADMIN' | 'ORG_MEMBER' | null;
+  orgRole?: 'ADMIN' | 'MEMBER' | null;
   orgSpendUsd?: number;
   /** The team's own cap in cents (null: none) and its month-to-date spend in USD. */
   teamCapCents?: number | null;
@@ -82,7 +82,7 @@ interface Fixture {
   /** The team's member roles as the roles read sees them (default: one ADMIN). */
   memberRoles?: string[];
   openPrs?: number;
-  platformRole?: 'ADMIN' | 'LEAD' | 'ENGINEER';
+  platformRole?: 'ADMIN' | 'USER';
   recent?: unknown[];
   running?: unknown[];
   stale?: number;
@@ -248,7 +248,7 @@ async function build(fx: Fixture) {
     verifyAccessToken: () => ({
       exp: 9999999999,
       iat: 0,
-      role: fx.platformRole ?? 'ENGINEER',
+      role: fx.platformRole ?? 'USER',
       sub: ME,
     }),
   } as never);
@@ -271,15 +271,15 @@ afterEach(async () => {
 mocks.resolveSetting.mockResolvedValue(24);
 
 describe('GET /api/v1/teams/:id/overview', () => {
-  it('gives a team ENGINEER the base view only: the lead and admin keys are absent', async () => {
-    // A platform LEAD whose role in this team is ENGINEER still gets the engineer view.
-    const { prisma, res } = await get({ platformRole: 'LEAD', teamRole: 'ENGINEER' });
+  it('gives a team MEMBER the base view only: the lead and admin keys are absent', async () => {
+    // A platform USER whose role in this team is MEMBER still gets the member view.
+    const { prisma, res } = await get({ platformRole: 'USER', teamRole: 'MEMBER' });
     expect(res.statusCode, res.body).toBe(200);
     const { data } = res.json();
-    expect(data.viewerLevel).toBe('engineer');
+    expect(data.viewerLevel).toBe('member');
     expect(data.team).toEqual({
       id: TEAM,
-      myRole: 'ENGINEER',
+      myRole: 'MEMBER',
       name: 'Alpha',
       orgId: 'org-1',
       orgName: 'Acme',
@@ -316,22 +316,22 @@ describe('GET /api/v1/teams/:id/overview', () => {
 
   describe('needsAdmin', () => {
     it('is absent when the team has an ADMIN', async () => {
-      const { res } = await get({ memberRoles: ['ADMIN', 'ENGINEER'], teamRole: 'LEAD' });
+      const { res } = await get({ memberRoles: ['ADMIN', 'MEMBER'], teamRole: 'LEAD' });
       expect('needsAdmin' in res.json().data).toBe(false);
     });
 
     it('is true for a lead of a team with no ADMIN', async () => {
-      const { res } = await get({ memberRoles: ['LEAD', 'ENGINEER'], teamRole: 'LEAD' });
+      const { res } = await get({ memberRoles: ['LEAD', 'MEMBER'], teamRole: 'LEAD' });
       expect(res.json().data.needsAdmin).toBe(true);
     });
 
     it('is true for an organization admin who is also a plain member', async () => {
       const { res } = await get({
-        memberRoles: ['ENGINEER'],
-        orgRole: 'ORG_ADMIN',
-        teamRole: 'ENGINEER',
+        memberRoles: ['MEMBER'],
+        orgRole: 'ADMIN',
+        teamRole: 'MEMBER',
       });
-      expect(res.json().data.viewerLevel).toBe('engineer');
+      expect(res.json().data.viewerLevel).toBe('member');
       expect(res.json().data.needsAdmin).toBe(true);
     });
 
@@ -341,7 +341,7 @@ describe('GET /api/v1/teams/:id/overview', () => {
     });
 
     it('is absent for a member who does not govern the team', async () => {
-      const { res } = await get({ memberRoles: ['ENGINEER'], teamRole: 'ENGINEER' });
+      const { res } = await get({ memberRoles: ['MEMBER'], teamRole: 'MEMBER' });
       expect('needsAdmin' in res.json().data).toBe(false);
     });
   });
@@ -409,11 +409,11 @@ describe('GET /api/v1/teams/:id/overview', () => {
     expect(where.AND[1]).toEqual({ attributedTeamId: TEAM });
   });
 
-  it('omits the spend from a team ADMIN who is not an ORG_ADMIN when the org has a cap', async () => {
+  it('omits the spend from a team ADMIN who is not an org ADMIN when the org has a cap', async () => {
     const { prisma, res } = await get({
       costUsd: 12.345,
       orgCapCents: 100_000,
-      orgRole: 'ORG_MEMBER',
+      orgRole: 'MEMBER',
       orgSpendUsd: 450,
       teamRole: 'ADMIN',
     });
@@ -429,7 +429,7 @@ describe('GET /api/v1/teams/:id/overview', () => {
       await get({
         costUsd: 12.345,
         orgCapCents: 100_000,
-        orgRole: 'ORG_MEMBER',
+        orgRole: 'MEMBER',
         orgSpendUsd: 450,
         teamCapCents: 1000,
         teamRole: 'ADMIN',
@@ -445,7 +445,7 @@ describe('GET /api/v1/teams/:id/overview', () => {
       await get({
         costUsd: 12.345,
         orgCapCents: 100_000,
-        orgRole: 'ORG_MEMBER',
+        orgRole: 'MEMBER',
         orgSpendUsd: 900,
         teamCapCents: 1_000_000,
         teamRole: 'ADMIN',
@@ -456,11 +456,11 @@ describe('GET /api/v1/teams/:id/overview', () => {
     expect(data.admin).toEqual({});
   });
 
-  it('keeps the spend for an ORG_ADMIN who is also the team ADMIN, and for a platform ADMIN', async () => {
+  it('keeps the spend for an org ADMIN who is also the team ADMIN, and for a platform ADMIN', async () => {
     const orgAdmin = await get({
       costUsd: 12.345,
       orgCapCents: 100_000,
-      orgRole: 'ORG_ADMIN',
+      orgRole: 'ADMIN',
       orgSpendUsd: 450,
       teamRole: 'ADMIN',
     });
@@ -491,9 +491,9 @@ describe('GET /api/v1/teams/:id/overview', () => {
     expect(data.admin).toBeDefined();
   });
 
-  it('lets the team role, not the platform role, decide: a platform ADMIN on the team as ENGINEER', async () => {
-    const { res } = await get({ platformRole: 'ADMIN', teamRole: 'ENGINEER' });
-    expect(res.json().data.viewerLevel).toBe('engineer');
+  it('lets the team role, not the platform role, decide: a platform ADMIN on the team as MEMBER', async () => {
+    const { res } = await get({ platformRole: 'ADMIN', teamRole: 'MEMBER' });
+    expect(res.json().data.viewerLevel).toBe('member');
     expect('lead' in res.json().data).toBe(false);
   });
 
@@ -548,7 +548,7 @@ describe('GET /api/v1/teams/:id/overview', () => {
         }),
       ],
       steps: [step],
-      teamRole: 'ENGINEER',
+      teamRole: 'MEMBER',
     });
     const { data } = res.json();
     expect(data.needsYou).toEqual({ total: 1 });
@@ -570,7 +570,7 @@ describe('GET /api/v1/teams/:id/overview', () => {
         runRow({ id: 'd', status: 'RUNNING', workRequestId: 'w4' }),
       ],
       sharedCanLaunch: false,
-      teamRole: 'ENGINEER',
+      teamRole: 'MEMBER',
     });
     const { data } = res.json();
     expect(data.last7d).toEqual({ failed: 2, started: 4, succeeded: 1 });
@@ -602,7 +602,7 @@ describe('GET /api/v1/teams/:id/overview', () => {
   });
 
   it('reads only the repositories the caller may reach through the repo gate', async () => {
-    const { prisma } = await get({ teamRole: 'ENGINEER' });
+    const { prisma } = await get({ teamRole: 'MEMBER' });
     const where = prisma.connection.findMany.mock.calls[0][0].where;
     expect(where.AND).toHaveLength(3);
     expect(where.AND[0]).toHaveProperty('AND');
@@ -629,7 +629,7 @@ describe('GET /api/v1/teams/:id/overview', () => {
         runRow({ id: 'dup', status: 'SUCCESS' }),
       ],
       controlledRunIds: ['waiting'],
-      teamRole: 'ENGINEER',
+      teamRole: 'MEMBER',
     });
     const { data } = res.json();
     expect(data.activity.map((a: { runId: string }) => a.runId)).toEqual(['x', 'waiting']);
@@ -653,7 +653,7 @@ describe('GET /api/v1/teams/:id/overview', () => {
     const { prisma, res } = await get({
       activity: [runRow({ _count: { humanSteps: 1 }, id: 'visible-only', status: 'RUNNING' })],
       controlledRunIds: [],
-      teamRole: 'ENGINEER',
+      teamRole: 'MEMBER',
     });
     expect(res.json().data.activity[0].state).toBe('active');
     const query = prisma.workflowHumanStep.findMany.mock.calls
@@ -713,7 +713,7 @@ describe('GET /api/v1/teams/:id/overview', () => {
     it("counts only the caller's own running requests, beside the team's", async () => {
       const { res } = await get({
         running: [running('a', ME), running('b', OTHER), running('c', OTHER)],
-        teamRole: 'ENGINEER',
+        teamRole: 'MEMBER',
       });
       const { data } = res.json();
       expect(data.running).toBe(3);
@@ -723,7 +723,7 @@ describe('GET /api/v1/teams/:id/overview', () => {
     it('counts the failed attempts the caller launched and the merges awaiting them, and no one else', async () => {
       const { res } = await get({
         attempts: [failed('f1', ME), failed('f2', OTHER), merging('m1', ME), merging('m2', OTHER)],
-        teamRole: 'ENGINEER',
+        teamRole: 'MEMBER',
       });
       const { data } = res.json();
       expect(data.mine).toMatchObject({ failed: 1, prsAwaitingMerge: 1 });
@@ -738,19 +738,16 @@ describe('GET /api/v1/teams/:id/overview', () => {
         ...failed('f4', 'ex-member'),
         failureAssignment: { assigneeId: OTHER, team: { memberships: [{ userId: ME }] } },
       };
-      const { res } = await get({ attempts: [assigned, elsewhere], teamRole: 'ENGINEER' });
+      const { res } = await get({ attempts: [assigned, elsewhere], teamRole: 'MEMBER' });
       const { data } = res.json();
       expect(data.mine.failed).toBe(1);
       expect(data.needsYou.total).toBe(1);
     });
 
-    it.each(['ENGINEER', 'LEAD', 'ADMIN'] as const)(
-      'is present for a team %s',
-      async (teamRole) => {
-        const { res } = await get({ teamRole });
-        expect(res.json().data.mine).toEqual({ failed: 0, prsAwaitingMerge: 0, running: 0 });
-      }
-    );
+    it.each(['MEMBER', 'LEAD', 'ADMIN'] as const)('is present for a team %s', async (teamRole) => {
+      const { res } = await get({ teamRole });
+      expect(res.json().data.mine).toEqual({ failed: 0, prsAwaitingMerge: 0, running: 0 });
+    });
   });
 
   describe('launchBudget on the repositories', () => {
@@ -760,7 +757,7 @@ describe('GET /api/v1/teams/:id/overview', () => {
         ownerCapCents: 1000,
         ownerSpendUsd: 10,
         teamCapCents: 10_000,
-        teamRole: 'ENGINEER',
+        teamRole: 'MEMBER',
         teamSpendUsd: 10,
       });
       const { data } = res.json();
@@ -780,19 +777,19 @@ describe('GET /api/v1/teams/:id/overview', () => {
         ownerCapCents: 1000,
         ownerSpendUsd: 10,
         sharedCanLaunch: false,
-        teamRole: 'ENGINEER',
+        teamRole: 'MEMBER',
       });
       expect(res.json().data.repos[1]).toMatchObject({ canLaunch: false, launchBudget: null });
       expect(prisma.team.findMany.mock.calls[0][0].where.id.in).toEqual([TEAM]);
     });
 
     it('is null when the owner has no cap, and carries no amount', async () => {
-      const { res } = await get({ ownerCapCents: null, teamRole: 'ENGINEER' });
+      const { res } = await get({ ownerCapCents: null, teamRole: 'MEMBER' });
       expect(res.json().data.repos[1].launchBudget).toBeNull();
       const { res: capped } = await get({
         ownerCapCents: 50_000,
         ownerSpendUsd: 100,
-        teamRole: 'ENGINEER',
+        teamRole: 'MEMBER',
       });
       const sharedRepo = capped.json().data.repos[1];
       expect(sharedRepo.launchBudget).toMatchObject({ percentUsed: 20 });
@@ -800,7 +797,7 @@ describe('GET /api/v1/teams/:id/overview', () => {
     });
 
     it("reads the owner's organization once, together with the team's, and never an unrelated one", async () => {
-      const { prisma } = await get({ ownerOrgId: 'org-2', teamRole: 'ENGINEER' });
+      const { prisma } = await get({ ownerOrgId: 'org-2', teamRole: 'MEMBER' });
       expect(prisma.organization.findMany).toHaveBeenCalledTimes(1);
       expect(prisma.organization.findMany.mock.calls[0][0].where.id.in.sort()).toEqual([
         'org-1',
@@ -817,7 +814,7 @@ describe('GET /api/v1/teams/:id/overview', () => {
         ownerCapCents: 20_000,
         ownerOrgId: 'org-2',
         ownerSpendUsd: 50,
-        teamRole: 'ENGINEER',
+        teamRole: 'MEMBER',
       });
       const { data } = res.json();
       expect(data.budget).toMatchObject({ scope: 'org', state: 'over' });
@@ -827,13 +824,13 @@ describe('GET /api/v1/teams/:id/overview', () => {
 
   describe('budget', () => {
     it('is null when the org has no cap', async () => {
-      const { prisma, res } = await get({ orgCapCents: null, teamRole: 'ENGINEER' });
+      const { prisma, res } = await get({ orgCapCents: null, teamRole: 'MEMBER' });
       expect(res.json().data.budget).toBeNull();
       expect(prisma.organization.findMany).toHaveBeenCalledTimes(1);
     });
 
-    it('gives an ENGINEER a state and a percentage and no dollar figure anywhere', async () => {
-      const { res } = await get({ orgCapCents: 100_000, orgSpendUsd: 450, teamRole: 'ENGINEER' });
+    it('gives a MEMBER a state and a percentage and no dollar figure anywhere', async () => {
+      const { res } = await get({ orgCapCents: 100_000, orgSpendUsd: 450, teamRole: 'MEMBER' });
       const { data } = res.json();
       expect(data.budget).toEqual({
         alertThresholdPercent: 80,
@@ -850,7 +847,7 @@ describe('GET /api/v1/teams/:id/overview', () => {
     });
 
     it("reads only the team's own org", async () => {
-      const { prisma } = await get({ orgCapCents: 1000, orgSpendUsd: 1, teamRole: 'ENGINEER' });
+      const { prisma } = await get({ orgCapCents: 1000, orgSpendUsd: 1, teamRole: 'MEMBER' });
       expect(prisma.organization.findMany.mock.calls[0][0].where).toEqual({
         id: { in: ['org-1'] },
       });

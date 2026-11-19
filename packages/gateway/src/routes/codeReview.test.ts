@@ -364,7 +364,7 @@ describe('review fix retry route', () => {
   });
   it('binds generic fire retries to the same latest decision, automation and repository', async () => {
     const { app, retryStart, db } = await ready();
-    const user = { exp: 1, iat: 1, role: 'ENGINEER' as const, sub: SOURCE };
+    const user = { exp: 1, iat: 1, role: 'USER' as const, sub: SOURCE };
     db.automationFire.findFirst.mockResolvedValue({
       automationId: TEMPLATE,
       id: PRESET,

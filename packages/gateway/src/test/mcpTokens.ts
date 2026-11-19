@@ -88,7 +88,7 @@ export function fakeVerifierDeps(
         }
       : state.grant;
   state.grant = grant;
-  state.user = state.user === undefined ? { isActive: true, role: 'ENGINEER' } : state.user;
+  state.user = state.user === undefined ? { isActive: true, role: 'USER' } : state.user;
   state.writeToolsEnabled ??= false;
   state.jwksFetches ??= { count: 0 };
   state.grantLookups ??= [];

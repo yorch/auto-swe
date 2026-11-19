@@ -15,8 +15,8 @@ const OTHER_TEAM = 'team-2';
 const leadOfTeam = new Map([[TEAM, 'LEAD']]);
 
 const admin: ConfigActor = { id: 'u-admin', role: 'ADMIN' };
-const lead: ConfigActor = { id: 'u-lead', role: 'LEAD' };
-const engineer: ConfigActor = { id: 'u-eng', role: 'ENGINEER' };
+const lead: ConfigActor = { id: 'u-lead', role: 'USER' };
+const engineer: ConfigActor = { id: 'u-eng', role: 'USER' };
 
 function teamGrant(overrides: Partial<ConfigGrant> = {}): ConfigGrant {
   return {
@@ -266,7 +266,7 @@ describe('checkSettingWrite', () => {
     };
     expect(checkSettingWrite(lead, target, [userGrant])).toEqual({ allowed: true });
     expect(
-      checkSettingWrite({ id: 'someone-else', role: 'LEAD' }, target, [userGrant])
+      checkSettingWrite({ id: 'someone-else', role: 'USER' }, target, [userGrant])
     ).toMatchObject({ allowed: false, code: 'NO_GRANT' });
   });
 });

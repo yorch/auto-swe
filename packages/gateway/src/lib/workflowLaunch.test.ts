@@ -411,7 +411,7 @@ describe('launchTrackedWorkflow', () => {
         runInput: { connectionId: 'repo-a', id: 'ri-membership' },
       },
       async () => {},
-      { sourceAuthorization: { actor: { role: 'ENGINEER', sub: 'user-1' } } }
+      { sourceAuthorization: { actor: { role: 'USER', sub: 'user-1' } } }
     );
     expect(prisma.connection.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'repo-a' } })

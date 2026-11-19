@@ -23,7 +23,7 @@ import { runPlanIntentHash, startRunPlan } from './runPlanStart.js';
 const USER = {
   exp: 0,
   iat: 0,
-  role: 'ENGINEER' as const,
+  role: 'USER' as const,
   sub: '0a1b2c3d-1111-4111-8111-aaaaaaaaaaaa',
 };
 const REPO = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';

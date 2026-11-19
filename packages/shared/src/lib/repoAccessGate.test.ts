@@ -32,7 +32,7 @@ const REPO = {
   repoName: 'payments',
   scmProvider: 'github',
 };
-const engineer = { exp: 0, iat: 0, role: 'ENGINEER' as const, sub: 'user-1' };
+const engineer = { exp: 0, iat: 0, role: 'USER' as const, sub: 'user-1' };
 const admin = { ...engineer, role: 'ADMIN' as const, sub: 'user-admin' };
 const log = { warn: vi.fn() } as never;
 

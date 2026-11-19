@@ -7,7 +7,7 @@ vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
   ...(await import('../test/billingMock.js')),
 }));
 
-const USER = { role: 'ENGINEER' as const, sub: 'user-1' };
+const USER = { role: 'USER' as const, sub: 'user-1' };
 const ADMIN = { role: 'ADMIN' as const, sub: 'admin-1' };
 
 function repo(over: {

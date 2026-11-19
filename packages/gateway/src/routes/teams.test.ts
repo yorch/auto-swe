@@ -13,20 +13,20 @@ vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
  *   - DELETE /api/v1/teams/:id/members/:userId
  *   - PUT    /api/v1/teams/:id/shell-image-allowlist
  *
- * Both are gated behind `requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD' })`,
+ * Both are gated behind `requireAuth({ requiredTeamRole: 'LEAD' })`,
  * so the harness has to provide:
  *   - a fake JWT verifier (state.userRole drives the payload),
  *   - team.findUnique (read for the allowlist endpoint + RBAC team lookup),
  *   - teamMembership.{findUnique, delete} (RBAC + the route's own DB ops).
  *
  * Platform ADMIN bypasses team-role checks (see auth.ts:328), so the test
- * relies on returning userRole='LEAD' + a matching teamMembership row.
+ * relies on returning userRole='USER' + a matching teamMembership row.
  */
 interface MembershipRow {
   id: string;
   userId: string;
   teamId: string;
-  role: 'ADMIN' | 'LEAD' | 'ENGINEER';
+  role: 'ADMIN' | 'LEAD' | 'MEMBER';
 }
 
 interface TeamRow {
@@ -42,7 +42,7 @@ interface TeamRow {
 
 interface State {
   orgMemberships?: Array<{ id: string; userId: string; orgId: string; role: string }>;
-  userRole: 'ADMIN' | 'LEAD' | 'ENGINEER';
+  userRole: 'ADMIN' | 'USER';
   /** sub claim on the fake JWT — must match a membership row to pass team RBAC. */
   userId: string;
   teams: TeamRow[];
@@ -88,15 +88,15 @@ function freshState(overrides?: Partial<State>): State {
       // The target member to remove
       {
         id: 'm-target',
-        role: 'ENGINEER',
+        role: 'MEMBER',
         teamId: TEAM_ID,
         userId: TARGET_USER_ID,
       },
     ],
     orgMemberships: [
-      { id: 'org-caller', orgId: TEAM_ID, role: 'ORG_ADMIN', userId: ADMIN_USER_ID },
-      { id: 'org-target', orgId: TEAM_ID, role: 'ORG_MEMBER', userId: TARGET_USER_ID },
-      { id: 'default-caller', orgId: 'org-default', role: 'ORG_MEMBER', userId: ADMIN_USER_ID },
+      { id: 'org-caller', orgId: TEAM_ID, role: 'ADMIN', userId: ADMIN_USER_ID },
+      { id: 'org-target', orgId: TEAM_ID, role: 'MEMBER', userId: TARGET_USER_ID },
+      { id: 'default-caller', orgId: 'org-default', role: 'MEMBER', userId: ADMIN_USER_ID },
     ],
     teams: [
       {
@@ -108,7 +108,7 @@ function freshState(overrides?: Partial<State>): State {
       },
     ],
     userId: ADMIN_USER_ID,
-    userRole: 'LEAD',
+    userRole: 'USER',
     ...overrides,
   };
 }
@@ -406,9 +406,7 @@ describe('organization-bounded team creation', () => {
 
   it('lets an organization admin create through the unscoped route, as through the org route', async () => {
     const state = freshState({
-      orgMemberships: [
-        { id: 'org', orgId: 'org-default', role: 'ORG_ADMIN', userId: ADMIN_USER_ID },
-      ],
+      orgMemberships: [{ id: 'org', orgId: 'org-default', role: 'ADMIN', userId: ADMIN_USER_ID }],
     });
     const app = buildApp(state);
     const res = await app.inject({
@@ -440,9 +438,9 @@ describe('organization-bounded team creation', () => {
 
   for (const prefix of ['/api/v1/platform/organizations', '/api/v1/admin/organizations']) {
     it.each([
-      ['ORG_ADMIN', TEAM_ID, 201],
-      ['ORG_MEMBER', TEAM_ID, 403],
-      ['ORG_ADMIN', TARGET_USER_ID, 403],
+      ['ADMIN', TEAM_ID, 201],
+      ['MEMBER', TEAM_ID, 403],
+      ['ADMIN', TARGET_USER_ID, 403],
     ])(`%s in %s creates through ${prefix} with status %s`, async (role, orgId, status) => {
       const state = freshState({
         orgMemberships: [{ id: 'org', orgId, role, userId: ADMIN_USER_ID }],
@@ -475,7 +473,7 @@ describe('organization-bounded team creation', () => {
                 {
                   id: 'org',
                   orgId: url === '/api/v1/teams' ? 'org-default' : TEAM_ID,
-                  role: 'ORG_MEMBER',
+                  role: 'MEMBER',
                   userId: TARGET_USER_ID,
                 },
               ]
@@ -512,7 +510,7 @@ describe('organization-bounded team creation', () => {
       });
       expect(res.statusCode).toBe(201);
       expect(state.orgMemberships).toContainEqual(
-        expect.objectContaining({ role: 'ORG_MEMBER', userId: ADMIN_USER_ID })
+        expect.objectContaining({ role: 'MEMBER', userId: ADMIN_USER_ID })
       );
       expect(state.audits?.map((a) => a.entityType)).toEqual([
         'OrganizationMembership',
@@ -523,7 +521,7 @@ describe('organization-bounded team creation', () => {
     });
   }
 
-  it.each(['LEAD', 'ADMIN'] as const)('bounds member additions by org for %s', async (userRole) => {
+  it.each(['USER', 'ADMIN'] as const)('bounds member additions by org for %s', async (userRole) => {
     const state = freshState({
       memberships: [{ id: 'caller', role: 'LEAD', teamId: TEAM_ID, userId: ADMIN_USER_ID }],
       orgMemberships: [],
@@ -539,7 +537,7 @@ describe('organization-bounded team creation', () => {
     expect(res.statusCode).toBe(userRole === 'ADMIN' ? 201 : 400);
     if (userRole === 'ADMIN') {
       expect(state.orgMemberships).toContainEqual(
-        expect.objectContaining({ orgId: TEAM_ID, role: 'ORG_MEMBER', userId: TARGET_USER_ID })
+        expect.objectContaining({ orgId: TEAM_ID, role: 'MEMBER', userId: TARGET_USER_ID })
       );
       expect(state.audits?.map((a) => a.entityType)).toEqual([
         'OrganizationMembership',
@@ -636,10 +634,10 @@ describe('GET /api/v1/teams', () => {
     return JSON.parse(res.payload).data as Array<Record<string, unknown>>;
   };
 
-  it.each(['ADMIN', 'LEAD', 'ENGINEER'] as const)(
+  it.each(['ADMIN', 'LEAD', 'MEMBER'] as const)(
     'reports a %s membership as myRole',
     async (role) => {
-      const state = twoTeams({ userRole: 'ENGINEER' });
+      const state = twoTeams({ userRole: 'USER' });
       state.memberships[0].role = role;
       const data = await list(state);
       expect(data).toHaveLength(1);
@@ -661,8 +659,8 @@ describe('GET /api/v1/teams', () => {
     ]);
   });
 
-  it('lists an ENGINEER org administrator’s active teams without inventing team membership', async () => {
-    const state = twoTeams({ userRole: 'ENGINEER' });
+  it('lists a platform USER org administrator’s active teams without inventing team membership', async () => {
+    const state = twoTeams({ userRole: 'USER' });
     state.orgAdminIds = [state.teams[1].orgId ?? ''];
     expect((await list(state)).map((t) => [t.id, t.myRole])).toEqual([
       [TEAM_ID, 'LEAD'],
@@ -689,7 +687,7 @@ describe('GET /api/v1/teams', () => {
   });
 
   it('excludes an inactive team, judged by the row, for an ADMIN and a member alike', async () => {
-    for (const userRole of ['ADMIN', 'ENGINEER'] as const) {
+    for (const userRole of ['ADMIN', 'USER'] as const) {
       const state = twoTeams({ userRole });
       state.teams[0].isActive = false;
       state.memberships.push({
@@ -722,7 +720,7 @@ describe('GET /api/v1/teams', () => {
     const data = await list(twoTeams({ userRole: 'ADMIN' }));
     const body = JSON.stringify(data);
     expect(body).not.toContain(TARGET_USER_ID);
-    expect(body).not.toContain('ENGINEER');
+    expect(body).not.toContain('MEMBER');
     expect(data.every((t) => !('memberships' in t))).toBe(true);
   });
 });
@@ -834,10 +832,10 @@ describe('DELETE /api/v1/teams/:id/members/:userId', () => {
   });
 
   it('403s when the caller is not a LEAD in this team', async () => {
-    // Caller is platform LEAD but only ENGINEER in this team — auth.ts:344
+    // Caller is a platform USER but only MEMBER in this team — auth.ts:344
     // (the requiredTeamRole check) should reject.
     const state = freshState();
-    state.memberships[0].role = 'ENGINEER';
+    state.memberships[0].role = 'MEMBER';
     const app = buildApp(state);
 
     const res = await app.inject({
@@ -859,13 +857,11 @@ describe('the team role alone decides team management', () => {
   const NEW_USER_ID = '00000000-0000-4000-8000-0000000000cc';
   const headers = { authorization: 'Bearer fake-jwt' };
   const joiner = {
-    orgMemberships: [
-      { id: 'new-user-org', orgId: TEAM_ID, role: 'ORG_MEMBER', userId: NEW_USER_ID },
-    ],
+    orgMemberships: [{ id: 'new-user-org', orgId: TEAM_ID, role: 'MEMBER', userId: NEW_USER_ID }],
   };
 
-  it('lets a platform ENGINEER who leads the team rename it', async () => {
-    const state = freshState({ userRole: 'ENGINEER' });
+  it('lets a platform USER who leads the team rename it', async () => {
+    const state = freshState({ userRole: 'USER' });
     const res = await buildApp(state).inject({
       body: { name: 'platform-eng' },
       headers,
@@ -876,8 +872,8 @@ describe('the team role alone decides team management', () => {
     expect(state.teams[0].name).toBe('platform-eng');
   });
 
-  it('lets a platform ENGINEER who leads the team remove a member', async () => {
-    const state = freshState({ userRole: 'ENGINEER' });
+  it('lets a platform USER who leads the team remove a member', async () => {
+    const state = freshState({ userRole: 'USER' });
     const res = await buildApp(state).inject({
       headers,
       method: 'DELETE',
@@ -888,12 +884,12 @@ describe('the team role alone decides team management', () => {
   });
 
   it.each([
-    ['add a member', 'POST', '/members', { role: 'ENGINEER', userId: NEW_USER_ID }, 201],
+    ['add a member', 'POST', '/members', { role: 'MEMBER', userId: NEW_USER_ID }, 201],
     ['change a role', 'PATCH', `/members/${TARGET_USER_ID}`, { role: 'LEAD' }, 200],
   ] as const)(
-    'lets a platform ENGINEER who leads the team: %s',
+    'lets a platform USER who leads the team: %s',
     async (_name, method, path, payload, status) => {
-      const res = await buildApp(freshState({ userRole: 'ENGINEER', ...joiner })).inject({
+      const res = await buildApp(freshState({ userRole: 'USER', ...joiner })).inject({
         headers,
         method,
         payload,
@@ -903,9 +899,9 @@ describe('the team role alone decides team management', () => {
     }
   );
 
-  it('refuses a platform LEAD who is only an ENGINEER of the team', async () => {
-    const state = freshState({ userRole: 'LEAD' });
-    state.memberships[0].role = 'ENGINEER';
+  it('refuses a platform USER who is only a MEMBER of the team', async () => {
+    const state = freshState({ userRole: 'USER' });
+    state.memberships[0].role = 'MEMBER';
     const res = await buildApp(state).inject({
       body: { name: 'platform-eng' },
       headers,
@@ -931,7 +927,7 @@ describe('the team role alone decides team management', () => {
   });
 
   it('refuses a team LEAD who grants a role above their own', async () => {
-    const state = freshState({ userRole: 'ENGINEER', ...joiner });
+    const state = freshState({ userRole: 'USER', ...joiner });
     const res = await buildApp(state).inject({
       headers,
       method: 'POST',
@@ -957,19 +953,19 @@ describe('organization authority over a team', () => {
         ...(membership
           ? [{ id: 'm-caller', role: membership, teamId: TEAM_ID, userId: ADMIN_USER_ID }]
           : []),
-        { id: 'm-target', role: 'ENGINEER', teamId: TEAM_ID, userId: TARGET_USER_ID },
+        { id: 'm-target', role: 'MEMBER', teamId: TEAM_ID, userId: TARGET_USER_ID },
       ],
       orgMemberships: [
-        { id: 'org-caller', orgId: TEAM_ID, role: 'ORG_ADMIN', userId: ADMIN_USER_ID },
-        { id: 'org-new', orgId: TEAM_ID, role: 'ORG_MEMBER', userId: NEW_USER_ID },
+        { id: 'org-caller', orgId: TEAM_ID, role: 'ADMIN', userId: ADMIN_USER_ID },
+        { id: 'org-new', orgId: TEAM_ID, role: 'MEMBER', userId: NEW_USER_ID },
       ],
-      userRole: 'ENGINEER',
+      userRole: 'USER',
     });
     Object.assign(state.teams[0] as TeamRow, { orgId: TEAM_ID, ...team });
     return state;
   }
 
-  it.each([null, 'ENGINEER', 'LEAD'] as const)(
+  it.each([null, 'MEMBER', 'LEAD'] as const)(
     'ranks an org ADMIN as ADMIN, so they grant ADMIN (team membership: %s)',
     async (membership) => {
       const state = orgAdminState(membership);
@@ -1015,7 +1011,7 @@ describe('organization authority over a team', () => {
   });
 
   it('lets an org ADMIN who is a team member raise their own role', async () => {
-    const state = orgAdminState('ENGINEER');
+    const state = orgAdminState('MEMBER');
     const res = await buildApp(state).inject({
       headers,
       method: 'PATCH',
@@ -1043,7 +1039,7 @@ describe('organization authority over a team', () => {
   it('refuses a plain team LEAD who raises themselves above their own rank', async () => {
     const state = orgAdminState('LEAD');
     state.orgMemberships = [
-      { id: 'org-caller', orgId: TEAM_ID, role: 'ORG_MEMBER', userId: ADMIN_USER_ID },
+      { id: 'org-caller', orgId: TEAM_ID, role: 'MEMBER', userId: ADMIN_USER_ID },
     ];
     const res = await buildApp(state).inject({
       headers,
@@ -1079,7 +1075,7 @@ describe('organization authority over a team', () => {
   it('lets a team LEAD both rename the team and set its persona prompt', async () => {
     const state = orgAdminState('LEAD');
     state.orgMemberships = [
-      { id: 'org-caller', orgId: TEAM_ID, role: 'ORG_MEMBER', userId: ADMIN_USER_ID },
+      { id: 'org-caller', orgId: TEAM_ID, role: 'MEMBER', userId: ADMIN_USER_ID },
     ];
     const app = buildApp(state);
     for (const body of [{ name: 'platform-eng' }, { defaultPersonaPrompt: 'Be brief.' }]) {
@@ -1130,7 +1126,7 @@ describe('organization authority over a team', () => {
 
   it('records the authority a team creation was allowed on', async () => {
     const state = freshState({
-      orgMemberships: [{ id: 'org', orgId: TEAM_ID, role: 'ORG_ADMIN', userId: ADMIN_USER_ID }],
+      orgMemberships: [{ id: 'org', orgId: TEAM_ID, role: 'ADMIN', userId: ADMIN_USER_ID }],
     });
     const app = buildApp(state);
     const res = await app.inject({
@@ -1199,16 +1195,14 @@ describe('POST /api/v1/teams/:id/members', () => {
   it('answers 409 MEMBER_EXISTS when a concurrent add wins the unique index', async () => {
     const state = freshState({
       createConflict: true,
-      orgMemberships: [
-        { id: 'new-user-org', orgId: TEAM_ID, role: 'ORG_MEMBER', userId: NEW_USER_ID },
-      ],
+      orgMemberships: [{ id: 'new-user-org', orgId: TEAM_ID, role: 'MEMBER', userId: NEW_USER_ID }],
     });
     const app = buildApp(state);
 
     const res = await app.inject({
       headers: { authorization: 'Bearer fake-jwt' },
       method: 'POST',
-      payload: { role: 'ENGINEER', userId: NEW_USER_ID },
+      payload: { role: 'MEMBER', userId: NEW_USER_ID },
       url: `/api/v1/teams/${TEAM_ID}/members`,
     });
 
@@ -1221,16 +1215,14 @@ describe('POST /api/v1/teams/:id/members', () => {
   it('locks the organization before the team and reads the organization membership under it', async () => {
     const ORG = '00000000-0000-4000-8000-0000000000dd';
     const state = freshState({
-      orgMemberships: [
-        { id: 'new-user-org', orgId: TEAM_ID, role: 'ORG_MEMBER', userId: NEW_USER_ID },
-      ],
+      orgMemberships: [{ id: 'new-user-org', orgId: TEAM_ID, role: 'MEMBER', userId: NEW_USER_ID }],
     });
     state.teams[0] = { ...state.teams[0], orgId: ORG } as never;
     const app = buildApp(state);
     const res = await app.inject({
       headers: { authorization: 'Bearer fake-jwt' },
       method: 'POST',
-      payload: { role: 'ENGINEER', userId: NEW_USER_ID },
+      payload: { role: 'MEMBER', userId: NEW_USER_ID },
       url: `/api/v1/teams/${TEAM_ID}/members`,
     });
     expect(res.statusCode, res.body).toBe(201);
@@ -1243,7 +1235,7 @@ describe('POST /api/v1/teams/:id/members', () => {
     const res = await app.inject({
       headers: { authorization: 'Bearer fake-jwt' },
       method: 'POST',
-      payload: { role: 'ENGINEER', userId: NEW_USER_ID },
+      payload: { role: 'MEMBER', userId: NEW_USER_ID },
       url: '/api/v1/teams/00000000-0000-4000-8000-0000000000ee/members',
     });
     expect(res.statusCode).toBe(404);
@@ -1472,7 +1464,7 @@ describe('PUT /api/v1/teams/:id/egress-allowlist', () => {
 
   it('403s when the caller is not a team ADMIN', async () => {
     // PUT requires requiredTeamRole: 'ADMIN'; a LEAD is rejected.
-    const state = freshState({ userRole: 'LEAD' });
+    const state = freshState({ userRole: 'USER' });
     const app = buildApp(state);
 
     const res = await app.inject({

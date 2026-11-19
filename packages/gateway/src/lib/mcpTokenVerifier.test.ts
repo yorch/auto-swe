@@ -57,7 +57,7 @@ describe('mcp token verifier', () => {
     expect(error).toBeUndefined();
     expect(info).toMatchObject({
       clientId: TEST_CLIENT,
-      extra: { consentId: 'consent-1', role: 'ENGINEER', userId: TEST_USER },
+      extra: { consentId: 'consent-1', role: 'USER', userId: TEST_USER },
       scopes: ['mcp:read'],
     });
     expect(info?.resource?.href).toBe(TEST_RESOURCE);
@@ -279,7 +279,7 @@ describe('mcp token verifier', () => {
     });
 
     it.each([
-      ['inactive', { isActive: false, role: 'ENGINEER' }],
+      ['inactive', { isActive: false, role: 'USER' }],
       ['gone', null],
     ])('rejects a user who is %s', async (_name, user) => {
       const r = await run(await mintToken({ key }), fakeVerifierDeps([key], { user }));
@@ -357,7 +357,7 @@ describe('mcp token verifier', () => {
     it('does not depend on the platform role: a non-ADMIN consenting user holds admin', async () => {
       const r = await run(
         await mintToken({ claims: { scope: 'mcp:admin' }, key }),
-        fakeVerifierDeps([key], { admin: true, user: { isActive: true, role: 'ENGINEER' } })
+        fakeVerifierDeps([key], { admin: true, user: { isActive: true, role: 'USER' } })
       );
       expect(r.info?.scopes).toEqual(['mcp:read', 'mcp:admin']);
     });

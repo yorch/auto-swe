@@ -13,7 +13,7 @@ const { decideRepoAccess, multiRepoRefusalBody, repoAccessErrorBody } = await im
 );
 
 const prisma = {} as PrismaClient;
-const engineer = { exp: 0, iat: 0, role: 'ENGINEER' as const, sub: 'user-1' };
+const engineer = { exp: 0, iat: 0, role: 'USER' as const, sub: 'user-1' };
 const admin = { ...engineer, role: 'ADMIN' as const, sub: 'user-admin' };
 const ENFORCE = { mode: 'enforce' as const, staleAfterHours: 72 };
 const OFF = { mode: 'off' as const, staleAfterHours: 72 };

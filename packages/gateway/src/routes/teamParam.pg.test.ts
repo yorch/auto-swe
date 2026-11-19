@@ -420,10 +420,10 @@ describe.skipIf(!enabled)('team scope against Postgres', () => {
       expect((await overview('alice', 'teama')).needsYou.total).toBe(ACTIONABLE_STEPS);
     });
 
-    it('builds the view from the team role and omits gated sections for an engineer', async () => {
+    it('builds the view from the team role and omits gated sections for a member', async () => {
       const raw = await call('alice', `/api/v1/teams/${ids.teama}/overview`);
       const alice = (raw.json() as { data: Overview }).data;
-      expect(alice.viewerLevel).toBe('engineer');
+      expect(alice.viewerLevel).toBe('member');
       expect('lead' in alice).toBe(false);
       expect('admin' in alice).toBe(false);
       expect(raw.body).not.toContain('@example.test');

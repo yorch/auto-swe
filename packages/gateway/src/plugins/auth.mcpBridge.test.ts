@@ -38,7 +38,7 @@ describe('requireAuth and the MCP bridge', () => {
     app.decorate('prisma', {
       apiToken: { findUnique: async () => null, update: async () => ({}) },
       user: {
-        findUnique: async () => ({ isActive: true, role: 'ENGINEER', slackId: null }),
+        findUnique: async () => ({ isActive: true, role: 'USER', slackId: null }),
       },
     } as never);
     await app.register(authPlugin);
@@ -118,7 +118,7 @@ describe('requireAuth and the MCP bridge', () => {
   });
 
   beforeEach(() => {
-    state.user = { isActive: true, role: 'ENGINEER' };
+    state.user = { isActive: true, role: 'USER' };
     state.writeToolsEnabled = true;
     state.grant = defaultGrant;
   });
@@ -150,7 +150,7 @@ describe('requireAuth and the MCP bridge', () => {
     expect(res?.body).toEqual({
       authMethod: 'mcp',
       bridge: { clientId: 'client-abc', consentId: 'consent-1', scopes: ['mcp:read'] },
-      role: 'ENGINEER',
+      role: 'USER',
       sub: TEST_USER,
     });
   });
@@ -298,12 +298,12 @@ describe('requireAuth and the MCP bridge', () => {
     });
   });
 
-  it('keeps the route capability check: a bridged ENGINEER lacks platform.users.manage', async () => {
+  it('keeps the route capability check: a bridged USER lacks platform.users.manage', async () => {
     expect((await bridged('/probe/lead-only', readToken)).statusCode).toBe(403);
   });
 
   it('uses the user as they are now: a deactivated user is refused, a demoted one is demoted', async () => {
-    state.user = { isActive: false, role: 'ENGINEER' };
+    state.user = { isActive: false, role: 'USER' };
     expect((await bridged('/probe/read', readToken)).statusCode).toBe(401);
     state.user = { isActive: true, role: 'ADMIN' };
     const res = await bridged('/probe/read', readToken);

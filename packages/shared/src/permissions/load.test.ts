@@ -200,3 +200,33 @@ describe('can', () => {
     });
   });
 });
+
+describe('tenant-guard exemption', () => {
+  it('reads memberships under a declared exemption, so the real tenant guard does not throw', async () => {
+    const { isUnscoped } = await import('../lib/tenantGuard.js');
+    const seen: Record<string, boolean> = {};
+    const db = {
+      organizationMembership: {
+        findMany: vi.fn(async () => {
+          seen.organizationMembership = isUnscoped('OrganizationMembership');
+          return [];
+        }),
+      },
+      team: {
+        findMany: vi.fn(async () => {
+          seen.team = isUnscoped('Team');
+          return [{ id: 't1', isActive: true, orgId: 'o1' }];
+        }),
+      },
+      teamMembership: {
+        findMany: vi.fn(async () => {
+          seen.teamMembership = isUnscoped('TeamMembership');
+          return [];
+        }),
+      },
+    } as unknown as PermissionsDb;
+    await can(db, USER, 'team.repos.manage', { teamId: 't1' });
+    await heldScope(db, USER, 'team.repos.manage');
+    expect(seen).toEqual({ organizationMembership: true, team: true, teamMembership: true });
+  });
+});

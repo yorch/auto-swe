@@ -35,7 +35,7 @@ import { _cacheSessionForTests, _hasCachedSessionForTests } from '../plugins/aut
 import { userRoutes } from './users.js';
 
 interface AuthState {
-  role: 'ADMIN' | 'LEAD' | 'ENGINEER';
+  role: 'ADMIN' | 'USER';
   sub: string;
 }
 
@@ -137,7 +137,7 @@ describe('userRoutes', () => {
           id: USER_ID,
           isActive: true,
           memberships: [{ role: 'LEAD', team: { id: 't-1', name: 'Platform', slug: 'platform' } }],
-          role: 'ENGINEER',
+          role: 'USER',
           slackId: null,
         },
       ]);
@@ -155,7 +155,7 @@ describe('userRoutes', () => {
     });
 
     it('returns 403 for a non-ADMIN caller', async () => {
-      ctx.authState.role = 'LEAD';
+      ctx.authState.role = 'USER';
 
       const res = await ctx.app.inject({
         headers: AUTH_HEADER,
@@ -179,7 +179,7 @@ describe('userRoutes', () => {
 
   describe('GET /api/v1/users/lookup', () => {
     it('resolves an active user by exact email for a LEAD', async () => {
-      ctx.authState.role = 'LEAD';
+      ctx.authState.role = 'USER';
       ctx.mockPrisma.user.findMany.mockResolvedValueOnce([
         { email: 'a@example.com', id: USER_ID, name: 'Ada' },
       ]);
@@ -205,7 +205,7 @@ describe('userRoutes', () => {
     });
 
     it('does not answer for a row matched only by an ILIKE wildcard', async () => {
-      ctx.authState.role = 'LEAD';
+      ctx.authState.role = 'USER';
       // `_` is a one-character wildcard if the database compared with ILIKE.
       ctx.mockPrisma.user.findMany.mockResolvedValueOnce([
         { email: 'ab@example.com', id: USER_ID, name: 'Ada' },
@@ -229,7 +229,7 @@ describe('userRoutes', () => {
         user: { findMany: vi.fn().mockResolvedValue([]) },
       } as unknown as never);
       app.decorate('auth', {
-        verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: 'LEAD', sub: 'lead-1' }),
+        verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: 'USER', sub: 'lead-1' }),
       } as unknown as never);
       // A global limit far above the route's, as in index.ts.
       await app.register(rateLimit, { max: 1000, timeWindow: '1 minute' });
@@ -253,7 +253,7 @@ describe('userRoutes', () => {
     });
 
     it('returns 404 when no active user matches', async () => {
-      ctx.authState.role = 'LEAD';
+      ctx.authState.role = 'USER';
       ctx.mockPrisma.user.findMany.mockResolvedValueOnce([]);
       const res = await ctx.app.inject({
         headers: AUTH_HEADER,
@@ -263,8 +263,8 @@ describe('userRoutes', () => {
       expect(res.statusCode).toBe(404);
     });
 
-    it('resolves an email for a platform ENGINEER who leads a team', async () => {
-      ctx.authState.role = 'ENGINEER';
+    it('resolves an email for a platform USER who leads a team', async () => {
+      ctx.authState.role = 'USER';
       ctx.mockPrisma.user.findMany.mockResolvedValueOnce([
         { email: 'a@example.com', id: USER_ID, name: 'Ada' },
       ]);
@@ -276,7 +276,7 @@ describe('userRoutes', () => {
       expect(res.statusCode).toBe(200);
     });
 
-    it.each(['ENGINEER', 'LEAD'] as const)(
+    it.each(['USER'] as const)(
       'refuses a platform %s who leads no team, and looks nobody up',
       async (role) => {
         ctx.authState.role = role;
@@ -293,7 +293,7 @@ describe('userRoutes', () => {
     );
 
     it('holds the directory capability only through an active team', async () => {
-      ctx.authState.role = 'ENGINEER';
+      ctx.authState.role = 'USER';
       ctx.authState.sub = 'user-9';
       ctx.mockPrisma.teamMembership.findMany.mockResolvedValue([
         { role: 'ADMIN', team: { id: 'team-2', isActive: false, orgId: null } },
@@ -311,7 +311,7 @@ describe('userRoutes', () => {
     });
 
     it('lets a lead of an active team look up', async () => {
-      ctx.authState.role = 'ENGINEER';
+      ctx.authState.role = 'USER';
       ctx.authState.sub = 'user-9';
       ctx.mockPrisma.teamMembership.findMany.mockResolvedValue([
         { role: 'ADMIN', team: { id: 'team-2', isActive: true, orgId: null } },
@@ -340,7 +340,7 @@ describe('userRoutes', () => {
     });
 
     it('rejects a malformed email', async () => {
-      ctx.authState.role = 'LEAD';
+      ctx.authState.role = 'USER';
       const bad = await ctx.app.inject({
         headers: AUTH_HEADER,
         method: 'GET',
@@ -359,7 +359,7 @@ describe('userRoutes', () => {
         email: 'new@example.com',
         id: USER_ID,
         isActive: true,
-        role: 'ENGINEER',
+        role: 'USER',
         slackId: null,
       });
 
@@ -384,7 +384,7 @@ describe('userRoutes', () => {
         email: 'cred@example.com',
         id: USER_ID,
         isActive: true,
-        role: 'ENGINEER',
+        role: 'USER',
         slackId: null,
       });
       ctx.mockPrisma.account.create.mockClear();
@@ -412,7 +412,7 @@ describe('userRoutes', () => {
         email: 'mixed@example.com',
         id: USER_ID,
         isActive: true,
-        role: 'ENGINEER',
+        role: 'USER',
         slackId: null,
       });
 
@@ -448,7 +448,7 @@ describe('userRoutes', () => {
         email: 'withpw@example.com',
         id: USER_ID,
         isActive: true,
-        role: 'ENGINEER',
+        role: 'USER',
         slackId: null,
       });
 
@@ -578,7 +578,7 @@ describe('userRoutes', () => {
     });
 
     it('returns 403 for a non-ADMIN caller', async () => {
-      ctx.authState.role = 'LEAD';
+      ctx.authState.role = 'USER';
 
       const res = await ctx.app.inject({
         headers: AUTH_HEADER,
@@ -599,7 +599,7 @@ describe('userRoutes', () => {
         email: 'invitee@example.com',
         id: USER_ID,
         isActive: true,
-        role: 'ENGINEER',
+        role: 'USER',
       });
       ctx.mockPrisma.team.findUnique.mockResolvedValueOnce({
         id: 'team-default',
@@ -619,7 +619,7 @@ describe('userRoutes', () => {
         email: 'invitee@example.com',
         id: USER_ID,
         isActive: true,
-        role: 'ENGINEER',
+        role: 'USER',
       });
       expect(ctx.mockPrisma.user.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -627,11 +627,11 @@ describe('userRoutes', () => {
         })
       );
       expect(ctx.mockPrisma.teamMembership.createMany).toHaveBeenCalledWith({
-        data: { role: 'ENGINEER', teamId: 'team-default', userId: USER_ID },
+        data: { role: 'MEMBER', teamId: 'team-default', userId: USER_ID },
         skipDuplicates: true,
       });
       expect(ctx.mockPrisma.organizationMembership.createMany).toHaveBeenCalledWith({
-        data: { orgId: 'org-default', role: 'ORG_MEMBER', userId: USER_ID },
+        data: { orgId: 'org-default', role: 'MEMBER', userId: USER_ID },
         skipDuplicates: true,
       });
       expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalledWith({
@@ -646,7 +646,7 @@ describe('userRoutes', () => {
         email: 'noteam@example.com',
         id: USER_ID,
         isActive: true,
-        role: 'ENGINEER',
+        role: 'USER',
       });
       ctx.mockPrisma.team.findUnique.mockResolvedValueOnce(null);
 
@@ -669,7 +669,7 @@ describe('userRoutes', () => {
         emailVerified: true,
         id: USER_ID,
         isActive: true,
-        role: 'ENGINEER',
+        role: 'USER',
       });
 
       const res = await ctx.app.inject({
@@ -709,7 +709,7 @@ describe('userRoutes', () => {
     });
 
     it('returns 403 for a non-ADMIN caller', async () => {
-      ctx.authState.role = 'ENGINEER';
+      ctx.authState.role = 'USER';
 
       const res = await ctx.app.inject({
         headers: AUTH_HEADER,
@@ -730,19 +730,19 @@ describe('userRoutes', () => {
         email: 'updated@example.com',
         id: USER_ID,
         isActive: true,
-        role: 'LEAD',
+        role: 'ADMIN',
         slackId: null,
       });
 
       const res = await ctx.app.inject({
         headers: AUTH_HEADER,
         method: 'PATCH',
-        payload: { role: 'LEAD' },
+        payload: { role: 'ADMIN' },
         url: `/api/v1/users/${USER_ID}`,
       });
 
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload).data.role).toBe('LEAD');
+      expect(JSON.parse(res.payload).data.role).toBe('ADMIN');
     });
 
     it('returns 404 when the user does not exist', async () => {
@@ -751,7 +751,7 @@ describe('userRoutes', () => {
       const res = await ctx.app.inject({
         headers: AUTH_HEADER,
         method: 'PATCH',
-        payload: { role: 'LEAD' },
+        payload: { role: 'USER' },
         url: `/api/v1/users/${USER_ID}`,
       });
 
@@ -801,7 +801,7 @@ describe('userRoutes', () => {
       const res = await ctx.app.inject({
         headers: AUTH_HEADER,
         method: 'PATCH',
-        payload: { role: 'LEAD' },
+        payload: { role: 'USER' },
         url: '/api/v1/users/not-a-uuid',
       });
       expect(res.statusCode).toBe(400);
@@ -819,7 +819,7 @@ describe('userRoutes', () => {
     });
 
     it('returns 403 for a non-ADMIN caller', async () => {
-      ctx.authState.role = 'LEAD';
+      ctx.authState.role = 'USER';
 
       const res = await ctx.app.inject({
         headers: AUTH_HEADER,
@@ -856,7 +856,7 @@ describe('userRoutes', () => {
         const res = await ctx.app.inject({
           headers: AUTH_HEADER,
           method: 'PATCH',
-          payload: { role: 'ENGINEER' },
+          payload: { role: 'USER' },
           url: `/api/v1/users/${USER_ID}`,
         });
 
@@ -916,7 +916,7 @@ describe('userRoutes', () => {
           email: 'other@example.com',
           id: USER_ID,
           isActive: false,
-          role: 'ENGINEER',
+          role: 'USER',
           slackId: null,
         });
 
@@ -934,7 +934,7 @@ describe('userRoutes', () => {
       it('drops the deactivated user’s cached browser sessions immediately', async () => {
         // The cache is keyed by the signed cookie value (`<token>.<sig>`), which
         // the sessions table never stores — invalidation keys on the user id.
-        const payload = { exp: 0, iat: 0, role: 'ENGINEER' as const, sub: USER_ID };
+        const payload = { exp: 0, iat: 0, role: 'USER' as const, sub: USER_ID };
         _cacheSessionForTests('tok-a.sig-a', payload);
         _cacheSessionForTests('tok-other.sig', { ...payload, sub: 'someone-else' });
         ctx.mockPrisma.user.findUnique.mockResolvedValueOnce({ id: USER_ID, isActive: true });
@@ -942,7 +942,7 @@ describe('userRoutes', () => {
           email: 'other@example.com',
           id: USER_ID,
           isActive: false,
-          role: 'ENGINEER',
+          role: 'USER',
           slackId: null,
         });
 
@@ -965,7 +965,7 @@ describe('userRoutes', () => {
           email: 'other@example.com',
           id: USER_ID,
           isActive: false,
-          role: 'ENGINEER',
+          role: 'USER',
           slackId: null,
         });
 
@@ -991,13 +991,13 @@ describe('userRoutes', () => {
           email: 'other@example.com',
           id: USER_ID,
           isActive: true,
-          role: 'LEAD',
+          role: 'USER',
           slackId: null,
         });
         await ctx.app.inject({
           headers: AUTH_HEADER,
           method: 'PATCH',
-          payload: { role: 'LEAD' },
+          payload: { role: 'USER' },
           url: `/api/v1/users/${USER_ID}`,
         });
 
@@ -1011,7 +1011,7 @@ describe('userRoutes', () => {
           email: 'other@example.com',
           id: USER_ID,
           isActive: false,
-          role: 'ENGINEER',
+          role: 'USER',
           slackId: null,
         });
         const res = await ctx.app.inject({
@@ -1032,7 +1032,7 @@ describe('userRoutes', () => {
           email: 'other@example.com',
           id: USER_ID,
           isActive: false,
-          role: 'ENGINEER',
+          role: 'USER',
           slackId: null,
         });
         const res = await ctx.app.inject({
@@ -1054,14 +1054,14 @@ describe('userRoutes', () => {
           email: 'other@example.com',
           id: USER_ID,
           isActive: true,
-          role: 'ENGINEER',
+          role: 'USER',
           slackId: null,
         });
 
         const res = await ctx.app.inject({
           headers: AUTH_HEADER,
           method: 'PATCH',
-          payload: { role: 'ENGINEER' },
+          payload: { role: 'USER' },
           url: `/api/v1/users/${USER_ID}`,
         });
 
@@ -1079,7 +1079,7 @@ describe('userRoutes', () => {
         email: 'audit@example.com',
         id: USER_ID,
         isActive: true,
-        role: 'ENGINEER',
+        role: 'USER',
         slackId: null,
       });
 
@@ -1112,14 +1112,14 @@ describe('userRoutes', () => {
         emailVerified: true,
         id: USER_ID,
         isActive: true,
-        role: 'LEAD',
+        role: 'USER',
       });
       ctx.mockPrisma.team.findUnique.mockResolvedValueOnce(null);
 
       await ctx.app.inject({
         headers: AUTH_HEADER,
         method: 'POST',
-        payload: { email: 'invite-audit@example.com', role: 'LEAD' },
+        payload: { email: 'invite-audit@example.com', role: 'USER' },
         url: '/api/v1/users/invite',
       });
 
@@ -1132,7 +1132,7 @@ describe('userRoutes', () => {
         email: 'invite-audit@example.com',
         emailVerified: true,
         isActive: true,
-        role: 'LEAD',
+        role: 'USER',
       });
     });
 
@@ -1141,21 +1141,21 @@ describe('userRoutes', () => {
         email: 'before@example.com',
         id: USER_ID,
         isActive: true,
-        role: 'ENGINEER',
+        role: 'USER',
         slackId: null,
       });
       ctx.mockPrisma.user.update.mockResolvedValueOnce({
         email: 'before@example.com',
         id: USER_ID,
         isActive: true,
-        role: 'LEAD',
+        role: 'ADMIN',
         slackId: null,
       });
 
       await ctx.app.inject({
         headers: AUTH_HEADER,
         method: 'PATCH',
-        payload: { role: 'LEAD' },
+        payload: { role: 'ADMIN' },
         url: `/api/v1/users/${USER_ID}`,
       });
 
@@ -1166,8 +1166,8 @@ describe('userRoutes', () => {
         action: 'UPDATE',
         entityType: 'User',
       });
-      expect(auditCall?.data.beforeJson).toMatchObject({ role: 'ENGINEER' });
-      expect(auditCall?.data.afterJson).toMatchObject({ role: 'LEAD' });
+      expect(auditCall?.data.beforeJson).toMatchObject({ role: 'USER' });
+      expect(auditCall?.data.afterJson).toMatchObject({ role: 'ADMIN' });
     });
   });
 });

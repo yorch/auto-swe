@@ -30,8 +30,8 @@ const LEAD_KEY = 'channel.historyMessageLimit';
 const ADMIN_KEY = 'github.ciFailureTriggersEnabled';
 const GLOBAL_ONLY_KEY = 'github.repositoryHosts';
 
-const LEAD: ConfigActor = { id: 'user-1', role: 'LEAD' };
-const ENGINEER: ConfigActor = { id: 'user-1', role: 'ENGINEER' };
+const LEAD: ConfigActor = { id: 'user-1', role: 'USER' };
+const ENGINEER: ConfigActor = { id: 'user-1', role: 'USER' };
 const ADMIN: ConfigActor = { id: 'admin-1', role: 'ADMIN' };
 
 const TEAM: ScopeSelector = { scope: 'TEAM', teamId: TEAM_ID };

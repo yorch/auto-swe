@@ -55,7 +55,7 @@ export async function buildMcpTestApp(
   app.setSerializerCompiler(serializerCompiler);
   app.decorate('prisma', {
     apiToken: { findUnique: async () => null },
-    user: { findUnique: async () => ({ isActive: true, role: 'ENGINEER', slackId: null }) },
+    user: { findUnique: async () => ({ isActive: true, role: 'USER', slackId: null }) },
   } as never);
   await app.register(authPlugin);
   const verifier = createMcpTokenVerifier(fakeVerifierDeps([key], { admin: true }));

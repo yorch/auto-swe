@@ -35,7 +35,7 @@ export function makeAssistantPrisma(): {
     },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     user: {
-      findUnique: vi.fn().mockResolvedValue({ isActive: true, role: 'ENGINEER', slackId: null }),
+      findUnique: vi.fn().mockResolvedValue({ isActive: true, role: 'USER', slackId: null }),
     },
   };
 }
@@ -69,5 +69,5 @@ export function assistantBearer(
 
 /** An ordinary API access token for `USER_ID`: the person, not their assistant. */
 export function personBearer(app: FastifyInstance): string {
-  return `Bearer ${app.auth.signAccessToken({ role: 'ENGINEER', sub: USER_ID })}`;
+  return `Bearer ${app.auth.signAccessToken({ role: 'USER', sub: USER_ID })}`;
 }

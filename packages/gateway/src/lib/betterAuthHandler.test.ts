@@ -135,7 +135,7 @@ describe('createBetterAuthHandler session cache', () => {
   it('drops the cached session when sign-out succeeds, and only then', async () => {
     const app = await makeApp();
     const cookie = 'better-auth.session_token=tok.sig';
-    const payload = { exp: 9_999_999_999, iat: 0, role: 'ENGINEER' as const, sub: 'u' };
+    const payload = { exp: 9_999_999_999, iat: 0, role: 'USER' as const, sub: 'u' };
     _cacheSessionForTests('tok.sig', payload);
     seen.status = 500;
     await app.inject({

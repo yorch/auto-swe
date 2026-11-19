@@ -123,7 +123,7 @@ describe('auth plugin — OAuth state', () => {
 });
 
 describe('session cache invalidation', () => {
-  const payload: JwtPayload = { exp: 0, iat: 0, role: 'ENGINEER', sub: USER_ID };
+  const payload: JwtPayload = { exp: 0, iat: 0, role: 'USER', sub: USER_ID };
 
   beforeEach(() => {
     _resetAuthCachesForTests();
@@ -184,7 +184,7 @@ describe('rateLimitKey', () => {
   it('buckets a verified JWT by its user, without a database read', async () => {
     const findUnique = vi.fn();
     app = await buildApp(findUnique);
-    const token = app.auth.signAccessToken({ role: 'ENGINEER', sub: USER_ID });
+    const token = app.auth.signAccessToken({ role: 'USER', sub: USER_ID });
 
     expect(rateLimitKey(req(app, { authorization: `Bearer ${token}` }))).toBe(`user:${USER_ID}`);
     expect(findUnique).not.toHaveBeenCalled();
@@ -209,7 +209,7 @@ describe('rateLimitKey', () => {
     const cookie = { cookie: 'better-auth.session_token=tok.sig' };
     expect(rateLimitKey(req(app, cookie))).toBe('ip:10.0.0.9');
 
-    _cacheSessionForTests('tok.sig', { exp: 0, iat: 0, role: 'ENGINEER', sub: USER_ID });
+    _cacheSessionForTests('tok.sig', { exp: 0, iat: 0, role: 'USER', sub: USER_ID });
     expect(rateLimitKey(req(app, cookie))).toBe(`user:${USER_ID}`);
   });
 });

@@ -39,7 +39,7 @@ const JOB_ID = 'runplan-aabbccdd-0123456789abcdef';
 
 const fastify = {} as FastifyInstance;
 const request = { log: { error: vi.fn(), warn: vi.fn() } } as unknown as FastifyRequest;
-const user = { id: 'user-1', role: 'ENGINEER' as const };
+const user = { id: 'user-1', role: 'USER' as const };
 
 function claims(overrides: Partial<SlackRunPlanClaims> = {}): SlackRunPlanClaims {
   const intent = overrides.intent ?? 'add rate limiting <!channel>';
@@ -106,7 +106,7 @@ describe('handleRunPlanGenerateAction', () => {
       user: { sub: 'user-1' },
     });
     // The acting user is the platform user the Slack id links to, never the channel or a service.
-    expect((args.user as { role: string }).role).toBe('ENGINEER');
+    expect((args.user as { role: string }).role).toBe('USER');
   });
 
   it('replies privately that it is generating, and posts a Review plan link button in the thread', async () => {

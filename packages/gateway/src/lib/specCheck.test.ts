@@ -25,7 +25,7 @@ vi.mock('./specRefValidation.js', () => ({ findSpecRefProblems: refs.findSpecRef
 
 const TEAM_ID = '11111111-1111-4111-8111-111111111111';
 const ADMIN = { role: 'ADMIN', sub: 'admin-1' } as JwtPayload;
-const LEAD = { role: 'LEAD', sub: 'user-1' } as JwtPayload;
+const LEAD = { role: 'USER', sub: 'user-1' } as JwtPayload;
 
 interface PrismaOpts {
   membership?: { role: string } | null;

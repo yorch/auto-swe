@@ -6,7 +6,7 @@ function database(existing = false, failAudit = false) {
   const state = {
     audits: [] as Array<{ actorId: string | null; entityType: string }>,
     org: existing
-      ? { id: 'org-member', role: 'ORG_ADMIN' }
+      ? { id: 'org-member', role: 'ADMIN' }
       : (null as { id: string; role: string } | null),
     team: existing
       ? { id: 'team-member', role: 'ADMIN' }
@@ -26,7 +26,7 @@ function database(existing = false, failAudit = false) {
         if (state.org) {
           return { count: 0 };
         }
-        state.org = { id: 'org-member', role: 'ORG_MEMBER' };
+        state.org = { id: 'org-member', role: 'MEMBER' };
         return { count: 1 };
       }),
       findUniqueOrThrow: async () => state.org,
@@ -36,7 +36,7 @@ function database(existing = false, failAudit = false) {
         if (state.team) {
           return { count: 0 };
         }
-        state.team = { id: 'team-member', role: 'ENGINEER' };
+        state.team = { id: 'team-member', role: 'MEMBER' };
         return { count: 1 };
       }),
       findUniqueOrThrow: async () => state.team,
@@ -64,11 +64,11 @@ describe('default-team enrollment transaction', () => {
       await enrollDefaultTeam(db, { id: 'team', orgId: 'org' }, 'user', actorId);
       await enrollDefaultTeam(db, { id: 'team', orgId: 'org' }, 'user', actorId);
       expect(tx.organizationMembership.createMany).toHaveBeenCalledWith({
-        data: { orgId: 'org', role: 'ORG_MEMBER', userId: 'user' },
+        data: { orgId: 'org', role: 'MEMBER', userId: 'user' },
         skipDuplicates: true,
       });
       expect(tx.teamMembership.createMany).toHaveBeenCalledWith({
-        data: { role: 'ENGINEER', teamId: 'team', userId: 'user' },
+        data: { role: 'MEMBER', teamId: 'team', userId: 'user' },
         skipDuplicates: true,
       });
       expect(state.audits).toEqual([
@@ -81,7 +81,7 @@ describe('default-team enrollment transaction', () => {
   it('does not downgrade or audit existing roles', async () => {
     const { db, state } = database(true);
     await enrollDefaultTeam(db, { id: 'team', orgId: 'org' }, 'user', null);
-    expect(state.org?.role).toBe('ORG_ADMIN');
+    expect(state.org?.role).toBe('ADMIN');
     expect(state.team?.role).toBe('ADMIN');
     expect(state.audits).toEqual([]);
   });

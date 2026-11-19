@@ -64,7 +64,7 @@ describe.skipIf(!enabled)('assistant conversations against Postgres', () => {
   });
 
   const person = (i: number) =>
-    `Bearer ${app.auth.signAccessToken({ role: 'ENGINEER', sub: userIds[i] as string })}`;
+    `Bearer ${app.auth.signAccessToken({ role: 'USER', sub: userIds[i] as string })}`;
 
   it('records a conversation, its message and an empty reply, and starts the turn', async () => {
     const res = await app.inject({
