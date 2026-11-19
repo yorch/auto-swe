@@ -30,6 +30,10 @@
       "result": {
         "delivery": {
           "from": "nodes.deliver.output"
+        },
+        "prUrl": {
+          "default": null,
+          "from": "nodes.deliver.output.pullRequestUrl"
         }
       },
       "status": "SUCCESS",

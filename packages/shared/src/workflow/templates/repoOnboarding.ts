@@ -178,7 +178,12 @@ export const REPO_ONBOARDING_SPEC: WorkflowSpec = {
     done: {
       type: 'terminate',
       status: 'SUCCESS',
-      result: { delivery: { from: 'nodes.deliver.output' } },
+      // Reason: the run page's verdict links the pull request from `result.prUrl`; the delivery
+      // activity names it `pullRequestUrl`, so without this the run reads "no pull request link".
+      result: {
+        delivery: { from: 'nodes.deliver.output' },
+        prUrl: { from: 'nodes.deliver.output.pullRequestUrl', default: null },
+      },
     },
     rejected: { type: 'terminate', status: 'FAILED' },
   },
