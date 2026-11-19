@@ -9,6 +9,11 @@
 --   config_permissions.role         ENGINEER -> MEMBER, others unchanged             (TeamRole)
 --   organization_memberships.role   ORG_ADMIN -> ADMIN, ORG_MEMBER -> MEMBER         (OrgRole)
 
+-- Bound the wait for the ACCESS EXCLUSIVE locks the type changes take (users is read on every
+-- authenticated request): fail fast and retry rather than queue the whole gateway behind a long
+-- transaction. SET LOCAL ends with this transaction.
+SET LOCAL lock_timeout = '5s';
+
 -- 1. The defaults name the old type, so they go before the columns change type.
 ALTER TABLE "users" ALTER COLUMN "role" DROP DEFAULT;
 ALTER TABLE "team_memberships" ALTER COLUMN "role" DROP DEFAULT;

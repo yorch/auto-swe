@@ -2,7 +2,7 @@ import { runUnscoped } from '../lib/tenantGuard.js';
 import { decide } from './can.js';
 import { CATALOG, type CapabilityKey } from './catalog/index.js';
 import { loadStanding, type PermissionsDb } from './load.js';
-import { isPlatformAdmin } from './standing.js';
+import { isPlatformAdmin, orgIsAdmin } from './standing.js';
 import type { Actor, Authority, CapabilityDef, Resource } from './types.js';
 
 /**
@@ -111,12 +111,16 @@ async function effectivePermissionsUnscoped(
       select: { id: true, name: true, orgId: true, slug: true },
       where: { id: opts.teamId },
     });
-    const memberOfOrg = named?.orgId ? orgRows.some((o) => o.orgId === named.orgId) : false;
+    // Only an organization ADMIN may name a team they are not on: any org role used to be enough, which
+    // told a plain org member the name and slug of teams `GET /teams/:id` refuses them.
+    const adminOfOrg = named?.orgId
+      ? orgRows.some((o) => o.orgId === named.orgId && orgIsAdmin(o.role))
+      : false;
     const member = teams.has(opts.teamId);
     if (!named) {
       return { ok: false, reason: platformAdmin ? 'NOT_FOUND' : 'NO_STANDING' };
     }
-    if (!(member || memberOfOrg || platformAdmin)) {
+    if (!(member || adminOfOrg || platformAdmin)) {
       return { ok: false, reason: 'NO_STANDING' };
     }
     const mine = teams.get(named.id);

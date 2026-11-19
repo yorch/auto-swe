@@ -2107,17 +2107,24 @@ team memberships.
 | `config_permissions.role` | `Role` | `TeamRole` (`ENGINEER` becomes `MEMBER`) |
 
 The API and the CLI carry the new names: a request that sends `ENGINEER` or `ORG_ADMIN` is refused, and
-`GET /api/v1/teams/:id/overview` answers `viewerLevel: "member"` where it answered `"engineer"`. An access
-token minted before the upgrade can carry the old platform role until it expires; sign in again to
-refresh it.
+`GET /api/v1/teams/:id/overview` answers `viewerLevel: "member"` where it answered `"engineer"`. A token or session
+minted before the upgrade keeps working: the platform role is read from the database on every request,
+never from the token.
 
 **Settings grants.** A role-grantee grant is now a TEAM-scope grant only (`CHECK (role IS NULL OR scope =
 'TEAM')`), matched against the actor's role in the grant's team. The migration deletes every grant that
 named a role, because it matched a platform role that no longer exists in that meaning, and every user
 grant held by a user who was a platform `ENGINEER`, because it never took effect and would otherwise
-switch on. User grants held by `LEAD` and `ADMIN` users are kept. The migration prints a notice with
-both counts (`split_role_enums: deleted N role-grantee settings grants and M user grants ...`) in the
-migration output of `prisma migrate deploy` when the server log level shows notices.
+switch on. User grants held by `LEAD` and `ADMIN` users are kept. The migration records both counts
+with `RAISE NOTICE`, but `prisma migrate deploy` does not show notices and the default server log level
+hides them, so **list the grants before upgrading**: `SELECT * FROM config_permissions WHERE role IS NOT
+NULL OR user_id IN (SELECT id FROM users WHERE role = 'ENGINEER')` and keep the output.
+
+**Rolling deploy.** Stop every old gateway and worker replica before running the migration. After it,
+old code still writes `ENGINEER` (sign-up default, invites, default team membership) and those writes
+fail with an invalid-enum error until the last old replica is gone. The migration sets a 5-second
+`lock_timeout`, rewrites `users`, `team_memberships` and `config_permissions` under an exclusive lock,
+and fails fast if a long transaction holds one of them; retry once it ends.
 
 **Actions.**
 

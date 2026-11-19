@@ -592,7 +592,7 @@ export const SETTING_DEFINITIONS = {
   'github.signInAutoApproveOrgs': defineSetting({
     defaultValue: [],
     description:
-      "GitHub organizations whose members are approved automatically when they first sign in with GitHub, skipping the approval queue. Empty turns auto-approval off. Membership is checked with the platform GitHub credential against the instance's own GitHub host, so the credential needs permission to read organization members; any error, a private membership it cannot see, or a missing GitHub login leaves the user waiting for an admin. Approved users get the ENGINEER role and join the default team like any other sign-up, and a deactivated account is never re-approved. Lowercase organization logins, comma-separated. Read through a ~30 s cache, so removing an organization takes up to that long to apply.",
+      "GitHub organizations whose members are approved automatically when they first sign in with GitHub, skipping the approval queue. Empty turns auto-approval off. Membership is checked with the platform GitHub credential against the instance's own GitHub host, so the credential needs permission to read organization members; any error, a private membership it cannot see, or a missing GitHub login leaves the user waiting for an admin. Approved users get the USER platform role and join the default team like any other sign-up, and a deactivated account is never re-approved. Lowercase organization logins, comma-separated. Read through a ~30 s cache, so removing an organization takes up to that long to apply.",
     group: 'github',
     label: 'Auto-approve sign-ins from organizations',
     overridableAt: [],

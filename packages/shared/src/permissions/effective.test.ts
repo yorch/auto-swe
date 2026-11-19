@@ -86,6 +86,16 @@ describe('effectivePermissions', () => {
     expect(result.value.organizations.map((o) => o.orgId)).toEqual(['org-1']);
   });
 
+  it('does not name a team to a plain organization member who is not on it', async () => {
+    const db = mockDb({
+      orgs: [{ organization: { name: 'Acme' }, orgId: 'org-1', role: 'MEMBER' }],
+    });
+    const existing = await effectivePermissions(db, USER, { teamId: 'team-b' });
+    const missing = await effectivePermissions(db, USER, { teamId: 'no-such-team' });
+    expect(existing).toEqual({ ok: false, reason: 'NO_STANDING' });
+    expect(missing).toEqual(existing);
+  });
+
   it('refuses a team without standing the same way whether it exists or not', async () => {
     const db = mockDb({});
     const existing = await effectivePermissions(db, USER, { teamId: 'team-c' });
