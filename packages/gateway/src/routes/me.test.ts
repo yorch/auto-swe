@@ -27,6 +27,9 @@ async function buildApp() {
   app.setSerializerCompiler(serializerCompiler);
 
   const mockPrisma = {
+    organizationMembership: { findMany: vi.fn(async () => []) },
+    team: { findMany: vi.fn(async () => []), findUnique: vi.fn(async () => null) },
+    teamMembership: { findMany: vi.fn(async () => []) },
     user: {
       findUniqueOrThrow: vi.fn(),
       update: vi.fn(),
@@ -304,6 +307,37 @@ describe('meRoutes', () => {
       expect(list.statusCode).toBe(401);
       expect(del.statusCode).toBe(401);
       expect(mcpMocks.revokeMcpGrants).not.toHaveBeenCalled();
+    });
+  });
+  describe('GET /api/v1/me/permissions', () => {
+    it("answers the caller's own standing, empty for a person with no memberships", async () => {
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/me/permissions',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        organizations: [],
+        platformCapabilities: expect.any(Array),
+        platformRole: 'ENGINEER',
+        teams: [],
+      });
+    });
+
+    it('answers 403 for a team the caller has no standing on, existing or not', async () => {
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/me/permissions?teamId=00000000-0000-4000-8000-0000000000aa',
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('FORBIDDEN');
+    });
+
+    it('requires authentication', async () => {
+      const res = await ctx.app.inject({ method: 'GET', url: '/api/v1/me/permissions' });
+      expect(res.statusCode).toBe(401);
     });
   });
 });

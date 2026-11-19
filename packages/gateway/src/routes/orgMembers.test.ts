@@ -18,6 +18,14 @@ const TARGET_USER = '00000000-0000-4000-8000-0000000000bb';
 const TEAM_ID = '00000000-0000-4000-8000-0000000000cc';
 
 const orgLockCalls: string[] = [];
+/** Every lock the removal takes, in order: 'org', then 'team:<id>'. */
+const lockOrder: string[] = [];
+const teamMembershipDelete = vi.fn().mockResolvedValue({});
+/** The target's team memberships in the organization, and the other members of those teams. */
+const cascade: {
+  peers: Array<{ role: string; teamId: string; userId: string }>;
+  rows: Array<{ id: string; role: string; teamId: string; userId: string }>;
+} = { peers: [], rows: [] };
 
 const MEMBER_ROW = {
   createdAt: new Date(),
@@ -56,7 +64,12 @@ function buildApp(
   teamFindUnique.mockResolvedValue({ id: TEAM_ID, orgId: ORG_ID });
   let prisma: Record<string, unknown>;
   prisma = {
+    $executeRaw: vi.fn(async (_strings: TemplateStringsArray, id: string) => {
+      lockOrder.push(`team:${id}`);
+      return 1;
+    }),
     $queryRaw: vi.fn(async () => {
+      lockOrder.push('org');
       orgLockCalls.push(ORG_ID);
       return [{ id: ORG_ID }];
     }),
@@ -98,14 +111,29 @@ function buildApp(
     },
     teamMembership: {
       create: teamMemberCreate,
+      delete: teamMembershipDelete,
       findMany: vi
         .fn()
-        .mockImplementation((args: { select: { team?: unknown } }) =>
-          Promise.resolve(
-            args.select.team
-              ? [{ role: teamRole, team: { id: TEAM_ID, isActive: true, orgId: ORG_ID } }]
-              : [{ role: teamRole, teamId: TEAM_ID }]
-          )
+        .mockImplementation(
+          (args: {
+            select: { id?: unknown; team?: unknown };
+            where: { team?: { orgId?: string }; teamId?: unknown; userId?: string };
+          }) => {
+            if (args.where.team?.orgId) {
+              // The organization-removal cascade's reads of the target's memberships.
+              return Promise.resolve(
+                'id' in args.select ? cascade.rows : cascade.rows.map((r) => ({ teamId: r.teamId }))
+              );
+            }
+            if (args.where.teamId && !args.where.userId) {
+              return Promise.resolve(cascade.peers);
+            }
+            return Promise.resolve(
+              args.select.team
+                ? [{ role: teamRole, team: { id: TEAM_ID, isActive: true, orgId: ORG_ID } }]
+                : [{ role: teamRole, teamId: TEAM_ID }]
+            );
+          }
         ),
       findUnique: vi.fn().mockResolvedValue({ role: teamRole }),
     },
@@ -122,6 +150,9 @@ describe('GET /:orgId/members', () => {
   afterEach(() => {
     vi.clearAllMocks();
     orgLockCalls.length = 0;
+    lockOrder.length = 0;
+    cascade.rows = [];
+    cascade.peers = [];
   });
 
   it('returns members list for org admin', async () => {
@@ -146,6 +177,9 @@ describe('POST /:orgId/members', () => {
   afterEach(() => {
     vi.clearAllMocks();
     orgLockCalls.length = 0;
+    lockOrder.length = 0;
+    cascade.rows = [];
+    cascade.peers = [];
   });
 
   it('creates a membership', async () => {
@@ -200,6 +234,9 @@ describe('POST /:orgId/members/invite', () => {
   afterEach(() => {
     vi.clearAllMocks();
     orgLockCalls.length = 0;
+    lockOrder.length = 0;
+    cascade.rows = [];
+    cascade.peers = [];
   });
 
   const invite = async (role: string, trustedInvites = false, orgActive = true) => {
@@ -231,6 +268,10 @@ describe('POST /:orgId/members/invite', () => {
         'TeamMembership',
         'User',
       ]);
+      // The ground of the decision that allowed the invitation is on every row it wrote.
+      expect(
+        auditCreate.mock.calls.map((c) => (c[0].data.context as { authority?: string })?.authority)
+      ).toEqual(['org-admin', 'org-admin', 'org-admin']);
       await app.close();
     }
   );
@@ -329,6 +370,9 @@ describe('POST /:orgId/members/invite authorization', () => {
   afterEach(() => {
     vi.clearAllMocks();
     orgLockCalls.length = 0;
+    lockOrder.length = 0;
+    cascade.rows = [];
+    cascade.peers = [];
   });
 
   it('refuses an organization member who is not an administrator', async () => {
@@ -364,6 +408,9 @@ describe('POST /teams/:id/members/invite', () => {
   afterEach(() => {
     vi.clearAllMocks();
     orgLockCalls.length = 0;
+    lockOrder.length = 0;
+    cascade.rows = [];
+    cascade.peers = [];
   });
 
   it.each([
@@ -502,6 +549,9 @@ describe('PATCH /:orgId/members/:userId guards', () => {
   afterEach(() => {
     vi.clearAllMocks();
     orgLockCalls.length = 0;
+    lockOrder.length = 0;
+    cascade.rows = [];
+    cascade.peers = [];
   });
 
   it('refuses an administrator removing themselves', async () => {
@@ -520,6 +570,9 @@ describe('PATCH /:orgId/members/:userId', () => {
   afterEach(() => {
     vi.clearAllMocks();
     orgLockCalls.length = 0;
+    lockOrder.length = 0;
+    cascade.rows = [];
+    cascade.peers = [];
   });
 
   it('returns 403 for a platform-ENGINEER who is only an ORG_MEMBER', async () => {
@@ -539,6 +592,9 @@ describe('DELETE /:orgId/members/:userId', () => {
   afterEach(() => {
     vi.clearAllMocks();
     orgLockCalls.length = 0;
+    lockOrder.length = 0;
+    cascade.rows = [];
+    cascade.peers = [];
   });
 
   it('removes a membership', async () => {
@@ -550,6 +606,45 @@ describe('DELETE /:orgId/members/:userId', () => {
     });
     expect(res.statusCode).toBe(204);
     expect(orgLockCalls).toEqual([ORG_ID]);
+  });
+
+  it('removes the memberships in every team of the organization in the same transaction, locking the organization first and the teams in ascending id order', async () => {
+    cascade.rows = [
+      { id: 'tm-b', role: 'ENGINEER', teamId: 'team-b', userId: TARGET_USER },
+      { id: 'tm-a', role: 'ADMIN', teamId: 'team-a', userId: TARGET_USER },
+    ];
+    // Team A keeps no other ADMIN: an organization authority may leave it so.
+    cascade.peers = [{ role: 'ENGINEER', teamId: 'team-a', userId: 'someone' }];
+    const app = buildApp('ADMIN');
+    await app.ready();
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `${PREFIX}/${ORG_ID}/members/${TARGET_USER}`,
+    });
+    expect(res.statusCode).toBe(204);
+    expect(lockOrder).toEqual(['org', 'team:team-a', 'team:team-b']);
+    expect(teamMembershipDelete.mock.calls.map((c) => c[0].where.id).sort()).toEqual([
+      'tm-a',
+      'tm-b',
+    ]);
+    const audited = auditCreate.mock.calls
+      .map((c) => c[0].data)
+      .filter((d: { entityType: string }) => d.entityType === 'TeamMembership');
+    expect(audited.map((d: { entityId: string }) => d.entityId).sort()).toEqual(['tm-a', 'tm-b']);
+    expect(audited.every((d: { action: string }) => d.action === 'DELETE')).toBe(true);
+  });
+
+  it('removes no team membership when the user has none in the organization', async () => {
+    cascade.rows = [];
+    const app = buildApp('ADMIN');
+    await app.ready();
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `${PREFIX}/${ORG_ID}/members/${TARGET_USER}`,
+    });
+    expect(res.statusCode).toBe(204);
+    expect(teamMembershipDelete).not.toHaveBeenCalled();
+    expect(lockOrder).toEqual(['org']);
   });
 
   it('returns 403 for a platform-ENGINEER who is only an ORG_MEMBER', async () => {

@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { readDueSoonHours } from '../lib/dueSoonHours.js';
+import { loadEffectivePermissions } from '../lib/effectivePermissions.js';
 import { sendError } from '../lib/httpErrors.js';
 import { listMcpGrants, revokeMcpGrants } from '../lib/mcpGrants.js';
 import { buildMeSummary } from '../lib/meSummary.js';
@@ -44,6 +45,29 @@ export const meRoutes: FastifyPluginAsync = async (fastify) => {
       user,
     });
   });
+
+  // GET /api/v1/me/permissions[?teamId=]: what the caller may do, from the same resolver the routes
+  // use. Open to any signed-in person because it describes only their own standing. With `teamId`
+  // it is narrowed to that team and includes capabilities held only through organization or
+  // platform authority; a team the caller has no standing on answers 403 whether or not it exists.
+  app.get(
+    '/permissions',
+    {
+      onRequest: requireAuth(),
+      schema: { querystring: z.object({ teamId: z.string().uuid().optional() }) },
+    },
+    async (request, reply) => {
+      const answer = await loadEffectivePermissions(
+        fastify.prisma,
+        requireUser(request),
+        request.query.teamId
+      );
+      if (!answer.ok) {
+        return reply.status(answer.status).send({ error: answer.error });
+      }
+      return answer.body;
+    }
+  );
 
   // GET /api/v1/me/preferences
   app.get('/preferences', { onRequest: requireAuth() }, async (request) => {

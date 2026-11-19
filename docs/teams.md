@@ -113,10 +113,11 @@ role of LEAD does not raise anything for a non-member: only the platform ADMIN i
 | `repos` | everyone | Active repositories the team owns or that are shared to it, that the caller may reach (membership and the access gate): `relation` is `owned` or `shared`, and a shared one names the owning team |
 | `budget` | everyone | The budget that binds work on the team's repositories: `scope`, `state`, `percentUsed`, `alertThresholdPercent`. Percent only, for every viewer level ([the budget meter](#the-budget-meter)); `null` when neither the team nor its organization sets a cap |
 | `lead` | `lead`, `admin` | `unownedFailures`, `staleApprovals`, `openPullRequests` |
+| `needsAdmin` | viewers holding `team.members.manage` on the team | `true` when the team has no ADMIN, which an organization removal can leave. Absent otherwise, never `false`; appoint one through the members tab |
 | `repos[].canLaunch` | everyone | `false` when the repository is shared to the team view-only; always `true` for an owned one |
 | `admin.monthCostUsdCents` | `admin` | This calendar month's spend (UTC) attributed to the team, in cents; `null` when it cannot be computed. Absent for a team ADMIN who is not an ORG_ADMIN when the binding cap is the organization's; present when the team's own cap binds |
 
-`lead` and `admin` are **absent** from the JSON for a lower view, not `null`, and their queries are
+`lead`, `admin` and `needsAdmin` are **absent** from the JSON for a lower view, not `null`, and their queries are
 not run. The `activity` feed names a launcher by display name only. The feed's name is the run's credential launcher (`launchedById`), so it can differ from a run's initiator. Run lists are different: a run's
 initiator is shown with name and email to anyone who can see the run ([run-provenance.md](./run-provenance.md)).
 
@@ -580,7 +581,31 @@ the first team membership and any automatic organization membership commit toget
 
 Adding a member through `POST /api/v1/teams/:id/members` requires that user to belong to the team's
 organization (`400 ORG_MEMBERSHIP_REQUIRED` otherwise). A platform ADMIN can add a non-member;
-the gateway creates an audited `ORG_MEMBER` membership in the same transaction.
+the gateway creates an audited `ORG_MEMBER` membership in the same transaction. The add
+takes the organization's row lock before the team's and reads the organization membership under it,
+so a concurrent organization removal cannot leave a user on a team without belonging to its
+organization.
+
+### Leaving an organization
+
+Removing an organization membership (`DELETE /api/v1/platform/organizations/:orgId/members/:userId`,
+also under the admin prefix) removes the user's memberships in every team of that organization in the
+same transaction, with one audit row for each, carrying the `authority` of the decision. A role
+change is not a removal and cascades nothing. The transaction locks the organization first, then the
+affected teams in ascending id order, the order every membership write takes them in.
+
+- Removing the organization's last `ORG_ADMIN` is refused with `409 LAST_ORG_ADMIN`, unless the
+  actor is a platform ADMIN.
+- The cascade may leave a team with no ADMIN only when the actor holds organization or platform
+  authority; the team's overview then carries `needsAdmin` for those who can appoint one. A
+  team-level removal of the last ADMIN is still refused with `409 LAST_TEAM_ADMIN`.
+
+`GET /api/v1/me/permissions` answers what the signed-in person may do, from the same resolver the
+routes use: `platformRole`, `platformCapabilities`, and for each team and organization they belong to
+the `role` and the `capabilities`, each as `{ key, authority }`. With `?teamId=` it is narrowed to that
+team and includes it when the person holds capabilities there only through organization or platform
+authority (`role` is then `null`). A team the person has no standing on answers `403 FORBIDDEN`
+whether or not it exists.
 
 Sign-up and platform user invitations enroll the user in the default team's organization as
 `ORG_MEMBER` and in the default team as `ENGINEER` in one audited transaction. Existing organization
@@ -631,7 +656,6 @@ in the approval queue. See [invited users](./oauth-setup.md#invited-users) for t
 - Team invitations require a new email address; existing users are added through the member-add
   route. A failed invitation email does not roll back the account or memberships.
 
-- Removing an organization membership does not remove that user's team memberships.
 - **Engineers see failures only for runs they launched, or that a lead assigned to them.** A lead
   does not see a failure on a teammate's run in the desk, and a run the caller controls but did not
   launch is excluded unless it was assigned.

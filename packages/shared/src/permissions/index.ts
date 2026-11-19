@@ -21,6 +21,15 @@ export {
   notAuthor,
   notSelf,
 } from './constraints.js';
+export {
+  type EffectiveOrganization,
+  type EffectivePermissions,
+  type EffectiveRefusal,
+  type EffectiveResult,
+  type EffectiveTeam,
+  effectivePermissions,
+  type HeldCapability,
+} from './effective.js';
 export { can, heldScope, loadStanding, type PermissionsDb, userActor } from './load.js';
 export {
   isPlatformAdmin,

@@ -118,6 +118,9 @@ async function createTeam(
 ) {
   const audit = context ? { context } : {};
   return fastify.prisma.$transaction(async (tx) => {
+    // CLAUDE.md §7 exception: the organization lock serializes the first admin's membership checks
+    // with an organization removal, which deletes team memberships under the same lock.
+    await tx.$executeRaw`SELECT 1 FROM organizations WHERE id = ${orgId}::uuid FOR UPDATE`;
     await ensureOrganizationMember(
       fastify,
       tx,
@@ -294,9 +297,20 @@ async function applyMembershipChange<T>(
   prisma: FastifyInstance['prisma'],
   teamId: string,
   removesAdmin: boolean,
-  write: (db: Prisma.TransactionClient) => Promise<T>
+  write: (db: Prisma.TransactionClient) => Promise<T>,
+  /**
+   * The team's organization, for a write that reads or creates an organization membership. Its row
+   * lock is then taken first, before the team's, so the organization-removal cascade (which takes
+   * the same two locks in the same order) cannot interleave with the add.
+   */
+  orgId?: string
 ): Promise<{ ok: true; value: T } | { ok: false; guard: TeamGuardResult }> {
   return prisma.$transaction(async (tx) => {
+    if (orgId) {
+      // CLAUDE.md §7 exception: the organization lock serializes this membership write with an
+      // organization removal, which deletes the user's team memberships under the same lock.
+      await tx.$executeRaw`SELECT 1 FROM organizations WHERE id = ${orgId}::uuid FOR UPDATE`;
+    }
     // CLAUDE.md §7 exception: this lock is shared with source checks and serializes all
     // membership changes for this team.
     await tx.$executeRaw`SELECT 1 FROM teams WHERE id = ${teamId}::uuid FOR UPDATE`;
@@ -783,6 +797,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
       }
       const result = await inviteUser(fastify, actor, {
+        ...(request.authority ? { authority: request.authority } : {}),
         email: request.body.email,
         orgId: team.orgId,
         orgRole: 'ORG_MEMBER',
@@ -825,6 +840,13 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       if (existing) {
         return sendConflict(reply, 'MEMBER_EXISTS', 'User is already a member of this team');
       }
+      const target = await fastify.prisma.team.findUnique({
+        select: { orgId: true },
+        where: { id: request.params.id },
+      });
+      if (!target) {
+        return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
+      }
 
       // The read above is only the friendly early answer; the unique index on
       // (userId, teamId) decides a concurrent double-add, which must be a 409,
@@ -861,7 +883,10 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
               entityType: 'TeamMembership',
             });
             return membership;
-          }
+          },
+          // The organization membership is read under the organization's lock, so an organization
+          // removal that ran first is seen and one that runs next waits for this membership.
+          target.orgId
         );
         if (!result.ok) {
           return sendError(reply, 409, result.guard.code, result.guard.message);

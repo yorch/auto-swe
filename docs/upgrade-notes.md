@@ -2070,3 +2070,21 @@ clear it.
 show as Unverified in `/agents`.
 
 ---
+
+### Users who left an organization but kept team memberships (`<fixing-commit-sha>`)
+
+**Affected.** Deployments where an organization membership was removed before this change. Removal
+used to leave the person's memberships in the organization's teams, so a user can belong to a team of
+an organization they are no longer a member of.
+
+**What changes.** Removing an organization membership now removes the user's memberships in all of that
+organization's teams in the same transaction, one audit row each. Memberships left by earlier removals
+are not cleaned up. A cascade can leave a team with no ADMIN, shown as `needsAdmin` on its overview.
+
+**Actions.** List team memberships whose user has no membership in the team's organization
+(`team_memberships` joined to `teams` with no matching `organization_memberships` row), and remove them
+through the team members API, or re-add the user to the organization where the access is intended.
+Appoint an ADMIN for any team the overview flags.
+
+**Verify.** The same query returns no rows, and removing a test user from an organization removes their
+team memberships.

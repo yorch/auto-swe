@@ -47,6 +47,13 @@ const LAST_WINDOW_DAYS = 7;
 
 type ViewerLevel = TeamOverview['viewerLevel'];
 
+/**
+ * The overview as built here. `needsAdmin` is present, and `true`, only for a viewer who governs
+ * the team (`team.members.manage`) when the team has no ADMIN; it is absent otherwise, never
+ * `false` or `null`, like `lead` and `admin`.
+ */
+export type TeamOverviewView = TeamOverview & { needsAdmin?: true };
+
 interface OverviewDeps {
   dueSoonHours: number;
   gate: MaybeGate;
@@ -64,6 +71,15 @@ export function viewerLevelFor(teamRole: string | null, platformRole: string): V
     return 'admin';
   }
   return teamRankMeets(rank, 'LEAD') ? 'lead' : 'engineer';
+}
+
+/** Whether the viewer holds the governance capability that appoints a team's members. */
+async function viewerGovernsTeam(
+  prisma: PrismaClient,
+  user: VisibilityActor,
+  teamId: string
+): Promise<boolean> {
+  return (await can(prisma, userActor(user), 'team.members.manage', { teamId })).allowed;
 }
 
 function startOfMonthUtc(now: number): Date {
@@ -275,7 +291,7 @@ async function monthCostCents(
 export async function buildTeamOverview(
   deps: OverviewDeps,
   teamId: string
-): Promise<TeamOverview | null> {
+): Promise<TeamOverviewView | null> {
   const { dueSoonHours, gate, prisma, user } = deps;
   const team = await prisma.team.findUnique({
     select: {
@@ -337,7 +353,7 @@ export async function buildTeamOverview(
       .running,
   };
   const groups = groupRequestExecutions(recent);
-  const overview: TeamOverview = {
+  const overview: TeamOverviewView = {
     activity,
     budget: budgets.get(team.id) ?? null,
     last7d: {
@@ -371,6 +387,20 @@ export async function buildTeamOverview(
     viewerLevel,
   };
 
+  // A team with no ADMIN (an organization removal may leave one) is flagged for those who can
+  // appoint one. One read of the roles answers it for nearly every team; the capability is asked
+  // only for a team that has none.
+  const roles = await prisma.teamMembership.findMany({
+    select: { role: true },
+    where: { teamId: team.id },
+  });
+  if (
+    !roles.some((m) => teamRankMeets(teamRankOf(m.role), 'ADMIN')) &&
+    (await viewerGovernsTeam(prisma, user, team.id))
+  ) {
+    overview.needsAdmin = true;
+  }
+
   if (viewerLevel === 'engineer') {
     return overview;
   }
@@ -401,7 +431,7 @@ export async function buildTeamOverview(
       },
     }),
   ]);
-  const withLead: TeamOverview = {
+  const withLead: TeamOverviewView = {
     ...overview,
     lead: { openPullRequests, staleApprovals, unownedFailures },
   };

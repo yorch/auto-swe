@@ -137,6 +137,12 @@ decide(standing, capability, resource?)    // Decision, with no database
 - The gateway caches a decision for the life of a request and never across requests. Memberships
   are read on each check.
 
+### Reading your own permissions
+
+`GET /api/v1/me/permissions[?teamId=]` returns the caller's effective permissions, derived from the
+same standing and decision code as the checks above, so it cannot disagree with them. See
+[teams](./teams.md#leaving-an-organization) for the shape. The in-app assistant may call it.
+
 ### Declaring a route
 
 ```ts

@@ -1,7 +1,8 @@
 import type { Role } from '@auto-swe/shared';
-import { isPlatformAdmin } from '@auto-swe/shared/permissions';
+import { type Authority, isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyInstance } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
+import { type AuditContext, currentAuditContext } from './auditContext.js';
 import { writeAuditLog } from './auditLog.js';
 import { getDefaultClientOrigin } from './env.js';
 import { isUniqueConstraintError } from './prismaErrors.js';
@@ -10,6 +11,12 @@ export async function inviteUser(
   fastify: FastifyInstance,
   actor: JwtPayload,
   args: {
+    /**
+     * The ground of the capability decision that allowed the invitation. It is written into the audit
+     * context of every row the invitation creates. A route that decided with `can()` passes it,
+     * because only a route's declarative check records it on the request.
+     */
+    authority?: Authority;
     email: string;
     orgId: string;
     orgRole: 'ORG_ADMIN' | 'ORG_MEMBER';
@@ -24,6 +31,9 @@ export async function inviteUser(
     ok: false as const,
     status,
   });
+  const audit: { context?: AuditContext } = args.authority
+    ? { context: { ...(currentAuditContext() ?? {}), authority: args.authority } }
+    : {};
   let result:
     | ReturnType<typeof refusal>
     | { ok: true; user: { email: string; id: string; isActive: boolean; role: Role } };
@@ -70,6 +80,7 @@ export async function inviteUser(
         actor,
         after: { orgId: args.orgId, role: args.orgRole, userId: user.id },
         client: tx,
+        ...audit,
         entityId: membership.id,
         entityType: 'OrganizationMembership',
       });
@@ -82,6 +93,7 @@ export async function inviteUser(
           actor,
           after: { role: teamMembership.role, teamId: args.teamId, userId: user.id },
           client: tx,
+          ...audit,
           entityId: teamMembership.id,
           entityType: 'TeamMembership',
         });
@@ -91,6 +103,7 @@ export async function inviteUser(
         actor,
         after: { approvalSource, email: user.email, isActive: user.isActive, orgId: args.orgId },
         client: tx,
+        ...audit,
         entityId: user.id,
         entityType: 'User',
       });

@@ -244,9 +244,10 @@ function buildApp(state: State): FastifyInstance {
         if (include) {
           state.detailIncludes?.push(include);
         }
-        return (
-          state.teams.find((t) => (where.id ? t.id === where.id : t.slug === where.slug)) ?? null
+        const found = state.teams.find((t) =>
+          where.id ? t.id === where.id : t.slug === where.slug
         );
+        return found ? { orgId: TEAM_ID, ...found } : null;
       },
       findUniqueOrThrow: async () => ({ orgId: TEAM_ID }),
       update: async ({
@@ -1134,7 +1135,40 @@ describe('POST /api/v1/teams/:id/members', () => {
 
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe('MEMBER_EXISTS');
-    expect(state.locks).toEqual([TEAM_ID]);
+    // The organization's row lock first, then the team's.
+    expect(state.locks).toEqual([TEAM_ID, TEAM_ID]);
+  });
+
+  it('locks the organization before the team and reads the organization membership under it', async () => {
+    const ORG = '00000000-0000-4000-8000-0000000000dd';
+    const state = freshState({
+      orgMemberships: [
+        { id: 'new-user-org', orgId: TEAM_ID, role: 'ORG_MEMBER', userId: NEW_USER_ID },
+      ],
+    });
+    state.teams[0] = { ...state.teams[0], orgId: ORG } as never;
+    const app = buildApp(state);
+    const res = await app.inject({
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'POST',
+      payload: { role: 'ENGINEER', userId: NEW_USER_ID },
+      url: `/api/v1/teams/${TEAM_ID}/members`,
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(state.locks).toEqual([ORG, TEAM_ID]);
+  });
+
+  it('answers 404 for a team that does not exist, before taking any lock', async () => {
+    const state = freshState({ userRole: 'ADMIN' });
+    const app = buildApp(state);
+    const res = await app.inject({
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'POST',
+      payload: { role: 'ENGINEER', userId: NEW_USER_ID },
+      url: '/api/v1/teams/00000000-0000-4000-8000-0000000000ee/members',
+    });
+    expect(res.statusCode).toBe(404);
+    expect(state.locks ?? []).toEqual([]);
   });
 });
 

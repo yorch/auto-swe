@@ -8,16 +8,20 @@
  */
 import type { Prisma } from '@auto-swe/shared';
 import {
+  type Authority,
   actingRank,
+  isPlatformAdmin,
   loadStanding,
   notSelf,
   orgIsAdmin,
   TEAM_ROLE_RANK,
+  teamRankMeets,
   teamRankOf,
 } from '@auto-swe/shared/permissions';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { auditContextOf } from '../lib/auditContext.js';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { actorOf, can, replyRefusal } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
@@ -44,6 +48,22 @@ type OrgMemberRole = z.infer<typeof PatchMemberSchema>['role'];
 
 type OrgAdminGuardResult = { code: string; message: string } | null;
 
+function teamMembershipAuditFields(row: { role: string; teamId: string; userId: string }) {
+  return { role: row.role, teamId: row.teamId, userId: row.userId };
+}
+
+/** The more exceptional of two authorities, as a combined decision reports it. */
+const AUTHORITY_ORDER: Readonly<Record<Authority, number>> = {
+  'org-admin': 2,
+  'org-member': 1,
+  'platform-admin': 3,
+  'team-role': 0,
+};
+
+function strongestAuthority(a: Authority, b: Authority): Authority {
+  return AUTHORITY_ORDER[b] > AUTHORITY_ORDER[a] ? b : a;
+}
+
 /** Prevent self-demotion/self-removal and removing/demoting the last org admin. */
 async function guardOrgAdminChange(
   db: Prisma.TransactionClient,
@@ -52,7 +72,8 @@ async function guardOrgAdminChange(
   actorUserId: string,
   action: 'delete' | 'update',
   currentRole: OrgMemberRole,
-  newRole?: OrgMemberRole
+  newRole?: OrgMemberRole,
+  actorIsPlatformAdmin = false
 ): Promise<OrgAdminGuardResult> {
   if (!notSelf(actorUserId, targetUserId)) {
     if (action === 'delete') {
@@ -62,7 +83,11 @@ async function guardOrgAdminChange(
       return { code: 'SELF_DEMOTION', message: 'Cannot change your own organization role' };
     }
   }
+  // The instance operator may remove an organization's last admin (and then appoint another); the
+  // organization's own admins may not leave it with none. A role change is not a removal.
+  const operatorRemoval = action === 'delete' && actorIsPlatformAdmin;
   if (
+    !operatorRemoval &&
     orgIsAdmin(currentRole) &&
     ((action === 'update' && newRole && !orgIsAdmin(newRole)) || action === 'delete')
   ) {
@@ -79,6 +104,90 @@ async function guardOrgAdminChange(
     }
   }
   return null;
+}
+
+type CascadePlan =
+  | { guard: { code: string; message: string } }
+  | { rows: Array<{ id: string; role: string; teamId: string; userId: string }> };
+
+/**
+ * The user's memberships in every team of the organization, locked and checked, and nothing
+ * written. The caller already holds the organization's row lock; the teams' locks are taken here in
+ * ascending id order, the order every other writer takes them in. The memberships are read after the
+ * locks, so a change that was waiting on one is seen.
+ *
+ * The cascade may leave a team with no ADMIN only for an actor who holds organization or platform
+ * authority, who governs the team and can appoint another; for anyone else it is refused with the
+ * `LAST_TEAM_ADMIN` a team-level removal gives. The team then shows `needsAdmin` on its overview.
+ */
+async function planTeamCascade(
+  tx: Prisma.TransactionClient,
+  orgId: string,
+  userId: string,
+  authority: Authority | undefined
+): Promise<CascadePlan> {
+  const teamIds = (
+    await tx.teamMembership.findMany({
+      orderBy: { teamId: 'asc' },
+      select: { teamId: true },
+      where: { team: { orgId }, userId },
+    })
+  ).map((m) => m.teamId);
+  for (const teamId of [...teamIds].sort()) {
+    // CLAUDE.md §7 exception: the team row lock every membership write takes, taken after the
+    // organization's and in ascending id order so two cascades cannot deadlock.
+    await tx.$executeRaw`SELECT 1 FROM teams WHERE id = ${teamId}::uuid FOR UPDATE`;
+  }
+  const rows = await tx.teamMembership.findMany({
+    orderBy: { teamId: 'asc' },
+    select: { id: true, role: true, teamId: true, userId: true },
+    where: { team: { orgId }, userId },
+  });
+  const governs = authority === 'org-admin' || authority === 'platform-admin';
+  const adminRows = rows.filter((r) => teamRankMeets(teamRankOf(r.role), 'ADMIN'));
+  if (!governs && adminRows.length > 0) {
+    const peers = await tx.teamMembership.findMany({
+      select: { role: true, teamId: true, userId: true },
+      where: { teamId: { in: adminRows.map((r) => r.teamId) } },
+    });
+    for (const row of adminRows) {
+      const others = peers.filter(
+        (p) =>
+          p.teamId === row.teamId &&
+          p.userId !== userId &&
+          teamRankMeets(teamRankOf(p.role), 'ADMIN')
+      );
+      if (others.length === 0) {
+        return {
+          guard: {
+            code: 'LAST_TEAM_ADMIN',
+            message: 'Cannot remove or demote the last team admin',
+          },
+        };
+      }
+    }
+  }
+  return { rows };
+}
+
+async function removeTeamMemberships(
+  fastify: Parameters<typeof orgMembersPlugin>[0],
+  tx: Prisma.TransactionClient,
+  request: FastifyRequest,
+  rows: Extract<CascadePlan, { rows: unknown }>['rows']
+): Promise<void> {
+  for (const row of rows) {
+    await tx.teamMembership.delete({ where: { id: row.id } });
+    await writeAuditLog(fastify, {
+      action: 'DELETE',
+      actor: requireUser(request),
+      before: teamMembershipAuditFields(row),
+      client: tx,
+      context: auditContextOf(request),
+      entityId: row.id,
+      entityType: 'TeamMembership',
+    });
+  }
 }
 
 async function withOrganizationMembershipLock<T>(
@@ -210,6 +319,8 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
       if (!orgDecision.allowed) {
         return replyRefusal(reply, orgDecision);
       }
+      // Both decisions allowed the invitation; the audit records the more exceptional ground.
+      let authority: Authority = orgDecision.authority;
       if (teamId) {
         // A team of another organization keeps its 400, as before; only then is the team asked.
         const team = await fastify.prisma.team.findUnique({
@@ -223,6 +334,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
         if (!teamDecision.allowed) {
           return replyRefusal(reply, teamDecision);
         }
+        authority = strongestAuthority(authority, teamDecision.authority);
         // The same rank rule as a team member-add: no grant above the rank the actor acts at.
         const standing = await loadStanding(fastify.prisma, actorOf(request), { teamId });
         const actorRank = actingRank(standing, teamId);
@@ -237,6 +349,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
         }
       }
       const result = await inviteUser(fastify, requireUser(request), {
+        authority,
         email,
         orgId,
         orgRole,
@@ -329,10 +442,18 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
           userId,
           requireUser(request).sub,
           'delete',
-          row.role
+          row.role,
+          undefined,
+          isPlatformAdmin(requireUser(request))
         );
         if (guard) {
           return { guard };
+        }
+        // Leaving the organization ends the person's place in all of its teams, in this
+        // transaction: nothing is written until every refusal has been decided.
+        const plan = await planTeamCascade(tx, orgId, userId, request.authority);
+        if ('guard' in plan) {
+          return { guard: plan.guard };
         }
         await tx.organizationMembership.delete({ where: { id: row.id } });
         await writeAuditLog(fastify, {
@@ -343,6 +464,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
           entityId: row.id,
           entityType: 'OrganizationMembership',
         });
+        await removeTeamMemberships(fastify, tx, request, plan.rows);
         return { deleted: true as const };
       });
       if ('missing' in result) {

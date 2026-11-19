@@ -79,6 +79,8 @@ interface Fixture {
   sharedCanLaunch?: boolean;
   costUsd?: number | null | Error;
   members?: string[];
+  /** The team's member roles as the roles read sees them (default: one ADMIN). */
+  memberRoles?: string[];
   openPrs?: number;
   platformRole?: 'ADMIN' | 'LEAD' | 'ENGINEER';
   recent?: unknown[];
@@ -162,14 +164,18 @@ async function build(fx: Fixture) {
       ]),
     },
     team: {
-      // The team's own budget row; the fixture's team sets no cap of its own.
-      findMany: vi.fn(async (args: { where: { id: { in: string[] } } }) =>
-        [
-          { id: TEAM, monthlyBudgetUsdCents: fx.teamCapCents ?? null },
-          { id: OTHER_TEAM, monthlyBudgetUsdCents: fx.ownerCapCents ?? null },
-        ]
-          .filter((t) => t.monthlyBudgetUsdCents != null && args.where.id.in.includes(t.id))
-          .map((t) => ({ ...t, budgetAlertThresholdPercent: null }))
+      // The team's own budget row; the fixture's team sets no cap of its own. The permissions
+      // loader asks for the team's activity and organization instead.
+      findMany: vi.fn(
+        async (args: { select?: { isActive?: boolean }; where: { id: { in: string[] } } }) =>
+          args.select?.isActive
+            ? [{ id: TEAM, isActive: true, orgId: 'org-1' }]
+            : [
+                { id: TEAM, monthlyBudgetUsdCents: fx.teamCapCents ?? null },
+                { id: OTHER_TEAM, monthlyBudgetUsdCents: fx.ownerCapCents ?? null },
+              ]
+                .filter((t) => t.monthlyBudgetUsdCents != null && args.where.id.in.includes(t.id))
+                .map((t) => ({ ...t, budgetAlertThresholdPercent: null }))
       ),
       findUnique: vi.fn().mockResolvedValue(
         fx.teamExists === false
@@ -185,7 +191,18 @@ async function build(fx: Fixture) {
       ),
     },
     teamMembership: {
-      findMany: vi.fn().mockResolvedValue((fx.members ?? [ME]).map((userId) => ({ userId }))),
+      findMany: vi.fn(
+        async (args: { select: Record<string, unknown>; where: { userId?: string } }) => {
+          if (args.where.userId) {
+            // The permissions loader's read of the viewer's own membership.
+            return fx.teamRole ? [{ role: fx.teamRole, teamId: TEAM }] : [];
+          }
+          if ('role' in args.select) {
+            return (fx.memberRoles ?? ['ADMIN']).map((role) => ({ role }));
+          }
+          return (fx.members ?? [ME]).map((userId) => ({ userId }));
+        }
+      ),
     },
     teamSpendUsd: { [OTHER_TEAM]: fx.ownerSpendUsd ?? 0, [TEAM]: fx.teamSpendUsd ?? 0 },
     workflowHumanStep: {
@@ -289,7 +306,44 @@ describe('GET /api/v1/teams/:id/overview', () => {
     expect(prisma.workflowHumanStep.count).not.toHaveBeenCalled();
     expect(prisma.pullRequest.count).not.toHaveBeenCalled();
     expect(prisma.workflowRun.aggregate).not.toHaveBeenCalled();
-    expect(prisma.teamMembership.findMany).not.toHaveBeenCalled();
+    // Only the roles read for `needsAdmin`: the unowned-failures member read is not made.
+    expect(prisma.teamMembership.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.teamMembership.findMany).toHaveBeenCalledWith({
+      select: { role: true },
+      where: { teamId: TEAM },
+    });
+  });
+
+  describe('needsAdmin', () => {
+    it('is absent when the team has an ADMIN', async () => {
+      const { res } = await get({ memberRoles: ['ADMIN', 'ENGINEER'], teamRole: 'LEAD' });
+      expect('needsAdmin' in res.json().data).toBe(false);
+    });
+
+    it('is true for a lead of a team with no ADMIN', async () => {
+      const { res } = await get({ memberRoles: ['LEAD', 'ENGINEER'], teamRole: 'LEAD' });
+      expect(res.json().data.needsAdmin).toBe(true);
+    });
+
+    it('is true for an organization admin who is also a plain member', async () => {
+      const { res } = await get({
+        memberRoles: ['ENGINEER'],
+        orgRole: 'ORG_ADMIN',
+        teamRole: 'ENGINEER',
+      });
+      expect(res.json().data.viewerLevel).toBe('engineer');
+      expect(res.json().data.needsAdmin).toBe(true);
+    });
+
+    it('is true for a platform ADMIN who is not a member', async () => {
+      const { res } = await get({ memberRoles: [], platformRole: 'ADMIN', teamRole: null });
+      expect(res.json().data.needsAdmin).toBe(true);
+    });
+
+    it('is absent for a member who does not govern the team', async () => {
+      const { res } = await get({ memberRoles: ['ENGINEER'], teamRole: 'ENGINEER' });
+      expect('needsAdmin' in res.json().data).toBe(false);
+    });
   });
 
   it('gives a team LEAD the lead section and no admin key', async () => {
