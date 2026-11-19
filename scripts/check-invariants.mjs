@@ -328,6 +328,7 @@ const MCP_ROUTE_FILE = 'packages/gateway/src/routes/mcp.ts';
 const ALLOWED_PACKAGES = new Set([
   '@auto-swe/shared/lib/agentRun',
   '@auto-swe/shared/lib/gitRef',
+  '@auto-swe/shared/permissions/roles',
   '@modelcontextprotocol/server',
   'better-auth/node',
   'fastify',

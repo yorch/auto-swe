@@ -32,6 +32,14 @@ export {
 } from './effective.js';
 export { can, heldScope, loadStanding, type PermissionsDb, userActor } from './load.js';
 export {
+  ORG_ROLES,
+  type OrgRoleValue,
+  PLATFORM_ROLES,
+  type PlatformRoleValue,
+  TEAM_ROLES,
+  type TeamRoleValue,
+} from './roles.js';
+export {
   isPlatformAdmin,
   isPlatformAdminRole,
   orgIsAdmin,

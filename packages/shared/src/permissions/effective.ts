@@ -1,3 +1,4 @@
+import { runUnscoped } from '../lib/tenantGuard.js';
 import { decide } from './can.js';
 import { CATALOG, type CapabilityKey } from './catalog/index.js';
 import { loadStanding, type PermissionsDb } from './load.js';
@@ -79,7 +80,7 @@ function heldOn(
  * a member of its organization, not a platform administrator) is refused, and the refusal is the
  * same whether the team exists or not.
  */
-export async function effectivePermissions(
+async function effectivePermissionsUnscoped(
   prisma: PermissionsDb,
   actor: Extract<Actor, { kind: 'user' }>,
   opts: { teamId?: string } = {}
@@ -167,4 +168,17 @@ export async function effectivePermissions(
         .sort((a, b) => a.slug.localeCompare(b.slug) || a.teamId.localeCompare(b.teamId)),
     },
   };
+}
+
+/** See {@link effectivePermissionsUnscoped}; the caller's own memberships span tenants by definition. */
+export function effectivePermissions(
+  prisma: PermissionsDb,
+  actor: Extract<Actor, { kind: 'user' }>,
+  opts: { teamId?: string } = {}
+): Promise<EffectiveResult> {
+  return runUnscoped(
+    "the effective-permissions view reads the caller's own memberships",
+    ['Team', 'TeamMembership', 'OrganizationMembership'],
+    () => effectivePermissionsUnscoped(prisma, actor, opts)
+  );
 }

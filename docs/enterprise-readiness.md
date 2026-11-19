@@ -45,7 +45,7 @@ step.
 - **Machine identities** are separate: team-owned service principals with their own scoped tokens
   ([service-principals.md](./service-principals.md)), so a person leaving does not strand
   automation, but nothing links them to an external directory either.
-- **Roles.** Platform roles `ENGINEER < LEAD < ADMIN`, team roles and organisation roles are set
+- **Roles.** Platform roles `USER < ADMIN`, team roles `MEMBER < LEAD < ADMIN` and organisation roles are set
   in the dashboard or API. No path assigns them from an identity-provider attribute.
 
 ### Gap

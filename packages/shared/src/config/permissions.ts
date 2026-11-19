@@ -1,4 +1,4 @@
-import type { Role } from '../generated/prisma/enums.js';
+import type { PlatformRole, TeamRole } from '../generated/prisma/enums.js';
 import { isPlatformAdmin } from '../permissions/standing.js';
 import { getSettingDefinition, isSettingKey, type SettingKey } from './registry.js';
 import type { SettingScope } from './types.js';
@@ -40,7 +40,7 @@ export function keyPatternMatches(pattern: string, key: string): boolean {
 export interface ConfigGrant {
   keyPattern: string;
   userId: string | null;
-  role: Role | null;
+  role: TeamRole | null;
   scope: SettingScope;
   teamId: string | null;
   orgId: string | null;
@@ -59,7 +59,7 @@ export interface SettingWriteTarget {
 
 export interface ConfigActor {
   id: string;
-  role: Role;
+  role: PlatformRole;
 }
 
 /// The actor's role in each team they belong to, keyed by team id.

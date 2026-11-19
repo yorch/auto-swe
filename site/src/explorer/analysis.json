@@ -16758,7 +16758,7 @@
       "title": "Viewer level from team role"
     },
     {
-      "anchor": "if (viewerLevel === 'engineer') {",
+      "anchor": "if (viewerLevel === 'member') {",
       "before": 0,
       "id": "teamOverviewTiers",
       "lines": 56,
@@ -16790,12 +16790,12 @@
       "title": "Team switcher opens the team space"
     },
     {
-      "anchor": "export function teamSettingsScope(",
-      "before": 5,
+      "anchor": "const canSeeSettings = useCan('team.settings.manage', scope);",
+      "before": 2,
       "id": "webSettingsScope",
-      "lines": 16,
-      "path": "packages/web/src/lib/teamSpace.ts",
-      "title": "Team settings scope by role"
+      "lines": 6,
+      "path": "packages/web/src/app/teams/[slug]/layout.tsx",
+      "title": "Team Settings and Manage tabs follow capabilities"
     },
     {
       "anchor": "export function isViewOnlyFor(",

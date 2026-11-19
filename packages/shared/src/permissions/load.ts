@@ -1,4 +1,5 @@
 import type { PrismaClient } from '../generated/prisma/client.js';
+import { runUnscoped } from '../lib/tenantGuard.js';
 import { decide, orgRuleApplies, platformAdminHolds, requiresActiveTeam } from './can.js';
 import { CATALOG, type CapabilityKey } from './catalog/index.js';
 import { isPlatformAdmin, orgRankMeets, orgRankOf, teamRankMeets, teamRankOf } from './standing.js';
@@ -56,7 +57,7 @@ export function userActor(user: { sub: string; role: string }): Actor {
 }
 
 /** Load the actor's standing on every team and organization `resource` names. */
-export async function loadStanding(
+async function loadStandingUnscoped(
   prisma: PermissionsDb,
   actor: Actor,
   resource?: Resource
@@ -169,7 +170,7 @@ export async function can(
  * lets an organization role confer it, one organization-membership query and one lookup of those
  * organizations' teams. Nothing is asked per row.
  */
-export async function heldScope(
+async function heldScopeUnscoped(
   prisma: PermissionsDb,
   actor: Actor,
   capability: CapabilityKey
@@ -232,4 +233,36 @@ export async function heldScope(
     orgIds: def.scope === 'org' ? [...orgIds] : [],
     teamIds: [...teamIds],
   };
+}
+
+/**
+ * The resolver reads the ACTOR's own standing: their memberships across every tenant and the team
+ * rows those memberships point at. That is cross-tenant by definition and the rows never reach a
+ * caller, only a decision, so each public entry point runs its whole body under one declared
+ * exemption instead of at eleven separate call sites. Without it the tenant guard throws on the first
+ * team read in production; mocked tests cannot see that.
+ */
+const STANDING_REASON = "the capability resolver reads the actor's own memberships";
+const STANDING_MODELS = ['Team', 'TeamMembership', 'OrganizationMembership'] as const;
+
+/** Load the actor's standing on every team and organization `resource` names. */
+export function loadStanding(
+  prisma: PermissionsDb,
+  actor: Actor,
+  resource?: Resource
+): Promise<Standing> {
+  return runUnscoped(STANDING_REASON, STANDING_MODELS, () =>
+    loadStandingUnscoped(prisma, actor, resource)
+  );
+}
+
+/** The set a list endpoint may filter by (see {@link heldScopeUnscoped}). */
+export function heldScope(
+  prisma: PermissionsDb,
+  actor: Actor,
+  capability: CapabilityKey
+): Promise<HeldScope> {
+  return runUnscoped(STANDING_REASON, STANDING_MODELS, () =>
+    heldScopeUnscoped(prisma, actor, capability)
+  );
 }

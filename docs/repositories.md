@@ -210,7 +210,7 @@ admins see every listed repository without filtering.
 ### Who may onboard
 
 Onboarding (`POST /repositories` and `POST /repositories/import`) requires a platform ADMIN,
-LEAD or ADMIN membership in the active target team, or ORG_ADMIN membership in that team's
+LEAD or ADMIN membership in the active target team, or organization ADMIN membership in that team's
 organization. The caller's platform role need not be LEAD. These roles also govern editing,
 moving and sharing connections; moving requires permission in both the owning and target teams.
 GitHub discovery (`GET /repositories/github/available`) requires a platform ADMIN or permission
@@ -250,7 +250,7 @@ it, because that token is the identity their runs act as. The answer is always `
 `{ ok, detail, checks[], durationMs }`; a failing step is a check, not an error, and the wording is
 fixed per status class.
 
-Only a platform ADMIN, a lead of the owning team or its organization's ORG_ADMIN may ask, the rule that governs editing the
+Only a platform ADMIN, a lead of the owning team or its organization's organization ADMIN may ask, the rule that governs editing the
 repository. The check is about a repository that is already connected, so it cannot be used to
 find which private repositories the platform credential can see.
 
@@ -623,7 +623,7 @@ it — the agent's, the quality gates', UI and CI verification, merges and evals
 tree the agent worked in.
 
 Managing setup requires the owning team's ADMIN role or platform ADMIN. Team LEAD and
-ORG_ADMIN alone do not grant shell-authoring permission. This restriction covers changing the
+organization ADMIN alone do not grant shell-authoring permission. This restriction covers changing the
 setup definition, proposing its pull request, managing setup secrets, moving preview environment
 values to secrets, and reading or dismissing setup blockers. Non-platform administrators also
 need the owning team to be active.
@@ -931,8 +931,8 @@ the same organization (`ConnectionTeamShare`).
 | Save a personal GitHub token for it | yes | yes |
 | Be a channel-assistant code task's repository, by name | yes | yes, unless the team owns one by that name |
 | Be a channel-assistant code task's repository by default (no name given) | if it is the team's only repository | never |
-| Edit, deactivate or move the repository | team lead or owning organization's ORG_ADMIN | no |
-| Change who it is shared with | team lead or owning organization's ORG_ADMIN | no |
+| Edit, deactivate or move the repository | team lead or owning organization's organization ADMIN | no |
+| Change who it is shared with | team lead or owning organization's organization ADMIN | no |
 | Create a schedule | lead | lead |
 | Edit, fire or delete a schedule | any schedule on the repository (lead) | the team's own schedules only (lead) |
 | Add or confirm dependency edges | lead | no |
@@ -944,7 +944,7 @@ runs, and a launch is refused with `403 REPOSITORY_VIEW_ONLY`, whose message nam
 the owning team and platform admins are never limited by a share.
 
 The team list (`GET /api/v1/teams`) tells the caller their own role in each team as `myRole`
-(`ADMIN`, `LEAD`, `ENGINEER`, or `null` for a team they do not belong to, which a platform admin
+(`ADMIN`, `LEAD`, `MEMBER`, or `null` for a team they do not belong to, which a platform admin
 sees), plus the owning organization's `orgId` and `orgName`; it never carries another member's
 role. `?member=true` restricts the list to the caller's own teams, even for a platform admin. The
 dashboard derives which teams the caller leads from this list, with no per-team request. The
@@ -1014,9 +1014,9 @@ Sharing is managed from the repository card on the **Connections** page, or over
 
 | Route | Who | Does |
 |---|---|---|
-| `GET /api/v1/repositories/:id/share-candidates` | the owning team's leads, its organization's ORG_ADMINs, platform admins | Active teams in the owning team's organization, other than the owner |
-| `PUT /api/v1/repositories/:id/shares` | the owning team's leads, its organization's ORG_ADMINs, platform admins | Replace the set of teams it is shared with; audited. A team that stays keeps its `canLaunch`, a new team starts with `true`. Answers each share with its `canLaunch` |
-| `PATCH /api/v1/repositories/:id/shares/:teamId` | the owning team's leads, its organization's ORG_ADMINs, platform admins | Body `{ "canLaunch": boolean }`: make one share view-only or launching again; audited; `404 SHARE_NOT_FOUND` for a team the repository is not shared with |
+| `GET /api/v1/repositories/:id/share-candidates` | the owning team's leads, its organization's organization `ADMIN`s, platform admins | Active teams in the owning team's organization, other than the owner |
+| `PUT /api/v1/repositories/:id/shares` | the owning team's leads, its organization's organization `ADMIN`s, platform admins | Replace the set of teams it is shared with; audited. A team that stays keeps its `canLaunch`, a new team starts with `true`. Answers each share with its `canLaunch` |
+| `PATCH /api/v1/repositories/:id/shares/:teamId` | the owning team's leads, its organization's organization `ADMIN`s, platform admins | Body `{ "canLaunch": boolean }`: make one share view-only or launching again; audited; `404 SHARE_NOT_FOUND` for a team the repository is not shared with |
 
 `GET /api/v1/repositories?teamId=<team>` lists only the repositories that team owns or that are
 shared to it. The filter is its own `AND` term beside reachability, so it only narrows; the caller

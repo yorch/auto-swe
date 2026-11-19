@@ -28,7 +28,7 @@ import {
  * The tool records only a mode, an agent key and a repository hint. This activity, which runs after
  * the turn, decides everything else: the goal is the invoking person's own message, the repository
  * is one this channel's team may use and the person may reach, and the person must be a linked,
- * active ENGINEER. It then signs a single-use, expiring token binding all of that to the person,
+ * active user. It then signs a single-use, expiring token binding all of that to the person,
  * the channel and the thread, and returns the Slack message that carries it. It creates no plan,
  * starts no workflow and approves nothing: clicking the button asks the gateway to start
  * generation as the clicker, and a plan is approved only in the dashboard.

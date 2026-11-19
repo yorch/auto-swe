@@ -260,7 +260,7 @@ When a workflow exits abnormally (cancelled by the user or failed), all `PENDING
 
 ## API reference
 
-All endpoints require at least the `ENGINEER` role. Visibility follows the same team-membership rules as the inbox UI.
+All endpoints require any signed-in user. Visibility follows the same team-membership rules as the inbox UI.
 
 ### `GET /api/v1/human-steps`
 

@@ -870,9 +870,9 @@ tables it uses are the `oauth*` and `jwks` models. Details, and what it does not
 [oauth-setup.md](./oauth-setup.md#the-platform-as-an-oauth-server-for-mcp-clients).
 
 **Authorization** is declarative on the `requireAuth` hook. Platform roles are
-`ENGINEER < LEAD < ADMIN`. `requiredTeamRole` resolves team membership from a route's team param;
+`USER < ADMIN`; team roles are `MEMBER < LEAD < ADMIN`. `requiredTeamRole` resolves team membership from a route's team param;
 `requiredOrgRole` resolves `OrganizationMembership` from its `:orgId` param and checks
-`ORG_ADMIN > ORG_MEMBER`. An `ORG_ADMIN` therefore self-serves their own org regardless of platform
+`MEMBER < ADMIN`. An organization `ADMIN` therefore self-serves their own org regardless of platform
 role, and a platform `ADMIN` bypasses the org check. Handlers that derive the org from the request
 body rather than a route param — every launch path, notably — take the org checks inline through
 `authorizeLaunch` instead. Tenant isolation is enforced in the application layer, not by database row policies.
@@ -944,7 +944,7 @@ erDiagram
 |-------|--------|---------|
 | Identity | `User`, `Account`, `Session`, `Verification` | better-auth sessions, PATs, the JWT bridge; `User.preferences` JSONB holds per-user UI settings (run-detail layout, last team and pinned team slugs; the slugs are hints, never checked against membership) |
 | Auth tokens | `ApiToken`, `ServicePrincipal` | `ats_*` bearer tokens, owned by a user or by a team's service principal; only the hash is stored. A service principal carries its repository and template allowlists and its own limits |
-| Tenancy & RBAC | `Organization`, `Team`, `TeamMembership`, `OrganizationMembership` | `Organization` is the top-level tenant; every `Team` nests under one. `OrgRole` is `ORG_ADMIN` / `ORG_MEMBER` |
+| Tenancy & RBAC | `Organization`, `Team`, `TeamMembership`, `OrganizationMembership` | `Organization` is the top-level tenant; every `Team` nests under one. `OrgRole` is organization `ADMIN` / organization `MEMBER` |
 | Connections | `Connection` | Typed binding to an external system. `type` is validated against the runtime registry in `@auto-swe/shared/lib/connectionTypes` (`git_repo`, `issue_tracker`, `notion`, `confluence`, `zendesk`, `pagerduty`, `pagerduty_events`, `hubspot`, `slack_workspace`, `http_api`, `mcp`). `type='git_repo'` carries repo coordinates, default branch, and gate commands; other types store type-specific settings in `config`. Token-based connection types may store an AES-256-GCM encrypted API token (`apiKeyCiphertext`/`Nonce`/`AuthTag`/`Version`). Git-identity columns are nullable for non-git types, and git uniqueness is a partial unique index scoped to `type='git_repo'` |
 | Repository sharing | `ConnectionTeamShare` | A further team, in the owning team's organization, whose members may see and launch on a repository; the owning team keeps management. See [repositories.md](./repositories.md) |
 | Per-user credentials | `ConnectionCredential` | One user's own encrypted GitHub token for one repository, bound to the origins it was verified against and used only for runs that user launched (`WorkflowRun.launchedById`). See [user-github-credentials.md](./user-github-credentials.md) |
@@ -980,7 +980,7 @@ bill their channel, not an org. A cancel that finds no execution left to stop le
 run for the run reaper (§8), which finalizes and bills it; a channel turn is ended by the cancel
 itself. `Organization.monthlyBudgetUsdCents` caps monthly spend —
 every launch path returns `402 ORG_BUDGET_EXCEEDED` once the month's spend meets the cap. The
-refusal names the state, never the cap: the amount is an ORG_ADMIN's to read.
+refusal names the state, never the cap: the amount is an organization ADMIN's to read.
 The launch paths — work requests and their re-runs, epics, PRD runs, schedules, template runs and
 the Slack run modal — take one decision, `authorizeLaunch` (`gateway/src/lib/launchAuthorization.ts`):
 repository access, then membership of every org the launch spends against, then each org's cap.
@@ -1014,7 +1014,7 @@ reaches the cap. That read goes through a per-org cache of one config-cache wind
 the cap and the spend together, so a refusal clears within a window of the cap being raised.
 The cap and org membership are managed at `/api/v1/platform/organizations/:orgId/budget` and
 `/members`. Reading the cap and the spend in dollars (`GET …/budget`, and the budget fields of
-`GET /api/v1/platform/organizations` and `GET …/organizations/:orgId`) takes ORG_ADMIN, or platform
+`GET /api/v1/platform/organizations` and `GET …/organizations/:orgId`) takes an organization ADMIN, or platform
 ADMIN. Any org member reads `GET …/organizations/:orgId/budget/status`: a state (`no_cap`, `ok`,
 `alert`, `projected_over`, `over`), the percentage used and the alert threshold, with no amount
 ([teams.md](./teams.md#the-budget-meter)). `currentYearMonth()` in `@auto-swe/shared/lib/billing` is the shared month-bucket key,
@@ -1255,12 +1255,12 @@ per-UTC-day series, breakdowns by team, organization, model, agent, and activity
 average latency of the calls that succeeded, error rate, cost), the spend from workflows without a
 run, and the ten runs that spent most inside the window. With no filter the report is
 platform-wide and ADMIN-only, since it includes spend no team owns; a team LEAD (by team
-membership) may read their team and an ORG_ADMIN their organization, and every query of a scoped
+membership) may read their team and an organization ADMIN their organization, and every query of a scoped
 report carries the `teamId`/`orgId` predicate the tenant guard checks. The dashboard renders it at
 `/insights/usage` with a scope picker. `GET /api/v1/platform/usage/scopes` returns what the caller may
 read — `platform` (ADMIN), the teams they lead, the organizations they administer — by the same rules
 as the report. The page, its layout, and the sidebar entry all gate on that list being non-empty
-rather than on the platform role, so a team LEAD or ORG_ADMIN whose platform role is ENGINEER reaches
+rather than on the platform role, so a team LEAD or organization ADMIN whose platform role is `USER` reaches
 it; the report route still checks every request.
 
 A daily rollup keeps the report fast on a long history. The `ScheduledAgentTraceRollupWorkflow`
@@ -1327,7 +1327,7 @@ The report's `byUser` ranks the ten users whose launched runs spent most, with a
 workflow id that is started again does not inherit the earlier launcher's spend). Spend with no
 launcher — runless workflows, webhook and scheduled launches, traces that predate the Temporal run
 id — is reported in `byUserUnattributed`. An ADMIN sees every launcher with name and email. A team
-LEAD or ORG_ADMIN sees names only, and only for launchers who belong to the team or organization the
+LEAD or organization ADMIN sees names only, and only for launchers who belong to the team or organization the
 report is scoped to; every other launcher is folded into one unnamed `outsideScope` row so a scoped
 report does not reveal who else spends elsewhere.
 
@@ -2143,7 +2143,7 @@ Current constraints of the system as built. Deliberate product boundaries are in
   derivable owner, and rows written while the run lookup failed land under "no team". The last are
   left ownerless on purpose: a row with an org and no run counts toward the org cap as runless
   spend, which would bill a run already counted from its ledger a second time. There is no per-repository breakdown. The page opens for anyone holding a usage
-  scope (`GET /usage/scopes`, checked by `requireUsageScope()` in the page layout), so an ORG_ADMIN
+  scope (`GET /usage/scopes`, checked by `requireUsageScope()` in the page layout), so an organization ADMIN
   or team LEAD with a lower platform role can open it; the gateway limits which scopes each may read. The daily series is one aggregate per UTC day, so a 90-day window
   costs 90 small queries.
   A failed embedding writes no row, so embedding error rates always read 0%, and a row whose call

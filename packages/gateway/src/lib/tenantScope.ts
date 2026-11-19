@@ -225,7 +225,7 @@ export function repositoryManagementTeams(actor: ScopeActor): Prisma.TeamWhereIn
       {
         OR: [
           ledTeams(actor),
-          { organization: { memberships: { some: { role: 'ORG_ADMIN', userId: actor.sub } } } },
+          { organization: { memberships: { some: { role: 'ADMIN', userId: actor.sub } } } },
         ],
       },
     ],

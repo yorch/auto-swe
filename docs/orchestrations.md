@@ -72,7 +72,7 @@ auto-swe orchestrate start "Summarise last week's incidents" --team=payments --a
 
 ### Who may launch
 
-An ENGINEER or above. The decision depends on the mode:
+An any signed-in user. The decision depends on the mode:
 
 | Mode | Authority |
 |---|---|
@@ -668,7 +668,7 @@ signed); then expiry. A refusal at any of these is `401`.
 
 ## 9. API reference
 
-All routes need ENGINEER (a service principal holds no role and is admitted only where the table says
+All routes need a signed-in user (a service principal holds no role and is admitted only where the table says
 "or its principal"). Visibility is section 7. Orchestration refusals answer
 `{ "code", "error": { "code", "message" }, "message" }`; other errors use the gateway's
 `{ "error": { "code", "message" } }`.

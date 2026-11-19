@@ -9,6 +9,7 @@ import type { RepoSetup } from '../lib/repoSetup.js';
 import type { RunTrigger } from '../lib/runTrigger.js';
 import type { SetupBlocker } from '../lib/setupBlocker.js';
 import type { WorkspaceProviderType } from '../lib/workspaceProviders.js';
+import type { TeamRoleValue } from '../permissions/roles.js';
 import type { BudgetTier, WorkflowStatus } from './workflow.js';
 
 export type { BudgetTier } from './workflow.js';
@@ -236,7 +237,7 @@ export interface TeamSummary {
   defaultPersonaPrompt: string | null;
   _count: { memberships: number; repositories: number };
   /** The caller's own role in this team; null when they are not a member (a platform ADMIN's view). */
-  myRole: 'ADMIN' | 'LEAD' | 'ENGINEER' | null;
+  myRole: TeamRoleValue | null;
   orgId: string;
   orgName: string;
 }
@@ -257,7 +258,7 @@ export interface BudgetStatus {
 }
 
 /**
- * A team's own monthly cap, as a team ADMIN (or an ORG_ADMIN, or a platform ADMIN) manages it.
+ * A team's own monthly cap, as a team ADMIN (or an organization ADMIN, or a platform ADMIN) manages it.
  * Dollar amounts appear only here and in the repo's other admin-only budget reads.
  */
 export interface TeamBudgetSettings {
@@ -307,7 +308,7 @@ export interface MeSummaryTeam {
   orgId: string;
   orgName: string;
   /** Never null: this list holds only teams the caller belongs to. */
-  myRole: 'ADMIN' | 'LEAD' | 'ENGINEER';
+  myRole: TeamRoleValue;
   /** Items in `needsYou` that belong to this team. */
   needsYou: number;
   /** The budget that binds work on this team's repositories; null when none is set. */
@@ -358,10 +359,10 @@ export interface TeamOverview {
     orgId: string;
     orgName: string;
     /** The caller's own role in this team; null for a platform ADMIN who is not a member. */
-    myRole: 'ADMIN' | 'LEAD' | 'ENGINEER' | null;
+    myRole: TeamRoleValue | null;
   };
   /** Which view the server built: the team role decides it, never the platform role. */
-  viewerLevel: 'engineer' | 'lead' | 'admin';
+  viewerLevel: 'member' | 'lead' | 'admin';
   /** The budget that binds work on this team's repositories; percentage only. Null when none is set. */
   budget: BudgetStatus | null;
   /** The caller's own actionable items on this team's repositories. */
@@ -398,7 +399,7 @@ export interface TeamOverview {
   admin?: {
     /**
      * This calendar month's attributed spend in cents; null when it cannot be computed. Absent when
-     * the organization has a cap and the viewer is not an ORG_ADMIN of it (or a platform ADMIN):
+     * the organization has a cap and the viewer is not an organization ADMIN of it (or a platform ADMIN):
      * beside `budget.percentUsed` it would reveal the cap.
      */
     monthCostUsdCents?: number | null;

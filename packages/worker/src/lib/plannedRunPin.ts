@@ -1,4 +1,4 @@
-import type { Role } from '@auto-swe/shared';
+import type { PlatformRole } from '@auto-swe/shared';
 import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import type { AccessLog } from '@auto-swe/shared/lib/accessActor';
@@ -164,7 +164,7 @@ export const assertLauncherStillAuthorized: LauncherAccessCheck = async (
   }
   const verdict = await decideRepoAccess(
     db as never,
-    { role: user.role as Role, sub: user.id },
+    { role: user.role as PlatformRole, sub: user.id },
     repo,
     gate,
     ACCESS_LOG,

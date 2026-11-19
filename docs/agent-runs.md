@@ -54,7 +54,7 @@ them to the original task for that attempt, and leaves the original request unch
 
 ### Who may launch, and as whom
 
-An ENGINEER who is a member of the repository's owning team **or of a team it is shared with**, through
+A user who is a member of the repository's owning team **or of a team it is shared with**, through
 the same launch decision every other path takes (repository access, GitHub permission under the access
 gate, the organisation's monthly cap). The run acts as its launcher: with
 `github.userCredentialsEnabled` on, the launcher's own saved GitHub token stands in for the platform
@@ -330,14 +330,14 @@ An agent run and the channel assistant are different mechanisms that share only 
 | | Agent run | Channel assistant |
 |---|---|---|
 | Executes | One library agent against one `git_repo` repository, in a Docker workspace, as a single step of the hidden system template | A conversational turn (a single model call with intent-recording tools, no container), or a thread-bound `RunnableWorkflow` for a delegated task |
-| Needs | A repository ledger row, an ENGINEER launcher with repository membership, and an `agent-<32hex>` ticket id | A Slack channel; no repository for a general task |
+| Needs | A repository ledger row, a user launcher with repository membership, and an `agent-<32hex>` ticket id | A Slack channel; no repository for a general task |
 | Budget | The run's tier budget, the organization cap and admission control | The channel's monthly budget, held before a turn and settled after |
 | Acts as | The launching user | The Slack user, or no one, per the channel's repository-access mode |
 
 A channel task is not an agent run for three reasons. The general route is repo-less on purpose, and
 an agent run cannot start without a repository. The code route already launches the team's
 engineering template, with its TDD loop, review network and CI wait, which a one-shot agent run
-does not have. And the two authorise differently: an agent run requires a linked ENGINEER, while a
+does not have. And the two authorise differently: an agent run requires a linked user, while a
 mention needs no linked account when the channel's repository-access gate is off. The `channelAssistant`
 agent is on `NON_LAUNCHABLE_AGENT_KEYS` for the same reason.
 
@@ -352,14 +352,14 @@ gateway, so the entry point would be too.
 
 ## 9. The dashboard
 
-**Start work** (`/start`, ENGINEER and above) offers workflow, agent, multi-repo epic and PRD
+**Start work** (`/start`, any signed-in user) offers workflow, agent, multi-repo epic and PRD
 launch paths. The `/agent-runs` URL redirects to `/start?mode=agent`. The agent path is a form over
 the same `POST /api/v1/agent-runs`. A review screen shows the repository, agent, task, delivery, and
 limits before launch. Returning to the inputs preserves the draft. Launching opens the request
 side panel in **Requests** (`/requests`), which groups its execution attempts.
 Choosing a repository first scopes everything else to it, because the repository decides which agents
 exist (its organization's overrides) and which ceilings apply (they cascade to team and organization).
-Two read endpoints, both ENGINEER, serve the form:
+Two read endpoints, both any signed-in user, serve the form:
 
 | Call | Answers |
 |---|---|
@@ -371,10 +371,10 @@ refused by the repository access gate; a platform ADMIN reaches every active git
 `404 CONNECTION_NOT_FOUND`, the same as a repository that does not exist. That includes a caller who
 is not a member of the repository's organization, because the launch refuses them too.
 
-**Decision: ENGINEERs may read launchable agents' names and descriptions.** The agent library is
-otherwise ADMIN-only. `GET /agent-runs/agents` shows any ENGINEER the key, name, description, scope and
+**Decision: any signed-in user may read launchable agents' names and descriptions.** The agent library is
+otherwise ADMIN-only. `GET /agent-runs/agents` shows any signed-in user the key, name, description, scope and
 version numbers of the agents they could launch, with or without a repository, and never a prompt,
-skills, tools or model. An ENGINEER could already launch those agents by key, so this discloses the
+skills, tools or model. A signed-in user could already launch those agents by key, so this discloses the
 catalog of what is launchable, not how any agent works.
 
 The form validates the caps against the reported ceilings before sending, but the gateway and the

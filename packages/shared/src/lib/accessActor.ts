@@ -7,7 +7,7 @@
  * implementations of an access decision drift, so there is one, here.
  */
 
-import type { Role } from '../index.js';
+import type { PlatformRole } from '../index.js';
 export interface AccessActor {
   /** User UUID. */
   sub: string;
@@ -20,7 +20,7 @@ export interface AccessActor {
    * working one, which is the same failure mode the required-and-nullable gate
    * argument was shaped to prevent.
    */
-  role: Role;
+  role: PlatformRole;
 }
 
 /** The logger shape these take, so neither process's logger type leaks in. */

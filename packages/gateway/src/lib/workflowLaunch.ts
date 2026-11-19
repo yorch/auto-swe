@@ -1,4 +1,4 @@
-import type { Prisma, Role } from '@auto-swe/shared';
+import type { PlatformRole, Prisma } from '@auto-swe/shared';
 import type { AccessActor } from '@auto-swe/shared/lib/accessActor';
 import { sameRepositoryIds } from '@auto-swe/shared/lib/sameRepositoryIds';
 import {
@@ -162,7 +162,7 @@ export async function snapshotAuthorizedRepositorySource(
     if (!currentUser?.isActive) {
       return null;
     }
-    actor = { role: currentUser.role as Role, sub: currentUser.id };
+    actor = { role: currentUser.role as PlatformRole, sub: currentUser.id };
   }
   // CLAUDE.md §7 exception: repository moves lock this row; Prisma cannot express SELECT FOR UPDATE.
   const locked = await tx.$queryRaw<Array<{ id: string }>>`
@@ -322,7 +322,7 @@ async function snapshotAuthorizedTeamSource(
     if (!currentUser?.isActive) {
       return null;
     }
-    actor = { role: currentUser.role as Role, sub: currentUser.id };
+    actor = { role: currentUser.role as PlatformRole, sub: currentUser.id };
   }
   // CLAUDE.md §7 exception: lock the tenant row while checking its launch snapshot.
   const locked = await tx.$queryRaw<Array<{ id: string }>>`

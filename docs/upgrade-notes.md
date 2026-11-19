@@ -2088,3 +2088,51 @@ Appoint an ADMIN for any team the overview flags.
 
 **Verify.** The same query returns no rows, and removing a test user from an organization removes their
 team memberships.
+
+---
+
+### Role enums are split and renamed; role-grantee settings grants are deleted (`<fixing commit SHA>`)
+
+**Affected.** Every deployment that ran code before this change, because the migration
+`20261119000000_split_role_enums` rewrites stored role values. A deployment with rows in
+`config_permissions` (settings grants) is also affected by the deletions below.
+
+**What changes.** One shared `Role` type becomes three, and the organization role values lose their prefix:
+
+| Column | Before | After |
+|---|---|---|
+| `users.role` | `ADMIN`, `LEAD`, `ENGINEER` | `PlatformRole`: `ADMIN` stays `ADMIN`; `LEAD` and `ENGINEER` become `USER` |
+| `team_memberships.role` | `ADMIN`, `LEAD`, `ENGINEER` | `TeamRole`: `ENGINEER` becomes `MEMBER`; `LEAD` and `ADMIN` unchanged |
+| `organization_memberships.role` | `ORG_ADMIN`, `ORG_MEMBER` | `OrgRole`: `ADMIN`, `MEMBER` |
+| `config_permissions.role` | `Role` | `TeamRole` (`ENGINEER` becomes `MEMBER`) |
+
+The API and the CLI carry the new names: a request that sends `ENGINEER` or `ORG_ADMIN` is refused, and
+`GET /api/v1/teams/:id/overview` answers `viewerLevel: "member"` where it answered `"engineer"`. An access
+token minted before the upgrade can carry the old platform role until it expires; sign in again to
+refresh it.
+
+**Settings grants.** A role-grantee grant is now a TEAM-scope grant only (`CHECK (role IS NULL OR scope =
+'TEAM')`), matched against the actor's role in the grant's team. The migration deletes every grant that
+named a role, because it matched a platform role that no longer exists in that meaning, and every user
+grant held by a user who was a platform `ENGINEER`, because it never took effect and would otherwise
+switch on. User grants held by `LEAD` and `ADMIN` users are kept. The migration prints a notice with
+both counts (`split_role_enums: deleted N role-grantee settings grants and M user grants ...`) in the
+migration output of `prisma migrate deploy` when the server log level shows notices.
+
+**Actions.**
+
+1. Re-issue the deleted role grants as team-role grants through `POST /api/v1/platform/config/grants`
+   with `scope: "TEAM"`, a `teamId` and a team `role` (`MEMBER`, `LEAD` or `ADMIN`). Re-grant a deleted
+   per-user grant only where the user should now hold that authority.
+2. Update scripts, integrations and CLI automation that send or compare `ENGINEER`, platform `LEAD`,
+   `ORG_ADMIN` or `ORG_MEMBER`.
+
+**Historical values.** `transcript_access_log.actor_role` and the `context` JSON of audit rows keep the
+spelling they were written with and are not rewritten; new rows carry the new names. Workflow histories and
+persisted workflow inputs written before the change (for example `sourceAuthorization.actor.role`) still
+read correctly, because the permissions module accepts the old spellings.
+
+**Verify.** `SELECT DISTINCT role FROM users` returns only `ADMIN` and `USER`;
+`SELECT DISTINCT role FROM team_memberships` returns only `ADMIN`, `LEAD` and `MEMBER`;
+`SELECT DISTINCT role FROM organization_memberships` returns only `ADMIN` and `MEMBER`; and
+`SELECT 1 FROM pg_type WHERE typname = 'Role'` returns no row.

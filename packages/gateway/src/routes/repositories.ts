@@ -865,9 +865,8 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       const showInactive = includeInactive;
       // A deactivated connection is listed only to someone who could reactivate
       // it: a platform ADMIN, or a LEAD/ADMIN of the owning team (the bar
-      // `canManageTeamRepos` sets for the write). The platform LEAD role alone
-      // is not that — on a team where they are a plain ENGINEER they would be
-      // shown rows they can do nothing with.
+      // `canManageTeamRepos` sets for the write). A plain team MEMBER is not
+      // that: they would be shown rows they can do nothing with.
       const managed = isPlatformAdmin(user) ? null : await heldScope(request, 'team.repos.manage');
       const reach =
         managed === null

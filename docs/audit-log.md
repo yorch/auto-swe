@@ -164,7 +164,7 @@ own: `audit.runEffectRetentionDays` (ADMIN, GLOBAL only) is `0`, keep forever, b
 at least 30 days. The `AUDIT_ACTIVITY_PRUNE_*` sweep deletes older rows in the same batches as the
 other halves. Unlike the audit log it writes no summary row.
 
-`GET /api/v1/workflow-runs/:id/effects` (ENGINEER, the same run visibility as the run's traces;
+`GET /api/v1/workflow-runs/:id/effects` (any signed-in user, the same run visibility as the run's traces;
 service tokens do not reach it) returns a run's effects oldest first, at most 1,000, with
 `truncated` set when there were more (the page is then the newest 1,000, and the older rows are
 left out). The run page shows them under "External effects". The

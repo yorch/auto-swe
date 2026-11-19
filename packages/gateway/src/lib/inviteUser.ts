@@ -1,4 +1,4 @@
-import type { Role } from '@auto-swe/shared';
+import type { OrgRole, PlatformRole, TeamRole } from '@auto-swe/shared';
 import { type Authority, isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyInstance } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
@@ -19,12 +19,12 @@ export async function inviteUser(
     authority?: Authority;
     email: string;
     orgId: string;
-    orgRole: 'ORG_ADMIN' | 'ORG_MEMBER';
+    orgRole: OrgRole;
     source: 'org_admin' | 'team_lead';
     /** The audit context of the TeamMembership row, when its ground differs from `authority`. */
     teamContext?: AuditContext;
     teamId?: string;
-    teamRole?: Role;
+    teamRole?: TeamRole;
   }
 ) {
   const refusal = (status: number, code: string, message: string) => ({
@@ -38,7 +38,7 @@ export async function inviteUser(
     : {};
   let result:
     | ReturnType<typeof refusal>
-    | { ok: true; user: { email: string; id: string; isActive: boolean; role: Role } };
+    | { ok: true; user: { email: string; id: string; isActive: boolean; role: PlatformRole } };
   try {
     result = await fastify.prisma.$transaction(async (tx) => {
       // CLAUDE.md §7 exception: serialize membership writes with organization revocations.
@@ -70,7 +70,7 @@ export async function inviteUser(
           email: args.email,
           emailVerified: approved,
           isActive: approved,
-          role: 'ENGINEER',
+          role: 'USER',
         },
         select: { email: true, id: true, isActive: true, role: true },
       });
@@ -88,7 +88,7 @@ export async function inviteUser(
       });
       if (args.teamId) {
         const teamMembership = await tx.teamMembership.create({
-          data: { role: args.teamRole ?? 'ENGINEER', teamId: args.teamId, userId: user.id },
+          data: { role: args.teamRole ?? 'MEMBER', teamId: args.teamId, userId: user.id },
         });
         await writeAuditLog(fastify, {
           action: 'CREATE',

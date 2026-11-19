@@ -2163,7 +2163,7 @@ export const SETTING_DEFINITIONS = {
 
   // ── Agent runs ─────────────────────────────────────────────────────────────
   // Ad-hoc "run this library agent on this repo" launches. Every one of these is
-  // ADMIN-only: they bound what any ENGINEER can spend or publish from a text
+  // ADMIN-only: they bound what any team MEMBER can spend or publish from a text
   // box, so a LEAD who may tune the implementer's step budget must not be able
   // to raise them. A per-launch cap can only LOWER the ceilings below; the
   // gateway rejects a cap above one and the worker clamps again, because a

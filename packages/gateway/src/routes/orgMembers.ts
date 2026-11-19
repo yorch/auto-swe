@@ -13,8 +13,10 @@ import {
   isPlatformAdmin,
   loadStanding,
   notSelf,
+  ORG_ROLES,
   orgIsAdmin,
   TEAM_ROLE_RANK,
+  TEAM_ROLES,
   teamRankMeets,
   teamRankOf,
 } from '@auto-swe/shared/permissions';
@@ -36,12 +38,12 @@ const OrgParamsSchema = z.object({ orgId: z.string().uuid() });
 const MemberParamsSchema = z.object({ orgId: z.string().uuid(), userId: z.string().uuid() });
 
 const UpsertMemberSchema = z.object({
-  role: z.enum(['ORG_ADMIN', 'ORG_MEMBER']).default('ORG_MEMBER'),
+  role: z.enum(ORG_ROLES).default('MEMBER'),
   userId: z.string().uuid(),
 });
 
 const PatchMemberSchema = z.object({
-  role: z.enum(['ORG_ADMIN', 'ORG_MEMBER']),
+  role: z.enum(ORG_ROLES),
 });
 
 type OrgMemberRole = z.infer<typeof PatchMemberSchema>['role'];
@@ -305,9 +307,9 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
       schema: {
         body: z.object({
           email: z.string().trim().toLowerCase().email(),
-          orgRole: z.enum(['ORG_ADMIN', 'ORG_MEMBER']).default('ORG_MEMBER'),
+          orgRole: z.enum(ORG_ROLES).default('MEMBER'),
           teamId: z.string().uuid().optional(),
-          teamRole: z.enum(['ADMIN', 'LEAD', 'ENGINEER']).default('ENGINEER'),
+          teamRole: z.enum(TEAM_ROLES).default('MEMBER'),
         }),
         params: OrgParamsSchema,
       },

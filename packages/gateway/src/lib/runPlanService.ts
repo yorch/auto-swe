@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { Role } from '@auto-swe/shared';
+import { PlatformRole } from '@auto-swe/shared';
 import { resolveSettings, snapshotPinnedSettings } from '@auto-swe/shared/config';
 import { AGENT_RUN_TEMPLATE_NAME, AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
 import {
@@ -240,9 +240,8 @@ function captureReply(): { reply: FastifyReply; refusal: () => PlanRefusal } {
  * persisted `sourceAuthorization` and the validation payload cannot drift apart. The worker's
  * re-check (`plannedRunPin.ts`) reads the role from the database, never from this value.
  */
-// Rename-step site: `Role.ENGINEER` becomes the plain `USER` platform role when the enums are renamed.
-function synthesizedPlanActor(sub: string): { role: Role; sub: string } {
-  return { role: Role.ENGINEER, sub };
+function synthesizedPlanActor(sub: string): { role: PlatformRole; sub: string } {
+  return { role: PlatformRole.USER, sub };
 }
 
 /** The user row behind an actor: it must be an active user, and that is all the planner needs. */

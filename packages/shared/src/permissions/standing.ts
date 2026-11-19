@@ -1,8 +1,11 @@
 import type { OrgRank, TeamRank } from './types.js';
 
 /**
- * The only module that reads stored role values. Everything else works in `TeamRank`/`OrgRank` and
- * booleans, so renaming the stored enums edits this file alone.
+ * The only module that reads stored role values. It also alone keeps accepting the retired
+ * spellings (`ENGINEER`, `ORG_ADMIN`, `ORG_MEMBER`, platform `LEAD`): Temporal histories and
+ * persisted workflow inputs (`sourceAuthorization.actor.role`) written by earlier code carry them,
+ * and a replay or a resumed run must still read them. Nothing new writes them. Everything else
+ * works in `TeamRank`/`OrgRank` and booleans, so renaming the stored enums edits this file alone.
  *
  * Unknown values map to `null`/`false`: a role this module has never heard of confers nothing.
  */

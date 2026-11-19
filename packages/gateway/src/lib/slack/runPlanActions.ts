@@ -1,4 +1,4 @@
-import type { Role } from '@auto-swe/shared';
+import type { PlatformRole } from '@auto-swe/shared';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
 import {
   SLACK_RUN_PLAN_ACTION_ID,
@@ -78,7 +78,7 @@ function postedWhereTokenSays(payload: SlackInteractivePayload, claims: SlackRun
 export async function handleRunPlanGenerateAction(
   fastify: FastifyInstance,
   request: FastifyRequest,
-  user: { id: string; role: Role },
+  user: { id: string; role: PlatformRole },
   payload: SlackInteractivePayload,
   signingSecret: string
 ): Promise<unknown> {

@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { Role } from '@auto-swe/shared';
+import type { PlatformRole } from '@auto-swe/shared';
 import { resolveSetting } from '@auto-swe/shared/config';
 import {
   ASSISTANT_ACTION_HEADER,
@@ -14,7 +14,12 @@ import {
 } from '@auto-swe/shared/lib/orchestrationTokenKey';
 import type { RepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
-import { type Authority, type CapabilityKey, isCapabilityKey } from '@auto-swe/shared/permissions';
+import {
+  type Authority,
+  type CapabilityKey,
+  isCapabilityKey,
+  PLATFORM_ROLES,
+} from '@auto-swe/shared/permissions';
 import { SERVICE_TOKEN_SCOPES, type ServiceTokenScope } from '@auto-swe/shared/types/api';
 import { normalizeIP } from '@fastify/rate-limit';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
@@ -39,7 +44,7 @@ export type AuthMethod =
 
 export interface JwtPayload {
   sub: string; // User UUID
-  role: Role;
+  role: PlatformRole;
   slackId?: string;
   iat: number;
   exp: number;
@@ -256,7 +261,7 @@ const OAUTH_STATE_AUDIENCE = 'auto-swe:oauth-state';
 const ASSISTANT_AUDIENCE = 'auto-swe:assistant';
 /**
  * Each OAuth flow mints its own state purpose so a token minted by the
- * ENGINEER-level user-link flow can never complete the ADMIN-only bot
+ * user-level link flow can never complete the ADMIN-only bot
  * install (or vice versa). Verified as an exact match at the callback.
  */
 export type OAuthStatePurpose = 'slack-link' | 'slack-install' | 'github-app-manifest';
@@ -372,7 +377,7 @@ function bearerRejectionMessage(err: unknown): string {
 /** The live user fields an access token's claims are re-checked against. */
 export interface TokenUserState {
   isActive: boolean;
-  role: Role;
+  role: PlatformRole;
   slackId: string | null;
 }
 
@@ -714,7 +719,7 @@ async function verifyBetterAuthSession(request: FastifyRequest): Promise<JwtPayl
   // to the users table. Type the relevant subset to satisfy TS without `any`.
   const u = session.user as {
     id: string;
-    role: Role;
+    role: PlatformRole;
     isActive: boolean;
     slackId?: string | null;
   };
@@ -861,7 +866,7 @@ export function _hasCachedSessionForTests(cookieValue: string): boolean {
 
 type BridgeOutcome = { payload: JwtPayload } | { status: 401 | 403; code: string; message: string };
 
-const MCP_ROLES = ['ADMIN', 'LEAD', 'ENGINEER'];
+const MCP_ROLES: readonly string[] = PLATFORM_ROLES;
 
 /**
  * Authenticate an MCP tool call that the bridge made in-process (`lib/mcp/bridge.ts`).
@@ -926,7 +931,7 @@ async function authenticateBridgedCall(
     payload: {
       exp: authInfo.expiresAt ?? now + 60,
       iat: now,
-      role: role as Role,
+      role: role as PlatformRole,
       sub: userId,
     },
   };
@@ -1082,7 +1087,7 @@ export function appendHandlerCheckedBackstop(routeOptions: {
  * Admit a service principal's token to this route, or refuse it. Secure by default: a route that
  * declares no `config.serviceScopes` answers 401 `SERVICE_TOKEN_NOT_ALLOWED`, whatever the token
  * carries — so a new route is closed to machines until it opts in. A route that does declare them
- * needs every one on the token (else 403 `INSUFFICIENT_SCOPE`). A platform role above ENGINEER,
+ * needs every one on the token (else 403 `INSUFFICIENT_SCOPE`). Platform `ADMIN`,
  * or any team or organization role, refuses a principal outright: it holds no role to check
  * (and `assertServiceScopesAdmissible` refuses such a route at registration).
  *

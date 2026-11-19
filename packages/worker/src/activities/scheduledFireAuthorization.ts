@@ -20,7 +20,7 @@
  * next tick decides again, so restoring access resumes the schedule with no
  * other action.
  */
-import { Prisma, type PrismaClient, type Role } from '@auto-swe/shared';
+import { type PlatformRole, Prisma, type PrismaClient } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import type { AccessLog } from '@auto-swe/shared/lib/accessActor';
 import {
@@ -206,7 +206,7 @@ export async function scheduledFireRefusal(
       );
     }
   }
-  const actor = { role: owner.role as Role, sub: owner.id };
+  const actor = { role: owner.role as PlatformRole, sub: owner.id };
   // The fire must use the schedule's explicit acting user; there is no creator fallback.
   const runIdentity = 'caller';
 

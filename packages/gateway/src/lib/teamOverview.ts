@@ -65,12 +65,12 @@ interface OverviewDeps {
 export function viewerLevelFor(teamRole: string | null, platformRole: string): ViewerLevel {
   const rank = teamRankOf(teamRole);
   if (rank === null) {
-    return isPlatformAdminRole(platformRole) ? 'admin' : 'engineer';
+    return isPlatformAdminRole(platformRole) ? 'admin' : 'member';
   }
   if (teamRankMeets(rank, 'ADMIN')) {
     return 'admin';
   }
-  return teamRankMeets(rank, 'LEAD') ? 'lead' : 'engineer';
+  return teamRankMeets(rank, 'LEAD') ? 'lead' : 'member';
 }
 
 /** Whether the viewer holds the governance capability that appoints a team's members. */
@@ -401,7 +401,7 @@ export async function buildTeamOverview(
     overview.needsAdmin = true;
   }
 
-  if (viewerLevel === 'engineer') {
+  if (viewerLevel === 'member') {
     return overview;
   }
 

@@ -219,7 +219,7 @@ runs after transcript pruning and does not fail transcript pruning.
 
 ## API and authorization
 
-All routes below require ENGINEER or higher and refuse service-principal tokens. Run visibility matches the traces route,
+All routes below require any signed-in user and refuse service-principal tokens. Run visibility matches the traces route,
 including repository-access gating; inaccessible runs return 404. Run control means the owning
 team or requester, or ADMIN, using the same control filter as transcript content.
 

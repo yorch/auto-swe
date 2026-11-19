@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { Prisma, Role } from '@auto-swe/shared';
+import type { PlatformRole, Prisma } from '@auto-swe/shared';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import {
   declaredConnectionInputs,
@@ -69,7 +69,7 @@ export function buildLinkAccountModalView(): SlackModalView {
 
 export async function buildRunModalView(
   fastify: FastifyInstance,
-  user: { id: string; role: Role },
+  user: { id: string; role: PlatformRole },
   channelId: string,
   initialDescription: string
 ): Promise<{ ok: true; view: unknown } | { ok: false; error: string }> {
@@ -204,7 +204,7 @@ const TICKET_BRIEF_PLACEHOLDER = '(read from the ticket)';
 
 export async function handleRunModalSubmission(
   fastify: FastifyInstance,
-  user: { id: string; role: Role },
+  user: { id: string; role: PlatformRole },
   payload: SlackInteractivePayload
 ): Promise<unknown> {
   const values = payload.view?.state?.values ?? {};

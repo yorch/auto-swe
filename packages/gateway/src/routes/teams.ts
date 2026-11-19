@@ -7,6 +7,7 @@ import {
   loadStanding,
   notSelf,
   TEAM_ROLE_RANK,
+  TEAM_ROLES,
   type TeamRank,
   teamRankMeets,
   teamRankOf,
@@ -90,7 +91,7 @@ async function ensureOrganizationMember(
     throw new OrganizationMemberRequired();
   }
   const rows = await tx.organizationMembership.createMany({
-    data: { orgId, role: 'ORG_MEMBER', userId },
+    data: { orgId, role: 'MEMBER', userId },
     skipDuplicates: true,
   });
   if (rows.count) {
@@ -100,7 +101,7 @@ async function ensureOrganizationMember(
     await writeAuditLog(fastify, {
       action: 'CREATE',
       actor,
-      after: { orgId, role: 'ORG_MEMBER', userId },
+      after: { orgId, role: 'MEMBER', userId },
       client: tx,
       ...(context ? { context } : {}),
       entityId: membership.id,
@@ -206,12 +207,12 @@ const TeamParamsSchema = z.object({ id: z.string().uuid() });
 const TeamMemberParamsSchema = z.object({ id: z.string().uuid(), userId: z.string().uuid() });
 
 const AddMemberSchema = z.object({
-  role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']).default('ENGINEER'),
+  role: z.enum(TEAM_ROLES).default('MEMBER'),
   userId: z.string().uuid(),
 });
 
 const UpdateMemberSchema = z.object({
-  role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']),
+  role: z.enum(TEAM_ROLES),
 });
 
 interface TeamGuardResult {
@@ -784,7 +785,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       schema: {
         body: z.object({
           email: z.string().trim().toLowerCase().email(),
-          role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']).default('ENGINEER'),
+          role: z.enum(TEAM_ROLES).default('MEMBER'),
         }),
         params: TeamParamsSchema,
       },
@@ -811,7 +812,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         ...(request.authority ? { authority: request.authority } : {}),
         email: request.body.email,
         orgId: team.orgId,
-        orgRole: 'ORG_MEMBER',
+        orgRole: 'MEMBER',
         source: 'team_lead',
         teamId: team.id,
         teamRole: request.body.role,

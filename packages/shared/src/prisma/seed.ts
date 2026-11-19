@@ -85,13 +85,13 @@ async function main() {
   });
   console.log(`Seed: admin added to default team`);
 
-  // Add admin to default org as ORG_ADMIN (P5 RBAC)
+  // Add admin to default org as organization ADMIN (P5 RBAC)
   await prisma.organizationMembership.upsert({
-    create: { orgId: org.id, role: 'ORG_ADMIN', userId: admin.id },
+    create: { orgId: org.id, role: 'ADMIN', userId: admin.id },
     update: {},
     where: { userId_orgId: { orgId: org.id, userId: admin.id } },
   });
-  console.log(`Seed: admin added to default org as ORG_ADMIN`);
+  console.log(`Seed: admin added to default org as ADMIN`);
 
   // Seed a sample git_repo connection for local development. The org/repo
   // uniqueness is a partial index (git_repo only), so use findFirst + create

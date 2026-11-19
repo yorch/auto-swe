@@ -40,7 +40,7 @@ so the `:id` path segment is always the dependent repo:
 
 - `GET /api/v1/repositories/:id/dependencies` — the repo's outgoing edges (**depends on**) and
   incoming edges (**depended on by**), with each neighbour repo hydrated and filtered to the caller's
-  organization. Open to any team member (`ENGINEER`).
+  organization. Open to any team member (`MEMBER`).
 - `POST /api/v1/repositories/:id/dependencies` — declare a manual edge to another repo.
 - `PATCH /api/v1/repositories/:id/dependencies/:edgeId` — confirm/reactivate (`status: active`) or
   dismiss (`status: dismissed`).

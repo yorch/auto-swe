@@ -1,4 +1,4 @@
-import type { Role } from '@auto-swe/shared';
+import type { PlatformRole } from '@auto-swe/shared';
 import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyInstance } from 'fastify';
 import { asPlatformAdmin } from '../platformAdminScope.js';
@@ -32,7 +32,7 @@ interface SimpleTemplateRow {
 
 export async function listVisibleTemplates(
   fastify: FastifyInstance,
-  user: { id: string; role: Role }
+  user: { id: string; role: PlatformRole }
 ): Promise<SimpleTemplateRow[]> {
   const visible = isPlatformAdmin(user)
     ? {}
@@ -65,7 +65,7 @@ export async function listVisibleTemplates(
 
 export async function findTemplateByName(
   fastify: FastifyInstance,
-  user: { id: string; role: Role },
+  user: { id: string; role: PlatformRole },
   name: string
 ): Promise<
   | (SimpleTemplateRow & {

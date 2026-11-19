@@ -8,7 +8,7 @@ export async function enrollDefaultTeam(
   actorId: string | null
 ): Promise<void> {
   await db.$transaction(async (tx) => {
-    const orgData = { orgId: team.orgId, role: 'ORG_MEMBER' as const, userId };
+    const orgData = { orgId: team.orgId, role: 'MEMBER' as const, userId };
     const orgRows = await tx.organizationMembership.createMany({
       data: orgData,
       skipDuplicates: true,
@@ -28,7 +28,7 @@ export async function enrollDefaultTeam(
         },
       });
     }
-    const teamData = { role: 'ENGINEER' as const, teamId: team.id, userId };
+    const teamData = { role: 'MEMBER' as const, teamId: team.id, userId };
     const teamRows = await tx.teamMembership.createMany({ data: teamData, skipDuplicates: true });
     if (teamRows.count) {
       const row = await tx.teamMembership.findUniqueOrThrow({

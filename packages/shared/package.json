@@ -193,7 +193,8 @@
     "./config/permissions": "./dist/config/permissions.js",
     "./config/resolveSetting": "./dist/config/resolveSetting.js",
     "./config/types": "./dist/config/types.js",
-    "./permissions": "./dist/permissions/index.js"
+    "./permissions": "./dist/permissions/index.js",
+    "./permissions/roles": "./dist/permissions/roles.js"
   },
   "scripts": {
     "db:generate": "DATABASE_URL=dummy prisma generate",

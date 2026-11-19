@@ -1,4 +1,4 @@
-import type { Role } from '@auto-swe/shared';
+import type { PlatformRole } from '@auto-swe/shared';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
 import {
   resolveSlackBotTokenForWorkspace,
@@ -38,7 +38,7 @@ import { openSlackView, verifySlackSignature } from '../../lib/slack.js';
  */
 async function findControlledRun(
   fastify: FastifyInstance,
-  user: { id: string; role: Role },
+  user: { id: string; role: PlatformRole },
   workflowId: string
 ): Promise<{ ownerTeamIds: string[] } | null> {
   // Slack routes authenticate by request signature rather than `requireAuth`,
@@ -70,7 +70,7 @@ async function findControlledRun(
 
 async function canControlRun(
   fastify: FastifyInstance,
-  user: { id: string; role: Role },
+  user: { id: string; role: PlatformRole },
   workflowId: string
 ): Promise<boolean> {
   return (await findControlledRun(fastify, user, workflowId)) !== null;

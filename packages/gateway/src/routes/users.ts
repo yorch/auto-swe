@@ -1,7 +1,6 @@
 import crypto from 'node:crypto';
-import { Role } from '@auto-swe/shared';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
-import { isPlatformAdminRole, notSelf } from '@auto-swe/shared/permissions';
+import { isPlatformAdminRole, notSelf, PLATFORM_ROLES } from '@auto-swe/shared/permissions';
 import bcrypt from 'bcrypt';
 import { hashPassword } from 'better-auth/crypto';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
@@ -22,7 +21,7 @@ const CreateUserSchema = z.object({
   email: NormalisedEmail,
   // 128 is better-auth's default maximum password length.
   password: z.string().min(8).max(128).optional(), // Auto-generated if not provided
-  role: z.enum([Role.ADMIN, Role.LEAD, Role.ENGINEER]).default(Role.ENGINEER),
+  role: z.enum(PLATFORM_ROLES).default('USER'),
   // Non-empty so the truthiness guards on slackId can't be bypassed with "".
   slackId: z.string().min(1).optional(),
 });
@@ -34,7 +33,7 @@ const UserLookupQuery = z.object({ email: z.string().trim().email() });
 const UpdateUserSchema = z.object({
   email: NormalisedEmail.optional(),
   isActive: z.boolean().optional(),
-  role: z.enum([Role.ADMIN, Role.LEAD, Role.ENGINEER]).optional(),
+  role: z.enum(PLATFORM_ROLES).optional(),
   // Non-empty when present; null explicitly unlinks. "" can't slip past the
   // truthiness guard on the uniqueness pre-check.
   slackId: z.string().min(1).nullable().optional(),
@@ -268,7 +267,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       schema: {
         body: z.object({
           email: NormalisedEmail,
-          role: z.enum([Role.ADMIN, Role.LEAD, Role.ENGINEER]).default(Role.ENGINEER),
+          role: z.enum(PLATFORM_ROLES).default('USER'),
         }),
       },
     },

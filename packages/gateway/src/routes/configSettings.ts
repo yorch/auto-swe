@@ -5,6 +5,7 @@ import {
   SETTING_SCOPE_ORDER,
 } from '@auto-swe/shared/config';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { TEAM_ROLES } from '@auto-swe/shared/permissions';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -51,7 +52,7 @@ const ScopeQuery = z.object({
 const GrantBody = z.object({
   keyPattern: z.string().min(1).max(120),
   orgId: z.uuid().optional(),
-  role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']).optional(),
+  role: z.enum(TEAM_ROLES).optional(),
   scope: z.enum(['GLOBAL', 'ORGANIZATION', 'TEAM']),
   teamId: z.uuid().optional(),
   userId: z.uuid().optional(),

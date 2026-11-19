@@ -126,7 +126,7 @@ code does the rest:
   is another person's message (the "Ask auto-swe about this" shortcut) is not offered the tool.
 - The repository is the one the channel's binding rules resolve (a hint matching the team's repositories
   and named in the person's own message; otherwise the team's single owned repository). Ambiguous or
-  none posts an explanation and no button. The person must be a linked, active ENGINEER, and the
+  none posts an explanation and no button. The person must be a linked, active user, and the
   channel's repository-access mode applies exactly as it does to a code task.
 - The assistant posts a confirmation quoting the goal (escaped, so it cannot carry a mention or a
   link) and naming the repository, with a **Generate plan** button. The button's value is a signed,
@@ -169,7 +169,7 @@ setting has no CHANNEL tier) bounds the tool loop of mention turns and delegated
 
 **Not an agent run.** A delegated task is a `RunnableWorkflow`; it is not a library
 [agent run](./agent-runs.md), which is a repository-bound, container-bound step that requires an
-ENGINEER launcher. The general route has no repository, and the code route launches the team's
+user launcher. The general route has no repository, and the code route launches the team's
 engineering template. `channelAssistant` is on the agent-run non-launchable list. See
 [agent-runs.md §9](./agent-runs.md#9-relation-to-the-channel-assistant).
 

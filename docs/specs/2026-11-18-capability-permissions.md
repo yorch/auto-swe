@@ -199,11 +199,12 @@ unique indexes are dropped.
 **The migration does not reinterpret old grants; it keeps only those that worked.** Today the
 role floor is checked before any grant, so a grant on a key whose floor the actor's platform role did
 not meet did nothing, and a role grant matched the platform role, not a team's. The migration
-therefore deletes: every role-grantee row (they matched a role that no longer exists in that
-meaning); every user grant on a key whose old floor was `ADMIN`; and every user grant whose user did
-not hold platform `LEAD` or `ADMIN` at migration time. The remaining user grants (live before, live
-after) are kept. It reports the count deleted. Operators re-issue team-role grants through the
-settings API.
+therefore deletes every role-grantee row (they matched a role that no longer exists in that
+meaning) and every user grant whose user held the platform role `ENGINEER` at migration time (it was
+inert on a `LEAD`-floor key and would switch on). User grants held by `LEAD` and `ADMIN` users are kept.
+A user grant on a key whose old floor was `ADMIN` needs no deletion: such a key is `writeAccess:
+'admin'` afterwards and ignores grants, as it effectively did before. The migration reports the counts
+deleted. Operators re-issue team-role grants through the settings API.
 
 The sensitive-setting redaction in `configSettingsService` keys on `writeAccess: 'admin'` where it
 keyed on the `ADMIN` floor.

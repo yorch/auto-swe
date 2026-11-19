@@ -143,6 +143,33 @@ decide(standing, capability, resource?)    // Decision, with no database
 same standing and decision code as the checks above, so it cannot disagree with them. See
 [teams](./teams.md#leaving-an-organization) for the shape. The in-app assistant may call it.
 
+### In the dashboard
+
+The dashboard decides which controls to show from that one answer and never from a role. A single
+data hook reads `GET /api/v1/me/permissions` (cached for a minute, keyed by the signed-in person,
+refreshed after a team or organization membership changes), and one decision hook reads it:
+
+```ts
+useCan('team.repos.manage', { teamId })     // boolean: this capability, on this team
+useCan('org.budget.manage', { orgId })      // on this organization
+useCan('platform.users.manage')             // a platform capability
+useCan('team.launch.multi-repo')            // without an id: on any team, in any organization
+usePlatformAdmin()                          // the person holds every capability
+```
+
+- A platform admin holds everything. A team capability is read from the team's entry in the
+  answer; for a team the person is not a member of (an organization admin) the hook asks
+  `?teamId=` once, and only when an organization role can confer the capability. A capability that
+  is not known, or not loaded yet, is `false`: a control that is missing costs a reload, one that is
+  shown and refused costs trust.
+- Server pages (`AccessLayout`) gate on the same answer: a platform admin, a capability held
+  anywhere, or any signed-in person where the API narrows what the page shows. The navigation
+  entries carry the same access, so a page is offered to exactly the people its layout admits.
+- The role selects offer the roles up to the person's effective rank on the team: all three for
+  authority held through the organization or the platform, the person's own team role and below for
+  authority held through a team role. The gateway applies the same rule and refuses the rest.
+- This only hides controls. Every request is checked again by the gateway.
+
 ### Declaring a route
 
 ```ts

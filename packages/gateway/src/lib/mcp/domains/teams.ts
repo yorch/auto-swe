@@ -1,3 +1,4 @@
+import { TEAM_ROLES } from '@auto-swe/shared/permissions/roles';
 import { z } from 'zod';
 import { shortName } from '../projections.js';
 import type { ToolKit } from '../toolKit.js';
@@ -11,7 +12,7 @@ import type { McpDomain } from './index.js';
 
 const teamName = shortName(200);
 const teamSlug = shortName(100);
-const teamRole = z.enum(['ADMIN', 'LEAD', 'ENGINEER']).catch('ENGINEER');
+const teamRole = z.enum(TEAM_ROLES).catch('MEMBER');
 
 const repositoryRef = z.object({
   id: z.string().uuid(),
@@ -68,9 +69,7 @@ const teamsOutput = z.object({
 
 const teamOutput = z.object({
   id: z.string().uuid(),
-  members: z.array(
-    z.object({ role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']), userId: z.string().uuid() })
-  ),
+  members: z.array(z.object({ role: z.enum(TEAM_ROLES), userId: z.string().uuid() })),
   name: z.string(),
   repositories: z.array(repositoryOut),
   sharedRepositories: z.array(
