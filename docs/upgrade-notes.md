@@ -2043,3 +2043,30 @@ answers `scrubbed: true` and `intent: ''`, and plans inside the period are intac
 events can be lower.
 
 ---
+
+### Bundle installs refuse the seeded origin and clear an agent's verified flag (`<fixing commit SHA>`)
+
+**Affected:** deployments where an installed bundle names `swe-starter` as its `metadata.source`
+(`SELECT name, source FROM installed_bundles WHERE source = 'swe-starter'`), and deployments that
+re-installed a bundle over an existing GLOBAL agent that was verified.
+
+**What changes.** A bundle whose `source` is `swe-starter` is refused with a
+`BundleIntegrityError`; only the platform's own seed may carry that origin. A re-install over an
+existing GLOBAL agent now sets `isVerified` to `false` together with the replaced prompt, as it
+already did for skills. Rows an earlier install wrote with `origin = 'swe-starter'` are not
+changed, so they keep reading as seeded content, and agents already rewritten keep whatever
+`isVerified` they carried. No migration. A bundle exported with `origin: 'swe-starter'` can no
+longer be installed as exported: the content hash covers `source`, so rebuild the bundle under
+another `source` (for example with the SDK's `defineBundle`) and sign it again if it was signed.
+
+**Actions.** For each bundle the query returns that is not the platform's own, review the agents,
+skills and templates it wrote (`origin = 'swe-starter'` but absent from the platform's seed),
+and re-install the bundle under another `source` with `overwriteProtected`. No action if the
+query returns nothing.
+Agents a re-install already rewrote while verified keep `isVerified`; re-install the bundle to
+clear it.
+
+**Verify.** The query returns no rows for bundles you installed, and the agents the bundle ships
+show as Unverified in `/agents`.
+
+---

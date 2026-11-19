@@ -781,6 +781,71 @@ describe('installBundle', () => {
     expect(prisma.agent.update).toHaveBeenCalledTimes(1);
   });
 
+  it('clears isVerified when it rewrites an existing agent head in place', async () => {
+    prisma.agent.findFirst.mockResolvedValue({
+      id: 'mine',
+      isVerified: true,
+      origin: 'bundle:test',
+    });
+    const m = manifestFor({
+      ...EMPTY,
+      agents: [{ key: 'test.reviewer', name: 'Reviewer', systemPrompt: 'new prompt' }],
+    } as unknown as BundleEntities);
+
+    await installBundle(asArg(), m, { allowUnverified: true });
+    expect(prisma.agent.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ isVerified: false, systemPrompt: 'new prompt' }),
+        where: { id: 'mine' },
+      })
+    );
+  });
+
+  it('creates a new agent unverified', async () => {
+    const m = manifestFor({
+      ...EMPTY,
+      agents: [{ key: 'test.reviewer', name: 'Reviewer' }],
+    } as unknown as BundleEntities);
+
+    await installBundle(asArg(), m, { allowUnverified: true });
+    expect(prisma.agent.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ isVerified: false }) })
+    );
+  });
+
+  it('refuses a bundle whose source is the seeded starter origin, before any write', async () => {
+    const m = manifestFor(
+      {
+        ...EMPTY,
+        agents: [{ key: 'test.reviewer', name: 'Reviewer' }],
+      } as unknown as BundleEntities,
+      [],
+      { source: 'swe-starter' }
+    );
+    await expect(installBundle(asArg(), m, { allowUnverified: true })).rejects.toThrow(
+      /origin of the platform's seeded content/
+    );
+    expect(prisma.agent.create).not.toHaveBeenCalled();
+    expect(prisma.agent.update).not.toHaveBeenCalled();
+    expect(prisma.installedBundle.upsert).not.toHaveBeenCalled();
+  });
+
+  it('still installs a bundle that names an ordinary source', async () => {
+    const m = manifestFor(
+      {
+        ...EMPTY,
+        agents: [{ key: 'test.reviewer', name: 'Reviewer' }],
+      } as unknown as BundleEntities,
+      [],
+      { source: 'acme-internal' }
+    );
+    const res = await installBundle(asArg(), m, { allowUnverified: true });
+    expect(res.counts.agents).toBe(1);
+    expect(prisma.agent.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ origin: 'acme-internal' }) })
+    );
+  });
+
   describe('agent runtime', () => {
     const agentManifest = (agent: Record<string, unknown>) =>
       manifestFor({
