@@ -2054,7 +2054,6 @@ export const SETTING_DEFINITIONS = {
     group: 'workflow',
     label: 'Run history retention',
     overridableAt: [],
-    requiredRole: 'ADMIN',
     restartRequired: false,
     runPinned: false,
     schema: z
@@ -2063,6 +2062,7 @@ export const SETTING_DEFINITIONS = {
       .max(3650)
       .refine((days) => days === 0 || days >= 30, 'must be 0 (keep forever) or at least 30'),
     unit: 'days (0 = forever)',
+    writeAccess: 'admin',
   }),
 
   // ── Template webhooks ──────────────────────────────────────────────────────

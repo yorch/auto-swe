@@ -211,7 +211,7 @@ describe('retention settings', () => {
     }
     expect(SETTING_DEFINITIONS[key].defaultValue).toBe(0);
     expect(SETTING_DEFINITIONS[key].overridableAt).toEqual([]);
-    expect(SETTING_DEFINITIONS[key].requiredRole).toBe('ADMIN');
+    expect(SETTING_DEFINITIONS[key].writeAccess).toBe('admin');
   });
 
   it('page-view events are off by default', () => {
