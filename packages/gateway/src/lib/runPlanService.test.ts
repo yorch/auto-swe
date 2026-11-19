@@ -420,6 +420,17 @@ describe('createPlanRecord', () => {
 });
 
 describe('approvePlan', () => {
+  it('decides the repository as the database role', async () => {
+    const { prisma } = fakePrisma(planRow(), {
+      user: { id: OWNER.sub, isActive: true, role: 'ADMIN' },
+    });
+    expect(await approvePlan(deps(prisma), OWNER, PLAN_ID)).toMatchObject({ ok: true });
+    expect(m.validate).toHaveBeenCalledWith(
+      expect.objectContaining({ user: expect.objectContaining({ role: 'ADMIN' }) }),
+      expect.anything()
+    );
+  });
+
   it('approves the owner’s pending plan: PENDING -> APPROVED, stamped with who and when', async () => {
     const { prisma, table } = fakePrisma(planRow());
     const result = await approvePlan(deps(prisma), OWNER, PLAN_ID);
@@ -711,6 +722,20 @@ describe('expirePlans', () => {
 
 describe('launchApprovedPlan', () => {
   const approved = () => planRow({ approvedAt: NOW, approvedById: OWNER.sub, status: 'APPROVED' });
+
+  it('decides the repository and the knowledge sources as the database role', async () => {
+    const { prisma } = fakePrisma(approved(), {
+      user: { id: OWNER.sub, isActive: true, role: 'ADMIN' },
+    });
+    expect(await launchApprovedPlan(deps(prisma), OWNER, PLAN_ID)).toMatchObject({ ok: true });
+    expect(m.validate).toHaveBeenCalledWith(
+      expect.objectContaining({ user: expect.objectContaining({ role: 'ADMIN' }) }),
+      expect.anything()
+    );
+    expect(m.launch.mock.calls[0]?.[3]).toMatchObject({
+      sourceAuthorization: { actor: { role: 'ADMIN', sub: OWNER.sub } },
+    });
+  });
 
   it('starts the Planned Run template with only the plan id, as the approver', async () => {
     const { prisma } = fakePrisma(approved());

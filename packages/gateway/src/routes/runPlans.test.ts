@@ -1639,6 +1639,53 @@ describe('run plan routes', () => {
       expect((await route()).json().data).toEqual({ matches: [], noneFit: true });
     });
 
+    it('decides the repository as the database role, so an ADMIN outside the team is not refused', async () => {
+      // The token says ENGINEER; the database says ADMIN. Like the real decision, refuse anyone
+      // who is not an ADMIN and not a member (this caller belongs to no team of the repository).
+      s.dbRole = 'ADMIN';
+      m.validate.mockImplementation(
+        async (
+          input: { user: { role: string } },
+          reply: { status: (code: number) => { send: (body: unknown) => void } }
+        ) => {
+          if (input.user.role !== 'ADMIN') {
+            reply.status(403).send({
+              error: { code: 'FORBIDDEN', message: 'You do not have access to this repository.' },
+            });
+            return { ok: false };
+          }
+          return { ok: true };
+        }
+      );
+      const res = await route();
+      expect(res.statusCode).toBe(200);
+      expect(m.validate).toHaveBeenCalledWith(
+        expect.objectContaining({ user: expect.objectContaining({ role: 'ADMIN', sub: USER }) }),
+        expect.anything()
+      );
+    });
+
+    // Route wiring only: the validator is mocked with its own rule, so this proves a refusal from
+    // `validateRunConnection` reaches the caller as 403. The real rule is covered by
+    // `runPlanService.access.test.ts`.
+    it('passes a repository refusal for an ENGINEER through as 403', async () => {
+      m.validate.mockImplementation(
+        async (
+          input: { user: { role: string } },
+          reply: { status: (code: number) => { send: (body: unknown) => void } }
+        ) => {
+          if (input.user.role !== 'ADMIN') {
+            reply.status(403).send({
+              error: { code: 'FORBIDDEN', message: 'You do not have access to this repository.' },
+            });
+            return { ok: false };
+          }
+          return { ok: true };
+        }
+      );
+      expect((await route()).statusCode).toBe(403);
+    });
+
     it('says nothing fits without calling the router when the caller has no candidate', async () => {
       s.templates = [];
       expect((await route()).json().data).toEqual({ matches: [], noneFit: true });

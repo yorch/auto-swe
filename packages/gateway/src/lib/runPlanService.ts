@@ -306,6 +306,12 @@ export async function authorizeRepository(
     }
   | PlanRefusal
 > {
+  // The platform role comes from the user row, never from the caller: a platform ADMIN reaches
+  // every active repository, so the decision must see the real role.
+  const engineer = await requireEngineer(deps, actor);
+  if (!engineer.ok) {
+    return engineer;
+  }
   const captured = captureReply();
   const decision = await validateRunConnection(
     {
@@ -315,7 +321,7 @@ export async function authorizeRepository(
       prisma: deps.prisma,
       providerMeta: null,
       templateTeamId: null,
-      user: { exp: 0, iat: 0, role: Role.ENGINEER, sub: actor.sub },
+      user: { exp: 0, iat: 0, role: engineer.role, sub: actor.sub },
     },
     captured.reply
   );
@@ -1132,7 +1138,7 @@ export async function launchApprovedPlan(
         return still ? null : 'PLAN_NOT_LAUNCHABLE';
       },
       log: deps.log ?? { error: () => undefined },
-      sourceAuthorization: { actor: { role: Role.ENGINEER, sub: actor.sub } },
+      sourceAuthorization: { actor: { role: engineer.role, sub: actor.sub } },
     }
   );
   if (!result.ok) {
