@@ -63,7 +63,7 @@ function toColumns(secret: string) {
 
 export const githubWebhookSecretRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.integrations.manage' });
   const notFound = (reply: Parameters<typeof sendError>[0]) =>
     sendError(reply, 404, 'WEBHOOK_SECRET_NOT_FOUND', 'No webhook secret with that id');
 

@@ -202,7 +202,7 @@ export const harnessProfileRoutes: FastifyPluginAsync<HarnessProfileRouteOptions
   options
 ) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.catalog.manage' });
   const readDeps = options.readDeps ?? {};
   const projectSkills = options.projectSkills ?? (projectPluginSkills as ProjectPluginSkills);
 

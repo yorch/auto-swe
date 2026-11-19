@@ -120,7 +120,7 @@ function keyColumns(key: string | null) {
 
 export const githubHostCredentialRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.integrations.manage' });
   const notFound = (reply: Parameters<typeof sendError>[0]) =>
     sendError(reply, 404, 'HOST_CREDENTIAL_NOT_FOUND', 'No host credential with that id');
 

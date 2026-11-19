@@ -18,6 +18,9 @@ function buildApp(role: string, membershipRole: string | null = 'ORG_ADMIN') {
       configAuditLog: { create: auditCreate },
       organization: { findUnique: vi.fn().mockResolvedValue(ORG_ROW), update: orgUpdate },
       organizationMembership: {
+        findMany: vi
+          .fn()
+          .mockResolvedValue(membershipRole ? [{ orgId: ORG_ID, role: membershipRole }] : []),
         findUnique: vi.fn().mockResolvedValue(membershipRole ? { role: membershipRole } : null),
       },
     },
@@ -92,15 +95,25 @@ describe('organization budget dollars', () => {
       prisma: {
         organization: { findUnique: vi.fn().mockResolvedValue(BUDGETED) },
         organizationMembership: {
-          findMany: vi.fn().mockResolvedValue([
-            {
-              organization: {
-                ...BUDGETED,
-                monthlyUsages: [{ costUsdAccrued: '50', runsCompleted: 3, yearMonth: '2026-06' }],
-              },
-              role: membershipRole,
-            },
-          ]),
+          // The list reads memberships with their organizations; the permissions loader reads
+          // the caller's own membership of the one organization asked about.
+          findMany: vi.fn().mockImplementation((args: { include?: unknown }) =>
+            Promise.resolve(
+              args.include
+                ? [
+                    {
+                      organization: {
+                        ...BUDGETED,
+                        monthlyUsages: [
+                          { costUsdAccrued: '50', runsCompleted: 3, yearMonth: '2026-06' },
+                        ],
+                      },
+                      role: membershipRole,
+                    },
+                  ]
+                : [{ orgId: ORG_ID, role: membershipRole }]
+            )
+          ),
           findUnique: vi.fn().mockResolvedValue({ role: membershipRole }),
         },
       },

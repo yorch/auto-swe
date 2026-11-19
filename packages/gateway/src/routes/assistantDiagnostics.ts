@@ -69,7 +69,10 @@ export const assistantDiagnosticsRoutes: FastifyPluginAsync = async (fastify) =>
   // GET /api/v1/platform/assistant/failures — FAILED replies, newest first.
   app.get(
     '/assistant/failures',
-    { onRequest: requireAuth({ requiredRole: 'ADMIN' }), schema: { querystring: ListQuery } },
+    {
+      onRequest: requireAuth({ capability: 'platform.audit.read' }),
+      schema: { querystring: ListQuery },
+    },
     async (request) => {
       const { limit, offset, since, until } = request.query;
       const where = {
@@ -102,7 +105,10 @@ export const assistantDiagnosticsRoutes: FastifyPluginAsync = async (fastify) =>
   // GET /api/v1/platform/assistant/failures/:messageId — one failure and its turn's trace rows.
   app.get(
     '/assistant/failures/:messageId',
-    { onRequest: requireAuth({ requiredRole: 'ADMIN' }), schema: { params: FailureParams } },
+    {
+      onRequest: requireAuth({ capability: 'platform.audit.read' }),
+      schema: { params: FailureParams },
+    },
     async (request, reply) => {
       const row = await fastify.prisma.assistantMessage.findFirst({
         select: failureSelect,

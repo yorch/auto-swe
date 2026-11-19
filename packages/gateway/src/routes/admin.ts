@@ -149,7 +149,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/access-tokens',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.sessions.manage' }),
       schema: { response: { 200: AccessTokenListResponseSchema } },
     },
     async () => {
@@ -186,7 +186,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   app.delete(
     '/access-tokens/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.sessions.manage' }),
       schema: { params: TokenIdParam },
     },
     async (request, reply) => {
@@ -241,39 +241,43 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   const callerSessionToken = (headers: Parameters<typeof extractSessionCookieValue>[0]) =>
     extractSessionCookieValue(headers)?.split('.')[0] ?? null;
 
-  app.get('/sessions', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async (request) => {
-    const own = callerSessionToken(request.headers);
-    const rows = await fastify.prisma.session.findMany({
-      orderBy: { createdAt: 'desc' },
-      select: {
-        createdAt: true,
-        expiresAt: true,
-        id: true,
-        ipAddress: true,
-        token: true,
-        updatedAt: true,
-        user: { select: { email: true, id: true } },
-        userAgent: true,
-      },
-    });
-    // Truncate the token to a prefix in the response — admins shouldn't be
-    // able to read full bearer values out of the dashboard.
-    return {
-      data: rows.map((r) => ({
-        ...r,
-        // Lets the list mark the caller's own session, which they should not revoke blind.
-        current: own !== null && r.token === own,
-        token: `${r.token.slice(0, 8)}…`,
-      })),
-    };
-  });
+  app.get(
+    '/sessions',
+    { onRequest: requireAuth({ capability: 'platform.sessions.manage' }) },
+    async (request) => {
+      const own = callerSessionToken(request.headers);
+      const rows = await fastify.prisma.session.findMany({
+        orderBy: { createdAt: 'desc' },
+        select: {
+          createdAt: true,
+          expiresAt: true,
+          id: true,
+          ipAddress: true,
+          token: true,
+          updatedAt: true,
+          user: { select: { email: true, id: true } },
+          userAgent: true,
+        },
+      });
+      // Truncate the token to a prefix in the response — admins shouldn't be
+      // able to read full bearer values out of the dashboard.
+      return {
+        data: rows.map((r) => ({
+          ...r,
+          // Lets the list mark the caller's own session, which they should not revoke blind.
+          current: own !== null && r.token === own,
+          token: `${r.token.slice(0, 8)}…`,
+        })),
+      };
+    }
+  );
 
   // Signs one user out everywhere. The caller's own session survives, so an admin
   // clearing their own sessions is not logged out of the page they are using.
   app.post(
     '/sessions/revoke-user',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.sessions.manage' }),
       schema: { body: RevokeUserBody },
     },
     async (request) => {
@@ -307,7 +311,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   app.delete(
     '/sessions/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.sessions.manage' }),
       schema: { params: SessionIdParam },
     },
     async (request, reply) => {
@@ -388,7 +392,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     '/audit-log/export',
     {
       config: { activity: 'export' },
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.audit.read' }),
       schema: { querystring: AuditLogExportQuery },
     },
     async (request, reply) => {
@@ -451,7 +455,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     '/audit-log',
     {
       config: { activity: 'read' },
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.audit.read' }),
       schema: { querystring: AuditLogQuery, response: { 200: AuditLogResponseSchema } },
     },
     async (request) => {
@@ -528,7 +532,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/shell-audit/prune',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.shell-audit.prune' }),
       schema: { querystring: PruneQuery },
     },
     async (request) => {

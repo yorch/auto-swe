@@ -53,6 +53,7 @@ async function buildApp() {
     },
     organizationMembership: {
       createMany: vi.fn().mockResolvedValue({ count: 1 }),
+      findMany: vi.fn().mockResolvedValue([]),
       findUniqueOrThrow: vi.fn().mockResolvedValue({ id: 'org-member' }),
     },
     session: {
@@ -64,6 +65,7 @@ async function buildApp() {
     teamMembership: {
       createMany: vi.fn().mockResolvedValue({ count: 1 }),
       findFirst: vi.fn(),
+      findMany: vi.fn(),
       findUniqueOrThrow: vi.fn().mockResolvedValue({ id: 'team-member' }),
     },
     user: {
@@ -98,6 +100,8 @@ async function buildApp() {
 }
 
 const AUTH_HEADER = { authorization: 'Bearer fake-jwt' };
+// What the permissions loader reads for a person who leads one active team.
+const LEADS_A_TEAM = [{ role: 'LEAD', team: { id: 'team-1', isActive: true, orgId: null } }];
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 
 describe('userRoutes', () => {
@@ -114,7 +118,7 @@ describe('userRoutes', () => {
     ctx.mockPrisma.team.findUnique.mockReset();
     ctx.mockPrisma.teamMembership.createMany.mockReset().mockResolvedValue({ count: 1 });
     // By default the caller leads a team, as the lookup requires of anyone who is not an ADMIN.
-    ctx.mockPrisma.teamMembership.findFirst.mockReset().mockResolvedValue({ teamId: 'team-1' });
+    ctx.mockPrisma.teamMembership.findMany.mockReset().mockResolvedValue(LEADS_A_TEAM);
     ctx.mockPrisma.organizationMembership.createMany.mockReset().mockResolvedValue({ count: 1 });
     ctx.mockPrisma.user.create.mockReset();
     ctx.mockPrisma.user.findFirst.mockReset();
@@ -220,7 +224,8 @@ describe('userRoutes', () => {
       app.setValidatorCompiler(validatorCompiler);
       app.setSerializerCompiler(serializerCompiler);
       app.decorate('prisma', {
-        teamMembership: { findFirst: vi.fn().mockResolvedValue({ teamId: 'team-1' }) },
+        organizationMembership: { findMany: vi.fn().mockResolvedValue([]) },
+        teamMembership: { findMany: vi.fn().mockResolvedValue(LEADS_A_TEAM) },
         user: { findMany: vi.fn().mockResolvedValue([]) },
       } as unknown as never);
       app.decorate('auth', {
@@ -275,7 +280,7 @@ describe('userRoutes', () => {
       'refuses a platform %s who leads no team, and looks nobody up',
       async (role) => {
         ctx.authState.role = role;
-        ctx.mockPrisma.teamMembership.findFirst.mockResolvedValue(null);
+        ctx.mockPrisma.teamMembership.findMany.mockResolvedValue([]);
         const res = await ctx.app.inject({
           headers: AUTH_HEADER,
           method: 'GET',
@@ -287,24 +292,42 @@ describe('userRoutes', () => {
       }
     );
 
-    it('asks for LEAD or ADMIN on an active team', async () => {
+    it('holds the directory capability only through an active team', async () => {
       ctx.authState.role = 'ENGINEER';
       ctx.authState.sub = 'user-9';
-      ctx.mockPrisma.user.findMany.mockResolvedValueOnce([]);
-      await ctx.app.inject({
+      ctx.mockPrisma.teamMembership.findMany.mockResolvedValue([
+        { role: 'ADMIN', team: { id: 'team-2', isActive: false, orgId: null } },
+      ]);
+      const refused = await ctx.app.inject({
         headers: AUTH_HEADER,
         method: 'GET',
         url: '/api/v1/users/lookup?email=a@example.com',
       });
-      expect(ctx.mockPrisma.teamMembership.findFirst).toHaveBeenCalledWith({
-        select: { teamId: true },
-        where: { role: { in: ['LEAD', 'ADMIN'] }, team: { isActive: true }, userId: 'user-9' },
+      expect(refused.statusCode).toBe(403);
+      expect(JSON.parse(refused.payload).error.missing).toBe('platform.users.directory.read');
+      expect(ctx.mockPrisma.teamMembership.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { userId: 'user-9' } })
+      );
+    });
+
+    it('lets a lead of an active team look up', async () => {
+      ctx.authState.role = 'ENGINEER';
+      ctx.authState.sub = 'user-9';
+      ctx.mockPrisma.teamMembership.findMany.mockResolvedValue([
+        { role: 'ADMIN', team: { id: 'team-2', isActive: true, orgId: null } },
+      ]);
+      ctx.mockPrisma.user.findMany.mockResolvedValueOnce([]);
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/users/lookup?email=a@example.com',
       });
+      expect(res.statusCode).toBe(404);
     });
 
     it('lets a platform ADMIN look up without leading any team', async () => {
       ctx.authState.role = 'ADMIN';
-      ctx.mockPrisma.teamMembership.findFirst.mockResolvedValue(null);
+      ctx.mockPrisma.teamMembership.findMany.mockResolvedValue([]);
       ctx.mockPrisma.user.findMany.mockResolvedValueOnce([
         { email: 'a@example.com', id: USER_ID, name: 'Ada' },
       ]);

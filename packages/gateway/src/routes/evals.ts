@@ -266,7 +266,7 @@ function toCaseDto(c: {
 
 export const evalRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.catalog.manage' });
 
   const LessonInput = z.object({
     content: z.string().trim().min(1).max(5000),

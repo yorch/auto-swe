@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { Role } from '@auto-swe/shared';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { isPlatformAdminRole, notSelf } from '@auto-swe/shared/permissions';
 import bcrypt from 'bcrypt';
 import { hashPassword } from 'better-auth/crypto';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
@@ -97,7 +98,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: Role.ADMIN }),
+      onRequest: requireAuth({ capability: 'platform.users.manage' }),
     },
     async () => {
       const users = await fastify.prisma.user.findMany({
@@ -134,32 +135,14 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
     '/lookup',
     {
       config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({ capability: 'platform.users.directory.read' }),
       schema: { querystring: UserLookupQuery },
     },
     async (request, reply) => {
-      // The platform role asks for nothing here: the people who need this are team leads, whatever
-      // their platform role. Someone who leads no team has no one to add, so answering them would
-      // only make this a directory oracle.
-      const caller = requireUser(request);
-      if (caller.role !== Role.ADMIN) {
-        const leadsATeam = await fastify.prisma.teamMembership.findFirst({
-          select: { teamId: true },
-          where: {
-            role: { in: ['LEAD', 'ADMIN'] },
-            team: { isActive: true },
-            userId: caller.sub,
-          },
-        });
-        if (!leadsATeam) {
-          return sendError(
-            reply,
-            403,
-            'FORBIDDEN',
-            'Requires LEAD membership on an active team to look users up'
-          );
-        }
-      }
+      // The capability is held by a lead of at least one active team, or a platform admin. Someone
+      // who leads no team has no one to add, so answering them would only make this a directory
+      // oracle.
+
       // A case-insensitive `equals` can compile to ILIKE on Postgres, where `_`
       // (legal in an email) is a one-character wildcard — so the candidates are
       // re-checked for an exact, case-folded match here rather than trusting
@@ -182,7 +165,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: Role.ADMIN }),
+      onRequest: requireAuth({ capability: 'platform.users.manage' }),
       schema: { body: CreateUserSchema },
     },
     async (request, reply) => {
@@ -281,7 +264,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/invite',
     {
-      onRequest: requireAuth({ requiredRole: Role.ADMIN }),
+      onRequest: requireAuth({ capability: 'platform.users.manage' }),
       schema: {
         body: z.object({
           email: NormalisedEmail,
@@ -358,7 +341,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: Role.ADMIN }),
+      onRequest: requireAuth({ capability: 'platform.users.manage' }),
       schema: { body: UpdateUserSchema, params: UserParamsSchema },
     },
     async (request, reply) => {
@@ -374,7 +357,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       // other self-edits (email, slackId) and edits to other users pass
       // through unaffected.
       const actor = requireUser(request);
-      if (actor.sub === request.params.id) {
+      if (!notSelf(actor.sub, request.params.id)) {
         if (request.body.isActive === false) {
           return sendError(
             reply,
@@ -383,7 +366,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
             'You cannot deactivate your own account.'
           );
         }
-        if (request.body.role !== undefined && request.body.role !== Role.ADMIN) {
+        if (request.body.role !== undefined && !isPlatformAdminRole(request.body.role)) {
           return sendError(
             reply,
             400,

@@ -165,7 +165,7 @@ export const marketplaceRoutes: FastifyPluginAsync<MarketplaceRouteOptions> = as
   options
 ) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.integrations.manage' });
   const readDeps = options.readDeps ?? {};
   const sourceDeps: SkillSourceDeps | undefined = readDeps.source;
 

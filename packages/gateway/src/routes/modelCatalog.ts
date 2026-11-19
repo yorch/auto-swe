@@ -123,7 +123,7 @@ function toDto(row: CatalogRow) {
 export const modelCatalogRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const anyUser = requireAuth();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.catalog.manage' });
 
   app.get(
     '/model-catalog',

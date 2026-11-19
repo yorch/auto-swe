@@ -3,15 +3,23 @@
  * Mounted at /api/v1/platform/organizations.
  *
  * Access is enforced declaratively by the `requireAuth` onRequest hook:
- * `requiredOrgRole: 'ORG_MEMBER'` to read, `'ORG_ADMIN'` to write. Platform
- * ADMINs bypass the org check. This mirrors the team-scoped `requiredTeamRole`
- * pattern, so the gate is visible in each route's options rather than inline.
+ * `org.members.read` to read, `org.members.manage` to write. The one exception is the invite,
+ * which also needs `team.members.manage` on the team it names, so it asks both in the handler.
  */
 import type { Prisma } from '@auto-swe/shared';
+import {
+  actingRank,
+  loadStanding,
+  notSelf,
+  orgIsAdmin,
+  TEAM_ROLE_RANK,
+  teamRankOf,
+} from '@auto-swe/shared/permissions';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { actorOf, can, replyRefusal } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
 import { inviteUser } from '../lib/inviteUser.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -32,6 +40,8 @@ const PatchMemberSchema = z.object({
   role: z.enum(['ORG_ADMIN', 'ORG_MEMBER']),
 });
 
+type OrgMemberRole = z.infer<typeof PatchMemberSchema>['role'];
+
 type OrgAdminGuardResult = { code: string; message: string } | null;
 
 /** Prevent self-demotion/self-removal and removing/demoting the last org admin. */
@@ -41,10 +51,10 @@ async function guardOrgAdminChange(
   targetUserId: string,
   actorUserId: string,
   action: 'delete' | 'update',
-  currentRole: 'ORG_ADMIN' | 'ORG_MEMBER',
-  newRole?: 'ORG_ADMIN' | 'ORG_MEMBER'
+  currentRole: OrgMemberRole,
+  newRole?: OrgMemberRole
 ): Promise<OrgAdminGuardResult> {
-  if (actorUserId === targetUserId) {
+  if (!notSelf(actorUserId, targetUserId)) {
     if (action === 'delete') {
       return { code: 'SELF_REMOVAL', message: 'Cannot remove yourself from the organization' };
     }
@@ -53,12 +63,14 @@ async function guardOrgAdminChange(
     }
   }
   if (
-    currentRole === 'ORG_ADMIN' &&
-    ((action === 'update' && newRole && newRole !== 'ORG_ADMIN') || action === 'delete')
+    orgIsAdmin(currentRole) &&
+    ((action === 'update' && newRole && !orgIsAdmin(newRole)) || action === 'delete')
   ) {
-    const adminCount = await db.organizationMembership.count({
-      where: { orgId, role: 'ORG_ADMIN' },
+    const members = await db.organizationMembership.findMany({
+      select: { role: true },
+      where: { orgId },
     });
+    const adminCount = members.filter((m) => orgIsAdmin(m.role)).length;
     if (adminCount <= 1) {
       return {
         code: 'LAST_ORG_ADMIN',
@@ -88,7 +100,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
   f.get(
     '/:orgId/members',
     {
-      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_MEMBER' }),
+      onRequest: requireAuth({ capability: 'org.members.read', org: { param: 'orgId' } }),
       schema: { params: OrgParamsSchema },
     },
     async (request) => {
@@ -115,7 +127,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
   f.post(
     '/:orgId/members',
     {
-      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_ADMIN' }),
+      onRequest: requireAuth({ capability: 'org.members.manage', org: { param: 'orgId' } }),
       schema: { body: UpsertMemberSchema, params: OrgParamsSchema },
     },
     async (request, reply) => {
@@ -178,7 +190,9 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
   f.post(
     '/:orgId/members/invite',
     {
-      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_ADMIN' }),
+      // The organization half is asked in the handler beside the team half: an invitation that
+      // carries a team needs `team.members.manage` on that team too, with no exemption.
+      onRequest: requireAuth({ handlerChecked: ['org.members.manage', 'team.members.manage'] }),
       schema: {
         body: z.object({
           email: z.string().trim().toLowerCase().email(),
@@ -192,6 +206,36 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const { orgId } = request.params;
       const { email, orgRole, teamId, teamRole } = request.body;
+      const orgDecision = await can(request, 'org.members.manage', { orgId });
+      if (!orgDecision.allowed) {
+        return replyRefusal(reply, orgDecision);
+      }
+      if (teamId) {
+        // A team of another organization keeps its 400, as before; only then is the team asked.
+        const team = await fastify.prisma.team.findUnique({
+          select: { orgId: true },
+          where: { id: teamId },
+        });
+        if (team && team.orgId !== orgId) {
+          return sendError(reply, 400, 'TEAM_ORG_MISMATCH', 'Team must belong to the organization');
+        }
+        const teamDecision = await can(request, 'team.members.manage', { teamId });
+        if (!teamDecision.allowed) {
+          return replyRefusal(reply, teamDecision);
+        }
+        // The same rank rule as a team member-add: no grant above the rank the actor acts at.
+        const standing = await loadStanding(fastify.prisma, actorOf(request), { teamId });
+        const actorRank = actingRank(standing, teamId);
+        const granted = teamRankOf(teamRole);
+        if (!(actorRank && granted) || TEAM_ROLE_RANK[granted] > TEAM_ROLE_RANK[actorRank]) {
+          return sendError(
+            reply,
+            403,
+            'PRIVILEGE_ESCALATION',
+            'Cannot grant a role higher than your own'
+          );
+        }
+      }
       const result = await inviteUser(fastify, requireUser(request), {
         email,
         orgId,
@@ -211,7 +255,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
   f.patch(
     '/:orgId/members/:userId',
     {
-      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_ADMIN' }),
+      onRequest: requireAuth({ capability: 'org.members.manage', org: { param: 'orgId' } }),
       schema: { body: PatchMemberSchema, params: MemberParamsSchema },
     },
     async (request, reply) => {
@@ -266,7 +310,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
   f.delete(
     '/:orgId/members/:userId',
     {
-      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_ADMIN' }),
+      onRequest: requireAuth({ capability: 'org.members.manage', org: { param: 'orgId' } }),
       schema: { params: MemberParamsSchema },
     },
     async (request, reply) => {

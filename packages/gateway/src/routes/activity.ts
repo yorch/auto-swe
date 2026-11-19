@@ -88,7 +88,10 @@ export const activityAdminRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get(
     '/activity',
-    { onRequest: requireAuth({ requiredRole: 'ADMIN' }), schema: { querystring: ActivityQuery } },
+    {
+      onRequest: requireAuth({ capability: 'platform.audit.read' }),
+      schema: { querystring: ActivityQuery },
+    },
     async (request) => {
       const { actorId, kind, limit, offset, route, since, until } = request.query;
       const where: Prisma.UserActivityEventWhereInput = {
@@ -135,7 +138,10 @@ export const activityAdminRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get(
     '/activity/summary',
-    { onRequest: requireAuth({ requiredRole: 'ADMIN' }), schema: { querystring: SummaryQuery } },
+    {
+      onRequest: requireAuth({ capability: 'platform.audit.read' }),
+      schema: { querystring: SummaryQuery },
+    },
     async (request) => {
       const { days } = request.query;
       // One indexed `groupBy` per UTC day (at most 30) instead of reading rows back and counting

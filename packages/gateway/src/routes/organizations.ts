@@ -1,11 +1,13 @@
 import { Prisma } from '@auto-swe/shared';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isPlatformAdmin, orgIsAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { can } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
-import { currentYearMonth, isOrgAdmin } from '../lib/orgAccess.js';
+import { currentYearMonth } from '../lib/orgAccess.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const OrgParamsSchema = z.object({ orgId: z.string().uuid() });
@@ -81,7 +83,7 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
   // List organizations the current user is a member of, with budget + alert state.
-  app.get('/', { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) }, async (request) => {
+  app.get('/', { onRequest: requireAuth() }, async (request) => {
     const user = requireUser(request);
     // Scoped by `userId` (the caller's own memberships), but the tenant guard
     // only recognises org/team keys as scoping — `userId` alone is a false
@@ -104,12 +106,12 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
           where: { userId: user.sub },
         })
     );
-    // The cap and the spend in dollars are an ORG_ADMIN's (and a platform ADMIN's) to read.
+    // The cap and the spend in dollars are an organization administrator's (and a platform administrator's) to read.
     return {
       data: rows.map((m) => {
         const summary = projectOrgBudgetSummary(m.organization);
         return {
-          ...(m.role === 'ORG_ADMIN' || user.role === 'ADMIN'
+          ...(orgIsAdmin(m.role) || isPlatformAdmin(user)
             ? summary
             : withoutBudgetDollars(summary)),
           role: m.role,
@@ -119,23 +121,27 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // GET /api/v1/platform/organizations/budget-alerts — platform ADMIN view of alerting orgs.
-  app.get('/budget-alerts', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async () => {
-    const orgs = await fastify.prisma.organization.findMany({
-      include: {
-        monthlyUsages: { where: { yearMonth: currentYearMonth() } },
-      },
-      orderBy: { name: 'asc' },
-      where: { isActive: true },
-    });
-    return { data: orgs.map(projectOrgBudgetSummary) };
-  });
+  app.get(
+    '/budget-alerts',
+    { onRequest: requireAuth({ capability: 'platform.budgets.read-all' }) },
+    async () => {
+      const orgs = await fastify.prisma.organization.findMany({
+        include: {
+          monthlyUsages: { where: { yearMonth: currentYearMonth() } },
+        },
+        orderBy: { name: 'asc' },
+        where: { isActive: true },
+      });
+      return { data: orgs.map(projectOrgBudgetSummary) };
+    }
+  );
 
   // GET /api/v1/platform/organizations/:orgId — any org member may read; the monthly cap is an
-  // ORG_ADMIN's, so a member's response omits it.
+  // administrator's, so a member's response omits it.
   app.get(
     '/:orgId',
     {
-      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_MEMBER' }),
+      onRequest: requireAuth({ capability: 'org.read', org: { param: 'orgId' } }),
       schema: { params: OrgParamsSchema },
     },
     async (request, reply) => {
@@ -154,7 +160,7 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
       if (!org) {
         return sendError(reply, 404, 'NOT_FOUND', 'Organization not found');
       }
-      if (!(await isOrgAdmin(fastify.prisma, requireUser(request), orgId))) {
+      if (!(await can(request, 'org.budget.manage', { orgId })).allowed) {
         const { monthlyBudgetUsdCents: _cap, ...visible } = org;
         return { data: visible };
       }
@@ -167,7 +173,7 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:orgId',
     {
-      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_ADMIN' }),
+      onRequest: requireAuth({ capability: 'org.settings.manage', org: { param: 'orgId' } }),
       schema: { body: PatchOrgSchema, params: OrgParamsSchema },
     },
     async (request, reply) => {
@@ -176,7 +182,10 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
       if (Object.keys(body).length === 0) {
         return sendError(reply, 400, 'INVALID_BODY', 'No fields to update');
       }
-      if (body.trustedInvites !== undefined && requireUser(request).role !== 'ADMIN') {
+      if (
+        body.trustedInvites !== undefined &&
+        !(await can(request, 'platform.orgs.trust-invites.manage')).allowed
+      ) {
         return sendError(
           reply,
           403,

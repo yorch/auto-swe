@@ -195,7 +195,7 @@ function sanitizeAuditUrl(rawUrl: string): string {
 
 export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.integrations.manage' });
 
   app.get('/mcp-connections', { onRequest: adminOnly }, async () => {
     const rows = await runUnscoped("admin lists every team's mcp connections", ['Connection'], () =>

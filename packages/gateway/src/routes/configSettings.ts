@@ -277,7 +277,10 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
 
   f.get(
     '/config/grants',
-    { preHandler: requireAuth({ requiredRole: 'ADMIN' }), schema: { response: { 200: z.any() } } },
+    {
+      preHandler: requireAuth({ capability: 'platform.config.grants.manage' }),
+      schema: { response: { 200: z.any() } },
+    },
     async (_req, reply) => {
       const grants = await runUnscoped(
         'the admin grant listing is deployment-wide by definition',
@@ -299,7 +302,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
   f.post(
     '/config/grants',
     {
-      preHandler: requireAuth({ requiredRole: 'ADMIN' }),
+      preHandler: requireAuth({ capability: 'platform.config.grants.manage' }),
       schema: { body: GrantBody, response: { 200: z.any(), 400: z.any() } },
     },
     async (req, reply) => {
@@ -357,7 +360,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
   f.get(
     '/config/grants/preview',
     {
-      preHandler: requireAuth({ requiredRole: 'ADMIN' }),
+      preHandler: requireAuth({ capability: 'platform.config.grants.manage' }),
       schema: {
         querystring: z.object({ keyPattern: z.string().min(1).max(120) }),
         response: { 200: z.any(), 400: z.any() },
@@ -398,7 +401,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
   f.delete(
     '/config/grants/:id',
     {
-      preHandler: requireAuth({ requiredRole: 'ADMIN' }),
+      preHandler: requireAuth({ capability: 'platform.config.grants.manage' }),
       schema: { params: z.object({ id: z.uuid() }), response: { 200: z.any(), 404: z.any() } },
     },
     async (req, reply) => {

@@ -67,7 +67,18 @@ function buildApp(
       count: vi.fn().mockResolvedValue(2),
       create: vi.fn().mockResolvedValue(MEMBER_ROW),
       delete: vi.fn().mockResolvedValue({}),
-      findMany: vi.fn().mockResolvedValue([MEMBER_ROW]),
+      // The permissions loader reads the caller's own membership (`where.userId`); the member list
+      // reads the rows with their users; the last-admin guard reads every role in the org.
+      findMany: vi
+        .fn()
+        .mockImplementation((args: { include?: unknown; where: { userId?: string } }) => {
+          if (args.where.userId) {
+            return Promise.resolve(membershipRole ? [{ orgId: ORG_ID, role: membershipRole }] : []);
+          }
+          return Promise.resolve(
+            args.include ? [MEMBER_ROW] : [{ role: 'ORG_ADMIN' }, { role: 'ORG_ADMIN' }]
+          );
+        }),
       findUnique: vi
         .fn()
         .mockImplementation(({ where }: { where: { userId_orgId?: unknown; id?: string } }) => {
@@ -78,9 +89,24 @@ function buildApp(
         }),
       update: vi.fn().mockResolvedValue({ ...MEMBER_ROW, role: 'ORG_MEMBER' }),
     },
-    team: { findUnique: teamFindUnique },
+    team: {
+      findMany: vi.fn().mockImplementation(async () => {
+        const team = await teamFindUnique();
+        return team ? [{ id: team.id, isActive: team.isActive ?? true, orgId: team.orgId }] : [];
+      }),
+      findUnique: teamFindUnique,
+    },
     teamMembership: {
       create: teamMemberCreate,
+      findMany: vi
+        .fn()
+        .mockImplementation((args: { select: { team?: unknown } }) =>
+          Promise.resolve(
+            args.select.team
+              ? [{ role: teamRole, team: { id: TEAM_ID, isActive: true, orgId: ORG_ID } }]
+              : [{ role: teamRole, teamId: TEAM_ID }]
+          )
+        ),
       findUnique: vi.fn().mockResolvedValue({ role: teamRole }),
     },
     user: { create: userCreate, findFirst: userFindFirst },
@@ -299,6 +325,41 @@ describe('POST /:orgId/members/invite', () => {
   });
 });
 
+describe('POST /:orgId/members/invite authorization', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    orgLockCalls.length = 0;
+  });
+
+  it('refuses an organization member who is not an administrator', async () => {
+    const app = buildApp('ENGINEER', 'ORG_MEMBER');
+    const res = await app.inject({
+      method: 'POST',
+      payload: { email: 'team@example.com' },
+      url: `${PREFIX}/${ORG_ID}/members/invite`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.missing).toBe('org.members.manage');
+    expect(userCreate).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('asks team.members.manage on the team an invitation names', async () => {
+    const app = buildApp('ENGINEER');
+    // A deactivated team confers nothing on an organization administrator.
+    teamFindUnique.mockResolvedValue({ id: TEAM_ID, isActive: false, orgId: ORG_ID });
+    const res = await app.inject({
+      method: 'POST',
+      payload: { email: 'team@example.com', teamId: TEAM_ID },
+      url: `${PREFIX}/${ORG_ID}/members/invite`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.missing).toBe('team.members.manage');
+    expect(userCreate).not.toHaveBeenCalled();
+    await app.close();
+  });
+});
+
 describe('POST /teams/:id/members/invite', () => {
   afterEach(() => {
     vi.clearAllMocks();
@@ -433,6 +494,24 @@ describe('POST /teams/:id/members/invite', () => {
     });
     expect(res.statusCode).toBe(201);
     expect(res.json().data.teamRole).toBe('LEAD');
+    await app.close();
+  });
+});
+
+describe('PATCH /:orgId/members/:userId guards', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    orgLockCalls.length = 0;
+  });
+
+  it('refuses an administrator removing themselves', async () => {
+    const app = buildApp('ENGINEER');
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `${PREFIX}/${ORG_ID}/members/${USER_ID}`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('SELF_REMOVAL');
     await app.close();
   });
 });

@@ -303,7 +303,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   const f = fastify.withTypeProvider<ZodTypeProvider>();
 
   // All routes below require ADMIN
-  f.addHook('onRequest', requireAuth({ requiredRole: 'ADMIN' }));
+  f.addHook('onRequest', requireAuth({ capability: 'platform.integrations.manage' }));
 
   // ── Clear a stored secret ───────────────────────────────────────────────────
 

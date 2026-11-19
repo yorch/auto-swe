@@ -88,7 +88,7 @@ const asJson = (value: unknown): Prisma.InputJsonObject =>
 export const toolCatalogRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const anyUser = requireAuth();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.catalog.manage' });
 
   const audit = (
     actor: ReturnType<typeof requireUser>,

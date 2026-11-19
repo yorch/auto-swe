@@ -6,6 +6,7 @@ import {
   resolveWebUrl,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyInstance } from 'fastify';
 import { requireAuth, requireUser } from '../../plugins/auth.js';
 
@@ -124,7 +125,7 @@ export async function registerOauthRoutes(fastify: FastifyInstance): Promise<voi
   fastify.get(
     '/connect',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
     },
     async (request, reply) => {
       const { clientId } = await resolveSlackConfig();
@@ -263,7 +264,7 @@ export async function registerOauthRoutes(fastify: FastifyInstance): Promise<voi
   fastify.get(
     '/install',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.integrations.manage' }),
     },
     async (request, reply) => {
       const { clientId } = await resolveSlackConfig();
@@ -330,7 +331,7 @@ export async function registerOauthRoutes(fastify: FastifyInstance): Promise<voi
       select: { isActive: true, role: true },
       where: { id: installerId },
     });
-    if (!installer?.isActive || installer.role !== 'ADMIN') {
+    if (!installer?.isActive || !isPlatformAdmin(installer)) {
       return reply.status(403).send({
         error: { code: 'FORBIDDEN', message: 'Only active platform admins may install the bot' },
       });

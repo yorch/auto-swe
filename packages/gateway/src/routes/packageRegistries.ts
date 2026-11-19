@@ -193,7 +193,7 @@ async function scopeProblem(
 
 export const packageRegistryRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.integrations.manage' });
   const notFound = (reply: Parameters<typeof sendError>[0]) =>
     sendError(reply, 404, 'PACKAGE_REGISTRY_NOT_FOUND', 'No package registry with that id');
 
