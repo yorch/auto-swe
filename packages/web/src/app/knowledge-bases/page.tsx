@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { PageHelp } from '@/components/help/PageHelp';
 import {
   KnowledgeBaseDetail,
@@ -16,17 +16,15 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
+import { useCanOnTeams } from '@/hooks/useCan';
 import {
   type KnowledgeBase,
   useKnowledgeBaseAction,
   useKnowledgeBases,
 } from '@/hooks/useKnowledgeBases';
 import { useRepositories } from '@/hooks/useRepositories';
-import { useLedTeamIds } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
-import { canWriteTeamResource } from '@/lib/teamPermissions';
 import { visibleText } from '@/lib/visibleText';
-import { useAuthStore } from '@/stores/authStore';
 
 type Dialog =
   | { kind: 'create' }
@@ -35,14 +33,25 @@ type Dialog =
 export default function KnowledgeBasesPage() {
   const bases = useKnowledgeBases();
   const repositories = useRepositories({ limit: 500 });
-  const led = useLedTeamIds();
-  const role = useAuthStore((state) => state.user?.role);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
   const [notice, setNotice] = useState('');
   const action = useKnowledgeBaseAction();
-  const canManage = (teamId: string | undefined) => canWriteTeamResource(role, teamId, led);
+  // Attaching, changing and detaching knowledge bases is `team.knowledge-bases.manage` on the
+  // repository's owning team.
+  const canManage = useCanOnTeams(
+    'team.knowledge-bases.manage',
+    useMemo(
+      () => [
+        ...(repositories.data ?? []).map((r) => ({ id: r.team.id })),
+        ...(bases.data ?? []).flatMap((kb) =>
+          kb.connection?.teamId ? [{ id: kb.connection.teamId }] : []
+        ),
+      ],
+      [repositories.data, bases.data]
+    )
+  );
   const eligible = (repositories.data ?? []).filter(
     (repo) =>
       repo.type === 'git_repo' &&

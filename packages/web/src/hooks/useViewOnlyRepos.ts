@@ -1,10 +1,9 @@
 'use client';
 
 import { useMemo } from 'react';
+import { usePlatformAdmin } from '@/hooks/useCan';
 import { useTeams } from '@/hooks/useTeams';
 import { isViewOnlyFor } from '@/lib/repoLaunch';
-import { hasRole } from '@/lib/roles';
-import { useAuthStore } from '@/stores/authStore';
 
 type Launchable = Parameters<typeof isViewOnlyFor>[0];
 
@@ -13,8 +12,7 @@ type Launchable = Parameters<typeof isViewOnlyFor>[0];
  * belongs to. Nothing is view only while the teams load.
  */
 export function useIsViewOnly(): (repo: Launchable) => boolean {
-  const platformRole = useAuthStore((s) => s.user?.role);
-  const platformAdmin = hasRole(platformRole, 'ADMIN');
+  const platformAdmin = usePlatformAdmin();
   const teams = useTeams({ enabled: !platformAdmin, memberOnly: true });
   const key = teams.data
     ? teams.data

@@ -88,18 +88,30 @@ describe('useTeamParam', () => {
     const all = {
       data: [{ id: 'team-9', myRole: null, name: 'Elsewhere', slug: 'elsewhere' }],
     };
+    // The server describes the signed-in person: 'a' holds every platform capability, 'l' none.
+    let who = 'a';
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (input: RequestInfo | URL) =>
-        json(String(input).includes('member=true') ? MEMBER_TEAMS : all)
-      )
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes('/me/permissions')) {
+          return json({
+            organizations: [],
+            platformCapabilities: who === 'a' ? ['platform.users.manage'] : [],
+            platformRole: '',
+            teams: [],
+          });
+        }
+        return json(url.includes('member=true') ? MEMBER_TEAMS : all);
+      })
     );
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ADMIN', sub: 'a' } });
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'USER', sub: 'a' } });
     const admin = renderHook(() => useTeamParam(), { wrapper });
     await waitFor(() => expect(admin.result.current.teamId).toBe('team-9'));
     admin.unmount();
 
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'l' } });
+    who = 'l';
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'USER', sub: 'l' } });
     const lead = renderHook(() => useTeamParam(), { wrapper });
     await waitFor(() => expect(lead.result.current.pending).toBe(false));
     expect(lead.result.current.team).toBeNull();

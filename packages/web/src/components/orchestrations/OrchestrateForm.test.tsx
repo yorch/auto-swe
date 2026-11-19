@@ -5,11 +5,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bodyOf, withQuery } from '@/test/rtl-helpers';
 
 const push = vi.hoisted(() => vi.fn());
-const auth = vi.hoisted(() => ({ role: 'ENGINEER' }));
+// The platform role stands in for the server's answer: an admin holds the platform capabilities.
+const auth = vi.hoisted(() => ({ role: 'USER' }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
 vi.mock('@/stores/authStore', () => ({
-  useAuthStore: (selector: (s: { user: { role: string } | null }) => unknown) =>
-    selector({ user: { role: auth.role } }),
+  useAuthStore: (selector: (s: { user: { role: string; sub: string } | null }) => unknown) =>
+    selector({ user: { role: auth.role, sub: 'me' } }),
 }));
 
 import { OrchestrateForm } from './OrchestrateForm';
@@ -52,8 +53,16 @@ function gateway(
       .replace(/^https?:\/\/[^/]+/, '')
       .split('?')[0];
     const method = (init?.method ?? 'GET').toUpperCase();
+    if (path === '/api/v1/me/permissions') {
+      return json({
+        organizations: [],
+        platformCapabilities: auth.role === 'ADMIN' ? ['platform.integrations.manage'] : [],
+        platformRole: '',
+        teams: [],
+      });
+    }
     if (path === '/api/v1/teams') {
-      return json({ data: teams.map((t) => ({ ...t, myRole: 'ENGINEER', slug: t.name })) });
+      return json({ data: teams.map((t) => ({ ...t, myRole: 'MEMBER', slug: t.name })) });
     }
     if (path === '/api/v1/repositories') {
       return json({ data: [], meta: { limit: 500, offset: 0, total: 0 } });
@@ -88,7 +97,7 @@ function gateway(
 }
 
 afterEach(() => {
-  auth.role = 'ENGINEER';
+  auth.role = 'USER';
   cleanup();
   vi.unstubAllGlobals();
   push.mockClear();
@@ -239,7 +248,7 @@ describe('OrchestrateForm connections', () => {
   };
 
   it('lists the team’s connections for a non-admin from the orchestration route', async () => {
-    auth.role = 'ENGINEER';
+    auth.role = 'USER';
     const spy = gateway({ connections: [{ id: 'c1', name: 'Linear' }] });
     render(withQuery(<OrchestrateForm />));
     await go(/Researcher/);
@@ -247,7 +256,7 @@ describe('OrchestrateForm connections', () => {
     expect(
       spy.mock.calls.some(([u]) => String(u).includes('/orchestrations/connections?teamId=t1'))
     ).toBe(true);
-    // A non-admin never asks for the ADMIN-only platform list.
+    // Without `platform.integrations.manage` the platform list is never asked for.
     expect(spy.mock.calls.some(([u]) => String(u).includes('/platform/mcp-connections'))).toBe(
       false
     );
@@ -263,7 +272,7 @@ describe('OrchestrateForm connections', () => {
   });
 
   it('says so when the team’s connections cannot be loaded', async () => {
-    auth.role = 'ENGINEER';
+    auth.role = 'USER';
     const spy = gateway();
     const real = spy.getMockImplementation();
     spy.mockImplementation(async (input, init) => {
@@ -318,7 +327,7 @@ describe('OrchestrateForm connections', () => {
   });
 
   it('shows no write warning when there are no connections at all', async () => {
-    auth.role = 'ENGINEER';
+    auth.role = 'USER';
     gateway();
     render(withQuery(<OrchestrateForm />));
     await go(/Researcher/);

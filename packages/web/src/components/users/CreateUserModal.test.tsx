@@ -71,7 +71,7 @@ describe('CreateUserModal', () => {
           email: 'sa@example.com',
           id: 'u1',
           isActive: true,
-          role: 'ENGINEER',
+          role: 'USER',
           // Important: NO temporaryPassword field — admin provided their own
         },
       }),
@@ -108,7 +108,7 @@ describe('CreateUserModal', () => {
     expect(body).toEqual({
       email: 'sa@example.com',
       password: 'correct-horse-battery',
-      role: 'ENGINEER',
+      role: 'USER',
     });
   });
 
@@ -120,7 +120,7 @@ describe('CreateUserModal', () => {
           email: 'autogen@example.com',
           id: 'u2',
           isActive: true,
-          role: 'LEAD',
+          role: 'ADMIN',
           temporaryPassword: 'rnd-secret-once',
         },
       }),
@@ -132,7 +132,7 @@ describe('CreateUserModal', () => {
       target: { value: 'autogen@example.com' },
     });
     fireEvent.click(screen.getByRole('button', { name: /role/i }));
-    fireEvent.click(screen.getByRole('option', { name: 'Lead' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Platform admin' }));
     // Leave password field blank — gateway will auto-generate
     fireEvent.click(screen.getByRole('button', { name: /create user/i }));
 

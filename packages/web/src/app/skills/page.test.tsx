@@ -36,7 +36,10 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
 }));
-vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => state.admin }));
+vi.mock('@/hooks/useCan', () => ({
+  useCan: () => state.admin,
+  usePlatformAdmin: () => state.admin,
+}));
 vi.mock('@/hooks/useSkills', () => ({
   useCreateSkill: () => ({ isPending: false, mutateAsync: vi.fn() }),
   useDeleteSkill: () => ({ isPending: false, mutateAsync: vi.fn() }),

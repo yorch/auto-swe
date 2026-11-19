@@ -9,7 +9,7 @@ const h = vi.hoisted(() => ({
   error: null as Error | null,
   mutate: vi.fn(),
 }));
-vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => false }));
+vi.mock('@/hooks/useCan', () => ({ useCan: () => false, usePlatformAdmin: () => false }));
 vi.mock('@/hooks/useRepositoryTeams', () => ({
   useRepositoryTeams: () => [{ id: 'team-1', name: 'Payments' }],
 }));

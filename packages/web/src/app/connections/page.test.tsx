@@ -5,12 +5,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@/lib/api';
 import { withQuery } from '@/test/rtl-helpers';
 
+// What the server says the caller holds: capability keys, and the teams a team key is held on.
 const auth = vi.hoisted(() => ({
+  caps: [] as string[],
+  heldOn: ['t1'] as string[],
   myTeams: [] as string[],
-  orgRole: 'ORG_MEMBER',
-  role: 'ENGINEER',
-  teamRole: 'ENGINEER',
 }));
+const MEMBER_CAPS: string[] = [];
+const LEAD_CAPS = ['team.repos.create', 'team.repos.manage'];
+const TEAM_ADMIN_CAPS = [...LEAD_CAPS, 'team.repos.onboarding.launch'];
+const PLATFORM_ADMIN_CAPS = [
+  ...TEAM_ADMIN_CAPS,
+  'platform.integrations.manage',
+  'platform.repo-dependencies.scan',
+];
 const repos = vi.hoisted(() => ({ list: [] as unknown[] }));
 vi.mock('next/navigation', () => ({
   usePathname: () => '/connections',
@@ -18,21 +26,15 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
-vi.mock('@/stores/authStore', () => ({
-  useAuthStore: (select: (state: { user: { role: string } }) => unknown) =>
-    select({ user: { role: auth.role } }),
+vi.mock('@/hooks/useCan', () => ({
+  useCan: (key: string) => auth.caps.includes(key),
+  useCanOnTeams: (key: string) => (teamId: string | null | undefined) =>
+    auth.caps.includes(key) && !!teamId && auth.heldOn.includes(teamId),
 }));
 vi.mock('@/hooks/useTeams', () => ({
-  useAdminTeamIds: () => new Set(auth.teamRole === 'ADMIN' ? ['t1'] : []),
-  useLedTeamIds: () => new Set(auth.role === 'LEAD' ? ['t1'] : []),
   useTeams: (options?: { memberOnly?: boolean }) => ({
-    data: options?.memberOnly
-      ? auth.myTeams.map((id) => ({ id }))
-      : [{ id: 't1', myRole: auth.role === 'LEAD' ? 'LEAD' : auth.teamRole, orgId: 'o1' }],
+    data: options?.memberOnly ? auth.myTeams.map((id) => ({ id })) : [{ id: 't1', orgId: 'o1' }],
   }),
-}));
-vi.mock('@/hooks/useAdmin', () => ({
-  useUserOrgs: () => ({ data: [{ id: 'o1', role: auth.orgRole }] }),
 }));
 vi.mock('@/hooks/useRepositories', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -55,46 +57,42 @@ vi.mock('@/components/setup/SetupReadiness', () => ({ SetupBanner: () => null })
 
 import ConnectionsPage from './page';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  auth.caps = MEMBER_CAPS;
+});
 
 describe('Connections page', () => {
   it.each([
-    ['ADMIN', 'ENGINEER', true],
-    ['LEAD', 'ADMIN', true],
-    ['ENGINEER', 'ADMIN', true],
-    ['ENGINEER', 'ENGINEER', false],
-    ['LEAD', 'ENGINEER', false],
-  ] as const)(
-    'offers onboarding only to eligible setup authors: platform %s, team %s',
-    (role, teamRole, eligible) => {
-      auth.role = role;
-      auth.teamRole = teamRole;
-      repos.list = [
-        {
-          _count: { activeWorkflows: 0 },
-          id: 'r1',
-          isActive: true,
-          name: 'api',
-          organizationName: 'acme',
-          repoName: 'api',
-          team: { id: 't1', name: 'Payments', slug: 'payments' },
-          type: 'git_repo',
-        },
-      ];
-      try {
-        render(withQuery(<ConnectionsPage />));
-        fireEvent.click(screen.getByRole('button', { name: /More actions for acme\/api/ }));
-        // The team role alone decides: a team ADMIN is eligible whatever the platform role.
-        expect(Boolean(screen.queryByRole('menuitem', { name: 'Run onboarding' }))).toBe(eligible);
-      } finally {
-        repos.list = [];
-        auth.role = 'ENGINEER';
-        auth.teamRole = 'ENGINEER';
-      }
+    ['a platform admin', PLATFORM_ADMIN_CAPS, true],
+    ['a team admin', TEAM_ADMIN_CAPS, true],
+    ['a team lead', LEAD_CAPS, false],
+    ['a member', MEMBER_CAPS, false],
+  ] as const)('offers onboarding only to eligible setup authors: %s', (_who, caps, eligible) => {
+    auth.caps = [...caps];
+    repos.list = [
+      {
+        _count: { activeWorkflows: 0 },
+        id: 'r1',
+        isActive: true,
+        name: 'api',
+        organizationName: 'acme',
+        repoName: 'api',
+        team: { id: 't1', name: 'Payments', slug: 'payments' },
+        type: 'git_repo',
+      },
+    ];
+    try {
+      render(withQuery(<ConnectionsPage />));
+      fireEvent.click(screen.getByRole('button', { name: /More actions for acme\/api/ }));
+      // The server's answer for the row's team decides, whatever the platform role.
+      expect(Boolean(screen.queryByRole('menuitem', { name: 'Run onboarding' }))).toBe(eligible);
+    } finally {
+      repos.list = [];
     }
-  );
+  });
   it('runs onboarding from the row menu and shows launch failure', async () => {
-    auth.role = 'ADMIN';
+    auth.caps = [...PLATFORM_ADMIN_CAPS];
     repos.list = [
       {
         _count: { activeWorkflows: 0 },
@@ -116,24 +114,16 @@ describe('Connections page', () => {
     } finally {
       post.mockRestore();
       repos.list = [];
-      auth.role = 'ENGINEER';
     }
   });
-  it.each(['team', 'organization'])('allows an ENGINEER who manages the %s', (scope) => {
-    auth.role = 'ENGINEER';
-    auth.teamRole = scope === 'team' ? 'LEAD' : 'ENGINEER';
-    auth.orgRole = scope === 'organization' ? 'ORG_ADMIN' : 'ORG_MEMBER';
-    try {
-      render(withQuery(<ConnectionsPage />));
-      expect(screen.getAllByRole('button', { name: 'Import from GitHub' })).toHaveLength(2);
-      expect(screen.queryByRole('link', { name: 'GitHub App setup' })).toBeNull();
-    } finally {
-      auth.teamRole = 'ENGINEER';
-      auth.orgRole = 'ORG_MEMBER';
-    }
+  it('offers Import from GitHub to whoever the server lets create a repository', () => {
+    auth.caps = [...LEAD_CAPS];
+    render(withQuery(<ConnectionsPage />));
+    expect(screen.getAllByRole('button', { name: 'Import from GitHub' })).toHaveLength(2);
+    expect(screen.queryByRole('link', { name: 'GitHub App setup' })).toBeNull();
   });
   it('defines a connection, and offers the GitHub App guide only to administrators', () => {
-    auth.role = 'ENGINEER';
+    auth.caps = [...MEMBER_CAPS];
     const { unmount } = render(withQuery(<ConnectionsPage />));
     expect(screen.getByText(/is a configured link to an outside system/)).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'GitHub App setup' })).toBeNull();
@@ -141,12 +131,12 @@ describe('Connections page', () => {
     expect(screen.getByText(/the platform needs a GitHub App installation or token/)).toBeTruthy();
     unmount();
 
-    auth.role = 'LEAD';
+    auth.caps = [...LEAD_CAPS];
     const lead = render(withQuery(<ConnectionsPage />));
     expect(screen.queryByRole('link', { name: 'GitHub App setup' })).toBeNull();
     lead.unmount();
 
-    auth.role = 'ADMIN';
+    auth.caps = [...PLATFORM_ADMIN_CAPS];
     render(withQuery(<ConnectionsPage />));
     expect(screen.getByRole('link', { name: 'GitHub App setup' }).getAttribute('href')).toContain(
       'github-app-setup'
@@ -154,7 +144,7 @@ describe('Connections page', () => {
   });
 
   it('shows who owns a repository and blocks, with a reason, what the caller cannot manage', () => {
-    auth.role = 'LEAD';
+    auth.caps = [...LEAD_CAPS];
     auth.myTeams = ['t1'];
     const base = {
       _count: { activeWorkflows: 0 },
@@ -183,7 +173,7 @@ describe('Connections page', () => {
       expect(blocked[0]?.getAttribute('aria-label')).toMatch(/ui/);
       const reason = document.getElementById(blocked[0]?.getAttribute('aria-describedby') ?? '');
       expect(reason?.textContent).toBe(
-        'Only leads of Design or an administrator can edit this repository.'
+        'Only leads of Design, an admin of its organization or a platform admin can edit this repository.'
       );
       expect(screen.getAllByTestId('owner-chip').map((c) => c.textContent)).toEqual([
         'owned by Design',
@@ -194,8 +184,8 @@ describe('Connections page', () => {
     }
   });
 
-  it('does not tell an ENGINEER that their own team owns a read-only repository', () => {
-    auth.role = 'ENGINEER';
+  it('does not tell a member that their own team owns a read-only repository', () => {
+    auth.caps = [...MEMBER_CAPS];
     auth.myTeams = ['t1'];
     repos.list = [
       {
@@ -223,7 +213,7 @@ describe('Connections page', () => {
   });
 
   it('shows Share and Deactivate disabled with the owner named for a caller who cannot manage', () => {
-    auth.role = 'LEAD';
+    auth.caps = [...LEAD_CAPS];
     auth.myTeams = ['t1'];
     repos.list = [
       {
@@ -248,7 +238,9 @@ describe('Connections page', () => {
         expect(item.getAttribute('aria-disabled')).toBe('true');
         expect(
           document.getElementById(item.getAttribute('aria-describedby') ?? '')?.textContent
-        ).toBe('Only leads of Design or an administrator can do this.');
+        ).toBe(
+          'Only leads of Design, an admin of its organization or a platform admin can do this.'
+        );
       }
     } finally {
       repos.list = [];
@@ -257,7 +249,7 @@ describe('Connections page', () => {
   });
 
   it('leaves Share and Deactivate enabled for a lead of the owning team', () => {
-    auth.role = 'LEAD';
+    auth.caps = [...LEAD_CAPS];
     auth.myTeams = ['t1'];
     repos.list = [
       {

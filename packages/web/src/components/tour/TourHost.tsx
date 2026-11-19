@@ -1,10 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { ProductTour } from '@/components/tour/ProductTour';
 import { restoreTourFocus, TOUR_SEEN_KEY } from '@/components/tour/tourSupport';
+import { useTourSteps } from '@/components/tour/useTourSteps';
 import { writeDismissed } from '@/lib/dismissed';
-import { buildTourSteps } from '@/lib/tourSteps';
 import { useAuthStore } from '@/stores/authStore';
 import { useHelpStore } from '@/stores/helpStore';
 
@@ -17,8 +17,7 @@ export function TourHost() {
   const request = useHelpStore((s) => s.tourRequest);
   const pageTour = useHelpStore((s) => s.pageTour);
   const endTour = useHelpStore((s) => s.endTour);
-  const role = useAuthStore((s) => s.user?.role);
-  const productSteps = useMemo(() => buildTourSteps(role), [role]);
+  const productSteps = useTourSteps();
   const requestRef = useRef(request);
   requestRef.current = request;
 

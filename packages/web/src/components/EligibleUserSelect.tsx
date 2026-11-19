@@ -4,6 +4,7 @@ import type { UserSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { Combobox } from '@/components/ui/Combobox';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { platformRoleLabel } from '@/lib/roleLabels';
 
 /**
  * Renders a user picker for an "add member" flow: a searchable list of eligible users,
@@ -51,7 +52,10 @@ export function EligibleUserSelect({
       id={id}
       label={label}
       onChange={onChange}
-      options={eligible.map((u) => ({ label: `${u.email} · ${u.role}`, value: u.id }))}
+      options={eligible.map((u) => ({
+        label: `${u.email} · ${platformRoleLabel(u.role)}`,
+        value: u.id,
+      }))}
       placeholder="Search by email…"
       required
       value={value}

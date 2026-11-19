@@ -5,9 +5,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { visibleNavGroups } from '@/lib/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import { resetNavigation } from '@/test/mockNavigation';
+import {
+  ADMIN_PERMISSIONS,
+  NO_PERMISSIONS,
+  permissionsFor,
+  resetPermissions,
+  setPermissions,
+} from '@/test/permissions';
 
 vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).navigationMock());
 vi.mock('@/hooks/useApprovals', () => ({ useApprovalsCount: () => 0 }));
+vi.mock('@/hooks/useEffectivePermissions', async () =>
+  (await import('@/test/permissions')).permissionsMock()
+);
 const teamNav = vi.hoisted(() => ({
   entries: [] as {
     needsYou: number;
@@ -29,8 +39,12 @@ import { Sidebar } from './Sidebar';
 
 beforeEach(() => {
   useAuthStore.setState({ user: { email: 'a@x.dev', role: 'ADMIN', sub: 'u1' } } as never);
+  setPermissions(ADMIN_PERMISSIONS);
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  resetPermissions();
+});
 
 describe('Sidebar structure', () => {
   it.each(['/knowledge/item', '/knowledge-bases/item', '/lessons/item'])(
@@ -55,7 +69,7 @@ describe('Sidebar structure', () => {
     const { container } = render(
       <Sidebar collapsed onClose={() => undefined} onToggle={onToggle} open={false} />
     );
-    for (const item of visibleNavGroups('ADMIN', true).flatMap((g) => g.items)) {
+    for (const item of visibleNavGroups(ADMIN_PERMISSIONS, true).flatMap((g) => g.items)) {
       const link = screen.getByRole('link', { name: item.label });
       expect(link.getAttribute('data-sidebar-label')).toBe(item.label);
     }
@@ -126,13 +140,20 @@ describe('Sidebar structure', () => {
 });
 
 describe('Sidebar data-tour anchors', () => {
-  const setRole = (role: 'ENGINEER' | 'LEAD' | 'ADMIN') =>
-    useAuthStore.setState({ user: { email: 'a@x.dev', role, sub: 'u1' } } as never);
+  const PEOPLE = {
+    admin: ADMIN_PERMISSIONS,
+    lead: permissionsFor({
+      orgs: [{ capabilities: ['org.baselines.read'], orgId: 'o1' }],
+      teams: [{ capabilities: ['team.settings.manage'], role: 'LEAD', teamId: 't1' }],
+    }),
+    member: NO_PERMISSIONS,
+  } as const;
+  const setWho = (who: keyof typeof PEOPLE) => setPermissions(PEOPLE[who]);
 
-  it.each(['ENGINEER', 'LEAD', 'ADMIN'] as const)(
+  it.each(['member', 'lead', 'admin'] as const)(
     'gives the sidebar container its anchor and every rendered %s nav link its own href',
-    (role) => {
-      setRole(role);
+    (who) => {
+      setWho(who);
       resetNavigation('', '/');
       const { container } = render(<Sidebar onClose={() => undefined} open />);
       expect(container.querySelector('aside')?.getAttribute('data-tour')).toBe('sidebar');
@@ -145,14 +166,16 @@ describe('Sidebar data-tour anchors', () => {
     }
   );
 
-  it.each(['ENGINEER', 'LEAD', 'ADMIN'] as const)(
-    'anchors exactly the items the %s role may open, plus Start work',
-    (role) => {
-      setRole(role);
+  it.each(['member', 'lead', 'admin'] as const)(
+    'anchors exactly the items the %s may open, plus Start work',
+    (who) => {
+      setWho(who);
       resetNavigation('', '/');
       const { container } = render(<Sidebar onClose={() => undefined} open />);
       // The usage-scope check is mocked as platform-wide, matching useVisibleNavGroups.
-      const expected = visibleNavGroups(role, true).flatMap((g) => g.items.map((i) => i.href));
+      const expected = visibleNavGroups(PEOPLE[who], true).flatMap((g) =>
+        g.items.map((i) => i.href)
+      );
       const anchored = Array.from(container.querySelectorAll('[data-tour^="nav:"]')).map((el) =>
         el.getAttribute('data-tour')
       );
@@ -188,12 +211,12 @@ describe('Sidebar data-tour anchors', () => {
     });
   });
 
-  it('has no Agents anchor for an ENGINEER, and one for an ADMIN', () => {
-    setRole('ENGINEER');
+  it('has no Agents anchor for a member, and one for a platform admin', () => {
+    setWho('member');
     resetNavigation('', '/');
     const { container } = render(<Sidebar onClose={() => undefined} open />);
     expect(container.querySelector('[data-tour="nav:/agents"]')).toBeNull();
-    setRole('ADMIN');
+    setWho('admin');
     cleanup();
     const admin = render(<Sidebar onClose={() => undefined} open />);
     expect(admin.container.querySelector('[data-tour="nav:/agents"]')).not.toBeNull();
@@ -203,7 +226,7 @@ describe('Sidebar data-tour anchors', () => {
 describe('Sidebar Teams group', () => {
   const entry = (slug: string, name: string, needsYou = 0) => ({
     needsYou,
-    team: { id: `id-${slug}`, myRole: 'ENGINEER', name, slug },
+    team: { id: `id-${slug}`, myRole: 'MEMBER', name, slug },
   });
 
   beforeEach(() => {

@@ -1,5 +1,5 @@
-import type { Role } from '@auto-swe/shared';
-import { hasRole } from '@/lib/roles';
+import type { Access, Permissions } from '@/lib/capabilities';
+import { holdsAccess } from '@/lib/capabilities';
 
 /** URL-scoped lists, the cross-team desk, and team spaces support team navigation. */
 export function showsTeamSwitcher(pathname: string): boolean {
@@ -72,19 +72,18 @@ export function detailParent(pathname: string): DetailParent | null {
  * the same string. A detail page (one template, one team, one run) titles its
  * H1 with the entity's name and publishes it to the TopBar breadcrumb.
  *
- * `minRole` must match what actually serves the page: the route's
- * `RoleLayout` guard and the gateway `requiredRole` of the API it reads.
- * A nav entry that is more permissive than the layout bounces users; one that
- * is stricter hides a page they are allowed to use.
+ * `access` must match what actually serves the page: the route's `AccessLayout` guard and the
+ * capability the gateway requires of the API it reads. A nav entry that is more permissive than
+ * the layout bounces users; one that is stricter hides a page they are allowed to use.
  */
 export interface NavItem {
   href: string;
   label: string;
   icon: string;
-  minRole: Role;
+  access: Access;
   /**
-   * Offered only to someone who may read a usage scope (`GET /platform/usage/scopes`),
-   * whatever their platform role: a team LEAD or ORG_ADMIN by membership qualifies.
+   * Offered only to someone who may read a usage scope (`GET /platform/usage/scopes`), however
+   * they came by it: a team lead or an organization admin by membership qualifies.
    */
   needsUsageScope?: true;
   /**
@@ -113,154 +112,160 @@ export const ADMIN_HREF = '/admin';
 export const APPROVALS_HREF = '/approvals';
 
 const ADMIN_PAGES: NavItem[] = [
-  { href: '/admin/users', icon: 'users', label: 'Users', minRole: 'ADMIN', section: 'Access' },
   {
+    access: 'platform-admin',
+    href: '/admin/users',
+    icon: 'users',
+    label: 'Users',
+    section: 'Access',
+  },
+  {
+    access: 'any',
     href: '/admin/organizations',
     icon: 'building',
     label: 'Organizations',
-    minRole: 'ENGINEER',
     section: 'Access',
   },
   {
+    access: 'platform-admin',
     href: '/admin/sessions',
     icon: 'monitor',
     label: 'Sessions',
-    minRole: 'ADMIN',
     section: 'Access',
   },
   {
+    access: 'platform-admin',
     href: '/admin/api-tokens',
     icon: 'key',
     label: 'API tokens',
-    minRole: 'ADMIN',
     section: 'Access',
   },
   {
+    access: 'platform-admin',
     href: '/admin/scanner',
     icon: 'scan',
     label: 'Scanner patterns',
-    minRole: 'ADMIN',
     section: 'Security',
   },
   {
+    access: 'platform-admin',
     href: '/admin/harness-profiles',
     icon: 'package',
     label: 'Plugins',
-    minRole: 'ADMIN',
     section: 'Security',
   },
   {
+    access: 'platform-admin',
     href: '/admin/pr-evaluations',
     icon: 'filter',
     label: 'PR evaluations',
-    minRole: 'ADMIN',
     section: 'Security',
   },
   {
+    access: 'platform-admin',
     href: '/admin/policies',
     icon: 'security',
     label: 'Autonomy policies',
-    minRole: 'ADMIN',
     section: 'Security',
   },
   {
+    access: 'platform-admin',
     href: '/admin/policies/decisions',
     icon: 'gavel',
     label: 'Autonomy decisions',
-    minRole: 'ADMIN',
     section: 'Security',
   },
   {
+    access: 'platform-admin',
     href: '/admin/security',
     icon: 'alert',
     label: 'Security events',
-    minRole: 'ADMIN',
     section: 'Security',
   },
   {
+    access: 'platform-admin',
     href: '/admin/audit',
     icon: 'list',
     label: 'Audit log',
-    minRole: 'ADMIN',
     section: 'Security',
   },
   {
+    access: 'platform-admin',
     href: '/admin/activity',
     icon: 'users',
     label: 'User activity',
-    minRole: 'ADMIN',
     section: 'Security',
   },
   {
+    access: 'platform-admin',
     href: '/admin/assistant',
     icon: 'warning',
     label: 'Assistant failures',
-    minRole: 'ADMIN',
     section: 'Spend & insights',
   },
   {
+    access: 'team.settings.manage',
     href: '/admin/platform-settings',
     icon: 'settings',
     label: 'Platform settings',
-    minRole: 'LEAD',
     section: 'Configuration',
   },
   {
+    access: 'platform-admin',
     href: '/admin/workflow-defaults',
     icon: 'workflows',
     label: 'Workflow defaults',
-    minRole: 'ADMIN',
     section: 'Configuration',
   },
   {
+    access: 'platform-admin',
     href: '/admin/review-presets',
     icon: 'checkCircle',
     label: 'Platform review presets',
-    minRole: 'ADMIN',
     section: 'Configuration',
   },
   {
+    access: 'platform-admin',
     href: '/admin/config-grants',
     icon: 'lock',
     label: 'Config grants',
-    minRole: 'ADMIN',
     section: 'Configuration',
   },
   {
+    access: 'any',
     href: '/admin/slack-channels',
     icon: 'chat',
     label: 'Slack channels',
-    minRole: 'ENGINEER',
     section: 'Configuration',
   },
   // Platform credentials: administration, not authoring.
   {
+    access: 'platform-admin',
     href: '/admin/integrations',
     icon: 'puzzle',
     label: 'Integrations',
-    minRole: 'ADMIN',
     section: 'Credentials',
   },
   {
+    access: 'platform-admin',
     href: '/admin/github-installations',
     icon: 'github',
     label: 'GitHub installations',
-    minRole: 'ADMIN',
     section: 'Credentials',
   },
-  // The baselines API and layout both require LEAD.
+  // The baselines API answers to organization membership (`org.baselines.read`).
   {
+    access: 'org.baselines.read',
     href: '/admin/baselines',
     icon: 'target',
     label: 'Error baselines',
-    minRole: 'LEAD',
     section: 'Quality',
   },
   {
+    access: 'platform-admin',
     href: '/admin/evals',
     icon: 'flask',
     label: 'Evals',
-    minRole: 'ADMIN',
     section: 'Quality',
   },
 ];
@@ -270,85 +275,85 @@ const ADMIN_PAGES: NavItem[] = [
  * to the caller's teams and scopes. A team's own page is `/teams/<slug>`, which the Teams entry owns.
  */
 export const INSIGHTS_PAGES: NavItem[] = [
-  { href: '/teams', icon: 'teams', label: 'Teams', minRole: 'ENGINEER' },
-  { href: '/insights/analytics', icon: 'analytics', label: 'Analytics', minRole: 'ENGINEER' },
-  { href: '/insights/reports', icon: 'docs', label: 'Reports', minRole: 'ENGINEER' },
-  // Gated on holding a usage scope (a led team, an administered org, or ADMIN), not on
+  { access: 'any', href: '/teams', icon: 'teams', label: 'Teams' },
+  { access: 'any', href: '/insights/analytics', icon: 'analytics', label: 'Analytics' },
+  { access: 'any', href: '/insights/reports', icon: 'docs', label: 'Reports' },
+  // Gated on holding a usage scope (a led team, an administered org, or a platform admin), not on
   // the platform role; the gateway enforces which scopes each may read.
   {
+    access: 'any',
     href: '/insights/usage',
     icon: 'coin',
     label: 'LLM usage',
-    minRole: 'ENGINEER',
     needsUsageScope: true,
   },
   // Every automation kind in one list; schedules are still edited on their own page, which
-  // keeps this entry lit. The APIs admit ENGINEERs (launch authorization is per repo).
+  // keeps this entry lit. The APIs admit every signed-in person (launch authorization is per repo).
   {
+    access: 'any',
     alsoActiveFor: ['/admin/schedules'],
     href: '/automations',
     icon: 'clock',
     label: 'Automations',
-    minRole: 'ENGINEER',
   },
 ];
 
 export const KNOWLEDGE_PAGES: NavItem[] = [
-  { href: '/knowledge', icon: 'repository', label: 'Knowledge', minRole: 'ENGINEER' },
-  { href: '/knowledge-bases', icon: 'memory', label: 'Knowledge bases', minRole: 'ENGINEER' },
-  { href: '/lessons', icon: 'edit', label: 'Lessons', minRole: 'ENGINEER' },
+  { access: 'any', href: '/knowledge', icon: 'repository', label: 'Knowledge' },
+  { access: 'any', href: '/knowledge-bases', icon: 'memory', label: 'Knowledge bases' },
+  { access: 'any', href: '/lessons', icon: 'edit', label: 'Lessons' },
 ];
 
 export const NAV_GROUPS: NavGroup[] = [
   {
-    items: [{ href: '/', icon: 'dashboard', label: 'Home', minRole: 'ENGINEER' }],
+    items: [{ access: 'any', href: '/', icon: 'dashboard', label: 'Home' }],
     label: 'Home',
   },
   {
     items: [
-      { href: APPROVALS_HREF, icon: 'inbox', label: 'Approvals', minRole: 'ENGINEER' },
+      { access: 'any', href: APPROVALS_HREF, icon: 'inbox', label: 'Approvals' },
       {
+        access: 'any',
         href: '/requests',
         icon: 'canvas',
         label: 'Requests',
-        minRole: 'ENGINEER',
       },
-      { href: '/epics', icon: 'epics', label: 'Epics', minRole: 'ENGINEER' },
-      { href: '/campaigns', icon: 'layers', label: 'Campaigns', minRole: 'ENGINEER' },
-      { href: '/orchestrations', icon: 'branch', label: 'Orchestrations', minRole: 'ENGINEER' },
-      { href: '/runs', icon: 'runs', label: 'All runs', minRole: 'ENGINEER' },
+      { access: 'any', href: '/epics', icon: 'epics', label: 'Epics' },
+      { access: 'any', href: '/campaigns', icon: 'layers', label: 'Campaigns' },
+      { access: 'any', href: '/orchestrations', icon: 'branch', label: 'Orchestrations' },
+      { access: 'any', href: '/runs', icon: 'runs', label: 'All runs' },
       {
+        access: 'any',
         href: '/pull-requests',
         icon: 'pullRequest',
         label: 'Pull requests',
-        minRole: 'ENGINEER',
       },
-      { href: '/tickets', icon: 'ticket', label: 'Tickets', minRole: 'ENGINEER' },
+      { access: 'any', href: '/tickets', icon: 'ticket', label: 'Tickets' },
     ],
     label: 'All teams',
   },
   { items: INSIGHTS_PAGES, label: 'Teams and insights' },
   {
     items: [
-      { href: '/library', icon: 'templates', label: 'Workflow library', minRole: 'ENGINEER' },
-      // The authoring pages below are ADMIN-only: each route has its own ADMIN layout.
-      { href: '/agents', icon: 'agents', label: 'Agents', minRole: 'ADMIN' },
-      { href: '/skills', icon: 'skills', label: 'Skills', minRole: 'ADMIN' },
+      { access: 'any', href: '/library', icon: 'templates', label: 'Workflow library' },
+      // The authoring pages below are for platform administrators: each route has its own layout.
+      { access: 'platform-admin', href: '/agents', icon: 'agents', label: 'Agents' },
+      { access: 'platform-admin', href: '/skills', icon: 'skills', label: 'Skills' },
       {
+        access: 'any',
         href: '/review-presets',
         icon: 'checkCircle',
         label: 'Review presets',
-        minRole: 'ENGINEER',
       },
     ],
     label: 'Build',
   },
   {
     items: [
-      { href: '/connections', icon: 'connections', label: 'Connections', minRole: 'ENGINEER' },
-      { href: '/models', icon: 'sliders', label: 'Model configuration', minRole: 'ADMIN' },
-      { href: '/mcp', icon: 'plug', label: 'MCP connections', minRole: 'ADMIN' },
-      { href: '/bundles', icon: 'package', label: 'Bundles', minRole: 'ADMIN' },
+      { access: 'any', href: '/connections', icon: 'connections', label: 'Connections' },
+      { access: 'platform-admin', href: '/models', icon: 'sliders', label: 'Model configuration' },
+      { access: 'platform-admin', href: '/mcp', icon: 'plug', label: 'MCP connections' },
+      { access: 'platform-admin', href: '/bundles', icon: 'package', label: 'Bundles' },
     ],
     label: 'Connect',
   },
@@ -367,11 +372,11 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     items: [
       {
+        access: 'any',
         children: ADMIN_PAGES,
         href: ADMIN_HREF,
         icon: 'admin',
         label: 'Admin',
-        minRole: 'ENGINEER',
       },
     ],
     label: 'Admin',
@@ -379,8 +384,8 @@ export const NAV_GROUPS: NavGroup[] = [
 ];
 
 export const USER_NAV_ITEMS: NavItem[] = [
-  { href: '/settings', icon: 'settings', label: 'Settings', minRole: 'ENGINEER' },
-  { href: '/docs', icon: 'docs', label: 'Docs', minRole: 'ENGINEER' },
+  { access: 'any', href: '/settings', icon: 'settings', label: 'Settings' },
+  { access: 'any', href: '/docs', icon: 'docs', label: 'Docs' },
 ];
 
 /** `items` and, depth first, every child below them. */
@@ -394,34 +399,39 @@ export const NAV_ITEMS: NavItem[] = flattenNavItems([
   ...USER_NAV_ITEMS,
 ]);
 
-function visibleItems(items: NavItem[], role: string | null | undefined, hasUsageScope: boolean) {
+function visibleItems(
+  items: NavItem[],
+  perms: Permissions | null | undefined,
+  hasUsageScope: boolean
+) {
   return items.flatMap((item): NavItem[] => {
     if (
-      !hasRole(role, item.minRole) ||
-      (item.needsUsageScope && !hasUsageScope && !hasRole(role, 'ADMIN'))
+      !holdsAccess(perms, item.access) ||
+      (item.needsUsageScope && !hasUsageScope && !holdsAccess(perms, 'platform-admin'))
     ) {
       return [];
     }
     if (!item.children) {
       return [item];
     }
-    const children = visibleItems(item.children, role, hasUsageScope);
+    const children = visibleItems(item.children, perms, hasUsageScope);
     return children.length > 0 ? [{ ...item, children }] : [];
   });
 }
 
 /**
- * The groups, each narrowed to the items `role` may open; empty groups dropped. An item
- * with children keeps only the visible ones, and is dropped when none is.
- * `hasUsageScope` unlocks the items gated on a usage scope; an ADMIN always has one.
+ * The groups, each narrowed to the items the server's effective permissions (`perms`) let the
+ * person open; empty groups dropped. An item with children keeps only the visible ones, and is
+ * dropped when none is. `hasUsageScope` unlocks the items gated on a usage scope; a platform
+ * administrator always has one. Before `perms` loads, only the items open to everyone show.
  */
 export function visibleNavGroups(
-  role: string | null | undefined,
+  perms: Permissions | null | undefined,
   hasUsageScope = false
 ): NavGroup[] {
   return NAV_GROUPS.map((group) => ({
     ...group,
-    items: visibleItems(group.items, role, hasUsageScope),
+    items: visibleItems(group.items, perms, hasUsageScope),
   })).filter((group) => group.items.length > 0);
 }
 

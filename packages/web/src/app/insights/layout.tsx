@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { RoleLayout } from '@/components/auth/RoleLayout';
+import { AccessLayout } from '@/components/auth/AccessLayout';
 
 /**
  * Analytics, Reports and LLM usage: pages every signed-in role may open, which used to sit in the
@@ -7,5 +7,5 @@ import { RoleLayout } from '@/components/auth/RoleLayout';
  * usage page raises the floor to holding a usage scope in its own layout.
  */
 export default function InsightsLayout({ children }: { children: ReactNode }) {
-  return <RoleLayout allowed={['ENGINEER', 'LEAD', 'ADMIN']}>{children}</RoleLayout>;
+  return <AccessLayout access="any">{children}</AccessLayout>;
 }

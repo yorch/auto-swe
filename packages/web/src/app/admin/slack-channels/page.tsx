@@ -15,8 +15,8 @@ import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
+import { useCan } from '@/hooks/useCan';
 import { useDataTableSort } from '@/hooks/useDataTableSort';
-import { useHasRole } from '@/hooks/useHasRole';
 import { usePagedRows } from '@/hooks/usePagedRows';
 import { type SlackChannel, useSlackChannels } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
@@ -72,7 +72,7 @@ function SpendMeter({ channel }: { channel: SlackChannel }) {
 }
 
 export default function GovernSlackChannelsPage() {
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = useCan('platform.slack-channels.manage');
   const router = useRouter();
   const {
     data: channels,

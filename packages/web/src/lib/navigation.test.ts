@@ -1,10 +1,9 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Role } from '@auto-swe/shared';
 import { describe, expect, it } from 'vitest';
 import { ICON_PATHS, isIconName } from '@/components/ui/Icon';
-import { hasRole } from '@/lib/roles';
+import { type Access, holdsAccess, type Permissions } from '@/lib/capabilities';
 import {
   ADMIN_HREF,
   activeNavHref,
@@ -94,38 +93,70 @@ describe('detail parents', () => {
 });
 
 const APP_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'app');
-const RANK: Record<Role, number> = { ADMIN: 3, ENGINEER: 1, LEAD: 2 };
 
 /**
- * The strictest `RoleLayout allowed={[…]}` floor on the way from the app root
- * to `href` — what the server actually enforces for that page.
+ * The strictest `<AccessLayout access="…">` on the way from the app root to `href` — what the
+ * server actually enforces for that page. A layout that says `any` leaves the page to its API.
  */
-function layoutFloor(href: string): Role {
+function layoutAccess(href: string): Access {
   const segments = href.split('/').filter(Boolean);
-  let floor: Role = 'ENGINEER';
+  let strictest: Access = 'any';
   for (let i = 0; i <= segments.length; i++) {
     const file = join(APP_DIR, ...segments.slice(0, i), 'layout.tsx');
     if (!existsSync(file)) {
       continue;
     }
-    const match = readFileSync(file, 'utf8').match(/allowed=\{\[([^\]]*)\]\}/);
-    if (!match) {
-      continue;
-    }
-    const roles = [...match[1].matchAll(/'(ENGINEER|LEAD|ADMIN)'/g)].map((m) => m[1] as Role);
-    const lowest = roles.reduce<Role>((lo, r) => (RANK[r] < RANK[lo] ? r : lo), 'ADMIN');
-    if (RANK[lowest] > RANK[floor]) {
-      floor = lowest;
+    const match = readFileSync(file, 'utf8').match(/<AccessLayout access="([^"]+)"/);
+    if (match && match[1] !== 'any') {
+      strictest = match[1] as Access;
     }
   }
-  return floor;
+  return strictest;
 }
+
+/** What the dashboard reads from `GET /me/permissions`, for the cases below. */
+function permissions(opts: {
+  admin?: boolean;
+  orgCapabilities?: string[];
+  teamCapabilities?: string[];
+}): Permissions {
+  const held = (keys: string[]) => keys.map((key) => ({ authority: 'team-role', key }));
+  return {
+    organizations: opts.orgCapabilities
+      ? [{ capabilities: held(opts.orgCapabilities), name: 'Org', orgId: 'o1', role: 'MEMBER' }]
+      : [],
+    platformCapabilities: opts.admin ? ['platform.users.manage'] : [],
+    platformRole: opts.admin ? 'ADMIN' : 'USER',
+    teams: opts.teamCapabilities
+      ? [
+          {
+            capabilities: held(opts.teamCapabilities),
+            name: 'T',
+            orgId: 'o1',
+            role: 'LEAD',
+            slug: 't',
+            teamId: 't1',
+          },
+        ]
+      : [],
+  } as never;
+}
+
+const MEMBER = permissions({ orgCapabilities: ['org.read'], teamCapabilities: ['team.read'] });
+const LEAD = permissions({
+  orgCapabilities: ['org.read', 'org.baselines.read'],
+  teamCapabilities: ['team.read', 'team.settings.manage'],
+});
+const ADMIN = permissions({ admin: true });
+
+/** Pages whose layout leaves them open and whose navigation entry is narrower on purpose. */
+const NARROWER_THAN_LAYOUT = new Set(['/admin/platform-settings']);
 
 describe('NAV_GROUPS', () => {
   it('places Epics after Requests and keeps each destination active independently', () => {
     const work = NAV_GROUPS.find((group) => group.label === 'All teams')?.items ?? [];
     const requests = work.findIndex((item) => item.href === '/requests');
-    expect(work[requests + 1]).toMatchObject({ href: '/epics', minRole: 'ENGINEER' });
+    expect(work[requests + 1]).toMatchObject({ access: 'any', href: '/epics' });
     for (const path of ['/epics', '/epics/id']) {
       expect(activeNavHref(path, work)).toBe('/epics');
     }
@@ -174,12 +205,17 @@ describe('NAV_GROUPS', () => {
     expect(navLabel('/admin/review-presets')).toBe('Platform review presets');
     expect(pageSection('/connections')).toBe('Connect');
   });
-  it.each(NAV_ITEMS.map((i) => [i.href, i.minRole] as const))(
-    '%s is offered to exactly the roles its layout admits',
-    (href, minRole) => {
+  it.each(NAV_ITEMS.map((i) => [i.href, i.access] as const))(
+    '%s is offered to exactly the people its layout admits',
+    (href, access) => {
       // A nav entry looser than the layout bounces users off the page; a
       // stricter one hides a page they may use.
-      expect(minRole).toBe(layoutFloor(href));
+      if (NARROWER_THAN_LAYOUT.has(href)) {
+        expect(layoutAccess(href)).toBe('any');
+        expect(access).not.toBe('any');
+        return;
+      }
+      expect(access).toBe(layoutAccess(href));
     }
   );
 
@@ -196,8 +232,8 @@ describe('NAV_GROUPS', () => {
 });
 
 describe('visibleNavGroups', () => {
-  const hrefsFor = (role: string, scoped?: boolean) =>
-    visibleNavGroups(role, scoped).flatMap((g) => flattenNavItems(g.items).map((i) => i.href));
+  const hrefsFor = (perms: Permissions | undefined, scoped?: boolean) =>
+    visibleNavGroups(perms, scoped).flatMap((g) => flattenNavItems(g.items).map((i) => i.href));
 
   it('groups the sidebar into Home, All teams, Teams and insights, Build, Connect, Knowledge and Admin', () => {
     expect(NAV_GROUPS.map((g) => g.label)).toEqual([
@@ -212,7 +248,7 @@ describe('visibleNavGroups', () => {
   });
 
   it('offers Teams, Analytics, Reports, LLM usage and Automations in their own group, and not in Admin', () => {
-    const groups = visibleNavGroups('ENGINEER', true);
+    const groups = visibleNavGroups(MEMBER, true);
     const insights = groups.find((g) => g.label === 'Teams and insights');
     expect(insights?.items.map((i) => i.href)).toEqual([
       '/teams',
@@ -236,14 +272,15 @@ describe('visibleNavGroups', () => {
     expect(adminHrefs).not.toContain('/insights/analytics');
   });
 
-  it('shows an ENGINEER only ENGINEER pages', () => {
-    const hrefs = hrefsFor('ENGINEER');
+  it('shows a member only the pages open to everyone', () => {
+    const hrefs = hrefsFor(MEMBER);
     expect(hrefs).toContain('/automations');
     expect(hrefs).toContain('/teams');
     expect(hrefs).toContain('/admin/organizations');
     expect(hrefs).not.toContain('/admin/baselines');
+    expect(hrefs).not.toContain('/admin/platform-settings');
     expect(hrefs).not.toContain('/admin/review-presets');
-    // Team review presets are chosen from the teams the caller leads, so any engineer may open the page.
+    // Team review presets are chosen from the teams the caller leads, so anyone may open the page.
     expect(hrefs).toContain('/review-presets');
     expect(hrefs).toContain('/connections');
     expect(hrefs).toContain('/library');
@@ -253,50 +290,67 @@ describe('visibleNavGroups', () => {
     expect(hrefs).not.toContain('/admin/users');
   });
 
-  it('shows a LEAD the LEAD pages but not the ADMIN-only authoring pages', () => {
-    const hrefs = hrefsFor('LEAD');
+  it('shows a team lead the pages their capabilities open, not the platform admin pages', () => {
+    const hrefs = hrefsFor(LEAD);
     expect(hrefs).toContain('/admin/baselines');
+    expect(hrefs).toContain('/admin/platform-settings');
     expect(hrefs).toContain('/admin/organizations');
     expect(hrefs).not.toContain('/skills');
     expect(hrefs).not.toContain('/mcp');
     expect(hrefs).not.toContain('/admin/integrations');
   });
 
-  it('offers LLM usage by usage scope, not by platform role', () => {
-    const offered = (role: string, scoped?: boolean) =>
-      hrefsFor(role, scoped).includes('/insights/usage');
-    expect(offered('ENGINEER')).toBe(false);
-    expect(offered('ENGINEER', true)).toBe(true);
-    // A LEAD who leads no team has no scope, so the page would bounce them.
-    expect(offered('LEAD')).toBe(false);
-    expect(offered('LEAD', true)).toBe(true);
-    expect(offered('ADMIN')).toBe(true);
+  it('offers LLM usage by usage scope, not by anything else', () => {
+    const offered = (perms: Permissions, scoped?: boolean) =>
+      hrefsFor(perms, scoped).includes('/insights/usage');
+    expect(offered(MEMBER)).toBe(false);
+    expect(offered(MEMBER, true)).toBe(true);
+    // A lead who has no scope would be bounced by the page.
+    expect(offered(LEAD)).toBe(false);
+    expect(offered(LEAD, true)).toBe(true);
+    expect(offered(ADMIN)).toBe(true);
   });
 
-  it('shows an ADMIN everything', () => {
-    expect(hrefsFor('ADMIN').length).toBe(NAV_ITEMS.length - USER_NAV_ITEMS.length);
+  it('shows a platform admin everything', () => {
+    expect(hrefsFor(ADMIN).length).toBe(NAV_ITEMS.length - USER_NAV_ITEMS.length);
   });
 
-  it('shows nothing to an unknown role', () => {
-    expect(visibleNavGroups(undefined)).toEqual([]);
+  it('shows only the pages open to everyone until the permissions load', () => {
+    const hrefs = hrefsFor(undefined);
+    expect(hrefs).toContain('/');
+    expect(hrefs).toContain('/admin/organizations');
+    expect(hrefs).not.toContain('/admin/users');
+    expect(hrefs).not.toContain('/admin/baselines');
+    expect(hrefs).not.toContain('/admin/platform-settings');
+    expect(hrefs).not.toContain('/skills');
   });
 
-  it('gives Admin one sidebar entry, holding only the pages the role may open', () => {
-    for (const role of ['ENGINEER', 'LEAD', 'ADMIN']) {
-      const admin = visibleNavGroups(role, true).find((g) => g.label === 'Admin');
+  it('gives Admin one sidebar entry, holding only the pages the person may open', () => {
+    for (const [who, perms] of [
+      ['member', MEMBER],
+      ['lead', LEAD],
+      ['admin', ADMIN],
+    ] as const) {
+      const admin = visibleNavGroups(perms, true).find((g) => g.label === 'Admin');
       expect(admin?.items.map((i) => i.href)).toEqual([ADMIN_HREF]);
       const children = admin?.items[0].children ?? [];
       expect(children.length).toBeGreaterThan(0);
       for (const child of children) {
-        expect(hasRole(role, child.minRole), `${role} ${child.href}`).toBe(true);
+        expect(holdsAccess(perms, child.access), `${who} ${child.href}`).toBe(true);
         expect(child.href.startsWith(`${ADMIN_HREF}/`)).toBe(true);
       }
     }
   });
 
   it('drops an entry with children when none of them is visible', () => {
-    // An unknown role sees no Admin page, so it gets no Admin entry either.
-    expect(hrefsFor('NOPE')).not.toContain(ADMIN_HREF);
+    // Every person may open Organizations, so Admin is always offered; an entry whose children
+    // are all hidden would go, which is what the filter does for each child.
+    expect(hrefsFor(MEMBER)).toContain(ADMIN_HREF);
+    const admin = visibleNavGroups(MEMBER).find((g) => g.label === 'Admin');
+    expect(admin?.items[0].children?.map((c) => c.href)).toEqual([
+      '/admin/organizations',
+      '/admin/slack-channels',
+    ]);
   });
 });
 
@@ -396,7 +450,7 @@ describe('pageTitle', () => {
 
 describe('navSections', () => {
   const adminPages = () =>
-    visibleNavGroups('ADMIN', true)
+    visibleNavGroups(ADMIN, true)
       .flatMap((g) => g.items)
       .find((i) => i.href === ADMIN_HREF)?.children ?? [];
 

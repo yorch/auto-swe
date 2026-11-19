@@ -64,7 +64,7 @@ function stubGateway(stub: Stub = {}) {
     const path = url.replace(/^https?:\/\/[^/]+/, '').split('?')[0];
     const method = (init?.method ?? 'GET').toUpperCase();
     if (method === 'GET' && path === '/api/v1/teams') {
-      return json({ data: [{ id: 'mine', myRole: 'ENGINEER', name: 'Mine', slug: 'mine' }] });
+      return json({ data: [{ id: 'mine', myRole: 'MEMBER', name: 'Mine', slug: 'mine' }] });
     }
     if (method === 'GET' && path === '/api/v1/repositories') {
       const other = {

@@ -4,12 +4,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
 
-const auth = vi.hoisted(() => ({ role: 'ENGINEER' }));
+// `role` is the platform role of the signed-in person (empty: nobody is signed in). What they may
+// do comes from the server's answer, which `gateway()` derives from `role` and the team list.
+const auth = vi.hoisted(() => ({ role: 'USER' }));
 vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('@/stores/authStore', () => ({
-  useAuthStore: (selector: (s: { user: { role: string } | null }) => unknown) =>
-    selector({ user: { role: auth.role } }),
+  useAuthStore: (selector: (s: { user: { role: string; sub: string } | null }) => unknown) =>
+    selector({ user: auth.role ? { role: auth.role, sub: 'me' } : null }),
 }));
 vi.mock('@/components/requests/WorkflowLaunchForm', () => ({
   WorkflowLaunchForm: ({
@@ -35,7 +37,7 @@ vi.mock('@/components/orchestrations/OrchestrateForm', () => ({
 import { modeChoices } from './ModeChooser';
 import { StartWork } from './StartWork';
 
-const team = (slug: string, name: string, myRole: 'ADMIN' | 'LEAD' | 'ENGINEER') => ({
+const team = (slug: string, name: string, myRole: 'ADMIN' | 'LEAD' | 'MEMBER') => ({
   id: `id-${slug}`,
   myRole,
   name,
@@ -58,12 +60,36 @@ const repo = (
   type: 'git_repo',
 });
 
-/** The caller leads Payments by default, so a LEAD can start an epic. */
+/**
+ * What the server says the caller holds: a platform admin holds every capability; anyone else
+ * holds `team.launch.multi-repo` on the teams where their team role is a lead's or above.
+ */
+function permissionsFor(teams: ReturnType<typeof team>[]) {
+  return {
+    organizations: [],
+    platformCapabilities: auth.role === 'ADMIN' ? ['platform.users.manage'] : [],
+    platformRole: '',
+    teams: teams
+      .filter((t) => t.myRole !== 'MEMBER')
+      .map((t) => ({
+        capabilities: [{ authority: 'team-role', key: 'team.launch.multi-repo' }],
+        name: t.name,
+        orgId: t.orgId,
+        role: t.myRole,
+        slug: t.slug,
+        teamId: t.id,
+      })),
+  };
+}
+
+/** The caller leads Payments by default, so a lead can start an epic. */
 function gateway(
   options: { teams?: ReturnType<typeof team>[]; repos?: ReturnType<typeof repo>[] } = {}
 ) {
   return setupFetchMock({
     'GET /api/v1/epics': () => ({ data: [], meta: { limit: 50, offset: 0, total: 0 } }),
+    'GET /api/v1/me/permissions': () =>
+      permissionsFor(options.teams ?? [team('payments', 'Payments', 'LEAD')]),
     'GET /api/v1/repositories': () => ({ data: options.repos ?? [] }),
     'GET /api/v1/teams': () => ({ data: options.teams ?? [team('payments', 'Payments', 'LEAD')] }),
     'GET /api/v1/workflow-templates': () => ({ data: [] }),
@@ -118,6 +144,7 @@ describe('StartWork', () => {
   };
   function workflowsGateway(templates: ReturnType<typeof workflow>[], spec: unknown = summarySpec) {
     return setupFetchMock({
+      'GET /api/v1/me/permissions': () => permissionsFor([team('payments', 'Payments', 'LEAD')]),
       'GET /api/v1/teams': () => ({ data: [team('payments', 'Payments', 'LEAD')] }),
       'GET /api/v1/workflow-templates': () => ({ data: templates }),
       ...Object.fromEntries(
@@ -307,7 +334,7 @@ describe('StartWork', () => {
     }
   });
   it('disables the epic option below lead and says why', () => {
-    auth.role = 'ENGINEER';
+    auth.role = 'USER';
     gateway();
     render(withQuery(<StartWork />));
     const radio = screen.getByRole('radio', { name: /multi-repo epic/i }) as HTMLInputElement;
@@ -317,14 +344,14 @@ describe('StartWork', () => {
   });
 
   it('offers a PRD run on the same gating as an epic', async () => {
-    auth.role = 'ENGINEER';
+    auth.role = 'USER';
     gateway();
     render(withQuery(<StartWork />));
     expect(
       (screen.getByRole('radio', { name: /run from a prd/i }) as HTMLInputElement).disabled
     ).toBe(true);
     cleanup();
-    auth.role = 'LEAD';
+    auth.role = 'USER';
     gateway();
     render(withQuery(<StartWork initialMode="prd" />));
     await waitFor(() =>
@@ -338,7 +365,7 @@ describe('StartWork', () => {
   });
 
   it('starts in the requested mode', () => {
-    auth.role = 'LEAD';
+    auth.role = 'USER';
     gateway();
     render(withQuery(<StartWork initialMode="agent" />));
     expect((screen.getByRole('radio', { name: /run an agent/i }) as HTMLInputElement).checked).toBe(
@@ -347,14 +374,14 @@ describe('StartWork', () => {
   });
 
   it('warns when the requested workflow cannot be run', async () => {
-    auth.role = 'LEAD';
+    auth.role = 'USER';
     gateway();
     render(withQuery(<StartWork initialTemplateId="missing" />));
     expect(await screen.findByText(/not available to run/i)).toBeTruthy();
   });
 
   it('shows the what-happens-next aside at every breakpoint', () => {
-    auth.role = 'LEAD';
+    auth.role = 'USER';
     gateway();
     render(withQuery(<StartWork />));
     const aside = screen.getByLabelText('What happens next');
@@ -365,7 +392,7 @@ describe('StartWork', () => {
   });
 
   it('helps choose between a workflow, an agent and an epic', () => {
-    auth.role = 'LEAD';
+    auth.role = 'USER';
     gateway();
     render(withQuery(<StartWork />));
     expect(screen.getByText('Need help choosing?').parentElement?.getAttribute('open')).toBeNull();
@@ -374,7 +401,7 @@ describe('StartWork', () => {
   });
 
   it('lets a lead pick each mode from the chooser with one click', async () => {
-    auth.role = 'LEAD';
+    auth.role = 'USER';
     gateway();
     render(withQuery(<StartWork />));
     await epicEnabled();
@@ -402,8 +429,8 @@ describe('StartWork', () => {
     expect(checked(/run a workflow/i)).toBe(true);
   });
 
-  it('never offers or recommends an epic to an engineer, and says why', () => {
-    auth.role = 'ENGINEER';
+  it('never offers or recommends an epic to someone who leads no team, and says why', () => {
+    auth.role = 'USER';
     gateway();
     render(withQuery(<StartWork />));
     fireEvent.click(screen.getByText('Need help choosing?'));
@@ -418,8 +445,8 @@ describe('StartWork', () => {
     ]);
   });
 
-  it('offers orchestration to an engineer and shows its form', () => {
-    auth.role = 'ENGINEER';
+  it('offers orchestration to a signed-in person and shows its form', () => {
+    auth.role = 'USER';
     gateway();
     render(withQuery(<StartWork initialMode="orchestrate" />));
     const option = screen.getByRole('radio', { name: /orchestrate agents/i }) as HTMLInputElement;
@@ -430,7 +457,7 @@ describe('StartWork', () => {
   });
 
   it('does not mount the orchestration form until its mode is chosen, then keeps it', () => {
-    auth.role = 'ENGINEER';
+    auth.role = 'USER';
     gateway();
     render(withQuery(<StartWork />));
     expect(screen.queryByText('orchestrate form')).toBeNull();
@@ -441,8 +468,8 @@ describe('StartWork', () => {
     expect(screen.getByText('orchestrate form').closest('[hidden]')).not.toBeNull();
   });
 
-  it('neither offers nor starts in orchestration below engineer', () => {
-    auth.role = 'VIEWER';
+  it('neither offers nor starts in orchestration without a session', () => {
+    auth.role = '';
     gateway();
     render(withQuery(<StartWork initialMode="orchestrate" />));
     const option = screen.getByRole('radio', { name: /orchestrate agents/i }) as HTMLInputElement;
@@ -453,11 +480,11 @@ describe('StartWork', () => {
     fireEvent.click(screen.getByText('Need help choosing?'));
     const chooser = within(screen.getByTestId('mode-hint'));
     expect(chooser.queryByRole('button', { name: /orchestrate/i })).toBeNull();
-    expect(chooser.getByText(/Requires engineer or above/)).toBeTruthy();
+    expect(chooser.getByText(/Requires a signed-in account/)).toBeTruthy();
   });
 
   it('offers the describe-the-goal mode without fetching plans until it is chosen', async () => {
-    auth.role = 'ENGINEER';
+    auth.role = 'USER';
     const spy = gateway();
     render(withQuery(<StartWork />));
     expect(screen.getByRole('radio', { name: /describe the goal/i })).toBeTruthy();
@@ -473,7 +500,7 @@ describe('StartWork', () => {
   });
 
   it('never promises a draft pull request or a per-repository request in the side rail', async () => {
-    auth.role = 'LEAD';
+    auth.role = 'USER';
     gateway();
     render(withQuery(<StartWork />));
     await epicEnabled();
@@ -492,9 +519,9 @@ describe('StartWork', () => {
   });
 
   describe('epic gating by team role', () => {
-    it('hides the epic from a platform lead who leads no team, and says so', async () => {
-      auth.role = 'LEAD';
-      gateway({ teams: [team('payments', 'Payments', 'ENGINEER')] });
+    it('hides the epic from someone who leads no team, and says so', async () => {
+      auth.role = 'USER';
+      gateway({ teams: [team('payments', 'Payments', 'MEMBER')] });
       render(withQuery(<StartWork />));
       expect((await screen.findAllByText(/You do not lead a team/)).length).toBeGreaterThan(0);
       const radio = screen.getByRole('radio', { name: /multi-repo epic/i }) as HTMLInputElement;
@@ -504,9 +531,9 @@ describe('StartWork', () => {
     });
 
     it('names the scope team when the caller leads another team but not that one', async () => {
-      auth.role = 'LEAD';
+      auth.role = 'USER';
       gateway({
-        teams: [team('payments', 'Payments', 'ENGINEER'), team('data', 'Data', 'LEAD')],
+        teams: [team('payments', 'Payments', 'MEMBER'), team('data', 'Data', 'LEAD')],
       });
       render(withQuery(<StartWork initialTeamSlug="payments" />));
       expect((await screen.findAllByText(/Requires lead of Payments/)).length).toBeGreaterThan(0);
@@ -516,13 +543,13 @@ describe('StartWork', () => {
     });
 
     it('offers the epic when the caller leads the scope team', async () => {
-      auth.role = 'LEAD';
+      auth.role = 'USER';
       gateway({ teams: [team('payments', 'Payments', 'LEAD')] });
       render(withQuery(<StartWork initialTeamSlug="payments" />));
       await epicEnabled();
     });
 
-    it('offers a platform ADMIN the epic without any team role', async () => {
+    it('offers a platform admin the epic without any team role', async () => {
       auth.role = 'ADMIN';
       gateway({ teams: [] });
       render(withQuery(<StartWork />));
@@ -541,13 +568,13 @@ describe('StartWork', () => {
     ];
 
     it('groups the epic’s repositories as “Payments”, then “Shared with Payments”, and keeps out repositories of teams the caller does not lead', async () => {
-      auth.role = 'LEAD';
+      auth.role = 'USER';
       gateway({
         repos,
         teams: [
           team('payments', 'Payments', 'LEAD'),
           team('platform', 'Platform', 'LEAD'),
-          team('data', 'Data', 'ENGINEER'),
+          team('data', 'Data', 'MEMBER'),
         ],
       });
       render(withQuery(<StartWork initialMode="epic" initialTeamSlug="payments" />));
@@ -564,15 +591,15 @@ describe('StartWork', () => {
     });
 
     it('says which team the work is for', async () => {
-      auth.role = 'ENGINEER';
-      gateway({ repos, teams: [team('payments', 'Payments', 'ENGINEER')] });
+      auth.role = 'USER';
+      gateway({ repos, teams: [team('payments', 'Payments', 'MEMBER')] });
       render(withQuery(<StartWork initialTeamSlug="payments" />));
       expect((await screen.findByTestId('start-scope')).textContent).toContain('Payments');
     });
 
     it('ignores a team slug the caller is not a member of', async () => {
-      auth.role = 'ENGINEER';
-      gateway({ repos, teams: [team('payments', 'Payments', 'ENGINEER')] });
+      auth.role = 'USER';
+      gateway({ repos, teams: [team('payments', 'Payments', 'MEMBER')] });
       render(withQuery(<StartWork initialTeamSlug="secret" />));
       await waitFor(() => expect(screen.getByText('Running a workflow')).toBeTruthy());
       expect(screen.queryByTestId('start-scope')).toBeNull();

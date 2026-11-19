@@ -6,7 +6,10 @@ import { setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpe
 import { ShellAuditPrune } from './ShellAuditPrune';
 
 const isAdmin = vi.hoisted(() => ({ value: true }));
-vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => isAdmin.value }));
+vi.mock('@/hooks/useCan', () => ({
+  useCan: () => isAdmin.value,
+  usePlatformAdmin: () => isAdmin.value,
+}));
 
 const PATH = '/api/v1/platform/shell-audit/prune';
 

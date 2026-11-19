@@ -8,14 +8,14 @@ const create = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
 vi.mock('@/hooks/useCampaigns', () => ({
   useCreateCampaign: () => ({ ...create, isPending: false }),
 }));
-vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => false }));
+// The caller may start a campaign for team t1 only: the server's answer per team.
+vi.mock('@/hooks/useCan', () => ({ useCanOnTeams: () => (teamId: string) => teamId === 't1' }));
 vi.mock('@/hooks/useTeams', () => ({
   useAuthoringTeams: () => ({
     global: false,
     isLoading: false,
     teams: [{ id: 't1', name: 'Payments', orgId: 'o1', orgName: 'Acme' }],
   }),
-  useLedTeamIds: () => new Set(['t1']),
 }));
 vi.mock('@/hooks/useRepositories', () => ({
   useRepositories: () => ({

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { RoleLayout } from '@/components/auth/RoleLayout';
+import { AccessLayout } from '@/components/auth/AccessLayout';
 
 export default function Layout({ children }: { children: ReactNode }) {
-  return <RoleLayout allowed={['ADMIN']}>{children}</RoleLayout>;
+  return <AccessLayout access="platform-admin">{children}</AccessLayout>;
 }

@@ -2,7 +2,7 @@
 
 import { campaignTextProblem } from '@auto-swe/shared/lib/campaignOutcome';
 import { BUDGET_TIERS, CAMPAIGN_DESCRIPTION_MAX_LENGTH } from '@auto-swe/shared/types/workflow';
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Input } from '@/components/ui/Input';
@@ -11,9 +11,9 @@ import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { SearchInput } from '@/components/ui/Toolbar';
 import { type CreateCampaignBody, useCreateCampaign } from '@/hooks/useCampaigns';
-import { useHasRole } from '@/hooks/useHasRole';
+import { useCanOnTeams } from '@/hooks/useCan';
 import { useRepositories } from '@/hooks/useRepositories';
-import { useAuthoringTeams, useLedTeamIds } from '@/hooks/useTeams';
+import { useAuthoringTeams } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
 import { RECIPE_OPTIONS } from './campaignDisplay';
 
@@ -57,9 +57,12 @@ function StartForm({
 }) {
   const create = useCreateCampaign();
   const { isLoading: teamsLoading, teams } = useAuthoringTeams();
-  const ledTeamIds = useLedTeamIds();
-  const isAdmin = useHasRole('ADMIN');
   const { data: allRepos = [] } = useRepositories({ limit: 100 });
+  // A campaign needs `team.launch.multi-repo` on the team that owns each repository it names.
+  const canLaunchOn = useCanOnTeams(
+    'team.launch.multi-repo',
+    useMemo(() => allRepos.map((r) => ({ id: r.team.id })), [allRepos])
+  );
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [ownerChoice, setOwnerChoice] = useState('');
@@ -77,14 +80,14 @@ function StartForm({
   const ownerTeam = teams.find((t) => t.id === ownerTeamId);
   const orgByTeam = new Map(teams.map((t) => [t.id, t.orgId]));
 
-  // Git repositories in the owning team's organization, owned by a team the caller leads. A
-  // platform ADMIN may use any team's.
+  // Git repositories in the owning team's organization, owned by a team the caller may start a
+  // campaign for.
   const isGit = (r: (typeof allRepos)[number]) => r.type === 'git_repo' && r.isActive;
   const eligible = allRepos.filter((r) => {
     if (!isGit(r)) {
       return false;
     }
-    if (!isAdmin && !ledTeamIds?.has(r.team.id)) {
+    if (!canLaunchOn(r.team.id)) {
       return false;
     }
     const org = orgByTeam.get(r.team.id);

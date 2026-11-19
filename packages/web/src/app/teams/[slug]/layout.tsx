@@ -8,28 +8,19 @@ import { Badge } from '@/components/ui/Badge';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { TabBar } from '@/components/ui/TabBar';
-import { useUserOrgs } from '@/hooks/useAdmin';
+import { useCan, usePlatformAdmin } from '@/hooks/useCan';
+import { useEffectivePermissions } from '@/hooks/useEffectivePermissions';
 import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useTeams } from '@/hooks/useTeams';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
-import { hasRole } from '@/lib/roles';
+import { teamRoleLabel } from '@/lib/roleLabels';
 import { validateRouteParam } from '@/lib/routeParams';
-import { canManageTeamBudget } from '@/lib/teamPermissions';
-import {
-  canSeeTeamManage,
-  TEAM_ROLE_LABEL,
-  TEAM_TABS,
-  type TeamTabId,
-  teamHref,
-  teamSettingsScope,
-  teamTabFromPath,
-} from '@/lib/teamSpace';
-import { useAuthStore } from '@/stores/authStore';
+import { TEAM_TABS, type TeamTabId, teamHref, teamTabFromPath } from '@/lib/teamSpace';
 
 /**
  * One team's space. The slug in the address is the scope: it resolves through the caller's own
  * teams, and a slug that names no team they belong to renders the ordinary not-found page, which
- * says nothing about whether such a team exists. A platform ADMIN may also open a team they are
+ * says nothing about whether such a team exists. A platform admin may also open a team they are
  * not in (they can already list every team), without a role badge.
  */
 export default function TeamSpaceLayout({
@@ -42,20 +33,21 @@ export default function TeamSpaceLayout({
   const { slug: rawSlug } = use(params);
   const slug = validateRouteParam(rawSlug);
   const pathname = usePathname();
-  const platformRole = useAuthStore((s) => s.user?.role);
-  const isPlatformAdmin = hasRole(platformRole, 'ADMIN');
+  const isPlatformAdmin = usePlatformAdmin();
+  const permissions = useEffectivePermissions();
   const memberTeams = useTeams({ memberOnly: true });
   const allTeams = useTeams({ enabled: isPlatformAdmin });
   const { loaded, lastTeamSlug, setLastTeamSlug } = useUserPreferences();
-  // An ORG_ADMIN of the team's organization may open Settings for its Budget section; the lookup
-  // is skipped for callers who already hold the budget some other way.
-  const holdsBudget =
-    isPlatformAdmin || hasRole(memberTeams.data?.find((t) => t.slug === slug)?.myRole, 'ADMIN');
-  const userOrgs = useUserOrgs({ enabled: !holdsBudget });
 
   const team =
     (slug ? memberTeams.data?.find((t) => t.slug === slug) : undefined) ??
     (isPlatformAdmin && slug ? allTeams.data?.find((t) => t.slug === slug) : undefined);
+  // What the tabs offer is what the server says the caller holds on this team: Settings for the
+  // team's configuration, Manage for what its leads run it with, the budget for the dollar figures.
+  const scope = { orgId: team?.orgId, teamId: team?.id };
+  const canSeeSettings = useCan('team.settings.manage', scope);
+  const canSeeManage = useCan('team.attention.read', scope);
+  const canManageBudget = useCan('team.budget.manage', scope);
 
   useEntityTitle(team?.name);
   // Remember the visit as the user's last team. Written once per slug: a failed write must not
@@ -73,7 +65,8 @@ export default function TeamSpaceLayout({
     return <NotFound />;
   }
   if (!team) {
-    const waiting = memberTeams.isLoading || (isPlatformAdmin && allTeams.isLoading);
+    const waiting =
+      memberTeams.isLoading || permissions.isLoading || (isPlatformAdmin && allTeams.isLoading);
     if (waiting || memberTeams.isError) {
       return (
         <QueryBoundary
@@ -89,16 +82,12 @@ export default function TeamSpaceLayout({
     }
     return <NotFound />;
   }
+  // The tabs depend on what the server says the caller holds here: wait rather than flash a
+  // missing Settings tab, or a not-found page on a direct link to one.
+  if (permissions.isLoading) {
+    return <QueryBoundary isError={false} isLoading label="team" shape="detail" />;
+  }
 
-  const isOrgAdmin = (userOrgs.data ?? []).some(
-    (o) => o.id === team.orgId && o.role === 'ORG_ADMIN'
-  );
-  const canSeeSettings = teamSettingsScope(platformRole, team.myRole, isOrgAdmin) !== null;
-  // Until the organizations load, an ORG_ADMIN cannot be told from a lead who is not one.
-  const canManageBudget = userOrgs.isLoading
-    ? null
-    : canManageTeamBudget(platformRole, team.myRole, isOrgAdmin);
-  const canSeeManage = canSeeTeamManage(platformRole, team.myRole);
   const tabs = TEAM_TABS.filter(
     (tab) => (tab.id !== 'settings' || canSeeSettings) && (tab.id !== 'manage' || canSeeManage)
   ).map((tab) => ({
@@ -118,7 +107,7 @@ export default function TeamSpaceLayout({
               <span>{team.orgName}</span>
               {team.myRole && (
                 <Badge tone="neutral" variant="outline">
-                  you: {TEAM_ROLE_LABEL[team.myRole]}
+                  you: {teamRoleLabel(team.myRole)}
                 </Badge>
               )}
             </span>

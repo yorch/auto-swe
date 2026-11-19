@@ -8,7 +8,7 @@ import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import type { SettingScope, SettingSource, SettingView } from '@/hooks/useConfigSettings';
-import { platformRoleLabel } from '@/lib/govLabels';
+import { writeAccessLabel } from '@/lib/roleLabels';
 import { cn, FOCUS_RING } from '@/lib/utils';
 
 /**
@@ -255,7 +255,7 @@ export function SettingRow({
               ·
             </span>
             <Badge tone="muted" variant="text">
-              Needs {platformRoleLabel(setting.requiredRole).toLowerCase()}
+              Needs {writeAccessLabel(setting.writeAccess)}
             </Badge>
           </div>
         </div>
@@ -301,7 +301,7 @@ export function SettingRow({
                   // Withheld by the server for anyone below the setting's role.
                   placeholder={
                     setting.redacted
-                      ? `Hidden — ${platformRoleLabel(setting.requiredRole).toLowerCase()} only`
+                      ? `Hidden — ${writeAccessLabel(setting.writeAccess)} only`
                       : undefined
                   }
                   value={setting.redacted ? '' : draft}
@@ -389,8 +389,7 @@ export function SettingRow({
                   )
                 ) : (
                   <>
-                    Changing this needs the {platformRoleLabel(setting.requiredRole).toLowerCase()}{' '}
-                    role.
+                    Changing this needs a {writeAccessLabel(setting.writeAccess)}.
                     {grantsHref && (
                       <>
                         {' '}

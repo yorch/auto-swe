@@ -6,14 +6,11 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { useInviteUser } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
-import { platformRoleLabel } from '@/lib/govLabels';
-
-type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
-
-const ROLE_OPTIONS = (['ENGINEER', 'LEAD', 'ADMIN'] as const).map((r) => ({
-  label: platformRoleLabel(r),
-  value: r,
-}));
+import {
+  DEFAULT_PLATFORM_ROLE,
+  PLATFORM_ROLE_OPTIONS,
+  type PlatformRoleValue,
+} from '@/lib/roleLabels';
 
 /** Invites one person by email: a magic link, and an already-approved account on the default team. */
 export function InviteUserModal({
@@ -28,7 +25,7 @@ export function InviteUserModal({
 }) {
   const invite = useInviteUser();
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<Role>('ENGINEER');
+  const [role, setRole] = useState<PlatformRoleValue>(DEFAULT_PLATFORM_ROLE);
   const [error, setError] = useState<string | null>(null);
 
   const close = () => {
@@ -43,7 +40,7 @@ export function InviteUserModal({
     try {
       await invite.mutateAsync({ email: address, role });
       setEmail('');
-      setRole('ENGINEER');
+      setRole(DEFAULT_PLATFORM_ROLE);
       onInvited(address);
       onClose();
     } catch (err) {
@@ -75,9 +72,9 @@ export function InviteUserModal({
         />
         <Select
           id="invite-role"
-          label="Role"
-          onChange={(v) => setRole(v as Role)}
-          options={ROLE_OPTIONS}
+          label="Platform role"
+          onChange={(v) => setRole(v as PlatformRoleValue)}
+          options={[...PLATFORM_ROLE_OPTIONS]}
           value={role}
         />
         <ModalFooter

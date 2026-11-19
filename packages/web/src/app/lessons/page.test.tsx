@@ -2,9 +2,18 @@
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useAuthStore } from '@/stores/authStore';
+import {
+  ADMIN_PERMISSIONS,
+  NO_PERMISSIONS,
+  resetPermissions,
+  setPermissions,
+} from '@/test/permissions';
 import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import LessonsPage from './page';
+
+vi.mock('@/hooks/useEffectivePermissions', async () =>
+  (await import('@/test/permissions')).permissionsMock()
+);
 
 const lesson = (over: Record<string, unknown> = {}) => ({
   confidence: null,
@@ -51,11 +60,11 @@ function mock(rows: unknown[], managedRepoIds?: string[]) {
 
 beforeEach(() => {
   stubDialogPrototype();
-  useAuthStore.setState({ isAuthenticated: true, user: { role: 'ADMIN', sub: 'me' } });
+  setPermissions(ADMIN_PERMISSIONS);
 });
 afterEach(() => {
   vi.unstubAllGlobals();
-  useAuthStore.setState({ isAuthenticated: false, user: null });
+  resetPermissions();
 });
 
 describe('LessonsPage', () => {
@@ -104,7 +113,7 @@ function requestedPaths(spy: ReturnType<typeof setupFetchMock>): string[] {
 
 describe('LessonsPage (engineer)', () => {
   beforeEach(() => {
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ENGINEER', sub: 'me' } });
+    setPermissions(NO_PERMISSIONS);
   });
 
   it('lists lessons read-only and never asks for the admin-only stats or config', async () => {
@@ -155,7 +164,7 @@ describe('LessonsPage (engineer)', () => {
 
 describe('LessonsPage (lead of the repository team)', () => {
   beforeEach(() => {
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ENGINEER', sub: 'me' } });
+    setPermissions(NO_PERMISSIONS);
   });
 
   it('offers delete only on lessons of repositories they lead', async () => {
@@ -236,7 +245,7 @@ describe('LessonsPage flags', () => {
   });
 
   it('shows quarantine to readers without offering management controls', async () => {
-    useAuthStore.setState({ user: { role: 'ENGINEER', sub: 'me' } });
+    setPermissions(NO_PERMISSIONS);
     mock([
       lesson({
         quarantinedAt: '2026-10-01T00:00:00Z',
@@ -291,7 +300,7 @@ describe('LessonsPage flags', () => {
     );
   });
   beforeEach(() => {
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ENGINEER', sub: 'me' } });
+    setPermissions(NO_PERMISSIONS);
   });
 
   it('lets a reader flag a lesson with a reason', async () => {

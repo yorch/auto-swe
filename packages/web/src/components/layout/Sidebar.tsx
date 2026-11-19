@@ -16,6 +16,7 @@ import { useTeamNav } from '@/hooks/useTeamNav';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { useVisibleNavGroups } from '@/hooks/useVisibleNav';
 import { APPROVALS_HREF, activeNavHref, isStartWorkPath, type NavItem } from '@/lib/navigation';
+import { platformRoleLabel } from '@/lib/roleLabels';
 import { teamHref, teamSlugFromPath } from '@/lib/teamSpace';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
@@ -134,10 +135,8 @@ function UserMenu() {
         </span>
         <span className="min-w-0 flex-1" data-rail-label>
           <span className="block truncate text-sm font-semibold text-paper-200">{name}</span>
-          {(user?.role?.toLowerCase() ?? 'member') !== name.toLowerCase() && (
-            <span className="block text-xs text-paper-400">
-              {user?.role?.toLowerCase() ?? 'member'}
-            </span>
+          {user?.role && platformRoleLabel(user.role).toLowerCase() !== name.toLowerCase() && (
+            <span className="block text-xs text-paper-400">{platformRoleLabel(user?.role)}</span>
           )}
         </span>
         <Icon

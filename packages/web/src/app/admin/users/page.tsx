@@ -24,18 +24,20 @@ import { useDataTableSort } from '@/hooks/useDataTableSort';
 import { usePagedRows } from '@/hooks/usePagedRows';
 import { useUpdateUser, useUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
-import { platformRoleLabel, roleChangeNeedsConfirm } from '@/lib/govLabels';
+import { roleChangeNeedsConfirm } from '@/lib/govLabels';
 import { navLabel } from '@/lib/navigation';
+import {
+  PLATFORM_ROLE_OPTIONS,
+  type PlatformRoleValue,
+  platformRoleConsequence,
+  platformRoleLabel,
+} from '@/lib/roleLabels';
 import { cn, formatDate, plural } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
-type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
+type Role = PlatformRoleValue;
 
-const ROLE_OPTIONS: { label: string; value: Role }[] = [
-  { label: platformRoleLabel('ENGINEER'), value: 'ENGINEER' },
-  { label: platformRoleLabel('LEAD'), value: 'LEAD' },
-  { label: platformRoleLabel('ADMIN'), value: 'ADMIN' },
-];
+const ROLE_OPTIONS = [...PLATFORM_ROLE_OPTIONS];
 
 /** A user's team names, comma-separated; empty when they belong to none. */
 function teamNames(u: UserSummary): string {
@@ -49,12 +51,6 @@ const USER_SORT_KEYS = {
   email: (u: UserSummary) => u.email.toLowerCase(),
   joined: (u: UserSummary) => u.createdAt,
   role: (u: UserSummary) => u.role,
-};
-
-const ROLE_CONSEQUENCE: Record<Role, string> = {
-  ADMIN: 'full access to every team and all platform settings',
-  ENGINEER: 'access limited to their own teams and repositories',
-  LEAD: 'access to the teams they lead, plus organization and baseline views',
 };
 
 export default function UsersPage() {
@@ -308,9 +304,9 @@ export default function UsersPage() {
                       confirm={(from, to) =>
                         roleChangeNeedsConfirm(from, to)
                           ? {
-                              confirmLabel: to === 'ADMIN' ? 'Make admin' : 'Change role',
-                              dangerous: to === 'ADMIN',
-                              message: `${u.email} will go from ${platformRoleLabel(from)} to ${platformRoleLabel(to)}: ${ROLE_CONSEQUENCE[to as Role]}. The change applies immediately.`,
+                              confirmLabel: platformRoleConsequence(to).confirmLabel,
+                              dangerous: platformRoleConsequence(to).dangerous,
+                              message: `${u.email} will go from ${platformRoleLabel(from)} to ${platformRoleLabel(to)}: ${platformRoleConsequence(to).effect}. The change applies immediately.`,
                               title: 'Change role?',
                             }
                           : null
@@ -319,7 +315,7 @@ export default function UsersPage() {
                       value={u.role}
                     />
                   ),
-                header: 'Role',
+                header: 'Platform role',
                 id: 'role',
                 sortable: true,
               },

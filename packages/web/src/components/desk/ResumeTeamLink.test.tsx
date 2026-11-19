@@ -20,7 +20,7 @@ const team = (overrides: Partial<TeamSummary> = {}): TeamSummary => ({
   defaultPersonaPrompt: null,
   description: '',
   id: 't1',
-  myRole: 'ENGINEER',
+  myRole: 'MEMBER',
   name: 'Payments',
   orgId: 'o1',
   orgName: 'Acme',

@@ -6,20 +6,17 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stubDialogPrototype } from '@/test/rtl-helpers';
 
-const auth = vi.hoisted(() => ({ role: 'LEAD', teamRole: 'LEAD' as 'LEAD' | 'ADMIN' }));
+// The team role stands in for what the server says: only a team admin holds gate-command authoring.
+const auth = vi.hoisted(() => ({ teamRole: 'LEAD' as 'LEAD' | 'ADMIN' }));
 const update = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
 const create = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
 const evalDatasets = vi.hoisted(() => ({ data: [] as unknown[] }));
 
-vi.mock('@/hooks/useAdmin', () => ({ useUserOrgs: () => ({ data: [] }) }));
-
-vi.mock('@/stores/authStore', () => ({
-  useAuthStore: (select: (s: { user: { role: string } }) => unknown) =>
-    select({ user: { role: auth.role } }),
+vi.mock('@/hooks/useCan', () => ({
+  useCan: (key: string) => key === 'team.repos.gate-commands.author' && auth.teamRole === 'ADMIN',
+  useCanOnTeams: () => () => true,
 }));
 vi.mock('@/hooks/useTeams', () => ({
-  useAdminTeamIds: () => new Set(auth.teamRole === 'ADMIN' ? ['t1'] : []),
-  useLedTeamIds: () => new Set(['t1']),
   useTeams: () => ({
     data: [{ id: 't1', myRole: 'LEAD', name: 'Payments', orgId: 'o1', orgName: 'Org' }],
   }),
@@ -79,7 +76,6 @@ describe('ConnectionFormModal gate commands', () => {
   beforeEach(() => {
     update.mutateAsync.mockReset().mockResolvedValue({});
     create.mutateAsync.mockReset().mockResolvedValue({});
-    auth.role = 'LEAD';
     auth.teamRole = 'LEAD';
   });
 
@@ -190,7 +186,6 @@ describe('ConnectionFormModal PR title', () => {
   beforeAll(() => stubDialogPrototype());
   beforeEach(() => {
     update.mutateAsync.mockReset().mockResolvedValue({});
-    auth.role = 'LEAD';
     auth.teamRole = 'LEAD';
   });
 
@@ -238,7 +233,6 @@ describe('ConnectionFormModal PR title', () => {
 describe('ConnectionFormModal detected stack coverage', () => {
   beforeAll(() => stubDialogPrototype());
   beforeEach(() => {
-    auth.role = 'LEAD';
     auth.teamRole = 'LEAD';
   });
 
@@ -298,7 +292,6 @@ describe('ConnectionFormModal typed input', () => {
   beforeAll(() => stubDialogPrototype());
   beforeEach(() => {
     update.mutateAsync.mockReset().mockResolvedValue({});
-    auth.role = 'LEAD';
     auth.teamRole = 'LEAD';
   });
 
@@ -371,7 +364,6 @@ describe('ConnectionFormModal workspace setup', () => {
   beforeAll(() => stubDialogPrototype());
   beforeEach(() => {
     update.mutateAsync.mockReset().mockResolvedValue({});
-    auth.role = 'LEAD';
     auth.teamRole = 'ADMIN';
     evalDatasets.data = [];
   });
@@ -445,7 +437,6 @@ describe('ConnectionFormModal PagerDuty API key', () => {
   beforeAll(() => stubDialogPrototype());
   beforeEach(() => {
     update.mutateAsync.mockReset().mockResolvedValue({});
-    auth.role = 'LEAD';
     auth.teamRole = 'LEAD';
   });
 

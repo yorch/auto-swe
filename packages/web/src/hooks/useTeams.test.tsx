@@ -4,11 +4,10 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/stores/authStore';
+import { useCan } from './useCan';
 import {
   useAddTeamMember,
-  useAdminTeamIds,
-  useLeadsATeam,
-  useLedTeamIds,
+  useAuthoringTeams,
   useRemoveTeamMember,
   useUpdateTeamMember,
 } from './useTeams';
@@ -29,7 +28,7 @@ function wrapper({ children }: { children: ReactNode }) {
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
 
-const team = (id: string, myRole: 'ADMIN' | 'LEAD' | 'ENGINEER' | null) => ({
+const team = (id: string, myRole: 'ADMIN' | 'LEAD' | 'MEMBER' | null) => ({
   _count: { memberships: 1, repositories: 0 },
   defaultPersonaPrompt: null,
   description: '',
@@ -41,8 +40,33 @@ const team = (id: string, myRole: 'ADMIN' | 'LEAD' | 'ENGINEER' | null) => ({
   slug: id,
 });
 
-function signIn(role: 'ADMIN' | 'LEAD' | 'ENGINEER') {
-  useAuthStore.setState({ user: { role, sub: 'u1' } } as never);
+const standing = (teamId: string, role: string, keys: string[]) => ({
+  capabilities: keys.map((key) => ({ authority: 'team-role', key })),
+  name: teamId,
+  orgId: 'o1',
+  role,
+  slug: teamId,
+  teamId,
+});
+
+const answer = (teams: ReturnType<typeof standing>[], admin = false) => ({
+  organizations: [],
+  platformCapabilities: admin ? ['platform.users.manage'] : [],
+  platformRole: admin ? 'ADMIN' : 'USER',
+  teams,
+});
+
+/** The server's two answers: the team list, and what the person holds. */
+let permissions: ReturnType<typeof answer>;
+function serve() {
+  get.mockImplementation(async (url: string) => {
+    if (url.startsWith('/api/v1/me/permissions')) {
+      return permissions;
+    }
+    return {
+      data: [team('a', 'ADMIN'), team('l', 'LEAD'), team('m', 'MEMBER'), team('n', null)],
+    };
+  });
 }
 
 beforeEach(() => {
@@ -50,82 +74,50 @@ beforeEach(() => {
   write.mockReset();
   write.mockResolvedValue({});
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  get.mockResolvedValue({
-    data: [team('a', 'ADMIN'), team('l', 'LEAD'), team('e', 'ENGINEER'), team('n', null)],
-  });
+  useAuthStore.setState({ user: { role: 'USER', sub: 'u1' } } as never);
+  permissions = answer([
+    standing('a', 'ADMIN', ['team.templates.write']),
+    standing('l', 'LEAD', ['team.templates.write']),
+    standing('m', 'MEMBER', []),
+  ]);
+  serve();
 });
 
-describe('team id hooks derived from myRole', () => {
-  it('counts LEAD and ADMIN memberships as led, never a null role', async () => {
-    signIn('LEAD');
-    const { result } = renderHook(() => useLedTeamIds(), { wrapper });
-    expect(result.current).toBeNull();
-    await waitFor(() => expect(result.current).not.toBeNull());
-    expect([...(result.current ?? [])].sort()).toEqual(['a', 'l']);
-    expect(get).toHaveBeenCalledTimes(1);
+describe('useAuthoringTeams', () => {
+  it('lists the member teams on which the server says the caller may write templates', async () => {
+    const { result } = renderHook(() => useAuthoringTeams(), { wrapper });
+    expect(result.current.isLoading).toBe(true);
+    await waitFor(() => expect(result.current.teams.length).toBeGreaterThan(0));
+    expect(result.current.teams.map((t) => t.id).sort()).toEqual(['a', 'l']);
+    expect(result.current.global).toBe(false);
     expect(get).toHaveBeenCalledWith('/api/v1/teams?member=true');
   });
 
-  it('counts only ADMIN memberships as admin', async () => {
-    signIn('LEAD');
-    const { result } = renderHook(() => useAdminTeamIds(), { wrapper });
-    await waitFor(() => expect(result.current).not.toBeNull());
-    expect([...(result.current ?? [])]).toEqual(['a']);
+  it('lists nothing for a person with no capability on any team', async () => {
+    permissions = answer([standing('m', 'MEMBER', [])]);
+    const { result } = renderHook(() => useAuthoringTeams(), { wrapper });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.teams).toEqual([]);
   });
 
-  it('does not load the list for a platform ADMIN, who bypasses team checks', () => {
-    signIn('ADMIN');
-    const { result } = renderHook(() => useLedTeamIds(), { wrapper });
-    expect(result.current).toEqual(new Set());
-    expect(get).not.toHaveBeenCalled();
+  it('gives a platform admin every team and the global scope', async () => {
+    permissions = answer([], true);
+    const { result } = renderHook(() => useAuthoringTeams(), { wrapper });
+    await waitFor(() => expect(result.current.global).toBe(true));
+    await waitFor(() => expect(result.current.teams.length).toBe(4));
+    expect(get).toHaveBeenCalledWith('/api/v1/teams');
+    expect(get).not.toHaveBeenCalledWith('/api/v1/teams?member=true');
   });
 
-  it('asks for nothing and reports loading while no user is signed in', () => {
+  it('asks for nothing while no user is signed in', () => {
     useAuthStore.setState({ user: null } as never);
-    const { result } = renderHook(() => useLedTeamIds(), { wrapper });
-    expect(result.current).toBeNull();
+    const { result } = renderHook(() => useAuthoringTeams(), { wrapper });
+    expect(result.current.teams).toEqual([]);
     expect(get).not.toHaveBeenCalled();
-  });
-
-  it('loads the list for a platform ENGINEER, because the team role alone decides', async () => {
-    signIn('ENGINEER');
-    const { result } = renderHook(() => useLedTeamIds(), { wrapper });
-    await waitFor(() => expect(result.current).not.toBeNull());
-    expect([...(result.current ?? [])].sort()).toEqual(['a', 'l']);
-    expect(get).toHaveBeenCalledTimes(1);
   });
 });
 
-describe('useLeadsATeam', () => {
-  it('is true for a platform ADMIN without loading anything', () => {
-    signIn('ADMIN');
-    const { result } = renderHook(() => useLeadsATeam(), { wrapper });
-    expect(result.current).toBe(true);
-    expect(get).not.toHaveBeenCalled();
-  });
-
-  it('is true for a platform ENGINEER who leads a team, once the list has loaded', async () => {
-    signIn('ENGINEER');
-    const { result } = renderHook(() => useLeadsATeam(), { wrapper });
-    expect(result.current).toBe(false);
-    await waitFor(() => expect(result.current).toBe(true));
-  });
-
-  it('is false for someone who only has ENGINEER or no membership', async () => {
-    signIn('LEAD');
-    get.mockResolvedValue({ data: [team('e', 'ENGINEER'), team('n', null)] });
-    // Read the led set beside it: it turns non-null only once the team list has resolved, so the
-    // `false` below is an answer about the memberships, not about loading.
-    const { result } = renderHook(() => ({ leads: useLeadsATeam(), led: useLedTeamIds() }), {
-      wrapper,
-    });
-    await waitFor(() => expect(result.current.led).not.toBeNull());
-    expect([...(result.current.led ?? [])]).toEqual([]);
-    expect(result.current.leads).toBe(false);
-  });
-});
-
-describe('membership mutations refresh the led/admin sets', () => {
+describe('membership mutations refresh the effective permissions', () => {
   const cases = [
     [
       'add',
@@ -135,7 +127,7 @@ describe('membership mutations refresh the led/admin sets', () => {
     [
       'update',
       () => useUpdateTeamMember('l'),
-      (m: { mutate: (v: never) => void }) => m.mutate({ role: 'ENGINEER', userId: 'u1' } as never),
+      (m: { mutate: (v: never) => void }) => m.mutate({ role: 'MEMBER', userId: 'u1' } as never),
     ],
     [
       'remove',
@@ -144,15 +136,16 @@ describe('membership mutations refresh the led/admin sets', () => {
     ],
   ] as const;
 
-  it.each(cases)('after %s the led set is refetched', async (_name, useMutationHook, run) => {
-    signIn('LEAD');
-    const led = renderHook(() => useLedTeamIds(), { wrapper });
-    await waitFor(() => expect(led.result.current).not.toBeNull());
-    expect([...(led.result.current ?? [])].sort()).toEqual(['a', 'l']);
-    // The caller was demoted in team `l`: the next list no longer counts it as led.
-    get.mockResolvedValue({ data: [team('a', 'ADMIN'), team('l', 'ENGINEER')] });
-    const mutation = renderHook(() => useMutationHook(), { wrapper });
-    act(() => run(mutation.result.current as never));
-    await waitFor(() => expect([...(led.result.current ?? [])]).toEqual(['a']));
-  });
+  it.each(cases)(
+    'after %s what the caller may do is read again',
+    async (_name, useMutationHook, run) => {
+      const can = renderHook(() => useCan('team.templates.write', { teamId: 'l' }), { wrapper });
+      await waitFor(() => expect(can.result.current).toBe(true));
+      // The caller was demoted in team `l`: the next answer no longer lists the capability.
+      permissions = answer([standing('l', 'MEMBER', [])]);
+      const mutation = renderHook(() => useMutationHook(), { wrapper });
+      act(() => run(mutation.result.current as never));
+      await waitFor(() => expect(can.result.current).toBe(false));
+    }
+  );
 });

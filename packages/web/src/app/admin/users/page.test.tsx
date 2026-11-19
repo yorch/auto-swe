@@ -32,8 +32,8 @@ function mock() {
     'GET /api/v1/users': () => ({
       data: [
         user('me', 'me@x.com', 'ADMIN', true),
-        user('u2', 'eng@x.com', 'ENGINEER', true),
-        user('u3', 'waiting@x.com', 'ENGINEER', false),
+        user('u2', 'eng@x.com', 'USER', true),
+        user('u3', 'waiting@x.com', 'USER', false),
       ],
     }),
     'PATCH /api/v1/users/u2': () => ({ data: {} }),
@@ -49,16 +49,16 @@ describe('UsersPage', () => {
     expect(screen.getByText(/members you suspend move here too/)).toBeTruthy();
   });
 
-  it('confirms a promotion to admin before the role is saved', async () => {
+  it('confirms a promotion to platform admin before the role is saved', async () => {
     const spy = mock();
     render(withQuery(<UsersPage />));
     fireEvent.click(await screen.findByRole('button', { name: /Role for eng@x.com/ }));
-    fireEvent.click(screen.getByRole('option', { name: 'Admin' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Platform admin' }));
     expect(await screen.findByText('Change role?')).toBeTruthy();
     expect(spy.mock.calls.some(([, init]) => (init as RequestInit)?.method === 'PATCH')).toBe(
       false
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Make admin' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Make platform admin' }));
     await waitFor(() =>
       expect(bodyOf(spy, '/api/v1/users/u2', 'PATCH')).toEqual({ role: 'ADMIN' })
     );
@@ -73,7 +73,7 @@ describe('UsersPage', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send invite' }));
     await waitFor(() =>
-      expect(bodyOf(spy, '/api/v1/users/invite')).toEqual({ email: 'new@x.com', role: 'ENGINEER' })
+      expect(bodyOf(spy, '/api/v1/users/invite')).toEqual({ email: 'new@x.com', role: 'USER' })
     );
     expect(await screen.findByText(/Invite sent to new@x.com/)).toBeTruthy();
   });

@@ -9,7 +9,7 @@ import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { SearchInput } from '@/components/ui/Toolbar';
-import { useHasRole } from '@/hooks/useHasRole';
+import { useCan } from '@/hooks/useCan';
 import {
   type GitHubImportResult,
   type GitHubRepoInfo,
@@ -27,7 +27,7 @@ export function ImportFromGitHubModal({ open, onClose }: { open: boolean; onClos
   const [teamId, setTeamId] = useState('');
   const [results, setResults] = useState<(GitHubImportResult & { key: string })[] | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = useCan('platform.integrations.manage');
   const teams = useRepositoryTeams();
   const targetTeam = teamId || (teams.length === 1 ? teams[0].id : '');
   const { data, isLoading, error } = useGitHubAvailableRepos(open);

@@ -44,9 +44,9 @@ import {
   useDeleteAgent,
   useUpdateAgent,
 } from '@/hooks/useAgentLibrary';
+import { usePlatformAdmin } from '@/hooks/useCan';
 import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { useHarnessProfiles } from '@/hooks/useHarnessProfiles';
-import { useHasRole } from '@/hooks/useHasRole';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { useAdminCredentials } from '@/hooks/useModelConfig';
 import { useReadiness } from '@/hooks/useReadiness';
@@ -221,7 +221,7 @@ function AgentLibraryContent() {
   const { data: skills } = useSkills();
   const { data: credentials } = useAdminCredentials();
   // Readiness already knows which providers lack a credential, so one request covers every row.
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = usePlatformAdmin();
   const { data: readiness } = useReadiness(isAdmin);
   const { data: harnessProfiles } = useHarnessProfiles(isAdmin);
   const { data: slackChannels } = useSlackChannels();

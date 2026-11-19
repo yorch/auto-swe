@@ -5,7 +5,7 @@ import { clearDismissed, useDismissed, writeDismissed } from '@/lib/dismissed';
 import { RestoreGuides } from './RestoreGuides';
 
 let admin = true;
-vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => admin }));
+vi.mock('@/hooks/useCan', () => ({ useCan: () => admin, usePlatformAdmin: () => admin }));
 vi.mock('@/stores/authStore', () => ({
   useAuthStore: (select: (s: { user: { sub: string } }) => unknown) =>
     select({ user: { sub: 'u1' } }),

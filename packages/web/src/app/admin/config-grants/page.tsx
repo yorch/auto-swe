@@ -31,13 +31,18 @@ import { usePagedRows } from '@/hooks/usePagedRows';
 import { useTeams } from '@/hooks/useTeams';
 import { useEligibleUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
-import { platformRoleLabel } from '@/lib/govLabels';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { navLabel } from '@/lib/navigation';
+import {
+  DEFAULT_GRANT_ROLE,
+  TEAM_ROLE_OPTIONS,
+  type TeamRoleValue,
+  teamRoleLabel,
+  writeAccessLabel,
+} from '@/lib/roleLabels';
 import { cn, FOCUS_RING, plural } from '@/lib/utils';
 
 type GrantScope = 'GLOBAL' | 'ORGANIZATION' | 'TEAM';
-type GrantRole = 'ADMIN' | 'LEAD' | 'ENGINEER';
 
 const SORT_ACCESSORS = {
   created: (g: ConfigGrant) => g.createdAt,
@@ -45,9 +50,9 @@ const SORT_ACCESSORS = {
   pattern: (g: ConfigGrant) => g.keyPattern,
 };
 
-/** A pattern that covers every setting, or a whole role on the whole platform, is a broad grant. */
-function isBroadGrant(pattern: string, scope: GrantScope, granteeType: 'role' | 'user') {
-  return pattern.trim() === '*' || (scope === 'GLOBAL' && granteeType === 'role');
+/** A pattern that covers every setting is a broad grant. */
+function isBroadGrant(pattern: string) {
+  return pattern.trim() === '*';
 }
 
 export default function GovernConfigGrantsPage() {
@@ -65,8 +70,8 @@ export default function GovernConfigGrantsPage() {
 
   const [pattern, setPattern] = useState('');
   const [scope, setScope] = useState<GrantScope>('GLOBAL');
-  const [granteeType, setGranteeType] = useState<'role' | 'user'>('role');
-  const [role, setRole] = useState<GrantRole>('LEAD');
+  const [granteeType, setGranteeType] = useState<'team-role' | 'user'>('team-role');
+  const [role, setRole] = useState<TeamRoleValue>(DEFAULT_GRANT_ROLE);
   const [userId, setUserId] = useState('');
   const [teamId, setTeamId] = useState('');
   const [orgId, setOrgId] = useState('');
@@ -91,9 +96,14 @@ export default function GovernConfigGrantsPage() {
   const sorted = sortRows(allGrants);
   const pager = usePagedRows(sorted);
 
+  // A team role is only meaningful on one team: a grant to a role needs the TEAM scope, and the
+  // gateway refuses it anywhere else (`ROLE_GRANT_REQUIRES_TEAM_SCOPE`).
+  const roleGranteeAllowed = scope === 'TEAM';
+  const effectiveGranteeType: typeof granteeType = roleGranteeAllowed ? granteeType : 'user';
+
   const validate = (): string | null => {
     // Comboboxes cannot be natively `required`, so check the picks here.
-    if (granteeType === 'user' && !userId) {
+    if (effectiveGranteeType === 'user' && !userId) {
       return 'Pick the user this grant is for.';
     }
     if (scope === 'TEAM' && !teamId) {
@@ -109,7 +119,7 @@ export default function GovernConfigGrantsPage() {
     const body: Parameters<typeof createGrant.mutateAsync>[0] = {
       keyPattern: pattern,
       scope,
-      ...(granteeType === 'role' ? { role } : { userId }),
+      ...(effectiveGranteeType === 'team-role' ? { role } : { userId }),
       ...(scope === 'TEAM' ? { teamId } : {}),
       ...(scope === 'ORGANIZATION' ? { orgId } : {}),
     };
@@ -136,7 +146,7 @@ export default function GovernConfigGrantsPage() {
       setFormError(problem);
       return;
     }
-    if (isBroadGrant(pattern, scope, granteeType)) {
+    if (isBroadGrant(pattern)) {
       setRiskOpen(true);
       return;
     }
@@ -144,8 +154,8 @@ export default function GovernConfigGrantsPage() {
   };
 
   const granteeLabel =
-    granteeType === 'role'
-      ? `${platformRoleLabel(role)} role`
+    effectiveGranteeType === 'team-role'
+      ? `${teamRoleLabel(role)} role`
       : (eligibleUsers.find((u) => u.id === userId)?.email ?? 'the selected user');
   const scopeLabel =
     scope === 'GLOBAL'
@@ -157,7 +167,7 @@ export default function GovernConfigGrantsPage() {
     (g) =>
       g.keyPattern === pattern.trim() &&
       g.scope === scope &&
-      (granteeType === 'role' ? g.role === role : g.user?.email === granteeLabel) &&
+      (effectiveGranteeType === 'team-role' ? g.role === role : g.user?.email === granteeLabel) &&
       (scope === 'TEAM'
         ? g.team?.name === (teams ?? []).find((t) => t.id === teamId)?.name
         : true) &&
@@ -253,22 +263,19 @@ export default function GovernConfigGrantsPage() {
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <Select
               label="Grant to"
-              onChange={(v) => setGranteeType(v as 'role' | 'user')}
+              onChange={(v) => setGranteeType(v as 'team-role' | 'user')}
               options={[
-                { label: 'A role', value: 'role' },
+                // A role is a team role, so it needs the team scope (and a team) to mean anything.
+                ...(roleGranteeAllowed ? [{ label: 'A team role', value: 'team-role' }] : []),
                 { label: 'A specific user', value: 'user' },
               ]}
-              value={granteeType}
+              value={effectiveGranteeType}
             />
-            {granteeType === 'role' ? (
+            {effectiveGranteeType === 'team-role' ? (
               <Select
-                label="Role"
-                onChange={(v) => setRole(v as GrantRole)}
-                options={[
-                  { label: platformRoleLabel('ADMIN'), value: 'ADMIN' },
-                  { label: platformRoleLabel('LEAD'), value: 'LEAD' },
-                  { label: platformRoleLabel('ENGINEER'), value: 'ENGINEER' },
-                ]}
+                label="Team role"
+                onChange={(v) => setRole(v as TeamRoleValue)}
+                options={[...TEAM_ROLE_OPTIONS].reverse()}
                 value={role}
               />
             ) : (
@@ -317,11 +324,11 @@ export default function GovernConfigGrantsPage() {
                     <Badge tone="neutral" variant="outline">
                       {plural(preview.data.keys.length, 'matching key')}
                     </Badge>
-                    {preview.data.requiredRole && (
+                    {preview.data.writeAccess && (
                       <span className="text-xs text-paper-400">
-                        Highest role floor:{' '}
+                        Write access:{' '}
                         <span className="text-paper-100">
-                          {platformRoleLabel(preview.data.requiredRole)}
+                          {writeAccessLabel(preview.data.writeAccess)}
                         </span>
                       </span>
                     )}
@@ -335,7 +342,7 @@ export default function GovernConfigGrantsPage() {
                         <li className="flex justify-between gap-3 py-1.5" key={s.key}>
                           <span className="truncate font-mono text-paper-200">{s.key}</span>
                           <span className="shrink-0 text-paper-500">
-                            {s.group} · {platformRoleLabel(s.requiredRole)}
+                            {s.group} · {writeAccessLabel(s.writeAccess)}
                           </span>
                         </li>
                       ))}
@@ -347,12 +354,9 @@ export default function GovernConfigGrantsPage() {
               <Alert>{errMsg(preview.error, 'preview failed')}</Alert>
             )}
           </div>
-          {isBroadGrant(pattern, scope, granteeType) && pattern.length > 0 && (
+          {isBroadGrant(pattern) && pattern.length > 0 && (
             <Alert variant="warning">
-              {pattern.trim() === '*'
-                ? 'This pattern covers every setting. '
-                : 'This grant applies to everyone with the role, platform-wide. '}
-              You will be asked to confirm before it is created.
+              This pattern covers every setting. You will be asked to confirm before it is created.
             </Alert>
           )}
           {duplicate && (
@@ -431,7 +435,7 @@ export default function GovernConfigGrantsPage() {
                         <span className="text-paper-200">{g.user.email}</span>
                       ) : g.role ? (
                         <Badge tone="neutral" variant="outline">
-                          {platformRoleLabel(g.role)} role
+                          {teamRoleLabel(g.role)} role
                         </Badge>
                       ) : (
                         <span className="text-paper-500">—</span>

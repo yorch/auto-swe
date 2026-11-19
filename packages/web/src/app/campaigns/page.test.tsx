@@ -32,7 +32,7 @@ vi.mock('@/hooks/useCampaigns', async (importOriginal) => ({
 }));
 // `canStart`: the caller leads a team, or is a platform ADMIN (the hook answers for both).
 const role = vi.hoisted(() => ({ canStart: true }));
-vi.mock('@/hooks/useTeams', () => ({ useLeadsATeam: () => role.canStart }));
+vi.mock('@/hooks/useCan', () => ({ useCan: () => role.canStart }));
 vi.mock('@/components/campaigns/CampaignStartModal', () => ({
   CampaignStartModal: ({ open }: { open: boolean }) => (open ? <div>start form</div> : null),
 }));

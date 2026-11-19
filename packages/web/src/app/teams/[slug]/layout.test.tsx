@@ -28,11 +28,41 @@ const team = (slug: string, name: string, myRole: string | null) => ({
   slug,
 });
 
+/** What the server says the caller holds on the team `id-payments`, by kind of person. */
+const LEAD_CAPS = ['team.settings.manage', 'team.attention.read', 'team.members.manage'] as const;
+const standing = (
+  caps: readonly string[],
+  role: string | null = 'LEAD',
+  authority = 'team-role'
+) => ({
+  organizations: [],
+  platformCapabilities: [],
+  platformRole: '',
+  teams: [
+    {
+      capabilities: caps.map((key) => ({ authority, key })),
+      name: 'Payments',
+      orgId: 'org-1',
+      role,
+      slug: 'payments',
+      teamId: 'id-payments',
+    },
+  ],
+});
+const PLATFORM_ADMIN = {
+  organizations: [],
+  platformCapabilities: ['platform.users.manage'],
+  platformRole: '',
+  teams: [],
+};
+
 function gateway(
   memberTeams: ReturnType<typeof team>[],
+  permissions: object = standing(LEAD_CAPS),
   extras: Record<string, () => unknown> = {}
 ) {
   return setupFetchMock({
+    'GET /api/v1/me/permissions': () => permissions,
     'GET /api/v1/me/preferences': () => ({ preferences: {} }),
     'GET /api/v1/teams': () => ({ data: memberTeams }),
     'PATCH /api/v1/me/preferences': () => ({ preferences: {} }),
@@ -57,7 +87,7 @@ function BudgetProbe() {
 
 beforeEach(() => {
   resetNavigation('', '/teams/payments');
-  useAuthStore.setState({ isAuthenticated: true, user: { role: 'ENGINEER', sub: 'me' } });
+  useAuthStore.setState({ isAuthenticated: true, user: { role: 'USER', sub: 'me' } });
 });
 afterEach(() => {
   cleanup();
@@ -71,7 +101,7 @@ describe('team space layout', () => {
     renderLayout('payments');
     expect(await screen.findByRole('heading', { name: 'Payments' })).toBeTruthy();
     expect(screen.getByText('Acme Corp')).toBeTruthy();
-    expect(screen.getByText('you: Lead')).toBeTruthy();
+    expect(screen.getByText('you: Team lead')).toBeTruthy();
     expect(screen.getByText('tab content')).toBeTruthy();
   });
 
@@ -112,20 +142,21 @@ describe('team space layout', () => {
     );
   });
 
-  it('hides Settings from an engineer but keeps Members', async () => {
-    gateway([team('payments', 'Payments', 'ENGINEER')]);
+  it('hides Settings from a member but keeps Members', async () => {
+    gateway([team('payments', 'Payments', 'MEMBER')], standing([], 'MEMBER'));
     renderLayout('payments');
     await screen.findByRole('heading', { name: 'Payments' });
     expect(screen.queryByRole('link', { name: 'Settings' })).toBeNull();
     expect(screen.getByRole('link', { name: 'Members' })).toBeTruthy();
   });
 
-  it('offers Manage to a lead, and not to an engineer', async () => {
-    gateway([team('payments', 'Payments', 'ENGINEER')]);
+  it('offers Manage to a lead, and not to a member', async () => {
+    gateway([team('payments', 'Payments', 'MEMBER')], standing([], 'MEMBER'));
     renderLayout('payments');
     await screen.findByRole('heading', { name: 'Payments' });
     expect(screen.queryByRole('link', { name: 'Manage' })).toBeNull();
     cleanup();
+    vi.unstubAllGlobals();
     gateway([team('payments', 'Payments', 'LEAD')]);
     renderLayout('payments');
     expect((await screen.findByRole('link', { name: 'Manage' })).getAttribute('href')).toBe(
@@ -133,40 +164,47 @@ describe('team space layout', () => {
     );
   });
 
-  it('offers an ORG_ADMIN of the team’s organization Settings even as a plain engineer', async () => {
-    gateway([team('payments', 'Payments', 'ENGINEER')], {
-      'GET /api/v1/platform/organizations': () => ({
-        data: [{ id: 'org-1', name: 'Acme Corp', role: 'ORG_ADMIN', slug: 'acme' }],
-      }),
-    });
+  it('offers an organization admin who is a plain member of the team Settings, from the server’s answer', async () => {
+    // Governance reaches an organization admin without a team role; Manage (a lead's) does not.
+    gateway(
+      [team('payments', 'Payments', 'MEMBER')],
+      standing(['team.settings.manage', 'team.budget.manage'], 'MEMBER', 'org-admin')
+    );
     renderLayout('payments');
     expect(await screen.findByRole('link', { name: 'Settings' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Manage' })).toBeNull();
   });
 
-  it('does not offer Settings to an ORG_ADMIN of another organization', async () => {
-    gateway([team('payments', 'Payments', 'ENGINEER')], {
-      'GET /api/v1/platform/organizations': () => ({
-        data: [{ id: 'org-9', name: 'Other', role: 'ORG_ADMIN', slug: 'other' }],
-      }),
-    });
+  it('does not offer Settings to a member whose answer lists no governance capability', async () => {
+    gateway([team('payments', 'Payments', 'MEMBER')], standing([], 'MEMBER'));
     renderLayout('payments');
     await screen.findByRole('heading', { name: 'Payments' });
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByRole('link', { name: 'Settings' })).toBeNull();
   });
 
-  it('judges Settings by the team role, not the platform role', async () => {
-    // A platform LEAD who is only an ENGINEER on this team.
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
-    gateway([team('payments', 'Payments', 'ENGINEER')]);
+  it('does not render the tabs before the permissions have answered', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    gateway([team('payments', 'Payments', 'LEAD')]);
+    const inner = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/api/v1/me/permissions')) {
+        await gate;
+      }
+      return inner(input, init);
+    });
     renderLayout('payments');
-    await screen.findByRole('heading', { name: 'Payments' });
-    expect(screen.queryByRole('link', { name: 'Settings' })).toBeNull();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByRole('navigation', { name: 'Team sections' })).toBeNull();
+    release();
+    expect(await screen.findByRole('link', { name: 'Settings' })).toBeTruthy();
   });
 
-  it('offers a platform ADMIN Settings, and any team they can list', async () => {
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ADMIN', sub: 'me' } });
-    gateway([], {
+  it('offers a platform admin Settings, and any team they can list', async () => {
+    gateway([], PLATFORM_ADMIN, {
       'GET /api/v1/teams': () => ({ data: [team('payments', 'Payments', null)] }),
     });
     renderLayout('payments');
@@ -195,40 +233,8 @@ describe('team space layout', () => {
     ).toHaveLength(1);
   });
 
-  it('does not say a lead may not manage the budget while the organizations load', async () => {
-    gateway([team('payments', 'Payments', 'LEAD')], {
-      'GET /api/v1/platform/organizations': () => ({
-        data: [{ id: 'org-1', name: 'Acme Corp', role: 'ORG_ADMIN', slug: 'acme' }],
-      }),
-    });
-    const inner = globalThis.fetch;
-    let release: () => void = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).includes('/api/v1/platform/organizations')) {
-        await gate;
-      }
-      return inner(input, init);
-    });
-    render(
-      withQuery(
-        <TeamSpaceLayout params={params('payments')}>
-          <BudgetProbe />
-        </TeamSpaceLayout>
-      )
-    );
-    await screen.findByRole('heading', { name: 'Payments' });
-    expect(screen.getByText('budget: null')).toBeTruthy();
-    release();
-    expect(await screen.findByText('budget: true')).toBeTruthy();
-  });
-
-  it('settles a lead who is no ORG_ADMIN on false once the organizations load', async () => {
-    gateway([team('payments', 'Payments', 'LEAD')], {
-      'GET /api/v1/platform/organizations': () => ({ data: [] }),
-    });
+  it('says a lead may manage the budget only when the server lists the capability', async () => {
+    gateway([team('payments', 'Payments', 'LEAD')]);
     render(
       withQuery(
         <TeamSpaceLayout params={params('payments')}>
@@ -237,5 +243,20 @@ describe('team space layout', () => {
       )
     );
     expect(await screen.findByText('budget: false')).toBeTruthy();
+  });
+
+  it('lets whoever holds team.budget.manage there manage the budget', async () => {
+    gateway(
+      [team('payments', 'Payments', 'LEAD')],
+      standing([...LEAD_CAPS, 'team.budget.manage'], 'ADMIN')
+    );
+    render(
+      withQuery(
+        <TeamSpaceLayout params={params('payments')}>
+          <BudgetProbe />
+        </TeamSpaceLayout>
+      )
+    );
+    expect(await screen.findByText('budget: true')).toBeTruthy();
   });
 });

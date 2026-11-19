@@ -32,7 +32,7 @@ import {
   useTeamAgents,
   useUpdateTeamAgent,
 } from '@/hooks/useAgentLibrary';
-import { useHasRole } from '@/hooks/useHasRole';
+import { useCan } from '@/hooks/useCan';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { useTeamSkills } from '@/hooks/useSkills';
 import { useTeamPlugins } from '@/hooks/useTeamPlugins';
@@ -92,11 +92,11 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   const createAgent = useCreateTeamAgent(teamId);
   const updateAgent = useUpdateTeamAgent(teamId);
   const deleteAgent = useDeleteTeamAgent(teamId);
-  // The platform MCP connection list is ADMIN-only; a team ADMIN who is not a
-  // platform ADMIN gets no picker (and no request that can only 403). The
+  // The platform MCP connection list needs `platform.integrations.manage`; a team admin without
+  // it gets no picker (and no request that can only 403). The
   // skill picker reads the team-scoped list, which any team member may read.
-  const isPlatformAdmin = useHasRole('ADMIN');
-  const { data: mcpConnections } = useMcpConnections({ enabled: isPlatformAdmin });
+  const canListMcp = useCan('platform.integrations.manage');
+  const { data: mcpConnections } = useMcpConnections({ enabled: canListMcp });
   const { data: skills } = useTeamSkills(teamId);
   const { data: parentAgents } = useTeamAgentOptions(teamId);
   // A team admin may bind only the plugins the team has enabled.

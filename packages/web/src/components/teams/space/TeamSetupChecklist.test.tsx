@@ -3,11 +3,27 @@ import type { TeamSummary } from '@auto-swe/shared/types/api';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { useAuthStore } from '@/stores/authStore';
+import {
+  ADMIN_PERMISSIONS,
+  NO_PERMISSIONS,
+  permissionsFor,
+  resetPermissions,
+  setPermissions,
+} from '@/test/permissions';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
 import { TeamSetupChecklist } from './TeamSetupChecklist';
 
+vi.mock('@/hooks/useEffectivePermissions', async () =>
+  (await import('@/test/permissions')).permissionsMock()
+);
+
+// A team lead holds `team.members.manage` on the team; a member holds nothing there.
+const LEAD = permissionsFor({
+  teams: [{ capabilities: ['team.members.manage'], role: 'LEAD', teamId: 't1' }],
+});
+
 afterEach(() => {
+  resetPermissions();
   cleanup();
   vi.unstubAllGlobals();
 });
@@ -25,7 +41,7 @@ const team: TeamSummary = {
 
 describe('team setup checklist', () => {
   it('refreshes recent cached setup when returning from settings or connections', async () => {
-    useAuthStore.setState({ user: { role: 'LEAD', sub: 'me' } });
+    setPermissions(LEAD);
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: Infinity } },
     });
@@ -55,7 +71,7 @@ describe('team setup checklist', () => {
   });
 
   it('shows missing setup to a team lead and links to the working surfaces', async () => {
-    useAuthStore.setState({ user: { role: 'LEAD', sub: 'me' } });
+    setPermissions(LEAD);
     setupFetchMock({
       '/api/v1/teams/t1': () => ({
         data: {
@@ -78,7 +94,7 @@ describe('team setup checklist', () => {
   });
 
   it('counts shared repositories and hides once every item is complete', async () => {
-    useAuthStore.setState({ user: { role: 'ADMIN', sub: 'me' } });
+    setPermissions(ADMIN_PERMISSIONS);
     const spy = setupFetchMock({
       '/api/v1/teams/t1': () => ({
         data: {
@@ -96,16 +112,16 @@ describe('team setup checklist', () => {
     await vi.waitFor(() => expect(container.textContent).toBe(''));
   });
 
-  it('never loads setup for a team engineer', () => {
-    useAuthStore.setState({ user: { role: 'ENGINEER', sub: 'me' } });
+  it('never loads setup for a team member', () => {
+    setPermissions(NO_PERMISSIONS);
     const spy = setupFetchMock({});
-    render(withQuery(<TeamSetupChecklist team={{ ...team, myRole: 'ENGINEER' }} />));
+    render(withQuery(<TeamSetupChecklist team={{ ...team, myRole: 'MEMBER' }} />));
     expect(screen.queryByText('Team setup')).toBeNull();
     expect(spy).not.toHaveBeenCalled();
   });
 
   it('shows a retryable error instead of inventing missing setup', async () => {
-    useAuthStore.setState({ user: { role: 'LEAD', sub: 'me' } });
+    setPermissions(LEAD);
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
     render(withQuery(<TeamSetupChecklist team={team} />));
     expect(await screen.findByRole('button', { name: /retry/i })).toBeTruthy();

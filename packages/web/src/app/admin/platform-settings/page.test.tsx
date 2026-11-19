@@ -18,7 +18,10 @@ vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePage
 vi.mock('@/hooks/useUrlFilters', () => ({
   useUrlFilters: () => ({ params: state.params, update: state.update }),
 }));
-vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => state.admin }));
+vi.mock('@/hooks/useCan', () => ({
+  useCan: () => state.admin,
+  usePlatformAdmin: () => state.admin,
+}));
 vi.mock('@/hooks/useTemplates', () => ({
   useWorkflowTemplates: () => ({
     data: [

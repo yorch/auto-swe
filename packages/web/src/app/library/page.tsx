@@ -5,7 +5,7 @@ import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { TeamChip } from '@/components/teams/TeamChip';
 import { ActionMenu, type ActionMenuItem } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
@@ -32,9 +32,10 @@ import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { NODE_TYPE_LABEL } from '@/components/workflow/nodeTypeTone';
 import { STARTER_TEMPLATES, type StarterTemplate } from '@/components/workflow/starterTemplates';
 import { VersionTags } from '@/components/workflow/VersionTags';
+import { useCanOnTeams, usePlatformAdmin } from '@/hooks/useCan';
 import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { useTeamParam } from '@/hooks/useTeamParam';
-import { useAuthoringTeams, useLedTeamIds } from '@/hooks/useTeams';
+import { useAuthoringTeams } from '@/hooks/useTeams';
 import {
   useCreateWorkflowTemplate,
   useStartWorkflowGenerationJob,
@@ -48,9 +49,7 @@ import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { requestHref } from '@/lib/requestDisplay';
 import { teamGatedBoundary } from '@/lib/teamGate';
-import { canWriteTeamResource } from '@/lib/teamPermissions';
 import { cn, FOCUS_RING, formatDate, formatRelativeTime } from '@/lib/utils';
-import { useAuthStore } from '@/stores/authStore';
 import { restoreTemplate } from './restoreTemplate';
 
 const SPEC_SCHEMA_VERSION = 1;
@@ -652,22 +651,26 @@ function TemplatesPageContent() {
     error: loadError,
   } = useWorkflowTemplates(teamFilter.teamId, { enabled: !teamFilter.blocked });
   const createTemplate = useCreateWorkflowTemplate();
-  // Creating, forking and archiving templates ask the platform role for nothing
-  // beyond ENGINEER; the gateway requires LEAD membership on the owning team
-  // (templateWriteFilter), and a GLOBAL template is ADMIN-only. A new
-  // template is created for a team the caller picks, from the teams they lead
-  // (a platform ADMIN may pick any team, or none).
-  const platformRole = useAuthStore((s) => s.user?.role);
-  const ledTeamIds = useLedTeamIds();
+  // Creating, forking and archiving templates are `team.templates.write` on the owning team, and a
+  // GLOBAL template belongs to the platform. A new template is created for a team the caller
+  // picks, from the teams where they hold it (a platform admin may pick any team, or none).
+  const platformAdmin = usePlatformAdmin();
+  const canWriteOnTeam = useCanOnTeams(
+    'team.templates.write',
+    useMemo(
+      () => (templates ?? []).flatMap((t) => (t.team ? [{ id: t.team.id }] : [])),
+      [templates]
+    )
+  );
   const canWrite = (teamId: string | null | undefined) =>
-    canWriteTeamResource(platformRole, teamId, ledTeamIds);
+    teamId ? canWriteOnTeam(teamId) : platformAdmin;
   const canManage = authoring.global || authoring.teams.length > 0;
-  // The team role decides, whatever the platform role, so the reason is the same for everyone.
-  // No reason while the teams load: a team lead would see the button refused for a moment.
+  // The server's answer decides, whatever the platform role, so the reason is the same for
+  // everyone. No reason while the teams load: a team lead would see the button refused briefly.
   const manageTitle =
     canManage || authoring.isLoading
       ? undefined
-      : 'Requires the LEAD role in a team: lead a team to author workflows for it';
+      : 'Requires a team lead role: lead a team to author workflows for it';
   const [forkingId, setForkingId] = useState<string | null>(null);
   const [forkError, setForkError] = useState<string | null>(null);
   const [generateOpen, setGenerateOpen] = useState(false);

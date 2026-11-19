@@ -6,7 +6,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { focusMainContent, readDismissed } from '@/lib/dismissed';
 import { useAuthStore } from '@/stores/authStore';
 import { installMemoryStorage } from '@/test/memoryStorage';
+import {
+  ADMIN_PERMISSIONS,
+  NO_PERMISSIONS,
+  resetPermissions,
+  setPermissions,
+} from '@/test/permissions';
 import { TOUR_SEEN_KEY, TourLauncher } from './TourLauncher';
+
+vi.mock('@/hooks/useEffectivePermissions', async () =>
+  (await import('@/test/permissions')).permissionsMock()
+);
 
 // Pass-through spy: the real focusMainContent still runs, so tests can assert on both the call
 // and the resulting focus.
@@ -17,10 +27,12 @@ vi.mock('@/lib/dismissed', async (importOriginal) => {
 
 beforeEach(() => {
   installMemoryStorage();
-  useAuthStore.setState({ user: { email: 'a@x.dev', role: 'ENGINEER', sub: 'u1' } } as never);
+  useAuthStore.setState({ user: { email: 'a@x.dev', role: 'USER', sub: 'u1' } } as never);
+  setPermissions(NO_PERMISSIONS);
   vi.mocked(focusMainContent).mockClear();
 });
 afterEach(() => {
+  resetPermissions();
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -43,7 +55,7 @@ describe('TourLauncher', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('starts the tour on click, as the engineer tour', () => {
+  it('starts the tour on click, as the member tour', () => {
     render(<TourLauncher />);
     fireEvent.click(screen.getByRole('button', { name: 'Take the tour' }));
     expect(screen.getByRole('dialog')).toBeTruthy();
@@ -51,7 +63,7 @@ describe('TourLauncher', () => {
   });
 
   it('shows more steps to an admin', () => {
-    useAuthStore.setState({ user: { email: 'a@x.dev', role: 'ADMIN', sub: 'u1' } } as never);
+    setPermissions(ADMIN_PERMISSIONS);
     render(<TourLauncher />);
     fireEvent.click(screen.getByRole('button', { name: 'Take the tour' }));
     expect(screen.getByText('Step 1 of 10')).toBeTruthy();

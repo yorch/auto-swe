@@ -34,7 +34,7 @@ afterEach(() => vi.unstubAllGlobals());
 describe('TeamCallbackEndpointsSection', () => {
   it('lists endpoints by origin and prefix, never the secret', async () => {
     setupFetchMock({ [`GET ${BASE}`]: () => ({ data: [ROW] }) });
-    render(withQuery(<TeamCallbackEndpointsSection isPlatformAdmin={false} teamId="t1" />));
+    render(withQuery(<TeamCallbackEndpointsSection canUsePrivateNetwork={false} teamId="t1" />));
     expect(await screen.findByText('https://hooks.example.com/hooks')).toBeTruthy();
     expect(screen.getByText('…abcd')).toBeTruthy();
   });
@@ -44,13 +44,13 @@ describe('TeamCallbackEndpointsSection', () => {
       [`GET ${BASE}`]: () => ({ data: [] }),
       [`POST ${BASE}`]: () => ({ data: ROW, secret: 'whsec_once' }),
     });
-    render(withQuery(<TeamCallbackEndpointsSection isPlatformAdmin={false} teamId="t1" />));
+    render(withQuery(<TeamCallbackEndpointsSection canUsePrivateNetwork={false} teamId="t1" />));
     fireEvent.click(await screen.findByRole('button', { name: 'Add endpoint' }));
     fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'ci' } });
     fireEvent.change(screen.getByLabelText(/^Origin/), {
       target: { value: 'https://hooks.example.com' },
     });
-    // Only a platform admin is offered the private-network option.
+    // Only someone holding platform.callbacks.private-network is offered the private-network option.
     expect(screen.queryByText('Reach a private network')).toBeNull();
     fireEvent.click(screen.getAllByRole('button', { name: 'Add endpoint' }).at(-1) as HTMLElement);
     expect(await screen.findByText('whsec_once')).toBeTruthy();

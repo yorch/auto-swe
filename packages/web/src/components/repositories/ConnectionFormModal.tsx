@@ -23,9 +23,9 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import { useCan } from '@/hooks/useCan';
 import { useCreateRepository, useRepositories, useUpdateRepository } from '@/hooks/useRepositories';
 import { useRepositoryTeams } from '@/hooks/useRepositoryTeams';
-import { useAdminTeamIds } from '@/hooks/useTeams';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { api } from '@/lib/api';
 import { connectionLabel } from '@/lib/connectionDisplay';
@@ -44,8 +44,6 @@ import {
   gateCommandsPatch,
 } from '@/lib/gateCommandsForm';
 import { draftToSetup, type RepoSetupDraft, setupDraft } from '@/lib/repoSetupDraft';
-import { canAuthorTeamCode } from '@/lib/teamPermissions';
-import { useAuthStore } from '@/stores/authStore';
 
 export interface ConnectionPrefill {
   organizationName?: string;
@@ -84,8 +82,6 @@ export function ConnectionFormModal({
   mode: Mode;
 }) {
   const teams = useRepositoryTeams();
-  const platformRole = useAuthStore((s) => s.user?.role);
-  const adminTeamIds = useAdminTeamIds();
   const create = useCreateRepository();
   const update = useUpdateRepository(mode.kind === 'edit' ? mode.repo.id : '');
 
@@ -347,7 +343,7 @@ export function ConnectionFormModal({
   }, [connType, configJson]);
 
   const isEdit = mode.kind === 'edit';
-  const isPlatformAdmin = platformRole === 'ADMIN';
+  const canProbeImage = useCan('platform.repos.executor-image.probe');
   const busy = create.isPending || update.isPending;
 
   async function handleProbe() {
@@ -370,7 +366,7 @@ export function ConnectionFormModal({
   }
   const isGit = connType === 'git_repo';
   // Judged on the team the repository will be saved to, as the gateway does.
-  const canEditGateCommands = canAuthorTeamCode(platformRole, teamId, adminTeamIds);
+  const canEditGateCommands = useCan('team.repos.gate-commands.author', { teamId });
   // When importing from GitHub the type is always git_repo — hide the type selector.
   const showTypeSelector = !isEdit && !prefill;
 
@@ -450,7 +446,7 @@ export function ConnectionFormModal({
                   placeholder="Deployment default"
                   value={executorImage}
                 />
-                {isEdit && isPlatformAdmin && (
+                {isEdit && canProbeImage && (
                   <Button
                     disabled={probing}
                     onClick={handleProbe}

@@ -1,6 +1,5 @@
 'use client';
 
-import type { Role } from '@auto-swe/shared';
 import { useEffect, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Input } from '@/components/ui/Input';
@@ -9,7 +8,7 @@ import { Select } from '@/components/ui/Select';
 import { useInviteTeamMember } from '@/hooks/useTeams';
 import { ApiError } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
-import { platformRoleLabel } from '@/lib/govLabels';
+import { DEFAULT_TEAM_ROLE, type TeamRoleValue, teamRoleLabel } from '@/lib/roleLabels';
 
 export function InviteTeamMemberModal({
   open,
@@ -21,17 +20,17 @@ export function InviteTeamMemberModal({
   open: boolean;
   onClose: () => void;
   teamId: string;
-  grantableRoles: Role[];
+  grantableRoles: TeamRoleValue[];
   onInvited: (message: string) => void;
 }) {
   const invite = useInviteTeamMember(teamId);
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<Role>('ENGINEER');
+  const [role, setRole] = useState<TeamRoleValue>(DEFAULT_TEAM_ROLE);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     if (open) {
       setEmail('');
-      setRole('ENGINEER');
+      setRole(DEFAULT_TEAM_ROLE);
       setError(null);
     }
   }, [open]);
@@ -70,8 +69,8 @@ export function InviteTeamMemberModal({
         />
         <Select
           label="Team role"
-          onChange={(value) => setRole(value as Role)}
-          options={grantableRoles.map((r) => ({ label: platformRoleLabel(r), value: r }))}
+          onChange={(value) => setRole(value as TeamRoleValue)}
+          options={grantableRoles.map((r) => ({ label: teamRoleLabel(r), value: r }))}
           value={role}
         />
         {error && <Alert>{error}</Alert>}

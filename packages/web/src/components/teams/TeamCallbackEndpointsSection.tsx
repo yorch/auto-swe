@@ -53,11 +53,12 @@ const EMPTY: CallbackEndpointInput = {
  */
 export function TeamCallbackEndpointsSection({
   teamId,
-  isPlatformAdmin,
+  canUsePrivateNetwork,
 }: {
   teamId: string;
   /** Only a platform admin may let an endpoint reach a private network. */
-  isPlatformAdmin: boolean;
+  /** Whether the caller holds `platform.callbacks.private-network`. */
+  canUsePrivateNetwork: boolean;
 }) {
   const list = useCallbackEndpoints(teamId);
   const create = useCreateCallbackEndpoint(teamId);
@@ -300,10 +301,10 @@ export function TeamCallbackEndpointsSection({
             label="Accept callbacks from template webhooks"
             onChange={(e) => setForm({ ...form, acceptTemplateWebhookLaunches: e.target.checked })}
           />
-          {(isPlatformAdmin || form.allowPrivateNetwork) && (
+          {(canUsePrivateNetwork || form.allowPrivateNetwork) && (
             <Checkbox
               checked={form.allowPrivateNetwork}
-              disabled={!isPlatformAdmin && !form.allowPrivateNetwork}
+              disabled={!canUsePrivateNetwork && !form.allowPrivateNetwork}
               hint="Allows http and a private-network address for this origin. Loopback, link-local and metadata addresses stay refused."
               label="Reach a private network"
               onChange={(e) => setForm({ ...form, allowPrivateNetwork: e.target.checked })}

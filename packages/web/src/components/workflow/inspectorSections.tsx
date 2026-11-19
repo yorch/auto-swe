@@ -22,7 +22,7 @@ import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
-import { useHasRole } from '@/hooks/useHasRole';
+import { useCan } from '@/hooks/useCan';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { errMsg } from '@/lib/errors';
 import { AUTHORED_COMMAND_NOTE, CONTAINER_AUTHORING_RULE } from './containerNodes';
@@ -862,7 +862,7 @@ export function McpSection({
   // team's template cannot read it, so they get the id as a plain field
   // (keeping whatever the node already holds) instead of a picker that 403s
   // and hides the current value behind an empty placeholder.
-  const isPlatformAdmin = useHasRole('ADMIN');
+  const isPlatformAdmin = useCan('platform.integrations.manage');
   const {
     data: connections,
     error: connectionsError,

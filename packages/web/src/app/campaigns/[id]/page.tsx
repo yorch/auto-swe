@@ -15,12 +15,11 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { isCampaignNotFound, isCampaignTerminal, useCampaign } from '@/hooks/useCampaigns';
+import { useCan } from '@/hooks/useCan';
 import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useRunsForWorkRequest } from '@/hooks/useRuns';
-import { useLedTeamIds } from '@/hooks/useTeams';
 import { usePullRequests } from '@/hooks/useWorkViews';
 import { errMsg } from '@/lib/errors';
-import { hasRole } from '@/lib/roles';
 import { validateRouteParam } from '@/lib/routeParams';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -32,8 +31,8 @@ export default function CampaignDetailPage({ params }: PageProps) {
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
   const user = useAuthStore((s) => s.user);
-  const ledTeamIds = useLedTeamIds();
   const { data: campaign, isLoading, error, refetch } = useCampaign(id ?? '');
+  const canCancelAsLead = useCan('team.launch.multi-repo', { teamId: campaign?.ownerTeam.id });
   useEntityTitle(campaign?.name);
   // Every child run shares the campaign's work request, so its runs are found by that id and
   // matched to targets by Temporal workflow ID. 100 is the list endpoint's page cap.
@@ -84,12 +83,8 @@ export default function CampaignDetailPage({ params }: PageProps) {
   }
 
   const active = !isCampaignTerminal(campaign.state);
-  // The gateway lets the creator, a LEAD or ADMIN of the owning team, and a platform ADMIN cancel.
-  const canCancel =
-    active &&
-    (hasRole(user?.role, 'ADMIN') ||
-      (!!user && campaign.createdBy?.id === user.sub) ||
-      (ledTeamIds?.has(campaign.ownerTeam.id) ?? false));
+  // The gateway lets the creator and whoever holds `team.launch.multi-repo` on the owning team cancel.
+  const canCancel = active && (canCancelAsLead || (!!user && campaign.createdBy?.id === user.sub));
 
   return (
     <div className="space-y-6">

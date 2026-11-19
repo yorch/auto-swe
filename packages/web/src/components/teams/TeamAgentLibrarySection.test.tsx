@@ -31,7 +31,7 @@ vi.mock('@/hooks/useAgentLibrary', () => ({
   useUpdateTeamAgent: () => updateMutation,
 }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
-vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => false }));
+vi.mock('@/hooks/useCan', () => ({ useCan: () => false, usePlatformAdmin: () => false }));
 vi.mock('@/hooks/useMcpConnections', () => ({ useMcpConnections: () => ({ data: [] }) }));
 vi.mock('@/components/modelConfig/ModelSpecPicker', () => ({ ModelSpecPicker: () => null }));
 vi.mock('@/hooks/useTeamPlugins', () => ({

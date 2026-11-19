@@ -7,14 +7,9 @@ import { NeedsYouBadge } from '@/components/teams/NeedsYouBadge';
 import { Icon } from '@/components/ui/Icon';
 import { useTeamNav } from '@/hooks/useTeamNav';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
+import { teamRoleLabel } from '@/lib/roleLabels';
 import { canPinMore, togglePinnedTeam } from '@/lib/teamPins';
-import {
-  TEAM_ROLE_LABEL,
-  type TeamTabId,
-  teamHref,
-  teamSlugFromPath,
-  teamTabFromPath,
-} from '@/lib/teamSpace';
+import { type TeamTabId, teamHref, teamSlugFromPath, teamTabFromPath } from '@/lib/teamSpace';
 import { cn, FOCUS_RING } from '@/lib/utils';
 
 const MENU_ID = 'team-switcher-menu';
@@ -130,7 +125,7 @@ export function TeamSwitcher({ variant = 'pill' }: { variant?: 'pill' | 'strip' 
                   <span className="min-w-0 flex-1">
                     <span className="block truncate">{team.name}</span>
                     <span className="block text-xs text-paper-500">
-                      {team.myRole ? TEAM_ROLE_LABEL[team.myRole] : ''}
+                      {teamRoleLabel(team.myRole)}
                     </span>
                   </span>
                   <NeedsYouBadge count={needsYou} />

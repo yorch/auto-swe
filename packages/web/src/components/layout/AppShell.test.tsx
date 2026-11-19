@@ -8,6 +8,9 @@ import { installMemoryStorage } from '@/test/memoryStorage';
 import { resetNavigation } from '@/test/mockNavigation';
 
 vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).navigationMock());
+vi.mock('@/hooks/useEffectivePermissions', async () =>
+  (await import('@/test/permissions')).permissionsMock()
+);
 vi.mock('@/hooks/useApprovals', () => ({
   useApprovalsCount: () => 0,
   useApprovalsStream: () => undefined,

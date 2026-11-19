@@ -4,14 +4,14 @@ import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { TabBar } from '@/components/ui/TabBar';
+import { useEffectivePermissions } from '@/hooks/useEffectivePermissions';
+import { holdsAccess } from '@/lib/capabilities';
 import { activeNavHref, KNOWLEDGE_PAGES } from '@/lib/navigation';
-import { hasRole } from '@/lib/roles';
-import { useAuthStore } from '@/stores/authStore';
 
 export function KnowledgeLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const role = useAuthStore((s) => s.user?.role);
-  const tabs = KNOWLEDGE_PAGES.filter((item) => hasRole(role, item.minRole)).map((item) => ({
+  const { data: perms } = useEffectivePermissions();
+  const tabs = KNOWLEDGE_PAGES.filter((item) => holdsAccess(perms, item.access)).map((item) => ({
     href: item.href,
     id: item.href,
     label: item.label,

@@ -2,20 +2,39 @@
 
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { useAuthStore } from '@/stores/authStore';
 import { resetNavigation } from '@/test/mockNavigation';
+import {
+  ADMIN_PERMISSIONS,
+  NO_PERMISSIONS,
+  permissionsFor,
+  resetPermissions,
+  setPermissions,
+} from '@/test/permissions';
 
 vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).navigationMock());
+vi.mock('@/hooks/useEffectivePermissions', async () =>
+  (await import('@/test/permissions')).permissionsMock()
+);
 vi.mock('@/hooks/useAdmin', () => ({
   useUsageScopes: () => ({ data: { orgs: [], platform: false, teams: [] } }),
 }));
 
 import { AdminNav } from './AdminNav';
 
-const useRole = (role: 'ENGINEER' | 'LEAD' | 'ADMIN') =>
-  useAuthStore.setState({ user: { email: 'a@x.dev', role, sub: 'u1' } } as never);
+const PEOPLE = {
+  admin: ADMIN_PERMISSIONS,
+  lead: permissionsFor({
+    orgs: [{ capabilities: ['org.baselines.read'], orgId: 'o1' }],
+    teams: [{ capabilities: ['team.settings.manage'], role: 'LEAD', teamId: 't1' }],
+  }),
+  member: NO_PERMISSIONS,
+} as const;
+const useWho = (who: keyof typeof PEOPLE) => setPermissions(PEOPLE[who]);
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  resetPermissions();
+});
 
 function links() {
   const nav = screen.getByRole('navigation', { name: 'Admin' });
@@ -25,8 +44,8 @@ function links() {
 }
 
 describe('AdminNav', () => {
-  it('lists every Admin page for an ADMIN, by section', () => {
-    useRole('ADMIN');
+  it('lists every Admin page for a platform admin, by section', () => {
+    useWho('admin');
     resetNavigation('', '/admin/users');
     render(<AdminNav />);
     expect(links()).toEqual(expect.arrayContaining(['/admin', '/admin/users', '/admin/scanner']));
@@ -35,8 +54,8 @@ describe('AdminNav', () => {
     }
   });
 
-  it('keeps the role gating of the sidebar: an ENGINEER sees only ENGINEER pages', () => {
-    useRole('ENGINEER');
+  it('keeps the gating of the sidebar: a member sees only the pages open to everyone', () => {
+    useWho('member');
     resetNavigation('', '/admin/organizations');
     render(<AdminNav />);
     const hrefs = links();
@@ -51,8 +70,19 @@ describe('AdminNav', () => {
     expect(screen.queryByRole('list', { hidden: true, name: 'Security' })).toBeNull();
   });
 
+  it('adds the pages a team lead’s capabilities open, and still no platform admin page', () => {
+    useWho('lead');
+    resetNavigation('', '/admin/organizations');
+    render(<AdminNav />);
+    const hrefs = links();
+    expect(hrefs).toContain('/admin/platform-settings');
+    expect(hrefs).toContain('/admin/baselines');
+    expect(hrefs).not.toContain('/admin/users');
+    expect(hrefs).not.toContain('/admin/scanner');
+  });
+
   it('marks the current page, and the parent entry on a page without its own', () => {
-    useRole('ADMIN');
+    useWho('admin');
     resetNavigation('', '/admin/organizations/abc');
     render(<AdminNav />);
     const current = screen
@@ -62,7 +92,7 @@ describe('AdminNav', () => {
   });
 
   it('folds into a disclosure naming the current page on narrow screens', () => {
-    useRole('ADMIN');
+    useWho('admin');
     resetNavigation('', '/admin/audit');
     render(<AdminNav />);
     const toggle = screen.getByRole('button', { name: /Admin.*Audit log/ });

@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { useOrganizationDirectory } from '@/hooks/useAdmin';
-import { useHasRole } from '@/hooks/useHasRole';
+import { useOrgIdsCan, usePlatformAdmin } from '@/hooks/useCan';
 import { useOrgMembers } from '@/hooks/useOrg';
 import { useCreateTeam, useUpdateTeam } from '@/hooks/useTeams';
 import { ApiError } from '@/lib/api';
@@ -27,10 +27,12 @@ export function TeamFormModal({
 }) {
   const create = useCreateTeam();
   const update = useUpdateTeam(mode.kind === 'edit' ? mode.teamId : '');
-  const platformAdmin = useHasRole('ADMIN');
+  const platformAdmin = usePlatformAdmin();
+  const creatableOrgIds = useOrgIdsCan('org.teams.create');
   const directory = useOrganizationDirectory();
+  // The organizations a team may be created in: where the server says `org.teams.create` is held.
   const organizations = (directory.data ?? []).filter(
-    (o) => platformAdmin || o.role === 'ORG_ADMIN'
+    (o) => platformAdmin || creatableOrgIds?.has(o.id)
   );
   const [selectedOrgId, setSelectedOrgId] = useState('');
   const [adminUserId, setAdminUserId] = useState('');

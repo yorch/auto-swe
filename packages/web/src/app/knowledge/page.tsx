@@ -18,6 +18,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
+import { usePlatformAdmin } from '@/hooks/useCan';
 import {
   type KnowledgeItem,
   useKnowledge,
@@ -34,7 +35,6 @@ import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { teamGatedBoundary } from '@/lib/teamGate';
 import { cn } from '@/lib/utils';
-import { useAuthStore } from '@/stores/authStore';
 
 const PAGE_SIZE = 25;
 // The gateway refuses an offset above this, so the list stops at MAX_OFFSET + PAGE_SIZE items.
@@ -85,7 +85,7 @@ const VIEW_OPTIONS = [
 ];
 
 function Knowledge() {
-  const user = useAuthStore((s) => s.user);
+  const platformAdmin = usePlatformAdmin();
   const teamsQuery = useTeams();
   const teams = teamsQuery.data ?? [];
   const teamFromSlug = useTeamParam();
@@ -540,7 +540,7 @@ function Knowledge() {
           </div>
         )
       )}
-      {user?.role === 'ADMIN' && (
+      {platformAdmin && (
         <p className="mt-3 text-xs text-paper-500">
           Administrator actions on items that came from a repository still need access to that
           repository's source.

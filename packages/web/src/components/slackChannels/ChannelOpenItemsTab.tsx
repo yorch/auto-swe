@@ -10,7 +10,7 @@ import { Icon } from '@/components/ui/Icon';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Toolbar } from '@/components/ui/Toolbar';
-import { useHasRole } from '@/hooks/useHasRole';
+import { useCan } from '@/hooks/useCan';
 import {
   type ChannelOpenItemDto,
   type ChannelOpenItemStatus,
@@ -48,7 +48,7 @@ export function ChannelOpenItemsTab({ channel }: { channel: SlackChannel }) {
   } = useChannelOpenItems(channel.id, statusFilter);
   const updateItem = useUpdateChannelOpenItem();
   // Resolving and dismissing are an administrator's, and so is the user list that names people.
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = useCan('platform.slack-channels.manage');
   const { data: users } = useUsers(isAdmin);
   const names = emailsBySlackId(users);
   const [actionError, setActionError] = useState<string | null>(null);

@@ -29,8 +29,8 @@ import { Select } from '@/components/ui/Select';
 import { Stat } from '@/components/ui/Stat';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { triggerConsolidationNow, useConsolidationConfig } from '@/hooks/useAdminConfig';
+import { usePlatformAdmin } from '@/hooks/useCan';
 import { useDataTableSort } from '@/hooks/useDataTableSort';
-import { useHasRole } from '@/hooks/useHasRole';
 import {
   type Lesson,
   type LessonRepoStats,
@@ -91,10 +91,10 @@ const REPO_SORT_KEYS = {
  * Lessons for every signed-in role. Engineers read the lessons of the repositories they
  * can reach — the gateway scopes the list — because those lessons steer their runs. A lead
  * of a repository's owning team deletes its lessons and consolidates it; the cross-team
- * stats and consolidating everything at once stay with platform ADMINs.
+ * stats and consolidating everything at once stay with platform admins.
  */
 export default function LessonsPage() {
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = usePlatformAdmin();
   const queryClient = useQueryClient();
   // The filter's choices: the caller's own repositories, which is every one for an admin.
   const { data: repositories } = useRepositories({ limit: 100 });

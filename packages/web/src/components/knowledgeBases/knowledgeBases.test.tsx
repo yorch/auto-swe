@@ -63,6 +63,29 @@ const inherited = {
   ref: null,
   source: 'TEAM',
 };
+/** What the server says the caller holds: a platform admin, or a lead of `team1` only. */
+const PLATFORM_ADMIN = {
+  organizations: [],
+  platformCapabilities: ['platform.users.manage'],
+  platformRole: '',
+  teams: [],
+};
+const LEADS_TEAM1 = {
+  organizations: [],
+  platformCapabilities: [],
+  platformRole: '',
+  teams: [
+    {
+      capabilities: [{ authority: 'team-role', key: 'team.knowledge-bases.manage' }],
+      name: 'Platform',
+      orgId: 'org1',
+      role: 'LEAD',
+      slug: 'platform',
+      teamId: 'team1',
+    },
+  ],
+};
+
 function mock(rows = [base()], extra: Record<string, (body?: unknown) => unknown> = {}) {
   let current = rows;
   return setupFetchMock({
@@ -77,6 +100,7 @@ function mock(rows = [base()], extra: Record<string, (body?: unknown) => unknown
     'GET /api/v1/knowledge-bases/new-kb': () => ({
       data: current.find((row) => row.id === 'new-kb'),
     }),
+    'GET /api/v1/me/permissions': () => PLATFORM_ADMIN,
     'GET /api/v1/repositories': () => ({
       data: [repo, { ...repo, id: 'repo2', repoName: 'manual' }],
       meta: { total: 2 },
@@ -92,7 +116,7 @@ function mock(rows = [base()], extra: Record<string, (body?: unknown) => unknown
     'GET /api/v1/teams': () => ({
       data: [
         { id: 'team1', myRole: 'LEAD', name: 'Platform', orgId: 'org1', orgName: 'Acme' },
-        { id: 'team2', myRole: 'ENGINEER', name: 'Payments', orgId: 'org1', orgName: 'Acme' },
+        { id: 'team2', myRole: 'MEMBER', name: 'Payments', orgId: 'org1', orgName: 'Acme' },
       ],
     }),
     'GET /api/v1/teams/team1/knowledge-bases/effective': () => ({
@@ -130,7 +154,7 @@ function openPicker() {
 }
 beforeEach(() => {
   stubDialogPrototype();
-  useAuthStore.setState({ isAuthenticated: true, user: { role: 'ADMIN', sub: 'me' } });
+  useAuthStore.setState({ isAuthenticated: true, user: { role: 'USER', sub: 'me' } });
 });
 afterEach(() => {
   cleanup();
@@ -154,13 +178,16 @@ describe('knowledge base page', () => {
     expect(screen.getByText(/per file bytes/)).toBeTruthy();
   });
   it('hides management actions on a base owned by a team the caller does not lead', async () => {
-    useAuthStore.setState({ user: { role: 'LEAD', sub: 'me' } });
-    mock([
-      base({
-        connection: { team: { id: 'team2', name: 'Payments' }, teamId: 'team2' },
-        visibility: 'ORG',
-      }),
-    ]);
+    // The caller holds the capability on `team1` only; the base below belongs to `team2`.
+    mock(
+      [
+        base({
+          connection: { team: { id: 'team2', name: 'Payments' }, teamId: 'team2' },
+          visibility: 'ORG',
+        }),
+      ],
+      { 'GET /api/v1/me/permissions': () => LEADS_TEAM1 }
+    );
     render(withQuery(<KnowledgeBasesPage />));
     await screen.findByText('Ops docs');
     const create = await screen.findByRole('button', { name: 'Create knowledge base' });
@@ -169,14 +196,6 @@ describe('knowledge base page', () => {
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Reindex' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
-    cleanup();
-    // The platform role asks for nothing: this ENGINEER leads `team1`, so they may create there,
-    // but the base below belongs to `team2`, which they do not lead.
-    useAuthStore.setState({ user: { role: 'ENGINEER', sub: 'me' } });
-    render(withQuery(<KnowledgeBasesPage />));
-    await screen.findByText('Ops docs');
-    expect(await screen.findByRole('button', { name: 'Create knowledge base' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
   });
   it('creates from an eligible connection and edits fields without changing its connection', async () => {
     const spy = mock();

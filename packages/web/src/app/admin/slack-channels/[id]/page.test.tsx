@@ -3,10 +3,13 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { Suspense } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { useAuthStore } from '@/stores/authStore';
 import { nav, resetNavigation } from '@/test/mockNavigation';
+import { ADMIN_PERMISSIONS, NO_PERMISSIONS, setPermissions } from '@/test/permissions';
 import { withQuery } from '@/test/rtl-helpers';
 
+vi.mock('@/hooks/useEffectivePermissions', async () =>
+  (await import('@/test/permissions')).permissionsMock()
+);
 vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).navigationMock());
 
 const ID = '11111111-1111-4111-8111-111111111111';
@@ -52,7 +55,7 @@ beforeEach(() => {
     this.dispatchEvent(new Event('close'));
   };
   resetNavigation('', `/admin/slack-channels/${ID}`);
-  useAuthStore.setState({ isAuthenticated: true, user: { role: 'ADMIN', sub: 'me' } });
+  setPermissions(ADMIN_PERMISSIONS);
 });
 
 // `use()` needs a promise whose identity is stable across renders.
@@ -84,7 +87,7 @@ describe('SlackChannelDetailPage tabs', () => {
   });
 
   it('gives everyone else the read-only tabs, opening on Memory', async () => {
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ENGINEER', sub: 'me' } });
+    setPermissions(NO_PERMISSIONS);
     await renderPage();
     expect(await screen.findByText('memory tab')).toBeTruthy();
     expect(screen.queryByRole('tab', { name: 'Settings' })).toBeNull();
@@ -92,7 +95,7 @@ describe('SlackChannelDetailPage tabs', () => {
   });
 
   it('does not open Settings from the URL for someone who may not edit it', async () => {
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ENGINEER', sub: 'me' } });
+    setPermissions(NO_PERMISSIONS);
     resetNavigation('tab=settings', `/admin/slack-channels/${ID}`);
     await renderPage();
     expect(await screen.findByText('memory tab')).toBeTruthy();
@@ -115,7 +118,7 @@ describe('SlackChannelDetailPage tabs', () => {
   });
 
   it('offers no budget reset to anyone but an admin', async () => {
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ENGINEER', sub: 'me' } });
+    setPermissions(NO_PERMISSIONS);
     await renderPage();
     await screen.findByText('memory tab');
     expect(screen.queryByRole('button', { name: 'Reset budget' })).toBeNull();

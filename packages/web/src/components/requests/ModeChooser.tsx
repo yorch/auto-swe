@@ -41,7 +41,7 @@ export function modeChoices(
         }
       : {
           mode: 'orchestrate',
-          note: 'Requires engineer or above.',
+          note: 'Requires a signed-in account.',
           question: 'The task needs several agents, and you want to steer them as they work.',
         },
     {
@@ -81,7 +81,7 @@ export function ModeChooser({
   epicReason,
   onChoose,
 }: {
-  /** False below ENGINEER: the row explains instead of offering a mode the person cannot launch. */
+  /** False without a session: the row explains instead of offering a mode the person cannot launch. */
   canOrchestrate?: boolean;
   canStartEpic: boolean;
   /** Why an epic is not offered, when it is not; replaces the generic role sentence. */

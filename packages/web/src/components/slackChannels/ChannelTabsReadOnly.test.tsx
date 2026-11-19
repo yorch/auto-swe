@@ -15,6 +15,14 @@ const channel = { id: 'chan-1', name: 'general' } as unknown as SlackChannel;
 
 function mock() {
   return setupFetchMock({
+    'GET /api/v1/me/permissions': () => ({
+      organizations: [],
+      platformCapabilities: who.admin
+        ? ['platform.users.manage', 'platform.slack-channels.manage']
+        : [],
+      platformRole: '',
+      teams: [],
+    }),
     'GET /api/v1/platform/slack-channels/chan-1/memory': () => ({
       data: [
         {
@@ -47,8 +55,12 @@ function mock() {
   });
 }
 
-const as = (role: 'ADMIN' | 'ENGINEER') =>
-  useAuthStore.setState({ isAuthenticated: true, user: { role, sub: 'me' } });
+// Who the person is; the server's answer (`/me/permissions`) is derived from it in `mock()`.
+const who = { admin: false };
+const as = (kind: 'admin' | 'member') => {
+  who.admin = kind === 'admin';
+  useAuthStore.setState({ isAuthenticated: true, user: { role: 'USER', sub: 'me' } });
+};
 
 const paths = (spy: ReturnType<typeof setupFetchMock>) =>
   spy.mock.calls.map(
@@ -66,7 +78,7 @@ afterEach(() => {
 
 describe('channel tabs for someone who is not an administrator', () => {
   it('shows memory without the edit and delete menu', async () => {
-    as('ENGINEER');
+    as('member');
     mock();
     render(withQuery(<ChannelMemoryTab channel={channel} />));
     expect(await screen.findByText('Deploys go out on Tuesdays')).toBeTruthy();
@@ -74,7 +86,7 @@ describe('channel tabs for someone who is not an administrator', () => {
   });
 
   it('shows open items without resolve or dismiss, and never asks for the user list', async () => {
-    as('ENGINEER');
+    as('member');
     const spy = mock();
     render(withQuery(<ChannelOpenItemsTab channel={channel} />));
     expect(await screen.findByText('Rotate the staging key')).toBeTruthy();
@@ -83,7 +95,7 @@ describe('channel tabs for someone who is not an administrator', () => {
   });
 
   it('keeps the controls for an administrator', async () => {
-    as('ADMIN');
+    as('admin');
     mock();
     render(withQuery(<ChannelMemoryTab channel={channel} />));
     expect(await screen.findByRole('button', { name: 'Actions for this memory' })).toBeTruthy();

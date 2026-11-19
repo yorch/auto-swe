@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Icon } from '@/components/ui/Icon';
-import { useHasRole } from '@/hooks/useHasRole';
+import { usePlatformAdmin } from '@/hooks/useCan';
 import { useReadiness } from '@/hooks/useReadiness';
 import { focusMainContent, useDismissed } from '@/lib/dismissed';
 import { cn, FOCUS_RING } from '@/lib/utils';
@@ -132,7 +132,7 @@ export const GOVERNANCE_GROUPS: GuideGroup[] = [
  * cannot tell whether a policy has been reviewed.
  */
 export function GovernanceGuide() {
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = usePlatformAdmin();
   const { ready, dismissed, dismiss } = useDismissed(GOVERNANCE_DISMISS_KEY);
   const readiness = useReadiness(isAdmin);
   if (!isAdmin || !ready || dismissed || readiness.data?.ready !== true) {

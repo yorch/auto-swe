@@ -4,10 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flattenNavItems, NAV_ITEMS, visibleNavGroups } from '@/lib/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import { installMemoryStorage } from '@/test/memoryStorage';
+import { ADMIN_PERMISSIONS } from '@/test/permissions';
 import { GOVERNANCE_GROUPS, GovernanceGuide } from './GovernanceGuide';
 
 let isAdmin = true;
-vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => isAdmin }));
+vi.mock('@/hooks/useCan', () => ({ useCan: () => isAdmin, usePlatformAdmin: () => isAdmin }));
 let readiness: { data?: { ready: boolean } } = { data: { ready: true } };
 vi.mock('@/hooks/useReadiness', () => ({ useReadiness: () => readiness }));
 
@@ -60,7 +61,9 @@ describe('GovernanceGuide', () => {
 
   it('only links real pages an admin can open, labelled as the nav labels them', () => {
     const visible = new Set(
-      visibleNavGroups('ADMIN').flatMap((g) => flattenNavItems(g.items).map((i) => i.href))
+      visibleNavGroups(ADMIN_PERMISSIONS).flatMap((g) =>
+        flattenNavItems(g.items).map((i) => i.href)
+      )
     );
     for (const link of GOVERNANCE_GROUPS.flatMap((g) => g.links)) {
       expect(visible.has(link.href), link.href).toBe(true);

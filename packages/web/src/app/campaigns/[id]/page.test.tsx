@@ -23,11 +23,12 @@ vi.mock('@/hooks/useRuns', () => ({
 vi.mock('@/hooks/useWorkViews', () => ({
   usePullRequests: () => ({ data: [{ id: 'pr-9', repository: { id: 'conn-1' } }] }),
 }));
+// `led`: the server says the caller holds `team.launch.multi-repo` on the campaign's owning team.
 const auth = vi.hoisted(() => ({
-  led: new Set<string>(),
-  user: { role: 'LEAD', sub: 'someone-else' } as { role: string; sub: string },
+  led: false,
+  user: { role: 'USER', sub: 'someone-else' } as { role: string; sub: string },
 }));
-vi.mock('@/hooks/useTeams', () => ({ useLedTeamIds: () => auth.led }));
+vi.mock('@/hooks/useCan', () => ({ useCan: () => auth.led }));
 vi.mock('@/stores/authStore', () => ({
   useAuthStore: (select: (s: { user: typeof auth.user }) => unknown) => select({ user: auth.user }),
 }));
@@ -116,8 +117,8 @@ afterEach(() => {
   cleanup();
   useCampaign.mockReset();
   cancel.mutateAsync.mockReset();
-  auth.led = new Set();
-  auth.user = { role: 'LEAD', sub: 'someone-else' };
+  auth.led = false;
+  auth.user = { role: 'USER', sub: 'someone-else' };
 });
 
 describe('Campaign detail page', () => {
@@ -154,7 +155,7 @@ describe('Campaign detail page', () => {
 
   it('lets the creator cancel after confirming', async () => {
     stubDialogPrototype();
-    auth.user = { role: 'ENGINEER', sub: 'creator' };
+    auth.user = { role: 'USER', sub: 'creator' };
     cancel.mutateAsync.mockResolvedValue({});
     useCampaign.mockReturnValue({
       data: CAMPAIGN,
@@ -171,8 +172,20 @@ describe('Campaign detail page', () => {
     expect(cancel.mutateAsync).toHaveBeenCalledTimes(1);
   });
 
+  it('lets whoever holds the capability on the owning team cancel', async () => {
+    auth.led = true;
+    useCampaign.mockReturnValue({
+      data: CAMPAIGN,
+      error: null,
+      isLoading: false,
+      refetch: vi.fn(),
+    });
+    await renderPage();
+    expect(screen.getByRole('button', { name: 'Cancel campaign' })).toBeTruthy();
+  });
+
   it('offers no cancel once the campaign is final', async () => {
-    auth.user = { role: 'ADMIN', sub: 'admin' };
+    auth.led = true;
     useCampaign.mockReturnValue({
       data: { ...CAMPAIGN, state: 'COMPLETED' },
       error: null,

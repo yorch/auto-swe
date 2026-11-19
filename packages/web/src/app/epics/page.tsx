@@ -14,9 +14,9 @@ import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Toolbar } from '@/components/ui/Toolbar';
 import { WorkScopeControl } from '@/components/work/WorkScopeControl';
+import { useCan } from '@/hooks/useCan';
 import { useEpics } from '@/hooks/useEpics';
 import { useTeamParam } from '@/hooks/useTeamParam';
-import { useLeadsATeam } from '@/hooks/useTeams';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { teamGatedBoundary } from '@/lib/teamGate';
 
@@ -24,7 +24,7 @@ const PAGE_SIZE = 30;
 
 function Epics() {
   // Launching an epic requires LEAD on the owning team of each repository, whatever the platform role.
-  const canCreate = useLeadsATeam();
+  const canCreate = useCan('team.launch.multi-repo');
   const { params, update } = useUrlFilters();
   const scope = params.get('scope') === 'MINE' ? 'MINE' : 'TEAM';
   const offset = parseOffset(params.get('offset'));

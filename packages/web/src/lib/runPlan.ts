@@ -491,7 +491,7 @@ function driftView(kind: string): PlanErrorView {
 
 /**
  * A failed save as a template. A 403 from it is the template-authoring role of the plan's team
- * (LEAD or ADMIN of it), not the Engineer role the other plan actions need.
+ * (`team.templates.write` on it), not the plain team membership the other plan actions need.
  */
 export function describeSaveError(err: unknown): PlanErrorView {
   if (err instanceof ApiError && err.status === 403 && err.code === 'FORBIDDEN') {

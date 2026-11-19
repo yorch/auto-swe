@@ -35,7 +35,7 @@ beforeEach(() => {
   resetNavigation('', '/');
   nav.entries = [
     entry('payments', 'Payments', 'LEAD', 3),
-    entry('platform', 'Platform', 'ENGINEER', 0),
+    entry('platform', 'Platform', 'MEMBER', 0),
   ];
 });
 afterEach(cleanup);
@@ -57,7 +57,7 @@ describe('TeamSwitcher', () => {
       '/teams/platform',
     ]);
     expect(rows[0]?.textContent).toContain('All my teams');
-    expect(rows[1]?.textContent).toContain('Lead');
+    expect(rows[1]?.textContent).toContain('Team lead');
     expect(within(rows[1] as HTMLElement).getByTestId('needs-you-badge').textContent).toContain(
       '3'
     );
@@ -135,7 +135,7 @@ describe('TeamSwitcher', () => {
     it('refuses a 21st pin, saying why', () => {
       const many = Array.from({ length: 20 }, (_, i) => `team-${i}`);
       nav.entries = [
-        ...many.map((slug) => entry(slug, slug, 'ENGINEER', 0)),
+        ...many.map((slug) => entry(slug, slug, 'MEMBER', 0)),
         entry('extra', 'Extra', 'LEAD', 0),
       ];
       prefs.pinned = many;

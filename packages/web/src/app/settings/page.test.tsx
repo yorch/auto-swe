@@ -6,7 +6,7 @@ import { setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpe
 
 const h = vi.hoisted(() => ({
   reset: vi.fn(),
-  user: { email: 'me@example.com', role: 'ENGINEER', slackId: 'U123', sub: 'u1' } as {
+  user: { email: 'me@example.com', role: 'USER', slackId: 'U123', sub: 'u1' } as {
     email: string;
     role: string;
     slackId?: string;
