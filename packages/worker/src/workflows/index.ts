@@ -52,6 +52,7 @@ export { ScheduledRepoAccessSyncWorkflow } from './scheduledRepoAccessSync.js';
 export { ScheduledRepoDependencyScanWorkflow } from './scheduledRepoDependencyScan.js';
 export { ScheduledReportDigestWorkflow } from './scheduledReportDigest.js';
 export { ScheduledRevalidationWorkflow } from './scheduledRevalidation.js';
+export { ScheduledRunHistoryPruneWorkflow } from './scheduledRunHistoryPrune.js';
 export { ScheduledRunPlanSweepWorkflow } from './scheduledRunPlanSweep.js';
 export { ScheduledRunReaperWorkflow } from './scheduledRunReaper.js';
 export { ScheduledSkillSourceSyncWorkflow } from './scheduledSkillSourceSync.js';

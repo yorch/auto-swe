@@ -1347,6 +1347,34 @@ when an orchestration launched or restarted and passed it to the worker in the w
 **Verify.** A running orchestration still starts children after both are updated; a child call
 made with a token from before the update answers `401 TOKEN_INVALID`.
 
+### UN-30. A daily run-history sweep starts; it deletes finished runs once a retention is set
+
+**Affected.** Every deployment, in that the schedule `auto-swe-run-history-prune` is created at
+gateway start. It does nothing until an ADMIN sets `workflow.runRetentionDays` above `0`. The rest
+of this entry applies only to a deployment that sets it.
+
+**Fix commit.** `<fixing commit SHA>`.
+
+**Actions.**
+
+- Leave `workflow.runRetentionDays` at `0` to keep every run, as before. To stop the schedule from
+  existing at all, set `RUN_HISTORY_PRUNE_ENABLED=false` on the gateway.
+- Before setting a value (30 days is the floor), know that a run past it is deleted for good, with
+  its steps, traces, artifacts (object-store objects and filesystem files included), screenshot
+  evidence and its public copies, recorded HTTP calls and human steps. Memory items, agent
+  transcripts and the effects ledger survive without their link to the run. Ids kept elsewhere
+  (`EvalCase.sourceRunId`, `KnowledgeItem.producerRunId`, audit-log rows) then point at nothing.
+- Usage reports read from the daily rollup are unchanged. A day with no rollup is read from the
+  traces, so run `AGENT_TRACE_ROLLUP_BACKFILL_DAYS` on the worker first if older days are not rolled
+  up; a run with LLM spend and no rollup row is kept until that is done. Reports that read run rows
+  directly lose the deleted window.
+- Keep the value longer than any product-requirements (PRD) run can take to finish.
+- Each worker must have the artifact backend that holds the old artifacts configured (the bucket, or
+  `ARTIFACT_FS_DIR`), or runs with artifacts there are skipped and kept.
+
+**Verify.** With a value set, the worker logs `run history sweep: deleted N finished runs older than
+D days` after the next 05:17 UTC run (or `RUN_HISTORY_PRUNE_CRON`); with `0` it logs nothing.
+
 ---
 
 ## 4. If you cannot tell

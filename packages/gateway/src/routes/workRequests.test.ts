@@ -346,6 +346,7 @@ describe('POST /api/v1/work-requests', () => {
       syncRepoDependencyScanSchedule: async () => {},
       syncReportDigestSchedule: async () => {},
       syncRevalidationSchedule: async () => {},
+      syncRunHistoryPruneSchedule: async () => {},
       syncRunPlanSweepSchedule: async () => {},
       syncRunReaperSchedule: async () => {},
       syncSkillSourceSyncSchedule: async () => {},

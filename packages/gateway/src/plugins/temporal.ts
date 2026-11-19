@@ -107,6 +107,7 @@ export const WORKFLOW_RUN_ROLLUP_SCHEDULE_ID = 'auto-swe-workflow-run-rollup';
 export const REPORT_DIGEST_SCHEDULE_ID = 'auto-swe-report-digest';
 export const AUDIT_ACTIVITY_PRUNE_SCHEDULE_ID = 'auto-swe-audit-activity-prune';
 export const RUN_PLAN_SWEEP_SCHEDULE_ID = 'auto-swe-run-plan-sweep';
+export const RUN_HISTORY_PRUNE_SCHEDULE_ID = 'auto-swe-run-history-prune';
 
 /** Temporal Schedule ID for a ScheduledWorkRequest row. */
 export function workRequestScheduleId(scheduleRowId: string): string {
@@ -399,6 +400,12 @@ export interface RunPlanSweepScheduleConfig {
   cronExpression: string;
 }
 
+/** The finished-run retention sweep; the workflow reads its setting itself. */
+export interface RunHistoryPruneScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
 /**
  * The usage rollup sweep. The activity reads its backfill window from the worker's environment,
  * so the schedule carries no arguments.
@@ -672,6 +679,7 @@ declare module 'fastify' {
       triggerReportDigestTest: (subscriptionId: string) => Promise<void>;
       syncAuditActivityPruneSchedule: (config: AuditActivityPruneScheduleConfig) => Promise<void>;
       syncRunPlanSweepSchedule: (config: RunPlanSweepScheduleConfig) => Promise<void>;
+      syncRunHistoryPruneSchedule: (config: RunHistoryPruneScheduleConfig) => Promise<void>;
       syncSkillSourceSyncSchedule: (config: SkillSourceSyncScheduleConfig) => Promise<void>;
       syncMarketplaceSyncSchedule: (config: MarketplaceSyncScheduleConfig) => Promise<void>;
       syncOutcomeReportSchedule: (config: OutcomeReportScheduleConfig) => Promise<void>;
@@ -2011,6 +2019,14 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       };
       await upsertSchedule(REVALIDATION_SCHEDULE_ID, {
         action: makeRevalidationScheduleAction(input),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
+    async syncRunHistoryPruneSchedule(config: RunHistoryPruneScheduleConfig): Promise<void> {
+      await upsertSchedule(RUN_HISTORY_PRUNE_SCHEDULE_ID, {
+        action: makeSweepAction('ScheduledRunHistoryPruneWorkflow'),
         cronExpression: config.cronExpression,
         paused: !config.enabled,
       });
