@@ -23,9 +23,9 @@ const TEAM_ID = '00000000-0000-4000-8000-0000000000b1';
 const OTHER_TEAM_ID = '00000000-0000-4000-8000-0000000000b2';
 
 // Real registry keys, so the tests exercise the actual definitions:
-//   LEAD_KEY        requiredRole LEAD, overridable at CHANNEL / TEAM / ORGANIZATION, int 1..200
-//   ADMIN_KEY       requiredRole ADMIN, overridable at TEAM / ORGANIZATION, boolean
-//   GLOBAL_ONLY_KEY requiredRole ADMIN, overridable nowhere below GLOBAL
+//   LEAD_KEY        writeAccess grantable, overridable at CHANNEL / TEAM / ORGANIZATION, int 1..200
+//   ADMIN_KEY       writeAccess admin, overridable at TEAM / ORGANIZATION, boolean
+//   GLOBAL_ONLY_KEY writeAccess admin, overridable nowhere below GLOBAL
 const LEAD_KEY = 'channel.historyMessageLimit';
 const ADMIN_KEY = 'github.ciFailureTriggersEnabled';
 const GLOBAL_ONLY_KEY = 'github.repositoryHosts';
@@ -62,7 +62,10 @@ function makePrisma() {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue({ orgId: ORG_ID }),
     },
-    teamMembership: { findUnique: vi.fn().mockResolvedValue(null) },
+    teamMembership: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
     workerEgressCapability: { findMany: vi.fn().mockResolvedValue([]) },
     workflowTemplate: { findUnique: vi.fn().mockResolvedValue(null) },
   };
@@ -142,12 +145,26 @@ describe('resolveScopeTenant', () => {
 });
 
 describe('loadGrantsForActor', () => {
-  it("loads the actor's own grants and the grants for their role", async () => {
-    await loadGrantsForActor(asPrisma(prisma), LEAD);
+  it("loads the actor's own grants and the role grants of the teams they belong to", async () => {
+    prisma.teamMembership.findMany.mockResolvedValue([{ role: 'LEAD', teamId: TEAM_ID }]);
+    const loaded = await loadGrantsForActor(asPrisma(prisma), LEAD);
+    expect(prisma.teamMembership.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 'user-1' } })
+    );
     expect(prisma.configPermission.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { OR: [{ userId: 'user-1' }, { role: 'LEAD' }] },
+        where: {
+          OR: [{ userId: 'user-1' }, { scope: 'TEAM', teamId: { in: [TEAM_ID] }, userId: null }],
+        },
       })
+    );
+    expect(loaded.teamRoles.get(TEAM_ID)).toBe('LEAD');
+  });
+
+  it('loads only user grants for an actor with no team memberships', async () => {
+    await loadGrantsForActor(asPrisma(prisma), LEAD);
+    expect(prisma.configPermission.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { OR: [{ userId: 'user-1' }] } })
     );
   });
 });
@@ -223,34 +240,44 @@ describe('setSetting authorisation', () => {
 
   it('refuses a grant whose key pattern does not cover the key', async () => {
     prisma.configPermission.findMany.mockResolvedValue([
-      grant({ keyPattern: 'workflow.*', role: 'LEAD', scope: 'GLOBAL' }),
+      grant({ keyPattern: 'workflow.*', role: 'LEAD', scope: 'TEAM', teamId: TEAM_ID }),
     ]);
+    prisma.teamMembership.findMany.mockResolvedValue([{ role: 'LEAD', teamId: TEAM_ID }]);
     const result = await setSetting(asPrisma(prisma), LEAD, LEAD_KEY, TEAM, 50);
     expect(result).toEqual({
       denial: expect.objectContaining({ code: 'NO_GRANT' }),
     });
   });
 
-  it('lets a role grant cover every member of that role', async () => {
+  it('lets a team role grant cover members who hold that role in that team', async () => {
     prisma.configPermission.findMany.mockResolvedValue([
-      grant({ keyPattern: '*', role: 'LEAD', scope: 'GLOBAL' }),
+      grant({ keyPattern: '*', role: 'LEAD', scope: 'TEAM', teamId: TEAM_ID }),
     ]);
+    prisma.teamMembership.findMany.mockResolvedValue([{ role: 'LEAD', teamId: TEAM_ID }]);
     const result = await setSetting(asPrisma(prisma), LEAD, LEAD_KEY, TEAM, 50);
     expect(result).toMatchObject({ after: 50 });
   });
 
-  it('refuses an ENGINEER on a LEAD-floor key even with a deployment-wide grant', async () => {
+  it('refuses a team role grant when the actor holds the role in another team', async () => {
+    prisma.configPermission.findMany.mockResolvedValue([
+      grant({ keyPattern: '*', role: 'LEAD', scope: 'TEAM', teamId: TEAM_ID }),
+    ]);
+    prisma.teamMembership.findMany.mockResolvedValue([{ role: 'LEAD', teamId: OTHER_TEAM_ID }]);
+    const result = await setSetting(asPrisma(prisma), LEAD, LEAD_KEY, TEAM, 50);
+    expect(result).toEqual({ denial: expect.objectContaining({ code: 'NO_GRANT' }) });
+  });
+
+  // Replaces 'refuses an ENGINEER on a LEAD-floor key even with a deployment-wide grant': the
+  // platform-role floor is gone, so a user grant is what decides, and it covers a write.
+  it('lets a user with a deployment-wide user grant write a grantable key whatever their platform role', async () => {
     prisma.configPermission.findMany.mockResolvedValue([
       grant({ keyPattern: '*', scope: 'GLOBAL', userId: 'user-1' }),
     ]);
     const result = await setSetting(asPrisma(prisma), ENGINEER, LEAD_KEY, TEAM, 50);
-    expect(result).toEqual({
-      denial: expect.objectContaining({ code: 'ROLE_TOO_LOW' }),
-    });
-    expect(prisma.configSetting.create).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ after: 50 });
   });
 
-  it('refuses a LEAD on an ADMIN-floor key even with a grant covering it', async () => {
+  it('refuses a LEAD on an admin-only key even with a grant covering it', async () => {
     prisma.configPermission.findMany.mockResolvedValue([
       grant({ keyPattern: '*', scope: 'GLOBAL', userId: 'user-1' }),
     ]);

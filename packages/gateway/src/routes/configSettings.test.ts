@@ -22,7 +22,7 @@ vi.mock('@auto-swe/shared/db', () => ({
     organizationMembership: { findUnique: vi.fn(async () => null) },
     slackChannel: { findUnique: vi.fn(async () => ({ orgId: 'org-1', teamId: 'team-1' })) },
     team: { findMany: vi.fn(async () => []), findUnique: vi.fn(async () => ({ orgId: 'org-1' })) },
-    teamMembership: { findUnique: vi.fn(async () => null) },
+    teamMembership: { findMany: vi.fn(async () => []), findUnique: vi.fn(async () => null) },
     workerEgressCapability: { findMany: vi.fn(async () => []) },
     workflowTemplate: {
       findUnique: vi.fn(async () => ({ team: { orgId: 'org-1' }, teamId: 'team-1' })),
@@ -90,6 +90,7 @@ beforeEach(() => {
   configPermission.findMany.mockResolvedValue([] as never);
   team.findUnique.mockResolvedValue({ orgId: ORG_ID } as never);
   teamMembership.findUnique.mockResolvedValue(null as never);
+  teamMembership.findMany.mockResolvedValue([] as never);
   orgMembership.findUnique.mockResolvedValue(null as never);
   vi.mocked(prisma.workerEgressCapability.findMany).mockResolvedValue([]);
 });
@@ -169,6 +170,7 @@ describe('GET /config/settings', () => {
       requiredRole: 'LEAD',
       source: 'DEFAULT',
       value: 30,
+      writeAccess: 'grantable',
     });
     await app.close();
   });
@@ -492,6 +494,7 @@ describe('PUT /config/settings/:key', () => {
         userId: null,
       },
     ] as never);
+    teamMembership.findMany.mockResolvedValue([{ role: 'LEAD', teamId: TEAM_ID }] as never);
     const app = await buildApp();
     const res = await app.inject({
       body: { value: 12 },
@@ -517,6 +520,7 @@ describe('PUT /config/settings/:key', () => {
         userId: null,
       },
     ] as never);
+    teamMembership.findMany.mockResolvedValue([{ role: 'LEAD', teamId: TEAM_ID }] as never);
     const app = await buildApp();
     const res = await app.inject({
       body: { value: 12 },
@@ -540,6 +544,7 @@ describe('PUT /config/settings/:key', () => {
         userId: null,
       },
     ] as never);
+    teamMembership.findMany.mockResolvedValue([{ role: 'LEAD', teamId: TEAM_ID }] as never);
     const app = await buildApp();
     const res = await app.inject({
       body: { value: 12 },
@@ -551,7 +556,7 @@ describe('PUT /config/settings/:key', () => {
     await app.close();
   });
 
-  it('holds the requiredRole floor even when a wildcard grant matches', async () => {
+  it('keeps an admin-only key out of reach of a matching wildcard grant', async () => {
     configPermission.findMany.mockResolvedValue([
       { keyPattern: '*', orgId: null, role: 'LEAD', scope: 'GLOBAL', teamId: null, userId: null },
     ] as never);
@@ -674,6 +679,38 @@ describe('grants', () => {
     await app.close();
   });
 
+  it('refuses a role grant that is not TEAM-scoped with a team', async () => {
+    const app = await buildApp();
+    for (const body of [
+      { keyPattern: 'channel.*', role: 'LEAD', scope: 'GLOBAL' },
+      { keyPattern: 'channel.*', orgId: ORG_ID, role: 'LEAD', scope: 'ORGANIZATION' },
+      { keyPattern: 'channel.*', role: 'LEAD', scope: 'TEAM' },
+    ]) {
+      const res = await app.inject({
+        body,
+        headers: auth('ADMIN'),
+        method: 'POST',
+        url: '/api/v1/platform/config/grants',
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('ROLE_GRANT_REQUIRES_TEAM_SCOPE');
+    }
+    expect(configPermission.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('still lets a user grant be deployment-wide', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { keyPattern: 'channel.*', scope: 'GLOBAL', userId: USER_ID },
+      headers: auth('ADMIN'),
+      method: 'POST',
+      url: '/api/v1/platform/config/grants',
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
   it('requires the matching id for a scoped grant', async () => {
     const app = await buildApp();
     const res = await app.inject({
@@ -707,7 +744,7 @@ describe('grants', () => {
   it('rejects a keyPattern that is not *, a known group wildcard, or an exact known key', async () => {
     const app = await buildApp();
     const res = await app.inject({
-      body: { keyPattern: 'unknown.*', role: 'LEAD', scope: 'GLOBAL' },
+      body: { keyPattern: 'unknown.*', role: 'LEAD', scope: 'TEAM', teamId: TEAM_ID },
       headers: auth('ADMIN'),
       method: 'POST',
       url: '/api/v1/platform/config/grants',
@@ -721,7 +758,7 @@ describe('grants', () => {
   it('accepts the universal wildcard keyPattern', async () => {
     const app = await buildApp();
     const res = await app.inject({
-      body: { keyPattern: '*', role: 'ADMIN', scope: 'GLOBAL' },
+      body: { keyPattern: '*', role: 'ADMIN', scope: 'TEAM', teamId: TEAM_ID },
       headers: auth('ADMIN'),
       method: 'POST',
       url: '/api/v1/platform/config/grants',
@@ -734,7 +771,12 @@ describe('grants', () => {
   it('accepts an exact known setting key', async () => {
     const app = await buildApp();
     const res = await app.inject({
-      body: { keyPattern: 'channel.historyMessageLimit', role: 'LEAD', scope: 'GLOBAL' },
+      body: {
+        keyPattern: 'channel.historyMessageLimit',
+        role: 'LEAD',
+        scope: 'TEAM',
+        teamId: TEAM_ID,
+      },
       headers: auth('ADMIN'),
       method: 'POST',
       url: '/api/v1/platform/config/grants',
@@ -757,6 +799,7 @@ describe('grants', () => {
     expect(body.keys.length).toBeGreaterThan(0);
     expect(body.keys.every((k: string) => k.startsWith('channel.'))).toBe(true);
     expect(body.requiredRole).toBeDefined();
+    expect(body.writeAccess).toBeDefined();
     expect(body.settings.length).toBe(body.keys.length);
     await app.close();
   });
@@ -772,6 +815,7 @@ describe('grants', () => {
     const body = res.json().data;
     expect(body.keys.length).toBeGreaterThan(0);
     expect(body.requiredRole).toBe('ADMIN');
+    expect(body.writeAccess).toBe('admin');
     await app.close();
   });
 

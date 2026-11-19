@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import type { ConfigScope, Role } from '../generated/prisma/enums.js';
+import type { ConfigScope } from '../generated/prisma/enums.js';
 
 /// The five scope levels of the platform-wide config cascade, most specific
 /// first. `resolveSetting` walks them in this order and takes the first
@@ -18,6 +18,8 @@ export type SettingScope = (typeof SETTING_SCOPE_ORDER)[number];
 /// The scopes an override may be attached to below GLOBAL. GLOBAL is always
 /// available, so a definition lists only the narrower scopes it permits.
 export type OverridableScope = Exclude<SettingScope, 'GLOBAL'>;
+
+export type SettingWriteAccess = 'admin' | 'grantable';
 
 /// Groups exist so the admin UI can render one form per subsystem and so a
 /// permission grant can name a whole area (`channel.*`) instead of every key.
@@ -74,9 +76,9 @@ export interface SettingDefinition<T = unknown> {
   /// Scopes below GLOBAL where an override may be set. Empty means the knob is
   /// platform-wide only.
   overridableAt: readonly OverridableScope[];
-  /// Floor for who may change it. Grants can name who *may* write a key, but
-  /// never below this role.
-  requiredRole: Role;
+  /// Who may change it. `'admin'`: platform admins only, no grant reaches it.
+  /// `'grantable'`: platform admins, or an actor a configuration grant covers.
+  writeAccess: SettingWriteAccess;
   /// When true the value is snapshotted into `WorkflowRun.pinnedSettings` at
   /// run start and read from there for the life of the run. Use it for
   /// anything a run makes a structural decision on — fan-out width, transition
@@ -84,8 +86,8 @@ export interface SettingDefinition<T = unknown> {
   /// of a run disagree with the first. Everything else re-resolves per call,
   /// which is what lets a model edit land inside an in-flight workflow.
   runPinned: boolean;
-  /// True when the value itself must not be shown to anyone below
-  /// `requiredRole` — a host allowlist can name internal servers on a private
+  /// True when the value itself must not be shown to anyone but a platform
+  /// admin (`writeAccess: 'admin'` keys) — a host allowlist can name internal servers on a private
   /// network. The definition (label, description, default) stays visible; the
   /// resolved and stored values are redacted in every read.
   sensitive?: boolean;

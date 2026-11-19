@@ -4,13 +4,15 @@ import {
   type ConfigGrant,
   checkSettingWrite,
   keyPatternMatches,
-  roleMeets,
 } from './permissions.js';
 import { SETTING_DEFINITIONS, SETTING_KEYS } from './registry.js';
 
 const ORG = 'org-1';
 const TEAM = 'team-1';
 const OTHER_TEAM = 'team-2';
+
+/// The actor's role in each team, as the service loads it from memberships.
+const leadOfTeam = new Map([[TEAM, 'LEAD']]);
 
 const admin: ConfigActor = { id: 'u-admin', role: 'ADMIN' };
 const lead: ConfigActor = { id: 'u-lead', role: 'LEAD' };
@@ -48,14 +50,6 @@ describe('keyPatternMatches', () => {
   });
 });
 
-describe('roleMeets', () => {
-  it('ranks ADMIN above LEAD above ENGINEER', () => {
-    expect(roleMeets('ADMIN', 'LEAD')).toBe(true);
-    expect(roleMeets('LEAD', 'LEAD')).toBe(true);
-    expect(roleMeets('ENGINEER', 'LEAD')).toBe(false);
-  });
-});
-
 describe('checkSettingWrite', () => {
   it('rejects a key the registry does not define', () => {
     const result = checkSettingWrite(admin, { key: 'made.up', scope: 'GLOBAL' }, []);
@@ -78,24 +72,57 @@ describe('checkSettingWrite', () => {
     ).toEqual({ allowed: true });
   });
 
-  it('holds the requiredRole floor even for an otherwise matching grant', () => {
-    const grant = teamGrant({ keyPattern: '*', role: 'ENGINEER' });
+  it('refuses every non-admin on an admin-only key, whatever grant matches', () => {
+    // Replaces the removed platform-role floor assertion: writeAccess 'admin' is
+    // out of any grant's reach.
+    expect(SETTING_DEFINITIONS['github.userCredentialsEnabled'].writeAccess).toBe('admin');
+    const userGrant = teamGrant({
+      keyPattern: '*',
+      role: null,
+      scope: 'GLOBAL',
+      userId: engineer.id,
+    });
     const result = checkSettingWrite(
       engineer,
-      { key: 'channel.historyMessageLimit', scope: 'TEAM', targetOrgId: ORG, targetTeamId: TEAM },
-      [grant]
+      { key: 'github.userCredentialsEnabled', scope: 'GLOBAL' },
+      [userGrant],
+      leadOfTeam
     );
-    // historyMessageLimit requires LEAD — no grant can lower that.
     expect(result).toMatchObject({ allowed: false, code: 'ROLE_TOO_LOW' });
+    expect(
+      checkSettingWrite(admin, { key: 'github.userCredentialsEnabled', scope: 'GLOBAL' }, [])
+    ).toEqual({ allowed: true });
+  });
+
+  it('lets a user holding no platform role write a grantable key through a user grant', () => {
+    const userGrant = teamGrant({ role: null, userId: engineer.id });
+    expect(
+      checkSettingWrite(
+        engineer,
+        { key: 'channel.historyMessageLimit', scope: 'TEAM', targetOrgId: ORG, targetTeamId: TEAM },
+        [userGrant]
+      )
+    ).toEqual({ allowed: true });
+  });
+
+  it('denies a non-admin on a grantable key without a grant', () => {
+    expect(
+      checkSettingWrite(
+        engineer,
+        { key: 'channel.historyMessageLimit', scope: 'TEAM', targetOrgId: ORG, targetTeamId: TEAM },
+        []
+      )
+    ).toMatchObject({ allowed: false, code: 'NO_GRANT' });
   });
 
   it('requires platform ADMIN for the org-wide reporting opt-in despite an organization grant', () => {
     const orgGrant = teamGrant({
       keyPattern: 'analytics.orgWideReports',
       orgId: ORG,
-      role: 'LEAD',
+      role: null,
       scope: 'ORGANIZATION',
       teamId: null,
+      userId: lead.id,
     });
     const result = checkSettingWrite(
       lead,
@@ -123,9 +150,43 @@ describe('checkSettingWrite', () => {
       checkSettingWrite(
         lead,
         { key: 'channel.historyMessageLimit', scope: 'TEAM', targetOrgId: ORG, targetTeamId: TEAM },
-        [teamGrant()]
+        [teamGrant()],
+        leadOfTeam
       )
     ).toEqual({ allowed: true });
+  });
+
+  it('does not let a team role grant match a role held in another team or a different role', () => {
+    const target = {
+      key: 'channel.historyMessageLimit',
+      scope: 'TEAM' as const,
+      targetOrgId: ORG,
+      targetTeamId: TEAM,
+    };
+    expect(
+      checkSettingWrite(lead, target, [teamGrant()], new Map([[OTHER_TEAM, 'LEAD']]))
+    ).toMatchObject({ allowed: false, code: 'NO_GRANT' });
+    expect(
+      checkSettingWrite(lead, target, [teamGrant()], new Map([[TEAM, 'ENGINEER']]))
+    ).toMatchObject({ allowed: false, code: 'NO_GRANT' });
+    expect(checkSettingWrite(lead, target, [teamGrant()])).toMatchObject({
+      allowed: false,
+      code: 'NO_GRANT',
+    });
+  });
+
+  it('ignores a role grant that is not TEAM-scoped with a team', () => {
+    const target = {
+      key: 'channel.historyMessageLimit',
+      scope: 'TEAM' as const,
+      targetOrgId: ORG,
+      targetTeamId: TEAM,
+    };
+    const global = teamGrant({ scope: 'GLOBAL', teamId: null });
+    expect(checkSettingWrite(lead, target, [global], leadOfTeam)).toMatchObject({
+      allowed: false,
+      code: 'NO_GRANT',
+    });
   });
 
   it('does not let a team grant reach a different team', () => {
@@ -137,7 +198,8 @@ describe('checkSettingWrite', () => {
         targetOrgId: ORG,
         targetTeamId: OTHER_TEAM,
       },
-      [teamGrant()]
+      [teamGrant()],
+      leadOfTeam
     );
     expect(result).toMatchObject({ allowed: false, code: 'NO_GRANT' });
   });
@@ -167,13 +229,21 @@ describe('checkSettingWrite', () => {
           targetOrgId: ORG,
           targetTeamId: TEAM,
         },
-        [teamGrant()]
+        [teamGrant()],
+        leadOfTeam
       )
     ).toEqual({ allowed: true });
   });
 
   it('lets an org grant cover a team inside that org but not the GLOBAL row', () => {
-    const orgGrant = teamGrant({ orgId: ORG, scope: 'ORGANIZATION', teamId: null });
+    // A role grantee is only valid at TEAM scope now, so the org grant names the user.
+    const orgGrant = teamGrant({
+      orgId: ORG,
+      role: null,
+      scope: 'ORGANIZATION',
+      teamId: null,
+      userId: lead.id,
+    });
     expect(
       checkSettingWrite(
         lead,

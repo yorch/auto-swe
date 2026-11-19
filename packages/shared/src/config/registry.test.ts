@@ -11,9 +11,9 @@ describe('automatic onboarding', () => {
       defaultValue: false,
       group: 'onboarding',
       overridableAt: ['TEAM', 'ORGANIZATION'],
-      requiredRole: 'ADMIN',
       restartRequired: false,
       runPinned: false,
+      writeAccess: 'admin',
     });
     expect(setting.schema.parse(true)).toBe(true);
     expect(setting.schema.parse(false)).toBe(false);
@@ -27,9 +27,9 @@ describe('onboarding draft hosts', () => {
     expect(setting).toMatchObject({
       group: 'onboarding',
       overridableAt: ['ORGANIZATION', 'TEAM'],
-      requiredRole: 'ADMIN',
       restartRequired: false,
       runPinned: false,
+      writeAccess: 'admin',
     });
     expect(setting.defaultValue).toEqual([
       'registry.npmjs.org',
@@ -70,7 +70,7 @@ describe('restricted egress defaults', () => {
   it('has a live ADMIN baseline scoped only to GLOBAL and ORGANIZATION', () => {
     expect(SETTING_DEFINITIONS['workspace.egressPolicy'].defaultValue).toBe('restricted');
     const setting = SETTING_DEFINITIONS['workspace.egressBaselineAllowlist'];
-    expect(setting.requiredRole).toBe('ADMIN');
+    expect(setting.writeAccess).toBe('admin');
     expect(setting.overridableAt).toEqual(['ORGANIZATION']);
     expect(setting.runPinned).toBe(false);
     expect(setting.schema.parse(setting.defaultValue)).toEqual(setting.defaultValue);
@@ -90,7 +90,7 @@ describe('lesson recall experiment settings', () => {
   it('pins validated recall modes with template and tenant overrides', () => {
     const setting = SETTING_DEFINITIONS['memory.lessonRecall'];
     expect(setting.defaultValue).toBe('on');
-    expect(setting.requiredRole).toBe('LEAD');
+    expect(setting.writeAccess).toBe('grantable');
     expect(setting.overridableAt).toEqual(['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION']);
     expect(setting.runPinned).toBe(true);
     for (const value of ['on', 'shadow', 'off']) {
@@ -103,7 +103,7 @@ describe('lesson recall experiment settings', () => {
   it('pins a tenant-only holdout bounded to integer percentages from zero to fifty', () => {
     const setting = SETTING_DEFINITIONS['memory.lessonHoldoutPercent'];
     expect(setting.defaultValue).toBe(0);
-    expect(setting.requiredRole).toBe('LEAD');
+    expect(setting.writeAccess).toBe('grantable');
     expect(setting.overridableAt).toEqual(['TEAM', 'ORGANIZATION']);
     expect(setting.runPinned).toBe(true);
     for (const value of [0, 1, 25, 50]) {
@@ -119,7 +119,7 @@ describe('lesson quarantine threshold', () => {
   it('is live, LEAD-controlled, owner-scoped and bounded', () => {
     const setting = SETTING_DEFINITIONS['memory.lessonFlagQuarantineThreshold'];
     expect(setting.defaultValue).toBe(2);
-    expect(setting.requiredRole).toBe('LEAD');
+    expect(setting.writeAccess).toBe('grantable');
     expect(setting.overridableAt).toEqual(['TEAM', 'ORGANIZATION']);
     expect(setting.runPinned).toBe(false);
     expect(setting.restartRequired).toBe(false);
@@ -137,7 +137,7 @@ describe('setup egress setting', () => {
     const setup = SETTING_DEFINITIONS['workspace.setupEgressPolicy'];
     const agent = SETTING_DEFINITIONS['workspace.egressPolicy'];
     expect(setup.defaultValue).toBe('inherit');
-    expect(setup.requiredRole).toBe(agent.requiredRole);
+    expect(setup.writeAccess).toBe(agent.writeAccess);
     expect(setup.overridableAt).toEqual(agent.overridableAt);
     expect(setup.runPinned).toBe(true);
     expect(setup.restartRequired).toBe(false);
@@ -149,7 +149,7 @@ describe('review settings', () => {
     const setting = SETTING_DEFINITIONS['review.enabled'];
     expect(setting.defaultValue).toBe(true);
     expect(setting.group).toBe('review');
-    expect(setting.requiredRole).toBe('ADMIN');
+    expect(setting.writeAccess).toBe('admin');
     expect(setting.overridableAt).toEqual(['TEAM', 'ORGANIZATION']);
     expect(setting.runPinned).toBe(false);
     expect(setting.restartRequired).toBe(false);
@@ -174,7 +174,7 @@ describe('retention settings', () => {
     }
     expect(SETTING_DEFINITIONS[key].defaultValue).toBe(0);
     expect(SETTING_DEFINITIONS[key].overridableAt).toEqual([]);
-    expect(SETTING_DEFINITIONS[key].requiredRole).toBe('ADMIN');
+    expect(SETTING_DEFINITIONS[key].writeAccess).toBe('admin');
   });
 
   it('audit.runEffectRetentionDays is 0 (forever) or between a month and ten years', () => {
@@ -187,7 +187,7 @@ describe('retention settings', () => {
     }
     expect(SETTING_DEFINITIONS[key].defaultValue).toBe(0);
     expect(SETTING_DEFINITIONS[key].overridableAt).toEqual([]);
-    expect(SETTING_DEFINITIONS[key].requiredRole).toBe('ADMIN');
+    expect(SETTING_DEFINITIONS[key].writeAccess).toBe('admin');
   });
 
   it('analytics.activityRetentionDays is at least a week', () => {
@@ -222,7 +222,7 @@ describe('retention settings', () => {
     const setting = SETTING_DEFINITIONS['analytics.orgWideReports'];
     expect(setting.defaultValue).toBe(false);
     expect(setting.overridableAt).toEqual(['ORGANIZATION']);
-    expect(setting.requiredRole).toBe('ADMIN');
+    expect(setting.writeAccess).toBe('admin');
   });
 });
 
@@ -241,7 +241,7 @@ describe('UI validation settings', () => {
       const def = SETTING_DEFINITIONS[key as keyof typeof SETTING_DEFINITIONS];
       expect(def.defaultValue, key).toBe(value);
       expect(def.group, key).toBe('uiValidation');
-      expect(def.requiredRole, key).toBe('ADMIN');
+      expect(def.writeAccess, key).toBe('admin');
       expect(def.overridableAt, key).toEqual([]);
       expect(def.runPinned, key).toBe(false);
     }
@@ -276,7 +276,7 @@ describe('git author settings', () => {
       expect(def.overridableAt, key).toEqual(['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION']);
       // The identity written on every commit is ADMIN-only (a team lead could otherwise forge
       // provenance); crediting the launcher stays with the team lead.
-      expect(def.requiredRole, key).toBe(key === 'git.launcherAttribution' ? 'LEAD' : 'ADMIN');
+      expect(def.writeAccess, key).toBe(key === 'git.launcherAttribution' ? 'grantable' : 'admin');
       expect(def.runPinned, key).toBe(false);
     }
   });
@@ -348,7 +348,7 @@ describe('qodo pull-request feedback settings', () => {
     const d = def['qodo.prFeedbackBotAccountIds'];
     expect(d.defaultValue).toEqual([]);
     expect(d.overridableAt).toEqual([]);
-    expect(d.requiredRole).toBe('ADMIN');
+    expect(d.writeAccess).toBe('admin');
     expect(def['qodo.enabled'].defaultValue).toBe(false);
   });
 
@@ -376,7 +376,7 @@ describe('qodo pull-request feedback settings', () => {
   it('includes Qodo in a command round only when an admin opts in, per team or organization', () => {
     const d = def['qodo.prFeedbackIncludeOnCommand'];
     expect(d.defaultValue).toBe(false);
-    expect(d.requiredRole).toBe('ADMIN');
+    expect(d.writeAccess).toBe('admin');
     expect(d.overridableAt).toEqual(['TEAM', 'ORGANIZATION']);
     expect(d.runPinned).toBe(false);
     expect(d.restartRequired).toBe(false);
@@ -410,7 +410,7 @@ describe('qodo pull-request feedback settings', () => {
   it('bounds the wait for the run that opened the pull request', () => {
     const runWait = def['qodo.prFeedbackRunWaitSeconds'];
     expect(runWait.defaultValue).toBe(900);
-    expect(runWait.requiredRole).toBe('ADMIN');
+    expect(runWait.writeAccess).toBe('admin');
     expect(runWait.overridableAt).toEqual([]);
     for (const ok of [0, 900]) {
       expect(accepts('qodo.prFeedbackRunWaitSeconds', ok)).toBe(true);
@@ -443,7 +443,7 @@ describe('Jira filter polling settings', () => {
   it('the kill switch is off by default, ADMIN only, and settable per team or organization', () => {
     const def = SETTING_DEFINITIONS['workflow.jiraPollAutomationsEnabled'];
     expect(def.defaultValue).toBe(false);
-    expect(def.requiredRole).toBe('ADMIN');
+    expect(def.writeAccess).toBe('admin');
     expect(def.overridableAt).toEqual(['TEAM', 'ORGANIZATION']);
     expect(accepts('workflow.jiraPollAutomationsEnabled', 'yes')).toBe(false);
   });
@@ -451,7 +451,7 @@ describe('Jira filter polling settings', () => {
   it('the project allowlist is empty by default and takes only Jira project keys', () => {
     const key = 'workflow.jiraPollProjectKeys';
     expect(SETTING_DEFINITIONS[key].defaultValue).toEqual([]);
-    expect(SETTING_DEFINITIONS[key].requiredRole).toBe('ADMIN');
+    expect(SETTING_DEFINITIONS[key].writeAccess).toBe('admin');
     expect(SETTING_DEFINITIONS[key].overridableAt).toEqual(['TEAM', 'ORGANIZATION']);
     expect(accepts(key, ['PAY', 'plat_eng', 'A1'])).toBe(true);
     for (const bad of [['PAY-1'], ['has space'], ['1ABC'], [''], 'PAY', [1]]) {
@@ -463,7 +463,7 @@ describe('Jira filter polling settings', () => {
     const key = 'workflow.jiraPollIntervalSeconds';
     expect(SETTING_DEFINITIONS[key].defaultValue).toBe(300);
     expect(SETTING_DEFINITIONS[key].overridableAt).toEqual([]);
-    expect(SETTING_DEFINITIONS[key].requiredRole).toBe('ADMIN');
+    expect(SETTING_DEFINITIONS[key].writeAccess).toBe('admin');
     for (const ok of [60, 300, 86_400]) {
       expect(accepts(key, ok), String(ok)).toBe(true);
     }
@@ -479,7 +479,7 @@ describe('github.trackerIssueRepositories', () => {
 
   it('is empty by default, ADMIN-only, and overridable at team and organization', () => {
     expect(def.defaultValue).toEqual([]);
-    expect(def.requiredRole).toBe('ADMIN');
+    expect(def.writeAccess).toBe('admin');
     expect(def.overridableAt).toEqual(['TEAM', 'ORGANIZATION']);
     expect(def.group).toBe('github');
     expect(def.runPinned).toBe(false);
@@ -529,7 +529,7 @@ describe('prEvaluation settings', () => {
     for (const key of keys) {
       const def = SETTING_DEFINITIONS[key];
       expect(def.group, key).toBe('prEvaluation');
-      expect(def.requiredRole, key).toBe('ADMIN');
+      expect(def.writeAccess, key).toBe('admin');
       expect(def.runPinned, key).toBe(false);
       expect(def.schema.safeParse(def.defaultValue).success, key).toBe(true);
     }
@@ -600,7 +600,7 @@ describe('prEvaluation settings', () => {
       const def = SETTING_DEFINITIONS[key as keyof typeof defaults];
       expect(def.defaultValue, key).toBe(value);
       expect(def.overridableAt, key).toEqual([]);
-      expect(def.requiredRole, key).toBe('ADMIN');
+      expect(def.writeAccess, key).toBe('admin');
       expect(accepts(key as keyof typeof defaults, 1), key).toBe(true);
       for (const bad of [0, -1, 2.5, '3', 100_000_000]) {
         expect(accepts(key as keyof typeof defaults, bad), `${key} ${String(bad)}`).toBe(false);
@@ -617,7 +617,7 @@ describe('prEvaluation settings', () => {
       const def = SETTING_DEFINITIONS[key];
       expect(def.defaultValue, key).toBe(value);
       expect(def.overridableAt, key).toEqual([]);
-      expect(def.requiredRole, key).toBe('ADMIN');
+      expect(def.writeAccess, key).toBe('admin');
       expect(accepts(key, 1), key).toBe(true);
       expect(accepts(key, max), key).toBe(true);
       for (const bad of [0, -1, 2.5, '3', max + 1]) {
@@ -630,7 +630,7 @@ describe('prEvaluation settings', () => {
     const key = 'prEvaluation.botApprovalPaths';
     const def = SETTING_DEFINITIONS[key];
     expect(def.overridableAt).toEqual([]);
-    expect(def.requiredRole).toBe('ADMIN');
+    expect(def.writeAccess).toBe('admin');
     expect(def.runPinned).toBe(false);
     expect(def.description).toMatch(/empty/i);
     expect(accepts(key, def.defaultValue)).toBe(true);
@@ -685,7 +685,7 @@ describe('workspace.lfsStorageHosts', () => {
 
   it("is platform-wide, admin-only, and starts with github.com's content hosts", () => {
     expect(setting.overridableAt).toEqual([]);
-    expect(setting.requiredRole).toBe('ADMIN');
+    expect(setting.writeAccess).toBe('admin');
     expect(setting.defaultValue).toEqual([
       'github.com=github-cloud.githubusercontent.com',
       'github.com=media.githubusercontent.com',
@@ -716,9 +716,9 @@ describe('workspace sizing', () => {
       expect(setting).toMatchObject({
         group: 'workspace',
         overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
-        requiredRole: 'ADMIN',
         restartRequired: false,
         runPinned: true,
+        writeAccess: 'admin',
       });
     }
     expect(memory.defaultValue).toBe('');
@@ -770,7 +770,7 @@ describe('orchestration settings', () => {
     for (const key of keys) {
       const def = SETTING_DEFINITIONS[key];
       expect(def.group, key).toBe('orchestration');
-      expect(def.requiredRole, key).toBe('ADMIN');
+      expect(def.writeAccess, key).toBe('admin');
       expect(def.overridableAt, key).toEqual(
         key === 'orchestration.defaultAllowlist' ? ['ORGANIZATION'] : []
       );
@@ -826,7 +826,7 @@ describe('tracker.allowedProjectKeys', () => {
 
   it('is empty by default, ADMIN-only, overridable at team and organization, not pinned', () => {
     expect(def.defaultValue).toEqual([]);
-    expect(def.requiredRole).toBe('ADMIN');
+    expect(def.writeAccess).toBe('admin');
     expect(def.overridableAt).toEqual(['TEAM', 'ORGANIZATION']);
     expect(def.runPinned).toBe(false);
   });
@@ -862,9 +862,9 @@ describe('run plan settings', () => {
       expect(SETTING_DEFINITIONS[key], key).toMatchObject({
         group: 'runPlans',
         overridableAt: ['TEAM', 'ORGANIZATION'],
-        requiredRole: 'ADMIN',
         restartRequired: false,
         runPinned: false,
+        writeAccess: 'admin',
       });
     }
   });

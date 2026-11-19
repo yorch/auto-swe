@@ -1,9 +1,9 @@
 export {
+  type ActorTeamRoles,
   type ConfigActor,
   type ConfigGrant,
   checkSettingWrite,
   keyPatternMatches,
-  roleMeets,
   type SettingWriteTarget,
   type WriteDenial,
 } from './permissions.js';

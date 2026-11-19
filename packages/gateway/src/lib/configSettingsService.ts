@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import {
+  type ActorTeamRoles,
   type ConfigActor,
   type ConfigGrant,
   checkSettingWrite,
@@ -8,7 +9,6 @@ import {
   isSettingKey,
   type ResolvedSetting,
   resolveEffectiveSettings,
-  roleMeets,
   SETTING_DEFINITIONS,
   type SettingKey,
   type SettingResolveCtx,
@@ -16,6 +16,7 @@ import {
   type WriteDenial,
 } from '@auto-swe/shared/config';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import { advisoryWarnings } from './advisoryWarnings.js';
 import { loadEgressReadiness } from './egressReadiness.js';
 import { isUniqueConstraintError } from './prismaErrors.js';
@@ -32,7 +33,7 @@ import { runtimeSettingWarnings } from './runtimeSettingAdvice.js';
  *
  * Reads and writes go through the setting definitions rather than a per-key
  * route: the definition supplies the schema that validates a write, the scopes
- * a write is allowed at, and the role floor. Adding a knob is a definition, not
+ * a write is allowed at, and who may write it. Adding a knob is a definition, not
  * a change here.
  */
 
@@ -132,19 +133,32 @@ export async function resolveScopeTenant(
 }
 
 /// Every grant that could apply to this actor: their own user grants plus the
-/// role grants for the role they hold. Filtering by key and scope happens in
-/// `checkSettingWrite`, which owns the matching rule.
+/// role grants of any team they belong to, together with the actor's role in
+/// each of those teams (a role grant is matched against the actor's role in the
+/// grant's team). Filtering by key and scope happens in `checkSettingWrite`,
+/// which owns the matching rule.
+export interface ActorGrants {
+  grants: ConfigGrant[];
+  teamRoles: ActorTeamRoles;
+}
+
 export async function loadGrantsForActor(
   prisma: PrismaClient,
   actor: ConfigActor
-): Promise<ConfigGrant[]> {
+): Promise<ActorGrants> {
   // Cross-tenant on purpose: an actor's grants may span several teams and orgs,
-  // and the query is already pinned to that one actor.
-  const rows = await runUnscoped(
-    "a user's own grants span every tenant they hold authority in; the query is pinned to one actor",
-    ['ConfigPermission'],
-    () =>
-      prisma.configPermission.findMany({
+  // and the queries are already pinned to that one actor.
+  return runUnscoped(
+    "a user's own grants span every tenant they hold authority in; the queries are pinned to one actor",
+    ['ConfigPermission', 'TeamMembership'],
+    async () => {
+      const memberships = await prisma.teamMembership.findMany({
+        select: { role: true, teamId: true },
+        where: { userId: actor.id },
+      });
+      const teamRoles = new Map<string, string>(memberships.map((m) => [m.teamId, m.role]));
+      const teamIds = [...teamRoles.keys()];
+      const rows = await prisma.configPermission.findMany({
         select: {
           keyPattern: true,
           orgId: true,
@@ -153,10 +167,18 @@ export async function loadGrantsForActor(
           teamId: true,
           userId: true,
         },
-        where: { OR: [{ userId: actor.id }, { role: actor.role }] },
-      })
+        where: {
+          OR: [
+            { userId: actor.id },
+            ...(teamIds.length
+              ? [{ scope: 'TEAM' as const, teamId: { in: teamIds }, userId: null }]
+              : []),
+          ],
+        },
+      });
+      return { grants: rows as ConfigGrant[], teamRoles };
+    }
   );
-  return rows as ConfigGrant[];
 }
 
 /// Membership check for a scoped READ. Writes are authorised by grants, but a
@@ -169,7 +191,7 @@ export async function canReadScope(
   actor: ConfigActor,
   selector: ScopeSelector
 ): Promise<boolean> {
-  if (actor.role === 'ADMIN') {
+  if (isPlatformAdmin(actor)) {
     return true;
   }
   // GLOBAL values are the deployment-wide defaults every tenant already runs
@@ -214,7 +236,9 @@ export interface SettingView extends ResolvedSetting {
   description: string;
   defaultValue: unknown;
   overridableAt: readonly string[];
+  /// Deprecated alias of `writeAccess` (`'ADMIN'` / `'LEAD'`), kept for the dashboard.
   requiredRole: string;
+  writeAccess: 'admin' | 'grantable';
   restartRequired: boolean;
   runPinned: boolean;
   unit?: string;
@@ -223,7 +247,7 @@ export interface SettingView extends ResolvedSetting {
   /// both to understand why a change at their scope did or did not take effect.
   overrideAtScope?: unknown;
   /// Set when `value` and `overrideAtScope` were withheld because the setting
-  /// is sensitive and this actor is below its `requiredRole`.
+  /// is sensitive and this actor may not see it (see `writeAccess`).
   redacted?: boolean;
 }
 
@@ -252,14 +276,32 @@ export async function listSettings(
   // One query: `resolveEffectiveSettings` already loaded every override visible
   // from this context, including the row at the exact scope being asked about.
   const { overrideAt, settings } = await resolveEffectiveSettings(fullCtx);
-  const grants = actor.role === 'ADMIN' ? [] : await loadGrantsForActor(prisma, actor);
+  const actorGrants = isPlatformAdmin(actor)
+    ? { grants: [], teamRoles: new Map<string, string>() }
+    : await loadGrantsForActor(prisma, actor);
 
   return settings.map((resolved) => {
     const definition = getSettingDefinition(resolved.key as SettingKey);
     // A sensitive value (a host allowlist naming internal servers) is shown only
     // to someone who could change it. Everyone else sees the definition, not
     // what it is set to.
-    const redacted = !!definition.sensitive && !roleMeets(actor.role, definition.requiredRole);
+    const canWrite = checkSettingWrite(
+      actor,
+      {
+        key: resolved.key,
+        scope: selector.scope,
+        targetOrgId: tenant.orgId,
+        targetTeamId: tenant.teamId,
+      },
+      actorGrants.grants,
+      actorGrants.teamRoles
+    ).allowed;
+    // Admin-only keys are shown only to a platform admin; a sensitive grantable
+    // key is also shown to an actor whose grant lets them change it.
+    const redacted =
+      !!definition.sensitive &&
+      !isPlatformAdmin(actor) &&
+      (definition.writeAccess === 'admin' || !canWrite);
     return {
       ...resolved,
       ...(redacted ? { redacted: true, value: null } : {}),
@@ -267,26 +309,19 @@ export async function listSettings(
       // that re-derives this from the role alone can only see the floor, so a
       // lead holding a grant would be shown a disabled control for a key they
       // are entitled to change — the grant model is the point of the feature.
-      canWrite: checkSettingWrite(
-        actor,
-        {
-          key: resolved.key,
-          scope: selector.scope,
-          targetOrgId: tenant.orgId,
-          targetTeamId: tenant.teamId,
-        },
-        grants
-      ).allowed,
+      canWrite,
       defaultValue: definition.defaultValue,
       description: definition.description,
       group: definition.group,
       label: definition.label,
       overridableAt: definition.overridableAt,
       overrideAtScope: redacted ? undefined : overrideAt(resolved.key, selector.scope),
-      requiredRole: definition.requiredRole,
+      // Legacy field the dashboard still reads; derived from `writeAccess`.
+      requiredRole: definition.writeAccess === 'admin' ? 'ADMIN' : 'LEAD',
       restartRequired: definition.restartRequired,
       runPinned: definition.runPinned,
       unit: definition.unit,
+      writeAccess: definition.writeAccess,
     };
   });
 }
@@ -476,11 +511,14 @@ async function authorize(
     };
   }
   const tenant = await resolveScopeTenant(prisma, selector);
-  const grants = actor.role === 'ADMIN' ? [] : await loadGrantsForActor(prisma, actor);
+  const actorGrants = isPlatformAdmin(actor)
+    ? { grants: [], teamRoles: new Map<string, string>() }
+    : await loadGrantsForActor(prisma, actor);
   const verdict = checkSettingWrite(
     actor,
     { key, scope: selector.scope, targetOrgId: tenant.orgId, targetTeamId: tenant.teamId },
-    grants
+    actorGrants.grants,
+    actorGrants.teamRoles
   );
   return verdict.allowed ? null : verdict;
 }

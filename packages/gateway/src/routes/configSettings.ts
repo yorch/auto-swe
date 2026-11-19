@@ -94,15 +94,18 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
 ): Promise<void> => {
   const f = fastify.withTypeProvider<ZodTypeProvider>();
 
-  // Authentication only. Authorisation is per-setting, below.
-  f.addHook('onRequest', requireAuth());
+  // Authentication only (carried by each route's own options). Authorisation is per-setting, below.
+  const guard = requireAuth();
 
   /// Every setting, its effective value for the requested scope, and where that
   /// value came from. This is the effective-config view — the diagnostic for
   /// "why is this run behaving that way", which had no answer before.
   f.get(
     '/config/settings',
-    { schema: { querystring: ScopeQuery, response: { 200: z.any(), 400: z.any(), 403: z.any() } } },
+    {
+      onRequest: guard,
+      schema: { querystring: ScopeQuery, response: { 200: z.any(), 400: z.any(), 403: z.any() } },
+    },
     async (req, reply) => {
       const query = req.query;
       const actor = requireUser(req);
@@ -166,6 +169,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
   f.put(
     '/config/settings/:key',
     {
+      onRequest: guard,
       schema: {
         body: z.object({ value: z.unknown() }),
         params: z.object({ key: z.string().min(1).max(120) }),
@@ -225,6 +229,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
   f.delete(
     '/config/settings/:key',
     {
+      onRequest: guard,
       schema: {
         params: z.object({ key: z.string().min(1).max(120) }),
         querystring: ScopeQuery,
@@ -278,6 +283,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
   f.get(
     '/config/grants',
     {
+      onRequest: guard,
       preHandler: requireAuth({ capability: 'platform.config.grants.manage' }),
       schema: { response: { 200: z.any() } },
     },
@@ -302,6 +308,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
   f.post(
     '/config/grants',
     {
+      onRequest: guard,
       preHandler: requireAuth({ capability: 'platform.config.grants.manage' }),
       schema: { body: GrantBody, response: { 200: z.any(), 400: z.any() } },
     },
@@ -313,6 +320,14 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
           400,
           'GRANT_INVALID',
           'A grant names exactly one grantee: either userId or role.'
+        );
+      }
+      if (body.role && (body.scope !== 'TEAM' || !body.teamId)) {
+        return sendError(
+          reply,
+          400,
+          'ROLE_GRANT_REQUIRES_TEAM_SCOPE',
+          "A role grant covers one team's members, so it needs scope TEAM and a teamId."
         );
       }
       if (body.scope === 'TEAM' && !body.teamId) {
@@ -355,11 +370,12 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
   );
 
   /// Preview which setting keys a grant pattern would cover, and the most
-  /// restrictive role floor among them. Register before the dynamic grant-id
+  /// restrictive write access among them. Register before the dynamic grant-id
   /// route so `preview` can never be interpreted as an id.
   f.get(
     '/config/grants/preview',
     {
+      onRequest: guard,
       preHandler: requireAuth({ capability: 'platform.config.grants.manage' }),
       schema: {
         querystring: z.object({ keyPattern: z.string().min(1).max(120) }),
@@ -385,22 +401,27 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
           group: def.group,
           key,
           label: def.label,
-          requiredRole: def.requiredRole,
+          // Legacy field the dashboard still reads; derived from `writeAccess`.
+          requiredRole: def.writeAccess === 'admin' ? 'ADMIN' : 'LEAD',
+          writeAccess: def.writeAccess,
         };
       });
-      const rank = { ADMIN: 3, ENGINEER: 1, LEAD: 2 } as const;
-      type GrantRole = keyof typeof rank;
-      const requiredRole = definitions.reduce<GrantRole | null>((highest, def) => {
-        const role: GrantRole = def.requiredRole;
-        return highest === null || rank[role] > rank[highest] ? role : highest;
-      }, null);
-      return reply.send({ data: { keyPattern, keys, requiredRole, settings: definitions } });
+      const writeAccess = definitions.some((def) => def.writeAccess === 'admin')
+        ? 'admin'
+        : definitions.length > 0
+          ? 'grantable'
+          : null;
+      const requiredRole = writeAccess === 'admin' ? 'ADMIN' : writeAccess ? 'LEAD' : null;
+      return reply.send({
+        data: { keyPattern, keys, requiredRole, settings: definitions, writeAccess },
+      });
     }
   );
 
   f.delete(
     '/config/grants/:id',
     {
+      onRequest: guard,
       preHandler: requireAuth({ capability: 'platform.config.grants.manage' }),
       schema: { params: z.object({ id: z.uuid() }), response: { 200: z.any(), 404: z.any() } },
     },
