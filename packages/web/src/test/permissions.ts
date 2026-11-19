@@ -8,7 +8,7 @@
 //     (await import('@/test/permissions')).permissionsMock());
 //   beforeEach(() => setPermissions(ADMIN_PERMISSIONS));
 
-import type { CapabilityKey } from '@auto-swe/shared/permissions';
+import type { CapabilityKey } from '@auto-swe/shared/permissions/client';
 import type { Permissions } from '@/lib/capabilities';
 
 export interface TeamStanding {

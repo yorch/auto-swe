@@ -3,7 +3,7 @@ import {
   type CapabilityKey,
   type EffectivePermissions,
   orgRuleApplies,
-} from '@auto-swe/shared/permissions';
+} from '@auto-swe/shared/permissions/client';
 import { TEAM_ROLE_OPTIONS, type TeamRoleValue } from '@/lib/roleLabels';
 
 /**

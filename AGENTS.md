@@ -487,7 +487,7 @@ installation of its own host.
 
 Knobs that are neither an integration credential nor bootstrap live in the **setting registry**:
 one declaration per knob in `packages/shared/src/config/registry.ts` carrying its Zod schema,
-default, the scopes it may be overridden at, the role required to change it, and whether it pins to
+default, the scopes it may be overridden at, who may change it (`writeAccess`), and whether it pins to
 a run. That declaration is what validates a write, resolves a read, drives the `/admin/platform-settings`
 form, and gates permission — **adding a knob is a definition, not a migration plus a route plus a
 form field.**
@@ -509,8 +509,11 @@ form field.**
   workflow isolate cannot read the DB and a replay must not take a different path.
 - Storage is `config_settings`, one JSON value per `(key, scope)`, with **partial** unique indexes
   per scope — so writes use `findFirst` + conditional create, never `upsert`, exactly like `Agent`.
-- Permissions are `config_permissions` rows, not code. `requiredRole` is a floor no grant can lower;
-  ADMINs bypass grants; managing grants is ADMIN-only.
+- Permissions are `config_permissions` rows, not code. A definition's `writeAccess` is `'admin'`
+  (platform ADMIN only; no grant applies) or `'grantable'` (platform ADMIN, or a grant that covers
+  the key and scope). A role grant names a TEAM role, matched against the actor's role in the
+  grant's own team, so it is valid only at TEAM scope; ADMINs bypass grants; managing grants is
+  ADMIN-only.
 
 The singleton integration tables above are **not** absorbed into the registry — their shape is
 relational and their secrets use the AES-GCM envelope. Full reference:

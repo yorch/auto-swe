@@ -1,6 +1,6 @@
 'use client';
 
-import type { CapabilityKey } from '@auto-swe/shared/permissions';
+import type { CapabilityKey } from '@auto-swe/shared/permissions/client';
 import { useQueries } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import {

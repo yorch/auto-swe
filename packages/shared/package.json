@@ -194,6 +194,7 @@
     "./config/resolveSetting": "./dist/config/resolveSetting.js",
     "./config/types": "./dist/config/types.js",
     "./permissions": "./dist/permissions/index.js",
+    "./permissions/client": "./dist/permissions/client.js",
     "./permissions/roles": "./dist/permissions/roles.js"
   },
   "scripts": {
