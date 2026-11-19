@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { roleMeets } from '@auto-swe/shared/config/permissions';
 import {
   ReviewPresetAttachmentSchema,
   ReviewPresetCreateSchema,
@@ -16,6 +15,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { can } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema } from '../lib/idempotency.js';
 import { assertMcpWriteAllowed } from '../lib/mcpWriteGuard.js';
@@ -66,20 +66,19 @@ function writeRefusal(reply: FastifyReply, err: unknown) {
 
 export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const engineer = requireAuth({ requiredRole: 'ENGINEER' });
+  const engineer = requireAuth();
+  // The routes that answer through `scopeFor` with its default (write) check.
+  const manager = requireAuth({ handlerChecked: ['team.codereview.manage'] });
   async function scopeFor(request: FastifyRequest, reply: FastifyReply, write = true) {
-    const user = requireUser(request);
     const teamId = (request.query as { teamId?: string }).teamId ?? null;
-    if (user.role === 'ADMIN') {
+    // No team names no resource, which only a platform admin can satisfy.
+    const decision = await can(
+      request,
+      write ? 'team.codereview.manage' : 'team.codereview.read',
+      teamId ? { teamId } : undefined
+    );
+    if (decision.allowed) {
       return { teamId };
-    }
-    if (teamId) {
-      const membership = await fastify.prisma.teamMembership.findUnique({
-        where: { userId_teamId: { teamId, userId: user.sub } },
-      });
-      if (membership && roleMeets(membership.role, write ? 'LEAD' : 'ENGINEER')) {
-        return { teamId };
-      }
     }
     sendError(
       reply,
@@ -371,7 +370,7 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get(
     '/platform/review-presets',
-    { onRequest: engineer, schema: { querystring: Scope } },
+    { onRequest: manager, schema: { querystring: Scope } },
     async (request, reply) => {
       const scope = await scopeFor(request, reply);
       if (!scope) {
@@ -388,7 +387,7 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
   );
   app.get(
     '/platform/review-presets/:id',
-    { onRequest: engineer, schema: { params: Id, querystring: Scope } },
+    { onRequest: manager, schema: { params: Id, querystring: Scope } },
     async (request, reply) => {
       const scope = await scopeFor(request, reply);
       if (!scope) {
@@ -405,7 +404,7 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
   );
   app.post(
     '/platform/review-presets',
-    { onRequest: engineer, schema: { body: ReviewPresetCreateSchema, querystring: Scope } },
+    { onRequest: manager, schema: { body: ReviewPresetCreateSchema, querystring: Scope } },
     async (request, reply) => {
       const scope = await scopeFor(request, reply);
       if (!scope) {
@@ -446,7 +445,7 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/platform/review-presets/:id',
     {
-      onRequest: engineer,
+      onRequest: manager,
       schema: { body: ReviewPresetUpdateSchema, params: Id, querystring: Scope },
     },
     async (request, reply) => {
@@ -498,7 +497,7 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
   );
   app.delete(
     '/platform/review-presets/:id',
-    { onRequest: engineer, schema: { params: Id, querystring: Scope } },
+    { onRequest: manager, schema: { params: Id, querystring: Scope } },
     async (request, reply) => {
       const scope = await scopeFor(request, reply);
       if (!scope) {
@@ -527,7 +526,7 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
   );
   app.post(
     '/platform/review-presets/:id/attachments',
-    { onRequest: engineer, schema: { body: Attachment, params: Id, querystring: Scope } },
+    { onRequest: manager, schema: { body: Attachment, params: Id, querystring: Scope } },
     async (request, reply) => {
       const scope = await scopeFor(request, reply);
       if (!scope) {
@@ -579,7 +578,7 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
   );
   app.delete(
     '/platform/review-presets/:id/attachments',
-    { onRequest: engineer, schema: { body: Attachment, params: Id, querystring: Scope } },
+    { onRequest: manager, schema: { body: Attachment, params: Id, querystring: Scope } },
     async (request, reply) => {
       const scope = await scopeFor(request, reply);
       if (!scope) {

@@ -255,9 +255,11 @@ describe('GET /api/v1/pull-requests/outcomes', () => {
     expect(b.prisma.pullRequest.findMany).not.toHaveBeenCalled();
   });
 
-  it('refuses a VIEWER', async () => {
-    const b = await buildApp('VIEWER');
-    expect((await get(b)).statusCode).toBe(403);
+  // The platform role floor is gone; the unauthenticated refusal is what remains of it.
+  it('refuses an unauthenticated caller', async () => {
+    const b = await buildApp();
+    const res = await b.app.inject({ method: 'GET', url: '/api/v1/pull-requests/outcomes' });
+    expect(res.statusCode).toBe(401);
     expect(b.prisma.pullRequest.findMany).not.toHaveBeenCalled();
   });
 

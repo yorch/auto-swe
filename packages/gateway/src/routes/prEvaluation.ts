@@ -1,4 +1,4 @@
-import { Prisma, Role } from '@auto-swe/shared';
+import { Prisma } from '@auto-swe/shared';
 import { resolveSetting, resolveSettings } from '@auto-swe/shared/config';
 import { isGitHubRepository } from '@auto-swe/shared/lib/githubHostScope';
 import {
@@ -18,10 +18,12 @@ import {
   resolveGitHubApproverAppConfig,
   resolveGitHubConfig,
 } from '@auto-swe/shared/lib/systemConfig';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { can, heldScope } from '../lib/authz.js';
 import { sendConflict } from '../lib/conflict.js';
 import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
@@ -31,7 +33,6 @@ import { booleanQueryParam } from '../lib/queryParams.js';
 import { resolveRepositoryRouting } from '../lib/reviewQueue.js';
 import { manageableOrReachableConnections, reachableConnections } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
-import { canManageTeamRepos } from './repositories.js';
 
 const RepoParams = z.object({ id: z.string().uuid() });
 const EvaluationParams = z.object({ id: z.string().uuid() });
@@ -136,7 +137,7 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/repositories/:id/pr-evaluation',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth(),
       schema: { params: RepoParams },
     },
     async (request, reply) => {
@@ -153,7 +154,7 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
         where: {
           id: request.params.id,
           type: 'git_repo',
-          ...(user.role === Role.ADMIN ? {} : reachableConnections(user, request.repoAccessGate)),
+          ...(isPlatformAdmin(user) ? {} : reachableConnections(user, request.repoAccessGate)),
         },
       });
       if (!repo) {
@@ -235,7 +236,9 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
   app.put(
     '/repositories/:id/pr-evaluation',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({
+        handlerChecked: ['team.repos.manage', 'platform.pr-evaluation.auto-mode'],
+      }),
       schema: { body: SetPolicyBody, params: RepoParams },
     },
     async (request, reply) => {
@@ -254,18 +257,25 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
         where: {
           id: request.params.id,
           type: 'git_repo',
-          ...(user.role === Role.ADMIN
+          ...(isPlatformAdmin(user)
             ? {}
-            : manageableOrReachableConnections(user, request.repoAccessGate)),
+            : manageableOrReachableConnections(
+                user,
+                request.repoAccessGate,
+                await heldScope(request, 'team.repos.manage')
+              )),
         },
       });
       if (!repo) {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
-      if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+      if (!(await can(request, 'team.repos.manage', { teamId: repo.teamId })).allowed) {
         return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
       }
       const { botApproval, mode } = request.body;
+      // Auto mode and bot approval are the platform operator's: a team's own authority never
+      // reaches them, however it was obtained.
+      const autoModeAllowed = (await can(request, 'platform.pr-evaluation.auto-mode')).allowed;
       // Evaluation, auto-merge and bot approval are GitHub features: the worker refuses any other
       // provider's repository at run time, so choosing them here would only record a setting that
       // can never take effect. Refused up front; turning them off stays open for every row.
@@ -281,7 +291,7 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
       const newMode = modeGiven ? mode : (repo.prEvaluationMode as (typeof MODES)[number] | null);
 
       if (mode === 'auto') {
-        const reasons = await autoRefusals(fastify, user.role, repo);
+        const reasons = await autoRefusals(fastify, autoModeAllowed, repo);
         if (reasons.length > 0) {
           return sendError(
             reply,
@@ -293,7 +303,7 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
       if (botApproval === true) {
-        const reasons = await botApprovalRefusals(user.role, repo, newMode);
+        const reasons = await botApprovalRefusals(autoModeAllowed, repo, newMode);
         if (reasons.length > 0) {
           return sendError(
             reply,
@@ -387,7 +397,7 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/repositories/:id/review-routing',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth(),
       schema: { params: RepoParams },
     },
     async (request, reply) => {
@@ -397,7 +407,7 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
         where: {
           id: request.params.id,
           type: 'git_repo',
-          ...(user.role === Role.ADMIN ? {} : reachableConnections(user, request.repoAccessGate)),
+          ...(isPlatformAdmin(user) ? {} : reachableConnections(user, request.repoAccessGate)),
         },
       });
       if (!repo) {
@@ -417,7 +427,9 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
   app.put(
     '/repositories/:id/review-routing',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({
+        handlerChecked: ['team.repos.manage', 'platform.pr-evaluation.auto-mode'],
+      }),
       schema: { body: SetRoutingBody, params: RepoParams },
     },
     async (request, reply) => {
@@ -427,13 +439,13 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
         where: {
           id: request.params.id,
           type: 'git_repo',
-          ...(user.role === Role.ADMIN ? {} : reachableConnections(user, request.repoAccessGate)),
+          ...(isPlatformAdmin(user) ? {} : reachableConnections(user, request.repoAccessGate)),
         },
       });
       if (!repo) {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
-      if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+      if (!(await can(request, 'team.repos.manage', { teamId: repo.teamId })).allowed) {
         return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
       }
       const { override } = request.body;
@@ -445,7 +457,7 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
           inherited,
           stored ?? {},
           parseReviewRoutingOverride(repo.reviewRouting),
-          { removal: user.role !== Role.ADMIN }
+          { removal: !(await can(request, 'platform.pr-evaluation.auto-mode')).allowed }
         );
         if (loosened.length > 0) {
           return sendError(
@@ -479,14 +491,14 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/pr-evaluations',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth(),
       schema: { querystring: ListQuery },
     },
     async (request) => {
       const user = requireUser(request);
       const { limit, merged, offset, repoId, riskClass } = request.query;
       const where: Prisma.PrEvaluationWhereInput = {
-        ...(user.role === Role.ADMIN
+        ...(isPlatformAdmin(user)
           ? {}
           : { connection: reachableConnections(user, request.repoAccessGate) }),
         ...(repoId ? { connectionId: repoId } : {}),
@@ -518,7 +530,7 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/pr-evaluations/engagement',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth(),
       schema: { querystring: EngagementQuery },
     },
     async (request) => {
@@ -536,7 +548,7 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
         where: {
           pullRequest: {
             openedAt: { gte: since },
-            ...(user.role === Role.ADMIN
+            ...(isPlatformAdmin(user)
               ? {}
               : { repository: reachableConnections(user, request.repoAccessGate) }),
             ...(repoId ? { repoId } : {}),
@@ -556,7 +568,7 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
         take: ENGAGEMENT_ROW_CAP + 1,
         where: {
           createdAt: { gte: since },
-          ...(user.role === Role.ADMIN
+          ...(isPlatformAdmin(user)
             ? {}
             : { connection: reachableConnections(user, request.repoAccessGate) }),
           ...(repoId ? { connectionId: repoId } : {}),
@@ -583,7 +595,7 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/pr-evaluations/:id',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth(),
       schema: { params: EvaluationParams },
     },
     async (request, reply) => {
@@ -592,7 +604,7 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
         select: { ...SUMMARY_SELECT, brief: true, readiness: true },
         where: {
           id: request.params.id,
-          ...(user.role === Role.ADMIN
+          ...(isPlatformAdmin(user)
             ? {}
             : { connection: reachableConnections(user, request.repoAccessGate) }),
         },
@@ -683,11 +695,11 @@ async function enforceWarnings(
  */
 async function autoRefusals(
   fastify: FastifyInstance,
-  role: string,
+  autoModeAllowed: boolean,
   repo: { id: string; team: { orgId: string | null } | null; teamId: string }
 ): Promise<string[]> {
   const reasons: string[] = [];
-  if (role !== Role.ADMIN) {
+  if (!autoModeAllowed) {
     reasons.push('Only a platform admin may set auto mode.');
   }
   const ctx = {
@@ -756,12 +768,12 @@ async function autoRefusals(
  * required status would let one identity both vouch and approve). Never names an App id.
  */
 async function botApprovalRefusals(
-  role: string,
+  autoModeAllowed: boolean,
   repo: { id: string; team: { orgId: string | null } | null; teamId: string },
   resultingMode: (typeof MODES)[number] | null
 ): Promise<string[]> {
   const reasons: string[] = [];
-  if (role !== Role.ADMIN) {
+  if (!autoModeAllowed) {
     reasons.push('Only a platform admin may enable bot approval.');
   }
   if (resultingMode !== 'auto') {

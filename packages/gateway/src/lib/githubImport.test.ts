@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { repositoryManagementTeams } from './tenantScope.js';
+import { managedTeams } from './tenantScope.js';
 
 const h = vi.hoisted(() => ({
   config: {
@@ -49,6 +49,10 @@ const installation = {
   isActive: true,
 };
 const actor = { role: 'ENGINEER', sub: 'u1' };
+/** What `heldScope(…, 'team.repos.manage')` returned for a caller who manages one team. */
+const MANAGED = { all: false, orgIds: [], teamIds: ['team-1'] };
+/** A caller who manages none, so only installations with no organization are listed. */
+const NO_TEAMS = { all: false, orgIds: [], teamIds: [] };
 const admin = { ...actor, role: 'ADMIN' };
 const repo = (name: string) => ({
   apiUrl: `https://api.github.com/repos/acme/${name}`,
@@ -112,7 +116,7 @@ describe('GitHub discovery', () => {
     db.connection.findMany.mockResolvedValue([
       { githubUrl: null, organizationName: 'Acme', repoName: 'API' },
     ] as never);
-    const result = await availableGitHubRepos(prisma(), admin);
+    const result = await availableGitHubRepos(prisma(), admin, NO_TEAMS);
     expect(result.data).toHaveLength(2);
     expect(result.data[0]).toMatchObject({
       access: 'readable',
@@ -142,7 +146,7 @@ describe('GitHub discovery', () => {
   });
 
   it('scopes org-linked sources to organizations with a managed active team', async () => {
-    await availableGitHubRepos(prisma(), { role: 'ENGINEER', sub: 'caller' });
+    await availableGitHubRepos(prisma(), { role: 'ENGINEER', sub: 'caller' }, MANAGED);
     expect(db.gitHubInstallation.findMany).toHaveBeenCalledWith({
       orderBy: { id: 'asc' },
       where: {
@@ -151,7 +155,7 @@ describe('GitHub discovery', () => {
           { organizationId: null },
           {
             organization: {
-              teams: { some: repositoryManagementTeams({ sub: 'caller' }) },
+              teams: { some: managedTeams(MANAGED) },
             },
           },
         ],
@@ -165,7 +169,7 @@ describe('GitHub discovery', () => {
       ...installation,
       organizationId: 'org-a',
     } as never);
-    const result = await availableGitHubRepos(prisma(), actor);
+    const result = await availableGitHubRepos(prisma(), actor, NO_TEAMS);
     expect(result.data).toEqual([]);
     expect(result.sources).toEqual([]);
     expect(h.list).not.toHaveBeenCalled();
@@ -174,12 +178,12 @@ describe('GitHub discovery', () => {
     h.config.authMode = 'app';
     h.config.appInstallationId = '123';
     db.gitHubInstallation.findMany.mockResolvedValue([installation]);
-    const result = await availableGitHubRepos(prisma(), admin);
+    const result = await availableGitHubRepos(prisma(), admin, NO_TEAMS);
     expect(result.data[0].installationId).toBe(installation.id);
   });
   it('does not filter admins or look up their identity', async () => {
     h.lookup.mockResolvedValue({ ok: true, permission: 'none' });
-    const result = await availableGitHubRepos(prisma(), admin);
+    const result = await availableGitHubRepos(prisma(), admin, NO_TEAMS);
     expect(result.data[0].access).toBe('readable');
     expect(h.lookup).not.toHaveBeenCalled();
     expect(h.login).not.toHaveBeenCalled();
@@ -194,7 +198,7 @@ describe('GitHub discovery', () => {
     h.fetch.mockImplementation(async (_url, init) =>
       init.headers.Authorization === 'Bearer platform-secret' ? ok(['api', 'hidden']) : ok(['api'])
     );
-    const result = await availableGitHubRepos(prisma(), actor);
+    const result = await availableGitHubRepos(prisma(), actor, NO_TEAMS);
     expect(result.data.map((r) => r.name)).toEqual(['api']);
     expect(
       h.fetch.mock.calls.some(([url]) => url.includes('/user/installations/123/repositories'))
@@ -218,7 +222,7 @@ describe('GitHub discovery', () => {
       ok: true,
       permission: r.repoName === 'hidden' ? 'none' : 'read',
     }));
-    const result = await availableGitHubRepos(prisma(), actor);
+    const result = await availableGitHubRepos(prisma(), actor, NO_TEAMS);
     expect(result.data.map((r) => r.name)).toEqual(['api']);
     expect(h.lookup).toHaveBeenCalledTimes(2);
     expect(result.sources.every((s) => !s.error)).toBe(true);
@@ -234,7 +238,7 @@ describe('GitHub discovery', () => {
     ] as never);
     h.fetch.mockImplementation(async () => ok(['api'], false));
     h.lookup.mockResolvedValue({ failure: 'unavailable', ok: false });
-    const result = await availableGitHubRepos(prisma(), actor);
+    const result = await availableGitHubRepos(prisma(), actor, NO_TEAMS);
     expect(result.data.map((r) => r.access)).toEqual(['readable', 'unchecked']);
     expect(h.lookup).toHaveBeenCalledTimes(1);
   });
@@ -247,7 +251,7 @@ describe('GitHub discovery', () => {
     h.fetch.mockImplementation(async (url) =>
       url.includes('ghe.example') ? ok(['api']) : ok(['api'], false)
     );
-    const result = await availableGitHubRepos(prisma(), actor);
+    const result = await availableGitHubRepos(prisma(), actor, NO_TEAMS);
     expect(result.data.find((r) => r.githubUrl)?.access).toBe('unchecked');
     expect(
       h.fetch.mock.calls
@@ -263,7 +267,7 @@ describe('GitHub discovery', () => {
       { accessToken: 'enterprise-secret', accountId: 'ghe.example:42' },
     ] as never);
     db.user.findUnique.mockResolvedValue({ githubLoginAccountId: 'ghe.example:42' });
-    const result = await availableGitHubRepos(prisma(), actor);
+    const result = await availableGitHubRepos(prisma(), actor, NO_TEAMS);
     expect(result.data.find((r) => r.githubUrl)?.access).toBe('readable');
     expect(
       h.fetch.mock.calls
@@ -276,10 +280,10 @@ describe('GitHub discovery', () => {
     h.list.mockResolvedValue(
       Array.from({ length: IMPORT_ACCESS_LOOKUP_CAP + 2 }, (_, i) => repo(`r${i}`))
     );
-    const first = await availableGitHubRepos(prisma(), actor);
+    const first = await availableGitHubRepos(prisma(), actor, NO_TEAMS);
     expect(h.lookup).toHaveBeenCalledTimes(IMPORT_ACCESS_LOOKUP_CAP);
     expect(first.data.filter((r) => r.access === 'unchecked')).toHaveLength(2);
-    const next = await availableGitHubRepos(prisma(), actor);
+    const next = await availableGitHubRepos(prisma(), actor, NO_TEAMS);
     expect(h.lookup).toHaveBeenCalledTimes(IMPORT_ACCESS_LOOKUP_CAP + 2);
     expect(next.data.every((r) => r.access === 'readable')).toBe(true);
     expect(h.list).toHaveBeenCalledTimes(1);
@@ -290,16 +294,16 @@ describe('GitHub discovery', () => {
       Array.from({ length: IMPORT_ACCESS_LOOKUP_CAP + 1 }, (_, i) => repo(`r${i}`))
     );
     h.lookup.mockRejectedValue(new Error('rate limited platform-secret'));
-    const first = await availableGitHubRepos(prisma(), actor);
+    const first = await availableGitHubRepos(prisma(), actor, NO_TEAMS);
     expect(first.data.every((r) => r.access === 'unchecked')).toBe(true);
-    await availableGitHubRepos(prisma(), actor);
+    await availableGitHubRepos(prisma(), actor, NO_TEAMS);
     expect(h.lookup).toHaveBeenCalledTimes(IMPORT_ACCESS_LOOKUP_CAP + 1);
     expect(JSON.stringify(first)).not.toContain('platform-secret');
   });
 
   it('returns unchecked without a linked login', async () => {
     h.login.mockResolvedValue(null);
-    const result = await availableGitHubRepos(prisma(), actor);
+    const result = await availableGitHubRepos(prisma(), actor, NO_TEAMS);
     expect(result.data[0].access).toBe('unchecked');
     expect(h.lookup).not.toHaveBeenCalled();
   });
@@ -310,7 +314,7 @@ describe('GitHub discovery', () => {
       { accessToken: null, accountId: '42' },
       { accessToken: null, accountId: 'ghe.example:42' },
     ]);
-    const result = await availableGitHubRepos(prisma(), actor);
+    const result = await availableGitHubRepos(prisma(), actor, NO_TEAMS);
     expect(result.data[0].access).toBe('unchecked');
     expect(h.lookup).not.toHaveBeenCalled();
   });
@@ -327,7 +331,7 @@ describe('GitHub discovery', () => {
       }
       return 'other-secret';
     });
-    const result = await availableGitHubRepos(prisma(), admin);
+    const result = await availableGitHubRepos(prisma(), admin, NO_TEAMS);
     expect(result.sources.filter((s) => s.error)).toHaveLength(2);
     expect(result.data).toHaveLength(1);
     expect(result.data[0].installationId).toBe('install-2');
@@ -336,16 +340,16 @@ describe('GitHub discovery', () => {
 
   it('returns an empty listing with source errors when every source fails', async () => {
     h.list.mockRejectedValue(new Error('not configured'));
-    const result = await availableGitHubRepos(prisma(), admin);
+    const result = await availableGitHubRepos(prisma(), admin, NO_TEAMS);
     expect(result.data).toEqual([]);
     expect(result.sources[0].error).toBeTruthy();
   });
 
   it('expires listings and access answers after three minutes', async () => {
     vi.useFakeTimers();
-    await availableGitHubRepos(prisma(), actor);
+    await availableGitHubRepos(prisma(), actor, NO_TEAMS);
     vi.advanceTimersByTime(IMPORT_CACHE_TTL_MS + 1);
-    await availableGitHubRepos(prisma(), actor);
+    await availableGitHubRepos(prisma(), actor, NO_TEAMS);
     expect(h.list).toHaveBeenCalledTimes(2);
     expect(h.lookup).toHaveBeenCalledTimes(2);
   });
@@ -360,7 +364,7 @@ describe('GitHub discovery', () => {
         ? ok(['api'])
         : ok(Array.from({ length: 100 }, (_, i) => `r${i}`))
     );
-    const result = await availableGitHubRepos(prisma(), actor);
+    const result = await availableGitHubRepos(prisma(), actor, NO_TEAMS);
     expect(result.data[0].access).toBe('readable');
     expect(h.lookup).toHaveBeenCalledTimes(1);
   });

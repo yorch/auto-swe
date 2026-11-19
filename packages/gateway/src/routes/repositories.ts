@@ -4,7 +4,6 @@ import {
   encryptConnectionApiToken,
   encryptSecret,
   Prisma,
-  Role,
 } from '@auto-swe/shared';
 import { originOf, repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 // From the subpath, not the barrel: this module is pure (zod only), so a test that
@@ -51,12 +50,14 @@ import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { ToolKeySchema } from '@auto-swe/shared/lib/toolCatalog';
 import { MAX_TOOLS_IN_FILE, ToolRequestSchema } from '@auto-swe/shared/lib/toolsFile';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import { REPO_GATE_COMMAND_KEYS, type RepoGateCommands } from '@auto-swe/shared/types/api';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { can, heldScope } from '../lib/authz.js';
 import { sendConflict } from '../lib/conflict.js';
 import {
   failed,
@@ -79,18 +80,16 @@ import {
   launchRepoOnboarding,
   OnboardingLaunchError,
 } from '../lib/repoOnboardingLaunch.js';
-import { canManageTeamRepos } from '../lib/repoPermissions.js';
 import { insensitiveName } from '../lib/repositoryHost.js';
 import {
   onboardingChecklistCounts,
   repositoryOnboardingChecklist,
 } from '../lib/repositoryOnboardingChecklist.js';
 import { repositoryTeamScope } from '../lib/runTeamScope.js';
-import { isShellAuthor } from '../lib/specCheck.js';
 import { ownerLaunchBudgets } from '../lib/teamBudgetStatus.js';
 import { assertTeamParam } from '../lib/teamParam.js';
-import { manageableOrReachableConnections, repositoryManagementTeams } from '../lib/tenantScope.js';
-import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
+import { manageableOrReachableConnections, managedTeams } from '../lib/tenantScope.js';
+import { requireAuth, requireUser } from '../plugins/auth.js';
 import { deactivateSchedulesOutsideTeams } from './scheduledWorkRequests.js';
 
 /**
@@ -309,7 +308,17 @@ const UpdateRepoSchema = z.object({
   toolsFileEnabled: z.boolean().optional(),
 });
 
-export { canManageTeamRepos };
+// Other domains' routes still import it from here; it asks `team.repos.manage`.
+export { canManageTeamRepos } from '../lib/repoPermissions.js';
+
+/**
+ * Whether the caller may write commands that run in the repository's workspace: gate commands, a
+ * workspace setup, an app preview recipe. `team.repos.gate-commands.author`, asked of the team that
+ * will own the repository.
+ */
+async function holdsGateAuthor(request: FastifyRequest, teamId: string): Promise<boolean> {
+  return (await can(request, 'team.repos.gate-commands.author', { teamId })).allowed;
+}
 
 /** The overrides that run something: blank and null entries dropped; none at all is null. */
 function normaliseGateCommands(value: unknown): RepoGateCommands | null {
@@ -341,8 +350,7 @@ function sameGateCommands(a: RepoGateCommands | null, b: RepoGateCommands | null
  * cleared command makes every run fall back to the built-in default.
  */
 async function gateCommandsProblem(
-  fastify: FastifyInstance,
-  user: JwtPayload,
+  request: FastifyRequest,
   repo: { gateCommands: unknown; teamId: string; type: string },
   next: RepoGateCommands | null,
   ownerTeamId: string
@@ -357,7 +365,7 @@ async function gateCommandsProblem(
       status: 400,
     };
   }
-  if (await isShellAuthor(fastify, user, ownerTeamId)) {
+  if (await holdsGateAuthor(request, ownerTeamId)) {
     return null;
   }
   return {
@@ -386,8 +394,7 @@ function samePreviewConfig(a: unknown, b: unknown): boolean {
 }
 
 async function setupProblem(
-  fastify: FastifyInstance,
-  user: JwtPayload,
+  request: FastifyRequest,
   repo: { setup: unknown; teamId: string; type: string },
   next: RepoSetup | null,
   ownerTeamId: string
@@ -402,7 +409,7 @@ async function setupProblem(
       status: 400,
     };
   }
-  if (await isShellAuthor(fastify, user, ownerTeamId)) {
+  if (await holdsGateAuthor(request, ownerTeamId)) {
     return null;
   }
   return {
@@ -413,8 +420,7 @@ async function setupProblem(
 }
 
 async function previewConfigProblem(
-  fastify: FastifyInstance,
-  user: JwtPayload,
+  request: FastifyRequest,
   repo: { previewConfig: unknown; teamId: string; type: string },
   next: PreviewConfig | null,
   ownerTeamId: string
@@ -429,7 +435,7 @@ async function previewConfigProblem(
       status: 400,
     };
   }
-  if (!(await isShellAuthor(fastify, user, ownerTeamId))) {
+  if (!(await holdsGateAuthor(request, ownerTeamId))) {
     return {
       code: 'PREVIEW_CONFIG_FORBIDDEN',
       message: "Changing a repository's app preview requires team-admin role",
@@ -458,10 +464,19 @@ async function previewConfigProblem(
  * ADMIN-scoped everywhere else in this codebase.
  */
 function rejectsInstallationChange(
-  user: { role: string },
+  operator: boolean,
   installationId: string | null | undefined
 ): boolean {
-  return installationId !== undefined && user.role !== Role.ADMIN;
+  return installationId !== undefined && !operator;
+}
+
+/**
+ * Whether the caller holds the platform operator's repository controls: the GitHub App
+ * installation, the executor image and its build record, and the tool settings. They decide what
+ * runs next to the repository's credential, so no team authority reaches them.
+ */
+async function holdsPlatformRepoControls(request: FastifyRequest): Promise<boolean> {
+  return (await can(request, 'platform.repos.installation.bind')).allowed;
 }
 
 /** A stored or submitted tool list as comparable text; null and empty are the same list. */
@@ -557,7 +572,7 @@ function executorImageBuildUpdate(
  * admin chose.
  */
 function executorImageProblem(
-  user: { role: string },
+  operator: boolean,
   image: string | null | undefined,
   current: string | null
 ): { code: string; message: string; status: 400 | 403 } | null {
@@ -571,7 +586,7 @@ function executorImageProblem(
       status: 400,
     };
   }
-  if (user.role === Role.ADMIN) {
+  if (operator) {
     return null;
   }
   return {
@@ -607,7 +622,7 @@ async function onboardingAccessProblem(
   user: { sub: string; role: string },
   repo: PermissionRepo & { organizationName: string; repoName: string }
 ): Promise<{ code: string; message: string; status: 403 | 503 } | null> {
-  if (user.role === Role.ADMIN) {
+  if (isPlatformAdmin(user)) {
     return null;
   }
   const slug = `${repo.organizationName}/${repo.repoName}`;
@@ -820,41 +835,28 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
   // GET /api/v1/repositories/github/available — List importable GitHub repos
-  app.get(
-    '/github/available',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
-    async (request, reply) => {
-      const user = requireUser(request);
-      if (
-        user.role !== Role.ADMIN &&
-        !(await fastify.prisma.team.findFirst({
-          select: { id: true },
-          where: repositoryManagementTeams(user),
-        }))
-      ) {
-        return sendError(
-          reply,
-          403,
-          'FORBIDDEN',
-          'Requires a team lead or organization admin role'
-        );
-      }
-      return reply.send(await availableGitHubRepos(fastify.prisma, user));
+  app.get('/github/available', { onRequest: requireAuth() }, async (request, reply) => {
+    const user = requireUser(request);
+    // The caller must be able to manage the repositories of at least one active team.
+    const managed = await heldScope(request, 'team.repos.manage');
+    if (!managed.all && managed.teamIds.length === 0) {
+      return sendError(reply, 403, 'FORBIDDEN', 'Requires a team lead or organization admin role');
     }
-  );
+    return reply.send(await availableGitHubRepos(fastify.prisma, user, managed));
+  });
 
   // GET /api/v1/repositories — List repositories
   app.get(
     '/',
     {
       config: { mcpScope: 'read' },
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth(),
       schema: { querystring: ListReposQuery },
     },
     async (request) => {
       const user = requireUser(request);
       const { includeInactive, limit, offset, q, teamId } = request.query;
-      if (teamId && !(await canManageTeamRepos(fastify.prisma, user, teamId))) {
+      if (teamId && !(await can(request, 'team.repos.manage', { teamId: teamId })).allowed) {
         await assertTeamParam(fastify.prisma, user, teamId);
       }
       const showInactive = includeInactive;
@@ -863,10 +865,11 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       // `canManageTeamRepos` sets for the write). The platform LEAD role alone
       // is not that — on a team where they are a plain ENGINEER they would be
       // shown rows they can do nothing with.
+      const managed = isPlatformAdmin(user) ? null : await heldScope(request, 'team.repos.manage');
       const reach =
-        user.role === Role.ADMIN
+        managed === null
           ? null
-          : manageableOrReachableConnections(user, request.repoAccessGate);
+          : manageableOrReachableConnections(user, request.repoAccessGate, managed);
       // Combined, never blindly spread: the reachability predicate is itself an
       // `AND` of `OR`s, and spreading two objects that set the same key keeps
       // only whichever came last — silently dropping either the reachability
@@ -876,11 +879,11 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       let where: Prisma.ConnectionWhereInput;
       if (!showInactive) {
         where = { ...reach, isActive: true };
-      } else if (reach === null) {
+      } else if (reach === null || managed === null) {
         where = {};
       } else {
         where = {
-          AND: [reach, { OR: [{ isActive: true }, { team: repositoryManagementTeams(user) }] }],
+          AND: [reach, { OR: [{ isActive: true }, { team: managedTeams(managed) }] }],
         };
       }
       if (q) {
@@ -934,7 +937,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       // Where the cap a launch is held to stands: the OWNING team's, which a sharee's launch spends
       // against. Only for a repository the caller can start work on, and read once for the page.
       const myTeamIds =
-        user.role === Role.ADMIN || repos.length === 0
+        isPlatformAdmin(user) || repos.length === 0
           ? null
           : new Set(
               (
@@ -988,9 +991,13 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         },
         where: {
           id: request.params.id,
-          ...(user.role === Role.ADMIN
+          ...(isPlatformAdmin(user)
             ? {}
-            : manageableOrReachableConnections(user, request.repoAccessGate)),
+            : manageableOrReachableConnections(
+                user,
+                request.repoAccessGate,
+                await heldScope(request, 'team.repos.manage')
+              )),
         },
       });
       if (!repo) {
@@ -1012,6 +1019,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     verifiedInstallation?: { host: string; installationId: string }
   ) {
     const user = requireUser(request);
+    const operator = await holdsPlatformRepoControls(request);
     const log = request.log;
     const {
       apiToken,
@@ -1035,7 +1043,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       );
     }
 
-    if (!verifiedInstallation && rejectsInstallationChange(user, body.installationId)) {
+    if (!verifiedInstallation && rejectsInstallationChange(operator, body.installationId)) {
       throw new RepositoryCreateError(
         403,
         'FORBIDDEN',
@@ -1065,11 +1073,11 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     // Non-admins may only onboard repos into teams they lead.
-    if (!(await canManageTeamRepos(fastify.prisma, user, teamId))) {
+    if (!(await can(request, 'team.repos.create', { teamId })).allowed) {
       throw new RepositoryCreateError(403, 'FORBIDDEN', 'Requires LEAD role in the target team');
     }
 
-    const imageProblem = executorImageProblem(user, body.executorImage, null);
+    const imageProblem = executorImageProblem(operator, body.executorImage, null);
     if (imageProblem) {
       throw new RepositoryCreateError(imageProblem.status, imageProblem.code, imageProblem.message);
     }
@@ -1077,8 +1085,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     // Judged as a change from none, the same rule an edit applies.
     const gateCommands = normaliseGateCommands(rawGateCommands);
     const gateProblem = await gateCommandsProblem(
-      fastify,
-      user,
+      request,
       { gateCommands: null, teamId, type: type ?? 'git_repo' },
       gateCommands,
       teamId
@@ -1087,8 +1094,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       throw new RepositoryCreateError(gateProblem.status, gateProblem.code, gateProblem.message);
     }
     const previewProblem = await previewConfigProblem(
-      fastify,
-      user,
+      request,
       { previewConfig: null, teamId, type: type ?? 'git_repo' },
       previewConfig ?? null,
       teamId
@@ -1101,8 +1107,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       );
     }
     const setupCreateProblem = await setupProblem(
-      fastify,
-      user,
+      request,
       { setup: null, teamId, type: type ?? 'git_repo' },
       setup ?? null,
       teamId
@@ -1136,7 +1141,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       throw new RepositoryCreateError(
         403,
         'GITHUB_ACCESS_UNVERIFIED',
-        user.role === Role.ADMIN
+        operator
           ? 'This installation is linked to a different organization than the target team.'
           : `GitHub did not confirm that you can read ${organizationName}/${repoName}: you have no access, it does not exist, or the platform's GitHub credential cannot see it. Ask a platform admin to onboard it.`
       );
@@ -1280,11 +1285,13 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/import',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({
+        handlerChecked: ['team.repos.create', 'platform.repos.installation.bind'],
+      }),
       schema: { body: ImportReposSchema },
     },
     async (request, reply) => {
-      const user = requireUser(request);
+      const operator = await holdsPlatformRepoControls(request);
       const results = [];
       for (const item of request.body.repos) {
         const identity = { organizationName: item.organizationName, repoName: item.repoName };
@@ -1296,7 +1303,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           if (!team?.isActive) {
             throw new RepositoryCreateError(404, 'TEAM_NOT_FOUND', 'Team not found or inactive');
           }
-          if (!(await canManageTeamRepos(fastify.prisma, user, request.body.teamId))) {
+          if (!(await can(request, 'team.repos.create', { teamId: request.body.teamId })).allowed) {
             throw new RepositoryCreateError(
               403,
               'FORBIDDEN',
@@ -1322,7 +1329,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             }
           }
           if (item.installationId && !verified) {
-            if (user.role !== Role.ADMIN) {
+            if (!operator) {
               throw new RepositoryCreateError(
                 403,
                 'GITHUB_ACCESS_UNVERIFIED',
@@ -1374,7 +1381,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({
+        handlerChecked: ['team.repos.create', 'platform.repos.installation.bind'],
+      }),
       schema: { body: CreateRepoSchema },
     },
     async (request, reply) => {
@@ -1394,12 +1403,19 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({
+        handlerChecked: [
+          'team.repos.manage',
+          'platform.repos.installation.bind',
+          'team.repos.gate-commands.author',
+        ],
+      }),
       schema: { body: UpdateRepoSchema, params: RepoParamsSchema },
     },
     async (request, reply) => {
       const user = requireUser(request);
-      if (rejectsInstallationChange(user, request.body.installationId)) {
+      const operator = await holdsPlatformRepoControls(request);
+      if (rejectsInstallationChange(operator, request.body.installationId)) {
         return sendError(
           reply,
           403,
@@ -1441,7 +1457,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // Non-admins must lead the repo's current team to edit it...
-      if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+      if (!(await can(request, 'team.repos.manage', { teamId: repo.teamId })).allowed) {
         return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
       }
       // ...and, when reassigning to a different team, also lead the destination.
@@ -1454,13 +1470,13 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         if (!destTeam?.isActive) {
           return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Target team not found or inactive');
         }
-        if (!(await canManageTeamRepos(fastify.prisma, user, newTeamId))) {
+        if (!(await can(request, 'team.repos.manage', { teamId: newTeamId })).allowed) {
           return sendError(reply, 403, 'FORBIDDEN', 'Requires LEAD role in the target team');
         }
       }
 
       const imageProblem = executorImageProblem(
-        user,
+        operator,
         request.body.executorImage,
         repo.executorImage
       );
@@ -1469,7 +1485,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       }
       // executorImageBuild records how an image was built; the same authority
       // applies (admins set, anyone may clear), and clearing the image clears it.
-      if (request.body.executorImageBuild != null && user.role !== Role.ADMIN) {
+      if (request.body.executorImageBuild != null && !operator) {
         return sendError(
           reply,
           403,
@@ -1484,7 +1500,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       const toolChanges = toolSettingChanges(request.body, repo);
       if (
         (toolChanges.tools || toolChanges.toolsDeny || toolChanges.toolsFileEnabled) &&
-        user.role !== Role.ADMIN
+        !operator
       ) {
         return sendError(
           reply,
@@ -1505,8 +1521,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         // Judged against the team that will own the repository, so a move and a change in one
         // request need the role on the destination.
         const gateProblem = await gateCommandsProblem(
-          fastify,
-          user,
+          request,
           repo,
           nextGateCommands,
           request.body.teamId ?? repo.teamId
@@ -1521,8 +1536,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         !samePreviewConfig(nextPreviewConfig, repo.previewConfig);
       if (nextPreviewConfig !== undefined) {
         const previewProblem = await previewConfigProblem(
-          fastify,
-          user,
+          request,
           repo,
           nextPreviewConfig,
           request.body.teamId ?? repo.teamId
@@ -1540,8 +1554,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       const setupChange = nextSetup !== undefined && !samePreviewConfig(nextSetup, repo.setup);
       if (nextSetup !== undefined) {
         const problem = await setupProblem(
-          fastify,
-          user,
+          request,
           repo,
           nextSetup,
           request.body.teamId ?? repo.teamId
@@ -1562,7 +1575,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         newTeamId !== repo.teamId &&
         keptGateCommands !== null &&
         !gateCommandsChange &&
-        !(await isShellAuthor(fastify, user, newTeamId))
+        !(await holdsGateAuthor(request, newTeamId))
       ) {
         return sendError(
           reply,
@@ -1578,7 +1591,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         newTeamId !== repo.teamId &&
         keptPreviewConfig != null &&
         !previewConfigChange &&
-        !(await isShellAuthor(fastify, user, newTeamId))
+        !(await holdsGateAuthor(request, newTeamId))
       ) {
         return sendError(
           reply,
@@ -1593,7 +1606,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         newTeamId !== repo.teamId &&
         keptSetup != null &&
         !setupChange &&
-        !(await isShellAuthor(fastify, user, newTeamId))
+        !(await holdsGateAuthor(request, newTeamId))
       ) {
         return sendError(
           reply,
@@ -1651,7 +1664,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           reply,
           403,
           'GITHUB_ACCESS_UNVERIFIED',
-          user.role === Role.ADMIN
+          operator
             ? 'This installation is linked to a different organization than the target team.'
             : `GitHub did not confirm that you can read ${repo.organizationName}/${repo.repoName}: you have no access, it does not exist, or the platform's GitHub credential cannot see it. Ask a platform admin to onboard it.`
         );
@@ -1818,7 +1831,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         (githubUrl !== undefined && githubUrl !== repo.githubUrl) ||
         (githubApiUrl !== undefined && githubApiUrl !== repo.githubApiUrl) ||
         (defaultBranch !== undefined && defaultBranch !== repo.defaultBranch);
-      const clearToolsFile = user.role !== Role.ADMIN && repo.toolsFileEnabled && identityChanged;
+      const clearToolsFile = !operator && repo.toolsFileEnabled && identityChanged;
       const updateRow = (tx: Prisma.TransactionClient) =>
         tx.connection.update({
           data: {
@@ -2056,11 +2069,10 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/share-candidates',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({ handlerChecked: ['team.repos.manage'] }),
       schema: { params: RepoParamsSchema },
     },
     async (request, reply) => {
-      const user = requireUser(request);
       const repo = await fastify.prisma.connection.findUnique({
         select: { team: { select: { orgId: true } }, teamId: true, type: true },
         where: { id: request.params.id },
@@ -2068,7 +2080,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       if (repo?.type !== 'git_repo') {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
-      if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+      if (!(await can(request, 'team.repos.manage', { teamId: repo.teamId })).allowed) {
         return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
       }
       const teams = await fastify.prisma.team.findMany({
@@ -2087,7 +2099,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.put(
     '/:id/shares',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({ handlerChecked: ['team.repos.manage'] }),
       schema: { body: SharesSchema, params: RepoParamsSchema },
     },
     async (request, reply) => {
@@ -2107,7 +2119,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       if (repo?.type !== 'git_repo') {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
-      if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+      if (!(await can(request, 'team.repos.manage', { teamId: repo.teamId })).allowed) {
         return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
       }
 
@@ -2186,7 +2198,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:id/shares/:teamId',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({ handlerChecked: ['team.repos.manage'] }),
       schema: { body: ShareLaunchSchema, params: ShareParamsSchema },
     },
     async (request, reply) => {
@@ -2198,7 +2210,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       if (repo?.type !== 'git_repo') {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
-      if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+      if (!(await can(request, 'team.repos.manage', { teamId: repo.teamId })).allowed) {
         return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
       }
       const share = await runUnscoped(
@@ -2251,7 +2263,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/test-access',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({ handlerChecked: ['team.repos.manage'] }),
       schema: { params: RepoParamsSchema },
     },
     async (request, reply) => {
@@ -2269,7 +2281,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       if (repo?.type !== 'git_repo') {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
-      if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+      if (!(await can(request, 'team.repos.manage', { teamId: repo.teamId })).allowed) {
         return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
       }
       const result = await probeRepositoryAccess(fastify.prisma, repo, user.sub);
@@ -2289,11 +2301,10 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/test-pagerduty',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({ handlerChecked: ['team.repos.manage'] }),
       schema: { params: RepoParamsSchema },
     },
     async (request, reply) => {
-      const user = requireUser(request);
       const conn = await fastify.prisma.connection.findUnique({
         select: {
           apiKeyAuthTag: true,
@@ -2309,7 +2320,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       if (conn?.type !== 'pagerduty') {
         return sendError(reply, 404, 'NOT_FOUND', 'PagerDuty connection not found');
       }
-      if (!(await canManageTeamRepos(fastify.prisma, user, conn.teamId))) {
+      if (!(await can(request, 'team.repos.manage', { teamId: conn.teamId })).allowed) {
         return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this connection's team");
       }
       if (!(conn.apiKeyCiphertext && conn.apiKeyNonce && conn.apiKeyAuthTag)) {
@@ -2341,11 +2352,10 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/test-pagerduty-events',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({ handlerChecked: ['team.repos.manage'] }),
       schema: { params: RepoParamsSchema },
     },
     async (request, reply) => {
-      const user = requireUser(request);
       const conn = await fastify.prisma.connection.findUnique({
         select: {
           apiKeyAuthTag: true,
@@ -2360,7 +2370,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       if (conn?.type !== 'pagerduty_events') {
         return sendError(reply, 404, 'NOT_FOUND', 'PagerDuty change events connection not found');
       }
-      if (!(await canManageTeamRepos(fastify.prisma, user, conn.teamId))) {
+      if (!(await can(request, 'team.repos.manage', { teamId: conn.teamId })).allowed) {
         return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this connection's team");
       }
       if (!(conn.apiKeyCiphertext && conn.apiKeyNonce && conn.apiKeyAuthTag)) {
@@ -2403,10 +2413,10 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     if (repo?.type !== 'git_repo') {
       return { error: 404 as const, ok: false as const };
     }
-    if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+    if (!(await can(request, 'team.repos.manage', { teamId: repo.teamId })).allowed) {
       return { error: 403 as const, ok: false as const };
     }
-    if (!(await isShellAuthor(fastify, user, repo.teamId))) {
+    if (!(await holdsGateAuthor(request, repo.teamId))) {
       return { error: 403 as const, ok: false as const };
     }
     return { ok: true as const, repo, user };
@@ -2424,7 +2434,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/onboarding-runs',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({ handlerChecked: ['team.repos.onboarding.launch'] }),
       schema: { headers: IdempotencyHeaderSchema, params: RepoParamsSchema },
     },
     async (request, reply) => {
@@ -2448,7 +2458,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/setup/pull-request',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({
+        handlerChecked: ['team.repos.manage', 'team.repos.gate-commands.author'],
+      }),
       schema: { body: z.object({ setup: RepoSetupSchema }), params: RepoParamsSchema },
     },
     async (request, reply) => {
@@ -2475,7 +2487,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/setup/pull-request/:requestId',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({
+        handlerChecked: ['team.repos.manage', 'team.repos.gate-commands.author'],
+      }),
       schema: {
         params: RepoParamsSchema.extend({ requestId: z.string().max(100) }),
       },
@@ -2498,7 +2512,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/setup-blockers',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({
+        handlerChecked: ['team.repos.manage', 'team.repos.gate-commands.author'],
+      }),
       schema: {
         params: RepoParamsSchema,
         querystring: z.object({ includeResolved: booleanQueryParam(false) }),
@@ -2535,7 +2551,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/setup-blockers/:blockerId/resolve',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({
+        handlerChecked: ['team.repos.manage', 'team.repos.gate-commands.author'],
+      }),
       schema: { params: RepoParamsSchema.extend({ blockerId: z.string().uuid() }) },
     },
     async (request, reply) => {
@@ -2575,7 +2593,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/setup/secrets',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({
+        handlerChecked: ['team.repos.manage', 'team.repos.gate-commands.author'],
+      }),
       schema: { params: RepoParamsSchema },
     },
     async (request, reply) => {
@@ -2617,7 +2637,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.put(
     '/:id/setup/secrets/:name',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({
+        handlerChecked: ['team.repos.manage', 'team.repos.gate-commands.author'],
+      }),
       schema: {
         body: z.object({
           value: z
@@ -2684,7 +2706,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/preview/env-to-secrets',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({
+        handlerChecked: ['team.repos.manage', 'team.repos.gate-commands.author'],
+      }),
       schema: {
         body: z
           .object({
@@ -2803,8 +2827,8 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // Which eval datasets the caller may link to a repository's setup secrets: its team's TEAM
-  // datasets as a team admin, and its organization's ORG datasets as an ORG_ADMIN of that
-  // organization. A platform ADMIN may link both.
+  // datasets with `team.repos.eval-link` on the owning team, and its organization's ORG datasets
+  // with `org.repos.eval-dataset.link` on the repository's organization.
   const evalLinkAccess = async (request: FastifyRequest, id: string) => {
     const user = requireUser(request);
     const repo = await fastify.prisma.connection.findUnique({
@@ -2815,16 +2839,11 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       return null;
     }
     const orgId = repo.team?.orgId ?? null;
-    const teamAdmin = repo.teamId !== null && (await isShellAuthor(fastify, user, repo.teamId));
+    const teamAdmin =
+      repo.teamId !== null &&
+      (await can(request, 'team.repos.eval-link', { teamId: repo.teamId })).allowed;
     const orgAdmin =
-      orgId !== null &&
-      (user.role === 'ADMIN' ||
-        (
-          await fastify.prisma.organizationMembership.findUnique({
-            select: { role: true },
-            where: { userId_orgId: { orgId, userId: user.sub } },
-          })
-        )?.role === 'ORG_ADMIN');
+      orgId !== null && (await can(request, 'org.repos.eval-dataset.link', { orgId })).allowed;
     return {
       orgId: orgAdmin ? orgId : null,
       repo,
@@ -2973,7 +2992,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.delete(
     '/:id/setup/secrets/:name',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({
+        handlerChecked: ['team.repos.manage', 'team.repos.gate-commands.author'],
+      }),
       schema: { params: SetupSecretParamsSchema },
     },
     async (request, reply) => {
@@ -3010,7 +3031,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/executor-image/probe',
     {
-      onRequest: requireAuth({ requiredRole: Role.ADMIN }),
+      onRequest: requireAuth({ capability: 'platform.repos.executor-image.probe' }),
       schema: {
         body: z.object({ image: z.string().max(500).optional() }),
         params: RepoParamsSchema,

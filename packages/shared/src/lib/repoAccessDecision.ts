@@ -23,6 +23,7 @@
  */
 
 import type { PrismaClient } from '../index.js';
+import { isPlatformAdmin } from '../permissions/standing.js';
 import type { AccessActor, AccessLog } from './accessActor.js';
 import {
   decideRepoLaunch,
@@ -181,12 +182,12 @@ export async function decideRepoAccess(
   // the answer that is actionable for them, rather than being told about an
   // installation they have no stake in.
   // A shared team's members count, exactly as the owning team's do.
-  if (user.role !== 'ADMIN' && !isRepoMember(repo, user.sub)) {
+  if (!isPlatformAdmin(user) && !isRepoMember(repo, user.sub)) {
     return { allowed: false, reason: 'not-a-team-member' };
   }
   // A view-only share lets its team's members see the repository, not start work on it. Starting
   // work only: steering a run that is already going is not new spend on the owner's budget.
-  if (action === 'start-new-work' && user.role !== 'ADMIN' && !mayLaunchOnRepo(repo, user.sub)) {
+  if (action === 'start-new-work' && !isPlatformAdmin(user) && !mayLaunchOnRepo(repo, user.sub)) {
     return { allowed: false, reason: 'share-view-only' };
   }
   // Then the installation — when the caller is starting work, and then for
@@ -206,7 +207,7 @@ export async function decideRepoAccess(
   if (action === 'start-new-work' && isInstallationRetired(repo)) {
     return { allowed: false, reason: 'installation-retired' };
   }
-  if (user.role === 'ADMIN') {
+  if (isPlatformAdmin(user)) {
     return { allowed: true, reason: 'admin' };
   }
   // Exempt only a row with no repository to ask about. An MCP server or an

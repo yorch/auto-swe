@@ -4,6 +4,7 @@ import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { queueReviewFixRetry } from '../lib/reviewFixRetry.js';
+import { emptyStanding, withStanding } from '../test/repoStanding.js';
 import { codeReviewRoutes } from './codeReview.js';
 
 vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
@@ -88,12 +89,12 @@ describe('team review preset scoping', () => {
     await app.close();
   });
   it('denies non-leads and nonmembers, and hides presets outside the authorized scope', async () => {
-    const { app, db, preset } = await fixture('LEAD');
+    const { app, db, preset, standing } = await fixture('LEAD');
     const url = `${adminUrl}/${PRESET}?teamId=${TEAM}`;
     preset.teamId = REPO;
     expect((await app.inject({ headers: AUTH, url })).statusCode).toBe(404);
     for (const role of ['ENGINEER', null]) {
-      db.teamMembership.findUnique.mockResolvedValue(role ? { role } : null);
+      standing.fallback = { role };
       expect((await app.inject({ headers: AUTH, url })).statusCode).toBe(403);
     }
     expect(db.reviewPreset.update).not.toHaveBeenCalled();
@@ -224,7 +225,6 @@ async function fixture(role = 'ENGINEER') {
         return data;
       }),
     },
-    teamMembership: { findUnique: vi.fn().mockResolvedValue({ role: 'LEAD' }) },
     workflowRun: {
       findFirst: vi.fn().mockResolvedValue(source),
       findUnique: vi.fn().mockResolvedValue(source),
@@ -252,7 +252,10 @@ async function fixture(role = 'ENGINEER') {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
-  app.decorate('prisma', db as never);
+  // The caller leads every team the resolver asks about, unless a test changes it.
+  const standing = emptyStanding();
+  standing.fallback = { role: 'LEAD' };
+  app.decorate('prisma', withStanding(db, standing) as never);
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: SOURCE }),
   } as never);
@@ -263,7 +266,7 @@ async function fixture(role = 'ENGINEER') {
   } as never);
   await app.register(codeReviewRoutes, { prefix: '/api/v1' });
   await app.ready();
-  return { app, db, preset, retryStart, source, start, template };
+  return { app, db, preset, retryStart, source, standing, start, template };
 }
 
 beforeEach(() => {
@@ -344,10 +347,12 @@ describe('review fix retry route', () => {
     expect(await reviewFixRetryMetadata(app.prisma, SOURCE)).not.toHaveProperty('status');
     await app.close();
   });
-  it.each(['VIEWER', undefined])('denies unauthenticated or viewer callers (%s)', async (role) => {
-    const { app, retryStart } = await fixture(role);
-    const res = await app.inject({ method: 'POST', url, ...(role ? { headers: AUTH } : {}) });
-    expect(res.statusCode).toBe(role ? 403 : 401);
+  // The platform role floor this route used to declare is gone (any signed-in person may ask; the
+  // run control filter decides which runs they reach), so only the unauthenticated half remains.
+  it('denies unauthenticated callers', async () => {
+    const { app, retryStart } = await fixture();
+    const res = await app.inject({ method: 'POST', url });
+    expect(res.statusCode).toBe(401);
     expect(retryStart).not.toHaveBeenCalled();
     await app.close();
   });
@@ -399,15 +404,15 @@ describe('review launch route', () => {
     expect(db.workflowRun.findFirst).not.toHaveBeenCalled();
     await app.close();
   });
-  it('denies viewers before loading the source', async () => {
-    const { app, db } = await fixture('VIEWER');
+  // The platform role floor is gone; the unauthenticated refusal is what remains of it.
+  it('denies unauthenticated callers before loading the source', async () => {
+    const { app, db } = await fixture();
     const res = await app.inject({
-      headers: AUTH,
       method: 'POST',
       payload: { templateId: TEMPLATE },
       url: launchUrl,
     });
-    expect(res.statusCode).toBe(403);
+    expect(res.statusCode).toBe(401);
     expect(db.workflowRun.findFirst).not.toHaveBeenCalled();
     await app.close();
   });

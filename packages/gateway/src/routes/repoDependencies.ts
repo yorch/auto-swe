@@ -1,15 +1,16 @@
 import { EDGE_KINDS } from '@auto-swe/shared/lib/repoDependency';
 import { NEIGHBOR_SELECT } from '@auto-swe/shared/lib/repoDependencyResolver';
-import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
+import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { can } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { isTemporalUnavailable, sendTemporalUnavailable } from '../lib/temporalErrors.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
-import { canManageTeamRepos } from './repositories.js';
 
 /**
  * Repo dependency graph edges (see docs/history/repo-dependency-graph-rfc.md).
@@ -79,18 +80,16 @@ async function loadEdgeWithRepos(prisma: RoutePrisma, edgeId: string, id: string
   return { edge, from, to };
 }
 
-/** Whether the user is a LEAD (or ADMIN) on both teams — the manual-edge gate. */
-async function bothTeamsLead(
-  prisma: RoutePrisma,
-  user: { sub: string; role: string },
+/** Whether the caller holds `team.repos.deps.manage` on both teams — the manual-edge gate. */
+async function bothTeamsManage(
+  request: FastifyRequest,
   teamA: string,
   teamB: string
 ): Promise<boolean> {
-  const [a, b] = await Promise.all([
-    canManageTeamRepos(prisma, user, teamA),
-    canManageTeamRepos(prisma, user, teamB),
-  ]);
-  return a && b;
+  const decision = await can(request, 'team.repos.deps.manage', {
+    allOf: [{ teamId: teamA }, { teamId: teamB }],
+  });
+  return decision.allowed;
 }
 
 /**
@@ -103,7 +102,7 @@ async function canViewRepo(
   user: { sub: string; role: string },
   repo: RepoNode
 ): Promise<boolean> {
-  if (user.role === 'ADMIN') {
+  if (isPlatformAdmin(user)) {
     return true;
   }
   const membership = await prisma.teamMembership.findUnique({
@@ -128,56 +127,52 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
   // an `unresolved` row carrying the raw ref. Grouping those by ref answers "which
   // repo should we onboard next, and who is waiting on it". Declared before the
   // `/:id/...` routes so the literal path is unambiguous.
-  app.get(
-    '/dependencies/unresolved',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
-    async (request) => {
-      const user = requireUser(request);
-      // The ADMIN branch below drops the membership predicate deliberately.
-      // Written bare it would read as a forgotten filter — the exact bug the
-      // tenant guard exists to catch — so mark it as an intentional
-      // cross-tenant read instead.
-      const rows = await asPlatformAdmin(
-        user,
-        'an admin triages onboarding suggestions across every team',
-        ['RepoDependency', 'Connection'],
-        () =>
-          fastify.prisma.repoDependency.findMany({
-            orderBy: { detectedAt: 'desc' },
-            select: {
-              confidence: true,
-              fromRepo: { select: NEIGHBOR_SELECT },
-              id: true,
-              kind: true,
-              source: true,
-              toRef: true,
-            },
-            // Suggestions are only actionable to someone who can see the repo that
-            // raised them, so non-admins see their own teams' rows only.
-            take: 500,
-            where: {
-              status: 'unresolved',
-              toRef: { not: null },
-              ...(user.role !== 'ADMIN' && {
-                fromRepo: reachableConnections(user, request.repoAccessGate),
-              }),
-            },
-          })
-      );
+  app.get('/dependencies/unresolved', { onRequest: requireAuth() }, async (request) => {
+    const user = requireUser(request);
+    // The ADMIN branch below drops the membership predicate deliberately.
+    // Written bare it would read as a forgotten filter — the exact bug the
+    // tenant guard exists to catch — so mark it as an intentional
+    // cross-tenant read instead.
+    const rows = await asPlatformAdmin(
+      user,
+      'an admin triages onboarding suggestions across every team',
+      ['RepoDependency', 'Connection'],
+      () =>
+        fastify.prisma.repoDependency.findMany({
+          orderBy: { detectedAt: 'desc' },
+          select: {
+            confidence: true,
+            fromRepo: { select: NEIGHBOR_SELECT },
+            id: true,
+            kind: true,
+            source: true,
+            toRef: true,
+          },
+          // Suggestions are only actionable to someone who can see the repo that
+          // raised them, so non-admins see their own teams' rows only.
+          take: 500,
+          where: {
+            status: 'unresolved',
+            toRef: { not: null },
+            ...(!isPlatformAdmin(user) && {
+              fromRepo: reachableConnections(user, request.repoAccessGate),
+            }),
+          },
+        })
+    );
 
-      // Returned flat, one row per unresolved edge: the client component owns the
-      // grouping by `toRef` (and is unit-tested on it), so duplicating that here
-      // would be two implementations of the same rule.
-      return { data: rows };
-    }
-  );
+    // Returned flat, one row per unresolved edge: the client component owns the
+    // grouping by `toRef` (and is unit-tested on it), so duplicating that here
+    // would be two implementations of the same rule.
+    return { data: rows };
+  });
 
   // POST /dependencies/scan — run the detector sweep now, out of schedule band.
   // Restricted to ADMIN: the sweep spans every team's repos, not just the
   // caller's, and writes edges across the whole deployment.
   app.post(
     '/dependencies/scan',
-    { onRequest: requireAuth({ requiredRole: 'ADMIN' }) },
+    { onRequest: requireAuth({ capability: 'platform.repo-dependencies.scan' }) },
     async (request, reply) => {
       try {
         await fastify.temporal.triggerRepoDependencyScanNow();
@@ -207,14 +202,16 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
   // configured confidence threshold), never straight into agent context.
   app.post(
     '/:id/dependencies/infer',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: RepoParams } },
+    {
+      onRequest: requireAuth({ handlerChecked: ['team.repos.manage'] }),
+      schema: { params: RepoParams },
+    },
     async (request, reply) => {
-      const user = requireUser(request);
       const repo = await loadRepo(fastify.prisma, request.params.id);
       if (repo?.type !== 'git_repo') {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
-      if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+      if (!(await can(request, 'team.repos.manage', { teamId: repo.teamId })).allowed) {
         return sendError(reply, 403, 'FORBIDDEN', 'Requires LEAD on this repository’s team');
       }
       // The workflow id is derived from the repo, so Temporal rejects a second
@@ -243,7 +240,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
   // filtered to the caller's org.
   app.get(
     '/:id/dependencies',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: RepoParams } },
+    { onRequest: requireAuth(), schema: { params: RepoParams } },
     async (request, reply) => {
       const user = requireUser(request);
       const repo = await loadRepo(fastify.prisma, request.params.id);
@@ -316,7 +313,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/dependencies',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.repos.deps.manage'] }),
       schema: { body: CreateEdgeSchema, params: RepoParams },
     },
     async (request, reply) => {
@@ -343,7 +340,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
 
-      if (!(await bothTeamsLead(fastify.prisma, user, from.teamId, to.teamId))) {
+      if (!(await bothTeamsManage(request, from.teamId, to.teamId))) {
         return sendError(
           reply,
           403,
@@ -380,7 +377,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:id/dependencies/:edgeId',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.repos.deps.manage'] }),
       schema: { body: PatchEdgeSchema, params: EdgeParams },
     },
     async (request, reply) => {
@@ -410,7 +407,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
             'An unresolved suggestion cannot be activated until its repository is onboarded'
           );
         }
-        if (!(await bothTeamsLead(fastify.prisma, user, from.teamId, to.teamId))) {
+        if (!(await bothTeamsManage(request, from.teamId, to.teamId))) {
           return sendError(
             reply,
             403,
@@ -435,7 +432,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
       // `to` team; for an unresolved suggestion there is no `to` team, so the
       // dependent team's LEAD manages it.
       const vetoTeamId = to?.teamId ?? from.teamId;
-      if (!(await canManageTeamRepos(fastify.prisma, user, vetoTeamId))) {
+      if (!(await can(request, 'team.repos.deps.manage', { teamId: vetoTeamId })).allowed) {
         return sendError(
           reply,
           403,
@@ -454,29 +451,31 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
   // DELETE /:id/dependencies/:edgeId — remove (either team's LEAD).
   app.delete(
     '/:id/dependencies/:edgeId',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: EdgeParams } },
+    {
+      onRequest: requireAuth({ handlerChecked: ['team.repos.deps.manage'] }),
+      schema: { params: EdgeParams },
+    },
     async (request, reply) => {
-      const user = requireUser(request);
       const edge = await fastify.prisma.repoDependency.findUnique({
         where: { id: request.params.edgeId },
       });
       if (!edge || !edgeInvolves(edge, request.params.id)) {
         return sendError(reply, 404, 'EDGE_NOT_FOUND', 'Dependency edge not found');
       }
-      // ADMIN removes any edge; others need LEAD on either endpoint's team — so
-      // only load the endpoint repos when we actually have to check membership.
-      if (user.role !== 'ADMIN') {
-        const [from, to] = await Promise.all([
-          loadRepo(fastify.prisma, edge.fromRepoId),
-          edge.toRepoId ? loadRepo(fastify.prisma, edge.toRepoId) : Promise.resolve(null),
-        ]);
-        const teamIds = [from?.teamId, to?.teamId].filter((v): v is string => !!v);
-        const allowed = (
-          await Promise.all(teamIds.map((t) => canManageTeamRepos(fastify.prisma, user, t)))
-        ).some(Boolean);
-        if (!allowed) {
-          return sendError(reply, 403, 'FORBIDDEN', 'Requires LEAD on either repository’s team');
-        }
+      // Either endpoint's team may remove an edge. A platform admin holds the capability with no
+      // team, so an edge whose repositories are gone still has an answer.
+      const [from, to] = await Promise.all([
+        loadRepo(fastify.prisma, edge.fromRepoId),
+        edge.toRepoId ? loadRepo(fastify.prisma, edge.toRepoId) : Promise.resolve(null),
+      ]);
+      const teamIds = [from?.teamId, to?.teamId].filter((v): v is string => !!v);
+      const decision = await can(
+        request,
+        'team.repos.deps.manage',
+        teamIds.length > 0 ? { anyOf: teamIds.map((teamId) => ({ teamId })) } : undefined
+      );
+      if (!decision.allowed) {
+        return sendError(reply, 403, 'FORBIDDEN', 'Requires LEAD on either repository’s team');
       }
       await fastify.prisma.repoDependency.delete({ where: { id: edge.id } });
       return reply.status(204).send();

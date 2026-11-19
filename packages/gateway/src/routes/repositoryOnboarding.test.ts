@@ -22,6 +22,7 @@ vi.mock('@auto-swe/shared/lib/connectionCredential', async (importOriginal) => (
 
 import { TOOLS_FILE_PATH } from '@auto-swe/shared/lib/toolsFile';
 import { TemporalUnavailableError } from '../lib/temporalErrors.js';
+import { emptyStanding, resetStanding, setTeam, withStanding } from '../test/repoStanding.js';
 import { contentHashOf, repositoryOnboardingRoutes } from './repositoryOnboarding.js';
 
 interface AuthState {
@@ -58,7 +59,8 @@ async function buildApp() {
     toolCatalogEntry: { findMany: vi.fn() },
   };
   const temporal = { getOnboardingPrStatus: vi.fn(), startOnboardingPrWorkflow: vi.fn() };
-  app.decorate('prisma', prisma as unknown as never);
+  const standing = emptyStanding();
+  app.decorate('prisma', withStanding(prisma, standing) as unknown as never);
   app.decorate('temporal', temporal as unknown as never);
   app.decorate('auth', {
     verifyAccessToken: () => ({
@@ -70,7 +72,7 @@ async function buildApp() {
   } as unknown as never);
   await app.register(repositoryOnboardingRoutes, { prefix: '/api/v1' });
   await app.ready();
-  return { app, authState, prisma, temporal };
+  return { app, authState, prisma, standing, temporal };
 }
 
 describe('repository onboarding routes', () => {
@@ -84,6 +86,7 @@ describe('repository onboarding routes', () => {
     ctx.authState.role = 'ENGINEER';
     ctx.authState.sub = 'user-1';
     hosts.result = { ok: true };
+    resetStanding(ctx.standing);
     for (const model of Object.values(ctx.prisma)) {
       for (const fn of Object.values(model)) {
         (fn as ReturnType<typeof vi.fn>).mockReset();
@@ -107,9 +110,7 @@ describe('repository onboarding routes', () => {
     ...over,
   });
   const leadOfOwningTeam = (yes: boolean) =>
-    ctx.prisma.teamMembership.findUnique.mockResolvedValue(
-      yes ? { role: 'LEAD', team: { isActive: true } } : null
-    );
+    setTeam(ctx.standing, TEAM, { role: yes ? 'LEAD' : null });
 
   describe('POST /repositories/:id/onboarding-pr', () => {
     const body = {
@@ -138,10 +139,8 @@ describe('repository onboarding routes', () => {
     it.each(['own-org', 'other-org'])(
       'checks an ENGINEER organization admin against %s',
       async (orgId) => {
-        ctx.prisma.team.findUnique.mockResolvedValue({ isActive: true, orgId });
-        ctx.prisma.organizationMembership.findUnique.mockImplementation(async ({ where }) =>
-          where.userId_orgId.orgId === 'own-org' ? { role: 'ORG_ADMIN' } : null
-        );
+        setTeam(ctx.standing, TEAM, { orgId });
+        ctx.standing.orgs['own-org'] = 'ORG_ADMIN';
         expect((await post()).statusCode).toBe(orgId === 'own-org' ? 202 : 403);
       }
     );
@@ -152,9 +151,6 @@ describe('repository onboarding routes', () => {
       const res = await post();
       expect(res.statusCode).toBe(403);
       expect(ctx.temporal.startOnboardingPrWorkflow).not.toHaveBeenCalled();
-      expect(ctx.prisma.teamMembership.findUnique.mock.calls[0][0].where).toEqual({
-        userId_teamId: { teamId: TEAM, userId: 'user-1' },
-      });
     });
 
     it('is 404 for a repository the caller cannot reach', async () => {
@@ -393,8 +389,8 @@ describe('repository onboarding routes', () => {
     });
 
     it('returns status to an ENGINEER who administers the owning organization', async () => {
-      ctx.prisma.team.findUnique.mockResolvedValue({ isActive: true, orgId: 'own-org' });
-      ctx.prisma.organizationMembership.findUnique.mockResolvedValue({ role: 'ORG_ADMIN' });
+      setTeam(ctx.standing, TEAM, { orgId: 'own-org' });
+      ctx.standing.orgs['own-org'] = 'ORG_ADMIN';
       ctx.temporal.getOnboardingPrStatus.mockResolvedValue({ status: 'running' });
       expect((await get()).statusCode).toBe(200);
     });
@@ -443,12 +439,8 @@ describe('repository onboarding routes', () => {
       ['ENGINEER', 'ORG_ADMIN', 200],
       ['ENGINEER', 'ORG_MEMBER', 403],
     ] as const)('checks owning team/org roles: %s %s', async (teamRole, orgRole, status) => {
-      ctx.prisma.teamMembership.findUnique.mockResolvedValue({
-        role: teamRole,
-        team: { isActive: true },
-      });
-      ctx.prisma.team.findUnique.mockResolvedValue({ isActive: true, orgId: 'org-1' });
-      ctx.prisma.organizationMembership.findUnique.mockResolvedValue({ role: orgRole });
+      setTeam(ctx.standing, TEAM, { orgId: 'org-1', role: teamRole });
+      ctx.standing.orgs['org-1'] = orgRole;
       expect((await dismiss()).statusCode).toBe(status);
       if (status === 200) {
         expect(ctx.prisma.connection.updateMany).toHaveBeenCalledWith({

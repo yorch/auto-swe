@@ -21,6 +21,7 @@
  */
 import { resolveSetting, resolveSettings } from '../config/index.js';
 import type { PrismaClient } from '../index.js';
+import { isPlatformAdmin } from '../permissions/standing.js';
 import { decryptSecret, encryptSecret } from './crypto.js';
 import { assertGitHubRepository } from './githubHostScope.js';
 import { isRepoMember, repoMembersSelect } from './repoMembership.js';
@@ -244,7 +245,7 @@ export async function resolveUserCredential(
   // the token was saved must not send it anywhere: this throws rather than answering null, because
   // null means "fall back to the platform credential" and that is refused for the row too.
   assertGitHubRepository(row.connection);
-  if (row.user.role !== 'ADMIN' && !isRepoMember(row.connection, args.userId)) {
+  if (!isPlatformAdmin(row.user) && !isRepoMember(row.connection, args.userId)) {
     return null;
   }
 

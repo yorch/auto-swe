@@ -7,7 +7,6 @@ const m = vi.hoisted(() => ({
   authorize: vi.fn(),
   launch: vi.fn(),
   settings: vi.fn(),
-  shell: vi.fn(),
 }));
 vi.mock('@auto-swe/shared', () => ({
   ConnectionTypeSchema,
@@ -26,12 +25,9 @@ vi.mock('../lib/launchAuthorization.js', async (original) => ({
   authorizeLaunch: m.authorize,
 }));
 vi.mock('../lib/workflowLaunch.js', () => ({ launchTrackedWorkflow: m.launch }));
-vi.mock('../lib/specCheck.js', async (original) => ({
-  ...(await original<object>()),
-  isShellAuthor: m.shell,
-}));
 
 import { autoRunRepoOnboarding } from '../lib/repoOnboardingLaunch.js';
+import { emptyStanding, setTeam, withStanding } from '../test/repoStanding.js';
 import { repositoryRoutes } from './repositories.js';
 
 const REPO = '11111111-1111-4111-8111-111111111111';
@@ -92,7 +88,10 @@ async function build() {
     startRepoDependencyScan: vi.fn().mockResolvedValue(undefined),
     startRunnableWorkflow: vi.fn().mockResolvedValue(undefined),
   };
-  app.decorate('prisma', prisma as never);
+  // The caller administers the repository's team, as the old default membership said.
+  const standing = emptyStanding();
+  setTeam(standing, TEAM, { orgId: 'org-1', role: 'ADMIN' });
+  app.decorate('prisma', withStanding(prisma, standing) as never);
   app.decorate('temporal', temporal as never);
   app.decorate('auth', {
     verifyAccessToken: () => ({ ...actor, exp: 9999999999, iat: 0 }),
@@ -108,12 +107,11 @@ async function build() {
       method: 'POST',
       url: `/api/v1/repositories/${REPO}/onboarding-runs`,
     });
-  return { actor, app, post, prisma, repo, temporal };
+  return { actor, app, post, prisma, repo, standing, temporal };
 }
 beforeEach(() => {
   vi.resetAllMocks();
   m.authorize.mockResolvedValue({ ok: true });
-  m.shell.mockResolvedValue(true);
   m.settings.mockResolvedValue({ 'onboarding.autoRunOnConnect': false });
   m.launch.mockImplementation(async (_prisma, _rows, start) => {
     await start();
@@ -136,22 +134,17 @@ describe('onboarding run trigger', () => {
   it('refuses a platform ENGINEER who is only an ENGINEER of the repository team', async () => {
     const ctx = await build();
     ctx.actor.role = 'ENGINEER';
-    ctx.prisma.teamMembership.findUnique.mockResolvedValue({
-      role: 'ENGINEER',
-      team: { isActive: true },
-    });
+    setTeam(ctx.standing, TEAM, { orgId: 'org-1', role: 'ENGINEER' });
     const response = await ctx.post('direct-key');
     expect(response.statusCode).toBe(403);
     expect(response.json().error.code).toBe('REPO_SETUP_FORBIDDEN');
-    // The membership check refuses first, so the shell-author check never runs.
-    expect(m.shell).not.toHaveBeenCalled();
     expect(m.launch).not.toHaveBeenCalled();
   });
 
   it('refuses a platform ENGINEER who belongs to no team of the repository', async () => {
     const ctx = await build();
     ctx.actor.role = 'ENGINEER';
-    ctx.prisma.teamMembership.findUnique.mockResolvedValue(null);
+    setTeam(ctx.standing, TEAM, { orgId: 'org-1', role: null });
     const response = await ctx.post('direct-key');
     expect(response.statusCode).toBe(403);
     expect(m.launch).not.toHaveBeenCalled();
@@ -256,7 +249,8 @@ describe('onboarding run trigger', () => {
   it('requires repo management and shell authoring', async () => {
     const ctx = await build();
     ctx.actor.role = 'LEAD';
-    m.shell.mockResolvedValue(false);
+    // A lead manages the repository but does not hold the sensitive launch capability.
+    setTeam(ctx.standing, TEAM, { orgId: 'org-1', role: 'LEAD' });
     expect((await ctx.post()).statusCode).toBe(403);
     expect(m.launch).not.toHaveBeenCalled();
   });
@@ -338,7 +332,7 @@ describe('onboarding run trigger', () => {
     async (enabled) => {
       const ctx = await build();
       m.settings.mockResolvedValue({ 'onboarding.autoRunOnConnect': enabled });
-      const request = { log: ctx.app.log, user: ctx.actor } as never;
+      const request = { log: ctx.app.log, server: ctx.app, user: ctx.actor } as never;
       await autoRunRepoOnboarding(ctx.app, request, REPO, TEAM);
       expect(m.settings).toHaveBeenCalledWith(['onboarding.autoRunOnConnect'], {
         orgId: 'org-1',
@@ -360,7 +354,12 @@ describe('onboarding run trigger', () => {
     m.settings.mockResolvedValue({ 'onboarding.autoRunOnConnect': true });
     m.launch.mockRejectedValue(new Error('Temporal unavailable'));
     await expect(
-      autoRunRepoOnboarding(ctx.app, { log: ctx.app.log, user: ctx.actor } as never, REPO, TEAM)
+      autoRunRepoOnboarding(
+        ctx.app,
+        { log: ctx.app.log, server: ctx.app, user: ctx.actor } as never,
+        REPO,
+        TEAM
+      )
     ).resolves.toBeUndefined();
     expect(ctx.prisma.configAuditLog.create).toHaveBeenCalled();
   });

@@ -37,6 +37,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 }));
 
 import { resetSweepDebounceForTests } from '../lib/prEvaluationSweep.js';
+import { emptyStanding, resetStanding, setTeam, withStanding } from '../test/repoStanding.js';
 import { prEvaluationRoutes } from './prEvaluation.js';
 
 interface AuthState {
@@ -93,7 +94,8 @@ async function buildApp() {
     teamMembership: { findUnique: vi.fn() },
   };
   const temporal = { startPrEvaluationWorkflow: vi.fn() };
-  app.decorate('prisma', prisma as unknown as never);
+  const standing = emptyStanding();
+  app.decorate('prisma', withStanding(prisma, standing) as unknown as never);
   app.decorate('temporal', temporal as unknown as never);
   app.decorate('auth', {
     verifyAccessToken: () => ({
@@ -105,7 +107,7 @@ async function buildApp() {
   } as unknown as never);
   await app.register(prEvaluationRoutes, { prefix: '/api/v1' });
   await app.ready();
-  return { app, authState, prisma, temporal };
+  return { app, authState, prisma, standing, temporal };
 }
 
 describe('pr evaluation routes', () => {
@@ -138,13 +140,12 @@ describe('pr evaluation routes', () => {
     );
   }
   function leadOfTeam(yes: boolean) {
-    ctx.prisma.teamMembership.findUnique.mockResolvedValue(
-      yes ? { role: 'LEAD', team: { isActive: true } } : null
-    );
+    setTeam(ctx.standing, TEAM, { orgId: 'org-1', role: yes ? 'LEAD' : null });
   }
 
   beforeEach(() => {
     resetSweepDebounceForTests();
+    resetStanding(ctx.standing);
     ctx.authState.role = 'ENGINEER';
     ctx.authState.sub = 'user-1';
     settings.values = { ...DEFAULTS };
