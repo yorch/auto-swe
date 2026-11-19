@@ -12,6 +12,13 @@ export const runCapabilities = defineCapabilities({
     scope: 'team',
     team: 'MEMBER',
   },
+  'team.approvals.merge': {
+    class: 'operation',
+    description:
+      'Approve the merge gate of a team’s run from Slack. Asked on the run’s owning teams; any one suffices.',
+    scope: 'team',
+    team: 'LEAD',
+  },
   'team.approvals.nudge': {
     class: 'operation',
     description: 'Nudge an overdue approval step.',
@@ -20,9 +27,16 @@ export const runCapabilities = defineCapabilities({
   },
   'team.launch': {
     class: 'operation',
-    description: 'Start a run for a team, or as a team lead where a template requires one.',
+    description: 'Start a run for a team.',
     scope: 'team',
     team: 'MEMBER',
+  },
+  'team.launch.as-lead': {
+    class: 'operation',
+    description:
+      'Start a run attributed to a team the caller leads, as a schedule’s fire does for its own team.',
+    scope: 'team',
+    team: 'LEAD',
   },
   'team.launch.multi-repo': {
     class: 'operation',

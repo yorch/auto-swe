@@ -17,6 +17,12 @@ export const teamCapabilities = defineCapabilities({
     scope: 'team',
     team: 'MEMBER',
   },
+  'team.attention.manage': {
+    class: 'operation',
+    description: 'Assign unowned failures to a member of the team.',
+    scope: 'team',
+    team: 'LEAD',
+  },
   'team.attention.read': {
     class: 'read',
     description: 'See what is waiting on the team: approvals, failures, budget requests.',

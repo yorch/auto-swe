@@ -5,6 +5,13 @@ import { defineCapabilities } from './define.js';
  * with confers none of them; reach (team membership, shares, the GitHub gate) is a separate gate.
  */
 export const repoCapabilities = defineCapabilities({
+  'org.repos.eval-dataset.link': {
+    class: 'sensitive',
+    description:
+      "Link an organization-scope eval dataset to a repository's setup secrets, for a repository of the organization.",
+    org: 'ADMIN',
+    scope: 'org',
+  },
   'team.repos.create': {
     class: 'governance',
     description: 'Create a repository under a team.',

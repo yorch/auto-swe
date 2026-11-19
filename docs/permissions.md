@@ -231,6 +231,7 @@ _Generated from `packages/shared/src/permissions/catalog/` by `scripts/gen-permi
 |---|---|---|---|---|---|---|---|
 | `team.agents.manage` | team | operation | ADMIN | — | yes | yes | Create and change a team's agents and agent versions. |
 | `team.agents.read` | team | read | MEMBER | — | yes | no | List the agents a team may use. |
+| `team.attention.manage` | team | operation | LEAD | — | yes | yes | Assign unowned failures to a member of the team. |
 | `team.attention.read` | team | read | LEAD | — | yes | no | See what is waiting on the team: approvals, failures, budget requests. |
 | `team.budget-requests.create` | team | operation | LEAD | — | yes | yes | Ask for more budget for a team. |
 | `team.budget.manage` | team | governance | ADMIN | ADMIN | yes | yes | Set a team's budget cap and decide budget requests. |
@@ -255,6 +256,7 @@ _Generated from `packages/shared/src/permissions/catalog/` by `scripts/gen-permi
 
 | Capability | Scope | Class | Team role | Org role | Platform admin | Needs active team | Allows |
 |---|---|---|---|---|---|---|---|
+| `org.repos.eval-dataset.link` | org | sensitive | — | ADMIN | yes | — | Link an organization-scope eval dataset to a repository's setup secrets, for a repository of the organization. |
 | `team.repos.create` | team | governance | LEAD | ADMIN | yes | yes | Create a repository under a team. |
 | `team.repos.deps.manage` | team | governance | LEAD | ADMIN | yes | yes | Create, delete and veto dependency edges between repositories. A new edge needs it on both teams, a deletion on either. |
 | `team.repos.eval-link` | team | sensitive | ADMIN | — | yes | yes | Link a team-scope eval dataset to a repository. |
@@ -280,8 +282,10 @@ _Generated from `packages/shared/src/permissions/catalog/` by `scripts/gen-permi
 | Capability | Scope | Class | Team role | Org role | Platform admin | Needs active team | Allows |
 |---|---|---|---|---|---|---|---|
 | `team.approvals.answer` | team | operation | MEMBER | — | yes | yes | Answer an approval, decision or input step of a team’s run. |
+| `team.approvals.merge` | team | operation | LEAD | — | yes | yes | Approve the merge gate of a team’s run from Slack. Asked on the run’s owning teams; any one suffices. |
 | `team.approvals.nudge` | team | operation | LEAD | — | yes | yes | Nudge an overdue approval step. |
-| `team.launch` | team | operation | MEMBER | — | yes | yes | Start a run for a team, or as a team lead where a template requires one. |
+| `team.launch` | team | operation | MEMBER | — | yes | yes | Start a run for a team. |
+| `team.launch.as-lead` | team | operation | LEAD | — | yes | yes | Start a run attributed to a team the caller leads, as a schedule’s fire does for its own team. |
 | `team.launch.multi-repo` | team | operation | LEAD | — | yes | yes | Start a campaign, epic or PRD run across repositories. Asked on every repository’s owning team. |
 | `team.orchestrations.stop` | team | operation | — | — | yes | yes | Emergency-stop an orchestration that a service principal launched. Platform admin only. |
 | `team.runs.control` | team | operation | MEMBER | — | yes | yes | Cancel or retry a team’s run. |
