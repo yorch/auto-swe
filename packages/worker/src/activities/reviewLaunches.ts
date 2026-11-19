@@ -62,7 +62,7 @@ export async function enqueueReviewLaunchIntents(
 }
 
 const LEASE_MS = 5 * 60_000;
-const MAX_ATTEMPTS = 3;
+export const MAX_ATTEMPTS = 3;
 
 export async function dispatchReviewLaunches(runId: string): Promise<void> {
   return withHeartbeat('dispatchReviewLaunches', dispatch(runId));

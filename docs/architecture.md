@@ -1297,22 +1297,30 @@ floor of 30 days sits far past the rollup's two-day rewrite window, so a run's s
 before its traces can go.
 
 The deletion cascades in the database to the run's steps, traces, artifacts, human steps and their
-approvals, eval results, outcome references, autonomy decisions, trusted-knowledge evidence and
-callback deliveries. It sets null on memory items (the lesson stays, minus its link to the run) and on
-agent transcripts (which keep their own retention). Usage rollup rows, the transcript access log,
-audit-log rows, pull requests, work requests, the `ActiveWorkflow` ledger and the monthly usage
-tables have no foreign key to a run and are not touched. An S3 artifact's object is deleted before the
-run, because the cascade removes only the row.
+approvals, eval results, outcome references, autonomy decisions, trusted-knowledge evidence, callback
+deliveries, UI evidence rows, recorded outbound HTTP calls (which also have their own retention
+setting), steering messages, failure assignments and the run's review-launch intents. It sets null on
+memory items (the lesson stays, minus its link to the run), on agent transcripts (which keep their own
+retention), on the run effects ledger (`RunEffect` keeps its `workflowId` and its own retention), on
+pull request attribution, on orchestration children and review links, and on the run plan that
+launched it. No foreign key to a run restricts its deletion. Usage rollup rows, the transcript access
+log, audit-log rows, pull requests, work requests, the `ActiveWorkflow` ledger and the monthly usage
+tables have no foreign key to a run and are not touched. An artifact whose payload lives outside
+Postgres (an object-store object or a file in the filesystem store) is deleted before the run,
+because the cascade removes only the row, and so is the public-bucket copy of a screenshot's UI
+evidence, because nothing references it once the evidence row is gone.
 
 A finished run past the cutoff is **kept** when its `ActiveWorkflow` row is not terminal or has an
 open pull request (PR feedback reads the run that opened the pull request), when a callback delivery
 for it is still pending, when it is under a transcript legal hold, when a step started or a trace was written since the cutoff (a
 re-started workflow id keeps its first execution's end state), when it has LLM traces but no
-usage-rollup row (deleting it would erase its spend from days still read live), or when one of its
-object-store artifacts could not be deleted. While no object store is configured, a run that has
-object-store artifacts is not considered at all (the query leaves it out, and the sweep logs one
-warning saying so). The sweep logs what it deleted and how many runs it kept
-for each reason.
+usage-rollup row (deleting it would erase its spend from days still read live), when it is a child of
+an orchestration that is `ACTIVE` or `WAITING`, when a review launch that names it as its source is
+still being retried, or when one of its artifact payloads or public evidence copies could not be
+deleted. While no object-store bucket is configured, a run with an object-store artifact is not
+considered at all, and likewise a run with a filesystem-store artifact while no store directory is
+configured (the query leaves it out, and the sweep logs one warning naming the backends). The sweep
+logs what it deleted and how many runs it kept for each reason.
 
 The report's `byUser` ranks the ten users whose launched runs spent most, with a trace attributed to
 `WorkflowRun.launchedById` only when its Temporal run id is the one that wrote the run row (a
@@ -1826,7 +1834,8 @@ Current constraints of the system as built. Deliberate product boundaries are in
   therefore costs read time in every sweep, and if more kept runs than one sweep can read lie ahead of
   a deletable run, that run is not reached until they are no longer kept (backfill the rollup, close
   the pull request, deliver or retire the callback). Runs with object-store artifacts are not even
-  read while no object store is configured, and are kept forever. Pending callbacks and runs
+  read while no bucket is configured, nor runs with filesystem-store artifacts while no store
+  directory is configured, and are kept forever. Pending callbacks and runs
   with an open pull request are kept only while that is true: once the delivery completes or the pull
   request closes, the next sweep deletes the run. A run with a step started or a trace written since
   the cutoff is kept too, because a workflow id that is started again keeps its first execution's end
@@ -1835,7 +1844,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   `KnowledgeItem.producerRunId`, `TranscriptAccessLog.runId` and audit-log rows keep pointing at the
   id of a deleted run. Artifact objects are deleted with the currently configured bucket, not the
   row's `s3Bucket`: with the object store unconfigured, runs that have object-store artifacts are kept
-  forever (the query leaves them out). A run kept after some of its artifacts were deleted has lost
+  forever (the query leaves them out), and a filesystem artifact whose store directory is not the one
+  that wrote it (the store marker differs) fails closed and keeps its run. A public evidence copy is
+  deleted from the row's `publicBucket`, else from `UI_EVIDENCE_PUBLIC_BUCKET`, through the same
+  object-store client, so a deployment that names a public bucket but no object store keeps every
+  run that has screenshot evidence. A run kept after some of its artifacts were deleted has lost
   those artifacts, and the next sweep retries the rest. A transcript of a deleted run loses its run
   link and is then readable by an ADMIN only.
 - **A PRD parent that re-runs its launch step can relaunch a child whose run was deleted.** PRD

@@ -2024,17 +2024,17 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       });
     },
 
-    async syncRunPlanSweepSchedule(config: RunPlanSweepScheduleConfig): Promise<void> {
-      await upsertSchedule(RUN_PLAN_SWEEP_SCHEDULE_ID, {
-        action: makeSweepAction('ScheduledRunPlanSweepWorkflow'),
+    async syncRunHistoryPruneSchedule(config: RunHistoryPruneScheduleConfig): Promise<void> {
+      await upsertSchedule(RUN_HISTORY_PRUNE_SCHEDULE_ID, {
+        action: makeSweepAction('ScheduledRunHistoryPruneWorkflow'),
         cronExpression: config.cronExpression,
         paused: !config.enabled,
       });
     },
 
-    async syncRunHistoryPruneSchedule(config: RunHistoryPruneScheduleConfig): Promise<void> {
-      await upsertSchedule(RUN_HISTORY_PRUNE_SCHEDULE_ID, {
-        action: makeSweepAction('ScheduledRunHistoryPruneWorkflow'),
+    async syncRunPlanSweepSchedule(config: RunPlanSweepScheduleConfig): Promise<void> {
+      await upsertSchedule(RUN_PLAN_SWEEP_SCHEDULE_ID, {
+        action: makeSweepAction('ScheduledRunPlanSweepWorkflow'),
         cronExpression: config.cronExpression,
         paused: !config.enabled,
       });

@@ -1676,13 +1676,13 @@ export function resolveScheduledSweeps(): ScheduledSweepsConfig {
       cronExpression: envCron('REPORT_DIGEST_CRON', '0 13 * * 1'),
       enabled: envFlag('REPORT_DIGEST_ENABLED', true),
     },
-    runPlanSweep: {
-      cronExpression: envCron('RUN_PLAN_SWEEP_CRON', '*/15 * * * *'),
-      enabled: envFlag('RUN_PLAN_SWEEP_ENABLED', true),
-    },
     runHistoryPrune: {
       cronExpression: envCron('RUN_HISTORY_PRUNE_CRON', '17 5 * * *'),
       enabled: envFlag('RUN_HISTORY_PRUNE_ENABLED', true),
+    },
+    runPlanSweep: {
+      cronExpression: envCron('RUN_PLAN_SWEEP_CRON', '*/15 * * * *'),
+      enabled: envFlag('RUN_PLAN_SWEEP_ENABLED', true),
     },
     runReaper: {
       cronExpression: envCron('RUN_REAPER_CRON', '*/15 * * * *'),

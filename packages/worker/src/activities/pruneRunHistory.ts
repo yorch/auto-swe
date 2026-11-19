@@ -16,8 +16,8 @@
  *  - `pendingCallback`: a run callback for it is still PENDING (the cascade would drop it unsent);
  *  - `unrolledSpend`: it has LLM traces but no usage-rollup row, so deleting it would erase its
  *    spend from the report (days without a rollup are read live from the traces);
- *  - `storageFailed`: an object-store artifact could not be deleted first, which would otherwise
- *    orphan the object (the cascade removes only the row).
+ *  - `storageFailed`: an artifact payload (object store or filesystem) or a public evidence copy
+ *    could not be deleted first, which would otherwise orphan it (the cascade removes only the row).
  * A run under a transcript legal hold is never selected.
  *
  * Batches are small (a run cascades to thousands of trace rows) and walked by keyset on
@@ -27,12 +27,14 @@
  */
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
-import { deleteArtifact } from '@auto-swe/shared/lib/artifactStore';
+import { deleteArtifact, deleteObjectFromBucket } from '@auto-swe/shared/lib/artifactStore';
 import { resolveStorageConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { ACTIVE_WORKFLOW_TERMINAL_STATUSES } from '@auto-swe/shared/types/api';
 import { heartbeat } from '@temporalio/activity';
 import { auditLog, logWarn } from '../lib/activityLog.js';
+import { publicEvidenceKey } from './pruneUiEvidence.js';
+import { MAX_ATTEMPTS as REVIEW_LAUNCH_MAX_ATTEMPTS } from './reviewLaunches.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Runs deleted per statement; each cascades to its traces, so this is far below the siblings'. */
@@ -47,6 +49,8 @@ export const RUN_PRUNE_MAX_BATCHES = 5_000;
  * for one worst-case batch, and the heartbeat is what stops an attempt that overruns anyway.
  */
 export const RUN_PRUNE_BATCH_BUDGET_MS = 6 * 60 * 1000;
+/** Orchestration statuses that mean it can still read its children's runs. */
+const LIVE_ORCHESTRATION_STATUSES = ['ACTIVE', 'WAITING'] as const;
 /** The run statuses that mean the run has ended (everything but RUNNING). */
 export const RUN_TERMINAL_STATUSES = [
   'SUCCESS',
@@ -73,7 +77,15 @@ export interface PruneRunHistoryResult {
   more: boolean;
 }
 
-function finishedBefore(cutoff: Date, objectStore: boolean) {
+/** Artifact backends whose payload this process cannot reach, so their runs could only be kept. */
+export function unreachableBackends(cfg: {
+  fsDir: string | null;
+  s3Bucket: string | null;
+}): Array<'s3' | 'fs'> {
+  return [...(cfg.s3Bucket ? [] : (['s3'] as const)), ...(cfg.fsDir ? [] : (['fs'] as const))];
+}
+
+function finishedBefore(cutoff: Date, unreachable: Array<'s3' | 'fs'>) {
   // `startedAt` is implied by `endedAt` (a run ends after it starts) but is the indexed column
   // (`status, started_at`); stating it lets the query walk that index instead of scanning.
   //
@@ -82,9 +94,27 @@ function finishedBefore(cutoff: Date, objectStore: boolean) {
   // already ended), so a live second execution can look old and finished. Any step started or trace
   // written since the cutoff shows it is not.
   return {
-    // No object store: such a run's objects cannot be deleted, so it could only ever be kept.
-    ...(objectStore ? {} : { artifacts: { none: { backend: 's3' } } }),
+    // A backend this process is not configured for (no bucket, no filesystem root): such a run's
+    // payload cannot be deleted, so it could only ever be kept.
+    ...(unreachable.length > 0 ? { artifacts: { none: { backend: { in: unreachable } } } } : {}),
+    // A child of an orchestration that has not ended: the orchestration still lists it and reads
+    // its result.
+    AND: [
+      {
+        OR: [
+          { orchestrationId: null },
+          { orchestration: { status: { notIn: [...LIVE_ORCHESTRATION_STATUSES] } } },
+        ],
+      },
+    ],
     endedAt: { lt: cutoff },
+    // A review launch still being retried reads this run as its source (a spent one does not).
+    reviewLaunchIntents: {
+      none: {
+        attempts: { lt: REVIEW_LAUNCH_MAX_ATTEMPTS },
+        status: { in: ['pending', 'failed'] },
+      },
+    },
     startedAt: { lt: cutoff },
     status: { in: [...RUN_TERMINAL_STATUSES] },
     steps: { none: { startedAt: { gte: cutoff } } },
@@ -111,14 +141,14 @@ export async function pruneRunHistory(
     if (retentionDays <= 0) {
       return { deleted: 0, kept, more: false, retentionDays };
     }
-    const objectStore = resolveStorageConfig().backend === 's3';
-    if (!objectStore) {
+    const unreachable = unreachableBackends(resolveStorageConfig());
+    if (unreachable.length > 0) {
       logWarn(
-        'run history sweep: no object store is configured, so runs with object-store artifacts are not considered',
-        { retentionDays }
+        'run history sweep: an artifact backend is not configured here, so runs with artifacts in it are not considered',
+        { retentionDays, unreachable }
       );
     }
-    const where = finishedBefore(new Date(now.getTime() - retentionDays * DAY_MS), objectStore);
+    const where = finishedBefore(new Date(now.getTime() - retentionDays * DAY_MS), unreachable);
     const deadline = clock() + RUN_PRUNE_BATCH_BUDGET_MS;
     const expired = () => clock() >= deadline;
     // Ids kept (and counted) by the previous batch. `startedAt` is read at millisecond precision, so
@@ -280,9 +310,37 @@ async function deleteBatch(
   // would have nothing pointing at it. A run whose object cannot be deleted is tried next sweep.
   const eligible = ids.filter((id) => !skip.has(id));
   if (eligible.length > 0) {
+    // Public-bucket copies of UI evidence live outside the artifact store and nothing references
+    // them once the evidence row cascades away, so they go first.
+    const evidence = await prisma.runEvidence.findMany({
+      select: { id: true, publicBucket: true, runId: true },
+      where: { kind: 'screenshot', runId: { in: eligible } },
+    });
+    const defaultPublicBucket = process.env.UI_EVIDENCE_PUBLIC_BUCKET?.trim();
+    for (const row of evidence) {
+      const bucket = row.publicBucket?.trim() || defaultPublicBucket;
+      if (!bucket || skip.has(row.runId)) {
+        continue;
+      }
+      if (expired()) {
+        skip.add(row.runId);
+        continue;
+      }
+      heartbeat(`run history evidence ${row.id}`);
+      try {
+        await deleteObjectFromBucket(bucket, publicEvidenceKey(row.runId, row.id));
+      } catch (err) {
+        keep(row.runId, 'storageFailed');
+        logWarn('run history sweep could not delete a public evidence copy; its run is kept', {
+          error: err instanceof Error ? err.message : String(err),
+          evidenceId: row.id,
+        });
+      }
+    }
+    // Every payload kept outside Postgres (object store or filesystem); inline ones go with the row.
     const artifacts = await prisma.workflowArtifact.findMany({
       select: { id: true, runId: true },
-      where: { backend: 's3', runId: { in: eligible } },
+      where: { backend: { not: 'pg' }, runId: { in: eligible.filter((id) => !skip.has(id)) } },
     });
     for (const artifact of artifacts) {
       if (artifact.runId && skip.has(artifact.runId)) {

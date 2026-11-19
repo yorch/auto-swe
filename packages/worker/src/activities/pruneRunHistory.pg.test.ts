@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { _resetConfigCacheForTests } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
+import { putArtifact } from '@auto-swe/shared/lib/artifactStore';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -37,6 +42,11 @@ const SCOPED = [
   'AgentTranscript',
   'ConfigSetting',
   'MemoryItem',
+  'Orchestration',
+  'ReviewPreset',
+  'RunEffect',
+  'Team',
+  'WorkflowHttpCall',
 ];
 const unscoped = <T>(fn: () => Promise<T>) => runUnscoped('test fixture rows', SCOPED, fn);
 
@@ -46,6 +56,15 @@ describe.skipIf(!enabled)('run-history sweep against Postgres', () => {
   const daysAgo = (d: number) => new Date(NOW.getTime() - d * DAY);
   let templateId = '';
   let seq = 0;
+  let orgId = '';
+  let teamId = '';
+  let activeOrchestrationId = '';
+  let finishedOrchestrationId = '';
+  let presetId = '';
+  let reviewTemplateId = '';
+  let fsDir = '';
+  /** The first deletable run's filesystem artifact, to prove its file is removed. */
+  let fsArtifactPath = '';
   const deletable: string[] = [];
   const kept: Record<string, string[]> = {};
   const workflowIds: string[] = [];
@@ -59,7 +78,9 @@ describe.skipIf(!enabled)('run-history sweep against Postgres', () => {
     | 'pendingCallback'
     | 'liveLedger'
     | 'openPr'
-    | 'unrolled';
+    | 'unrolled'
+    | 'liveOrchestration'
+    | 'reviewRetry';
   const KINDS: Kind[] = [
     'running',
     'endedRecently',
@@ -70,6 +91,8 @@ describe.skipIf(!enabled)('run-history sweep against Postgres', () => {
     'liveLedger',
     'openPr',
     'unrolled',
+    'liveOrchestration',
+    'reviewRetry',
   ];
 
   /** One run, with a step, an LLM trace and (unless `rolled` is false) a rollup row. */
@@ -91,6 +114,12 @@ describe.skipIf(!enabled)('run-history sweep against Postgres', () => {
       data: {
         endedAt,
         id,
+        orchestrationId:
+          kind === 'liveOrchestration'
+            ? activeOrchestrationId
+            : opts.withChildren
+              ? finishedOrchestrationId
+              : null,
         specSnapshot: {},
         startedAt,
         status: kind === 'running' ? 'RUNNING' : (opts.status ?? 'SUCCESS'),
@@ -151,6 +180,11 @@ describe.skipIf(!enabled)('run-history sweep against Postgres', () => {
         },
       });
     }
+    if (kind === 'reviewRetry') {
+      await prisma.reviewLaunchIntent.create({
+        data: { attempts: 0, presetId, sourceRunId: id, status: 'pending' },
+      });
+    }
     if (kind === 'liveLedger' || kind === 'openPr') {
       const aw = await prisma.activeWorkflow.create({
         data: {
@@ -170,6 +204,43 @@ describe.skipIf(!enabled)('run-history sweep against Postgres', () => {
       });
     }
     if (opts.withChildren) {
+      const pgArtifact = await prisma.workflowArtifact.create({
+        data: {
+          backend: 'pg',
+          inlineBlob: Buffer.from('shot'),
+          kind: 'screenshot',
+          runId: id,
+          sizeBytes: 4,
+        },
+      });
+      await prisma.runEvidence.create({
+        data: { artifactId: pgArtifact.id, kind: 'screenshot', runId: id, source: 'agent' },
+      });
+      await prisma.workflowHttpCall.create({
+        data: {
+          attempt: 1,
+          host: 'example.test',
+          method: 'GET',
+          path: '/',
+          purpose: 'test',
+          runId: id,
+          scheme: 'https',
+          source: 'test',
+          startedAt: old,
+          workflowId,
+        },
+      });
+      await prisma.runEffect.create({
+        data: { action: 'push', kind: 'git', runId: id, status: 'ok', via: 'test', workflowId },
+      });
+      await prisma.runSteeringMessage.create({ data: { body: 'steer', runId: id } });
+      // A spent review launch (attempts exhausted) does not hold its source run.
+      await prisma.reviewLaunchIntent.create({
+        data: { attempts: 3, presetId, sourceRunId: id, status: 'failed' },
+      });
+      const fsRef = await putArtifact({ body: 'file', kind: 'log', runId: id });
+      const fsRow = await prisma.workflowArtifact.findUniqueOrThrow({ where: { id: fsRef.id } });
+      fsArtifactPath = path.join(fsDir, fsRow.fsPath ?? '');
       await prisma.workflowHumanStep.create({
         data: {
           kind: 'APPROVAL',
@@ -237,7 +308,40 @@ describe.skipIf(!enabled)('run-history sweep against Postgres', () => {
   }
 
   beforeAll(async () => {
+    fsDir = await mkdtemp(path.join(tmpdir(), 'rr-pg-fs-'));
+    process.env.ARTIFACT_FS_DIR = fsDir;
+    process.env.ARTIFACT_WRITE_BACKEND = 'fs';
+    orgId = (
+      await prisma.organization.create({
+        data: { name: `rr-pg-${suffix}`, slug: `rr-pg-${suffix}` },
+      })
+    ).id;
+    teamId = (
+      await unscoped(() =>
+        prisma.team.create({ data: { name: `rr-pg-${suffix}`, orgId, slug: `rr-pg-${suffix}` } })
+      )
+    ).id;
+    const orchestration = (status: 'ACTIVE' | 'COMPLETED') =>
+      unscoped(() =>
+        prisma.orchestration.create({
+          data: { allowlist: ['implementer'], status, teamId, title: `rr-pg-${suffix}` },
+        })
+      );
+    activeOrchestrationId = (await orchestration('ACTIVE')).id;
+    finishedOrchestrationId = (await orchestration('COMPLETED')).id;
     templateId = (await prisma.workflowTemplate.create({ data: { name: `rr-pg-${suffix}` } })).id;
+    reviewTemplateId = (
+      await prisma.workflowTemplate.create({
+        data: { kind: 'review', name: `rr-pg-rev-${suffix}` },
+      })
+    ).id;
+    presetId = (
+      await unscoped(() =>
+        prisma.reviewPreset.create({
+          data: { name: `rr-pg-${suffix}`, templateId: reviewTemplateId },
+        })
+      )
+    ).id;
     // Interleave: every fourth run is a kept one, the rest are deletable, 3 full batches in all.
     const total = RUN_PRUNE_BATCH * 3 + 40;
     let k = 0;
@@ -280,7 +384,18 @@ describe.skipIf(!enabled)('run-history sweep against Postgres', () => {
         where: { key: 'workflow.runRetentionDays', scope: 'GLOBAL' },
       })
     );
+    await unscoped(() => prisma.reviewPreset.deleteMany({ where: { id: presetId } }));
+    await unscoped(() => prisma.orchestration.deleteMany({ where: { teamId } }));
+    await unscoped(() => prisma.team.deleteMany({ where: { id: teamId } }));
+    await prisma.organization.deleteMany({ where: { id: orgId } });
+    await unscoped(() =>
+      prisma.runEffect.deleteMany({ where: { workflowId: { in: workflowIds } } })
+    );
     await prisma.workflowTemplate.delete({ where: { id: templateId } });
+    await prisma.workflowTemplate.delete({ where: { id: reviewTemplateId } });
+    await rm(fsDir, { force: true, recursive: true });
+    Reflect.deleteProperty(process.env, 'ARTIFACT_FS_DIR');
+    Reflect.deleteProperty(process.env, 'ARTIFACT_WRITE_BACKEND');
     await prisma.$disconnect();
   });
 
@@ -330,6 +445,18 @@ describe.skipIf(!enabled)('run-history sweep against Postgres', () => {
     expect(await prisma.evalResult.count({ where })).toBe(0);
     expect(await prisma.workflowOutcomeReference.count({ where })).toBe(0);
     expect(await prisma.workflowArtifact.count({ where })).toBe(0);
+    expect(await prisma.runEvidence.count({ where })).toBe(0);
+    expect(await unscoped(() => prisma.workflowHttpCall.count({ where }))).toBe(0);
+    expect(await prisma.runSteeringMessage.count({ where })).toBe(0);
+    expect(await prisma.reviewLaunchIntent.count({ where: { sourceRunId: first } })).toBe(0);
+    // The filesystem artifact's file went with its row, instead of being orphaned.
+    expect(existsSync(fsArtifactPath)).toBe(false);
+    // The effects ledger outlives its run, with the run link cleared.
+    const effects = await unscoped(() =>
+      prisma.runEffect.findMany({ where: { workflowId: `rr-pg-${suffix}-0` } })
+    );
+    expect(effects).toHaveLength(1);
+    expect(effects[0]?.runId).toBeNull();
     expect(await prisma.outboundDelivery.count({ where: { workflowRunId: first } })).toBe(0);
     const memory = await unscoped(() =>
       prisma.memoryItem.findMany({ where: { lessonSummary: `rr-pg-${suffix}` } })

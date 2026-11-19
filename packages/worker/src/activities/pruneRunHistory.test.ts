@@ -16,13 +16,21 @@ const db = vi.hoisted(() => ({
   /** Workflow ids whose ledger row is not terminal, or has an open pull request. */
   activeWorkflowIds: new Set<string>(),
   deletedArtifacts: [] as string[],
+  deletedPublicKeys: [] as string[],
+  /** Screenshot evidence rows, and the public copies deleted for them. */
+  evidence: [] as Array<{ id: string; runId: string; publicBucket: string | null }>,
   failingArtifactIds: new Set<string>(),
+  failingPublicKeys: new Set<string>(),
+  /** Run ids kept by an unfinished orchestration or a retried review launch. */
+  orchestratedRunIds: new Set<string>(),
   /** Run ids with a callback still pending. */
   pendingDeliveryRunIds: new Set<string>(),
+  reviewSourceRunIds: new Set<string>(),
   /** Run ids with a rollup row, and with an LLM trace. */
   rolledRunIds: new Set<string>(),
   runs: [] as Run[],
-  s3Artifacts: [] as Array<{ id: string; runId: string }>,
+  /** Artifacts held outside Postgres, by backend. */
+  s3Artifacts: [] as Array<{ id: string; runId: string; backend?: 's3' | 'fs' }>,
   tracedRunIds: new Set<string>(),
 }));
 
@@ -35,7 +43,9 @@ interface RunWhere {
   transcriptLegalHold: boolean;
   steps: { none: { startedAt: { gte: Date } } };
   traces: { none: { createdAt: { gte: Date } } };
-  artifacts?: { none: { backend: string } };
+  artifacts?: { none: { backend: { in: string[] } } };
+  AND?: unknown;
+  reviewLaunchIntents?: unknown;
   id?: { in: string[] };
   OR?: Array<{ startedAt: { gt: Date } | Date; id?: { gt: string } }>;
 }
@@ -58,7 +68,12 @@ function matches(r: Run, where: RunWhere): boolean {
     !(r.stepStartedAt && r.stepStartedAt >= where.steps.none.startedAt.gte) &&
     !(r.traceCreatedAt && r.traceCreatedAt >= where.traces.none.createdAt.gte) &&
     keyset &&
-    (!where.artifacts || !db.s3Artifacts.some((a) => a.runId === r.id)) &&
+    (!where.artifacts ||
+      !db.s3Artifacts.some(
+        (a) => a.runId === r.id && where.artifacts?.none.backend.in.includes(a.backend ?? 's3')
+      )) &&
+    !db.orchestratedRunIds.has(r.id) &&
+    !db.reviewSourceRunIds.has(r.id) &&
     (!where.id || where.id.in.includes(r.id))
   );
 }
@@ -89,9 +104,17 @@ vi.mock('@auto-swe/shared/db', () => ({
           .map((workflowRunId) => ({ workflowRunId }))
       ),
     },
-    workflowArtifact: {
+    runEvidence: {
       findMany: vi.fn(async ({ where }: { where: { runId: { in: string[] } } }) =>
-        db.s3Artifacts.filter((a) => where.runId.in.includes(a.runId))
+        db.evidence.filter((e) => where.runId.in.includes(e.runId))
+      ),
+    },
+    workflowArtifact: {
+      findMany: vi.fn(
+        async ({ where }: { where: { backend: { not: string }; runId: { in: string[] } } }) => {
+          expect(where.backend).toEqual({ not: 'pg' });
+          return db.s3Artifacts.filter((a) => where.runId.in.includes(a.runId));
+        }
       ),
     },
     workflowRun: {
@@ -122,9 +145,12 @@ vi.mock('@auto-swe/shared/db', () => ({
     },
   },
 }));
-const storage = vi.hoisted(() => ({ backend: 's3' as 's3' | 'inline' }));
+const storage = vi.hoisted(() => ({
+  fsDir: '/var/artifacts' as string | null,
+  s3Bucket: 'bucket' as string | null,
+}));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
-  resolveStorageConfig: () => ({ backend: storage.backend }),
+  resolveStorageConfig: () => ({ fsDir: storage.fsDir, s3Bucket: storage.s3Bucket }),
 }));
 vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
   deleteArtifact: vi.fn(async (id: string) => {
@@ -133,7 +159,14 @@ vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
     }
     db.deletedArtifacts.push(id);
   }),
+  deleteObjectFromBucket: vi.fn(async (bucket: string, key: string) => {
+    if (db.failingPublicKeys.has(key)) {
+      throw new Error('bucket unavailable');
+    }
+    db.deletedPublicKeys.push(`${bucket}/${key}`);
+  }),
 }));
+vi.mock('./reviewLaunches.js', () => ({ MAX_ATTEMPTS: 3 }));
 const setting = vi.hoisted(() => ({ days: 90, fail: false }));
 vi.mock('@auto-swe/shared/config', () => ({
   resolveSetting: vi.fn(async () => {
@@ -188,7 +221,14 @@ beforeEach(async () => {
   db.deletedArtifacts = [];
   setting.days = 90;
   setting.fail = false;
-  storage.backend = 's3';
+  storage.s3Bucket = 'bucket';
+  storage.fsDir = '/var/artifacts';
+  db.evidence = [];
+  db.deletedPublicKeys = [];
+  db.failingPublicKeys = new Set();
+  db.orchestratedRunIds = new Set();
+  db.reviewSourceRunIds = new Set();
+  vi.unstubAllEnvs();
 });
 
 describe('pruneRunHistory', () => {
@@ -368,8 +408,8 @@ describe('pruneRunHistory', () => {
     expect(result.deleted).toBe(1);
   });
 
-  it('never reads runs with object-store artifacts when no object store is configured', async () => {
-    storage.backend = 'inline';
+  it('never reads runs with object-store artifacts when no bucket is configured', async () => {
+    storage.s3Bucket = null;
     db.runs = [run('s3-run', 200), run('plain', 200)];
     db.s3Artifacts = [{ id: 'art', runId: 's3-run' }];
     const result = await pruneRunHistory(NOW);
@@ -473,16 +513,86 @@ describe('pruneRunHistory', () => {
     expect(result.kept.pendingCallback).toBe(RUN_PRUNE_BATCH);
   });
 
-  it('warns once per sweep that runs with object-store artifacts are not considered', async () => {
-    storage.backend = 'inline';
+  it('warns once per sweep that runs with artifacts in an unconfigured backend are not considered', async () => {
+    storage.s3Bucket = null;
+    storage.fsDir = null;
     db.runs = [run('plain', 200)];
     await pruneRunHistory(NOW);
-    const warnings = logWarn.mock.calls.filter(([m]) => String(m).includes('object store'));
+    const warnings = logWarn.mock.calls.filter(([m]) => String(m).includes('not configured'));
     expect(warnings).toHaveLength(1);
   });
 
-  it('does not warn about the object store when retention is off', async () => {
-    storage.backend = 'inline';
+  it('does not warn when both backends are configured', async () => {
+    db.runs = [run('plain', 200)];
+    await pruneRunHistory(NOW);
+    expect(logWarn).not.toHaveBeenCalled();
+  });
+
+  it('deletes filesystem-store artifacts before their run, and keeps a run whose file could not go', async () => {
+    db.runs = [run('a', 200), run('b', 200)];
+    db.s3Artifacts = [
+      { backend: 'fs', id: 'fs-a', runId: 'a' },
+      { backend: 'fs', id: 'fs-b', runId: 'b' },
+    ];
+    db.failingArtifactIds = new Set(['fs-b']);
+    const result = await pruneRunHistory(NOW);
+    expect(db.deletedArtifacts).toEqual(['fs-a']);
+    expect(ids()).toEqual(['b']);
+    expect(result.kept.storageFailed).toBe(1);
+  });
+
+  it('never reads runs with filesystem artifacts when no filesystem root is configured', async () => {
+    storage.fsDir = null;
+    db.runs = [run('fs-run', 200), run('plain', 200)];
+    db.s3Artifacts = [{ backend: 'fs', id: 'art', runId: 'fs-run' }];
+    const result = await pruneRunHistory(NOW);
+    expect(ids()).toEqual(['fs-run']);
+    expect(result.deleted).toBe(1);
+    expect(db.deletedArtifacts).toEqual([]);
+  });
+
+  it('removes the public copy of screenshot evidence, from its own bucket or the default one', async () => {
+    vi.stubEnv('UI_EVIDENCE_PUBLIC_BUCKET', 'default-public');
+    db.runs = [run('a', 200), run('b', 200)];
+    db.evidence = [
+      { id: 'e1', publicBucket: 'own-public', runId: 'a' },
+      { id: 'e2', publicBucket: null, runId: 'b' },
+    ];
+    const result = await pruneRunHistory(NOW);
+    expect(db.deletedPublicKeys.sort()).toEqual([
+      'default-public/ui-evidence/b/e2.png',
+      'own-public/ui-evidence/a/e1.png',
+    ]);
+    expect(result.deleted).toBe(2);
+  });
+
+  it('keeps a run whose public evidence copy could not be deleted', async () => {
+    db.runs = [run('a', 200)];
+    db.evidence = [{ id: 'e1', publicBucket: 'pub', runId: 'a' }];
+    db.failingPublicKeys = new Set(['ui-evidence/a/e1.png']);
+    const result = await pruneRunHistory(NOW);
+    expect(ids()).toEqual(['a']);
+    expect(result.kept.storageFailed).toBe(1);
+  });
+
+  it('touches no public bucket for evidence when none is named', async () => {
+    db.runs = [run('a', 200)];
+    db.evidence = [{ id: 'e1', publicBucket: null, runId: 'a' }];
+    await pruneRunHistory(NOW);
+    expect(db.deletedPublicKeys).toEqual([]);
+    expect(ids()).toEqual([]);
+  });
+
+  it('does not select a child of an unfinished orchestration or a source of a retried review launch', async () => {
+    db.runs = [run('child', 200), run('source', 200), run('plain', 200)];
+    db.orchestratedRunIds = new Set(['child']);
+    db.reviewSourceRunIds = new Set(['source']);
+    await pruneRunHistory(NOW);
+    expect(ids().sort()).toEqual(['child', 'source']);
+  });
+
+  it('does not warn about the artifact backends when retention is off', async () => {
+    storage.s3Bucket = null;
     setting.days = 0;
     await pruneRunHistory(NOW);
     expect(logWarn).not.toHaveBeenCalled();
