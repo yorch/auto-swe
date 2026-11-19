@@ -1,6 +1,7 @@
 import type { Prisma } from '@auto-swe/shared';
 import { type PullRequestRepo, pullRequestUrl } from '@auto-swe/shared/lib/pullRequest';
 import { resolveGitHubBaseUrl } from '@auto-swe/shared/lib/systemConfig';
+import { isPlatformAdmin, userActor } from '@auto-swe/shared/permissions';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -70,18 +71,17 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: ListWorkflowsQuery },
     },
     async (request) => {
       const user = requireUser(request);
       const { limit, offset } = request.query;
-      const where: Prisma.ActiveWorkflowWhereInput =
-        user.role === 'ADMIN'
-          ? {}
-          : {
-              repository: reachableConnections(user, request.repoAccessGate),
-            };
+      const where: Prisma.ActiveWorkflowWhereInput = isPlatformAdmin(userActor(user))
+        ? {}
+        : {
+            repository: reachableConnections(user, request.repoAccessGate),
+          };
 
       const [workflows, total, instanceBaseUrl] = await Promise.all([
         fastify.prisma.activeWorkflow.findMany({
@@ -105,14 +105,14 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: WorkflowIdParams },
     },
     async (request, reply) => {
       const user = requireUser(request);
       const where: Prisma.ActiveWorkflowWhereInput = {
         id: request.params.id,
-        ...(user.role !== 'ADMIN' && {
+        ...(!isPlatformAdmin(userActor(user)) && {
           repository: reachableConnections(user, request.repoAccessGate),
         }),
       };

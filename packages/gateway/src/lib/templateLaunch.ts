@@ -1,5 +1,6 @@
 import type { Prisma } from '@auto-swe/shared';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
+import { type HeldScope, isPlatformAdmin, userActor } from '@auto-swe/shared/permissions';
 import type { FastifyReply } from 'fastify';
 import { ledTeams, memberTeams } from './tenantScope.js';
 
@@ -8,7 +9,7 @@ export function teamMembershipFilter(user: {
   sub: string;
   role: string;
 }): Prisma.WorkflowTemplateWhereInput {
-  if (user.role === 'ADMIN') {
+  if (isPlatformAdmin(userActor(user))) {
     return {};
   }
   return {
@@ -20,22 +21,33 @@ export function teamMembershipFilter(user: {
 }
 
 /**
- * Write-scoped counterpart of `teamMembershipFilter`. Global templates
- * (`teamId: null`) are readable by everyone but may only be mutated by a
- * platform admin — a LEAD must never be able to edit, version, promote or
- * re-key the platform-wide fallback every other team runs.
- *
- * A team template needs LEAD (or ADMIN) membership on an active owning team,
- * the same bar `canManageTeamRepos` sets for the team's repositories. The
- * routes ask the platform role for no more than ENGINEER, so this filter is the
- * whole write check: without it any signed-in user could rewrite the workflow
- * every one of that team's runs executes.
+ * Write-scoped counterpart of `teamMembershipFilter`, built from the teams the caller holds
+ * `team.templates.write` on (`heldScope(request, 'team.templates.write')`). Global templates
+ * (`teamId: null`) are readable by everyone but may only be mutated by a platform admin, who holds
+ * the capability everywhere (`all`). A team template needs the capability on an active owning team,
+ * so a list and the action behind it cannot disagree.
+ */
+export function templateWriteWhere(held: HeldScope): Prisma.WorkflowTemplateWhereInput {
+  if (held.all) {
+    return {};
+  }
+  return {
+    team: { id: { in: held.teamIds }, isActive: true },
+    teamId: { not: null },
+  };
+}
+
+/**
+ * Transitional synchronous form for callers that have not moved to `templateWriteWhere` yet
+ * (`routes/automations.ts`). Same rule as before: platform admin, or LEAD or ADMIN of an active
+ * owning team.
+ * @deprecated Use `templateWriteWhere(await heldScope(request, 'team.templates.write'))`.
  */
 export function templateWriteFilter(user: {
   sub: string;
   role: string;
 }): Prisma.WorkflowTemplateWhereInput {
-  if (user.role === 'ADMIN') {
+  if (isPlatformAdmin(userActor(user))) {
     return {};
   }
   return {

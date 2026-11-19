@@ -7,7 +7,6 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
 import { skillPluginManaged } from '../lib/pluginSkillPolicy.js';
-import { checkTeamAccess } from '../lib/skillAssignmentService.js';
 import {
   createSkill,
   getSkillEffectivenessReport,
@@ -71,7 +70,7 @@ const ListSkillsQuery = z.object({});
 
 export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.catalog.manage' });
 
   // Two skills an agent could mistake for each other: the name is refused, as an import's is.
   const nameExists = (reply: FastifyReply, err: SkillNameConflictError) =>
@@ -371,22 +370,16 @@ const TeamIdParams = z.object({ teamId: z.string().uuid() });
 
 export const teamAgentSkillRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const engineer = requireAuth({ requiredRole: 'ENGINEER' });
+  const teamMember = requireAuth({ capability: 'team.agents.read', team: { param: 'teamId' } });
 
   // GET /api/v1/teams/:teamId/skills — read-only skill library for team members,
   // so team owners can pick skills for their TEAM-scope agents without the
   // admin-only /api/v1/platform/skills endpoint.
   app.get(
     '/:teamId/skills',
-    { onRequest: engineer, schema: { params: TeamIdParams } },
-    async (request, reply) => {
+    { onRequest: teamMember, schema: { params: TeamIdParams } },
+    async (request) => {
       const { teamId } = request.params;
-      const user = requireUser(request);
-
-      const access = await checkTeamAccess(fastify.prisma, user, teamId);
-      if (!access.ok) {
-        return sendError(reply, 403, 'FORBIDDEN', access.message);
-      }
 
       const team = await fastify.prisma.team.findUnique({
         select: { orgId: true },

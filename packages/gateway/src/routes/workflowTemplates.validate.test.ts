@@ -81,7 +81,11 @@ function buildApp(opts: Opts = {}) {
     }),
     configAuditLog: model('configAuditLog', {}),
     connection: model('connection', { findMany: (() => []) as never }),
+    // The permissions loader's reads, from the same `teamRole` fixture as the membership lookups.
+    organizationMembership: model('organizationMembership', { findMany: (() => []) as never }),
     team: model('team', {
+      findMany: ((a: { where: { id: { in: string[] } } }) =>
+        a.where.id.in.map((id) => ({ id, isActive: true, orgId: null }))) as never,
       findUnique: (() => ({
         egressAllowlist: [],
         shellImageAllowlist: opts.teamAllowlist ?? [],
@@ -90,6 +94,15 @@ function buildApp(opts: Opts = {}) {
     teamMembership: model('teamMembership', {
       findFirst: (() =>
         opts.teamRole === null ? null : { role: opts.teamRole ?? 'LEAD' }) as never,
+      findMany: ((a: { select?: { team?: unknown }; where: { teamId?: { in: string[] } } }) => {
+        if (opts.teamRole === null) {
+          return [];
+        }
+        const role = opts.teamRole ?? 'LEAD';
+        return a.select?.team
+          ? [{ role, team: { id: 'team-1', isActive: true } }]
+          : (a.where.teamId?.in ?? []).map((teamId) => ({ role, teamId }));
+      }) as never,
       findUnique: (() =>
         opts.teamRole === null ? null : { role: opts.teamRole ?? 'LEAD' }) as never,
     }),

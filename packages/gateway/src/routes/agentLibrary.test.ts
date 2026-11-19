@@ -8,6 +8,7 @@ vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
 
 import { packFiles } from '@auto-swe/shared/lib/harnessProfile';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
+import { emptyStanding, setTeam, withStanding } from '../test/repoStanding.js';
 import { agentLibraryRoutes, teamAgentLibraryRoutes } from './agentLibrary.js';
 
 function newMockPrisma() {
@@ -36,13 +37,15 @@ function newMockPrisma() {
     },
     // P5: org-scoped agent creation validates the org exists via this lookup.
     organization: { findUnique: vi.fn() },
+    // The permissions loader reads these (`withStanding` answers them from a plain description).
+    organizationMembership: { findMany: vi.fn().mockResolvedValue([]) },
     pluginEnablement: { findMany: vi.fn().mockResolvedValue([]) },
     providerCredential: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
     skill: { findMany: vi.fn().mockResolvedValue([]) },
     // Channel assistant Phase 1: CHANNEL-scoped agent creation validates the channel exists.
     slackChannel: { findUnique: vi.fn() },
-    team: { findUnique: vi.fn() },
-    teamMembership: { findUnique: vi.fn() },
+    team: { findMany: vi.fn(), findUnique: vi.fn() },
+    teamMembership: { findMany: vi.fn(), findUnique: vi.fn() },
     workflowTemplate: { findUnique: vi.fn() },
   };
   // The service wraps agent + skill-ref writes in an interactive transaction;
@@ -79,7 +82,11 @@ async function buildTeamApp(membershipRole: 'ADMIN' | 'ENGINEER' | null) {
   mockPrisma.teamMembership.findUnique.mockResolvedValue(
     membershipRole ? { role: membershipRole } : null
   );
-  app.decorate('prisma', mockPrisma as unknown as never);
+  const standing = emptyStanding();
+  if (membershipRole) {
+    setTeam(standing, TEAM, { role: membershipRole });
+  }
+  app.decorate('prisma', withStanding(mockPrisma, standing) as unknown as never);
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: 'ENGINEER', sub: 'u-1' }),
   } as unknown as never);

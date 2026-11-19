@@ -73,6 +73,17 @@ async function build(): Promise<Harness> {
         return data;
       },
     },
+    // The permissions loader's reads: the caller leads `team-1` (a platform ADMIN needs no
+    // membership, and the loader answers the same either way).
+    organizationMembership: { findMany: async () => [] },
+    team: {
+      findMany: async () => [{ id: 'team-1', isActive: true, orgId: null }],
+    },
+    teamMembership: {
+      findMany: async () => [
+        { role: 'LEAD', team: { id: 'team-1', isActive: true, orgId: null }, teamId: 'team-1' },
+      ],
+    },
     workflowTemplate: {
       findFirst: async ({ select, where }: { select?: Row; where: Row }) => {
         const id = where.id ?? ((where.AND as Row[] | undefined)?.[0]?.id as string | undefined);

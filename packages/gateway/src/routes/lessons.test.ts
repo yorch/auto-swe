@@ -12,6 +12,38 @@ const { forgetMock } = vi.hoisted(() => ({
 vi.mock('@auto-swe/shared/lib/memoryForget', () => ({ forgetMemoryItems: forgetMock }));
 vi.mock('@auto-swe/shared/config', () => ({ resolveSetting: vi.fn().mockResolvedValue(2) }));
 
+type Membership = { role: string; team: { isActive: boolean } } | null;
+
+/**
+ * Describe the caller's membership of whichever team the route asks about (every team the loader
+ * names is answered alike): its role and whether the team is active, or none.
+ */
+function setMembership(
+  prisma: {
+    team: { findMany: ReturnType<typeof vi.fn> };
+    teamMembership: { findMany: ReturnType<typeof vi.fn> };
+  },
+  membership: Membership
+): void {
+  prisma.team.findMany.mockImplementation(async (args: { where: { id: { in: string[] } } }) =>
+    args.where.id.in.map((id) => ({
+      id,
+      isActive: membership?.team.isActive ?? true,
+      orgId: null,
+    }))
+  );
+  prisma.teamMembership.findMany.mockImplementation(
+    async (args: { select?: { team?: unknown }; where: { teamId?: { in: string[] } } }) => {
+      if (!membership) {
+        return [];
+      }
+      return args.select?.team
+        ? [{ role: membership.role, team: { id: 'team-1', isActive: membership.team.isActive } }]
+        : (args.where.teamId?.in ?? []).map((teamId) => ({ role: membership.role, teamId }));
+    }
+  );
+}
+
 function newMockPrisma() {
   const prisma = {
     $executeRaw: vi.fn().mockResolvedValue(1),
@@ -35,12 +67,14 @@ function newMockPrisma() {
       findMany: vi.fn().mockResolvedValue([]),
       update: vi.fn().mockResolvedValue({}),
     },
-    organizationMembership: { findUnique: vi.fn().mockResolvedValue(null) },
-    team: { findUnique: vi.fn().mockResolvedValue(null) },
-    teamMembership: { findUnique: vi.fn().mockResolvedValue(null) },
+    // The permissions loader's three reads; `setMembership` answers them.
+    organizationMembership: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
+    team: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn().mockResolvedValue(null) },
+    teamMembership: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
     workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
   };
   prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => unknown) => fn(prisma));
+  setMembership(prisma, null);
   return prisma;
 }
 
@@ -88,7 +122,7 @@ describe('GET /lessons/recall-experiment', () => {
       { role: 'ENGINEER', team: { isActive: true } },
       { role: 'LEAD', team: { isActive: false } },
     ]) {
-      prisma.teamMembership.findUnique.mockResolvedValue(membership);
+      setMembership(prisma, membership);
       expect((await app.inject({ headers: AUTH, url })).statusCode).toBe(403);
     }
     expect(prisma.workflowRun.findMany).not.toHaveBeenCalled();
@@ -98,7 +132,7 @@ describe('GET /lessons/recall-experiment', () => {
     async (role) => {
       const { app, prisma } = await buildApp('ENGINEER');
       prisma.connection.findFirst.mockResolvedValue({ teamId: 'owning-team' });
-      prisma.teamMembership.findUnique.mockResolvedValue({ role, team: { isActive: true } });
+      setMembership(prisma, { role, team: { isActive: true } });
       const response = await app.inject({ headers: AUTH, url });
       expect(response.statusCode).toBe(200);
       expect(response.json().data.arms.ON).toMatchObject({ runCount: 0, successRate: null });
@@ -136,17 +170,16 @@ describe('GET /lessons/recall-experiment', () => {
       comparison: { smallSample: true },
       likeForLike: { ON: { runCount: 1 } },
     });
-    expect(prisma.teamMembership.findUnique).not.toHaveBeenCalled();
   });
   it('supports team scope only for that team manager, and excludes repositories merely shared with the team', async () => {
     const { app, prisma } = await buildApp('ENGINEER');
     const teamUrl = `/api/v1/lessons/recall-experiment?teamId=${REPO_ID}`;
     expect((await app.inject({ headers: AUTH, url: teamUrl })).statusCode).toBe(403);
-    prisma.teamMembership.findUnique.mockResolvedValue({ role: 'LEAD', team: { isActive: true } });
+    setMembership(prisma, { role: 'LEAD', team: { isActive: true } });
     const response = await app.inject({ headers: AUTH, url: teamUrl });
     expect(response.statusCode).toBe(200);
-    expect(prisma.teamMembership.findUnique).toHaveBeenLastCalledWith(
-      expect.objectContaining({ where: { userId_teamId: { teamId: REPO_ID, userId: 'admin-1' } } })
+    expect(prisma.teamMembership.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { teamId: { in: [REPO_ID] }, userId: 'admin-1' } })
     );
     expect(prisma.workflowRun.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -203,14 +236,13 @@ describe('GET /lessons (list)', () => {
 
   it('names the repositories a non-admin leads, and none for an admin', async () => {
     const { app, prisma } = await buildApp('ENGINEER');
+    setMembership(prisma, { role: 'LEAD', team: { isActive: true } });
     prisma.connection.findMany.mockResolvedValue([{ id: REPO_ID }]);
     const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/lessons' });
     expect(res.json().meta.managedRepoIds).toEqual([REPO_ID]);
+    // The teams come from `team.lessons.manage`, the same capability the actions ask.
     expect(prisma.connection.findMany.mock.calls[0][0].where).toEqual({
-      team: {
-        isActive: true,
-        memberships: { some: { role: { in: ['LEAD', 'ADMIN'] }, userId: 'admin-1' } },
-      },
+      team: { id: { in: ['team-1'] }, isActive: true },
       type: 'git_repo',
     });
 
@@ -381,12 +413,13 @@ describe('DELETE /lessons/:id', () => {
     const { app, prisma } = await buildApp('ENGINEER');
     prisma.memoryItem.findFirst.mockResolvedValue(repoLesson);
     prisma.connection.findFirst.mockResolvedValue({ teamId: 'team-1' });
-    prisma.teamMembership.findUnique.mockResolvedValue({ role: 'LEAD', team: { isActive: true } });
+    setMembership(prisma, { role: 'LEAD', team: { isActive: true } });
     const res = await del(app);
     expect(res.statusCode).toBe(200);
     expect(forgetMock).toHaveBeenCalledWith(expect.anything(), [LESSON_ID]);
-    expect(prisma.teamMembership.findUnique.mock.calls[0][0].where).toEqual({
-      userId_teamId: { teamId: 'team-1', userId: 'admin-1' },
+    expect(prisma.teamMembership.findMany.mock.calls[0][0].where).toEqual({
+      teamId: { in: ['team-1'] },
+      userId: 'admin-1',
     });
   });
 
@@ -394,7 +427,7 @@ describe('DELETE /lessons/:id', () => {
     const { app, prisma } = await buildApp('ENGINEER');
     prisma.memoryItem.findFirst.mockResolvedValue(repoLesson);
     prisma.connection.findFirst.mockResolvedValue({ teamId: 'team-1' });
-    prisma.teamMembership.findUnique.mockResolvedValue({
+    setMembership(prisma, {
       role: 'ENGINEER',
       team: { isActive: true },
     });
@@ -407,7 +440,7 @@ describe('DELETE /lessons/:id', () => {
     const { app, prisma } = await buildApp('ENGINEER');
     prisma.memoryItem.findFirst.mockResolvedValue(repoLesson);
     prisma.connection.findFirst.mockResolvedValue({ teamId: 'team-1' });
-    prisma.teamMembership.findUnique.mockResolvedValue({ role: 'LEAD', team: { isActive: false } });
+    setMembership(prisma, { role: 'LEAD', team: { isActive: false } });
     expect((await del(app)).statusCode).toBe(403);
     expect(forgetMock).not.toHaveBeenCalled();
   });
@@ -441,7 +474,7 @@ describe('POST /lessons/consolidate', () => {
     const { app, prisma, temporal } = await buildApp('ENGINEER');
     prisma.connection.findUnique.mockResolvedValue({ id: REPO_ID });
     prisma.connection.findFirst.mockResolvedValue({ teamId: 'team-1' });
-    prisma.teamMembership.findUnique.mockResolvedValue({ role: 'ADMIN', team: { isActive: true } });
+    setMembership(prisma, { role: 'ADMIN', team: { isActive: true } });
     const res = await post(app);
     expect(res.statusCode).toBe(202);
     expect(temporal.startConsolidationWorkflow).toHaveBeenCalledWith(
@@ -454,7 +487,7 @@ describe('POST /lessons/consolidate', () => {
     const { app, prisma, temporal } = await buildApp('ENGINEER');
     prisma.connection.findUnique.mockResolvedValue({ id: REPO_ID });
     prisma.connection.findFirst.mockResolvedValue({ teamId: 'team-1' });
-    prisma.teamMembership.findUnique.mockResolvedValue({
+    setMembership(prisma, {
       role: 'ENGINEER',
       team: { isActive: true },
     });
@@ -474,7 +507,6 @@ describe('POST /lessons/consolidate', () => {
     const { app, prisma } = await buildApp('ADMIN');
     prisma.connection.findUnique.mockResolvedValue({ id: REPO_ID });
     expect((await post(app)).statusCode).toBe(202);
-    expect(prisma.teamMembership.findUnique).not.toHaveBeenCalled();
   });
 });
 
@@ -494,7 +526,7 @@ describe('GET /workflow-runs/:id/lessons', () => {
       workflowRun: { findFirst: vi.fn().mockResolvedValue({ id: RUN_ID }) },
     };
     prisma.connection.findFirst.mockResolvedValue({ teamId: 'team-1' });
-    prisma.teamMembership.findUnique.mockResolvedValue({
+    setMembership(prisma, {
       role: 'ENGINEER',
       team: { isActive: true },
     });
@@ -664,7 +696,7 @@ describe('lesson flags', () => {
     const built = await buildApp('ENGINEER');
     built.prisma.memoryItem.findFirst.mockResolvedValue(lessonRow);
     built.prisma.connection.findFirst.mockResolvedValue({ teamId: 'team-1' });
-    built.prisma.teamMembership.findUnique.mockResolvedValue({
+    setMembership(built.prisma, {
       role: lead ? 'LEAD' : 'ENGINEER',
       team: { isActive: true },
     });

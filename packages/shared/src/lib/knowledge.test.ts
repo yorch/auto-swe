@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  canApproveKnowledge,
+  knowledgeApprovalCapability,
   knowledgeReadableWhere,
   knowledgeTeamReachWhere,
   toKnowledgeScalarProjection,
@@ -99,11 +99,9 @@ describe('knowledge policy', () => {
       status: 'APPROVED',
       visibility: 'ORGANIZATION',
     });
-    expect(canApproveKnowledge('LEAD', 'ORG_MEMBER', false, 'SELECTED_TEAMS')).toBe(true);
-    expect(canApproveKnowledge('LEAD', 'ORG_MEMBER', false, 'ORGANIZATION')).toBe(false);
-    expect(canApproveKnowledge('ENGINEER', 'ORG_ADMIN', false, 'ORGANIZATION')).toBe(true);
-    expect(canApproveKnowledge(null, null, false, 'TEAM')).toBe(false);
-    expect(canApproveKnowledge(null, null, true, 'ORGANIZATION')).toBe(true);
+    expect(knowledgeApprovalCapability('SELECTED_TEAMS')).toBe('team.knowledge.approve');
+    expect(knowledgeApprovalCapability('TEAM')).toBe('team.knowledge.approve');
+    expect(knowledgeApprovalCapability('ORGANIZATION')).toBe('org.knowledge.publish');
   });
 
   it('uses a valid impossible predicate when scope is missing', () => {

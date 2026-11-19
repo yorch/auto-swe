@@ -36,6 +36,29 @@ function activeTeam() {
   return { isActive: true, organization: { isActive: true }, orgId: 'org-1' };
 }
 
+/** What `can()` reads for the owning team: a LEAD of an active team in `org-1`. */
+function standingMocks() {
+  return {
+    organizationMembership: {
+      findMany: vi.fn().mockResolvedValue([{ orgId: 'org-1', role: 'ORG_MEMBER' }]),
+      findUnique: vi.fn().mockResolvedValue({ role: 'ORG_MEMBER' }),
+    },
+    team: {
+      findMany: vi.fn(async (args?: { where?: { isActive?: boolean } }) =>
+        // The recipient lookup filters on `isActive`; the permissions loader reads by id alone.
+        args?.where?.isActive
+          ? [{ id: recipientId }]
+          : [{ id: teamId, isActive: true, orgId: 'org-1' }]
+      ),
+      findUnique: vi.fn().mockResolvedValue(activeTeam()),
+    },
+    teamMembership: {
+      findMany: vi.fn().mockResolvedValue([{ role: 'LEAD', teamId }]),
+      findUnique: vi.fn().mockResolvedValue({ role: 'LEAD' }),
+    },
+  };
+}
+
 function database(overrides: Record<string, unknown> = {}) {
   const tx = {
     connection: { findFirst: vi.fn().mockResolvedValue({ id: repoId }) },
@@ -54,12 +77,7 @@ function database(overrides: Record<string, unknown> = {}) {
       createMany: vi.fn().mockResolvedValue({ count: 1 }),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
-    organizationMembership: { findUnique: vi.fn().mockResolvedValue({ role: 'ORG_MEMBER' }) },
-    team: {
-      findMany: vi.fn().mockResolvedValue([{ id: recipientId }]),
-      findUnique: vi.fn().mockResolvedValue(activeTeam()),
-    },
-    teamMembership: { findUnique: vi.fn().mockResolvedValue({ role: 'LEAD' }) },
+    ...standingMocks(),
     user: { findUnique: vi.fn().mockResolvedValue({ isActive: true, role: 'ENGINEER' }) },
     ...overrides,
   };
@@ -76,7 +94,11 @@ function readScopeDb(overrides: Record<string, unknown> = {}) {
     organization: { findMany: vi.fn().mockResolvedValue([]) },
     organizationMembership: { findMany: vi.fn().mockResolvedValue([{ orgId: 'org-1' }]) },
     team: { findMany: vi.fn().mockResolvedValue([]) },
-    teamMembership: { findMany: vi.fn().mockResolvedValue([{ teamId }]) },
+    teamMembership: {
+      findMany: vi
+        .fn()
+        .mockResolvedValue([{ role: 'LEAD', team: { id: teamId, isActive: true }, teamId }]),
+    },
     user: { findUnique: vi.fn().mockResolvedValue({ isActive: true, role: 'ENGINEER' }) },
     ...overrides,
   };
@@ -152,9 +174,7 @@ describe('knowledge lifecycle service', () => {
     const db = {
       connection: { findFirst: vi.fn().mockResolvedValue({ id: repoId }) },
       knowledgeItem: { create },
-      organizationMembership: { findUnique: vi.fn().mockResolvedValue({ role: 'ORG_MEMBER' }) },
-      team: { findUnique: vi.fn().mockResolvedValue(activeTeam()) },
-      teamMembership: { findUnique: vi.fn().mockResolvedValue({ role: 'LEAD' }) },
+      ...standingMocks(),
       user: { findUnique: vi.fn().mockResolvedValue({ isActive: true, role: 'ENGINEER' }) },
     } as unknown as PrismaClient;
     await expect(
@@ -456,7 +476,10 @@ describe('knowledge lifecycle service', () => {
   it('rejects cross-organization selected teams even for platform admins', async () => {
     const { db, tx } = database({
       team: {
-        findMany: vi.fn().mockResolvedValue([]),
+        // No recipient is in the owning organization; the loader still finds the owning team.
+        findMany: vi.fn(async (args?: { where?: { isActive?: boolean } }) =>
+          args?.where?.isActive ? [] : [{ id: teamId, isActive: true, orgId: 'org-1' }]
+        ),
         findUnique: vi.fn().mockResolvedValue(activeTeam()),
       },
       user: { findUnique: vi.fn().mockResolvedValue({ isActive: true, role: 'ADMIN' }) },
@@ -531,9 +554,7 @@ describe('knowledge lifecycle service', () => {
     const db = {
       $transaction: vi.fn((fn: (tx: unknown) => unknown) => fn(db)),
       knowledgeItem: { create },
-      organizationMembership: { findUnique: vi.fn().mockResolvedValue({ role: 'ORG_MEMBER' }) },
-      team: { findUnique: vi.fn().mockResolvedValue(activeTeam()) },
-      teamMembership: { findUnique: vi.fn().mockResolvedValue({ role: 'LEAD' }) },
+      ...standingMocks(),
       user: { findUnique: vi.fn().mockResolvedValue({ isActive: true, role: 'ENGINEER' }) },
     } as unknown as PrismaClient;
     await createCuratedKnowledgeItem(db, 'user-1', {

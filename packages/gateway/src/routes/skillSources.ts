@@ -169,7 +169,7 @@ const PUBLIC_SOURCE_SELECT = {
 
 export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.integrations.manage' });
 
   /** A fetch failure as its fixed string; anything unexpected is rethrown to the error handler. */
   const sourceError = (err: unknown, reply: FastifyReply) => {
