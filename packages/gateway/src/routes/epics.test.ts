@@ -9,6 +9,19 @@ vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
   ...(await import('../test/billingMock.js')),
 }));
 
+// Wraps the real `authorizeLaunch` so a test can read the options the route passed it.
+const authorizeLaunchSpy = vi.hoisted(() => vi.fn());
+vi.mock('../lib/launchAuthorization.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../lib/launchAuthorization.js')>();
+  return {
+    ...original,
+    authorizeLaunch: (...args: Parameters<typeof original.authorizeLaunch>) => {
+      authorizeLaunchSpy(...args);
+      return original.authorizeLaunch(...args);
+    },
+  };
+});
+
 // ── Fixtures ──
 
 const REPO_A = '00000000-0000-4000-8000-00000000000a'; // team-1 (user-1 is a member), org-1
@@ -509,6 +522,19 @@ describe('epic routes', () => {
       expect(body.error.reasons).toEqual([{ reason: 'team-lead-required', repo: 'org/alpha' }]);
       expect(startedEpicIds).toHaveLength(0);
       expect(createdWorkRequests).toHaveLength(0);
+    });
+
+    it('asks authorizeLaunch for the owning-team LEAD requirement, the route’s real refusal', async () => {
+      authorizeLaunchSpy.mockClear();
+      const res = await app.inject({
+        headers: auth,
+        method: 'POST',
+        payload: { ...payload, repoIds: [REPO_A] },
+        url: '/api/v1/epics',
+      });
+      expect(res.statusCode).toBe(201);
+      expect(authorizeLaunchSpy).toHaveBeenCalledTimes(1);
+      expect(authorizeLaunchSpy.mock.calls[0]?.[2]).toMatchObject({ requireOwningTeamLead: true });
     });
 
     it('allows a platform ENGINEER who leads the owning team', async () => {

@@ -474,6 +474,9 @@ function rejectsInstallationChange(
  * Whether the caller holds the platform operator's repository controls: the GitHub App
  * installation, the executor image and its build record, and the tool settings. They decide what
  * runs next to the repository's credential, so no team authority reaches them.
+ *
+ * Routes that call this do not list `platform.repos.installation.bind` in `handlerChecked`: the ask
+ * is a sub-rule at the top of the handler and would record an allowed check for any platform admin.
  */
 async function holdsPlatformRepoControls(request: FastifyRequest): Promise<boolean> {
   return (await can(request, 'platform.repos.installation.bind')).allowed;
@@ -1286,7 +1289,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     '/import',
     {
       onRequest: requireAuth({
-        handlerChecked: ['team.repos.create', 'platform.repos.installation.bind'],
+        handlerChecked: ['team.repos.create'],
       }),
       schema: { body: ImportReposSchema },
     },
@@ -1382,7 +1385,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     '/',
     {
       onRequest: requireAuth({
-        handlerChecked: ['team.repos.create', 'platform.repos.installation.bind'],
+        handlerChecked: ['team.repos.create'],
       }),
       schema: { body: CreateRepoSchema },
     },
@@ -1404,11 +1407,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id',
     {
       onRequest: requireAuth({
-        handlerChecked: [
-          'team.repos.manage',
-          'platform.repos.installation.bind',
-          'team.repos.gate-commands.author',
-        ],
+        handlerChecked: ['team.repos.manage', 'team.repos.gate-commands.author'],
       }),
       schema: { body: UpdateRepoSchema, params: RepoParamsSchema },
     },

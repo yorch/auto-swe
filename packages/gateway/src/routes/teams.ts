@@ -256,7 +256,9 @@ function guardTeamMembershipChange(
     if (action === 'delete') {
       return { code: 'SELF_REMOVAL', message: 'Cannot remove yourself from the team' };
     }
-    if (newRole && rankOf(newRole) !== targetRank) {
+    // Only a LOWERING is refused. A raise is the path an org or platform admin who already sits on
+    // the team uses to take team powers (spec 4.2); the rank checks below bound it by the acting rank.
+    if (newRole && outranks(targetRank, rankOf(newRole))) {
       return { code: 'SELF_DEMOTION', message: 'Cannot demote yourself' };
     }
   }
@@ -546,6 +548,15 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (!team) {
         return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
+      }
+
+      // The channel assistant's prompt steers an assistant that can start runs, so it is an
+      // operation, not team governance: organization authority alone does not reach it.
+      if (request.body.defaultPersonaPrompt !== undefined) {
+        const persona = await can(request, 'team.persona.manage', { teamId: team.id });
+        if (!persona.allowed) {
+          return replyRefusal(reply, persona);
+        }
       }
 
       // A rename onto another team's name trips the unique index on name.

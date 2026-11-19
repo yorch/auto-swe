@@ -21,6 +21,8 @@ export async function inviteUser(
     orgId: string;
     orgRole: 'ORG_ADMIN' | 'ORG_MEMBER';
     source: 'org_admin' | 'team_lead';
+    /** The audit context of the TeamMembership row, when its ground differs from `authority`. */
+    teamContext?: AuditContext;
     teamId?: string;
     teamRole?: Role;
   }
@@ -93,7 +95,7 @@ export async function inviteUser(
           actor,
           after: { role: teamMembership.role, teamId: args.teamId, userId: user.id },
           client: tx,
-          ...audit,
+          ...(args.teamContext ? { context: args.teamContext } : audit),
           entityId: teamMembership.id,
           entityType: 'TeamMembership',
         });

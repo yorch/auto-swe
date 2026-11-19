@@ -291,6 +291,42 @@ describe('POST /:orgId/members/invite', () => {
     await app.close();
   });
 
+  it('answers a team that does not exist as a mismatch, before asking about it', async () => {
+    const app = buildApp('ENGINEER');
+    teamFindUnique.mockResolvedValue(null);
+    const res = await app.inject({
+      method: 'POST',
+      payload: { email: 'team@example.com', teamId: TEAM_ID },
+      url: `${PREFIX}/${ORG_ID}/members/invite`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('TEAM_ORG_MISMATCH');
+    expect(userCreate).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('writes the team decision authority on the TeamMembership row', async () => {
+    // A platform admin with no organization membership who holds LEAD on the team (the harness's
+    // membership): the organization decision is `platform-admin`, the team decision `team-role`.
+    const app = buildApp('ADMIN', null);
+    const res = await app.inject({
+      method: 'POST',
+      payload: { email: 'team@example.com', teamId: TEAM_ID },
+      url: `${PREFIX}/${ORG_ID}/members/invite`,
+    });
+    expect(res.statusCode).toBe(201);
+    const teamRow = auditCreate.mock.calls
+      .map((c) => c[0].data as { entityType: string; context?: Record<string, unknown> })
+      .find((d) => d.entityType === 'TeamMembership');
+    expect(teamRow?.context).toMatchObject({ authority: 'team-role' });
+    const orgRow = auditCreate.mock.calls
+      .map((c) => c[0].data as { entityType: string; context?: Record<string, unknown> })
+      .find((d) => d.entityType === 'OrganizationMembership');
+    expect(orgRow?.context).toMatchObject({ authority: 'platform-admin' });
+    expect(teamRow?.context?.requestId).toEqual(expect.any(String));
+    await app.close();
+  });
+
   it("leaves an org admin's invitee waiting for a platform admin's approval", async () => {
     const res = await invite('ENGINEER');
 

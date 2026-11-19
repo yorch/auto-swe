@@ -115,7 +115,12 @@ Some current checks are not "may this role do this" but separation of duties or 
 launcher may steer an orchestration (an admin gets an emergency stop only on a run a service
 principal launched), a template's author may not review their own change (`SELF_REVIEW_FORBIDDEN`),
 nobody removes or demotes themselves (`SELF_REMOVAL`, `SELF_DEMOTION`), a failure assigned to
-someone, a run's launcher. Platform `ADMIN` does **not** satisfy these. They are written as named
+someone, a run's launcher. Platform `ADMIN` does **not** satisfy these, with one documented
+exception: `notAuthor` at template review. A platform `ADMIN` may review a generated template version
+they created themselves, as before, because a single-admin deployment could otherwise never promote
+a generated version, and an administrator can already author an unreviewed version. Any other author
+is refused (`SELF_REVIEW_FORBIDDEN`). The exception is taken by the review route, not by the helper:
+`notAuthor` itself takes no role. The constraints are written as named
 constraints in `packages/shared/src/permissions/constraints.ts` (`notSelf`, `isLauncher`,
 `notAuthor`, `isAssignee`), composed with a capability by the domain code
 (`can(...)` AND `constraint(...)`), and listed in the generated reference beside the capabilities
@@ -264,8 +269,9 @@ deliberate behaviour change and goes in the upgrade note.
 5. **Sandbox policy PUTs** are `team.sandbox-policy.manage`, platform `ADMIN` only, declared as such
    (the team-role half of the old declaration never ran).
 6. **Platform-admin sub-rules** inside team routes (private-network callbacks, agent runtime,
-   installation binding, executor image build, PR-evaluation auto mode, eval-dataset link at ORG
-   scope) stay platform-only capabilities with their own keys.
+   installation binding, executor image build, PR-evaluation auto mode) stay platform-only
+   capabilities with their own keys. Linking an ORG-scope eval dataset is `org.repos.eval-dataset.link`:
+   org `ADMIN` of the repository's organization or platform `ADMIN`, the legacy rule.
 7. **Human-error baselines** (platform `LEAD` + any org member today) become `org.baselines.manage`:
    org `ADMIN` of the target org or platform `ADMIN`; reading them (`org.baselines.read`) is open to
    any org member, a widening from platform `LEAD`.

@@ -240,6 +240,7 @@ function captureReply(): { reply: FastifyReply; refusal: () => PlanRefusal } {
  * persisted `sourceAuthorization` and the validation payload cannot drift apart. The worker's
  * re-check (`plannedRunPin.ts`) reads the role from the database, never from this value.
  */
+// Rename-step site: `Role.ENGINEER` becomes the plain `USER` platform role when the enums are renamed.
 function synthesizedPlanActor(sub: string): { role: Role; sub: string } {
   return { role: Role.ENGINEER, sub };
 }

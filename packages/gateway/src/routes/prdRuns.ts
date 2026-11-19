@@ -107,9 +107,10 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
       // orgs, so it takes the same launch decision as an epic, owning-team LEAD
       // requirement included. Every repository refusal is collected so the
       // response names all of them.
-      // `authorizeLaunch` enforces the lead requirement below and names the repositories it refuses.
-      // This asks the same question of the same owning teams so the route records its check; the
-      // answer is not used to refuse, because that body is the one `authorizeLaunch` builds.
+      // The `can()` below is the recorded check that satisfies the `handler-checked` backstop and
+      // its answer is deliberately not used. The refusal is `authorizeLaunch` with
+      // `requireOwningTeamLead: true`, which also names the repositories it refuses; a test pins
+      // that flag, so dropping it fails the build instead of leaving this route unguarded.
       await can(request, 'team.launch.multi-repo', allOfTeams(repos.map((repo) => repo.team.id)));
       const authorization = await authorizeLaunch(fastify.prisma, user, {
         gate: request.repoAccessGate,

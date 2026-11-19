@@ -9,6 +9,19 @@ vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
   ...(await import('../test/billingMock.js')),
 }));
 
+// Wraps the real `authorizeLaunch` so a test can read the options the route passed it.
+const authorizeLaunchSpy = vi.hoisted(() => vi.fn());
+vi.mock('../lib/launchAuthorization.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../lib/launchAuthorization.js')>();
+  return {
+    ...original,
+    authorizeLaunch: (...args: Parameters<typeof original.authorizeLaunch>) => {
+      authorizeLaunchSpy(...args);
+      return original.authorizeLaunch(...args);
+    },
+  };
+});
+
 /**
  * `POST /api/v1/prd-runs`.
  *
@@ -303,6 +316,13 @@ describe('POST /prd-runs', () => {
     ]);
     expect(h.runInputs).toHaveLength(0);
     expect(h.started).toHaveLength(0);
+  });
+
+  it('asks authorizeLaunch for the owning-team LEAD requirement, the route’s real refusal', async () => {
+    authorizeLaunchSpy.mockClear();
+    expect((await submit(h)).statusCode).toBe(201);
+    expect(authorizeLaunchSpy).toHaveBeenCalledTimes(1);
+    expect(authorizeLaunchSpy.mock.calls[0]?.[2]).toMatchObject({ requireOwningTeamLead: true });
   });
 
   it('lets a team LEAD start a PRD run', async () => {

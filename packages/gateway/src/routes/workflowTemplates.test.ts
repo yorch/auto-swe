@@ -1,3 +1,4 @@
+import { CATALOG } from '@auto-swe/shared/permissions';
 import {
   buildWorkflowRunDailyRollups,
   computeAnalytics,
@@ -2326,6 +2327,24 @@ describe('workflow-templates authored commands and serving unaudited code', () =
       expect(state.shellAudits).toEqual([
         expect.objectContaining({ image: 'alpine:latest', nodeId: 'sh' }),
       ]);
+    });
+
+    it('refuses a reviewer who may write but lacks team.templates.review', async () => {
+      // Review and write are both team LEAD today; raise review alone so only it refuses.
+      const def = CATALOG['team.templates.review'] as { team?: string };
+      const before = def.team;
+      def.team = 'ADMIN';
+      try {
+        const state = seeded('LEAD', LINT_DEFAULT_SPEC);
+        const res = await send(state, 'POST', `/${TPL_ID}/versions/2/review`);
+        expect(res.statusCode).toBe(403);
+        expect(res.json().error?.code).toBe('FORBIDDEN');
+        expect((state.versions.get(`${TPL_ID}:2`) as { reviewedAt?: Date }).reviewedAt).toBe(
+          undefined
+        );
+      } finally {
+        def.team = before;
+      }
     });
   });
 

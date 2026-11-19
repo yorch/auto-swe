@@ -86,6 +86,14 @@ export const teamCapabilities = defineCapabilities({
     scope: 'team',
     team: 'MEMBER',
   },
+  'team.persona.manage': {
+    class: 'operation',
+    description:
+      "Set the prompt of a team's channel assistant, which can start runs. Organization admins do not hold it without a team role.",
+    requiresActiveTeam: true,
+    scope: 'team',
+    team: 'LEAD',
+  },
   'team.plugins.manage': {
     class: 'operation',
     description: 'Enable and disable plugins for a team.',

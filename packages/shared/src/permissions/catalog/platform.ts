@@ -38,12 +38,6 @@ export const platformCapabilities = defineCapabilities({
     description: 'Create and remove settings grants.',
     scope: 'platform',
   },
-  'platform.github.import': {
-    class: 'governance',
-    description:
-      'Import from every repository the instance credential can see, not only those the person reaches.',
-    scope: 'platform',
-  },
   'platform.integrations.manage': {
     class: 'sensitive',
     description:
@@ -74,11 +68,6 @@ export const platformCapabilities = defineCapabilities({
     class: 'read',
     description:
       'Read platform-wide usage and delivery reports, with approver identities unmasked.',
-    scope: 'platform',
-  },
-  'platform.repos.eval-dataset.link-org': {
-    class: 'sensitive',
-    description: 'Link an organization-scope eval dataset to a repository.',
     scope: 'platform',
   },
   'platform.repos.executor-image.probe': {

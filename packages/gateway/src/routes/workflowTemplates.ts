@@ -2046,6 +2046,19 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       if (!tpl) {
         return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
       }
+      // The filter above scopes the lookup by `team.templates.write`; the capability this route
+      // declares is the review one, so ask it here (recorded for the backstop).
+      if (
+        !(
+          await can(
+            request,
+            'team.templates.review',
+            tpl.teamId ? { teamId: tpl.teamId } : undefined
+          )
+        ).allowed
+      ) {
+        return reply.status(403).send({ error: TEMPLATE_AUTHOR_REFUSAL });
+      }
       const target = await fastify.prisma.workflowTemplateVersion.findUnique({
         select: { createdBy: true, generatedBy: true, id: true, spec: true },
         where: { templateId_version: { templateId: tpl.id, version: request.params.version } },

@@ -173,6 +173,11 @@ These are **constraints**, in `packages/shared/src/permissions/constraints.ts`: 
 `can(...)` and `constraint(...)`. Platform `ADMIN` does not satisfy a constraint, and a constraint
 never widens access. The matrix lists each beside the capabilities it accompanies.
 
+There is one documented exception, taken by the caller and not by a helper: a platform `ADMIN` may
+review a generated template version they created themselves. A single-admin deployment could
+otherwise never promote a generated version, and an administrator can already author an unreviewed
+version. Any other author is refused with `SELF_REVIEW_FORBIDDEN`.
+
 ## Reach is not a capability
 
 Which repositories a person reaches (team membership or a share, `canLaunch` on a share, the
@@ -196,14 +201,12 @@ _Generated from `packages/shared/src/permissions/catalog/` by `scripts/gen-permi
 | `platform.callbacks.private-network` | platform | sensitive | — | — | yes | — | Let a callback endpoint reach a private network address. |
 | `platform.catalog.manage` | platform | governance | — | — | yes | — | Manage the model and tool catalogs, global skills and agents, autonomy policies, harness profiles, evals, readiness and outcome reports. |
 | `platform.config.grants.manage` | platform | governance | — | — | yes | — | Create and remove settings grants. |
-| `platform.github.import` | platform | governance | — | — | yes | — | Import from every repository the instance credential can see, not only those the person reaches. |
 | `platform.integrations.manage` | platform | sensitive | — | — | yes | — | Configure GitHub credentials, webhook secrets and installations, system config, Slack install, MCP connections, package registries, marketplaces, skill sources and bundles. |
 | `platform.lessons.stats` | platform | read | — | — | yes | — | Read platform-wide lesson statistics. |
 | `platform.orgs.trust-invites.manage` | platform | governance | — | — | yes | — | Decide which email domains an organization trusts for invitations. |
 | `platform.pr-evaluation.auto-mode` | platform | sensitive | — | — | yes | — | Set a repository's pull-request evaluation to auto mode, or enable bot approval. |
 | `platform.repo-dependencies.scan` | platform | operation | — | — | yes | — | Start a repository dependency scan. |
 | `platform.reports.read-all` | platform | read | — | — | yes | — | Read platform-wide usage and delivery reports, with approver identities unmasked. |
-| `platform.repos.eval-dataset.link-org` | platform | sensitive | — | — | yes | — | Link an organization-scope eval dataset to a repository. |
 | `platform.repos.executor-image.probe` | platform | sensitive | — | — | yes | — | Probe a repository's executor image. |
 | `platform.repos.installation.bind` | platform | sensitive | — | — | yes | — | Link an unverified GitHub installation to a repository, set the executor image build, and change a repository tool allowlist. |
 | `platform.scanner.manage` | platform | sensitive | — | — | yes | — | Create, change and remove runtime scanner patterns. |
@@ -248,6 +251,7 @@ _Generated from `packages/shared/src/permissions/catalog/` by `scripts/gen-permi
 | `team.delete` | team | governance | — | — | yes | yes | Delete a team. |
 | `team.members.manage` | team | governance | LEAD | ADMIN | yes | yes | Invite, add, change the role of and remove team members, never above the actor’s own rank. |
 | `team.members.read` | team | read | MEMBER | — | yes | no | List a team's members. |
+| `team.persona.manage` | team | operation | LEAD | — | yes | yes | Set the prompt of a team's channel assistant, which can start runs. Organization admins do not hold it without a team role. |
 | `team.plugins.manage` | team | operation | ADMIN | — | yes | yes | Enable and disable plugins for a team. |
 | `team.plugins.read` | team | read | MEMBER | — | yes | no | See which plugins a team has enabled. |
 | `team.read` | team | read | MEMBER | — | yes | no | See a team's detail. |
@@ -317,7 +321,7 @@ _Generated from `packages/shared/src/permissions/catalog/` by `scripts/gen-permi
 |---|---|---|
 | `notSelf` | `team.members.manage`, `org.members.manage`, `platform.users.manage` | Nobody removes or demotes themselves (`SELF_REMOVAL`, `SELF_DEMOTION`); nobody deactivates or demotes their own platform account. |
 | `isLauncher` | `team.runs.control`, `team.orchestrations.stop` | Only the launcher steers an orchestration; an administrator may emergency-stop one only when a service principal launched it. |
-| `notAuthor` | `team.templates.review` | A template’s author may not review their own change (`SELF_REVIEW_FORBIDDEN`). |
+| `notAuthor` | `team.templates.review` | A template’s author may not review their own change (`SELF_REVIEW_FORBIDDEN`). The one exception: a platform administrator may review a generated version they created, because a single-admin deployment could otherwise never promote one. |
 | `isAssignee` | `team.approvals.answer` | A step assigned to named approvers is answered by one of them. |
 
 <!-- permissions:matrix:end -->

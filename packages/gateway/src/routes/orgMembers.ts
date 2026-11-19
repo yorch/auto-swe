@@ -21,7 +21,7 @@ import {
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { auditContextOf } from '../lib/auditContext.js';
+import { type AuditContext, auditContextOf } from '../lib/auditContext.js';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { actorOf, can, replyRefusal } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
@@ -321,13 +321,16 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
       }
       // Both decisions allowed the invitation; the audit records the more exceptional ground.
       let authority: Authority = orgDecision.authority;
+      // The ground of the team decision, written on the TeamMembership row it allowed.
+      let teamContext: AuditContext | undefined;
       if (teamId) {
-        // A team of another organization keeps its 400, as before; only then is the team asked.
+        // A team that does not exist and a team of another organization answer alike, before the
+        // team is asked, so the answer does not reveal whether a team exists elsewhere (spec 7b).
         const team = await fastify.prisma.team.findUnique({
           select: { orgId: true },
           where: { id: teamId },
         });
-        if (team && team.orgId !== orgId) {
+        if (!team || team.orgId !== orgId) {
           return sendError(reply, 400, 'TEAM_ORG_MISMATCH', 'Team must belong to the organization');
         }
         const teamDecision = await can(request, 'team.members.manage', { teamId });
@@ -335,6 +338,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
           return replyRefusal(reply, teamDecision);
         }
         authority = strongestAuthority(authority, teamDecision.authority);
+        teamContext = { ...auditContextOf(request), authority: teamDecision.authority };
         // The same rank rule as a team member-add: no grant above the rank the actor acts at.
         const standing = await loadStanding(fastify.prisma, actorOf(request), { teamId });
         const actorRank = actingRank(standing, teamId);
@@ -354,6 +358,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
         orgId,
         orgRole,
         source: 'org_admin',
+        teamContext,
         teamId,
         teamRole,
       });
