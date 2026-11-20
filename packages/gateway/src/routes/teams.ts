@@ -26,6 +26,7 @@ import { inviteUser } from '../lib/inviteUser.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
+import { countCreatedTeams } from '../lib/teamJoinRequests.js';
 import {
   memberTeams,
   permissionRequirement,
@@ -72,6 +73,15 @@ const CreateTeamSchema = z.object({
 
 class OrganizationMemberRequired extends Error {}
 
+/** A self-service creator already has as many teams as `teams.maxCreatedPerUser` allows. */
+class TeamLimitReached extends Error {}
+
+/** What a self-service creation is held to; absent on the administrator path, which is not limited. */
+interface SelfServiceCreation {
+  /** `teams.maxCreatedPerUser` for the organization. */
+  limit: number;
+}
+
 async function ensureOrganizationMember(
   fastify: FastifyInstance,
   tx: Prisma.TransactionClient,
@@ -115,13 +125,23 @@ async function createTeam(
   actor: JwtPayload,
   body: z.infer<typeof CreateTeamSchema>,
   orgId: string,
-  context?: AuditContext
+  context?: AuditContext,
+  selfService?: SelfServiceCreation
 ) {
   const audit = context ? { context } : {};
   return fastify.prisma.$transaction(async (tx) => {
+    if (selfService) {
+      // CLAUDE.md §7 exception: Prisma cannot express a transaction-scoped advisory lock. The cap
+      // counts one person's teams across organizations, which no single organization lock covers,
+      // so two creations by the same person serialize here before either counts.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`team-create:${actor.sub}`}, 0))`;
+    }
     // CLAUDE.md §7 exception: the organization lock serializes the first admin's membership checks
     // with an organization removal, which deletes team memberships under the same lock.
     await tx.$executeRaw`SELECT 1 FROM organizations WHERE id = ${orgId}::uuid FOR UPDATE`;
+    if (selfService && (await countCreatedTeams(tx, actor.sub)) >= selfService.limit) {
+      throw new TeamLimitReached();
+    }
     await ensureOrganizationMember(
       fastify,
       tx,
@@ -132,7 +152,14 @@ async function createTeam(
       context
     );
     const team = await tx.team.create({
-      data: { description: body.description, name: body.name, orgId, slug: body.slug },
+      data: {
+        description: body.description,
+        name: body.name,
+        orgId,
+        slug: body.slug,
+        // Only a self-service creation names its creator; a team an administrator made has none.
+        ...(selfService ? { createdById: actor.sub } : {}),
+      },
     });
     const membership = await tx.teamMembership.create({
       data: { role: 'ADMIN', teamId: team.id, userId: body.adminUserId ?? actor.sub },
@@ -163,23 +190,69 @@ export const orgTeamRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.withTypeProvider<ZodTypeProvider>().post(
     '/:orgId/teams',
     {
-      onRequest: requireAuth({ capability: 'org.teams.create', org: { param: 'orgId' } }),
+      // `org.teams.create` OR self-service creation (`teams.selfServiceCreation` on for the
+      // organization and the caller a member of it). The catalog cannot say "or a member where a
+      // setting is on", so the handler asks the capability first and, failing that, `org.read`
+      // (organization membership) and the setting. The backstop counts only an ALLOWED check, so
+      // both are declared: an administrator is allowed the first, a self-service member the second.
+      onRequest: requireAuth({ handlerChecked: ['org.teams.create', 'org.read'] }),
       schema: {
         body: CreateTeamSchema.omit({ orgId: true }),
         params: z.object({ orgId: z.string().uuid() }),
       },
     },
     async (request, reply) => {
-      const org = await fastify.prisma.organization.findUnique({
-        where: { id: request.params.orgId },
-      });
+      const { orgId } = request.params;
+      const actor = requireUser(request);
+      // The administrator path, exactly as it was: held on the organization, unlimited by the cap.
+      const decision = await can(request, 'org.teams.create', { orgId });
+      let selfService: SelfServiceCreation | undefined;
+      if (!decision.allowed) {
+        // Anything short of full eligibility answers the capability's own refusal, so a caller
+        // learns nothing about whether the organization exists or has the setting on.
+        // `org.read` is held by any member of the organization; it is also the allowed check the
+        // handler-checked backstop needs on this path.
+        const member = await can(request, 'org.read', { orgId });
+        const active = member.allowed
+          ? await fastify.prisma.organization.findUnique({
+              select: { isActive: true },
+              where: { id: orgId },
+            })
+          : null;
+        if (!active?.isActive || !(await resolveSetting('teams.selfServiceCreation', { orgId }))) {
+          return replyRefusal(reply, decision);
+        }
+        if (request.body.adminUserId && request.body.adminUserId !== actor.sub) {
+          return sendError(
+            reply,
+            403,
+            'FORBIDDEN',
+            'Only an organization admin can appoint another person as team admin'
+          );
+        }
+        selfService = { limit: await resolveSetting('teams.maxCreatedPerUser', { orgId }) };
+      }
+      const context = {
+        ...auditContextOf(request),
+        authority: decision.allowed ? decision.authority : ('org-member' as const),
+      };
+
+      const org = await fastify.prisma.organization.findUnique({ where: { id: orgId } });
       if (!org) {
         return sendError(reply, 400, 'ORG_NOT_FOUND', 'Organization not found');
       }
       try {
-        const team = await createTeam(fastify, requireUser(request), request.body, org.id);
+        const team = await createTeam(fastify, actor, request.body, org.id, context, selfService);
         return reply.status(201).send({ data: team });
       } catch (err) {
+        if (err instanceof TeamLimitReached) {
+          return sendError(
+            reply,
+            409,
+            'TEAM_LIMIT_REACHED',
+            'You have created as many teams as the limit allows'
+          );
+        }
         if (err instanceof OrganizationMemberRequired) {
           return sendError(
             reply,
