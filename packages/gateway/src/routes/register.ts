@@ -76,6 +76,7 @@ import { tokenRoutes } from './tokens.js';
 import { toolCatalogRoutes } from './toolCatalog.js';
 import { transcriptRoutes } from './transcripts.js';
 import { usageRoutes } from './usage.js';
+import { userAnalyticsRoutes } from './userAnalytics.js';
 import { userRoutes } from './users.js';
 import { webhookRoutes } from './webhooks.js';
 import { stepRegistryRoutes, workflowRunRoutes } from './workflowRuns.js';
@@ -155,6 +156,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(adminRoutes, { prefix: '/api/v1/platform' });
   await app.register(activityAdminRoutes, { prefix: '/api/v1/platform' });
   await app.register(activityUiRoutes, { prefix: '/api/v1/activity' });
+  await app.register(userAnalyticsRoutes, { prefix: '/api/v1/platform' });
   // Deprecated alias — kept for one release.
   await app.register(adminRoutes, { prefix: '/api/v1/admin' });
   await app.register(modelConfigRoutes, { prefix: '/api/v1/platform' });
