@@ -1,6 +1,6 @@
 import { CI_TRIAGE_DEFAULTS } from '../../lib/ciTrigger.js';
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import { ciLoop, ciWaitEntry, prResult, qualityGate, terminate } from './authoring/index.js';
+import { ciWaitEntry, prResult, qualityGate, terminate } from './authoring/index.js';
 import { authored, macro } from './authoring/macro.js';
 
 /** What every outcome reports: the diagnosis and the run it was made for. */
@@ -384,9 +384,11 @@ const built = authored(
   // Polling as an option: a draft into a feature branch often runs no CI at all
   // (`on.pull_request.branches` names only main), and the poll reports that instead
   // of waiting four hours for a webhook that never comes.
-  // Plain helper, not a `ci` use: the fix step is edited below (`ciFix` config), and a use
-  // whose nodes were edited after expansion would be drift.
-  ciLoop({
+  macro('ci', 'ciLoop@2', {
+    // The CI loop's own fix step refuses workflow changes too, and its logs (the draft's own CI
+    // output) are untrusted input: redacted, screened for injection phrasing and fenced before
+    // the fixer sees them.
+    fixConfig: { ...REFUSE_WORKFLOW_CHANGES, untrustedCiLogs: true },
     // The trigger's option, with the payload contract's default for a hand-started run. The
     // limit is an expression, which `maxVisits` (a constant) cannot hold, so this loop keeps the
     // `context.ciRetries` counter. It counts CI failures before checking (`incCIRetries` then
@@ -412,18 +414,6 @@ const built = authored(
   }
 );
 const nodes = built.nodes;
-
-// The CI loop's own fix step refuses workflow changes too…
-const ciFix = nodes.ciFix;
-if (ciFix?.type !== 'step') {
-  throw new Error('ci-triage-and-fix: the CI loop has no ciFix step');
-}
-// …and its logs (the draft's own CI output) are untrusted input: redacted, screened for
-// injection phrasing and fenced before the fixer sees them.
-nodes.ciFix = {
-  ...ciFix,
-  config: { ...(ciFix.config ?? {}), ...REFUSE_WORKFLOW_CHANGES, untrustedCiLogs: true },
-};
 
 /**
  * A failed GitHub Actions run, diagnosed, and — when the trigger allows it and

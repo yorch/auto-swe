@@ -60,3 +60,45 @@ describe('runAuthorLoop cancellation', () => {
     expect(mockedRunAgent).toHaveBeenCalledTimes(5);
   });
 });
+
+describe('runAuthorLoop macro uses', () => {
+  const accept = (parsed: unknown) => ({ ok: true as const, value: parsed });
+
+  it('materializes a model spec that carries uses and no generated nodes', async () => {
+    mockedRunAgent.mockResolvedValue({
+      object: {
+        specJson: JSON.stringify({
+          entry: 'waitForCI',
+          name: 'n',
+          nodes: { done: { status: 'SUCCESS', type: 'terminate' } },
+          schemaVersion: 1,
+          uses: { ci: { args: { fix: false, passed: 'done' }, macro: 'ciLoop@2' } },
+        }),
+      },
+    } as never);
+    const result = await runAuthorLoop({ ...args, accept: accept as never, maxAttempts: 1 });
+    expect(result.ok).toBe(true);
+    const nodes = (result as { value: { nodes: Record<string, { use?: string }>; uses: object } })
+      .value;
+    expect(nodes.nodes.checkCI?.use).toBe('ci');
+    expect(nodes.nodes.done?.use).toBeUndefined();
+    expect(Object.keys(nodes.uses)).toEqual(['ci']);
+  });
+
+  it('feeds a bad use back as a repair finding', async () => {
+    mockedRunAgent.mockResolvedValue({
+      object: {
+        specJson: JSON.stringify({
+          entry: 'done',
+          name: 'n',
+          nodes: { done: { status: 'SUCCESS', type: 'terminate' } },
+          schemaVersion: 1,
+          uses: { ci: { args: { fix: false }, macro: 'ciLoop@2' } },
+        }),
+      },
+    } as never);
+    const result = await runAuthorLoop({ ...args, accept: accept as never, maxAttempts: 1 });
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { errors: string[] }).errors.join(' ')).toMatch(/ciLoop@2/);
+  });
+});

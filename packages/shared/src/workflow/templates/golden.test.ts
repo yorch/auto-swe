@@ -84,51 +84,6 @@ function removePassThrough(spec: WorkflowSpec, id: string): WorkflowSpec {
   };
 }
 
-/**
- * `notion-content-draft` appends to the operator's own Notion page through the same policy gate
- * its sibling `notion-content-brand-review` uses: `publishOutcome` declares the class
- * (`internal_write`), `checkAuto` branches on the decision, and a required approval waits on
- * `humanApproval` before the write, with `doneRejected` when it is refused or times out.
- */
-function withNotionDraftPolicyGate(g: WorkflowSpec): WorkflowSpec {
-  const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
-  nodes.draftContent = { ...(nodes.draftContent as object), next: 'publishOutcome' };
-  nodes.publishOutcome = {
-    config: { action: 'internal_write' },
-    inputs: { description: { from: 'request.payload.instructions' } },
-    next: 'checkAuto',
-    step: 'publishOutcome',
-    type: 'step',
-  };
-  nodes.checkAuto = {
-    expr: "nodes.publishOutcome.output.decision == 'require_approval'",
-    onFalse: 'writeOutcome',
-    onTrue: 'humanApproval',
-    type: 'cond',
-  };
-  nodes.humanApproval = {
-    approverCount: { from: 'nodes.publishOutcome.output.approverCount' },
-    contextFrom: 'nodes.draftContent.output.text',
-    description: 'Approve appending the draft to the target Notion page, or reject to discard it.',
-    onApprove: 'writeOutcome',
-    onReject: 'doneRejected',
-    onTimeout: 'doneRejected',
-    timeout: '24h',
-    title: 'Approve write',
-    type: 'humanApproval',
-  };
-  nodes.doneRejected = {
-    result: {
-      approved: { literal: false },
-      targetPageId: { from: 'request.payload.targetPageId' },
-      written: { literal: false },
-    },
-    status: 'SUCCESS',
-    type: 'terminate',
-  };
-  return { ...g, nodes } as WorkflowSpec;
-}
-
 const SUGAR_REASON =
   'plumbing removed by status/storeAs/onFailure/maxVisits: status stamps, copy-out sets, ' +
   'failure ladders and retry counters are fields on the node they belonged to';
@@ -143,6 +98,9 @@ const STALL =
 const CI_FIRST =
   'CI (with a 2-attempt fix loop) runs before the final gate and a rejection goes fix -> CI -> ' +
   'gate again';
+const CI_RESET =
+  'a pushed fix gives CI a fresh attempt budget through resetVisits on the node that keeps it, ' +
+  'not a set of nodes.fetchLogs.visits';
 const TICKET_HEAD =
   'the run’s tracker ticket is gathered before validation and handed to validate and implement, ' +
   'a request validation finds not actionable ends the run FAILED before implement, and ' +
@@ -162,16 +120,18 @@ const SUGARED: Record<string, string> = {
     'a fix is checked against the failing step’s own command before it is delivered; a fix ' +
     'pushed onto a pull request has its CI watched, with one follow-up attempt;',
   'code-and-ci': `${FINALIZER}; ${LESSONS};`,
-  'consensus-review': `${FINALIZER}; ${CI_FIRST}; ${LESSONS}; ${STALL};`,
+  'consensus-review': `${FINALIZER}; ${CI_FIRST}; ${LESSONS}; ${STALL}; ${CI_RESET};`,
   'db-migration-dry-run': '',
   'dependency-update': `${FINALIZER}; ${LESSONS};`,
   'docs-refresh': 'the description names the markdown prompt and the docs-directory path guard;',
   'external-approval-gate': `${STALL};`,
-  'four-eyes': `${FINALIZER}; ${CI_FIRST}; ${LESSONS} (not for the sign-off loop); ${STALL};`,
+  'four-eyes': `${FINALIZER}; ${CI_FIRST}; ${LESSONS} (not for the sign-off loop); ${STALL}; ${CI_RESET};`,
   'fully-supervised': 'the final approval offers request changes, capped at three rounds;',
   hotfix: '',
   'human-code-review': '',
   'model-catalog-refresh': `the guidance carries price-list figures, checked in code after the review; ${STALL};`,
+  'notion-content-draft':
+    'the Notion write is policy-gated, and an optional brand review (the brandReview input, on by default) rewrites the draft before it;',
   'parallel-fan-out': '',
   'prd-decomposition': '',
   'repo-onboarding':
@@ -194,13 +154,6 @@ const INTENDED_CHANGES: Record<
   string,
   { reason: string; apply: (g: WorkflowSpec) => WorkflowSpec }
 > = {
-  'notion-content-draft': {
-    apply: withNotionDraftPolicyGate,
-    reason:
-      'the paragraph it appends is an internal write, so the template records the autonomy ' +
-      'decision the audit log and any later policy edit are held to, and waits for approval when ' +
-      'the policy asks for one, exactly as its brand-review sibling does',
-  },
   // `writes: 'split'` names the two write nodes autoWrite/manualWrite, so the
   // result's `nodes.writeOutcome` reference pointed at a node that never runs.
   ...Object.fromEntries(

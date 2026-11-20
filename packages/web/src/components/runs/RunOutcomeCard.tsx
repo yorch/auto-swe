@@ -231,6 +231,7 @@ export function RunOutcomeCard({
 
   if (
     name === 'notion-content-draft' ||
+    // Retired built-in, merged into notion-content-draft; its historical runs still render.
     name === 'notion-content-brand-review' ||
     name === 'product-prd-draft'
   ) {

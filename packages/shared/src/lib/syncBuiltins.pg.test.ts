@@ -214,5 +214,42 @@ describe.skipIf(!enabled)(
         expect(after.inputSchema).toEqual(ADMINS);
       });
     });
+
+    describe('a retired built-in template', () => {
+      const RETIRED = 'notion-content-brand-review';
+      afterAll(async () => {
+        await prisma.workflowTemplate.deleteMany({ where: { name: RETIRED, teamId: null } });
+      });
+
+      it('is archived once, with its version kept, and left alone when an admin owns it', async () => {
+        await prisma.workflowTemplate.deleteMany({ where: { name: RETIRED, teamId: null } });
+        const row = await prisma.workflowTemplate.create({
+          data: {
+            activeVersion: 1,
+            description: 'retired',
+            name: RETIRED,
+            status: 'ACTIVE',
+            teamId: null,
+            versions: { create: { spec: { retired: true }, version: 1 } },
+          },
+        });
+        await seedSweStarter(prisma);
+        expect(
+          await prisma.workflowTemplate.findUniqueOrThrow({ where: { id: row.id } })
+        ).toMatchObject({ status: 'ARCHIVED' });
+        expect(await prisma.workflowTemplateVersion.count({ where: { templateId: row.id } })).toBe(
+          1
+        );
+
+        await prisma.workflowTemplate.update({
+          data: { experimentSplit: 20, experimentVersion: 1, status: 'ACTIVE' },
+          where: { id: row.id },
+        });
+        await seedSweStarter(prisma);
+        expect(
+          await prisma.workflowTemplate.findUniqueOrThrow({ where: { id: row.id } })
+        ).toMatchObject({ status: 'ACTIVE' });
+      });
+    });
   }
 );

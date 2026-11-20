@@ -1366,6 +1366,9 @@ export const SUPERSEDED_TEMPLATE_DESCRIPTIONS: Readonly<Record<string, readonly 
   'model-catalog-refresh': [
     "Keep the built-in model catalog current: list each provider's live model ids through the platform, read the official pricing pages, update BUILTIN_MODELS with a cited source for every changed price, and open a DRAFT pull request for a person to review. Uncertain figures are left unchanged and called out. A run with nothing to change, or whose previous pull request is still open, opens none. Point it at your auto-swe fork and schedule it.",
   ],
+  'notion-content-draft': [
+    'Read a Notion source page, draft a short update with the content writer, and append it to a target Notion page.',
+  ],
   'parallel-fan-out': [
     'Validate context, split the work into three parallel branches (feature implementation, tests, documentation), merge them into one integration branch (resolving conflicts with the merge-conflict agent if needed), then open a single PR. Each branch runs an isolated executeImplementation agent. Demonstrates the fanOut node with concurrency=3, pluck, and merge.',
   ],
@@ -1422,18 +1425,6 @@ export const PREVIOUS_BUILTIN_INPUT_SCHEMAS: Readonly<Record<string, readonly In
         title: { type: 'string' },
       },
       required: ['connectionId', 'title', 'brief'],
-      type: 'object',
-    },
-  ],
-  'notion-content-brand-review': [
-    {
-      properties: {
-        connectionId: UUID_CONNECTION_ID,
-        instructions: { type: 'string' },
-        sourcePageId: { type: 'string' },
-        targetPageId: { type: 'string' },
-      },
-      required: ['connectionId', 'sourcePageId', 'targetPageId'],
       type: 'object',
     },
   ],
@@ -1526,6 +1517,71 @@ async function syncTemplates(prisma: PrismaClient): Promise<void> {
     await syncBuiltinTemplate(prisma, {
       ...tmpl,
       workspaceProvider: tmpl.workspaceProvider ?? 'git_repo',
+    });
+  }
+  await retireBuiltinTemplates(prisma);
+}
+
+/**
+ * Built-in templates that no longer ship, by name, with the template that replaces each.
+ *
+ * Dropping a template from {@link BUILTIN_TEMPLATES} alone leaves its row in every database that
+ * ever seeded it, still ACTIVE and still in the picker. Listing it here makes sync archive that
+ * row, on the terms of {@link retireBuiltinTemplates}. Rows are never deleted: runs and versions
+ * reference them with restricting foreign keys.
+ */
+export const RETIRED_BUILTIN_TEMPLATES: Readonly<Record<string, { replacedBy: string }>> = {
+  'notion-content-brand-review': { replacedBy: 'notion-content-draft' },
+};
+
+/**
+ * Archive the retired built-in templates ({@link RETIRED_BUILTIN_TEMPLATES}) a database still has.
+ *
+ * A row is archived only when nobody has taken it over: a GLOBAL row (a team's copy is the team's),
+ * not the default template, running no A/B experiment, still ACTIVE, and active on the latest
+ * built-in version (no author on it) — the same test that lets a changed built-in advance. Any
+ * other GLOBAL row is left as it is and a warning names it and its replacement. Runs in flight and
+ * runs that pinned a version are unaffected: archiving changes the row's status only, and the
+ * template picker lists ACTIVE templates only.
+ */
+async function retireBuiltinTemplates(prisma: PrismaClient): Promise<void> {
+  for (const [name, { replacedBy }] of Object.entries(RETIRED_BUILTIN_TEMPLATES)) {
+    const row = await prisma.workflowTemplate.findFirst({ where: { name, teamId: null } });
+    if (!row || row.status === 'ARCHIVED') {
+      continue;
+    }
+    const versions = await prisma.workflowTemplateVersion.findMany({
+      orderBy: { version: 'asc' },
+      select: { createdBy: true, generatedBy: true, version: true },
+      where: { templateId: row.id },
+    });
+    const latestBuiltin = versions
+      .filter((v) => v.createdBy == null && v.generatedBy == null)
+      .at(-1);
+    const untouched =
+      row.status === 'ACTIVE' &&
+      !row.isDefault &&
+      (row.experimentSplit ?? 0) === 0 &&
+      latestBuiltin !== undefined &&
+      row.activeVersion === latestBuiltin.version;
+    if (!untouched || !latestBuiltin) {
+      console.warn(
+        `[syncBuiltins] '${name}' is retired in favour of '${replacedBy}' but was left as it is: ` +
+          'it is the default template, runs an A/B experiment, is not active, or an admin moved ' +
+          'it off its built-in version. Archive it by hand when it is no longer needed.'
+      );
+      continue;
+    }
+    // Conditional on the row still being what we read, so an admin's concurrent change wins.
+    await prisma.workflowTemplate.updateMany({
+      data: { status: 'ARCHIVED' },
+      where: {
+        activeVersion: latestBuiltin.version,
+        id: row.id,
+        isDefault: false,
+        status: 'ACTIVE',
+        teamId: null,
+      },
     });
   }
 }

@@ -5,8 +5,10 @@ import { mergeNodes, policyGatedWrite, sourceHead, terminate } from './authoring
  * Notion content draft workflow.
  *
  * Reads a source Notion page, asks the content-writer agent to draft a short
- * update from the source material and optional instructions, then appends the
- * draft as a paragraph block to a target Notion page.
+ * update from the source material and optional instructions, optionally has the
+ * brand-reviewer agent rewrite it for brand voice and clarity (the `brandReview`
+ * input, on unless the request says `false`), then appends the final text as a
+ * paragraph block to a target Notion page.
  *
  * This is the first non-git template: it demonstrates the generic
  * resolveWorkspace → readSource → agent → writeOutcome pipeline for a document
@@ -20,7 +22,7 @@ import { mergeNodes, policyGatedWrite, sourceHead, terminate } from './authoring
  */
 export const NOTION_CONTENT_DRAFT_SPEC: WorkflowSpec = {
   description:
-    'Read a Notion source page, draft a short update with the content writer, and append it to a target Notion page.',
+    'Read a Notion source page, draft a short update with the content writer, and append it to a target Notion page. With the brand review option on (the default), a second agent reviews the draft for brand voice and clarity and the reviewed text is what gets written; turn it off to write the plain draft.',
   entry: 'resolveWorkspace',
   name: 'notion-content-draft',
   nodes: mergeNodes(
@@ -38,18 +40,53 @@ export const NOTION_CONTENT_DRAFT_SPEC: WorkflowSpec = {
           source: { from: 'nodes.readSource.output.data' },
           targetPageId: { from: 'request.payload.targetPageId' },
         },
-        next: 'publishOutcome',
+        next: 'checkBrandReview',
         spanName: 'llm.notion_draft',
         title: 'Draft the update',
         type: 'agent',
+      },
+      // An absent input counts as on: only an explicit false skips the review.
+      checkBrandReview: {
+        expr: 'request.payload.brandReview != false',
+        group: 'draft',
+        onFalse: 'keepDraft',
+        onTrue: 'brandReview',
+        title: 'Review for brand voice?',
+        type: 'cond',
+      },
+      brandReview: {
+        agentRef: 'brandReviewer',
+        group: 'draft',
+        inputs: {
+          draft: { from: 'nodes.draftContent.output.text' },
+          instructions: { default: '', from: 'request.payload.instructions' },
+        },
+        next: 'keepReviewed',
+        spanName: 'llm.brand_review',
+        title: 'Review for brand voice',
+        type: 'agent',
+      },
+      keepReviewed: {
+        group: 'draft',
+        next: 'publishOutcome',
+        title: 'Keep the reviewed text',
+        type: 'set',
+        values: { 'context.finalText': { from: 'nodes.brandReview.output.text' } },
+      },
+      keepDraft: {
+        group: 'draft',
+        next: 'publishOutcome',
+        title: 'Keep the draft',
+        type: 'set',
+        values: { 'context.finalText': { from: 'nodes.draftContent.output.text' } },
       },
     },
     policyGatedWrite({
       action: 'internal_write',
       approval: {
-        contextFrom: 'nodes.draftContent.output.text',
+        contextFrom: 'context.finalText',
         description:
-          'Approve appending the draft to the target Notion page, or reject to discard it.',
+          'Approve appending the text to the target Notion page, or reject to discard it.',
         title: 'Approve write',
       },
       describeFrom: 'request.payload.instructions',
@@ -63,7 +100,7 @@ export const NOTION_CONTENT_DRAFT_SPEC: WorkflowSpec = {
         inputs: {
           connectionId: { from: 'request.payload.connectionId' },
           pageId: { from: 'request.payload.targetPageId' },
-          text: { from: 'nodes.draftContent.output.text' },
+          text: { from: 'context.finalText' },
         },
       },
       writes: 'single',
@@ -73,7 +110,7 @@ export const NOTION_CONTENT_DRAFT_SPEC: WorkflowSpec = {
         group: 'write',
         result: {
           targetPageId: { from: 'request.payload.targetPageId' },
-          text: { from: 'nodes.draftContent.output.text' },
+          text: { from: 'context.finalText' },
         },
         title: 'Done',
       }),

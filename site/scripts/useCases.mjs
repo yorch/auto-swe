@@ -451,18 +451,10 @@ export const USE_CASES = {
     maturity: 'seeded',
     source: 'packages/shared/src/workflow/templates/notionContentDraft.ts',
     summary:
-      'Reads a source page in Notion, drafts a short update from it, and appends the draft ' +
-      'to a target page.',
+      'Reads a source page in Notion, drafts a short update from it, and appends it to a ' +
+      'target page. With the brand review option on (the default), a second agent reviews the draft for ' +
+      'brand voice and clarity first and the reviewed text is what gets written.',
     title: 'Draft an update in Notion',
-  },
-  'notion-content-brand-review': {
-    group: 'content',
-    maturity: 'seeded',
-    source: 'packages/shared/src/workflow/templates/notionContentBrandReview.ts',
-    summary:
-      'The Notion draft, followed by a second agent that reviews it for brand voice and ' +
-      'clarity before it is written back.',
-    title: 'Draft with a brand review',
   },
   'send-slack-update': {
     group: 'content',

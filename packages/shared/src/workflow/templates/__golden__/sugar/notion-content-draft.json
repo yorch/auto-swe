@@ -1,0 +1,168 @@
+{
+  "description": "Read a Notion source page, draft a short update with the content writer, and append it to a target Notion page. With brandReview on (the default) a second agent reviews the draft for brand voice and clarity, and the reviewed text is what gets written; set it to false to write the plain draft.",
+  "entry": "resolveWorkspace",
+  "name": "notion-content-draft",
+  "nodes": {
+    "brandReview": {
+      "agentRef": "brandReviewer",
+      "inputs": {
+        "draft": {
+          "from": "nodes.draftContent.output.text"
+        },
+        "instructions": {
+          "default": "",
+          "from": "request.payload.instructions"
+        }
+      },
+      "next": "keepReviewed",
+      "spanName": "llm.brand_review",
+      "type": "agent"
+    },
+    "checkAuto": {
+      "expr": "nodes.publishOutcome.output.decision == 'require_approval'",
+      "onFalse": "writeOutcome",
+      "onTrue": "humanApproval",
+      "type": "cond"
+    },
+    "checkBrandReview": {
+      "expr": "request.payload.brandReview != false",
+      "onFalse": "keepDraft",
+      "onTrue": "brandReview",
+      "type": "cond"
+    },
+    "done": {
+      "result": {
+        "targetPageId": {
+          "from": "request.payload.targetPageId"
+        },
+        "text": {
+          "from": "context.finalText"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "doneRejected": {
+      "result": {
+        "approved": {
+          "literal": false
+        },
+        "targetPageId": {
+          "from": "request.payload.targetPageId"
+        },
+        "written": {
+          "literal": false
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "draftContent": {
+      "agentRef": "contentWriter",
+      "inputs": {
+        "instructions": {
+          "default": "",
+          "from": "request.payload.instructions"
+        },
+        "source": {
+          "from": "nodes.readSource.output.data"
+        },
+        "targetPageId": {
+          "from": "request.payload.targetPageId"
+        }
+      },
+      "next": "checkBrandReview",
+      "spanName": "llm.notion_draft",
+      "type": "agent"
+    },
+    "humanApproval": {
+      "approverCount": {
+        "from": "nodes.publishOutcome.output.approverCount"
+      },
+      "contextFrom": "context.finalText",
+      "description": "Approve appending the text to the target Notion page, or reject to discard it.",
+      "onApprove": "writeOutcome",
+      "onReject": "doneRejected",
+      "onTimeout": "doneRejected",
+      "timeout": "24h",
+      "title": "Approve write",
+      "type": "humanApproval"
+    },
+    "keepDraft": {
+      "next": "publishOutcome",
+      "type": "set",
+      "values": {
+        "context.finalText": {
+          "from": "nodes.draftContent.output.text"
+        }
+      }
+    },
+    "keepReviewed": {
+      "next": "publishOutcome",
+      "type": "set",
+      "values": {
+        "context.finalText": {
+          "from": "nodes.brandReview.output.text"
+        }
+      }
+    },
+    "publishOutcome": {
+      "config": {
+        "action": "internal_write"
+      },
+      "inputs": {
+        "description": {
+          "from": "request.payload.instructions"
+        }
+      },
+      "next": "checkAuto",
+      "step": "publishOutcome",
+      "type": "step"
+    },
+    "readSource": {
+      "config": {},
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.connectionId"
+        },
+        "pageId": {
+          "from": "request.payload.sourcePageId"
+        }
+      },
+      "next": "draftContent",
+      "step": "readSource",
+      "type": "step"
+    },
+    "resolveWorkspace": {
+      "config": {
+        "workspaceProvider": "document"
+      },
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.connectionId"
+        }
+      },
+      "next": "readSource",
+      "step": "resolveWorkspace",
+      "type": "step"
+    },
+    "writeOutcome": {
+      "config": {},
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.connectionId"
+        },
+        "pageId": {
+          "from": "request.payload.targetPageId"
+        },
+        "text": {
+          "from": "context.finalText"
+        }
+      },
+      "next": "done",
+      "step": "writeOutcome",
+      "type": "step"
+    }
+  },
+  "schemaVersion": 1
+}

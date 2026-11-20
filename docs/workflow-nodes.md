@@ -233,6 +233,7 @@ These fields mean the same on every node type that has them; the per-type tables
 | `onFailure` | dispatch nodes | A node id, or `{ "status", "message"? }`: where the node goes once it has finally failed (§4). |
 | `status` | every node | A free-form label (up to 64 characters) written as the run's domain status when the node is entered (§8). A `terminate` node's own `status` is its terminal status and overrides it. |
 | `maxVisits`, `onExhausted` | every node | Bound how often the node may be entered; the entry after the Nth goes to `onExhausted` instead (§8). `onExhausted` takes the same value as `onFailure`. |
+| `resetVisits` | every node | Up to 20 distinct node ids whose visit count (`nodes.<id>.visits`) is set to 0 when this node is entered, before its own `maxVisits` count (§8). Not an edge. |
 
 ## 6. Node reference
 
@@ -1551,7 +1552,7 @@ wait (see [qodo.md §6](./qodo.md#6-waiting-for-qodos-review-in-a-workflow)).
 
 ## 8. Plumbing fields
 
-Four optional field groups replace bookkeeping nodes that specs used to carry. Each is absent on a
+Five optional field groups replace bookkeeping nodes that specs used to carry. Each is absent on a
 spec saved without it, so such a spec parses and runs as it always did.
 
 **`storeAs`** (`step`, `agent`, `mcp`, `shell`, `containerStep`, `eval`) writes the node's output to
@@ -1576,6 +1577,18 @@ counts, and the entry after the `maxVisits`th goes to `onExhausted` (a node id, 
 shorthand) without running the node. The count is at `nodes.<id>.visits` and can be read by any
 later node. `maxVisits` without `onExhausted` is a `MAX_VISITS_WITHOUT_ONEXHAUSTED` error. It
 replaces a counter `set` node plus a `cond`.
+
+**`resetVisits`** gives a bounded loop a fresh budget. It lists up to 20 distinct node ids; when the
+interpreter enters the node that carries it, it sets `nodes.<id>.visits` to 0 for each listed id
+before anything else happens on that entry: before the node's own `maxVisits` count, its `status`
+and its dispatch. A node that lists itself therefore counts that entry as its first. The reset takes
+no transition, routes nowhere and is not an edge, so reachability, `NO_TERMINAL` and the canvas do
+not see it. An id that is not a node of the spec is a `RESET_VISITS_UNKNOWN_NODE` error; a listed
+node that sets no `maxVisits` keeps no count, so the reset does nothing there and `validateSpec`
+warns `RESET_VISITS_UNCOUNTED`. It replaces a `set` node writing `{ "literal": 0 }` to
+`nodes.<id>.visits`. The `four-eyes` and `consensus-review` templates use it on the node that keeps
+a fix a person or the reviewers asked for, `resetVisits: ["fetchLogs"]`, so the pushed fix gets the
+full CI attempt budget again.
 
 Before, a bounded draft loop took five nodes of plumbing: a `set` bumping `context.attempts`, the
 draft, a `set` copying its text to `context.draft`, an `updateDomainState` step, and a `cond`
@@ -1628,6 +1641,8 @@ Things to know:
   the context (§2) and so its own `nodes.<id>.visits`.
 - `onFailure` fires after a node's own retries. It does not catch an unevaluable binding, a
   cancellation, or the transition cap (§4).
+- Inside a `fanOut` branch `resetVisits` resets the branch's own counts only; the parent's count,
+  and every other branch's, is untouched, and the branch's counts are dropped when it ends.
 
 ## 9. Macros
 
@@ -1640,7 +1655,7 @@ analytics read only those. What the macro adds is metadata saying where the node
 {
   "uses": {
     "ci": {
-      "macro": "ciLoop@1",
+      "macro": "ciLoop@2",
       "args": { "passed": "done", "fix": { "handoff": { "repush": "repushAfterFix" } } }
     }
   }
@@ -1649,7 +1664,9 @@ analytics read only those. What the macro adds is metadata saying where the node
 
 - `uses` maps a use id (a letter, then up to 31 letters or digits) to `{ macro, args }`. Every node
   the macro produced carries `"use": "<id>"`.
-- Four macros exist: `validatePhase@1`, `reviewLoop@1`, `openPullRequest@1` and `ciLoop@1`. Their
+- These macros exist: `validatePhase@1`, `reviewLoop@1`, `openPullRequest@1`, `ciLoop@2` and
+  `ciLoop@1`. `ciLoop@2` adds `fixConfig` (merged into the `ciFix` node's `config`, as `reviewLoop`'s
+  `fixConfig` is into `reviewFix`); `ciLoop@1` stays for stored specs and rejects it. Their
   arguments are those of the authoring helpers they wrap, as plain JSON; node ids a macro routes to
   (`passed`, `approved`, `next`, `exhausted`) are arguments, and every other node the macro creates
   has a fixed id, so one spec holds at most one use of each macro.
@@ -1661,7 +1678,7 @@ analytics read only those. What the macro adds is metadata saying where the node
   of its arguments, when a node names an undeclared use, or when the macro or its arguments are
   unknown. Change the arguments and re-expand, or detach the use so its nodes become ordinary.
 - **A macro version never changes what it expands to.** A test pins each version's expansion over
-  a corpus of arguments; a changed expansion ships as the next version (`ciLoop@2`), so a stored
+  a corpus of arguments; a changed expansion ships as the next version (`ciLoop@2` is `ciLoop@1` plus `fixConfig`), so a stored
   spec keeps meaning what it meant.
 - **A `title` or `group` on a macro node may be changed**; any other change to a tagged node is
   drift.
@@ -1727,6 +1744,12 @@ A post-approval condition refuses delivery without a valid current draft. See
   out by a later node.
 - **A loop's termination is not proven.** `validateSpec` checks that a path to a `terminate`
   exists, not that a loop takes it; the transition cap is the backstop.
+- **`resetVisits` can undo a loop bound.** A reset on the same cycle as the node it resets sets
+  the count back every pass, so that node's `maxVisits` no longer ends the loop; only the
+  transition cap does, and nothing warns about it. Put the reset on a path that enters the loop
+  from outside, as `four-eyes` and `consensus-review` do. A generated run plan may not carry
+  `resetVisits` at all (`RESERVED_PATH_WRITE`), because its loop and transition checks assume every
+  count only grows (§8).
 - **`status` writes the live domain status only.** It updates the run's current status label, not
   the pinned run record, and the value is a free-form string with no registry of known labels.
 - **The `onFailure` and `onExhausted` shorthand cannot end a run `CANCELLED`.** Cancellation is set
@@ -1735,9 +1758,10 @@ A post-approval condition refuses delivery without a valid current draft. See
 - **Write paths do not understand brackets**, unlike read paths.
 - **A macro appears once per spec.** Its nodes have fixed ids, so a second use of the same macro
   collides; only `policyGatedWrite` and `signalGate` take a prefix, and neither is a macro.
-- **Only four helpers are macros.** `ciLoop`'s fix step takes no `fixConfig` argument, so a template
-  that customises it keeps the plain helper.
-- **The workflow author agent neither reads nor writes `uses`.** It is shown the flat nodes and
-  returns a flat spec, so a refined template loses its macro metadata.
+- **A refined template loses its macro metadata.** The workflow author agent writes `uses` when it
+  generates a spec, but a refinement is shown the flat nodes and returns flat nodes, so the
+  refined version carries no `uses`.
+- **Only some helpers are macros.** A template that customises a helper's nodes beyond its
+  arguments keeps the plain helper, since an edited use is drift.
 - **The editor's canvas does not stop an edit to a macro node's fields.** A change other than
   `title` or `group` is refused at save as drift; re-expand or detach the use first.

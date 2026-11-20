@@ -1,5 +1,4 @@
 export {
-  CI_ATTEMPTS_PATH,
   type CiFixHandoff,
   type CiLoopOptions,
   type CiWaitMode,

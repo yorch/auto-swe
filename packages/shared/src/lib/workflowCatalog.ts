@@ -64,7 +64,6 @@ const entries: [string, { title: string; group: WorkflowGroup }][] = [
   ['incident-postmortem', { group: 'engineering', title: 'Incident postmortem draft' }],
   ['zendesk-ticket-reply', { group: 'support', title: 'Support ticket reply' }],
   ['notion-content-draft', { group: 'content', title: 'Draft an update in Notion' }],
-  ['notion-content-brand-review', { group: 'content', title: 'Draft with a brand review' }],
   ['send-slack-update', { group: 'content', title: 'Post a Slack update' }],
   [
     'confluence-review-to-tickets',

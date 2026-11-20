@@ -19,6 +19,7 @@ import {
   firstDifferenceFromSeed,
   PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES,
   PREVIOUS_BUILTIN_INPUT_SCHEMAS,
+  RETIRED_BUILTIN_TEMPLATES,
   SWE_AGENTS,
   seedCoreDefaults,
   seedSweStarter,
@@ -1193,5 +1194,99 @@ describe('syncBuiltins — skill revisions', () => {
     expect(revisionsOf(tables, 'legacy')).toEqual([
       expect.objectContaining({ promptText: 'custom text', revision: 1 }),
     ]);
+  });
+});
+
+describe('syncBuiltins — retiring a built-in template', () => {
+  const RETIRED = 'notion-content-brand-review';
+
+  /** A seeded database that still holds the retired template's row, on its one built-in version. */
+  async function seedWithRetiredRow(over: Record<string, unknown> = {}) {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    const row: Row = {
+      activeVersion: 1,
+      experimentSplit: null,
+      id: 'retired-row',
+      isDefault: false,
+      name: RETIRED,
+      status: 'ACTIVE',
+      teamId: null,
+      ...over,
+    };
+    tables.workflowTemplate.push(row);
+    tables.workflowTemplateVersion.push({
+      createdBy: null,
+      generatedBy: null,
+      id: 'retired-v1',
+      spec: { old: 'spec' },
+      templateId: row.id,
+      version: 1,
+    });
+    return { prisma, row, tables };
+  }
+
+  function warnings() {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    return {
+      restore: () => warn.mockRestore(),
+      said: () => warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes(RETIRED)),
+    };
+  }
+
+  it('names the template that replaces each retired one, and that template ships', () => {
+    for (const { replacedBy } of Object.values(RETIRED_BUILTIN_TEMPLATES)) {
+      expect(BUILTIN_TEMPLATES.some((t) => t.name === replacedBy)).toBe(true);
+    }
+    expect(BUILTIN_TEMPLATES.some((t) => t.name in RETIRED_BUILTIN_TEMPLATES)).toBe(false);
+  });
+
+  it('archives a retired row still on its built-in version, and keeps the row and its version', async () => {
+    const { prisma, row, tables } = await seedWithRetiredRow();
+    await seedSweStarter(prisma);
+    expect(row.status).toBe('ARCHIVED');
+    expect(versionsOf(tables, row.id)).toHaveLength(1);
+    expect(row.activeVersion).toBe(1);
+  });
+
+  it('is a no-op when the retired row is absent or already archived, and on a second boot', async () => {
+    const { prisma, row } = await seedWithRetiredRow({ status: 'ARCHIVED' });
+    await seedSweStarter(prisma);
+    await seedSweStarter(prisma);
+    expect(row.status).toBe('ARCHIVED');
+    const fresh = makeFake();
+    await expect(seedSweStarter(fresh.prisma)).resolves.not.toThrow();
+  });
+
+  it.each<[string, Record<string, unknown>, boolean]>([
+    ['an admin moved it onto their own version', { activeVersion: 2 }, true],
+    ['it is running an A/B experiment', { experimentSplit: 20, experimentVersion: 1 }, false],
+    ['it is the default template', { isDefault: true }, false],
+    ['it is a team copy', { teamId: 'team-1' }, false],
+    ['it is a draft', { status: 'DRAFT' }, false],
+  ])('leaves the row alone and says so when %s', async (_why, over, adminVersion) => {
+    const { prisma, row, tables } = await seedWithRetiredRow(over);
+    if (adminVersion) {
+      tables.workflowTemplateVersion.push({
+        createdBy: 'user-1',
+        generatedBy: null,
+        id: 'retired-v2',
+        spec: { mine: true },
+        templateId: row.id,
+        version: 2,
+      });
+    }
+    const w = warnings();
+    try {
+      await seedSweStarter(prisma);
+      expect(row.status).toBe(over.status ?? 'ACTIVE');
+      // A team's copy is the team's: no warning about it, only GLOBAL rows are looked up.
+      if (over.teamId === undefined) {
+        const said = w.said();
+        expect(said.some((m) => m.includes('notion-content-draft'))).toBe(true);
+      }
+    } finally {
+      w.restore();
+    }
   });
 });

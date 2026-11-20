@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CI_ATTEMPTS_PATH, ciLoop, ciWaitEntry, waitForCi } from './ciLoop.js';
+import { ciLoop, ciWaitEntry, waitForCi } from './ciLoop.js';
 import { expectWellFormed } from './testUtil.js';
 
 describe('waitForCi', () => {
@@ -158,10 +158,6 @@ describe('ciLoop', () => {
     expect(fetch()).toMatchObject({ maxVisits: 2 });
     expect(fetch(6)).toMatchObject({ maxVisits: 5 });
     expect(() => fetch(1)).toThrow(/at least 2/);
-  });
-
-  it('exports the path a template resets to give a rejected change a fresh CI budget', () => {
-    expect(CI_ATTEMPTS_PATH).toBe('nodes.fetchLogs.visits');
   });
 
   it('takes the limit as an expression, which keeps a counter (maxVisits is a constant)', () => {

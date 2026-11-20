@@ -28,7 +28,8 @@ type Uses = NonNullable<WorkflowSpec['uses']>;
 
 /** The argument type of each macro, by `<name>@<version>`. */
 export interface MacroArgsByRef {
-  'ciLoop@1': CiLoopOptions;
+  'ciLoop@1': Omit<CiLoopOptions, 'fixConfig'>;
+  'ciLoop@2': CiLoopOptions;
   'openPullRequest@1': OpenPullRequestOptions;
   'reviewLoop@1': ReviewLoopOptions;
   'validatePhase@1': ValidatePhaseOptions;
