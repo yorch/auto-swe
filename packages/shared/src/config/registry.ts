@@ -1640,6 +1640,71 @@ export const SETTING_DEFINITIONS = {
     sensitive: true,
     writeAccess: 'admin',
   }),
+  // ── Teams: directory, join requests, self-service creation ────────────────
+  'teams.directoryScope': defineSetting<'platform' | 'organization'>({
+    defaultValue: 'platform',
+    description:
+      'Which teams the team directory lists to a signed-in user. `platform` lists every active team on the platform; `organization` lists only the teams of organizations the viewer belongs to, and a request to join may go only to a team the viewer can see. Platform-wide: it cannot be set per organization. A deployment that keeps teams private to an organization sets `organization`.',
+    group: 'teams',
+    label: 'Team directory scope',
+    overridableAt: [],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.enum(['platform', 'organization']),
+    writeAccess: 'admin',
+  }),
+  'teams.joinRequestCooldownHours': defineSetting({
+    defaultValue: 72,
+    description:
+      'Hours a user must wait before asking to join a team again after that team rejected their request. `0` allows an immediate new request. Platform-wide.',
+    group: 'teams',
+    label: 'Join request cooldown',
+    overridableAt: [],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(0).max(720),
+    unit: 'hours',
+    writeAccess: 'admin',
+  }),
+  'teams.maxCreatedPerUser': defineSetting({
+    defaultValue: 3,
+    description:
+      'How many teams one user may have created through self-service creation. Counts the active teams whose creator they are, across all organizations, not only this one. Does not limit an organization admin or a platform admin creating teams through the admin path.',
+    group: 'teams',
+    label: 'Teams per creator',
+    overridableAt: ['ORGANIZATION'],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(100),
+    unit: 'teams',
+    writeAccess: 'admin',
+  }),
+  'teams.maxOpenJoinRequests': defineSetting({
+    defaultValue: 5,
+    description:
+      'How many join requests one user may have open (awaiting a team or an organization decision) at once. Platform-wide.',
+    group: 'teams',
+    label: 'Open join requests per user',
+    overridableAt: [],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(50),
+    unit: 'requests',
+    writeAccess: 'admin',
+  }),
+  'teams.selfServiceCreation': defineSetting({
+    defaultValue: false,
+    description:
+      'Whether any member of an organization may create a team in it, without being an organization admin. The creator becomes the new team ADMIN, which lets them onboard any repository the platform credential can reach and invite people into the organization. Off by default: only organization admins and platform admins create teams. Applies to the organization-scoped creation route only.',
+    group: 'teams',
+    label: 'Self-service team creation',
+    overridableAt: ['ORGANIZATION'],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+    writeAccess: 'admin',
+  }),
+
   'tracker.allowedProjectKeys': defineSetting({
     defaultValue: [],
     description:

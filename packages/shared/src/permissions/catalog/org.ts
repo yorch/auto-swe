@@ -74,7 +74,8 @@ export const orgCapabilities = defineCapabilities({
   },
   'org.teams.create': {
     class: 'governance',
-    description: 'Create a team in the organization, from either team-creation route.',
+    description:
+      'Create a team in the organization. Both team-creation routes check it; only the organization route also admits a member where self-service creation is on.',
     org: 'ADMIN',
     scope: 'org',
   },

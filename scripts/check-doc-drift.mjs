@@ -347,9 +347,11 @@ const registrySrc = read('packages/shared/src/config/registry.ts');
 
 /** Keys of `SETTING_DEFINITIONS`, e.g. `workspace.maxToolOutputChars`. */
 const settingKeys = new Set(
-  [...registrySrc.matchAll(/^\s*'([a-z][a-zA-Z0-9]*\.[a-zA-Z0-9]+)':\s*defineSetting\(/gm)].map(
-    (m) => m[1]
-  )
+  [
+    ...registrySrc.matchAll(
+      /^\s*'([a-z][a-zA-Z0-9]*\.[a-zA-Z0-9]+)':\s*defineSetting(?:<[^>\n]*>)?\(/gm
+    ),
+  ].map((m) => m[1])
 );
 if (settingKeys.size === 0) {
   throw new Error('could not locate any SETTING_DEFINITIONS keys');
@@ -363,7 +365,9 @@ if (settingKeys.size === 0) {
  */
 const registeredKeyCount = new Set(
   [
-    ...registrySrc.matchAll(/^\s*'([a-z][a-zA-Z0-9]*(?:\.[a-zA-Z0-9]+)+)':\s*defineSetting\(/gm),
+    ...registrySrc.matchAll(
+      /^\s*'([a-z][a-zA-Z0-9]*(?:\.[a-zA-Z0-9]+)+)':\s*defineSetting(?:<[^>\n]*>)?\(/gm
+    ),
   ].map((m) => m[1])
 ).size;
 

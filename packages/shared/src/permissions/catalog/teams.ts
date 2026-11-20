@@ -72,6 +72,12 @@ export const teamCapabilities = defineCapabilities({
     description: 'Delete a team.',
     scope: 'team',
   },
+  'team.join-requests.create': {
+    class: 'operation',
+    description:
+      'Ask to join a team. Any signed-in person who is not a member and can see the team may; the route checks that itself and needs no capability, so only a platform admin holds this one in the catalog.',
+    scope: 'team',
+  },
   'team.members.manage': {
     class: 'governance',
     description:

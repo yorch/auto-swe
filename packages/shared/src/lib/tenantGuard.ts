@@ -70,6 +70,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'Team',
   'TeamBudgetNotice',
   'TeamBudgetRequest',
+  'TeamJoinRequest',
   'TeamMembership',
   'TeamSecret',
   'WorkflowHttpCall',

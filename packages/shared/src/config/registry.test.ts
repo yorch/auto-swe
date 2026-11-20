@@ -909,3 +909,44 @@ describe('run plan settings', () => {
     );
   });
 });
+
+describe('team directory and join-request settings', () => {
+  it('declares the contract defaults, scopes and access', () => {
+    const expected = {
+      'teams.directoryScope': { defaultValue: 'platform', overridableAt: [] },
+      'teams.joinRequestCooldownHours': { defaultValue: 72, overridableAt: [] },
+      'teams.maxCreatedPerUser': { defaultValue: 3, overridableAt: ['ORGANIZATION'] },
+      'teams.maxOpenJoinRequests': { defaultValue: 5, overridableAt: [] },
+      'teams.selfServiceCreation': { defaultValue: false, overridableAt: ['ORGANIZATION'] },
+    } as const;
+    for (const [key, want] of Object.entries(expected)) {
+      const def = SETTING_DEFINITIONS[key as keyof typeof expected];
+      expect(def, key).toMatchObject({
+        ...want,
+        group: 'teams',
+        restartRequired: false,
+        runPinned: false,
+        writeAccess: 'admin',
+      });
+      expect(def.schema.safeParse(def.defaultValue).success, key).toBe(true);
+    }
+  });
+
+  it('bounds each value', () => {
+    const accepts = (key: keyof typeof SETTING_DEFINITIONS, value: unknown) =>
+      SETTING_DEFINITIONS[key].schema.safeParse(value).success;
+    expect(accepts('teams.directoryScope', 'organization')).toBe(true);
+    expect(accepts('teams.directoryScope', 'team')).toBe(false);
+    expect(accepts('teams.selfServiceCreation', 'true')).toBe(false);
+    expect([0, 720].map((v) => accepts('teams.joinRequestCooldownHours', v))).toEqual([true, true]);
+    expect([-1, 721, 1.5].map((v) => accepts('teams.joinRequestCooldownHours', v))).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect([1, 100].map((v) => accepts('teams.maxCreatedPerUser', v))).toEqual([true, true]);
+    expect([0, 101].map((v) => accepts('teams.maxCreatedPerUser', v))).toEqual([false, false]);
+    expect([1, 50].map((v) => accepts('teams.maxOpenJoinRequests', v))).toEqual([true, true]);
+    expect([0, 51].map((v) => accepts('teams.maxOpenJoinRequests', v))).toEqual([false, false]);
+  });
+});

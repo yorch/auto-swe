@@ -99,6 +99,21 @@ describe('the capability catalog', () => {
     expect(CATALOG['team.callbacks.manage']).toMatchObject({ class: 'sensitive', team: 'LEAD' });
   });
 
+  it('lists the team directory and join requests without widening team management', () => {
+    expect(CATALOG['platform.team-directory.read']).toMatchObject({
+      class: 'read',
+      scope: 'platform',
+      team: 'MEMBER',
+    });
+    expect(CATALOG['team.join-requests.create']).toMatchObject({
+      class: 'operation',
+      scope: 'team',
+    });
+    // Deciding a request reuses the membership capabilities, so who decides is who manages.
+    expect(CATALOG['team.members.manage']).toMatchObject({ org: 'ADMIN', team: 'LEAD' });
+    expect(CATALOG['org.members.manage']).toMatchObject({ org: 'ADMIN', scope: 'org' });
+  });
+
   it('lists constraints only beside capabilities that exist', () => {
     for (const constraint of CONSTRAINTS) {
       expect(constraint.accompanies.length, constraint.name).toBeGreaterThan(0);

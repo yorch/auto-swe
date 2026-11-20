@@ -161,6 +161,15 @@ enum OrgRole {
   MEMBER
 }
 
+/// Where a request to join a team stands. `PENDING_TEAM` and `PENDING_ORG` are open; the rest are final.
+enum JoinRequestStatus {
+  PENDING_TEAM
+  PENDING_ORG
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
 enum ReportDigestScope {
   ORGANIZATION
   TEAM
@@ -1431,10 +1440,15 @@ model Team {
   monthlyBudgetUsdCents       Int?  @map("monthly_budget_usd_cents")
   /// Percent of the team's cap at which to start warning (1-100). Null = the default.
   budgetAlertThresholdPercent Int?  @map("budget_alert_threshold_percent")
+  /// The user who created the team through self-service creation. Null for a team an admin created
+  /// or one that predates the column; there is no backfill.
+  createdById          String?      @map("created_by_id") @db.Uuid
+  createdBy            User?        @relation("TeamCreator", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt            DateTime     @default(now()) @map("created_at") @db.Timestamptz
   updatedAt            DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   memberships           TeamMembership[]
+  joinRequests          TeamJoinRequest[]
   budgetNotices         TeamBudgetNotice[]
   repositories          Connection[]
   servicePrincipals     ServicePrincipal[]
@@ -1479,7 +1493,42 @@ model Team {
   campaignTargets CampaignTarget[]
   runPlans        RunPlan[]
   @@index([orgId])
+  @@index([createdById])
   @@map("teams")
+}
+
+/// A user's request to join a team. A same-organization request is decided once by the team's
+/// managers; a cross-organization one (`requiresOrgApproval`) needs a second decision from an admin
+/// of the team's organization. At most one open request per user and team: a partial unique index
+/// on `(user_id, team_id) WHERE status IN ('PENDING_TEAM','PENDING_ORG')`, hand-written in the
+/// migration because the Prisma DSL cannot express it.
+model TeamJoinRequest {
+  id                  String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId              String            @map("team_id") @db.Uuid
+  team                Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId              String            @map("user_id") @db.Uuid
+  user                User              @relation("JoinRequestRequester", fields: [userId], references: [id], onDelete: Cascade)
+  /// At most 500 characters (enforced by the API).
+  message             String            @default("")
+  status              JoinRequestStatus @default(PENDING_TEAM)
+  /// Set at creation: the requester is not a member of the team's organization.
+  requiresOrgApproval Boolean           @default(false) @map("requires_org_approval")
+  /// Chosen by the team approver; null until then (the grant defaults to MEMBER).
+  grantedRole         TeamRole?         @map("granted_role")
+  teamDecidedById     String?           @map("team_decided_by_id") @db.Uuid
+  teamDecidedBy       User?             @relation("JoinRequestTeamDecider", fields: [teamDecidedById], references: [id], onDelete: SetNull)
+  teamDecidedAt       DateTime?         @map("team_decided_at") @db.Timestamptz
+  teamDecisionNote    String?           @map("team_decision_note")
+  orgDecidedById      String?           @map("org_decided_by_id") @db.Uuid
+  orgDecidedBy        User?             @relation("JoinRequestOrgDecider", fields: [orgDecidedById], references: [id], onDelete: SetNull)
+  orgDecidedAt        DateTime?         @map("org_decided_at") @db.Timestamptz
+  orgDecisionNote     String?           @map("org_decision_note")
+  createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([teamId, status])
+  @@index([userId, createdAt])
+  @@map("team_join_requests")
 }
 
 model TeamMembership {
@@ -1854,6 +1903,10 @@ model User {
   decidedOrchestrationApprovals OrchestrationApproval[] @relation("OrchestrationApprovalDecider")
   runSteeringMessages RunSteeringMessage[] @relation("RunSteeringAuthor")
   createdTeamSecrets        TeamSecret[]       @relation("TeamSecretCreator")
+  createdTeams              Team[]             @relation("TeamCreator")
+  teamJoinRequests          TeamJoinRequest[]  @relation("JoinRequestRequester")
+  teamJoinRequestsDecided   TeamJoinRequest[]  @relation("JoinRequestTeamDecider")
+  teamJoinRequestsOrgDecided TeamJoinRequest[] @relation("JoinRequestOrgDecider")
   createdTeamSecretGrants   TeamSecretGrant[]  @relation("TeamSecretGrantCreator")
   failuresAssigned          FailureAssignment[] @relation("FailureAssignee")
   failureAssignmentsMade    FailureAssignment[] @relation("FailureAssigner")
