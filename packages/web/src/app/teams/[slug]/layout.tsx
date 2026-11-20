@@ -11,6 +11,7 @@ import { TabBar } from '@/components/ui/TabBar';
 import { useCan, usePlatformAdmin } from '@/hooks/useCan';
 import { useEffectivePermissions } from '@/hooks/useEffectivePermissions';
 import { useEntityTitle } from '@/hooks/useEntityTitle';
+import { useTeamOverview } from '@/hooks/useTeamOverview';
 import { useTeams } from '@/hooks/useTeams';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { teamRoleLabel } from '@/lib/roleLabels';
@@ -48,6 +49,10 @@ export default function TeamSpaceLayout({
   const canSeeSettings = useCan('team.settings.manage', scope);
   const canSeeManage = useCan('team.attention.read', scope);
   const canManageBudget = useCan('team.budget.manage', scope);
+  const canManageMembers = useCan('team.members.manage', scope);
+  // Open join requests, counted on the Members tab for those who decide them.
+  const overview = useTeamOverview(team?.id, { enabled: canManageMembers });
+  const pendingRequests = canManageMembers ? (overview.data?.pendingJoinRequests ?? 0) : 0;
 
   useEntityTitle(team?.name);
   // Remember the visit as the user's last team. Written once per slug: a failed write must not
@@ -94,6 +99,9 @@ export default function TeamSpaceLayout({
     href: teamHref(team.slug, tab.id),
     id: tab.id,
     label: tab.label,
+    ...(tab.id === 'members' && pendingRequests > 0
+      ? { badge: { count: pendingRequests, label: 'pending join requests' } }
+      : {}),
   }));
   const active: TeamTabId = teamTabFromPath(pathname) ?? 'overview';
 

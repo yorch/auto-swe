@@ -9,6 +9,33 @@ interface TabItem<T extends string> {
   label: string;
   /** Renders the tab as a link. Use it when each tab is its own route. */
   href?: string;
+  /**
+   * A count shown after the label (pending requests, say). `label` names it for assistive tech
+   * ("3 pending requests"); a zero count shows nothing.
+   */
+  badge?: { count: number; label: string };
+}
+
+/** The label of a tab with its optional count, which reads as text and not only as a pill. */
+function TabLabel({ tab }: { tab: Pick<TabItem<string>, 'label' | 'badge'> }) {
+  return (
+    <>
+      {tab.label}
+      {tab.badge && tab.badge.count > 0 && (
+        <>
+          <span
+            aria-hidden
+            className="ml-2 inline-flex min-w-5 items-center justify-center rounded-full bg-accent-400/20 px-1.5 text-2xs font-medium text-accent-400 tabular-nums"
+          >
+            {tab.badge.count}
+          </span>
+          <span className="sr-only">
+            , {tab.badge.count} {tab.badge.label}
+          </span>
+        </>
+      )}
+    </>
+  );
 }
 
 /** Props for the panel a tab controls; pair with `<TabBar idPrefix>`. */
@@ -123,7 +150,7 @@ export function TabBar<T extends string>({
                 href={tab.href}
                 key={tab.id}
               >
-                {tab.label}
+                <TabLabel tab={tab} />
               </Link>
             ) : (
               <button
@@ -133,7 +160,7 @@ export function TabBar<T extends string>({
                 onClick={() => onChange?.(tab.id)}
                 type="button"
               >
-                {tab.label}
+                <TabLabel tab={tab} />
               </button>
             )
           )}
@@ -164,7 +191,7 @@ export function TabBar<T extends string>({
                 tabIndex={selected ? 0 : -1}
                 type="button"
               >
-                {tab.label}
+                <TabLabel tab={tab} />
               </button>
             );
           })}

@@ -78,4 +78,23 @@ describe('TabBar', () => {
     // The inactive panel is not rendered, so its tab must not point at it.
     expect(screen.getByRole('tab', { name: 'A' }).hasAttribute('aria-controls')).toBe(false);
   });
+
+  it('names a tab count for assistive tech and hides a zero count', () => {
+    render(
+      <TabBar
+        active="members"
+        tabs={[
+          {
+            badge: { count: 3, label: 'pending join requests' },
+            href: '/m',
+            id: 'members',
+            label: 'Members',
+          },
+          { badge: { count: 0, label: 'pending' }, href: '/o', id: 'other', label: 'Other' },
+        ]}
+      />
+    );
+    expect(screen.getByRole('link', { name: 'Members, 3 pending join requests' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Other' })).toBeTruthy();
+  });
 });
