@@ -2225,3 +2225,31 @@ count, and any user may ask to join a team.
 **Verify.** With `teams.directoryScope` set to `organization`, `GET /api/v1/teams/directory` returns
 for a user only teams whose organization the user belongs to. `SELECT COUNT(*) FROM team_join_requests`
 returns a number rather than an error, and `\d teams` shows a `created_by_id` column.
+
+---
+
+### Sign-ins from before the method was recorded are missing from user analytics (`<sha>`)
+
+**Affected.** Deployments that recorded sign-ins before sign-in events carried a method, so that
+`config_audit_log` holds `Session` rows with `after_json->>'event' = 'sign_in'` and no `method` key
+(`SELECT count(*) FROM config_audit_log WHERE entity_type = 'Session' AND action = 'CREATE' AND after_json->>'event' = 'sign_in' AND NOT (after_json ? 'method')`
+returns a non-zero count). A deployment with no such rows needs nothing.
+
+**What changes.** Nothing is migrated automatically. Those sign-ins stay out of the user activity
+table, so last sign-in and sign-in counts in admin user analytics under-report the period before the
+upgrade. An opt-in script copies them in. No schema change, and it does not run at boot.
+
+**Actions.** Preview, then run it once from the gateway package:
+
+```bash
+yarn workspace @auto-swe/gateway backfill:sign-ins -- --dry-run
+yarn workspace @auto-swe/gateway backfill:sign-ins
+```
+
+Only audit rows inside the activity retention window are copied. Each is written as a `sign_in`
+event with method `unknown` and `props.backfilled = true`. The script is idempotent: it skips an
+audit row when the same user already has a `sign_in` event within 5 seconds, so a re-run adds
+nothing. `--max-rows <n>` bounds a run (default 1,000,000); run again to continue.
+
+**Verify.** A second run reports `would insert 0` under `--dry-run`, and the person's detail page
+lists the earlier sign-ins under the `unknown` method.
