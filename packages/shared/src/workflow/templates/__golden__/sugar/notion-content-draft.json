@@ -1,5 +1,5 @@
 {
-  "description": "Read a Notion source page, draft a short update with the content writer, and append it to a target Notion page. With brandReview on (the default) a second agent reviews the draft for brand voice and clarity, and the reviewed text is what gets written; set it to false to write the plain draft.",
+  "description": "Read a Notion source page, draft a short update with the content writer, and append it to a target Notion page. With the brand review option on (the default), a second agent reviews the draft for brand voice and clarity and the reviewed text is what gets written; turn it off to write the plain draft.",
   "entry": "resolveWorkspace",
   "name": "notion-content-draft",
   "nodes": {
