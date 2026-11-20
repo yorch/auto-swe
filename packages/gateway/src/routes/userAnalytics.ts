@@ -3,6 +3,8 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { truncateIp } from '../lib/auditContext.js';
+import { csvRow } from '../lib/csv.js';
+import { sendError } from '../lib/httpErrors.js';
 import { mapLimited } from '../lib/mapLimited.js';
 import { parseUserAgent } from '../lib/userAgent.js';
 import { requireAuth } from '../plugins/auth.js';
@@ -13,6 +15,7 @@ import { requireAuth } from '../plugins/auth.js';
  *
  *   GET /api/v1/platform/analytics/overview     — platform-wide tiles, per-day series, breakdowns
  *   GET /api/v1/platform/analytics/users        — one row per person, searchable and sortable
+ *   GET /api/v1/platform/analytics/users/export — the same rows as a CSV file (a recorded export)
  *   GET /api/v1/platform/analytics/users/:id    — one person's detail (itself a recorded `read`)
  *
  * Cost: the per-day aggregates are one indexed `groupBy` per UTC day and source over a fixed
@@ -49,6 +52,22 @@ const UsersQuery = DaysQuery.extend({
   q: z.string().trim().min(1).max(200).optional(),
   sort: z.enum(['lastActive', 'actions', 'signIns', 'failed', 'email']).default('lastActive'),
 });
+const ExportQuery = UsersQuery.omit({ limit: true, offset: true });
+/** The people list's columns, in file order; a header is the field name. */
+const EXPORT_COLUMNS = [
+  'email',
+  'name',
+  'role',
+  'userId',
+  'createdAt',
+  'lastActiveAt',
+  'lastSignInAt',
+  'signIns',
+  'failedSignIns',
+  'actions',
+  'activeDays',
+  'activeSessions',
+] as const;
 const IdParams = z.object({ id: z.string().uuid() });
 
 interface ActorDay {
@@ -457,6 +476,104 @@ export const userAnalyticsRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  /** Every matching person with the window's aggregates, in the requested order (up to USER_CAP). */
+  async function buildPeopleRows(
+    days: number,
+    q: string | undefined,
+    sort: z.infer<typeof UsersQuery>['sort'],
+    order: 'asc' | 'desc'
+  ) {
+    const s = await getScan();
+    const totals = sumByActor(windowOf(s, days));
+    const [people, sessionGroups] = await Promise.all([
+      prisma.user.findMany({
+        orderBy: { email: 'asc' },
+        select: { createdAt: true, email: true, id: true, name: true, role: true },
+        take: USER_CAP + 1,
+        where: q
+          ? {
+              OR: [
+                { email: { contains: q, mode: 'insensitive' } },
+                { name: { contains: q, mode: 'insensitive' } },
+              ],
+            }
+          : {},
+      }),
+      prisma.session.groupBy({
+        _count: { _all: true },
+        by: ['userId'],
+        where: { expiresAt: { gt: new Date() } },
+      }),
+    ]);
+    const truncated = people.length > USER_CAP;
+    const sessionsBy = new Map(sessionGroups.map((g) => [g.userId, g._count._all]));
+    const rows = people.slice(0, USER_CAP).map((u) => {
+      const t = totals.get(u.id);
+      return {
+        actions: t?.actions ?? 0,
+        activeDays: t?.activeDays ?? 0,
+        activeSessions: sessionsBy.get(u.id) ?? 0,
+        createdAt: u.createdAt,
+        email: u.email,
+        failedSignIns: t?.failed ?? 0,
+        lastActive: t?.lastActive ?? 0,
+        lastSignIn: t?.lastSignIn ?? 0,
+        name: u.name,
+        role: u.role,
+        signIns: t?.signIns ?? 0,
+        userId: u.id,
+      };
+    });
+    const dir = order === 'asc' ? 1 : -1;
+    const key = (r: (typeof rows)[number]): number | string =>
+      sort === 'email'
+        ? r.email.toLowerCase()
+        : sort === 'actions'
+          ? r.actions
+          : sort === 'signIns'
+            ? r.signIns
+            : sort === 'failed'
+              ? r.failedSignIns
+              : r.lastActive;
+    rows.sort((a, b) => {
+      const ka = key(a);
+      const kb = key(b);
+      const c = ka < kb ? -1 : ka > kb ? 1 : 0;
+      return c * dir || a.email.localeCompare(b.email);
+    });
+    return { rows, truncated };
+  }
+
+  type PersonRow = Awaited<ReturnType<typeof buildPeopleRows>>['rows'][number];
+
+  /** The list's wire shape, with the all-time last sign-in read for just these people. */
+  async function presentPeople(people: PersonRow[]) {
+    const ids = people.map((r) => r.userId);
+    const lastIn = ids.length
+      ? await prisma.userActivityEvent.groupBy({
+          _max: { createdAt: true },
+          by: ['actorId'],
+          where: { actorId: { in: ids }, kind: 'sign_in' },
+        })
+      : [];
+    const lastInBy = new Map(lastIn.map((g) => [g.actorId, g._max.createdAt?.getTime() ?? 0]));
+    return people.map((r) => ({
+      actions: r.actions,
+      activeDays: r.activeDays,
+      activeSessions: r.activeSessions,
+      createdAt: r.createdAt.toISOString(),
+      email: r.email,
+      failedSignIns: r.failedSignIns,
+      // Window-scoped, the value the list sorts on; `lastSignInAt` is all-time.
+      lastActiveAt: iso(r.lastActive),
+      lastSignInAt: iso(Math.max(r.lastSignIn, lastInBy.get(r.userId) ?? 0)),
+      name: r.name,
+      role: r.role,
+      signIns: r.signIns,
+      userId: r.userId,
+    }));
+  }
+
   app.get(
     '/analytics/users',
     {
@@ -465,96 +582,47 @@ export const userAnalyticsRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const { days, limit, offset, order, q, sort } = request.query;
-      const s = await getScan();
-      const totals = sumByActor(windowOf(s, days));
-      const [people, sessionGroups] = await Promise.all([
-        prisma.user.findMany({
-          orderBy: { email: 'asc' },
-          select: { createdAt: true, email: true, id: true, name: true, role: true },
-          take: USER_CAP + 1,
-          where: q
-            ? {
-                OR: [
-                  { email: { contains: q, mode: 'insensitive' } },
-                  { name: { contains: q, mode: 'insensitive' } },
-                ],
-              }
-            : {},
-        }),
-        prisma.session.groupBy({
-          _count: { _all: true },
-          by: ['userId'],
-          where: { expiresAt: { gt: new Date() } },
-        }),
-      ]);
-      const truncated = people.length > USER_CAP;
-      const sessionsBy = new Map(sessionGroups.map((g) => [g.userId, g._count._all]));
-      const rows = people.slice(0, USER_CAP).map((u) => {
-        const t = totals.get(u.id);
-        return {
-          actions: t?.actions ?? 0,
-          activeDays: t?.activeDays ?? 0,
-          activeSessions: sessionsBy.get(u.id) ?? 0,
-          createdAt: u.createdAt,
-          email: u.email,
-          failedSignIns: t?.failed ?? 0,
-          lastActive: t?.lastActive ?? 0,
-          lastSignIn: t?.lastSignIn ?? 0,
-          name: u.name,
-          role: u.role,
-          signIns: t?.signIns ?? 0,
-          userId: u.id,
-        };
-      });
-      const dir = order === 'asc' ? 1 : -1;
-      const key = (r: (typeof rows)[number]): number | string =>
-        sort === 'email'
-          ? r.email.toLowerCase()
-          : sort === 'actions'
-            ? r.actions
-            : sort === 'signIns'
-              ? r.signIns
-              : sort === 'failed'
-                ? r.failedSignIns
-                : r.lastActive;
-      rows.sort((a, b) => {
-        const ka = key(a);
-        const kb = key(b);
-        const c = ka < kb ? -1 : ka > kb ? 1 : 0;
-        return c * dir || a.email.localeCompare(b.email);
-      });
-      const page = rows.slice(offset, offset + limit);
-      // All-time last sign-in for the page only, so a quiet person still shows one.
-      const pageIds = page.map((r) => r.userId);
-      const lastIn = pageIds.length
-        ? await prisma.userActivityEvent.groupBy({
-            _max: { createdAt: true },
-            by: ['actorId'],
-            where: { actorId: { in: pageIds }, kind: 'sign_in' },
-          })
-        : [];
-      const lastInBy = new Map(lastIn.map((g) => [g.actorId, g._max.createdAt?.getTime() ?? 0]));
+      const { rows, truncated } = await buildPeopleRows(days, q, sort, order);
       return {
-        data: page.map((r) => {
-          const lastSignIn = Math.max(r.lastSignIn, lastInBy.get(r.userId) ?? 0);
-          return {
-            actions: r.actions,
-            activeDays: r.activeDays,
-            activeSessions: r.activeSessions,
-            createdAt: r.createdAt.toISOString(),
-            email: r.email,
-            failedSignIns: r.failedSignIns,
-            // Window-scoped, the value the list sorts on; `lastSignInAt` is all-time.
-            lastActiveAt: iso(r.lastActive),
-            lastSignInAt: iso(lastSignIn),
-            name: r.name,
-            role: r.role,
-            signIns: r.signIns,
-            userId: r.userId,
-          };
-        }),
+        // All-time last sign-in for the page only, so a quiet person still shows one.
+        data: await presentPeople(rows.slice(offset, offset + limit)),
         meta: { days, limit, offset, total: rows.length, truncated },
       };
+    }
+  );
+
+  // Registered before `/analytics/users/:id`; find-my-way ranks a static segment above a
+  // parameter either way, and the route test pins it. The export is itself a recorded `export`.
+  app.get(
+    '/analytics/users/export',
+    {
+      config: { activity: 'export' },
+      onRequest: requireAuth({ capability: 'platform.audit.read' }),
+      schema: { querystring: ExportQuery },
+    },
+    async (request, reply) => {
+      const { days, order, q, sort } = request.query;
+      const { rows, truncated } = await buildPeopleRows(days, q, sort, order);
+      if (truncated) {
+        // A partial file would read as the whole population, so refuse it instead.
+        return sendError(
+          reply,
+          413,
+          'EXPORT_TOO_LARGE',
+          `More than ${USER_CAP} people match, so the export would be incomplete. Narrow the search with q and export again.`
+        );
+      }
+      const people = await presentPeople(rows);
+      const body =
+        csvRow(EXPORT_COLUMNS) +
+        people.map((p) => csvRow(EXPORT_COLUMNS.map((c) => p[c]))).join('');
+      return reply
+        .header('content-type', 'text/csv; charset=utf-8')
+        .header('content-disposition', `attachment; filename="user-analytics-${days}d.csv"`)
+        .header('cache-control', 'no-store')
+        .header('x-export-row-limit', String(USER_CAP))
+        .header('x-export-truncated', 'false')
+        .send(body);
     }
   );
 

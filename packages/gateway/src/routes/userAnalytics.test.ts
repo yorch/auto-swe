@@ -8,7 +8,10 @@ const UID = '11111111-1111-4111-8111-111111111111';
 const today = new Date();
 today.setUTCHours(10, 0, 0, 0);
 
-async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
+async function buildApp(
+  role: 'ADMIN' | 'ENGINEER' = 'ADMIN',
+  overrides: Partial<{ name: string; email: string }> = {}
+) {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -18,6 +21,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
     id: UID,
     name: 'Ada',
     role: 'USER',
+    ...overrides,
   };
   const prisma = {
     configAuditLog: {
@@ -171,6 +175,68 @@ describe('GET /api/v1/platform/analytics/users', () => {
       signIns: 14,
       userId: UID,
     });
+  });
+});
+
+describe('GET /api/v1/platform/analytics/users/export', () => {
+  it('is a CSV attachment with the list columns, not the :id route', async () => {
+    const { app } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      url: '/api/v1/platform/analytics/users/export?days=7&q=ada&sort=actions',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('text/csv; charset=utf-8');
+    expect(res.headers['content-disposition']).toBe('attachment; filename="user-analytics-7d.csv"');
+    const [header, row] = res.body.split('\n');
+    expect(header).toBe(
+      'email,name,role,userId,createdAt,lastActiveAt,lastSignInAt,signIns,failedSignIns,actions,activeDays,activeSessions'
+    );
+    expect(row).toContain(`a@example.com,Ada,USER,${UID}`);
+    expect(row).toContain(',14,0,21,7,1');
+  });
+
+  it('neutralises formulas and quotes hostile names and emails', async () => {
+    const { app } = await buildApp('ADMIN', {
+      email: '=cmd@example.com',
+      name: '@SUM(1,2)"\nx',
+    });
+    const res = await app.inject({ headers: AUTH, url: '/api/v1/platform/analytics/users/export' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain("'=cmd@example.com,");
+    expect(res.body).toContain('"\'@SUM(1,2)""\nx"');
+  });
+
+  it('answers 413 instead of a partial file when more people match than the cap', async () => {
+    const { app, prisma } = await buildApp();
+    const one = (await prisma.user.findMany())[0];
+    prisma.user.findMany.mockResolvedValue(
+      Array.from({ length: 5001 }, (_, i) => ({
+        ...one,
+        email: `u${i}@example.com`,
+        id: `id-${i}`,
+      }))
+    );
+    const res = await app.inject({ headers: AUTH, url: '/api/v1/platform/analytics/users/export' });
+    expect(res.statusCode).toBe(413);
+    expect(res.json().error.code).toBe('EXPORT_TOO_LARGE');
+    expect(res.json().error.message).toContain('Narrow the search with q');
+    expect(res.headers['content-type']).not.toContain('text/csv');
+  });
+
+  it('requires platform.audit.read', async () => {
+    const { app } = await buildApp('ENGINEER');
+    const res = await app.inject({ headers: AUTH, url: '/api/v1/platform/analytics/users/export' });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('rejects an out-of-range window', async () => {
+    const { app } = await buildApp();
+    const res = await app.inject({
+      headers: AUTH,
+      url: '/api/v1/platform/analytics/users/export?days=90',
+    });
+    expect(res.statusCode).toBe(400);
   });
 });
 
