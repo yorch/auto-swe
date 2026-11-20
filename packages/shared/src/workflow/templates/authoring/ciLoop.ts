@@ -131,7 +131,7 @@ export interface CiLoopOptions {
   fix: false | { limit?: number | string; handoff: CiFixHandoff; retryIfUnchanged?: boolean };
   /**
    * Config for the `ciFix` node (a `systemPrompt`, `allowedPaths`, `untrustedCiLogs`, …).
-   * The fixer otherwise runs with the default prompt and no restriction. Omitted, the node
+   * The fixer otherwise runs with the default prompt and no restriction. Omitted or `{}`, the node
    * carries no `config`. Has no effect without a fix loop.
    */
   fixConfig?: Record<string, unknown>;
@@ -188,7 +188,9 @@ export function ciLoop(opts: CiLoopOptions): NodeMap {
     nodes,
     {
       ciFix: {
-        ...(opts.fixConfig ? { config: opts.fixConfig } : {}),
+        ...(opts.fixConfig && Object.keys(opts.fixConfig).length > 0
+          ? { config: opts.fixConfig }
+          : {}),
         group: loop,
         inputs: {
           failureContext: { from: 'context.lastCILogs' },

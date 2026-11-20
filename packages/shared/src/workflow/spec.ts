@@ -66,8 +66,10 @@ const OnFailureSchema = RouteTargetSchema;
  *   - `status`: domain status set when the node is entered (not on a retry)
  *   - `maxVisits` + `onExhausted`: loop bound; the (maxVisits+1)th entry routes to `onExhausted`
  *   - `resetVisits`: node ids whose visit count (`nodes.<id>.visits`) is set to 0 when this
- *     node is entered, before this node's own `maxVisits` count, so a node that lists itself
- *     counts this entry as its first. It takes no transition and is not an edge.
+ *     node is entered, before this node's own `maxVisits` count. It takes no transition and is
+ *     not an edge. A node that lists itself would zero its own count on every entry and could
+ *     never exhaust, so `validateSpec` refuses that when the node sets `maxVisits`
+ *     (`RESET_VISITS_SELF_BOUNDED`) and warns when it does not (`RESET_VISITS_UNCOUNTED`).
  * A `terminate` node's own `status` (its terminal status) overrides this one.
  */
 export const MAX_RESET_VISITS = 20;
@@ -76,7 +78,12 @@ export const MAX_RESET_VISITS = 20;
  * purpose. Every field declared with `NodeIdSchema` itself is an edge (the inventory reads edges
  * from the schema by that identity), and a reset routes nowhere.
  */
-const ResetVisitsIdSchema = z.string().min(1).max(64);
+const ResetVisitsIdSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  // The count lives at `nodes.<id>.visits`, so an id with a dot could never name a node's count.
+  .regex(/^[^.]+$/, 'a node id in resetVisits has no dot');
 const NodeFlowFields = {
   maxVisits: z.number().int().min(1).max(10_000).optional(),
   onExhausted: RouteTargetSchema.optional(),
@@ -775,6 +782,16 @@ export const WorkflowSpecSchema = z
             code: 'custom',
             message: `node '${id}'.${field} refers to unknown node '${ref}'`,
             path: ['nodes', id, field],
+          });
+        }
+      }
+      // Not an edge, but the same kind of mistake: a reset of a node that does not exist.
+      for (const ref of node.resetVisits ?? []) {
+        if (!isNodeId(ref)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `node '${id}'.resetVisits refers to unknown node '${ref}'`,
+            path: ['nodes', id, 'resetVisits'],
           });
         }
       }

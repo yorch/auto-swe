@@ -1581,11 +1581,14 @@ replaces a counter `set` node plus a `cond`.
 **`resetVisits`** gives a bounded loop a fresh budget. It lists up to 20 distinct node ids; when the
 interpreter enters the node that carries it, it sets `nodes.<id>.visits` to 0 for each listed id
 before anything else happens on that entry: before the node's own `maxVisits` count, its `status`
-and its dispatch. A node that lists itself therefore counts that entry as its first. The reset takes
-no transition, routes nowhere and is not an edge, so reachability, `NO_TERMINAL` and the canvas do
-not see it. An id that is not a node of the spec is a `RESET_VISITS_UNKNOWN_NODE` error; a listed
-node that sets no `maxVisits` keeps no count, so the reset does nothing there and `validateSpec`
-warns `RESET_VISITS_UNCOUNTED`. It replaces a `set` node writing `{ "literal": 0 }` to
+and its dispatch. The reset takes no transition, routes nowhere and is not an edge, so
+reachability, `NO_TERMINAL` and the canvas do not see it. An id that is not a node of the spec is
+refused when the spec is parsed, and `validateSpec` reports it as a `RESET_VISITS_UNKNOWN_NODE`
+error; an id with a dot cannot name a count and is refused too. A node that lists itself while
+setting `maxVisits` would zero its own count on every entry and never exhaust, so that is a
+`RESET_VISITS_SELF_BOUNDED` error. A listed node that sets no `maxVisits` (a self-listing one
+included) keeps no count, so the reset does nothing there and `validateSpec` warns
+`RESET_VISITS_UNCOUNTED`. It replaces a `set` node writing `{ "literal": 0 }` to
 `nodes.<id>.visits`. The `four-eyes` and `consensus-review` templates use it on the node that keeps
 a fix a person or the reviewers asked for, `resetVisits: ["fetchLogs"]`, so the pushed fix gets the
 full CI attempt budget again.
@@ -1744,9 +1747,10 @@ A post-approval condition refuses delivery without a valid current draft. See
   out by a later node.
 - **A loop's termination is not proven.** `validateSpec` checks that a path to a `terminate`
   exists, not that a loop takes it; the transition cap is the backstop.
-- **`resetVisits` can undo a loop bound.** A reset on the same cycle as the node it resets sets
-  the count back every pass, so that node's `maxVisits` no longer ends the loop; only the
-  transition cap does, and nothing warns about it. Put the reset on a path that enters the loop
+- **`resetVisits` can undo a loop bound.** A node that resets itself is not bounded by its own
+  `maxVisits` and is refused when it has one (`RESET_VISITS_SELF_BOUNDED`). A reset on the same
+  cycle as a different node it resets sets that node's count back every pass, so its `maxVisits`
+  no longer ends the loop; only the transition cap does, and nothing warns about it. Put the reset on a path that enters the loop
   from outside, as `four-eyes` and `consensus-review` do. A generated run plan may not carry
   `resetVisits` at all (`RESERVED_PATH_WRITE`), because its loop and transition checks assume every
   count only grows (§8).

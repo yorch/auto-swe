@@ -716,8 +716,9 @@ it is active on its latest built-in version and runs no A/B experiment. Any othe
 an admin's and stays. A built-in template that stops shipping is listed in
 `RETIRED_BUILTIN_TEMPLATES` (`shared/src/lib/syncBuiltins.ts`) with the template that replaces it;
 sync then archives its GLOBAL row, but only when it is `ACTIVE`, not the default, running no A/B
-experiment and active on its latest built-in version. Any other row is left as it is and a warning
-names it and its replacement. Rows are never deleted (runs and versions reference them), runs in
+experiment, active on its latest built-in version and referenced by no automation, schedule,
+template webhook or service principal. Any other row is left as it is and one warning per process
+names it and its replacement (and, for a referenced row, the kinds of reference). Rows are never deleted (runs and versions reference them), runs in
 flight and pinned versions are unaffected, and the template picker lists `ACTIVE` templates only.
 A
 built-in version is one with no author (`createdBy` and `generatedBy` both null). The same
@@ -2038,8 +2039,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   reach an existing deployment.
 - **A retired built-in is archived, not removed.** Its row, versions and runs stay, and an
   untouched row is archived at the next boot. A retired template an admin edited, made the default,
-  or is running an experiment on stays `ACTIVE` with a warning until an admin archives it, and a
-  team's own copy of the name is never touched.
+  or is running an experiment on, or one an automation, schedule, template webhook or service
+  principal still points at, stays `ACTIVE` with a warning until an admin archives it, and a
+  team's own copy of the name is never touched. Nothing records that an admin reactivated an
+  archived built-in, so an administrator who wants a retired built-in back makes a copy;
+  reactivating the built-in row is undone at the next start-up.
 - **A built-in `inputSchema` moves only from a value a release recorded.** A schema change that is
   not added to `PREVIOUS_BUILTIN_INPUT_SCHEMAS` never reaches an existing deployment, and one that
   is still skips a template an admin moved off its built-in version, archived, or is running an

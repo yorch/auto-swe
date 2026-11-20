@@ -47,6 +47,17 @@ const checkCiStub = {
 } as const;
 
 describe('ciLoop', () => {
+  it('emits no config for an empty fixConfig, like an absent one', () => {
+    const fix = { handoff: { repush: 'repushAfterCIFix' } };
+    expect(ciLoop({ fix, fixConfig: {}, passed: 'finish' }).ciFix).not.toHaveProperty('config');
+    expect(ciLoop({ fix, passed: 'finish' }).ciFix).not.toHaveProperty('config');
+    expect(
+      ciLoop({ fix, fixConfig: { untrustedCiLogs: true }, passed: 'finish' }).ciFix
+    ).toMatchObject({
+      config: { untrustedCiLogs: true },
+    });
+  });
+
   it('with a repush handoff: the fix loop closes back on the signal wait', () => {
     const nodes = ciLoop({
       fix: { handoff: { repush: 'repushAfterCIFix' } },

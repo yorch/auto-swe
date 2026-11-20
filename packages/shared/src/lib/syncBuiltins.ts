@@ -1059,6 +1059,7 @@ export const PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES: Readonly<Record<string, reado
   workflowAuthor: [
     'c3c88e3157e74a9ffc9be506d7317b6ed68a3cf9c61b2c6bf5c29f7e1a94c16a',
     '6cc360b27d30efb34e4a0b084148e4e022b5da3aeb45bc586515d1a14f269ebb',
+    'd531a81229fa5bec871606869fef2454e22cf94de09f774b5b271298521b4037',
   ],
   workflowExplainer: ['4ca25fbd0ca975380190be914a35bf813dedf4238418a4c39d0239e7fe156065'],
 };
@@ -1439,6 +1440,17 @@ export const PREVIOUS_BUILTIN_INPUT_SCHEMAS: Readonly<Record<string, readonly In
       required: ['connectionId', 'sourcePageId', 'targetPageId'],
       type: 'object',
     },
+    // What main shipped once the run form had connection pickers, before `brandReview`.
+    {
+      properties: {
+        connectionId: { connectionType: 'notion', type: 'connection' },
+        instructions: { type: 'string' },
+        sourcePageId: { type: 'string' },
+        targetPageId: { type: 'string' },
+      },
+      required: ['connectionId', 'sourcePageId', 'targetPageId'],
+      type: 'object',
+    },
   ],
   'product-prd-draft': [
     {
@@ -1565,10 +1577,23 @@ async function retireBuiltinTemplates(prisma: PrismaClient): Promise<void> {
       latestBuiltin !== undefined &&
       row.activeVersion === latestBuiltin.version;
     if (!untouched || !latestBuiltin) {
-      console.warn(
+      warnRetirementOnce(
+        `${name}:left`,
         `[syncBuiltins] '${name}' is retired in favour of '${replacedBy}' but was left as it is: ` +
           'it is the default template, runs an A/B experiment, is not active, or an admin moved ' +
           'it off its built-in version. Archive it by hand when it is no longer needed.'
+      );
+      continue;
+    }
+    // Live triggers resolve their template by id and refuse an archived one, so archiving a row
+    // one still points at would silently stop it. Leave it active until the owner repoints it.
+    const references = await liveTemplateReferences(prisma, row);
+    if (references.length > 0) {
+      warnRetirementOnce(
+        `${name}:referenced`,
+        `[syncBuiltins] '${name}' is retired in favour of '${replacedBy}' but was left ACTIVE: ` +
+          `it is still referenced by ${references.join(', ')}. Repoint those at ` +
+          `'${replacedBy}', then archive it by hand.`
       );
       continue;
     }
@@ -1584,6 +1609,56 @@ async function retireBuiltinTemplates(prisma: PrismaClient): Promise<void> {
       },
     });
   }
+}
+
+/** Retirement warnings already logged by this process, so a boot does not repeat itself. */
+const retirementWarned = new Set<string>();
+
+/** Test seam: forget which retirement warnings were logged. */
+export function resetRetirementWarnings(): void {
+  retirementWarned.clear();
+}
+
+function warnRetirementOnce(key: string, message: string): void {
+  if (retirementWarned.has(key)) {
+    return;
+  }
+  retirementWarned.add(key);
+  console.warn(message);
+}
+
+/**
+ * The kinds of live trigger that still point at a template row: an automation, a schedule, a
+ * template webhook, a service principal allowed to run it. Empty when nothing does.
+ */
+async function liveTemplateReferences(
+  prisma: PrismaClient,
+  row: { id: string; webhookToken?: string | null }
+): Promise<string[]> {
+  const kinds: string[] = [];
+  if (await prisma.automation.findFirst({ select: { id: true }, where: { templateId: row.id } })) {
+    kinds.push('an automation');
+  }
+  if (
+    await prisma.scheduledWorkRequest.findFirst({
+      select: { id: true },
+      where: { templateId: row.id },
+    })
+  ) {
+    kinds.push('a schedule');
+  }
+  if (row.webhookToken) {
+    kinds.push('a template webhook');
+  }
+  if (
+    await prisma.servicePrincipal.findFirst({
+      select: { id: true },
+      where: { templateIds: { has: row.id } },
+    })
+  ) {
+    kinds.push('a service principal');
+  }
+  return kinds;
 }
 
 /** JSON with object keys sorted, so a `jsonb` round trip compares equal. */

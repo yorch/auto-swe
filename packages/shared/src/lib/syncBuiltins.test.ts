@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../config/index.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -20,6 +20,7 @@ import {
   PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES,
   PREVIOUS_BUILTIN_INPUT_SCHEMAS,
   RETIRED_BUILTIN_TEMPLATES,
+  resetRetirementWarnings,
   SWE_AGENTS,
   seedCoreDefaults,
   seedSweStarter,
@@ -44,6 +45,9 @@ type Row = Record<string, unknown> & { id: string };
 
 function matches(row: Row, where: Record<string, unknown> = {}): boolean {
   return Object.entries(where).every(([k, v]) => {
+    if (v && typeof v === 'object' && 'has' in v) {
+      return ((row[k] as unknown[] | undefined) ?? []).includes((v as { has: unknown }).has);
+    }
     if (v && typeof v === 'object' && !Array.isArray(v)) {
       return true; // relation/operator filters are not needed by the seed
     }
@@ -57,10 +61,13 @@ function makeFake() {
   const tables = {
     agent: [] as Row[],
     agentSkillRef: [] as Row[],
+    automation: [] as Row[],
     autonomyPolicy: [] as Row[],
     evalRubric: [] as Row[],
     modelCatalogEntry: [] as Row[],
     scannerPattern: [] as Row[],
+    scheduledWorkRequest: [] as Row[],
+    servicePrincipal: [] as Row[],
     skill: [] as Row[],
     skillRevision: [] as Row[],
     toolCatalogEntry: [] as Row[],
@@ -673,6 +680,27 @@ describe('syncBuiltins — built-in input schemas', () => {
     expect(row.inputSchema).toEqual(previous);
   });
 
+  it('moves the notion-content-draft schema main shipped onto the one with brandReview', async () => {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    const row = template(tables, 'notion-content-draft');
+    const current = BUILTIN_TEMPLATES.find((t) => t.name === 'notion-content-draft')?.inputSchema;
+    expect(current).toBeDefined();
+    row.inputSchema = {
+      properties: {
+        connectionId: { connectionType: 'notion', type: 'connection' },
+        instructions: { type: 'string' },
+        sourcePageId: { type: 'string' },
+        targetPageId: { type: 'string' },
+      },
+      required: ['connectionId', 'sourcePageId', 'targetPageId'],
+      type: 'object',
+    };
+    await seedSweStarter(prisma);
+    expect(row.inputSchema).toEqual(current);
+    expect(JSON.stringify(row.inputSchema)).toContain('brandReview');
+  });
+
   it('lists only built-in templates with a schema, and never the schema a template ships now', () => {
     for (const [name, olds] of Object.entries(PREVIOUS_BUILTIN_INPUT_SCHEMAS)) {
       const current = BUILTIN_TEMPLATES.find((t) => t.name === name)?.inputSchema;
@@ -1032,6 +1060,28 @@ CONSTRAINTS:
     expect(versions()).toHaveLength(2);
   });
 
+  it('moves a workflowAuthor row seeded with the previous release prompt onto the current one', async () => {
+    // The prompt as the release before this one shipped it, frozen verbatim; its hash must be in
+    // the table or every untouched install reads as admin-edited and never gets the new prompt.
+    const outgoing = readFileSync(
+      path.join(
+        path.dirname(fileURLToPath(import.meta.url)),
+        '__fixtures__/workflowAuthorPrompt.main.txt'
+      ),
+      'utf8'
+    );
+    const { agent, prisma, versions } = await seeded('workflowAuthor');
+    const current = agent.systemPrompt as string;
+    expect(sha(outgoing)).toBe('d531a81229fa5bec871606869fef2454e22cf94de09f774b5b271298521b4037');
+    expect(hashes.workflowAuthor).toContain(sha(outgoing));
+    expect(hashes.workflowAuthor).not.toContain(sha(current));
+    expect(current).not.toBe(outgoing);
+    agent.systemPrompt = outgoing;
+    await seedSweStarter(prisma);
+    expect(versions()).toHaveLength(2);
+    expect(versions()[1]).toMatchObject({ isActive: true, systemPrompt: current, version: 2 });
+  });
+
   it('moves an untouched validateContext seed onto the prompt that asks for an AMBIGUOUS entry', async () => {
     const { agent, prisma, versions } = await seeded('validateContext');
     const current = agent.systemPrompt as string;
@@ -1199,6 +1249,7 @@ describe('syncBuiltins — skill revisions', () => {
 
 describe('syncBuiltins — retiring a built-in template', () => {
   const RETIRED = 'notion-content-brand-review';
+  beforeEach(() => resetRetirementWarnings());
 
   /** A seeded database that still holds the retired template's row, on its one built-in version. */
   async function seedWithRetiredRow(over: Record<string, unknown> = {}) {
@@ -1285,6 +1336,67 @@ describe('syncBuiltins — retiring a built-in template', () => {
         const said = w.said();
         expect(said.some((m) => m.includes('notion-content-draft'))).toBe(true);
       }
+    } finally {
+      w.restore();
+    }
+  });
+  it.each<[string, string, Record<string, unknown>]>([
+    ['an automation', 'automation', { id: 'a1' }],
+    ['a schedule', 'scheduledWorkRequest', { id: 's1' }],
+    ['a service principal', 'servicePrincipal', { id: 'p1' }],
+  ])(
+    'leaves the row ACTIVE and names the replacement when %s still uses it',
+    async (kind, table, extra) => {
+      const { prisma, row, tables } = await seedWithRetiredRow();
+      const data =
+        table === 'servicePrincipal' ? { templateIds: [row.id] } : { templateId: row.id };
+      (tables as unknown as Record<string, Row[]>)[table]?.push({
+        ...extra,
+        ...data,
+      } as unknown as Row);
+      const w = warnings();
+      try {
+        await seedSweStarter(prisma);
+        await seedSweStarter(prisma);
+        expect(row.status).toBe('ACTIVE');
+        const said = w.said();
+        // One warning per process, however many boots.
+        expect(said).toHaveLength(1);
+        expect(said[0]).toContain('notion-content-draft');
+        expect(said[0]).toContain(kind);
+      } finally {
+        w.restore();
+      }
+    }
+  );
+
+  it('leaves the row ACTIVE when it has a template webhook', async () => {
+    const { prisma, row } = await seedWithRetiredRow({ webhookToken: 'tok' });
+    const w = warnings();
+    try {
+      await seedSweStarter(prisma);
+      expect(row.status).toBe('ACTIVE');
+      expect(w.said().join()).toContain('a template webhook');
+    } finally {
+      w.restore();
+    }
+  });
+
+  it('still archives a row that only OTHER templates are referenced by', async () => {
+    const { prisma, row, tables } = await seedWithRetiredRow();
+    tables.automation.push({ id: 'a1', templateId: 'some-other-template' });
+    tables.servicePrincipal.push({ id: 'p1', templateIds: ['some-other-template'] });
+    await seedSweStarter(prisma);
+    expect(row.status).toBe('ARCHIVED');
+  });
+
+  it('logs the left-alone warning once per process, not at every boot', async () => {
+    const { prisma } = await seedWithRetiredRow({ status: 'DRAFT' });
+    const w = warnings();
+    try {
+      await seedSweStarter(prisma);
+      await seedSweStarter(prisma);
+      expect(w.said()).toHaveLength(1);
     } finally {
       w.restore();
     }

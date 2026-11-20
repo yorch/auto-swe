@@ -464,22 +464,49 @@ describe('resetVisits', () => {
     expect(visitsOf(r, 'b')).toBe(0);
   });
 
-  it('resets before the node counts its own entry: a node that lists itself never exhausts', async () => {
-    const spec = mk({
-      a: {
-        maxVisits: 1,
-        next: 'a',
-        onExhausted: { status: 'FAILED' },
-        resetVisits: ['a'],
-        step: 's',
-        type: 'step',
-      },
-    });
-    const { d, calls } = harness({});
-    await expect(runSpec(spec, ctx0(), d, { maxTransitions: 5 })).rejects.toThrow(
-      /MAX_NODE_TRANSITIONS/
+  it('refuses a node that resets itself while bounding itself, and only warns without a bound', () => {
+    const bounded = validateSpec(
+      mk({
+        a: {
+          maxVisits: 1,
+          next: 'a',
+          onExhausted: { status: 'FAILED' },
+          resetVisits: ['a'],
+          step: 's',
+          type: 'step',
+        },
+      })
     );
-    expect(calls.length).toBe(5);
+    expect(bounded.errors.filter((e) => e.code === 'RESET_VISITS_SELF_BOUNDED')).toEqual([
+      expect.objectContaining({ field: 'resetVisits', nodeId: 'a', severity: 'error' }),
+    ]);
+    expect(bounded.warnings.filter((w) => w.code === 'RESET_VISITS_UNCOUNTED')).toEqual([]);
+
+    const unbounded = validateSpec(
+      mk({
+        a: { next: 'done', resetVisits: ['a'], step: 's', type: 'step' },
+        done,
+      })
+    );
+    expect(unbounded.errors.filter((e) => e.code === 'RESET_VISITS_SELF_BOUNDED')).toEqual([]);
+    expect(unbounded.warnings.filter((w) => w.code === 'RESET_VISITS_UNCOUNTED')).toEqual([
+      expect.objectContaining({ nodeId: 'a' }),
+    ]);
+  });
+
+  it('rejects at parse an id that is not a node, or has a dot', () => {
+    expect(() =>
+      mk({
+        a: { next: 'done', resetVisits: ['nope'], step: 's', type: 'step' },
+        done,
+      })
+    ).toThrow(/resetVisits refers to unknown node 'nope'/);
+    expect(() =>
+      mk({
+        a: { next: 'done', resetVisits: ['x.y'], step: 's', type: 'step' },
+        done,
+      })
+    ).toThrow(/no dot/);
   });
 
   it('resets inside a fan-out branch only that branch’s counts', async () => {
@@ -514,8 +541,11 @@ describe('resetVisits', () => {
     const base = { next: 'done', step: 's', type: 'step' };
     expect(() => mk({ a: { ...base, resetVisits: ['a', 'a'] }, done })).toThrow(/more than once/);
     const many = Array.from({ length: 21 }, (_, i) => `n${i}`);
-    expect(() => mk({ a: { ...base, resetVisits: many }, done })).toThrow();
-    expect(() => mk({ a: { ...base, resetVisits: many.slice(0, 20) }, done })).not.toThrow();
+    const others = Object.fromEntries(many.map((id) => [id, { ...base }]));
+    expect(() => mk({ a: { ...base, resetVisits: many }, ...others, done })).toThrow();
+    expect(() =>
+      mk({ a: { ...base, resetVisits: many.slice(0, 20) }, ...others, done })
+    ).not.toThrow();
   });
 
   it('is not an edge', () => {
@@ -528,14 +558,18 @@ describe('resetVisits', () => {
   });
 
   it('validateSpec: an unknown id is an error, an uncounted one a warning', () => {
-    const report = validateSpec(
-      mk({
+    // Built unparsed: a spec that reaches validateSpec without going through the schema.
+    const report = validateSpec({
+      entry: 'a',
+      name: 'sugar',
+      nodes: {
         a: { next: 'b', resetVisits: ['nope', 'b', 'c'], step: 's', type: 'step' },
         b: { next: 'c', step: 's', type: 'step' },
         c: { maxVisits: 1, next: 'done', onExhausted: 'done', step: 's', type: 'step' },
         done,
-      })
-    );
+      },
+      schemaVersion: 1,
+    } as unknown as Parameters<typeof validateSpec>[0]);
     expect(report.errors.filter((e) => e.code === 'RESET_VISITS_UNKNOWN_NODE')).toEqual([
       expect.objectContaining({
         field: 'resetVisits',
