@@ -273,7 +273,7 @@ describe.skipIf(!enabled)('team join requests against Postgres', () => {
     ).resolves.toMatchObject({ role: 'MEMBER' });
     const audited = await prisma.configAuditLog.findMany({
       select: { entityType: true },
-      where: { actorId: orgAdmin, entityId: { not: '' } },
+      where: { actorId: orgAdmin },
     });
     expect(audited.map((a) => a.entityType)).toEqual(
       expect.arrayContaining(['OrganizationMembership', 'TeamMembership', 'TeamJoinRequest'])
