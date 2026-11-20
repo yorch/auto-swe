@@ -181,13 +181,30 @@ describe('GET /api/v1/platform/activity', () => {
       expect(res.statusCode).toBe(200);
       expect(res.json()).toMatchObject({
         daily: [
-          { day: '2026-10-01', denied: 1, export: 0, read: 1, ui: 0 },
+          {
+            day: '2026-10-01',
+            denied: 1,
+            export: 0,
+            read: 1,
+            sign_in: 0,
+            sign_in_failed: 0,
+            sign_out: 0,
+            ui: 0,
+          },
           { day: '2026-10-02', denied: 1, export: 0, read: 0, ui: 0 },
         ],
         dropped: 4,
         retentionDays: 90,
         topDenied: [{ count: 2, route: '/api/v1/platform/audit-log' }],
-        totals: { denied: 2, export: 0, read: 1, ui: 0 },
+        totals: {
+          denied: 2,
+          export: 0,
+          read: 1,
+          sign_in: 0,
+          sign_in_failed: 0,
+          sign_out: 0,
+          ui: 0,
+        },
       });
       // It counts in the database: no row is read back.
       expect(prisma.userActivityEvent.findMany).not.toHaveBeenCalled();

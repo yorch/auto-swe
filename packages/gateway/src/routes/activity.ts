@@ -3,7 +3,7 @@ import { resolveSetting } from '@auto-swe/shared/config';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { UI_DEDUPE_MS } from '../lib/activityEvents.js';
+import { ACTIVITY_KINDS, UI_DEDUPE_MS } from '../lib/activityEvents.js';
 import { auditContextOf } from '../lib/auditContext.js';
 import { mapLimited } from '../lib/mapLimited.js';
 import { paginationQuery } from '../lib/pagination.js';
@@ -29,7 +29,7 @@ const UiEventsBody = z.object({
     .max(20),
 });
 
-const KINDS = ['denied', 'read', 'export', 'ui'] as const;
+const KINDS = ACTIVITY_KINDS;
 const ActivityQuery = paginationQuery({ defaultLimit: 50, maxLimit: 200 }).extend({
   actorId: z.string().uuid().optional(),
   kind: z.enum(KINDS).optional(),
@@ -166,9 +166,18 @@ export const activityAdminRoutes: FastifyPluginAsync = async (fastify) => {
       });
       const retentionDays = await resolveSetting('analytics.activityRetentionDays', {});
       const uiEventsEnabled = await resolveSetting('analytics.uiEventsEnabled', {});
-      const totals = { denied: 0, export: 0, read: 0, ui: 0 };
+      const zero = () => ({
+        denied: 0,
+        export: 0,
+        read: 0,
+        sign_in: 0,
+        sign_in_failed: 0,
+        sign_out: 0,
+        ui: 0,
+      });
+      const totals = zero();
       const daily = dayStarts.flatMap((start, i) => {
-        const counts = { denied: 0, export: 0, read: 0, ui: 0 };
+        const counts = zero();
         for (const group of perDay[i] ?? []) {
           if (group.kind in counts) {
             const k = group.kind as (typeof KINDS)[number];

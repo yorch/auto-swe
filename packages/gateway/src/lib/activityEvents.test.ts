@@ -369,6 +369,7 @@ describe('activityEvents hook', () => {
 const INTENDED_TAGGED = [
   'GET /api/v1/admin/audit-log export:no',
   'GET /api/v1/admin/audit-log/export export:yes',
+  'GET /api/v1/platform/analytics/users/:id export:no',
   'GET /api/v1/platform/audit-log export:no',
   'GET /api/v1/platform/audit-log/export export:yes',
   'GET /api/v1/pull-requests/outcomes/export export:yes',

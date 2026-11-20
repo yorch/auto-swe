@@ -1,4 +1,5 @@
 import { metrics } from '@opentelemetry/api';
+import { AUTH_METHODS, type SignInMethod } from './authMethod.js';
 
 /**
  * The gateway's share of `workflow_runs_finalized_total` — the same instrument
@@ -76,7 +77,22 @@ function createInstruments() {
       unit: '{event}',
     });
   activityEventsDropped.add(0);
-  return { activityEventsDropped, httpDenied, runsFinalized, transcriptAccessLogFailures };
+  const signInFailed = metrics.getMeter('auto-swe-gateway').createCounter('auth.sign_in.failed', {
+    description:
+      'Failed sign-in attempts, by method. Counts every failure, including those with no known ' +
+      'user, which write no activity event (docs/user-activity.md).',
+    unit: '{attempt}',
+  });
+  for (const method of AUTH_METHODS) {
+    signInFailed.add(0, { method });
+  }
+  return {
+    activityEventsDropped,
+    httpDenied,
+    runsFinalized,
+    signInFailed,
+    transcriptAccessLogFailures,
+  };
 }
 
 let cached: ReturnType<typeof createInstruments> | undefined;
@@ -122,4 +138,9 @@ export function recordHttpDenied(route: string, status: number, actorKnown: bool
 /** `count` activity events were dropped rather than stored. */
 export function recordActivityEventsDropped(count: number): void {
   instruments().activityEventsDropped.add(count);
+}
+
+/** A sign-in attempt failed. Counted whether or not the person is known. */
+export function recordSignInFailed(method: SignInMethod): void {
+  instruments().signInFailed.add(1, { method });
 }

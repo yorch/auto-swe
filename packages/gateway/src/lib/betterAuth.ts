@@ -28,7 +28,7 @@ import {
 import { oauthDeviceAuthorization, oauthProvider } from '@better-auth/oauth-provider';
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
-import { APIError } from 'better-auth/api';
+import { APIError, createAuthMiddleware } from 'better-auth/api';
 import { jwt, magicLink } from 'better-auth/plugins';
 import { type GenericOAuthConfig, genericOAuth, okta } from 'better-auth/plugins/generic-oauth';
 import { authEmailAvailable, deliverAuthEmail } from './authEmail.js';
@@ -48,7 +48,7 @@ import {
   mcpIssuerFor,
   mcpResourceFor,
 } from './mcpOAuth.js';
-import { recordSignInAudit } from './signInAudit.js';
+import { observeSignInResult, observeSignOut, recordSignInAudit } from './signInAudit.js';
 
 // Share the gateway's single Prisma client (one pool, tenant guard attached)
 // instead of opening a second, unguarded connection pool for auth.
@@ -457,7 +457,11 @@ function buildAuth() {
         update: { after: async (account) => refreshGithubLogin(account) },
       },
       // One audit row per sign-in; see `recordSignInAudit`, which never throws.
-      session: { create: { after: async (session) => recordSignInAudit(prisma, session) } },
+      session: {
+        create: {
+          after: async (session, context) => recordSignInAudit(prisma, session, context as never),
+        },
+      },
       user: {
         create: {
           after: async (user) => {
@@ -502,6 +506,16 @@ function buildAuth() {
       // SMTP > Resend > console fallback. The user receives a tokenised
       // reset URL pointing at the web app's /reset-password page.
       sendResetPassword: async ({ user, url }) => deliverPasswordReset({ email: user.email, url }),
+    },
+    // Observers only: they record a failed sign-in and a sign-out, return nothing, and swallow
+    // their own errors, so the auth response is never altered (docs/user-activity.md).
+    hooks: {
+      after: createAuthMiddleware(async (ctx) => {
+        await observeSignInResult(prisma, ctx as never);
+      }),
+      before: createAuthMiddleware(async (ctx) => {
+        await observeSignOut(prisma, ctx as never);
+      }),
     },
     plugins: [
       magicLink({
