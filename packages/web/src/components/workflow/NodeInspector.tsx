@@ -256,6 +256,13 @@ export function NodeInspector({
         {!unknownType && (
           <FlowFieldsSection
             allNodeIds={allNodeIds}
+            countedNodeIds={
+              spec
+                ? Object.entries(spec.nodes).flatMap(([id, n]) =>
+                    n.maxVisits !== undefined ? [id] : []
+                  )
+                : undefined
+            }
             knownStatuses={knownStatuses}
             node={node}
             nodeId={nodeId}

@@ -515,14 +515,15 @@ Reading is tolerant by design: a stored or bundle-installed spec may carry a `ti
 shape, because before these fields existed such a key was ignored. A bad value therefore drops that
 field and nothing else, and never fails run creation or hides a run's graph.
 
-#### Plumbing fields: `storeAs`, `onFailure`, `status`, `maxVisits`
+#### Plumbing fields: `storeAs`, `onFailure`, `status`, `maxVisits`, `resetVisits`
 
-Four optional fields let a node do the bookkeeping that used to take a node of its own. `storeAs`
+Five optional fields let a node do the bookkeeping that used to take a node of its own. `storeAs`
 copies a dispatch node's output to a context path; `onFailure` routes a node that has finally failed
 (thrown error or failed gate, after any `onFail` retry) to a node or ends the run with a status;
 `status` sets the domain status on entering any node, before it dispatches; and `maxVisits` with
-`onExhausted` sends the entry past the limit elsewhere, counting at `nodes.<id>.visits`. The
-interpreter owns all four, so they are workflow state and replay the same way. Cost estimation reads
+`onExhausted` sends the entry past the limit elsewhere, counting at `nodes.<id>.visits`; and
+`resetVisits` sets the listed nodes' counts back to 0 when the node is entered, before its own count.
+The interpreter owns all five, so they are workflow state and replay the same way. Cost estimation reads
 `onFailure` and `onExhausted` node ids as the dearer alternative to `next`. Semantics and
 gotchas are in [workflow-nodes.md §8](./workflow-nodes.md#8-plumbing-fields).
 
@@ -712,7 +713,14 @@ is never reverted. A release that changes a built-in `inputSchema` records the o
 are moved: a template whose stored schema still equals one an earlier release shipped (compared
 key-order-insensitively) is moved onto the new one, with or without a spec change, but only while
 it is active on its latest built-in version and runs no A/B experiment. Any other stored value is
-an admin's and stays. A
+an admin's and stays. A built-in template that stops shipping is listed in
+`RETIRED_BUILTIN_TEMPLATES` (`shared/src/lib/syncBuiltins.ts`) with the template that replaces it;
+sync then archives its GLOBAL row, but only when it is `ACTIVE`, not the default, running no A/B
+experiment, active on its latest built-in version and referenced by no automation, schedule,
+template webhook or service principal. Any other row is left as it is and one warning per process
+names it and its replacement (and, for a referenced row, the kinds of reference). Rows are never deleted (runs and versions reference them), runs in
+flight and pinned versions are unaffected, and the template picker lists `ACTIVE` templates only.
+A
 built-in version is one with no author (`createdBy` and `generatedBy` both null). The same
 create-if-missing rule covers the GLOBAL agents and their skill refs: a ref an admin removed stays
 removed, and only a built-in skill the seed has added since the agent was created is attached to an existing agent. The one
@@ -2029,6 +2037,13 @@ Current constraints of the system as built. Deliberate product boundaries are in
   has none, together with an auto-activated new built-in version; nothing records the value an
   earlier release shipped, so a release that changes it for an already-seeded template does not
   reach an existing deployment.
+- **A retired built-in is archived, not removed.** Its row, versions and runs stay, and an
+  untouched row is archived at the next boot. A retired template an admin edited, made the default,
+  or is running an experiment on, or one an automation, schedule, template webhook or service
+  principal still points at, stays `ACTIVE` with a warning until an admin archives it, and a
+  team's own copy of the name is never touched. Nothing records that an admin reactivated an
+  archived built-in, so an administrator who wants a retired built-in back makes a copy;
+  reactivating the built-in row is undone at the next start-up.
 - **A built-in `inputSchema` moves only from a value a release recorded.** A schema change that is
   not added to `PREVIOUS_BUILTIN_INPUT_SCHEMAS` never reaches an existing deployment, and one that
   is still skips a template an admin moved off its built-in version, archived, or is running an

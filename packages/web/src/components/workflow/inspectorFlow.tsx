@@ -3,11 +3,13 @@
 /**
  * Flow-control fields every node can carry beyond its type's own settings:
  * `storeAs` (output path), `onFailure` / `onExhausted` (a node to route to, or
- * the stop-the-run shorthand), `status` and `maxVisits`. All optional; clearing
- * a field removes the key so a spec that does not use them is unchanged.
+ * the stop-the-run shorthand), `status`, `maxVisits` and `resetVisits` (node ids
+ * whose visit count is set back to 0 when this node is entered). All optional;
+ * clearing a field removes the key so a spec that does not use them is unchanged.
  */
 
 import type { Node as SpecNode } from '@auto-swe/shared/workflow';
+import { MAX_RESET_VISITS } from '@auto-swe/shared/workflow';
 import { useEffect, useId, useState } from 'react';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -53,6 +55,35 @@ export function parseMaxVisits(raw: string): number | undefined {
   const n = Number(raw.trim());
   return raw.trim() !== '' && Number.isInteger(n) && n >= 1 && n <= 10_000 ? n : undefined;
 }
+
+/**
+ * Parse a reset-visits draft: node ids separated by commas or whitespace. Repeats are
+ * dropped. An id that is not a node of the spec, or more than {@link MAX_RESET_VISITS}
+ * ids, is an error and nothing is committed. An empty draft clears the field.
+ */
+export function parseResetVisits(
+  raw: string,
+  allNodeIds: readonly string[]
+): { ids: string[] | undefined } | { error: string } {
+  const ids = [...new Set(raw.split(/[\s,]+/).filter((t) => t !== ''))];
+  if (ids.length === 0) {
+    return { ids: undefined };
+  }
+  const known = new Set(allNodeIds);
+  const unknown = ids.filter((id) => !known.has(id));
+  if (unknown.length > 0) {
+    return {
+      error: `Not a node of this workflow: ${unknown.join(', ')}`,
+    };
+  }
+  if (ids.length > MAX_RESET_VISITS) {
+    return { error: `At most ${MAX_RESET_VISITS} nodes` };
+  }
+  return { ids };
+}
+
+const sameIds = (a: readonly string[] | undefined, b: readonly string[] | undefined): boolean =>
+  (a ?? []).length === (b ?? []).length && (a ?? []).every((id, i) => id === b?.[i]);
 
 function RouteField({
   label,
@@ -128,12 +159,18 @@ export function FlowFieldsSection({
   node,
   nodeId,
   allNodeIds,
+  countedNodeIds,
   knownStatuses,
   onChange,
 }: {
   node: SpecNode;
   nodeId: string;
   allNodeIds: string[];
+  /**
+   * Ids of the nodes that set `maxVisits`, the only ones that keep a visit count. When
+   * given, a reset of any other node is flagged as having no effect.
+   */
+  countedNodeIds?: string[];
   knownStatuses?: string[];
   onChange: (next: SpecNode) => void;
 }) {
@@ -147,11 +184,21 @@ export function FlowFieldsSection({
   const [visits, setVisits] = useState(
     typeof record.maxVisits === 'number' ? String(record.maxVisits) : ''
   );
+  const storedResets = Array.isArray(record.resetVisits)
+    ? (record.resetVisits as unknown[]).filter((id): id is string => typeof id === 'string')
+    : undefined;
+  const resetsText = (storedResets ?? []).join(', ');
+  const [resets, setResets] = useState(resetsText);
+  const [resetsError, setResetsError] = useState<string | undefined>(undefined);
   // biome-ignore lint/correctness/useExhaustiveDependencies: resync when another node is selected or the value changes underneath
   useEffect(() => {
     setStatus(typeof record.status === 'string' ? record.status : '');
     setVisits(typeof record.maxVisits === 'number' ? String(record.maxVisits) : '');
-  }, [nodeId, record.status, record.maxVisits]);
+    setResets(resetsText);
+    setResetsError(undefined);
+  }, [nodeId, record.status, record.maxVisits, resetsText]);
+  const counted = countedNodeIds ? new Set(countedNodeIds) : undefined;
+  const uncounted = counted ? (storedResets ?? []).filter((id) => !counted.has(id)) : [];
 
   return (
     <InspectorSection title="Flow control">
@@ -220,6 +267,33 @@ export function FlowFieldsSection({
         onChange={(v) => onChange(withField(node, 'onExhausted', v))}
         otherIds={otherIds}
         value={record.onExhausted as RouteTarget | undefined}
+      />
+      <Input
+        className="font-mono text-xs"
+        compact
+        error={resetsError}
+        hint={
+          uncounted.length > 0
+            ? `No visit count to reset on ${uncounted.join(', ')}: set Max visits there`
+            : 'Node ids whose visit count starts again at 0 when the run enters this step, e.g. a retry budget'
+        }
+        hintTone={uncounted.length > 0 ? 'warning' : undefined}
+        label="Reset visit counts of"
+        onBlur={() => {
+          const parsed = parseResetVisits(resets, allNodeIds);
+          if ('error' in parsed) {
+            setResetsError(parsed.error);
+            return;
+          }
+          setResetsError(undefined);
+          if (!sameIds(parsed.ids, storedResets)) {
+            onChange(withField(node, 'resetVisits', parsed.ids));
+          }
+          setResets((parsed.ids ?? []).join(', '));
+        }}
+        onChange={(e) => setResets(e.target.value)}
+        placeholder="fetchLogs"
+        value={resets}
       />
     </InspectorSection>
   );

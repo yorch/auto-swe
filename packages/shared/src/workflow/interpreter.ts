@@ -510,6 +510,16 @@ async function walk(
     const recordingId = nodeIdPrefix ? `${nodeIdPrefix}${nodeId}` : nodeId;
     const nodeDispatcher = identityRecordingDispatcher(dispatcher, nodeId, node);
 
+    // Visit-count reset, before this node's own count below: a node that lists itself starts
+    // again at 1 on this entry. Pure context writes, so a replay recomputes them, and a spec
+    // without the field takes no new path. Inside a fan-out branch it resets the branch's own
+    // sealed counts only.
+    if (node.resetVisits !== undefined) {
+      for (const target of node.resetVisits) {
+        setPath(ctx, `nodes.${target}.visits`, 0);
+      }
+    }
+
     // Loop bound. The count lives in the run context, which is workflow state, so a
     // replay recomputes it; a fan-out branch has its own sealed `nodes`, so its count
     // is per branch.

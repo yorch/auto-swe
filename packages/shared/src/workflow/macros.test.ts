@@ -103,6 +103,21 @@ const CASES: Array<{
     ref: 'ciLoop@1',
   },
   {
+    args: {
+      fix: { handoff: { repush: 'pushFix' } },
+      fixConfig: { untrustedCiLogs: true },
+      passed: 'done',
+    },
+    entry: 'waitForCI',
+    helper: () =>
+      ciLoop({
+        fix: { handoff: { repush: 'pushFix' } },
+        fixConfig: { untrustedCiLogs: true },
+        passed: 'done',
+      }),
+    ref: 'ciLoop@2',
+  },
+  {
     args: { afterFix: 'clearCiResult', approved: 'openPR', exhausted: 'lessonReviewFailed' },
     entry: 'review',
     helper: () =>
@@ -182,9 +197,10 @@ function specWith(useId: string, use: MacroUse, extra: Record<string, unknown> =
 }
 
 describe('macro registry', () => {
-  it('registers the four versioned macros', () => {
+  it('registers the versioned macros', () => {
     expect(Object.keys(MACROS).sort()).toEqual([
       'ciLoop@1',
+      'ciLoop@2',
       'openPullRequest@1',
       'reviewLoop@1',
       'validatePhase@1',
@@ -193,8 +209,19 @@ describe('macro registry', () => {
       expect(def.ref).toBe(ref);
       expect(getMacro(ref)).toBe(def);
     }
-    expect(getMacro('ciLoop@2')).toBeUndefined();
+    expect(getMacro('ciLoop@3')).toBeUndefined();
     expect(getMacro('toString')).toBeUndefined();
+  });
+
+  it('ciLoop@1 rejects fixConfig and ciLoop@2 puts it on ciFix only', () => {
+    const args = { fix: { handoff: { repush: 'p' } }, fixConfig: { a: 1 }, passed: 'x' };
+    expect(findUseProblems({ nodes: {}, uses: { ci: { args, macro: 'ciLoop@1' } } })[0]).toMatch(
+      /invalid arguments for 'ciLoop@1'/
+    );
+    const v2 = expandUse('ci', { args, macro: 'ciLoop@2' });
+    expect((v2.ciFix as { config?: unknown }).config).toEqual({ a: 1 });
+    const bare = expandUse('ci', { args: { ...args, fixConfig: undefined }, macro: 'ciLoop@2' });
+    expect(Object.hasOwn(bare.ciFix as object, 'config')).toBe(false);
   });
 
   it('lists the arguments that route out of each expansion', () => {
@@ -823,6 +850,44 @@ describe('macro versions are frozen', () => {
       wait: 'pollOrSignal',
     },
     '9a7b07b48755a7d969024c1f6520764476bf94505b6ae66cb64f43a299c89145'
+  );
+  frozen(
+    'ciLoop@2 minimal (no fixConfig)',
+    'ciLoop@2',
+    { fix: false, passed: 'done' },
+    'a428e0ebc056a913176d106610d3422cfbcd63d54547596401ce0608ef29cc69'
+  );
+  frozen(
+    'ciLoop@2 repush limit, no fixConfig',
+    'ciLoop@2',
+    { fix: { handoff: { repush: 'pushFix' }, limit: 5 }, passed: 'done' },
+    '0ddafa223e013a418e62add4f9293fd7c6d42794d102ac8d86c702cb2ab797f3'
+  );
+  frozen(
+    'ciLoop@2 repush with fixConfig',
+    'ciLoop@2',
+    {
+      fix: { handoff: { repush: 'pushFix' } },
+      fixConfig: { allowedPaths: ['docs/**'], untrustedCiLogs: true },
+      passed: 'done',
+    },
+    '6efb51a730fa847ef4991513d74874ea4c865598a81dc9be7ff4fca92fb610e8'
+  );
+  frozen(
+    'ciLoop@2 rereview, poll, retryIfUnchanged, string limit, fixConfig',
+    'ciLoop@2',
+    {
+      exhausted: 'lessonCIFailed',
+      fix: {
+        handoff: { rereview: 'review' },
+        limit: 'request.payload.maxFixes ?? 2',
+        retryIfUnchanged: true,
+      },
+      fixConfig: { systemPrompt: 'Fix only the failing test.' },
+      passed: 'waitForHumanMerge',
+      wait: 'pollOrSignal',
+    },
+    '42a7a5e1e887dea020d9555001a7271202354d1523b2f01f196820111f82a49d'
   );
   frozen(
     'reviewLoop minimal',

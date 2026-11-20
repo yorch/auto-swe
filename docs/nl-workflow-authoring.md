@@ -71,6 +71,8 @@ string** (a 15-way discriminated union round-trips poorly through structured-out
 JSON-schema conversion). Each round:
 
 - `JSON.parse` the returned `specJson`;
+- expand any top-level `uses` entry that has no nodes (`materializeUses`), so a spec that names a
+  macro is judged in its flat form;
 - run `parseWorkflowSpec` (the canonical Zod gate);
 - on a JSON or schema error, feed the **concrete errors** back to the model and
   retry (bounded at 3 attempts).
@@ -91,6 +93,25 @@ catalog into the prompt (`packages/shared/src/workflow/authoring.ts`):
 The static format reference (the `WorkflowSpec` shape, all node types, binding
 syntax, rules) lives in the seeded `WORKFLOW_AUTHOR_PROMPT` system prompt; the
 dynamic catalog + the user's intent go in the user message.
+
+The prompt also teaches the optional node fields that replace bookkeeping nodes: `storeAs` (copy
+a node's output to a context path), `onFailure` (route once retries are spent), `status` (set the
+domain status on entry), `maxVisits` with `onExhausted` (bound a loop) and `resetVisits` (restart
+the visit count of the nodes it names), and the top-level `uses` map.
+
+### Macros in generated specs
+
+The author may write a `uses` entry (`validatePhase@1`, `reviewLoop@1`, `openPullRequest@1`,
+`ciLoop@2`; `ciLoop@1` exists for pinned specs and new specs use `@2`) instead of the macro's
+nodes. It routes its own nodes to the macro's entry node and passes the nodes the macro should
+route to as arguments; the platform generates the nodes when the spec is parsed, so the stored
+spec is flat, tagged and checked for drift like a hand-authored use (`docs/workflow-nodes.md`
+§9). A macro may appear once per spec. `packages/shared/src/lib/agentPrompts.test.ts` checks the
+prompt's macro section against the macro registry (names, entry nodes, routing arguments).
+
+A **refinement** is shown the current spec flat, without `uses` or `use` tags, and returns flat
+nodes, so a refined template keeps its behaviour but loses its macro metadata. The run-plan
+author never writes `uses`.
 
 ---
 

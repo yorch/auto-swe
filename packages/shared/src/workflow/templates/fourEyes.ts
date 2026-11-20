@@ -1,11 +1,5 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  CI_ATTEMPTS_PATH,
-  ciWaitEntry,
-  failureLesson,
-  prResult,
-  terminate,
-} from './authoring/index.js';
+import { ciWaitEntry, failureLesson, prResult, terminate } from './authoring/index.js';
 import { authored, macro } from './authoring/macro.js';
 
 /**
@@ -192,10 +186,10 @@ export const FOUR_EYES_SPEC: WorkflowSpec = {
       updateCodeAfterSignoffFix: {
         group: 'approval',
         next: 'repushAfterFix',
+        resetVisits: ['fetchLogs'],
         title: 'Keep the fixed code and reset the CI attempts',
         type: 'set',
         values: {
-          [CI_ATTEMPTS_PATH]: { literal: 0 },
           'context.currentCodeResult': { from: 'nodes.signoffFix.output' },
         },
       },

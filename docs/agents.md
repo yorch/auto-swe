@@ -35,7 +35,7 @@ library at `/agents`.
 | `commitToMemory` | `commitToMemory` | `anthropic/claude-opus-5-5` |
 | `channelAssistant` | Channel turns, ambient and reactive modes, `planChannelTask` / `runChannelSubtasks` | `anthropic/claude-opus-5-5` |
 | `evalJudge` | `runEvalNode` judge scorer | `anthropic/claude-haiku-4-5-20251001` |
-| `workflowAuthor` | NL workflow generation; also launch-time run-plan generation (`generateRunPlanSpec`), where the same agent and model run with the run-plan author prompt as a per-call override | `anthropic/claude-opus-5-5` |
+| `workflowAuthor` | NL workflow generation; also launch-time run-plan generation (`generateRunPlanSpec`), where the same agent and model run with the run-plan author prompt as a per-call override; the generation prompt teaches the macro `uses` form, a refinement stays flat (`docs/nl-workflow-authoring.md`) | `anthropic/claude-opus-5-5` |
 | `workflowExplainer` | NL workflow explanation | `anthropic/claude-sonnet-5-5` |
 | `repoDependencyInferrer` | `inferRepoDependencies` — proposes repo dependency edges for human confirmation | `anthropic/claude-haiku-4-5-20251001` |
 | `contentWriter` | Generic document-workflow drafting (e.g. Notion) | `anthropic/claude-sonnet-5-5` |

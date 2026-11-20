@@ -214,5 +214,84 @@ describe.skipIf(!enabled)(
         expect(after.inputSchema).toEqual(ADMINS);
       });
     });
+
+    describe('a retired built-in template', () => {
+      const RETIRED = 'notion-content-brand-review';
+      afterAll(async () => {
+        await prisma.workflowTemplate.deleteMany({ where: { name: RETIRED, teamId: null } });
+      });
+
+      it('is archived once, with its version kept, and left alone when an admin owns it', async () => {
+        await prisma.workflowTemplate.deleteMany({ where: { name: RETIRED, teamId: null } });
+        const row = await prisma.workflowTemplate.create({
+          data: {
+            activeVersion: 1,
+            description: 'retired',
+            name: RETIRED,
+            status: 'ACTIVE',
+            teamId: null,
+            versions: { create: { spec: { retired: true }, version: 1 } },
+          },
+        });
+        await seedSweStarter(prisma);
+        expect(
+          await prisma.workflowTemplate.findUniqueOrThrow({ where: { id: row.id } })
+        ).toMatchObject({ status: 'ARCHIVED' });
+        expect(await prisma.workflowTemplateVersion.count({ where: { templateId: row.id } })).toBe(
+          1
+        );
+
+        await prisma.workflowTemplate.update({
+          data: { experimentSplit: 20, experimentVersion: 1, status: 'ACTIVE' },
+          where: { id: row.id },
+        });
+        await seedSweStarter(prisma);
+        expect(
+          await prisma.workflowTemplate.findUniqueOrThrow({ where: { id: row.id } })
+        ).toMatchObject({ status: 'ACTIVE' });
+      });
+
+      it('is left ACTIVE while an automation or a service principal still points at it', async () => {
+        await prisma.workflowTemplate.deleteMany({ where: { name: RETIRED, teamId: null } });
+        const row = await prisma.workflowTemplate.create({
+          data: {
+            activeVersion: 1,
+            description: 'retired',
+            name: RETIRED,
+            status: 'ACTIVE',
+            teamId: null,
+            versions: { create: { spec: { retired: true }, version: 1 } },
+          },
+        });
+        const org = await prisma.organization.create({
+          data: { name: `retire-ref-${row.id}`, slug: `retire-ref-${row.id}` },
+        });
+        const team = await prisma.team.create({
+          data: { name: `retire-ref-${row.id}`, orgId: org.id, slug: `retire-ref-${row.id}` },
+        });
+        const principal = await prisma.servicePrincipal.create({
+          data: { name: 'retire-ref', teamId: team.id, templateIds: [row.id] },
+        });
+        try {
+          await seedSweStarter(prisma);
+          expect(
+            await prisma.workflowTemplate.findUniqueOrThrow({ where: { id: row.id } })
+          ).toMatchObject({ status: 'ACTIVE' });
+
+          await prisma.servicePrincipal.update({
+            data: { templateIds: [] },
+            where: { id: principal.id },
+          });
+          await seedSweStarter(prisma);
+          expect(
+            await prisma.workflowTemplate.findUniqueOrThrow({ where: { id: row.id } })
+          ).toMatchObject({ status: 'ARCHIVED' });
+        } finally {
+          await prisma.servicePrincipal.delete({ where: { id: principal.id } });
+          await prisma.team.delete({ where: { id: team.id } });
+          await prisma.organization.delete({ where: { id: org.id } });
+        }
+      });
+    });
   }
 );

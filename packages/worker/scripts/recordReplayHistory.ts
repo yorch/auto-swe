@@ -1044,6 +1044,39 @@ const SCENARIOS: Scenario[] = [
     ),
   },
   {
+    // resetVisits: the bounded body is entered twice and exhausts, a node outside the loop
+    // resets its count once, and the body runs twice more before it exhausts again. Four
+    // executeImplementation activities, so the reset, the recount and the second exhaustion
+    // are all on the recorded path.
+    name: 'reset-visits',
+    spec: spec(
+      {
+        again: { next: 'work', type: 'set', values: { 'context.laps': { literal: true } } },
+        exhausted: { status: 'FAILED', type: 'terminate' },
+        refill: {
+          next: 'work',
+          resetVisits: ['work'],
+          type: 'set',
+          values: { 'context.refilled': { literal: true } },
+        },
+        spent: {
+          expr: 'context.refilled == true',
+          onFalse: 'refill',
+          onTrue: 'exhausted',
+          type: 'cond',
+        },
+        work: {
+          maxVisits: 2,
+          next: 'again',
+          onExhausted: 'spent',
+          step: 'executeImplementation',
+          type: 'step',
+        },
+      },
+      'work'
+    ),
+  },
+  {
     // A fan-out whose branches each run a fan-out. The inner pool shares the
     // run-wide transition cap and branch-index allocation with the outer one.
     name: 'nested-fan-out',

@@ -1,7 +1,7 @@
 {
-  "description": "Read a Notion page, draft an update, review it for brand voice and clarity, and append the result to a target Notion page.",
+  "description": "Read a Notion source page, draft a short update with the content writer, and append it to a target Notion page. With the brand review option on (the default), a second agent reviews the draft for brand voice and clarity and the reviewed text is what gets written; turn it off to write the plain draft.",
   "entry": "resolveWorkspace",
-  "name": "notion-content-brand-review",
+  "name": "notion-content-draft",
   "nodes": {
     "brandReview": {
       "agentRef": "brandReviewer",
@@ -14,7 +14,7 @@
           "from": "request.payload.instructions"
         }
       },
-      "next": "publishOutcome",
+      "next": "keepReviewed",
       "spanName": "llm.brand_review",
       "type": "agent"
     },
@@ -24,13 +24,19 @@
       "onTrue": "humanApproval",
       "type": "cond"
     },
+    "checkBrandReview": {
+      "expr": "request.payload.brandReview != false",
+      "onFalse": "keepDraft",
+      "onTrue": "brandReview",
+      "type": "cond"
+    },
     "done": {
       "result": {
         "targetPageId": {
           "from": "request.payload.targetPageId"
         },
         "text": {
-          "from": "nodes.brandReview.output.text"
+          "from": "context.finalText"
         }
       },
       "status": "SUCCESS",
@@ -60,24 +66,45 @@
         },
         "source": {
           "from": "nodes.readSource.output.data"
+        },
+        "targetPageId": {
+          "from": "request.payload.targetPageId"
         }
       },
-      "next": "brandReview",
-      "spanName": "llm.content_draft",
+      "next": "checkBrandReview",
+      "spanName": "llm.notion_draft",
       "type": "agent"
     },
     "humanApproval": {
       "approverCount": {
         "from": "nodes.publishOutcome.output.approverCount"
       },
-      "contextFrom": "nodes.brandReview.output.text",
-      "description": "Approve appending the reviewed draft to the target Notion page, or reject to discard it.",
+      "contextFrom": "context.finalText",
+      "description": "Approve appending the text to the target Notion page, or reject to discard it.",
       "onApprove": "writeOutcome",
       "onReject": "doneRejected",
       "onTimeout": "doneRejected",
       "timeout": "24h",
       "title": "Approve write",
       "type": "humanApproval"
+    },
+    "keepDraft": {
+      "next": "publishOutcome",
+      "type": "set",
+      "values": {
+        "context.finalText": {
+          "from": "nodes.draftContent.output.text"
+        }
+      }
+    },
+    "keepReviewed": {
+      "next": "publishOutcome",
+      "type": "set",
+      "values": {
+        "context.finalText": {
+          "from": "nodes.brandReview.output.text"
+        }
+      }
     },
     "publishOutcome": {
       "config": {
@@ -129,7 +156,7 @@
           "from": "request.payload.targetPageId"
         },
         "text": {
-          "from": "nodes.brandReview.output.text"
+          "from": "context.finalText"
         }
       },
       "next": "done",

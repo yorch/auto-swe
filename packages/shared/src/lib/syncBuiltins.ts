@@ -1059,6 +1059,7 @@ export const PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES: Readonly<Record<string, reado
   workflowAuthor: [
     'c3c88e3157e74a9ffc9be506d7317b6ed68a3cf9c61b2c6bf5c29f7e1a94c16a',
     '6cc360b27d30efb34e4a0b084148e4e022b5da3aeb45bc586515d1a14f269ebb',
+    'd531a81229fa5bec871606869fef2454e22cf94de09f774b5b271298521b4037',
   ],
   workflowExplainer: ['4ca25fbd0ca975380190be914a35bf813dedf4238418a4c39d0239e7fe156065'],
 };
@@ -1366,6 +1367,9 @@ export const SUPERSEDED_TEMPLATE_DESCRIPTIONS: Readonly<Record<string, readonly 
   'model-catalog-refresh': [
     "Keep the built-in model catalog current: list each provider's live model ids through the platform, read the official pricing pages, update BUILTIN_MODELS with a cited source for every changed price, and open a DRAFT pull request for a person to review. Uncertain figures are left unchanged and called out. A run with nothing to change, or whose previous pull request is still open, opens none. Point it at your auto-swe fork and schedule it.",
   ],
+  'notion-content-draft': [
+    'Read a Notion source page, draft a short update with the content writer, and append it to a target Notion page.',
+  ],
   'parallel-fan-out': [
     'Validate context, split the work into three parallel branches (feature implementation, tests, documentation), merge them into one integration branch (resolving conflicts with the merge-conflict agent if needed), then open a single PR. Each branch runs an isolated executeImplementation agent. Demonstrates the fanOut node with concurrency=3, pluck, and merge.',
   ],
@@ -1425,7 +1429,7 @@ export const PREVIOUS_BUILTIN_INPUT_SCHEMAS: Readonly<Record<string, readonly In
       type: 'object',
     },
   ],
-  'notion-content-brand-review': [
+  'notion-content-draft': [
     {
       properties: {
         connectionId: UUID_CONNECTION_ID,
@@ -1436,11 +1440,10 @@ export const PREVIOUS_BUILTIN_INPUT_SCHEMAS: Readonly<Record<string, readonly In
       required: ['connectionId', 'sourcePageId', 'targetPageId'],
       type: 'object',
     },
-  ],
-  'notion-content-draft': [
+    // What main shipped once the run form had connection pickers, before `brandReview`.
     {
       properties: {
-        connectionId: UUID_CONNECTION_ID,
+        connectionId: { connectionType: 'notion', type: 'connection' },
         instructions: { type: 'string' },
         sourcePageId: { type: 'string' },
         targetPageId: { type: 'string' },
@@ -1528,6 +1531,134 @@ async function syncTemplates(prisma: PrismaClient): Promise<void> {
       workspaceProvider: tmpl.workspaceProvider ?? 'git_repo',
     });
   }
+  await retireBuiltinTemplates(prisma);
+}
+
+/**
+ * Built-in templates that no longer ship, by name, with the template that replaces each.
+ *
+ * Dropping a template from {@link BUILTIN_TEMPLATES} alone leaves its row in every database that
+ * ever seeded it, still ACTIVE and still in the picker. Listing it here makes sync archive that
+ * row, on the terms of {@link retireBuiltinTemplates}. Rows are never deleted: runs and versions
+ * reference them with restricting foreign keys.
+ */
+export const RETIRED_BUILTIN_TEMPLATES: Readonly<Record<string, { replacedBy: string }>> = {
+  'notion-content-brand-review': { replacedBy: 'notion-content-draft' },
+};
+
+/**
+ * Archive the retired built-in templates ({@link RETIRED_BUILTIN_TEMPLATES}) a database still has.
+ *
+ * A row is archived only when nobody has taken it over: a GLOBAL row (a team's copy is the team's),
+ * not the default template, running no A/B experiment, still ACTIVE, and active on the latest
+ * built-in version (no author on it) — the same test that lets a changed built-in advance. Any
+ * other GLOBAL row is left as it is and a warning names it and its replacement. Runs in flight and
+ * runs that pinned a version are unaffected: archiving changes the row's status only, and the
+ * template picker lists ACTIVE templates only.
+ */
+async function retireBuiltinTemplates(prisma: PrismaClient): Promise<void> {
+  for (const [name, { replacedBy }] of Object.entries(RETIRED_BUILTIN_TEMPLATES)) {
+    const row = await prisma.workflowTemplate.findFirst({ where: { name, teamId: null } });
+    if (!row || row.status === 'ARCHIVED') {
+      continue;
+    }
+    const versions = await prisma.workflowTemplateVersion.findMany({
+      orderBy: { version: 'asc' },
+      select: { createdBy: true, generatedBy: true, version: true },
+      where: { templateId: row.id },
+    });
+    const latestBuiltin = versions
+      .filter((v) => v.createdBy == null && v.generatedBy == null)
+      .at(-1);
+    const untouched =
+      row.status === 'ACTIVE' &&
+      !row.isDefault &&
+      (row.experimentSplit ?? 0) === 0 &&
+      latestBuiltin !== undefined &&
+      row.activeVersion === latestBuiltin.version;
+    if (!untouched || !latestBuiltin) {
+      warnRetirementOnce(
+        `${name}:left`,
+        `[syncBuiltins] '${name}' is retired in favour of '${replacedBy}' but was left as it is: ` +
+          'it is the default template, runs an A/B experiment, is not active, or an admin moved ' +
+          'it off its built-in version. Archive it by hand when it is no longer needed.'
+      );
+      continue;
+    }
+    // Live triggers resolve their template by id and refuse an archived one, so archiving a row
+    // one still points at would silently stop it. Leave it active until the owner repoints it.
+    const references = await liveTemplateReferences(prisma, row);
+    if (references.length > 0) {
+      warnRetirementOnce(
+        `${name}:referenced`,
+        `[syncBuiltins] '${name}' is retired in favour of '${replacedBy}' but was left ACTIVE: ` +
+          `it is still referenced by ${references.join(', ')}. Repoint those at ` +
+          `'${replacedBy}', then archive it by hand.`
+      );
+      continue;
+    }
+    // Conditional on the row still being what we read, so an admin's concurrent change wins.
+    await prisma.workflowTemplate.updateMany({
+      data: { status: 'ARCHIVED' },
+      where: {
+        activeVersion: latestBuiltin.version,
+        id: row.id,
+        isDefault: false,
+        status: 'ACTIVE',
+        teamId: null,
+      },
+    });
+  }
+}
+
+/** Retirement warnings already logged by this process, so a boot does not repeat itself. */
+const retirementWarned = new Set<string>();
+
+/** Test seam: forget which retirement warnings were logged. */
+export function resetRetirementWarnings(): void {
+  retirementWarned.clear();
+}
+
+function warnRetirementOnce(key: string, message: string): void {
+  if (retirementWarned.has(key)) {
+    return;
+  }
+  retirementWarned.add(key);
+  console.warn(message);
+}
+
+/**
+ * The kinds of live trigger that still point at a template row: an automation, a schedule, a
+ * template webhook, a service principal allowed to run it. Empty when nothing does.
+ */
+async function liveTemplateReferences(
+  prisma: PrismaClient,
+  row: { id: string; webhookToken?: string | null }
+): Promise<string[]> {
+  const kinds: string[] = [];
+  if (await prisma.automation.findFirst({ select: { id: true }, where: { templateId: row.id } })) {
+    kinds.push('an automation');
+  }
+  if (
+    await prisma.scheduledWorkRequest.findFirst({
+      select: { id: true },
+      where: { templateId: row.id },
+    })
+  ) {
+    kinds.push('a schedule');
+  }
+  if (row.webhookToken) {
+    kinds.push('a template webhook');
+  }
+  if (
+    await prisma.servicePrincipal.findFirst({
+      select: { id: true },
+      where: { templateIds: { has: row.id } },
+    })
+  ) {
+    kinds.push('a service principal');
+  }
+  return kinds;
 }
 
 /** JSON with object keys sorted, so a `jsonb` round trip compares equal. */

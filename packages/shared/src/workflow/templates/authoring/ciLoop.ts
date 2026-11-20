@@ -94,13 +94,6 @@ export type CiFixHandoff =
   /** Clear the CI result and go back into the review, to `then`, via `clearCiResult`. */
   | { rereview: string };
 
-/**
- * Where the loop's fix budget is counted: `fetchLogs` is entered once per fix attempt, so
- * its visit count is the number of attempts made. A template that gives a rejected change a
- * fresh CI budget sets this path back to 0.
- */
-export const CI_ATTEMPTS_PATH = 'nodes.fetchLogs.visits';
-
 export interface CiLoopOptions {
   /** Where a passing CI goes next. */
   passed: string;
@@ -136,6 +129,12 @@ export interface CiLoopOptions {
    * templates keep the nodes they were seeded with.
    */
   fix: false | { limit?: number | string; handoff: CiFixHandoff; retryIfUnchanged?: boolean };
+  /**
+   * Config for the `ciFix` node (a `systemPrompt`, `allowedPaths`, `untrustedCiLogs`, …).
+   * The fixer otherwise runs with the default prompt and no restriction. Omitted or `{}`, the node
+   * carries no `config`. Has no effect without a fix loop.
+   */
+  fixConfig?: Record<string, unknown>;
 }
 
 /**
@@ -189,6 +188,9 @@ export function ciLoop(opts: CiLoopOptions): NodeMap {
     nodes,
     {
       ciFix: {
+        ...(opts.fixConfig && Object.keys(opts.fixConfig).length > 0
+          ? { config: opts.fixConfig }
+          : {}),
         group: loop,
         inputs: {
           failureContext: { from: 'context.lastCILogs' },

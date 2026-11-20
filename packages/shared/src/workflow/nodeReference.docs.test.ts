@@ -51,6 +51,7 @@ const COMMON_FIELDS = [
   'status',
   'maxVisits',
   'onExhausted',
+  'resetVisits',
 ];
 
 const LABELS = [

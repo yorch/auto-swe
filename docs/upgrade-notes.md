@@ -979,7 +979,7 @@ dollars, make its creator an ORG_ADMIN and send it by email to ORG_ADMIN recipie
 
 ---
 
-### UN-18. Built-in templates carry macro metadata and are re-versioned (`2899bcb0`)
+### UN-18. Built-in templates carry macro metadata and are re-versioned (`1df77eeb`)
 
 **Affected.** Any deployment with a built-in template in a running A/B experiment, or with
 reporting that compares a built-in template version over time.
@@ -1374,6 +1374,49 @@ of this entry applies only to a deployment that sets it.
 
 **Verify.** With a value set, the worker logs `run history sweep: deleted N finished runs older than
 D days` after the next 05:17 UTC run (or `RUN_HISTORY_PRUNE_CRON`); with `0` it logs nothing.
+
+---
+
+### UN-31. Built-in workflows use `resetVisits` and `ciLoop@2`, and the Notion templates are merged (`<fixing commit SHA>`)
+
+**Affected.** Any deployment where the gateway or a worker can run different code from the rest,
+even briefly; any deployment that calls `notion-content-draft` from an automation, schedule,
+webhook or the API; any that launches `notion-content-brand-review`; any with a customised
+`workflowAuthor` agent prompt.
+
+**What changes.**
+
+- The `four-eyes` and `consensus-review` templates reset the CI attempts budget with a new node
+  field, `resetVisits`. The gateway syncs the built-in templates at start-up, so a gateway that runs
+  first puts the new versions in front of an old worker, which ignores the field: after a fix that
+  changed the code the CI loop keeps its old attempt count and can stop early. A run that started on
+  a new worker and is replayed by an old one (a rolling deploy or a rollback) takes a different path
+  and fails as non-deterministic.
+- `ci-triage-and-fix` is appended as a new version that records its CI loop as `ciLoop@2`. The nodes
+  are unchanged.
+- `notion-content-draft` gains a `brandReview` input that defaults to on, and absorbs
+  `notion-content-brand-review`. **Existing callers that never send `brandReview` now run a second
+  agent, the brand reviewer, which adds model cost, write the reviewed text instead of the draft, and
+  show the reviewed text in the approval.** Send `brandReview: false` to keep the old behaviour.
+- An unmodified `notion-content-brand-review` that no automation, schedule, webhook or service
+  principal refers to is archived at start-up and disappears from the picker. A copy an
+  administrator changed, one in a running experiment, the default, and any that is referred to stay
+  active and the start-up log warns; they receive no further updates. Runs and versions are kept
+  and a team's own copy is never touched. A template an administrator reactivates is archived again
+  at the next start-up.
+- The `workflowAuthor` prompt describes macros and `resetVisits`. An installation whose prompt was
+  edited keeps its edit and does not learn them.
+
+**Actions.** Upgrade every worker before, or together with, the gateway, and drain old workers
+before the new versions take work. If the gateway ran first, cancel and re-run any `four-eyes` or
+`consensus-review` run started since. Repoint the automations, schedules and webhooks that name
+`notion-content-brand-review` at `notion-content-draft`, then restart the gateway so the old row is
+archived; set `brandReview` to false wherever the review is not wanted. To give a customised
+`workflowAuthor` the new sections, re-apply the built-in prompt from the agent library.
+
+**Verify.** `printenv COMMIT_HASH` in the worker container names a commit that contains
+`resetVisits`; `notion-content-brand-review` shows as archived in the library; the
+`notion-content-draft` launch form shows the `brandReview` toggle.
 
 ---
 

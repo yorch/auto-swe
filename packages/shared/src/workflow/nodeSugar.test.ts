@@ -420,3 +420,165 @@ describe('maxVisits', () => {
     expect(r.status).toBe('SUCCESS');
   });
 });
+
+describe('resetVisits', () => {
+  const visitsOf = (r: { finalContext: Context }, id: string): unknown =>
+    (r.finalContext.nodes as Record<string, { visits?: number }>)[id]?.visits;
+
+  // `a` is bounded to two entries per budget; `r` gives it a fresh budget once, then the
+  // third entry after the reset routes out.
+  const resetLoop = () =>
+    mk(
+      {
+        a: { maxVisits: 2, next: 'gate', onExhausted: 'again', step: 's', type: 'step' },
+        again: { expr: 'context.reset == true', onFalse: 'r', onTrue: 'out', type: 'cond' },
+        done,
+        gate: { expr: 'true', onFalse: 'done', onTrue: 'a', type: 'cond' },
+        out: { status: 'FAILED', type: 'terminate' },
+        r: {
+          next: 'a',
+          resetVisits: ['a'],
+          type: 'set',
+          values: { 'context.reset': { literal: true } },
+        },
+      },
+      'a'
+    );
+
+  it('sets the listed counts to 0 on entry, giving the loop a fresh budget', async () => {
+    const { d, calls } = harness({});
+    const r = await runSpec(resetLoop(), ctx0(), d);
+    // two entries, exhausted, reset, two more, exhausted again
+    expect(calls).toEqual(['s', 's', 's', 's']);
+    expect(r.status).toBe('FAILED');
+    expect(visitsOf(r, 'a')).toBe(3);
+  });
+
+  it('writes the count even where none was kept, like a set of a literal 0', async () => {
+    const spec = mk({
+      a: { next: 'done', resetVisits: ['b'], step: 's', type: 'step' },
+      b: { maxVisits: 1, next: 'done', onExhausted: 'done', step: 's', type: 'step' },
+      done,
+    });
+    const r = await runSpec(spec, ctx0(), harness({}).d);
+    expect(visitsOf(r, 'b')).toBe(0);
+  });
+
+  it('refuses a node that resets itself while bounding itself, and only warns without a bound', () => {
+    const bounded = validateSpec(
+      mk({
+        a: {
+          maxVisits: 1,
+          next: 'a',
+          onExhausted: { status: 'FAILED' },
+          resetVisits: ['a'],
+          step: 's',
+          type: 'step',
+        },
+      })
+    );
+    expect(bounded.errors.filter((e) => e.code === 'RESET_VISITS_SELF_BOUNDED')).toEqual([
+      expect.objectContaining({ field: 'resetVisits', nodeId: 'a', severity: 'error' }),
+    ]);
+    expect(bounded.warnings.filter((w) => w.code === 'RESET_VISITS_UNCOUNTED')).toEqual([]);
+
+    const unbounded = validateSpec(
+      mk({
+        a: { next: 'done', resetVisits: ['a'], step: 's', type: 'step' },
+        done,
+      })
+    );
+    expect(unbounded.errors.filter((e) => e.code === 'RESET_VISITS_SELF_BOUNDED')).toEqual([]);
+    expect(unbounded.warnings.filter((w) => w.code === 'RESET_VISITS_UNCOUNTED')).toEqual([
+      expect.objectContaining({ nodeId: 'a' }),
+    ]);
+  });
+
+  it('rejects at parse an id that is not a node, or has a dot', () => {
+    expect(() =>
+      mk({
+        a: { next: 'done', resetVisits: ['nope'], step: 's', type: 'step' },
+        done,
+      })
+    ).toThrow(/resetVisits refers to unknown node 'nope'/);
+    expect(() =>
+      mk({
+        a: { next: 'done', resetVisits: ['x.y'], step: 's', type: 'step' },
+        done,
+      })
+    ).toThrow(/no dot/);
+  });
+
+  it('resets inside a fan-out branch only that branch’s counts', async () => {
+    const spec = mk(
+      {
+        b: { maxVisits: 1, next: 'c', onExhausted: 'bad', step: 's', type: 'step' },
+        bad: { status: 'FAILED', type: 'terminate' },
+        c: { next: 'ok', resetVisits: ['top'], step: 's', type: 'step' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: { join: 'top', over: { literal: [1, 2] }, subgraph: 'b', type: 'fanOut' },
+        ok: { status: 'SUCCESS', type: 'terminate' },
+        top: { maxVisits: 3, next: 'done', onExhausted: 'bad', step: 't', type: 'step' },
+      },
+      'fan'
+    );
+    const r = await runSpec(spec, ctx0(), harness({}).d);
+    expect(r.status).toBe('SUCCESS');
+    expect(visitsOf(r, 'top')).toBe(1);
+  });
+
+  it('changes nothing for a spec without the field', async () => {
+    const spec = mk({
+      a: { maxVisits: 3, next: 'a', onExhausted: 'stop', step: 's', type: 'step' },
+      stop: { status: 'FAILED', type: 'terminate' },
+    });
+    expect(spec.nodes.a).not.toHaveProperty('resetVisits');
+    const r = await runSpec(spec, ctx0(), harness({}).d);
+    expect(visitsOf(r, 'a')).toBe(4);
+  });
+
+  it('parses up to 20 distinct ids, and refuses repeats and more', () => {
+    const base = { next: 'done', step: 's', type: 'step' };
+    expect(() => mk({ a: { ...base, resetVisits: ['a', 'a'] }, done })).toThrow(/more than once/);
+    const many = Array.from({ length: 21 }, (_, i) => `n${i}`);
+    const others = Object.fromEntries(many.map((id) => [id, { ...base }]));
+    expect(() => mk({ a: { ...base, resetVisits: many }, ...others, done })).toThrow();
+    expect(() =>
+      mk({ a: { ...base, resetVisits: many.slice(0, 20) }, ...others, done })
+    ).not.toThrow();
+  });
+
+  it('is not an edge', () => {
+    const spec = mk({
+      a: { next: 'done', resetVisits: ['b'], step: 's', type: 'step' },
+      b: { maxVisits: 1, next: 'done', onExhausted: 'done', step: 's', type: 'step' },
+      done,
+    });
+    expect(nodeEdges(spec.nodes.a as Parameters<typeof nodeEdges>[0])).toEqual([['next', 'done']]);
+  });
+
+  it('validateSpec: an unknown id is an error, an uncounted one a warning', () => {
+    // Built unparsed: a spec that reaches validateSpec without going through the schema.
+    const report = validateSpec({
+      entry: 'a',
+      name: 'sugar',
+      nodes: {
+        a: { next: 'b', resetVisits: ['nope', 'b', 'c'], step: 's', type: 'step' },
+        b: { next: 'c', step: 's', type: 'step' },
+        c: { maxVisits: 1, next: 'done', onExhausted: 'done', step: 's', type: 'step' },
+        done,
+      },
+      schemaVersion: 1,
+    } as unknown as Parameters<typeof validateSpec>[0]);
+    expect(report.errors.filter((e) => e.code === 'RESET_VISITS_UNKNOWN_NODE')).toEqual([
+      expect.objectContaining({
+        field: 'resetVisits',
+        message: expect.stringContaining("'nope'"),
+        nodeId: 'a',
+      }),
+    ]);
+    expect(report.warnings.filter((w) => w.code === 'RESET_VISITS_UNCOUNTED')).toEqual([
+      expect.objectContaining({ message: expect.stringContaining("'b'"), nodeId: 'a' }),
+    ]);
+  });
+});

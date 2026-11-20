@@ -33,7 +33,6 @@ import {
 import { INCIDENT_TRIAGE_INPUT_SCHEMA, INCIDENT_TRIAGE_SPEC } from './incidentTriage.js';
 import { ISSUE_TO_CONFLUENCE_PAGE_SPEC } from './issueToConfluencePage.js';
 import { MODEL_CATALOG_REFRESH_SPEC } from './modelCatalogRefresh.js';
-import { NOTION_CONTENT_BRAND_REVIEW_SPEC } from './notionContentBrandReview.js';
 import { NOTION_CONTENT_DRAFT_SPEC } from './notionContentDraft.js';
 import { PARALLEL_FAN_OUT_SPEC } from './parallelFanOut.js';
 import { PRD_DECOMPOSITION_SPEC } from './prdDecomposition.js';
@@ -263,6 +262,13 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     description: NOTION_CONTENT_DRAFT_SPEC.description,
     inputSchema: {
       properties: {
+        brandReview: {
+          default: true,
+          description:
+            'Have a second agent review the draft for brand voice and clarity and write the reviewed text. Off writes the plain draft.',
+          title: 'Review for brand voice',
+          type: 'boolean',
+        },
         connectionId: { connectionType: 'notion', type: 'connection' },
         instructions: { type: 'string' },
         sourcePageId: { type: 'string' },
@@ -273,22 +279,6 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     },
     name: NOTION_CONTENT_DRAFT_SPEC.name,
     spec: NOTION_CONTENT_DRAFT_SPEC,
-    workspaceProvider: 'document',
-  },
-  {
-    description: NOTION_CONTENT_BRAND_REVIEW_SPEC.description,
-    inputSchema: {
-      properties: {
-        connectionId: { connectionType: 'notion', type: 'connection' },
-        instructions: { type: 'string' },
-        sourcePageId: { type: 'string' },
-        targetPageId: { type: 'string' },
-      },
-      required: ['connectionId', 'sourcePageId', 'targetPageId'],
-      type: 'object',
-    },
-    name: NOTION_CONTENT_BRAND_REVIEW_SPEC.name,
-    spec: NOTION_CONTENT_BRAND_REVIEW_SPEC,
     workspaceProvider: 'document',
   },
 
@@ -479,7 +469,6 @@ export {
 } from './incidentTriage.js';
 export { ISSUE_TO_CONFLUENCE_PAGE_SPEC } from './issueToConfluencePage.js';
 export { MODEL_CATALOG_REFRESH_SPEC } from './modelCatalogRefresh.js';
-export { NOTION_CONTENT_BRAND_REVIEW_SPEC } from './notionContentBrandReview.js';
 export { NOTION_CONTENT_DRAFT_SPEC } from './notionContentDraft.js';
 export { PARALLEL_FAN_OUT_SPEC } from './parallelFanOut.js';
 export { PRD_DECOMPOSITION_SPEC } from './prdDecomposition.js';

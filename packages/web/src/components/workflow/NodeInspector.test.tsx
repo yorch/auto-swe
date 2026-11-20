@@ -4,6 +4,7 @@ import type { Node as SpecNode } from '@auto-swe/shared/workflow';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { FlowFieldsSection } from './inspectorFlow';
 import { NodeInspector } from './NodeInspector';
 
 /**
@@ -682,6 +683,43 @@ describe('NodeInspector flow control', () => {
     );
     expect(screen.getByLabelText('Stop message')).toHaveProperty('value', 'x');
     expect(screen.getAllByRole('button', { name: /On failure/i })).toHaveLength(1);
+  });
+
+  it('commits reset visit ids on blur, deduplicated, and clears the field when emptied', () => {
+    const onChangeNode = renderInspector(STEP, 'run');
+    const input = screen.getByLabelText('Reset visit counts of');
+    fireEvent.change(input, { target: { value: 'a, b a' } });
+    fireEvent.blur(input);
+    expect(onChangeNode.mock.calls[0]?.[0]).toMatchObject({ resetVisits: ['a', 'b'] });
+    cleanup();
+    const cleared = renderInspector({ ...STEP, resetVisits: ['a'] } as SpecNode, 'run');
+    const again = screen.getByLabelText('Reset visit counts of');
+    expect(again).toHaveProperty('value', 'a');
+    fireEvent.change(again, { target: { value: ' ' } });
+    fireEvent.blur(again);
+    expect(cleared.mock.calls[0]?.[0]).not.toHaveProperty('resetVisits');
+  });
+
+  it('flags a reset of a node that keeps no visit count', () => {
+    render(
+      <FlowFieldsSection
+        allNodeIds={['run', 'a', 'b']}
+        countedNodeIds={['a']}
+        node={{ ...STEP, resetVisits: ['a', 'b'] } as SpecNode}
+        nodeId="run"
+        onChange={vi.fn()}
+      />
+    );
+    expect(screen.getByText('No visit count to reset on b: set Max visits there')).toBeTruthy();
+  });
+
+  it('refuses a reset of an id that is not a node, and commits nothing', () => {
+    const onChangeNode = renderInspector(STEP, 'run');
+    const input = screen.getByLabelText('Reset visit counts of');
+    fireEvent.change(input, { target: { value: 'a, nope' } });
+    fireEvent.blur(input);
+    expect(onChangeNode).not.toHaveBeenCalled();
+    expect(screen.getByText(/Not a node of this workflow: nope/)).toBeTruthy();
   });
 
   it('commits max visits on blur, and drops an invalid value', () => {

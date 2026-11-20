@@ -81,7 +81,7 @@ const DomainStatus = z.string().min(1).max(64);
 /** `maxVisits` is at most 10 000 and the loops set it to `limit - 1`. */
 const LoopLimit = z.number().int().min(2).max(10_001);
 
-const CiLoopArgs = z.strictObject({
+const CiLoopArgsV1 = z.strictObject({
   exhausted: NodeRef.optional(),
   fix: z.union([
     z.literal(false),
@@ -96,6 +96,10 @@ const CiLoopArgs = z.strictObject({
   ]),
   passed: NodeRef,
   wait: z.enum(['signal', 'pollOrSignal']).optional(),
+}) satisfies z.ZodType<Omit<CiLoopOptions, 'fixConfig'>>;
+
+const CiLoopArgs = CiLoopArgsV1.extend({
+  fixConfig: z.record(z.string(), z.unknown()).optional(),
 }) satisfies z.ZodType<CiLoopOptions>;
 
 const ReviewLoopArgs = z.strictObject({
@@ -129,12 +133,20 @@ function define<A>(def: MacroDefinition<A>): MacroDefinition<A> {
 /** Every macro a spec may use, by `<name>@<version>`. */
 export const MACROS: Readonly<Record<string, MacroDefinition<unknown>>> = Object.freeze({
   'ciLoop@1': define({
-    args: CiLoopArgs,
+    args: CiLoopArgsV1,
     edgeArgs: ['passed', 'exhausted', 'fix.handoff.rereview'],
     entry: (a) => ciWaitEntry(a.wait),
     expand: (a) => ciLoop(a),
     nodeIdArgs: ['fix.handoff.repush'],
     ref: 'ciLoop@1',
+  }),
+  'ciLoop@2': define({
+    args: CiLoopArgs,
+    edgeArgs: ['passed', 'exhausted', 'fix.handoff.rereview'],
+    entry: (a) => ciWaitEntry(a.wait),
+    expand: (a) => ciLoop(a),
+    nodeIdArgs: ['fix.handoff.repush'],
+    ref: 'ciLoop@2',
   }),
   'openPullRequest@1': define({
     args: OpenPullRequestArgs,

@@ -43,6 +43,23 @@ function withGates(edit: (raw: RawSpec) => void): () => RawSpec {
 const HOSTILE: Hostile[] = [
   {
     build: delivering((r) => {
+      r.nodes.review = { ...r.nodes.review, resetVisits: ['review'] };
+    }),
+    expect: 'RESERVED_PATH_WRITE',
+    name: 'node that resets a loop bound with resetVisits',
+  },
+  {
+    build: () => {
+      const raw = outputOnlyRaw();
+      raw.nodes.draft = { ...raw.nodes.draft, resetVisits: ['draft'] };
+      return raw;
+    },
+    expect: 'RESERVED_PATH_WRITE',
+    mode: 'output-only',
+    name: 'output-only agent that resets its own visit count',
+  },
+  {
+    build: delivering((r) => {
       r.nodes.review = { ...r.nodes.review, onFail: 'warn' };
     }),
     expect: 'ONFAIL_WARN',
