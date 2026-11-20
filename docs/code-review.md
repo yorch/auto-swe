@@ -43,7 +43,7 @@ The same run viewer serves agent runs. Successful submission opens the review's 
 which refreshes automatically while waiting for execution to start. Diagnostics become available
 when the worker creates the review run.
 
-Manual launches require ENGINEER access, control of the source run, repository launch authorization,
+Manual launches require a signed-in user access, control of the source run, repository launch authorization,
 and launch budget. Send an `Idempotency-Key` to retry a submission without creating another run.
 Review workflow IDs use `review-<repo8>-<hex8>`; the review creates no work branch of its own.
 
@@ -135,12 +135,12 @@ workflow; transient skips and launch failures use the run's **Retry fix** action
 ## API
 
 All paths below have the `/api/v1` prefix. Preset administration requires ADMIN; launch and picker
-routes require ENGINEER, with source control and repository checks on launch.
+routes require a signed-in user, with source control and repository checks on launch.
 
 | Method and path | Request / result |
 |---|---|
 | `POST /workflow-runs/:id/reviews` | Exactly `{ "presetId": "<uuid>" }` or `{ "templateId": "<uuid>" }`; optional `Idempotency-Key`; returns 201 with `data: { runId, workflowId, workRequestId }`. |
-| `POST /workflow-runs/:id/reviews/fix-retry` | ENGINEER with review-run control and repository authorization; queues a guarded fix retry and returns 202 with `data: { workflowId }`. |
+| `POST /workflow-runs/:id/reviews/fix-retry` | Any signed-in user with review-run control and repository authorization; queues a guarded fix retry and returns 202 with `data: { workflowId }`. |
 | `GET /review-presets` | Enabled presets and active review templates for the picker. |
 | `GET /workflow-runs/:id` | The `review` field describes eligibility, control, source linkage, and linked review summaries. Step outputs carry the publication summary. |
 | `GET /platform/review-presets` | Presets with template metadata and attachments. |

@@ -48,7 +48,7 @@ function providerOf(spec: string | null | undefined): string | null {
 }
 
 export const readinessRoutes: FastifyPluginAsync = async (fastify) => {
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.catalog.manage' });
 
   fastify.get('/readiness', { onRequest: adminOnly }, async () => {
     const [egress, coverage, required, connectionCount] = await Promise.all([

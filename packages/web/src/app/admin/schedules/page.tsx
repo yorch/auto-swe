@@ -20,8 +20,9 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
+import { useCan, useCanOnTeams } from '@/hooks/useCan';
 import { useDataTableSort } from '@/hooks/useDataTableSort';
-import { useHasRole } from '@/hooks/useHasRole';
+import { useEffectivePermissions } from '@/hooks/useEffectivePermissions';
 import { useRepositories } from '@/hooks/useRepositories';
 import {
   useCreateSchedule,
@@ -30,7 +31,6 @@ import {
   useSchedules,
   useUpdateSchedule,
 } from '@/hooks/useSchedules';
-import { useLedTeamIds } from '@/hooks/useTeams';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
 import { BUDGET_TIER_OPTIONS } from '@/lib/govLabels';
@@ -106,18 +106,13 @@ function ScheduleFormModal({
   const update = useUpdateSchedule();
   const { data: repos } = useRepositories();
   const { data: templates } = useWorkflowTemplates();
-  const isAdmin = useHasRole('ADMIN');
-  const ledTeamIds = useLedTeamIds();
-
-  // The teams that may own a schedule on the chosen repository (its owner and
-  // the teams it is shared with) that the caller leads. With one, the server's
+  // The teams that may own a schedule on the chosen repository (its owner and the teams it is
+  // shared with) on which the caller holds `team.schedules.create`. With one, the server's
   // default is right and no picker is shown.
   const repo = (repos ?? []).find((r) => r.id === form.repoId);
-  const eligibleTeams = repo
-    ? [repo.team, ...(repo.shares ?? []).map((s) => s.team)].filter(
-        (t) => isAdmin || ledTeamIds?.has(t.id)
-      )
-    : [];
+  const candidateTeams = repo ? [repo.team, ...(repo.shares ?? []).map((s) => s.team)] : [];
+  const canScheduleFor = useCanOnTeams('team.schedules.create', candidateTeams);
+  const eligibleTeams = candidateTeams.filter((t) => canScheduleFor(t.id));
   const showTeamPicker = eligibleTeams.length > 1;
   const teamId = eligibleTeams.some((t) => t.id === form.teamId)
     ? form.teamId
@@ -496,10 +491,9 @@ const SCHEDULE_SORT_KEYS = {
 export default function GovernSchedulesPage() {
   const [newOpen, setNewOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ScheduledWorkRequestSummary | null>(null);
-  const isAdmin = useHasRole('ADMIN');
-  const ledTeamIds = useLedTeamIds();
-  // Mirrors the gateway: an ADMIN, or a lead of the owning or a shared team.
-  const canCreate = isAdmin || (ledTeamIds?.size ?? 0) > 0;
+  // Mirrors the gateway: `team.schedules.create` on some team (a platform admin holds it on all).
+  const canCreate = useCan('team.schedules.create');
+  const permissionsKnown = useEffectivePermissions().data !== undefined;
   const [deleteTarget, setDeleteTarget] = useState<ScheduledWorkRequestSummary | null>(null);
   const [query, setQuery] = useState('');
   const { onSortChange, sort, sortRows } =
@@ -536,7 +530,7 @@ export default function GovernSchedulesPage() {
               <Icon name="plus" size={14} />
               Create schedule
             </Button>
-            {!canCreate && ledTeamIds && (
+            {!canCreate && permissionsKnown && (
               <span className="text-xs text-paper-500">Only team leads can create schedules</span>
             )}
           </div>

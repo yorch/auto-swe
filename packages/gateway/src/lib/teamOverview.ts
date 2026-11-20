@@ -1,5 +1,13 @@
 import type { Prisma, PrismaClient } from '@auto-swe/shared';
 import { usdToCents } from '@auto-swe/shared/lib/billing';
+import {
+  can,
+  isPlatformAdmin,
+  isPlatformAdminRole,
+  teamRankMeets,
+  teamRankOf,
+  userActor,
+} from '@auto-swe/shared/permissions';
 import type {
   BudgetStatus,
   TeamOverview,
@@ -14,7 +22,6 @@ import {
   requestTitle,
   teamDeskScope,
 } from './meSummary.js';
-import { isOrgAdmin } from './orgAccess.js';
 import { asPlatformAdmin } from './platformAdminScope.js';
 import { teamPullRequestOutcomes } from './pullRequestOutcomesQuery.js';
 import { groupRequestExecutions } from './requestExecutions.js';
@@ -40,6 +47,13 @@ const LAST_WINDOW_DAYS = 7;
 
 type ViewerLevel = TeamOverview['viewerLevel'];
 
+/**
+ * The overview as built here. `needsAdmin` is present, and `true`, only for a viewer who governs
+ * the team (`team.members.manage`) when the team has no ADMIN; it is absent otherwise, never
+ * `false` or `null`, like `lead` and `admin`.
+ */
+export type TeamOverviewView = TeamOverview & { needsAdmin?: true };
+
 interface OverviewDeps {
   dueSoonHours: number;
   gate: MaybeGate;
@@ -48,14 +62,24 @@ interface OverviewDeps {
 }
 
 /** The view a team role gets. The platform role never decides it, except for an ADMIN outside the team. */
-export function viewerLevelFor(
-  teamRole: 'ADMIN' | 'LEAD' | 'ENGINEER' | null,
-  platformRole: string
-): ViewerLevel {
-  if (teamRole === null) {
-    return platformRole === 'ADMIN' ? 'admin' : 'engineer';
+export function viewerLevelFor(teamRole: string | null, platformRole: string): ViewerLevel {
+  const rank = teamRankOf(teamRole);
+  if (rank === null) {
+    return isPlatformAdminRole(platformRole) ? 'admin' : 'member';
   }
-  return teamRole === 'ADMIN' ? 'admin' : teamRole === 'LEAD' ? 'lead' : 'engineer';
+  if (teamRankMeets(rank, 'ADMIN')) {
+    return 'admin';
+  }
+  return teamRankMeets(rank, 'LEAD') ? 'lead' : 'member';
+}
+
+/** Whether the viewer holds the governance capability that appoints a team's members. */
+async function viewerGovernsTeam(
+  prisma: PrismaClient,
+  user: VisibilityActor,
+  teamId: string
+): Promise<boolean> {
+  return (await can(prisma, userActor(user), 'team.members.manage', { teamId })).allowed;
 }
 
 function startOfMonthUtc(now: number): Date {
@@ -201,7 +225,7 @@ async function loadRepoRows(deps: OverviewDeps, team: { id: string }) {
         take: REPO_LIMIT,
         where: {
           AND: [
-            user.role === 'ADMIN' ? {} : reachableConnections(user, gate),
+            isPlatformAdmin(user) ? {} : reachableConnections(user, gate),
             repositoryTeamScope(team.id),
             { isActive: true, type: 'git_repo' },
           ],
@@ -267,7 +291,7 @@ async function monthCostCents(
 export async function buildTeamOverview(
   deps: OverviewDeps,
   teamId: string
-): Promise<TeamOverview | null> {
+): Promise<TeamOverviewView | null> {
   const { dueSoonHours, gate, prisma, user } = deps;
   const team = await prisma.team.findUnique({
     select: {
@@ -281,7 +305,7 @@ export async function buildTeamOverview(
     where: { id: teamId },
   });
   const myRole = team?.memberships[0]?.role ?? null;
-  if (!team || (myRole === null && user.role !== 'ADMIN')) {
+  if (!team || (myRole === null && !isPlatformAdmin(user))) {
     return null;
   }
   const viewerLevel = viewerLevelFor(myRole, user.role);
@@ -329,7 +353,7 @@ export async function buildTeamOverview(
       .running,
   };
   const groups = groupRequestExecutions(recent);
-  const overview: TeamOverview = {
+  const overview: TeamOverviewView = {
     activity,
     budget: budgets.get(team.id) ?? null,
     last7d: {
@@ -363,7 +387,21 @@ export async function buildTeamOverview(
     viewerLevel,
   };
 
-  if (viewerLevel === 'engineer') {
+  // A team with no ADMIN (an organization removal may leave one) is flagged for those who can
+  // appoint one. One read of the roles answers it for nearly every team; the capability is asked
+  // only for a team that has none.
+  const roles = await prisma.teamMembership.findMany({
+    select: { role: true },
+    where: { teamId: team.id },
+  });
+  if (
+    !roles.some((m) => teamRankMeets(teamRankOf(m.role), 'ADMIN')) &&
+    (await viewerGovernsTeam(prisma, user, team.id))
+  ) {
+    overview.needsAdmin = true;
+  }
+
+  if (viewerLevel === 'member') {
     return overview;
   }
 
@@ -386,14 +424,14 @@ export async function buildTeamOverview(
     prisma.pullRequest.count({
       where: {
         AND: [
-          user.role === 'ADMIN' ? {} : { repository: reachableConnections(user, gate) },
+          isPlatformAdmin(user) ? {} : { repository: reachableConnections(user, gate) },
           { repository: repositoryTeamScope(team.id) },
           { status: 'OPEN' },
         ],
       },
     }),
   ]);
-  const withLead: TeamOverview = {
+  const withLead: TeamOverviewView = {
     ...overview,
     lead: { openPullRequests, staleApprovals, unownedFailures },
   };
@@ -408,7 +446,7 @@ export async function buildTeamOverview(
   if (
     overview.budget !== null &&
     overview.budget.scope !== 'team' &&
-    !(await isOrgAdmin(prisma, user, team.orgId))
+    !(await can(prisma, userActor(user), 'org.budget.manage', { orgId: team.orgId })).allowed
   ) {
     return { ...withLead, admin: {} };
   }

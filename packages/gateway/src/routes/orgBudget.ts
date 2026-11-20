@@ -102,7 +102,7 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
   f.get(
     '/:orgId/budget/status',
     {
-      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_MEMBER' }),
+      onRequest: requireAuth({ capability: 'org.read', org: { param: 'orgId' } }),
       schema: {
         params: OrgParamsSchema,
         response: { 200: z.object({ data: BudgetStatusSchema }), 404: ErrorResponseSchema },
@@ -134,7 +134,7 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
   f.get(
     '/:orgId/budget',
     {
-      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_ADMIN' }),
+      onRequest: requireAuth({ capability: 'org.budget.manage', org: { param: 'orgId' } }),
       schema: {
         params: OrgParamsSchema,
         response: { 200: BudgetResponseSchema, 404: ErrorResponseSchema },
@@ -170,7 +170,7 @@ const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
   f.patch(
     '/:orgId/budget',
     {
-      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_ADMIN' }),
+      onRequest: requireAuth({ capability: 'org.budget.manage', org: { param: 'orgId' } }),
       schema: {
         body: PatchBudgetSchema,
         params: OrgParamsSchema,

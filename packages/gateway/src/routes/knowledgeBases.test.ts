@@ -6,10 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@auto-swe/shared', () => ({
   Role: { ADMIN: 'ADMIN', ENGINEER: 'ENGINEER', LEAD: 'LEAD' },
 }));
-vi.mock('./repositories.js', () => ({ canManageTeamRepos: vi.fn() }));
 
+import { emptyStanding, resetStanding, setTeam, withStanding } from '../test/repoStanding.js';
 import { knowledgeBaseRoutes } from './knowledgeBases.js';
-import { canManageTeamRepos } from './repositories.js';
 
 const KB = '11111111-1111-4111-8111-111111111111';
 const REPO = '22222222-2222-4222-8222-222222222222';
@@ -46,12 +45,19 @@ const prisma = {
   knowledgeBase: delegate(),
   knowledgeBaseLink: delegate(),
   knowledgeBaseTeamShare: delegate(),
+  // The permissions loader reads these, answered from `standing` by `withStanding`.
+  organizationMembership: delegate(),
   team: delegate(),
+  teamMembership: delegate(),
   workflowTemplate: delegate(),
 };
 const temporal = { startKnowledgeBaseIndex: vi.fn() };
 let app: ReturnType<typeof Fastify>;
 let role = 'LEAD';
+const standing = emptyStanding();
+/** Whether the caller may manage the team's knowledge bases: a LEAD of it, or no membership. */
+const setCanManage = (allowed: boolean) =>
+  setTeam(standing, TEAM, { orgId: ORG, role: allowed ? 'LEAD' : null });
 
 beforeEach(async () => {
   role = 'LEAD';
@@ -61,7 +67,8 @@ beforeEach(async () => {
       value.findMany.mockResolvedValue([]);
     }
   }
-  vi.mocked(canManageTeamRepos).mockResolvedValue(true);
+  resetStanding(standing);
+  setCanManage(true);
   prisma.knowledgeBase.findFirst.mockResolvedValue(row);
   prisma.knowledgeBase.create.mockResolvedValue(row);
   prisma.knowledgeBase.update.mockResolvedValue(row);
@@ -77,7 +84,7 @@ beforeEach(async () => {
   app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
-  app.decorate('prisma', prisma as never);
+  app.decorate('prisma', withStanding(prisma, standing) as never);
   app.decorate('temporal', temporal as never);
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'user' }),
@@ -247,7 +254,7 @@ describe('knowledge base routes', () => {
     expect(prisma.configAuditLog.create).toHaveBeenCalled();
   });
   it('refuses creation by non-leads', async () => {
-    vi.mocked(canManageTeamRepos).mockResolvedValue(false);
+    setCanManage(false);
     expect(
       (
         await app.inject({
@@ -315,7 +322,7 @@ describe('knowledge base routes', () => {
   it.each(['PATCH', 'DELETE', 'PUT', 'POST'] as const)(
     'gates owner mutations: %s',
     async (method) => {
-      vi.mocked(canManageTeamRepos).mockResolvedValue(false);
+      setCanManage(false);
       const suffix = method === 'PUT' ? '/shares' : method === 'POST' ? '/reindex' : '';
       const payload =
         method === 'PUT' ? { teamIds: [] } : method === 'PATCH' ? { name: 'New' } : undefined;
@@ -578,7 +585,7 @@ describe('knowledge base links and effective preview', () => {
     expect(prisma.knowledgeBaseLink.create).not.toHaveBeenCalled();
   });
   it('requires target lead for listing and writing', async () => {
-    vi.mocked(canManageTeamRepos).mockResolvedValue(false);
+    setCanManage(false);
     expect(
       (
         await app.inject({

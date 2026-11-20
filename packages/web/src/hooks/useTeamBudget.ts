@@ -9,8 +9,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
 /**
- * A team's own cap and its month's spend, in dollars. Team ADMIN, ORG_ADMIN of the team's
- * organization, or platform ADMIN only: pass `enabled: false` for anyone else rather than meeting
+ * A team's own cap and its month's spend, in dollars. For holders of `team.budget.manage` only: pass `enabled: false` for anyone else rather than meeting
  * a 403.
  */
 export function useTeamBudget(teamId: string | undefined, enabled = true) {

@@ -40,7 +40,7 @@ export const requestWorkspaceRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/requests',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: Query },
     },
     async (request) => {

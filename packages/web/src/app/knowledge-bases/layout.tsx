@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react';
-import { RoleLayout } from '@/components/auth/RoleLayout';
+import { AccessLayout } from '@/components/auth/AccessLayout';
 import { KnowledgeLayout } from '@/components/layout/KnowledgeLayout';
 
 export default function Layout({ children }: { children: ReactNode }) {
   return (
-    <RoleLayout allowed={['ENGINEER']}>
+    <AccessLayout access="any">
       <KnowledgeLayout>{children}</KnowledgeLayout>
-    </RoleLayout>
+    </AccessLayout>
   );
 }

@@ -8,6 +8,7 @@ import {
   type PermissionRepo,
   verifiedGithubLoginFor,
 } from '@auto-swe/shared/lib/repoPermission';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyReply } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
 import { sendError } from './httpErrors.js';
@@ -53,7 +54,7 @@ export async function authorizeTeamLaunch(
     },
     where: { id: input.teamId },
   });
-  const member = team ? team.memberships.length > 0 || user.role === 'ADMIN' : false;
+  const member = team ? team.memberships.length > 0 || isPlatformAdmin(user) : false;
   if (!team?.isActive || !team.organization.isActive || !member) {
     sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
     return null;

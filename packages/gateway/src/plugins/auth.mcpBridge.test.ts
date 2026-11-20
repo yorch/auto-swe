@@ -38,7 +38,7 @@ describe('requireAuth and the MCP bridge', () => {
     app.decorate('prisma', {
       apiToken: { findUnique: async () => null, update: async () => ({}) },
       user: {
-        findUnique: async () => ({ isActive: true, role: 'ENGINEER', slackId: null }),
+        findUnique: async () => ({ isActive: true, role: 'USER', slackId: null }),
       },
     } as never);
     await app.register(authPlugin);
@@ -65,22 +65,25 @@ describe('requireAuth and the MCP bridge', () => {
     });
     app.get(
       '/probe/read',
-      { config: { mcpScope: 'read' }, onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
+      { config: { mcpScope: 'read' }, onRequest: requireAuth() },
       async (request) => probe(request)
     );
     app.post(
       '/probe/write',
-      { config: { mcpScope: 'write' }, onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
+      { config: { mcpScope: 'write' }, onRequest: requireAuth() },
       async (request) => probe(request)
     );
     app.get(
       '/probe/admin',
-      { config: { mcpScope: 'admin' }, onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
+      { config: { mcpScope: 'admin' }, onRequest: requireAuth() },
       async (request) => probe(request)
     );
     app.get(
       '/probe/lead-only',
-      { config: { mcpScope: 'read' }, onRequest: requireAuth({ requiredRole: 'LEAD' }) },
+      {
+        config: { mcpScope: 'read' },
+        onRequest: requireAuth({ capability: 'platform.users.manage' }),
+      },
       async (request) => probe(request)
     );
     // A route that never opted in: the REST surface as it is today.
@@ -115,7 +118,7 @@ describe('requireAuth and the MCP bridge', () => {
   });
 
   beforeEach(() => {
-    state.user = { isActive: true, role: 'ENGINEER' };
+    state.user = { isActive: true, role: 'USER' };
     state.writeToolsEnabled = true;
     state.grant = defaultGrant;
   });
@@ -147,7 +150,7 @@ describe('requireAuth and the MCP bridge', () => {
     expect(res?.body).toEqual({
       authMethod: 'mcp',
       bridge: { clientId: 'client-abc', consentId: 'consent-1', scopes: ['mcp:read'] },
-      role: 'ENGINEER',
+      role: 'USER',
       sub: TEST_USER,
     });
   });
@@ -295,12 +298,12 @@ describe('requireAuth and the MCP bridge', () => {
     });
   });
 
-  it('keeps the route role check: a bridged ENGINEER is not a LEAD', async () => {
+  it('keeps the route capability check: a bridged USER lacks platform.users.manage', async () => {
     expect((await bridged('/probe/lead-only', readToken)).statusCode).toBe(403);
   });
 
   it('uses the user as they are now: a deactivated user is refused, a demoted one is demoted', async () => {
-    state.user = { isActive: false, role: 'ENGINEER' };
+    state.user = { isActive: false, role: 'USER' };
     expect((await bridged('/probe/read', readToken)).statusCode).toBe(401);
     state.user = { isActive: true, role: 'ADMIN' };
     const res = await bridged('/probe/read', readToken);

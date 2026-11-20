@@ -54,7 +54,7 @@ function pick(label: RegExp, option: string) {
 beforeEach(() => {
   resetNavigation('', '/knowledge');
   stubDialogPrototype();
-  useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
+  useAuthStore.setState({ isAuthenticated: true, user: { role: 'USER', sub: 'me' } });
 });
 afterEach(() => {
   cleanup();

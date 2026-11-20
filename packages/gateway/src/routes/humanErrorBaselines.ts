@@ -1,7 +1,8 @@
-import { Role } from '@auto-swe/shared';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { can, heldScope, replyRefusal } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { memberOrgs } from '../lib/tenantScope.js';
@@ -29,7 +30,7 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ handlerChecked: ['org.baselines.read'] }),
       schema: { querystring: ListBaselinesQuery },
     },
     async (request) => {
@@ -40,6 +41,8 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
       // listing every org's baselines is a deliberate cross-tenant read, said
       // so through `asPlatformAdmin`; everyone else stays behind membership.
       const orgFilter = orgId ? { orgId } : {};
+      // Any member of an organization reads its baselines (`org.baselines.read`); the operator all.
+      const held = await heldScope(request, 'org.baselines.read');
       const rows = await asPlatformAdmin(
         user,
         "admin lists every organization's error baselines",
@@ -56,10 +59,7 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
               recordedAt: true,
               sampleSize: true,
             },
-            where:
-              user.role === Role.ADMIN
-                ? orgFilter
-                : { organization: memberOrgs(user), ...orgFilter },
+            where: held.all ? orgFilter : { organization: memberOrgs(user), ...orgFilter },
           })
       );
       return {
@@ -79,7 +79,7 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ handlerChecked: ['org.baselines.manage'] }),
       schema: { body: CreateBaselineBody },
     },
     async (request, reply) => {
@@ -89,12 +89,9 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 400, 'INVALID_BASELINE', 'errorCount cannot exceed sampleSize');
       }
 
-      const membership = await fastify.prisma.organizationMembership.findFirst({
-        select: { id: true },
-        where: { orgId, userId: user.sub },
-      });
-      if (!membership && user.role !== 'ADMIN') {
-        return sendError(reply, 403, 'FORBIDDEN', 'You are not a member of this organization');
+      const decision = await can(request, 'org.baselines.manage', { orgId });
+      if (!decision.allowed) {
+        return replyRefusal(reply, decision);
       }
 
       const created = await fastify.prisma.humanErrorBaseline.create({
@@ -125,23 +122,27 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
   app.delete(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ handlerChecked: ['org.baselines.manage'] }),
       schema: { params: BaselineIdParam },
     },
     async (request, reply) => {
       const user = requireUser(request);
       const existing = await fastify.prisma.humanErrorBaseline.findFirst({
-        select: { id: true },
-        where:
-          user.role === Role.ADMIN
-            ? { id: request.params.id }
-            : {
-                id: request.params.id,
-                organization: memberOrgs(user),
-              },
+        select: { id: true, orgId: true },
+        where: isPlatformAdmin(user)
+          ? { id: request.params.id }
+          : {
+              id: request.params.id,
+              organization: memberOrgs(user),
+            },
       });
       if (!existing) {
         return sendError(reply, 404, 'NOT_FOUND', 'Baseline not found');
+      }
+      // A member who can see the baseline but does not administer its organization may not remove it.
+      const decision = await can(request, 'org.baselines.manage', { orgId: existing.orgId });
+      if (!decision.allowed) {
+        return replyRefusal(reply, decision);
       }
       await fastify.prisma.humanErrorBaseline.delete({
         where: { id: request.params.id },

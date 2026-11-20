@@ -8,8 +8,8 @@ export interface TeamSpace {
   /** Whether the Settings tab is offered to the caller. */
   canSeeSettings: boolean;
   /**
-   * Whether the caller may read and set the team's budget (team ADMIN, org ADMIN, platform ADMIN);
-   * null while the organizations that decide it are still loading.
+   * Whether the caller may read and set the team's budget (`team.budget.manage`); null while that
+   * is not yet known.
    */
   canManageBudget: boolean | null;
 }

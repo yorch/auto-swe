@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
-import { useHasRole } from '@/hooks/useHasRole';
+import { useCan } from '@/hooks/useCan';
 import {
   downloadTranscript,
   useRunTranscripts,
@@ -35,7 +35,7 @@ function sizeLabel(bytes: number): string {
  */
 export function RunTranscripts({ runId }: { runId: string }) {
   const { data, error, isError, isFetching, isLoading, refetch } = useRunTranscripts(runId);
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = useCan('platform.transcripts.retention.manage');
   const hold = useTranscriptLegalHold(runId);
   const [dialog, setDialog] = useState<'hold' | 'release' | null>(null);
   const [reason, setReason] = useState('');

@@ -9,6 +9,7 @@ import {
 } from '@auto-swe/shared/lib/runCallbacks';
 import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { RouteCaller } from '../plugins/auth.js';
 import { sendError } from './httpErrors.js';
@@ -48,7 +49,7 @@ export async function callbackTeamsForUser(
   prisma: FastifyInstance['prisma'],
   user: { sub: string; role: string }
 ): Promise<CallbackTeams> {
-  if (user.role === 'ADMIN') {
+  if (isPlatformAdmin(user)) {
     return { kind: 'any' };
   }
   const memberships = await prisma.teamMembership.findMany({

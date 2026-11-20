@@ -170,7 +170,7 @@ then reads the setup secrets that repository holds. A TEAM dataset may only name
 its own team, and an ORGANIZATION dataset one of a team in its organization; the platform route
 refuses others (`REPO_NOT_IN_DATASET_TEAM`, `REPO_NOT_IN_DATASET_ORG`). From a repository's
 **Eval datasets using these secrets** panel, next to its setup secrets, a team admin links or
-unlinks the team's datasets and an `ORG_ADMIN` of the team's organization links or unlinks the
+unlinks the team's datasets and an organization `ADMIN` of the team's organization links or unlinks the
 organization's datasets; a platform ADMIN sees both
 (`GET /api/v1/repositories/:id/setup/eval-datasets` lists what the caller may link, and is empty,
 hiding the panel, for anyone else; `PUT /api/v1/repositories/:id/setup/eval-datasets/:datasetId`

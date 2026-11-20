@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { type Prisma, Role } from '@auto-swe/shared';
+import type { Prisma } from '@auto-swe/shared';
 import { resolveSetting, resolveSettings } from '@auto-swe/shared/config';
 import {
   AGENT_RUN_MAX_PROMPT_CHARS,
@@ -23,6 +23,7 @@ import {
   OrchestrationBodySchema,
 } from '@auto-swe/shared/lib/orchestrationApi';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isLauncher, isPlatformAdmin } from '@auto-swe/shared/permissions';
 import { ACTIVE_WORKFLOW_TERMINAL_STATUSES } from '@auto-swe/shared/types/api';
 import type { BudgetTier } from '@auto-swe/shared/types/workflow';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
@@ -36,6 +37,7 @@ import {
   splitRef,
 } from '../lib/agentRunLaunch.js';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { can } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, uuidFromIdempotencyKey } from '../lib/idempotency.js';
 import {
@@ -519,7 +521,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         select: DETAIL_SELECT,
         where: {
           id,
-          ...(user.role === Role.ADMIN
+          ...(isPlatformAdmin(user)
             ? {}
             : {
                 OR: [
@@ -536,7 +538,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     const caller = requireCaller(request);
     return caller.kind === 'service'
       ? { admin: false, serviceId: caller.principal.servicePrincipalId, sub: '' }
-      : { admin: caller.user.role === Role.ADMIN, sub: caller.user.sub };
+      : { admin: isPlatformAdmin(caller.user), sub: caller.user.sub };
   }
 
   /**
@@ -550,7 +552,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       sendError(reply, 404, 'NOT_FOUND', 'Orchestration not found');
       return null;
     }
-    if (request.principal || !request.user || row.launchedById !== request.user.sub) {
+    if (request.principal || !request.user || !isLauncher(request.user.sub, row.launchedById)) {
       sendError(reply, 403, 'NOT_LAUNCHER', 'Only the person who launched this can do that');
       return null;
     }
@@ -581,7 +583,8 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     const owns =
       caller.kind === 'service'
         ? row.serviceId === caller.principal.servicePrincipalId
-        : row.launchedById === caller.user.sub || (opts.emergencyStop && isAdminStop(request, row));
+        : isLauncher(caller.user.sub, row.launchedById) ||
+          (opts.emergencyStop === true && (await isAdminStop(request, row)));
     if (!owns) {
       sendError(reply, 403, 'NOT_LAUNCHER', 'Only the launcher of this can do that');
       return null;
@@ -589,30 +592,34 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     return row;
   }
 
-  /** Whether this is an ADMIN's emergency stop of an orchestration no person launched. */
-  function isAdminStop(
+  /**
+   * Whether this is an operator's emergency stop of an orchestration no person launched: a
+   * `team.orchestrations.stop` holder (platform admin only) acting on one a service principal
+   * launched. Everyone else, administrators included, may steer only what they launched.
+   */
+  async function isAdminStop(
     request: FastifyRequest,
     row: { launchedById: string | null; serviceId: string | null }
-  ): boolean {
+  ): Promise<boolean> {
     const caller = requireCaller(request);
     return (
       caller.kind === 'user' &&
-      caller.user.role === Role.ADMIN &&
       row.launchedById === null &&
-      row.serviceId !== null
+      row.serviceId !== null &&
+      (await can(request, 'team.orchestrations.stop')).allowed
     );
   }
 
-  /** The audit fields that name an ADMIN's emergency stop: the actor is the ADMIN, the target the principal. */
-  function stopContext(
+  /** The audit fields that name an emergency stop: the actor is the operator, the target the principal. */
+  async function stopContext(
     request: FastifyRequest,
     row: { launchedById: string | null; serviceId: string | null }
-  ): Record<string, unknown> {
+  ): Promise<Record<string, unknown>> {
     const caller = requireCaller(request);
     return caller.kind === 'user' &&
       row.launchedById !== caller.user.sub &&
-      isAdminStop(request, row)
-      ? { adminStop: true, targetServiceId: row.serviceId }
+      (await isAdminStop(request, row))
+      ? { adminStop: true, authority: 'platform-admin', targetServiceId: row.serviceId }
       : {};
   }
 
@@ -723,7 +730,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     {
       // Open to service principals (repository-bound only): docs/service-principals.md.
       config: { mcpScope: 'write', serviceScopes: ['runs:agent'] },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       onSend: mcpWriteAuditHook,
       preValidation: mcpWriteBegin('orchestrations_launch'),
       schema: { body: OrchestrationLaunchSchema, headers: IdempotencyHeaderSchema },
@@ -1156,7 +1163,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     '/',
     {
       config: { mcpScope: 'read', serviceScopes: ['runs:agent'] },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: ListQuery },
     },
     async (request) => {
@@ -1167,7 +1174,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         ...(teamId ? { teamId } : {}),
         ...(caller.kind === 'service'
           ? { serviceId: caller.principal.servicePrincipalId }
-          : caller.user.role === Role.ADMIN
+          : isPlatformAdmin(caller.user)
             ? {}
             : {
                 OR: [
@@ -1271,7 +1278,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/connections',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: z.object({ teamId: z.uuid() }) },
     },
     async (request, reply) => {
@@ -1285,7 +1292,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         },
         where: { id: teamId },
       });
-      if (!team?.isActive || (team.memberships.length === 0 && user.role !== Role.ADMIN)) {
+      if (!team?.isActive || (team.memberships.length === 0 && !isPlatformAdmin(user))) {
         return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
       }
       const rows = await prisma.connection.findMany({
@@ -1302,7 +1309,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/defaults',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: z.object({ teamId: z.uuid() }) },
     },
     async (request, reply) => {
@@ -1317,7 +1324,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         },
         where: { id: teamId },
       });
-      if (!team?.isActive || (team.memberships.length === 0 && user.role !== Role.ADMIN)) {
+      if (!team?.isActive || (team.memberships.length === 0 && !isPlatformAdmin(user))) {
         return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
       }
       const { allowlist, writeCapable } = await resolveDefaults(prisma, {
@@ -1332,7 +1339,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id',
     {
       config: { mcpScope: 'read', serviceScopes: ['runs:agent'] },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: IdParams },
     },
     async (request, reply) => {
@@ -1353,7 +1360,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id/messages',
     {
       config: { mcpScope: 'read', serviceScopes: ['runs:agent'] },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: IdParams, querystring: MessagesQuery },
     },
     async (request, reply) => {
@@ -1402,7 +1409,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/events',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: {
         params: IdParams,
         querystring: z.object({ after: z.string().max(512).optional() }),
@@ -1664,7 +1671,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id/messages',
     {
       config: { mcpScope: 'write', serviceScopes: ['runs:agent'] },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       onSend: mcpWriteAuditHook,
       preValidation: mcpWriteBegin('orchestrations_message'),
       schema: { body: OrchestrationBodySchema, params: IdParams },
@@ -1765,7 +1772,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id/children/:childId/messages',
     {
       config: { mcpScope: 'write', orchestrationToken: 'caller', serviceScopes: ['runs:agent'] },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       onSend: mcpWriteAuditHook,
       preValidation: mcpWriteBegin('orchestrations_message'),
       schema: { body: OrchestrationBodySchema, params: ChildParams },
@@ -1857,7 +1864,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id/children',
     {
       config: { orchestrationToken: 'caller' },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       onSend: async (_request, reply, payload) => normalizeRefusalBody(reply.statusCode, payload),
       schema: { body: SpawnBody, headers: IdempotencyHeaderSchema, params: IdParams },
     },
@@ -2278,7 +2285,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id/children/:childId/cancel',
     {
       config: { orchestrationToken: 'caller', serviceScopes: ['runs:agent'] },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: ChildParams },
     },
     async (request, reply) => {
@@ -2383,7 +2390,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/attach',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { body: AttachRepoBodySchema, params: IdParams },
     },
     async (request, reply) => {
@@ -2524,7 +2531,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.post(
     '/:id/attach/decline',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: IdParams } },
+    { onRequest: requireAuth(), schema: { params: IdParams } },
     async (request, reply) => {
       const row = await launcherOwned(request, reply, request.params.id);
       if (!row) {
@@ -2602,7 +2609,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/approvals/:approvalId',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { body: ApprovalDecisionBodySchema, params: ApprovalParams },
     },
     async (request, reply) => {
@@ -2662,7 +2669,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id/cancel',
     {
       config: { serviceScopes: ['runs:agent'] },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: IdParams },
     },
     async (request, reply) => {
@@ -2699,7 +2706,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         children: children.size,
         failed,
         scope: 'orchestration',
-        ...stopContext(request, row),
+        ...(await stopContext(request, row)),
       });
       return {
         data: {
@@ -2715,7 +2722,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id/end',
     {
       config: { serviceScopes: ['runs:agent'] },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: IdParams },
     },
     async (request, reply) => {
@@ -2739,7 +2746,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
           failed: stuck.length,
           scope: 'end',
           status: 'not ended',
-          ...stopContext(request, row),
+          ...(await stopContext(request, row)),
         });
         return refusal(
           reply,
@@ -2768,7 +2775,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
         children: new Set([...first.ids, ...retry.ids, ...second.ids]).size,
         failed: second.failed,
         scope: 'end',
-        ...stopContext(request, row),
+        ...(await stopContext(request, row)),
       });
       return { data: { status: 'COMPLETED' } };
     }

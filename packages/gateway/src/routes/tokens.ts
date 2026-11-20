@@ -44,7 +44,7 @@ export const tokenRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
   // ── List own tokens ──
-  app.get('/', { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) }, async (request) => {
+  app.get('/', { onRequest: requireAuth() }, async (request) => {
     const user = requireUser(request);
     const rows = await fastify.prisma.apiToken.findMany({
       orderBy: { createdAt: 'desc' },
@@ -66,7 +66,7 @@ export const tokenRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { body: CreateTokenBody },
     },
     async (request, reply) => {
@@ -120,7 +120,7 @@ export const tokenRoutes: FastifyPluginAsync = async (fastify) => {
   app.delete(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: TokenIdParam },
     },
     async (request, reply) => {

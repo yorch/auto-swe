@@ -2,11 +2,11 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import jsonwebtoken from 'jsonwebtoken';
 import { describe, expect, it, vi } from 'vitest';
 import type { JwtPayload } from './auth.js';
-import { assertServiceScopesAdmissible, hasRole, requireAuth } from './auth.js';
+import { assertServiceScopesAdmissible, requireAuth } from './auth.js';
 
 /**
  * Exercises the pure/decidable authz surface of `plugins/auth.ts` directly —
- * `hasRole` plus the `requireAuth()` hook — without registering a Fastify app
+ * the `requireAuth()` hook — without registering a Fastify app
  * or touching better-auth's session store. `requireAuth()` returns a plain
  * `(request, reply) => Promise<void>` hook, so it can be invoked against
  * minimal fake request/reply objects that only implement what the hook
@@ -86,60 +86,38 @@ const jwt = (role: string, sub = 'user-1'): JwtPayload => ({
   sub,
 });
 
-// ─── hasRole hierarchy ──────────────────────────────────────────────────────
-
-describe('hasRole', () => {
-  it('ADMIN outranks LEAD and ENGINEER (and itself)', () => {
-    expect(hasRole('ADMIN', 'ADMIN')).toBe(true);
-    expect(hasRole('ADMIN', 'LEAD')).toBe(true);
-    expect(hasRole('ADMIN', 'ENGINEER')).toBe(true);
-  });
-
-  it('LEAD outranks ENGINEER and itself, but not ADMIN', () => {
-    expect(hasRole('LEAD', 'LEAD')).toBe(true);
-    expect(hasRole('LEAD', 'ENGINEER')).toBe(true);
-    expect(hasRole('LEAD', 'ADMIN')).toBe(false);
-  });
-
-  it('ENGINEER only satisfies ENGINEER', () => {
-    expect(hasRole('ENGINEER', 'ENGINEER')).toBe(true);
-    expect(hasRole('ENGINEER', 'LEAD')).toBe(false);
-    expect(hasRole('ENGINEER', 'ADMIN')).toBe(false);
-  });
-
-  it('an unrecognized role is treated as rank 0 — denied against any known required role', () => {
-    expect(hasRole('BOGUS', 'ENGINEER')).toBe(false);
-    expect(hasRole('BOGUS', 'LEAD')).toBe(false);
-    expect(hasRole('BOGUS', 'ADMIN')).toBe(false);
-  });
-});
-
-// ─── requireAuth: Bearer JWT path + platform requiredRole ─────────────────
+// ─── requireAuth: Bearer JWT path + platform capability ───────────────────
 
 describe('requireAuth — Bearer JWT path', () => {
-  it('lets the request through when the role satisfies requiredRole (no reply sent)', async () => {
+  it('lets the request through when the actor holds the capability (no reply sent)', async () => {
     const request = makeRequest({
       authorization: 'Bearer good-jwt',
-      verifyAccessToken: () => jwt('LEAD'),
+      verifyAccessToken: () => jwt('ADMIN'),
     });
     const reply = makeReply();
-    await requireAuth({ requiredRole: 'ENGINEER' })(request, reply as unknown as FastifyReply);
+    await requireAuth({ capability: 'platform.users.manage' })(
+      request,
+      reply as unknown as FastifyReply
+    );
 
     expect(reply.statusCode).toBeUndefined();
-    expect(request.user).toEqual(jwt('LEAD'));
+    expect(request.user).toEqual(jwt('ADMIN'));
   });
 
-  it('rejects with 403 FORBIDDEN when the role does not satisfy requiredRole', async () => {
+  it('rejects with 403 FORBIDDEN naming the capability the actor lacks', async () => {
     const request = makeRequest({
       authorization: 'Bearer good-jwt',
       verifyAccessToken: () => jwt('ENGINEER'),
     });
     const reply = makeReply();
-    await requireAuth({ requiredRole: 'LEAD' })(request, reply as unknown as FastifyReply);
+    await requireAuth({ capability: 'platform.users.manage' })(
+      request,
+      reply as unknown as FastifyReply
+    );
 
     expect(reply.statusCode).toBe(403);
-    expect(reply.body).toEqual({
-      error: { code: 'FORBIDDEN', message: 'Requires LEAD role' },
+    expect(reply.body).toMatchObject({
+      error: { code: 'FORBIDDEN', missing: 'platform.users.manage' },
     });
   });
 
@@ -402,10 +380,7 @@ describe('requireAuth — service principal tokens', () => {
       },
     });
     const reply = makeReply();
-    await requireAuth({ requiredRole: 'ENGINEER', ...options })(
-      request,
-      reply as unknown as FastifyReply
-    );
+    await requireAuth(options)(request, reply as unknown as FastifyReply);
     return { reply, request };
   }
 
@@ -467,50 +442,52 @@ describe('requireAuth — service principal tokens', () => {
     expect(request.principal).toBeUndefined();
   });
 
-  it('refuses a principal on a route that needs a team role, which it cannot hold', async () => {
+  it('refuses a principal on a route that needs a team capability, which it cannot hold', async () => {
     const { reply } = await call(
       serviceToken(),
       { serviceScopes: ['runs:read'] },
-      { requiredTeamRole: 'LEAD', teamIdParam: 'id' }
+      { capability: 'team.templates.write' }
     );
     expect(reply.statusCode).toBe(403);
   });
 
-  it('refuses a principal on a route that requires a platform role above ENGINEER', async () => {
+  it('refuses a principal on a route that requires a platform capability', async () => {
     const { reply, request } = await call(
       serviceToken(),
       { serviceScopes: ['runs:read'] },
-      { requiredRole: 'LEAD' }
+      { capability: 'platform.users.manage' }
     );
     expect(reply.statusCode).toBe(403);
     expect(request.principal).toBeUndefined();
   });
 
-  it('refuses at registration a route that opts in behind a role a principal cannot hold', () => {
+  it('refuses at registration a route that opts in behind a capability a principal cannot hold', () => {
     expect(() =>
       assertServiceScopesAdmissible({
         config: { serviceScopes: ['runs:read'] },
-        onRequest: requireAuth({ requiredRole: 'LEAD' }),
+        onRequest: requireAuth({ capability: 'platform.users.manage' }),
         url: '/x',
       })
     ).toThrow(/serviceScopes/);
     expect(() =>
       assertServiceScopesAdmissible({
         config: { serviceScopes: ['runs:read'] },
-        onRequest: [requireAuth({ requiredTeamRole: 'ENGINEER' })],
+        onRequest: [requireAuth({ capability: 'team.read' })],
         url: '/y',
       })
     ).toThrow();
     expect(() =>
       assertServiceScopesAdmissible({
         config: { serviceScopes: ['runs:read'] },
-        onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+        onRequest: requireAuth(),
         url: '/z',
       })
     ).not.toThrow();
     // Without the opt-in there is nothing to check.
     expect(() =>
-      assertServiceScopesAdmissible({ onRequest: requireAuth({ requiredRole: 'ADMIN' }) })
+      assertServiceScopesAdmissible({
+        onRequest: requireAuth({ capability: 'platform.users.manage' }),
+      })
     ).not.toThrow();
   });
 
@@ -532,273 +509,196 @@ describe('requireAuth — service principal tokens', () => {
   });
 });
 
-// ─── requireAuth: requiredTeamRole ──────────────────────────────────────────
+// ─── requireAuth: team / org capability resolution ──────────────────────────
+// Replaces the removed `requiredTeamRole` / `requiredOrgRole` blocks: the same membership,
+// parameter-shape and bypass questions, asked through `capability`.
 
-describe('requireAuth — requiredTeamRole', () => {
-  it('platform ADMIN bypasses team-membership resolution entirely (no DB lookup)', async () => {
-    const findUnique = vi.fn();
-    const request = makeRequest({
-      authorization: 'Bearer jwt',
-      params: {}, // no team id param — still bypassed for a platform ADMIN
-      prisma: { teamMembership: { findUnique } },
-      verifyAccessToken: () => jwt('ADMIN', 'admin-1'),
-    });
-    const reply = makeReply();
-    await requireAuth({ requiredTeamRole: 'LEAD' })(request, reply as unknown as FastifyReply);
+const TEAM_ID = '00000000-0000-4000-8000-000000000001';
+const ORG_ID = '00000000-0000-4000-8000-000000000011';
 
+function resolverPrisma(world: { teamRole?: string; orgRole?: string; teamExists?: boolean }) {
+  return {
+    organizationMembership: {
+      findMany: vi.fn(async () => (world.orgRole ? [{ orgId: ORG_ID, role: world.orgRole }] : [])),
+    },
+    team: {
+      findMany: vi.fn(async () =>
+        world.teamExists === false ? [] : [{ id: TEAM_ID, isActive: true, orgId: ORG_ID }]
+      ),
+    },
+    teamMembership: {
+      findMany: vi.fn(async () =>
+        world.teamRole
+          ? [
+              {
+                role: world.teamRole,
+                team: { id: TEAM_ID, isActive: true, orgId: ORG_ID },
+                teamId: TEAM_ID,
+              },
+            ]
+          : []
+      ),
+    },
+  };
+}
+
+async function runCapability(
+  options: Parameters<typeof requireAuth>[0],
+  opts: { role?: string; params?: Record<string, string> } & Parameters<typeof resolverPrisma>[0]
+) {
+  const prisma = resolverPrisma(opts);
+  const request = makeRequest({
+    authorization: 'Bearer jwt',
+    params: opts.params ?? {},
+    prisma,
+    verifyAccessToken: () => jwt(opts.role ?? 'ENGINEER', 'user-1'),
+  });
+  const reply = makeReply();
+  await requireAuth(options)(request, reply as unknown as FastifyReply);
+  return { prisma, reply, request };
+}
+
+describe('requireAuth — team capability', () => {
+  it('platform ADMIN passes a team capability with no membership', async () => {
+    const { reply } = await runCapability(
+      { capability: 'team.templates.write' },
+      { params: { id: TEAM_ID }, role: 'ADMIN' }
+    );
     expect(reply.statusCode).toBeUndefined();
-    expect(findUnique).not.toHaveBeenCalled();
   });
 
-  it('fails loudly with 500 SERVER_ERROR when the team id route param is missing (not a silent grant)', async () => {
-    const findUnique = vi.fn();
-    const request = makeRequest({
-      authorization: 'Bearer jwt',
-      params: {},
-      prisma: { teamMembership: { findUnique } },
-      verifyAccessToken: () => jwt('ENGINEER'),
-    });
-    const reply = makeReply();
-    await requireAuth({ requiredTeamRole: 'LEAD' })(request, reply as unknown as FastifyReply);
-
+  it('fails loudly with 500 SERVER_ERROR when the team id route param is missing', async () => {
+    const { reply, prisma } = await runCapability(
+      { capability: 'team.templates.write' },
+      { params: {} }
+    );
     expect(reply.statusCode).toBe(500);
     expect(errorCode(reply)).toBe('SERVER_ERROR');
-    // Critical: the DB was never even consulted, so this cannot be confused
-    // with a legitimate "no membership" 403.
-    expect(findUnique).not.toHaveBeenCalled();
+    expect(prisma.teamMembership.findMany).not.toHaveBeenCalled();
   });
 
-  it('resolves membership via the default "id" param and allows a sufficient team role', async () => {
-    const findUnique = vi.fn().mockResolvedValue({ role: 'LEAD' });
-    const request = makeRequest({
-      authorization: 'Bearer jwt',
-      params: { id: '00000000-0000-0000-0000-000000000001' },
-      prisma: { teamMembership: { findUnique } },
-      verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
-    });
-    const reply = makeReply();
-    await requireAuth({ requiredTeamRole: 'LEAD' })(request, reply as unknown as FastifyReply);
-
+  it('reads the default "id" param and allows a sufficient team role', async () => {
+    const { reply, request } = await runCapability(
+      { capability: 'team.templates.write' },
+      { params: { id: TEAM_ID }, teamRole: 'LEAD' }
+    );
     expect(reply.statusCode).toBeUndefined();
-    expect(findUnique).toHaveBeenCalledWith({
-      where: {
-        userId_teamId: { teamId: '00000000-0000-0000-0000-000000000001', userId: 'user-1' },
-      },
-    });
     expect(request.teamRole).toBe('LEAD');
   });
 
   it('rejects with 403 when the membership role is insufficient', async () => {
-    const findUnique = vi.fn().mockResolvedValue({ role: 'ENGINEER' });
-    const request = makeRequest({
-      authorization: 'Bearer jwt',
-      params: { id: '00000000-0000-0000-0000-000000000001' },
-      prisma: { teamMembership: { findUnique } },
-      verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
-    });
-    const reply = makeReply();
-    await requireAuth({ requiredTeamRole: 'LEAD' })(request, reply as unknown as FastifyReply);
-
+    const { reply } = await runCapability(
+      { capability: 'team.templates.write' },
+      { params: { id: TEAM_ID }, teamRole: 'ENGINEER' }
+    );
     expect(reply.statusCode).toBe(403);
   });
 
-  it('rejects with 403 when there is no membership row at all', async () => {
-    const findUnique = vi.fn().mockResolvedValue(null);
-    const request = makeRequest({
-      authorization: 'Bearer jwt',
-      params: { id: '00000000-0000-0000-0000-000000000001' },
-      prisma: { teamMembership: { findUnique } },
-      verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
-    });
-    const reply = makeReply();
-    await requireAuth({ requiredTeamRole: 'LEAD' })(request, reply as unknown as FastifyReply);
+  it('rejects with 403 when there is no membership at all', async () => {
+    const { reply } = await runCapability(
+      { capability: 'team.templates.write' },
+      { params: { id: TEAM_ID } }
+    );
+    expect(reply.statusCode).toBe(403);
+  });
 
+  it('an unrecognized stored team role holds nothing', async () => {
+    const { reply } = await runCapability(
+      { capability: 'team.templates.write' },
+      { params: { id: TEAM_ID }, teamRole: 'SOMETHING_WEIRD' }
+    );
     expect(reply.statusCode).toBe(403);
   });
 
   it('rejects with 400 INVALID_ID when the team id param is not a UUID', async () => {
-    const findUnique = vi.fn();
-    const request = makeRequest({
-      authorization: 'Bearer jwt',
-      params: { id: 'not-a-uuid' },
-      prisma: { teamMembership: { findUnique } },
-      verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
-    });
-    const reply = makeReply();
-    await requireAuth({ requiredTeamRole: 'LEAD' })(request, reply as unknown as FastifyReply);
-
+    const { reply, prisma } = await runCapability(
+      { capability: 'team.templates.write' },
+      { params: { id: 'not-a-uuid' } }
+    );
     expect(reply.statusCode).toBe(400);
     expect(errorCode(reply)).toBe('INVALID_ID');
-    expect(findUnique).not.toHaveBeenCalled();
+    expect(prisma.teamMembership.findMany).not.toHaveBeenCalled();
   });
 
-  it('honors a custom teamIdParam name', async () => {
-    const findUnique = vi.fn().mockResolvedValue({ role: 'ADMIN' });
-    const request = makeRequest({
-      authorization: 'Bearer jwt',
-      params: { teamId: '00000000-0000-0000-0000-000000000002' },
-      prisma: { teamMembership: { findUnique } },
-      verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
-    });
-    const reply = makeReply();
-    await requireAuth({ requiredTeamRole: 'LEAD', teamIdParam: 'teamId' })(
-      request,
-      reply as unknown as FastifyReply
+  it('honors a custom team parameter name', async () => {
+    const { reply } = await runCapability(
+      { capability: 'team.templates.write', team: { param: 'teamId' } },
+      { params: { teamId: TEAM_ID }, teamRole: 'ADMIN' }
     );
-
     expect(reply.statusCode).toBeUndefined();
-    expect(findUnique).toHaveBeenCalledWith({
-      where: {
-        userId_teamId: { teamId: '00000000-0000-0000-0000-000000000002', userId: 'user-1' },
-      },
-    });
   });
 });
 
-// ─── requireAuth: requiredOrgRole ───────────────────────────────────────────
-
-describe('requireAuth — requiredOrgRole', () => {
-  it('platform ADMIN bypasses org-membership resolution entirely (no DB lookup)', async () => {
-    const findUnique = vi.fn();
-    const request = makeRequest({
-      authorization: 'Bearer jwt',
-      prisma: { organizationMembership: { findUnique } },
-      verifyAccessToken: () => jwt('ADMIN', 'admin-1'),
-    });
-    const reply = makeReply();
-    await requireAuth({ requiredOrgRole: 'ORG_ADMIN' })(request, reply as unknown as FastifyReply);
-
+describe('requireAuth — org capability', () => {
+  it('platform ADMIN passes an org capability', async () => {
+    const { reply } = await runCapability(
+      { capability: 'org.settings.manage' },
+      { params: { orgId: ORG_ID }, role: 'ADMIN' }
+    );
     expect(reply.statusCode).toBeUndefined();
-    expect(findUnique).not.toHaveBeenCalled();
   });
 
   it('fails loudly with 500 SERVER_ERROR when the org id route param is missing', async () => {
-    const findUnique = vi.fn();
-    const request = makeRequest({
-      authorization: 'Bearer jwt',
-      prisma: { organizationMembership: { findUnique } },
-      verifyAccessToken: () => jwt('ENGINEER'),
-    });
-    const reply = makeReply();
-    await requireAuth({ requiredOrgRole: 'ORG_MEMBER' })(request, reply as unknown as FastifyReply);
-
+    const { reply } = await runCapability({ capability: 'org.settings.manage' }, { params: {} });
     expect(reply.statusCode).toBe(500);
     expect(errorCode(reply)).toBe('SERVER_ERROR');
-    expect(findUnique).not.toHaveBeenCalled();
   });
 
-  it('ORG_ADMIN satisfies a requiredOrgRole of ORG_MEMBER (hierarchy)', async () => {
-    const findUnique = vi.fn().mockResolvedValue({ role: 'ORG_ADMIN' });
-    const request = makeRequest({
-      authorization: 'Bearer jwt',
-      params: { orgId: '00000000-0000-0000-0000-000000000011' },
-      prisma: { organizationMembership: { findUnique } },
-      verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
-    });
-    const reply = makeReply();
-    await requireAuth({ requiredOrgRole: 'ORG_MEMBER' })(request, reply as unknown as FastifyReply);
-
-    expect(reply.statusCode).toBeUndefined();
+  it('ORG_ADMIN holds an org governance capability; ORG_MEMBER does not', async () => {
+    const ok = await runCapability(
+      { capability: 'org.settings.manage' },
+      { orgRole: 'ORG_ADMIN', params: { orgId: ORG_ID } }
+    );
+    expect(ok.reply.statusCode).toBeUndefined();
+    const no = await runCapability(
+      { capability: 'org.settings.manage' },
+      { orgRole: 'ORG_MEMBER', params: { orgId: ORG_ID } }
+    );
+    expect(no.reply.statusCode).toBe(403);
   });
 
-  it('ORG_MEMBER does NOT satisfy a requiredOrgRole of ORG_ADMIN (hierarchy)', async () => {
-    const findUnique = vi.fn().mockResolvedValue({ role: 'ORG_MEMBER' });
-    const request = makeRequest({
-      authorization: 'Bearer jwt',
-      params: { orgId: '00000000-0000-0000-0000-000000000011' },
-      prisma: { organizationMembership: { findUnique } },
-      verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
-    });
-    const reply = makeReply();
-    await requireAuth({ requiredOrgRole: 'ORG_ADMIN' })(request, reply as unknown as FastifyReply);
-
+  it('an unrecognized org role holds nothing', async () => {
+    const { reply } = await runCapability(
+      { capability: 'org.settings.manage' },
+      { orgRole: 'SOMETHING_WEIRD', params: { orgId: ORG_ID } }
+    );
     expect(reply.statusCode).toBe(403);
   });
 
-  it('an unrecognized membership role is treated as rank 0 — always denied', async () => {
-    const findUnique = vi.fn().mockResolvedValue({ role: 'SOMETHING_WEIRD' });
-    const request = makeRequest({
-      authorization: 'Bearer jwt',
-      params: { orgId: '00000000-0000-0000-0000-000000000011' },
-      prisma: { organizationMembership: { findUnique } },
-      verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
-    });
-    const reply = makeReply();
-    await requireAuth({ requiredOrgRole: 'ORG_MEMBER' })(request, reply as unknown as FastifyReply);
-
-    expect(reply.statusCode).toBe(403);
-  });
-
-  it('rejects with 403 when there is no org membership row at all', async () => {
-    const findUnique = vi.fn().mockResolvedValue(null);
-    const request = makeRequest({
-      authorization: 'Bearer jwt',
-      params: { orgId: '00000000-0000-0000-0000-000000000011' },
-      prisma: { organizationMembership: { findUnique } },
-      verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
-    });
-    const reply = makeReply();
-    await requireAuth({ requiredOrgRole: 'ORG_MEMBER' })(request, reply as unknown as FastifyReply);
-
+  it('rejects with 403 when there is no org membership at all', async () => {
+    const { reply } = await runCapability(
+      { capability: 'org.settings.manage' },
+      { params: { orgId: ORG_ID } }
+    );
     expect(reply.statusCode).toBe(403);
   });
 
   it('rejects with 400 INVALID_ID when the org id param is not a UUID', async () => {
-    const findUnique = vi.fn();
-    const request = makeRequest({
-      authorization: 'Bearer jwt',
-      params: { orgId: 'not-a-uuid' },
-      prisma: { organizationMembership: { findUnique } },
-      verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
-    });
-    const reply = makeReply();
-    await requireAuth({ requiredOrgRole: 'ORG_MEMBER' })(request, reply as unknown as FastifyReply);
-
+    const { reply } = await runCapability(
+      { capability: 'org.settings.manage' },
+      { params: { orgId: 'not-a-uuid' } }
+    );
     expect(reply.statusCode).toBe(400);
     expect(errorCode(reply)).toBe('INVALID_ID');
-    expect(findUnique).not.toHaveBeenCalled();
   });
 
-  it('honors a custom orgIdParam name', async () => {
-    const findUnique = vi.fn().mockResolvedValue({ role: 'ORG_ADMIN' });
-    const request = makeRequest({
-      authorization: 'Bearer jwt',
-      params: { organization: '00000000-0000-0000-0000-000000000019' },
-      prisma: { organizationMembership: { findUnique } },
-      verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
-    });
-    const reply = makeReply();
-    await requireAuth({ orgIdParam: 'organization', requiredOrgRole: 'ORG_MEMBER' })(
-      request,
-      reply as unknown as FastifyReply
+  it('honors a custom org parameter name', async () => {
+    const { reply } = await runCapability(
+      { capability: 'org.settings.manage', org: { param: 'organization' } },
+      { orgRole: 'ORG_ADMIN', params: { organization: ORG_ID } }
     );
-
     expect(reply.statusCode).toBeUndefined();
-    expect(findUnique).toHaveBeenCalledWith({
-      where: { userId_orgId: { orgId: '00000000-0000-0000-0000-000000000019', userId: 'user-1' } },
-    });
   });
 });
 
-// ─── requireAuth: combined checks ───────────────────────────────────────────
-
-describe('requireAuth — requiredRole is checked before team/org checks', () => {
-  it('a platform-role failure short-circuits before any team/org DB lookup', async () => {
-    const findUnique = vi.fn();
-    const request = makeRequest({
-      authorization: 'Bearer jwt',
-      params: { id: '00000000-0000-0000-0000-000000000001' },
-      prisma: { teamMembership: { findUnique } },
-      verifyAccessToken: () => jwt('ENGINEER', 'user-1'),
-    });
-    const reply = makeReply();
-    await requireAuth({ requiredRole: 'ADMIN', requiredTeamRole: 'LEAD' })(
-      request,
-      reply as unknown as FastifyReply
+describe('requireAuth — platform capability short-circuits', () => {
+  it('a platform capability failure never consults team or org membership', async () => {
+    const { reply, prisma } = await runCapability(
+      { capability: 'platform.users.manage' },
+      { params: { id: TEAM_ID }, teamRole: 'ADMIN' }
     );
-
     expect(reply.statusCode).toBe(403);
     expect(errorCode(reply)).toBe('FORBIDDEN');
-    expect(findUnique).not.toHaveBeenCalled();
+    expect(prisma.teamMembership.findMany).not.toHaveBeenCalled();
   });
 });

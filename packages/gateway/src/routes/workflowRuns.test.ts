@@ -1119,14 +1119,13 @@ describe('workflowRunRoutes GET /:id/effects', () => {
     expect(prisma.runEffect.findMany).not.toHaveBeenCalled();
   });
 
-  it('requires at least the ENGINEER role', async () => {
-    const { app, prisma } = await buildApp('VIEWER');
+  it('requires a signed-in caller', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
     const res = await app.inject({
-      headers: AUTH,
       method: 'GET',
       url: `/api/v1/workflow-runs/${runId}/effects`,
     });
-    expect(res.statusCode).toBe(403);
+    expect(res.statusCode).toBe(401);
     expect(prisma.runEffect.findMany).not.toHaveBeenCalled();
   });
 });
@@ -1699,16 +1698,10 @@ describe('workflowRunRoutes GET /:id/artifacts/:artifactId (context overflow tex
     expect(res.statusCode).toBe(401);
   });
 
-  it('refuses a caller whose role is below ENGINEER', async () => {
+  it('refuses a caller with no credentials', async () => {
     const { app } = await buildApp('ENGINEER');
-    (app as unknown as { auth: { verifyAccessToken: unknown } }).auth.verifyAccessToken = () => ({
-      exp: 9999999999,
-      iat: 0,
-      role: 'VIEWER',
-      sub: 'u-1',
-    });
-    const res = await app.inject({ headers: AUTH, method: 'GET', url });
-    expect(res.statusCode).toBe(403);
+    const res = await app.inject({ method: 'GET', url });
+    expect(res.statusCode).toBe(401);
     expect(getArtifact).not.toHaveBeenCalled();
   });
 

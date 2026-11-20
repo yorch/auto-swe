@@ -96,10 +96,9 @@ describe('report routes', () => {
       url: '/api/v1/reports/budget',
     });
     expect(response.statusCode).toBe(403);
+    // Only the organizations whose reports the caller holds are asked for: none here.
     expect(prisma.organization.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { memberships: { some: { role: 'ORG_ADMIN', userId: 'user-1' } } },
-      })
+      expect.objectContaining({ where: { id: { in: [] } } })
     );
   });
 
@@ -115,7 +114,9 @@ describe('report routes', () => {
       vi.mocked(resolveSetting).mockResolvedValue(orgWide);
       const { app, prisma } = await buildApp(role);
       prisma.organization.findMany.mockResolvedValue([budgetOrg]);
-      prisma.organizationMembership.findMany.mockResolvedValue([{ orgId: 'org-1' }]);
+      prisma.organizationMembership.findMany.mockResolvedValue([
+        { orgId: 'org-1', role: 'ORG_ADMIN' },
+      ]);
       const response = await app.inject({
         headers: AUTH,
         method: 'GET',
@@ -159,15 +160,11 @@ describe('report routes', () => {
     });
   });
 
-  it('requires an engineer-level role for delivery, quality, automation, and approval reports', async () => {
-    const { app } = await buildApp('VIEWER');
+  it('requires a signed-in person for delivery, quality, automation, and approval reports', async () => {
+    const { app } = await buildApp();
     for (const tab of ['delivery', 'quality', 'automations', 'hitl']) {
-      const response = await app.inject({
-        headers: AUTH,
-        method: 'GET',
-        url: `/api/v1/reports/${tab}`,
-      });
-      expect(response.statusCode).toBe(403);
+      const response = await app.inject({ method: 'GET', url: `/api/v1/reports/${tab}` });
+      expect(response.statusCode).toBe(401);
     }
   });
 
@@ -246,7 +243,9 @@ describe('report routes', () => {
     ).toContain(`"attributedTeamId":"${teamId}"`);
 
     const matchingOrgAdmin = await buildApp('ENGINEER');
-    matchingOrgAdmin.prisma.organizationMembership.findMany.mockResolvedValue([{ orgId: 'org-1' }]);
+    matchingOrgAdmin.prisma.organizationMembership.findMany.mockResolvedValue([
+      { orgId: 'org-1', role: 'ORG_ADMIN' },
+    ]);
     matchingOrgAdmin.prisma.team.findUnique.mockResolvedValue({ orgId: 'org-1' });
     const authorizedResponse = await matchingOrgAdmin.app.inject({
       headers: AUTH,
@@ -259,7 +258,9 @@ describe('report routes', () => {
     ).toContainEqual({ attributedTeamId: teamId });
 
     const otherOrgAdmin = await buildApp('ENGINEER');
-    otherOrgAdmin.prisma.organizationMembership.findMany.mockResolvedValue([{ orgId: 'org-1' }]);
+    otherOrgAdmin.prisma.organizationMembership.findMany.mockResolvedValue([
+      { orgId: 'org-1', role: 'ORG_ADMIN' },
+    ]);
     otherOrgAdmin.prisma.team.findUnique.mockResolvedValue({ orgId: 'org-2' });
     const forbiddenResponse = await otherOrgAdmin.app.inject({
       headers: AUTH,
@@ -365,7 +366,9 @@ describe('report routes', () => {
     });
 
     const orgAdmin = await buildApp('ENGINEER');
-    orgAdmin.prisma.organizationMembership.findMany.mockResolvedValue([{ orgId: 'org-1' }]);
+    orgAdmin.prisma.organizationMembership.findMany.mockResolvedValue([
+      { orgId: 'org-1', role: 'ORG_ADMIN' },
+    ]);
     orgAdmin.prisma.team.findUnique.mockResolvedValue({ orgId: 'org-1' });
     orgAdmin.prisma.automation.findMany.mockResolvedValue([]);
     const orgResponse = await orgAdmin.app.inject({

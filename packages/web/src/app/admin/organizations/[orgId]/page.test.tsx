@@ -3,9 +3,18 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/stores/authStore';
+import {
+  ADMIN_PERMISSIONS,
+  permissionsFor,
+  resetPermissions,
+  setPermissions,
+} from '@/test/permissions';
 import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import OrgAdminPage from './page';
 
+vi.mock('@/hooks/useEffectivePermissions', async () =>
+  (await import('@/test/permissions')).permissionsMock()
+);
 vi.mock('next/navigation', () => ({
   usePathname: () => '/admin/organizations/11111111-1111-4111-8111-111111111111',
   useRouter: () => ({ push: vi.fn() }),
@@ -17,21 +26,44 @@ const params = Object.assign(Promise.resolve({ orgId: ORG_ID }), {
   value: { orgId: ORG_ID },
 });
 
+// What the server says the caller holds in this organization.
+const ORG_ADMIN = permissionsFor({
+  orgs: [
+    {
+      capabilities: [
+        'org.read',
+        'org.members.manage',
+        'org.budget.manage',
+        'org.settings.manage',
+        'org.teams.create',
+        'org.github.manage',
+      ],
+      orgId: ORG_ID,
+      role: 'ADMIN',
+    },
+  ],
+});
+const ORG_MEMBER = permissionsFor({
+  orgs: [{ capabilities: ['org.read'], orgId: ORG_ID, role: 'MEMBER' }],
+});
+
 const member = (userId: string, email: string, role: string) => ({
   createdAt: '2026-01-01T00:00:00.000Z',
   id: `m-${userId}`,
   orgId: ORG_ID,
   role,
-  user: { email, id: userId, name: null, role: 'ENGINEER' },
+  user: { email, id: userId, name: null, role: 'USER' },
   userId,
 });
 
 beforeEach(() => {
   stubDialogPrototype();
-  useAuthStore.setState({ isAuthenticated: true, user: { role: 'ADMIN', sub: 'me' } } as never);
+  useAuthStore.setState({ isAuthenticated: true, user: { role: 'USER', sub: 'me' } } as never);
+  setPermissions(ORG_ADMIN);
 });
 afterEach(() => {
   cleanup();
+  resetPermissions();
   vi.unstubAllGlobals();
 });
 
@@ -66,30 +98,25 @@ function mock(members: ReturnType<typeof member>[]) {
 }
 
 describe('organization admin page', () => {
-  it('offers GitHub connections to a platform engineer who is an organization admin', async () => {
-    useAuthStore.setState({
-      isAuthenticated: true,
-      user: { role: 'ENGINEER', sub: 'me' },
-    } as never);
-    mock([member('me', 'me@x.com', 'ORG_ADMIN')]);
+  it('offers GitHub connections to an organization admin who is no platform admin', async () => {
+    mock([member('me', 'me@x.com', 'ADMIN')]);
     render(withQuery(<OrgAdminPage params={params} />));
     expect(await screen.findByRole('button', { name: 'Connect a GitHub org' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'New team' })).toBeTruthy();
     expect(await screen.findByText('No linked installations.')).toBeTruthy();
   });
   it('does not offer GitHub management to an ordinary organization member', async () => {
-    useAuthStore.setState({
-      isAuthenticated: true,
-      user: { role: 'ENGINEER', sub: 'me' },
-    } as never);
-    mock([member('me', 'me@x.com', 'ORG_MEMBER')]);
+    setPermissions(ORG_MEMBER);
+    mock([member('me', 'me@x.com', 'MEMBER')]);
     render(withQuery(<OrgAdminPage params={params} />));
     await screen.findByRole('heading', { name: 'Acme' });
     expect(screen.queryByRole('button', { name: 'Connect a GitHub org' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'New team' })).toBeNull();
   });
   it('asks before trusting organization admin invites, and saves only on confirmation', async () => {
-    const spy = mock([member('me', 'me@x.com', 'ORG_ADMIN')]);
+    // Deciding which email domains an organization trusts is a platform admin's.
+    setPermissions(ADMIN_PERMISSIONS);
+    const spy = mock([member('me', 'me@x.com', 'ADMIN')]);
     render(withQuery(<OrgAdminPage params={params} />));
     fireEvent.click(
       await screen.findByRole('switch', { name: 'Trust organization and team invites' })
@@ -106,27 +133,27 @@ describe('organization admin page', () => {
     );
   });
 
-  it('will not offer to demote the only organization admin', async () => {
-    mock([member('u2', 'only@x.com', 'ORG_ADMIN'), member('u3', 'plain@x.com', 'ORG_MEMBER')]);
+  it('keeps trust in invites from an organization admin who is no platform admin', async () => {
+    mock([member('me', 'me@x.com', 'ADMIN')]);
     render(withQuery(<OrgAdminPage params={params} />));
-    const select = await screen.findByRole('button', { name: /Org role for only@x.com/ });
-    expect((select as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText('The only organization admin')).toBeTruthy();
+    await screen.findByRole('heading', { name: 'Acme' });
     expect(
-      (screen.getByRole('button', { name: /Org role for plain@x.com/ }) as HTMLButtonElement)
-        .disabled
-    ).toBe(false);
+      screen.queryByRole('switch', { name: 'Trust organization and team invites' })
+    ).toBeNull();
   });
 
-  it('shows an ORG_MEMBER the percentage meter and never asks for the dollar budget', async () => {
-    useAuthStore.setState({
-      isAuthenticated: true,
-      user: { role: 'ENGINEER', sub: 'me' },
-    } as never);
-    const spy = mock([
-      member('me', 'me@x.com', 'ORG_MEMBER'),
-      member('u2', 'a@x.com', 'ORG_ADMIN'),
-    ]);
+  it('lets an organization admin change another member’s role, not their own', async () => {
+    mock([member('me', 'me@x.com', 'ADMIN'), member('u3', 'plain@x.com', 'MEMBER')]);
+    render(withQuery(<OrgAdminPage params={params} />));
+    const select = await screen.findByRole('button', { name: /Org role for plain@x.com/ });
+    expect((select as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByRole('button', { name: /Org role for me@x.com/ })).toBeNull();
+    expect(screen.getByTitle('You cannot change your own role').textContent).toBe('Org admin');
+  });
+
+  it('shows an org member the percentage meter and never asks for the dollar budget', async () => {
+    setPermissions(ORG_MEMBER);
+    const spy = mock([member('me', 'me@x.com', 'MEMBER'), member('u2', 'a@x.com', 'ADMIN')]);
     render(withQuery(<OrgAdminPage params={params} />));
     expect(await screen.findByTestId('budget-meter')).toBeTruthy();
     expect(screen.getByText('41% of the org budget this month')).toBeTruthy();
@@ -136,7 +163,7 @@ describe('organization admin page', () => {
   });
 
   it('keeps Save budget disabled until a value changes', async () => {
-    mock([member('me', 'me@x.com', 'ORG_ADMIN')]);
+    mock([member('me', 'me@x.com', 'ADMIN')]);
     render(withQuery(<OrgAdminPage params={params} />));
     const save = (await screen.findByRole('button', { name: 'Save budget' })) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
@@ -144,12 +171,11 @@ describe('organization admin page', () => {
     expect(save.disabled).toBe(false);
   });
 
-  it('offers team creation to an ENGINEER org admin and sends optional invite team and role', async () => {
-    useAuthStore.setState({ user: { role: 'ENGINEER', sub: 'me' } });
-    const spy = mock([member('me', 'me@x.com', 'ORG_ADMIN')]);
+  it('offers team creation to an org admin and sends optional invite team and role', async () => {
+    const spy = mock([member('me', 'me@x.com', 'ADMIN')]);
     render(withQuery(<OrgAdminPage params={params} />));
     expect(await screen.findByRole('button', { name: 'New team' })).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'new@acme.com' } });
+    fireEvent.change(await screen.findByLabelText('Email'), { target: { value: 'new@acme.com' } });
     await waitFor(() =>
       expect(
         (screen.getByRole('button', { name: /team \(optional\)/i }) as HTMLButtonElement).disabled
@@ -159,12 +185,12 @@ describe('organization admin page', () => {
     expect(screen.queryByRole('option', { name: 'Foreign' })).toBeNull();
     fireEvent.click(screen.getByRole('option', { name: 'Payments' }));
     fireEvent.click(screen.getByRole('button', { name: /Team role/ }));
-    fireEvent.click(screen.getByRole('option', { name: 'Lead' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Team lead' }));
     fireEvent.click(screen.getByRole('button', { name: 'Send invite' }));
     await screen.findByText(/wait in the platform approval queue/);
     expect(bodyOf(spy, `/organizations/${ORG_ID}/members/invite`)).toEqual({
       email: 'new@acme.com',
-      orgRole: 'ORG_MEMBER',
+      orgRole: 'MEMBER',
       teamId: 't1',
       teamRole: 'LEAD',
     });

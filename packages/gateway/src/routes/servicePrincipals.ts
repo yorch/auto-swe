@@ -131,8 +131,8 @@ function liveTokenWhere(now: Date): Prisma.ApiTokenWhereInput {
 export const servicePrincipalRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const lead = requireAuth({
-    requiredTeamRole: 'LEAD',
-    teamIdParam: 'teamId',
+    capability: 'team.service-principals.manage',
+    team: { param: 'teamId' },
   });
 
   /** The team, or null after replying 404. A platform ADMIN passes the role check for any id. */

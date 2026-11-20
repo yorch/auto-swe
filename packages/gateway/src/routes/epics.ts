@@ -2,11 +2,13 @@ import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
 import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { can } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
-import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
+import { allOfTeams, authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { paginationQuery } from '../lib/pagination.js';
 import {
   type ConnectionScopeGate,
@@ -87,7 +89,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.launch.multi-repo'] }),
       schema: {
         body: CreateEpicSchema,
       },
@@ -125,7 +127,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
                 select: {
                   id: true,
                   memberships: {
-                    select: { role: true, userId: true },
+                    select: { userId: true },
                     where: { userId: user.sub },
                   },
                   monthlyBudgetUsdCents: true,
@@ -161,6 +163,11 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       // and it can spend against more than one org. Every repository refusal is
       // collected so the response names all of them — refusing on the first
       // would make a caller fix them one at a time.
+      // The `can()` below is the recorded check that satisfies the `handler-checked` backstop and
+      // its answer is deliberately not used. The refusal is `authorizeLaunch` with
+      // `requireOwningTeamLead: true`, which also names the repositories it refuses; a test pins
+      // that flag, so dropping it fails the build instead of leaving this route unguarded.
+      await can(request, 'team.launch.multi-repo', allOfTeams(repos.map((repo) => repo.team.id)));
       const authorization = await authorizeLaunch(fastify.prisma, user, {
         gate: request.repoAccessGate,
         log: request.log,
@@ -255,7 +262,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
     '/',
     {
       config: { mcpScope: 'read' },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: ListEpicsQuery },
     },
     async (request) => {
@@ -285,7 +292,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
             },
           ],
         }),
-        ...(user.role !== 'ADMIN' && {
+        ...(!isPlatformAdmin(user) && {
           OR: [
             { requestedById: user.sub },
             {
@@ -355,7 +362,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:workflowId',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: EpicParams },
     },
     async (request, reply) => {
@@ -421,7 +428,7 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       // Visibility: ADMIN sees all; others need at least one of the epic's
       // repos on their team. 404 (not 403) so existence isn't probeable —
       // mirrors the list endpoint's silent filtering.
-      if (user.role !== 'ADMIN') {
+      if (!isPlatformAdmin(user)) {
         const allowed = await accessibleRepoIds(fastify.prisma, user, request.repoAccessGate);
         if (!knownRepoIds.some((id) => allowed.has(id))) {
           return notFound();

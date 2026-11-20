@@ -13,6 +13,7 @@ import { Combobox } from '@/components/ui/Combobox';
 import { Icon } from '@/components/ui/Icon';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
+import { useCan } from '@/hooks/useCan';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
 import {
   useLaunchOrchestration,
@@ -38,8 +39,6 @@ import {
 } from '@/lib/orchestration';
 import { groupedRepoOptions } from '@/lib/repoGroups';
 import { VIEW_ONLY_REASON } from '@/lib/repoLaunch';
-import { hasRole } from '@/lib/roles';
-import { useAuthStore } from '@/stores/authStore';
 
 const NO_REPO = 'none';
 
@@ -68,8 +67,9 @@ export function OrchestrateForm({
 } = {}) {
   const router = useRouter();
   const scope = useStartScope();
-  const platformRole = useAuthStore((s) => s.user?.role);
-  const isAdmin = hasRole(platformRole, 'ADMIN');
+  // The platform's connection list (which also says which agents use each) needs
+  // `platform.integrations.manage`; anyone else reads their team's connections.
+  const isAdmin = useCan('platform.integrations.manage');
   const [values, setValues] = useState<OrchestrateFormValues>(EMPTY);
   const [reviewing, setReviewing] = useState(false);
   const [attempted, setAttempted] = useState(false);
@@ -93,8 +93,8 @@ export function OrchestrateForm({
   };
   const namedTeamId = repo ? repo.team?.id : effective.teamId;
   const agents = useOrchestrationAgents(values.repoId || null);
-  // An ADMIN reads the platform list (which also says which agents use each connection); anyone
-  // else reads the team's connections from the orchestration route, open to its members.
+  // Whoever holds it reads the platform list; anyone else reads the team's connections from the
+  // orchestration route, open to its members.
   const adminConnections = useMcpConnections({ enabled: isAdmin });
   const memberConnections = useOrchestrationConnections(isAdmin ? '' : (namedTeamId ?? ''));
   const teamConnections: ConnectionOption[] = isAdmin

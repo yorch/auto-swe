@@ -54,6 +54,12 @@ function build(opts: Opts = {}) {
       ]),
     },
     organizationMembership: {
+      // The permissions loader's read of the caller's standing in the organizations it names.
+      findMany: vi.fn(async ({ where }: { where: { orgId: { in: string[] } } }) =>
+        opts.orgRole && where.orgId.in.includes(opts.orgRoleIn ?? ORG)
+          ? [{ orgId: opts.orgRoleIn ?? ORG, role: opts.orgRole }]
+          : []
+      ),
       // Keyed by the organization asked about, so a role held in another one does not answer.
       findUnique: vi.fn(async ({ where }: { where: { userId_orgId: { orgId: string } } }) =>
         opts.orgRole && where.userId_orgId.orgId === (opts.orgRoleIn ?? ORG)
@@ -65,13 +71,22 @@ function build(opts: Opts = {}) {
       findUnique: vi.fn(async () => ({ costUsdAccrued: opts.orgSpentUsd ?? 0 })),
     },
     team: {
-      findMany: vi.fn(async () => [
-        { budgetAlertThresholdPercent: null, id: TEAM, monthlyBudgetUsdCents: teamCap },
-      ]),
+      findMany: vi.fn(async (args?: { select?: { isActive?: boolean } }) =>
+        args?.select?.isActive
+          ? // The permissions loader's read of the team itself.
+            opts.unknownTeam
+            ? []
+            : [{ id: TEAM, isActive: true, orgId: ORG }]
+          : [{ budgetAlertThresholdPercent: null, id: TEAM, monthlyBudgetUsdCents: teamCap }]
+      ),
       findUnique: vi.fn(async () => (opts.unknownTeam ? null : row)),
       update,
     },
     teamBudgetRequest: { updateMany: resolvePending },
+    teamMembership: {
+      // The permissions loader's read of the caller's membership.
+      findMany: vi.fn(async () => (opts.teamRole ? [{ role: opts.teamRole, teamId: TEAM }] : [])),
+    },
     teamSpendUsd: { [TEAM]: opts.teamSpentUsd ?? 0 },
   };
   const app = makeAuthedApp({ prisma, role: opts.platformRole ?? 'ENGINEER', sub: USER });

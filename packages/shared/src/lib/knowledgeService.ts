@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Prisma, type PrismaClient } from '../generated/prisma/client.js';
+import { type Actor, can, heldScope, isPlatformAdmin } from '../permissions/index.js';
 import {
   ApproveKnowledgeItemSchema,
   CreateCuratedKnowledgeItemSchema,
@@ -390,18 +391,17 @@ export async function createWorkflowKnowledgeRepositoryCapability(
   ) {
     return noScope();
   }
-  const memberRepository =
-    launcher.role === 'ADMIN'
-      ? { id: repository.id }
-      : await db.connection.findFirst({
-          select: { id: true },
-          where: {
-            id: repository.id,
-            isActive: true,
-            type: 'git_repo',
-            ...repoMemberWhere({ userId: principal.launchedById }),
-          },
-        });
+  const memberRepository = isPlatformAdmin({ kind: 'user', role: launcher.role })
+    ? { id: repository.id }
+    : await db.connection.findFirst({
+        select: { id: true },
+        where: {
+          id: repository.id,
+          isActive: true,
+          type: 'git_repo',
+          ...repoMemberWhere({ userId: principal.launchedById }),
+        },
+      });
   if (!memberRepository) {
     return noScope();
   }
@@ -455,7 +455,7 @@ async function resolveKnowledgeActorScope(db: Db, userId: string): Promise<Knowl
     throw new KnowledgeAccessError();
   }
   let repoIds = repos.map((r) => r.id);
-  if (user.role === 'ADMIN') {
+  if (isPlatformAdmin({ kind: 'user', role: user.role })) {
     const platformRepositories = await runUnscoped(
       'explicit platform ADMIN knowledge repository gate candidates',
       ['Connection'],
@@ -474,7 +474,7 @@ async function resolveKnowledgeActorScope(db: Db, userId: string): Promise<Knowl
     repoIds = platformRepositories.map((repository) => repository.id);
   }
   return {
-    isPlatformAdmin: user.role === 'ADMIN',
+    isPlatformAdmin: isPlatformAdmin({ kind: 'user', role: user.role }),
     orgIds: orgMemberships.map((m) => m.orgId),
     repoIds,
     teamIds: memberships.map((m) => m.teamId),
@@ -653,32 +653,32 @@ async function queryManagedKnowledge(
     capabilityRepositories(repositoryCapability, 'user', authenticatedUserId)
   );
   const filter = KnowledgeManagementFilterSchema.parse(input);
-  const [user, teams, organizations] = await Promise.all([
-    db.user.findUnique({
-      select: { isActive: true, role: true },
-      where: { id: authenticatedUserId },
-    }),
-    db.team.findMany({
-      select: { id: true },
-      where: {
-        isActive: true,
-        memberships: { some: { role: { in: ['LEAD', 'ADMIN'] }, userId: authenticatedUserId } },
-      },
-    }),
-    db.organization.findMany({
-      select: { id: true },
-      where: {
-        isActive: true,
-        memberships: { some: { role: 'ORG_ADMIN', userId: authenticatedUserId } },
-      },
-    }),
-  ]);
+  const user = await db.user.findUnique({
+    select: { isActive: true, role: true },
+    where: { id: authenticatedUserId },
+  });
   if (!user?.isActive) {
     throw new KnowledgeAccessError();
   }
-  const platformAdmin = user.role === 'ADMIN';
-  const teamIds = teams.map(({ id }) => id);
-  const orgIds = organizations.map(({ id }) => id);
+  const platformAdmin = isPlatformAdmin({ kind: 'user', role: user.role });
+  const actor: Actor = { id: authenticatedUserId, kind: 'user', role: user.role };
+  // The teams the person manages knowledge for and the organizations they publish it for, by the
+  // same capabilities the write paths ask, so the listing and the action cannot disagree.
+  let teamIds: string[] = [];
+  let orgIds: string[] = [];
+  if (!platformAdmin) {
+    const [teamScope, orgScope] = await Promise.all([
+      heldScope(db, actor, 'team.knowledge.manage'),
+      heldScope(db, actor, 'org.knowledge.publish'),
+    ]);
+    teamIds = teamScope.teamIds;
+    orgIds = (
+      await db.organization.findMany({
+        select: { id: true },
+        where: { id: { in: orgScope.orgIds }, isActive: true },
+      })
+    ).map(({ id }) => id);
+  }
   if (!platformAdmin && !teamIds.length && !orgIds.length) {
     throw new KnowledgeAccessError();
   }
@@ -775,7 +775,7 @@ export async function createCuratedKnowledgeItem(
     throw new KnowledgeAccessError();
   }
   const actor = await humanMembership(db, userId, parsed.teamId, team.orgId);
-  if (!actor.platformAdmin && actor.role !== 'LEAD' && actor.role !== 'ADMIN') {
+  if (!(await can(db, actor, 'team.knowledge.manage', { teamId: parsed.teamId })).allowed) {
     throw new KnowledgeAccessError();
   }
   if (parsed.repoId) {
@@ -1002,20 +1002,18 @@ async function requireKnowledgeSourceCapability(
   }
 }
 
-async function humanMembership(db: Db, userId: string, teamId: string, orgId: string) {
-  const [user, member, orgMember, team] = await Promise.all([
+/**
+ * The acting person, once the checks that are not about authority hold: the user, the team and its
+ * organization are active and the team belongs to `orgId`. What they may do is `can()`'s to say.
+ */
+async function humanMembership(
+  db: Db,
+  userId: string,
+  teamId: string,
+  orgId: string
+): Promise<Actor> {
+  const [user, team] = await Promise.all([
     db.user.findUnique({ select: { isActive: true, role: true }, where: { id: userId } }),
-    db.teamMembership.findUnique({
-      select: { role: true },
-      where: {
-        team: { isActive: true, organization: { isActive: true } },
-        userId_teamId: { teamId, userId },
-      },
-    }),
-    db.organizationMembership.findUnique({
-      select: { role: true },
-      where: { organization: { isActive: true }, userId_orgId: { orgId, userId } },
-    }),
     db.team.findUnique({
       select: { isActive: true, organization: { select: { isActive: true } }, orgId: true },
       where: { id: teamId },
@@ -1024,11 +1022,7 @@ async function humanMembership(db: Db, userId: string, teamId: string, orgId: st
   if (!user?.isActive || !team?.isActive || !team.organization.isActive || team.orgId !== orgId) {
     throw new KnowledgeAccessError();
   }
-  return {
-    orgRole: orgMember?.role ?? null,
-    platformAdmin: user.role === 'ADMIN',
-    role: member?.role ?? null,
-  };
+  return { id: userId, kind: 'user', role: user.role };
 }
 
 export async function approveKnowledgeItem(
@@ -1058,7 +1052,14 @@ export async function approveKnowledgeItem(
     }
     await requireKnowledgeSourceCapability(tx, userId, item.repoId, repositoryCapability);
     const actor = await humanMembership(tx, userId, item.ownerTeamId, item.orgId);
-    if (!canApproveKnowledge(actor.role, actor.orgRole, actor.platformAdmin, parsed.visibility)) {
+    if (
+      !(await canApproveKnowledge(
+        tx,
+        actor,
+        { orgId: item.orgId, teamId: item.ownerTeamId },
+        parsed.visibility
+      ))
+    ) {
       throw new KnowledgeAccessError();
     }
     if (
@@ -1144,7 +1145,14 @@ export async function publishApprovedKnowledgeItem(
     }
     await requireKnowledgeSourceCapability(tx, userId, item.repoId, repositoryCapability);
     const actor = await humanMembership(tx, userId, item.ownerTeamId, item.orgId);
-    if (!canApproveKnowledge(actor.role, actor.orgRole, actor.platformAdmin, parsed.visibility)) {
+    if (
+      !(await canApproveKnowledge(
+        tx,
+        actor,
+        { orgId: item.orgId, teamId: item.ownerTeamId },
+        parsed.visibility
+      ))
+    ) {
       throw new KnowledgeAccessError();
     }
     if (item.status !== 'APPROVED' || item.version !== parsed.expectedVersion) {
@@ -1263,7 +1271,7 @@ async function transitionKnowledgeItem<S extends 'REJECTED' | 'SUPERSEDED'>(
     }
     await requireKnowledgeSourceCapability(tx, userId, item.repoId, repositoryCapability);
     const actor = await humanMembership(tx, userId, item.ownerTeamId, item.orgId);
-    if (!actor.platformAdmin && actor.role !== 'LEAD' && actor.role !== 'ADMIN') {
+    if (!(await can(tx, actor, 'team.knowledge.manage', { teamId: item.ownerTeamId })).allowed) {
       throw new KnowledgeAccessError();
     }
     if (
@@ -1319,7 +1327,7 @@ export async function reviseKnowledgeItem(
     }
     await requireKnowledgeSourceCapability(tx, userId, item.repoId, repositoryCapability);
     const actor = await humanMembership(tx, userId, item.ownerTeamId, item.orgId);
-    if (!actor.platformAdmin && actor.role !== 'LEAD' && actor.role !== 'ADMIN') {
+    if (!(await can(tx, actor, 'team.knowledge.manage', { teamId: item.ownerTeamId })).allowed) {
       throw new KnowledgeAccessError();
     }
     if (item.version !== parsed.expectedVersion || item.status === 'SUPERSEDED') {

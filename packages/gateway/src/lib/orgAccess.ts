@@ -1,14 +1,13 @@
 /**
  * Org-level RBAC and budget helpers.
  *
- * Most org-scoped routes enforce access declaratively via the `requireAuth`
- * onRequest hook (`requiredOrgRole` + `orgIdParam`). These cover the case the
- * hook can't: a launch, where the org is derived from the target connection
- * inside the handler rather than from a route param. Launch routes reach them
- * through `authorizeLaunch` (`launchAuthorization.ts`).
+ * Org-scoped routes enforce access declaratively via `requireAuth({ capability, org })`. These
+ * helpers cover the case the hook can't: a launch, where the org is derived from the target
+ * connection inside the handler rather than from a route param. Launch routes reach them
+ * through `authorizeLaunch` (`launchAuthorization.ts`). They read the membership through the
+ * permissions module's rank functions, so no role value is compared here.
  *
- * Platform ADMINs bypass the check; non-admins need an `OrganizationMembership`
- * row for the org.
+ * Platform administrators bypass the check; others need an `OrganizationMembership` row.
  */
 import type { PrismaClient } from '@auto-swe/shared';
 import {
@@ -17,6 +16,7 @@ import {
   orgMonthSpend,
   usdToCents,
 } from '@auto-swe/shared/lib/billing';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyReply } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
 
@@ -59,28 +59,13 @@ export function teamBudgetRefusal(team: { memberName: string | null }): {
   };
 }
 
-/** Is the user an ORG_ADMIN of `orgId`? Platform ADMINs always are. */
-export async function isOrgAdmin(
-  prisma: PrismaClient,
-  user: { role: string; sub: string },
-  orgId: string
-): Promise<boolean> {
-  if (user.role === 'ADMIN') {
-    return true;
-  }
-  const membership = await prisma.organizationMembership.findUnique({
-    where: { userId_orgId: { orgId, userId: user.sub } },
-  });
-  return membership?.role === 'ORG_ADMIN';
-}
-
 /** Is the user a member of `orgId`? Platform ADMINs always are. */
 export async function isOrgMember(
   prisma: PrismaClient,
   user: Pick<JwtPayload, 'role' | 'sub'>,
   orgId: string
 ): Promise<boolean> {
-  if (user.role === 'ADMIN') {
+  if (isPlatformAdmin(user)) {
     return true;
   }
   const membership = await prisma.organizationMembership.findUnique({

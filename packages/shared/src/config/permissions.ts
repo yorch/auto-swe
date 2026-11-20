@@ -1,33 +1,24 @@
-import type { Role } from '../generated/prisma/enums.js';
+import type { PlatformRole, TeamRole } from '../generated/prisma/enums.js';
+import { isPlatformAdmin } from '../permissions/standing.js';
 import { getSettingDefinition, isSettingKey, type SettingKey } from './registry.js';
 import type { SettingScope } from './types.js';
 
 /**
  * Who may change which settings, and where.
  *
- * Two independent gates, both of which must pass:
+ *   - A definition with `writeAccess: 'admin'` is writable by a platform admin
+ *     only; no grant reaches it.
+ *   - A definition with `writeAccess: 'grantable'` is writable by a platform
+ *     admin or by an actor a grant covers. Grants are rows, not code, so
+ *     widening who configures what is an admin action.
  *
- *   - The definition's `requiredRole` is a floor. No grant can let an ENGINEER
- *     write a key marked ADMIN.
- *   - A grant must authorise the actor for that key at that scope. Grants are
- *     rows, not code, so widening who configures what is an admin action.
+ * A grant's grantee is a user, or a team role. A role grant is matched against
+ * the actor's role in the grant's own team, never against a platform role.
  *
- * Platform ADMINs bypass grants entirely: they can already write every
+ * Platform admins bypass grants entirely: they can already write every
  * singleton config table, so requiring them to grant themselves access would be
  * ceremony that teaches operators to ignore the model.
  */
-
-/// Seniority order, least privileged first. Used only for the `requiredRole`
-/// floor — it is not a claim that a LEAD can do everything an ENGINEER can.
-const ROLE_RANK: Record<Role, number> = {
-  ADMIN: 3,
-  ENGINEER: 1,
-  LEAD: 2,
-};
-
-export function roleMeets(actual: Role, required: Role): boolean {
-  return ROLE_RANK[actual] >= ROLE_RANK[required];
-}
 
 /// Matches a stored grant pattern against a setting key. Three forms, and no
 /// others — `*` for everything, `group.*` for one subsystem, or an exact key.
@@ -43,11 +34,13 @@ export function keyPatternMatches(pattern: string, key: string): boolean {
   return pattern === key;
 }
 
-/// A grant as the checker needs to see it.
+/// A grant as the checker needs to see it. The grantee is `userId` XOR `role`;
+/// a role grant is only valid with `scope = 'TEAM'` and a `teamId`, and names
+/// the role a member must hold in that team.
 export interface ConfigGrant {
   keyPattern: string;
   userId: string | null;
-  role: Role | null;
+  role: TeamRole | null;
   scope: SettingScope;
   teamId: string | null;
   orgId: string | null;
@@ -66,17 +59,35 @@ export interface SettingWriteTarget {
 
 export interface ConfigActor {
   id: string;
-  role: Role;
+  role: PlatformRole;
 }
 
+/// The actor's role in each team they belong to, keyed by team id.
+export type ActorTeamRoles = ReadonlyMap<string, string>;
+
 /// Does one grant authorise this write?
-function grantCovers(grant: ConfigGrant, actor: ConfigActor, target: SettingWriteTarget): boolean {
+function grantCovers(
+  grant: ConfigGrant,
+  actor: ConfigActor,
+  target: SettingWriteTarget,
+  actorTeamRoles: ActorTeamRoles
+): boolean {
   if (!keyPatternMatches(grant.keyPattern, target.key)) {
     return false;
   }
-  const granteeMatches = grant.userId ? grant.userId === actor.id : grant.role === actor.role;
-  if (!granteeMatches) {
-    return false;
+  if (grant.userId) {
+    if (grant.userId !== actor.id) {
+      return false;
+    }
+  } else {
+    // A role grant means "holders of this role in the grant's team", so it has
+    // no meaning outside a TEAM-scoped grant.
+    if (!grant.role || grant.scope !== 'TEAM' || !grant.teamId) {
+      return false;
+    }
+    if (actorTeamRoles.get(grant.teamId) !== grant.role) {
+      return false;
+    }
   }
 
   switch (grant.scope) {
@@ -115,7 +126,8 @@ export type WriteDenial =
 export function checkSettingWrite(
   actor: ConfigActor,
   target: SettingWriteTarget,
-  grants: readonly ConfigGrant[]
+  grants: readonly ConfigGrant[],
+  actorTeamRoles: ActorTeamRoles = new Map()
 ): WriteDenial {
   if (!isSettingKey(target.key)) {
     return {
@@ -137,19 +149,19 @@ export function checkSettingWrite(
     };
   }
 
-  if (!roleMeets(actor.role, definition.requiredRole)) {
-    return {
-      allowed: false,
-      code: 'ROLE_TOO_LOW',
-      message: `'${target.key}' requires the ${definition.requiredRole} role.`,
-    };
-  }
-
-  if (actor.role === 'ADMIN') {
+  if (isPlatformAdmin(actor)) {
     return { allowed: true };
   }
 
-  if (grants.some((grant) => grantCovers(grant, actor, target))) {
+  if (definition.writeAccess === 'admin') {
+    return {
+      allowed: false,
+      code: 'ROLE_TOO_LOW',
+      message: `'${target.key}' can only be changed by a platform admin.`,
+    };
+  }
+
+  if (grants.some((grant) => grantCovers(grant, actor, target, actorTeamRoles))) {
     return { allowed: true };
   }
 

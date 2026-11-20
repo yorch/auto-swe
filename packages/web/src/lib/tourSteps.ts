@@ -1,6 +1,4 @@
-import type { Role } from '@auto-swe/shared';
 import { navLabel } from '@/lib/navigation';
-import { hasRole } from '@/lib/roles';
 
 /**
  * The product tour: an ordered list of short steps, each pointing at one element of the shell.
@@ -10,20 +8,21 @@ import { hasRole } from '@/lib/roles';
  * back to the centered position too when the anchor is missing or hidden, so a step never points
  * at nothing. `tourSteps.test.tsx` renders the real sidebar and checks every anchor exists.
  *
- * `roles` lists the platform roles that see the step. It must agree with `minRole` of the
- * navigation entry the anchor names (the test checks), so a page the sidebar hides from a role is
- * never described to it. Every sentence below restates what the page itself says it does.
+ * `adminOnly` marks a step for platform admins. It must agree with the `access` of the navigation
+ * entry the anchor names (the test checks), so a page the sidebar hides from someone is never
+ * described to them. Every sentence below restates what the page itself says it does.
  */
 export interface TourStep {
   id: string;
   anchor: string | null;
   title: string;
   body: string;
-  /** Replaces `body` for LEAD and ADMIN, where the page offers more than it does to an engineer. */
+  /** Replaces `body` for someone who leads a team, where the page offers more than to a member. */
   leadBody?: string;
-  /** Replaces `body` and `leadBody` for ADMIN, where the page offers more again. */
+  /** Replaces `body` and `leadBody` for a platform admin, where the page offers more again. */
   adminBody?: string;
-  roles: Role[];
+  /** Only a platform admin sees the step. */
+  adminOnly?: true;
 }
 
 /**
@@ -33,15 +32,11 @@ export interface TourStep {
  */
 export type PageTourStep = Pick<TourStep, 'id' | 'anchor' | 'title' | 'body'>;
 
-const ALL: Role[] = ['ENGINEER', 'LEAD', 'ADMIN'];
-const ADMIN_ONLY: Role[] = ['ADMIN'];
-
 export const TOUR_STEPS: TourStep[] = [
   {
     anchor: 'sidebar',
-    body: 'The sidebar lists the pages you can open, grouped into Work, Teams, Build, Connect, Knowledge and Admin. Collapse it to an icon rail when you need more room. What appears depends on your role.',
+    body: 'The sidebar lists the pages you can open, grouped into Work, Teams, Build, Connect, Knowledge and Admin. Collapse it to an icon rail when you need more room. What appears depends on what you may do.',
     id: 'sidebar',
-    roles: ALL,
     title: 'Main navigation',
   },
   {
@@ -50,42 +45,37 @@ export const TOUR_STEPS: TourStep[] = [
     id: 'start-work',
     leadBody:
       'Start a workflow, run a single agent on one repository, or run a multi-repo epic from one brief.',
-    roles: ALL,
     title: 'Start work',
   },
   {
     anchor: 'nav:/approvals',
     body: 'Runs that stop at a gate wait here for a person to approve, decide, fill in a form or review. The sidebar badge shows how many are waiting on you.',
     id: 'approvals',
-    roles: ALL,
     title: navLabel('/approvals'),
   },
   {
     anchor: 'nav:/requests',
     body: 'Every request you made, with retries kept together. “Needs attention” means a person is needed or a run failed or timed out.',
     id: 'requests',
-    roles: ALL,
     title: navLabel('/requests'),
   },
   {
     anchor: 'nav:/pull-requests',
     body: 'Pull requests the platform opened, with their state on the host, CI and the run behind them. No built-in step or template merges a pull request; you review and merge it on the host, unless its repository is in auto mode, where GitHub may merge a qualifying low-risk one.',
     id: 'pull-requests',
-    roles: ALL,
     title: navLabel('/pull-requests'),
   },
   {
     anchor: 'nav:/library',
     body: 'Your reusable workflow templates. Pick one, run it with your inputs, and follow the request.',
     id: 'workflow-library',
-    roles: ALL,
     title: navLabel('/library'),
   },
   {
+    adminOnly: true,
     anchor: 'nav:/agents',
     body: 'Versioned agents. Saving an edit creates a new version; runs already in progress keep the version they started with.',
     id: 'agents',
-    roles: ADMIN_ONLY,
     title: navLabel('/agents'),
   },
   {
@@ -96,36 +86,38 @@ export const TOUR_STEPS: TourStep[] = [
     id: 'admin',
     leadBody:
       'Teams and organizations, platform settings, analytics, automations and knowledge, in one area with its own menu. Platform settings is operator policy; each row says which scope its value comes from.',
-    roles: ALL,
     title: navLabel('/admin'),
   },
   {
     anchor: 'sidebar:user-menu',
     body: 'Open your user menu for Docs: how auto-swe works and how to run it, with concepts, setup guides and references. Settings lives here too.',
     id: 'docs',
-    roles: ALL,
     title: navLabel('/docs'),
   },
   {
     anchor: null,
     body: 'A small ? button beside a term opens a short explanation, often with a link to the docs. Hover it, focus it or click it.',
     id: 'help-tips',
-    roles: ALL,
     title: 'Help on the page',
   },
 ];
 
-/** The steps `role` sees, in order. An unknown or missing role sees the engineer steps. */
-export function buildTourSteps(role: string | null | undefined): TourStep[] {
-  const effective: Role = hasRole(role, 'ADMIN')
-    ? 'ADMIN'
-    : hasRole(role, 'LEAD')
-      ? 'LEAD'
-      : 'ENGINEER';
-  return TOUR_STEPS.filter((step) => step.roles.includes(effective)).map((step) => {
-    if (step.adminBody && effective === 'ADMIN') {
+/** What decides which steps and wordings a person sees, as the server's permissions say it. */
+export interface TourAudience {
+  /** Holds every capability: sees the administration steps and wording. */
+  platformAdmin: boolean;
+  /** May start work across repositories on some team (a team lead): sees the lead wording. */
+  teamLead: boolean;
+}
+
+/** The steps `audience` sees, in order. Someone with neither flag sees the member steps. */
+export function buildTourSteps(audience: TourAudience): TourStep[] {
+  return TOUR_STEPS.filter((step) => !step.adminOnly || audience.platformAdmin).map((step) => {
+    if (step.adminBody && audience.platformAdmin) {
       return { ...step, body: step.adminBody };
     }
-    return step.leadBody && effective !== 'ENGINEER' ? { ...step, body: step.leadBody } : step;
+    return step.leadBody && (audience.platformAdmin || audience.teamLead)
+      ? { ...step, body: step.leadBody }
+      : step;
   });
 }

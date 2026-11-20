@@ -1,18 +1,22 @@
 'use client';
 
-import type { Role } from '@auto-swe/shared';
 import { useEffect, useState } from 'react';
 import { MemberUserPicker } from '@/components/MemberUserPicker';
 import { Alert } from '@/components/ui/Alert';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
-import { useHasRole } from '@/hooks/useHasRole';
+import { usePlatformAdmin } from '@/hooks/useCan';
 import { useOrgMembers } from '@/hooks/useOrg';
 import { useAddTeamMember } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
-import { platformRoleLabel } from '@/lib/govLabels';
+import {
+  DEFAULT_TEAM_ROLE,
+  TEAM_ROLE_OPTIONS,
+  type TeamRoleValue,
+  teamRoleLabel,
+} from '@/lib/roleLabels';
 
-const ALL_ROLES: Role[] = ['ENGINEER', 'LEAD', 'ADMIN'];
+const ALL_ROLES: TeamRoleValue[] = TEAM_ROLE_OPTIONS.map((o) => o.value);
 
 export function AddMemberModal({
   open,
@@ -26,15 +30,16 @@ export function AddMemberModal({
   onClose: () => void;
   teamId: string;
   existingUserIds: string[];
-  /** Team roles the caller may grant; the gateway refuses anything above their own. */
-  grantableRoles?: Role[];
+  /** Team roles the caller may grant (`useGrantableTeamRoles`); the gateway refuses anything above
+   * their own rank. */
+  grantableRoles?: TeamRoleValue[];
   orgId?: string;
 }) {
   const add = useAddTeamMember(teamId);
-  const platformAdmin = useHasRole('ADMIN');
+  const platformAdmin = usePlatformAdmin();
   const orgMembers = useOrgMembers(open && !platformAdmin ? (orgId ?? '') : '');
   const [userId, setUserId] = useState('');
-  const [role, setRole] = useState<Role>('ENGINEER');
+  const [role, setRole] = useState<TeamRoleValue>(DEFAULT_TEAM_ROLE);
   const [error, setError] = useState<string | null>(null);
   const [pickerKey, setPickerKey] = useState(0);
 
@@ -42,7 +47,7 @@ export function AddMemberModal({
     if (!open) {
       return;
     }
-    setRole('ENGINEER');
+    setRole(DEFAULT_TEAM_ROLE);
     setError(null);
     setUserId('');
     // Remount the picker so its own lookup field starts empty too.
@@ -99,8 +104,8 @@ export function AddMemberModal({
         <Select
           id="role"
           label="Team role"
-          onChange={(v) => setRole(v as Role)}
-          options={grantableRoles.map((r) => ({ label: platformRoleLabel(r), value: r }))}
+          onChange={(v) => setRole(v as TeamRoleValue)}
+          options={grantableRoles.map((r) => ({ label: teamRoleLabel(r), value: r }))}
           value={role}
         />
         {error && <Alert>{error}</Alert>}

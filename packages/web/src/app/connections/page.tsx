@@ -2,7 +2,7 @@
 
 import { getConnectionTypeMetadata, isConnectionType } from '@auto-swe/shared/lib/connectionTypes';
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ProbeModal } from '@/components/integrations/ProbeModal';
 import { KnowledgeBaseLinksSection } from '@/components/knowledgeBases/KnowledgeBaseLinksSection';
 import type { ConnectionPrefill } from '@/components/repositories/ConnectionFormModal';
@@ -37,19 +37,17 @@ import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
-import { useHasRole } from '@/hooks/useHasRole';
+import { useCan, useCanOnTeams } from '@/hooks/useCan';
 import {
   useRepoDependencySuggestions,
   useTriggerRepoDependencyScan,
 } from '@/hooks/useRepoDependencies';
 import { useMyCredentials, useRepositories, useRunRepoOnboarding } from '@/hooks/useRepositories';
-import { useRepositoryTeams } from '@/hooks/useRepositoryTeams';
-import { useAdminTeamIds, useTeams } from '@/hooks/useTeams';
+import { useTeams } from '@/hooks/useTeams';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
-import { canAuthorTeamCode, repoLeadReason, repoManageReason } from '@/lib/teamPermissions';
-import { useAuthStore } from '@/stores/authStore';
+import { repoLeadReason, repoManageReason } from '@/lib/teamPermissions';
 
 type ModalMode =
   | { kind: 'create'; prefill?: ConnectionPrefill }
@@ -80,18 +78,13 @@ const PAGE_SIZE = 30;
 
 export default function ConnectionsPage() {
   const onboarding = useRunRepoOnboarding();
-  const adminTeamIds = useAdminTeamIds();
-  const platformRole = useAuthStore((s) => s.user?.role);
-  const isAdmin = useHasRole('ADMIN');
-  const managedTeams = useRepositoryTeams();
-  const canManageTeam = useCallback(
-    (teamId: string | null | undefined) => isAdmin || managedTeams.some((t) => t.id === teamId),
-    [isAdmin, managedTeams]
-  );
+  const canSetUpGithub = useCan('platform.integrations.manage');
+  const canScanDependencies = useCan('platform.repo-dependencies.scan');
   // The owner chip names a team the viewer is looking at from outside; their own team's repository
   // is not "owned by" someone else.
   const myTeamIds = new Set((useTeams({ memberOnly: true }).data ?? []).map((t) => t.id));
-  const canManage = isAdmin || managedTeams.length > 0;
+  // May the person add a connection to some team? Each row below asks its own team.
+  const canManage = useCan('team.repos.create');
   // Deactivating a connection must not make it vanish for the people who can
   // reactivate it — they can opt into seeing inactive rows.
   const [showInactive, setShowInactive] = useState(false);
@@ -120,6 +113,15 @@ export default function ConnectionsPage() {
     offset,
     q: query || undefined,
   });
+  // Each row asks the server about its own team: editing a repository is `team.repos.manage`
+  // there, starting its onboarding `team.repos.onboarding.launch`.
+  const rowTeams = useMemo(
+    () => (repos ?? []).flatMap((r) => (r.team?.id ? [{ id: r.team.id }] : [])),
+    [repos]
+  );
+  const canManageTeam = useCanOnTeams('team.repos.manage', rowTeams);
+  const canOnboard = useCanOnTeams('team.repos.onboarding.launch', rowTeams);
+  const canManageDeps = useCanOnTeams('team.repos.deps.manage', rowTeams);
   const suggestions = useRepoDependencySuggestions();
   const scan = useTriggerRepoDependencyScan();
   const myCredentials = useMyCredentials();
@@ -168,7 +170,7 @@ export default function ConnectionsPage() {
             A connection <HelpTip term="connection" /> is a configured link to an outside system: a
             source repository, an issue tracker, a REST API, an MCP server, Notion, Slack and so on.
             Workflows use connections to read and change things.
-            {isAdmin && (
+            {canSetUpGithub && (
               <>
                 {' '}
                 For a repository, see{' '}
@@ -281,9 +283,7 @@ export default function ConnectionsPage() {
                   const isGitRepo = !r.type || r.type === 'git_repo';
                   const label = connectionLabel(r);
                   const menu: ActionMenuItem[] = [
-                    ...(isGitRepo &&
-                    r.isActive &&
-                    canAuthorTeamCode(platformRole, r.team?.id, adminTeamIds)
+                    ...(isGitRepo && r.isActive && canOnboard(r.team?.id)
                       ? [
                           {
                             disabledReason: onboarding.isPending ? 'Starting onboarding' : null,
@@ -549,7 +549,7 @@ export default function ConnectionsPage() {
       <section>
         <SectionHeader
           actions={
-            isAdmin && (
+            canScanDependencies && (
               <Button
                 disabled={scan.isPending}
                 onClick={() => scan.mutate()}
@@ -586,7 +586,7 @@ export default function ConnectionsPage() {
           )}
           <RepoDependencySuggestions
             emptyText={
-              isAdmin
+              canScanDependencies
                 ? undefined
                 : 'No suggestions yet. An administrator can re-scan dependencies to look for repositories to onboard.'
             }
@@ -678,8 +678,8 @@ export default function ConnectionsPage() {
       )}
       {mode?.kind === 'dependencies' && (
         <RepoDependenciesModal
-          canManage={canManageTeam(mode.repo.team?.id)}
-          canManageTeam={canManageTeam}
+          canManage={canManageDeps(mode.repo.team?.id)}
+          canManageTeam={canManageDeps}
           onClose={() => setMode(null)}
           open
           repo={mode.repo}

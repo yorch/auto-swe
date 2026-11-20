@@ -6,6 +6,7 @@
 
 import { resolveSetting } from '@auto-swe/shared/config';
 import type { UsableCredential } from '@auto-swe/shared/lib/connectionCredential';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -160,7 +161,7 @@ const draftOf = (row: DraftRow) => ({
 
 export const pullRequestReviewRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const engineerOnly = requireAuth({ requiredRole: 'ENGINEER' });
+  const engineerOnly = requireAuth();
 
   /** The pull request and where it lives, when the caller may see its repository. */
   const reachablePull = (request: FastifyRequest, id: string) => {
@@ -185,7 +186,7 @@ export const pullRequestReviewRoutes: FastifyPluginAsync = async (fastify) => {
       },
       where: {
         id,
-        ...(user.role === 'ADMIN'
+        ...(isPlatformAdmin(user)
           ? {}
           : { repository: reachableConnections(user, request.repoAccessGate) }),
       },

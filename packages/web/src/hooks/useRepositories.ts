@@ -454,7 +454,7 @@ export function useLinkRepoEvalDataset(connectionId: string) {
 
 // ── Review routing ──
 
-/** The routing override a repository stores and the routing in force (ENGINEER; reachable repositories). */
+/** The routing override a repository stores and the routing in force (any signed-in person; reachable repositories). */
 export function useRepositoryReviewRouting(connectionId: string | undefined) {
   return useQuery({
     enabled: Boolean(connectionId),

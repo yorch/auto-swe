@@ -77,10 +77,29 @@ async function buildTeamApp(opts: {
   app.setSerializerCompiler(serializerCompiler);
   const mockPrisma = newMockPrisma();
   (
-    mockPrisma as unknown as { teamMembership: { findUnique: ReturnType<typeof vi.fn> } }
+    mockPrisma as unknown as {
+      teamMembership: { findMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
+    }
   ).teamMembership = {
+    // The permissions loader's read of the caller's membership.
+    findMany: vi.fn(async (args: { where: { teamId: { in: string[] } } }) =>
+      opts.teamMembership && args.where.teamId.in[0]
+        ? [{ role: opts.teamMembership.role, teamId: args.where.teamId.in[0] }]
+        : []
+    ),
     findUnique: vi.fn().mockResolvedValue(opts.teamMembership ?? null),
   };
+  // The permissions loader's read of the team itself and of the caller's organizations.
+  const credentialTeamsFindMany = mockPrisma.team.findMany as (args: unknown) => Promise<unknown>;
+  mockPrisma.team.findMany = vi.fn(
+    async (args: { select?: { isActive?: boolean }; where?: { id?: { in: string[] } } }) =>
+      args.select?.isActive && args.where?.id
+        ? args.where.id.in.map((id) => ({ id, isActive: true, orgId: 'org-1' }))
+        : credentialTeamsFindMany(args)
+  );
+  (
+    mockPrisma as unknown as { organizationMembership: { findMany: ReturnType<typeof vi.fn> } }
+  ).organizationMembership = { findMany: vi.fn().mockResolvedValue([]) };
   app.decorate('prisma', mockPrisma as unknown as never);
   app.decorate('auth', {
     verifyAccessToken: () => ({

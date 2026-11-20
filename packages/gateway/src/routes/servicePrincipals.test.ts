@@ -160,6 +160,7 @@ describe('service principal management routes', () => {
         },
       },
       organizationMembership: {
+        findMany: async () => (s.orgMember ? [{ orgId: 'org-1', role: 'ORG_MEMBER' }] : []),
         findUnique: async () => (s.orgMember ? { role: 'ORG_MEMBER' } : null),
       },
       orgMonthlyUsage: {
@@ -181,8 +182,13 @@ describe('service principal management routes', () => {
           return { ...(s.principal as Record<string, unknown>), ...data };
         },
       },
-      team: { findUnique: async () => ({ id: TEAM }) },
+      team: {
+        // The permissions loader's read of the team itself.
+        findMany: async () => [{ id: TEAM, isActive: true, orgId: 'org-1' }],
+        findUnique: async () => ({ id: TEAM }),
+      },
       teamMembership: {
+        findMany: async () => (s.teamRole ? [{ role: s.teamRole, teamId: TEAM }] : []),
         findUnique: async () => (s.teamRole ? { role: s.teamRole } : null),
       },
       workflowTemplate: {

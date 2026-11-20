@@ -15,6 +15,7 @@ import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
 import { MEMORY_SECURITY_EVENTS } from '@auto-swe/shared/lib/scannerCache';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import { activityInfo } from '@temporalio/activity';
 import { currentNodeTag } from './activityNodeTag.js';
 import { assertBudgetAvailable } from './costTracking.js';
@@ -104,7 +105,7 @@ export async function resolveKnowledgeExecutionScope(): Promise<KnowledgeExecuti
       if (!user?.isActive) {
         return false;
       }
-      if (user.role === 'ADMIN') {
+      if (isPlatformAdmin({ kind: 'user', role: user.role })) {
         sourceAuthorized = true;
         return true;
       }

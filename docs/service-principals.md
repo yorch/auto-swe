@@ -86,13 +86,13 @@ A service token is refused with `401` when it is revoked or expired, when its pr
 or when the principal's team or that team's organization is inactive. It never becomes
 `request.user`: the gateway sets a separate `request.principal`, so a handler that reads the user
 cannot take a machine for a person. Whether the route accepts it is decided centrally, in the same
-hook, from the route's own declaration (a route that opts in behind a platform role above ENGINEER,
+hook, from the route's own declaration (a route that opts in behind platform `ADMIN`,
 or any team or organization role, is refused at registration, since a principal holds no role):
 
 ```ts
 app.post('/', {
   config: { serviceScopes: ['runs:launch'] },
-  onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+  onRequest: requireAuth(),
   // …
 }, handler);
 ```

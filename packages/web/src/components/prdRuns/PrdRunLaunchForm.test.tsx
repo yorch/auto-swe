@@ -5,20 +5,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bodyOf, setupFetchMock, withQuery } from '@/test/rtl-helpers';
 import { PrdRunLaunchForm } from './PrdRunLaunchForm';
 
-// The platform role is ENGINEER throughout: the form follows whether the caller leads a team.
-const auth = vi.hoisted(() => ({ leads: true, role: 'ENGINEER' }));
+// The form follows whether the server says the caller may start work across repositories.
+const auth = vi.hoisted(() => ({ leads: true, role: 'USER' }));
 vi.mock('@/stores/authStore', () => ({
   useAuthStore: (selector: (s: { user: { role: string } | null }) => unknown) =>
     selector({ user: { role: auth.role } }),
 }));
-vi.mock('@/hooks/useTeams', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/hooks/useTeams')>()),
-  useLeadsATeam: () => auth.leads,
+vi.mock('@/hooks/useCan', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useCan')>()),
+  useCan: () => auth.leads,
 }));
 
 afterEach(() => {
   cleanup();
-  auth.role = 'ENGINEER';
+  auth.role = 'USER';
   auth.leads = true;
   vi.unstubAllGlobals();
 });

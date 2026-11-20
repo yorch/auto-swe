@@ -30,12 +30,12 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon, type IconName } from '@/components/ui/Icon';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { usePlatformAdmin, useTeamIdsCan } from '@/hooks/useCan';
 import { useTeams } from '@/hooks/useTeams';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { useWorkflowProcess } from '@/hooks/useWorkflowProcess';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { requestHref } from '@/lib/requestDisplay';
-import { hasRole } from '@/lib/roles';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -206,24 +206,23 @@ function Step({
 const BASE_EPIC_REASON = 'Requires team lead or administrator.';
 
 /**
- * Whether the caller may start an epic, and why not. The caller must lead the team that owns
- * each repository the epic spans (their `myRole`), whatever their platform role. Under a team
- * scope that is that team; without one, any team they lead — the form then lists only
- * repositories of the teams they lead.
+ * Whether the caller may start an epic, and why not. The caller must hold `team.launch.multi-repo`
+ * on the team that owns each repository the epic spans, as the server's effective permissions say
+ * (`led` is the set of such teams; `null` while it loads). Under a team scope that is that team;
+ * without one, any such team — the form then lists only repositories of those teams.
  */
 function epicAccess(
-  platformRole: string | null | undefined,
-  memberTeams: { id: string; name: string; myRole: string | null }[] | undefined,
+  platformAdmin: boolean,
+  led: ReadonlySet<string> | null,
   scopeTeam: { id: string; name: string } | null
 ): { allowed: boolean; reason: string; epicTeamIds: StartScopeValue['epicTeamIds'] } {
   const base = BASE_EPIC_REASON;
-  if (hasRole(platformRole, 'ADMIN')) {
+  if (platformAdmin) {
     return { allowed: true, epicTeamIds: 'all', reason: '' };
   }
-  if (!memberTeams) {
+  if (!led) {
     return { allowed: false, epicTeamIds: null, reason: base };
   }
-  const led = new Set(memberTeams.filter((t) => hasRole(t.myRole, 'LEAD')).map((t) => t.id));
   if (scopeTeam) {
     return led.has(scopeTeam.id)
       ? { allowed: true, epicTeamIds: led, reason: '' }
@@ -260,19 +259,22 @@ export function StartWork({
   initialTeamSlug?: string;
 }) {
   const router = useRouter();
-  const platformRole = useAuthStore((state) => state.user?.role);
+  const platformAdmin = usePlatformAdmin();
+  const leadTeamIds = useTeamIdsCan('team.launch.multi-repo');
+  const signedIn = useAuthStore((state) => state.user !== null);
   const memberTeams = useTeams({ memberOnly: true });
   const scopeTeam =
     (initialTeamSlug && memberTeams.data?.find((t) => t.slug === initialTeamSlug)) || null;
-  const epic = epicAccess(platformRole, memberTeams.data, scopeTeam);
+  const epic = epicAccess(platformAdmin, leadTeamIds, scopeTeam);
   const canStartEpic = epic.allowed;
   const scope: StartScopeValue = {
     epicTeamIds: epic.epicTeamIds,
     team: scopeTeam ? { id: scopeTeam.id, name: scopeTeam.name } : null,
   };
-  const canOrchestrate = hasRole(platformRole, 'ENGINEER');
+  // Orchestrating is open to every signed-in person; the team's own gates apply at launch.
+  const canOrchestrate = signedIn;
   const [requestedMode, setRequestedMode] = useState<Mode>(initialMode);
-  // `?mode=orchestrate` below ENGINEER falls back to a workflow: that mode cannot be launched.
+  // `?mode=orchestrate` without a session falls back to a workflow: that mode cannot be launched.
   const mode: Mode =
     requestedMode === 'orchestrate' && !canOrchestrate ? 'workflow' : requestedMode;
   // The orchestration form (and its queries) mounts the first time its mode is shown.
@@ -351,7 +353,7 @@ export function StartWork({
     {
       description: canOrchestrate
         ? 'Chat with an orchestrator that runs several agents.'
-        : 'Requires engineer or above.',
+        : 'Requires a signed-in account.',
       disabled: !canOrchestrate,
       icon: 'branch',
       label: 'Orchestrate agents',

@@ -68,6 +68,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | Doc | Covers |
 |-----|--------|
 | [configuration.md](./configuration.md) | Where every knob lives — the environment/integration/registry split, the setting registry and its cascade, who may change what, run pinning |
+| [permissions.md](./permissions.md) | Who may do what — capabilities with a scope and a class, the three authorities (team role, organization admin, platform admin), the organization-admin rule, constraints, how a route declares a capability, and the generated capability matrix |
 | [deployment.md](./deployment.md) | Production runbook — environment, database, Temporal, images, service layout, smoke test, day-2 ops, hardening |
 | [kubernetes-helm.md](./kubernetes-helm.md) | The Helm chart for the gateway, worker and web dashboard — values, secrets, the migration Job, probes, the workspace namespace, and what it does not deploy |
 | [upgrade-notes.md](./upgrade-notes.md) | What an operator does on a deployment that ran earlier code — fixed defects that exposed a credential, keyed by the condition and the fixing commit: who is affected, what was exposed and for how long, what to rotate or purge, how to verify the fix |

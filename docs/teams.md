@@ -8,7 +8,7 @@ contains, who sees what, and how its counts agree with the lists behind them.
 
 ## 1. My desk
 
-`GET /api/v1/me/summary` (ENGINEER and above) returns the whole desk in one response:
+`GET /api/v1/me/summary` (any signed-in user) returns the whole desk in one response:
 
 | Field | Meaning |
 |---|---|
@@ -44,7 +44,7 @@ Approvals are exactly the steps `GET /api/v1/human-steps?actionable=true&mine=tr
 one function (`deskHumanStepWhere()` in `gateway/src/lib/meSummary.ts`, over `humanStepListWhere()`).
 `mine=true` applies the same member-scope term as the desk: it keeps only steps on runs of the
 caller's own teams' work (a repository one of their teams owns or is shared, or a template one of
-their teams owns). For an ENGINEER it changes little; for a platform ADMIN it is what makes the list
+their teams owns). For a signed-in user it changes little; for a platform ADMIN it is what makes the list
 total equal the desk's approval count.
 
 A failed attempt counts only while it is the **latest** attempt of its request: a retry that
@@ -80,7 +80,7 @@ ticket id.
 
 ## 2. Team overview
 
-`GET /api/v1/teams/:id/overview` (ENGINEER and above) is one team's landing page in one response.
+`GET /api/v1/teams/:id/overview` (any signed-in user) is one team's landing page in one response.
 The caller must be a **member** of the team or a platform ADMIN; anyone else, and any unknown id,
 gets the same `404 TEAM_NOT_FOUND`. It is built by `buildTeamOverview()` in
 `gateway/src/lib/teamOverview.ts`.
@@ -93,11 +93,11 @@ gets the same `404 TEAM_NOT_FOUND`. It is built by `buildTeamOverview()` in
 |---|---|
 | `ADMIN` | `admin` |
 | `LEAD` | `lead` |
-| `ENGINEER` | `engineer` |
+| `MEMBER` | `member` |
 | none (platform ADMIN who is not a member) | `admin`, and `team.myRole` is `null` |
 
-A platform LEAD (or ADMIN) whose role in the team is `ENGINEER` gets the `engineer` view. A platform
-role of LEAD does not raise anything for a non-member: only the platform ADMIN is let in.
+A platform `ADMIN` whose role in the team is `MEMBER` gets the `member` view. A platform
+`USER` who is not a member gets nothing: only the platform ADMIN is let in.
 
 ### What it contains
 
@@ -113,10 +113,11 @@ role of LEAD does not raise anything for a non-member: only the platform ADMIN i
 | `repos` | everyone | Active repositories the team owns or that are shared to it, that the caller may reach (membership and the access gate): `relation` is `owned` or `shared`, and a shared one names the owning team |
 | `budget` | everyone | The budget that binds work on the team's repositories: `scope`, `state`, `percentUsed`, `alertThresholdPercent`. Percent only, for every viewer level ([the budget meter](#the-budget-meter)); `null` when neither the team nor its organization sets a cap |
 | `lead` | `lead`, `admin` | `unownedFailures`, `staleApprovals`, `openPullRequests` |
+| `needsAdmin` | viewers holding `team.members.manage` on the team | `true` when the team has no ADMIN, which an organization removal can leave. Absent otherwise, never `false`; appoint one through the members tab |
 | `repos[].canLaunch` | everyone | `false` when the repository is shared to the team view-only; always `true` for an owned one |
-| `admin.monthCostUsdCents` | `admin` | This calendar month's spend (UTC) attributed to the team, in cents; `null` when it cannot be computed. Absent for a team ADMIN who is not an ORG_ADMIN when the binding cap is the organization's; present when the team's own cap binds |
+| `admin.monthCostUsdCents` | `admin` | This calendar month's spend (UTC) attributed to the team, in cents; `null` when it cannot be computed. Absent for a team ADMIN who is not an organization ADMIN when the binding cap is the organization's; present when the team's own cap binds |
 
-`lead` and `admin` are **absent** from the JSON for a lower view, not `null`, and their queries are
+`lead`, `admin` and `needsAdmin` are **absent** from the JSON for a lower view, not `null`, and their queries are
 not run. The `activity` feed names a launcher by display name only. The feed's name is the run's credential launcher (`launchedById`), so it can differ from a run's initiator. Run lists are different: a run's
 initiator is shown with name and email to anyone who can see the run ([run-provenance.md](./run-provenance.md)).
 
@@ -165,7 +166,7 @@ The state is the budget report's forecast ([reporting.md](./reporting.md#budget)
 defined as the launch gate defines it. The spend is the one the cap is compared against
 (`orgMonthSpend` for the organization, `teamMonthSpend` for the team). A tie in the share used goes
 to the more severe state, then to the team. A response never carries the cap or the spend in dollars, whatever the viewer's
-role: dollars are read by an ORG_ADMIN (or platform ADMIN) at `GET /api/v1/platform/organizations/:orgId/budget`.
+role: dollars are read by an organization ADMIN (or platform ADMIN) at `GET /api/v1/platform/organizations/:orgId/budget`.
 Any member of an organization reads the same percentage-only status at
 `GET /api/v1/platform/organizations/:orgId/budget/status`. The desk reads every team's organization
 and team with one read of each and one spend read per capped organization or team, not one per team,
@@ -229,8 +230,8 @@ Its header names the organization and the caller's role in the team. The tabs ar
 | Work | `/teams/<slug>/work` | every member | One team's requests, pull requests, tickets and epics, through the same lists as the global pages, narrowed to the team |
 | Automations, Reports, Knowledge | `/teams/<slug>/automations`, `…/reports`, `…/knowledge` | every member | A short panel with a link to the existing page, which reads `?team=<slug>` and narrows itself |
 | Members | `/teams/<slug>/members` | every member | The team's membership |
-| Manage | `/teams/<slug>/manage` | a team `LEAD` or `ADMIN`, and a platform ADMIN | The team's running: Attention, Repositories, Schedules, Automations, Budget and Service principals ([§3, Manage](#manage)) |
-| Settings | `/teams/<slug>/settings` | a team `LEAD` or `ADMIN`, and a platform ADMIN | The team's configuration: general details, the budget cap for those who may edit it, automation, secrets and the sandbox policy |
+| Manage | `/teams/<slug>/manage` | whoever holds `team.attention.read` on the team (a team `LEAD` or `ADMIN`), and a platform admin | The team's running: Attention, Repositories, Schedules, Automations, Budget and Service principals ([§3, Manage](#manage)) |
+| Settings | `/teams/<slug>/settings` | whoever holds `team.settings.manage` on the team (a team `LEAD` or `ADMIN`, an organization `ADMIN` of its organization), and a platform admin | The team's configuration: general details, the budget cap for those who may edit it, automation, secrets and the sandbox policy |
 
 The Manage and Settings tabs are hidden from everyone else, and their addresses answer not found.
 Which sections of the Overview appear is decided by the server from the team role ([§2](#the-view-is-decided-by-the-team-role)),
@@ -238,8 +239,8 @@ never by the tabs.
 
 ### Manage
 
-The Manage tab is where a team's lead runs the team. It is offered to a team `LEAD` or `ADMIN`
-and to a platform ADMIN, and no one else. Editing a cap or a configuration stays in Settings;
+The Manage tab is where a team's lead runs the team. It is offered to whoever holds
+`team.attention.read` on the team (a team `LEAD` or `ADMIN`) and to a platform admin, and no one else. Editing a cap or a configuration stays in Settings;
 Manage holds the work that a lead acts on and the sections that edit the team's own resources.
 
 | Section | What it holds |
@@ -290,7 +291,7 @@ announced in Slack; otherwise the answer is `409 NUDGE_UNAVAILABLE`.
 Budget section and asks for a change with `POST /api/v1/teams/:id/budget-requests` and `{ reason }`. The reason is 1 to 500 characters after
 trimming. A request carries no amount. A team has one pending request at a time; a second one
 answers `409 REQUEST_PENDING`. The request is audited with the reason's length, not the reason.
-The team ADMIN, an ORG_ADMIN of the organization and a platform ADMIN list the pending requests
+The team ADMIN, an organization ADMIN of the organization and a platform ADMIN list the pending requests
 with `GET /api/v1/teams/:id/budget-requests`, oldest first, and see them in Settings, Budget. Nobody
 is notified of a request. A `PATCH /api/v1/teams/:id/budget` whose body names
 `monthlyBudgetUsdCents` resolves every pending request in the same transaction, whether it raises,
@@ -306,13 +307,12 @@ owns and keeps the caller's visibility.
 ### The team role decides
 
 Every action on a team's work asks for the caller's role **in that team**, whatever their platform
-role. A platform `ENGINEER` who leads a team manages its members and settings, invites people, edits
+role. A platform `USER` who leads a team manages its members and settings, invites people, edits
 its repositories and templates, and launches epics, PRD runs and campaigns on its repositories. A
-platform `LEAD` who is only an `ENGINEER` in a team has none of that on it. A platform `ADMIN` passes
-every team check. The platform `LEAD` role still gates the one page no team owns that it opens,
-platform settings. The global review presets are platform `ADMIN` only. Organization-scoped pages
+platform `USER` who is only a `MEMBER` of a team has none of that on it. A platform `ADMIN` passes
+every team check. Settings that no team owns are written by a platform `ADMIN`, or by a user a settings grant covers. The global review presets are platform `ADMIN` only. Organization-scoped pages
 (the error baselines) decide by organization membership. The route test `teamRoleFloor.test.ts` fails when a route that names a team role also asks
-for a platform role above `ENGINEER`; the two sandbox allowlist routes, which are platform `ADMIN` only
+for a platform role above `USER`; the two sandbox allowlist routes, which are platform `ADMIN` only
 by design, are the named exceptions.
 
 A platform ADMIN may open the space of a team they are not a member of by its address. The overview
@@ -394,14 +394,14 @@ gate and the mid-run guard read it from the row, and nothing resolves it through
 
 | Route | Who | Does |
 |---|---|---|
-| `GET /api/v1/teams/:id/budget` | team `ADMIN`, `ORG_ADMIN` of the team's organization, platform `ADMIN` | The cap, the alert threshold (1 to 100) and this month's spend in cents |
+| `GET /api/v1/teams/:id/budget` | team `ADMIN`, organization `ADMIN` of the team's organization, platform `ADMIN` | The cap, the alert threshold (1 to 100) and this month's spend in cents |
 | `PATCH /api/v1/teams/:id/budget` | the same | Set or clear (`null`) either; the cap is a whole number of cents from 0 up, and 0 refuses every launch. Audited |
 | `GET /api/v1/teams/:id/budget/status` | any member of the team, and the same three roles | The binding status, percent and state only |
 
-A team `LEAD` and a platform `LEAD` are refused the first two (`403`). A caller with no standing on
+A team `LEAD` is refused the first two (`403`). A caller with no standing on
 the team gets the `404 TEAM_NOT_FOUND` an unknown team gets. The responses are wrapped in `data`.
 The team ADMIN reads the team's own spend in dollars here because the cap is theirs; the
-organization's cap and spend stay an ORG_ADMIN's.
+organization's cap and spend stay an organization ADMIN's.
 
 ### Who pays
 
@@ -566,7 +566,7 @@ someone who leads no active team; rate-limited to 30 a minute). Both forms restr
 the caller's own role or below. An invitation reports the response's active or waiting-for-approval state. The
 organization's invite form also offers an optional team from that organization and a team role.
 
-An organization's `ORG_ADMIN` creates a team with
+An organization's organization `ADMIN` creates a team with
 `POST /api/v1/platform/organizations/:orgId/teams` (also available under
 `/api/v1/admin/organizations/:orgId/teams`). Platform `ADMIN` can create in any organization.
 `POST /api/v1/teams` remains platform-ADMIN-only and accepts an optional `orgId`, falling back
@@ -574,16 +574,40 @@ to the default organization. Team names and slugs are globally unique.
 
 Both routes accept `name`, `slug`, optional `description` and optional `adminUserId`. The creator
 becomes the first team `ADMIN` unless `adminUserId` selects another existing organization member.
-An out-of-organization selection returns `400 ORG_MEMBERSHIP_REQUIRED`. A platform ADMIN creating
-a team without selecting someone else receives an `ORG_MEMBER` membership if needed. Team creation,
+An out-of-organization selection returns `400 organization MEMBERSHIP_REQUIRED`. A platform ADMIN creating
+a team without selecting someone else receives an organization `MEMBER` membership if needed. Team creation,
 the first team membership and any automatic organization membership commit together with audits.
 
 Adding a member through `POST /api/v1/teams/:id/members` requires that user to belong to the team's
-organization (`400 ORG_MEMBERSHIP_REQUIRED` otherwise). A platform ADMIN can add a non-member;
-the gateway creates an audited `ORG_MEMBER` membership in the same transaction.
+organization (`400 organization MEMBERSHIP_REQUIRED` otherwise). A platform ADMIN can add a non-member;
+the gateway creates an audited organization `MEMBER` membership in the same transaction. The add
+takes the organization's row lock before the team's and reads the organization membership under it,
+so a concurrent organization removal cannot leave a user on a team without belonging to its
+organization.
+
+### Leaving an organization
+
+Removing an organization membership (`DELETE /api/v1/platform/organizations/:orgId/members/:userId`,
+also under the admin prefix) removes the user's memberships in every team of that organization in the
+same transaction, with one audit row for each, carrying the `authority` of the decision. A role
+change is not a removal and cascades nothing. The transaction locks the organization first, then the
+affected teams in ascending id order, the order every membership write takes them in.
+
+- Removing the organization's last organization `ADMIN` is refused with `409 LAST_ORG_ADMIN`, unless the
+  actor is a platform ADMIN.
+- The cascade may leave a team with no ADMIN only when the actor holds organization or platform
+  authority; the team's overview then carries `needsAdmin` for those who can appoint one. A
+  team-level removal of the last ADMIN is still refused with `409 LAST_TEAM_ADMIN`.
+
+`GET /api/v1/me/permissions` answers what the signed-in person may do, from the same resolver the
+routes use: `platformRole`, `platformCapabilities`, and for each team and organization they belong to
+the `role` and the `capabilities`, each as `{ key, authority }`. With `?teamId=` it is narrowed to that
+team and includes it when the person holds capabilities there only through organization or platform
+authority (`role` is then `null`). A team the person has no standing on answers `403 FORBIDDEN`
+whether or not it exists.
 
 Sign-up and platform user invitations enroll the user in the default team's organization as
-`ORG_MEMBER` and in the default team as `ENGINEER` in one audited transaction. Existing organization
+organization `MEMBER` and in the default team as `MEMBER` in one audited transaction. Existing organization
 and team roles are preserved; repeated enrollment creates neither duplicate memberships nor audits.
 Enrollment failures are logged without failing account creation, and neither membership is committed
 if that enrollment transaction fails.
@@ -591,18 +615,18 @@ if that enrollment transaction fails.
 ### Inviting someone directly into a team
 
 `POST /api/v1/teams/:id/members/invite` accepts `email` and an optional team `role`
-(`ADMIN`, `LEAD`, or `ENGINEER`, default `ENGINEER`). A team `LEAD` or `ADMIN` can invite, but
+(`ADMIN`, `LEAD`, or `MEMBER`, default `MEMBER`). A team `LEAD` or `ADMIN` can invite, but
 cannot grant a role above their own. Platform ADMIN can invite into any team. The account's
-platform role is `ENGINEER`; the supplied role applies only to the team.
+platform role is `USER`; the supplied role applies only to the team.
 Inviting follows the same team-role rule as member-add.
 
 Organization admins can also supply optional `teamId` and `teamRole` on
 `POST /api/v1/platform/organizations/:orgId/members/invite` (including its admin-prefix alias).
 The team must belong to that organization (`400 TEAM_ORG_MISMATCH` otherwise); `teamRole`
-defaults to `ENGINEER` and is separate from the invite's `orgRole`.
+defaults to `MEMBER` and is separate from the invite's `orgRole`.
 
 Both invitation routes create the account, organization membership and any team membership in one
-audited transaction, then send a magic link. Team invitations grant `ORG_MEMBER` in the team's
+audited transaction, then send a magic link. Team invitations grant organization `MEMBER` in the team's
 organization. Existing email addresses return `409 USER_EXISTS`; use member-add for existing users.
 Platform ADMIN invitations approve the account immediately (`admin`). Other team invitations approve
 only in an active organization with `trustedInvites` enabled (`team_lead`); otherwise the account waits
@@ -631,7 +655,6 @@ in the approval queue. See [invited users](./oauth-setup.md#invited-users) for t
 - Team invitations require a new email address; existing users are added through the member-add
   route. A failed invitation email does not roll back the account or memberships.
 
-- Removing an organization membership does not remove that user's team memberships.
 - **Engineers see failures only for runs they launched, or that a lead assigned to them.** A lead
   does not see a failure on a teammate's run in the desk, and a run the caller controls but did not
   launch is excluded unless it was assigned.
@@ -666,7 +689,7 @@ in the approval queue. See [invited users](./oauth-setup.md#invited-users) for t
   against a team, a channel run) has `ownerTeam` `null` even when a team is attributed its spend.
 - **`canAnswer` covers human steps, not every control.** Cancelling a run is guarded by the same
   control rule, but run detail exposes it only for the review fix retry (`canControl`).
-- **A team ADMIN can lift a cap an ORG_ADMIN set.** `PATCH /teams/:id/budget` lets a team ADMIN
+- **A team ADMIN can lift a cap an organization ADMIN set.** `PATCH /teams/:id/budget` lets a team ADMIN
   clear or raise the team's cap whoever set it, so the team cap is a self-imposed limit, not an
   organization control. It does not check that the team is active.
 - **Two month-spend figures.** The overview's `admin.monthCostUsdCents` sums runs by the month they
@@ -709,11 +732,11 @@ in the approval queue. See [invited users](./oauth-setup.md#invited-users) for t
   percentage it gives the cap away: the overview's withholding rule narrows the channels and does
   not seal the organization's cap there.
 - **The meter is not a secrecy boundary for the cap.** The percentage is rounded to one decimal and
-  the dollars are an ORG_ADMIN's to read, so on its own it gives pace and state, not an allowance.
+  the dollars are an organization ADMIN's to read, so on its own it gives pace and state, not an allowance.
   Someone who also sees a dollar figure of the organization's spend elsewhere could work the cap
   out. The team overview therefore leaves `admin.monthCostUsdCents` out for a team ADMIN who is not
-  an ORG_ADMIN of a capped organization, and an organization report digest carries dollars only
-  when its creator is an ORG_ADMIN and every target is an email to an ORG_ADMIN. A team's own spend
+  an organization ADMIN of a capped organization, and an organization report digest carries dollars only
+  when its creator is an organization ADMIN and every target is an email to an organization ADMIN. A team's own spend
   is not the organization's, so this narrows the channels and does not prove the cap secret.
 - **Shared-repository pull requests count in a sharee's list, not in its outcomes.** The overview's
   `openPullRequests` includes pull requests on a repository shared to the team, while `pullRequests`

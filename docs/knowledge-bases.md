@@ -137,12 +137,12 @@ All paths use `/api/v1` and require authentication:
 
 | Routes | Access |
 |---|---|
-| `GET /knowledge-bases`, `GET /knowledge-bases/:id` | ENGINEER+, visibility-filtered; explicit platform-ADMIN bypass |
+| `GET /knowledge-bases`, `GET /knowledge-bases/:id` | any signed-in user, visibility-filtered; explicit platform-ADMIN bypass |
 | `POST /knowledge-bases`, `PATCH/DELETE /knowledge-bases/:id` | Owning-team LEAD or platform ADMIN |
 | `PUT /knowledge-bases/:id/shares`, `POST /knowledge-bases/:id/reindex` | Owning-team LEAD or platform ADMIN |
 | `GET/POST /knowledge-base-links`, `PATCH/DELETE /knowledge-base-links/:id` | Target-team LEAD; GLOBAL template management requires ADMIN |
-| `GET /repositories/:id/knowledge-bases/effective` | ENGINEER+, repository reachability |
-| `GET /teams/:id/knowledge-bases/effective` | ENGINEER+, team membership; explicit platform-ADMIN bypass |
+| `GET /repositories/:id/knowledge-bases/effective` | any signed-in user, repository reachability |
+| `GET /teams/:id/knowledge-bases/effective` | any signed-in user, team membership; explicit platform-ADMIN bypass |
 
 Both effective endpoints accept optional `templateId`. Mutations are audited; assistant policy
 classifies reads as read-only access and management calls as confirmation-requiring actions.

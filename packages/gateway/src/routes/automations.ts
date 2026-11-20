@@ -7,8 +7,8 @@
  *
  * An automation belongs to a repository or, for a source whose automations target a team, to a
  * team. Reading a repository's automations and what they decided is open to its members;
- * managing them is ADMIN, or a LEAD of the owning team (`repoAutomationAccess`). A team's are
- * read by its members and managed by ADMIN or its LEADs (`teamAutomationAccess`). Saving one
+ * managing them is `team.automations.manage` on the owning team (`repoAutomationAccess`). A
+ * team's are read by its members and managed by the same capability (`teamAutomationAccess`). Saving one
  * that can start runs is a launch decision, as for a schedule.
  */
 import type { Prisma } from '@auto-swe/shared';
@@ -38,10 +38,13 @@ import { isInstallationRetired } from '@auto-swe/shared/lib/repoAccessDecision';
 import { ReviewLaunchError } from '@auto-swe/shared/lib/reviewLaunch';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { type AuditContext, auditContextOf } from '../lib/auditContext.js';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { heldScope } from '../lib/authz.js';
 import {
   type AutomationOwnerAccess,
   automationOwnerAccess,
@@ -212,7 +215,18 @@ async function newestPerKey<K extends string, Row extends Record<K, string | nul
 
 export const automationRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const signedIn = requireAuth({ requiredRole: 'ENGINEER' });
+  // Reading is reach (a repository's members, a team's members); a route that changes an
+  // automation, or reads what only its managers may, decides `team.automations.manage` itself.
+  const signedIn = requireAuth();
+  const managing = requireAuth({ handlerChecked: ['team.automations.manage'] });
+
+  /** The audit context of a write, carrying the ground the manage decision was made on. */
+  function auditAs(request: FastifyRequest, access: AutomationOwnerAccess): AuditContext {
+    return {
+      ...auditContextOf(request),
+      ...(access.authority ? { authority: access.authority } : {}),
+    };
+  }
 
   /**
    * An automation starts runs, so saving one that can start runs is a launch decision, exactly
@@ -516,7 +530,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       where: { id },
     });
     const access = row
-      ? await automationOwnerAccess(fastify.prisma, row, user, request.repoAccessGate)
+      ? await automationOwnerAccess(request, row, user, request.repoAccessGate)
       : null;
     if (!row || !access) {
       await sendError(reply, 404, 'AUTOMATION_NOT_FOUND', 'Automation not found');
@@ -532,7 +546,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
     owner: { connectionId?: string; teamId?: string }
   ): Promise<AutomationOwnerAccess | null> {
     const access = await automationOwnerAccess(
-      fastify.prisma,
+      request,
       { connectionId: owner.connectionId ?? null, teamId: owner.teamId ?? null },
       requireUser(request),
       request.repoAccessGate
@@ -565,11 +579,11 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
   // Schedules keep their own list route, permissions and live state; the dashboard merges them.
   app.get('/', { onRequest: signedIn }, async (request) => {
     const user = requireUser(request);
-    const admin = user.role === 'ADMIN';
+    const admin = isPlatformAdmin(user);
+    const manageScope = await heldScope(request, 'team.automations.manage');
 
     // A repository automation through the repository the caller can reach; a team's (one with
     // no repository) through membership of its team. An admin sees all.
-    const memberships = { select: { role: true }, where: { userId: user.sub } } as const;
     const automations = await runUnscoped(
       'an admin sees every automation; everyone else only those of reachable repositories and their own teams',
       ['Automation'],
@@ -583,10 +597,10 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
                 id: true,
                 organizationName: true,
                 repoName: true,
-                team: { select: { id: true, memberships, name: true } },
+                team: { select: { id: true, name: true } },
               },
             },
-            team: { select: { id: true, memberships, name: true } },
+            team: { select: { id: true, name: true } },
           },
           where: admin
             ? {}
@@ -626,12 +640,11 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       if (!team) {
         return [];
       }
-      const role = team.memberships[0]?.role;
       const automation = { ...rest, team: ownTeam ? { id: ownTeam.id, name: ownTeam.name } : null };
       const last = lastFires.get(a.id);
       return {
         automation,
-        canManage: admin || role === 'LEAD' || role === 'ADMIN',
+        canManage: manageScope.all || manageScope.teamIds.includes(team.id),
         enabled: a.enabled,
         id: a.id,
         kind: 'event' as const,
@@ -811,7 +824,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
   // declares. Managers only: the owning team's own templates are its business.
   app.get(
     '/events/templates',
-    { onRequest: signedIn, schema: { querystring: TemplatesQuery } },
+    { onRequest: managing, schema: { querystring: TemplatesQuery } },
     async (request, reply) => {
       const access = await loadOwner(request, reply, request.query);
       if (!access) {
@@ -869,7 +882,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
     {
       // A save of a Jira filter automation asks Jira, with the platform's one credential.
       config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
-      onRequest: signedIn,
+      onRequest: managing,
       schema: { body: CreateBody },
     },
     async (request, reply) => {
@@ -929,6 +942,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         action: 'CREATE',
         actor: user,
         after: created,
+        context: auditAs(request, access),
         entityId: created.id,
         entityType: 'Automation',
       });
@@ -941,7 +955,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
     '/events/:id',
     {
       config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
-      onRequest: signedIn,
+      onRequest: managing,
       schema: { body: UpdateBody, params: IdParams },
     },
     async (request, reply) => {
@@ -1035,6 +1049,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         actor: user,
         after: updated,
         before: existing,
+        context: auditAs(request, access),
         entityId: existing.id,
         entityType: 'Automation',
       });
@@ -1046,7 +1061,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
   // the limits keep reading.
   app.delete(
     '/events/:id',
-    { onRequest: signedIn, schema: { params: IdParams } },
+    { onRequest: managing, schema: { params: IdParams } },
     async (request, reply) => {
       const loaded = await loadAutomation(request, reply, request.params.id);
       if (!loaded) {
@@ -1060,6 +1075,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         action: 'DELETE',
         actor: loaded.user,
         before: loaded.row,
+        context: auditAs(request, loaded.access),
         entityId: loaded.row.id,
         entityType: 'Automation',
       });
@@ -1111,7 +1127,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
   // a delivery; the earlier decision stays in the history, marked retried.
   app.post(
     '/events/:id/fires/:fireId/retry',
-    { onRequest: signedIn, schema: { params: FireParams } },
+    { onRequest: managing, schema: { params: FireParams } },
     async (request, reply) => {
       const loaded = await loadAutomation(request, reply, request.params.id);
       if (!loaded) {
@@ -1309,6 +1325,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         actor: user,
         after: { outcome: result.outcome, retriedFireId: fire.id },
         before: { outcome: fire.outcome },
+        context: auditAs(request, access),
         entityId: automation.id,
         entityType: 'Automation',
       });

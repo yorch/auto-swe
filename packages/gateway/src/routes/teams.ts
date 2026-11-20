@@ -1,12 +1,24 @@
-import type { Prisma, Role } from '@auto-swe/shared';
+import type { Prisma } from '@auto-swe/shared';
 import { resolveSetting } from '@auto-swe/shared/config';
-import { roleMeets } from '@auto-swe/shared/config/permissions';
 import { egressAllowlistSchema } from '@auto-swe/shared/lib/egressPolicy';
+import {
+  actingRank,
+  isPlatformAdmin,
+  loadStanding,
+  notSelf,
+  TEAM_ROLE_RANK,
+  TEAM_ROLES,
+  type TeamRank,
+  teamRankMeets,
+  teamRankOf,
+} from '@auto-swe/shared/permissions';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
-import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { type AuditContext, auditContextOf } from '../lib/auditContext.js';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { actorOf, can, replyRefusal } from '../lib/authz.js';
 import { sendConflict } from '../lib/conflict.js';
 import { loadEgressReadiness } from '../lib/egressReadiness.js';
 import { sendError } from '../lib/httpErrors.js';
@@ -66,7 +78,8 @@ async function ensureOrganizationMember(
   actor: JwtPayload,
   orgId: string,
   userId: string,
-  allowCreate: boolean
+  allowCreate: boolean,
+  context?: AuditContext
 ) {
   const existing = await tx.organizationMembership.findUnique({
     where: { userId_orgId: { orgId, userId } },
@@ -78,7 +91,7 @@ async function ensureOrganizationMember(
     throw new OrganizationMemberRequired();
   }
   const rows = await tx.organizationMembership.createMany({
-    data: { orgId, role: 'ORG_MEMBER', userId },
+    data: { orgId, role: 'MEMBER', userId },
     skipDuplicates: true,
   });
   if (rows.count) {
@@ -88,8 +101,9 @@ async function ensureOrganizationMember(
     await writeAuditLog(fastify, {
       action: 'CREATE',
       actor,
-      after: { orgId, role: 'ORG_MEMBER', userId },
+      after: { orgId, role: 'MEMBER', userId },
       client: tx,
+      ...(context ? { context } : {}),
       entityId: membership.id,
       entityType: 'OrganizationMembership',
     });
@@ -100,16 +114,22 @@ async function createTeam(
   fastify: FastifyInstance,
   actor: JwtPayload,
   body: z.infer<typeof CreateTeamSchema>,
-  orgId: string
+  orgId: string,
+  context?: AuditContext
 ) {
+  const audit = context ? { context } : {};
   return fastify.prisma.$transaction(async (tx) => {
+    // CLAUDE.md §7 exception: the organization lock serializes the first admin's membership checks
+    // with an organization removal, which deletes team memberships under the same lock.
+    await tx.$executeRaw`SELECT 1 FROM organizations WHERE id = ${orgId}::uuid FOR UPDATE`;
     await ensureOrganizationMember(
       fastify,
       tx,
       actor,
       orgId,
       body.adminUserId ?? actor.sub,
-      actor.role === 'ADMIN' && !body.adminUserId
+      isPlatformAdmin(actor) && !body.adminUserId,
+      context
     );
     const team = await tx.team.create({
       data: { description: body.description, name: body.name, orgId, slug: body.slug },
@@ -122,6 +142,7 @@ async function createTeam(
       actor,
       after: teamAuditFields(team),
       client: tx,
+      ...audit,
       entityId: team.id,
       entityType: 'Team',
     });
@@ -130,6 +151,7 @@ async function createTeam(
       actor,
       after: membershipAuditFields(membership),
       client: tx,
+      ...audit,
       entityId: membership.id,
       entityType: 'TeamMembership',
     });
@@ -141,7 +163,7 @@ export const orgTeamRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.withTypeProvider<ZodTypeProvider>().post(
     '/:orgId/teams',
     {
-      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_ADMIN' }),
+      onRequest: requireAuth({ capability: 'org.teams.create', org: { param: 'orgId' } }),
       schema: {
         body: CreateTeamSchema.omit({ orgId: true }),
         params: z.object({ orgId: z.string().uuid() }),
@@ -185,17 +207,37 @@ const TeamParamsSchema = z.object({ id: z.string().uuid() });
 const TeamMemberParamsSchema = z.object({ id: z.string().uuid(), userId: z.string().uuid() });
 
 const AddMemberSchema = z.object({
-  role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']).default('ENGINEER'),
+  role: z.enum(TEAM_ROLES).default('MEMBER'),
   userId: z.string().uuid(),
 });
 
 const UpdateMemberSchema = z.object({
-  role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']),
+  role: z.enum(TEAM_ROLES),
 });
 
 interface TeamGuardResult {
   code: string;
   message: string;
+}
+
+/** A stored membership role as a rank. An unknown value ranks lowest: it confers nothing. */
+function rankOf(role: string): TeamRank {
+  return teamRankOf(role) ?? 'MEMBER';
+}
+
+/** Whether `rank` is above `ceiling`. */
+function outranks(rank: TeamRank, ceiling: TeamRank): boolean {
+  return TEAM_ROLE_RANK[rank] > TEAM_ROLE_RANK[ceiling];
+}
+
+/**
+ * The rank the caller acts at in `teamId` for a member change: platform and organization
+ * authority without a membership rank `ADMIN`, a membership ranks as its role (`actingRank`).
+ * `null` means no standing at all, which a route that passed its capability check never sees.
+ */
+async function actingRankOf(request: FastifyRequest, teamId: string): Promise<TeamRank | null> {
+  const standing = await loadStanding(request.server.prisma, actorOf(request), { teamId });
+  return actingRank(standing, teamId);
 }
 
 /**
@@ -204,24 +246,27 @@ interface TeamGuardResult {
  */
 function guardTeamMembershipChange(
   actorUserId: string,
-  actorRole: Role,
+  actorRank: TeamRank,
   targetUserId: string,
-  targetRole: Role,
+  targetRole: string,
   action: 'delete' | 'update',
-  newRole?: Role
+  newRole?: string
 ): TeamGuardResult | null {
-  if (actorUserId === targetUserId) {
+  const targetRank = rankOf(targetRole);
+  if (!notSelf(actorUserId, targetUserId)) {
     if (action === 'delete') {
       return { code: 'SELF_REMOVAL', message: 'Cannot remove yourself from the team' };
     }
-    if (newRole && newRole !== actorRole) {
+    // Only a LOWERING is refused. A raise is the path an org or platform admin who already sits on
+    // the team uses to take team powers (spec 4.2); the rank checks below bound it by the acting rank.
+    if (newRole && outranks(targetRank, rankOf(newRole))) {
       return { code: 'SELF_DEMOTION', message: 'Cannot demote yourself' };
     }
   }
-  if (roleMeets(targetRole, actorRole) && targetRole !== actorRole) {
+  if (outranks(targetRank, actorRank)) {
     return { code: 'HIERARCHY', message: 'Cannot modify a member with a higher role' };
   }
-  if (newRole && roleMeets(newRole, actorRole) && newRole !== actorRole) {
+  if (newRole && outranks(rankOf(newRole), actorRank)) {
     return { code: 'PRIVILEGE_ESCALATION', message: 'Cannot grant a role higher than your own' };
   }
   return null;
@@ -233,8 +278,15 @@ const LAST_TEAM_ADMIN: TeamGuardResult = {
 };
 
 /** Does this change take an ADMIN away from the team? */
-function removesTeamAdmin(targetRole: Role, action: 'delete' | 'update', newRole?: Role): boolean {
-  return targetRole === 'ADMIN' && (action === 'delete' || (!!newRole && newRole !== 'ADMIN'));
+function removesTeamAdmin(
+  targetRole: string,
+  action: 'delete' | 'update',
+  newRole?: string
+): boolean {
+  return (
+    teamRankMeets(teamRankOf(targetRole), 'ADMIN') &&
+    (action === 'delete' || (!!newRole && !teamRankMeets(teamRankOf(newRole), 'ADMIN')))
+  );
 }
 
 /**
@@ -248,14 +300,26 @@ async function applyMembershipChange<T>(
   prisma: FastifyInstance['prisma'],
   teamId: string,
   removesAdmin: boolean,
-  write: (db: Prisma.TransactionClient) => Promise<T>
+  write: (db: Prisma.TransactionClient) => Promise<T>,
+  /**
+   * The team's organization, for a write that reads or creates an organization membership. Its row
+   * lock is then taken first, before the team's, so the organization-removal cascade (which takes
+   * the same two locks in the same order) cannot interleave with the add.
+   */
+  orgId?: string
 ): Promise<{ ok: true; value: T } | { ok: false; guard: TeamGuardResult }> {
   return prisma.$transaction(async (tx) => {
+    if (orgId) {
+      // CLAUDE.md §7 exception: the organization lock serializes this membership write with an
+      // organization removal, which deletes the user's team memberships under the same lock.
+      await tx.$executeRaw`SELECT 1 FROM organizations WHERE id = ${orgId}::uuid FOR UPDATE`;
+    }
     // CLAUDE.md §7 exception: this lock is shared with source checks and serializes all
     // membership changes for this team.
     await tx.$executeRaw`SELECT 1 FROM teams WHERE id = ${teamId}::uuid FOR UPDATE`;
     if (removesAdmin) {
-      const adminCount = await tx.teamMembership.count({ where: { role: 'ADMIN', teamId } });
+      const roles = await tx.teamMembership.findMany({ select: { role: true }, where: { teamId } });
+      const adminCount = roles.filter((m) => teamRankMeets(teamRankOf(m.role), 'ADMIN')).length;
       if (adminCount <= 1) {
         return { guard: LAST_TEAM_ADMIN, ok: false as const };
       }
@@ -272,15 +336,35 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   // team-scope variants share helpers and audit-log writers.
   await fastify.register(teamScopedConfigRoutes);
 
-  // POST /api/v1/teams — Create team (ADMIN only)
+  // POST /api/v1/teams — Create team (`org.teams.create` on the target organization, the same
+  // capability as the organization-scoped route)
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ handlerChecked: ['org.teams.create'] }),
       schema: { body: CreateTeamSchema },
     },
     async (request, reply) => {
       const { name, slug, orgId } = request.body;
+
+      // P5: every team nests under an organization. Use the requested org, else
+      // fall back to the seeded 'default' org so single-tenant flows still work.
+      const org = orgId
+        ? await fastify.prisma.organization.findUnique({ where: { id: orgId } })
+        : await fastify.prisma.organization.findUnique({ where: { slug: 'default' } });
+
+      // The capability is decided before anything else is said about the team or the
+      // organization, so a caller without it learns neither whether a name is taken nor
+      // whether an organization exists.
+      const decision = await can(
+        request,
+        'org.teams.create',
+        org ? { orgId: org.id } : orgId ? { orgId } : undefined
+      );
+      if (!decision.allowed) {
+        return replyRefusal(reply, decision);
+      }
+      const context = { ...auditContextOf(request), authority: decision.authority };
 
       const existing = await fastify.prisma.team.findFirst({
         where: { OR: [{ name }, { slug }] },
@@ -289,11 +373,6 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         return sendConflict(reply, 'TEAM_EXISTS', 'Team name or slug already exists');
       }
 
-      // P5: every team nests under an organization. Use the requested org, else
-      // fall back to the seeded 'default' org so single-tenant flows still work.
-      const org = orgId
-        ? await fastify.prisma.organization.findUnique({ where: { id: orgId } })
-        : await fastify.prisma.organization.findUnique({ where: { slug: 'default' } });
       if (!org) {
         return sendError(
           reply,
@@ -307,7 +386,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       // name/slug are the real guard, so map their violation to the same 409.
       let team: Awaited<ReturnType<typeof fastify.prisma.team.create>>;
       try {
-        team = await createTeam(fastify, requireUser(request), request.body, org.id);
+        team = await createTeam(fastify, requireUser(request), request.body, org.id, context);
       } catch (err) {
         if (err instanceof OrganizationMemberRequired) {
           return sendError(
@@ -335,12 +414,12 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     '/',
     {
       config: { mcpScope: 'read' },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: z.object({ member: booleanQueryParam() }) },
     },
     async (request) => {
       const user = requireUser(request);
-      const memberOnly = user.role !== 'ADMIN' || request.query.member;
+      const memberOnly = !isPlatformAdmin(user) || request.query.member;
       // `memberTeams(user)` is a literal AND element so the tenant guard's static check sees the
       // membership predicate; `{}` (no restriction) is only reachable for a platform ADMIN.
       const where: Prisma.TeamWhereInput = {
@@ -384,7 +463,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id',
     {
       config: { mcpScope: 'read' },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.read'] }),
       schema: { params: TeamParamsSchema },
     },
     async (request, reply) => {
@@ -406,12 +485,17 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
       }
 
-      // Non-admins may only view teams they belong to
-      if (user.role !== 'ADMIN') {
-        const isMember = team.memberships.some((m) => m.user.id === user.sub);
-        if (!isMember) {
-          return sendError(reply, 403, 'FORBIDDEN', 'You are not a member of this team');
-        }
+      // Only a member of the team (or a platform administrator) may view it. The team is looked
+      // up first so a missing one still answers 404, as it always has.
+      const decision = await can(request, 'team.read', { teamId: team.id });
+      if (!decision.allowed) {
+        return reply.status(403).send({
+          error: {
+            code: 'FORBIDDEN',
+            message: 'You are not a member of this team',
+            missing: decision.missing,
+          },
+        });
       }
 
       // Repositories other teams have shared with this one: read-only here,
@@ -436,7 +520,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
           connection: {
             isActive: true,
             type: 'git_repo',
-            ...(user.role === 'ADMIN' ? {} : permissionRequirement(user, request.repoAccessGate)),
+            ...(isPlatformAdmin(user) ? {} : permissionRequirement(user, request.repoAccessGate)),
           },
           teamId: team.id,
         },
@@ -452,11 +536,11 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // PATCH /api/v1/teams/:id — Update team (requires LEAD in this team)
+  // PATCH /api/v1/teams/:id — Update team (`team.settings.manage`)
   app.patch(
     '/:id',
     {
-      onRequest: requireAuth({ requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
+      onRequest: requireAuth({ capability: 'team.settings.manage', team: { param: 'id' } }),
       schema: { body: UpdateTeamSchema, params: TeamParamsSchema },
     },
     async (request, reply) => {
@@ -465,6 +549,15 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (!team) {
         return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
+      }
+
+      // The channel assistant's prompt steers an assistant that can start runs, so it is an
+      // operation, not team governance: organization authority alone does not reach it.
+      if (request.body.defaultPersonaPrompt !== undefined) {
+        const persona = await can(request, 'team.persona.manage', { teamId: team.id });
+        if (!persona.allowed) {
+          return replyRefusal(reply, persona);
+        }
       }
 
       // A rename onto another team's name trips the unique index on name.
@@ -495,9 +588,8 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // ── Phase 6: shell-step image allowlist ─────────────────────────────────
-  // Restricted to team ADMINs (role hierarchy treats platform ADMIN as ≥ team
-  // ADMIN, so platform admins can also edit). Built-in images are always
-  // allowed; this list only adds to them.
+  // Reading is a team member's; writing is `team.sandbox-policy.manage`, which only a platform
+  // administrator holds. Built-in images are always allowed; this list only adds to them.
   const ShellAllowlistBody = z.object({
     shellImageAllowlist: z
       .array(
@@ -516,11 +608,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/shell-image-allowlist',
     {
-      onRequest: requireAuth({
-        requiredRole: 'ENGINEER',
-        requiredTeamRole: 'ENGINEER',
-        teamIdParam: 'id',
-      }),
+      onRequest: requireAuth({ capability: 'team.sandbox-policy.read', team: { param: 'id' } }),
       schema: { params: TeamParamsSchema },
     },
     async (request, reply) => {
@@ -538,11 +626,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.put(
     '/:id/shell-image-allowlist',
     {
-      onRequest: requireAuth({
-        requiredRole: 'ADMIN',
-        requiredTeamRole: 'ADMIN',
-        teamIdParam: 'id',
-      }),
+      onRequest: requireAuth({ capability: 'team.sandbox-policy.manage', team: { param: 'id' } }),
       schema: { body: ShellAllowlistBody, params: TeamParamsSchema },
     },
     async (request, reply) => {
@@ -578,11 +662,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/egress-allowlist',
     {
-      onRequest: requireAuth({
-        requiredRole: 'ENGINEER',
-        requiredTeamRole: 'ENGINEER',
-        teamIdParam: 'id',
-      }),
+      onRequest: requireAuth({ capability: 'team.sandbox-policy.read', team: { param: 'id' } }),
       schema: { params: TeamParamsSchema },
     },
     async (request, reply) => {
@@ -603,11 +683,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.put(
     '/:id/egress-allowlist',
     {
-      onRequest: requireAuth({
-        requiredRole: 'ADMIN',
-        requiredTeamRole: 'ADMIN',
-        teamIdParam: 'id',
-      }),
+      onRequest: requireAuth({ capability: 'team.sandbox-policy.manage', team: { param: 'id' } }),
       schema: { body: EgressAllowlistBody, params: TeamParamsSchema },
     },
     async (request, reply) => {
@@ -642,11 +718,11 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // DELETE /api/v1/teams/:id — Soft-delete team (ADMIN only)
+  // DELETE /api/v1/teams/:id — Soft-delete team (`team.delete`, platform administrators only)
   app.delete(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'team.delete', team: { param: 'id' } }),
       schema: { params: TeamParamsSchema },
     },
     async (request, reply) => {
@@ -687,7 +763,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.get<{ Params: { id: string } }>(
     '/:id/members',
     {
-      onRequest: requireAuth({ requiredTeamRole: 'ENGINEER', teamIdParam: 'id' }),
+      onRequest: requireAuth({ capability: 'team.members.read', team: { param: 'id' } }),
     },
     async (request) => {
       const members = await fastify.prisma.teamMembership.findMany({
@@ -705,19 +781,22 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/members/invite',
     {
-      onRequest: requireAuth({ requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
+      onRequest: requireAuth({ capability: 'team.members.manage', team: { param: 'id' } }),
       schema: {
         body: z.object({
           email: z.string().trim().toLowerCase().email(),
-          role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']).default('ENGINEER'),
+          role: z.enum(TEAM_ROLES).default('MEMBER'),
         }),
         params: TeamParamsSchema,
       },
     },
     async (request, reply) => {
       const actor = requireUser(request);
-      const actorRole = (request.teamRole as Role | undefined) ?? actor.role;
-      if (roleMeets(request.body.role, actorRole) && request.body.role !== actorRole) {
+      const actorRank = await actingRankOf(request, request.params.id);
+      if (!actorRank) {
+        return sendError(reply, 403, 'FORBIDDEN', 'You have no standing in this team');
+      }
+      if (outranks(rankOf(request.body.role), actorRank)) {
         return sendError(
           reply,
           403,
@@ -730,9 +809,10 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
       }
       const result = await inviteUser(fastify, actor, {
+        ...(request.authority ? { authority: request.authority } : {}),
         email: request.body.email,
         orgId: team.orgId,
-        orgRole: 'ORG_MEMBER',
+        orgRole: 'MEMBER',
         source: 'team_lead',
         teamId: team.id,
         teamRole: request.body.role,
@@ -747,14 +827,17 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/members',
     {
-      onRequest: requireAuth({ requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
+      onRequest: requireAuth({ capability: 'team.members.manage', team: { param: 'id' } }),
       schema: { body: AddMemberSchema, params: TeamParamsSchema },
     },
     async (request, reply) => {
       const { userId, role } = request.body;
-      const actorRole = (request.teamRole as Role | undefined) ?? requireUser(request).role;
+      const actorRank = await actingRankOf(request, request.params.id);
+      if (!actorRank) {
+        return sendError(reply, 403, 'FORBIDDEN', 'You have no standing in this team');
+      }
 
-      if (roleMeets(role, actorRole) && role !== actorRole) {
+      if (outranks(rankOf(role), actorRank)) {
         return sendError(
           reply,
           403,
@@ -768,6 +851,13 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (existing) {
         return sendConflict(reply, 'MEMBER_EXISTS', 'User is already a member of this team');
+      }
+      const target = await fastify.prisma.team.findUnique({
+        select: { orgId: true },
+        where: { id: request.params.id },
+      });
+      if (!target) {
+        return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
       }
 
       // The read above is only the friendly early answer; the unique index on
@@ -786,7 +876,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
               requireUser(request),
               team.orgId,
               userId,
-              requireUser(request).role === 'ADMIN'
+              isPlatformAdmin(requireUser(request))
             );
             const membership = await db.teamMembership.create({
               data: {
@@ -805,7 +895,10 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
               entityType: 'TeamMembership',
             });
             return membership;
-          }
+          },
+          // The organization membership is read under the organization's lock, so an organization
+          // removal that ran first is seen and one that runs next waits for this membership.
+          target.orgId
         );
         if (!result.ok) {
           return sendError(reply, 409, result.guard.code, result.guard.message);
@@ -828,15 +921,18 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // PATCH /api/v1/teams/:id/members/:userId — Update member role (requires LEAD in this team)
+  // PATCH /api/v1/teams/:id/members/:userId — Update member role (`team.members.manage`)
   app.patch(
     '/:id/members/:userId',
     {
-      onRequest: requireAuth({ requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
+      onRequest: requireAuth({ capability: 'team.members.manage', team: { param: 'id' } }),
       schema: { body: UpdateMemberSchema, params: TeamMemberParamsSchema },
     },
     async (request, reply) => {
-      const actorRole = (request.teamRole as Role | undefined) ?? requireUser(request).role;
+      const actorRank = await actingRankOf(request, request.params.id);
+      if (!actorRank) {
+        return sendError(reply, 403, 'FORBIDDEN', 'You have no standing in this team');
+      }
       const membership = await fastify.prisma.teamMembership.findUnique({
         where: { userId_teamId: { teamId: request.params.id, userId: request.params.userId } },
       });
@@ -846,7 +942,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
 
       const guard = guardTeamMembershipChange(
         requireUser(request).sub,
-        actorRole,
+        actorRank,
         request.params.userId,
         membership.role,
         'update',
@@ -885,15 +981,18 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // DELETE /api/v1/teams/:id/members/:userId — Remove member (requires LEAD in this team)
+  // DELETE /api/v1/teams/:id/members/:userId — Remove member (`team.members.manage`)
   app.delete(
     '/:id/members/:userId',
     {
-      onRequest: requireAuth({ requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
+      onRequest: requireAuth({ capability: 'team.members.manage', team: { param: 'id' } }),
       schema: { params: TeamMemberParamsSchema },
     },
     async (request, reply) => {
-      const actorRole = (request.teamRole as Role | undefined) ?? requireUser(request).role;
+      const actorRank = await actingRankOf(request, request.params.id);
+      if (!actorRank) {
+        return sendError(reply, 403, 'FORBIDDEN', 'You have no standing in this team');
+      }
       const membership = await fastify.prisma.teamMembership.findUnique({
         where: { userId_teamId: { teamId: request.params.id, userId: request.params.userId } },
       });
@@ -903,7 +1002,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
 
       const guard = guardTeamMembershipChange(
         requireUser(request).sub,
-        actorRole,
+        actorRank,
         request.params.userId,
         membership.role,
         'delete'

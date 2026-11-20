@@ -12,7 +12,7 @@ import GovernOrganizationsPage from './page';
 
 beforeEach(() => {
   resetNavigation('', '/admin/organizations');
-  useAuthStore.setState({ user: { role: 'ADMIN' } } as never);
+  useAuthStore.setState({ user: { role: 'USER', sub: 'me' } } as never);
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -29,6 +29,13 @@ const org = (id: string, triggered: boolean) => ({
 describe('GovernOrganizationsPage', () => {
   it('lists every organization for an admin and filters to alerting ones through the URL', async () => {
     const spy = setupFetchMock({
+      // The server says this person holds a platform capability only a platform admin holds.
+      '/api/v1/me/permissions': () => ({
+        organizations: [],
+        platformCapabilities: ['platform.users.manage'],
+        platformRole: '',
+        teams: [],
+      }),
       '/api/v1/platform/organizations/budget-alerts': () => ({
         data: [org('a', true), org('b', false)],
       }),

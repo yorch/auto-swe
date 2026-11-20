@@ -9,14 +9,16 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { type CreatedUser, useCreateUser } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
-import { platformRoleLabel } from '@/lib/govLabels';
-
-type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
+import {
+  DEFAULT_PLATFORM_ROLE,
+  PLATFORM_ROLE_OPTIONS,
+  type PlatformRoleValue,
+} from '@/lib/roleLabels';
 
 export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const create = useCreateUser();
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<Role>('ENGINEER');
+  const [role, setRole] = useState<PlatformRoleValue>(DEFAULT_PLATFORM_ROLE);
   const [password, setPassword] = useState('');
   const [slackId, setSlackId] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +26,7 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
 
   function reset() {
     setEmail('');
-    setRole('ENGINEER');
+    setRole(DEFAULT_PLATFORM_ROLE);
     setPassword('');
     setSlackId('');
     setError(null);
@@ -78,12 +80,9 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
           />
           <Select
             id="new-user-role"
-            label="Role"
-            onChange={(v) => setRole(v as Role)}
-            options={(['ENGINEER', 'LEAD', 'ADMIN'] as const).map((r) => ({
-              label: platformRoleLabel(r),
-              value: r,
-            }))}
+            label="Platform role"
+            onChange={(v) => setRole(v as PlatformRoleValue)}
+            options={[...PLATFORM_ROLE_OPTIONS]}
             value={role}
           />
           <Input

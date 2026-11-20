@@ -204,8 +204,8 @@ export function useOrchestrationAgents(repoId: string | null) {
 }
 
 /**
- * The MCP connections a launcher may put in the fixed set for a team. Open to any ENGINEER who is
- * a member of the team, unlike the platform list, which is ADMIN-only.
+ * The MCP connections a launcher may put in the fixed set for a team. Open to any member of the
+ * team, unlike the platform list, which needs `platform.integrations.manage`.
  */
 export function useOrchestrationConnections(teamId: string) {
   return useQuery({

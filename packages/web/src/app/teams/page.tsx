@@ -11,8 +11,7 @@ import { Skeleton } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
-import { useOrganizationDirectory } from '@/hooks/useAdmin';
-import { useHasRole } from '@/hooks/useHasRole';
+import { useCan } from '@/hooks/useCan';
 import { useTeams } from '@/hooks/useTeams';
 import { navLabel } from '@/lib/navigation';
 import { teamHref } from '@/lib/teamSpace';
@@ -23,9 +22,7 @@ const SEARCH_THRESHOLD = 3;
 
 export default function TeamsPage() {
   const { data: teams, isLoading, isError, isFetching, refetch, error: loadError } = useTeams();
-  const platformAdmin = useHasRole('ADMIN');
-  const organizations = useOrganizationDirectory();
-  const canCreate = platformAdmin || (organizations.data ?? []).some((o) => o.role === 'ORG_ADMIN');
+  const canCreate = useCan('org.teams.create');
   const [creating, setCreating] = useState(false);
   const [search, setSearch] = useState('');
 

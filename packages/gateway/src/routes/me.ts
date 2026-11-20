@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { readDueSoonHours } from '../lib/dueSoonHours.js';
+import { loadEffectivePermissions } from '../lib/effectivePermissions.js';
 import { sendError } from '../lib/httpErrors.js';
 import { listMcpGrants, revokeMcpGrants } from '../lib/mcpGrants.js';
 import { buildMeSummary } from '../lib/meSummary.js';
@@ -34,7 +35,7 @@ export const meRoutes: FastifyPluginAsync = async (fastify) => {
 
   // GET /api/v1/me/summary: the caller's cross-team desk. Only teams they belong to (a platform
   // ADMIN's desk is member-scoped too), and what is waiting on them across those teams.
-  app.get('/summary', { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) }, async (request) => {
+  app.get('/summary', { onRequest: requireAuth() }, async (request) => {
     const user = requireUser(request);
     const dueSoonHours = await readDueSoonHours(request.log);
     return buildMeSummary({
@@ -45,25 +46,44 @@ export const meRoutes: FastifyPluginAsync = async (fastify) => {
     });
   });
 
-  // GET /api/v1/me/preferences
+  // GET /api/v1/me/permissions[?teamId=]: what the caller may do, from the same resolver the routes
+  // use. Open to any signed-in person because it describes only their own standing. With `teamId`
+  // it is narrowed to that team and includes capabilities held only through organization or
+  // platform authority; a team the caller has no standing on answers 403 whether or not it exists.
   app.get(
-    '/preferences',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
-    async (request) => {
-      const { sub } = requireUser(request);
-      const user = await fastify.prisma.user.findUniqueOrThrow({
-        select: { preferences: true },
-        where: { id: sub },
-      });
-      return { preferences: user.preferences };
+    '/permissions',
+    {
+      onRequest: requireAuth(),
+      schema: { querystring: z.object({ teamId: z.string().uuid().optional() }) },
+    },
+    async (request, reply) => {
+      const answer = await loadEffectivePermissions(
+        fastify.prisma,
+        requireUser(request),
+        request.query.teamId
+      );
+      if (!answer.ok) {
+        return reply.status(answer.status).send({ error: answer.error });
+      }
+      return answer.body;
     }
   );
+
+  // GET /api/v1/me/preferences
+  app.get('/preferences', { onRequest: requireAuth() }, async (request) => {
+    const { sub } = requireUser(request);
+    const user = await fastify.prisma.user.findUniqueOrThrow({
+      select: { preferences: true },
+      where: { id: sub },
+    });
+    return { preferences: user.preferences };
+  });
 
   // PATCH /api/v1/me/preferences
   app.patch(
     '/preferences',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { body: PreferencesBodySchema },
     },
     async (request) => {
@@ -91,24 +111,20 @@ export const meRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /api/v1/me/mcp-grants: the MCP clients the caller has authorised. `mcp` carries the
   // operator switches the consent screen and the settings page need to tell the user what
   // can be granted; reading it here keeps the OAuth endpoints themselves free of lookups.
-  app.get(
-    '/mcp-grants',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
-    async (request) => {
-      const { sub } = requireUser(request);
-      const [grants, settings] = await Promise.all([
-        listMcpGrants(fastify.prisma, sub),
-        resolveSettings(['mcp.enabled', 'mcp.writeToolsEnabled']),
-      ]);
-      return {
-        data: grants,
-        mcp: {
-          enabled: settings['mcp.enabled'],
-          writeToolsEnabled: settings['mcp.writeToolsEnabled'],
-        },
-      };
-    }
-  );
+  app.get('/mcp-grants', { onRequest: requireAuth() }, async (request) => {
+    const { sub } = requireUser(request);
+    const [grants, settings] = await Promise.all([
+      listMcpGrants(fastify.prisma, sub),
+      resolveSettings(['mcp.enabled', 'mcp.writeToolsEnabled']),
+    ]);
+    return {
+      data: grants,
+      mcp: {
+        enabled: settings['mcp.enabled'],
+        writeToolsEnabled: settings['mcp.writeToolsEnabled'],
+      },
+    };
+  });
 
   // DELETE /api/v1/me/mcp-grants/:clientId: the caller's own grant to one client, durably
   // (refresh and access tokens included). Deliberately independent of `mcp.enabled`: a user
@@ -116,7 +132,7 @@ export const meRoutes: FastifyPluginAsync = async (fastify) => {
   app.delete(
     '/mcp-grants/:clientId',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: z.object({ clientId: z.string().min(1).max(256) }) },
     },
     async (request, reply) => {

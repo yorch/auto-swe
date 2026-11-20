@@ -328,6 +328,7 @@ const MCP_ROUTE_FILE = 'packages/gateway/src/routes/mcp.ts';
 const ALLOWED_PACKAGES = new Set([
   '@auto-swe/shared/lib/agentRun',
   '@auto-swe/shared/lib/gitRef',
+  '@auto-swe/shared/permissions/roles',
   '@modelcontextprotocol/server',
   'better-auth/node',
   'fastify',
@@ -1553,6 +1554,282 @@ function checkProviderCodeLivesInScm() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// INVARIANT 13 — authorization is never decided by comparing a role value.
+//
+// Who may do what is the permissions module's answer (`can()`, `useCan`, `isPlatformAdmin`,
+// `actingRank`, the capability catalog and its constraints), and stored role values are read in
+// `packages/shared/src/permissions/` alone. A route, a service or a component that writes
+// `membership.role === 'ADMIN'`, `['LEAD', 'ADMIN'].includes(role)`, `roleMeets(…)` or a Prisma
+// filter `role: { in: ['LEAD', 'ADMIN'] }` re-decides who counts as an administrator beside the
+// catalog. Both sides are strings, so it type-checks, passes its own test and works; nothing fails
+// when the next feature quietly disagrees with the capability matrix. Fails on, in
+// `packages/*/src` (tests, test-helper directories, generated Prisma code and the permissions
+// module excluded):
+//   (a) a comparison (`===`, `!==`, `==`, `!=`, a `switch` case, `.includes(` / `.has(` on an inline
+//       list) between a `role`/`*Role`-named expression and a role literal or a
+//       `PlatformRole`/`TeamRole`/`OrgRole`/`Role` member;
+//   (b) a call to `hasRole(`, `roleMeets(`, `isOrgAdmin(` or `hasOrgRole(`;
+//   (c) the identifiers `LEAD_ROLES` and `TEAM_LEAD_ROLES`;
+//   (d) a Prisma FILTER on a `role` key whose value is a role literal or `{ in: [literals] }`. A
+//       WRITE (`role: 'ADMIN'` inside `data`, `create` or `update`) is not a decision and is
+//       allowed: the nearest enclosing `data`/`create`/`update`/`createMany` key marks a write,
+//       the nearest `where`/`some`/`every`/`none`/`is`/`isNot` marks a filter;
+//   (e) `z.enum([…])` made only of role literals (build it from `PLATFORM_ROLES`, `TEAM_ROLES` or
+//       `ORG_ROLES`).
+// Role literals: ADMIN, LEAD, MEMBER, USER, ENGINEER, ORG_ADMIN, ORG_MEMBER.
+//
+// A tripwire over source text with comments removed. It does not see types, so a `*Role`-typed
+// value under a name that has no "role" in it, a list of roles held in a variable and tested later,
+// an object literal built in one place and used as a `where` in another (no enclosing filter key)
+// and a role compared through a helper of the caller's own are not seen. A standing constraint on a
+// new surface, not a past incident.
+//
+// The few places that compare a role value for a reason that is not authorization are named by
+// FILE and COUNT in ROLE_DECISION_ALLOWLIST below, each with its reason; a file whose offenders
+// number more than its count fails with every one listed, and one with fewer fails as a stale
+// entry.
+// ---------------------------------------------------------------------------
+
+const ROLE_LITERAL_NAMES = [
+  'ADMIN',
+  'LEAD',
+  'MEMBER',
+  'USER',
+  'ENGINEER',
+  'ORG_ADMIN',
+  'ORG_MEMBER',
+].join('|');
+const ROLE_LITERAL = `(?:'(?:${ROLE_LITERAL_NAMES})'|"(?:${ROLE_LITERAL_NAMES})")`;
+const ROLE_ENUM_MEMBER = String.raw`\b(?:PlatformRole|TeamRole|OrgRole|Role)\.[A-Z_]+\b`;
+const ROLE_VALUE = `(?:${ROLE_LITERAL}|${ROLE_ENUM_MEMBER})`;
+/** An expression ending in a `role`/`*Role` name: `x.role`, `m?.orgRole`, `getRole(u)`, `role!`. */
+const ROLE_EXPR = String.raw`(?:[\w$]+\??\.)*[\w$]*[rR]ole\w*!?(?:\([^()]*\))?`;
+const COMPARE_OP = `(?:===|!==|==|!=)`;
+const ROLE_VALUE_LIST = String.raw`\[\s*${ROLE_VALUE}(?:\s*,\s*${ROLE_VALUE})*\s*,?\s*\]`;
+
+const ROLE_COMPARISONS = [
+  new RegExp(String.raw`${ROLE_EXPR}\s*${COMPARE_OP}\s*${ROLE_VALUE}`, 'g'),
+  new RegExp(String.raw`${ROLE_VALUE}\s*${COMPARE_OP}\s*${ROLE_EXPR}`, 'g'),
+  new RegExp(String.raw`${ROLE_VALUE_LIST}\s*(?:as const\s*)?\)?\s*\.(?:includes|has)\(`, 'g'),
+  new RegExp(
+    String.raw`\b[\w$]*[rR]ole\w*\s+in\s+(?:\[|\{|new Set)\s*\(?\s*\[?\s*${ROLE_VALUE}`,
+    'g'
+  ),
+];
+const ROLE_HELPER_CALL = /\b(?:hasRole|roleMeets|isOrgAdmin|hasOrgRole)\s*\(/g;
+const LEAD_ROLES_NAME = /\b(?:LEAD_ROLES|TEAM_LEAD_ROLES)\b/g;
+const ROLE_FILTER = new RegExp(
+  String.raw`\b(?:role|\w+Role)\s*:\s*(?:${ROLE_VALUE}|\{\s*(?:in|notIn|equals|not)\s*:\s*(?:${ROLE_VALUE}|${ROLE_VALUE_LIST}))`,
+  'g'
+);
+const ROLE_ZOD_ENUM = new RegExp(String.raw`\bz\s*\.\s*enum\(\s*${ROLE_VALUE_LIST}`, 'g');
+const ROLE_SWITCH = /\bswitch\s*\(/g;
+const ROLE_CASE = new RegExp(String.raw`\bcase\s+${ROLE_VALUE}\s*:`, 'g');
+
+const WRITE_KEYS = new Set(['data', 'create', 'update', 'createMany']);
+const FILTER_KEYS = new Set(['where', 'some', 'every', 'none', 'is', 'isNot']);
+
+/**
+ * Per-file allowance for role comparisons that are not authorization, `{ count, reason }` each.
+ * Every entry compares the author of a stored chat message (`USER` against `ASSISTANT` /
+ * `ORCHESTRATOR` / `SYSTEM`), a column that merely shares the name `role` with the membership
+ * models. Nothing here decides what a person may do.
+ */
+export const ROLE_DECISION_ALLOWLIST = new Map([
+  [
+    'packages/web/src/components/assistant/AssistantPanel.tsx',
+    { count: 1, reason: 'renders a chat message by its author (USER vs ASSISTANT)' },
+  ],
+  [
+    'packages/web/src/components/orchestrations/ConversationColumn.tsx',
+    { count: 1, reason: 'aligns a chat message by its author (USER vs ORCHESTRATOR/SYSTEM)' },
+  ],
+  [
+    'packages/worker/src/activities/assistantTurn.ts',
+    {
+      count: 2,
+      reason: 'reads the latest chat message author and maps it to a model-message role',
+    },
+  ],
+  [
+    'packages/worker/src/lib/orchestrationContext.ts',
+    { count: 1, reason: 'selects the launcher-authored chat rows of an orchestration' },
+  ],
+  [
+    'packages/gateway/src/routes/assistantConversations.ts',
+    { count: 1, reason: 'filters assistant chat rows by author (USER)' },
+  ],
+  [
+    'packages/worker/src/activities/orchestrationTurn.ts',
+    { count: 1, reason: 'filters orchestration chat rows by author (USER)' },
+  ],
+]);
+
+/** Is `file` (repo-relative) role-scanned: package source that is not a test, helper or generated? */
+export function isRoleScannedFile(file) {
+  const f = posixPath(file);
+  return (
+    /^packages\/[^/]+\/src\//.test(f) &&
+    SOURCE_EXTENSION.test(f) &&
+    !TEST_FILE.test(f) &&
+    !/\/(?:test|__tests__|generated)\//.test(f) &&
+    !f.startsWith('packages/shared/src/permissions/')
+  );
+}
+
+/** The index of the bracket closing the one at `open`, or -1. */
+function matchingClose(code, open) {
+  const pairs = { '(': ')', '[': ']', '{': '}' };
+  let depth = 0;
+  for (let i = open; i < code.length; i++) {
+    if ('([{'.includes(code[i])) {
+      depth++;
+    } else if (')]}'.includes(code[i])) {
+      depth--;
+      if (depth === 0) {
+        return code[i] === pairs[code[open]] ? i : -1;
+      }
+    }
+  }
+  return -1;
+}
+
+/**
+ * Whether the object literal around `idx` is a Prisma write, a filter or neither (`null`): the
+ * nearest enclosing named key that is one of WRITE_KEYS / FILTER_KEYS decides. Array elements and
+ * other keys (`team`, `memberships`) are climbed through.
+ */
+function objectContext(code, idx) {
+  let depth = 0;
+  for (let i = idx - 1; i >= 0; i--) {
+    if (code[i] === '}') {
+      depth++;
+    } else if (code[i] === '{') {
+      if (depth > 0) {
+        depth--;
+        continue;
+      }
+      const key = /([\w$]+)\s*:\s*$/.exec(code.slice(Math.max(0, i - 80), i));
+      if (key && WRITE_KEYS.has(key[1])) {
+        return 'write';
+      }
+      if (key && FILTER_KEYS.has(key[1])) {
+        return 'filter';
+      }
+    }
+  }
+  return null;
+}
+
+/** Violations in one file: `{ line, text, kind }` each, after the file's allowlist entry. */
+export function roleDecisionViolations(file, src, allowlist = ROLE_DECISION_ALLOWLIST) {
+  const f = posixPath(file);
+  if (!isRoleScannedFile(f)) {
+    return [];
+  }
+  const code = stripComments(src);
+  const lines = src.split('\n');
+  const lineOf = (index) => code.slice(0, index).split('\n').length;
+  const seen = new Set();
+  const found = [];
+  const add = (index, kind) => {
+    const line = lineOf(index);
+    if (!seen.has(`${line}:${kind}`)) {
+      seen.add(`${line}:${kind}`);
+      found.push({ kind, line, text: (lines[line - 1] ?? '').trim() });
+    }
+  };
+  for (const re of ROLE_COMPARISONS) {
+    for (const m of code.matchAll(re)) {
+      add(m.index, 'comparison');
+    }
+  }
+  for (const m of code.matchAll(ROLE_HELPER_CALL)) {
+    add(m.index, 'role-helper');
+  }
+  for (const m of code.matchAll(LEAD_ROLES_NAME)) {
+    add(m.index, 'lead-roles');
+  }
+  for (const m of code.matchAll(ROLE_FILTER)) {
+    if (objectContext(code, m.index) === 'filter') {
+      add(m.index, 'filter');
+    }
+  }
+  for (const m of code.matchAll(ROLE_ZOD_ENUM)) {
+    const close = matchingClose(code, code.indexOf('(', m.index));
+    const body = close < 0 ? '' : code.slice(code.indexOf('[', m.index), close);
+    if (new RegExp(`^${ROLE_VALUE_LIST}\\s*$`).test(body)) {
+      add(m.index, 'zod-enum');
+    }
+  }
+  for (const m of code.matchAll(ROLE_SWITCH)) {
+    const open = m.index + m[0].length - 1;
+    const close = matchingClose(code, open);
+    if (close < 0 || !new RegExp(`${ROLE_EXPR}\\s*$`).test(code.slice(open + 1, close))) {
+      continue;
+    }
+    const braceOpen = code.indexOf('{', close);
+    const braceClose = braceOpen < 0 ? -1 : matchingClose(code, braceOpen);
+    if (braceClose < 0) {
+      continue;
+    }
+    for (const c of code.slice(braceOpen, braceClose).matchAll(ROLE_CASE)) {
+      add(braceOpen + c.index, 'switch-case');
+    }
+  }
+  found.sort((a, b) => a.line - b.line);
+  const allowed = allowlist.get(f)?.count ?? 0;
+  if (found.length > allowed) {
+    return found;
+  }
+  if (found.length < allowed) {
+    return [
+      {
+        kind: 'stale-allowlist',
+        line: 1,
+        text: `ROLE_DECISION_ALLOWLIST allows ${allowed} here but the file has ${found.length}`,
+      },
+    ];
+  }
+  return [];
+}
+
+function checkNoAuthorizationByRoleValue() {
+  const files = [];
+  for (const pkg of readdirSync(join(ROOT, 'packages'))) {
+    if (existsSync(join(ROOT, 'packages', pkg, 'src'))) {
+      files.push(...walk(join('packages', pkg, 'src'), isRoleScannedFile));
+    }
+  }
+  for (const file of ROLE_DECISION_ALLOWLIST.keys()) {
+    if (!existsSync(join(ROOT, file))) {
+      fail(
+        file,
+        1,
+        'no-authorization-by-role-value',
+        'allowlisted file does not exist',
+        'Remove it.'
+      );
+    }
+  }
+  for (const file of files) {
+    for (const v of roleDecisionViolations(file, read(file))) {
+      fail(
+        file,
+        v.line,
+        'no-authorization-by-role-value',
+        v.kind === 'stale-allowlist' ? v.text : `${v.kind}: ${v.text.slice(0, 140)}`,
+        v.kind === 'stale-allowlist'
+          ? 'Lower or remove the entry in ROLE_DECISION_ALLOWLIST (scripts/check-invariants.mjs).'
+          : 'Ask the permissions module (can(), useCan, isPlatformAdmin, actingRank, teamRolesAtLeast / ' +
+              'orgRolesAtLeast for a Prisma filter, PLATFORM_ROLES / TEAM_ROLES / ORG_ROLES for a ' +
+              'schema) instead of comparing a role value. See docs/permissions.md.'
+      );
+    }
+  }
+}
+
 function main() {
   checkWorkspaceImageLiterals();
   checkDockerfileYarnProvisioning();
@@ -1567,6 +1844,7 @@ function main() {
   checkNoImmediateMerge();
   checkSlackMessageWriters();
   checkProviderCodeLivesInScm();
+  checkNoAuthorizationByRoleValue();
   report();
 }
 
@@ -1584,7 +1862,7 @@ function report() {
     process.exit(1);
   }
 
-  console.log('Invariant check passed — 12 invariants, no violations.');
+  console.log('Invariant check passed — 13 invariants, no violations.');
   console.log('  workspace image is inherited, never written inline at a call site');
   console.log('  every Dockerfile stage that runs yarn provides one first, and no other does');
   console.log('  the root layout renders per request when it reads NEXT_PUBLIC_* at runtime');
@@ -1606,6 +1884,7 @@ function report() {
     '  Slack messages are sent only through known writers, and the worker defuses broadcasts'
   );
   console.log("  another SCM provider's API client lives in worker/src/lib/scm/, nowhere else");
+  console.log('  authorization is never decided by comparing a role value outside permissions/');
 }
 
 const invokedDirectly =

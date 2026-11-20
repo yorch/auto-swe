@@ -3,13 +3,12 @@
 import NotFound from '@/app/not-found';
 import { TeamManagePanel } from '@/components/teams/space/TeamManagePanel';
 import { useTeamSpace } from '@/components/teams/space/TeamSpaceContext';
-import { canSeeTeamManage } from '@/lib/teamSpace';
-import { useAuthStore } from '@/stores/authStore';
+import { useCan } from '@/hooks/useCan';
 
 export default function TeamManagePage() {
   const { canManageBudget, team } = useTeamSpace();
-  const platformRole = useAuthStore((s) => s.user?.role);
-  if (!canSeeTeamManage(platformRole, team.myRole)) {
+  const canSeeManage = useCan('team.attention.read', { orgId: team.orgId, teamId: team.id });
+  if (!canSeeManage) {
     return <NotFound />;
   }
   return <TeamManagePanel canManageBudget={canManageBudget} team={team} />;

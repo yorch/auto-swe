@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ProductTour } from '@/components/tour/ProductTour';
 import { restoreTourFocus, TOUR_SEEN_KEY } from '@/components/tour/tourSupport';
+import { useTourSteps } from '@/components/tour/useTourSteps';
 import { BUTTON_STYLE, buttonClassName } from '@/components/ui/Button';
 import {
   DISMISSED_CHANGE_EVENT,
@@ -10,7 +11,6 @@ import {
   useDismissed,
   writeDismissed,
 } from '@/lib/dismissed';
-import { buildTourSteps } from '@/lib/tourSteps';
 import { useAuthStore } from '@/stores/authStore';
 
 export { TOUR_SEEN_KEY };
@@ -21,8 +21,7 @@ export { TOUR_SEEN_KEY };
  * again", and focus returns to this button. Leaving the page mid-tour records it as seen too.
  */
 export function TourLauncher() {
-  const role = useAuthStore((s) => s.user?.role);
-  const steps = useMemo(() => buildTourSteps(role), [role]);
+  const steps = useTourSteps();
   const { ready, dismissed, dismiss } = useDismissed(TOUR_SEEN_KEY);
   const [running, setRunning] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);

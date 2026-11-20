@@ -4,10 +4,12 @@ import {
   verifyReportDigestUnsubscribeToken,
 } from '@auto-swe/shared/lib/reportDigestUnsubscribe';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import type { FastifyPluginAsync, FastifyReply } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { auditContextOf } from '../lib/auditContext.js';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { can, heldScope } from '../lib/authz.js';
 import { registerFormBodyParser } from '../lib/formBody.js';
 import { claimReportDigestTestSend } from '../lib/reportDigestRateLimit.js';
 import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
@@ -26,6 +28,13 @@ const bodySchema = z
   .strict();
 const createBodySchema = bodySchema.omit({ confirmOptedOutReadd: true });
 const MAX_SUBSCRIPTIONS_PER_SCOPE = 5;
+/** A subscription with no scope identifier is nobody's to manage. */
+const NOT_AUTHORIZED = {
+  allowed: false,
+  code: 'FORBIDDEN',
+  missing: 'team.digests.manage',
+  reason: 'the subscription names no scope',
+} as const;
 const unsubscribeQuerySchema = z.object({ token: z.string().min(1).max(256) });
 const unsubscribeBodySchema = z.object({ 'List-Unsubscribe': z.literal('One-Click') }).strict();
 
@@ -43,7 +52,9 @@ function setUnsubscribeResponseHeaders(reply: FastifyReply): void {
 
 export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const auth = requireAuth({ requiredRole: 'ENGINEER' });
+  // Who may manage a digest depends on its scope (an organization's, a team's), so each handler
+  // asks the matching capability itself.
+  const auth = requireAuth({ handlerChecked: ['org.digests.manage', 'team.digests.manage'] });
 
   try {
     registerFormBodyParser(fastify);
@@ -83,7 +94,12 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/unsubscribe',
     {
-      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+      config: {
+        authz: 'public',
+        publicReason:
+          'signed unsubscribe token (HMAC) per subscription and recipient, verified in the handler',
+        rateLimit: { max: 30, timeWindow: '1 minute' },
+      },
       schema: { querystring: unsubscribeQuerySchema },
     },
     async (request, reply) => {
@@ -104,7 +120,12 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/unsubscribe',
     {
-      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+      config: {
+        authz: 'public',
+        publicReason:
+          'signed unsubscribe token (HMAC) per subscription and recipient, verified in the handler',
+        rateLimit: { max: 30, timeWindow: '1 minute' },
+      },
       schema: { body: unsubscribeBodySchema, querystring: unsubscribeQuerySchema },
     },
     async (request, reply) => {
@@ -139,60 +160,31 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  const membershipScopes = async (userId: string) => {
-    const [orgs, teams] = await runUnscoped(
-      'digest scope authorization reads the caller memberships',
-      ['OrganizationMembership', 'TeamMembership'],
-      () =>
-        Promise.all([
-          fastify.prisma.organizationMembership.findMany({
-            select: { orgId: true },
-            where: { role: 'ORG_ADMIN', userId },
-          }),
-          fastify.prisma.teamMembership.findMany({
-            select: { role: true, teamId: true },
-            where: { role: { in: ['LEAD', 'ADMIN'] }, userId },
-          }),
-        ])
-    );
-    const orgTeamIds = orgs.length
-      ? await runUnscoped('digest scope authorization resolves organization teams', ['Team'], () =>
-          fastify.prisma.team.findMany({
-            select: { id: true },
-            where: { orgId: { in: orgs.map(({ orgId }) => orgId) } },
-          })
-        )
-      : [];
-    return {
-      orgIds: orgs.map(({ orgId }) => orgId),
-      teamIds: [
-        ...new Set([...teams.map(({ teamId }) => teamId), ...orgTeamIds.map(({ id }) => id)]),
-      ],
-    };
+  /**
+   * The organizations and teams whose digests the caller manages. A team lead holds
+   * `team.digests.manage` on their team and an organization admin on every team of their
+   * organization (a governance capability), so the same set backs the list and the checks below.
+   */
+  const heldScopes = async (request: FastifyRequest) => {
+    const [teams, orgs] = await Promise.all([
+      heldScope(request, 'team.digests.manage'),
+      heldScope(request, 'org.digests.manage'),
+    ]);
+    return { all: teams.all || orgs.all, orgIds: orgs.orgIds, teamIds: teams.teamIds };
   };
 
   const canManage = async (
-    user: { role: string; sub: string },
+    request: FastifyRequest,
     subscription: { orgId: string | null; scope: string; teamId: string | null }
   ) => {
-    if (user.role === 'ADMIN') {
-      return true;
-    }
-    const scopes = await membershipScopes(user.sub);
     if (subscription.scope === 'ORGANIZATION') {
-      return !!subscription.orgId && scopes.orgIds.includes(subscription.orgId);
+      return subscription.orgId
+        ? await can(request, 'org.digests.manage', { orgId: subscription.orgId })
+        : NOT_AUTHORIZED;
     }
-    if (subscription.teamId && scopes.teamIds.includes(subscription.teamId)) {
-      return true;
-    }
-    if (!subscription.teamId || !scopes.orgIds.length) {
-      return false;
-    }
-    const team = await fastify.prisma.team.findUnique({
-      select: { orgId: true },
-      where: { id: subscription.teamId },
-    });
-    return !!team?.orgId && scopes.orgIds.includes(team.orgId);
+    return subscription.teamId
+      ? await can(request, 'team.digests.manage', { teamId: subscription.teamId })
+      : NOT_AUTHORIZED;
   };
 
   const validateSubscription = async (value: {
@@ -284,8 +276,7 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
     );
 
   app.get('/', { onRequest: auth }, async (request) => {
-    const user = requireUser(request);
-    const scopes = await membershipScopes(user.sub);
+    const scopes = await heldScopes(request);
     const OR = [
       ...(scopes.orgIds.length ? [{ orgId: { in: scopes.orgIds } }] : []),
       ...(scopes.teamIds.length ? [{ teamId: { in: scopes.teamIds } }] : []),
@@ -298,31 +289,30 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
           fastify.prisma.reportDigestSubscription.findMany({
             include: { organization: true, slackChannel: true, team: true },
             orderBy: { createdAt: 'desc' },
-            where: user.role === 'ADMIN' ? undefined : { OR },
+            where: scopes.all ? undefined : { OR },
           })
       ),
       fastify.prisma.organization.findMany({
         orderBy: { name: 'asc' },
         select: { id: true, name: true },
-        where: user.role === 'ADMIN' ? undefined : { id: { in: scopes.orgIds } },
+        where: scopes.all ? undefined : { id: { in: scopes.orgIds } },
       }),
       runUnscoped('authorized users list manageable digest teams', ['Team'], () =>
         fastify.prisma.team.findMany({
           orderBy: { name: 'asc' },
           select: { id: true, name: true, orgId: true },
-          where: user.role === 'ADMIN' ? undefined : { id: { in: scopes.teamIds } },
+          where: scopes.all ? undefined : { id: { in: scopes.teamIds } },
         })
       ),
       runUnscoped('authorized users list manageable digest channels', ['SlackChannel'], () =>
         fastify.prisma.slackChannel.findMany({
           orderBy: { name: 'asc' },
           select: { id: true, name: true, orgId: true, teamId: true },
-          where:
-            user.role === 'ADMIN'
-              ? undefined
-              : {
-                  OR: [{ orgId: { in: scopes.orgIds } }, { teamId: { in: scopes.teamIds } }],
-                },
+          where: scopes.all
+            ? undefined
+            : {
+                OR: [{ orgId: { in: scopes.orgIds } }, { teamId: { in: scopes.teamIds } }],
+              },
         })
       ),
     ]);
@@ -330,7 +320,7 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
       data: {
         channels,
         organizations,
-        subscriptions: OR.length || user.role === 'ADMIN' ? subscriptions : [],
+        subscriptions: OR.length || scopes.all ? subscriptions : [],
         teams,
       },
     };
@@ -362,7 +352,7 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
     const candidate = { orgId, scope: body.scope, teamId };
-    if (!(await canManage(user, candidate))) {
+    if (!(await canManage(request, candidate)).allowed) {
       return reply.status(403).send({ error: 'Digest scope access is not authorized' });
     }
     if (body.scope === 'ORGANIZATION' && !(await orgWideReportsEnabled(orgId))) {
@@ -399,7 +389,7 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
       if (!existing) {
         return reply.status(404).send({ error: 'Digest subscription not found' });
       }
-      if (!(await canManage(user, existing))) {
+      if (!(await canManage(request, existing)).allowed) {
         return reply.status(403).send({ error: 'Digest scope access is not authorized' });
       }
       const value = {
@@ -421,7 +411,8 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
             : {}),
         });
       }
-      if (!(await canManage(user, value))) {
+      const decision = await canManage(request, value);
+      if (!decision.allowed) {
         return reply.status(403).send({ error: 'Digest scope access is not authorized' });
       }
       if (value.scope === 'ORGANIZATION' && !(await orgWideReportsEnabled(value.orgId))) {
@@ -498,6 +489,7 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
             after: { readdedRecipients },
             before: { optedOutRecipients: readdedRecipients },
             client: tx,
+            context: { ...auditContextOf(request), authority: decision.authority },
             entityId: existing.id,
             entityType: 'ReportDigestSubscription',
           });
@@ -512,14 +504,13 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id',
     { onRequest: auth, schema: { params: paramsSchema } },
     async (request, reply) => {
-      const user = requireUser(request);
       const existing = await fastify.prisma.reportDigestSubscription.findUnique({
         where: { id: request.params.id },
       });
       if (!existing) {
         return reply.status(404).send({ error: 'Digest subscription not found' });
       }
-      if (!(await canManage(user, existing))) {
+      if (!(await canManage(request, existing)).allowed) {
         return reply.status(403).send({ error: 'Digest scope access is not authorized' });
       }
       await fastify.prisma.reportDigestSubscription.delete({ where: { id: existing.id } });
@@ -531,14 +522,13 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id/send-test',
     { onRequest: auth, schema: { params: paramsSchema } },
     async (request, reply) => {
-      const user = requireUser(request);
       const existing = await fastify.prisma.reportDigestSubscription.findUnique({
         where: { id: request.params.id },
       });
       if (!existing) {
         return reply.status(404).send({ error: 'Digest subscription not found' });
       }
-      if (!(await canManage(user, existing))) {
+      if (!(await canManage(request, existing)).allowed) {
         return reply.status(403).send({ error: 'Digest scope access is not authorized' });
       }
       if (existing.scope === 'ORGANIZATION' && !(await orgWideReportsEnabled(existing.orgId))) {

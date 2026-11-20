@@ -1,5 +1,5 @@
-import { Role } from '@auto-swe/shared';
-import { resolveSettings, roleMeets } from '@auto-swe/shared/config';
+import type { PlatformRole } from '@auto-swe/shared';
+import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import type { AccessLog } from '@auto-swe/shared/lib/accessActor';
 import {
@@ -20,6 +20,7 @@ import {
   resolveRunPlanAgentPins,
   specAgentKeys,
 } from '@auto-swe/shared/lib/runPlanAgentPins';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import {
   migrateSpec,
@@ -107,7 +108,7 @@ export type LauncherAccessCheck = (
 
 /**
  * Re-take the launch decision for the person the run acts as: the approval is days or minutes old,
- * and a person who was deactivated, demoted below ENGINEER, removed from the repository's teams or
+ * and a person who was deactivated, removed from the repository's teams or
  * org, or lost GitHub access since is refused here. Same shared decision the gateway and a
  * scheduled fire take (`decideRepoAccess`), so the three cannot disagree about what "may launch"
  * means.
@@ -123,9 +124,6 @@ export const assertLauncherStillAuthorized: LauncherAccessCheck = async (
   });
   if (!user?.isActive) {
     throw refuse('PLAN_LAUNCHER_INACTIVE', 'the person who approved the plan is no longer active');
-  }
-  if (!roleMeets(user.role as Role, Role.ENGINEER)) {
-    throw refuse('PLAN_LAUNCHER_ROLE', 'the person who approved the plan no longer has the role');
   }
   const repo = await db.connection.findUnique({
     select: {
@@ -166,7 +164,7 @@ export const assertLauncherStillAuthorized: LauncherAccessCheck = async (
   }
   const verdict = await decideRepoAccess(
     db as never,
-    { role: user.role as Role, sub: user.id },
+    { role: user.role as PlatformRole, sub: user.id },
     repo,
     gate,
     ACCESS_LOG,
@@ -179,7 +177,7 @@ export const assertLauncherStillAuthorized: LauncherAccessCheck = async (
       REPO_ACCESS_REFUSAL_MESSAGE[verdict.reason] ?? 'the launcher cannot use the repository'
     );
   }
-  if (user.role !== Role.ADMIN) {
+  if (!isPlatformAdmin(user)) {
     const membership = await db.organizationMembership.findUnique({
       select: { userId: true },
       where: { userId_orgId: { orgId: repo.team.orgId, userId: user.id } },

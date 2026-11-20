@@ -16,9 +16,16 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   useSearchParams: () => new URLSearchParams(nav.query),
 }));
+// The person may write templates on no listed team; a platform admin is told by `admin`.
+vi.mock('@/hooks/useEffectivePermissions', async () =>
+  (await import('@/test/permissions')).permissionsMock()
+);
+vi.mock('@/hooks/useCan', () => ({
+  useCanOnTeams: () => () => false,
+  usePlatformAdmin: () => false,
+}));
 vi.mock('@/hooks/useTeams', () => ({
   useAuthoringTeams: () => state.authoring,
-  useLedTeamIds: () => new Set<string>(),
   useTeams: () => ({ data: state.member, isLoading: false }),
 }));
 vi.mock('@/hooks/useTemplates', () => ({
@@ -36,7 +43,6 @@ vi.mock('@/hooks/useTemplates', () => ({
   }),
 }));
 
-import { useAuthStore } from '@/stores/authStore';
 import { stubDialogPrototype } from '@/test/rtl-helpers';
 import TemplatesPage from './page';
 
@@ -141,7 +147,6 @@ describe('Workflow library', () => {
   it('offers blank creation inside the one New workflow dialog', async () => {
     state.templates = [base];
     state.authoring = { global: true, isLoading: false, teams: [] };
-    useAuthStore.setState({ user: { role: 'ADMIN' } } as never);
     render(<TemplatesPage />);
     fireEvent.click(screen.getByRole('button', { name: 'New workflow' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Blank' }));
@@ -156,7 +161,6 @@ describe('Workflow library', () => {
       isLoading: false,
       teams: [{ id: 'team-1', name: 'Payments' }],
     };
-    useAuthStore.setState({ user: { role: 'ADMIN' } } as never);
     render(<TemplatesPage />);
     fireEvent.click(screen.getByRole('button', { name: 'New workflow' }));
     const dialog = await screen.findByRole('dialog');
@@ -175,7 +179,6 @@ describe('Workflow library', () => {
         { id: 'team-2', name: 'Data' },
       ],
     };
-    useAuthStore.setState({ user: { role: 'LEAD' } } as never);
     idle.mutateAsync.mockResolvedValue({ data: { id: 'new-1' } });
     render(<TemplatesPage />);
     fireEvent.click(screen.getByRole('button', { name: 'New workflow' }));
@@ -210,7 +213,6 @@ describe('Workflow library', () => {
       ],
     };
     nav.query = 'team=payments';
-    useAuthStore.setState({ user: { role: 'LEAD' } } as never);
     render(<TemplatesPage />);
     expect(screen.getByTestId('team-chip').textContent).toContain('Payments');
     fireEvent.click(screen.getByRole('button', { name: 'New workflow' }));
@@ -220,7 +222,6 @@ describe('Workflow library', () => {
 
   it('keeps New workflow off for someone who leads no team', () => {
     state.templates = [base];
-    useAuthStore.setState({ user: { role: 'LEAD' } } as never);
     render(<TemplatesPage />);
     expect(
       (screen.getByRole('button', { name: 'New workflow' }) as HTMLButtonElement).disabled
@@ -231,19 +232,17 @@ describe('Workflow library', () => {
   it('does not state a reason for New workflow while the teams are still loading', () => {
     state.templates = [base];
     state.authoring = { global: false, isLoading: true, teams: [] };
-    useAuthStore.setState({ user: { role: 'ENGINEER' } } as never);
     render(<TemplatesPage />);
     expect(screen.queryByText(/lead a team to author workflows for it/i)).toBeNull();
   });
 
-  it('turns New workflow on for a platform ENGINEER who leads a team: the team role decides', () => {
+  it('turns New workflow on for someone the server lets author for a team', () => {
     state.templates = [base];
     state.authoring = {
       global: false,
       isLoading: false,
       teams: [{ id: 'team-1', name: 'Payments' }],
     };
-    useAuthStore.setState({ user: { role: 'ENGINEER' } } as never);
     render(<TemplatesPage />);
     expect(
       (screen.getByRole('button', { name: 'New workflow' }) as HTMLButtonElement).disabled

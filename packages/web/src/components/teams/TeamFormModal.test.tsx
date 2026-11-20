@@ -4,14 +4,36 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, api } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
+import {
+  ADMIN_PERMISSIONS,
+  permissionsFor,
+  resetPermissions,
+  setPermissions,
+} from '@/test/permissions';
 import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import { TeamFormModal } from './TeamFormModal';
 
+vi.mock('@/hooks/useEffectivePermissions', async () =>
+  (await import('@/test/permissions')).permissionsMock()
+);
+
 beforeEach(() => {
   stubDialogPrototype();
-  useAuthStore.setState({ isAuthenticated: true, user: { role: 'ADMIN', sub: 'me' } });
+  useAuthStore.setState({ isAuthenticated: true, user: { role: 'USER', sub: 'me' } });
+  setPermissions(ADMIN_PERMISSIONS);
 });
+
+/** The organizations the server says the person may create teams in (`org.teams.create`). */
+const permissions = (creates: string[], reads: string[] = []) =>
+  permissionsFor({
+    orgs: [
+      ...creates.map((orgId) => ({ capabilities: ['org.teams.create' as const], orgId })),
+      ...reads.map((orgId) => ({ capabilities: ['org.read' as const], orgId })),
+    ],
+  });
+
 afterEach(() => {
+  resetPermissions();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -102,13 +124,13 @@ describe('TeamFormModal — organization admin', () => {
   });
 
   it('skips the single-org picker, defaults admin to creator and uses the scoped endpoint', async () => {
-    useAuthStore.setState({ user: { role: 'ENGINEER', sub: 'me' } });
+    setPermissions(permissions(['o1'], ['o2']));
     const onClose = vi.fn();
     const spy = setupFetchMock({
       '/api/v1/platform/organizations': () => ({
         data: [
-          { id: 'o1', name: 'Acme', role: 'ORG_ADMIN' },
-          { id: 'o2', name: 'Other', role: 'ORG_MEMBER' },
+          { id: 'o1', name: 'Acme' },
+          { id: 'o2', name: 'Other' },
         ],
       }),
       '/api/v1/platform/organizations/o1/members': () => ({ data: [] }),
@@ -123,15 +145,15 @@ describe('TeamFormModal — organization admin', () => {
     expect(bodyOf(spy, '/organizations/o1/teams')).toEqual({ name: 'Payments', slug: 'payments' });
   });
 
-  it('offers only administered orgs and sends the selected first admin', async () => {
-    useAuthStore.setState({ user: { role: 'LEAD', sub: 'me' } });
+  it('offers only the orgs the server lets them create teams in, and sends the selected first admin', async () => {
+    setPermissions(permissions(['o1', 'o2'], ['o3']));
     const onClose = vi.fn();
     const spy = setupFetchMock({
       '/api/v1/platform/organizations': () => ({
         data: [
-          { id: 'o1', name: 'Acme', role: 'ORG_ADMIN' },
-          { id: 'o2', name: 'Beta', role: 'ORG_ADMIN' },
-          { id: 'o3', name: 'Foreign', role: 'ORG_MEMBER' },
+          { id: 'o1', name: 'Acme' },
+          { id: 'o2', name: 'Beta' },
+          { id: 'o3', name: 'Foreign' },
         ],
       }),
       '/api/v1/platform/organizations/o2/members': () => ({

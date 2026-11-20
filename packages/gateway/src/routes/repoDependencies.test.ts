@@ -16,6 +16,7 @@ vi.mock('@auto-swe/shared', () => ({
   Role: ROLE,
 }));
 
+import { emptyStanding, resetStanding, setTeam, withStanding } from '../test/repoStanding.js';
 import { repoDependencyRoutes } from './repoDependencies.js';
 
 interface AuthState {
@@ -70,24 +71,22 @@ async function buildApp() {
     triggerRepoDependencyScanNow: vi.fn(async () => {}),
   };
 
-  app.decorate('prisma', mockPrisma as unknown as never);
+  const standing = emptyStanding();
+  app.decorate('prisma', withStanding(mockPrisma, standing) as unknown as never);
   app.decorate('auth', mockAuth as unknown as never);
   app.decorate('temporal', mockTemporal as unknown as never);
   await app.register(repoDependencyRoutes, { prefix: '/api/v1/repositories' });
   await app.ready();
-  return { app, authState, mockPrisma, mockTemporal };
+  return { app, authState, mockPrisma, mockTemporal, standing };
 }
 
 const AUTH = { authorization: 'Bearer fake' };
 
-/** Make `canManageTeamRepos` (via teamMembership.findUnique) grant these team ids. */
-function leadOf(mockPrisma: Awaited<ReturnType<typeof buildApp>>['mockPrisma'], teamIds: string[]) {
-  mockPrisma.teamMembership.findUnique.mockImplementation(
-    (args: { where: { userId_teamId: { teamId: string } } }) =>
-      teamIds.includes(args.where.userId_teamId.teamId)
-        ? Promise.resolve({ role: 'LEAD', team: { isActive: true } })
-        : Promise.resolve(null)
-  );
+/** Make the caller a lead of these teams, so `team.repos.manage` and `.deps.manage` hold there. */
+function leadOf(ctx: { standing: ReturnType<typeof emptyStanding> }, teamIds: string[]) {
+  for (const teamId of teamIds) {
+    setTeam(ctx.standing, teamId, { role: 'LEAD' });
+  }
 }
 
 describe('repoDependencyRoutes', () => {
@@ -100,6 +99,7 @@ describe('repoDependencyRoutes', () => {
   beforeEach(() => {
     ctx.authState.role = 'LEAD';
     ctx.authState.sub = 'user-1';
+    resetStanding(ctx.standing);
     for (const model of Object.values(ctx.mockPrisma)) {
       for (const fn of Object.values(model)) {
         (fn as ReturnType<typeof vi.fn>).mockReset();
@@ -116,7 +116,7 @@ describe('repoDependencyRoutes', () => {
       ctx.mockPrisma.connection.findUnique
         .mockResolvedValueOnce(repoRow(FROM, TEAM_FROM))
         .mockResolvedValueOnce(repoRow(TO, TEAM_TO));
-      leadOf(ctx.mockPrisma, [TEAM_FROM, TEAM_TO]);
+      leadOf(ctx, [TEAM_FROM, TEAM_TO]);
       ctx.mockPrisma.repoDependency.create.mockResolvedValueOnce({ id: EDGE, status: 'active' });
 
       const res = await ctx.app.inject({
@@ -142,7 +142,7 @@ describe('repoDependencyRoutes', () => {
       ctx.mockPrisma.connection.findUnique
         .mockResolvedValueOnce(repoRow(FROM, TEAM_FROM))
         .mockResolvedValueOnce(repoRow(TO, TEAM_TO));
-      leadOf(ctx.mockPrisma, [TEAM_FROM]); // not TEAM_TO
+      leadOf(ctx, [TEAM_FROM]); // not TEAM_TO
 
       const res = await ctx.app.inject({
         body: { toRepoId: TO },
@@ -185,7 +185,7 @@ describe('repoDependencyRoutes', () => {
       ctx.mockPrisma.connection.findUnique
         .mockResolvedValueOnce(repoRow(FROM, TEAM_FROM))
         .mockResolvedValueOnce(repoRow(TO, TEAM_TO));
-      leadOf(ctx.mockPrisma, [TEAM_FROM, TEAM_TO]);
+      leadOf(ctx, [TEAM_FROM, TEAM_TO]);
       ctx.mockPrisma.repoDependency.create.mockRejectedValueOnce(
         Object.assign(new Error('dup'), { code: 'P2002' })
       );
@@ -204,7 +204,7 @@ describe('repoDependencyRoutes', () => {
       ctx.mockPrisma.connection.findUnique
         .mockResolvedValueOnce(repoRow(FROM, TEAM_FROM))
         .mockResolvedValueOnce(repoRow(TO, TEAM_TO));
-      leadOf(ctx.mockPrisma, []);
+      leadOf(ctx, []);
       const res = await ctx.app.inject({
         body: { toRepoId: TO },
         headers: AUTH,
@@ -220,7 +220,7 @@ describe('repoDependencyRoutes', () => {
       ctx.mockPrisma.connection.findUnique
         .mockResolvedValueOnce(repoRow(FROM, TEAM_FROM))
         .mockResolvedValueOnce(repoRow(TO, TEAM_TO));
-      leadOf(ctx.mockPrisma, [TEAM_FROM]);
+      leadOf(ctx, [TEAM_FROM]);
       const res = await ctx.app.inject({
         body: { toRepoId: TO },
         headers: AUTH,
@@ -236,7 +236,7 @@ describe('repoDependencyRoutes', () => {
       ctx.mockPrisma.connection.findUnique
         .mockResolvedValueOnce(repoRow(FROM, TEAM_FROM))
         .mockResolvedValueOnce(repoRow(TO, TEAM_TO));
-      leadOf(ctx.mockPrisma, [TEAM_FROM, TEAM_TO]);
+      leadOf(ctx, [TEAM_FROM, TEAM_TO]);
       ctx.mockPrisma.repoDependency.create.mockResolvedValueOnce({ id: EDGE, status: 'active' });
       const res = await ctx.app.inject({
         body: { toRepoId: TO },
@@ -259,7 +259,7 @@ describe('repoDependencyRoutes', () => {
       ctx.mockPrisma.connection.findUnique
         .mockResolvedValueOnce(repoRow(FROM, TEAM_FROM))
         .mockResolvedValueOnce(repoRow(TO, TEAM_TO));
-      leadOf(ctx.mockPrisma, [TEAM_TO]);
+      leadOf(ctx, [TEAM_TO]);
     });
 
     it('may dismiss an edge', async () => {
@@ -294,7 +294,7 @@ describe('repoDependencyRoutes', () => {
       ctx.mockPrisma.connection.findUnique
         .mockResolvedValueOnce(repoRow(FROM, TEAM_FROM))
         .mockResolvedValueOnce(repoRow(TO, TEAM_TO));
-      leadOf(ctx.mockPrisma, [TEAM_TO]); // only the depended-upon team
+      leadOf(ctx, [TEAM_TO]); // only the depended-upon team
       ctx.mockPrisma.repoDependency.update.mockResolvedValueOnce({ id: EDGE, status: 'dismissed' });
 
       const res = await ctx.app.inject({
@@ -320,7 +320,7 @@ describe('repoDependencyRoutes', () => {
       ctx.mockPrisma.connection.findUnique
         .mockResolvedValueOnce(repoRow(FROM, TEAM_FROM))
         .mockResolvedValueOnce(repoRow(TO, TEAM_TO));
-      leadOf(ctx.mockPrisma, [TEAM_FROM]); // dependent team only — not the veto holder
+      leadOf(ctx, [TEAM_FROM]); // dependent team only — not the veto holder
 
       const res = await ctx.app.inject({
         body: { status: 'dismissed' },
@@ -343,7 +343,7 @@ describe('repoDependencyRoutes', () => {
       ctx.mockPrisma.connection.findUnique
         .mockResolvedValueOnce(repoRow(FROM, TEAM_FROM))
         .mockResolvedValueOnce(repoRow(TO, TEAM_TO));
-      leadOf(ctx.mockPrisma, [TEAM_TO]);
+      leadOf(ctx, [TEAM_TO]);
       ctx.mockPrisma.repoDependency.update.mockResolvedValueOnce({ id: EDGE, status: 'dismissed' });
 
       const res = await ctx.app.inject({
@@ -366,7 +366,7 @@ describe('repoDependencyRoutes', () => {
       ctx.mockPrisma.connection.findUnique
         .mockResolvedValueOnce(repoRow(FROM, TEAM_FROM))
         .mockResolvedValueOnce(repoRow(TO, TEAM_TO));
-      leadOf(ctx.mockPrisma, [TEAM_TO]);
+      leadOf(ctx, [TEAM_TO]);
       ctx.mockPrisma.repoDependency.delete.mockResolvedValueOnce({ id: EDGE });
 
       const res = await ctx.app.inject({
@@ -535,7 +535,7 @@ describe('repoDependencyRoutes', () => {
   describe('POST /:id/dependencies/infer', () => {
     it('starts inference for a LEAD of the repo own team', async () => {
       ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce(repoRow(FROM, TEAM_FROM));
-      leadOf(ctx.mockPrisma, [TEAM_FROM]);
+      leadOf(ctx, [TEAM_FROM]);
 
       const res = await ctx.app.inject({
         headers: AUTH,
@@ -553,7 +553,7 @@ describe('repoDependencyRoutes', () => {
     it('starts inference for a platform ENGINEER who leads the repo own team', async () => {
       ctx.authState.role = 'ENGINEER';
       ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce(repoRow(FROM, TEAM_FROM));
-      leadOf(ctx.mockPrisma, [TEAM_FROM]);
+      leadOf(ctx, [TEAM_FROM]);
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'POST',
@@ -565,7 +565,7 @@ describe('repoDependencyRoutes', () => {
     it('forbids a platform ENGINEER who leads no team, and starts nothing', async () => {
       ctx.authState.role = 'ENGINEER';
       ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce(repoRow(FROM, TEAM_FROM));
-      leadOf(ctx.mockPrisma, []);
+      leadOf(ctx, []);
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'POST',
@@ -577,7 +577,7 @@ describe('repoDependencyRoutes', () => {
 
     it('forbids a LEAD of some other team — inference costs a model call', async () => {
       ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce(repoRow(FROM, TEAM_FROM));
-      leadOf(ctx.mockPrisma, [TEAM_TO]);
+      leadOf(ctx, [TEAM_TO]);
 
       const res = await ctx.app.inject({
         headers: AUTH,
@@ -594,7 +594,7 @@ describe('repoDependencyRoutes', () => {
       // flight is rejected by Temporal. That is intended, but it must not reach
       // the caller as a 500 when someone double-clicks.
       ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce(repoRow(FROM, TEAM_FROM));
-      leadOf(ctx.mockPrisma, [TEAM_FROM]);
+      leadOf(ctx, [TEAM_FROM]);
       ctx.mockTemporal.startRepoDependencyInference.mockRejectedValueOnce(
         Object.assign(new Error('already started'), {
           name: 'WorkflowExecutionAlreadyStartedError',

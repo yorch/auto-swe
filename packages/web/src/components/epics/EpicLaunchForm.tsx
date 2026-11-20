@@ -12,9 +12,9 @@ import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Textarea';
 import { SearchInput } from '@/components/ui/Toolbar';
+import { useCan } from '@/hooks/useCan';
 import { useCreateEpic } from '@/hooks/useEpics';
 import { useRepositories } from '@/hooks/useRepositories';
-import { useLeadsATeam } from '@/hooks/useTeams';
 import { useIsViewOnly } from '@/hooks/useViewOnlyRepos';
 import { errMsg } from '@/lib/errors';
 import { groupReposByTeam } from '@/lib/repoGroups';
@@ -33,7 +33,7 @@ export function EpicLaunchForm({
   reviewBeforeLaunch?: boolean;
 }) {
   // POST /epics requires LEAD on the owning team of each repository, whatever the platform role.
-  const canCreate = useLeadsATeam();
+  const canCreate = useCan('team.launch.multi-repo');
   const { data: allRepos = [] } = useRepositories();
   // An epic may span only repositories whose owning team the caller leads.
   const scope = useStartScope();

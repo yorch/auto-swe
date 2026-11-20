@@ -141,7 +141,7 @@ describe('agent run settings', () => {
     'workspace.agentRunAllowWorkflowChanges',
   ] as const)('%s is ADMIN-only and not run-pinned', (key) => {
     const def = getSettingDefinition(key);
-    expect(def.requiredRole).toBe('ADMIN');
+    expect(def.writeAccess).toBe('admin');
     expect(def.runPinned).toBe(false);
   });
 

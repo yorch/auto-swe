@@ -135,7 +135,7 @@ export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/security-events',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.audit.read' }),
       schema: { querystring: ListQuery },
     },
     async (request) => {
@@ -208,7 +208,10 @@ export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
   // the window of equal length just before it, so a page can show a trend.
   app.get(
     '/security-events/summary',
-    { onRequest: requireAuth({ requiredRole: 'ADMIN' }), schema: { querystring: WindowQuery } },
+    {
+      onRequest: requireAuth({ capability: 'platform.audit.read' }),
+      schema: { querystring: WindowQuery },
+    },
     async (request) => {
       const { since, until } = request.query;
       const types = Object.keys(TYPE_PREDICATES) as SecurityEventType[];

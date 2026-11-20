@@ -14,11 +14,11 @@ const setting = {
   label: 'Max things',
   overridableAt: ['TEAM'],
   redacted: false,
-  requiredRole: 'ADMIN',
   restartRequired: false,
   runPinned: false,
   source: 'GLOBAL',
   value: 5,
+  writeAccess: 'admin',
 } as unknown as SettingView;
 
 function row(scopeKey: string, onSave = vi.fn()) {
@@ -34,6 +34,68 @@ function row(scopeKey: string, onSave = vi.fn()) {
     />
   );
 }
+
+describe('SettingRow write access', () => {
+  const withAccess = (writeAccess: 'admin' | 'grantable', extra: object = {}) =>
+    ({ ...setting, writeAccess, ...extra }) as unknown as SettingView;
+
+  it('says who may write the setting', () => {
+    const { rerender } = render(
+      <SettingRow
+        canWriteHere
+        onClear={() => {}}
+        onEdit={() => {}}
+        onSave={() => {}}
+        scope="TEAM"
+        scopeKey="TEAM:a"
+        setting={withAccess('admin')}
+      />
+    );
+    expect(screen.getByText('Needs platform admin')).toBeTruthy();
+    rerender(
+      <SettingRow
+        canWriteHere
+        onClear={() => {}}
+        onEdit={() => {}}
+        onSave={() => {}}
+        scope="TEAM"
+        scopeKey="TEAM:a"
+        setting={withAccess('grantable')}
+      />
+    );
+    expect(screen.getByText('Needs platform admin or a grant')).toBeTruthy();
+  });
+
+  it('explains a read-only row by the setting’s write access', () => {
+    render(
+      <SettingRow
+        canWriteHere={false}
+        onClear={() => {}}
+        onEdit={() => {}}
+        onSave={() => {}}
+        scope="GLOBAL"
+        scopeKey="GLOBAL"
+        setting={withAccess('grantable')}
+      />
+    );
+    expect(screen.getByText(/Changing this needs a platform admin or a grant\./)).toBeTruthy();
+  });
+
+  it('names who may read a withheld value', () => {
+    render(
+      <SettingRow
+        canWriteHere={false}
+        onClear={() => {}}
+        onEdit={() => {}}
+        onSave={() => {}}
+        scope="GLOBAL"
+        scopeKey="GLOBAL"
+        setting={withAccess('admin', { redacted: true })}
+      />
+    );
+    expect(screen.getByPlaceholderText('Hidden — platform admin only')).toBeTruthy();
+  });
+});
 
 describe('SettingRow', () => {
   it('shows advisory warnings alongside a successful save', () => {

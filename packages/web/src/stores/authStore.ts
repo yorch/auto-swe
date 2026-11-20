@@ -4,6 +4,7 @@ import { api } from '@/lib/api';
 import { API_BASE, COOKIE_ACCESS_TOKEN, COOKIE_SESSION_MARKER } from '@/lib/config';
 import { resumeUrl } from '@/lib/mcpConsent';
 import { gatewayUnreachableMessage } from '@/lib/networkErrors';
+import { DEFAULT_PLATFORM_ROLE } from '@/lib/roleLabels';
 
 /**
  * Providers driven through better-auth's social routes. `okta` is registered
@@ -220,7 +221,7 @@ async function fetchBetterAuthSession(): Promise<SessionProbe> {
       // Default to true so a stale cache / pre-better-auth user (where
       // isActive may be missing from the response) renders as active.
       isActive: user.isActive ?? true,
-      role: user.role ?? 'ENGINEER',
+      role: user.role ?? DEFAULT_PLATFORM_ROLE,
       sub: user.id,
       ...(user.email ? { email: user.email } : {}),
       ...(user.slackId ? { slackId: user.slackId } : {}),

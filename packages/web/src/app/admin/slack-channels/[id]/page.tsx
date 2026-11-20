@@ -13,8 +13,8 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
+import { useCan } from '@/hooks/useCan';
 import { useEntityTitle } from '@/hooks/useEntityTitle';
-import { useHasRole } from '@/hooks/useHasRole';
 import { useResetChannelBudget, useSlackChannel } from '@/hooks/useSlackChannels';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { ApiError } from '@/lib/api';
@@ -40,7 +40,7 @@ export default function SlackChannelDetailPage({ params }: { params: Promise<{ i
   // The tab lives in the URL so a view can be linked to and survives a reload.
   const { params: query, update } = useUrlFilters();
   // Settings are an administrator's; everyone else reads the channel's other tabs.
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = useCan('platform.slack-channels.manage');
   const tabs = isAdmin ? TABS : TABS.filter((t) => t.id !== 'settings');
   const defaultTab: Tab = isAdmin ? 'settings' : 'memory';
   const rawTab = query.get('tab');

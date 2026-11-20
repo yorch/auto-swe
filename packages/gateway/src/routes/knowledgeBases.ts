@@ -1,8 +1,10 @@
 import type { Prisma } from '@auto-swe/shared';
-import type { FastifyPluginAsync, FastifyReply } from 'fastify';
+import { isPlatformAdmin, userActor } from '@auto-swe/shared/permissions';
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { can } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
 import {
   attachableKnowledgeBaseWhere,
@@ -13,7 +15,6 @@ import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { memberOrgs, memberTeams, reachableConnections } from '../lib/tenantScope.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
-import { canManageTeamRepos } from './repositories.js';
 
 const Id = z.object({ id: z.string().uuid() });
 const Mount = z
@@ -73,8 +74,8 @@ const CreateLink = Target.safeExtend({
 
 function visibleWhere(user: JwtPayload): Prisma.KnowledgeBaseWhereInput {
   return {
-    organization: user.role === 'ADMIN' ? {} : memberOrgs(user),
-    ...(user.role === 'ADMIN'
+    organization: isPlatformAdmin(userActor(user)) ? {} : memberOrgs(user),
+    ...(isPlatformAdmin(userActor(user))
       ? {}
       : {
           OR: [
@@ -88,7 +89,14 @@ function visibleWhere(user: JwtPayload): Prisma.KnowledgeBaseWhereInput {
 
 export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const auth = { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) };
+  const auth = { onRequest: requireAuth() };
+  // Routes whose handler asks the owning team's `team.knowledge-bases.manage` (governance: a team
+  // lead, an admin of the team's organization, or a platform admin).
+  const managed = {
+    onRequest: requireAuth({ handlerChecked: ['team.knowledge-bases.manage'] }),
+  };
+  const canManage = async (request: FastifyRequest, teamId: string) =>
+    (await can(request, 'team.knowledge-bases.manage', { teamId })).allowed;
   const load = (id: string, user: JwtPayload) =>
     fastify.prisma.knowledgeBase.findFirst({
       include: {
@@ -122,7 +130,7 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/knowledge-bases',
     {
-      ...auth,
+      ...managed,
       schema: {
         body: Fields.extend({
           connectionId: z.string().uuid(),
@@ -148,7 +156,7 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
           'A git repository connection is required'
         );
       }
-      if (!(await canManageTeamRepos(fastify.prisma, user, connection.teamId))) {
+      if (!(await canManage(request, connection.teamId))) {
         return sendError(reply, 403, 'FORBIDDEN', 'Owning team LEAD required');
       }
       try {
@@ -184,14 +192,14 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.patch(
     '/knowledge-bases/:id',
-    { ...auth, schema: { body: Fields.partial(), params: Id } },
+    { ...managed, schema: { body: Fields.partial(), params: Id } },
     async (request, reply) => {
       const user = requireUser(request);
       const row = await load(request.params.id, user);
       if (!row) {
         return sendError(reply, 404, 'NOT_FOUND', 'Knowledge base not found');
       }
-      if (!(await canManageTeamRepos(fastify.prisma, user, row.connection.teamId))) {
+      if (!(await canManage(request, row.connection.teamId))) {
         return sendError(reply, 403, 'FORBIDDEN', 'Owning team LEAD required');
       }
       const updated = await fastify.prisma.knowledgeBase.update({
@@ -212,14 +220,14 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.delete(
     '/knowledge-bases/:id',
-    { ...auth, schema: { params: Id } },
+    { ...managed, schema: { params: Id } },
     async (request, reply) => {
       const user = requireUser(request);
       const row = await load(request.params.id, user);
       if (!row) {
         return sendError(reply, 404, 'NOT_FOUND', 'Knowledge base not found');
       }
-      if (!(await canManageTeamRepos(fastify.prisma, user, row.connection.teamId))) {
+      if (!(await canManage(request, row.connection.teamId))) {
         return sendError(reply, 403, 'FORBIDDEN', 'Owning team LEAD required');
       }
       await fastify.prisma.knowledgeBase.delete({ where: { id: row.id } });
@@ -237,7 +245,7 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
   app.put(
     '/knowledge-bases/:id/shares',
     {
-      ...auth,
+      ...managed,
       schema: { body: z.object({ teamIds: z.array(z.string().uuid()).max(100) }), params: Id },
     },
     async (request, reply) => {
@@ -246,7 +254,7 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
       if (!row) {
         return sendError(reply, 404, 'NOT_FOUND', 'Knowledge base not found');
       }
-      if (!(await canManageTeamRepos(fastify.prisma, user, row.connection.teamId))) {
+      if (!(await canManage(request, row.connection.teamId))) {
         return sendError(reply, 403, 'FORBIDDEN', 'Owning team LEAD required');
       }
       const teamIds = [...new Set(request.body.teamIds)];
@@ -284,14 +292,14 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.post(
     '/knowledge-bases/:id/reindex',
-    { ...auth, schema: { params: Id } },
+    { ...managed, schema: { params: Id } },
     async (request, reply) => {
       const user = requireUser(request);
       const row = await load(request.params.id, user);
       if (!row) {
         return sendError(reply, 404, 'NOT_FOUND', 'Knowledge base not found');
       }
-      if (!(await canManageTeamRepos(fastify.prisma, user, row.connection.teamId))) {
+      if (!(await canManage(request, row.connection.teamId))) {
         return sendError(reply, 403, 'FORBIDDEN', 'Owning team LEAD required');
       }
       await fastify.temporal.startKnowledgeBaseIndex(row.id);
@@ -306,7 +314,7 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  async function targetFor(body: z.infer<typeof Target>, user: JwtPayload) {
+  async function targetFor(body: z.infer<typeof Target>, request: FastifyRequest) {
     let teamId: string | null = null;
     if (body.scope === 'TEAM') {
       teamId = body.teamId ?? null;
@@ -327,10 +335,13 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
       }
       teamId = template.teamId;
       if (!teamId) {
-        return user.role === 'ADMIN' ? { orgId: null, teamId: null } : null;
+        // A global template: only a platform admin, who holds the capability with no team named.
+        return (await can(request, 'team.knowledge-bases.manage')).allowed
+          ? { orgId: null, teamId: null }
+          : null;
       }
     }
-    if (!teamId || !(await canManageTeamRepos(fastify.prisma, user, teamId))) {
+    if (!teamId || !(await canManage(request, teamId))) {
       return null;
     }
     const team = await fastify.prisma.team.findUnique({ where: { id: teamId } });
@@ -383,9 +394,9 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get(
     '/knowledge-base-links',
-    { ...auth, schema: { querystring: Target } },
+    { ...managed, schema: { querystring: Target } },
     async (request, reply) => {
-      const target = await targetFor(request.query, requireUser(request));
+      const target = await targetFor(request.query, request);
       if (!target) {
         return sendError(reply, 403, 'FORBIDDEN', 'Target LEAD required');
       }
@@ -405,10 +416,10 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.post(
     '/knowledge-base-links',
-    { ...auth, schema: { body: CreateLink } },
+    { ...managed, schema: { body: CreateLink } },
     async (request, reply) => {
       const user = requireUser(request);
-      const target = await targetFor(request.body, user);
+      const target = await targetFor(request.body, request);
       if (!target) {
         return sendError(reply, 403, 'FORBIDDEN', 'Target LEAD required');
       }
@@ -445,7 +456,7 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.patch(
     '/knowledge-base-links/:id',
-    { ...auth, schema: { body: LinkFields.partial(), params: Id } },
+    { ...managed, schema: { body: LinkFields.partial(), params: Id } },
     async (request, reply) => {
       const user = requireUser(request);
       const row = await fastify.prisma.knowledgeBaseLink.findUnique({
@@ -461,7 +472,7 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
           teamId: row.teamId ?? undefined,
           templateId: row.templateId ?? undefined,
         },
-        user
+        request
       );
       if (!target) {
         return sendError(reply, 403, 'FORBIDDEN', 'Target LEAD required');
@@ -505,7 +516,7 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.delete(
     '/knowledge-base-links/:id',
-    { ...auth, schema: { params: Id } },
+    { ...managed, schema: { params: Id } },
     async (request, reply) => {
       const user = requireUser(request);
       const row = await fastify.prisma.knowledgeBaseLink.findUnique({
@@ -522,7 +533,7 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
             teamId: row.teamId ?? undefined,
             templateId: row.templateId ?? undefined,
           },
-          user
+          request
         ))
       ) {
         return sendError(reply, 403, 'FORBIDDEN', 'Target LEAD required');
@@ -556,7 +567,7 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
             where: {
               id: request.params.id,
               isActive: true,
-              ...(user.role === 'ADMIN' ? {} : memberTeams(user)),
+              ...(isPlatformAdmin(userActor(user)) ? {} : memberTeams(user)),
             },
           })
       );

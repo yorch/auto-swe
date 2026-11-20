@@ -18,13 +18,21 @@ const TARGET_USER = '00000000-0000-4000-8000-0000000000bb';
 const TEAM_ID = '00000000-0000-4000-8000-0000000000cc';
 
 const orgLockCalls: string[] = [];
+/** Every lock the removal takes, in order: 'org', then 'team:<id>'. */
+const lockOrder: string[] = [];
+const teamMembershipDelete = vi.fn().mockResolvedValue({});
+/** The target's team memberships in the organization, and the other members of those teams. */
+const cascade: {
+  peers: Array<{ role: string; teamId: string; userId: string }>;
+  rows: Array<{ id: string; role: string; teamId: string; userId: string }>;
+} = { peers: [], rows: [] };
 
 const MEMBER_ROW = {
   createdAt: new Date(),
   id: 'row-1',
   orgId: ORG_ID,
-  role: 'ORG_ADMIN',
-  user: { email: 'lead@test.com', id: TARGET_USER, name: null, role: 'LEAD' },
+  role: 'ADMIN',
+  user: { email: 'lead@test.com', id: TARGET_USER, name: null, role: 'USER' },
   userId: TARGET_USER,
 };
 
@@ -46,7 +54,7 @@ const teamMemberCreate = vi.fn(async ({ data }: { data: Record<string, unknown> 
 
 function buildApp(
   role: string,
-  membershipRole: string | null = 'ORG_ADMIN',
+  membershipRole: string | null = 'ADMIN',
   trustedInvites = false,
   orgActive = true,
   teamRole = 'LEAD'
@@ -56,7 +64,12 @@ function buildApp(
   teamFindUnique.mockResolvedValue({ id: TEAM_ID, orgId: ORG_ID });
   let prisma: Record<string, unknown>;
   prisma = {
+    $executeRaw: vi.fn(async (_strings: TemplateStringsArray, id: string) => {
+      lockOrder.push(`team:${id}`);
+      return 1;
+    }),
     $queryRaw: vi.fn(async () => {
+      lockOrder.push('org');
       orgLockCalls.push(ORG_ID);
       return [{ id: ORG_ID }];
     }),
@@ -67,7 +80,18 @@ function buildApp(
       count: vi.fn().mockResolvedValue(2),
       create: vi.fn().mockResolvedValue(MEMBER_ROW),
       delete: vi.fn().mockResolvedValue({}),
-      findMany: vi.fn().mockResolvedValue([MEMBER_ROW]),
+      // The permissions loader reads the caller's own membership (`where.userId`); the member list
+      // reads the rows with their users; the last-admin guard reads every role in the org.
+      findMany: vi
+        .fn()
+        .mockImplementation((args: { include?: unknown; where: { userId?: string } }) => {
+          if (args.where.userId) {
+            return Promise.resolve(membershipRole ? [{ orgId: ORG_ID, role: membershipRole }] : []);
+          }
+          return Promise.resolve(
+            args.include ? [MEMBER_ROW] : [{ role: 'ADMIN' }, { role: 'ADMIN' }]
+          );
+        }),
       findUnique: vi
         .fn()
         .mockImplementation(({ where }: { where: { userId_orgId?: unknown; id?: string } }) => {
@@ -76,11 +100,41 @@ function buildApp(
           }
           return Promise.resolve(membershipRole ? { id: 'row-1', role: membershipRole } : null);
         }),
-      update: vi.fn().mockResolvedValue({ ...MEMBER_ROW, role: 'ORG_MEMBER' }),
+      update: vi.fn().mockResolvedValue({ ...MEMBER_ROW, role: 'MEMBER' }),
     },
-    team: { findUnique: teamFindUnique },
+    team: {
+      findMany: vi.fn().mockImplementation(async () => {
+        const team = await teamFindUnique();
+        return team ? [{ id: team.id, isActive: team.isActive ?? true, orgId: team.orgId }] : [];
+      }),
+      findUnique: teamFindUnique,
+    },
     teamMembership: {
       create: teamMemberCreate,
+      delete: teamMembershipDelete,
+      findMany: vi
+        .fn()
+        .mockImplementation(
+          (args: {
+            select: { id?: unknown; team?: unknown };
+            where: { team?: { orgId?: string }; teamId?: unknown; userId?: string };
+          }) => {
+            if (args.where.team?.orgId) {
+              // The organization-removal cascade's reads of the target's memberships.
+              return Promise.resolve(
+                'id' in args.select ? cascade.rows : cascade.rows.map((r) => ({ teamId: r.teamId }))
+              );
+            }
+            if (args.where.teamId && !args.where.userId) {
+              return Promise.resolve(cascade.peers);
+            }
+            return Promise.resolve(
+              args.select.team
+                ? [{ role: teamRole, team: { id: TEAM_ID, isActive: true, orgId: ORG_ID } }]
+                : [{ role: teamRole, teamId: TEAM_ID }]
+            );
+          }
+        ),
       findUnique: vi.fn().mockResolvedValue({ role: teamRole }),
     },
     user: { create: userCreate, findFirst: userFindFirst },
@@ -96,6 +150,9 @@ describe('GET /:orgId/members', () => {
   afterEach(() => {
     vi.clearAllMocks();
     orgLockCalls.length = 0;
+    lockOrder.length = 0;
+    cascade.rows = [];
+    cascade.peers = [];
   });
 
   it('returns members list for org admin', async () => {
@@ -109,7 +166,7 @@ describe('GET /:orgId/members', () => {
   });
 
   it('returns 403 when non-member tries to list', async () => {
-    const app = buildApp('LEAD', null);
+    const app = buildApp('USER', null);
     await app.ready();
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/members` });
     expect(res.statusCode).toBe(403);
@@ -120,13 +177,16 @@ describe('POST /:orgId/members', () => {
   afterEach(() => {
     vi.clearAllMocks();
     orgLockCalls.length = 0;
+    lockOrder.length = 0;
+    cascade.rows = [];
+    cascade.peers = [];
   });
 
   it('creates a membership', async () => {
     const app = buildApp('ADMIN');
     await app.ready();
     const res = await app.inject({
-      body: JSON.stringify({ role: 'ORG_MEMBER', userId: TARGET_USER }),
+      body: JSON.stringify({ role: 'MEMBER', userId: TARGET_USER }),
       headers: { 'content-type': 'application/json' },
       method: 'POST',
       url: `${PREFIX}/${ORG_ID}/members`,
@@ -145,11 +205,11 @@ describe('POST /:orgId/members', () => {
     });
   });
 
-  it('allows an ORG_ADMIN who is only a platform ENGINEER to manage members', async () => {
-    const app = buildApp('ENGINEER', 'ORG_ADMIN');
+  it('allows an org ADMIN who is only a platform USER to manage members', async () => {
+    const app = buildApp('USER', 'ADMIN');
     await app.ready();
     const res = await app.inject({
-      body: JSON.stringify({ role: 'ORG_MEMBER', userId: TARGET_USER }),
+      body: JSON.stringify({ role: 'MEMBER', userId: TARGET_USER }),
       headers: { 'content-type': 'application/json' },
       method: 'POST',
       url: `${PREFIX}/${ORG_ID}/members`,
@@ -157,11 +217,11 @@ describe('POST /:orgId/members', () => {
     expect(res.statusCode).toBeOneOf([200, 201]);
   });
 
-  it('returns 403 for a platform ENGINEER who is only an ORG_MEMBER', async () => {
-    const app = buildApp('ENGINEER', 'ORG_MEMBER');
+  it('returns 403 for a platform USER who is only an org MEMBER', async () => {
+    const app = buildApp('USER', 'MEMBER');
     await app.ready();
     const res = await app.inject({
-      body: JSON.stringify({ role: 'ORG_MEMBER', userId: TARGET_USER }),
+      body: JSON.stringify({ role: 'MEMBER', userId: TARGET_USER }),
       headers: { 'content-type': 'application/json' },
       method: 'POST',
       url: `${PREFIX}/${ORG_ID}/members`,
@@ -174,10 +234,13 @@ describe('POST /:orgId/members/invite', () => {
   afterEach(() => {
     vi.clearAllMocks();
     orgLockCalls.length = 0;
+    lockOrder.length = 0;
+    cascade.rows = [];
+    cascade.peers = [];
   });
 
   const invite = async (role: string, trustedInvites = false, orgActive = true) => {
-    const app = buildApp(role, 'ORG_ADMIN', trustedInvites, orgActive);
+    const app = buildApp(role, 'ADMIN', trustedInvites, orgActive);
     await app.ready();
     return app.inject({
       body: JSON.stringify({ email: 'New@Example.com' }),
@@ -190,7 +253,7 @@ describe('POST /:orgId/members/invite', () => {
   it.each([undefined, 'LEAD', 'ADMIN'] as const)(
     'invites into an organization team with role %s',
     async (teamRole) => {
-      const app = buildApp('ENGINEER');
+      const app = buildApp('USER');
       const res = await app.inject({
         method: 'POST',
         payload: { email: 'team@example.com', teamId: TEAM_ID, ...(teamRole ? { teamRole } : {}) },
@@ -198,19 +261,23 @@ describe('POST /:orgId/members/invite', () => {
       });
       expect(res.statusCode).toBe(201);
       expect(teamMemberCreate).toHaveBeenCalledWith({
-        data: { role: teamRole ?? 'ENGINEER', teamId: TEAM_ID, userId: TARGET_USER },
+        data: { role: teamRole ?? 'MEMBER', teamId: TEAM_ID, userId: TARGET_USER },
       });
       expect(auditCreate.mock.calls.map((c) => c[0].data.entityType)).toEqual([
         'OrganizationMembership',
         'TeamMembership',
         'User',
       ]);
+      // The ground of the decision that allowed the invitation is on every row it wrote.
+      expect(
+        auditCreate.mock.calls.map((c) => (c[0].data.context as { authority?: string })?.authority)
+      ).toEqual(['org-admin', 'org-admin', 'org-admin']);
       await app.close();
     }
   );
 
   it('rejects a team from another organization without creating the user', async () => {
-    const app = buildApp('ENGINEER');
+    const app = buildApp('USER');
     teamFindUnique.mockResolvedValue({ id: TEAM_ID, orgId: TARGET_USER });
     const res = await app.inject({
       method: 'POST',
@@ -224,11 +291,47 @@ describe('POST /:orgId/members/invite', () => {
     await app.close();
   });
 
+  it('answers a team that does not exist as a mismatch, before asking about it', async () => {
+    const app = buildApp('USER');
+    teamFindUnique.mockResolvedValue(null);
+    const res = await app.inject({
+      method: 'POST',
+      payload: { email: 'team@example.com', teamId: TEAM_ID },
+      url: `${PREFIX}/${ORG_ID}/members/invite`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('TEAM_ORG_MISMATCH');
+    expect(userCreate).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('writes the team decision authority on the TeamMembership row', async () => {
+    // A platform admin with no organization membership who holds LEAD on the team (the harness's
+    // membership): the organization decision is `platform-admin`, the team decision `team-role`.
+    const app = buildApp('ADMIN', null);
+    const res = await app.inject({
+      method: 'POST',
+      payload: { email: 'team@example.com', teamId: TEAM_ID },
+      url: `${PREFIX}/${ORG_ID}/members/invite`,
+    });
+    expect(res.statusCode).toBe(201);
+    const teamRow = auditCreate.mock.calls
+      .map((c) => c[0].data as { entityType: string; context?: Record<string, unknown> })
+      .find((d) => d.entityType === 'TeamMembership');
+    expect(teamRow?.context).toMatchObject({ authority: 'team-role' });
+    const orgRow = auditCreate.mock.calls
+      .map((c) => c[0].data as { entityType: string; context?: Record<string, unknown> })
+      .find((d) => d.entityType === 'OrganizationMembership');
+    expect(orgRow?.context).toMatchObject({ authority: 'platform-admin' });
+    expect(teamRow?.context?.requestId).toEqual(expect.any(String));
+    await app.close();
+  });
+
   it("leaves an org admin's invitee waiting for a platform admin's approval", async () => {
-    const res = await invite('ENGINEER');
+    const res = await invite('USER');
 
     expect(res.statusCode).toBe(201);
-    expect(JSON.parse(res.body).data).toMatchObject({ isActive: false, orgRole: 'ORG_MEMBER' });
+    expect(JSON.parse(res.body).data).toMatchObject({ isActive: false, orgRole: 'MEMBER' });
     const call = userCreate.mock.calls[0]?.[0] as { data: Record<string, unknown> };
     const { data } = call;
     // Inactive and unapproved is the approval queue; the address is verified
@@ -237,7 +340,7 @@ describe('POST /:orgId/members/invite', () => {
       email: 'new@example.com',
       emailVerified: false,
       isActive: false,
-      role: 'ENGINEER',
+      role: 'USER',
     });
     // The org membership and the magic link still go out.
     expect(orgLockCalls).toEqual([ORG_ID]);
@@ -261,10 +364,10 @@ describe('POST /:orgId/members/invite', () => {
   });
 
   it("approves a trusted organization's org-admin invitee as org_admin", async () => {
-    const res = await invite('ENGINEER', true);
+    const res = await invite('USER', true);
 
     expect(res.statusCode).toBe(201);
-    expect(JSON.parse(res.body).data).toMatchObject({ isActive: true, orgRole: 'ORG_MEMBER' });
+    expect(JSON.parse(res.body).data).toMatchObject({ isActive: true, orgRole: 'MEMBER' });
     const call = userCreate.mock.calls[0]?.[0] as { data: Record<string, unknown> };
     expect(call.data).toMatchObject({
       approvalSource: 'org_admin',
@@ -284,7 +387,7 @@ describe('POST /:orgId/members/invite', () => {
   });
 
   it('queues the invitee of a trusted but deactivated organization', async () => {
-    await invite('ENGINEER', true, false);
+    await invite('USER', true, false);
 
     const call = userCreate.mock.calls[0]?.[0] as { data: Record<string, unknown> };
     expect(call.data).toMatchObject({ emailVerified: false, isActive: false });
@@ -299,18 +402,59 @@ describe('POST /:orgId/members/invite', () => {
   });
 });
 
+describe('POST /:orgId/members/invite authorization', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    orgLockCalls.length = 0;
+    lockOrder.length = 0;
+    cascade.rows = [];
+    cascade.peers = [];
+  });
+
+  it('refuses an organization member who is not an administrator', async () => {
+    const app = buildApp('USER', 'MEMBER');
+    const res = await app.inject({
+      method: 'POST',
+      payload: { email: 'team@example.com' },
+      url: `${PREFIX}/${ORG_ID}/members/invite`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.missing).toBe('org.members.manage');
+    expect(userCreate).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('asks team.members.manage on the team an invitation names', async () => {
+    const app = buildApp('USER');
+    // A deactivated team confers nothing on an organization administrator.
+    teamFindUnique.mockResolvedValue({ id: TEAM_ID, isActive: false, orgId: ORG_ID });
+    const res = await app.inject({
+      method: 'POST',
+      payload: { email: 'team@example.com', teamId: TEAM_ID },
+      url: `${PREFIX}/${ORG_ID}/members/invite`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.missing).toBe('team.members.manage');
+    expect(userCreate).not.toHaveBeenCalled();
+    await app.close();
+  });
+});
+
 describe('POST /teams/:id/members/invite', () => {
   afterEach(() => {
     vi.clearAllMocks();
     orgLockCalls.length = 0;
+    lockOrder.length = 0;
+    cascade.rows = [];
+    cascade.peers = [];
   });
 
   it.each([
-    ['LEAD', 'LEAD', true, true, true, 'team_lead'],
-    ['LEAD', 'LEAD', false, true, false, null],
-    ['LEAD', 'LEAD', true, false, false, null],
+    ['USER', 'LEAD', true, true, true, 'team_lead'],
+    ['USER', 'LEAD', false, true, false, null],
+    ['USER', 'LEAD', true, false, false, null],
     ['ADMIN', 'LEAD', false, false, true, 'admin'],
-    ['LEAD', 'ADMIN', true, true, true, 'team_lead'],
+    ['USER', 'ADMIN', true, true, true, 'team_lead'],
   ] as const)(
     'applies approval policy for %s/%s, trust %s, active %s',
     async (role, teamRole, trusted, active, approved, source) => {
@@ -321,14 +465,14 @@ describe('POST /teams/:id/members/invite', () => {
         url: `/api/v1/teams/${TEAM_ID}/members/invite`,
       });
       expect(res.statusCode).toBe(201);
-      expect(res.json().data).toMatchObject({ isActive: approved, teamRole: 'ENGINEER' });
+      expect(res.json().data).toMatchObject({ isActive: approved, teamRole: 'MEMBER' });
       expect(userCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             email: 'new@example.com',
             emailVerified: approved,
             isActive: approved,
-            role: 'ENGINEER',
+            role: 'USER',
           }),
         })
       );
@@ -339,7 +483,7 @@ describe('POST /teams/:id/members/invite', () => {
         expect(data).not.toHaveProperty('approvalSource');
       }
       expect(teamMemberCreate).toHaveBeenCalledWith({
-        data: { role: 'ENGINEER', teamId: TEAM_ID, userId: TARGET_USER },
+        data: { role: 'MEMBER', teamId: TEAM_ID, userId: TARGET_USER },
       });
       expect(auditCreate.mock.calls.map((c) => c[0].data.entityType)).toEqual([
         'OrganizationMembership',
@@ -353,8 +497,8 @@ describe('POST /teams/:id/members/invite', () => {
   );
 
   it.each([
-    ['ENGINEER', 'ENGINEER', 'ENGINEER', 'FORBIDDEN'],
-    ['LEAD', 'LEAD', 'ADMIN', 'PRIVILEGE_ESCALATION'],
+    ['USER', 'MEMBER', 'MEMBER', 'FORBIDDEN'],
+    ['USER', 'LEAD', 'ADMIN', 'PRIVILEGE_ESCALATION'],
   ])('rejects invitation by %s/%s granting %s', async (platformRole, teamRole, role, code) => {
     const app = buildApp(platformRole, null, false, true, teamRole);
     const res = await app.inject({
@@ -369,7 +513,7 @@ describe('POST /teams/:id/members/invite', () => {
   });
 
   it('refuses an existing email', async () => {
-    const app = buildApp('LEAD');
+    const app = buildApp('USER');
     userFindFirst.mockResolvedValue({ id: TARGET_USER });
     const res = await app.inject({
       method: 'POST',
@@ -385,7 +529,7 @@ describe('POST /teams/:id/members/invite', () => {
   });
 
   it('rejects an empty invitation', async () => {
-    const app = buildApp('LEAD');
+    const app = buildApp('USER');
     const res = await app.inject({
       method: 'POST',
       payload: {},
@@ -397,7 +541,7 @@ describe('POST /teams/:id/members/invite', () => {
   });
 
   it('maps a concurrent email insertion to USER_EXISTS', async () => {
-    const app = buildApp('LEAD');
+    const app = buildApp('USER');
     userCreate.mockRejectedValueOnce(Object.assign(new Error('unique email'), { code: 'P2002' }));
     const res = await app.inject({
       method: 'POST',
@@ -411,7 +555,7 @@ describe('POST /teams/:id/members/invite', () => {
   });
 
   it('does not send the link when the membership audit fails', async () => {
-    const app = buildApp('LEAD');
+    const app = buildApp('USER');
     auditCreate.mockRejectedValueOnce(new Error('audit failed'));
     const res = await app.inject({
       method: 'POST',
@@ -424,7 +568,7 @@ describe('POST /teams/:id/members/invite', () => {
   });
 
   it('keeps the created account when email delivery fails', async () => {
-    const app = buildApp('LEAD');
+    const app = buildApp('USER');
     signInMagicLink.mockRejectedValueOnce(new Error('mail offline'));
     const res = await app.inject({
       method: 'POST',
@@ -437,17 +581,41 @@ describe('POST /teams/:id/members/invite', () => {
   });
 });
 
+describe('PATCH /:orgId/members/:userId guards', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    orgLockCalls.length = 0;
+    lockOrder.length = 0;
+    cascade.rows = [];
+    cascade.peers = [];
+  });
+
+  it('refuses an administrator removing themselves', async () => {
+    const app = buildApp('USER');
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `${PREFIX}/${ORG_ID}/members/${USER_ID}`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('SELF_REMOVAL');
+    await app.close();
+  });
+});
+
 describe('PATCH /:orgId/members/:userId', () => {
   afterEach(() => {
     vi.clearAllMocks();
     orgLockCalls.length = 0;
+    lockOrder.length = 0;
+    cascade.rows = [];
+    cascade.peers = [];
   });
 
-  it('returns 403 for a platform-ENGINEER who is only an ORG_MEMBER', async () => {
-    const app = buildApp('ENGINEER', 'ORG_MEMBER');
+  it('returns 403 for a platform-USER who is only an org MEMBER', async () => {
+    const app = buildApp('USER', 'MEMBER');
     await app.ready();
     const res = await app.inject({
-      body: JSON.stringify({ role: 'ORG_ADMIN' }),
+      body: JSON.stringify({ role: 'ADMIN' }),
       headers: { 'content-type': 'application/json' },
       method: 'PATCH',
       url: `${PREFIX}/${ORG_ID}/members/${TARGET_USER}`,
@@ -460,6 +628,9 @@ describe('DELETE /:orgId/members/:userId', () => {
   afterEach(() => {
     vi.clearAllMocks();
     orgLockCalls.length = 0;
+    lockOrder.length = 0;
+    cascade.rows = [];
+    cascade.peers = [];
   });
 
   it('removes a membership', async () => {
@@ -473,8 +644,47 @@ describe('DELETE /:orgId/members/:userId', () => {
     expect(orgLockCalls).toEqual([ORG_ID]);
   });
 
-  it('returns 403 for a platform-ENGINEER who is only an ORG_MEMBER', async () => {
-    const app = buildApp('ENGINEER', 'ORG_MEMBER');
+  it('removes the memberships in every team of the organization in the same transaction, locking the organization first and the teams in ascending id order', async () => {
+    cascade.rows = [
+      { id: 'tm-b', role: 'MEMBER', teamId: 'team-b', userId: TARGET_USER },
+      { id: 'tm-a', role: 'ADMIN', teamId: 'team-a', userId: TARGET_USER },
+    ];
+    // Team A keeps no other ADMIN: an organization authority may leave it so.
+    cascade.peers = [{ role: 'MEMBER', teamId: 'team-a', userId: 'someone' }];
+    const app = buildApp('ADMIN');
+    await app.ready();
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `${PREFIX}/${ORG_ID}/members/${TARGET_USER}`,
+    });
+    expect(res.statusCode).toBe(204);
+    expect(lockOrder).toEqual(['org', 'team:team-a', 'team:team-b']);
+    expect(teamMembershipDelete.mock.calls.map((c) => c[0].where.id).sort()).toEqual([
+      'tm-a',
+      'tm-b',
+    ]);
+    const audited = auditCreate.mock.calls
+      .map((c) => c[0].data)
+      .filter((d: { entityType: string }) => d.entityType === 'TeamMembership');
+    expect(audited.map((d: { entityId: string }) => d.entityId).sort()).toEqual(['tm-a', 'tm-b']);
+    expect(audited.every((d: { action: string }) => d.action === 'DELETE')).toBe(true);
+  });
+
+  it('removes no team membership when the user has none in the organization', async () => {
+    cascade.rows = [];
+    const app = buildApp('ADMIN');
+    await app.ready();
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `${PREFIX}/${ORG_ID}/members/${TARGET_USER}`,
+    });
+    expect(res.statusCode).toBe(204);
+    expect(teamMembershipDelete).not.toHaveBeenCalled();
+    expect(lockOrder).toEqual(['org']);
+  });
+
+  it('returns 403 for a platform-USER who is only an org MEMBER', async () => {
+    const app = buildApp('USER', 'MEMBER');
     await app.ready();
     const res = await app.inject({
       method: 'DELETE',

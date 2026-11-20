@@ -3,54 +3,57 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import TeamReviewPresetsPage from './page';
 
+// The teams the server says the caller holds `team.codereview.manage` on; `known` is false until
+// the effective permissions have loaded.
 const state = vi.hoisted(() => ({
-  admin: false,
-  led: new Set(['mine']) as Set<string> | null,
+  known: true,
+  managed: new Set(['mine']) as Set<string>,
+}));
+vi.mock('@/hooks/useCan', () => ({
+  useCanOnTeams: () => (teamId: string) => state.managed.has(teamId),
+}));
+vi.mock('@/hooks/useEffectivePermissions', () => ({
+  useEffectivePermissions: () => ({ data: state.known ? {} : undefined }),
 }));
 vi.mock('@/hooks/useTeams', () => ({
-  useLedTeamIds: () => state.led,
   useTeams: () => ({
     data: [
-      { id: 'mine', myRole: 'LEAD', name: 'My team', orgId: 'o1', orgName: 'Org' },
-      { id: 'other', myRole: null, name: 'Other team', orgId: 'o1', orgName: 'Org' },
+      { id: 'mine', name: 'My team', orgId: 'o1', orgName: 'Org' },
+      { id: 'other', name: 'Other team', orgId: 'o1', orgName: 'Org' },
     ],
     isSuccess: true,
     refetch: vi.fn(),
   }),
-}));
-vi.mock('@/stores/authStore', () => ({
-  useAuthStore: (select: (value: object) => unknown) =>
-    select({ user: { role: state.admin ? 'ADMIN' : 'LEAD' } }),
 }));
 vi.mock('@/components/ReviewPresetsView', () => ({
   ReviewPresetsView: ({ teamId }: { teamId: string }) => <p>Presets for {teamId}</p>,
 }));
 afterEach(() => {
   cleanup();
-  state.admin = false;
-  state.led = new Set(['mine']);
+  state.known = true;
+  state.managed = new Set(['mine']);
 });
 describe('team review preset view', () => {
-  it('shows only led teams and binds the management view to the selected team', () => {
+  it('shows only the teams the caller may manage and binds the view to the selected team', () => {
     render(<TeamReviewPresetsPage />);
     expect(screen.getByText('Presets for mine')).toBeTruthy();
     expect(screen.queryByText('Other team')).toBeNull();
   });
-  it('does not mount a global or other-team management view when no teams are led', () => {
-    state.led?.clear();
+  it('does not mount a global or other-team management view when no team is managed', () => {
+    state.managed = new Set();
     render(<TeamReviewPresetsPage />);
     expect(screen.getByText('No teams you lead are available.')).toBeTruthy();
     expect(screen.queryByText('Presets for mine')).toBeNull();
   });
-  it('says nothing about teams while the led teams are still loading', () => {
-    state.led = null;
+  it('says nothing about teams while the permissions are still loading', () => {
+    state.known = false;
+    state.managed = new Set();
     render(<TeamReviewPresetsPage />);
     expect(screen.queryByText('No teams you lead are available.')).toBeNull();
     expect(screen.queryByText('Presets for mine')).toBeNull();
   });
-  it('allows platform administrators to select teams without a team membership', () => {
-    state.admin = true;
-    state.led?.clear();
+  it('lists every team the server says the caller manages, whether or not they are a member', () => {
+    state.managed = new Set(['mine', 'other']);
     render(<TeamReviewPresetsPage />);
     expect(screen.getByText('Presets for mine')).toBeTruthy();
   });

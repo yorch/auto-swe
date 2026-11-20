@@ -10,7 +10,7 @@ const m = vi.hoisted(() => ({
 vi.mock('./runPlanService.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./runPlanService.js')>()),
   authorizeRepository: m.authorize,
-  requireEngineer: m.engineer,
+  requireActivePlanUser: m.engineer,
 }));
 vi.mock('./launchableAgents.js', () => ({ launchableAgentKeys: m.agentKeys }));
 vi.mock('./runPlanQuotas.js', () => ({
@@ -23,7 +23,7 @@ import { runPlanIntentHash, startRunPlan } from './runPlanStart.js';
 const USER = {
   exp: 0,
   iat: 0,
-  role: 'ENGINEER' as const,
+  role: 'USER' as const,
   sub: '0a1b2c3d-1111-4111-8111-aaaaaaaaaaaa',
 };
 const REPO = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
@@ -37,7 +37,7 @@ const fastify = { prisma, temporal } as never;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  m.engineer.mockResolvedValue({ ok: true, role: 'ENGINEER' });
+  m.engineer.mockResolvedValue({ ok: true });
   m.authorize.mockResolvedValue({ ok: true, repo: { id: REPO, orgId: 'org-1', teamId: 'team-1' } });
   m.agentKeys.mockResolvedValue(['docsMaintainer']);
   m.reserve.mockResolvedValue({ auditId: 'audit-1', ok: true });
@@ -49,10 +49,10 @@ beforeEach(() => {
 const args = { idempotencyKey: 'k-1', intent: 'do the thing', repoId: REPO, user: USER };
 
 describe('startRunPlan', () => {
-  it('refuses a person who is not an active ENGINEER before reading the repository', async () => {
+  it('refuses a person who is not an active user before reading the repository', async () => {
     m.engineer.mockResolvedValue({
       code: 'FORBIDDEN',
-      message: 'Run plans need the ENGINEER role',
+      message: 'Only an active user can use run plans',
       ok: false,
       status: 403,
     });

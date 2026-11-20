@@ -7,7 +7,7 @@ vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
   ...(await import('../test/billingMock.js')),
 }));
 
-const USER = { role: 'ENGINEER' as const, sub: 'user-1' };
+const USER = { role: 'USER' as const, sub: 'user-1' };
 const ADMIN = { role: 'ADMIN' as const, sub: 'admin-1' };
 
 function repo(over: {
@@ -49,6 +49,8 @@ function prisma(opts: {
   orgMembers?: Record<string, boolean>;
   spentUsd?: Record<string, number>;
   teamSpentUsd?: Record<string, number>;
+  /** teamId -> the caller's role on it. */
+  teamRoles?: Record<string, string>;
 }) {
   return {
     organizationMembership: {
@@ -60,6 +62,19 @@ function prisma(opts: {
       findUnique: vi.fn(async ({ where }: { where: { orgId_yearMonth: { orgId: string } } }) => ({
         costUsdAccrued: opts.spentUsd?.[where.orgId_yearMonth.orgId] ?? 0,
       })),
+    },
+    // The capability resolver: the teams a launch names, and the caller's role on each.
+    team: {
+      findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
+        where.id.in.map((id) => ({ id, isActive: true, orgId: null }))
+      ),
+    },
+    teamMembership: {
+      findMany: vi.fn(async ({ where }: { where: { teamId: { in: string[] } } }) =>
+        where.teamId.in.flatMap((teamId) =>
+          opts.teamRoles?.[teamId] ? [{ role: opts.teamRoles[teamId], teamId }] : []
+        )
+      ),
     },
     teamSpendUsd: opts.teamSpentUsd,
   };
@@ -370,5 +385,39 @@ describe('authorizeLaunch', () => {
         expect(decision.refusal.body.error.message).not.toContain('Payments');
       }
     });
+  });
+});
+
+describe('authorizeLaunch with requireOwningTeamLead', () => {
+  const two = [repo({ id: 'repo-1', teamId: 'team-1' }), repo({ id: 'repo-2', teamId: 'team-2' })];
+
+  it('allows a lead of every owning team', async () => {
+    const decision = await authorizeLaunch(
+      prisma({ teamRoles: { 'team-1': 'LEAD', 'team-2': 'ADMIN' } }) as never,
+      USER,
+      { gate: GATE_OFF, repos: two, requireOwningTeamLead: true }
+    );
+    expect(decision).toEqual({ ok: true });
+  });
+
+  it('names only the repositories whose owning team the caller does not lead', async () => {
+    const decision = await authorizeLaunch(
+      prisma({ teamRoles: { 'team-1': 'LEAD', 'team-2': 'ENGINEER' } }) as never,
+      USER,
+      { gate: GATE_OFF, repos: two, requireOwningTeamLead: true }
+    );
+    expect(decision).toMatchObject({ ok: false, refusal: { kind: 'repo-access', status: 403 } });
+    const error = (decision as unknown as { refusal: { body: { error: { reasons: unknown[] } } } })
+      .refusal.body.error;
+    expect(error.reasons).toEqual([{ reason: 'team-lead-required', repo: 'acme/repo-2' }]);
+  });
+
+  it('lets a platform admin through without a membership', async () => {
+    const decision = await authorizeLaunch(prisma({}) as never, ADMIN, {
+      gate: GATE_OFF,
+      repos: two,
+      requireOwningTeamLead: true,
+    });
+    expect(decision).toEqual({ ok: true });
   });
 });

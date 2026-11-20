@@ -14,7 +14,8 @@ import type {
   EvalTrendsDto,
 } from '@auto-swe/shared/types/api';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useHasRole } from '@/hooks/useHasRole';
+import { usePlatformAdmin } from '@/hooks/useCan';
+import { useEffectivePermissions } from '@/hooks/useEffectivePermissions';
 import { api } from '@/lib/api';
 import { type DateRange, rangeKey, rangeQuery } from '@/lib/dateRange';
 import type { ScannerPatternType } from '@/lib/scannerPatternTypes';
@@ -574,10 +575,10 @@ interface OrgMonthUsage {
 export interface UserOrg {
   alert: { percent: number | null; triggered: boolean };
   budgetAlertThresholdPercent: number | null;
-  /** Absent on a row where the caller is not an ORG_ADMIN: the spend in dollars is theirs to read. */
+  /** Absent on a row where the caller does not hold `org.budget.manage`: the spend in dollars is theirs to read. */
   currentMonthUsage?: OrgMonthUsage | null;
   id: string;
-  /** Absent on a row where the caller is not an ORG_ADMIN. */
+  /** Absent on a row where the caller does not hold `org.budget.manage`. */
   monthlyBudgetUsdCents?: number | null;
   name: string;
   role: string;
@@ -603,8 +604,11 @@ export type DirectoryOrg = Omit<UserOrg, 'role'> & { role?: string };
  * "my organizations" view.
  */
 export function useOrganizationDirectory() {
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = usePlatformAdmin();
+  // Which directory to read depends on the answer, so wait for it rather than ask the wrong one.
+  const permissionsKnown = useEffectivePermissions().data !== undefined;
   return useQuery({
+    enabled: permissionsKnown,
     queryFn: () =>
       api
         .get<{ data: DirectoryOrg[] }>(

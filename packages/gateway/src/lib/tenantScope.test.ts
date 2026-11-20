@@ -1,7 +1,14 @@
 import type { Prisma } from '@auto-swe/shared';
 import { hasTenantPredicate } from '@auto-swe/shared/lib/tenantGuard';
 import { describe, expect, it } from 'vitest';
-import { memberOrgs, memberTeams, reachableConnections } from './tenantScope.js';
+import {
+  manageableOrReachableConnections,
+  managedTeams,
+  memberOrgs,
+  memberTeams,
+  reachableConnections,
+  teamsHeldIn,
+} from './tenantScope.js';
 
 const actor = { sub: '11111111-1111-1111-1111-111111111111' };
 
@@ -148,5 +155,33 @@ describe('tenant scope predicates', () => {
       expect(predicate.memberships).toEqual({ some: { userId: actor.sub } });
     }
     expect(halves(reachableConnections(actor, undefined))[0]).toEqual(membership);
+  });
+});
+
+describe('held-scope team filters', () => {
+  it('filters a list to the teams a held scope names, and to none for an empty one', () => {
+    expect(teamsHeldIn({ all: false, orgIds: [], teamIds: ['t1', 't2'] })).toEqual({
+      id: { in: ['t1', 't2'] },
+    });
+    expect(teamsHeldIn({ all: false, orgIds: [], teamIds: [] })).toEqual({ id: { in: [] } });
+  });
+
+  it('applies no filter for a caller who holds the capability everywhere', () => {
+    expect(teamsHeldIn({ all: true, orgIds: [], teamIds: [] })).toEqual({});
+  });
+
+  it('restricts managed teams to active ones', () => {
+    expect(managedTeams({ all: false, orgIds: [], teamIds: ['t1'] })).toEqual({
+      AND: [{ isActive: true }, { id: { in: ['t1'] } }],
+    });
+  });
+
+  it('adds the managed teams to reach without widening the permission requirement', () => {
+    const filter = manageableOrReachableConnections(actor, undefined, {
+      all: false,
+      orgIds: [],
+      teamIds: ['t1'],
+    });
+    expect(JSON.stringify(filter)).toContain('"id":{"in":["t1"]}');
   });
 });

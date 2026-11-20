@@ -249,7 +249,7 @@ A setting is one declaration in `packages/shared/src/config/registry.ts`:
   schema: z.number().int().positive().max(10_080),
   defaultValue: 10,
   overridableAt: ['TEAM', 'ORGANIZATION'],
-  requiredRole: 'LEAD',
+  writeAccess: 'grantable',
   runPinned: false,
   restartRequired: false,
   unit: 'minutes',
@@ -271,7 +271,7 @@ every row and grant that referenced it.
 |---|---|
 | `schema` | Zod schema. Validates writes *and* values read back out of the database. |
 | `overridableAt` | Scopes below GLOBAL where an override may be set. Empty means platform-wide only. |
-| `requiredRole` | A floor. No grant can let an actor below it write the key. |
+| `writeAccess` | `'admin'`: only a platform admin may write the key, and no grant reaches it. `'grantable'`: a platform admin, or an actor a grant covers. |
 | `runPinned` | Frozen into a run's snapshot at start; see §4. |
 | `restartRequired` | Surfaced in the UI. The resolver does not enforce it. |
 
@@ -318,8 +318,9 @@ shown read-only there.
 
 Two independent gates, both of which must pass.
 
-**The definition's `requiredRole` is a floor.** No grant can let an `ENGINEER` write a key marked
-`ADMIN`.
+**The definition's `writeAccess` is a ceiling on delegation.** A key marked `admin` is writable only
+by a platform admin (a denial answers `ROLE_TOO_LOW`); no grant reaches it. A key marked `grantable`
+is writable by a platform admin or by an actor a grant covers.
 
 **A grant must authorise the actor.** Grants are rows in `config_permissions`, not a map in code, so
 widening who configures what is an admin action rather than a deploy:
@@ -327,7 +328,7 @@ widening who configures what is an admin action rather than a deploy:
 | Column | Meaning |
 |---|---|
 | `keyPattern` | An exact key, a `group.*` prefix, or `*`. Deliberately not a glob library — an operator reading a grant should know what it covers without learning a syntax. |
-| `userId` *or* `role` | Exactly one, enforced by a CHECK constraint. A role grant covers every holder of that role. |
+| `userId` *or* `role` | Exactly one, enforced by a CHECK constraint. A role grant covers the members who hold exactly that role **in the grant's own team** (a `LEAD` grant does not cover the team's `ADMIN`s), not a platform role, so it is valid only with `scope = TEAM` and a `teamId`; the API refuses anything else with `400 ROLE_GRANT_REQUIRES_TEAM_SCOPE`. |
 | `scope` + `teamId`/`orgId` | The authority's reach. A TEAM grant covers that team and the channels and templates beneath it; an ORGANIZATION grant covers anything inside the org but never the GLOBAL row. |
 
 A write is authorised against the tenant it actually lands in, not the ids in the request: a CHANNEL
@@ -707,7 +708,7 @@ refuses boot if GLOBAL policy is `restricted` without a proxy: configure the pro
 `workspace.egressPolicy` to `open`. Scoped overrides retain runtime enforcement checks.
 
 `workspace.setupEgressPolicy` (`inherit`, `open`, `restricted`; default `inherit`) has the same
-ADMIN permission floor, override scopes and run pinning. A looser value applies only to agent-workspace
+admin-only write access, override scopes and run pinning. A looser value applies only to agent-workspace
 setup; a stricter or equal value behaves as `inherit`. `open` keeps the private-range/metadata network
 baseline; `restricted` uses the effective baseline/team allowlist and proxy/lock enforcement. The worker terminates and verifies setup
 processes before replacing the rules with the agent lock. The settings UI reads its enum directly from

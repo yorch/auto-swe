@@ -628,7 +628,7 @@ function buildAuth() {
         // repository access.
         githubLogin: { input: false, required: false, type: 'string' },
         isActive: { defaultValue: false, input: false, required: false, type: 'boolean' },
-        role: { defaultValue: 'ENGINEER', input: false, required: false, type: 'string' },
+        role: { defaultValue: 'USER', input: false, required: false, type: 'string' },
         slackId: { input: false, required: false, type: 'string' },
       },
     },

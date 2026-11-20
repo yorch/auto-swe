@@ -1,15 +1,17 @@
 'use client';
 
-import type { TeamOverview, TeamOverviewActivityItem } from '@auto-swe/shared/types/api';
+import type { TeamOverviewActivityItem } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { BudgetMeter } from '@/components/teams/BudgetMeter';
 import { OwnerChip } from '@/components/teams/OwnerChip';
+import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { Stat } from '@/components/ui/Stat';
+import type { TeamOverviewData } from '@/hooks/useTeamOverview';
 import { requestHref } from '@/lib/requestDisplay';
 import { cn, FOCUS_RING } from '@/lib/utils';
 
@@ -80,16 +82,17 @@ function MineHint({ definition, href, link }: { definition: string; href: string
 
 /**
  * A team's overview. The sections that depend on the caller's team role render only when the
- * server sent them (`lead`, `admin`): the platform role never decides what is shown here.
+ * server sent them (`lead`, `admin`, `needsAdmin`): nothing here is decided from a role in the
+ * browser.
  */
 export function TeamOverviewView({
   canManageBudget = false,
   overview,
   slug,
 }: {
-  /** True for a caller who may open the Budget section without being the team's admin (ORG_ADMIN); null while unknown. */
+  /** True for a caller who holds `team.budget.manage` here (a team admin, an org admin); null while unknown. */
   canManageBudget?: boolean | null;
-  overview: TeamOverview;
+  overview: TeamOverviewData;
   slug: string;
 }) {
   const { last7d, pullRequests: pr } = overview;
@@ -97,6 +100,15 @@ export function TeamOverviewView({
   const teamParam = encodeURIComponent(slug);
   return (
     <div className="space-y-6">
+      {overview.needsAdmin && (
+        <Alert title="This team has no admin" variant="warning">
+          Make someone a team admin from{' '}
+          <Link className="underline underline-offset-2" href={`/teams/${teamParam}/members`}>
+            Members
+          </Link>
+          , so the team keeps someone who can run it.
+        </Alert>
+      )}
       <Card aria-label="My work" data-testid="my-work">
         <CardHeader className="mb-3">
           <CardTitle>My work</CardTitle>

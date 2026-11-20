@@ -10,6 +10,7 @@ import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAcces
 import { reviewRunMetadata } from '@auto-swe/shared/lib/reviewLaunch';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { EvalResultDto, RunEffectDto, RunEvidenceDto } from '@auto-swe/shared/types/api';
 import { WORKFLOW_RUN_STATUSES } from '@auto-swe/shared/types/api';
 import { listSteps } from '@auto-swe/shared/workflow';
@@ -40,7 +41,6 @@ import {
 } from '../lib/temporalErrors.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import {
-  hasRole,
   loadTokenUser,
   RBAC_OPTIONS,
   type RouteCaller,
@@ -106,7 +106,7 @@ const EVIDENCE_EXTENSIONS: Record<string, string> = {
 };
 
 function evidenceContentAuthHook() {
-  const fallback = { requiredRole: 'ENGINEER' as const };
+  const fallback = {};
   const authenticate = requireAuth(fallback);
   const hook = async (request: FastifyRequest, reply: FastifyReply) => {
     const token = (request.query as { token?: unknown } | undefined)?.token;
@@ -126,7 +126,7 @@ function evidenceContentAuthHook() {
       return sendError(reply, 401, 'EVIDENCE_LINK_INVALID', 'This evidence link is not valid');
     }
     const user = await loadTokenUser(request.server.prisma, claims.sub);
-    if (!user?.isActive || !hasRole(user.role, 'ENGINEER')) {
+    if (!user?.isActive) {
       return sendError(
         reply,
         401,
@@ -479,7 +479,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id/evidence',
     {
       config: { mcpScope: 'read' },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: RunIdParam, response: { 200: EvidenceListResponse } },
     },
     async (request, reply) => {
@@ -530,7 +530,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/evidence/:evidenceId/link',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: RunEvidenceParams, response: { 200: EvidenceLinkResponse } },
     },
     async (request, reply) => {
@@ -641,7 +641,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     '/',
     {
       config: { mcpScope: 'read', serviceScopes: ['runs:read'] },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: ListRunsQuery, response: { 200: RunListResponseSchema } },
     },
     async (request) => {
@@ -667,7 +667,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       const user = caller.kind === 'user' ? caller.user : null;
       const visibilityFilter: Prisma.WorkflowRunWhereInput = !user
         ? teamFilter
-        : user.role === 'ADMIN' && scope === 'ALL'
+        : isPlatformAdmin(user) && scope === 'ALL'
           ? {}
           : scope === 'MINE'
             ? { AND: [teamFilter, { workRequest: { requestedById: user.sub } }] }
@@ -745,7 +745,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       // An MCP write tool reaches this route through the bridge; `assertMcpWriteAllowed` below
       // is what bounds it, and the hook writes its audit row.
       config: { mcpScope: 'write', serviceScopes: ['runs:cancel'] },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       onSend: mcpWriteAuditHook,
       preValidation: mcpWriteBegin('cancel_run'),
       schema: {
@@ -884,7 +884,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id/eval-results',
     {
       config: { mcpScope: 'read' },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: {
         params: RunIdParam,
         response: { 200: EvalResultsResponseSchema, 404: ErrorResponseSchema },
@@ -918,7 +918,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/artifacts/:artifactId',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: {
         params: RunArtifactParams,
         response: {
@@ -977,7 +977,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/traces',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: {
         params: RunIdParam,
         querystring: RunTracesQuery,
@@ -1039,7 +1039,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id/effects',
     {
       config: { mcpScope: 'read' },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: {
         params: RunIdParam,
         response: { 200: RunEffectsResponseSchema, 404: ErrorResponseSchema },
@@ -1095,7 +1095,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id',
     {
       config: { activity: 'read', mcpScope: 'read', serviceScopes: ['runs:read'] },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: {
         params: RunIdParam,
         querystring: RunDetailQuery,
@@ -1173,7 +1173,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
               where: {
                 prNumber: { not: null },
                 runId: run.id,
-                ...(caller.user.role === 'ADMIN'
+                ...(isPlatformAdmin(caller.user)
                   ? {}
                   : { repository: reachableConnections(caller.user, request.repoAccessGate) }),
               },
@@ -1252,7 +1252,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id/autonomy-decisions',
     {
       config: { mcpScope: 'read' },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: {
         params: RunIdParam,
         querystring: AutonomyDecisionsQuery,
@@ -1285,7 +1285,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
 
 export const stepRegistryRoutes: FastifyPluginAsync = async (fastify) => {
   // ── Step palette catalog (for the web editor) ──
-  fastify.get('/registry', { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) }, async () => ({
+  fastify.get('/registry', { onRequest: requireAuth() }, async () => ({
     data: listSteps(),
   }));
 };

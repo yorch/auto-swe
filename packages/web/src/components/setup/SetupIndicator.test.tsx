@@ -24,7 +24,7 @@ const incomplete: Readiness = {
   providers: [],
   ready: false,
 };
-vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => admin }));
+vi.mock('@/hooks/useCan', () => ({ useCan: () => admin, usePlatformAdmin: () => admin }));
 vi.mock('@/hooks/useReadiness', () => ({ useReadiness: () => ({ data: readiness, isError }) }));
 vi.mock('next/navigation', () => ({ usePathname: () => pathname }));
 beforeEach(() => {

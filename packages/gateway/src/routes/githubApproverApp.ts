@@ -124,7 +124,7 @@ function invalid(
 
 export const githubApproverAppRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.integrations.manage' });
 
   /**
    * Whatever the approver App approved stands on GitHub, and the status it earned stands with it.

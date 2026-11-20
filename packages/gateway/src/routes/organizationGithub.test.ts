@@ -13,7 +13,6 @@ const h = vi.hoisted(() => ({
 }));
 vi.mock('@auto-swe/shared/lib/githubInstallation', () => ({ fetchGitHubAppIdentity: h.identity }));
 vi.mock('../lib/githubConnect.js', () => ({ verifyGithubInstaller: h.verify }));
-vi.mock('../lib/orgAccess.js', () => ({ isOrgAdmin: h.admin }));
 vi.mock('@auto-swe/shared/lib/crypto', () => ({
   deriveSubkey: () => ({ key: Buffer.alloc(32, 5), version: 1 }),
   deriveSubkeyForVersion: () => Buffer.alloc(32, 5),
@@ -41,6 +40,12 @@ const prisma = {
     findMany: vi.fn(),
     findUnique: vi.fn(),
     updateMany: vi.fn(),
+  },
+  // `h.admin` decides whether the caller administers the organization the loader asks about.
+  organizationMembership: {
+    findMany: vi.fn(async (args: { where: { orgId: { in: string[] } } }) =>
+      (await h.admin()) ? args.where.orgId.in.map((orgId) => ({ orgId, role: 'ORG_ADMIN' })) : []
+    ),
   },
 };
 const AUTH = { authorization: 'Bearer test' };

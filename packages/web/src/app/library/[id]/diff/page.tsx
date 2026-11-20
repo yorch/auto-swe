@@ -15,16 +15,14 @@ import { Select } from '@/components/ui/Select';
 import { PromoteVersionModal } from '@/components/workflow/PromoteVersionModal';
 import { TemplateNotFound, TemplateSubNav } from '@/components/workflow/templateNav';
 import { type DiffKind, WorkflowDag } from '@/components/workflow/WorkflowDag';
+import { useCanOwned } from '@/hooks/useCan';
 import { useEntityTitle } from '@/hooks/useEntityTitle';
-import { useLedTeamIds } from '@/hooks/useTeams';
 import { useWorkflowSpecDiff, useWorkflowTemplate } from '@/hooks/useTemplates';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
 import { diffFields, type FieldChange, orientVersions } from '@/lib/specDiff';
-import { canWriteTeamResource } from '@/lib/teamPermissions';
 import { cn, FOCUS_RING } from '@/lib/utils';
-import { useAuthStore } from '@/stores/authStore';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -151,9 +149,7 @@ function TemplateDiffContent({ params }: PageProps) {
     error: templateErr,
   } = useWorkflowTemplate(id ?? '');
   useEntityTitle(template?.name);
-  const platformRole = useAuthStore((s) => s.user?.role);
-  const ledTeamIds = useLedTeamIds();
-  const canManage = canWriteTeamResource(platformRole, template?.team?.id, ledTeamIds);
+  const canManage = useCanOwned('team.templates.write', template?.team?.id);
   const sortedVersions = useMemo(
     () => (template ? [...template.versions].sort((a, b) => b.version - a.version) : []),
     [template]

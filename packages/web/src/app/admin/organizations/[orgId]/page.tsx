@@ -21,9 +21,9 @@ import { Select } from '@/components/ui/Select';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { RoleSelectCell } from '@/components/users/RoleSelectCell';
+import { useCan } from '@/hooks/useCan';
 import { useDataTableSort } from '@/hooks/useDataTableSort';
 import { useEntityTitle } from '@/hooks/useEntityTitle';
-import { useHasRole } from '@/hooks/useHasRole';
 import {
   type OrgRole,
   useInviteOrgMember,
@@ -42,15 +42,22 @@ import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { useTeams } from '@/hooks/useTeams';
 import { buildBudgetPatch, centsToDollarsInput, removeCapPatch } from '@/lib/budgetPatch';
 import { errMsg } from '@/lib/errors';
-import { ORG_ROLE_OPTIONS, orgRoleLabel, platformRoleLabel } from '@/lib/govLabels';
+import {
+  DEFAULT_ORG_ROLE,
+  DEFAULT_TEAM_ROLE,
+  ORG_ROLE_OPTIONS,
+  orgRoleLabel,
+  orgRoleRank,
+  platformRoleLabel,
+  TEAM_ROLE_OPTIONS,
+  type TeamRoleValue,
+} from '@/lib/roleLabels';
 import { validateRouteParam } from '@/lib/routeParams';
 import { cn, formatCents, formatPercent, formatTokens, plural } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
-const ORG_ROLES: readonly OrgRole[] = ['ORG_MEMBER', 'ORG_ADMIN'];
-
 function isOrgRole(value: string): value is OrgRole {
-  return (ORG_ROLES as readonly string[]).includes(value);
+  return orgRoleRank(value) >= 0;
 }
 
 /** Members below this count are listed without a search box. */
@@ -80,16 +87,23 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
   const patchBudget = usePatchOrgBudget(orgId ?? '');
 
   const authUserId = useAuthStore((s) => s.user?.sub ?? null);
-  // Every write on this page is `requiredOrgRole: 'ORG_ADMIN'` (platform ADMIN
-  // bypasses); an ORG_MEMBER reads the same data but gets no controls.
-  const isPlatformAdmin = useHasRole('ADMIN');
-  const canAdmin =
-    isPlatformAdmin ||
-    (members ?? []).some((m) => m.userId === authUserId && m.role === 'ORG_ADMIN');
-  // The dollar budget is an ORG_ADMIN's; a plain member reads the percentage-only status instead.
-  const budgetQuery = useOrgBudget(orgId ?? '', canAdmin);
+  // Each control is the server's answer for this organization (`/me/permissions`): an org member
+  // reads the same data and gets no controls.
+  const scope = { orgId: orgId ?? undefined };
+  const canManageMembers = useCan('org.members.manage', scope);
+  const canManageBudget = useCan('org.budget.manage', scope);
+  const canEditProfile = useCan('org.settings.manage', scope);
+  const canCreateTeam = useCan('org.teams.create', scope);
+  const canLinkGithub = useCan('org.github.manage', scope);
+  const canTrustInvites = useCan('platform.orgs.trust-invites.manage');
+  // The dollar budget is for those who hold `org.budget.manage`; a plain member reads the
+  // percentage-only status instead.
+  const budgetQuery = useOrgBudget(orgId ?? '', canManageBudget);
   const budget = budgetQuery.data;
-  const budgetStatusQuery = useOrgBudgetStatus(orgId ?? '', membersQuery.isSuccess && !canAdmin);
+  const budgetStatusQuery = useOrgBudgetStatus(
+    orgId ?? '',
+    membersQuery.isSuccess && !canManageBudget
+  );
 
   const [orgName, setOrgName] = useState('');
   const [orgSlug, setOrgSlug] = useState('');
@@ -114,13 +128,13 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
   }
 
   const [addUserId, setAddUserId] = useState('');
-  const [addRole, setAddRole] = useState<OrgRole>('ORG_MEMBER');
+  const [addRole, setAddRole] = useState<OrgRole>(DEFAULT_ORG_ROLE);
   const [inviteEmail, setInviteEmail] = useState('');
-  const teams = useTeams({ enabled: canAdmin });
+  const teams = useTeams({ enabled: canManageMembers });
   const [creatingTeam, setCreatingTeam] = useState(false);
   const [inviteTeamId, setInviteTeamId] = useState('');
-  const [inviteTeamRole, setInviteTeamRole] = useState<'ADMIN' | 'LEAD' | 'ENGINEER'>('ENGINEER');
-  const [inviteRole, setInviteRole] = useState<OrgRole>('ORG_MEMBER');
+  const [inviteTeamRole, setInviteTeamRole] = useState<TeamRoleValue>(DEFAULT_TEAM_ROLE);
+  const [inviteRole, setInviteRole] = useState<OrgRole>(DEFAULT_ORG_ROLE);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteNotice, setInviteNotice] = useState<string | null>(null);
   const [addNotice, setAddNotice] = useState<string | null>(null);
@@ -151,7 +165,6 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
       (m.user.name ?? '').toLowerCase().includes(memberQuery)
   );
   const memberPager = usePagedRows(memberSort.sortRows(filteredMembers), 25, memberQuery);
-  const adminCount = (members ?? []).filter((m) => m.role === 'ORG_ADMIN').length;
 
   if (!orgId) {
     return (
@@ -203,9 +216,9 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
           : `Invite sent to ${email}. They wait in the platform approval queue until an admin approves them.`
       );
       setInviteEmail('');
-      setInviteRole('ORG_MEMBER');
+      setInviteRole(DEFAULT_ORG_ROLE);
       setInviteTeamId('');
-      setInviteTeamRole('ENGINEER');
+      setInviteTeamRole(DEFAULT_TEAM_ROLE);
     } catch (e) {
       setInviteError(errMsg(e, 'Failed to invite member'));
     }
@@ -281,7 +294,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
     <div className="space-y-6">
       <PageHeader
         actions={
-          canAdmin && (
+          canCreateTeam && (
             <Button onClick={() => setCreatingTeam(true)} variant="primary">
               New team
             </Button>
@@ -302,7 +315,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
         }
         title={org?.name ?? 'Organization'}
       />
-      {canAdmin && orgId && <OrganizationGithub orgId={orgId} />}
+      {canLinkGithub && orgId && <OrganizationGithub orgId={orgId} />}
       <TeamFormModal
         mode={{ kind: 'create', orgId }}
         onClose={() => setCreatingTeam(false)}
@@ -335,7 +348,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
               <EmptyState
                 className="py-6"
                 hint={
-                  canAdmin
+                  canManageMembers
                     ? 'Add an existing user or invite someone by email below.'
                     : 'Nobody belongs to this organization yet.'
                 }
@@ -356,7 +369,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                 )}
                 <DataTable
                   actions={
-                    canAdmin
+                    canManageMembers
                       ? (m) =>
                           m.userId === authUserId ? (
                             <span className="sr-only">You cannot remove yourself</span>
@@ -403,15 +416,15 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                     },
                     {
                       cell: (m) =>
-                        canAdmin && m.userId !== authUserId ? (
+                        canManageMembers && m.userId !== authUserId ? (
                           <RoleSelectCell
                             apply={(role) =>
                               patchMember.mutateAsync({ role: role as OrgRole, userId: m.userId })
                             }
                             ariaLabel={`Org role for ${m.user.email}`}
                             className="w-48"
-                            confirm={(_from, to) =>
-                              to === 'ORG_ADMIN'
+                            confirm={(from, to) =>
+                              orgRoleRank(to) > orgRoleRank(from)
                                 ? {
                                     confirmLabel: 'Make organization admin',
                                     dangerous: true,
@@ -424,9 +437,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                                     title: 'Remove organization admin rights?',
                                   }
                             }
-                            disabled={m.role === 'ORG_ADMIN' && adminCount <= 1}
-                            disabledReason="The only organization admin"
-                            options={ORG_ROLE_OPTIONS}
+                            options={[...ORG_ROLE_OPTIONS]}
                             value={m.role}
                           />
                         ) : (
@@ -436,7 +447,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                                 ? 'You cannot change your own role'
                                 : undefined
                             }
-                            tone={m.role === 'ORG_ADMIN' ? 'accent' : 'neutral'}
+                            tone={orgRoleRank(m.role) > 0 ? 'accent' : 'neutral'}
                             variant="outline"
                           >
                             {orgRoleLabel(m.role)}
@@ -468,7 +479,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                 )}
               </div>
             )}
-            {canAdmin && (
+            {canManageMembers && (
               <div className="mt-6 grid grid-cols-1 gap-6 border-t border-ink-600 pt-5 xl:grid-cols-2">
                 <div className="space-y-3">
                   <h4 className="text-sm font-medium text-paper-100">Add an existing user</h4>
@@ -486,13 +497,13 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                     <div className="flex flex-wrap items-end gap-3">
                       <div className="min-w-0 flex-1">
                         <Select
-                          label="Role"
+                          label="Org role"
                           onChange={(role) => {
                             if (isOrgRole(role)) {
                               setAddRole(role);
                             }
                           }}
-                          options={ORG_ROLE_OPTIONS}
+                          options={[...ORG_ROLE_OPTIONS]}
                           value={addRole}
                         />
                       </div>
@@ -544,26 +555,21 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                     {inviteTeamId && (
                       <Select
                         label="Team role"
-                        onChange={(value) =>
-                          setInviteTeamRole(value as 'ADMIN' | 'LEAD' | 'ENGINEER')
-                        }
-                        options={['ENGINEER', 'LEAD', 'ADMIN'].map((role) => ({
-                          label: platformRoleLabel(role),
-                          value: role,
-                        }))}
+                        onChange={(value) => setInviteTeamRole(value as TeamRoleValue)}
+                        options={[...TEAM_ROLE_OPTIONS]}
                         value={inviteTeamRole}
                       />
                     )}
                     <div className="flex flex-wrap items-end gap-3">
                       <div className="min-w-0 flex-1">
                         <Select
-                          label="Role"
+                          label="Org role"
                           onChange={(role) => {
                             if (isOrgRole(role)) {
                               setInviteRole(role);
                             }
                           }}
-                          options={ORG_ROLE_OPTIONS}
+                          options={[...ORG_ROLE_OPTIONS]}
                           value={inviteRole}
                         />
                       </div>
@@ -603,7 +609,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                   </Badge>
                 ))}
             </CardHeader>
-            {!canAdmin ? (
+            {!canManageBudget ? (
               <QueryBoundary
                 error={budgetStatusQuery.error}
                 isError={budgetStatusQuery.isError}
@@ -713,7 +719,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                       </dd>
                     </div>
                   </dl>
-                  {canAdmin && (
+                  {canManageBudget && (
                     <form
                       className="space-y-4 border-t border-ink-600 pt-4"
                       onSubmit={(e) => {
@@ -807,7 +813,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                     setOrgName(e.target.value);
                     setOrgSaved(false);
                   }}
-                  readOnly={!canAdmin}
+                  readOnly={!canEditProfile}
                   value={orgName}
                 />
                 <Input
@@ -818,10 +824,10 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                     setOrgSlug(e.target.value);
                     setOrgSaved(false);
                   }}
-                  readOnly={!canAdmin}
+                  readOnly={!canEditProfile}
                   value={orgSlug}
                 />
-                {canAdmin && (
+                {canEditProfile && (
                   <div className="flex items-center justify-end gap-3">
                     <span aria-live="polite" className="mr-auto text-xs text-paper-500">
                       {orgSaved && !orgDirty ? 'Profile saved.' : orgDirty ? 'Unsaved changes' : ''}
@@ -841,7 +847,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
 
           {/* ── Invite trust (platform admins only) ── It saves on toggle, so it
               sits outside the profile form, whose unsaved edits a refetch resets. */}
-          {isPlatformAdmin && org && (
+          {canTrustInvites && org && (
             <Card>
               <CardHeader className="mb-3">
                 <CardTitle>Invite trust</CardTitle>

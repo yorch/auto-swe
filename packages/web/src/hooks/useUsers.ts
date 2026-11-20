@@ -3,12 +3,13 @@
 import type { UserSummary } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import type { PlatformRoleValue } from '@/lib/roleLabels';
 
 export interface CreateUserBody {
   email: string;
   /** Omit to let the gateway auto-generate one (returned once in the response). */
   password?: string;
-  role?: 'ADMIN' | 'LEAD' | 'ENGINEER';
+  role?: PlatformRoleValue;
   slackId?: string;
 }
 
@@ -17,7 +18,7 @@ export interface CreatedUser extends UserSummary {
   temporaryPassword?: string;
 }
 
-/** The full directory — `GET /users` is ADMIN-only, so pass `enabled: false` otherwise. */
+/** The full directory — `GET /users` is for platform admins, so pass `enabled: false` otherwise. */
 export function useUsers(enabled = true) {
   return useQuery({
     enabled,
@@ -63,7 +64,7 @@ export function useUpdateUser() {
       id: string;
       patch: Partial<{
         isActive: boolean;
-        role: 'ADMIN' | 'LEAD' | 'ENGINEER';
+        role: PlatformRoleValue;
         slackId: string | null;
       }>;
     }) => api.patch<{ data: UserSummary }>(`/api/v1/users/${id}`, patch),
@@ -74,7 +75,7 @@ export function useUpdateUser() {
 export function useInviteUser() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { email: string; role?: 'ADMIN' | 'LEAD' | 'ENGINEER' }) =>
+    mutationFn: (body: { email: string; role?: PlatformRoleValue }) =>
       api.post<{ data: UserSummary }>('/api/v1/users/invite', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   });

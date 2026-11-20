@@ -5,10 +5,10 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { can } from '../lib/authz.js';
 import { verifyGithubInstaller } from '../lib/githubConnect.js';
 import { signGithubConnectState, verifyGithubConnectState } from '../lib/githubConnectState.js';
 import { sendError } from '../lib/httpErrors.js';
-import { isOrgAdmin } from '../lib/orgAccess.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -24,7 +24,7 @@ const Claim = z
 
 export const organizationGithubRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const auth = requireAuth({ requiredRole: 'ENGINEER' });
+  const auth = requireAuth({ handlerChecked: ['org.github.manage'] });
   async function appConfig() {
     const config = await resolveGitHubConfig();
     if (!(config.appId && config.appPrivateKey && config.appClientId && config.appClientSecret)) {
@@ -54,7 +54,7 @@ export const organizationGithubRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: auth, schema: { params: OrgParams } },
     async (request, reply) => {
       const user = requireUser(request);
-      if (!(await isOrgAdmin(fastify.prisma, user, request.params.orgId))) {
+      if (!(await can(request, 'org.github.manage', { orgId: request.params.orgId })).allowed) {
         return sendError(reply, 403, 'FORBIDDEN', 'Requires organization admin');
       }
       const settings = await appConfig();
@@ -95,7 +95,7 @@ export const organizationGithubRoutes: FastifyPluginAsync = async (fastify) => {
           'The connection request is invalid or expired. Start again from your organization.'
         );
       }
-      if (!(await isOrgAdmin(fastify.prisma, user, claims.orgId))) {
+      if (!(await can(request, 'org.github.manage', { orgId: claims.orgId })).allowed) {
         return sendError(reply, 403, 'FORBIDDEN', 'Requires organization admin');
       }
       const settings = await appConfig();
@@ -179,7 +179,7 @@ export const organizationGithubRoutes: FastifyPluginAsync = async (fastify) => {
     '/organizations/:orgId/github/installations',
     { onRequest: auth, schema: { params: OrgParams } },
     async (request, reply) => {
-      if (!(await isOrgAdmin(fastify.prisma, requireUser(request), request.params.orgId))) {
+      if (!(await can(request, 'org.github.manage', { orgId: request.params.orgId })).allowed) {
         return sendError(reply, 403, 'FORBIDDEN', 'Requires organization admin');
       }
       return {
@@ -197,7 +197,7 @@ export const organizationGithubRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const { orgId, id } = request.params;
-      if (!(await isOrgAdmin(fastify.prisma, user, orgId))) {
+      if (!(await can(request, 'org.github.manage', { orgId })).allowed) {
         return sendError(reply, 403, 'FORBIDDEN', 'Requires organization admin');
       }
       const row = await fastify.prisma.gitHubInstallation.findFirst({

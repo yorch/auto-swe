@@ -110,10 +110,27 @@ describe('human step routes', () => {
       configAuditLog: {
         create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
       },
+      // `membershipRow` is a LEAD membership of one team. The capability resolver reads it two
+      // ways: by the teams a resource names, and, for a held scope, by the user alone.
+      team: {
+        findMany: async (args: { where: { id: { in: string[] } } }) =>
+          args.where.id.in.map((id) => ({ id, isActive: true, orgId: null })),
+      },
       teamMembership: {
-        findMany: async (args: Record<string, unknown>) => {
+        findMany: async (args: {
+          select: Record<string, unknown>;
+          where: { teamId?: { in: string[] } };
+        }) => {
           membershipCalls.push(args);
-          return membershipRow ? [membershipRow] : [];
+          if (!membershipRow) {
+            return [];
+          }
+          if (args.select.team) {
+            return [{ role: 'LEAD', team: { id: membershipRow.teamId, isActive: true } }];
+          }
+          return (args.where.teamId?.in ?? []).includes(membershipRow.teamId as string)
+            ? [{ role: 'LEAD', teamId: membershipRow.teamId }]
+            : [];
         },
       },
       workflowHumanStep: {
@@ -1175,11 +1192,9 @@ describe('human step routes', () => {
       expect(updateManyCalls).toHaveLength(0);
     });
 
-    it('looks for a LEAD or ADMIN membership of an active owning team', async () => {
+    it('decides team.approvals.nudge on the owning teams of the run', async () => {
       await post();
       expect(membershipCalls[0]?.where).toEqual({
-        role: { in: ['LEAD', 'ADMIN'] },
-        team: { isActive: true },
         teamId: { in: ['team-1'] },
         userId: USER_ID,
       });

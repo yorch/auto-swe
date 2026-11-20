@@ -25,9 +25,9 @@ import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { Textarea } from '@/components/ui/Textarea';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
+import { usePlatformAdmin } from '@/hooks/useCan';
 import { useDataTableSort } from '@/hooks/useDataTableSort';
 import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
-import { useHasRole } from '@/hooks/useHasRole';
 import {
   type Skill,
   type SkillEffectiveness,
@@ -119,7 +119,7 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
   // The row handed in is a snapshot; the list is live, so a restore shows at once.
   const { data: allSkills } = useSkills();
   const verify = useVerifySkill();
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = usePlatformAdmin();
   const [verifyError, setVerifyError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ description: '', isActive: true, name: '', promptText: '' });
@@ -689,7 +689,7 @@ export default function StudioSkillsPage() {
 }
 
 function StudioSkillsContent() {
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = usePlatformAdmin();
   const [tab, setTab] = useState<Tab>('skills');
   const [newOpen, setNewOpen] = useState(false);
   const [viewTarget, setViewTarget] = useState<Skill | null>(null);

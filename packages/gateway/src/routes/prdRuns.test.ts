@@ -9,6 +9,19 @@ vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
   ...(await import('../test/billingMock.js')),
 }));
 
+// Wraps the real `authorizeLaunch` so a test can read the options the route passed it.
+const authorizeLaunchSpy = vi.hoisted(() => vi.fn());
+vi.mock('../lib/launchAuthorization.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../lib/launchAuthorization.js')>();
+  return {
+    ...original,
+    authorizeLaunch: (...args: Parameters<typeof original.authorizeLaunch>) => {
+      authorizeLaunchSpy(...args);
+      return original.authorizeLaunch(...args);
+    },
+  };
+});
+
 /**
  * `POST /api/v1/prd-runs`.
  *
@@ -77,8 +90,9 @@ async function buildHarness(): Promise<Harness> {
           repoName: 'payments',
           shares: [],
           team: {
+            id: 'team-1',
             isActive: true,
-            memberships: [{ role: h.teamRole, userId: 'user-1' }],
+            memberships: [{ userId: 'user-1' }],
             organization: { id: 'org-1', isActive: true, monthlyBudgetUsdCents: 1000 },
             orgId: 'org-1',
           },
@@ -117,7 +131,14 @@ async function buildHarness(): Promise<Harness> {
         return {};
       },
     },
-    teamMembership: { findUnique: async () => ({ role: 'LEAD' }) },
+    // The capability resolver loads the named team and the caller's role on it.
+    team: {
+      findMany: async () => [{ id: 'team-1', isActive: true, orgId: null }],
+    },
+    teamMembership: {
+      findMany: async () => [{ role: h.teamRole, teamId: 'team-1' }],
+      findUnique: async () => ({ role: 'LEAD' }),
+    },
     user: { findUnique: async () => ({ id: 'user-1', isActive: true, role: h.role }) },
     workflowTemplate: {
       findFirst: async () => ({ activeVersion: 1, id: 'tpl-prd' }),
@@ -295,6 +316,13 @@ describe('POST /prd-runs', () => {
     ]);
     expect(h.runInputs).toHaveLength(0);
     expect(h.started).toHaveLength(0);
+  });
+
+  it('asks authorizeLaunch for the owning-team LEAD requirement, the route’s real refusal', async () => {
+    authorizeLaunchSpy.mockClear();
+    expect((await submit(h)).statusCode).toBe(201);
+    expect(authorizeLaunchSpy).toHaveBeenCalledTimes(1);
+    expect(authorizeLaunchSpy.mock.calls[0]?.[2]).toMatchObject({ requireOwningTeamLead: true });
   });
 
   it('lets a team LEAD start a PRD run', async () => {

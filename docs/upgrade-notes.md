@@ -2070,3 +2070,76 @@ clear it.
 show as Unverified in `/agents`.
 
 ---
+
+### Users who left an organization but kept team memberships (`<fixing-commit-sha>`)
+
+**Affected.** Deployments where an organization membership was removed before this change. Removal
+used to leave the person's memberships in the organization's teams, so a user can belong to a team of
+an organization they are no longer a member of.
+
+**What changes.** Removing an organization membership now removes the user's memberships in all of that
+organization's teams in the same transaction, one audit row each. Memberships left by earlier removals
+are not cleaned up. A cascade can leave a team with no ADMIN, shown as `needsAdmin` on its overview.
+
+**Actions.** List team memberships whose user has no membership in the team's organization
+(`team_memberships` joined to `teams` with no matching `organization_memberships` row), and remove them
+through the team members API, or re-add the user to the organization where the access is intended.
+Appoint an ADMIN for any team the overview flags.
+
+**Verify.** The same query returns no rows, and removing a test user from an organization removes their
+team memberships.
+
+---
+
+### Role enums are split and renamed; role-grantee settings grants are deleted (`<fixing commit SHA>`)
+
+**Affected.** Every deployment that ran code before this change, because the migration
+`20261119000000_split_role_enums` rewrites stored role values. A deployment with rows in
+`config_permissions` (settings grants) is also affected by the deletions below.
+
+**What changes.** One shared `Role` type becomes three, and the organization role values lose their prefix:
+
+| Column | Before | After |
+|---|---|---|
+| `users.role` | `ADMIN`, `LEAD`, `ENGINEER` | `PlatformRole`: `ADMIN` stays `ADMIN`; `LEAD` and `ENGINEER` become `USER` |
+| `team_memberships.role` | `ADMIN`, `LEAD`, `ENGINEER` | `TeamRole`: `ENGINEER` becomes `MEMBER`; `LEAD` and `ADMIN` unchanged |
+| `organization_memberships.role` | `ORG_ADMIN`, `ORG_MEMBER` | `OrgRole`: `ADMIN`, `MEMBER` |
+| `config_permissions.role` | `Role` | `TeamRole` (`ENGINEER` becomes `MEMBER`) |
+
+The API and the CLI carry the new names: a request that sends `ENGINEER` or `ORG_ADMIN` is refused, and
+`GET /api/v1/teams/:id/overview` answers `viewerLevel: "member"` where it answered `"engineer"`. A token or session
+minted before the upgrade keeps working: the platform role is read from the database on every request,
+never from the token.
+
+**Settings grants.** A role-grantee grant is now a TEAM-scope grant only (`CHECK (role IS NULL OR scope =
+'TEAM')`), matched against the actor's role in the grant's team. The migration deletes every grant that
+named a role, because it matched a platform role that no longer exists in that meaning, and every user
+grant held by a user who was a platform `ENGINEER`, because it never took effect and would otherwise
+switch on. User grants held by `LEAD` and `ADMIN` users are kept. The migration records both counts
+with `RAISE NOTICE`, but `prisma migrate deploy` does not show notices and the default server log level
+hides them, so **list the grants before upgrading**: `SELECT * FROM config_permissions WHERE role IS NOT
+NULL OR user_id IN (SELECT id FROM users WHERE role = 'ENGINEER')` and keep the output.
+
+**Rolling deploy.** Stop every old gateway and worker replica before running the migration. After it,
+old code still writes `ENGINEER` (sign-up default, invites, default team membership) and those writes
+fail with an invalid-enum error until the last old replica is gone. The migration sets a 5-second
+`lock_timeout`, rewrites `users`, `team_memberships` and `config_permissions` under an exclusive lock,
+and fails fast if a long transaction holds one of them; retry once it ends.
+
+**Actions.**
+
+1. Re-issue the deleted role grants as team-role grants through `POST /api/v1/platform/config/grants`
+   with `scope: "TEAM"`, a `teamId` and a team `role` (`MEMBER`, `LEAD` or `ADMIN`). Re-grant a deleted
+   per-user grant only where the user should now hold that authority.
+2. Update scripts, integrations and CLI automation that send or compare `ENGINEER`, platform `LEAD`,
+   `ORG_ADMIN` or `ORG_MEMBER`.
+
+**Historical values.** `transcript_access_log.actor_role` and the `context` JSON of audit rows keep the
+spelling they were written with and are not rewritten; new rows carry the new names. Workflow histories and
+persisted workflow inputs written before the change (for example `sourceAuthorization.actor.role`) still
+read correctly, because the permissions module accepts the old spellings.
+
+**Verify.** `SELECT DISTINCT role FROM users` returns only `ADMIN` and `USER`;
+`SELECT DISTINCT role FROM team_memberships` returns only `ADMIN`, `LEAD` and `MEMBER`;
+`SELECT DISTINCT role FROM organization_memberships` returns only `ADMIN` and `MEMBER`; and
+`SELECT 1 FROM pg_type WHERE typname = 'Role'` returns no row.

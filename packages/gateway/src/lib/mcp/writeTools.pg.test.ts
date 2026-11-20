@@ -103,7 +103,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
   async function makeUser(label: string) {
     const email = `${MARK}-${label}@example.test`;
     const user = await prisma.user.create({
-      data: { email, emailVerified: true, isActive: true, name: `Name ${label}`, role: 'ENGINEER' },
+      data: { email, emailVerified: true, isActive: true, name: `Name ${label}`, role: 'USER' },
     });
     await prisma.account.create({
       data: {
@@ -542,7 +542,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
   const restSubmit = (userId: string, body: Record<string, unknown>) =>
     app.inject({
       headers: {
-        authorization: `Bearer ${app.auth.signAccessToken({ role: 'ENGINEER', sub: userId })}`,
+        authorization: `Bearer ${app.auth.signAccessToken({ role: 'USER', sub: userId })}`,
       },
       method: 'POST',
       payload: body,
@@ -946,7 +946,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
       await settingsOn({ 'mcp.writeToolsEnabled': false });
       const ordinary = await app.inject({
         headers: {
-          authorization: `Bearer ${app.auth.signAccessToken({ role: 'ENGINEER', sub: people.alice.id })}`,
+          authorization: `Bearer ${app.auth.signAccessToken({ role: 'USER', sub: people.alice.id })}`,
         },
         method: 'POST',
         payload: { payload: { ...payload, budget: 'LARGE' } },
@@ -1540,7 +1540,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
       const { runId } = await runFor(people.dave.id, people.dave.id);
       const viaRest = await app.inject({
         headers: {
-          authorization: `Bearer ${app.auth.signAccessToken({ role: 'ENGINEER', sub: people.carol.id })}`,
+          authorization: `Bearer ${app.auth.signAccessToken({ role: 'USER', sub: people.carol.id })}`,
         },
         method: 'POST',
         url: `/api/v1/workflow-runs/${runId}/cancel`,

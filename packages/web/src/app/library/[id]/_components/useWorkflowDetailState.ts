@@ -11,9 +11,10 @@ import {
   CONTAINER_AUTHORING_RULE,
   describeAuthoredCode,
 } from '@/components/workflow/containerNodes';
+import { useCanOwned } from '@/hooks/useCan';
+import { useEffectivePermissions } from '@/hooks/useEffectivePermissions';
 import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useRolePricing } from '@/hooks/useModelCatalog';
-import { useAdminTeamIds, useLedTeamIds } from '@/hooks/useTeams';
 import {
   useCreateWorkflowVersion,
   useReviewWorkflowVersion,
@@ -26,11 +27,8 @@ import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { ApiError } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
 import { estimatorPricing } from '@/lib/modelCatalog';
-import { hasRole } from '@/lib/roles';
 import { validateRouteParam } from '@/lib/routeParams';
 import { schemaIssues } from '@/lib/specSchemaIssues';
-import { canAuthorTeamCode, canWriteTeamResource } from '@/lib/teamPermissions';
-import { useAuthStore } from '@/stores/authStore';
 import type { ViewMode } from './EditorActions';
 
 /**
@@ -144,20 +142,15 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
   const { data: analytics } = useWorkflowTemplateAnalytics(id ?? '', 30, { poll: false });
   const createVersion = useCreateWorkflowVersion(id ?? '');
   const reviewVersion = useReviewWorkflowVersion(id ?? '');
-  // Every write here (new version, promote, review, refine, metadata, webhook)
-  // asks the platform role for nothing beyond ENGINEER and requires LEAD
-  // membership on the template's owning team (templateWriteFilter) — a GLOBAL
-  // template is ADMIN-only. Anyone else gets a read-only view.
-  const platformRole = useAuthStore((s) => s.user?.role);
-  const ledTeamIds = useLedTeamIds();
-  const canManage = canWriteTeamResource(platformRole, template?.team?.id, ledTeamIds);
-  // Container code and authored commands take a team ADMIN on top (the gateway's
-  // `workflow:write:shell`). Null while the memberships load: the save then asks the gateway.
-  const adminTeamIds = useAdminTeamIds();
-  const canAuthorCode =
-    adminTeamIds === null && !hasRole(platformRole, 'ADMIN')
-      ? null
-      : canAuthorTeamCode(platformRole, template?.team?.id, adminTeamIds);
+  // Every write here (new version, promote, review, refine, metadata, webhook) is
+  // `team.templates.write` on the template's owning team; a GLOBAL template belongs to the
+  // platform, so only a platform admin writes it. Anyone else gets a read-only view.
+  const canManage = useCanOwned('team.templates.write', template?.team?.id);
+  // Container code and authored commands take `team.templates.shell.author` on top. Null while
+  // the permissions load: the save then asks the gateway.
+  const permissionsReady = useEffectivePermissions().data !== undefined;
+  const canAuthorShell = useCanOwned('team.templates.shell.author', template?.team?.id);
+  const canAuthorCode = permissionsReady ? canAuthorShell : null;
 
   const [mode, setMode] = useState<ViewMode>('view');
   const [editorSpec, setEditorSpec] = useState<WorkflowSpec | null>(null);

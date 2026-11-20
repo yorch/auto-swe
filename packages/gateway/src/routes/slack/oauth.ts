@@ -6,6 +6,7 @@ import {
   resolveWebUrl,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyInstance } from 'fastify';
 import { requireAuth, requireUser } from '../../plugins/auth.js';
 
@@ -124,7 +125,7 @@ export async function registerOauthRoutes(fastify: FastifyInstance): Promise<voi
   fastify.get(
     '/connect',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
     },
     async (request, reply) => {
       const { clientId } = await resolveSlackConfig();
@@ -156,100 +157,110 @@ export async function registerOauthRoutes(fastify: FastifyInstance): Promise<voi
   );
 
   // GET /api/v1/auth/slack/callback — Handle Slack OAuth callback
-  fastify.get('/callback', async (request, reply) => {
-    const { code, state } = request.query as { code?: string; state?: string };
-    // The flow must finish in the browser that started it (SLACK_LINK_COOKIE).
-    // One use only: the cookie is cleared whatever the outcome, a cancelled or
-    // malformed callback included.
-    const { cookie, redirectUri } = slackLinkCallback();
-    const browserNonce = request.cookies[SLACK_LINK_COOKIE];
-    reply.clearCookie(SLACK_LINK_COOKIE, cookie);
+  fastify.get(
+    '/callback',
+    {
+      config: {
+        authz: 'public',
+        publicReason:
+          'OAuth redirect from Slack: signed single-purpose state token bound to the starting browser by a cookie nonce',
+      },
+    },
+    async (request, reply) => {
+      const { code, state } = request.query as { code?: string; state?: string };
+      // The flow must finish in the browser that started it (SLACK_LINK_COOKIE).
+      // One use only: the cookie is cleared whatever the outcome, a cancelled or
+      // malformed callback included.
+      const { cookie, redirectUri } = slackLinkCallback();
+      const browserNonce = request.cookies[SLACK_LINK_COOKIE];
+      reply.clearCookie(SLACK_LINK_COOKIE, cookie);
 
-    if (!code || !state) {
-      return reply.status(400).send({
-        error: { code: 'INVALID_CALLBACK', message: 'Missing code or state' },
+      if (!code || !state) {
+        return reply.status(400).send({
+          error: { code: 'INVALID_CALLBACK', message: 'Missing code or state' },
+        });
+      }
+
+      // Verify the single-purpose OAuth state token.
+      let statePayload: { sub: string; nonce?: string };
+      try {
+        statePayload = fastify.auth.verifyOAuthState(state, 'slack-link');
+      } catch {
+        return reply.status(400).send({
+          error: { code: 'INVALID_STATE', message: 'Invalid state parameter' },
+        });
+      }
+
+      if (!(statePayload.nonce && browserNonce && sameNonce(statePayload.nonce, browserNonce))) {
+        return reply.status(403).send({
+          error: {
+            code: 'STATE_MISMATCH',
+            message:
+              'This Slack link was not started in this browser. Start it again from your settings page.',
+          },
+        });
+      }
+      // The state is up to ten minutes old; the account it names must still be
+      // one that may sign in.
+      const linkingUser = await fastify.prisma.user.findUnique({
+        select: { isActive: true },
+        where: { id: statePayload.sub },
       });
-    }
+      if (!linkingUser?.isActive) {
+        return reply.status(403).send({
+          error: { code: 'USER_INACTIVE', message: 'User account is not active' },
+        });
+      }
 
-    // Verify the single-purpose OAuth state token.
-    let statePayload: { sub: string; nonce?: string };
-    try {
-      statePayload = fastify.auth.verifyOAuthState(state, 'slack-link');
-    } catch {
-      return reply.status(400).send({
-        error: { code: 'INVALID_STATE', message: 'Invalid state parameter' },
+      const { clientId, clientSecret } = await resolveSlackConfig();
+      if (!clientId || !clientSecret) {
+        return reply.status(503).send({
+          error: { code: 'SLACK_NOT_CONFIGURED', message: 'Slack OAuth credentials missing' },
+        });
+      }
+      const tokenData = await exchangeSlackOAuthCode(clientId, clientSecret, code, redirectUri);
+      if (!tokenData.ok) {
+        return reply.status(400).send({
+          error: { code: 'SLACK_AUTH_FAILED', message: tokenData.error ?? 'Slack OAuth failed' },
+        });
+      }
+
+      // Get user identity
+      const identityResponse = await fetch('https://slack.com/api/users.identity', {
+        headers: { Authorization: `Bearer ${tokenData.authed_user.access_token}` },
       });
-    }
 
-    if (!(statePayload.nonce && browserNonce && sameNonce(statePayload.nonce, browserNonce))) {
-      return reply.status(403).send({
-        error: {
-          code: 'STATE_MISMATCH',
-          message:
-            'This Slack link was not started in this browser. Start it again from your settings page.',
-        },
+      const identity = (await identityResponse.json()) as SlackIdentityResponse;
+      if (!identity.ok) {
+        return reply.status(400).send({
+          error: { code: 'SLACK_IDENTITY_FAILED', message: 'Failed to get Slack identity' },
+        });
+      }
+
+      const slackId = identity.user.id;
+
+      // Prevent double-linking
+      const existingLink = await fastify.prisma.user.findFirst({
+        where: { id: { not: statePayload.sub }, slackId },
       });
-    }
-    // The state is up to ten minutes old; the account it names must still be
-    // one that may sign in.
-    const linkingUser = await fastify.prisma.user.findUnique({
-      select: { isActive: true },
-      where: { id: statePayload.sub },
-    });
-    if (!linkingUser?.isActive) {
-      return reply.status(403).send({
-        error: { code: 'USER_INACTIVE', message: 'User account is not active' },
+      if (existingLink) {
+        return reply.status(409).send({
+          error: {
+            code: 'SLACK_ALREADY_LINKED',
+            message: 'This Slack account is linked to another user',
+          },
+        });
+      }
+
+      // Update user with Slack ID
+      await fastify.prisma.user.update({
+        data: { slackId },
+        where: { id: statePayload.sub },
       });
+
+      return { data: { connected: true, slackId } };
     }
-
-    const { clientId, clientSecret } = await resolveSlackConfig();
-    if (!clientId || !clientSecret) {
-      return reply.status(503).send({
-        error: { code: 'SLACK_NOT_CONFIGURED', message: 'Slack OAuth credentials missing' },
-      });
-    }
-    const tokenData = await exchangeSlackOAuthCode(clientId, clientSecret, code, redirectUri);
-    if (!tokenData.ok) {
-      return reply.status(400).send({
-        error: { code: 'SLACK_AUTH_FAILED', message: tokenData.error ?? 'Slack OAuth failed' },
-      });
-    }
-
-    // Get user identity
-    const identityResponse = await fetch('https://slack.com/api/users.identity', {
-      headers: { Authorization: `Bearer ${tokenData.authed_user.access_token}` },
-    });
-
-    const identity = (await identityResponse.json()) as SlackIdentityResponse;
-    if (!identity.ok) {
-      return reply.status(400).send({
-        error: { code: 'SLACK_IDENTITY_FAILED', message: 'Failed to get Slack identity' },
-      });
-    }
-
-    const slackId = identity.user.id;
-
-    // Prevent double-linking
-    const existingLink = await fastify.prisma.user.findFirst({
-      where: { id: { not: statePayload.sub }, slackId },
-    });
-    if (existingLink) {
-      return reply.status(409).send({
-        error: {
-          code: 'SLACK_ALREADY_LINKED',
-          message: 'This Slack account is linked to another user',
-        },
-      });
-    }
-
-    // Update user with Slack ID
-    await fastify.prisma.user.update({
-      data: { slackId },
-      where: { id: statePayload.sub },
-    });
-
-    return { data: { connected: true, slackId } };
-  });
+  );
 
   // ── App install (Full multi-workspace) ──────────────────────────────────────
   //
@@ -263,7 +274,7 @@ export async function registerOauthRoutes(fastify: FastifyInstance): Promise<voi
   fastify.get(
     '/install',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.integrations.manage' }),
     },
     async (request, reply) => {
       const { clientId } = await resolveSlackConfig();
@@ -290,115 +301,126 @@ export async function registerOauthRoutes(fastify: FastifyInstance): Promise<voi
   // GET /api/v1/auth/slack/install/callback — Complete the bot install: exchange
   // the code for the workspace bot token and persist it encrypted on the
   // workspace row. Redirects back to the admin integrations page on success.
-  fastify.get('/install/callback', async (request, reply) => {
-    const { code, state } = request.query as { code?: string; state?: string };
-    // The install must finish in the browser that started it (SLACK_INSTALL_COOKIE).
-    // One use only: cleared whatever the outcome.
-    const { cookie, redirectUri } = slackLinkCallback(SLACK_INSTALL_CALLBACK_PATH);
-    const browserNonce = request.cookies[SLACK_INSTALL_COOKIE];
-    reply.clearCookie(SLACK_INSTALL_COOKIE, cookie);
+  fastify.get(
+    '/install/callback',
+    {
+      config: {
+        authz: 'public',
+        publicReason:
+          'OAuth redirect from Slack: signed install state bound to the browser by a cookie nonce; starter re-checked as an active platform ADMIN',
+      },
+    },
+    async (request, reply) => {
+      const { code, state } = request.query as { code?: string; state?: string };
+      // The install must finish in the browser that started it (SLACK_INSTALL_COOKIE).
+      // One use only: cleared whatever the outcome.
+      const { cookie, redirectUri } = slackLinkCallback(SLACK_INSTALL_CALLBACK_PATH);
+      const browserNonce = request.cookies[SLACK_INSTALL_COOKIE];
+      reply.clearCookie(SLACK_INSTALL_COOKIE, cookie);
 
-    if (!code || !state) {
-      return reply.status(400).send({
-        error: { code: 'INVALID_CALLBACK', message: 'Missing code or state' },
-      });
-    }
-    let installerId: string;
-    let stateNonce: string | undefined;
-    try {
-      const payload = fastify.auth.verifyOAuthState(state, 'slack-install');
-      installerId = payload.sub;
-      stateNonce = payload.nonce;
-    } catch {
-      return reply.status(400).send({
-        error: { code: 'INVALID_STATE', message: 'Invalid state parameter' },
-      });
-    }
-    if (!(stateNonce && browserNonce && sameNonce(stateNonce, browserNonce))) {
-      return reply.status(403).send({
-        error: {
-          code: 'STATE_MISMATCH',
-          message:
-            'This install was not started in this browser. Start it again from the admin page.',
-        },
-      });
-    }
-    // The state proves who started the flow; re-check that they are still an
-    // active platform admin at completion time so a demoted or deactivated
-    // account (or a state token from a lesser flow) cannot bind a bot token.
-    const installer = await fastify.prisma.user.findUnique({
-      select: { isActive: true, role: true },
-      where: { id: installerId },
-    });
-    if (!installer?.isActive || installer.role !== 'ADMIN') {
-      return reply.status(403).send({
-        error: { code: 'FORBIDDEN', message: 'Only active platform admins may install the bot' },
-      });
-    }
-
-    const { clientId, clientSecret } = await resolveSlackConfig();
-    if (!clientId || !clientSecret) {
-      return reply.status(503).send({
-        error: { code: 'SLACK_NOT_CONFIGURED', message: 'Slack OAuth credentials missing' },
-      });
-    }
-    const tokenData = await exchangeSlackOAuthCode(clientId, clientSecret, code, redirectUri);
-    // A bot install returns the bot token as the top-level `access_token` plus the
-    // installing `team`. Bail clearly if either is missing (e.g. a user-scope grant).
-    if (!tokenData.ok || !tokenData.access_token || !tokenData.team?.id) {
-      return reply.status(400).send({
-        error: {
-          code: 'SLACK_INSTALL_FAILED',
-          message: tokenData.error ?? 'Slack did not return a workspace bot token',
-        },
-      });
-    }
-
-    const slackTeamId = tokenData.team.id;
-    const sealed = encryptSecret(tokenData.access_token);
-    const tokenColumns = {
-      botTokenAuthTag: sealed.authTag,
-      botTokenCiphertext: sealed.ciphertext,
-      botTokenKeyVersion: sealed.keyVersion,
-      botTokenLastFour: sealed.lastFour,
-      botTokenNonce: sealed.nonce,
-      ...(tokenData.app_id ? { appId: tokenData.app_id } : {}),
-      ...(tokenData.bot_user_id ? { botUserId: tokenData.bot_user_id } : {}),
-      installedAt: new Date(),
-      ...(tokenData.team.name ? { name: tokenData.team.name } : {}),
-    };
-
-    // Existing workspace → store the token. New workspace → create under the
-    // default team's org (mirrors event-time auto-provisioning) so a first-ever
-    // install needs no prior event.
-    const existing = await fastify.prisma.slackWorkspace.findUnique({ where: { slackTeamId } });
-    if (existing) {
-      await fastify.prisma.slackWorkspace.update({
-        data: tokenColumns,
-        where: { slackTeamId },
-      });
-    } else {
-      const { defaultTeamSlug } = await resolveWorkflowDefaults();
-      const defaultTeam = await fastify.prisma.team.findUnique({
-        where: { slug: defaultTeamSlug },
-      });
-      if (!defaultTeam) {
-        return reply.status(503).send({
+      if (!code || !state) {
+        return reply.status(400).send({
+          error: { code: 'INVALID_CALLBACK', message: 'Missing code or state' },
+        });
+      }
+      let installerId: string;
+      let stateNonce: string | undefined;
+      try {
+        const payload = fastify.auth.verifyOAuthState(state, 'slack-install');
+        installerId = payload.sub;
+        stateNonce = payload.nonce;
+      } catch {
+        return reply.status(400).send({
+          error: { code: 'INVALID_STATE', message: 'Invalid state parameter' },
+        });
+      }
+      if (!(stateNonce && browserNonce && sameNonce(stateNonce, browserNonce))) {
+        return reply.status(403).send({
           error: {
-            code: 'DEFAULT_TEAM_MISSING',
-            message: 'No default team — run `yarn db:seed` before installing into a new workspace',
+            code: 'STATE_MISMATCH',
+            message:
+              'This install was not started in this browser. Start it again from the admin page.',
           },
         });
       }
-      await fastify.prisma.slackWorkspace.create({
-        data: { ...tokenColumns, orgId: defaultTeam.orgId, slackTeamId },
+      // The state proves who started the flow; re-check that they are still an
+      // active platform admin at completion time so a demoted or deactivated
+      // account (or a state token from a lesser flow) cannot bind a bot token.
+      const installer = await fastify.prisma.user.findUnique({
+        select: { isActive: true, role: true },
+        where: { id: installerId },
       });
-    }
+      if (!installer?.isActive || !isPlatformAdmin(installer)) {
+        return reply.status(403).send({
+          error: { code: 'FORBIDDEN', message: 'Only active platform admins may install the bot' },
+        });
+      }
 
-    // Bounce back to the integrations page with a success flag; its Slack tab
-    // reads `tab` and `slack_installed`.
-    return reply.redirect(
-      `${resolveWebUrl()}/admin/integrations?tab=slack&slack_installed=${slackTeamId}`
-    );
-  });
+      const { clientId, clientSecret } = await resolveSlackConfig();
+      if (!clientId || !clientSecret) {
+        return reply.status(503).send({
+          error: { code: 'SLACK_NOT_CONFIGURED', message: 'Slack OAuth credentials missing' },
+        });
+      }
+      const tokenData = await exchangeSlackOAuthCode(clientId, clientSecret, code, redirectUri);
+      // A bot install returns the bot token as the top-level `access_token` plus the
+      // installing `team`. Bail clearly if either is missing (e.g. a user-scope grant).
+      if (!tokenData.ok || !tokenData.access_token || !tokenData.team?.id) {
+        return reply.status(400).send({
+          error: {
+            code: 'SLACK_INSTALL_FAILED',
+            message: tokenData.error ?? 'Slack did not return a workspace bot token',
+          },
+        });
+      }
+
+      const slackTeamId = tokenData.team.id;
+      const sealed = encryptSecret(tokenData.access_token);
+      const tokenColumns = {
+        botTokenAuthTag: sealed.authTag,
+        botTokenCiphertext: sealed.ciphertext,
+        botTokenKeyVersion: sealed.keyVersion,
+        botTokenLastFour: sealed.lastFour,
+        botTokenNonce: sealed.nonce,
+        ...(tokenData.app_id ? { appId: tokenData.app_id } : {}),
+        ...(tokenData.bot_user_id ? { botUserId: tokenData.bot_user_id } : {}),
+        installedAt: new Date(),
+        ...(tokenData.team.name ? { name: tokenData.team.name } : {}),
+      };
+
+      // Existing workspace → store the token. New workspace → create under the
+      // default team's org (mirrors event-time auto-provisioning) so a first-ever
+      // install needs no prior event.
+      const existing = await fastify.prisma.slackWorkspace.findUnique({ where: { slackTeamId } });
+      if (existing) {
+        await fastify.prisma.slackWorkspace.update({
+          data: tokenColumns,
+          where: { slackTeamId },
+        });
+      } else {
+        const { defaultTeamSlug } = await resolveWorkflowDefaults();
+        const defaultTeam = await fastify.prisma.team.findUnique({
+          where: { slug: defaultTeamSlug },
+        });
+        if (!defaultTeam) {
+          return reply.status(503).send({
+            error: {
+              code: 'DEFAULT_TEAM_MISSING',
+              message:
+                'No default team — run `yarn db:seed` before installing into a new workspace',
+            },
+          });
+        }
+        await fastify.prisma.slackWorkspace.create({
+          data: { ...tokenColumns, orgId: defaultTeam.orgId, slackTeamId },
+        });
+      }
+
+      // Bounce back to the integrations page with a success flag; its Slack tab
+      // reads `tab` and `slack_installed`.
+      return reply.redirect(
+        `${resolveWebUrl()}/admin/integrations?tab=slack&slack_installed=${slackTeamId}`
+      );
+    }
+  );
 }

@@ -9,6 +9,19 @@ vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
   ...(await import('../test/billingMock.js')),
 }));
 
+// Wraps the real `authorizeLaunch` so a test can read the options the route passed it.
+const authorizeLaunchSpy = vi.hoisted(() => vi.fn());
+vi.mock('../lib/launchAuthorization.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../lib/launchAuthorization.js')>();
+  return {
+    ...original,
+    authorizeLaunch: (...args: Parameters<typeof original.authorizeLaunch>) => {
+      authorizeLaunchSpy(...args);
+      return original.authorizeLaunch(...args);
+    },
+  };
+});
+
 // ── Fixtures ──
 
 const REPO_A = '00000000-0000-4000-8000-00000000000a'; // team-1 (user-1 is a member), org-1
@@ -41,6 +54,9 @@ interface ActiveWorkflowFixture {
   assignedBranch: string | null;
   updatedAt: Date;
 }
+
+/** The id of a repository's owning team: the fixture's, or one made from the repository's. */
+const teamIdOf = (r: RepoFixture): string => r.teamId ?? `team-of-${r.id}`;
 
 const repoFixtures: RepoFixture[] = [
   {
@@ -295,9 +311,10 @@ describe('epic routes', () => {
                 ? [{ team: { memberships: [{ userId: currentSub }] } }]
                 : [],
               team: {
+                id: teamIdOf(r),
                 memberships:
                   r.memberIds.includes(currentSub) && !sharedOnlyRepos.has(r.id)
-                    ? [{ role: teamRoleByRepo[r.id] ?? currentTeamRole, userId: currentSub }]
+                    ? [{ userId: currentSub }]
                     : [],
                 organization: { id: r.orgId, monthlyBudgetUsdCents: r.monthlyBudgetUsdCents },
                 orgId: r.orgId,
@@ -353,6 +370,24 @@ describe('epic routes', () => {
           const start = args.skip ?? 0;
           return rows.slice(start, args.take === undefined ? undefined : start + args.take);
         },
+      },
+      // The capability resolver: the teams a resource names, and the caller's role on each. A
+      // repository's team is the one `teamIdOf` names; a share confers no role on the owner.
+      team: {
+        findMany: async (args: { where: { id: { in: string[] } } }) =>
+          args.where.id.in.map((id) => ({ id, isActive: true, orgId: null })),
+      },
+      teamMembership: {
+        findMany: async (args: { where: { teamId: { in: string[] } } }) =>
+          args.where.teamId.in.flatMap((teamId) => {
+            const repo = repoFixtures.find((r) => teamIdOf(r) === teamId);
+            if (!repo) {
+              return [];
+            }
+            return repo.memberIds.includes(currentSub) && !sharedOnlyRepos.has(repo.id)
+              ? [{ role: teamRoleByRepo[repo.id] ?? currentTeamRole, teamId }]
+              : [];
+          }),
       },
     };
 
@@ -487,6 +522,19 @@ describe('epic routes', () => {
       expect(body.error.reasons).toEqual([{ reason: 'team-lead-required', repo: 'org/alpha' }]);
       expect(startedEpicIds).toHaveLength(0);
       expect(createdWorkRequests).toHaveLength(0);
+    });
+
+    it('asks authorizeLaunch for the owning-team LEAD requirement, the route’s real refusal', async () => {
+      authorizeLaunchSpy.mockClear();
+      const res = await app.inject({
+        headers: auth,
+        method: 'POST',
+        payload: { ...payload, repoIds: [REPO_A] },
+        url: '/api/v1/epics',
+      });
+      expect(res.statusCode).toBe(201);
+      expect(authorizeLaunchSpy).toHaveBeenCalledTimes(1);
+      expect(authorizeLaunchSpy.mock.calls[0]?.[2]).toMatchObject({ requireOwningTeamLead: true });
     });
 
     it('allows a platform ENGINEER who leads the owning team', async () => {

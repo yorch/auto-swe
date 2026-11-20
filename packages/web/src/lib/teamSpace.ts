@@ -1,5 +1,3 @@
-import { hasRole } from '@/lib/roles';
-
 /** The tabs of a team space, in display order. `path` is the segment after `/teams/<slug>`. */
 export const TEAM_TABS = [
   { id: 'overview', label: 'Overview', path: '' },
@@ -34,57 +32,3 @@ export function teamSlugFromPath(pathname: string): string | null {
   const match = /^\/teams\/([^/]+)(?:\/|$)/.exec(pathname);
   return match ? decodeURIComponent(match[1]) : null;
 }
-
-/** What the Settings tab offers: every section, the Budget section alone, or nothing. */
-export type TeamSettingsScope = 'full' | 'budget' | null;
-
-/**
- * Whether the caller reaches the team's full configuration: a team ADMIN or LEAD (the caller's
- * own team role, `myRole`) or a platform ADMIN, who bypasses team checks.
- */
-export function hasFullTeamSettings(
-  platformRole: string | null | undefined,
-  myRole: string | null | undefined
-): boolean {
-  return hasRole(platformRole, 'ADMIN') || hasRole(myRole, 'LEAD');
-}
-
-/**
- * Settings is `full` for a team ADMIN or LEAD and a platform ADMIN, `budget` for an ORG_ADMIN of
- * the team's organization who is otherwise below team LEAD (the Budget section only), and null
- * for everyone else.
- */
-export function teamSettingsScope(
-  platformRole: string | null | undefined,
-  myRole: string | null | undefined,
-  isOrgAdmin: boolean
-): TeamSettingsScope {
-  if (hasFullTeamSettings(platformRole, myRole)) {
-    return 'full';
-  }
-  return isOrgAdmin ? 'budget' : null;
-}
-
-/** Whether the Manage tab is offered: a team LEAD or ADMIN, or a platform ADMIN. */
-export function canSeeTeamManage(
-  platformRole: string | null | undefined,
-  myRole: string | null | undefined
-): boolean {
-  return hasFullTeamSettings(platformRole, myRole);
-}
-
-/** Whether the Settings tab is offered at all. */
-export function canSeeTeamSettings(
-  platformRole: string | null | undefined,
-  myRole: string | null | undefined,
-  isOrgAdmin = false
-): boolean {
-  return teamSettingsScope(platformRole, myRole, isOrgAdmin) !== null;
-}
-
-/** `Lead`, `Admin`, `Engineer` — how a team role reads in the chrome. */
-export const TEAM_ROLE_LABEL: Record<'ADMIN' | 'LEAD' | 'ENGINEER', string> = {
-  ADMIN: 'Admin',
-  ENGINEER: 'Engineer',
-  LEAD: 'Lead',
-};

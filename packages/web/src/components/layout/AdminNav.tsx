@@ -117,8 +117,8 @@ export function AdminNav() {
 }
 
 const OVERVIEW: NavItem = {
+  access: 'any',
   href: ADMIN_HREF,
   icon: 'dashboard',
   label: 'Overview',
-  minRole: 'ENGINEER',
 };

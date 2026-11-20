@@ -5,7 +5,8 @@ const db = vi.hoisted(() => ({
   campaignTarget: { updateMany: vi.fn() },
   connection: { findUnique: vi.fn() },
   organizationMembership: { findUnique: vi.fn() },
-  teamMembership: { findUnique: vi.fn() },
+  team: { findMany: vi.fn() },
+  teamMembership: { findMany: vi.fn() },
   user: { findUnique: vi.fn() },
 }));
 const settings = vi.hoisted(() => ({ disabledTeams: new Set<string>() }));
@@ -327,11 +328,15 @@ describe('authorizeCampaignTargets', () => {
       orgMember ? { userId: 'u1' } : null
     );
     db.user.findUnique.mockImplementation(async () => launcher);
-    db.teamMembership.findUnique.mockImplementation(
-      async (args: { where: { userId_teamId: { teamId: string } } }) => {
-        const role = roles[args.where.userId_teamId.teamId];
-        return role ? { role } : null;
-      }
+    // The shared resolver loads the named teams and the launcher's membership of them.
+    db.team.findMany.mockImplementation(async (args: { where: { id: { in: string[] } } }) =>
+      args.where.id.in.map((id) => ({ id, isActive: true, orgId: null }))
+    );
+    db.teamMembership.findMany.mockImplementation(
+      async (args: { where: { teamId: { in: string[] } } }) =>
+        args.where.teamId.in.flatMap((teamId) =>
+          roles[teamId] ? [{ role: roles[teamId], teamId }] : []
+        )
     );
     db.connection.findUnique.mockImplementation(async (args: { where: { id: string } }) => {
       const r = repos[args.where.id];

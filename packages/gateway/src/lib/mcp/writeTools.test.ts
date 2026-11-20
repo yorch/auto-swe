@@ -96,7 +96,7 @@ async function build(
   const standIn = (path: string) =>
     app.post(
       path,
-      { config: { mcpScope: 'write' }, onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
+      { config: { mcpScope: 'write' }, onRequest: requireAuth() },
       async (request, reply) => {
         sent.push({
           body: request.body,
@@ -110,7 +110,7 @@ async function build(
   const listed = { runs: [] as Array<string | [string, string]>, url: '' };
   app.get(
     '/api/v1/workflow-runs',
-    { config: { mcpScope: 'read' }, onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
+    { config: { mcpScope: 'read' }, onRequest: requireAuth() },
     async (request) => {
       listed.url = request.url;
       return {

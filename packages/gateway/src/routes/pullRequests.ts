@@ -15,6 +15,7 @@ import {
 import { summarizePullRequestOutcomes } from '@auto-swe/shared/lib/pullRequestOutcomes';
 import { resolveGitHubBaseUrl } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type {
   PullRequestCockpit,
   PullRequestListItem,
@@ -192,7 +193,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
     '/',
     {
       config: { mcpScope: 'read' },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: Query },
     },
     async (request, reply) => {
@@ -210,7 +211,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
       const filters: Prisma.PullRequestWhereInput[] = [
-        user.role === 'ADMIN'
+        isPlatformAdmin(user)
           ? {}
           : { repository: reachableConnections(user, request.repoAccessGate) },
       ];
@@ -423,7 +424,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  const engineerOnly = requireAuth({ requiredRole: 'ENGINEER' });
+  const engineerOnly = requireAuth();
   // Delivery metric: the cohort of PRs opened in the window, judged as of now.
   app.get(
     '/outcomes',
@@ -433,7 +434,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      if (request.query.templateId && user.role !== 'ADMIN') {
+      if (request.query.templateId && !isPlatformAdmin(user)) {
         const visibleTemplate = await runUnscoped(
           'outcome template filters must use the workflow-template visibility rule',
           ['WorkflowTemplate'],
@@ -479,27 +480,26 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
       });
       const capped = rows.length > OUTCOMES_ROW_CAP;
       const kept = rows.slice(0, OUTCOMES_ROW_CAP);
-      const visibleTemplateIds =
-        user.role === 'ADMIN'
-          ? null
-          : new Set(
-              (
-                await runUnscoped(
-                  'outcome template labels are limited to the caller-visible template ids',
-                  ['WorkflowTemplate'],
-                  () =>
-                    fastify.prisma.workflowTemplate.findMany({
-                      select: { id: true },
-                      where: {
-                        AND: [
-                          teamMembershipFilter(user),
-                          { id: { in: [...new Set(kept.flatMap((row) => row.templateId ?? []))] } },
-                        ],
-                      },
-                    })
-                )
-              ).map((template) => template.id)
-            );
+      const visibleTemplateIds = isPlatformAdmin(user)
+        ? null
+        : new Set(
+            (
+              await runUnscoped(
+                'outcome template labels are limited to the caller-visible template ids',
+                ['WorkflowTemplate'],
+                () =>
+                  fastify.prisma.workflowTemplate.findMany({
+                    select: { id: true },
+                    where: {
+                      AND: [
+                        teamMembershipFilter(user),
+                        { id: { in: [...new Set(kept.flatMap((row) => row.templateId ?? []))] } },
+                      ],
+                    },
+                  })
+              )
+            ).map((template) => template.id)
+          );
       const templateOf = (r: (typeof kept)[number]) =>
         r.templateId && (visibleTemplateIds === null || visibleTemplateIds.has(r.templateId))
           ? { templateId: r.templateId, templateName: r.template?.name ?? 'Unknown' }
@@ -702,7 +702,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
                 fastify.prisma.team.findMany({
                   select: { id: true, name: true },
                   where: {
-                    AND: [{ id: { in: teamIds } }, user.role === 'ADMIN' ? {} : memberTeams(user)],
+                    AND: [{ id: { in: teamIds } }, isPlatformAdmin(user) ? {} : memberTeams(user)],
                   },
                 })
             );
@@ -783,7 +783,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      if (request.query.templateId && user.role !== 'ADMIN') {
+      if (request.query.templateId && !isPlatformAdmin(user)) {
         const visibleTemplate = await runUnscoped(
           'outcome export template filters must use the workflow-template visibility rule',
           ['WorkflowTemplate'],
@@ -840,10 +840,10 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         r.mergedAt?.toISOString() ?? null,
         r.closedAt?.toISOString() ?? null,
         r.mergedAt ? r.mergedAt.getTime() - r.openedAt.getTime() : null,
-        user.role === 'ADMIN' || (r.templateId !== null && visibleTemplateIds.has(r.templateId))
+        isPlatformAdmin(user) || (r.templateId !== null && visibleTemplateIds.has(r.templateId))
           ? r.templateId
           : null,
-        user.role === 'ADMIN' || (r.templateId !== null && visibleTemplateIds.has(r.templateId))
+        isPlatformAdmin(user) || (r.templateId !== null && visibleTemplateIds.has(r.templateId))
           ? (r.template?.name ?? null)
           : null,
       ];
@@ -856,7 +856,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
       const encodeBatch = async (batch: Batch) => {
         const ids = [...new Set(batch.flatMap((row) => row.templateId ?? []))];
         const visibleTemplateIds =
-          user.role === 'ADMIN' || ids.length === 0
+          isPlatformAdmin(user) || ids.length === 0
             ? new Set(ids)
             : new Set(
                 (
@@ -921,10 +921,9 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const reach =
-        user.role === 'ADMIN'
-          ? {}
-          : { connection: reachableConnections(user, request.repoAccessGate) };
+      const reach = isPlatformAdmin(user)
+        ? {}
+        : { connection: reachableConnections(user, request.repoAccessGate) };
       const row = await fastify.prisma.pullRequest.findFirst({
         include: {
           repository: {
@@ -951,7 +950,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         },
         where: {
           id: request.params.id,
-          ...(user.role === 'ADMIN'
+          ...(isPlatformAdmin(user)
             ? {}
             : { repository: reachableConnections(user, request.repoAccessGate) }),
         },
@@ -1124,7 +1123,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         select: { id: true },
         where: {
           id: request.params.id,
-          ...(user.role === 'ADMIN'
+          ...(isPlatformAdmin(user)
             ? {}
             : { repository: reachableConnections(user, request.repoAccessGate) }),
         },
@@ -1163,7 +1162,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         select: { id: true },
         where: {
           id: request.params.id,
-          ...(user.role === 'ADMIN'
+          ...(isPlatformAdmin(user)
             ? {}
             : { repository: reachableConnections(user, request.repoAccessGate) }),
         },

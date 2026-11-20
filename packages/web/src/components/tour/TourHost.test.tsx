@@ -1,15 +1,20 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readDismissed } from '@/lib/dismissed';
 import type { PageTourStep } from '@/lib/tourSteps';
 import { useAuthStore } from '@/stores/authStore';
 import { useHelpStore } from '@/stores/helpStore';
 import { installMemoryStorage } from '@/test/memoryStorage';
+import { NO_PERMISSIONS, resetPermissions, setPermissions } from '@/test/permissions';
 import { PageTour } from './PageTour';
 import { TourHost } from './TourHost';
 import { TOUR_SEEN_KEY } from './tourSupport';
+
+vi.mock('@/hooks/useEffectivePermissions', async () =>
+  (await import('@/test/permissions')).permissionsMock()
+);
 
 const STEPS: PageTourStep[] = [
   { anchor: null, body: 'First body', id: 'a', title: 'First' },
@@ -18,9 +23,11 @@ const STEPS: PageTourStep[] = [
 
 beforeEach(() => {
   installMemoryStorage();
-  useAuthStore.setState({ user: { email: 'a@x.dev', role: 'ENGINEER', sub: 'u1' } } as never);
+  useAuthStore.setState({ user: { email: 'a@x.dev', role: 'USER', sub: 'u1' } } as never);
+  setPermissions(NO_PERMISSIONS);
 });
 afterEach(() => {
+  resetPermissions();
   cleanup();
   act(() => useHelpStore.setState({ pageTour: null, tourRequest: null }));
 });

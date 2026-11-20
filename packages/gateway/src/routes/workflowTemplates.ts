@@ -20,6 +20,13 @@ import {
   type WorkspaceProviderType,
   WorkspaceProviderTypeSchema,
 } from '@auto-swe/shared/lib/workspaceProviders';
+import {
+  type CapabilityKey,
+  isPlatformAdmin,
+  notAuthor,
+  can as sharedCan,
+  userActor,
+} from '@auto-swe/shared/permissions';
 import { WORKFLOW_TEMPLATE_STATUSES } from '@auto-swe/shared/types/api';
 import {
   BUDGET_TIERS,
@@ -48,6 +55,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { advisoryWarnings } from '../lib/advisoryWarnings.js';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { can, heldScope } from '../lib/authz.js';
 import { csvRow } from '../lib/csv.js';
 import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/dateWindow.js';
 import { launchWarningsFor, scanLaunchDescription } from '../lib/descriptionScan.js';
@@ -110,7 +118,7 @@ import {
   launchableTemplateWhere,
   sendTemplateNotLaunchable,
   teamMembershipFilter,
-  templateWriteFilter,
+  templateWriteWhere,
 } from '../lib/templateLaunch.js';
 import {
   checkTemplateSave,
@@ -175,51 +183,40 @@ const TEMPLATE_AUTHOR_REFUSAL = {
 } as const;
 
 /**
- * The caller's membership on `teamId` when it lets them author that team's
- * templates — LEAD or ADMIN on an active team, the bar `templateWriteFilter`
- * and `canManageTeamRepos` set — else null.
- */
-async function findTemplateAuthorMembership(
-  fastify: FastifyInstance,
-  user: JwtPayload,
-  teamId: string
-): Promise<{ role: string } | null> {
-  const member = await fastify.prisma.teamMembership.findFirst({
-    select: { role: true },
-    where: { role: { in: ['LEAD', 'ADMIN'] }, team: { isActive: true }, teamId, userId: user.sub },
-  });
-  return member ?? null;
-}
-
-/**
- * Shared authoring RBAC for the generate endpoints: non-admins may only target a
- * team they lead and may not author global templates. Returns the
- * `allowShell` hint (admin or team-admin) on success, or a reply to send.
+ * Shared authoring check for the generate endpoints and for saving a run plan as a template: a
+ * team template needs `capability` (default `team.templates.write`) on its active owning team;
+ * a global (team-less) one is a platform admin's alone, because the capability asked with no team
+ * is theirs only. Returns the `allowShell` hint (`team.templates.shell.author`) on success, or a
+ * reply to send. Pass `request` from a route that declares the capability in `handlerChecked`, so
+ * the check is recorded for that route.
  */
 export async function resolveTemplateAuthScope(
   fastify: FastifyInstance,
   user: JwtPayload,
-  teamId: string | null
+  teamId: string | null,
+  opts: {
+    capability?: 'team.templates.generate' | 'team.templates.write';
+    request?: FastifyRequest;
+  } = {}
 ): Promise<{ ok: true; allowShell: boolean } | { ok: false; statusCode: number; body: unknown }> {
-  if (user.role === 'ADMIN') {
-    return { allowShell: true, ok: true };
+  const resource = teamId ? { teamId } : undefined;
+  const ask = async (capability: CapabilityKey) =>
+    (opts.request
+      ? await can(opts.request, capability, resource)
+      : await sharedCan(fastify.prisma, userActor(user), capability, resource)
+    ).allowed;
+  if (!(await ask(opts.capability ?? 'team.templates.write'))) {
+    return teamId
+      ? { body: { error: TEMPLATE_AUTHOR_REFUSAL }, ok: false, statusCode: 403 }
+      : {
+          body: {
+            error: { code: 'FORBIDDEN', message: 'Only admins may create global templates' },
+          },
+          ok: false,
+          statusCode: 403,
+        };
   }
-  if (!teamId) {
-    return {
-      body: { error: { code: 'FORBIDDEN', message: 'Only admins may create global templates' } },
-      ok: false,
-      statusCode: 403,
-    };
-  }
-  const member = await findTemplateAuthorMembership(fastify, user, teamId);
-  if (!member) {
-    return {
-      body: { error: TEMPLATE_AUTHOR_REFUSAL },
-      ok: false,
-      statusCode: 403,
-    };
-  }
-  return { allowShell: member.role === 'ADMIN', ok: true };
+  return { allowShell: await ask('team.templates.shell.author'), ok: true };
 }
 
 type ServingAuthorization =
@@ -638,6 +635,12 @@ function sendSpecHasErrors(reply: FastifyReply, errors: string[], action: string
 export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
+  // The templates the caller may change: every one for a platform admin, and those of the active
+  // teams they hold `team.templates.write` on otherwise. The same set the write routes ask, so a
+  // list and the action behind it cannot disagree.
+  const writeFilter = async (request: FastifyRequest) =>
+    templateWriteWhere(await heldScope(request, 'team.templates.write'));
+
   // A system template ("Agent Run") is not addressable through any template
   // route: not read, edited, versioned, promoted, refined, run, scheduled, or
   // given a webhook. Runs a launch creates through its own endpoint stay visible
@@ -1000,7 +1003,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/analytics',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: GlobalAnalyticsQuery },
     },
     buildGlobalAnalyticsReport
@@ -1016,7 +1019,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/analytics/export',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: AnalyticsExportQuery },
     },
     async (request, reply) => {
@@ -1086,7 +1089,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/generate',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.templates.generate'] }),
       schema: { body: GenerateTemplateBody },
     },
     async (request, reply) => {
@@ -1096,7 +1099,10 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // RBAC mirrors POST /: non-admins may only target a team they belong to and
       // may not author global templates. `allowShell` is the hint passed to the
       // author agent (the real gate is assertShellAuthoringAllowed at persist).
-      const scope = await resolveTemplateAuthScope(fastify, user, teamId ?? null);
+      const scope = await resolveTemplateAuthScope(fastify, user, teamId ?? null, {
+        capability: 'team.templates.generate',
+        request,
+      });
       if (!scope.ok) {
         return reply.status(scope.statusCode).send(scope.body);
       }
@@ -1231,13 +1237,16 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/generate/jobs',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.templates.generate'] }),
       schema: { body: GenerateTemplateBody },
     },
     async (request, reply) => {
       const user = requireUser(request);
       const { prompt, teamId, name } = request.body;
-      const scope = await resolveTemplateAuthScope(fastify, user, teamId ?? null);
+      const scope = await resolveTemplateAuthScope(fastify, user, teamId ?? null, {
+        capability: 'team.templates.generate',
+        request,
+      });
       if (!scope.ok) {
         return reply.status(scope.statusCode).send(scope.body);
       }
@@ -1260,21 +1269,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/generate/jobs/:jobId',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.templates.generate'] }),
       schema: { params: JobIdParam },
     },
     async (request, reply) => {
       // The job id is the only handle, so the caller must at least lead a team. Without a team
       // role there is nothing else to check: the job records its creator, but the status does not.
-      const user = requireUser(request);
-      if (user.role !== 'ADMIN') {
-        const leads = await fastify.prisma.teamMembership.findFirst({
-          select: { teamId: true },
-          where: { role: { in: ['LEAD', 'ADMIN'] }, team: { isActive: true }, userId: user.sub },
-        });
-        if (!leads) {
-          return reply.status(403).send({ error: TEMPLATE_AUTHOR_REFUSAL });
-        }
+      if (!(await can(request, 'team.templates.generate', { anyTeam: true })).allowed) {
+        return reply.status(403).send({ error: TEMPLATE_AUTHOR_REFUSAL });
       }
       const status = await fastify.temporal.getWorkflowAuthorJobStatus(request.params.jobId);
       if (status.status === 'running') {
@@ -1292,7 +1294,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     '/',
     {
       config: { mcpScope: 'read' },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: ListTemplatesQuery },
     },
     async (request) => {
@@ -1368,7 +1370,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.templates.write'] }),
       schema: { body: CreateTemplateBody },
     },
     async (request, reply) => {
@@ -1388,13 +1390,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Non-admins may only create team-owned templates for teams they belong to,
       // and may not create global (teamId = null) templates.
-      if (user.role !== 'ADMIN') {
+      if (!(await can(request, 'team.templates.write', teamId ? { teamId } : undefined)).allowed) {
         if (!teamId) {
           return sendError(reply, 403, 'FORBIDDEN', 'Only admins may create global templates');
         }
-        if (!(await findTemplateAuthorMembership(fastify, user, teamId))) {
-          return reply.status(403).send({ error: TEMPLATE_AUTHOR_REFUSAL });
-        }
+        return reply.status(403).send({ error: TEMPLATE_AUTHOR_REFUSAL });
       }
 
       const parsedSpec = parsed as WorkflowSpec;
@@ -1464,7 +1464,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/validate',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.templates.write'] }),
       schema: { body: ValidateSpecBody },
     },
     async (request, reply) => {
@@ -1476,27 +1476,23 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         // Same lookup as the version-create route: a template the caller cannot write is 404.
         const tpl = await fastify.prisma.workflowTemplate.findFirst({
           select: { origin: true, teamId: true },
-          where: { id: templateId, ...templateWriteFilter(user) },
+          where: { id: templateId, ...(await writeFilter(request)) },
         });
         if (!tpl || isSystemTemplate(tpl)) {
           return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
         }
         scopeTeamId = tpl.teamId;
-      } else if (scopeTeamId && user.role !== 'ADMIN') {
+      } else if (scopeTeamId) {
         // As on create: a team the caller cannot author for is refused, so the team's image
         // allowlist is never echoed back to someone outside it.
-        if (!(await findTemplateAuthorMembership(fastify, user, scopeTeamId))) {
+        if (!(await can(request, 'team.templates.write', { teamId: scopeTeamId })).allowed) {
           return reply.status(403).send({ error: TEMPLATE_AUTHOR_REFUSAL });
         }
-      } else if (!scopeTeamId && user.role !== 'ADMIN') {
+      } else if (!(await can(request, 'team.templates.write')).allowed) {
         // No scope named: the spec is judged as a global one, and the checks below look agent
         // keys and connection ids up across teams. Someone who leads no team has no business
         // asking, so the answer would only be an existence oracle.
-        const leadsATeam = await fastify.prisma.teamMembership.findFirst({
-          select: { teamId: true },
-          where: { role: { in: ['LEAD', 'ADMIN'] }, team: { isActive: true }, userId: user.sub },
-        });
-        if (!leadsATeam) {
+        if (!(await can(request, 'team.templates.write', { anyTeam: true })).allowed) {
           return reply.status(403).send({ error: TEMPLATE_AUTHOR_REFUSAL });
         }
       }
@@ -1516,7 +1512,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       if (
         !templateId &&
         !scopeTeamId &&
-        user.role !== 'ADMIN' &&
+        !(await can(request, 'team.templates.write')).allowed &&
         !issues.some((i) => i.source === 'schema')
       ) {
         issues.push({
@@ -1536,7 +1532,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: TemplateIdParam },
     },
     async (request, reply) => {
@@ -1605,7 +1601,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.templates.write'] }),
       schema: { body: UpdateTemplateBody, params: TemplateIdParam },
     },
     async (request, reply) => {
@@ -1614,7 +1610,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 400, 'RESERVED_TEMPLATE_NAME', RESERVED_TEMPLATE_NAME_MESSAGE);
       }
       const existing = await fastify.prisma.workflowTemplate.findFirst({
-        where: { id: request.params.id, ...templateWriteFilter(user) },
+        where: { id: request.params.id, ...(await writeFilter(request)) },
       });
       if (!existing) {
         return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
@@ -1782,12 +1778,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
 
   // ── Explain a template in plain language ──
   // POST /:id/explain — runs the workflowExplainer agent over the active
-  // version's spec and returns a Markdown explanation. Read-level (ENGINEER):
+  // version's spec and returns a Markdown explanation. Read-level (any signed-in person):
   // it touches no state, just describes an already-visible template.
   app.post(
     '/:id/explain',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: TemplateIdParam },
     },
     async (request, reply) => {
@@ -1856,14 +1852,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/refine',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.templates.write'] }),
       schema: { body: RefineTemplateBody, params: TemplateIdParam },
     },
     async (request, reply) => {
       const user = requireUser(request);
       const tpl = await fastify.prisma.workflowTemplate.findFirst({
         select: { id: true, name: true, teamId: true },
-        where: { id: request.params.id, ...templateWriteFilter(user) },
+        where: { id: request.params.id, ...(await writeFilter(request)) },
       });
       if (!tpl) {
         return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
@@ -1889,13 +1885,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // assertShellAuthoringAllowed at persist). Mirror the version-create
       // stance: any LEAD member may refine, but only admins / team-admins may
       // (re)introduce shell nodes.
-      let allowShell = user.role === 'ADMIN';
-      if (!allowShell && tpl.teamId) {
-        const member = await fastify.prisma.teamMembership.findFirst({
-          where: { teamId: tpl.teamId, userId: user.sub },
-        });
-        allowShell = member?.role === 'ADMIN';
-      }
+      const allowShell = (
+        await can(
+          request,
+          'team.templates.shell.author',
+          tpl.teamId ? { teamId: tpl.teamId } : undefined
+        )
+      ).allowed;
 
       let generated: { spec: WorkflowSpec; summary: string; attempts: number };
       try {
@@ -1996,7 +1992,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/versions/:version',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: VersionParam },
     },
     async (request, reply) => {
@@ -2038,17 +2034,30 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/versions/:version/review',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.templates.review'] }),
       schema: { params: VersionParam },
     },
     async (request, reply) => {
       const user = requireUser(request);
       const tpl = await fastify.prisma.workflowTemplate.findFirst({
         select: { id: true, teamId: true },
-        where: { id: request.params.id, ...templateWriteFilter(user) },
+        where: { id: request.params.id, ...(await writeFilter(request)) },
       });
       if (!tpl) {
         return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
+      }
+      // The filter above scopes the lookup by `team.templates.write`; the capability this route
+      // declares is the review one, so ask it here (recorded for the backstop).
+      if (
+        !(
+          await can(
+            request,
+            'team.templates.review',
+            tpl.teamId ? { teamId: tpl.teamId } : undefined
+          )
+        ).allowed
+      ) {
+        return reply.status(403).send({ error: TEMPLATE_AUTHOR_REFUSAL });
       }
       const target = await fastify.prisma.workflowTemplateVersion.findUnique({
         select: { createdBy: true, generatedBy: true, id: true, spec: true },
@@ -2060,7 +2069,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // Review is a second pair of eyes on what the author agent produced for
       // someone. The person who asked for the generation approving it is no
       // review at all, so it takes someone else — or a platform admin.
-      if (target.generatedBy && target.createdBy === user.sub && user.role !== 'ADMIN') {
+      if (
+        target.generatedBy &&
+        !notAuthor(user.sub, target.createdBy) &&
+        !isPlatformAdmin(userActor(user))
+      ) {
         return sendError(
           reply,
           403,
@@ -2102,13 +2115,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/versions',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.templates.write'] }),
       schema: { body: CreateVersionBody, params: TemplateIdParam },
     },
     async (request, reply) => {
       const user = requireUser(request);
       const tpl = await fastify.prisma.workflowTemplate.findFirst({
-        where: { id: request.params.id, ...templateWriteFilter(user) },
+        where: { id: request.params.id, ...(await writeFilter(request)) },
       });
       if (!tpl) {
         return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
@@ -2188,13 +2201,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/promote',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.templates.write'] }),
       schema: { body: PromoteBody, params: TemplateIdParam },
     },
     async (request, reply) => {
       const user = requireUser(request);
       const tpl = await fastify.prisma.workflowTemplate.findFirst({
-        where: { id: request.params.id, ...templateWriteFilter(user) },
+        where: { id: request.params.id, ...(await writeFilter(request)) },
       });
       if (!tpl) {
         return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
@@ -2272,7 +2285,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // Open to service principals: docs/service-principals.md. One handler for both kinds of
       // caller, so a principal goes through every check a person does, plus its own.
       config: { mcpScope: 'write', serviceScopes: ['runs:launch'] },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       onSend: mcpWriteAuditHook,
       preValidation: mcpWriteBegin('start_template_run'),
       schema: {
@@ -2900,7 +2913,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/runs',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: TemplateIdParam, querystring: RunListPaginationQuery },
     },
     async (request, reply) => {
@@ -2948,13 +2961,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/webhook/regenerate',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.templates.write'] }),
       schema: { params: TemplateIdParam },
     },
     async (request, reply) => {
       const user = requireUser(request);
       const existing = await fastify.prisma.workflowTemplate.findFirst({
-        where: { id: request.params.id, ...templateWriteFilter(user) },
+        where: { id: request.params.id, ...(await writeFilter(request)) },
       });
       if (!existing) {
         return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
@@ -2982,13 +2995,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.delete(
     '/:id/webhook',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.templates.write'] }),
       schema: { params: TemplateIdParam },
     },
     async (request, reply) => {
       const user = requireUser(request);
       const existing = await fastify.prisma.workflowTemplate.findFirst({
-        where: { id: request.params.id, ...templateWriteFilter(user) },
+        where: { id: request.params.id, ...(await writeFilter(request)) },
       });
       if (!existing) {
         return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
@@ -3013,12 +3026,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   // Same permission as the token routes: team LEAD of the owning team, through the write filter.
   // The audit log records whether a secret exists and the switch, never the secret.
   const loadWritableTemplate = async (
-    request: { params: { id: string } },
-    user: JwtPayload,
+    request: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply
   ) => {
     const existing = await fastify.prisma.workflowTemplate.findFirst({
-      where: { id: request.params.id, ...templateWriteFilter(user) },
+      where: { id: request.params.id, ...(await writeFilter(request)) },
     });
     if (!existing) {
       await sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
@@ -3031,11 +3043,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
    * write filter, then re-read the row through the same filter. `gone` means the template no
    * longer exists or the caller may no longer edit it (404); `conflict` means it exists but the
    * condition no longer held (409); `ok` carries the row as written, which responses and the
-   * audit log are built from. The guard cannot read `templateWriteFilter`'s spread (an ADMIN's
+   * audit log are built from. The guard cannot read the write filter's spread (an ADMIN's
    * is empty, and a global template has no team), so the calls are marked rather than filtered.
    */
   const updateSigningIf = async (
-    user: JwtPayload,
+    request: FastifyRequest,
     id: string,
     data: Prisma.WorkflowTemplateUpdateManyMutationInput,
     condition: Prisma.WorkflowTemplateWhereInput
@@ -3044,12 +3056,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       'one template by id, constrained by the caller’s write filter',
       ['WorkflowTemplate'],
       async () => {
+        const writable = await writeFilter(request);
         const { count } = await fastify.prisma.workflowTemplate.updateMany({
           data,
-          where: { AND: [{ id }, templateWriteFilter(user), condition] },
+          where: { AND: [{ id }, writable, condition] },
         });
         const row = await fastify.prisma.workflowTemplate.findFirst({
-          where: { AND: [{ id }, templateWriteFilter(user)] },
+          where: { AND: [{ id }, writable] },
         });
         if (!row) {
           return { status: 'gone' as const };
@@ -3068,12 +3081,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/webhook/signing-secret/rotate',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.templates.write'] }),
       schema: { params: TemplateIdParam },
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const existing = await loadWritableTemplate(request, user, reply);
+      const existing = await loadWritableTemplate(request, reply);
       if (!existing) {
         return;
       }
@@ -3082,7 +3095,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const rotated = rotatedSigningColumns(existing, now);
       // Conditional on the secret read: two rotations racing would otherwise both hand out a
       // secret, and the one written first would be silently replaced.
-      const write = await updateSigningIf(user, existing.id, rotated.data, {
+      const write = await updateSigningIf(request, existing.id, rotated.data, {
         webhookSigningSecretNonce: existing.webhookSigningSecretNonce
           ? { equals: existing.webhookSigningSecretNonce }
           : null,
@@ -3121,12 +3134,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.delete(
     '/:id/webhook/signing-secret',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.templates.write'] }),
       schema: { params: TemplateIdParam },
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const existing = await loadWritableTemplate(request, user, reply);
+      const existing = await loadWritableTemplate(request, reply);
       if (!existing) {
         return;
       }
@@ -3141,7 +3154,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const now = new Date();
       // Conditional on the switch still being off: a concurrent PUT that turned it on must not
       // end with signatures required and no secret.
-      const cleared = await updateSigningIf(user, existing.id, CLEARED_SIGNING_COLUMNS, {
+      const cleared = await updateSigningIf(request, existing.id, CLEARED_SIGNING_COLUMNS, {
         webhookRequireSignature: false,
       });
       if (cleared.status === 'gone') {
@@ -3172,12 +3185,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.put(
     '/:id/webhook/require-signature',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.templates.write'] }),
       schema: { body: RequireSignatureBody, params: TemplateIdParam },
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const existing = await loadWritableTemplate(request, user, reply);
+      const existing = await loadWritableTemplate(request, reply);
       if (!existing) {
         return;
       }
@@ -3194,7 +3207,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // Turning it on is conditional on a secret still existing: a concurrent DELETE of the
       // secret must not leave signatures required with nothing to sign with.
       const changed = await updateSigningIf(
-        user,
+        request,
         existing.id,
         { webhookRequireSignature: required },
         required ? { webhookSigningSecretCiphertext: { not: null } } : {}
@@ -3236,7 +3249,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/diff',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: TemplateIdParam, querystring: DiffQuery },
     },
     async (request, reply) => {
@@ -3286,7 +3299,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/analytics',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { params: TemplateIdParam, querystring: AnalyticsQuery },
     },
     async (request, reply) => {

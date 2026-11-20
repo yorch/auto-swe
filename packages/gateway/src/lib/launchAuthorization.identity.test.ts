@@ -9,7 +9,7 @@ vi.mock('@auto-swe/shared/lib/repoAccessDecision', async (importOriginal) => ({
 
 const { authorizeLaunch } = await import('./launchAuthorization.js');
 
-const USER = { role: 'ENGINEER' as const, sub: 'user-1' };
+const USER = { role: 'USER' as const, sub: 'user-1' };
 const GATE = { mode: 'enforce' as const, staleAfterHours: 24 };
 
 const REPO: LaunchRepo = {

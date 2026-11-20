@@ -17,32 +17,32 @@ import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { RoleSelectCell } from '@/components/users/RoleSelectCell';
+import { useCan, useGrantableTeamRoles } from '@/hooks/useCan';
 import { usePagedRows } from '@/hooks/usePagedRows';
 import { useRemoveTeamMember, useTeam, useUpdateTeamMember } from '@/hooks/useTeams';
-import { platformRoleLabel } from '@/lib/govLabels';
-import { isRole } from '@/lib/roles';
-import { teamPermissions } from '@/lib/teamPermissions';
-import { useAuthStore } from '@/stores/authStore';
+import {
+  platformRoleLabel,
+  type TeamRoleValue,
+  teamRoleConsequence,
+  teamRoleLabel,
+  teamRoleRank,
+} from '@/lib/roleLabels';
 
 /** Teams with this many members or fewer are listed without a search box. */
 const MEMBER_SEARCH_THRESHOLD = 10;
-const ROLE_RANK: Record<string, number> = { ADMIN: 3, ENGINEER: 1, LEAD: 2 };
 
 /**
  * The team's members and their roles. Everyone in the team reads the list; the controls offered
- * are exactly what the gateway will accept from this caller (see `teamPermissions`), judged by
- * the caller's own team role.
+ * are what the server's effective permissions say this caller may do here (`team.members.manage`
+ * and the roles it lets them grant).
  */
 export function TeamMembersPanel({ team: summary }: { team: TeamSummary }) {
   const id = summary.id;
   const { data: team, error, isError, isFetching, isLoading, refetch } = useTeam(id);
   const updateMember = useUpdateTeamMember(id);
   const removeMember = useRemoveTeamMember(id);
-  const platformRole = useAuthStore((s) => s.user?.role);
-  const { canManageMembers: canManage, grantableRoles } = teamPermissions(
-    platformRole,
-    summary.myRole
-  );
+  const canManage = useCan('team.members.manage', { orgId: summary.orgId, teamId: id });
+  const grantableRoles = useGrantableTeamRoles(id);
   const [adding, setAdding] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -152,33 +152,33 @@ export function TeamMembersPanel({ team: summary }: { team: TeamSummary }) {
                 },
                 {
                   cell: (m) =>
-                    canManage && m.user?.id && isRole(m.role) && grantableRoles.includes(m.role) ? (
+                    canManage && m.user?.id && grantableRoles.includes(m.role as TeamRoleValue) ? (
                       <RoleSelectCell
                         apply={(role) =>
                           updateMember.mutateAsync({
-                            role: role as 'ADMIN' | 'LEAD' | 'ENGINEER',
+                            role: role as TeamRoleValue,
                             userId: m.user?.id ?? '',
                           })
                         }
                         ariaLabel={`Team role for ${m.user.email ?? 'member'}`}
                         confirm={(from, to) =>
-                          (ROLE_RANK[to] ?? 0) > (ROLE_RANK[from] ?? 0) && to !== 'ENGINEER'
+                          teamRoleRank(to) > teamRoleRank(from) && teamRoleRank(to) > 0
                             ? {
-                                confirmLabel: `Make ${platformRoleLabel(to)}`,
-                                message: `${m.user?.email ?? 'This member'} will become a team ${platformRoleLabel(to)} on ${team.name}${to === 'LEAD' ? ', able to manage its members, persona and callback endpoints' : ', able to manage everything a lead can, plus the team agent library'}.`,
-                                title: `Make ${platformRoleLabel(to)}?`,
+                                confirmLabel: `Make ${teamRoleLabel(to).toLowerCase()}`,
+                                message: `${m.user?.email ?? 'This member'} will become a ${teamRoleLabel(to).toLowerCase()} on ${team.name}, ${teamRoleConsequence(to)}.`,
+                                title: `Make ${teamRoleLabel(to).toLowerCase()}?`,
                               }
                             : null
                         }
                         options={grantableRoles.map((r) => ({
-                          label: platformRoleLabel(r),
+                          label: teamRoleLabel(r),
                           value: r,
                         }))}
                         value={m.role}
                       />
                     ) : (
                       <Badge tone="neutral" variant="outline">
-                        {platformRoleLabel(m.role)}
+                        {teamRoleLabel(m.role)}
                       </Badge>
                     ),
                   header: 'Team role',

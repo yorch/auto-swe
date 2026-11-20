@@ -89,6 +89,8 @@ async function buildApp(role: string, teamRole: string | null) {
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
     configAuditLog: { create: vi.fn(async () => ({})) },
+    // The capability resolver: the team exists and is active, and the caller's membership in it.
+    organizationMembership: { findMany: vi.fn(async () => []) },
     outboundDelivery: {
       count: vi.fn(async () => 1),
       findFirst: vi.fn(async () => ({ id: DELIVERY, status: 'DEAD' })),
@@ -98,7 +100,11 @@ async function buildApp(role: string, teamRole: string | null) {
       ),
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
+    team: {
+      findMany: vi.fn(async () => [{ id: TEAM, isActive: true, orgId: 'org-1' }]),
+    },
     teamMembership: {
+      findMany: vi.fn(async () => (teamRole ? [{ role: teamRole, teamId: TEAM }] : [])),
       findUnique: vi.fn(async () => (teamRole ? { role: teamRole } : null)),
     },
     workflowRun: { findFirst: vi.fn() },

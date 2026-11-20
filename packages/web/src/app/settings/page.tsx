@@ -18,7 +18,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useAuthProviders, useLinkedAccounts } from '@/hooks/useAccountSettings';
 import { API_BASE } from '@/lib/config';
 import { errMsg } from '@/lib/errors';
-import { platformRoleLabel } from '@/lib/govLabels';
+import { platformRoleLabel } from '@/lib/roleLabels';
 import { type SocialProviderId, useAuthStore } from '@/stores/authStore';
 
 interface Provider {

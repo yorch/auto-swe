@@ -2,8 +2,14 @@
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useAuthStore } from '@/stores/authStore';
 import { nav, resetNavigation } from '@/test/mockNavigation';
+import {
+  ADMIN_PERMISSIONS,
+  permissionsFor,
+  resetPermissions,
+  setNarrowedPermissions,
+  setPermissions,
+} from '@/test/permissions';
 import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import { TeamSettingsPanel } from './TeamSettingsPanel';
 
@@ -19,10 +25,60 @@ vi.mock('@/components/teams/TeamSecretsPanel', () => ({
 }));
 
 vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).navigationMock());
+vi.mock('@/hooks/useEffectivePermissions', async () =>
+  (await import('@/test/permissions')).permissionsMock()
+);
 
 const TEAM_ID = '11111111-1111-4111-8111-111111111111';
 
-const summary = (myRole: 'ADMIN' | 'LEAD' | 'ENGINEER' | null) => ({
+// What the server says each kind of person holds on this team (`GET /me/permissions`).
+const LEAD_CAPABILITIES = [
+  'team.members.manage',
+  'team.settings.manage',
+  'team.persona.manage',
+  'team.repos.manage',
+  'team.repos.create',
+  'team.knowledge-bases.manage',
+  'team.callbacks.manage',
+] as const;
+const ADMIN_CAPABILITIES = [
+  ...LEAD_CAPABILITIES,
+  'team.budget.manage',
+  'team.secrets.manage',
+  'team.agents.manage',
+  'team.plugins.manage',
+] as const;
+const standing = (role: string, capabilities: readonly (typeof ADMIN_CAPABILITIES)[number][]) =>
+  permissionsFor({
+    teams: [{ capabilities: [...capabilities], orgId: 'o', role, teamId: TEAM_ID }],
+  });
+const TEAM_LEAD = standing('LEAD', LEAD_CAPABILITIES);
+const TEAM_ADMIN = standing('ADMIN', ADMIN_CAPABILITIES);
+const TEAM_MEMBER = standing('MEMBER', []);
+/** An organization admin with no membership: only the per-team answer says what they hold. */
+const ORG_ADMIN = permissionsFor({
+  orgs: [{ capabilities: ['org.budget.manage'], orgId: 'o', role: 'ADMIN' }],
+});
+const ORG_ADMIN_ON_TEAM = permissionsFor({
+  teams: [
+    {
+      authority: 'org-admin',
+      capabilities: [
+        'team.members.manage',
+        'team.settings.manage',
+        'team.repos.manage',
+        'team.repos.create',
+        'team.budget.manage',
+        'team.knowledge-bases.manage',
+      ],
+      orgId: 'o',
+      role: null,
+      teamId: TEAM_ID,
+    },
+  ],
+});
+
+const summary = (myRole: 'ADMIN' | 'LEAD' | 'MEMBER' | null) => ({
   _count: { memberships: 0, repositories: 0 },
   defaultPersonaPrompt: null,
   description: '',
@@ -50,15 +106,19 @@ const team = (persona: string | null) => ({
 beforeEach(() => {
   resetNavigation('', '/teams/payments/settings');
   stubDialogPrototype();
-  useAuthStore.setState({ isAuthenticated: true, user: { role: 'ADMIN', sub: 'me' } });
+  setPermissions(ADMIN_PERMISSIONS);
 });
 afterEach(() => {
   vi.unstubAllGlobals();
-  useAuthStore.setState({ isAuthenticated: false, user: null });
+  resetPermissions();
 });
 
-function renderPanel(role: 'ADMIN' | 'LEAD' | 'ENGINEER' | null = 'LEAD') {
-  render(withQuery(<TeamSettingsPanel team={summary(role)} />));
+function renderPanel(
+  perms: Parameters<typeof setPermissions>[0] = TEAM_LEAD,
+  myRole: 'ADMIN' | 'LEAD' | 'MEMBER' | null = null
+) {
+  setPermissions(perms);
+  render(withQuery(<TeamSettingsPanel team={summary(myRole)} />));
 }
 
 describe('TeamSettingsPanel persona', () => {
@@ -103,7 +163,7 @@ describe('TeamSettingsPanel sections', () => {
 
   it('shows General first and moves to a section through the URL', async () => {
     mockTeam();
-    renderPanel();
+    renderPanel(ADMIN_PERMISSIONS);
     await screen.findByLabelText('Persona');
     expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe('true');
     fireEvent.click(screen.getByRole('tab', { name: 'Sandbox policy' }));
@@ -118,21 +178,19 @@ describe('TeamSettingsPanel sections', () => {
     await waitFor(() => expect(nav.replace.at(-1)).toBe('/teams/payments/manage'));
   });
 
-  it('offers a team lead who is not a platform ADMIN no sandbox section, and lists no service principals', async () => {
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
+  it('offers a team lead no sandbox section, and lists no service principals', async () => {
     mockTeam();
-    renderPanel('LEAD');
+    renderPanel(TEAM_LEAD, 'LEAD');
     await screen.findByRole('tab', { name: 'General' });
-    // Allowlists are platform-ADMIN only (teamPermissions), whatever the team role.
+    // Allowlists need `team.sandbox-policy.manage`, which only a platform admin holds.
     expect(screen.queryByRole('tab', { name: 'Sandbox policy' })).toBeNull();
     // Service principals moved to the Manage tab.
     expect(screen.queryByRole('tab', { name: 'Service principals' })).toBeNull();
   });
 
-  it('offers no member-management section when the team role is below lead', async () => {
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
+  it('offers no persona section to a plain team member', async () => {
     mockTeam();
-    renderPanel('ENGINEER');
+    renderPanel(TEAM_MEMBER, 'MEMBER');
     await screen.findByRole('tab', { name: 'General' });
     expect(screen.queryByRole('tab', { name: 'Service principals' })).toBeNull();
     expect(screen.queryByLabelText('Persona')).toBeNull();
@@ -159,76 +217,59 @@ describe('TeamSettingsPanel budget and sharing', () => {
       ...extra,
     });
 
-  it('offers the Budget tab to a team ADMIN who is not a platform admin', async () => {
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
+  it('offers the Budget tab to a team admin who is not a platform admin', async () => {
     mock();
-    renderPanel('ADMIN');
+    renderPanel(TEAM_ADMIN, 'ADMIN');
     expect(await screen.findByRole('tab', { name: 'Budget' })).toBeTruthy();
   });
 
-  it('hides the Budget tab from a team LEAD, even a platform LEAD', async () => {
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
+  it('hides the Budget tab from a team lead', async () => {
     mock();
-    renderPanel('LEAD');
+    renderPanel(TEAM_LEAD, 'LEAD');
     await screen.findByRole('tab', { name: 'General' });
-    // Let the org lookup settle: it must not grant the tab to a non-ORG_ADMIN.
-    await waitFor(() => expect(screen.queryByRole('tab', { name: 'Budget' })).toBeNull());
+    expect(screen.queryByRole('tab', { name: 'Budget' })).toBeNull();
   });
 
-  it('offers the Budget tab to an ORG_ADMIN of the team’s organization only', async () => {
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
-    mock({
-      'GET /api/v1/platform/organizations': () => ({
-        data: [
-          { id: 'other', name: 'Other', role: 'ORG_ADMIN', slug: 'other' },
-          { id: 'o', name: 'Acme', role: 'ORG_ADMIN', slug: 'acme' },
-        ],
-      }),
-    });
-    renderPanel('LEAD');
+  it('offers an organization admin who is not on the team the Budget tab, from the per-team answer', async () => {
+    setNarrowedPermissions(TEAM_ID, ORG_ADMIN_ON_TEAM);
+    mock();
+    renderPanel(ORG_ADMIN);
     expect(await screen.findByRole('tab', { name: 'Budget' })).toBeTruthy();
+    // Operation and sensitive sections are not an organization admin's.
+    expect(screen.queryByRole('tab', { name: 'Secrets' })).toBeNull();
+    expect(screen.queryByLabelText('Persona')).toBeNull();
   });
 
-  it('shows an ORG_ADMIN below team LEAD the Budget section alone', async () => {
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ENGINEER', sub: 'me' } });
-    mock({
-      'GET /api/v1/platform/organizations': () => ({
-        data: [{ id: 'o', name: 'Acme', role: 'ORG_ADMIN', slug: 'acme' }],
-      }),
-    });
-    resetNavigation('tab=automation', '/teams/payments/settings');
-    renderPanel('ENGINEER');
+  it('shows an organization admin the sections they hold, not the team admin sections', async () => {
+    setNarrowedPermissions(TEAM_ID, ORG_ADMIN_ON_TEAM);
+    mock();
+    resetNavigation('tab=budget', '/teams/payments/settings');
+    renderPanel(ORG_ADMIN);
     expect(await screen.findByTestId('team-budget-section')).toBeTruthy();
-    expect(screen.queryByRole('tab', { name: 'General' })).toBeNull();
-    expect(screen.queryByText('Shared with this team')).toBeNull();
+    expect(screen.getByRole('tab', { name: 'General' })).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: 'Sandbox policy' })).toBeNull();
   });
 
-  it('does not grant the tab for ORG_ADMIN of a different organization', async () => {
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
-    mock({
-      'GET /api/v1/platform/organizations': () => ({
-        data: [{ id: 'other', name: 'Other', role: 'ORG_ADMIN', slug: 'other' }],
-      }),
-    });
-    renderPanel('LEAD');
+  it('does not grant the tab when the server describes nothing for the person on this team', async () => {
+    mock();
+    renderPanel(ORG_ADMIN);
     await screen.findByRole('tab', { name: 'General' });
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByRole('tab', { name: 'Budget' })).toBeNull();
   });
 
-  it('shows the Budget section with the Model configuration link to a platform ADMIN', async () => {
+  it('shows the Budget section with the Model configuration link to a platform admin', async () => {
     mock();
     resetNavigation('tab=budget', '/teams/payments/settings');
-    renderPanel('ADMIN');
+    renderPanel(ADMIN_PERMISSIONS);
     expect(await screen.findByTestId('team-budget-section')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Model configuration' })).toBeTruthy();
   });
 
-  it('omits the Model configuration link for a team ADMIN who cannot reach the page', async () => {
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
+  it('omits the Model configuration link for a team admin who cannot reach the page', async () => {
     mock();
     resetNavigation('tab=budget', '/teams/payments/settings');
-    renderPanel('ADMIN');
+    renderPanel(TEAM_ADMIN, 'ADMIN');
     await screen.findByTestId('team-budget-section');
     expect(screen.queryByRole('link', { name: 'Model configuration' })).toBeNull();
   });
@@ -247,7 +288,7 @@ describe('TeamSettingsPanel budget and sharing', () => {
       }),
     });
     resetNavigation('tab=budget', '/teams/payments/settings');
-    renderPanel('ADMIN');
+    renderPanel(TEAM_ADMIN, 'ADMIN');
     const requests = await screen.findByTestId('budget-requests');
     expect(within(requests).getByText('Launch month needs more headroom')).toBeTruthy();
     expect(within(requests).getByText(/Dana Lead/)).toBeTruthy();
@@ -274,7 +315,7 @@ describe('TeamSettingsPanel budget and sharing', () => {
       },
     });
     resetNavigation('tab=budget', '/teams/payments/settings');
-    renderPanel('ADMIN');
+    renderPanel(TEAM_ADMIN, 'ADMIN');
     const requests = await screen.findByTestId('budget-requests');
     fireEvent.click(
       within(requests).getByRole('button', {
@@ -313,7 +354,7 @@ describe('TeamSettingsPanel budget and sharing', () => {
         : base(input, init)
     );
     resetNavigation('tab=budget', '/teams/payments/settings');
-    renderPanel('ADMIN');
+    renderPanel(TEAM_ADMIN, 'ADMIN');
     const requests = await screen.findByTestId('budget-requests');
     fireEvent.click(within(requests).getByRole('button', { name: 'Dismiss request: More' }));
     expect(await within(requests).findByText('No pending budget request')).toBeTruthy();
@@ -323,7 +364,7 @@ describe('TeamSettingsPanel budget and sharing', () => {
   it('renders nothing for the budget requests when there are none', async () => {
     mock({ [`GET /api/v1/teams/${TEAM_ID}/budget-requests`]: () => ({ data: [] }) });
     resetNavigation('tab=budget', '/teams/payments/settings');
-    renderPanel('ADMIN');
+    renderPanel(TEAM_ADMIN, 'ADMIN');
     await screen.findByTestId('team-budget-section');
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByTestId('budget-requests')).toBeNull();
@@ -338,7 +379,7 @@ describe('TeamSettingsPanel budget and sharing', () => {
       team: t(TEAM_ID, 'Payments'),
     };
     mock({ 'GET /api/v1/repositories': () => ({ data: [owned] }) });
-    renderPanel('LEAD');
+    renderPanel(TEAM_LEAD, 'LEAD');
     const card = await screen.findByTestId('shared-out');
     expect(
       within(card)
@@ -349,7 +390,6 @@ describe('TeamSettingsPanel budget and sharing', () => {
   });
 
   it('shows no share management to a team member below lead', async () => {
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
     mock({
       'GET /api/v1/repositories': () => ({
         data: [
@@ -363,7 +403,7 @@ describe('TeamSettingsPanel budget and sharing', () => {
         ],
       }),
     });
-    renderPanel('ENGINEER');
+    renderPanel(TEAM_MEMBER, 'MEMBER');
     await screen.findByRole('tab', { name: 'General' });
     expect(screen.queryByTestId('shared-out')).toBeNull();
   });
@@ -381,7 +421,7 @@ describe('TeamSettingsPanel budget and sharing', () => {
         data: { ...team(null).data, sharedRepositories: [sharedIn] },
       }),
     });
-    renderPanel('LEAD');
+    renderPanel(TEAM_LEAD, 'LEAD');
     const chip = await screen.findByText('View only');
     expect(chip.closest('li')?.textContent).toContain('acme/ui');
     expect(chip.closest('li')?.textContent).toContain('from Design');
@@ -393,29 +433,27 @@ describe('TeamSettingsPanel secrets', () => {
     setupFetchMock({ [`GET /api/v1/teams/${TEAM_ID}`]: () => team('Be terse.') });
   });
 
-  it('offers the Secrets tab to a team ADMIN and shows the panel there', async () => {
-    renderPanel('ADMIN');
+  it('offers the Secrets tab to a team admin and shows the panel there', async () => {
+    renderPanel(TEAM_ADMIN, 'ADMIN');
     await screen.findByRole('tab', { name: 'Secrets' });
     fireEvent.click(screen.getByRole('tab', { name: 'Secrets' }));
     expect(screen.getByTestId('team-secrets-panel')).toBeTruthy();
   });
 
-  it('hides the Secrets tab from a team LEAD, even a platform LEAD who leads the team', async () => {
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
-    renderPanel('LEAD');
+  it('hides the Secrets tab from a team lead', async () => {
+    renderPanel(TEAM_LEAD, 'LEAD');
     await screen.findByRole('tab', { name: 'General' });
     expect(screen.queryByRole('tab', { name: 'Secrets' })).toBeNull();
   });
 
-  it('hides the Secrets tab from a team ENGINEER who is not a platform ADMIN', async () => {
-    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ENGINEER', sub: 'me' } });
-    renderPanel('ENGINEER');
+  it('hides the Secrets tab from a team member who is not a platform admin', async () => {
+    renderPanel(TEAM_MEMBER, 'MEMBER');
     await screen.findByRole('tab', { name: 'General' });
     expect(screen.queryByRole('tab', { name: 'Secrets' })).toBeNull();
   });
 
-  it('offers the Secrets tab to a platform ADMIN whatever their team role', async () => {
-    renderPanel('ENGINEER');
+  it('offers the Secrets tab to a platform admin whatever their team role', async () => {
+    renderPanel(ADMIN_PERMISSIONS, 'MEMBER');
     await screen.findByRole('tab', { name: 'Secrets' });
   });
 });

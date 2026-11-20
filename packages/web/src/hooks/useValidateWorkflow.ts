@@ -34,7 +34,7 @@ export interface ValidateWorkflowBody {
 /**
  * Asks the gateway to run the checks a save would run (shape, lint, whether the agents and MCP
  * connections exist for the caller, the shell / container authoring gate) without saving or
- * running anything. Needs the LEAD role; the caller treats any failure as "the server check could
+ * running anything. Needs `team.templates.write`; the caller treats any failure as "the server check could
  * not run", never as a clean result.
  */
 export function useValidateWorkflow() {

@@ -68,9 +68,9 @@ Each authorized organization shows its monthly budget, alert threshold, month-to
 elapsed UTC days, month length, and projected spend. Projection uses fractional elapsed days. A
 projection from less than one elapsed day is still shown and marked low confidence. The status
 prioritizes actual overspend, projected overspend, an alert threshold, and then an in-budget state.
-Organizations without a cap show `no_cap`. The report carries the cap and the spend in dollars, so it lists only organizations the caller is ORG_ADMIN of (every organization for a platform ADMIN); an engineer's percentage-only view of the same state is the budget meter in [teams.md](./teams.md#the-budget-meter). The report lists the five highest-cost runs started in
+Organizations without a cap show `no_cap`. The report carries the cap and the spend in dollars, so it lists only organizations the caller is organization ADMIN of (every organization for a platform ADMIN); an engineer's percentage-only view of the same state is the budget meter in [teams.md](./teams.md#the-budget-meter). The report lists the five highest-cost runs started in
 the current month for each organization, selected by the run's persisted organization attribution
-(`WorkflowRun.attributedOrgId`), the same field the other reports scope by. An ORG_ADMIN sees
+(`WorkflowRun.attributedOrgId`), the same field the other reports scope by. An organization ADMIN sees
 those runs across the whole organization only when a platform ADMIN has enabled
 `analytics.orgWideReports` for it; otherwise the list is limited to the runs the caller can see
 through their teams, reachable repositories or own launches, as in the other reports. A platform
@@ -163,8 +163,8 @@ the percent used of the cap that binds the team, the team's own or its organizat
 used the larger share, with the line naming whose it is (the meter's rule, defined once in
 `shared/src/lib/budgetStatus.ts`). It is a percentage for every reader and never carries an amount;
 with no cap set there is no line. The organization section carries month-to-date and projected spend in
-dollars only when the subscription's creator is currently an ORG_ADMIN (or platform ADMIN) and every
-target is an email to an ORG_ADMIN of the organization (or platform ADMIN); a Slack channel or any
+dollars only when the subscription's creator is currently an organization ADMIN (or platform ADMIN) and every
+target is an email to an organization ADMIN of the organization (or platform ADMIN); a Slack channel or any
 other recipient makes it a state and a percentage. Send-test delivers immediately without changing the scheduled
 last-sent timestamp.
 
@@ -212,7 +212,7 @@ otherwise the configured Resend transport.
   (`recipients_out_of_scope`) only when no recipient remains; a partly delivered digest shows no
   sign in the admin UI that some addresses were skipped.
 - Non-ADMIN reporting visibility includes runs attributed to the caller's teams, runs attributed
-  to an organization where the caller is ORG_ADMIN and `analytics.orgWideReports` is enabled, runs
+  to an organization where the caller is organization ADMIN and `analytics.orgWideReports` is enabled, runs
   on repositories reachable through the caller's teams and GitHub permission gate, and runs
   launched by the caller. The four predicates form one OR, so a run matching multiple predicates
   contributes once. ADMIN sees all rows, including null-attribution rows. A `teamId` filter remains

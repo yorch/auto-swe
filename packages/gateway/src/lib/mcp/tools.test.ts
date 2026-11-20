@@ -303,7 +303,7 @@ async function build(options: {
             seen.queries.push({ ...(request.query as Record<string, unknown>) });
             seen.urls.push(request.url);
           },
-          requireAuth({ requiredRole: 'ENGINEER' }),
+          requireAuth(),
         ],
       },
       async (_request, reply) => {
@@ -330,7 +330,7 @@ async function build(options: {
           async (request) => {
             seen.urls.push(request.url);
           },
-          requireAuth({ requiredRole: 'ENGINEER' }),
+          requireAuth(),
         ],
       },
       async () => ({ data: [] })

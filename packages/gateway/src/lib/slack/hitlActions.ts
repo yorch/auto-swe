@@ -1,4 +1,4 @@
-import type { Role } from '@auto-swe/shared';
+import type { PlatformRole } from '@auto-swe/shared';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
 import { resolveSlackBotTokenForWorkspace } from '@auto-swe/shared/lib/systemConfig';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -44,7 +44,7 @@ interface HitlButtonValue {
 export async function handleHitlResolveAction(
   fastify: FastifyInstance,
   request: FastifyRequest,
-  user: { id: string; role: Role },
+  user: { id: string; role: PlatformRole },
   payload: SlackInteractivePayload,
   signingSecret: string
 ): Promise<unknown> {
@@ -119,7 +119,7 @@ type HitlSlackOutcome =
 async function resolveHitlStepFromSlack(
   fastify: FastifyInstance,
   request: FastifyRequest,
-  user: { id: string; role: Role },
+  user: { id: string; role: PlatformRole },
   where: {
     channelId: string | undefined;
     messageTs: string | undefined;
@@ -207,7 +207,7 @@ async function resolveHitlStepFromSlack(
  */
 async function openHitlCommentModal(
   fastify: FastifyInstance,
-  user: { id: string; role: Role },
+  user: { id: string; role: PlatformRole },
   payload: SlackInteractivePayload,
   signingSecret: string,
   target: { stepId: string; action: 'approve' | 'reject' | 'request_changes' }
@@ -282,7 +282,7 @@ async function openHitlCommentModal(
 export async function handleHitlModalSubmission(
   fastify: FastifyInstance,
   request: FastifyRequest,
-  user: { id: string; role: Role },
+  user: { id: string; role: PlatformRole },
   payload: SlackInteractivePayload,
   signingSecret: string
 ): Promise<unknown> {

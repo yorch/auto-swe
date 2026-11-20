@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { KnowledgeStatus as DbKnowledgeStatus } from '../generated/prisma/enums.js';
 import type { KnowledgeItemWhereInput } from '../generated/prisma/models/KnowledgeItem.js';
+import { type Actor, can, type PermissionsDb } from '../permissions/index.js';
 
 export const KNOWLEDGE_TYPES = ['LEARNING', 'REFERENCE', 'DECISION', 'POLICY'] as const;
 export const KNOWLEDGE_STATUSES = ['UNREVIEWED', 'APPROVED', 'REJECTED', 'SUPERSEDED'] as const;
@@ -303,20 +304,30 @@ export function knowledgeReadableWhere(scope: KnowledgeAccessScope): KnowledgeIt
   };
 }
 
-export function canApproveKnowledge(
-  role: 'ADMIN' | 'LEAD' | 'ENGINEER' | null,
-  orgRole: 'ORG_ADMIN' | 'ORG_MEMBER' | null,
-  platformAdmin: boolean,
+/** The capability that approves or republishes an item at `visibility`. */
+export function knowledgeApprovalCapability(
   visibility: KnowledgeVisibility
-): boolean {
-  if (platformAdmin) {
-    return true;
-  }
-  if (visibility === 'ORGANIZATION') {
-    return orgRole === 'ORG_ADMIN';
-  }
-  if (visibility === 'SELECTED_TEAMS') {
-    return role === 'ADMIN' || role === 'LEAD';
-  }
-  return role === 'ADMIN' || role === 'LEAD';
+): 'org.knowledge.publish' | 'team.knowledge.approve' {
+  return visibility === 'ORGANIZATION' ? 'org.knowledge.publish' : 'team.knowledge.approve';
+}
+
+/**
+ * Whether `actor` may approve (or republish) an item owned by `owner` at `visibility`:
+ * organization visibility needs `org.knowledge.publish` on the item's organization, every other
+ * visibility `team.knowledge.approve` on its owning team.
+ */
+export async function canApproveKnowledge(
+  db: PermissionsDb,
+  actor: Actor,
+  owner: { teamId: string; orgId: string },
+  visibility: KnowledgeVisibility
+): Promise<boolean> {
+  const capability = knowledgeApprovalCapability(visibility);
+  const decision = await can(
+    db,
+    actor,
+    capability,
+    capability === 'org.knowledge.publish' ? { orgId: owner.orgId } : { teamId: owner.teamId }
+  );
+  return decision.allowed;
 }

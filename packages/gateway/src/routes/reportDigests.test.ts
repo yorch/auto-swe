@@ -35,8 +35,14 @@ async function buildApp(
   const prisma = {
     configAuditLog: { create: vi.fn().mockResolvedValue(undefined) },
     organization: { findMany: vi.fn().mockResolvedValue([]) },
+    // The caller is an administrator of each organization named (the capability resolver reads it,
+    // by organization ids for a decision and for every organization for a held scope).
     organizationMembership: {
-      findMany: vi.fn().mockResolvedValue((membership.orgIds ?? []).map((orgId) => ({ orgId }))),
+      findMany: vi.fn(async (args: { where: { orgId?: { in: string[] } } }) =>
+        (membership.orgIds ?? [])
+          .filter((orgId) => !args.where.orgId || args.where.orgId.in.includes(orgId))
+          .map((orgId) => ({ orgId, role: 'ORG_ADMIN' }))
+      ),
     },
     reportDigestSubscription: {
       count: vi.fn().mockResolvedValue(0),
@@ -52,15 +58,28 @@ async function buildApp(
       findUnique: vi.fn().mockResolvedValue({ orgId: ORG_B }),
     },
     team: {
-      findMany: vi.fn().mockResolvedValue([]),
+      // By ids (a decision): active teams of the matching organization. By organization (a held
+      // scope): the teams of those organizations.
+      findMany: vi.fn(
+        async (args: { where: { id?: { in: string[] }; orgId?: { in: string[] } } }) =>
+          [TEAM_A, TEAM_B]
+            .map((id) => ({ id, isActive: true, orgId: id === TEAM_A ? ORG_A : ORG_B }))
+            .filter((t) =>
+              args.where.id
+                ? args.where.id.in.includes(t.id)
+                : args.where.orgId?.in.includes(t.orgId)
+            )
+      ),
       findUnique: vi.fn(async ({ where }: { where: { id: string } }) => ({
         orgId: where.id === TEAM_A ? ORG_A : ORG_B,
       })),
     },
     teamMembership: {
-      findMany: vi
-        .fn()
-        .mockResolvedValue((membership.teamIds ?? []).map((teamId) => ({ role: 'LEAD', teamId }))),
+      findMany: vi.fn(async (args: { where: { teamId?: { in: string[] } } }) =>
+        (membership.teamIds ?? [])
+          .filter((teamId) => !args.where.teamId || args.where.teamId.in.includes(teamId))
+          .map((teamId) => ({ role: 'LEAD', team: { id: teamId, isActive: true }, teamId }))
+      ),
     },
     user: {
       findMany: vi.fn(async ({ where }: { where: { email: { in: string[] } } }) =>

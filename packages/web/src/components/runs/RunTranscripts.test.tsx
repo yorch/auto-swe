@@ -40,7 +40,7 @@ vi.mock('@/hooks/useTranscripts', () => ({
   }),
   useTranscriptLegalHold: () => ({ mutateAsync }),
 }));
-vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => admin }));
+vi.mock('@/hooks/useCan', () => ({ useCan: () => admin, usePlatformAdmin: () => admin }));
 
 beforeEach(() => stubDialogPrototype());
 afterEach(cleanup);

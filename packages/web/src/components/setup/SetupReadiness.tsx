@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { OnboardingCard } from '@/components/setup/OnboardingCard';
 import { ButtonLink } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
-import { useHasRole } from '@/hooks/useHasRole';
+import { usePlatformAdmin } from '@/hooks/useCan';
 import { type ReadinessItemId, useReadiness } from '@/hooks/useReadiness';
 import { readinessSummary } from '@/lib/readinessSummary';
 import { cn, FOCUS_RING } from '@/lib/utils';
@@ -22,7 +22,7 @@ export function SetupReadiness({
   embedded?: boolean;
   onNavigate?: () => void;
 }) {
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = usePlatformAdmin();
   const { data, isLoading } = useReadiness(isAdmin);
   if (!isAdmin) {
     return null;
@@ -151,7 +151,7 @@ export function SetupBanner({
   inPage?: { label: string; onClick: () => void };
   compact?: boolean;
 }) {
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = usePlatformAdmin();
   const { data } = useReadiness(isAdmin);
   const missing = data?.items.filter((i) => !i.ok && items.includes(i.id)) ?? [];
   if (!isAdmin || !data || missing.length === 0) {

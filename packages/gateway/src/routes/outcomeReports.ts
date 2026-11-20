@@ -24,7 +24,7 @@ const LiveQuery = FormatQuery.extend({
  */
 export const outcomeReportRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const admin = requireAuth({ requiredRole: 'ADMIN' });
+  const admin = requireAuth({ capability: 'platform.catalog.manage' });
 
   app.get('/', { onRequest: admin, schema: { querystring: LiveQuery } }, async (request, reply) => {
     const now = new Date();

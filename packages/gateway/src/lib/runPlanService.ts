@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
-import { Role } from '@auto-swe/shared';
-import { resolveSettings, roleMeets, snapshotPinnedSettings } from '@auto-swe/shared/config';
+import { PlatformRole } from '@auto-swe/shared';
+import { resolveSettings, snapshotPinnedSettings } from '@auto-swe/shared/config';
 import { AGENT_RUN_TEMPLATE_NAME, AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
 import {
   closeAgentRunLedgerRows,
@@ -234,22 +234,29 @@ function captureReply(): { reply: FastifyReply; refusal: () => PlanRefusal } {
   };
 }
 
-/** The user row behind an actor: active and at least an ENGINEER. */
-export async function requireEngineer(
+/**
+ * The identity a run plan acts as when it validates a repository or launches: the person's `sub`
+ * with today's stored role string. Every synthesized actor on the plan path is built here, so the
+ * persisted `sourceAuthorization` and the validation payload cannot drift apart. The worker's
+ * re-check (`plannedRunPin.ts`) reads the role from the database, never from this value.
+ */
+function synthesizedPlanActor(sub: string): { role: PlatformRole; sub: string } {
+  return { role: PlatformRole.USER, sub };
+}
+
+/** The user row behind an actor: it must be an active user, and that is all the planner needs. */
+export async function requireActivePlanUser(
   deps: RunPlanServiceDeps,
   actor: PlanActor
-): Promise<{ ok: true; role: Role } | PlanRefusal> {
+): Promise<{ ok: true } | PlanRefusal> {
   const user = await deps.prisma.user.findUnique({
-    select: { id: true, isActive: true, role: true },
+    select: { id: true, isActive: true },
     where: { id: actor.sub },
   });
   if (!user?.isActive) {
     return refuse(403, 'FORBIDDEN', 'Only an active user can use run plans');
   }
-  if (!roleMeets(user.role as Role, Role.ENGINEER)) {
-    return refuse(403, 'FORBIDDEN', 'Run plans need the ENGINEER role');
-  }
-  return { ok: true, role: user.role as Role };
+  return { ok: true };
 }
 
 function parseStoredSpec(raw: unknown): WorkflowSpec | null {
@@ -315,7 +322,7 @@ export async function authorizeRepository(
       prisma: deps.prisma,
       providerMeta: null,
       templateTeamId: null,
-      user: { exp: 0, iat: 0, role: Role.ENGINEER, sub: actor.sub },
+      user: { exp: 0, iat: 0, ...synthesizedPlanActor(actor.sub) },
     },
     captured.reply
   );
@@ -543,7 +550,7 @@ export interface CreatePlanInput {
 export type CreatePlanResult = { ok: true; planId: string; expiresAt: Date } | PlanRefusal;
 
 /**
- * Store a generated plan as PENDING. The owner must be an active ENGINEER who can reach the
+ * Store a generated plan as PENDING. The owner must be an active user who can reach the
  * repository; the spec must parse, pass the skeleton policy and `validateSpec` (a plan that fails
  * is never stored, so there is nothing to approve); its hash and both reports are computed here.
  */
@@ -551,7 +558,7 @@ export async function createPlanRecord(
   deps: RunPlanServiceDeps,
   input: CreatePlanInput
 ): Promise<CreatePlanResult> {
-  const engineer = await requireEngineer(deps, input.owner);
+  const engineer = await requireActivePlanUser(deps, input.owner);
   if (!engineer.ok) {
     return engineer;
   }
@@ -723,7 +730,7 @@ async function verifyPlanForApproval(
     return refuse(409, 'PLAN_EXPIRED', 'The plan has expired; create a new one');
   }
 
-  const engineer = await requireEngineer(deps, actor);
+  const engineer = await requireActivePlanUser(deps, actor);
   if (!engineer.ok) {
     return engineer;
   }
@@ -1018,7 +1025,7 @@ export async function launchApprovedPlan(
   if (plan.expiresAt.getTime() <= nowOf(deps).getTime()) {
     return refuse(409, 'PLAN_EXPIRED', 'The plan has expired; create a new one');
   }
-  const engineer = await requireEngineer(deps, actor);
+  const engineer = await requireActivePlanUser(deps, actor);
   if (!engineer.ok) {
     return engineer;
   }
@@ -1132,7 +1139,7 @@ export async function launchApprovedPlan(
         return still ? null : 'PLAN_NOT_LAUNCHABLE';
       },
       log: deps.log ?? { error: () => undefined },
-      sourceAuthorization: { actor: { role: Role.ENGINEER, sub: actor.sub } },
+      sourceAuthorization: { actor: synthesizedPlanActor(actor.sub) },
     }
   );
   if (!result.ok) {

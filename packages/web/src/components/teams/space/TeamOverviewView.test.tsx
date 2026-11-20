@@ -51,13 +51,13 @@ const base: TeamOverview = {
   running: 2,
   team: {
     id: 't1',
-    myRole: 'ENGINEER',
+    myRole: 'MEMBER',
     name: 'Payments',
     orgId: 'o1',
     orgName: 'Acme',
     slug: 'payments',
   },
-  viewerLevel: 'engineer',
+  viewerLevel: 'member',
 };
 
 describe('TeamOverviewView', () => {
@@ -203,11 +203,21 @@ describe('TeamOverviewView', () => {
     rerender(
       <TeamOverviewView
         canManageBudget
-        overview={{ ...base, budget, viewerLevel: 'engineer' }}
+        overview={{ ...base, budget, viewerLevel: 'member' }}
         slug="payments"
       />
     );
     expect(screen.getByRole('link', { name: 'Manage budget' })).toBeTruthy();
+  });
+
+  it('says a team has no admin only when the server says so', () => {
+    const { rerender } = render(<TeamOverviewView overview={base} slug="payments" />);
+    expect(screen.queryByText('This team has no admin')).toBeNull();
+    rerender(<TeamOverviewView overview={{ ...base, needsAdmin: true }} slug="payments" />);
+    expect(screen.getByText('This team has no admin')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Members' }).getAttribute('href')).toBe(
+      '/teams/payments/members'
+    );
   });
 
   it('marks repositories with canLaunch off as view only', () => {
@@ -244,7 +254,7 @@ describe('TeamOverviewView', () => {
 
   it('renders My work before Team numbers at every viewer level', () => {
     const levels: TeamOverview[] = [
-      { ...base, viewerLevel: 'engineer' },
+      { ...base, viewerLevel: 'member' },
       {
         ...base,
         lead: { openPullRequests: 0, staleApprovals: 0, unownedFailures: 0 },

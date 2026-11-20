@@ -555,7 +555,7 @@ Every unmet condition is named, in the refusal, in the arming note on the evalua
 `auto-swe pr-policy status`. The figures are counts: no requester is named in an API response, a
 log line, a status or a comment. The deployment-wide history is shared by every organization and
 team on the instance (organization B's merges count toward organization A's thresholds), and the
-aggregate counts, never ids, are visible to any ENGINEER who can reach one repository
+aggregate counts, never ids, are visible to any signed-in user who can reach one repository
 (`GET /repositories/:id/pr-evaluation`, `evidence.deployment`).
 
 A merge is recorded on the single evaluation row of the head that was merged. A merge is marked bad
@@ -573,7 +573,7 @@ detection is a title heuristic; and the rows of a repository are deleted with it
 
 | Action | Role |
 |---|---|
-| Read a repository's evaluation state and the evaluations of repositories you can reach | ENGINEER and above, for a repository you can reach |
+| Read a repository's evaluation state and the evaluations of repositories you can reach | any signed-in user, for a repository you can reach |
 | Set a repository to `off`, `advisory`, `enforce` or `inherit` | Lead of the owning team, or platform admin |
 | Set a repository to `auto` | Platform admin only, and only while the preconditions below hold |
 | Turn bot approval on for a repository | Platform admin only, and only while the preconditions in §16 hold |
@@ -796,15 +796,15 @@ is the count of all matching open pull requests, not the number ordered. The Pul
 
 | Route | Role | Purpose |
 |---|---|---|
-| `GET /api/v1/repositories/:id/pr-evaluation` | ENGINEER | Enabled flag, mode and where it came from, whether auto-merge is allowed, the status context, the thresholds in force, the evidence figures, whether bot approval is on, allowed by the deployment and has an approver App to use (booleans only), and the repository's last evaluation |
+| `GET /api/v1/repositories/:id/pr-evaluation` | any signed-in user | Enabled flag, mode and where it came from, whether auto-merge is allowed, the status context, the thresholds in force, the evidence figures, whether bot approval is on, allowed by the deployment and has an approver App to use (booleans only), and the repository's last evaluation |
 | `PUT /api/v1/repositories/:id/pr-evaluation` | LEAD of the owning team, or ADMIN | Body `{ "mode"?: "off" \| "advisory" \| "enforce" \| "auto" \| null, "botApproval"?: boolean }`, at least one; `null` inherits. `auto` is ADMIN-only and may answer `400 AUTO_NOT_READY`. `botApproval: true` is ADMIN-only, needs the resulting mode to be `auto`, and may answer `400 BOT_APPROVAL_NOT_READY` with every unmet reason (§16.1); any mode other than `auto` sets it false in the same update. Two writes that race on the same repository can answer `409 PR_EVALUATION_CONFLICT`: reload and retry. The response carries the resulting `mode`, `modeSource`, `botApproval` and `warnings` under `data` (`warnings` is non-empty for `enforce` when the status context is not shown to be a required check) |
-| `GET /api/v1/repositories/:id/review-routing` | ENGINEER | The repository's routing override and the routing in force (§12.1) |
+| `GET /api/v1/repositories/:id/review-routing` | any signed-in user | The repository's routing override and the routing in force (§12.1) |
 | `PUT /api/v1/repositories/:id/review-routing` | LEAD of the owning team (whatever the platform role), or ADMIN | Body `{ "override": { ... } \| null }`; `null` or `{}` clears the override. Keys: `humanMinRisk`, `humanAboveLines`, `humanPaths`, `quickReviewMaxLines`, `skipWhenBotApproved`; an unknown key is a `400`. An override can only add strictness (§12.1): a value looser than what is in force, or an omitted key that carries strictness, answers `403 ROUTING_LOOSER_THAN_SETTINGS` (omitting a key is allowed to an ADMIN). Audited. The in-app assistant may not call it |
-| `GET /api/v1/pull-requests?order=attention` | ENGINEER | The open pull requests as a review queue, with `needsHuman` and its reason on each (§12.1). `state` other than `OPEN` or `all` answers `400 ATTENTION_ORDER_OPEN_ONLY`. Orders at most 1000 open pull requests (the oldest kept) and says `meta.queue.truncated` when more matched or the evaluation read was cut |
-| `GET /api/v1/pull-requests/review-time` | ENGINEER | Reviewer time per pull request cohort, repository and team, and the open queue now ([reporting.md](./reporting.md#reviewer-time)) |
-| `GET /api/v1/pr-evaluations` | ENGINEER | Evaluations, newest first, for repositories you can reach. Filters `repoId`, `riskClass`, `merged`; `limit` (default 50, at most 100) and `offset`. Each row reports whether a brief exists and its length, not the brief |
-| `GET /api/v1/pr-evaluations/engagement` | ENGINEER | Whether reviewers act on the brief, for repositories you can reach: `days` (default 30, 1 to 365) and `repoId`. Evaluations, how many a person reviewed, the median minutes to the first review, the share of reviewed ones with a request for changes, and where inline comments landed (on a flagged file, on a file the brief said to skim, elsewhere), and `pullRequestsViewed` with `medianMinutesToFirstView`, how soon a pull request opened in the window was first opened on the review page. Reads at most 5000 evaluations and 5000 first visits and says `capped` when the window held more of either |
-| `GET /api/v1/pr-evaluations/:id` | ENGINEER | One evaluation in full: reasons, the brief, and the branch rules it read |
+| `GET /api/v1/pull-requests?order=attention` | any signed-in user | The open pull requests as a review queue, with `needsHuman` and its reason on each (§12.1). `state` other than `OPEN` or `all` answers `400 ATTENTION_ORDER_OPEN_ONLY`. Orders at most 1000 open pull requests (the oldest kept) and says `meta.queue.truncated` when more matched or the evaluation read was cut |
+| `GET /api/v1/pull-requests/review-time` | any signed-in user | Reviewer time per pull request cohort, repository and team, and the open queue now ([reporting.md](./reporting.md#reviewer-time)) |
+| `GET /api/v1/pr-evaluations` | any signed-in user | Evaluations, newest first, for repositories you can reach. Filters `repoId`, `riskClass`, `merged`; `limit` (default 50, at most 100) and `offset`. Each row reports whether a brief exists and its length, not the brief |
+| `GET /api/v1/pr-evaluations/engagement` | any signed-in user | Whether reviewers act on the brief, for repositories you can reach: `days` (default 30, 1 to 365) and `repoId`. Evaluations, how many a person reviewed, the median minutes to the first review, the share of reviewed ones with a request for changes, and where inline comments landed (on a flagged file, on a file the brief said to skim, elsewhere), and `pullRequestsViewed` with `medianMinutesToFirstView`, how soon a pull request opened in the window was first opened on the review page. Reads at most 5000 evaluations and 5000 first visits and says `capped` when the window held more of either |
+| `GET /api/v1/pr-evaluations/:id` | any signed-in user | One evaluation in full: reasons, the brief, and the branch rules it read |
 | `GET /api/v1/integrations/github-approver-app` | ADMIN | Whether the approver App is configured, its App id and slug, the last four characters of its private key, the retired slugs (`retiredAppSlugs`, oldest first), and when it changed. The key is never returned |
 | `PUT /api/v1/integrations/github-approver-app` | ADMIN | Body `{ "appId"?, "appSlug"?, "privateKey"? }`. Checked against GitHub before anything is stored (§16.2). A blank `privateKey` keeps the stored one |
 | `DELETE /api/v1/integrations/github-approver-app` | ADMIN | Removes the App id, slug and key (`204`); the removed slug is kept so its approvals can still be withdrawn |
@@ -1316,4 +1316,4 @@ documentation change as a platform pull request and read the evaluation's reason
   its pull request by repository and number only, so the page finds the review page
   (`/pull-requests/<id>`, described in [`work-views.md`](./work-views.md)) from each visible
   repository's newest 100 pull requests: an older pull request's row shows no link. The page is
-  admin-only; an ENGINEER reads the same data through the routes in §13 or the CLI.
+  admin-only; a signed-in user reads the same data through the routes in §13 or the CLI.

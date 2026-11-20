@@ -35,7 +35,7 @@ approves it on the full preview.
 | CLI | `auto-swe plan route\|create\|wait\|show\|list\|approve\|reject\|run\|save`; `auto-swe run --describe "<goal>" --repo=<org/name> [--agent=<key>] --yes` is an alias of `plan run`. Approval needs an interactive confirmation or `--yes` |
 | Slack | The channel assistant's `proposeRun` tool offers a **Generate plan** button to the person who asked; the plan is previewed and approved on the dashboard (section 7) |
 
-Every route requires an ENGINEER and is refused for service principals. A plan is visible to its
+Every route requires a signed-in user and is refused for service principals. A plan is visible to its
 owner only; anyone else gets `404`. The in-app assistant may create a plan with the user's
 confirmation and may never approve one.
 
@@ -136,7 +136,7 @@ named reason when any of these no longer holds:
 | Refusal | Cause |
 |---|---|
 | `404` | Not the owner, or no such plan |
-| `403` | Role below ENGINEER, repository reach lost, feature disabled |
+| `403` | Not an active user, repository reach lost, feature disabled |
 | `409` with `details.drift` | Agents, settings, catalog, repository or spec changed since generation |
 | `409` | The plan is not pending, or has expired |
 | `422` | The stored spec fails the policy |
@@ -255,7 +255,7 @@ activity bound applies (see Limitations).
 `proposeRun` records an intent and carries no goal text: the goal is the invoking person's own
 message, taken verbatim by fixed code. The reply quotes it, names the repository and offers a
 **Generate plan** button. A signed, expiring token binds the Slack user, channel, thread, goal and
-repository; only that person may click, they must be a linked, active ENGINEER with repository
+repository; only that person may click, they must be a linked, active user with repository
 reach, and a replay is refused. A click starts generation and links to the dashboard. Slack never
 approves a plan or starts a run.
 

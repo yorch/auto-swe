@@ -3,8 +3,8 @@ import { Alert } from '@/components/ui/Alert';
 import { requireUsageScope } from '@/lib/auth.server';
 
 export default async function Layout({ children }: { children: ReactNode }) {
-  // Gated on holding a usage scope, not on the platform role: a team LEAD or
-  // ORG_ADMIN by membership may have a lower one. The gateway enforces which
+  // Gated on holding a usage scope, not on the platform role: a team lead or an
+  // organization admin by membership may have a lower one. The gateway enforces which
   // scopes each may read.
   const access = await requireUsageScope();
   if (access.status === 'unavailable') {

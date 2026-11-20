@@ -1,4 +1,4 @@
-import type { Prisma, Role } from '@auto-swe/shared';
+import type { PlatformRole, Prisma } from '@auto-swe/shared';
 import type { AccessActor } from '@auto-swe/shared/lib/accessActor';
 import { sameRepositoryIds } from '@auto-swe/shared/lib/sameRepositoryIds';
 import {
@@ -7,6 +7,7 @@ import {
   type WorkflowIdOwner,
   workflowIdFamilyBases,
 } from '@auto-swe/shared/lib/workflowId';
+import { isPlatformAdmin, can as sharedCan, userActor } from '@auto-swe/shared/permissions';
 import type { FastifyInstance } from 'fastify';
 import { getErrorName } from '../plugins/auth.js';
 import { auditContextData } from './auditContext.js';
@@ -161,7 +162,7 @@ export async function snapshotAuthorizedRepositorySource(
     if (!currentUser?.isActive) {
       return null;
     }
-    actor = { role: currentUser.role as Role, sub: currentUser.id };
+    actor = { role: currentUser.role as PlatformRole, sub: currentUser.id };
   }
   // CLAUDE.md §7 exception: repository moves lock this row; Prisma cannot express SELECT FOR UPDATE.
   const locked = await tx.$queryRaw<Array<{ id: string }>>`
@@ -255,7 +256,7 @@ export async function snapshotAuthorizedRepositorySource(
     return null;
   }
 
-  if (actor && actor.role !== 'ADMIN') {
+  if (actor && !isPlatformAdmin(actor)) {
     const repoMember =
       repo.team.memberships.some((membership) => membership.userId === actor.sub) ||
       repo.shares.some(
@@ -284,18 +285,16 @@ export async function snapshotAuthorizedRepositorySource(
     if (!selectedTeamIsVisible) {
       return null;
     }
-    if (actor?.role !== 'ADMIN') {
-      const membership = actor
-        ? await tx.teamMembership.findUnique({
-            select: { role: true },
-            where: {
-              userId_teamId: { teamId: authorization.requiredTeamId, userId: actor.sub },
-            },
-          })
-        : null;
-      if (membership?.role !== 'LEAD' && membership?.role !== 'ADMIN') {
-        return null;
-      }
+    // Platform admin holds the capability too; a launch with no actor holds nothing.
+    if (
+      !actor ||
+      !(
+        await sharedCan(tx, userActor(actor), 'team.launch.as-lead', {
+          teamId: authorization.requiredTeamId,
+        })
+      ).allowed
+    ) {
+      return null;
     }
   }
 
@@ -323,7 +322,7 @@ async function snapshotAuthorizedTeamSource(
     if (!currentUser?.isActive) {
       return null;
     }
-    actor = { role: currentUser.role as Role, sub: currentUser.id };
+    actor = { role: currentUser.role as PlatformRole, sub: currentUser.id };
   }
   // CLAUDE.md §7 exception: lock the tenant row while checking its launch snapshot.
   const locked = await tx.$queryRaw<Array<{ id: string }>>`
@@ -355,12 +354,12 @@ async function snapshotAuthorizedTeamSource(
     team.id !== expected.teamId ||
     team.orgId !== expected.orgId ||
     (actor &&
-      actor.role !== 'ADMIN' &&
+      !isPlatformAdmin(actor) &&
       !team.memberships.some((membership) => membership.userId === actor.sub))
   ) {
     return null;
   }
-  if (actor && actor.role !== 'ADMIN') {
+  if (actor && !isPlatformAdmin(actor)) {
     const membership = await tx.organizationMembership.findUnique({
       select: { userId: true },
       where: { userId_orgId: { orgId: team.orgId, userId: actor.sub } },

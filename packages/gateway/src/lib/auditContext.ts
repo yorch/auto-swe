@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { isIPv4, isIPv6 } from 'node:net';
+import type { Authority } from '@auto-swe/shared/permissions';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { AuthMethod } from '../plugins/auth.js';
 
@@ -9,6 +10,8 @@ import type { AuthMethod } from '../plugins/auth.js';
  */
 export interface AuditContext {
   via?: AuthMethod;
+  /** The ground of the route's capability check (`team-role`, `org-admin`, `platform-admin`, …). */
+  authority?: Authority;
   requestId?: string;
   /** Truncated: /24 for IPv4, /48 for IPv6. Omitted for assistant calls. */
   ip?: string;
@@ -77,6 +80,9 @@ export function auditContextOf(request: FastifyRequest): AuditContext {
   const context: AuditContext = { requestId: request.id };
   if (via) {
     context.via = via;
+  }
+  if (request.authority) {
+    context.authority = request.authority;
   }
   // The assistant calls from the worker, so the peer address is ours, not the user's. An MCP
   // bridged call is injected with the outer request's client address as its remote address, so

@@ -1,9 +1,10 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { normalizeModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isPlatformAdmin, userActor } from '@auto-swe/shared/permissions';
 import { IMPLEMENTER_RUNTIMES, REASONING_LEVELS } from '@auto-swe/shared/types/api';
 import { AGENT_TOOL_KEYS } from '@auto-swe/shared/workflow';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { advisoryWarnings } from '../lib/advisoryWarnings.js';
@@ -31,11 +32,11 @@ import {
   writesModel,
 } from '../lib/agentLibraryService.js';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { can } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
 import { ModelSpecSchema } from '../lib/modelSpecSchema.js';
 import { skillAttachError } from '../lib/pluginSkillPolicy.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
-import { checkTeamAccess } from '../lib/skillAssignmentService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const AGENT_SCOPES = ['GLOBAL', 'ORGANIZATION', 'TEAM', 'CHANNEL', 'WORKFLOW_TEMPLATE'] as const;
@@ -123,12 +124,15 @@ const AgentBaseFields = {
  * the `workspace.implementerRuntime` setting. A team admin's write that leaves
  * it out (or restates the current value) keeps whatever an ADMIN chose.
  */
-function runtimeChangeForbidden(
-  actorRole: string,
+async function runtimeChangeForbidden(
+  request: FastifyRequest,
   requested: string | null | undefined,
   current: string | null
-): boolean {
-  return actorRole !== 'ADMIN' && requested !== undefined && requested !== current;
+): Promise<boolean> {
+  if (requested === undefined || requested === current) {
+    return false;
+  }
+  return !(await can(request, 'platform.agents.runtime.set')).allowed;
 }
 
 /** Whether `requested` names a different ordered list than `current` (undefined = keep). */
@@ -230,7 +234,7 @@ const IdParams = z.object({ id: z.string().uuid() });
 /** Admin-only Agent library: create/version/list/delete across all scopes. */
 export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.catalog.manage' });
 
   for (const dryRun of [true, false]) {
     app.post(
@@ -612,11 +616,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
 /** Team-owner Agent library: TEAM-scope agents for a single team. */
 export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const teamAdmin = requireAuth({
-    requiredRole: 'ENGINEER',
-    requiredTeamRole: 'ADMIN',
-    teamIdParam: 'id',
-  });
+  const teamAdmin = requireAuth({ capability: 'team.agents.manage', team: { param: 'id' } });
   const TeamParams = z.object({ id: z.string().uuid() });
   const TeamAgentParams = z.object({ agentId: z.string().uuid(), id: z.string().uuid() });
   const TeamCreate = z.object(AgentBaseFields).extend({
@@ -629,11 +629,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
 
   // Any team member may read the agent keys an override can name — key, display name and model
   // only, never a prompt, tool list or connection. The full library stays team-admin / ADMIN.
-  const teamMember = requireAuth({
-    requiredRole: 'ENGINEER',
-    requiredTeamRole: 'ENGINEER',
-    teamIdParam: 'id',
-  });
+  const teamMember = requireAuth({ capability: 'team.agents.read', team: { param: 'id' } });
 
   app.get(
     '/:id/agent-library/options',
@@ -693,7 +689,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         { key: request.body.key, scope: 'TEAM' },
         named
       );
-      if (runtimeChangeForbidden(actor.role, request.body.runtime, inherited)) {
+      if (await runtimeChangeForbidden(request, request.body.runtime, inherited)) {
         return reply.status(403).send(RUNTIME_ADMIN_ONLY);
       }
       const modelError = modelRequiredError(named, true);
@@ -803,13 +799,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       if (current?.scope !== 'TEAM' || current.teamId !== request.params.id) {
         return sendError(reply, 404, 'NOT_FOUND', 'Agent not found');
       }
-      const access = await checkTeamAccess(fastify.prisma, actor, request.params.id, {
-        requireTeamAdmin: true,
-      });
-      if (!access.ok) {
-        return sendError(reply, 403, 'FORBIDDEN', access.message);
-      }
-      if (runtimeChangeForbidden(actor.role, request.body.runtime, current.runtime)) {
+      if (await runtimeChangeForbidden(request, request.body.runtime, current.runtime)) {
         return reply.status(403).send(RUNTIME_ADMIN_ONLY);
       }
       const merged = mergedRuntimeAndModel(current, request.body);
@@ -889,7 +879,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
                   agent.key,
                   agent.modelSpec,
                   // A team admin is not told about other teams' agents.
-                  actor.role === 'ADMIN' ? undefined : request.params.id
+                  isPlatformAdmin(userActor(actor)) ? undefined : request.params.id
                 ),
               []
             )
@@ -939,12 +929,6 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (current?.scope !== 'TEAM' || current.teamId !== request.params.id) {
         return sendError(reply, 404, 'NOT_FOUND', 'Agent not found');
-      }
-      const access = await checkTeamAccess(fastify.prisma, actor, request.params.id, {
-        requireTeamAdmin: true,
-      });
-      if (!access.ok) {
-        return sendError(reply, 403, 'FORBIDDEN', access.message);
       }
       const count = await deactivateAgentLineage(fastify.prisma, {
         key: current.key,

@@ -17,6 +17,7 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useOrganizationDirectory } from '@/hooks/useAdmin';
+import { usePlatformAdmin } from '@/hooks/useCan';
 import {
   type ScopeSelection,
   type SettingView,
@@ -24,7 +25,6 @@ import {
   useConfigSettings,
   useSetConfigSetting,
 } from '@/hooks/useConfigSettings';
-import { useHasRole } from '@/hooks/useHasRole';
 import { useSlackChannels } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
@@ -66,7 +66,7 @@ const SCOPE_ID_PARAM = {
 
 export default function GovernSettingsPage() {
   const { params, update } = useUrlFilters();
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = usePlatformAdmin();
   // The viewed scope lives in the URL so a view can be linked to and survives a reload.
   const rawScope = params.get('scope');
   const scope: ViewScope =

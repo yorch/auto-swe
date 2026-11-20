@@ -5,7 +5,7 @@ import { EligibleUserSelect } from '@/components/EligibleUserSelect';
 import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
-import { useHasRole } from '@/hooks/useHasRole';
+import { useCan } from '@/hooks/useCan';
 import { lookupUserByEmail, useEligibleUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
 
@@ -28,7 +28,7 @@ export function MemberUserPicker({
   label?: string;
   id?: string;
 }) {
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = useCan('platform.users.manage');
   const eligible = useEligibleUsers(existingUserIds, isAdmin);
 
   // Admin mode starts empty: the caller must make an explicit choice, so Add

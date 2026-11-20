@@ -8,11 +8,10 @@ import {
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { requireUser } from '../plugins/auth.js';
 import { writeAuditLog } from './auditLog.js';
+import { can } from './authz.js';
 import { workflowIdFromIdempotencyKey } from './idempotency.js';
 import { authorizeLaunch } from './launchAuthorization.js';
-import { canManageTeamRepos } from './repoPermissions.js';
 import { findLaunchConnection } from './runConnection.js';
-import { isShellAuthor } from './specCheck.js';
 import { launchTrackedTemplateRun } from './trackedTemplateLaunch.js';
 
 export class OnboardingLaunchError extends Error {
@@ -39,10 +38,7 @@ export async function launchRepoOnboarding(
   if (!repo?.isActive) {
     refuse(404, 'REPO_NOT_FOUND', 'Repository not found or inactive');
   }
-  if (
-    !(await canManageTeamRepos(fastify.prisma, user, repo.teamId)) ||
-    !(await isShellAuthor(fastify, user, repo.teamId))
-  ) {
+  if (!(await can(request, 'team.repos.onboarding.launch', { teamId: repo.teamId })).allowed) {
     refuse(
       403,
       'REPO_SETUP_FORBIDDEN',

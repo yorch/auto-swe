@@ -27,16 +27,8 @@ const PluginParams = TeamParams.extend({ name: z.string().min(1).max(64) });
 
 export const pluginEnablementRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const teamMember = requireAuth({
-    requiredRole: 'ENGINEER',
-    requiredTeamRole: 'ENGINEER',
-    teamIdParam: 'teamId',
-  });
-  const teamAdmin = requireAuth({
-    requiredRole: 'ENGINEER',
-    requiredTeamRole: 'ADMIN',
-    teamIdParam: 'teamId',
-  });
+  const teamMember = requireAuth({ capability: 'team.plugins.read', team: { param: 'teamId' } });
+  const teamAdmin = requireAuth({ capability: 'team.plugins.manage', team: { param: 'teamId' } });
 
   app.get(
     '/:teamId/plugins',

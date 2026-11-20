@@ -649,27 +649,18 @@ describe('transcriptRoutes', () => {
     });
   });
 
-  it('refuses at registration a download-link hook behind a role a service principal cannot hold', async () => {
+  it('refuses a download-link hook that declares a capability, and admits the bare one', async () => {
+    // A link carries a person's identity only, so it cannot answer a capability.
+    expect(() => contentAuthHook({ capability: 'platform.audit.read' })).toThrow(
+      /declares no capability/
+    );
     const app = Fastify({ logger: false });
     app.addHook('onRoute', assertServiceScopesAdmissible);
-    expect(() =>
-      app.get(
-        '/x/:id',
-        {
-          config: { serviceScopes: ['runs:read'] },
-          onRequest: contentAuthHook({ requiredRole: 'ADMIN' }),
-        },
-        async () => ({})
-      )
-    ).toThrow(/serviceScopes behind a role/);
-    // The ENGINEER fallback the content route uses is admissible.
+    // The bare fallback the content route uses is admissible.
     expect(() =>
       app.get(
         '/y/:id',
-        {
-          config: { serviceScopes: ['runs:read'] },
-          onRequest: contentAuthHook({ requiredRole: 'ENGINEER' }),
-        },
+        { config: { serviceScopes: ['runs:read'] }, onRequest: contentAuthHook() },
         async () => ({})
       )
     ).not.toThrow();

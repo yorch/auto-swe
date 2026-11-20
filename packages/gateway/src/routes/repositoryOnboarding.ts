@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { Role } from '@auto-swe/shared';
 import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 import {
   OnboardingRequestSchema,
@@ -13,15 +12,16 @@ import {
   type ToolRequest,
   toToolCatalogEntry,
 } from '@auto-swe/shared/lib/toolCatalog';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { can, heldScope } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
 import { isTemporalUnavailable, sendTemporalUnavailable } from '../lib/temporalErrors.js';
 import { manageableOrReachableConnections } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
-import { canManageTeamRepos } from './repositories.js';
 
 /**
  * Ask the platform to open a pull request that adds a repository's `.auto-swe/` config files
@@ -87,7 +87,7 @@ export const repositoryOnboardingRoutes: FastifyPluginAsync = async (fastify) =>
   app.post(
     '/repositories/:id/onboarding-pr',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({ handlerChecked: ['team.repos.manage'] }),
       schema: { body: OnboardingRequestSchema, params: RepoParams },
     },
     async (request, reply) => {
@@ -104,15 +104,19 @@ export const repositoryOnboardingRoutes: FastifyPluginAsync = async (fastify) =>
         },
         where: {
           id: request.params.id,
-          ...(user.role === Role.ADMIN
+          ...(isPlatformAdmin(user)
             ? {}
-            : manageableOrReachableConnections(user, request.repoAccessGate)),
+            : manageableOrReachableConnections(
+                user,
+                request.repoAccessGate,
+                await heldScope(request, 'team.repos.manage')
+              )),
         },
       });
       if (!repo) {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
-      if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+      if (!(await can(request, 'team.repos.manage', { teamId: repo.teamId })).allowed) {
         return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
       }
       if (repo.type !== 'git_repo') {
@@ -222,19 +226,26 @@ export const repositoryOnboardingRoutes: FastifyPluginAsync = async (fastify) =>
         where: {
           id,
           type: 'git_repo',
-          ...(user.role === Role.ADMIN
+          ...(isPlatformAdmin(user)
             ? {}
-            : manageableOrReachableConnections(user, request.repoAccessGate)),
+            : manageableOrReachableConnections(
+                user,
+                request.repoAccessGate,
+                await heldScope(request, 'team.repos.manage')
+              )),
         },
       });
       if (!repo) {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
-      if (user.role !== Role.ADMIN) {
+      if (!isPlatformAdmin(user)) {
         const membership = await fastify.prisma.teamMembership.findUnique({
           where: { userId_teamId: { teamId: repo.teamId, userId: user.sub } },
         });
-        if (!membership && !(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+        if (
+          !membership &&
+          !(await can(request, 'team.repos.manage', { teamId: repo.teamId })).allowed
+        ) {
           return sendError(
             reply,
             403,
@@ -279,7 +290,7 @@ export const repositoryOnboardingRoutes: FastifyPluginAsync = async (fastify) =>
   app.post(
     '/repositories/:id/onboarding-checklist/dismiss',
     {
-      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      onRequest: requireAuth({ handlerChecked: ['team.repos.manage'] }),
       schema: { params: RepoParams },
     },
     async (request, reply) => {
@@ -289,15 +300,19 @@ export const repositoryOnboardingRoutes: FastifyPluginAsync = async (fastify) =>
         where: {
           id: request.params.id,
           type: 'git_repo',
-          ...(user.role === Role.ADMIN
+          ...(isPlatformAdmin(user)
             ? {}
-            : manageableOrReachableConnections(user, request.repoAccessGate)),
+            : manageableOrReachableConnections(
+                user,
+                request.repoAccessGate,
+                await heldScope(request, 'team.repos.manage')
+              )),
         },
       });
       if (!repo) {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
-      if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+      if (!(await can(request, 'team.repos.manage', { teamId: repo.teamId })).allowed) {
         return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
       }
       await fastify.prisma.connection.updateMany({

@@ -80,7 +80,7 @@ const WITH_SKILLS = {
 
 export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.catalog.manage' });
 
   const lineageWhere = (a: {
     key: string;

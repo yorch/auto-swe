@@ -1,3 +1,4 @@
+import { CATALOG } from '@auto-swe/shared/permissions';
 import {
   buildWorkflowRunDailyRollups,
   computeAnalytics,
@@ -184,8 +185,12 @@ function buildApp(state: {
           ).humanErrorBaselines ?? [],
       },
       organizationMembership: {
-        findMany: async () => (state.orgAdminOrgIds ?? []).map((orgId) => ({ orgId })),
+        // The loader selects the role too; the caller holds no organization role in these tests.
+        findMany: async (args?: { select?: { role?: unknown } }) =>
+          args?.select?.role ? [] : (state.orgAdminOrgIds ?? []).map((orgId) => ({ orgId })),
       },
+      // The permissions loader's reads, answered from the same fixtures as the membership lookups:
+      // the caller holds `teamRole` (default LEAD) on whatever team is asked about, or none.
       pullRequest: {
         findMany: async (args: Mutable) => {
           state.pullRequestArgs?.push(args);
@@ -213,6 +218,8 @@ function buildApp(state: {
         },
       },
       team: {
+        findMany: async ({ where }: { where: { id?: { in?: string[] } } }) =>
+          (where.id?.in ?? []).map((id) => ({ id, isActive: true, orgId: null })),
         findUnique: async ({ where }: { where: Mutable }) => {
           // For the shell allowlist check; tests can override via state.teamAllowlist
           return where.id
@@ -234,7 +241,24 @@ function buildApp(state: {
                 userId: 'user-1',
               };
         },
-        findMany: async () => (state.memberTeamIds ?? []).map((teamId) => ({ teamId })),
+        findMany: async (args: {
+          select?: { role?: unknown; team?: unknown };
+          where?: { teamId?: { in?: string[] } };
+        }) => {
+          if (args.select?.role) {
+            if (state.noLeadMembership) {
+              return [];
+            }
+            const role = (state as { teamRole?: string }).teamRole ?? 'LEAD';
+            if (args.select.team) {
+              state.leadLookups?.push(args.where ?? {});
+            }
+            return args.select.team
+              ? [{ role, team: { id: 'a1b2c3d4-1234-4567-89ab-cdef01234567', isActive: true } }]
+              : (args.where?.teamId?.in ?? []).map((teamId) => ({ role, teamId }));
+          }
+          return (state.memberTeamIds ?? []).map((teamId) => ({ teamId }));
+        },
         findUnique: async ({ where }: { where: Mutable }) => {
           const composite = where.userId_teamId as { userId: string; teamId: string };
           const teamRole = (state as { teamRole?: string }).teamRole ?? 'LEAD';
@@ -1718,11 +1742,9 @@ describe('workflow-templates routes', () => {
     }
     // The plugin's system-template guard looks the row up first (by id alone);
     // the route's own write-scoped lookup is the one that carries the team filter.
+    // The teams are the ones the caller holds `team.templates.write` on (the loader's read).
     expect(wheres.find((w) => w.team !== undefined)).toMatchObject({
-      team: {
-        isActive: true,
-        memberships: { some: { role: { in: ['LEAD', 'ADMIN'] }, userId: 'user-1' } },
-      },
+      team: { id: { in: ['a1b2c3d4-1234-4567-89ab-cdef01234567'] }, isActive: true },
       teamId: { not: null },
     });
   });
@@ -1810,15 +1832,13 @@ describe('workflow-templates: the team role alone decides authoring', () => {
     expect(res.statusCode).toBe(403);
   });
 
-  it('asks for LEAD or ADMIN on an active team when it checks the poll', async () => {
+  it('asks for team.templates.generate on any of the caller’s teams when it checks the poll', async () => {
     state.leadLookups = [];
     (state as { jobStatus?: unknown }).jobStatus = { phase: 'persisting', status: 'running' };
-    await send('GET', '/generate/jobs/wfauthorjob-0123456789abcdef0123456789abcdef');
-    expect(state.leadLookups).toContainEqual({
-      role: { in: ['LEAD', 'ADMIN'] },
-      team: { isActive: true },
-      userId: 'user-1',
-    });
+    const res = await send('GET', '/generate/jobs/wfauthorjob-0123456789abcdef0123456789abcdef');
+    expect(res.statusCode).toBe(200);
+    // The person-level question reads every membership the caller has.
+    expect(state.leadLookups).toContainEqual({ userId: 'user-1' });
   });
 
   it('refuses an id that is not a generation job id, before reading any workflow', async () => {
@@ -2308,6 +2328,24 @@ describe('workflow-templates authored commands and serving unaudited code', () =
         expect.objectContaining({ image: 'alpine:latest', nodeId: 'sh' }),
       ]);
     });
+
+    it('refuses a reviewer who may write but lacks team.templates.review', async () => {
+      // Review and write are both team LEAD today; raise review alone so only it refuses.
+      const def = CATALOG['team.templates.review'] as { team?: string };
+      const before = def.team;
+      def.team = 'ADMIN';
+      try {
+        const state = seeded('LEAD', LINT_DEFAULT_SPEC);
+        const res = await send(state, 'POST', `/${TPL_ID}/versions/2/review`);
+        expect(res.statusCode).toBe(403);
+        expect(res.json().error?.code).toBe('FORBIDDEN');
+        expect((state.versions.get(`${TPL_ID}:2`) as { reviewedAt?: Date }).reviewedAt).toBe(
+          undefined
+        );
+      } finally {
+        def.team = before;
+      }
+    });
   });
 
   describe('PATCH', () => {
@@ -2734,21 +2772,22 @@ describe('computeGlobalAnalytics', () => {
 });
 
 describe('GET /workflow-templates/analytics/export access', () => {
-  it('refuses a viewer', async () => {
+  // The platform-role floor is gone (any signed-in person reads what they can reach), so the
+  // refusal that remains is the missing sign-in.
+  it('refuses a caller who is not signed in', async () => {
     const app = buildApp({
       runs: [],
       templates: [],
-      userRole: 'VIEWER',
+      userRole: 'ENGINEER',
       versions: new Map(),
     });
     await app.ready();
     try {
       const response = await app.inject({
-        headers: { authorization: 'Bearer x' },
         method: 'GET',
         url: '/api/v1/workflow-templates/analytics/export',
       });
-      expect(response.statusCode).toBe(403);
+      expect(response.statusCode).toBe(401);
     } finally {
       await app.close();
     }

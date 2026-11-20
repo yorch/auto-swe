@@ -880,24 +880,23 @@ describe('run plan routes', () => {
       });
     });
 
-    describe('the caller’s role is read from the database', () => {
-      it('refuses a viewer token', async () => {
+    describe('the caller is read from the database', () => {
+      it('needs an active user and no particular platform role', async () => {
         s.role = 'VIEWER';
-        expect((await create()).statusCode).toBe(403);
-        expect(s.started).toEqual([]);
+        expect((await create()).statusCode).toBe(202);
       });
 
-      it.each([
-        ['demoted', { dbRole: 'VIEWER' }],
-        ['deactivated', { active: false }],
-      ])('refuses a person who was %s since the token was issued', async (_name, change) => {
-        Object.assign(s, change);
-        const res = await create();
-        expect(res.statusCode).toBe(403);
-        expect(res.json().error.code).toBe('FORBIDDEN');
-        expect(s.started).toEqual([]);
-        expect(s.audit).toEqual([]);
-      });
+      it.each([['deactivated', { active: false }]])(
+        'refuses a person who was %s since the token was issued',
+        async (_name, change) => {
+          Object.assign(s, change);
+          const res = await create();
+          expect(res.statusCode).toBe(403);
+          expect(res.json().error.code).toBe('FORBIDDEN');
+          expect(s.started).toEqual([]);
+          expect(s.audit).toEqual([]);
+        }
+      );
     });
 
     it('returns the same job for a retried Idempotency-Key, without starting or charging twice', async () => {

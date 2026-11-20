@@ -6,9 +6,9 @@ import type { TourStep } from '@/lib/tourSteps';
 import { ProductTour } from './ProductTour';
 
 const STEPS: TourStep[] = [
-  { anchor: 'nav:/a', body: 'About A', id: 'a', roles: ['ENGINEER'], title: 'Alpha' },
-  { anchor: 'nav:/missing', body: 'About B', id: 'b', roles: ['ENGINEER'], title: 'Beta' },
-  { anchor: null, body: 'About C', id: 'c', roles: ['ENGINEER'], title: 'Gamma' },
+  { anchor: 'nav:/a', body: 'About A', id: 'a', title: 'Alpha' },
+  { anchor: 'nav:/missing', body: 'About B', id: 'b', title: 'Beta' },
+  { anchor: null, body: 'About C', id: 'c', title: 'Gamma' },
 ];
 
 /** jsdom has no layout: give every element with a data-tour a real size, except `zero`. */

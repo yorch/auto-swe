@@ -6,6 +6,7 @@ import type {
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { auditContextOf } from '../lib/auditContext.js';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
 import { teamBudgetAccess } from '../lib/teamBudgetAccess.js';
@@ -52,7 +53,7 @@ export const teamBudgetRequestRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/budget-requests',
     {
-      onRequest: requireAuth({ requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
+      onRequest: requireAuth({ capability: 'team.budget-requests.create', team: { param: 'id' } }),
       schema: { body: CreateBodySchema, params: TeamParamsSchema },
     },
     async (request, reply) => {
@@ -96,16 +97,15 @@ export const teamBudgetRequestRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // GET /api/v1/teams/:id/budget-requests — the pending requests, oldest first, for whoever may
-  // set the cap: a team ADMIN, an ORG_ADMIN of the team's organization, a platform ADMIN.
+  // set the cap (`team.budget.manage`).
   app.get(
     '/:id/budget-requests',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: TeamParamsSchema } },
+    {
+      onRequest: requireAuth({ handlerChecked: ['team.budget.manage', 'team.budget.read'] }),
+      schema: { params: TeamParamsSchema },
+    },
     async (request, reply) => {
-      const access = await teamBudgetAccess(
-        fastify.prisma,
-        requireUser(request),
-        request.params.id
-      );
+      const access = await teamBudgetAccess(request, fastify.prisma, request.params.id);
       if (!access) {
         return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
       }
@@ -126,12 +126,12 @@ export const teamBudgetRequestRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/budget-requests/:requestId/dismiss',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.budget.manage', 'team.budget.read'] }),
       schema: { params: RequestParamsSchema },
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const access = await teamBudgetAccess(fastify.prisma, user, request.params.id);
+      const access = await teamBudgetAccess(request, fastify.prisma, request.params.id);
       if (!access) {
         return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
       }
@@ -153,6 +153,7 @@ export const teamBudgetRequestRoutes: FastifyPluginAsync = async (fastify) => {
           after: { dismissed: true },
           before: { resolvedAt: null },
           client: tx,
+          context: { ...auditContextOf(request), authority: access.authority },
           entityId: requestId,
           entityType: 'TeamBudgetRequest',
         });

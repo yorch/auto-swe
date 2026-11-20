@@ -2,7 +2,7 @@
 import { ConnectionTypeSchema } from '@auto-swe/shared/lib/connectionTypes';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const DB_NULL = vi.hoisted(() => ({ __sentinel: 'Prisma.DbNull' }));
 vi.mock('@auto-swe/shared', () => ({
@@ -39,6 +39,8 @@ vi.mock('../lib/github.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/github.js')>()),
   listGitHubRepos: (...a: unknown[]) => listGitHubRepos(...a),
 }));
+
+import { emptyStanding, resetStanding, setTeam, withStanding } from '../test/repoStanding.js';
 
 const { repositoryRoutes } = await import('./repositories.js');
 
@@ -94,14 +96,15 @@ async function buildApp() {
       : Promise.all(ops as Promise<unknown>[])
   );
   const temporal = { syncWorkRequestSchedule: vi.fn().mockResolvedValue(undefined) };
-  app.decorate('prisma', prisma as unknown as never);
+  const standing = emptyStanding();
+  app.decorate('prisma', withStanding(prisma, standing) as unknown as never);
   app.decorate('temporal', temporal as unknown as never);
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: auth.role, sub: auth.sub }),
   } as unknown as never);
   await app.register(repositoryRoutes, { prefix: '/api/v1/repositories' });
   await app.ready();
-  return { app, auth, prisma, temporal };
+  return { app, auth, prisma, standing, temporal };
 }
 
 describe('repository URL overrides', () => {
@@ -112,6 +115,7 @@ describe('repository URL overrides', () => {
   afterAll(() => ctx.app.close());
   beforeEach(() => {
     vi.clearAllMocks();
+    resetStanding(ctx.standing);
     ctx.auth.role = 'ADMIN';
     repositoryHostsAllowed.mockResolvedValue({ ok: true });
     ctx.prisma.team.findUnique.mockResolvedValue({ id: TEAM, isActive: true });
@@ -293,10 +297,7 @@ describe('repository URL overrides', () => {
 
     it("asks a team lead's own GitHub access on the new host, as onboarding does", async () => {
       ctx.auth.role = 'LEAD';
-      ctx.prisma.teamMembership.findUnique.mockResolvedValue({
-        role: 'LEAD',
-        team: { isActive: true },
-      });
+      setTeam(ctx.standing, TEAM, { role: 'LEAD' });
       const ghe = { githubApiUrl: 'https://ghe.corp/api/v3', githubUrl: 'https://ghe.corp' };
 
       lookupRepoPermission.mockResolvedValue({ ok: true, permission: 'none' });
@@ -511,6 +512,7 @@ describe('repository sharing', () => {
   afterAll(() => ctx.app.close());
   beforeEach(() => {
     vi.clearAllMocks();
+    resetStanding(ctx.standing);
     ctx.auth.role = 'ADMIN';
     ctx.prisma.connection.findUnique.mockResolvedValue({
       id: REPO,
@@ -630,16 +632,11 @@ describe('repository sharing', () => {
     });
 
     describe('who may change a share', () => {
-      afterEach(() => ctx.prisma.teamMembership.findUnique.mockReset());
-
-      /** Team memberships by team id; a team the caller is not in answers null. */
+      /** Team memberships by team id; a team the caller is not in has no role. */
       function memberOf(roles: Record<string, string>, isActive = true) {
-        ctx.prisma.teamMembership.findUnique.mockImplementation(
-          async ({ where }: { where: { userId_teamId: { teamId: string } } }) => {
-            const role = roles[where.userId_teamId.teamId];
-            return role ? { role, team: { isActive } } : null;
-          }
-        );
+        for (const [teamId, role] of Object.entries(roles)) {
+          setTeam(ctx.standing, teamId, { isActive, role });
+        }
       }
 
       it('lets a LEAD of the owning team change it', async () => {

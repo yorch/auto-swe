@@ -27,7 +27,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { Textarea } from '@/components/ui/Textarea';
-import { useUserOrgs } from '@/hooks/useAdmin';
+import { useCan, usePlatformAdmin } from '@/hooks/useCan';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useDismissBudgetRequest, useTeamBudgetRequests } from '@/hooks/useTeamBudgetRequests';
@@ -36,10 +36,6 @@ import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { api } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
 import { VIEW_ONLY_CHIP } from '@/lib/repoLaunch';
-import { hasRole } from '@/lib/roles';
-import { canManageTeamBudget, teamPermissions } from '@/lib/teamPermissions';
-import { hasFullTeamSettings } from '@/lib/teamSpace';
-import { useAuthStore } from '@/stores/authStore';
 
 type SettingsTab = 'general' | 'budget' | 'automation' | 'plugins' | 'secrets' | 'sandbox';
 
@@ -106,36 +102,32 @@ function PendingBudgetRequests({ teamId }: { teamId: string }) {
 
 /**
  * A team's configuration: its details, repositories, persona, event endpoints and agents, and
- * sandbox policy. Offered to a team LEAD or ADMIN and to a platform
- * ADMIN; each section still shows only what `teamPermissions` says the caller may change.
+ * sandbox policy. Offered to whoever holds `team.settings.manage` on the team; each section still
+ * shows only what the server's effective permissions say the caller may change.
  */
 export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
   const id = summary.id;
   const { data: team, error, isError, isFetching, isLoading, refetch } = useTeam(id);
-  const platformRole = useAuthStore((s) => s.user?.role);
-  const {
-    canManageMembers: canManage,
-    canEditAllowlists,
-    canManageTeamAgents,
-    canManageTeamPlugins,
-    canManageCallbacks,
-    canManageTeamSecrets,
-  } = teamPermissions(platformRole, summary.myRole);
-  // An ORG_ADMIN of the team's organization may manage its budget without being on the team; the
-  // lookup is skipped for the callers who qualify some other way.
-  const platformAdminRole = hasRole(platformRole, 'ADMIN');
-  const teamAdminRole = hasRole(summary.myRole, 'ADMIN');
-  const userOrgs = useUserOrgs({ enabled: !platformAdminRole && !teamAdminRole });
-  const isOrgAdmin = (userOrgs.data ?? []).some(
-    (o) => o.id === summary.orgId && o.role === 'ORG_ADMIN'
-  );
-  const canManageBudget = canManageTeamBudget(platformRole, summary.myRole, isOrgAdmin);
-  // An ORG_ADMIN who is below team LEAD reaches the Budget section and nothing else.
-  const fullSettings = hasFullTeamSettings(platformRole, summary.myRole);
-  const budgetOnly = !fullSettings && isOrgAdmin;
+  // Every control below is the server's answer for this team, never a conclusion drawn from a role.
+  const scope = { orgId: summary.orgId, teamId: id };
+  const canManageRepos = useCan('team.repos.manage', scope);
+  const canCreateRepos = useCan('team.repos.create', scope);
+  const canEditPersona = useCan('team.persona.manage', scope);
+  const canManageKnowledgeBases = useCan('team.knowledge-bases.manage', scope);
+  const canEditTeam = useCan('team.settings.manage', scope);
+  const canEditAllowlists = useCan('team.sandbox-policy.manage', scope);
+  const canManageTeamAgents = useCan('team.agents.manage', scope);
+  const canManageTeamPlugins = useCan('team.plugins.manage', scope);
+  const canManageCallbacks = useCan('team.callbacks.manage', scope);
+  const canManageTeamSecrets = useCan('team.secrets.manage', scope);
+  const canManageBudget = useCan('team.budget.manage', scope);
+  // The Models page, where a team's own provider key is added, is a platform admin page.
+  const canManageCredentials = usePlatformAdmin();
+  const canDeleteTeam = useCan('team.delete', scope);
+  const canUsePrivateNetwork = useCan('platform.callbacks.private-network');
   // The owning team's leads see who its repositories are shared with, to set what each may do.
   const ownedRepos = useRepositories({ limit: 500 });
-  const sharedOut = canManage
+  const sharedOut = canManageRepos
     ? (ownedRepos.data ?? []).filter((r) => r.team?.id === id && (r.shares?.length ?? 0) > 0)
     : [];
   const updateTeam = useUpdateTeam(id);
@@ -175,15 +167,6 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
     }
   }
 
-  if (!fullSettings && (userOrgs.isLoading || budgetOnly)) {
-    return budgetOnly ? (
-      <div className="space-y-6" {...tabPanelProps('team-settings', 'budget')}>
-        <PendingBudgetRequests teamId={id} />
-        <TeamBudgetSection canManageCredentials={false} teamId={id} />
-      </div>
-    ) : null;
-  }
-
   if (isLoading || isError || !team) {
     return (
       <QueryBoundary
@@ -201,7 +184,6 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
   const personaUnchanged = personaInput.trim() === (team.defaultPersonaPrompt ?? '').trim();
   const repositories = team.repositories ?? [];
   const shared = team.sharedRepositories ?? [];
-  const isPlatformAdmin = hasRole(platformRole, 'ADMIN');
 
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: 'general', label: 'General' },
@@ -223,7 +205,7 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
           {team.description || 'Repositories, persona, sandbox allowlists and agent overrides.'}
           <span className="mt-1 block font-mono text-xs text-paper-500">{team.slug}</span>
         </p>
-        {canManage && (
+        {canEditTeam && (
           <Button onClick={() => setEditing(true)} variant="secondary">
             <Icon name="edit" size={14} />
             Edit team
@@ -251,7 +233,7 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
                 <EmptyState
                   className="py-6"
                   hint={
-                    canManage ? (
+                    canCreateRepos ? (
                       <>
                         Add one from{' '}
                         <Link
@@ -341,7 +323,7 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
             </Card>
           )}
 
-          {canManage && (
+          {canEditPersona && (
             <Card>
               <CardHeader className="mb-1">
                 <CardTitle>Default persona</CardTitle>
@@ -403,7 +385,7 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
             </Card>
           )}
 
-          {isPlatformAdmin && (
+          {canDeleteTeam && (
             <Card className="border-danger-400/30">
               <CardHeader className="mb-1">
                 <CardTitle>Delete team</CardTitle>
@@ -423,7 +405,7 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
       {tab === 'budget' && canManageBudget && (
         <div className="space-y-6" {...tabPanelProps('team-settings', 'budget')}>
           <PendingBudgetRequests teamId={id} />
-          <TeamBudgetSection canManageCredentials={isPlatformAdmin} teamId={id} />
+          <TeamBudgetSection canManageCredentials={canManageCredentials} teamId={id} />
         </div>
       )}
 
@@ -431,13 +413,13 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
         <div className="space-y-6" {...tabPanelProps('team-settings', 'automation')}>
           <EventEndpointsCard team={{ id, name: team.name }} />
           <KnowledgeBaseLinksPanel
-            canManage={canManage}
+            canManage={canManageKnowledgeBases}
             target={{ scope: 'TEAM', teamId: id }}
             teamId={id}
           />
           {canManageTeamAgents && <TeamAgentLibrarySection teamId={id} />}
           {canManageCallbacks && (
-            <TeamCallbackEndpointsSection isPlatformAdmin={isPlatformAdmin} teamId={id} />
+            <TeamCallbackEndpointsSection canUsePrivateNetwork={canUsePrivateNetwork} teamId={id} />
           )}
         </div>
       )}

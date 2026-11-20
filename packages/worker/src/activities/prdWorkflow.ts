@@ -30,6 +30,7 @@ import {
   TRACKER_PROJECT_NOT_ALLOWED,
   trackerProjectNotAllowedMessage,
 } from '@auto-swe/shared/lib/trackerWrite';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, activityInfo, heartbeat } from '@temporalio/activity';
 import { WorkflowIdReusePolicy } from '@temporalio/client';
@@ -253,15 +254,16 @@ export async function createPrdChildRunInputInTransaction(
             (share) =>
               share.team.isActive && share.team.memberships.some((row) => row.userId === actorId)
           ));
+      const actorIsAdmin = !!actor && isPlatformAdmin(actor);
       const orgMember =
-        actorId && actor?.role !== 'ADMIN'
+        actorId && !actorIsAdmin
           ? await tx.organizationMembership.findUnique({
               select: { userId: true },
               where: { userId_orgId: { orgId: input.expected.orgId, userId: actorId } },
             })
           : null;
       const sourceAuthorized =
-        !!actorId && !!actor?.isActive && (actor.role === 'ADMIN' || (member && !!orgMember));
+        !!actorId && !!actor?.isActive && (actorIsAdmin || (member && !!orgMember));
       if (
         repo?.isActive &&
         repo.type === 'git_repo' &&

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { FIRST_RUN_DISMISS_KEY } from '@/components/setup/FirstRunChecklist';
 import { GOVERNANCE_DISMISS_KEY } from '@/components/setup/GovernanceGuide';
 import { Button } from '@/components/ui/Button';
-import { useHasRole } from '@/hooks/useHasRole';
+import { usePlatformAdmin } from '@/hooks/useCan';
 import { clearDismissed, DISMISSED_CHANGE_EVENT, readDismissed } from '@/lib/dismissed';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -15,7 +15,7 @@ import { useAuthStore } from '@/stores/authStore';
  * Renders nothing while no guide is hidden.
  */
 export function RestoreGuides() {
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = usePlatformAdmin();
   const userId = useAuthStore((s) => s.user?.sub);
   const key = isAdmin ? GOVERNANCE_DISMISS_KEY : FIRST_RUN_DISMISS_KEY;
   const [hidden, setHidden] = useState(false);

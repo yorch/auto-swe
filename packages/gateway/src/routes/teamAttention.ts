@@ -15,12 +15,13 @@ const teamParams = z.object({ id: z.string().uuid() });
 /** What a team lead has to act on: failures nobody owns any more, and who takes them over. */
 export const teamAttentionRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const lead = requireAuth({ requiredTeamRole: 'LEAD', teamIdParam: 'id' });
+  const read = requireAuth({ capability: 'team.attention.read', team: { param: 'id' } });
+  const manage = requireAuth({ capability: 'team.attention.manage', team: { param: 'id' } });
 
   // GET /api/v1/teams/:id/attention/failures. The same definition the overview counts.
   app.get(
     '/:id/attention/failures',
-    { onRequest: lead, schema: { params: teamParams } },
+    { onRequest: read, schema: { params: teamParams } },
     async (request) => {
       const failures = await loadUnownedFailures(
         { gate: request.repoAccessGate, prisma: fastify.prisma, user: requireUser(request) },
@@ -36,7 +37,7 @@ export const teamAttentionRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/failure-assignments',
     {
-      onRequest: lead,
+      onRequest: manage,
       schema: {
         body: z.object({ assigneeId: z.string().uuid(), runId: z.string().uuid() }),
         params: teamParams,

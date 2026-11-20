@@ -2,6 +2,7 @@ import type { ConfigGrant as ConfigGrantRule } from '@auto-swe/shared/config/per
 import type { SettingScope, SettingSource } from '@auto-swe/shared/config/types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import type { TeamRoleValue, WriteAccess } from '@/lib/roleLabels';
 
 // Re-exported from the registry itself rather than kept as a second literal
 // union — the web package already takes type-only imports from shared, and a
@@ -11,7 +12,7 @@ export type { SettingScope, SettingSource } from '@auto-swe/shared/config/types'
 export interface SettingView {
   key: string;
   /// Whether the signed-in user may write this key at the requested scope,
-  /// decided server-side so it accounts for grants and not just the role floor.
+  /// decided server-side so it accounts for grants and not just the setting's write access.
   canWrite: boolean;
   group: string;
   label: string;
@@ -21,12 +22,12 @@ export interface SettingView {
   defaultValue: unknown;
   overrideAtScope?: unknown;
   overridableAt: SettingScope[];
-  requiredRole: 'ADMIN' | 'LEAD' | 'ENGINEER';
+  /** Who may write it: platform admins only, or also a covering grant. */
+  writeAccess: WriteAccess;
   restartRequired: boolean;
   runPinned: boolean;
   unit?: string;
-  /// The value is withheld: the setting is sensitive and the viewer is below
-  /// its required role.
+  /// The value is withheld: the setting is sensitive and only platform admins read it.
   redacted?: boolean;
 }
 
@@ -117,7 +118,8 @@ export function useCreateConfigGrant() {
   return useMutation({
     mutationFn: (body: {
       keyPattern: string;
-      role?: 'ADMIN' | 'LEAD' | 'ENGINEER';
+      /** A team role: the grant is for that team's members of the role, so it needs `scope: 'TEAM'`. */
+      role?: TeamRoleValue;
       userId?: string;
       scope: 'GLOBAL' | 'ORGANIZATION' | 'TEAM';
       teamId?: string;
@@ -139,8 +141,8 @@ export function useRevokeConfigGrant() {
 export interface GrantPreview {
   keyPattern: string;
   keys: string[];
-  requiredRole: string | null;
-  settings: { group: string; key: string; label: string; requiredRole: string }[];
+  writeAccess: WriteAccess | null;
+  settings: { group: string; key: string; label: string; writeAccess: WriteAccess }[];
 }
 
 export function useConfigGrantPreview(keyPattern: string) {

@@ -3,7 +3,8 @@
 import type { TeamSummary } from '@auto-swe/shared/types/api';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback } from 'react';
-import { useHasRole } from '@/hooks/useHasRole';
+import { usePlatformAdmin } from '@/hooks/useCan';
+import { useEffectivePermissions } from '@/hooks/useEffectivePermissions';
 import { useTeams } from '@/hooks/useTeams';
 
 export interface TeamParam {
@@ -43,9 +44,10 @@ export function useTeamParam(): TeamParam {
   const router = useRouter();
   const pathname = usePathname();
   const slug = params.get('team') ?? '';
-  const isPlatformAdmin = useHasRole('ADMIN');
+  const isPlatformAdmin = usePlatformAdmin();
+  const permissions = useEffectivePermissions();
   const members = useTeams({ enabled: !!slug, memberOnly: true });
-  // A platform ADMIN may open a team space they are not in, so the slug also resolves through
+  // A platform admin may open a team space they are not in, so the slug also resolves through
   // the full list when the member lookup misses. Nobody else gets that fallback.
   const all = useTeams({ enabled: !!slug && isPlatformAdmin });
   const memberHit = slug ? members.data?.find((t) => t.slug === slug) : undefined;
@@ -55,7 +57,9 @@ export function useTeamParam(): TeamParam {
     null;
   const resolved = team !== null;
   const lookups = isPlatformAdmin ? [members, all] : [members];
-  const pending = !!slug && !resolved && lookups.some((q) => q.isLoading);
+  // Until the permissions load, a platform admin is not yet known to be one.
+  const pending =
+    !!slug && !resolved && (permissions.isLoading || lookups.some((q) => q.isLoading));
   const isError = !!slug && !resolved && !pending && lookups.some((q) => q.isError);
   const retry = () => {
     for (const q of lookups) {

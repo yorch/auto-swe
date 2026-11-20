@@ -205,9 +205,7 @@ describe('campaign routes', () => {
         team: {
           id: repo.teamId,
           isActive: true,
-          memberships: isMember(repo.teamId)
-            ? [{ role: teamRoles[repo.teamId]?.[currentSub], userId: currentSub }]
-            : [],
+          memberships: isMember(repo.teamId) ? [{ userId: currentSub }] : [],
           monthlyBudgetUsdCents: null,
           name: team.name,
           organization: { id: team.orgId, isActive: true, monthlyBudgetUsdCents: null },
@@ -415,6 +413,8 @@ describe('campaign routes', () => {
         findUnique: async (args: { where: { id: string } }) => repoDetail(args.where.id),
       },
       organizationMembership: {
+        // The capability resolver reads org standing for the teams it names: no org role here.
+        findMany: async () => [],
         findUnique: async (args: {
           where: { userId_orgId: { orgId: string; userId: string } };
         }) => ({
@@ -438,22 +438,29 @@ describe('campaign routes', () => {
           runInputs.find((r) => r.id === args.where.id) ?? null,
       },
       team: {
+        findMany: async (args: { where: { id: { in: string[] } } }) =>
+          args.where.id.in.flatMap((id) =>
+            TEAMS[id] ? [{ id, isActive: true, orgId: TEAMS[id].orgId }] : []
+          ),
         findUnique: async (args: { where: { id: string } }) => {
           const team = TEAMS[args.where.id];
           if (!team) {
             return null;
           }
-          const role = teamRoles[args.where.id]?.[currentSub];
           return {
             id: args.where.id,
             isActive: true,
-            memberships: role ? [{ role }] : [],
             name: team.name,
             orgId: team.orgId,
           };
         },
       },
       teamMembership: {
+        findMany: async (args: { where: { teamId: { in: string[] }; userId: string } }) =>
+          args.where.teamId.in.flatMap((teamId) => {
+            const role = teamRoles[teamId]?.[args.where.userId];
+            return role ? [{ role, teamId }] : [];
+          }),
         findUnique: async (args: {
           where: { userId_teamId: { teamId: string; userId: string } };
         }) => {

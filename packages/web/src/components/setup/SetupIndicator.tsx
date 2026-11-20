@@ -5,12 +5,12 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { SetupReadiness } from '@/components/setup/SetupReadiness';
 import { Icon } from '@/components/ui/Icon';
 import { IconButton } from '@/components/ui/IconButton';
-import { useHasRole } from '@/hooks/useHasRole';
+import { usePlatformAdmin } from '@/hooks/useCan';
 import { useReadiness } from '@/hooks/useReadiness';
 import { cn, FOCUS_RING } from '@/lib/utils';
 
 export function SetupIndicator() {
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = usePlatformAdmin();
   const { data, isError } = useReadiness(isAdmin);
   const pathname = usePathname();
   const [openFor, setOpenFor] = useState<string | null>(null);

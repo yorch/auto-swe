@@ -302,8 +302,8 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 ): Promise<void> => {
   const f = fastify.withTypeProvider<ZodTypeProvider>();
 
-  // All routes below require ADMIN
-  f.addHook('onRequest', requireAuth({ requiredRole: 'ADMIN' }));
+  // Every route below carries this guard in its own options, so the route walk sees it.
+  const guard = requireAuth({ capability: 'platform.integrations.manage' });
 
   // ── Clear a stored secret ───────────────────────────────────────────────────
 
@@ -312,6 +312,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   f.delete(
     '/config/:integration/secrets/:field',
     {
+      onRequest: guard,
       schema: {
         params: z.object({
           field: z.string().max(40),
@@ -350,20 +351,25 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   // connection: a failing one is an entry, not an error.
   f.post(
     '/connections/test',
-    { schema: { body: ConnectionsTestBody.nullish(), response: { 200: z.any() } } },
+    {
+      onRequest: guard,
+      schema: { body: ConnectionsTestBody.nullish(), response: { 200: z.any() } },
+    },
     async (req, reply) =>
       reply.send({ data: await checkAllConnections(fastify.prisma, req.body ?? {}) })
   );
 
   // ── GitHub ──────────────────────────────────────────────────────────────────
 
-  f.get('/config/github', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await getGitHubConfig(fastify.prisma))
+  f.get(
+    '/config/github',
+    { onRequest: guard, schema: { response: { 200: z.any() } } },
+    async (_req, reply) => reply.send(await getGitHubConfig(fastify.prisma))
   );
 
   f.put(
     '/config/github',
-    { schema: { body: GitHubPutBody, response: { 200: z.any() } } },
+    { onRequest: guard, schema: { body: GitHubPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const result = await updateGitHubConfig(fastify.prisma, req.body);
       await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
@@ -373,19 +379,21 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   f.post(
     '/config/github/test',
-    { schema: { body: GitHubTestBody.optional(), response: { 200: z.any() } } },
+    { onRequest: guard, schema: { body: GitHubTestBody.optional(), response: { 200: z.any() } } },
     async (req, reply) => reply.send(await testGitHubConnection(req.body ?? {}))
   );
 
   // ── Slack ───────────────────────────────────────────────────────────────────
 
-  f.get('/config/slack', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await getSlackConfig(fastify.prisma))
+  f.get(
+    '/config/slack',
+    { onRequest: guard, schema: { response: { 200: z.any() } } },
+    async (_req, reply) => reply.send(await getSlackConfig(fastify.prisma))
   );
 
   f.put(
     '/config/slack',
-    { schema: { body: SlackPutBody, response: { 200: z.any() } } },
+    { onRequest: guard, schema: { body: SlackPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const result = await updateSlackConfig(fastify.prisma, req.body);
       await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
@@ -395,7 +403,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   f.post(
     '/config/slack/test',
-    { schema: { body: SlackTestBody.optional(), response: { 200: z.any() } } },
+    { onRequest: guard, schema: { body: SlackTestBody.optional(), response: { 200: z.any() } } },
     async (req, reply) => reply.send(await testSlackConnection(req.body ?? {}))
   );
 
@@ -403,13 +411,13 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   f.get(
     '/config/workflow-defaults',
-    { schema: { response: { 200: z.any() } } },
+    { onRequest: guard, schema: { response: { 200: z.any() } } },
     async (_req, reply) => reply.send({ data: await resolveWorkflowDefaults() })
   );
 
   f.put(
     '/config/workflow-defaults',
-    { schema: { body: WorkflowDefaultsPutBody, response: { 200: z.any() } } },
+    { onRequest: guard, schema: { body: WorkflowDefaultsPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const result = await updateWorkflowDefaults(fastify.prisma, req.body);
       await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
@@ -421,13 +429,18 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   // ── Issue tracker ────────────────────────────────────────────────────────────
 
-  f.get('/config/issue-tracker', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await getIssueTrackerConfig(fastify.prisma))
+  f.get(
+    '/config/issue-tracker',
+    { onRequest: guard, schema: { response: { 200: z.any() } } },
+    async (_req, reply) => reply.send(await getIssueTrackerConfig(fastify.prisma))
   );
 
   f.put(
     '/config/issue-tracker',
-    { schema: { body: IssueTrackerPutBody, response: { 200: z.any(), 400: z.any() } } },
+    {
+      onRequest: guard,
+      schema: { body: IssueTrackerPutBody, response: { 200: z.any(), 400: z.any() } },
+    },
     async (req, reply) => {
       const refusal = await issueTrackerBaseUrlRefusal(fastify.prisma, req.body);
       if (refusal) {
@@ -446,7 +459,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   f.post(
     '/config/issue-tracker/test',
-    { schema: { body: IssueTrackerTestBody, response: { 200: z.any() } } },
+    { onRequest: guard, schema: { body: IssueTrackerTestBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const { ticketId, ...draft } = req.body;
       return reply.send(await testIssueTrackerConnection(ticketId, draft));
@@ -456,6 +469,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
   f.post(
     '/config/issue-tracker/detect-fields',
     {
+      onRequest: guard,
       schema: {
         response: {
           200: z.object({
@@ -485,13 +499,18 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   // ── Knowledge base ───────────────────────────────────────────────────────────
 
-  f.get('/config/knowledge-base', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await getKnowledgeBaseConfig(fastify.prisma))
+  f.get(
+    '/config/knowledge-base',
+    { onRequest: guard, schema: { response: { 200: z.any() } } },
+    async (_req, reply) => reply.send(await getKnowledgeBaseConfig(fastify.prisma))
   );
 
   f.put(
     '/config/knowledge-base',
-    { schema: { body: KnowledgeBasePutBody, response: { 200: z.any(), 400: z.any() } } },
+    {
+      onRequest: guard,
+      schema: { body: KnowledgeBasePutBody, response: { 200: z.any(), 400: z.any() } },
+    },
     async (req, reply) => {
       const refusal = await knowledgeBaseBaseUrlRefusal(fastify.prisma, req.body);
       if (refusal) {
@@ -510,19 +529,24 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   f.post(
     '/config/knowledge-base/test',
-    { schema: { body: KnowledgeBaseTestBody.optional(), response: { 200: z.any() } } },
+    {
+      onRequest: guard,
+      schema: { body: KnowledgeBaseTestBody.optional(), response: { 200: z.any() } },
+    },
     async (req, reply) => reply.send(await testKnowledgeBaseConnection(req.body ?? {}))
   );
 
   // ── Figma (design source) ────────────────────────────────────────────────────
 
-  f.get('/config/figma', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send(await getFigmaConfig(fastify.prisma))
+  f.get(
+    '/config/figma',
+    { onRequest: guard, schema: { response: { 200: z.any() } } },
+    async (_req, reply) => reply.send(await getFigmaConfig(fastify.prisma))
   );
 
   f.put(
     '/config/figma',
-    { schema: { body: FigmaPutBody, response: { 200: z.any() } } },
+    { onRequest: guard, schema: { body: FigmaPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       const result = await updateFigmaConfig(fastify.prisma, req.body);
       await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
@@ -532,7 +556,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   f.post(
     '/config/figma/test',
-    { schema: { body: FigmaTestBody.optional(), response: { 200: z.any() } } },
+    { onRequest: guard, schema: { body: FigmaTestBody.optional(), response: { 200: z.any() } } },
     async (req, reply) => reply.send(await testFigmaConnection(req.body ?? {}))
   );
 
@@ -540,7 +564,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   f.get(
     '/config/audit-log',
-    { schema: { querystring: AuditLogQuery, response: { 200: z.any() } } },
+    { onRequest: guard, schema: { querystring: AuditLogQuery, response: { 200: z.any() } } },
     async (req, reply) =>
       reply.send({ data: await listConfigAuditEntries(fastify.prisma, req.query.limit) })
   );
@@ -549,7 +573,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   f.get(
     '/config/consolidation',
-    { schema: { response: { 200: z.any() } } },
+    { onRequest: guard, schema: { response: { 200: z.any() } } },
     async (_req, reply) => {
       const config = await resolveConsolidationConfig();
       const status = await fastify.temporal.getConsolidationScheduleStatus();
@@ -559,7 +583,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   f.put(
     '/config/consolidation',
-    { schema: { body: ConsolidationPutBody, response: { 200: z.any() } } },
+    { onRequest: guard, schema: { body: ConsolidationPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       // The save syncs the schedule; refuse before persisting so a config that cannot
       // reach Temporal is not stored behind a 503.
@@ -578,7 +602,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   f.post(
     '/config/consolidation/trigger',
-    { schema: { response: { 200: z.any() } } },
+    { onRequest: guard, schema: { response: { 200: z.any() } } },
     async (_req, reply) => {
       await fastify.temporal.triggerConsolidationNow();
       return reply.send({ data: { triggered: true } });
@@ -589,7 +613,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   f.get(
     '/config/eval-schedule',
-    { schema: { response: { 200: z.any() } } },
+    { onRequest: guard, schema: { response: { 200: z.any() } } },
     async (_req, reply) => {
       const config = await resolveEvalScheduleConfig();
       const status = await fastify.temporal.getEvalScheduleStatus();
@@ -599,7 +623,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   f.put(
     '/config/eval-schedule',
-    { schema: { body: EvalSchedulePutBody, response: { 200: z.any() } } },
+    { onRequest: guard, schema: { body: EvalSchedulePutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       // The save syncs the schedule; refuse before persisting so a config that cannot
       // reach Temporal is not stored behind a 503.
@@ -618,7 +642,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   f.post(
     '/config/eval-schedule/trigger',
-    { schema: { response: { 200: z.any() } } },
+    { onRequest: guard, schema: { response: { 200: z.any() } } },
     async (_req, reply) => {
       await fastify.temporal.triggerEvalNow();
       return reply.send({ data: { triggered: true } });
@@ -627,15 +651,19 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   // ── Re-validation schedule ───────────────────────────────────────────────────
 
-  f.get('/config/revalidation', { schema: { response: { 200: z.any() } } }, async (_req, reply) => {
-    const config = await resolveRevalidationConfig();
-    const status = await fastify.temporal.getRevalidationScheduleStatus();
-    return reply.send({ data: { ...config, schedule: status } });
-  });
+  f.get(
+    '/config/revalidation',
+    { onRequest: guard, schema: { response: { 200: z.any() } } },
+    async (_req, reply) => {
+      const config = await resolveRevalidationConfig();
+      const status = await fastify.temporal.getRevalidationScheduleStatus();
+      return reply.send({ data: { ...config, schedule: status } });
+    }
+  );
 
   f.put(
     '/config/revalidation',
-    { schema: { body: RevalidationPutBody, response: { 200: z.any() } } },
+    { onRequest: guard, schema: { body: RevalidationPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
       // The save syncs the schedule; refuse before persisting so a config that cannot
       // reach Temporal is not stored behind a 503.
@@ -654,7 +682,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   f.post(
     '/config/revalidation/trigger',
-    { schema: { response: { 200: z.any() } } },
+    { onRequest: guard, schema: { response: { 200: z.any() } } },
     async (_req, reply) => {
       await fastify.temporal.triggerRevalidationNow();
       return reply.send({ data: { triggered: true } });
@@ -663,14 +691,18 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   // ── Canary routing ────────────────────────────────────────────────────────────
 
-  f.get('/config/canary', { schema: { response: { 200: z.any() } } }, async (_req, reply) => {
-    const config = await resolveCanaryConfig();
-    return reply.send({ data: config });
-  });
+  f.get(
+    '/config/canary',
+    { onRequest: guard, schema: { response: { 200: z.any() } } },
+    async (_req, reply) => {
+      const config = await resolveCanaryConfig();
+      return reply.send({ data: config });
+    }
+  );
 
   f.put(
     '/config/canary',
-    { schema: { body: CanaryPutBody, response: { 200: z.any(), 400: z.any() } } },
+    { onRequest: guard, schema: { body: CanaryPutBody, response: { 200: z.any(), 400: z.any() } } },
     async (req, reply) => {
       // Guard against pinning a nonexistent/inactive agent version: createWorkflowRun
       // writes agentVersions[agentKey]=candidateVersion verbatim, so a bad version
@@ -705,7 +737,9 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
 
   // ── Test endpoint (checks decryption works for all secrets) ──────────────────
 
-  f.get('/config/test-decrypt', { schema: { response: { 200: z.any() } } }, async (_req, reply) =>
-    reply.send({ data: await testDecryptSecrets(fastify.prisma) })
+  f.get(
+    '/config/test-decrypt',
+    { onRequest: guard, schema: { response: { 200: z.any() } } },
+    async (_req, reply) => reply.send({ data: await testDecryptSecrets(fastify.prisma) })
   );
 };

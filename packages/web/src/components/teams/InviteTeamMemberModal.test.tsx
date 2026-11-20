@@ -24,7 +24,7 @@ describe('team invitation form', () => {
     render(
       withQuery(
         <InviteTeamMemberModal
-          grantableRoles={['ENGINEER', 'LEAD']}
+          grantableRoles={['MEMBER', 'LEAD']}
           onClose={onClose}
           onInvited={onInvited}
           open
@@ -37,8 +37,8 @@ describe('team invitation form', () => {
     ).toBe(true);
     fireEvent.change(screen.getByLabelText(/Email/), { target: { value: 'new@acme.com' } });
     fireEvent.click(screen.getByRole('button', { name: /Team role/ }));
-    expect(screen.queryByRole('option', { name: 'Admin' })).toBeNull();
-    fireEvent.click(screen.getByRole('option', { name: 'Lead' }));
+    expect(screen.queryByRole('option', { name: 'Team admin' })).toBeNull();
+    fireEvent.click(screen.getByRole('option', { name: 'Team lead' }));
     fireEvent.click(screen.getByRole('button', { name: 'Send invite' }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(bodyOf(spy, '/teams/t1/members/invite')).toEqual({
@@ -56,7 +56,7 @@ describe('team invitation form', () => {
     render(
       withQuery(
         <InviteTeamMemberModal
-          grantableRoles={['ENGINEER']}
+          grantableRoles={['MEMBER']}
           onClose={onClose}
           onInvited={vi.fn()}
           open

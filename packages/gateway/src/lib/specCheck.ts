@@ -1,3 +1,4 @@
+import { can, userActor } from '@auto-swe/shared/permissions';
 import {
   assertShellImageAllowed,
   collectAuthoredCode,
@@ -75,26 +76,24 @@ export async function assertShellAuthoringAllowed(
 }
 
 /**
- * Whether `user` holds `workflow:write:shell` for `teamId`: a platform ADMIN, or an ADMIN member
- * of that team. Nobody else may author code for a global (`null`) team. The one rule for every
- * place an author writes a command that runs in a workspace — template specs and a repository's
- * gate commands alike.
+ * Whether `user` holds `team.repos.gate-commands.author` for `teamId`: a platform admin, or an
+ * admin of that team. Nobody else may author code for a global (`null`) team. The one rule for
+ * every place an author writes a command that runs in a workspace — template specs and a
+ * repository's gate commands alike.
  */
 export async function isShellAuthor(
   fastify: FastifyInstance,
   user: JwtPayload,
   teamId: string | null
 ): Promise<boolean> {
-  if (user.role === 'ADMIN') {
-    return true;
-  }
-  if (teamId === null) {
-    return false;
-  }
-  const membership = await fastify.prisma.teamMembership.findUnique({
-    where: { userId_teamId: { teamId, userId: user.sub } },
-  });
-  return membership?.role === 'ADMIN';
+  // With no team there is no resource, which only the instance operator can satisfy.
+  const decision = await can(
+    fastify.prisma,
+    userActor(user),
+    'team.repos.gate-commands.author',
+    teamId === null ? undefined : { teamId }
+  );
+  return decision.allowed;
 }
 
 export async function assertShellImagesAllowed(

@@ -115,8 +115,8 @@ function BudgetForm({ budget, teamId }: { budget: TeamBudgetSettings; teamId: st
 }
 
 /**
- * A team's own monthly budget, for the team's ADMIN, an ORG_ADMIN of its organization and a
- * platform ADMIN. The caller decides who sees it; the gateway enforces the same rule.
+ * A team's own monthly budget, for whoever holds `team.budget.manage` on the team. The caller
+ * decides who sees it from the server's permissions; the gateway enforces the same rule.
  */
 export function TeamBudgetSection({
   canManageCredentials,

@@ -116,12 +116,16 @@ export const scannerPatternRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
   // GET /api/v1/platform/scanner-patterns
-  app.get('/scanner-patterns', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async () => {
-    const patterns = await fastify.prisma.scannerPattern.findMany({
-      orderBy: [{ type: 'asc' }, { label: 'asc' }],
-    });
-    return { data: patterns };
-  });
+  app.get(
+    '/scanner-patterns',
+    { onRequest: requireAuth({ capability: 'platform.scanner.manage' }) },
+    async () => {
+      const patterns = await fastify.prisma.scannerPattern.findMany({
+        orderBy: [{ type: 'asc' }, { label: 'asc' }],
+      });
+      return { data: patterns };
+    }
+  );
 
   // POST /api/v1/platform/scanner-patterns/test
   //
@@ -134,7 +138,7 @@ export const scannerPatternRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/scanner-patterns/test',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.scanner.manage' }),
       schema: { body: TestPatternSchema },
     },
     async (request, reply) => {
@@ -192,7 +196,7 @@ export const scannerPatternRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/scanner-patterns',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.scanner.manage' }),
       schema: { body: CreatePatternSchema },
     },
     async (request, reply) => {
@@ -231,7 +235,7 @@ export const scannerPatternRoutes: FastifyPluginAsync = async (fastify) => {
   app.put(
     '/scanner-patterns/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.scanner.manage' }),
       schema: { body: UpdatePatternSchema, params: PatternIdParams },
     },
     async (request, reply) => {
@@ -313,7 +317,7 @@ export const scannerPatternRoutes: FastifyPluginAsync = async (fastify) => {
   app.delete(
     '/scanner-patterns/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ capability: 'platform.scanner.manage' }),
       schema: { params: PatternIdParams },
     },
     async (request, reply) => {

@@ -102,7 +102,7 @@ describe.skipIf(!enabled)('team budgets against Postgres', () => {
     return row;
   }
 
-  const user = (key: string) => ({ role: 'ENGINEER' as const, sub: ids[key] as string });
+  const user = (key: string) => ({ role: 'USER' as const, sub: ids[key] as string });
   async function launch(key: string, repo: string) {
     const row = await findLaunchRepo(prisma, ids[repo] as string, ids[key] as string);
     if (!row) {

@@ -3,7 +3,7 @@
 import { Badge } from '@/components/ui/Badge';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import { useDataTableSort } from '@/hooks/useDataTableSort';
-import { orgRoleLabel } from '@/lib/govLabels';
+import { orgRoleLabel, orgRoleRank } from '@/lib/roleLabels';
 import { cn, formatCents, formatPercent } from '@/lib/utils';
 
 /** The budget fields both the organizations list and the budget-alerts list carry. */
@@ -94,7 +94,7 @@ const COLUMNS: Record<
     alignRight: false,
     cell: (org) =>
       org.role ? (
-        <Badge tone={org.role === 'ORG_ADMIN' ? 'accent' : 'neutral'} variant="outline">
+        <Badge tone={orgRoleRank(org.role) > 0 ? 'accent' : 'neutral'} variant="outline">
           {orgRoleLabel(org.role)}
         </Badge>
       ) : (

@@ -17,9 +17,11 @@ import {
   reviseKnowledgeItem,
   supersedeKnowledgeItem,
 } from '@auto-swe/shared';
+import { isPlatformAdmin, userActor } from '@auto-swe/shared/permissions';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { can } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
 import { assertTeamParam } from '../lib/teamParam.js';
 import { reachableConnections } from '../lib/tenantScope.js';
@@ -72,7 +74,7 @@ export const knowledgeRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get(
     '/',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { querystring: ListQuery } },
+    { onRequest: requireAuth(), schema: { querystring: ListQuery } },
     async (request, reply) => {
       const user = requireUser(request);
       const capability = await capabilityFor(user, request);
@@ -120,7 +122,7 @@ export const knowledgeRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/search',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: {
         querystring: z.object({
           limit: z.coerce.number().int().min(1).max(50).default(10),
@@ -143,34 +145,27 @@ export const knowledgeRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/permissions',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: PermissionQuery },
     },
     async (request) => {
       const user = requireUser(request);
-      const [{ role }, team, organization] = await Promise.all([
-        fastify.prisma.user.findUniqueOrThrow({ select: { role: true }, where: { id: user.sub } }),
-        request.query.teamId
-          ? fastify.prisma.teamMembership.findFirst({
-              select: { role: true },
-              where: { teamId: request.query.teamId, userId: user.sub },
-            })
-          : null,
-        request.query.orgId
-          ? fastify.prisma.organizationMembership.findFirst({
-              select: { role: true },
-              where: { orgId: request.query.orgId, userId: user.sub },
-            })
-          : null,
+      // Each flag is the capability the matching action asks: asked of a named team or
+      // organization, or of neither (then only a platform admin holds it).
+      const teamResource = request.query.teamId ? { teamId: request.query.teamId } : undefined;
+      const orgResource = request.query.orgId ? { orgId: request.query.orgId } : undefined;
+      const [manage, approve, publish] = await Promise.all([
+        can(request, 'team.knowledge.manage', teamResource),
+        can(request, 'team.knowledge.approve', teamResource),
+        can(request, 'org.knowledge.publish', orgResource),
       ]);
       return {
         data: {
-          canCreateCurated: role === 'ADMIN' || team?.role === 'LEAD' || team?.role === 'ADMIN',
-          canManageTeam: role === 'ADMIN' || team?.role === 'LEAD' || team?.role === 'ADMIN',
-          canPublishOrganization: role === 'ADMIN' || organization?.role === 'ORG_ADMIN',
-          canPublishSelectedTeams:
-            role === 'ADMIN' || team?.role === 'LEAD' || team?.role === 'ADMIN',
-          platformAdmin: role === 'ADMIN',
+          canCreateCurated: manage.allowed,
+          canManageTeam: manage.allowed,
+          canPublishOrganization: publish.allowed,
+          canPublishSelectedTeams: approve.allowed,
+          platformAdmin: isPlatformAdmin(userActor(user)),
           repoOriginActionsRequireSourceAccess: true,
         },
       };
@@ -179,7 +174,7 @@ export const knowledgeRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get(
     '/:id',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: IdParams } },
+    { onRequest: requireAuth(), schema: { params: IdParams } },
     async (request, reply) => {
       const user = requireUser(request);
       const capability = await capabilityFor(user, request);
@@ -219,7 +214,7 @@ export const knowledgeRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { body: CreateCuratedKnowledgeItemSchema },
     },
     async (request, reply) => {
@@ -242,7 +237,7 @@ export const knowledgeRoutes: FastifyPluginAsync = async (fastify) => {
   app.put(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { body: ReviseKnowledgeItemSchema, params: IdParams },
     },
     async (request, reply) => {
@@ -267,7 +262,7 @@ export const knowledgeRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/approve',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { body: ApproveKnowledgeItemSchema, params: IdParams },
     },
     async (request, reply) => {
@@ -291,7 +286,7 @@ export const knowledgeRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/publish',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { body: ApproveKnowledgeItemSchema, params: IdParams },
     },
     async (request, reply) => {
@@ -315,7 +310,7 @@ export const knowledgeRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/reject',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { body: VersionBody, params: IdParams },
     },
     async (request, reply) => {
@@ -339,7 +334,7 @@ export const knowledgeRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/supersede',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { body: VersionBody, params: IdParams },
     },
     async (request, reply) => {

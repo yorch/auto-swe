@@ -1,5 +1,4 @@
-import type { Prisma, Role } from '@auto-swe/shared';
-import { roleMeets } from '@auto-swe/shared/config/permissions';
+import type { Prisma } from '@auto-swe/shared';
 import {
   CALLBACK_EVENT_TYPES,
   callbackTargetOrigin,
@@ -8,15 +7,17 @@ import {
   normaliseCallbackPathPrefix,
   rotatedEndpointSecretColumns,
 } from '@auto-swe/shared/lib/runCallbacks';
-import type { FastifyPluginAsync, FastifyReply } from 'fastify';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { can } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
-import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
+import { requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
  * Run-callback endpoints (docs/run-callbacks.md): the receivers a team allows
@@ -196,29 +197,30 @@ function limitedDeliveryView(row: DeliveryViewRow) {
   };
 }
 
-/** The caller's standing on an endpoint's team: any membership, and LEAD+ (or platform ADMIN). */
+/**
+ * The caller's standing on an endpoint's team: whether they may read it (`team.callbacks.read`: any
+ * member, or the platform operator) and manage it (`team.callbacks.manage`).
+ */
 async function teamAccess(
-  prisma: Parameters<FastifyPluginAsync>[0]['prisma'],
-  user: JwtPayload,
+  request: FastifyRequest,
   teamId: string
 ): Promise<{ member: boolean; manages: boolean }> {
-  if (user.role === 'ADMIN') {
-    return { manages: true, member: true };
-  }
-  const membership = await prisma.teamMembership.findUnique({
-    select: { role: true },
-    where: { userId_teamId: { teamId, userId: user.sub } },
-  });
-  return {
-    manages: !!membership && roleMeets(membership.role as Role, 'LEAD' as Role),
-    member: !!membership,
-  };
+  const [read, manage] = await Promise.all([
+    can(request, 'team.callbacks.read', { teamId }),
+    can(request, 'team.callbacks.manage', { teamId }),
+  ]);
+  return { manages: manage.allowed, member: read.allowed };
+}
+
+/** Whether the caller may opt an endpoint into a private network: the platform operator alone. */
+async function mayUsePrivateNetwork(request: FastifyRequest): Promise<boolean> {
+  return (await can(request, 'platform.callbacks.private-network')).allowed;
 }
 
 /** `/api/v1/teams/:teamId/callback-endpoints`. */
 export const callbackEndpointRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const manage = requireAuth({ requiredTeamRole: 'LEAD', teamIdParam: 'teamId' });
+  const manage = requireAuth({ capability: 'team.callbacks.manage', team: { param: 'teamId' } });
 
   async function loadEndpoint(teamId: string, endpointId: string) {
     return fastify.prisma.callbackEndpoint.findFirst({ where: { id: endpointId, teamId } });
@@ -243,7 +245,7 @@ export const callbackEndpointRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const body = request.body;
-      if (body.allowPrivateNetwork && user.role !== 'ADMIN') {
+      if (body.allowPrivateNetwork && !(await mayUsePrivateNetwork(request))) {
         return refusePrivateNetwork(reply);
       }
       const origin = normaliseCallbackOrigin(body.origin, body.allowPrivateNetwork);
@@ -310,7 +312,7 @@ export const callbackEndpointRoutes: FastifyPluginAsync = async (fastify) => {
       if (
         body.allowPrivateNetwork === true &&
         !existing.allowPrivateNetwork &&
-        user.role !== 'ADMIN'
+        !(await mayUsePrivateNetwork(request))
       ) {
         return refusePrivateNetwork(reply);
       }
@@ -326,7 +328,7 @@ export const callbackEndpointRoutes: FastifyPluginAsync = async (fastify) => {
       if (
         (movesDestination || opensToWebhooks) &&
         (existing.allowPrivateNetwork || privateAfter) &&
-        user.role !== 'ADMIN'
+        !(await mayUsePrivateNetwork(request))
       ) {
         return refusePrivateNetwork(reply);
       }
@@ -587,7 +589,7 @@ export const runCallbackDeliveryRoutes: FastifyPluginAsync = async (fastify) => 
 
   app.get(
     '/:id/callback-deliveries',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: RunParams } },
+    { onRequest: requireAuth(), schema: { params: RunParams } },
     async (request, reply) => {
       const user = requireUser(request);
       const run = await fastify.prisma.workflowRun.findFirst({
@@ -626,11 +628,11 @@ export const runCallbackDeliveryRoutes: FastifyPluginAsync = async (fastify) => 
         teamIds.add(callback.endpoint.teamId);
       }
       for (const teamId of teamIds) {
-        access.set(teamId, await teamAccess(fastify.prisma, user, teamId));
+        access.set(teamId, await teamAccess(request, teamId));
       }
       const seesPath = callback?.endpoint
         ? access.get(callback.endpoint.teamId)?.member === true
-        : user.role === 'ADMIN';
+        : isPlatformAdmin(user);
       return {
         data: {
           deliveries: rows.map((r) => {

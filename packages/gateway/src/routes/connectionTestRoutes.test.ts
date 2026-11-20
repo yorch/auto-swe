@@ -3,6 +3,7 @@ import { encryptConnectionApiToken } from '@auto-swe/shared';
 import Fastify, { type FastifyPluginAsync } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { emptyStanding, withStanding } from '../test/repoStanding.js';
 
 /**
  * The "test this connection" endpoints beside the connections they test: who may call each, what
@@ -74,13 +75,14 @@ async function buildApp(
     team: { findUnique: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
   };
-  app.decorate('prisma', prisma as unknown as never);
+  const standing = emptyStanding();
+  app.decorate('prisma', withStanding(prisma, standing) as unknown as never);
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'user-1' }),
   } as unknown as never);
   await app.register(plugin, { prefix });
   await app.ready();
-  return { app, prisma };
+  return { app, prisma, standing };
 }
 
 beforeEach(() => {
@@ -192,18 +194,26 @@ describe('POST /repositories/:id/test-access', () => {
   });
 
   it('refuses a lead of another team, so it cannot probe what the platform credential sees', async () => {
-    const { app, prisma } = await buildApp('LEAD', repositoryRoutes, '/api/v1/repositories');
+    const { app, prisma, standing } = await buildApp(
+      'LEAD',
+      repositoryRoutes,
+      '/api/v1/repositories'
+    );
     prisma.connection.findUnique.mockResolvedValue(repo);
-    prisma.teamMembership.findUnique.mockResolvedValue(null);
+    standing.fallback = undefined;
     const res = await app.inject({ headers: AUTH, method: 'POST', url });
     expect(res.statusCode).toBe(403);
     expect(probeRepositoryAccess).not.toHaveBeenCalled();
   });
 
   it("runs the check for a lead of the repository's team, as that user", async () => {
-    const { app, prisma } = await buildApp('ENGINEER', repositoryRoutes, '/api/v1/repositories');
+    const { app, prisma, standing } = await buildApp(
+      'ENGINEER',
+      repositoryRoutes,
+      '/api/v1/repositories'
+    );
     prisma.connection.findUnique.mockResolvedValue(repo);
-    prisma.teamMembership.findUnique.mockResolvedValue({ role: 'LEAD', team: { isActive: true } });
+    standing.fallback = { role: 'LEAD' };
     probeRepositoryAccess.mockResolvedValue(RESULT);
     const res = await app.inject({ headers: AUTH, method: 'POST', url });
     expect(res.statusCode).toBe(200);
@@ -239,7 +249,6 @@ describe('POST /repositories/:id/test-access', () => {
     probeRepositoryAccess.mockResolvedValue(RESULT);
     const res = await app.inject({ headers: AUTH, method: 'POST', url });
     expect(res.statusCode).toBe(200);
-    expect(prisma.teamMembership.findUnique).not.toHaveBeenCalled();
   });
 });
 
@@ -269,18 +278,26 @@ describe('POST /repositories/:id/test-pagerduty', () => {
   });
 
   it('refuses a lead of another team', async () => {
-    const { app, prisma } = await buildApp('LEAD', repositoryRoutes, '/api/v1/repositories');
+    const { app, prisma, standing } = await buildApp(
+      'LEAD',
+      repositoryRoutes,
+      '/api/v1/repositories'
+    );
     prisma.connection.findUnique.mockResolvedValue(conn);
-    prisma.teamMembership.findUnique.mockResolvedValue(null);
+    standing.fallback = undefined;
     const res = await app.inject({ headers: AUTH, method: 'POST', url });
     expect(res.statusCode).toBe(403);
     expect(probePagerDutyConnection).not.toHaveBeenCalled();
   });
 
   it('lets a platform ENGINEER who leads the connection team run the check', async () => {
-    const { app, prisma } = await buildApp('ENGINEER', repositoryRoutes, '/api/v1/repositories');
+    const { app, prisma, standing } = await buildApp(
+      'ENGINEER',
+      repositoryRoutes,
+      '/api/v1/repositories'
+    );
     prisma.connection.findUnique.mockResolvedValue(conn);
-    prisma.teamMembership.findUnique.mockResolvedValue({ role: 'LEAD', team: { isActive: true } });
+    standing.fallback = { role: 'LEAD' };
     probePagerDutyConnection.mockResolvedValue(RESULT);
     const res = await app.inject({ headers: AUTH, method: 'POST', url });
     expect(res.statusCode).toBe(200);
@@ -288,12 +305,13 @@ describe('POST /repositories/:id/test-pagerduty', () => {
   });
 
   it('refuses a platform ENGINEER who is only an ENGINEER of the connection team', async () => {
-    const { app, prisma } = await buildApp('ENGINEER', repositoryRoutes, '/api/v1/repositories');
+    const { app, prisma, standing } = await buildApp(
+      'ENGINEER',
+      repositoryRoutes,
+      '/api/v1/repositories'
+    );
     prisma.connection.findUnique.mockResolvedValue(conn);
-    prisma.teamMembership.findUnique.mockResolvedValue({
-      role: 'ENGINEER',
-      team: { isActive: true },
-    });
+    standing.fallback = { role: 'ENGINEER' };
     const res = await app.inject({ headers: AUTH, method: 'POST', url });
     expect(res.statusCode).toBe(403);
     expect(probePagerDutyConnection).not.toHaveBeenCalled();

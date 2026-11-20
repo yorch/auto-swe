@@ -25,7 +25,7 @@ import {
  * show that a field the tool must not pass on does not reach the agent. Domain tests use it.
  */
 
-/** Stand-in for one route: what it answers, and the `requiredRole` its real gate declares. */
+/** Stand-in for one route: what it answers, and what its real gate declares. */
 export interface StubRoute {
   body: unknown | (() => unknown);
   status?: number;
@@ -55,7 +55,7 @@ export async function buildMcpTestApp(
   app.setSerializerCompiler(serializerCompiler);
   app.decorate('prisma', {
     apiToken: { findUnique: async () => null },
-    user: { findUnique: async () => ({ isActive: true, role: 'ENGINEER', slackId: null }) },
+    user: { findUnique: async () => ({ isActive: true, role: 'USER', slackId: null }) },
   } as never);
   await app.register(authPlugin);
   const verifier = createMcpTokenVerifier(fakeVerifierDeps([key], { admin: true }));
@@ -89,7 +89,7 @@ export async function buildMcpTestApp(
           seen.queries.push({ ...(request.query as Record<string, unknown>) });
           seen.urls.push(request.url);
         },
-        requireAuth({ requiredRole: 'ENGINEER' }),
+        requireAuth(),
       ],
       url: path,
     });

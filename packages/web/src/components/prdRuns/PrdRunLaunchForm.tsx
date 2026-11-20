@@ -11,10 +11,10 @@ import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Textarea';
 import { SearchInput } from '@/components/ui/Toolbar';
+import { useCan } from '@/hooks/useCan';
 import { type CreatePrdRunResponse, useCreatePrdRun } from '@/hooks/usePrdRuns';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useRunsForWorkRequest } from '@/hooks/useRuns';
-import { useLeadsATeam } from '@/hooks/useTeams';
 import { useIsViewOnly } from '@/hooks/useViewOnlyRepos';
 import { ApiError } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
@@ -64,7 +64,7 @@ function StartedPrdRun({ started }: { started: CreatePrdRunResponse }) {
  * 403 from the gateway names the repositories it refused.
  */
 export function PrdRunLaunchForm({ reviewBeforeLaunch = false }: { reviewBeforeLaunch?: boolean }) {
-  const canCreate = useLeadsATeam();
+  const canCreate = useCan('team.launch.multi-repo');
   const { data: allRepos = [] } = useRepositories();
   // The same limit as an epic: only repositories whose owning team the caller leads.
   const scope = useStartScope();

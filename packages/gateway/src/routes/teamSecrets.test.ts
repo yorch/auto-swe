@@ -37,10 +37,11 @@ async function buildApp() {
     $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)),
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     connection: { findMany: vi.fn() },
+    organizationMembership: { findMany: vi.fn() },
     repoSetupBlocker: { findMany: vi.fn(), updateMany: vi.fn() },
     repoSetupSecret: { findMany: vi.fn() },
-    team: { findUnique: vi.fn() },
-    teamMembership: { findUnique: vi.fn() },
+    team: { findMany: vi.fn(), findUnique: vi.fn() },
+    teamMembership: { findMany: vi.fn(), findUnique: vi.fn() },
     teamSecret: {
       count: vi.fn(),
       deleteMany: vi.fn(),
@@ -77,6 +78,13 @@ describe('teamSecretRoutes', () => {
     ctx.prisma.teamMembership.findUnique.mockImplementation(async ({ where }) =>
       role && where.userId_teamId.teamId === teamId ? { role } : null
     );
+    // The permissions loader's read of the caller's membership.
+    ctx.prisma.teamMembership.findMany.mockResolvedValue(role ? [{ role, teamId }] : []);
+  };
+  const setTeamActive = (isActive: boolean) => {
+    ctx.prisma.team.findUnique.mockResolvedValue({ isActive });
+    // The permissions loader's read of the team itself.
+    ctx.prisma.team.findMany.mockResolvedValue([{ id: TEAM, isActive, orgId: 'org-1' }]);
   };
   const row = (name: string, grants: string[] = []) => ({
     grants: grants.map((connectionId) => ({ connectionId })),
@@ -117,7 +125,8 @@ describe('teamSecretRoutes', () => {
     }
     ctx.prisma.$transaction.mockImplementation(async (fn) => fn(ctx.tx));
     ctx.prisma.configAuditLog.create.mockResolvedValue({});
-    ctx.prisma.team.findUnique.mockResolvedValue({ isActive: true });
+    setTeamActive(true);
+    ctx.prisma.organizationMembership.findMany.mockResolvedValue([]);
     ctx.prisma.teamSecret.count.mockResolvedValue(0);
     ctx.prisma.teamSecret.findUnique.mockResolvedValue(null);
     ctx.prisma.repoSetupBlocker.findMany.mockResolvedValue([]);
@@ -237,11 +246,19 @@ describe('teamSecretRoutes', () => {
       expect((await put('NEW_TOKEN')).statusCode).toBe(200);
     });
 
-    it('refuses an inactive team', async () => {
-      ctx.prisma.team.findUnique.mockResolvedValue({ isActive: false });
+    it('refuses an inactive team to a platform admin, and confers nothing on its own admin', async () => {
+      setTeamActive(false);
+      ctx.authState.role = 'ADMIN';
       const res = await put('NPM_TOKEN');
       expect(res.statusCode).toBe(409);
       expect(res.json().error.code).toBe('TEAM_INACTIVE');
+
+      // A deactivated team confers nothing on its own admin, so the capability check refuses
+      // before the route's own inactive-team answer.
+      ctx.authState.role = 'ENGINEER';
+      const refused = await put('NPM_TOKEN');
+      expect(refused.statusCode).toBe(403);
+      expect(refused.json().error.missing).toBe('team.secrets.manage');
     });
 
     it.each(['PATH', 'NODE_OPTIONS', 'GIT_ASKPASS', 'HTTPS_PROXY', 'lower_case'])(

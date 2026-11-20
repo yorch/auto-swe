@@ -29,6 +29,7 @@ import {
   resolvePublicUrl,
   resolveWebUrl,
 } from '@auto-swe/shared/lib/systemConfig';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -107,7 +108,10 @@ export const githubAppManifestRoutes: FastifyPluginAsync<GitHubAppManifestRouteO
 
   app.post(
     '/github-app-manifest',
-    { onRequest: requireAuth({ requiredRole: 'ADMIN' }), schema: { body: StartBody.optional() } },
+    {
+      onRequest: requireAuth({ capability: 'platform.integrations.manage' }),
+      schema: { body: StartBody.optional() },
+    },
     async (request, reply) => {
       const user = requireUser(request);
       const config = await resolveGitHubConfig();
@@ -156,7 +160,14 @@ export const githubAppManifestRoutes: FastifyPluginAsync<GitHubAppManifestRouteO
 
   app.get(
     '/github-app-manifest/callback',
-    { schema: { querystring: CallbackQuery } },
+    {
+      config: {
+        authz: 'public',
+        publicReason:
+          'GitHub redirect: signed state bound to the browser by a cookie nonce; starter re-checked as an active platform ADMIN',
+      },
+      schema: { querystring: CallbackQuery },
+    },
     async (request, reply) => {
       const { code, state } = request.query;
       // One use only: the cookie is cleared whatever the outcome, a cancelled flow included.
@@ -180,7 +191,7 @@ export const githubAppManifestRoutes: FastifyPluginAsync<GitHubAppManifestRouteO
         select: { isActive: true, role: true },
         where: { id: payload.sub },
       });
-      if (!starter?.isActive || starter.role !== 'ADMIN') {
+      if (!starter?.isActive || !isPlatformAdmin(starter)) {
         return backToIntegrations(reply, 'FORBIDDEN');
       }
 

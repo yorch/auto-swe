@@ -2,10 +2,10 @@
 
 import type { TeamDetail, TeamSummary } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useMemo } from 'react';
 import { api } from '@/lib/api';
-import { hasRole } from '@/lib/roles';
-import { useAuthStore } from '@/stores/authStore';
+import { holdsCapability, isPlatformAdminAnswer } from '@/lib/capabilities';
+import type { TeamRoleValue } from '@/lib/roleLabels';
+import { PERMISSIONS_KEY, useEffectivePermissions } from './useEffectivePermissions';
 
 /**
  * The teams the caller can see, each with their own role in it (`myRole`). `memberOnly` asks for
@@ -38,84 +38,28 @@ export function useTeam(id: string, options: { refetchOnMount?: boolean | 'alway
 }
 
 /**
- * Ids of the active teams the caller leads (LEAD or ADMIN membership) — the
- * team-scoped write bar the gateway applies to templates and connections on
- * top of the platform role. `null` until known.
- */
-export function useLedTeamIds(): ReadonlySet<string> | null {
-  return useTeamIdsWithRole('LEAD');
-}
-
-/**
- * Ids of the active teams the caller is an ADMIN of — the gateway's
- * `workflow:write:shell` bar for code an author writes that runs in a
- * workspace: shell steps, gate commands. `null` until known.
- */
-export function useAdminTeamIds(): ReadonlySet<string> | null {
-  return useTeamIdsWithRole('ADMIN');
-}
-
-/**
- * Ids of the teams where the caller's own membership is at least `minRole`, read from the
- * `myRole` the team list carries. The list is requested `member=true`, so a team a platform
- * ADMIN does not belong to is absent, and a null `myRole` is never counted. Anyone but a platform
- * ADMIN needs it, because the team role alone decides; a platform ADMIN bypasses team checks and
- * does not load the list.
- */
-function useTeamIdsWithRole(minRole: 'LEAD' | 'ADMIN'): ReadonlySet<string> | null {
-  const user = useAuthStore((s) => s.user);
-  const platformAdmin = hasRole(user?.role, 'ADMIN');
-  // No lookup before the user is known: the request would go out unauthenticated.
-  const teams = useTeams({ enabled: !!user && !platformAdmin, memberOnly: true });
-  // Reduce to a string key first so the returned Set keeps its identity across
-  // renders — callers put it in memo / callback deps.
-  let key: string | null;
-  if (platformAdmin) {
-    key = '';
-  } else if (!user || !teams.data) {
-    key = null;
-  } else {
-    key = teams.data
-      .filter((t) => hasRole(t.myRole, minRole))
-      .map((t) => t.id)
-      .sort()
-      .join(',');
-  }
-  return useMemo(() => (key === null ? null : new Set(key ? key.split(',') : [])), [key]);
-}
-
-/**
- * Whether the caller may start work that needs the lead of an owning team (an epic, a campaign): a
- * platform ADMIN, or anyone who leads at least one active team. False while the list loads, which
- * hides the control rather than flashing one that would be refused.
- */
-export function useLeadsATeam(): boolean {
-  const user = useAuthStore((s) => s.user);
-  const led = useLedTeamIds();
-  return hasRole(user?.role, 'ADMIN') || (led?.size ?? 0) > 0;
-}
-
-/**
- * The teams the caller may author team-owned resources for (a workflow template): the teams
- * they LEAD or ADMIN, read from `myRole`. A platform ADMIN may author for any team and for no
- * team at all (`global`), so they get every team the directory lists.
+ * The teams the caller may author team-owned resources for (a workflow template): the teams on
+ * which the server says they hold `team.templates.write`. A platform administrator may author for
+ * any team and for no team at all (`global`), so they get every team the directory lists.
  */
 export function useAuthoringTeams(): {
   teams: TeamSummary[];
   global: boolean;
   isLoading: boolean;
 } {
-  const user = useAuthStore((s) => s.user);
-  const platformAdmin = hasRole(user?.role, 'ADMIN');
+  const { data: perms, isLoading: permsLoading } = useEffectivePermissions();
+  const platformAdmin = isPlatformAdminAnswer(perms);
   const all = useTeams({ enabled: platformAdmin });
-  const member = useTeams({ enabled: !!user && !platformAdmin, memberOnly: true });
+  const member = useTeams({ enabled: !!perms && !platformAdmin, memberOnly: true });
   if (platformAdmin) {
     return { global: true, isLoading: all.isLoading, teams: all.data ?? [] };
   }
   return {
     global: false,
-    isLoading: member.isLoading,
-    teams: (member.data ?? []).filter((t) => hasRole(t.myRole, 'LEAD')),
+    isLoading: permsLoading || member.isLoading,
+    teams: (member.data ?? []).filter((t) =>
+      holdsCapability(perms, 'team.templates.write', { teamId: t.id })
+    ),
   };
 }
 
@@ -142,7 +86,10 @@ export function useCreateTeam() {
         orgId ? `/api/v1/platform/organizations/${orgId}/teams` : '/api/v1/teams',
         body
       ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['teams'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['teams'] });
+      qc.invalidateQueries({ queryKey: PERMISSIONS_KEY });
+    },
   });
 }
 
@@ -164,10 +111,11 @@ export function useUpdateTeam(id: string) {
 export function useAddTeamMember(teamId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { userId: string; role?: 'ADMIN' | 'LEAD' | 'ENGINEER' }) =>
+    mutationFn: (body: { userId: string; role?: TeamRoleValue }) =>
       api.post(`/api/v1/teams/${teamId}/members`, body),
     onSuccess: () => {
-      // ['teams'] prefix-matches ['teams', 'member'], which the led/admin sets read `myRole` from.
+      // A change of membership changes what the person's effective permissions say.
+      qc.invalidateQueries({ queryKey: PERMISSIONS_KEY });
       qc.invalidateQueries({ queryKey: ['teams'] });
       qc.invalidateQueries({ queryKey: ['team', teamId] });
     },
@@ -177,7 +125,7 @@ export function useAddTeamMember(teamId: string) {
 export function useInviteTeamMember(teamId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { email: string; role: 'ADMIN' | 'LEAD' | 'ENGINEER' }) =>
+    mutationFn: (body: { email: string; role: TeamRoleValue }) =>
       api.post<{ data: { id: string; email: string; isActive: boolean } }>(
         `/api/v1/teams/${teamId}/members/invite`,
         body
@@ -188,6 +136,7 @@ export function useInviteTeamMember(teamId: string) {
         ['team', teamId],
         ['team-overview', teamId],
         ['org-members'],
+        PERMISSIONS_KEY,
       ]) {
         void qc.invalidateQueries({ queryKey });
       }
@@ -198,10 +147,11 @@ export function useInviteTeamMember(teamId: string) {
 export function useUpdateTeamMember(teamId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ userId, role }: { userId: string; role: 'ADMIN' | 'LEAD' | 'ENGINEER' }) =>
+    mutationFn: ({ userId, role }: { userId: string; role: TeamRoleValue }) =>
       api.patch(`/api/v1/teams/${teamId}/members/${userId}`, { role }),
     onSuccess: () => {
-      // ['teams'] prefix-matches ['teams', 'member'], which the led/admin sets read `myRole` from.
+      // A change of membership changes what the person's effective permissions say.
+      qc.invalidateQueries({ queryKey: PERMISSIONS_KEY });
       qc.invalidateQueries({ queryKey: ['teams'] });
       qc.invalidateQueries({ queryKey: ['team', teamId] });
     },
@@ -213,7 +163,8 @@ export function useRemoveTeamMember(teamId: string) {
   return useMutation({
     mutationFn: (userId: string) => api.delete(`/api/v1/teams/${teamId}/members/${userId}`),
     onSuccess: () => {
-      // ['teams'] prefix-matches ['teams', 'member'], which the led/admin sets read `myRole` from.
+      // A change of membership changes what the person's effective permissions say.
+      qc.invalidateQueries({ queryKey: PERMISSIONS_KEY });
       qc.invalidateQueries({ queryKey: ['teams'] });
       qc.invalidateQueries({ queryKey: ['team', teamId] });
     },

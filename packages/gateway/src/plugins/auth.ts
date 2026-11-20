@@ -1,8 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { Role } from '@auto-swe/shared';
+import type { PlatformRole } from '@auto-swe/shared';
 import { resolveSetting } from '@auto-swe/shared/config';
-import { roleMeets } from '@auto-swe/shared/config/permissions';
 import {
   ASSISTANT_ACTION_HEADER,
   ASSISTANT_TOKEN_PREFIX,
@@ -15,12 +14,19 @@ import {
 } from '@auto-swe/shared/lib/orchestrationTokenKey';
 import type { RepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
+import {
+  type Authority,
+  type CapabilityKey,
+  isCapabilityKey,
+  PLATFORM_ROLES,
+} from '@auto-swe/shared/permissions';
 import { SERVICE_TOKEN_SCOPES, type ServiceTokenScope } from '@auto-swe/shared/types/api';
 import { normalizeIP } from '@fastify/rate-limit';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import jwt from 'jsonwebtoken';
 import { type AssistantAccess, assistantAccess } from '../lib/assistantPolicy.js';
+import { assertHandlerChecked, enforceCapability } from '../lib/authz.js';
 import { MCP_BRIDGE_HEADER } from '../lib/mcp/bridge.js';
 import { MCP_SCOPE_ADMIN, MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../lib/mcpOAuth.js';
 
@@ -38,7 +44,7 @@ export type AuthMethod =
 
 export interface JwtPayload {
   sub: string; // User UUID
-  role: Role;
+  role: PlatformRole;
   slackId?: string;
   iat: number;
   exp: number;
@@ -97,6 +103,12 @@ declare module 'fastify' {
     assistantBodyDigest?: string;
     teamRole?: string;
     /**
+     * The ground on which the most recent capability check allowed this request: `team-role`,
+     * `org-member`, `org-admin` or `platform-admin`. Absent until a check allows. The audit log
+     * records it so a use of org or platform authority is distinguishable.
+     */
+    authority?: Authority;
+    /**
      * How the GitHub permission gate is configured for this request.
      *
      * Resolved once here rather than in each handler: the visibility filters
@@ -130,6 +142,18 @@ declare module 'fastify' {
     orchestration?: { orchestrationId: string };
   }
   interface FastifyContextConfig {
+    /**
+     * How the route is authorized, set at registration from the route's `requireAuth` options
+     * (see `authzKindOf`). A route with no `requireAuth` hook declares `'public'` here itself.
+     */
+    authz?: AuthzKind;
+    /** Required with `authz: 'public'`: what authenticates the route, or why nothing needs to. */
+    publicReason?: string;
+    /**
+     * The capabilities a `handler-checked` route's handler checks, copied from `requireAuth` at
+     * registration. Only an allowed check of one of these satisfies the backstop.
+     */
+    handlerChecked?: readonly CapabilityKey[];
     /**
      * Opt a route in to the orchestration token. `caller`: a person or the service principal that
      * launched the orchestration acts. A route that does not declare this refuses the token with
@@ -189,24 +213,6 @@ export type RouteCaller =
   | { kind: 'user'; user: JwtPayload }
   | { kind: 'service'; principal: ServicePrincipalCaller };
 
-// Role hierarchy: ADMIN > LEAD > ENGINEER. The ladder itself lives in
-// `@auto-swe/shared/config/permissions`, because the settings registry's
-// `requiredRole` floor has to rank roles the same way every other check in this
-// file does — two copies would let the two drift apart silently.
-function hasRole(userRole: string, requiredRole: string): boolean {
-  return roleMeets(userRole as Role, requiredRole as Role);
-}
-
-// Org role hierarchy: ORG_ADMIN > ORG_MEMBER (P5 multi-org RBAC).
-const ORG_ROLE_HIERARCHY: Record<string, number> = {
-  ORG_ADMIN: 2,
-  ORG_MEMBER: 1,
-};
-
-function hasOrgRole(userRole: string, requiredRole: string): boolean {
-  return (ORG_ROLE_HIERARCHY[userRole] ?? 0) >= (ORG_ROLE_HIERARCHY[requiredRole] ?? 0);
-}
-
 /**
  * Asserts that requireAuth middleware ran and narrows request.user to JwtPayload.
  * Use inside route handlers that include requireAuth() in their onRequest hook.
@@ -255,7 +261,7 @@ const OAUTH_STATE_AUDIENCE = 'auto-swe:oauth-state';
 const ASSISTANT_AUDIENCE = 'auto-swe:assistant';
 /**
  * Each OAuth flow mints its own state purpose so a token minted by the
- * ENGINEER-level user-link flow can never complete the ADMIN-only bot
+ * user-level link flow can never complete the ADMIN-only bot
  * install (or vice versa). Verified as an exact match at the callback.
  */
 export type OAuthStatePurpose = 'slack-link' | 'slack-install' | 'github-app-manifest';
@@ -371,7 +377,7 @@ function bearerRejectionMessage(err: unknown): string {
 /** The live user fields an access token's claims are re-checked against. */
 export interface TokenUserState {
   isActive: boolean;
-  role: Role;
+  role: PlatformRole;
   slackId: string | null;
 }
 
@@ -410,6 +416,8 @@ export async function loadTokenUser(
 
 const authPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.addHook('onRoute', assertServiceScopesAdmissible);
+  fastify.addHook('onRoute', annotateAuthz);
+  fastify.addHook('onRoute', appendHandlerCheckedBackstop);
   fastify.addHook('onRoute', appendAssistantBackstop);
   fastify.addHook('preValidation', checkAssistantGrantOnceParsed);
   const privateKey = getPrivateKey();
@@ -507,28 +515,34 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
   });
 };
 
-export { authPlugin, hasRole };
+export { authPlugin };
 export default fp(authPlugin, { fastify: '5.x', name: 'auth' });
 
 // ── RBAC Hook Factory ──
 
 export interface RBACOptions {
-  requiredRole?: string; // Platform role check
-  requiredTeamRole?: string; // Team-scoped role check (resolves via team membership)
-  teamIdParam?: string; // Route param name containing the team ID (default: 'id')
-  requiredOrgRole?: string; // Org-scoped role check (resolves via org membership)
-  orgIdParam?: string; // Route param name containing the org ID (default: 'orgId')
+  /**
+   * The capability the route needs, decided after authentication by `can()`. A refusal is 403
+   * `FORBIDDEN` with `error.missing`. A platform-scoped capability needs no resource; a team-scoped
+   * one reads the team id from `team.param` (default `id`); an org-scoped one reads the org id from
+   * `org.param` (default `orgId`), or the org of the team named by `team.param`.
+   */
+  capability?: CapabilityKey;
+  team?: { param?: string };
+  org?: { param?: string };
+  /**
+   * The capabilities the handler checks itself with `can()` from `lib/authz.ts`, because its
+   * resource comes from the body or a lookup. A 2xx answer with no check fails a test and logs
+   * `authz.unchecked` elsewhere.
+   */
+  handlerChecked?: readonly CapabilityKey[];
+  /** Answer a capability refusal as `404 NOT_FOUND`, for a route that hides existence. */
+  hideAs404?: boolean;
 }
 
-/**
- * Creates a Fastify onRequest hook that enforces JWT authentication
- * and optional role-based access control.
- *
- * When `requiredTeamRole` is set with a `teamIdParam`, the middleware resolves
- * the user's membership in that team and checks their team role. Likewise,
- * `requiredOrgRole` with `orgIdParam` resolves org membership and checks the
- * org role (ORG_ADMIN > ORG_MEMBER). Platform ADMINs bypass team/org checks.
- */
+/** How a route is authorized, as `config.authz` records it. */
+export type AuthzKind = 'capability' | 'handler-checked' | 'service' | 'authenticated' | 'public';
+
 /** Phase-8 personal access tokens are prefixed with `ats_`. The remainder is
  * 32 bytes of base64url entropy (~43 chars). Anything starting with this
  * prefix bypasses JWT verification and hashes through ApiToken
@@ -705,7 +719,7 @@ async function verifyBetterAuthSession(request: FastifyRequest): Promise<JwtPayl
   // to the users table. Type the relevant subset to satisfy TS without `any`.
   const u = session.user as {
     id: string;
-    role: Role;
+    role: PlatformRole;
     isActive: boolean;
     slackId?: string | null;
   };
@@ -852,7 +866,7 @@ export function _hasCachedSessionForTests(cookieValue: string): boolean {
 
 type BridgeOutcome = { payload: JwtPayload } | { status: 401 | 403; code: string; message: string };
 
-const MCP_ROLES = ['ADMIN', 'LEAD', 'ENGINEER'];
+const MCP_ROLES: readonly string[] = PLATFORM_ROLES;
 
 /**
  * Authenticate an MCP tool call that the bridge made in-process (`lib/mcp/bridge.ts`).
@@ -917,7 +931,7 @@ async function authenticateBridgedCall(
     payload: {
       exp: authInfo.expiresAt ?? now + 60,
       iat: now,
-      role: role as Role,
+      role: role as PlatformRole,
       sub: userId,
     },
   };
@@ -925,15 +939,11 @@ async function authenticateBridgedCall(
 
 /**
  * Whether a route guarded by these options may admit a service principal at all. A principal
- * holds no role, so only a route whose bar is the lowest platform role (or none) and that asks
- * for no team or organization role can opt in.
+ * holds no role and passes no capability, so only a route that declares neither a capability nor
+ * a handler check can opt in.
  */
 export function serviceAdmissible(options: RBACOptions): boolean {
-  return (
-    (!options.requiredRole || options.requiredRole === 'ENGINEER') &&
-    !options.requiredTeamRole &&
-    !options.requiredOrgRole
-  );
+  return !options.capability && !options.handlerChecked?.length;
 }
 
 /**
@@ -950,32 +960,134 @@ export const RBAC_OPTIONS = Symbol('requireAuth options');
  */
 export function assertServiceScopesAdmissible(routeOptions: {
   url?: string;
-  config?: { serviceScopes?: readonly string[] };
+  config?: { serviceScopes?: readonly string[]; orchestrationToken?: string };
   onRequest?: unknown;
+  preValidation?: unknown;
+  preHandler?: unknown;
 }): void {
-  if (!routeOptions.config?.serviceScopes?.length) {
+  const url = routeOptions.url ?? '?';
+  const serviceScopes = !!routeOptions.config?.serviceScopes?.length;
+  const orchestrationToken = !!routeOptions.config?.orchestrationToken;
+  if (!serviceScopes && !orchestrationToken) {
     return;
   }
-  const hooks = Array.isArray(routeOptions.onRequest)
-    ? routeOptions.onRequest
-    : routeOptions.onRequest
-      ? [routeOptions.onRequest]
-      : [];
+  const hooks = [
+    routeOptions.onRequest,
+    routeOptions.preValidation,
+    routeOptions.preHandler,
+  ].flatMap((phase) => (Array.isArray(phase) ? phase : phase ? [phase] : []));
   for (const hook of hooks) {
     const options = (hook as { [RBAC_OPTIONS]?: RBACOptions })[RBAC_OPTIONS];
-    if (options && !serviceAdmissible(options)) {
+    // A service principal, and the principal an orchestration token resolves to, is admitted
+    // before any capability runs and can never pass `can()`. A route that names a capability
+    // beside either would look guarded and be closed to the machine, or worse, open to it.
+    const named = options?.capability ?? options?.handlerChecked?.[0];
+    if (named) {
       throw new Error(
-        `Route ${routeOptions.url ?? '?'} declares serviceScopes behind a role a service principal cannot hold`
+        `Route ${url} declares ${serviceScopes ? 'serviceScopes' : 'an orchestration token'} and the capability ${named}: a principal is judged by its scopes, never by a capability`
+      );
+    }
+    if (serviceScopes && options && !serviceAdmissible(options)) {
+      throw new Error(
+        `Route ${url} declares serviceScopes behind a role a service principal cannot hold`
       );
     }
   }
+}
+
+const AUTHZ_PRIORITY: readonly AuthzKind[] = [
+  'capability',
+  'handler-checked',
+  'service',
+  'authenticated',
+];
+
+/**
+ * How a route is authorized, from its `requireAuth` options: `capability` (declares one),
+ * `handler-checked` (the handler checks), `service` (declares `serviceScopes`),
+ * `authenticated` (a bare `requireAuth()`). `undefined` when the route has
+ * no `requireAuth` hook; such a route is `public` only if it says so in `config.authz`.
+ */
+export function authzKindOf(routeOptions: {
+  config?: { authz?: AuthzKind; serviceScopes?: readonly string[] };
+  onRequest?: unknown;
+  preHandler?: unknown;
+  preValidation?: unknown;
+}): AuthzKind | undefined {
+  const hooks = [
+    routeOptions.onRequest,
+    routeOptions.preValidation,
+    routeOptions.preHandler,
+  ].flatMap((phase) => (Array.isArray(phase) ? phase : phase ? [phase] : []));
+  const kinds = new Set<AuthzKind>();
+  for (const hook of hooks) {
+    const options = (hook as { [RBAC_OPTIONS]?: RBACOptions })[RBAC_OPTIONS];
+    if (!options) {
+      continue;
+    }
+    if (options.capability) {
+      kinds.add('capability');
+    } else if (options.handlerChecked?.length) {
+      kinds.add('handler-checked');
+    } else if (routeOptions.config?.serviceScopes?.length) {
+      kinds.add('service');
+    } else {
+      kinds.add('authenticated');
+    }
+  }
+  return AUTHZ_PRIORITY.find((kind) => kinds.has(kind));
+}
+
+/**
+ * `onRoute` hook: record `config.authz` from the route's hooks. A route with no `requireAuth` hook
+ * keeps whatever it declared, which is `'public'` or nothing.
+ */
+export function annotateAuthz(routeOptions: {
+  config?: {
+    authz?: AuthzKind;
+    handlerChecked?: readonly CapabilityKey[];
+    serviceScopes?: readonly string[];
+  };
+  onRequest?: unknown;
+  preHandler?: unknown;
+  preValidation?: unknown;
+}): void {
+  const kind = authzKindOf(routeOptions);
+  if (kind) {
+    const handlerChecked = [
+      routeOptions.onRequest,
+      routeOptions.preValidation,
+      routeOptions.preHandler,
+    ]
+      .flatMap((phase) => (Array.isArray(phase) ? phase : phase ? [phase] : []))
+      .flatMap(
+        (hook) => (hook as { [RBAC_OPTIONS]?: RBACOptions })[RBAC_OPTIONS]?.handlerChecked ?? []
+      );
+    routeOptions.config = {
+      ...routeOptions.config,
+      authz: kind,
+      ...(handlerChecked.length ? { handlerChecked } : {}),
+    };
+  }
+}
+
+/** `onRoute` hook: a `handler-checked` route gets the `onSend` backstop. */
+export function appendHandlerCheckedBackstop(routeOptions: {
+  config?: { authz?: AuthzKind };
+  onSend?: unknown;
+}): void {
+  if (routeOptions.config?.authz !== 'handler-checked') {
+    return;
+  }
+  const own = routeOptions.onSend;
+  routeOptions.onSend = [...(Array.isArray(own) ? own : own ? [own] : []), assertHandlerChecked];
 }
 
 /**
  * Admit a service principal's token to this route, or refuse it. Secure by default: a route that
  * declares no `config.serviceScopes` answers 401 `SERVICE_TOKEN_NOT_ALLOWED`, whatever the token
  * carries — so a new route is closed to machines until it opts in. A route that does declare them
- * needs every one on the token (else 403 `INSUFFICIENT_SCOPE`). A platform role above ENGINEER,
+ * needs every one on the token (else 403 `INSUFFICIENT_SCOPE`). Platform `ADMIN`,
  * or any team or organization role, refuses a principal outright: it holds no role to check
  * (and `assertServiceScopesAdmissible` refuses such a route at registration).
  *
@@ -1373,6 +1485,14 @@ async function admitOrchestrationToken(
 }
 
 export function requireAuth(options: RBACOptions = {}) {
+  for (const key of [options.capability, ...(options.handlerChecked ?? [])]) {
+    if (key !== undefined && !isCapabilityKey(key)) {
+      throw new Error(`requireAuth names the unknown capability '${key}'`);
+    }
+  }
+  if (options.capability && options.handlerChecked?.length) {
+    throw new Error('requireAuth takes a capability or handlerChecked, not both');
+  }
   const hook = async (request: FastifyRequest, reply: FastifyReply) => {
     const authHeader = request.headers.authorization;
     let payload: JwtPayload | null = null;
@@ -1483,85 +1603,10 @@ export function requireAuth(options: RBACOptions = {}) {
     }
     request.repoAccessGate = gate ?? { mode: 'off', staleAfterHours: 0 };
 
-    // Platform role check
-    if (options.requiredRole && !hasRole(payload.role, options.requiredRole)) {
-      return reply.status(403).send({
-        error: { code: 'FORBIDDEN', message: `Requires ${options.requiredRole} role` },
-      });
-    }
-
-    // Team role check: resolve membership and enforce
-    if (options.requiredTeamRole) {
-      // Platform ADMIN bypasses team checks
-      if (payload.role === 'ADMIN') {
-        return;
-      }
-
-      const teamId = (request.params as Record<string, string>)?.[options.teamIdParam ?? 'id'];
-      if (!teamId) {
-        // The route promised a team ID param but did not declare one. This is a
-        // server misconfiguration, not a client error, so it stays a 500.
-        return reply.status(500).send({
-          error: { code: 'SERVER_ERROR', message: 'Team ID route parameter missing' },
-        });
-      }
-      if (!UUID_RE.test(teamId)) {
-        return reply.status(400).send({
-          error: { code: 'INVALID_ID', message: 'Team ID must be a valid UUID' },
-        });
-      }
-
-      const prisma = request.server.prisma;
-      const membership = await prisma.teamMembership.findUnique({
-        where: { userId_teamId: { teamId, userId: payload.sub } },
-      });
-
-      if (!membership || !hasRole(membership.role, options.requiredTeamRole)) {
-        return reply.status(403).send({
-          error: {
-            code: 'FORBIDDEN',
-            message: `Requires ${options.requiredTeamRole} role in this team`,
-          },
-        });
-      }
-
-      request.teamRole = membership.role;
-    }
-
-    // Org role check: resolve org membership and enforce (P5 multi-org RBAC)
-    if (options.requiredOrgRole) {
-      // Platform ADMIN bypasses org checks
-      if (payload.role === 'ADMIN') {
-        return;
-      }
-
-      const orgId = (request.params as Record<string, string>)?.[options.orgIdParam ?? 'orgId'];
-      if (!orgId) {
-        // The route promised an org ID param but did not declare one. This is a
-        // server misconfiguration, not a client error, so it stays a 500.
-        return reply.status(500).send({
-          error: { code: 'SERVER_ERROR', message: 'Organization ID route parameter missing' },
-        });
-      }
-      if (!UUID_RE.test(orgId)) {
-        return reply.status(400).send({
-          error: { code: 'INVALID_ID', message: 'Organization ID must be a valid UUID' },
-        });
-      }
-
-      const prisma = request.server.prisma;
-      const membership = await prisma.organizationMembership.findUnique({
-        where: { userId_orgId: { orgId, userId: payload.sub } },
-      });
-
-      if (!membership || !hasOrgRole(membership.role, options.requiredOrgRole)) {
-        return reply.status(403).send({
-          error: {
-            code: 'FORBIDDEN',
-            message: `Requires ${options.requiredOrgRole} role in this organization`,
-          },
-        });
-      }
+    // Capability check, when the route declares one.
+    const refused = await enforceCapability(request, reply, payload, options);
+    if (refused) {
+      return refused;
     }
   };
   return Object.assign(hook, { [RBAC_OPTIONS]: options });

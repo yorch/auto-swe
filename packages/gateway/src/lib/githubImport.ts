@@ -10,10 +10,11 @@ import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
 import { lookupRepoPermission, verifiedGithubLoginFor } from '@auto-swe/shared/lib/repoPermission';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { type HeldScope, isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyInstance } from 'fastify';
 import { type GitHubRepoInfo, listGitHubRepos } from './github.js';
 import { defaultGitHubInstallation } from './installationOrganization.js';
-import { repositoryManagementTeams } from './tenantScope.js';
+import { managedTeams } from './tenantScope.js';
 
 export const IMPORT_ACCESS_LOOKUP_CAP = 100;
 export const IMPORT_CACHE_TTL_MS = 180_000;
@@ -191,19 +192,20 @@ export async function verifiedImportInstallation(
 
 export async function availableGitHubRepos(
   prisma: FastifyInstance['prisma'],
-  user: { sub: string; role: string }
+  user: { sub: string; role: string },
+  managed: HeldScope
 ) {
   const config = await resolveGitHubConfig();
   const rows = await prisma.gitHubInstallation.findMany({
     orderBy: { id: 'asc' },
     where: {
       isActive: true,
-      ...(user.role === 'ADMIN'
+      ...(isPlatformAdmin(user)
         ? {}
         : {
             OR: [
               { organizationId: null },
-              { organization: { teams: { some: repositoryManagementTeams(user) } } },
+              { organization: { teams: { some: managedTeams(managed) } } },
             ],
           }),
     },
@@ -269,7 +271,7 @@ export async function availableGitHubRepos(
       });
     }
   }
-  const admin = user.role === 'ADMIN';
+  const admin = isPlatformAdmin(user);
   const accounts = admin
     ? []
     : await prisma.account.findMany({

@@ -3,8 +3,10 @@
 import type { BudgetStatus } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import type { OrgRoleValue, TeamRoleValue } from '@/lib/roleLabels';
+import { PERMISSIONS_KEY } from './useEffectivePermissions';
 
-export type OrgRole = 'ORG_ADMIN' | 'ORG_MEMBER';
+export type OrgRole = OrgRoleValue;
 
 export interface OrgMemberRow {
   id: string;
@@ -46,7 +48,7 @@ export interface OrgBudgetRow {
 export interface OrgRow {
   budgetAlertThresholdPercent: number | null;
   id: string;
-  /** Absent for a caller who is not an ORG_ADMIN: the cap is theirs to read. */
+  /** Absent for a caller who does not hold `org.budget.manage`: the cap is theirs to read. */
   monthlyBudgetUsdCents?: number | null;
   name: string;
   slug: string;
@@ -94,7 +96,10 @@ export function useUpsertOrgMember(orgId: string) {
       api
         .post<{ data: OrgMemberRow }>(`/api/v1/platform/organizations/${orgId}/members`, body)
         .then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-members', orgId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['org-members', orgId] });
+      qc.invalidateQueries({ queryKey: PERMISSIONS_KEY });
+    },
   });
 }
 
@@ -108,7 +113,10 @@ export function usePatchOrgMember(orgId: string) {
           { role }
         )
         .then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-members', orgId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['org-members', orgId] });
+      qc.invalidateQueries({ queryKey: PERMISSIONS_KEY });
+    },
   });
 }
 
@@ -117,7 +125,10 @@ export function useRemoveOrgMember(orgId: string) {
   return useMutation({
     mutationFn: (userId: string) =>
       api.delete(`/api/v1/platform/organizations/${orgId}/members/${userId}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-members', orgId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['org-members', orgId] });
+      qc.invalidateQueries({ queryKey: PERMISSIONS_KEY });
+    },
   });
 }
 
@@ -128,7 +139,7 @@ export function useInviteOrgMember(orgId: string) {
       email: string;
       orgRole: OrgRole;
       teamId?: string;
-      teamRole?: 'ADMIN' | 'LEAD' | 'ENGINEER';
+      teamRole?: TeamRoleValue;
     }) =>
       api.post<{ data: { id: string; email: string; isActive: boolean } }>(
         `/api/v1/platform/organizations/${orgId}/members/invite`,
@@ -138,6 +149,7 @@ export function useInviteOrgMember(orgId: string) {
       qc.invalidateQueries({ queryKey: ['org-members', orgId] });
       qc.invalidateQueries({ queryKey: ['teams'] });
       qc.invalidateQueries({ queryKey: ['team'] });
+      qc.invalidateQueries({ queryKey: PERMISSIONS_KEY });
     },
   });
 }
@@ -145,7 +157,7 @@ export function useInviteOrgMember(orgId: string) {
 // ── Org Budget ──
 
 /**
- * The dollar budget: ORG_ADMIN (or platform ADMIN) only, so a caller who is neither passes
+ * The dollar budget (`org.budget.manage`), so a caller who does not hold it passes
  * `enabled: false` rather than meeting a 403.
  */
 export function useOrgBudget(orgId: string, enabled = true) {

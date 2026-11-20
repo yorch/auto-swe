@@ -58,7 +58,7 @@ const IdParams = z.object({ id: z.string().uuid() });
 
 export const githubInstallationRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.integrations.manage' });
   const outsideCount = (id: string, organizationId: string | null | undefined) =>
     organizationId
       ? runUnscoped(

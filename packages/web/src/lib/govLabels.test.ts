@@ -1,28 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import {
-  budgetTierLabel,
-  orgRoleLabel,
-  platformRoleLabel,
-  roleChangeNeedsConfirm,
-} from './govLabels';
+import { budgetTierLabel, roleChangeNeedsConfirm } from './govLabels';
 
 describe('govLabels', () => {
-  it('names org roles, tiers and platform roles in plain language', () => {
-    expect(orgRoleLabel('ORG_ADMIN')).toBe('Organization admin');
+  it('names budget tiers in plain language', () => {
     expect(budgetTierLabel('EPIC')).toBe('Epic');
-    expect(platformRoleLabel('LEAD')).toBe('Lead');
-  });
-
-  it('passes an unknown value through rather than hiding it', () => {
-    expect(orgRoleLabel('SOMETHING')).toBe('SOMETHING');
+    expect(budgetTierLabel('SOMETHING')).toBe('SOMETHING');
   });
 });
 
 describe('roleChangeNeedsConfirm', () => {
-  it('confirms admin grants and demotions only', () => {
-    expect(roleChangeNeedsConfirm('ENGINEER', 'ADMIN')).toBe(true);
-    expect(roleChangeNeedsConfirm('ADMIN', 'LEAD')).toBe(true);
-    expect(roleChangeNeedsConfirm('LEAD', 'ENGINEER')).toBe(true);
-    expect(roleChangeNeedsConfirm('ENGINEER', 'LEAD')).toBe(false);
+  it('asks before a platform role changes, and not when it stays', () => {
+    expect(roleChangeNeedsConfirm('USER', 'ADMIN')).toBe(true);
+    expect(roleChangeNeedsConfirm('ADMIN', 'USER')).toBe(true);
+    expect(roleChangeNeedsConfirm('USER', 'USER')).toBe(false);
   });
 });

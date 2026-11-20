@@ -66,7 +66,7 @@ describe.skipIf(!enabled)('assistant actions against Postgres', () => {
 
   const assistant = (cid = conversationId) =>
     `Bearer ${app.auth.signAssistantToken({ conversationId: cid, userId })}`;
-  const person = () => `Bearer ${app.auth.signAccessToken({ role: 'ENGINEER', sub: userId })}`;
+  const person = () => `Bearer ${app.auth.signAccessToken({ role: 'USER', sub: userId })}`;
 
   async function proposeAndConfirm(): Promise<string> {
     const proposed = await app.inject({

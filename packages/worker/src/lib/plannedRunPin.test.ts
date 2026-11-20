@@ -563,12 +563,6 @@ describe('loadApprovedPlan: what the plan runs and who runs it', () => {
       expect(await run({ user: null })).toBe('PLAN_LAUNCHER_INACTIVE');
     });
 
-    it('refuses a launcher demoted below ENGINEER', async () => {
-      expect(await run({ user: { id: USER, isActive: true, role: 'VIEWER' } })).toBe(
-        'PLAN_LAUNCHER_ROLE'
-      );
-    });
-
     it('refuses when the shared repository decision no longer allows the launcher', async () => {
       access.verdict.value = { allowed: false, reason: 'not-a-team-member' };
       expect(await run({})).toBe('PLAN_LAUNCHER_ACCESS_LOST');

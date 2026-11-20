@@ -25,7 +25,7 @@ vi.mock('./specRefValidation.js', () => ({ findSpecRefProblems: refs.findSpecRef
 
 const TEAM_ID = '11111111-1111-4111-8111-111111111111';
 const ADMIN = { role: 'ADMIN', sub: 'admin-1' } as JwtPayload;
-const LEAD = { role: 'LEAD', sub: 'user-1' } as JwtPayload;
+const LEAD = { role: 'USER', sub: 'user-1' } as JwtPayload;
 
 interface PrismaOpts {
   membership?: { role: string } | null;
@@ -34,8 +34,19 @@ interface PrismaOpts {
 
 function fastifyWith(opts: PrismaOpts = {}) {
   const prisma = {
-    team: { findUnique: vi.fn().mockResolvedValue(opts.team ?? null) },
-    teamMembership: { findUnique: vi.fn().mockResolvedValue(opts.membership ?? null) },
+    organizationMembership: { findMany: vi.fn().mockResolvedValue([]) },
+    // `can()` reads the team, the caller's membership of it and its organization standing.
+    team: {
+      findMany: vi.fn().mockResolvedValue([{ id: TEAM_ID, isActive: true, orgId: null }]),
+      findUnique: vi.fn().mockResolvedValue(opts.team ?? null),
+    },
+    teamMembership: {
+      findMany: vi
+        .fn()
+        .mockResolvedValue(
+          opts.membership ? [{ role: opts.membership.role, teamId: TEAM_ID }] : []
+        ),
+    },
   };
   return { fastify: { prisma } as unknown as FastifyInstance, prisma };
 }
@@ -214,14 +225,14 @@ describe('assertShellAuthoringAllowed', () => {
     const { fastify, prisma } = fastifyWith();
     const result = await assertShellAuthoringAllowed(fastify, LEAD, TEAM_ID, []);
     expect(result).toBeNull();
-    expect(prisma.teamMembership.findUnique).not.toHaveBeenCalled();
+    expect(prisma.teamMembership.findMany).not.toHaveBeenCalled();
   });
 
   it('lets a platform ADMIN author shell nodes on a global template without a lookup', async () => {
     const { fastify, prisma } = fastifyWith();
     const result = await assertShellAuthoringAllowed(fastify, ADMIN, null, [shell('sh', 'x')]);
     expect(result).toBeNull();
-    expect(prisma.teamMembership.findUnique).not.toHaveBeenCalled();
+    expect(prisma.teamMembership.findMany).not.toHaveBeenCalled();
   });
 
   it('refuses a non-platform-admin on a global template with SHELL_AUTHOR_FORBIDDEN', async () => {
@@ -238,15 +249,16 @@ describe('assertShellAuthoringAllowed', () => {
       statusCode: 403,
     });
     // A team-admin membership cannot unlock a global template.
-    expect(prisma.teamMembership.findUnique).not.toHaveBeenCalled();
+    expect(prisma.teamMembership.findMany).not.toHaveBeenCalled();
   });
 
   it('lets a team ADMIN of the owning team author shell nodes', async () => {
     const { fastify, prisma } = fastifyWith({ membership: { role: 'ADMIN' } });
     const result = await assertShellAuthoringAllowed(fastify, LEAD, TEAM_ID, [shell('sh', 'x')]);
     expect(result).toBeNull();
-    expect(prisma.teamMembership.findUnique).toHaveBeenCalledWith({
-      where: { userId_teamId: { teamId: TEAM_ID, userId: 'user-1' } },
+    expect(prisma.teamMembership.findMany).toHaveBeenCalledWith({
+      select: { role: true, teamId: true },
+      where: { teamId: { in: [TEAM_ID] }, userId: 'user-1' },
     });
   });
 

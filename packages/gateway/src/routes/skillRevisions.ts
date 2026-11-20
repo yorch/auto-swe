@@ -25,7 +25,7 @@ const RevisionParams = IdParams.extend({ revision: z.coerce.number().int().posit
 
 export const skillRevisionRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.catalog.manage' });
 
   app.get(
     '/skills/:id/revisions',

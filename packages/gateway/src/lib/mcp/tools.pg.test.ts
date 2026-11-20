@@ -80,7 +80,7 @@ describe.skipIf(!enabled)('MCP read tools against Postgres', () => {
       url,
     });
 
-  async function makeUser(role: 'ENGINEER' | 'ADMIN', label: string) {
+  async function makeUser(role: 'USER' | 'ADMIN', label: string) {
     const email = `${MARK}-${label}@example.test`;
     const user = await prisma.user.create({
       data: { email, emailVerified: true, isActive: true, name: `Name ${label}`, role },
@@ -182,7 +182,7 @@ describe.skipIf(!enabled)('MCP read tools against Postgres', () => {
   }
 
   /** The same question asked of REST, as the same user, with an API token. */
-  async function rest(user: { id: string; role: 'ENGINEER' | 'ADMIN' }, url: string) {
+  async function rest(user: { id: string; role: 'USER' | 'ADMIN' }, url: string) {
     const res = await app.inject({
       headers: {
         authorization: `Bearer ${app.auth.signAccessToken({ role: user.role, sub: user.id })}`,
@@ -215,7 +215,7 @@ describe.skipIf(!enabled)('MCP read tools against Postgres', () => {
   const ids = {} as Record<string, string>;
   const people = {} as Record<
     'alice' | 'outsider' | 'admin' | 'gone',
-    { cookie: string; id: string; role: 'ENGINEER' | 'ADMIN'; token: string }
+    { cookie: string; id: string; role: 'USER' | 'ADMIN'; token: string }
   >;
 
   async function fixtures() {
@@ -311,10 +311,10 @@ describe.skipIf(!enabled)('MCP read tools against Postgres', () => {
       ids[`human${side}`] = human.id;
     }
 
-    const alice = await makeUser('ENGINEER', 'alice');
-    const outsider = await makeUser('ENGINEER', 'outsider');
+    const alice = await makeUser('USER', 'alice');
+    const outsider = await makeUser('USER', 'outsider');
     const admin = await makeUser('ADMIN', 'admin');
-    const gone = await makeUser('ENGINEER', 'gone');
+    const gone = await makeUser('USER', 'gone');
     await runUnscoped('test fixture: memberships', ['TeamMembership'], async () => {
       await prisma.teamMembership.create({
         data: { teamId: ids.teama as string, userId: alice.id },
@@ -326,14 +326,14 @@ describe.skipIf(!enabled)('MCP read tools against Postgres', () => {
         data: { teamId: ids.teama as string, userId: gone.id },
       });
     });
-    people.alice = { ...alice, role: 'ENGINEER', token: (await issueToken(alice.cookie)).token };
+    people.alice = { ...alice, role: 'USER', token: (await issueToken(alice.cookie)).token };
     people.outsider = {
       ...outsider,
-      role: 'ENGINEER',
+      role: 'USER',
       token: (await issueToken(outsider.cookie)).token,
     };
     people.admin = { ...admin, role: 'ADMIN', token: (await issueToken(admin.cookie)).token };
-    people.gone = { ...gone, role: 'ENGINEER', token: (await issueToken(gone.cookie)).token };
+    people.gone = { ...gone, role: 'USER', token: (await issueToken(gone.cookie)).token };
   }
 
   async function cleanup() {

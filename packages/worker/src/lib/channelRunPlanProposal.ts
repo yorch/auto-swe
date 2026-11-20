@@ -213,7 +213,7 @@ export const PROPOSAL_TEXT = {
   linkAccount:
     ':lock: Generating a plan acts as you, so your Slack account has to be linked to auto-swe ' +
     'first. Link it in Settings, then ask me again.',
-  needsEngineer: ':lock: Generating a plan needs the ENGINEER role on auto-swe.',
+  needsEngineer: ':lock: Generating a plan needs an active user account on auto-swe.',
   noRepo:
     ":information_source: I couldn't tell which repository to plan for: this channel has none " +
     'linked, or several. Name the repository in your request (or ask an admin to link one), ' +

@@ -33,6 +33,7 @@ import {
   syncTrackerOnEvent,
   type TrackerSyncEvent,
 } from '@auto-swe/shared/lib/trackerSync';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { migrateSpec, parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import {
@@ -265,11 +266,12 @@ async function epicChildSourceSnapshot(
       return unknown;
     }
     // The platform ADMIN bypass is the same explicit one every other repository check makes.
+    const platformAdmin = isPlatformAdmin({ kind: 'user', role: actor.role });
     const member =
-      actor.role === 'ADMIN' ||
+      platformAdmin ||
       Boolean(teamMembership) ||
       repository.shares.some((share) => share.team.isActive && share.team.memberships.length > 0);
-    const orgMember = actor.role === 'ADMIN' || Boolean(orgMembership);
+    const orgMember = platformAdmin || Boolean(orgMembership);
     if (!member || !orgMember) {
       return unknown;
     }

@@ -30,7 +30,7 @@ function makeReply() {
 }
 
 const ADMIN_USER = { role: 'ADMIN', sub: USER_ID } as import('../plugins/auth.js').JwtPayload;
-const LEAD_USER = { role: 'LEAD', sub: USER_ID } as import('../plugins/auth.js').JwtPayload;
+const LEAD_USER = { role: 'USER', sub: USER_ID } as import('../plugins/auth.js').JwtPayload;
 
 describe('assertOrgAccess', () => {
   it('platform ADMIN always passes without DB query', async () => {

@@ -22,7 +22,7 @@ const teamDetail = {
     ...teamRow,
     memberships: [
       { role: 'LEAD', user: { email: 'alice@example.com', id: USER, role: 'ADMIN' } },
-      { role: 'SUPERUSER', user: { email: 'bob@example.com', id: REPO, role: 'ENGINEER' } },
+      { role: 'SUPERUSER', user: { email: 'bob@example.com', id: REPO, role: 'USER' } },
     ],
     repositories: [
       { id: REPO, isActive: true, organizationName: 'acme', repoName: 'api', secret: INJECTION },
@@ -73,7 +73,7 @@ describe('the team tools', () => {
       // A role this server does not know degrades to the lowest rather than passing through.
       members: [
         { role: 'LEAD', userId: USER },
-        { role: 'ENGINEER', userId: REPO },
+        { role: 'MEMBER', userId: REPO },
       ],
       name: 'Payments',
       repositories: [{ id: REPO, isActive: true, organizationName: 'acme', repoName: 'api' }],

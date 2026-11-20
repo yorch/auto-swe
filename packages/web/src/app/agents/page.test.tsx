@@ -64,7 +64,10 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('@/hooks/useAdmin', () => ({ useOrganizationDirectory: () => ({ data: [] }) }));
-vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => state.admin }));
+vi.mock('@/hooks/useCan', () => ({
+  useCan: () => state.admin,
+  usePlatformAdmin: () => state.admin,
+}));
 vi.mock('@/hooks/useMcpConnections', () => ({ useMcpConnections: () => ({ data: [] }) }));
 vi.mock('@/hooks/useModelConfig', () => ({ useAdminCredentials: () => ({ data: [] }) }));
 vi.mock('@/hooks/useReadiness', () => ({

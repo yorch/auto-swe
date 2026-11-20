@@ -7,7 +7,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Input } from '@/components/ui/Input';
 import { type ShellAuditPruneResult, useShellAuditPrune } from '@/hooks/useAdmin';
-import { useHasRole } from '@/hooks/useHasRole';
+import { useCan } from '@/hooks/useCan';
 import { errMsg } from '@/lib/errors';
 
 const MAX_DAYS = 3650;
@@ -18,7 +18,7 @@ const MAX_DAYS = 3650;
  * first, and the delete is confirmed. Renders nothing for a non-admin.
  */
 export function ShellAuditPrune() {
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = useCan('platform.shell-audit.prune');
   const prune = useShellAuditPrune();
   const [days, setDays] = useState('90');
   const [preview, setPreview] = useState<ShellAuditPruneResult | null>(null);

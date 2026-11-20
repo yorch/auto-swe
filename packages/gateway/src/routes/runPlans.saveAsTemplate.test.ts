@@ -102,14 +102,30 @@ describe('POST /run-plans/:id/save-as-template', () => {
           return data;
         },
       },
+      // The permissions loader's reads: the caller holds `teamRole` on the plan's team, or none.
+      organizationMembership: { findMany: async () => [] },
       runPlan: {
         findUnique: async ({ where }: { where: { id: string } }) =>
           s.plans.find((p) => p.id === where.id) ?? null,
+      },
+      team: {
+        findMany: async (args: { where: { id: { in: string[] } } }) =>
+          args.where.id.in.map((id) => ({ id, isActive: true, orgId: null })),
       },
       teamMembership: {
         findFirst: async (args: { where: Record<string, unknown> }) => {
           s.leadLookups.push(args.where);
           return s.teamRole ? { role: s.teamRole } : null;
+        },
+        findMany: async (args: { select?: { team?: unknown }; where: Record<string, unknown> }) => {
+          s.leadLookups.push(args.where);
+          if (!s.teamRole) {
+            return [];
+          }
+          // `heldScope` lists the caller's teams; `can` asks about the ones it names.
+          return args.select?.team
+            ? [{ role: s.teamRole, team: { id: TEAM, isActive: true, orgId: null } }]
+            : [{ role: s.teamRole, teamId: (args.where.teamId as { in: string[] }).in[0] }];
         },
         findUnique: async () => (s.teamRole ? { role: s.teamRole } : null),
       },
@@ -248,8 +264,8 @@ describe('POST /run-plans/:id/save-as-template', () => {
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe('FORBIDDEN');
     expect(s.templates).toHaveLength(0);
-    // The lookup is the template-authoring one: LEAD or ADMIN of the plan's team.
-    expect(s.leadLookups[0]).toMatchObject({ role: { in: ['LEAD', 'ADMIN'] }, teamId: TEAM });
+    // The lookup is the permissions loader's read of the caller's role on the plan's team.
+    expect(s.leadLookups[0]).toMatchObject({ teamId: { in: [TEAM] } });
     s.role = 'ADMIN';
     expect((await save({})).statusCode).toBe(201);
   });

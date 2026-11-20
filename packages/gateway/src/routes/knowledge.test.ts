@@ -33,6 +33,7 @@ vi.mock('@auto-swe/shared/lib/repoAccessGate', () => ({
 }));
 
 import { KnowledgeAccessError, KnowledgeVersionConflictError } from '@auto-swe/shared';
+import { emptyStanding, setTeam, withStanding } from '../test/repoStanding.js';
 import { knowledgeRoutes } from './knowledge.js';
 
 const ACTOR = 'actor-user';
@@ -63,13 +64,25 @@ describe('knowledge routes', () => {
     app.decorate('auth', {
       verifyAccessToken: async () => ({ exp: 9999999999, iat: 0, role: actorRole, sub: ACTOR }),
     } as never);
-    app.decorate('prisma', {
-      connection: { findFirst: async () => (repoAllowed ? { id: REPO } : null) },
-      organizationMembership: { findFirst: async () => null },
-      team: { findFirst: async () => (teamMember ? { id: TEAM } : null) },
-      teamMembership: { findFirst: async () => ({ role: 'LEAD' }) },
-      user: { findUniqueOrThrow: async () => ({ role: actorRole }) },
-    } as never);
+    // The caller leads TEAM; `can()` reads that through `withStanding`.
+    const standing = emptyStanding();
+    setTeam(standing, TEAM, { role: 'LEAD' });
+    app.decorate(
+      'prisma',
+      withStanding(
+        {
+          connection: { findFirst: async () => (repoAllowed ? { id: REPO } : null) },
+          organizationMembership: { findFirst: async () => null, findMany: async () => [] },
+          team: {
+            findFirst: async () => (teamMember ? { id: TEAM } : null),
+            findMany: async () => [],
+          },
+          teamMembership: { findFirst: async () => ({ role: 'LEAD' }), findMany: async () => [] },
+          user: { findUniqueOrThrow: async () => ({ role: actorRole }) },
+        },
+        standing
+      ) as never
+    );
     app.register(knowledgeRoutes, { prefix: '/api/v1/knowledge' });
     await app.ready();
   });

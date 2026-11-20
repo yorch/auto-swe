@@ -4,14 +4,13 @@ import type { TeamSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { Card, CardTitle } from '@/components/ui/Card';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { useCan } from '@/hooks/useCan';
 import { useTeam } from '@/hooks/useTeams';
-import { hasRole } from '@/lib/roles';
 import { teamHref } from '@/lib/teamSpace';
-import { useAuthStore } from '@/stores/authStore';
 
 export function TeamSetupChecklist({ team }: { team: TeamSummary }) {
-  const platformRole = useAuthStore((s) => s.user?.role);
-  const visible = hasRole(platformRole, 'ADMIN') || hasRole(team.myRole, 'LEAD');
+  // The checklist is for whoever runs the team: those who may manage its members.
+  const visible = useCan('team.members.manage', { orgId: team.orgId, teamId: team.id });
   return visible ? <Checklist team={team} /> : null;
 }
 

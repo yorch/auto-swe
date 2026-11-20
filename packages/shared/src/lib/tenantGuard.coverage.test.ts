@@ -48,6 +48,13 @@ const EXEMPT_WRAPPERS = new Set(['runUnscoped', 'asPlatformAdmin']);
  *  - `knowledgeService:knowledgeItem.findMany` → one call uses `knowledgeReadableWhere(actor)`;
  *    the other uses conditions built from current manager memberships, repository capabilities,
  *    and the explicit platform-ADMIN `runUnscoped()` path.
+ *  - `permissions/load:team.findMany`, `teamMembership.findMany`, `organizationMembership.findMany` →
+ *    the capability resolver reads the ACTOR's own standing (their memberships by `userId`, and the
+ *    team rows those memberships or the named teams point at). A person's standing spans tenants by
+ *    definition and the rows are never returned to a caller, only folded into a decision.
+ *  - `permissions/effective:teamMembership.findMany`, `organizationMembership.findMany` → the
+ *    caller's own memberships by `userId`, for `GET /me/permissions`; the response describes only the
+ *    caller's own standing.
  *  - `knowledgeRuntime:knowledgeItem.findMany` → both semantic candidate and final-projection
  *    calls reuse `getKnowledgeWorkflowEligibilityWhere()`, which intersects the running workflow's
  *    current launcher memberships with the saved source and issued repository capability.
@@ -71,6 +78,11 @@ const HAND_VERIFIED = new Map([
   ['packages/shared/src/lib/knowledgeService.ts:connection.findMany', 1],
   ['packages/shared/src/lib/knowledgeService.ts:knowledgeItem.findMany', 2],
   ['packages/worker/src/lib/knowledgeRuntime.ts:knowledgeItem.findMany', 2],
+  ['packages/shared/src/permissions/load.ts:team.findMany', 1],
+  ['packages/shared/src/permissions/load.ts:teamMembership.findMany', 2],
+  ['packages/shared/src/permissions/load.ts:organizationMembership.findMany', 2],
+  ['packages/shared/src/permissions/effective.ts:teamMembership.findMany', 1],
+  ['packages/shared/src/permissions/effective.ts:organizationMembership.findMany', 1],
 ]);
 
 /**

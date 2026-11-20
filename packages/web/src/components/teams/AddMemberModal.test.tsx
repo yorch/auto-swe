@@ -2,28 +2,33 @@
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useAuthStore } from '@/stores/authStore';
+import {
+  ADMIN_PERMISSIONS,
+  permissionsFor,
+  resetPermissions,
+  setPermissions,
+} from '@/test/permissions';
 import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import { AddMemberModal } from './AddMemberModal';
 
-function signInAs(role: 'ADMIN' | 'LEAD') {
-  useAuthStore.setState({ isAuthenticated: true, user: { role, sub: 'me' } });
-}
+vi.mock('@/hooks/useEffectivePermissions', async () =>
+  (await import('@/test/permissions')).permissionsMock()
+);
 
 beforeEach(() => {
   stubDialogPrototype();
-  signInAs('ADMIN');
+  setPermissions(ADMIN_PERMISSIONS);
 });
 afterEach(() => {
   vi.unstubAllGlobals();
-  useAuthStore.setState({ isAuthenticated: false, user: null });
+  resetPermissions();
 });
 
 const TEAM_ID = 't1';
 const USERS = [
-  { email: 'eligible@example.com', id: 'u1', isActive: true, role: 'ENGINEER', slackId: null },
-  { email: 'already-member@example.com', id: 'u2', isActive: true, role: 'LEAD', slackId: null },
-  { email: 'inactive@example.com', id: 'u3', isActive: false, role: 'ENGINEER', slackId: null },
+  { email: 'eligible@example.com', id: 'u1', isActive: true, role: 'USER', slackId: null },
+  { email: 'already-member@example.com', id: 'u2', isActive: true, role: 'USER', slackId: null },
+  { email: 'inactive@example.com', id: 'u3', isActive: false, role: 'USER', slackId: null },
 ];
 
 describe('AddMemberModal', () => {
@@ -55,11 +60,11 @@ describe('AddMemberModal', () => {
     // Picking it closes the list (an open popover makes the rest of the dialog inert).
     fireEvent.click(screen.getByRole('option'));
 
-    // Bump role to LEAD before submitting. The select has id="role" so the
+    // Bump the team role to lead before submitting. The select has id="role" so the
     // accessible name resolves to "Team role" — match exactly to avoid the
     // /role/i regex also catching the "Role" column in any other render.
     fireEvent.click(screen.getByRole('button', { name: /team role/i }));
-    fireEvent.click(screen.getByRole('option', { name: 'Lead' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Team lead' }));
     fireEvent.click(screen.getByRole('button', { name: /add member/i }));
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
@@ -88,8 +93,12 @@ describe('AddMemberModal', () => {
     expect(submit.disabled).toBe(true);
   });
 
-  it('lets a LEAD pick only organization members not already in the team', async () => {
-    signInAs('LEAD');
+  it('lets a team lead pick only organization members not already in the team', async () => {
+    setPermissions(
+      permissionsFor({
+        teams: [{ capabilities: ['team.members.manage'], role: 'LEAD', teamId: TEAM_ID }],
+      })
+    );
     const onClose = vi.fn();
     const spy = setupFetchMock({
       '/api/v1/platform/organizations/o1/members': () => ({
@@ -105,7 +114,7 @@ describe('AddMemberModal', () => {
       withQuery(
         <AddMemberModal
           existingUserIds={['u2']}
-          grantableRoles={['ENGINEER', 'LEAD']}
+          grantableRoles={['MEMBER', 'LEAD']}
           onClose={onClose}
           open={true}
           orgId="o1"
@@ -129,10 +138,10 @@ describe('AddMemberModal', () => {
     fireEvent.click(submit);
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(bodyOf(spy, `/api/v1/teams/${TEAM_ID}/members`, 'POST')).toEqual({
-      role: 'ENGINEER',
+      role: 'MEMBER',
       userId: 'u1',
     });
-    // The ADMIN-only directory was never requested.
+    // The platform admin's full directory was never requested.
     expect(spy.mock.calls.some(([u]) => String(u).endsWith('/api/v1/users'))).toBe(false);
   });
 });

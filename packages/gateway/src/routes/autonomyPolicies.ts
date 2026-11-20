@@ -152,7 +152,7 @@ function policyWriteRefusal(
 
 export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.catalog.manage' });
 
   app.get(
     '/autonomy-policies',

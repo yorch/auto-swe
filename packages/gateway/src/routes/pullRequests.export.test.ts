@@ -207,9 +207,14 @@ describe('GET /api/v1/pull-requests/outcomes/export', () => {
     ]);
   });
 
-  it('refuses a VIEWER and a bad query without reading', async () => {
-    const viewer = await buildApp('VIEWER');
-    expect((await get(viewer)).statusCode).toBe(403);
+  // The platform role floor is gone; the unauthenticated refusal is what remains of it.
+  it('refuses an unauthenticated caller and a bad query without reading', async () => {
+    const viewer = await buildApp();
+    const res = await viewer.app.inject({
+      method: 'GET',
+      url: '/api/v1/pull-requests/outcomes/export',
+    });
+    expect(res.statusCode).toBe(401);
     const b = await buildApp();
     expect((await get(b, '?format=xml')).statusCode).toBe(400);
     expect((await get(b, '?since=2026-06-10')).statusCode).toBe(400);

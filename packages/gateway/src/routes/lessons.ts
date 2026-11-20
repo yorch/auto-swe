@@ -1,11 +1,13 @@
 import type { Prisma } from '@auto-swe/shared';
 import { forgetMemoryItems } from '@auto-swe/shared/lib/memoryForget';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isPlatformAdmin, userActor } from '@auto-swe/shared/permissions';
 import { QUALITY_FIX_STEPS } from '@auto-swe/shared/workflow';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { can, heldScope } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
 import {
   LESSON_QUARANTINE_SELECT,
@@ -18,9 +20,8 @@ import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
-import { ledTeams, reachableConnections } from '../lib/tenantScope.js';
+import { reachableConnections } from '../lib/tenantScope.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
-import { canManageTeamRepos } from './repositories.js';
 
 const ConsolidateBody = z.object({
   minClusterSize: z.number().int().min(2).max(20).optional(),
@@ -62,16 +63,19 @@ const LESSON_SCOPE = 'swe-lessons';
  * What the caller may do with a repository's lessons. Managing them — deleting one,
  * starting consolidation — is repository management, so it takes what editing the
  * repository takes: a platform ADMIN, or a LEAD or ADMIN of its owning team
- * (`canManageTeamRepos`). A shared team's members read the lessons but do not manage
+ * (`team.lessons.manage`). A shared team's members read the lessons but do not manage
  * them. A lesson whose repository is gone is a platform ADMIN's alone.
  */
 async function lessonRepoAccess(
   fastify: Parameters<FastifyPluginAsync>[0],
+  request: FastifyRequest,
   user: JwtPayload,
   gate: Parameters<typeof reachableConnections>[1],
   repoId: string | null
 ): Promise<'manage' | 'read' | 'none'> {
-  if (user.role === 'ADMIN') {
+  // Named with no team, the capability is a platform admin's alone: they manage every lesson,
+  // including one whose repository is gone.
+  if ((await can(request, 'team.lessons.manage')).allowed) {
     return 'manage';
   }
   if (!repoId) {
@@ -84,7 +88,9 @@ async function lessonRepoAccess(
   if (!repo) {
     return 'none';
   }
-  return (await canManageTeamRepos(fastify.prisma, user, repo.teamId)) ? 'manage' : 'read';
+  return (await can(request, 'team.lessons.manage', { teamId: repo.teamId })).allowed
+    ? 'manage'
+    : 'read';
 }
 
 const NOT_A_LEAD = "Only a lead of the repository's team can manage its lessons";
@@ -95,7 +101,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/recall-experiment',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.lessons.manage'] }),
       schema: {
         querystring: z
           .object({
@@ -110,7 +116,6 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
-      const user = requireUser(request);
       const { repoId, teamId } = request.query;
       let ownerTeamId = teamId;
       if (repoId) {
@@ -123,7 +128,10 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
         }
         ownerTeamId = repo.teamId;
       }
-      if (!ownerTeamId || !(await canManageTeamRepos(fastify.prisma, user, ownerTeamId))) {
+      if (
+        !ownerTeamId ||
+        !(await can(request, 'team.lessons.manage', { teamId: ownerTeamId })).allowed
+      ) {
         return sendError(reply, 403, 'FORBIDDEN', NOT_A_LEAD);
       }
       const since = request.query.since ?? new Date(Date.now() - 30 * 86_400_000);
@@ -182,17 +190,16 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: LessonListQuery },
     },
     async (request) => {
       const user = requireUser(request);
       const { flagged, quarantined, includeConsolidated, limit, offset, q, repoId } = request.query;
 
-      const accessFilter: Prisma.MemoryItemWhereInput =
-        user.role === 'ADMIN'
-          ? {}
-          : { repository: reachableConnections(user, request.repoAccessGate) };
+      const accessFilter: Prisma.MemoryItemWhereInput = isPlatformAdmin(userActor(user))
+        ? {}
+        : { repository: reachableConnections(user, request.repoAccessGate) };
 
       const where: Prisma.MemoryItemWhereInput = {
         ...accessFilter,
@@ -257,22 +264,21 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       // The repositories whose lessons this caller may manage, so the page offers the
       // controls only where the routes below would accept them. A platform ADMIN manages
       // every repository and gets no list.
-      const managedRepoIds =
-        user.role === 'ADMIN'
-          ? undefined
-          : (
-              await fastify.prisma.connection.findMany({
-                select: { id: true },
-                where: { team: { ...ledTeams(user), isActive: true }, type: 'git_repo' },
-              })
-            ).map((r) => r.id);
+      const held = await heldScope(request, 'team.lessons.manage');
+      const managedRepoIds = held.all
+        ? undefined
+        : (
+            await fastify.prisma.connection.findMany({
+              select: { id: true },
+              where: { team: { id: { in: held.teamIds }, isActive: true }, type: 'git_repo' },
+            })
+          ).map((r) => r.id);
 
       // Who flagged a lesson and why is for the people who act on it; everyone else sees
       // how many flags it has and their own.
       const managed = new Set(managedRepoIds ?? []);
       const data = lessons.map(({ _count, flags, ...lesson }) => {
-        const manages =
-          user.role === 'ADMIN' || (!!lesson.repository && managed.has(lesson.repository.id));
+        const manages = held.all || (!!lesson.repository && managed.has(lesson.repository.id));
         const mine = flags.find((f) => f.flaggedById === user.sub);
         return {
           ...lesson,
@@ -296,7 +302,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/search',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { querystring: LessonSearchQuery },
     },
     async (request, reply) => {
@@ -304,7 +310,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Non-admins must be a member of the team that owns the repo they're searching
       const user = requireUser(request);
-      if (user.role !== 'ADMIN') {
+      if (!isPlatformAdmin(userActor(user))) {
         const accessibleRepo = await fastify.prisma.connection.findFirst({
           select: { id: true },
           where: {
@@ -358,7 +364,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/consolidate',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.lessons.manage'] }),
       schema: { body: ConsolidateBody },
     },
     async (request, reply) => {
@@ -370,7 +376,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: repoId },
       });
       const access = repo
-        ? await lessonRepoAccess(fastify, user, request.repoAccessGate, repo.id)
+        ? await lessonRepoAccess(fastify, request, user, request.repoAccessGate, repo.id)
         : 'none';
       if (access === 'none') {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
@@ -401,79 +407,84 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   // fresh deployment EVERY configured repo is in that state, so deriving the
   // list from the groupBy returned nothing and the admin table showed "No
   // repositories found" — and the per-repo "Run now" control vanished with it.
-  app.get('/stats', { onRequest: requireAuth({ requiredRole: 'ADMIN' }) }, async () => {
-    // Whole-fleet by design: this is the admin view of memory health across
-    // every repo, and the per-repo "Run now" control is built from it.
-    const [repos, totalGroups, activeGroups] = await runUnscoped(
-      'admin memory-health stats span every team',
-      ['Connection', 'MemoryItem'],
-      () =>
-        Promise.all([
-          // `git_repo` only — the Connection table is polymorphic (e.g. `mcp`
-          // servers), and a non-repo connection has no org/repo name to show.
-          fastify.prisma.connection.findMany({
-            select: { id: true, organizationName: true, repoName: true },
-            where: { type: 'git_repo' },
-          }),
-          fastify.prisma.memoryItem.groupBy({
-            _count: { _all: true },
-            _max: { consolidatedAt: true },
-            by: ['repoId'],
-            where: { repoId: { not: null }, scope: LESSON_SCOPE },
-          }),
-          fastify.prisma.memoryItem.groupBy({
-            _count: { _all: true },
-            by: ['repoId'],
-            where: {
-              consolidatedAt: null,
-              repoId: { not: null },
-              scope: LESSON_SCOPE,
-              supersededAt: null,
-            },
-          }),
-        ])
-    );
-
-    const repoById = new Map(repos.map((r) => [r.id, r]));
-    const totalByRepoId = new Map(
-      totalGroups
-        .filter((g): g is typeof g & { repoId: string } => g.repoId !== null)
-        .map((g) => [g.repoId, g] as const)
-    );
-    const activeCountByRepoId = new Map(activeGroups.map((g) => [g.repoId, g._count._all]));
-
-    // Every git repo, plus (defensively) any repo that has lessons but is
-    // absent from that list — the page sums these rows into its summary tiles,
-    // so silently dropping one would understate the totals.
-    const repoIds = [...new Set([...repoById.keys(), ...totalByRepoId.keys()])];
-
-    const data = repoIds
-      .map((id) => {
-        const repo = repoById.get(id);
-        const group = totalByRepoId.get(id);
-        const totalCount = group?._count._all ?? 0;
-        const activeCount = activeCountByRepoId.get(id) ?? 0;
-        return {
-          activeCount,
-          consolidatedCount: totalCount - activeCount,
-          id,
-          lastConsolidatedAt: group?._max.consolidatedAt ?? null,
-          organizationName: repo?.organizationName ?? null,
-          repoName: repo?.repoName ?? null,
-          totalCount,
-        };
-      })
-      .sort(
-        (a, b) =>
-          (a.organizationName ?? '').localeCompare(b.organizationName ?? '') ||
-          (a.repoName ?? '').localeCompare(b.repoName ?? '')
+  app.get(
+    '/stats',
+    { onRequest: requireAuth({ capability: 'platform.lessons.stats' }) },
+    async () => {
+      // Whole-fleet by design: this is the admin view of memory health across
+      // every repo, and the per-repo "Run now" control is built from it.
+      const [repos, totalGroups, activeGroups] = await runUnscoped(
+        'admin memory-health stats span every team',
+        ['Connection', 'MemoryItem'],
+        () =>
+          Promise.all([
+            // `git_repo` only — the Connection table is polymorphic (e.g. `mcp`
+            // servers), and a non-repo connection has no org/repo name to show.
+            fastify.prisma.connection.findMany({
+              select: { id: true, organizationName: true, repoName: true },
+              where: { type: 'git_repo' },
+            }),
+            fastify.prisma.memoryItem.groupBy({
+              _count: { _all: true },
+              _max: { consolidatedAt: true },
+              by: ['repoId'],
+              where: { repoId: { not: null }, scope: LESSON_SCOPE },
+            }),
+            fastify.prisma.memoryItem.groupBy({
+              _count: { _all: true },
+              by: ['repoId'],
+              where: {
+                consolidatedAt: null,
+                repoId: { not: null },
+                scope: LESSON_SCOPE,
+                supersededAt: null,
+              },
+            }),
+          ])
       );
 
-    return { data };
-  });
+      const repoById = new Map(repos.map((r) => [r.id, r]));
+      const totalByRepoId = new Map(
+        totalGroups
+          .filter((g): g is typeof g & { repoId: string } => g.repoId !== null)
+          .map((g) => [g.repoId, g] as const)
+      );
+      const activeCountByRepoId = new Map(activeGroups.map((g) => [g.repoId, g._count._all]));
+
+      // Every git repo, plus (defensively) any repo that has lessons but is
+      // absent from that list — the page sums these rows into its summary tiles,
+      // so silently dropping one would understate the totals.
+      const repoIds = [...new Set([...repoById.keys(), ...totalByRepoId.keys()])];
+
+      const data = repoIds
+        .map((id) => {
+          const repo = repoById.get(id);
+          const group = totalByRepoId.get(id);
+          const totalCount = group?._count._all ?? 0;
+          const activeCount = activeCountByRepoId.get(id) ?? 0;
+          return {
+            activeCount,
+            consolidatedCount: totalCount - activeCount,
+            id,
+            lastConsolidatedAt: group?._max.consolidatedAt ?? null,
+            organizationName: repo?.organizationName ?? null,
+            repoName: repo?.repoName ?? null,
+            totalCount,
+          };
+        })
+        .sort(
+          (a, b) =>
+            (a.organizationName ?? '').localeCompare(b.organizationName ?? '') ||
+            (a.repoName ?? '').localeCompare(b.repoName ?? '')
+        );
+
+      return { data };
+    }
+  );
 
   /** A repository lesson and what the caller may do with it; null when they cannot read it. */
   async function readableLesson(
+    request: FastifyRequest,
     user: JwtPayload,
     gate: Parameters<typeof reachableConnections>[1],
     id: string
@@ -485,7 +496,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
     if (!lesson) {
       return null;
     }
-    const access = await lessonRepoAccess(fastify, user, gate, lesson.repoId);
+    const access = await lessonRepoAccess(fastify, request, user, gate, lesson.repoId);
     return access === 'none' ? null : { access, lesson };
   }
 
@@ -507,12 +518,17 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
     app.post(
       `/:id/${action}`,
       {
-        onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+        onRequest: requireAuth({ handlerChecked: ['team.lessons.manage'] }),
         schema: { params: LessonIdParams, ...(action === 'quarantine' ? { body: FlagBody } : {}) },
       },
       async (request, reply) => {
         const actor = requireUser(request);
-        const found = await readableLesson(actor, request.repoAccessGate, request.params.id);
+        const found = await readableLesson(
+          request,
+          actor,
+          request.repoAccessGate,
+          request.params.id
+        );
         if (!found) {
           return sendError(reply, 404, 'LESSON_NOT_FOUND', 'Lesson not found');
         }
@@ -571,12 +587,12 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/flags',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth(),
       schema: { body: FlagBody, params: LessonIdParams },
     },
     async (request, reply) => {
       const actor = requireUser(request);
-      const found = await readableLesson(actor, request.repoAccessGate, request.params.id);
+      const found = await readableLesson(request, actor, request.repoAccessGate, request.params.id);
       if (!found) {
         return sendError(reply, 404, 'LESSON_NOT_FOUND', 'Lesson not found');
       }
@@ -607,10 +623,10 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   // DELETE /api/v1/lessons/:id/flags/mine — Withdraw your own flag
   app.delete(
     '/:id/flags/mine',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: LessonIdParams } },
+    { onRequest: requireAuth(), schema: { params: LessonIdParams } },
     async (request, reply) => {
       const actor = requireUser(request);
-      const found = await readableLesson(actor, request.repoAccessGate, request.params.id);
+      const found = await readableLesson(request, actor, request.repoAccessGate, request.params.id);
       if (!found) {
         return sendError(reply, 404, 'LESSON_NOT_FOUND', 'Lesson not found');
       }
@@ -637,10 +653,13 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   // DELETE /api/v1/lessons/:id/flags — Clear every flag on a lesson you manage, keeping the lesson
   app.delete(
     '/:id/flags',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: LessonIdParams } },
+    {
+      onRequest: requireAuth({ handlerChecked: ['team.lessons.manage'] }),
+      schema: { params: LessonIdParams },
+    },
     async (request, reply) => {
       const actor = requireUser(request);
-      const found = await readableLesson(actor, request.repoAccessGate, request.params.id);
+      const found = await readableLesson(request, actor, request.repoAccessGate, request.params.id);
       if (!found) {
         return sendError(reply, 404, 'LESSON_NOT_FOUND', 'Lesson not found');
       }
@@ -675,7 +694,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   app.delete(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: requireAuth({ handlerChecked: ['team.lessons.manage'] }),
       schema: { params: LessonIdParams },
     },
     async (request, reply) => {
@@ -695,7 +714,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       });
       // A lesson the caller cannot read is not found, so a delete does not confirm it exists.
       const access = lesson
-        ? await lessonRepoAccess(fastify, actor, request.repoAccessGate, lesson.repoId)
+        ? await lessonRepoAccess(fastify, request, actor, request.repoAccessGate, lesson.repoId)
         : 'none';
       if (!lesson || access === 'none') {
         return sendError(reply, 404, 'LESSON_NOT_FOUND', 'Lesson not found');
@@ -790,7 +809,7 @@ export const runLessonRoutes: FastifyPluginAsync = async (fastify) => {
 
   app.get(
     '/:id/lessons',
-    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: LessonIdParams } },
+    { onRequest: requireAuth(), schema: { params: LessonIdParams } },
     async (request, reply) => {
       const user = requireUser(request);
       const run = await fastify.prisma.workflowRun.findFirst({
@@ -859,7 +878,7 @@ export const runLessonRoutes: FastifyPluginAsync = async (fastify) => {
         if (!accessByRepo.has(row.repoId)) {
           accessByRepo.set(
             row.repoId,
-            lessonRepoAccess(fastify, user, request.repoAccessGate, row.repoId)
+            lessonRepoAccess(fastify, request, user, request.repoAccessGate, row.repoId)
           );
         }
         const access = await accessByRepo.get(row.repoId);

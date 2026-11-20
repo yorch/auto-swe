@@ -7,10 +7,9 @@ import { Button } from '@/components/ui/Button';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { useAnsweredGate } from '@/hooks/useAnsweredGate';
-import { useHasRole } from '@/hooks/useHasRole';
+import { usePlatformAdmin, useTeamIdsCan } from '@/hooks/useCan';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useRequests } from '@/hooks/useRequests';
-import { useLedTeamIds } from '@/hooks/useTeams';
 import { usePullRequests } from '@/hooks/useWorkViews';
 import { focusMainContent, useDismissed } from '@/lib/dismissed';
 import { cn, FOCUS_RING } from '@/lib/utils';
@@ -34,7 +33,7 @@ interface Step {
  * their first run depends on that setup being finished.
  */
 export function FirstRunChecklist() {
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = usePlatformAdmin();
   if (isAdmin) {
     return null;
   }
@@ -42,7 +41,8 @@ export function FirstRunChecklist() {
 }
 
 function FirstRunChecklistBody() {
-  const ledTeamIds = useLedTeamIds();
+  // Whoever may create a repository on some team of theirs is told to connect one.
+  const ledTeamIds = useTeamIdsCan('team.repos.create');
   const isLead = (ledTeamIds?.size ?? 0) > 0;
   const { ready, dismissed, dismiss } = useDismissed(FIRST_RUN_DISMISS_KEY);
   // Personal progress across every team, so neither list is narrowed to one.
@@ -59,7 +59,7 @@ function FirstRunChecklistBody() {
   const answered = useAnsweredGate();
 
   const queries = [repos, requests, answered, merged];
-  // The led teams word the repository step, so wait for them: the wording must not flip.
+  // The teams word the repository step, so wait for them: the wording must not flip.
   const settled = queries.every((q) => !q.isLoading) && ledTeamIds !== null;
   // A query that failed cannot say a step is open, so show nothing rather than a false prompt.
   if (!ready || dismissed || !settled || queries.some((q) => q.isError)) {

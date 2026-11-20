@@ -73,9 +73,12 @@ function build(opts: Opts = {}) {
     }),
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     organizationMembership: {
+      findMany: vi.fn(async () => (opts.orgRole ? [{ orgId: ORG, role: opts.orgRole }] : [])),
       findUnique: vi.fn(async () => (opts.orgRole ? { role: opts.orgRole } : null)),
     },
     team: {
+      // The permissions loader's read of the team itself.
+      findMany: vi.fn(async () => [{ id: TEAM, isActive: true, orgId: ORG }]),
       findUnique: vi.fn(async () => ({
         budgetAlertThresholdPercent: null,
         id: TEAM,
@@ -87,6 +90,8 @@ function build(opts: Opts = {}) {
     },
     teamBudgetRequest: { create, findMany, updateMany },
     teamMembership: {
+      // The permissions loader's read of the caller's membership.
+      findMany: vi.fn(async () => (opts.teamRole ? [{ role: opts.teamRole, teamId: TEAM }] : [])),
       findUnique: vi.fn(async () => (opts.teamRole ? { role: opts.teamRole } : null)),
     },
   };

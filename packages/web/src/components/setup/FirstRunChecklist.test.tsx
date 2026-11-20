@@ -5,22 +5,18 @@ import { useAuthStore } from '@/stores/authStore';
 import { installMemoryStorage } from '@/test/memoryStorage';
 import { FirstRunChecklist } from './FirstRunChecklist';
 
-let role = 'ENGINEER';
-// The checklist words the repository step for anyone who leads a team; the platform role is only
-// a stand-in here for who does. `null` is the led-team set while the team list loads.
+// Who the person is, for the server's answer: a platform admin, a team lead, or neither. The
+// checklist words the repository step for anyone who may create one on a team; `null` is that set
+// while the permissions load.
+let who: 'member' | 'lead' | 'admin' = 'member';
 let ledLoading = false;
-vi.mock('@/hooks/useTeams', () => ({
-  useLedTeamIds: () => {
+vi.mock('@/hooks/useCan', () => ({
+  usePlatformAdmin: () => who === 'admin',
+  useTeamIdsCan: () => {
     if (ledLoading) {
       return null;
     }
-    return role === 'ENGINEER' ? new Set<string>() : new Set(['team-1']);
-  },
-}));
-vi.mock('@/hooks/useHasRole', () => ({
-  useHasRole: (required: string) => {
-    const rank: Record<string, number> = { ADMIN: 3, ENGINEER: 1, LEAD: 2 };
-    return rank[role] >= rank[required];
+    return who === 'member' ? new Set<string>() : new Set(['team-1']);
   },
 }));
 
@@ -81,10 +77,10 @@ function reset() {
 
 beforeEach(() => {
   reset();
-  role = 'ENGINEER';
+  who = 'member';
   ledLoading = false;
   installMemoryStorage();
-  useAuthStore.setState({ user: { role: 'ENGINEER', sub: 'u1' } });
+  useAuthStore.setState({ user: { role: 'USER', sub: 'u1' } });
 });
 afterEach(() => {
   cleanup();
@@ -128,7 +124,7 @@ describe('FirstRunChecklist', () => {
     ).toBeTruthy();
     expect(screen.getByRole('link', { name: /Open connections/ })).toBeTruthy();
     cleanup();
-    role = 'LEAD';
+    who = 'lead';
     render(<FirstRunChecklist />);
     expect(screen.getByRole('link', { name: /Connect a repository/ })).toBeTruthy();
   });
@@ -210,7 +206,7 @@ describe('FirstRunChecklist', () => {
   });
 
   it('renders nothing for an admin', () => {
-    role = 'ADMIN';
+    who = 'admin';
     render(<FirstRunChecklist />);
     expect(screen.queryByTestId('first-run-checklist')).toBeNull();
   });
@@ -224,7 +220,7 @@ describe('FirstRunChecklist', () => {
     render(<FirstRunChecklist />);
     expect(screen.queryByTestId('first-run-checklist')).toBeNull();
     cleanup();
-    useAuthStore.setState({ user: { role: 'ENGINEER', sub: 'u2' } });
+    useAuthStore.setState({ user: { role: 'USER', sub: 'u2' } });
     render(<FirstRunChecklist />);
     expect(screen.getByTestId('first-run-checklist')).toBeTruthy();
   });

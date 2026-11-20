@@ -22,6 +22,7 @@
 
 import { resolveSettings } from '../config/index.js';
 import type { PrismaClient } from '../index.js';
+import { isPlatformAdmin } from '../permissions/standing.js';
 import type { AccessActor, AccessLog } from './accessActor.js';
 import { isGitHubRepository } from './githubHostScope.js';
 import { permissionMeets } from './githubPermission.js';
@@ -237,7 +238,7 @@ export async function decideRepoLaunch(
     return { allowed: true, reason: 'gate-off' };
   }
   // Platform ADMINs bypass, consistent with every other check in the gateway.
-  if (user.role === 'ADMIN') {
+  if (isPlatformAdmin(user)) {
     return { allowed: true, reason: 'admin' };
   }
 

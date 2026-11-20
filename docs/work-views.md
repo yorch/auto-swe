@@ -145,7 +145,7 @@ steps in the human-step list, but the request is not marked as needing their att
 
 ## 2.1 `GET /api/v1/pull-requests/:id/cockpit`
 
-What the review page (§5) shows for one pull request, by its `PullRequest` id. ENGINEER and above,
+What the review page (§5) shows for one pull request, by its `PullRequest` id. any signed-in user,
 with the list's visibility: a repository the caller cannot reach is `404 PULL_REQUEST_NOT_FOUND`, and
 nothing is read from the host until that is decided. The answer has these parts, `pull` first:
 
@@ -343,7 +343,7 @@ The same pull requests as a file for a spreadsheet or BI tool: one row per PR **
 window** (no previous window), newest first. It takes the outcomes read's `window`, `since`/`until`,
 `scope`, `teamId`, `repoId` and `templateId`, plus `format`: `csv` (default) or `ndjson`. Visibility is the
 outcomes read's, from the same filter function, so an export reaches no row the summary would not.
-ENGINEER and above may call it. The **Export CSV** button on the pull request outcomes card of
+any signed-in user may call it. The **Export CSV** button on the pull request outcomes card of
 `/insights/analytics` downloads the CSV for the page's window and the repository chosen on the card,
 and says so when the file was cut at the row limit.
 

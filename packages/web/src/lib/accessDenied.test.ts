@@ -2,20 +2,28 @@ import { describe, expect, it } from 'vitest';
 import { deniedHref, deniedMessage, deniedReasonHref } from './accessDenied';
 
 describe('access denied notice', () => {
-  it('names the lowest role the page admits', () => {
-    expect(deniedHref('/skills', ['ADMIN'])).toBe('/?denied=%2Fskills&need=ADMIN');
-    expect(deniedHref('/admin/baselines', ['LEAD', 'ADMIN'])).toContain('need=LEAD');
+  it('names what the page needs', () => {
+    expect(deniedHref('/skills', 'platform-admin')).toBe('/?denied=%2Fskills&need=platform-admin');
+    expect(deniedHref('/admin/baselines', 'org.baselines.read')).toContain(
+      'need=org.baselines.read'
+    );
   });
 
-  it('explains which page needs which role', () => {
-    expect(deniedMessage('/admin/users', 'ADMIN')).toBe(
-      'You need the administrator role to open Users. Ask an administrator if you think you should have access.'
+  it('explains which page needs the platform admin role', () => {
+    expect(deniedMessage('/admin/users', 'platform-admin')).toBe(
+      'You need the platform admin role to open Users. Ask an administrator if you think you should have access.'
+    );
+  });
+
+  it('never echoes the attacker-controllable `need` value', () => {
+    expect(deniedMessage('/admin/users', '<script>')).toBe(
+      'You need more access to open Users. Ask an administrator if you think you should have access.'
     );
   });
 
   it('ignores missing or off-site paths', () => {
-    expect(deniedMessage(null, 'ADMIN')).toBeNull();
-    expect(deniedMessage('//evil.example', 'ADMIN')).toBeNull();
+    expect(deniedMessage(null, 'platform-admin')).toBeNull();
+    expect(deniedMessage('//evil.example', 'platform-admin')).toBeNull();
     expect(deniedMessage('https://evil.example', null)).toBeNull();
   });
 
@@ -30,10 +38,10 @@ describe('access denied notice', () => {
   });
 
   it('says nothing when the denied page is Home', () => {
-    expect(deniedMessage('/', 'ADMIN')).toBeNull();
+    expect(deniedMessage('/', 'platform-admin')).toBeNull();
   });
 
   it('falls back to "this page" for a path no page claims', () => {
-    expect(deniedMessage('/no/such/page', 'ADMIN')).toContain('to open this page.');
+    expect(deniedMessage('/no/such/page', 'platform-admin')).toContain('to open this page.');
   });
 });

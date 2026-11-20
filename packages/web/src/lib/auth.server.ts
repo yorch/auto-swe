@@ -1,8 +1,7 @@
-import type { Role } from '@auto-swe/shared';
-import { roleMeets } from '@auto-swe/shared/config/permissions';
 import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { deniedHref, deniedReasonHref } from '@/lib/accessDenied';
+import { type Access, holdsAccess, type Permissions } from '@/lib/capabilities';
 import {
   COOKIE_ACCESS_TOKEN,
   COOKIE_SESSION_MARKER,
@@ -14,7 +13,7 @@ import { apiInternalUrl } from '@/lib/env';
 interface SessionUser {
   id: string;
   email: string;
-  role: Role;
+  role: string;
   isActive: boolean;
 }
 
@@ -103,17 +102,39 @@ export type RoleCheck =
   | { status: 'unavailable'; detail: string };
 
 /**
- * Gate a server-rendered subtree on a minimum role. Redirects to the login
- * bridge when the bearer is missing/expired, to `/` when the caller is signed
- * in but lacks the role (or is inactive; Home then explains why), and returns `unavailable` — for the
- * caller to render as an error — when the gateway could not be asked, so an
- * outage is not dressed up as "you are not allowed here".
+ * Gate a server-rendered subtree on `access`: any signed-in person, a platform administrator, or a
+ * capability of the catalog held anywhere. What is held comes from the gateway's effective
+ * permissions (`GET /api/v1/me/permissions`), never from the role in the session. Redirects to the
+ * login bridge when the bearer is missing/expired, to `/` when the caller is signed in but lacks
+ * the access (or is inactive; Home then explains why), and returns `unavailable` — for the caller
+ * to render as an error — when the gateway could not be asked, so an outage is not dressed up as
+ * "you are not allowed here". The gateway still checks every request the page makes.
  */
-export async function requireRole(allowed: Role[]): Promise<RoleCheck> {
+export async function requireAccess(access: Access): Promise<RoleCheck> {
   const result = await requireActiveSession();
-  if (result.status === 'ok' && !allowed.some((r) => roleMeets(result.user.role, r))) {
+  if (result.status !== 'ok' || access === 'any') {
+    return result;
+  }
+  const token = (await cookies()).get(COOKIE_ACCESS_TOKEN)?.value;
+  let res: Response;
+  try {
+    res = await fetch(`${apiInternalUrl()}/api/v1/me/permissions`, {
+      cache: 'no-store',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    return { detail: 'The gateway is unreachable.', status: 'unavailable' };
+  }
+  if (!res.ok) {
+    return { detail: `The gateway answered HTTP ${res.status}.`, status: 'unavailable' };
+  }
+  const perms = (await res.json().catch(() => null)) as Permissions | null;
+  if (!perms || !Array.isArray(perms.platformCapabilities)) {
+    return { detail: 'The gateway returned an unexpected response.', status: 'unavailable' };
+  }
+  if (!holdsAccess(perms, access)) {
     const headerStore = await headers();
-    redirect(deniedHref(headerStore.get(PATHNAME_HEADER) ?? '/', allowed));
+    redirect(deniedHref(headerStore.get(PATHNAME_HEADER) ?? '/', access));
   }
   return result;
 }
@@ -143,7 +164,7 @@ async function requireActiveSession(): Promise<RoleCheck> {
  * Gate a server-rendered subtree on holding at least one LLM-usage scope — the
  * platform, a team the caller leads, or an organization they administer. The
  * platform role alone does not decide it: a team LEAD by membership may hold a
- * lower one. Same redirect and `unavailable` behaviour as {@link requireRole};
+ * lower one. Same redirect and `unavailable` behaviour as {@link requireAccess};
  * the gateway still checks the scope of every report it serves.
  */
 export async function requireUsageScope(): Promise<RoleCheck> {

@@ -3,7 +3,7 @@ import { deliveryReportFromRollups } from './workflowRunRollupReports.js';
 
 export interface ReportDigestInput {
   /**
-   * The organization's month-to-date budget. The dollar figures are an ORG_ADMIN's to read and
+   * The organization's month-to-date budget. The dollar figures are an organization ADMIN's to read and
    * are given only when every reader of this digest may see them; otherwise the section is the
    * state and a percentage.
    */

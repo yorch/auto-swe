@@ -4,8 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
 import { SetupBanner, SetupReadiness } from './SetupReadiness';
 
-let role = 'ADMIN';
-vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => role === 'ADMIN' }));
+let admin = true;
+vi.mock('@/hooks/useCan', () => ({ useCan: () => admin, usePlatformAdmin: () => admin }));
 
 const items = [
   {
@@ -42,7 +42,7 @@ function gateway(ready = false) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  role = 'ADMIN';
+  admin = true;
 });
 
 describe('SetupReadiness', () => {
@@ -161,7 +161,7 @@ describe('SetupReadiness', () => {
   });
 
   it('renders nothing for a non-admin', () => {
-    role = 'ENGINEER';
+    admin = false;
     gateway();
     const { container } = render(withQuery(<SetupReadiness />));
     expect(container.textContent).toBe('');

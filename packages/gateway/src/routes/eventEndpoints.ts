@@ -1,7 +1,7 @@
 /**
  * A team's event endpoints (docs/inbound-events.md): `/api/v1/teams/:teamId/event-endpoints`.
- * Members of the team read them (never a secret); ADMIN and the team's LEADs create, change,
- * rotate and remove them, as for the team's automations. A secret is returned once, when it is
+ * Members of the team read them (never a secret); holders of `team.event-endpoints.manage` (the
+ * team's LEADs and ADMINs, and the platform operator) create, change, rotate and remove them, as for the team's automations. A secret is returned once, when it is
  * generated, and every change is audited without it.
  */
 import type { Prisma } from '@auto-swe/shared';
@@ -16,9 +16,11 @@ import {
   SIGNATURE_ENCODINGS,
   SignatureHeaderSchema,
 } from '@auto-swe/shared/automation';
+import type { Authority } from '@auto-swe/shared/permissions';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { type AuditContext, auditContextOf } from '../lib/auditContext.js';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { TEAM_MANAGE_FORBIDDEN, teamAutomationAccess } from '../lib/automations/access.js';
 import { newSecretColumns, rotatedSecretColumns } from '../lib/eventEndpoints.js';
@@ -152,11 +154,24 @@ function view(row: PublicEndpoint, now = new Date()) {
 
 export const eventEndpointRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const signedIn = requireAuth({ requiredRole: 'ENGINEER' });
+  // Reading is team membership; a route that changes an endpoint decides the capability itself.
+  const signedIn = requireAuth();
+  const managing = requireAuth({ handlerChecked: ['team.event-endpoints.manage'] });
+
+  /** The audit context of a write, carrying the ground the manage decision was made on. */
+  function auditAs(
+    request: FastifyRequest,
+    access: { authority: Authority | undefined }
+  ): AuditContext {
+    return {
+      ...auditContextOf(request),
+      ...(access.authority ? { authority: access.authority } : {}),
+    };
+  }
 
   /** The caller's access to the team, or a 404 already sent. */
   async function loadTeam(request: FastifyRequest, reply: FastifyReply, teamId: string) {
-    const access = await teamAutomationAccess(fastify.prisma, teamId, requireUser(request));
+    const access = await teamAutomationAccess(request, teamId, 'team.event-endpoints.manage');
     if (!access) {
       await sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
     }
@@ -209,7 +224,7 @@ export const eventEndpointRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /:teamId/event-endpoints — a new endpoint, with its secret shown once.
   app.post(
     '/:teamId/event-endpoints',
-    { onRequest: signedIn, schema: { body: CreateBody, params: TeamParams } },
+    { onRequest: managing, schema: { body: CreateBody, params: TeamParams } },
     async (request, reply) => {
       const user = requireUser(request);
       const access = await loadTeam(request, reply, request.params.teamId);
@@ -276,6 +291,7 @@ export const eventEndpointRoutes: FastifyPluginAsync = async (fastify) => {
         action: 'CREATE',
         actor: user,
         after: { ...view(created), secretGenerated: secret.generated },
+        context: auditAs(request, access),
         entityId: created.id,
         entityType: 'EventEndpoint',
       });
@@ -289,7 +305,7 @@ export const eventEndpointRoutes: FastifyPluginAsync = async (fastify) => {
   // PATCH /:teamId/event-endpoints/:id — name, switch, scheme settings and pointers.
   app.patch(
     '/:teamId/event-endpoints/:id',
-    { onRequest: signedIn, schema: { body: UpdateBody, params: EndpointParams } },
+    { onRequest: managing, schema: { body: UpdateBody, params: EndpointParams } },
     async (request, reply) => {
       const loaded = await loadForManager(request, reply, request.params);
       if (!loaded) {
@@ -369,6 +385,7 @@ export const eventEndpointRoutes: FastifyPluginAsync = async (fastify) => {
         actor: requireUser(request),
         after: view(updated),
         before: pickPublic(before),
+        context: auditAs(request, loaded.access),
         entityId: row.id,
         entityType: 'EventEndpoint',
       });
@@ -380,7 +397,7 @@ export const eventEndpointRoutes: FastifyPluginAsync = async (fastify) => {
   // accepted for 24 hours. The new one is returned once when generated.
   app.post(
     '/:teamId/event-endpoints/:id/secret/rotate',
-    { onRequest: signedIn, schema: { body: RotateBody, params: EndpointParams } },
+    { onRequest: managing, schema: { body: RotateBody, params: EndpointParams } },
     async (request, reply) => {
       const loaded = await loadForManager(request, reply, request.params);
       if (!loaded) {
@@ -403,6 +420,7 @@ export const eventEndpointRoutes: FastifyPluginAsync = async (fastify) => {
           secretLastFour: updated.secretLastFour,
         },
         before: { secretLastFour: row.secretLastFour },
+        context: auditAs(request, loaded.access),
         entityId: row.id,
         entityType: 'EventEndpoint',
       });
@@ -415,7 +433,7 @@ export const eventEndpointRoutes: FastifyPluginAsync = async (fastify) => {
   // DELETE /:teamId/event-endpoints/:id — refused while an automation listens to it.
   app.delete(
     '/:teamId/event-endpoints/:id',
-    { onRequest: signedIn, schema: { params: EndpointParams } },
+    { onRequest: managing, schema: { params: EndpointParams } },
     async (request, reply) => {
       const loaded = await loadForManager(request, reply, request.params);
       if (!loaded) {
@@ -442,6 +460,7 @@ export const eventEndpointRoutes: FastifyPluginAsync = async (fastify) => {
         action: 'DELETE',
         actor: requireUser(request),
         before: pickPublic(view({ ...row })),
+        context: auditAs(request, loaded.access),
         entityId: row.id,
         entityType: 'EventEndpoint',
       });

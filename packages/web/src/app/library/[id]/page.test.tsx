@@ -9,10 +9,12 @@ const TEMPLATE_ID = '11111111-1111-4111-8111-111111111111';
 
 // Stable references: the page re-seeds its editor whenever the query data identity changes.
 const hooks = vi.hoisted(() => ({
-  adminTeamIds: null as ReadonlySet<string> | null,
+  // What the server says the caller holds on the template's team: write it, author shell steps.
+  canShell: true,
+  canWrite: true,
   editorProps: null as { baseVersion?: number; onChange?: (spec: unknown) => void } | null,
-  ledTeamIds: new Set<string>() as ReadonlySet<string>,
   mutateAsync: vi.fn(),
+  permissionsLoaded: true,
   refineProps: null as { onSaved?: (v: number) => void } | null,
   template: {
     activeVersion: 1,
@@ -75,9 +77,12 @@ vi.mock('@/hooks/useTemplates', () => ({
   }),
 }));
 vi.mock('@/hooks/useModelCatalog', () => ({ useRolePricing: () => ({ data: undefined }) }));
-vi.mock('@/hooks/useTeams', () => ({
-  useAdminTeamIds: () => hooks.adminTeamIds,
-  useLedTeamIds: () => hooks.ledTeamIds,
+vi.mock('@/hooks/useCan', () => ({
+  useCanOwned: (capability: string) =>
+    capability === 'team.templates.write' ? hooks.canWrite : hooks.canShell,
+}));
+vi.mock('@/hooks/useEffectivePermissions', () => ({
+  useEffectivePermissions: () => ({ data: hooks.permissionsLoaded ? {} : undefined }),
 }));
 vi.mock('@/hooks/useTransientFlag', () => ({ useTransientFlag: () => [false, vi.fn()] }));
 vi.mock('@/components/workflow/WorkflowDag', () => ({ WorkflowDag: () => null }));
@@ -118,7 +123,6 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-import { useAuthStore } from '@/stores/authStore';
 import TemplateDetailPage from './page';
 
 beforeEach(() => {
@@ -133,9 +137,9 @@ beforeEach(() => {
   hooks.versionQuery.undefined = false;
   hooks.versionQuery.refetch.mockReset();
   hooks.template.versions = [{ createdAt: '2026-01-01T00:00:00.000Z', version: 1 }];
-  hooks.adminTeamIds = null;
-  hooks.ledTeamIds = new Set();
-  useAuthStore.setState({ user: { role: 'ADMIN' } } as never);
+  hooks.canWrite = true;
+  hooks.canShell = true;
+  hooks.permissionsLoaded = true;
 });
 
 // React's `use` reads a settled thenable synchronously; a fresh promise per render would suspend forever.
@@ -156,7 +160,8 @@ async function renderPage() {
 
 describe('workflow editor with lint errors', () => {
   it('makes the description readable in Settings without management permissions', async () => {
-    useAuthStore.setState({ user: { role: 'ENGINEER' } } as never);
+    hooks.canWrite = false;
+    hooks.canShell = false;
     await renderPage();
     fireEvent.click(await screen.findByRole('tab', { name: 'Settings' }));
     expect(
@@ -221,9 +226,7 @@ describe('saving a version with an authored command', () => {
   }
 
   it('tells a team lead who is not a team admin, without asking the server', async () => {
-    useAuthStore.setState({ user: { role: 'LEAD' } } as never);
-    hooks.ledTeamIds = new Set(['t1']);
-    hooks.adminTeamIds = new Set();
+    hooks.canShell = false;
     await saveJson(LINT_COMMAND_SPEC);
     expect(
       await screen.findByText(/1 step with its own command\. Needs a platform admin/)
@@ -232,9 +235,6 @@ describe('saving a version with an authored command', () => {
   });
 
   it('asks a team admin to confirm, then saves', async () => {
-    useAuthStore.setState({ user: { role: 'LEAD' } } as never);
-    hooks.ledTeamIds = new Set(['t1']);
-    hooks.adminTeamIds = new Set(['t1']);
     await saveJson(LINT_COMMAND_SPEC);
     await screen.findByText('Authored code detected');
     expect(hooks.mutateAsync).not.toHaveBeenCalled();
@@ -540,7 +540,8 @@ describe('leaving the JSON view', () => {
   });
 
   it('lets an untouched, unparseable stored version switch to Visual, even read-only', async () => {
-    useAuthStore.setState({ user: { role: 'ENGINEER' } } as never);
+    hooks.canWrite = false;
+    hooks.canShell = false;
     const stored = hooks.version.spec;
     hooks.version.spec = { broken: true } as unknown as typeof stored;
     try {

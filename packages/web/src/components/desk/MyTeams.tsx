@@ -5,19 +5,14 @@ import Link from 'next/link';
 import { BudgetMeter } from '@/components/teams/BudgetMeter';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
+import { teamRoleLabel } from '@/lib/roleLabels';
 import { teamHref } from '@/lib/teamSpace';
 import { FOCUS_RING } from '@/lib/utils';
-
-const ROLE_LABEL: Record<MeSummaryTeam['myRole'], string> = {
-  ADMIN: 'Admin',
-  ENGINEER: 'Engineer',
-  LEAD: 'Lead',
-};
 
 function TeamCard({ team }: { team: MeSummaryTeam }) {
   return (
     <Link
-      aria-label={`${team.name}, ${ROLE_LABEL[team.myRole]}, ${team.needsYou} need you`}
+      aria-label={`${team.name}, ${teamRoleLabel(team.myRole)}, ${team.needsYou} need you`}
       className={`block rounded-xl no-underline ${FOCUS_RING}`}
       href={teamHref(team.slug)}
     >
@@ -28,7 +23,7 @@ function TeamCard({ team }: { team: MeSummaryTeam }) {
             <p className="truncate text-xs text-paper-500">{team.orgName}</p>
           </div>
           <Badge tone="neutral" variant="outline">
-            {ROLE_LABEL[team.myRole]}
+            {teamRoleLabel(team.myRole)}
           </Badge>
         </div>
         <dl className="mt-3 grid grid-cols-3 gap-2 text-xs">

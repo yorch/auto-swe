@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
-import { RoleLayout } from '@/components/auth/RoleLayout';
+import { AccessLayout } from '@/components/auth/AccessLayout';
 
 export default function Layout({ children }: { children: ReactNode }) {
-  // Every form on this page reads and writes /platform/config/*, which is ADMIN-only.
-  return <RoleLayout allowed={['ADMIN']}>{children}</RoleLayout>;
+  // Every form on this page reads and writes /platform/config/*, which is for platform admins only.
+  return <AccessLayout access="platform-admin">{children}</AccessLayout>;
 }

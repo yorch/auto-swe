@@ -27,6 +27,7 @@
  * exactly how the GLOBAL workflow templates would vanish from an admin's list.
  */
 import type { Prisma } from '@auto-swe/shared';
+import { type HeldScope, orgRolesAtLeast, teamRolesAtLeast } from '@auto-swe/shared/permissions';
 
 /** The subset of an authenticated caller these predicates read. */
 export interface ScopeActor {
@@ -108,11 +109,12 @@ export function reachableConnections(
 /** Repository management includes org administrators without widening launch authorization. */
 export function manageableOrReachableConnections(
   actor: ScopeActor,
-  gate: MaybeGate
+  gate: MaybeGate,
+  managed: HeldScope
 ): Prisma.ConnectionWhereInput {
   return {
     AND: [
-      { OR: [memberOrSharedTeams(actor), { team: repositoryManagementTeams(actor) }] },
+      { OR: [memberOrSharedTeams(actor), { team: managedTeams(managed) }] },
       permissionRequirement(actor, gate),
     ],
   };
@@ -183,14 +185,39 @@ export function permissionRequirement(
 }
 
 /**
- * Teams the actor leads: LEAD or ADMIN membership. Nest under a `team` key.
- * The team-scoped write bar — `canManageTeamRepos` is its single-row form.
+ * The teams a `HeldScope` names, as a filter. Nest under a `team` key. `scope` is what
+ * `heldScope(request, key)` returned for a team-scoped capability: it already holds the teams the
+ * actor's membership or organization authority reaches, active ones only when the capability
+ * requires an active team, so a list cannot disagree with the action behind it.
  */
-export function ledTeams(actor: ScopeActor): Prisma.TeamWhereInput {
-  return { memberships: { some: { role: { in: ['LEAD', 'ADMIN'] }, userId: actor.sub } } };
+export function teamsHeldIn(scope: HeldScope): Prisma.TeamWhereInput {
+  return scope.all ? {} : { id: { in: scope.teamIds } };
 }
 
-/** Active teams whose repositories the actor may manage. */
+/**
+ * Active teams whose repositories the caller may manage: `team.repos.manage`, as `heldScope`
+ * returned it. A platform admin is not special-cased here; the call sites bypass the filter.
+ */
+export function managedTeams(managed: HeldScope): Prisma.TeamWhereInput {
+  return { AND: [{ isActive: true }, teamsHeldIn(managed)] };
+}
+
+/**
+ * Teams the actor leads: LEAD or ADMIN membership. Nest under a `team` key.
+ *
+ * @deprecated Other domains' files still import it; a list asks `heldScope` and nests
+ * `teamsHeldIn` instead. Deleted once nothing imports it.
+ */
+export function ledTeams(actor: ScopeActor): Prisma.TeamWhereInput {
+  return { memberships: { some: { role: { in: teamRolesAtLeast('LEAD') }, userId: actor.sub } } };
+}
+
+/**
+ * Active teams whose repositories the actor may manage.
+ *
+ * @deprecated Use `managedTeams(await heldScope(request, 'team.repos.manage'))`. Kept for files
+ * outside the repository domain; deleted once nothing imports it.
+ */
 export function repositoryManagementTeams(actor: ScopeActor): Prisma.TeamWhereInput {
   return {
     AND: [
@@ -198,7 +225,11 @@ export function repositoryManagementTeams(actor: ScopeActor): Prisma.TeamWhereIn
       {
         OR: [
           ledTeams(actor),
-          { organization: { memberships: { some: { role: 'ORG_ADMIN', userId: actor.sub } } } },
+          {
+            organization: {
+              memberships: { some: { role: { in: orgRolesAtLeast('ADMIN') }, userId: actor.sub } },
+            },
+          },
         ],
       },
     ],

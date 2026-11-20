@@ -23,14 +23,15 @@ async function buildApp() {
     agent: { findMany: vi.fn() },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     harnessProfile: { findMany: vi.fn(), findUnique: vi.fn() },
+    organizationMembership: { findMany: vi.fn() },
     pluginEnablement: {
       create: vi.fn(),
       deleteMany: vi.fn(),
       findFirst: vi.fn(),
       findMany: vi.fn(),
     },
-    team: { findUnique: vi.fn() },
-    teamMembership: { findUnique: vi.fn() },
+    team: { findMany: vi.fn(), findUnique: vi.fn() },
+    teamMembership: { findMany: vi.fn(), findUnique: vi.fn() },
   };
   app.decorate('prisma', prisma as unknown as never);
   app.decorate('auth', {
@@ -57,10 +58,15 @@ describe('pluginEnablementRoutes', () => {
     ctx.prisma.teamMembership.findUnique.mockImplementation(async ({ where }) =>
       role && where.userId_teamId.teamId === TEAM ? { role } : null
     );
+    // The permissions loader's read of the caller's membership.
+    ctx.prisma.teamMembership.findMany.mockResolvedValue(role ? [{ role, teamId: TEAM }] : []);
   };
   beforeEach(() => {
     vi.clearAllMocks();
     ctx.prisma.team.findUnique.mockResolvedValue({ isActive: true });
+    // The permissions loader's read of the team itself and of the caller's organizations.
+    ctx.prisma.team.findMany.mockResolvedValue([{ id: TEAM, isActive: true, orgId: 'org-1' }]);
+    ctx.prisma.organizationMembership.findMany.mockResolvedValue([]);
     ctx.prisma.harnessProfile.findUnique.mockResolvedValue({ id: PROFILE_ID, status: 'OK' });
     ctx.prisma.agent.findMany.mockResolvedValue([]);
     ctx.prisma.pluginEnablement.findMany.mockResolvedValue([]);

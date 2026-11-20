@@ -11,7 +11,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useOrganizationDirectory } from '@/hooks/useAdmin';
-import { useHasRole } from '@/hooks/useHasRole';
+import { usePlatformAdmin } from '@/hooks/useCan';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { navLabel } from '@/lib/navigation';
 import { plural } from '@/lib/utils';
@@ -25,7 +25,7 @@ export default function GovernOrganizationsPage() {
     refetch,
     error: loadError,
   } = useOrganizationDirectory();
-  const isAdmin = useHasRole('ADMIN');
+  const isAdmin = usePlatformAdmin();
   const { params, update } = useUrlFilters();
   // The filter lives in the URL so the old Budget alerts link (`?alerting=1`) lands on it.
   const alertingOnly = params.get('alerting') === '1';

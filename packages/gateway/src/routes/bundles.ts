@@ -248,7 +248,7 @@ async function runInstall(
 
 export const bundleRoutes: FastifyPluginAsync<BundleRouteOptions> = async (fastify, options) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+  const adminOnly = requireAuth({ capability: 'platform.integrations.manage' });
 
   app.get('/bundles', { onRequest: adminOnly }, async () => ({
     data: await listInstalledBundles(fastify.prisma),

@@ -9523,7 +9523,7 @@
       "title": "Each deactivated schedule is audited"
     },
     {
-      "anchor": "const adminOnly = requireAuth({ requiredRole: 'ADMIN' });",
+      "anchor": "const adminOnly = requireAuth({ capability: 'platform.integrations.manage' });",
       "before": 0,
       "id": "hostCredRoutes",
       "lines": 8,
@@ -10051,12 +10051,12 @@
       "title": "Reference files stored unscanned, skills unverified"
     },
     {
-      "anchor": "const adminOnly = requireAuth({ requiredRole: 'ADMIN' });",
+      "anchor": "const adminOnly = requireAuth({ capability: 'platform.integrations.manage' });",
       "before": 2,
       "id": "skillImportRoutes",
       "lines": 4,
       "path": "packages/gateway/src/routes/skillSources.ts",
-      "title": "Skill source routes are ADMIN-only"
+      "title": "Skill source routes need the integrations capability"
     },
     {
       "anchor": "export function skillPromptBlock(",
@@ -10539,7 +10539,7 @@
       "title": "Latest PR on the run’s own row: updated, refused if closed, else the newest open PR adopted"
     },
     {
-      "anchor": "onRequest: requireAuth({ requiredRole: 'ENGINEER' }),",
+      "anchor": "onRequest: requireAuth(),",
       "before": 2,
       "id": "prList",
       "lines": 44,
@@ -13027,7 +13027,7 @@
       "title": "What a non-admin reads: local approved items and unreviewed learnings, shared items only once approved"
     },
     {
-      "anchor": "export function canApproveKnowledge(",
+      "anchor": "export async function canApproveKnowledge(",
       "before": 0,
       "id": "knowledgeApproveRoles",
       "lines": 17,
@@ -14939,12 +14939,12 @@
       "title": "Report reads stop at 10,000 rows; the window is a 7, 30 or 90 day preset or a custom range"
     },
     {
-      "anchor": "const readAnalytics = requireAuth({ requiredRole: 'ENGINEER' });",
+      "anchor": "const readAnalytics = requireAuth();",
       "before": 0,
       "id": "reportRole",
       "lines": 1,
       "path": "packages/gateway/src/routes/reports.ts",
-      "title": "Delivery, quality, automation and approval reports need ENGINEER"
+      "title": "Delivery, quality, automation and approval reports need a signed-in user"
     },
     {
       "anchor": "const rollupRows = plan.rollupDays.length",
@@ -16018,12 +16018,12 @@
       "title": "Switching evaluation, auto-merge or bot approval off, or narrowing bot approval, triggers the sweep"
     },
     {
-      "anchor": "const reasons = await autoRefusals(fastify, user.role, repo);",
+      "anchor": "const reasons = await autoRefusals(fastify, autoModeAllowed, repo);",
       "before": 4,
       "id": "prEvalModeRoute",
       "lines": 30,
       "path": "packages/gateway/src/routes/prEvaluation.ts",
-      "title": "Auto mode and bot approval are ADMIN-only and refused with every unmet reason"
+      "title": "Auto mode and bot approval need platform admin and are refused with every unmet reason"
     },
     {
       "anchor": "const identity = await fetchGitHubAppIdentity({",
@@ -16758,7 +16758,7 @@
       "title": "Viewer level from team role"
     },
     {
-      "anchor": "if (viewerLevel === 'engineer') {",
+      "anchor": "if (viewerLevel === 'member') {",
       "before": 0,
       "id": "teamOverviewTiers",
       "lines": 56,
@@ -16790,12 +16790,12 @@
       "title": "Team switcher opens the team space"
     },
     {
-      "anchor": "export function teamSettingsScope(",
-      "before": 5,
+      "anchor": "const canSeeSettings = useCan('team.settings.manage', scope);",
+      "before": 2,
       "id": "webSettingsScope",
-      "lines": 16,
-      "path": "packages/web/src/lib/teamSpace.ts",
-      "title": "Team settings scope by role"
+      "lines": 6,
+      "path": "packages/web/src/app/teams/[slug]/layout.tsx",
+      "title": "Team Settings and Manage tabs follow capabilities"
     },
     {
       "anchor": "export function isViewOnlyFor(",
@@ -16814,7 +16814,7 @@
       "title": "Launch right through a share"
     },
     {
-      "anchor": "action === 'start-new-work' && user.role !== 'ADMIN' && !mayLaunchOnRepo(",
+      "anchor": "action === 'start-new-work' && !isPlatformAdmin(user) && !mayLaunchOnRepo(",
       "before": 3,
       "id": "shareLaunchGate",
       "lines": 10,
@@ -16894,7 +16894,7 @@
       "title": "Connection-less launch stamped with the team it was held to"
     },
     {
-      "anchor": "if (input.requireOwningTeamLead && actor.role !== 'ADMIN') {",
+      "anchor": "if (input.requireOwningTeamLead) {",
       "before": 0,
       "id": "launchLead",
       "lines": 30,

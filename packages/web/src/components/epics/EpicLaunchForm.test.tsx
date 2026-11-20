@@ -7,14 +7,14 @@ import { EpicLaunchForm } from './EpicLaunchForm';
 
 const pushSpy = vi.fn();
 
-// The "+ New epic" button is for a platform admin or someone who leads a team.
+// The "+ New epic" button is for whoever holds `team.launch.multi-repo` (the server's answer).
 vi.mock('@/stores/authStore', () => ({
   useAuthStore: (selector: (s: { user: { role: string } | null }) => unknown) =>
-    selector({ user: { role: 'ENGINEER' } }),
+    selector({ user: { role: 'USER' } }),
 }));
-vi.mock('@/hooks/useTeams', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/hooks/useTeams')>()),
-  useLeadsATeam: () => true,
+vi.mock('@/hooks/useCan', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useCan')>()),
+  useCan: () => true,
 }));
 
 beforeEach(stubDialogPrototype);

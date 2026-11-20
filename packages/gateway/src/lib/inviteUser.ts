@@ -1,6 +1,8 @@
-import type { Role } from '@auto-swe/shared';
+import type { OrgRole, PlatformRole, TeamRole } from '@auto-swe/shared';
+import { type Authority, isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyInstance } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
+import { type AuditContext, currentAuditContext } from './auditContext.js';
 import { writeAuditLog } from './auditLog.js';
 import { getDefaultClientOrigin } from './env.js';
 import { isUniqueConstraintError } from './prismaErrors.js';
@@ -9,12 +11,20 @@ export async function inviteUser(
   fastify: FastifyInstance,
   actor: JwtPayload,
   args: {
+    /**
+     * The ground of the capability decision that allowed the invitation. It is written into the audit
+     * context of every row the invitation creates. A route that decided with `can()` passes it,
+     * because only a route's declarative check records it on the request.
+     */
+    authority?: Authority;
     email: string;
     orgId: string;
-    orgRole: 'ORG_ADMIN' | 'ORG_MEMBER';
+    orgRole: OrgRole;
     source: 'org_admin' | 'team_lead';
+    /** The audit context of the TeamMembership row, when its ground differs from `authority`. */
+    teamContext?: AuditContext;
     teamId?: string;
-    teamRole?: Role;
+    teamRole?: TeamRole;
   }
 ) {
   const refusal = (status: number, code: string, message: string) => ({
@@ -23,9 +33,12 @@ export async function inviteUser(
     ok: false as const,
     status,
   });
+  const audit: { context?: AuditContext } = args.authority
+    ? { context: { ...(currentAuditContext() ?? {}), authority: args.authority } }
+    : {};
   let result:
     | ReturnType<typeof refusal>
-    | { ok: true; user: { email: string; id: string; isActive: boolean; role: Role } };
+    | { ok: true; user: { email: string; id: string; isActive: boolean; role: PlatformRole } };
   try {
     result = await fastify.prisma.$transaction(async (tx) => {
       // CLAUDE.md §7 exception: serialize membership writes with organization revocations.
@@ -42,7 +55,7 @@ export async function inviteUser(
       if (existing) {
         return refusal(409, 'USER_EXISTS', 'User with this email already exists');
       }
-      let approvalSource: string | null = actor.role === 'ADMIN' ? 'admin' : null;
+      let approvalSource: string | null = isPlatformAdmin(actor) ? 'admin' : null;
       if (!approvalSource) {
         const org = await tx.organization.findUnique({
           select: { isActive: true, trustedInvites: true },
@@ -57,7 +70,7 @@ export async function inviteUser(
           email: args.email,
           emailVerified: approved,
           isActive: approved,
-          role: 'ENGINEER',
+          role: 'USER',
         },
         select: { email: true, id: true, isActive: true, role: true },
       });
@@ -69,18 +82,20 @@ export async function inviteUser(
         actor,
         after: { orgId: args.orgId, role: args.orgRole, userId: user.id },
         client: tx,
+        ...audit,
         entityId: membership.id,
         entityType: 'OrganizationMembership',
       });
       if (args.teamId) {
         const teamMembership = await tx.teamMembership.create({
-          data: { role: args.teamRole ?? 'ENGINEER', teamId: args.teamId, userId: user.id },
+          data: { role: args.teamRole ?? 'MEMBER', teamId: args.teamId, userId: user.id },
         });
         await writeAuditLog(fastify, {
           action: 'CREATE',
           actor,
           after: { role: teamMembership.role, teamId: args.teamId, userId: user.id },
           client: tx,
+          ...(args.teamContext ? { context: args.teamContext } : audit),
           entityId: teamMembership.id,
           entityType: 'TeamMembership',
         });
@@ -90,6 +105,7 @@ export async function inviteUser(
         actor,
         after: { approvalSource, email: user.email, isActive: user.isActive, orgId: args.orgId },
         client: tx,
+        ...audit,
         entityId: user.id,
         entityType: 'User',
       });

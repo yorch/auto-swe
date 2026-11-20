@@ -20,7 +20,7 @@
  * next tick decides again, so restoring access resumes the schedule with no
  * other action.
  */
-import { Prisma, type PrismaClient, type Role } from '@auto-swe/shared';
+import { type PlatformRole, Prisma, type PrismaClient } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import type { AccessLog } from '@auto-swe/shared/lib/accessActor';
 import {
@@ -36,6 +36,7 @@ import {
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
 import { canTeamLaunchOnRepo, repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { liveInFlightExecution, type SettledLookup } from '@auto-swe/shared/lib/requestInFlight';
+import { isPlatformAdmin, userActor } from '@auto-swe/shared/permissions';
 import { ApplicationFailure, log } from '@temporalio/activity';
 import { workflowSettledStatus } from '../lib/agentRunSlots.js';
 
@@ -205,7 +206,7 @@ export async function scheduledFireRefusal(
       );
     }
   }
-  const actor = { role: owner.role as Role, sub: owner.id };
+  const actor = { role: owner.role as PlatformRole, sub: owner.id };
   // The fire must use the schedule's explicit acting user; there is no creator fallback.
   const runIdentity = 'caller';
 
@@ -306,7 +307,7 @@ export async function scheduledFireRefusal(
     return refuse(verdict.reason, REPO_ACCESS_REFUSAL_MESSAGE[verdict.reason]);
   }
 
-  if (actor.role !== 'ADMIN') {
+  if (!isPlatformAdmin(userActor({ role: actor.role, sub: actor.sub }))) {
     const membership = await db.organizationMembership.findUnique({
       where: { userId_orgId: { orgId: repo.team.orgId, userId: owner.id } },
     });
@@ -655,7 +656,7 @@ export async function assertScheduledFireSourceSnapshot(
     return fail('share-view-only', VIEW_ONLY_SCHEDULE_MESSAGE);
   }
 
-  if (owner.role !== 'ADMIN') {
+  if (!isPlatformAdmin(userActor({ role: owner.role, sub: owner.id }))) {
     const hasMembership =
       repo.team.memberships.some((membership) => membership.userId === owner.id) ||
       repo.shares.some(

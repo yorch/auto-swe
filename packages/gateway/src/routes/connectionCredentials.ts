@@ -25,6 +25,7 @@ import { fetchOwnRepoPermission, permissionMeets } from '@auto-swe/shared/lib/gi
 import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
 import { isRepoMember, repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import type { TokenWriteCapability } from '@auto-swe/shared/types/api';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -69,7 +70,7 @@ export function classifyWriteCapability(oauthScopes: string | undefined): TokenW
 
 export const connectionCredentialRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
-  const signedIn = requireAuth({ requiredRole: 'ENGINEER' });
+  const signedIn = requireAuth();
 
   /**
    * The repository a credential route acts on, if the caller may hold a token
@@ -102,7 +103,7 @@ export const connectionCredentialRoutes: FastifyPluginAsync = async (fastify) =>
     if (repo?.type !== 'git_repo' || !(repo.organizationName && repo.repoName)) {
       return null;
     }
-    if (user.role !== 'ADMIN' && !isRepoMember(repo, user.sub)) {
+    if (!isPlatformAdmin(user) && !isRepoMember(repo, user.sub)) {
       return null;
     }
     return repo;
@@ -132,7 +133,7 @@ export const connectionCredentialRoutes: FastifyPluginAsync = async (fastify) =>
         // ADMIN-only: the list can name internal GitHub Enterprise hosts, and an
         // engineer refused at save time is told which of their repository's
         // own URLs was refused — something they can already see.
-        ...(user.role === 'ADMIN' ? { hosts: policy.hosts } : {}),
+        ...(isPlatformAdmin(user) ? { hosts: policy.hosts } : {}),
       },
     };
   });

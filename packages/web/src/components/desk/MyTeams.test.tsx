@@ -41,7 +41,7 @@ describe('MyTeams', () => {
       <MyTeams
         teams={[
           team(),
-          team({ myRole: 'ENGINEER', name: 'Platform', slug: 'platform', teamId: 't2' }),
+          team({ myRole: 'MEMBER', name: 'Platform', slug: 'platform', teamId: 't2' }),
         ]}
       />
     );
@@ -50,11 +50,11 @@ describe('MyTeams', () => {
     const first = within(cards[0] as HTMLElement);
     expect(first.getByText('Payments')).toBeTruthy();
     expect(first.getByText('Acme')).toBeTruthy();
-    expect(first.getByText('Lead')).toBeTruthy();
+    expect(first.getByText('Team lead')).toBeTruthy();
     expect(first.getByText('Needs you').nextSibling?.textContent).toBe('3');
     expect(first.getByText('Running').nextSibling?.textContent).toBe('1');
     expect(first.getByText('Queued').nextSibling?.textContent).toBe('2');
-    expect(within(cards[1] as HTMLElement).getByText('Engineer')).toBeTruthy();
+    expect(within(cards[1] as HTMLElement).getByText('Team member')).toBeTruthy();
     expect(screen.getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual([
       '/teams/payments',
       '/teams/platform',
