@@ -14,7 +14,16 @@ import { recordActivityEventsDropped, recordHttpDenied } from './metrics.js';
  * fails a request.
  */
 
-export type ActivityKind = 'denied' | 'read' | 'export' | 'ui';
+export const ACTIVITY_KINDS = [
+  'denied',
+  'read',
+  'export',
+  'ui',
+  'sign_in',
+  'sign_in_failed',
+  'sign_out',
+] as const;
+export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 
 export interface ActivityEventRow {
   actorId: string | null;
@@ -34,6 +43,8 @@ export interface ActivityEventRow {
 export const READ_DEDUPE_MS = 10 * 60_000;
 /** A `denied` row for one actor, route and status is written at most this often. */
 export const DENIED_DEDUPE_MS = 60_000;
+/** A `sign_in`, `sign_in_failed` or `sign_out` row for one actor and method is written at most this often. */
+export const AUTH_EVENT_DEDUPE_MS = 60_000;
 /** The same page view from one actor is collapsed within this window (five seconds). */
 export const UI_DEDUPE_MS = 5000;
 /** Distinct dedupe keys held at once; the oldest are forgotten first, so memory stays bounded. */
@@ -47,6 +58,9 @@ export const ACTOR_EVENTS_PER_MINUTE: Readonly<Record<ActivityKind, number>> = {
   denied: 120,
   export: 60,
   read: 60,
+  sign_in: 30,
+  sign_in_failed: 30,
+  sign_out: 30,
   ui: 60,
 };
 /** Buckets tracked at once (an actor and kind each); the least recently used are forgotten first. */
@@ -55,7 +69,13 @@ const ACTOR_BUCKETS_MAX = 20_000;
 const STOP_TIMEOUT_MS = 3000;
 
 /** Kinds that must survive a full queue; `ui` and `read` are evicted first. */
-const HIGH_PRIORITY: ReadonlySet<ActivityKind> = new Set(['denied', 'export']);
+const HIGH_PRIORITY: ReadonlySet<ActivityKind> = new Set([
+  'denied',
+  'export',
+  'sign_in',
+  'sign_in_failed',
+  'sign_out',
+]);
 
 export interface ActivityQueueOptions {
   write: (rows: ActivityEventRow[]) => Promise<void>;
@@ -238,6 +258,17 @@ export class ActivityQueue {
   }
 }
 
+/**
+ * The running gateway's queue, so the auth hooks (which live in better-auth, outside any request
+ * handler) share its dedupe, per-actor buckets and batching. `undefined` before the plugin loads
+ * and after it closes; the caller then writes directly.
+ */
+let activeQueue: ActivityQueue | undefined;
+
+export function currentActivityQueue(): ActivityQueue | undefined {
+  return activeQueue;
+}
+
 declare module 'fastify' {
   interface FastifyInstance {
     activityQueue: ActivityQueue;
@@ -295,8 +326,12 @@ export const activityEvents = fp<{
       },
     });
     app.decorate('activityQueue', queue);
+    activeQueue = queue;
     queue.start();
     app.addHook('onClose', async () => {
+      if (activeQueue === queue) {
+        activeQueue = undefined;
+      }
       await queue.stop();
     });
 

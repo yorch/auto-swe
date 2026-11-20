@@ -10,6 +10,8 @@ export const UI_ROUTE_TEMPLATES: readonly string[] = [
   '/',
   '/admin',
   '/admin/activity',
+  '/admin/user-analytics',
+  '/admin/user-analytics/users/[id]',
   '/admin/api-tokens',
   '/admin/assistant',
   '/admin/audit',

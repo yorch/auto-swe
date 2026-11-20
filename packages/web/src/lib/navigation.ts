@@ -198,6 +198,13 @@ const ADMIN_PAGES: NavItem[] = [
   },
   {
     access: 'platform-admin',
+    href: '/admin/user-analytics',
+    icon: 'analytics',
+    label: 'User analytics',
+    section: 'Security',
+  },
+  {
+    access: 'platform-admin',
     href: '/admin/assistant',
     icon: 'warning',
     label: 'Assistant failures',

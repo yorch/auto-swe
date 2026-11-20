@@ -9,11 +9,17 @@ describe('recordSignInAudit', () => {
     const app = Fastify();
     registerAuditContext(app);
     app.get('/x', async () => {
-      await recordSignInAudit({ configAuditLog: { create } } as never, {
-        id: 's-1',
-        ipAddress: '6.6.6.6',
-        userId: 'u-1',
-      });
+      await recordSignInAudit(
+        {
+          configAuditLog: { create },
+          userActivityEvent: { create: vi.fn(async () => ({})) },
+        } as never,
+        {
+          id: 's-1',
+          ipAddress: '6.6.6.6',
+          userId: 'u-1',
+        }
+      );
       return {};
     });
     await app.inject({ remoteAddress: '203.0.113.77', url: '/x' });
@@ -21,7 +27,7 @@ describe('recordSignInAudit', () => {
       data: {
         action: 'CREATE',
         actorId: 'u-1',
-        afterJson: { event: 'sign_in' },
+        afterJson: { event: 'sign_in', method: 'unknown' },
         context: { ip: '203.0.113.0', requestId: expect.any(String), via: 'session' },
         entityId: 's-1',
         entityType: 'Session',
@@ -32,11 +38,17 @@ describe('recordSignInAudit', () => {
 
   it('falls back to the session row address outside a request', async () => {
     const create = vi.fn(async () => ({}));
-    await recordSignInAudit({ configAuditLog: { create } } as never, {
-      id: 's-1',
-      ipAddress: '203.0.113.77',
-      userId: 'u-1',
-    });
+    await recordSignInAudit(
+      {
+        configAuditLog: { create },
+        userActivityEvent: { create: vi.fn(async () => ({})) },
+      } as never,
+      {
+        id: 's-1',
+        ipAddress: '203.0.113.77',
+        userId: 'u-1',
+      }
+    );
     expect(create).toHaveBeenCalledWith({
       data: expect.objectContaining({ context: { ip: '203.0.113.0', via: 'session' } }),
     });
@@ -44,11 +56,17 @@ describe('recordSignInAudit', () => {
 
   it('omits an unknown or unparseable fallback address', async () => {
     const create = vi.fn(async () => ({}));
-    await recordSignInAudit({ configAuditLog: { create } } as never, {
-      id: 's-1',
-      ipAddress: null,
-      userId: 'u-1',
-    });
+    await recordSignInAudit(
+      {
+        configAuditLog: { create },
+        userActivityEvent: { create: vi.fn(async () => ({})) },
+      } as never,
+      {
+        id: 's-1',
+        ipAddress: null,
+        userId: 'u-1',
+      }
+    );
     expect(create).toHaveBeenCalledWith({
       data: expect.objectContaining({ context: { via: 'session' } }),
     });
@@ -60,7 +78,13 @@ describe('recordSignInAudit', () => {
       throw new Error('db down');
     });
     await expect(
-      recordSignInAudit({ configAuditLog: { create } } as never, { id: 's', userId: 'u' })
+      recordSignInAudit(
+        {
+          configAuditLog: { create },
+          userActivityEvent: { create: vi.fn(async () => ({})) },
+        } as never,
+        { id: 's', userId: 'u' }
+      )
     ).resolves.toBeUndefined();
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
