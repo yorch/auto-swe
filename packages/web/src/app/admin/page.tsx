@@ -30,6 +30,7 @@ const PAGE_DESCRIPTIONS: Record<string, string> = {
   '/admin/security': 'Events raised by the security scanners.',
   '/admin/sessions': 'Browser sessions that are signed in; sign people out.',
   '/admin/slack-channels': 'Channels the assistant answers in, with their spend.',
+  '/admin/user-analytics': 'Sign-ins, active users and what people do, per person.',
   '/admin/users': 'Invite people, approve sign-ups, set roles, suspend accounts.',
   '/admin/workflow-defaults': 'Branch prefix, templates, budgets and iteration limits.',
 };

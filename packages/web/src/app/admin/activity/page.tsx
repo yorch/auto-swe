@@ -25,17 +25,31 @@ import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 const LIMIT = 50;
 const SUMMARY_DAYS = 14;
 
-const KINDS: ActivityKind[] = ['denied', 'read', 'export', 'ui'];
+const KINDS: ActivityKind[] = [
+  'denied',
+  'read',
+  'export',
+  'ui',
+  'sign_in',
+  'sign_in_failed',
+  'sign_out',
+];
 const KIND_LABEL: Record<ActivityKind, string> = {
   denied: 'Denied',
   export: 'Export',
   read: 'Sensitive read',
+  sign_in: 'Sign-in',
+  sign_in_failed: 'Failed sign-in',
+  sign_out: 'Sign-out',
   ui: 'Page view',
 };
 const KIND_TONE: Record<ActivityKind, BadgeTone> = {
   denied: 'danger',
   export: 'warning',
   read: 'neutral',
+  sign_in: 'success',
+  sign_in_failed: 'danger',
+  sign_out: 'muted',
   ui: 'muted',
 };
 const KIND_OPTIONS = [
@@ -96,8 +110,12 @@ function ActivityWorkspace() {
             hint={summary.isLoading ? 'Loading…' : `last ${SUMMARY_DAYS} days`}
             key={k}
             label={KIND_LABEL[k]}
-            tone={k === 'denied' && (s?.totals.denied ?? 0) > 0 ? 'danger' : 'default'}
-            value={s ? s.totals[k] : '—'}
+            tone={
+              (k === 'denied' || k === 'sign_in_failed') && (s?.totals[k] ?? 0) > 0
+                ? 'danger'
+                : 'default'
+            }
+            value={s ? (s.totals[k] ?? 0) : '—'}
           />
         ))}
       </div>

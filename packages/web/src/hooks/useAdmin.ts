@@ -318,7 +318,14 @@ export function useSecurityEventSummary(window: SecurityEventWindow = {}) {
 
 // ── User activity events ──
 
-export type ActivityKind = 'denied' | 'read' | 'export' | 'ui';
+export type ActivityKind =
+  | 'denied'
+  | 'read'
+  | 'export'
+  | 'ui'
+  | 'sign_in'
+  | 'sign_in_failed'
+  | 'sign_out';
 
 export interface ActivityEventRow {
   id: string;
@@ -368,6 +375,199 @@ export function useActivitySummary(days: number) {
     placeholderData: keepPreviousData,
     queryFn: () => api.get<ActivitySummary>(`/api/v1/platform/activity/summary?days=${days}`),
     queryKey: ['activity', 'summary', days],
+    refetchInterval: 60_000,
+  });
+}
+
+// ── User analytics (sign-ins, active users, actions) ──
+
+export type AuthMethod =
+  | 'password'
+  | 'github'
+  | 'google'
+  | 'okta'
+  | 'magic-link'
+  | 'oauth'
+  | 'unknown';
+
+export interface AnalyticsOverview {
+  days: number;
+  generatedAt: string;
+  truncated: boolean;
+  users: {
+    total: number;
+    dau: number;
+    wau: number;
+    mau: number;
+    stickinessPct: number;
+    newInWindow: number;
+    neverSignedIn: number;
+  };
+  activeByDay: Array<{
+    day: string;
+    activeUsers: number;
+    signIns: number;
+    failedSignIns: number;
+    signOuts: number;
+    actions: number;
+  }>;
+  signIns: {
+    total: number;
+    failed: number;
+    byMethod: Array<{ method: string; count: number }>;
+    byBrowser: Array<{ name: string; count: number }>;
+    byOs: Array<{ name: string; count: number }>;
+  };
+  actions: {
+    total: number;
+    byEntityType: Array<{ entityType: string; count: number }>;
+    byAction: { CREATE: number; UPDATE: number; DELETE: number };
+  };
+  topUsers: Array<{
+    userId: string;
+    email: string;
+    name: string | null;
+    actions: number;
+    signIns: number;
+    lastActiveAt: string | null;
+  }>;
+  recentFailures: Array<{
+    id: string;
+    createdAt: string;
+    userId: string | null;
+    email: string | null;
+    method: string | null;
+    reason: string | null;
+    ip: string | null;
+  }>;
+  activeSessions: number;
+  /** Sign-ins plus actions by UTC hour, 24 entries. */
+  peakHours: number[];
+}
+
+export type AnalyticsUserSort = 'lastActive' | 'actions' | 'signIns' | 'failed' | 'email';
+
+export interface AnalyticsUserRow {
+  userId: string;
+  email: string;
+  name: string | null;
+  role: string;
+  createdAt: string;
+  lastSignInAt: string | null;
+  lastActiveAt: string | null;
+  signIns: number;
+  failedSignIns: number;
+  actions: number;
+  activeDays: number;
+  activeSessions: number;
+}
+
+export interface AnalyticsUsersParams {
+  days: number;
+  q?: string;
+  sort?: AnalyticsUserSort;
+  order?: 'asc' | 'desc';
+  limit: number;
+  offset: number;
+}
+
+export interface AnalyticsUsersPage {
+  data: AnalyticsUserRow[];
+  meta: { limit: number; offset: number; total: number; days: number; truncated: boolean };
+}
+
+export interface AnalyticsUserDetail {
+  user: {
+    id: string;
+    email: string;
+    name: string | null;
+    role: string;
+    createdAt: string;
+    teams: Array<{ id: string; slug: string; role: string }>;
+  };
+  summary: {
+    signIns: number;
+    failedSignIns: number;
+    signOuts: number;
+    actions: number;
+    activeDays: number;
+    lastSignInAt: string | null;
+    lastActiveAt: string | null;
+    firstSeenAt: string | null;
+  };
+  daily: Array<{ day: string; signIns: number; failedSignIns: number; actions: number }>;
+  actionsByEntityType: Array<{ entityType: string; count: number }>;
+  actionsByAction: { CREATE: number; UPDATE: number; DELETE: number };
+  signInHistory: Array<{
+    id: string;
+    kind: 'sign_in' | 'sign_in_failed' | 'sign_out';
+    createdAt: string;
+    method: string | null;
+    browser: string | null;
+    os: string | null;
+    ip: string | null;
+    reason: string | null;
+  }>;
+  recentActions: Array<{
+    id: string;
+    createdAt: string;
+    entityType: string;
+    entityId: string | null;
+    action: string;
+    via: string | null;
+  }>;
+  topPages: Array<{ route: string; count: number }>;
+  sessions: Array<{
+    id: string;
+    createdAt: string;
+    expiresAt: string;
+    ipTruncated: string | null;
+    browser: string | null;
+    os: string | null;
+  }>;
+}
+
+export function useAnalyticsOverview(days: number) {
+  return useQuery({
+    placeholderData: keepPreviousData,
+    queryFn: () => api.get<AnalyticsOverview>(`/api/v1/platform/analytics/overview?days=${days}`),
+    queryKey: ['analytics', 'overview', days],
+    refetchInterval: 60_000,
+  });
+}
+
+export function useAnalyticsUsers(params: AnalyticsUsersParams) {
+  const qs = new URLSearchParams({
+    days: String(params.days),
+    limit: String(params.limit),
+    offset: String(params.offset),
+  });
+  if (params.q) {
+    qs.set('q', params.q);
+  }
+  if (params.sort) {
+    qs.set('sort', params.sort);
+  }
+  if (params.order) {
+    qs.set('order', params.order);
+  }
+  return useQuery({
+    placeholderData: keepPreviousData,
+    queryFn: () => api.get<AnalyticsUsersPage>(`/api/v1/platform/analytics/users?${qs}`),
+    queryKey: ['analytics', 'users', params],
+    refetchInterval: 60_000,
+  });
+}
+
+export function useAnalyticsUser(id: string, days: number) {
+  return useQuery({
+    enabled: id.length > 0,
+    placeholderData: keepPreviousData,
+    queryFn: () =>
+      api.get<AnalyticsUserDetail>(
+        `/api/v1/platform/analytics/users/${encodeURIComponent(id)}?days=${days}`
+      ),
+    queryKey: ['analytics', 'user', id, days],
     refetchInterval: 60_000,
   });
 }

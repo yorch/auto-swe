@@ -78,7 +78,9 @@ when the system acted, such as a webhook or a sweep), `beforeJson`, `afterJson`,
   sweep). Rows carry ids, the mode and the team, never the goal text or the spec. See
   [configuration.md](./configuration.md) for the limits.
 - **Sign-ins.** Each session created by better-auth writes a `CREATE` row of entity type `Session`
-  with `afterJson` `{ "event": "sign_in" }`, the user as actor, and a context of `via: "session"`
+  with `afterJson` `{ "event": "sign_in", "method": "<method>" }`, where `method` is the sign-in
+  method from [user-activity.md](./user-activity.md) §7 (`password`, `github`, `google`, `okta`,
+  `magic-link`, `oauth` or `unknown`), the user as actor, and a context of `via: "session"`
   plus the request id and truncated address. The address is the request's (`request.ip`), not the
   session row's `ipAddress`, which better-auth fills from `X-Forwarded-For` whatever the proxy
   setting; the row's value is used only when the hook runs outside a request.
