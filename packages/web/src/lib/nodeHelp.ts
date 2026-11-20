@@ -286,7 +286,7 @@ const DISPATCH_PLUMBING =
   ' Optional on this node: `storeAs` copies the output to a context path (never under `nodes.`), and `onFailure` routes to a node, or ends the run with `{ status, message }`, once retries are spent — for a thrown error or a failed gate — and wins over `onFail` block and warn.';
 
 const FLOW_FIELDS =
-  ' On any node: `status` sets the run’s domain status on entry, and `maxVisits` with `onExhausted` sends the next entry past the limit elsewhere (the count is at nodes.<id>.visits).';
+  ' On any node: `status` sets the run’s domain status on entry, and `maxVisits` with `onExhausted` sends the next entry past the limit elsewhere (the count is at nodes.<id>.visits), and `resetVisits` lists node ids whose count starts again at 0 when this node is entered, before its own count.';
 
 const DISPATCH_TYPES: ReadonlySet<SpecNode['type']> = new Set([
   'agent',

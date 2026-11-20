@@ -276,13 +276,11 @@
     },
     "updateCodeAfterFix": {
       "next": "repushAfterFix",
+      "resetVisits": ["fetchLogs"],
       "type": "set",
       "values": {
         "context.currentCodeResult": {
           "from": "nodes.consensusFix.output"
-        },
-        "nodes.fetchLogs.visits": {
-          "literal": 0
         }
       }
     },

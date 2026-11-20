@@ -114,6 +114,7 @@ describe('RunnableWorkflow — history replay', () => {
       'nested-fan-out',
       'on-error-continue',
       'on-fail-retry',
+      'reset-visits',
       'shell',
       'signal-timeout',
       'signal',
@@ -250,6 +251,17 @@ describe('RunnableWorkflow — history replay', () => {
     );
     const names = scheduled.map((e) => e.activityTaskScheduledEventAttributes?.activityType?.name);
     expect(names.filter((n) => n === 'executeImplementation')).toHaveLength(2);
+  });
+
+  it('the reset-visits fixture refilled the loop budget once and walked it again', () => {
+    // maxVisits: 2, reset once from outside the loop: two activities, the reset, two more.
+    const scheduled = eventsOf('reset-visits').filter(
+      (e) => e.eventType === EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+    );
+    const names = scheduled.map((e) => e.activityTaskScheduledEventAttributes?.activityType?.name);
+    expect(names.filter((n) => n === 'executeImplementation')).toHaveLength(4);
+    const types = eventsOf('reset-visits').map((e) => e.eventType);
+    expect(types.at(-1)).toBe(EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED);
   });
 
   it('the needs-input fixture paused, asked a person and resumed the activity', () => {

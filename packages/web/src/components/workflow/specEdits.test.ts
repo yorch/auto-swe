@@ -5,6 +5,7 @@ import {
   deleteNodeFromSpec,
   isEdgeFieldRequired,
   renameNodeInSpec,
+  rewriteResetVisits,
   setSpecEdge,
   UNRESOLVED_NODE_ID,
 } from './specEdits';
@@ -167,5 +168,57 @@ describe('setSpecEdge', () => {
 
   it('ignores an unknown node', () => {
     expect(setSpecEdge(SPEC, 'nope', 'next', 'end')).toBe(SPEC);
+  });
+});
+
+describe('resetVisits references', () => {
+  const RESET: WorkflowSpec = parseWorkflowSpec({
+    entry: 'start',
+    name: 'reset',
+    nodes: {
+      counted: { maxVisits: 2, next: 'end', onExhausted: 'end', step: 'c', type: 'step' },
+      end: { status: 'SUCCESS', type: 'terminate' },
+      other: { maxVisits: 1, next: 'counted', onExhausted: 'end', step: 'o', type: 'step' },
+      start: { next: 'other', resetVisits: ['counted', 'other'], step: 's', type: 'step' },
+    },
+    schemaVersion: 1,
+  });
+
+  it('rewrites a renamed id in every resetVisits list, in place', () => {
+    const next = renameNodeInSpec(RESET, 'counted', 'bounded');
+    expect(next.nodes.start?.resetVisits).toEqual(['bounded', 'other']);
+    expect(() => parseWorkflowSpec(next)).not.toThrow();
+  });
+
+  it('drops a deleted id, and the field once the list is empty', () => {
+    const one = deleteNodeFromSpec(RESET, 'counted');
+    expect(one.nodes.start?.resetVisits).toEqual(['other']);
+    expect(() => parseWorkflowSpec(one)).not.toThrow();
+    const both = deleteNodeFromSpec(one, 'other');
+    expect(both.nodes.start).not.toHaveProperty('resetVisits');
+    expect(() => parseWorkflowSpec(both)).not.toThrow();
+  });
+
+  it('is not an edge: deleting a listed node creates no placeholder', () => {
+    const spec = parseWorkflowSpec({
+      entry: 'a',
+      name: 'only-reset',
+      nodes: {
+        a: { next: 'end', resetVisits: ['b'], step: 's', type: 'step' },
+        b: { maxVisits: 1, next: 'end', onExhausted: 'end', step: 's', type: 'step' },
+        end: { status: 'SUCCESS', type: 'terminate' },
+      },
+      schemaVersion: 1,
+    });
+    const next = deleteNodeFromSpec(spec, 'b');
+    expect(next.nodes[UNRESOLVED_NODE_ID]).toBeUndefined();
+    expect(next.nodes.a).toMatchObject({ next: 'end', step: 's', type: 'step' });
+    expect(next.nodes.a).not.toHaveProperty('resetVisits');
+  });
+
+  it('keeps the nodes map when nothing changes, and deduplicates a rename onto a listed id', () => {
+    expect(rewriteResetVisits(RESET.nodes, (t) => t)).toBe(RESET.nodes);
+    const merged = rewriteResetVisits(RESET.nodes, (t) => (t === 'counted' ? 'other' : t));
+    expect(merged.start?.resetVisits).toEqual(['other']);
   });
 });

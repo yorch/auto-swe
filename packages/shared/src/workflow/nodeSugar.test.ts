@@ -420,3 +420,131 @@ describe('maxVisits', () => {
     expect(r.status).toBe('SUCCESS');
   });
 });
+
+describe('resetVisits', () => {
+  const visitsOf = (r: { finalContext: Context }, id: string): unknown =>
+    (r.finalContext.nodes as Record<string, { visits?: number }>)[id]?.visits;
+
+  // `a` is bounded to two entries per budget; `r` gives it a fresh budget once, then the
+  // third entry after the reset routes out.
+  const resetLoop = () =>
+    mk(
+      {
+        a: { maxVisits: 2, next: 'gate', onExhausted: 'again', step: 's', type: 'step' },
+        again: { expr: 'context.reset == true', onFalse: 'r', onTrue: 'out', type: 'cond' },
+        done,
+        gate: { expr: 'true', onFalse: 'done', onTrue: 'a', type: 'cond' },
+        out: { status: 'FAILED', type: 'terminate' },
+        r: {
+          next: 'a',
+          resetVisits: ['a'],
+          type: 'set',
+          values: { 'context.reset': { literal: true } },
+        },
+      },
+      'a'
+    );
+
+  it('sets the listed counts to 0 on entry, giving the loop a fresh budget', async () => {
+    const { d, calls } = harness({});
+    const r = await runSpec(resetLoop(), ctx0(), d);
+    // two entries, exhausted, reset, two more, exhausted again
+    expect(calls).toEqual(['s', 's', 's', 's']);
+    expect(r.status).toBe('FAILED');
+    expect(visitsOf(r, 'a')).toBe(3);
+  });
+
+  it('writes the count even where none was kept, like a set of a literal 0', async () => {
+    const spec = mk({
+      a: { next: 'done', resetVisits: ['b'], step: 's', type: 'step' },
+      b: { maxVisits: 1, next: 'done', onExhausted: 'done', step: 's', type: 'step' },
+      done,
+    });
+    const r = await runSpec(spec, ctx0(), harness({}).d);
+    expect(visitsOf(r, 'b')).toBe(0);
+  });
+
+  it('resets before the node counts its own entry: a node that lists itself never exhausts', async () => {
+    const spec = mk({
+      a: {
+        maxVisits: 1,
+        next: 'a',
+        onExhausted: { status: 'FAILED' },
+        resetVisits: ['a'],
+        step: 's',
+        type: 'step',
+      },
+    });
+    const { d, calls } = harness({});
+    await expect(runSpec(spec, ctx0(), d, { maxTransitions: 5 })).rejects.toThrow(
+      /MAX_NODE_TRANSITIONS/
+    );
+    expect(calls.length).toBe(5);
+  });
+
+  it('resets inside a fan-out branch only that branch’s counts', async () => {
+    const spec = mk(
+      {
+        b: { maxVisits: 1, next: 'c', onExhausted: 'bad', step: 's', type: 'step' },
+        bad: { status: 'FAILED', type: 'terminate' },
+        c: { next: 'ok', resetVisits: ['top'], step: 's', type: 'step' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: { join: 'top', over: { literal: [1, 2] }, subgraph: 'b', type: 'fanOut' },
+        ok: { status: 'SUCCESS', type: 'terminate' },
+        top: { maxVisits: 3, next: 'done', onExhausted: 'bad', step: 't', type: 'step' },
+      },
+      'fan'
+    );
+    const r = await runSpec(spec, ctx0(), harness({}).d);
+    expect(r.status).toBe('SUCCESS');
+    expect(visitsOf(r, 'top')).toBe(1);
+  });
+
+  it('changes nothing for a spec without the field', async () => {
+    const spec = mk({
+      a: { maxVisits: 3, next: 'a', onExhausted: 'stop', step: 's', type: 'step' },
+      stop: { status: 'FAILED', type: 'terminate' },
+    });
+    expect(spec.nodes.a).not.toHaveProperty('resetVisits');
+    const r = await runSpec(spec, ctx0(), harness({}).d);
+    expect(visitsOf(r, 'a')).toBe(4);
+  });
+
+  it('parses up to 20 distinct ids, and refuses repeats and more', () => {
+    const base = { next: 'done', step: 's', type: 'step' };
+    expect(() => mk({ a: { ...base, resetVisits: ['a', 'a'] }, done })).toThrow(/more than once/);
+    const many = Array.from({ length: 21 }, (_, i) => `n${i}`);
+    expect(() => mk({ a: { ...base, resetVisits: many }, done })).toThrow();
+    expect(() => mk({ a: { ...base, resetVisits: many.slice(0, 20) }, done })).not.toThrow();
+  });
+
+  it('is not an edge', () => {
+    const spec = mk({
+      a: { next: 'done', resetVisits: ['b'], step: 's', type: 'step' },
+      b: { maxVisits: 1, next: 'done', onExhausted: 'done', step: 's', type: 'step' },
+      done,
+    });
+    expect(nodeEdges(spec.nodes.a as Parameters<typeof nodeEdges>[0])).toEqual([['next', 'done']]);
+  });
+
+  it('validateSpec: an unknown id is an error, an uncounted one a warning', () => {
+    const report = validateSpec(
+      mk({
+        a: { next: 'b', resetVisits: ['nope', 'b', 'c'], step: 's', type: 'step' },
+        b: { next: 'c', step: 's', type: 'step' },
+        c: { maxVisits: 1, next: 'done', onExhausted: 'done', step: 's', type: 'step' },
+        done,
+      })
+    );
+    expect(report.errors.filter((e) => e.code === 'RESET_VISITS_UNKNOWN_NODE')).toEqual([
+      expect.objectContaining({
+        field: 'resetVisits',
+        message: expect.stringContaining("'nope'"),
+        nodeId: 'a',
+      }),
+    ]);
+    expect(report.warnings.filter((w) => w.code === 'RESET_VISITS_UNCOUNTED')).toEqual([
+      expect.objectContaining({ message: expect.stringContaining("'b'"), nodeId: 'a' }),
+    ]);
+  });
+});

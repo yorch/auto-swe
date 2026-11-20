@@ -22,7 +22,8 @@
  *   reaches a security-relevant input. No authored command or container code anywhere.
  * - **Writes.** A `set` node or a `storeAs` writes only under `context.`; the platform's own
  *   plumbing paths take only a node's output, and `context.currentCodeResult` only an
- *   implementation or fix step's. `nodes.*` is never written, so a plan cannot answer its own cond.
+ *   implementation or fix step's. `nodes.*` is never written, so a plan cannot answer its own cond,
+ *   and no node carries `resetVisits`, which would write a visit count there.
  * - **Failure policy.** A stage or fix node's `onFail` is `block` or a bounded retry, never `warn`,
  *   and its `onError` is never `continue`.
  * - **Ordering by dominance.** The graph is modelled the way the interpreter walks it: every node
@@ -837,6 +838,15 @@ function checkWrites(spec: WorkflowSpec, id: string, node: Node, add: Add): void
         add(problem.code, `set node '${id}' ${problem.message}`, id);
       }
     }
+  }
+  // `resetVisits` writes `nodes.<id>.visits`: a plan that could zero a count could lift the loop
+  // bounds the transition budget and the loop rule are computed from.
+  for (const target of node.resetVisits ?? []) {
+    add(
+      'RESERVED_PATH_WRITE',
+      `node '${id}' resets the visit count of '${target}' (resetVisits writes 'nodes.${target}.visits'); a generated plan may not reset a loop bound`,
+      id
+    );
   }
   const storeAs = 'storeAs' in node ? node.storeAs : undefined;
   if (storeAs !== undefined) {

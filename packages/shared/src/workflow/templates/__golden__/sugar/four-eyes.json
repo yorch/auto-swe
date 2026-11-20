@@ -361,13 +361,11 @@
     },
     "updateCodeAfterSignoffFix": {
       "next": "repushAfterFix",
+      "resetVisits": ["fetchLogs"],
       "type": "set",
       "values": {
         "context.currentCodeResult": {
           "from": "nodes.signoffFix.output"
-        },
-        "nodes.fetchLogs.visits": {
-          "literal": 0
         }
       }
     },

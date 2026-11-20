@@ -65,11 +65,28 @@ const OnFailureSchema = RouteTargetSchema;
  * before they existed, so an old spec parses and behaves as it did.
  *   - `status`: domain status set when the node is entered (not on a retry)
  *   - `maxVisits` + `onExhausted`: loop bound; the (maxVisits+1)th entry routes to `onExhausted`
+ *   - `resetVisits`: node ids whose visit count (`nodes.<id>.visits`) is set to 0 when this
+ *     node is entered, before this node's own `maxVisits` count, so a node that lists itself
+ *     counts this entry as its first. It takes no transition and is not an edge.
  * A `terminate` node's own `status` (its terminal status) overrides this one.
  */
+export const MAX_RESET_VISITS = 20;
+/**
+ * A node id named by `resetVisits`: the shape of {@link NodeIdSchema}, as a separate schema on
+ * purpose. Every field declared with `NodeIdSchema` itself is an edge (the inventory reads edges
+ * from the schema by that identity), and a reset routes nowhere.
+ */
+const ResetVisitsIdSchema = z.string().min(1).max(64);
 const NodeFlowFields = {
   maxVisits: z.number().int().min(1).max(10_000).optional(),
   onExhausted: RouteTargetSchema.optional(),
+  resetVisits: z
+    .array(ResetVisitsIdSchema)
+    .max(MAX_RESET_VISITS)
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: 'resetVisits lists a node id more than once',
+    })
+    .optional(),
   status: z.string().min(1).max(64).optional(),
 };
 

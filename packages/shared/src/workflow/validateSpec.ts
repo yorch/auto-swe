@@ -24,7 +24,10 @@
  *                          mechanism. Opt-in because platform templates (Channel Task) and
  *                          existing team templates legitimately name such agents; only run-plan
  *                          paths, whose agents are chosen by a model, turn it on
+ *     - RESET_VISITS_UNKNOWN_NODE  a node's `resetVisits` names an id that is not a node
  *   warnings (advisory):
+ *     - RESET_VISITS_UNCOUNTED  a node's `resetVisits` names a node that sets no `maxVisits`,
+ *                          so no count is kept there and the reset changes nothing
  *     - UNKNOWN_NODE_REF   a `{ from: "nodes.<id>..." }` binding names a node
  *                          that doesn't exist (may reference a not-yet-added node)
  *     - UNREACHABLE        a node can't be reached from `entry`
@@ -440,6 +443,26 @@ export function validateSpec(
         nodeId: id,
         severity: 'warning',
       });
+    }
+    for (const target of node.resetVisits ?? []) {
+      const listed = Object.hasOwn(spec.nodes, target) ? spec.nodes[target] : undefined;
+      if (listed === undefined) {
+        errors.push({
+          code: 'RESET_VISITS_UNKNOWN_NODE',
+          field: 'resetVisits',
+          message: `resetVisits names '${target}', which is not a node of this workflow`,
+          nodeId: id,
+          severity: 'error',
+        });
+      } else if (listed.maxVisits === undefined) {
+        warnings.push({
+          code: 'RESET_VISITS_UNCOUNTED',
+          field: 'resetVisits',
+          message: `resetVisits names '${target}', which sets no maxVisits, so nothing counts its visits and the reset has no effect`,
+          nodeId: id,
+          severity: 'warning',
+        });
+      }
     }
     for (const { field, segments } of writePathSegments(id, node)) {
       // Only the dispatch nodes: signal and human `storeAs` predate this rule and keep their

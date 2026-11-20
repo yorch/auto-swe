@@ -3,7 +3,9 @@
  * node, clearing one edge.
  *
  * Every one of these has to rewrite the *references* other nodes hold, and the
- * set of reference-bearing fields is not a list this file is allowed to keep:
+ * set of reference-bearing fields is not a list this file is allowed to keep
+ * (the one non-edge reference, a node's `resetVisits` ids, is rewritten beside
+ * the edges by {@link rewriteResetVisits}):
  * it is `nodeEdges()` in the spec module, which the schema's ref validation and
  * the interpreter's reachability analysis already read from. Editors that kept
  * their own hardcoded field list drifted from it (missing `onApprove`,
@@ -121,6 +123,45 @@ export function rewriteEdges(
 }
 
 /**
+ * Rewrite every node's `resetVisits` list through `map`. It names nodes but is not an edge
+ * (`nodeEdges` leaves it out: a reset routes nowhere), so `rewriteEdges` does not see it. A
+ * `null` drops the id, and a list left empty is removed. Nodes without the field, and lists
+ * `map` leaves alone, keep their identity.
+ */
+export function rewriteResetVisits(
+  nodes: WorkflowSpec['nodes'],
+  map: (target: string) => string | null
+): WorkflowSpec['nodes'] {
+  let changed = false;
+  const out: Record<string, SpecNode> = {};
+  for (const [id, node] of Object.entries(nodes)) {
+    const ids = node.resetVisits;
+    if (ids === undefined) {
+      out[id] = node;
+      continue;
+    }
+    // Deduplicated: the schema refuses a repeated id, and a rename onto an id the list
+    // already names (a stale one) would otherwise produce one.
+    const next = [
+      ...new Set(
+        ids.flatMap((target) => {
+          const mapped = map(target);
+          return mapped === null ? [] : [mapped];
+        })
+      ),
+    ];
+    if (next.length === ids.length && next.every((t, i) => t === ids[i])) {
+      out[id] = node;
+      continue;
+    }
+    changed = true;
+    const { resetVisits: _old, ...rest } = node;
+    out[id] = (next.length > 0 ? { ...rest, resetVisits: next } : rest) as SpecNode;
+  }
+  return changed ? (out as WorkflowSpec['nodes']) : nodes;
+}
+
+/**
  * Delete `id` and repair every reference to it.
  *
  * Deleting the entry node, or a node that is not in the spec, is a no-op.
@@ -135,7 +176,10 @@ export function deleteNodeFromSpec(spec: WorkflowSpec, id: string): WorkflowSpec
   const { [id]: _removed, ...rest } = spec.nodes;
   return {
     ...spec,
-    nodes: rewriteEdges(rest as WorkflowSpec['nodes'], (target) => (target === id ? null : target)),
+    nodes: rewriteResetVisits(
+      rewriteEdges(rest as WorkflowSpec['nodes'], (target) => (target === id ? null : target)),
+      (target) => (target === id ? null : target)
+    ),
   };
 }
 
@@ -158,8 +202,9 @@ export function renameNodeInSpec(spec: WorkflowSpec, oldId: string, newId: strin
   return {
     ...spec,
     entry: spec.entry === oldId ? newId : spec.entry,
-    nodes: rewriteEdges(moved as WorkflowSpec['nodes'], (target) =>
-      target === oldId ? newId : target
+    nodes: rewriteResetVisits(
+      rewriteEdges(moved as WorkflowSpec['nodes'], (target) => (target === oldId ? newId : target)),
+      (target) => (target === oldId ? newId : target)
     ),
     ...(uses !== spec.uses ? { uses } : {}),
   };
