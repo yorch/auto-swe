@@ -725,6 +725,23 @@ run-pinned and apply through the settings cache. Public PR screenshot copies req
 `UI_EVIDENCE_PUBLIC_BUCKET` and `UI_EVIDENCE_PUBLIC_BASE_URL` in the worker environment in addition
 to enabling `uiValidation.prInlineImages`. The public bucket policy is operator-managed.
 
+## Team directory and join requests
+
+The `teams` group holds the five settings that govern the team directory, join requests and
+self-service team creation. A platform ADMIN writes all five, and none is run-pinned.
+
+| Key | Default | Scopes | Meaning |
+|---|---|---|---|
+| `teams.directoryScope` | `platform` | GLOBAL | `platform` lists every active team to every signed-in user and accepts a join request to any listed team; `organization` lists only the teams of organizations the viewer belongs to. |
+| `teams.selfServiceCreation` | `false` | GLOBAL, ORGANIZATION | Whether any member of an organization may create a team in it. The creator becomes the team ADMIN. |
+| `teams.maxCreatedPerUser` | `3` | GLOBAL, ORGANIZATION | Active teams one user may have created through self-service creation, counted across all organizations (1 to 100). Does not limit an organization or platform admin. |
+| `teams.maxOpenJoinRequests` | `5` | GLOBAL | Open join requests one user may hold at once (1 to 50). |
+| `teams.joinRequestCooldownHours` | `72` | GLOBAL | Hours after a rejection before the same team accepts a new request from that user (0 to 720). |
+
+The default `teams.directoryScope` exposes each active team's name, slug, description, organization and
+member count to every signed-in user; set it to `organization` to keep teams private to their
+organization. Behaviour is in [teams.md](./teams.md#team-directory-and-join-requests).
+
 ## Orchestration
 
 The `orchestration` group bounds orchestrated agent runs (see the orchestration design in

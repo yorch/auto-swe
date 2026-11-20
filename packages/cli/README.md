@@ -181,6 +181,31 @@ runs show <runId>                    Print one run (with steps) as JSON
 runs tail <runId> [--interval=SEC] [--max=N]
                                      Poll until terminal status (exit 2 if the run did not succeed)
 
+teams directory [--query=q] [--org=<id>] [--limit=N] [--cursor=C] [--json]
+                                     List the teams you can see and your relationship to each
+teams request <teamId> [--message=text] [--json]
+                                     Ask to join a team (one open request per team); a team in
+                                     another organization also needs that organization's approval
+teams requests [--json]              List your own join requests, newest first
+teams requests withdraw <requestId> [--json]
+                                     Withdraw one of your open requests
+teams requests pending <teamId> [--status=S] [--json]
+                                     List a team's join requests (team managers); S is a
+                                     status or ALL
+teams requests approve <teamId> <requestId> [--role=ADMIN|LEAD|MEMBER] [--note=text] [--json]
+                                     Approve at the team step; the role defaults to MEMBER and may
+                                     not exceed your own role
+teams requests reject <teamId> <requestId> [--note=text] [--json]
+                                     Reject at the team step
+
+orgs requests <orgId> [--status=S] [--json]
+                                     List join requests awaiting the organization's decision,
+                                     with the role the team granted; S is a status or ALL
+orgs requests approve <orgId> <requestId> [--note=text] [--json]
+                                     Approve the organization step (needs organization admin)
+orgs requests reject <orgId> <requestId> [--note=text] [--json]
+                                     Reject the organization step
+
 tokens list                          List your personal access tokens
 tokens create <name> [--expires-in-days=N]
                                      Issue a personal access token (printed once)
