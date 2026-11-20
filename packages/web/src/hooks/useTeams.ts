@@ -88,6 +88,7 @@ export function useCreateTeam() {
       ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['teams'] });
+      qc.invalidateQueries({ queryKey: ['team-directory'] });
       qc.invalidateQueries({ queryKey: PERMISSIONS_KEY });
     },
   });

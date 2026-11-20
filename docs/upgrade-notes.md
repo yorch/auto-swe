@@ -2186,3 +2186,42 @@ read correctly, because the permissions module accepts the old spellings.
 `SELECT DISTINCT role FROM team_memberships` returns only `ADMIN`, `LEAD` and `MEMBER`;
 `SELECT DISTINCT role FROM organization_memberships` returns only `ADMIN` and `MEMBER`; and
 `SELECT 1 FROM pg_type WHERE typname = 'Role'` returns no row.
+
+---
+
+### Team directory: deployments that keep teams private to an organization (`<fixing commit SHA>`)
+
+**Affected.** Deployments that keep teams private to an organization, meaning a signed-in user of one
+organization should see only that organization's teams. Also affected: any deployment that applies
+migration `20261120000000_team_join_requests`, which adds the join-request table and `Team.createdById`.
+
+**What changes.** The team directory lists every active team to every signed-in user by default
+(`teams.directoryScope` is `platform`). Before this change no user could see a team they did not
+belong to. The directory also exposes each team's name, slug, description, organization and member
+count, and any user may ask to join a team.
+
+**Actions.**
+
+1. Apply the migration with `yarn db:deploy`.
+2. To keep teams private to an organization, set the GLOBAL value of `teams.directoryScope` to
+   `organization` at `/admin/platform-settings`. The setting exists only in the new gateway's registry,
+   so it cannot be written before that gateway runs. Until it is saved, from the first request the new
+   gateway serves, the default (`platform`) lists every active team's name, slug, description,
+   organization and member count to every signed-in user and accepts a join request to any listed team.
+   An operator who cannot accept that window inserts the row before starting the new gateway (the
+   `config_settings` table exists from the initial migration; `value` is JSONB, so the string is quoted):
+
+   ```sql
+   INSERT INTO config_settings (key, scope, value)
+   VALUES ('teams.directoryScope', 'GLOBAL', '"organization"'::jsonb)
+   ON CONFLICT DO NOTHING;
+   ```
+
+   The setting has no organization-level value, so one setting governs the whole deployment. The
+   settings cache lasts about 30 seconds.
+3. Self-service team creation stays off until a platform ADMIN sets `teams.selfServiceCreation`. No
+   action is needed if members should not create teams.
+
+**Verify.** With `teams.directoryScope` set to `organization`, `GET /api/v1/teams/directory` returns
+for a user only teams whose organization the user belongs to. `SELECT COUNT(*) FROM team_join_requests`
+returns a number rather than an error, and `\d teams` shows a `created_by_id` column.

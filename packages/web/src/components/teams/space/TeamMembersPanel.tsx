@@ -4,6 +4,7 @@ import type { TeamSummary } from '@auto-swe/shared/types/api';
 import { useState } from 'react';
 import { AddMemberModal } from '@/components/teams/AddMemberModal';
 import { InviteTeamMemberModal } from '@/components/teams/InviteTeamMemberModal';
+import { TeamJoinRequestsPanel } from '@/components/teams/space/TeamJoinRequestsPanel';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -205,6 +206,9 @@ export function TeamMembersPanel({ team: summary }: { team: TeamSummary }) {
           </div>
         )}
       </Card>
+      {canManage && (
+        <TeamJoinRequestsPanel grantableRoles={grantableRoles} teamId={id} teamName={team.name} />
+      )}
       <AddMemberModal
         existingUserIds={existingUserIds}
         grantableRoles={grantableRoles}

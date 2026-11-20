@@ -240,6 +240,7 @@ _Generated from `packages/shared/src/permissions/catalog/` by `scripts/gen-permi
 | `platform.sessions.manage` | platform | governance | — | — | yes | — | List and revoke access tokens and sessions. |
 | `platform.shell-audit.prune` | platform | sensitive | — | — | yes | — | Prune the shell audit trail. |
 | `platform.slack-channels.manage` | platform | governance | — | — | yes | — | Create and change Slack channels, erase a user, edit channel memory. |
+| `platform.team-directory.read` | platform | read | MEMBER | — | yes | no | List the teams on the platform. Every signed-in person may; the route needs no capability, and the catalog lists a member of any team so the matrix and the client list show it. |
 | `platform.transcripts.retention.manage` | platform | sensitive | — | — | yes | — | Place and lift legal holds on runs and transcripts, and verify transcript integrity. |
 | `platform.users.directory.read` | platform | read | LEAD | — | yes | yes | Look people up in the user directory. Held by a lead of any active team. |
 | `platform.users.manage` | platform | governance | — | — | yes | — | Create users, change their platform role, activate or deactivate them. |
@@ -259,7 +260,7 @@ _Generated from `packages/shared/src/permissions/catalog/` by `scripts/gen-permi
 | `org.read` | org | read | — | MEMBER | yes | — | See the organization, its detail and its budget alert level. |
 | `org.reports.read` | org | read | — | ADMIN | yes | — | Read the organization's usage and delivery reports. |
 | `org.settings.manage` | org | governance | — | ADMIN | yes | — | Change the organization's name and slug. |
-| `org.teams.create` | org | governance | — | ADMIN | yes | — | Create a team in the organization, from either team-creation route. |
+| `org.teams.create` | org | governance | — | ADMIN | yes | — | Create a team in the organization. Both team-creation routes check it; only the organization route also admits a member where self-service creation is on. |
 
 ### Teams
 
@@ -276,6 +277,7 @@ _Generated from `packages/shared/src/permissions/catalog/` by `scripts/gen-permi
 | `team.callbacks.read` | team | read | MEMBER | — | yes | no | See a team's callback endpoints and their deliveries. |
 | `team.credentials.manage` | team | sensitive | ADMIN | — | yes | yes | Manage a team's model provider credentials. |
 | `team.delete` | team | governance | — | — | yes | yes | Delete a team. |
+| `team.join-requests.create` | team | operation | — | — | yes | yes | Ask to join a team. Any signed-in person who is not a member and can see the team may; the route checks that itself and needs no capability, so only a platform admin holds this one in the catalog. |
 | `team.members.manage` | team | governance | LEAD | ADMIN | yes | yes | Invite, add, change the role of and remove team members, never above the actor’s own rank. |
 | `team.members.read` | team | read | MEMBER | — | yes | no | List a team's members. |
 | `team.persona.manage` | team | operation | LEAD | — | yes | yes | Set the prompt of a team's channel assistant, which can start runs. Organization admins do not hold it without a team role. |

@@ -79,6 +79,8 @@ interface Fixture {
   sharedCanLaunch?: boolean;
   costUsd?: number | null | Error;
   members?: string[];
+  /** Join requests awaiting the team's own decision. */
+  pendingRequests?: number;
   /** The team's member roles as the roles read sees them (default: one ADMIN). */
   memberRoles?: string[];
   openPrs?: number;
@@ -182,6 +184,7 @@ async function build(fx: Fixture) {
           ? null
           : {
               id: TEAM,
+              isActive: true,
               memberships: fx.teamRole ? [{ role: fx.teamRole }] : [],
               name: 'Alpha',
               organization: { name: 'Acme' },
@@ -190,6 +193,7 @@ async function build(fx: Fixture) {
             }
       ),
     },
+    teamJoinRequest: { count: vi.fn().mockResolvedValue(fx.pendingRequests ?? 0) },
     teamMembership: {
       findMany: vi.fn(
         async (args: { select: Record<string, unknown>; where: { userId?: string } }) => {
@@ -343,6 +347,42 @@ describe('GET /api/v1/teams/:id/overview', () => {
     it('is absent for a member who does not govern the team', async () => {
       const { res } = await get({ memberRoles: ['MEMBER'], teamRole: 'MEMBER' });
       expect('needsAdmin' in res.json().data).toBe(false);
+    });
+  });
+
+  describe('pendingJoinRequests', () => {
+    it.each(['LEAD', 'ADMIN'] as const)(
+      'counts the requests awaiting a team %s',
+      async (teamRole) => {
+        const { prisma, res } = await get({ pendingRequests: 3, teamRole });
+        expect(res.json().data.pendingJoinRequests).toBe(3);
+        // One count, scoped to the team and to the team's own step.
+        expect(prisma.teamJoinRequest.count).toHaveBeenCalledTimes(1);
+        expect(prisma.teamJoinRequest.count).toHaveBeenCalledWith({
+          where: { status: 'PENDING_TEAM', teamId: TEAM },
+        });
+      }
+    );
+
+    it('is absent for a plain member, who is not asked to count anything', async () => {
+      const { prisma, res } = await get({ pendingRequests: 3, teamRole: 'MEMBER' });
+      expect('pendingJoinRequests' in res.json().data).toBe(false);
+      expect(prisma.teamJoinRequest.count).not.toHaveBeenCalled();
+    });
+
+    it('is present for an organization admin who is a plain member of the team', async () => {
+      const { res } = await get({ orgRole: 'ADMIN', pendingRequests: 2, teamRole: 'MEMBER' });
+      expect(res.json().data.pendingJoinRequests).toBe(2);
+    });
+
+    it('is present, and zero, for a platform ADMIN outside the team', async () => {
+      const { res } = await get({ platformRole: 'ADMIN', teamRole: null });
+      expect(res.json().data.pendingJoinRequests).toBe(0);
+    });
+
+    it('is absent for a member of the organization who is not its admin', async () => {
+      const { res } = await get({ orgRole: 'MEMBER', pendingRequests: 2, teamRole: 'MEMBER' });
+      expect('pendingJoinRequests' in res.json().data).toBe(false);
     });
   });
 

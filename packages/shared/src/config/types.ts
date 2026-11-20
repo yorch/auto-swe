@@ -43,6 +43,7 @@ export const SETTING_GROUPS = [
   'review',
   'runPlans',
   'skills',
+  'teams',
   'tracker',
   'uiValidation',
   'workflow',

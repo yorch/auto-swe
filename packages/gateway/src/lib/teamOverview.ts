@@ -1,9 +1,12 @@
 import type { Prisma, PrismaClient } from '@auto-swe/shared';
 import { usdToCents } from '@auto-swe/shared/lib/billing';
 import {
+  CATALOG,
   can,
   isPlatformAdmin,
   isPlatformAdminRole,
+  orgRankMeets,
+  orgRankOf,
   teamRankMeets,
   teamRankOf,
   userActor,
@@ -35,6 +38,7 @@ import {
 import { buildWorkflowRunVisibilityFilter, type VisibilityActor } from './runVisibility.js';
 import { loadUnownedFailures } from './teamAttention.js';
 import { bindingBudgetStatuses } from './teamBudgetStatus.js';
+import { countPendingTeamRequests } from './teamJoinRequests.js';
 import { type MaybeGate, reachableConnections } from './tenantScope.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -52,7 +56,14 @@ type ViewerLevel = TeamOverview['viewerLevel'];
  * the team (`team.members.manage`) when the team has no ADMIN; it is absent otherwise, never
  * `false` or `null`, like `lead` and `admin`.
  */
-export type TeamOverviewView = TeamOverview & { needsAdmin?: true };
+export type TeamOverviewView = TeamOverview & {
+  needsAdmin?: true;
+  /**
+   * Join requests awaiting the team's own decision. Present only for a viewer who holds
+   * `team.members.manage`, so a plain member's response has no such key.
+   */
+  pendingJoinRequests?: number;
+};
 
 interface OverviewDeps {
   dueSoonHours: number;
@@ -296,6 +307,7 @@ export async function buildTeamOverview(
   const team = await prisma.team.findUnique({
     select: {
       id: true,
+      isActive: true,
       memberships: { select: { role: true }, where: { userId: user.sub } },
       name: true,
       organization: { select: { name: true } },
@@ -387,6 +399,35 @@ export async function buildTeamOverview(
     viewerLevel,
   };
 
+  // Whether the viewer holds `team.members.manage` (asked at most once). A team LEAD or ADMIN
+  // holds it on an active team by their level, which needs no query. A plain member holds it only
+  // through organization or platform authority, so one organization-membership read (against the
+  // catalog's own organization rank for the capability) rules out nearly every member before the
+  // full capability check, which is then left to the few it could allow.
+  let governs: boolean | undefined;
+  const viewerGoverns = async () => {
+    if (governs !== undefined) {
+      return governs;
+    }
+    if (team.isActive && viewerLevel !== 'member') {
+      governs = true;
+    } else if (isPlatformAdmin(user)) {
+      governs = await viewerGovernsTeam(prisma, user, team.id);
+    } else {
+      const orgRow = await prisma.organizationMembership.findUnique({
+        select: { role: true },
+        where: { userId_orgId: { orgId: team.orgId, userId: user.sub } },
+      });
+      const needed = CATALOG['team.members.manage'].org;
+      governs =
+        !!orgRow &&
+        !!needed &&
+        orgRankMeets(orgRankOf(orgRow.role), needed) &&
+        (await viewerGovernsTeam(prisma, user, team.id));
+    }
+    return governs;
+  };
+
   // A team with no ADMIN (an organization removal may leave one) is flagged for those who can
   // appoint one. One read of the roles answers it for nearly every team; the capability is asked
   // only for a team that has none.
@@ -394,11 +435,12 @@ export async function buildTeamOverview(
     select: { role: true },
     where: { teamId: team.id },
   });
-  if (
-    !roles.some((m) => teamRankMeets(teamRankOf(m.role), 'ADMIN')) &&
-    (await viewerGovernsTeam(prisma, user, team.id))
-  ) {
+  if (!roles.some((m) => teamRankMeets(teamRankOf(m.role), 'ADMIN')) && (await viewerGoverns())) {
     overview.needsAdmin = true;
+  }
+  // The same people decide who joins, so they see how many are waiting: one indexed count.
+  if (await viewerGoverns()) {
+    overview.pendingJoinRequests = await countPendingTeamRequests(prisma, team.id);
   }
 
   if (viewerLevel === 'member') {

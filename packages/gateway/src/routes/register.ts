@@ -68,6 +68,11 @@ import { systemConfigRoutes } from './systemConfig.js';
 import { teamAttentionRoutes } from './teamAttention.js';
 import { teamBudgetRoutes } from './teamBudget.js';
 import { teamBudgetRequestRoutes } from './teamBudgetRequests.js';
+import {
+  meJoinRequestRoutes,
+  orgJoinRequestRoutes,
+  teamJoinRequestRoutes,
+} from './teamJoinRequests.js';
 import { teamOverviewRoutes } from './teamOverview.js';
 import { teamSecretRoutes } from './teamSecrets.js';
 import { orgTeamRoutes, teamRoutes } from './teams.js';
@@ -125,6 +130,9 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(webhookRoutes, { prefix: '/api/v1/webhooks' });
   // Signed events from other services; reads bodies as bytes in its own plugin.
   await app.register(inboundEventRoutes, { prefix: '/api/v1/webhooks/events' });
+  // The directory registers before `teamRoutes`, whose `/:id` would otherwise be the first reader
+  // of `/teams/directory` (a static segment wins in the router either way; this keeps it obvious).
+  await app.register(teamJoinRequestRoutes, { prefix: '/api/v1/teams' });
   await app.register(teamRoutes, { prefix: '/api/v1/teams' });
   await app.register(teamOverviewRoutes, { prefix: '/api/v1/teams' });
   await app.register(teamAttentionRoutes, { prefix: '/api/v1/teams' });
@@ -137,6 +145,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(eventEndpointRoutes, { prefix: '/api/v1/teams' });
   await app.register(userRoutes, { prefix: '/api/v1/users' });
   await app.register(meRoutes, { prefix: '/api/v1/me' });
+  await app.register(meJoinRequestRoutes, { prefix: '/api/v1/me' });
   await app.register(prEvaluationRoutes, { prefix: '/api/v1' });
   await app.register(repositoryRoutes, { prefix: '/api/v1/repositories' });
   await app.register(repoDependencyRoutes, { prefix: '/api/v1/repositories' });
@@ -197,9 +206,11 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(readinessRoutes, { prefix: '/api/v1/platform' });
   await app.register(orgMembersRoutes, { prefix: '/api/v1/platform/organizations' });
   await app.register(orgTeamRoutes, { prefix: '/api/v1/platform/organizations' });
+  await app.register(orgJoinRequestRoutes, { prefix: '/api/v1/platform/organizations' });
   // Deprecated alias — kept for one release.
   await app.register(orgMembersRoutes, { prefix: '/api/v1/admin/organizations' });
   await app.register(orgTeamRoutes, { prefix: '/api/v1/admin/organizations' });
+  await app.register(orgJoinRequestRoutes, { prefix: '/api/v1/admin/organizations' });
   await app.register(orgBudgetRoutes, { prefix: '/api/v1/platform/organizations' });
   // Deprecated alias — kept for one release.
   await app.register(orgBudgetRoutes, { prefix: '/api/v1/admin/organizations' });

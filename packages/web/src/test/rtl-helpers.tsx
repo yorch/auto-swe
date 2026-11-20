@@ -30,6 +30,19 @@ export function stubDialogPrototype(): void {
   }
 }
 
+/** Return one from a `setupFetchMock` handler to answer with that status and body instead of 200. */
+export class FetchFailure {
+  constructor(
+    readonly status: number,
+    readonly body: unknown
+  ) {}
+}
+
+/** A gateway error body (`{ error: { code, message, details } }`) with its status. */
+export function gatewayError(status: number, code: string, message = code, details?: unknown) {
+  return new FetchFailure(status, { error: { code, details, message } });
+}
+
 /**
  * Install a fetch spy that dispatches to per-path handlers. Handler keys are
  * either `"<path>"` (matches any method) or `"<METHOD> <path>"` (e.g.
@@ -55,9 +68,10 @@ export function setupFetchMock(
       throw new Error(`No fetch mock for ${method} ${path}`);
     }
     const body = init?.body ? JSON.parse(init.body as string) : undefined;
-    return new Response(JSON.stringify(handler(body)), {
+    const answer = handler(body);
+    return new Response(JSON.stringify(answer instanceof FetchFailure ? answer.body : answer), {
       headers: { 'content-type': 'application/json' },
-      status: 200,
+      status: answer instanceof FetchFailure ? answer.status : 200,
     });
   });
   vi.stubGlobal('fetch', fetchSpy);

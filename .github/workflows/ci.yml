@@ -499,6 +499,14 @@ jobs:
           TEAM_BUDGET_NOTICE_PG_TEST: '1'
         run: yarn test packages/worker/src/lib/teamBudgetNotice.pg.test.ts
 
+      # Team join requests: the one-open-request-per-person-and-team index, the conditional claim
+      # that lets exactly one of two concurrent decisions win, the per-person lock behind the
+      # open-request cap, and the two-step approval, with the real tenant guard on every query.
+      - name: Team join requests (database-backed tests)
+        env:
+          TEAM_JOIN_REQUESTS_PG_TEST: '1'
+        run: yarn test packages/gateway/src/lib/teamJoinRequests.pg.test.ts
+
       # The personal desk: its approval, failure and pull-request counts against the lists they
       # summarise, the platform ADMIN's member scope, and the per-team buckets, all relational
       # predicates a mocked Prisma would not evaluate.

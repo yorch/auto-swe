@@ -101,6 +101,14 @@ export const platformCapabilities = defineCapabilities({
     description: 'Create and change Slack channels, erase a user, edit channel memory.',
     scope: 'platform',
   },
+  'platform.team-directory.read': {
+    class: 'read',
+    description:
+      'List the teams on the platform. Every signed-in person may; the route needs no capability, and the catalog lists a member of any team so the matrix and the client list show it.',
+    requiresActiveTeam: false,
+    scope: 'platform',
+    team: 'MEMBER',
+  },
   'platform.transcripts.retention.manage': {
     class: 'sensitive',
     description:

@@ -19,6 +19,7 @@ export const GROUP_TITLES: Record<string, string> = {
   review: 'Code reviews',
   runPlans: 'Run plans',
   skills: 'Skill imports',
+  teams: 'Team directory and creation',
   tracker: 'Issue tracker',
   uiValidation: 'UI validation',
   workflow: 'Workflow interpreter',
@@ -56,6 +57,8 @@ export const GROUP_BLURBS: Record<string, string> = {
   runPlans:
     'Whether people may describe a goal and have a plan generated for it, and how many plans and rankings one person may start or hold.',
   skills: 'How skills imported from external repositories are screened and fetched.',
+  teams:
+    'Who sees the team directory, whether members may create teams in their organization, and how join requests are limited.',
   tracker:
     'Which Jira projects and Linear teams runs may read tickets from and write to. Overridable per team and organization.',
   uiValidation:

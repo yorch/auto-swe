@@ -8,11 +8,13 @@ import { runConnectionsCommand } from './commands/connections.js';
 import { runEvalsCommand } from './commands/evals.js';
 import { runMcpCommand } from './commands/mcp.js';
 import { runOrchestrateCommand } from './commands/orchestrate.js';
+import { runOrgsCommand } from './commands/orgs.js';
 import { hasDescribeFlag, runDescribeAlias, runPlanCommand } from './commands/plan.js';
 import { runPrPolicyCommand } from './commands/prPolicy.js';
 import { runReposCommand, runReposSetupInit } from './commands/repos.js';
 import { runRunsCommand } from './commands/runs.js';
 import { runSkillsCommand } from './commands/skills.js';
+import { runTeamsCommand } from './commands/teams.js';
 import { runTokensCommand } from './commands/tokens.js';
 import { runTranscriptsCommand } from './commands/transcripts.js';
 import { runWorkflowsCommand } from './commands/workflows.js';
@@ -102,6 +104,20 @@ COMMANDS
   runs tail <runId> [--interval=SEC] [--max=N]
   transcripts list <runId> / get <id> / export --from --to   Agent transcript inspection and export
                                        Poll until terminal status (exit 2 if the run did not succeed)
+
+  teams directory [--query=q] [--org=<id>] [--limit=N]
+                                       List the teams you can see and your relationship to each
+  teams request <teamId> [--message=text]
+                                       Ask to join a team
+  teams requests [withdraw <requestId>]
+                                       List your join requests, or withdraw one
+  teams requests pending <teamId> [--status=S]
+                                       List a team's join requests (team managers)
+  teams requests approve|reject <teamId> <requestId> [--role=ROLE] [--note=text]
+                                       Decide a join request at the team step
+  orgs requests <orgId> [--status=S]   List join requests awaiting an organization's decision
+  orgs requests approve|reject <orgId> <requestId> [--note=text]
+                                       Decide the organization step of a cross-organization request
 
   tokens list                          List your personal access tokens
   tokens create <name> [--expires-in-days=N]
@@ -231,6 +247,12 @@ async function main(argv: string[]): Promise<number> {
   }
   if (cmd === 'connections') {
     return await runConnectionsCommand(rest, env);
+  }
+  if (cmd === 'teams') {
+    return await runTeamsCommand(rest, env);
+  }
+  if (cmd === 'orgs') {
+    return await runOrgsCommand(rest, env);
   }
   process.stderr.write(`Unknown command: ${cmd}\n${HELP}`);
   return 1;

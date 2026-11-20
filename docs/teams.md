@@ -632,6 +632,127 @@ Platform ADMIN invitations approve the account immediately (`admin`). Other team
 only in an active organization with `trustedInvites` enabled (`team_lead`); otherwise the account waits
 in the approval queue. See [invited users](./oauth-setup.md#invited-users) for the trust policy.
 
+## Team directory and join requests
+
+Every signed-in user can browse the team directory, ask to join a team and follow that request in the
+app. Team managers decide. A request to a team in another organization also needs an administrator of
+that organization. The web app's **Directory** view is reached from the teams navigation, and the CLI
+has `auto-swe teams directory`, `teams request`, `teams requests` and `orgs requests`.
+
+### The directory
+
+`GET /api/v1/teams/directory?q=&orgId=&limit=&cursor=` lists active teams with their public fields only:
+name, slug, description, organization, member count, and the caller's `relationship` to the team, which
+is `MEMBER`, `REQUESTED` (with the open `requestId`) or `NONE`. The member count covers active users
+only. A team of a deactivated organization is not listed. The response also carries `creatableOrgs`,
+the organizations where the caller may create a team now.
+
+`teams.directoryScope` decides which teams appear. `platform` (the default) lists every active team to
+every signed-in user, and any listed team accepts a request. `organization` lists only the teams of
+organizations the caller belongs to, and a request may go only to a team the caller can see. It is read
+deployment-wide. The `platform` default therefore shows every active team's name, slug, description,
+organization and member count to every signed-in user; a deployment that keeps teams private to an
+organization sets `organization`.
+
+### Requesting to join
+
+`POST /api/v1/teams/:id/join-requests` opens a request with an optional `message` of up to 500
+characters. Any active team the caller can see in the directory accepts one. The gateway refuses a
+request with:
+
+- `404 TEAM_NOT_FOUND` when the team is unknown, inactive, belongs to a deactivated organization or is
+  outside the caller's scope;
+- `409 ALREADY_MEMBER` when the caller is already a member;
+- `409 REQUEST_PENDING` when the caller already has an open request to that team;
+- `429 JOIN_REQUEST_COOLDOWN` when the caller was rejected by that team within
+  `teams.joinRequestCooldownHours` (default 72; `0` disables the wait);
+- `429 TOO_MANY_OPEN_REQUESTS` when the caller has `teams.maxOpenJoinRequests` open requests across all
+  teams (default 5).
+
+A request is `PENDING_TEAM` until its first decision. It then becomes `APPROVED`, `REJECTED` or
+`WITHDRAWN`, or `PENDING_ORG` when the organization step applies. Final statuses never change.
+`GET /api/v1/me/join-requests` lists the caller's own requests, newest first, with team and organization
+names, up to the newest 200. `POST /api/v1/me/join-requests/:requestId/withdraw` withdraws an open
+request of the caller's. Withdrawing starts no cooldown.
+
+### Deciding a request
+
+The people who decide are the people who already manage membership.
+
+- **Team step.** A holder of `team.members.manage` for the team decides: a team `LEAD` or `ADMIN`, an
+  organization `ADMIN` of the team's organization, or a platform `ADMIN`. The approve route is
+  `POST /api/v1/teams/:id/join-requests/:requestId/approve` with an optional `role` and `note`; the reject
+  route is `.../reject` with an optional `note`. The granted role is `MEMBER` unless the approver names
+  another. An approver cannot grant a role above their own rank, as with member-add. The team step
+  records the chosen role on the request.
+- **Organization step.** This applies only when the requester is not a member of the team's organization
+  (`requiresOrgApproval`). Approving at the team step then moves the request to `PENDING_ORG` instead of
+  approving it. A holder of `org.members.manage` for that organization approves or rejects it with
+  `POST /api/v1/platform/organizations/:orgId/join-requests/:requestId/approve` or `.../reject`, also
+  under the admin prefix. Approval creates the organization `MEMBER` membership and the team membership
+  with the role the team step recorded, in one audited transaction. The organization step applies that
+  role as recorded and does not check the team approver's current rank again.
+
+A same-organization request has one decision, and approving it creates the team membership.
+
+A decision is a conditional update on the status the reviewer saw, so two reviewers cannot both decide
+the same request. The two approval paths lock the organization row and then the team's, which is the
+order every membership write uses; under those locks they re-read the requester's organization and team
+membership, and refuse a requester who is no longer active or a team that is no longer active. A
+rejection and a withdrawal take neither lock, and the conditional update alone decides them. Creating a
+request takes a per-user advisory lock instead, so two requests by one person cannot both pass the
+open-request cap. Every write records `ConfigAuditLog` rows for the request and for any membership it
+creates. Approving a request whose requester already holds the team membership completes the request
+without creating a duplicate and records the role they already hold as the granted role.
+
+Reviewers see the queue in the Requests panel on the team space's Members tab, where the tab shows the
+pending count. The same count is `pendingJoinRequests` in the team overview, for callers who hold
+`team.members.manage`. The API is `GET /api/v1/teams/:id/join-requests?status=`. Organization admins see
+requests awaiting the organization step in the Approvals panel on the organization page, from
+`GET /api/v1/platform/organizations/:orgId/join-requests?status=`.
+
+The in-app assistant may read the directory and the caller's own requests. It may create and withdraw a
+request only after the user confirms, and it may not decide any request.
+
+### Creating teams
+
+Team creation is off by default. `teams.selfServiceCreation` lets any member of an active organization
+create a team in it, and a platform `ADMIN` sets it. Organization administrators with `org.teams.create`
+can always create one, without the limit below. The route is
+`POST /api/v1/platform/organizations/:orgId/teams`. A self-service creator cannot name another person as
+the team's admin.
+
+The creator becomes the team's `ADMIN`. An operator enabling `teams.selfServiceCreation` therefore gives
+every member of the organization the ability to:
+
+- onboard repositories into the team, as long as the creator can read the repository on GitHub
+  themselves (see [repositories.md](./repositories.md#who-may-onboard)), which the platform credential
+  then reaches for the team's runs;
+- invite people into the organization through the team's invitation route, and where the organization
+  has `trustedInvites` enabled the invited accounts become active at once (see
+  [inviting someone directly into a team](#inviting-someone-directly-into-a-team));
+- manage the team's credentials and members.
+
+`teams.maxCreatedPerUser` (default 3) bounds how many teams one user has created. The count covers the
+creator's active teams across all organizations, while the limit applied is the one resolved for the
+organization being created in. A creation past the limit is refused with `409 TEAM_LIMIT_REACHED`. Only
+the self-service path records `createdById`, so a team an administrator created, or one that existed
+before the feature, counts toward no one's limit. Only a platform `ADMIN` can deactivate a team, which is
+why the count covers active teams only: a creator cannot free a slot by deactivating a team.
+
+### Settings
+
+The five keys are declared in the setting registry and edited at `/admin/platform-settings`. None is
+run-pinned.
+
+| Key | Default | Scopes | Meaning |
+|---|---|---|---|
+| `teams.directoryScope` | `platform` | GLOBAL | Which teams the directory lists: `platform` or `organization`. |
+| `teams.selfServiceCreation` | `false` | GLOBAL, ORGANIZATION | Whether members may create teams in the organization. |
+| `teams.maxCreatedPerUser` | `3` | GLOBAL, ORGANIZATION | Active teams one user may have created through self-service creation, across organizations (1 to 100). |
+| `teams.maxOpenJoinRequests` | `5` | GLOBAL | Open join requests one user may hold across all teams (1 to 50). |
+| `teams.joinRequestCooldownHours` | `72` | GLOBAL | Hours after a rejection before the same team accepts a new request (0 to 720). |
+
 ## Limitations
 
 - **Team secrets are not usable by agents, shell steps or container steps.** They reach only setup
@@ -768,3 +889,23 @@ in the approval queue. See [invited users](./oauth-setup.md#invited-users) for t
 - **The overview refreshes only when read.** It carries no event stream and is as current as the
   request that built it.
 - **Repositories are capped at 200** on the overview; the repository list is the complete view.
+- **Only the app shows a request's status.** There is no email or Slack notification. A requester learns
+  the outcome by looking at **My requests**, and a reviewer sees a queue and counts but no alert.
+- **`teams.directoryScope` is deployment-wide, not per organization.** An operator cannot make one
+  organization's teams private while another's are listed.
+- **A request asks for a team, not a role.** The requester cannot ask for a role; the approver chooses it
+  when approving.
+- **One person can hold both decisions and still decide twice.** Someone with `team.members.manage` and
+  `org.members.manage` (an administrator of the team's organization, or a platform `ADMIN`) must approve
+  a cross-organization request at the team step and then again at the organization step.
+- **Requests involving a deactivated user or team stay open.** An open request of a deactivated requester,
+  or to a deactivated team, is not closed by the deactivation. It counts toward the requester's
+  open-request cap, and only the requester withdrawing it or a platform `ADMIN` deciding it clears it.
+- **Withdrawing starts no cooldown.** Only a rejection does, so a person can withdraw and re-request
+  repeatedly. Each withdrawal and each new request writes an audit row.
+- **The requester's own list shows the newest 200 requests.**
+- **The organization step trusts the role the team step recorded.** It does not re-check the team
+  approver's rank at the time the organization approves.
+- **The default `teams.directoryScope` exposes the directory platform-wide.** Until it is set to
+  `organization`, every signed-in user sees every active team's name, slug, description, organization and
+  member count, and can ask to join any of them.

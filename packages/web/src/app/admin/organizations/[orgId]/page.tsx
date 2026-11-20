@@ -3,6 +3,7 @@
 import { use, useEffect, useState } from 'react';
 import { MemberUserPicker } from '@/components/MemberUserPicker';
 import { OrganizationGithub } from '@/components/organizations/OrganizationGithub';
+import { OrgJoinApprovalsPanel } from '@/components/organizations/OrgJoinApprovalsPanel';
 import { BudgetMeter } from '@/components/teams/BudgetMeter';
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
 import { ActionMenu } from '@/components/ui/ActionMenu';
@@ -316,6 +317,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
         title={org?.name ?? 'Organization'}
       />
       {canLinkGithub && orgId && <OrganizationGithub orgId={orgId} />}
+      {canManageMembers && orgId && <OrgJoinApprovalsPanel orgId={orgId} />}
       <TeamFormModal
         mode={{ kind: 'create', orgId }}
         onClose={() => setCreatingTeam(false)}
