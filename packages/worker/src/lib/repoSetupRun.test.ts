@@ -766,6 +766,46 @@ describe('cleanup and the secret scan', () => {
     expect(artifacts.putArtifact).not.toHaveBeenCalled();
   });
 
+  describe('a scan that did not finish', () => {
+    const run = (scan: { exitCode: number; stdout: string }) =>
+      runSetupStepsPhase(
+        fakeHost({
+          capture: vi.fn(async (cmd: string) =>
+            cmd.includes('grep -lF')
+              ? { ...scan, stderr: '' }
+              : { exitCode: 0, stderr: '', stdout: '' }
+          ),
+        }),
+        { secrets: ['NPM_TOKEN'], steps: [{ run: 'yarn' }] },
+        inputs,
+        { NPM_TOKEN: 'npm_abcdef123' }
+      ).catch((e) => e);
+
+    it.each([
+      ['an empty stdout', { exitCode: 137, stdout: '' }],
+      [
+        'the memory-kill note on stdout, not read as a leaked file',
+        { exitCode: 137, stdout: '[auto-swe] Command was killed (exit 137, SIGKILL).' },
+      ],
+      ['a timeout', { exitCode: 124, stdout: '' }],
+    ])('fails setup as an internal blocker on %s', async (_name, scan) => {
+      const err = await run(scan);
+      expect(err).toMatchObject({ type: WORKSPACE_SETUP_FAILED });
+      expect(String(err.message)).toMatch(/^workspace setup: the secret scan did not finish/);
+      expect(err.details[0].kind).toBe('internal');
+      expect(err.details.map((d: { kind: string }) => d.kind)).not.toContain('secret_leak');
+    });
+
+    it('still reports a leak for a real file list on exit 0', async () => {
+      const err = await run({ exitCode: 0, stdout: '.npmrc\n' });
+      expect(err.details[0].kind).toBe('secret_leak');
+    });
+
+    it('passes on exit 0 with an empty stdout', async () => {
+      await expect(run({ exitCode: 0, stdout: '' })).resolves.not.toBeInstanceOf(Error);
+    });
+  });
+
   it('does not scan when the definition names no secrets, but still stops leftover processes', async () => {
     const host = fakeHost();
     await runSetupStepsPhase(host, { steps: [{ run: 'yarn' }] }, inputs);

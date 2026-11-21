@@ -69,7 +69,11 @@ import {
 } from '../lib/workspaceBackend/kubernetes/safeTar.js';
 import { agentWorkspaceSpec } from '../lib/workspaceBackend/spec.js';
 import type { WorkspaceHandle, WorkspaceServiceSpec } from '../lib/workspaceBackend/types.js';
-import { describeWorkspaceOom } from '../lib/workspaceOom.js';
+import {
+  describeWorkspaceOom,
+  withWorkspaceOomNote,
+  withWorkspaceOomNoteOnError,
+} from '../lib/workspaceOom.js';
 import { resolveRunWorkspaceSize } from '../lib/workspaceSizing.js';
 import {
   type InstalledTool,
@@ -1140,9 +1144,9 @@ export async function createWorkspace(
   // Secrets minted during setup (submodule credentials), scrubbed like the clone's own.
   const setupSecrets: string[] = [];
   const setupHost: RepoSetupHost = {
-    capture: (command, opts) => {
+    capture: async (command, opts) => {
       const tag = newExecTag();
-      return backend.exec(handle, ['sh', '-c', command], {
+      const result = await backend.exec(handle, ['sh', '-c', command], {
         env: [tag.env, ...toolsEnv, ...(opts.env ?? [])],
         heartbeatLabel: 'workspace: setup',
         onTimeout: tag.onTimeout,
@@ -1151,6 +1155,8 @@ export async function createWorkspace(
         timeoutMs: opts.timeoutMs,
         workdir: '/workspace/target-repo',
       });
+      // A dependency install killed for memory is plausible here; see `execCapture`.
+      return withWorkspaceOomNote(result, workspaceSize.memory);
     },
     git: (dir, subcommand, authHeader, timeoutMs) => {
       const tag = newExecTag();
@@ -1844,15 +1850,20 @@ export async function createWorkspace(
     readBaseFile: (path) => readSetupFile(setupHost, trustedBaseSha, path),
     ...(setupPhase ? { finishSetup } : {}),
     exec: (command: string, options) => {
+      // Not `async`: a refused `newExecTag()` (setup transition) must still throw synchronously.
       const tag = newExecTag();
-      return backend.execShell(handle, ['sh', '-c', command], {
-        env: [tag.env, ...toolsEnv],
-        heartbeatLabel: 'workspace: exec',
-        onTimeout: tag.onTimeout,
-        ...phaseSecrets(options?.secretEnv),
-        timeoutMs: options?.timeoutMs,
-        workdir: '/workspace/target-repo',
-      });
+      return backend
+        .execShell(handle, ['sh', '-c', command], {
+          env: [tag.env, ...toolsEnv],
+          heartbeatLabel: 'workspace: exec',
+          onTimeout: tag.onTimeout,
+          ...phaseSecrets(options?.secretEnv),
+          timeoutMs: options?.timeoutMs,
+          workdir: '/workspace/target-repo',
+        })
+        .catch((error: unknown) => {
+          throw withWorkspaceOomNoteOnError(error, workspaceSize.memory);
+        });
     },
     execCapture: async (command: string, options) => {
       const tag = newExecTag();
@@ -1866,16 +1877,8 @@ export async function createWorkspace(
       });
       // The common choke point of the gates, the agent's bash tool and the CI verifier: a command
       // the kernel killed for memory otherwise reads as an ordinary failure, and a fixer agent
-      // loops on it. The note goes on stderr when that stream has content; on an empty stderr it
-      // goes on stdout instead, because the gate summary reads `stderr || stdout` and a note on an
-      // empty stderr would hide the test output that shows what was running when it was killed.
-      const oom = describeWorkspaceOom(result, workspaceSize.memory);
-      if (!oom) {
-        return result;
-      }
-      return result.stderr.trim() === ''
-        ? { ...result, stdout: `${result.stdout}\n${oom}`.trim() }
-        : { ...result, stderr: `${result.stderr}\n${oom}`.trim() };
+      // loops on it.
+      return withWorkspaceOomNote(result, workspaceSize.memory);
     },
     execStdin: async (command: string, stdin: string | Buffer) => {
       const tag = newExecTag();
@@ -1888,9 +1891,10 @@ export async function createWorkspace(
         workdir: '/workspace/target-repo',
       });
       if (result.exitCode !== 0) {
+        const oom = describeWorkspaceOom(result, workspaceSize.memory);
         throw Object.assign(
           new Error(
-            `Command failed (exit code ${result.exitCode}${result.signal ? `, ${result.signal}` : ''}): ${command}`
+            `Command failed (exit code ${result.exitCode}${result.signal ? `, ${result.signal}` : ''}): ${command}${oom ? `\n${oom}` : ''}`
           ),
           { exitCode: result.exitCode, stderr: result.stderr, stdout: result.stdout }
         );

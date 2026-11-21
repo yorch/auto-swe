@@ -925,6 +925,15 @@ async function scanForSecrets(
       blocker('internal', host.redact(err instanceof Error ? err.message : String(err)))
     );
   }
+  // The script ends in `; true`, so a non-zero exit means the shell itself was killed (an
+  // out-of-memory kill, a timeout): its stdout is not a file list, and a scan that did not finish
+  // cannot say the checkout is clean.
+  if (result.exitCode !== 0) {
+    throw setupRunFailure(
+      `the secret scan did not finish: ${host.redact(tail(host, result))}`,
+      blocker('internal', host.redact(tail(host, result)))
+    );
+  }
   const files = result.stdout
     .split('\n')
     .map((f) => f.trim())

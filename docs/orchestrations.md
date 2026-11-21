@@ -294,7 +294,8 @@ The browser is the one thing a repo-less reader may have a container for. When t
 of any kind (no GitHub token, model credential or MCP credential), used only to drive the browser. It
 is made before the loop starts, on the deployment's configured workspace image (which must carry the
 browser, as for [UI validation](./ui-validation.md)), counts as part of the run's own agent-run slot,
-and is removed when the child ends, however it ends.
+and is removed when the child ends, however it ends. Each child sizes its workspace from its own run's
+pinned `workspace.memory` and `workspace.cpus` settings, and the browser container is sized the same way.
 
 - **Hosts.** The browser reaches the team's own egress allowlist entries and nothing else: the global
   baseline (`workspace.egressBaselineAllowlist`: a code host, package registries) is not added. The

@@ -598,6 +598,101 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
     await ws.destroy();
   });
 
+  it('puts the memory note on a repo setup step that exits 137, and not on one that exits 1', async () => {
+    vi.mocked(resolveRunWorkspaceSize).mockResolvedValue({ cpus: 2, memory: '12g' });
+    try {
+      const run = (exitCode: number) => {
+        vi.mocked(spawnCaptureAsync).mockImplementation(async (_file, args) =>
+          args.some((a) => a.includes('yarn install'))
+            ? { exitCode, stderr: 'Killed', stdout: '' }
+            : { exitCode: 0, stderr: '', stdout: '' }
+        );
+        return createWorkspace(
+          'https://github.com/acme/repo.git',
+          'auto/TICKET-1',
+          'main',
+          undefined,
+          undefined,
+          false,
+          { repoSetup: { field: { steps: [{ run: 'yarn install' }] } } }
+        );
+      };
+      await expect(run(137)).rejects.toThrow(
+        /"step 1" failed \(exit 137\)[\s\S]*ran out of memory \(limit 12g\)/
+      );
+      const plain = await run(1).catch((error: unknown) => error);
+      expect(plain).toBeInstanceOf(Error);
+      expect((plain as Error).message).toContain('"step 1" failed (exit 1)');
+      expect((plain as Error).message).not.toContain('ran out of memory');
+    } finally {
+      vi.mocked(resolveRunWorkspaceSize).mockReset();
+      vi.mocked(spawnCaptureAsync).mockReset();
+      vi.mocked(spawnCaptureAsync).mockResolvedValue({ exitCode: 0, stderr: '', stdout: '' });
+    }
+  });
+
+  it('appends the memory note to a throwing exec only for exit 137, keeping the message prefix', async () => {
+    vi.mocked(resolveRunWorkspaceSize).mockResolvedValueOnce({ cpus: 2, memory: '12g' });
+    const ws = await createWorkspace('https://github.com/acme/repo.git', 'auto/TICKET-1', 'main');
+    const fail = (code: number, extra: Record<string, unknown> = {}) =>
+      vi
+        .mocked(execShellAsync)
+        .mockRejectedValueOnce(
+          Object.assign(new Error('Command failed: docker exec x\nKilled'), { code, ...extra })
+        );
+
+    fail(137);
+    const oom = await ws.exec('yarn build').then(
+      () => new Error('resolved'),
+      (error: Error) => error
+    );
+    expect(oom.message).toMatch(/^Command failed: docker exec x\nKilled\n/);
+    expect(oom.message).toContain('ran out of memory (limit 12g)');
+    expect((oom as Error & { code?: number }).code).toBe(137);
+
+    fail(1);
+    const plain = await ws.exec('yarn build').then(
+      () => new Error('resolved'),
+      (error: Error) => error
+    );
+    expect(plain.message).toBe('Command failed: docker exec x\nKilled');
+
+    fail(137, { killed: true, signal: 'SIGTERM' });
+    const timedOut = await ws.exec('yarn build').then(
+      () => new Error('resolved'),
+      (error: Error) => error
+    );
+    expect(timedOut.message).not.toContain('ran out of memory');
+
+    await ws.destroy();
+  });
+
+  it('appends the memory note to a failed execStdin only for exit 137, keeping its prefix and fields', async () => {
+    vi.mocked(resolveRunWorkspaceSize).mockResolvedValueOnce({ cpus: 2, memory: '12g' });
+    const ws = await createWorkspace('https://github.com/acme/repo.git', 'auto/TICKET-1', 'main');
+    vi.mocked(spawnCaptureAsync).mockClear();
+
+    vi.mocked(spawnWithStdinAsync).mockResolvedValueOnce({
+      exitCode: 137,
+      stderr: 'Killed',
+      stdout: '',
+    });
+    const oom = await ws.execStdin('node build.js', 'input').catch((error: unknown) => error);
+    expect(oom).toMatchObject({ exitCode: 137, stderr: 'Killed' });
+    expect((oom as Error).message).toMatch(/^Command failed \(exit code 137\): node build\.js\n/);
+    expect((oom as Error).message).toContain('ran out of memory (limit 12g)');
+
+    vi.mocked(spawnWithStdinAsync).mockResolvedValueOnce({
+      exitCode: 1,
+      stderr: 'boom',
+      stdout: '',
+    });
+    const plain = await ws.execStdin('node build.js', 'input').catch((error: unknown) => error);
+    expect((plain as Error).message).toBe('Command failed (exit code 1): node build.js');
+
+    await ws.destroy();
+  });
+
   it('applies the workspace caps + default image from the environment', async () => {
     vi.mocked(resolveWorkspaceInfra).mockReturnValueOnce({
       blockMetadata: true,

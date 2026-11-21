@@ -835,8 +835,9 @@ an MCP write is held for the launcher's decision.
   when written, not against the nodes or quota behind them. Under Kubernetes a pod larger than the namespace quota
   or any node stays Pending until the ready timeout and the run fails then; under Docker the daemon or broker
   rejects an oversize request when the container is created.
-- **A memory kill is recognised only by its exit status.** A captured command that exits 137 is annotated as most likely
-  out of memory (see the Resources row in [architecture.md](./architecture.md)). A child killed while the shell survives and
+- **A memory kill is recognised only by its exit status.** A command that exits 137 through a workspace's capture, `exec`,
+  `execStdin` or repo setup is annotated as most likely out of memory (see the Memory-killed commands row in
+  [architecture.md](./architecture.md), which lists the paths without a note). A child killed while the shell survives and
   exits 0 or 1, a runner that catches the death and reports its own failure, and a SIGKILL from another cause (`kill -9`)
   are not told apart; the backend's `OOMKilled` state is not consulted, and a gate that was OOM-killed still fails and is
   retried by its fix step like any other failure.
