@@ -670,12 +670,21 @@ is `MEMBER`, `REQUESTED` (with the open `requestId`) or `NONE`. The member count
 only. A team of a deactivated organization is not listed. The response also carries `creatableOrgs`,
 the organizations where the caller may create a team now.
 
-`teams.directoryScope` decides which teams appear. `platform` (the default) lists every active team to
-every signed-in user, and any listed team accepts a request. `organization` lists only the teams of
-organizations the caller belongs to, and a request may go only to a team the caller can see. It is read
-deployment-wide. The `platform` default therefore shows every active team's name, slug, description,
-organization and member count to every signed-in user; a deployment that keeps teams private to an
-organization sets `organization`.
+`teams.directoryScope` decides which teams appear, and it is resolved for each organization. A team is
+listed to a viewer when its own organization's value is `platform`, or when the viewer belongs to that
+organization. An organization with no value of its own uses the GLOBAL value, which is `platform` by
+default. The team's own organization decides: no other organization's value applies to it. A request
+may go only to a team the caller can see, and the same rule gates creating one. The response's
+`organizations` lists the organizations with at least one team the caller may see, sorted by name and
+capped at 500; `organizationsTruncated` is `true` when more exist, and the organization filter then
+offers only the first 500. The human `teams directory` table does not print the list. The response's `scope` is only the deployment-wide
+(GLOBAL) value of `teams.directoryScope`. It does not describe what the caller is shown once organizations
+override the setting: a viewer may see the teams of an organization whose value is `platform` while `scope`
+reads `organization`, and the reverse. Each team's own organization decides.
+
+The `platform` default shows every active team's name, slug, description, organization and member count
+to every signed-in user, and any listed team accepts a request. An operator keeps teams private to an
+organization by setting `organization` at GLOBAL scope or for that organization.
 
 ### Requesting to join
 
@@ -687,16 +696,21 @@ request with:
   outside the caller's scope;
 - `409 ALREADY_MEMBER` when the caller is already a member;
 - `409 REQUEST_PENDING` when the caller already has an open request to that team;
-- `429 JOIN_REQUEST_COOLDOWN` when the caller was rejected by that team within
-  `teams.joinRequestCooldownHours` (default 72; `0` disables the wait);
+- `429 JOIN_REQUEST_COOLDOWN` when the caller's last request to that team was rejected within
+  `teams.joinRequestCooldownHours` (default 72; `0` disables the wait), or was withdrawn within
+  `teams.withdrawCooldownHours` (default 1; `0` disables the wait). The error's `details.reason` is
+  `rejected` or `withdrawn`. Only a request a person decided or withdrew starts a cooldown; a request
+  closed by a deactivation does not;
 - `429 TOO_MANY_OPEN_REQUESTS` when the caller has `teams.maxOpenJoinRequests` open requests across all
   teams (default 5).
 
 A request is `PENDING_TEAM` until its first decision. It then becomes `APPROVED`, `REJECTED` or
 `WITHDRAWN`, or `PENDING_ORG` when the organization step applies. Final statuses never change.
 `GET /api/v1/me/join-requests` lists the caller's own requests, newest first, with team and organization
-names, up to the newest 200. `POST /api/v1/me/join-requests/:requestId/withdraw` withdraws an open
-request of the caller's. Withdrawing starts no cooldown.
+names, up to the newest 200. The response's `meta.truncated` is true when the caller has more. Every
+request view carries `closeReason`: `null` when a person decided or withdrew the request, otherwise the
+reason a deactivation closed it. `POST /api/v1/me/join-requests/:requestId/withdraw` withdraws an open
+request of the caller's. A withdrawal starts the withdrawal cooldown for that team.
 
 ### Deciding a request
 
@@ -713,20 +727,40 @@ The people who decide are the people who already manage membership.
   approving it. A holder of `org.members.manage` for that organization approves or rejects it with
   `POST /api/v1/platform/organizations/:orgId/join-requests/:requestId/approve` or `.../reject`, also
   under the admin prefix. Approval creates the organization `MEMBER` membership and the team membership
-  with the role the team step recorded, in one audited transaction. The organization step applies that
-  role as recorded and does not check the team approver's current rank again.
+  with the role the team step recorded, in one audited transaction. The organization step re-checks the
+  team approver's standing before it applies that role, as described below.
 
 A same-organization request has one decision, and approving it creates the team membership.
 
+**Combined approval.** When the team step approves a request that needs the organization step, the
+requester is not yet a member of the team, and the approver also holds `org.members.manage` for the
+team's organization, one transaction records both
+decisions. The request becomes `APPROVED`, the organization `MEMBER` membership and the team membership
+are created, and the audit rows name both steps. The response is the reviewer view with status
+`APPROVED`. Otherwise the request moves to `PENDING_ORG`, as described above.
+
+**Organization-step re-check.** An organization-step approval first re-reads the team step's decider. If
+that person is no longer active, no longer holds `team.members.manage` for the team, or is ranked below the
+recorded role, the granted role becomes `MEMBER`. A team approver may grant a role up to their own rank, so
+the check is against that rank. The `TeamJoinRequest` audit row of every organization-step approval carries
+a `clamp` object with `clamped` (true or false), `from` (the role the team approver chose) and `to` (the
+role applied), whether or not the role changed. When the requester already holds the team membership, the
+approval creates no second one, the role they already hold is the granted role, `clamp.from` and
+`clamp.to` are both that role, and `clamp.clamped` is false. The approval is never refused for this.
+
 A decision is a conditional update on the status the reviewer saw, so two reviewers cannot both decide
-the same request. The two approval paths lock the organization row and then the team's, which is the
-order every membership write uses; under those locks they re-read the requester's organization and team
-membership, and refuse a requester who is no longer active or a team that is no longer active. A
+the same request. The two approval paths lock the organization row and then the team's, the order the
+other membership writes use (workflow launch locks a team before its organization; see Limitations).
+Under those locks they re-read the approver's standing, the requester's organization and team
+membership, and refuse an approver who no longer holds the capability, a requester who is no longer
+active or a team that is no longer active. The audit rows record the authority read under the lock. A
 rejection and a withdrawal take neither lock, and the conditional update alone decides them. Creating a
 request takes a per-user advisory lock instead, so two requests by one person cannot both pass the
-open-request cap. Every write records `ConfigAuditLog` rows for the request and for any membership it
-creates. Approving a request whose requester already holds the team membership completes the request
-without creating a duplicate and records the role they already hold as the granted role.
+open-request cap, and under it re-reads that the requester and the team are still active; a user
+deactivation takes the same lock before it closes that person's requests, so a request cannot
+slip in after the close. Every write records `ConfigAuditLog` rows for the request and for any membership it
+creates. Approving a request, at either step, whose requester already holds the team membership completes
+the request without creating a duplicate and records the role they already hold as the granted role.
 
 Reviewers see the queue in the Requests panel on the team space's Members tab, where the tab shows the
 pending count. The same count is `pendingJoinRequests` in the team overview, for callers who hold
@@ -736,6 +770,41 @@ requests awaiting the organization step in the Approvals panel on the organizati
 
 The in-app assistant may read the directory and the caller's own requests. It may create and withdraw a
 request only after the user confirms, and it may not decide any request.
+
+### Closing requests on deactivation
+
+Deactivating a user or a team closes that scope's open join requests in the same transaction, and writes
+an audit row for each one. A request of a deactivated requester becomes `WITHDRAWN` with `closeReason`
+`REQUESTER_DEACTIVATED`. A request to a deactivated team becomes `REJECTED` with `TEAM_DEACTIVATED`, at
+either step. Each closed request carries a decision note that names the reason. A close starts no cooldown.
+Reactivating the user or team reopens nothing: the closed requests stay closed, and the person asks again.
+
+The close helper also supports an organization scope (`REJECTED` with `ORGANIZATION_DEACTIVATED`), but
+no deactivation path calls it: no route sets an organization inactive, so nothing closes requests on
+that ground today.
+
+### Notifications
+
+Three notifications go out, all best effort. The module is `joinRequestNotifier.ts`, and it is called after
+the transaction that caused the event commits.
+
+| Event | Recipient | Channel |
+|---|---|---|
+| A request is created | The team's `slackNotifyChannel`, when it is set and Slack is configured | Slack post |
+| A request is decided as `APPROVED` or `REJECTED` | The requester | Email |
+| A request moves to `PENDING_ORG` | The requester, and the organization's active `ADMIN` members | Email |
+
+Nothing is sent when `teams.joinRequestNotifications` is `false`, and a deactivation close sends nothing.
+The Slack post names the requester and the team, and carries the request's message. The message is escaped
+and Slack broadcast mentions are neutralized. The post links to the team's members page for review, and it
+never includes the requester's email address. The emails are escaped in HTML, carry the decision note, and
+link to the web app. No token or credential appears in any of them. Email uses the SMTP or Resend transport
+that sign-in emails use. When neither is configured, the sends are skipped and the gateway process logs one
+warning (in development and test it logs the recipient count instead). A failed send is logged and dropped;
+the request and its decision stand. A request closed by a deactivation, or whose team or organization is
+inactive when the notifier runs, sends nothing. The organization admins' email reaches at most the first 20
+active admins and links to the organization's admin page. The Slack post needs the Slack bot token for the
+channel; without one nothing is posted.
 
 ### Creating teams
 
@@ -765,19 +834,27 @@ why the count covers active teams only: a creator cannot free a slot by deactiva
 
 ### Settings
 
-The five keys are declared in the setting registry and edited at `/admin/platform-settings`. None is
-run-pinned.
+The keys are declared in the setting registry and edited at `/admin/platform-settings`. None is run-pinned.
 
 | Key | Default | Scopes | Meaning |
 |---|---|---|---|
-| `teams.directoryScope` | `platform` | GLOBAL | Which teams the directory lists: `platform` or `organization`. |
+| `teams.directoryScope` | `platform` | GLOBAL, ORGANIZATION | Which teams the directory lists: `platform` or `organization`. An organization's own value decides its teams; an organization with none uses the GLOBAL value. |
 | `teams.selfServiceCreation` | `false` | GLOBAL, ORGANIZATION | Whether members may create teams in the organization. |
 | `teams.maxCreatedPerUser` | `3` | GLOBAL, ORGANIZATION | Active teams one user may have created through self-service creation, across organizations (1 to 100). |
 | `teams.maxOpenJoinRequests` | `5` | GLOBAL | Open join requests one user may hold across all teams (1 to 50). |
 | `teams.joinRequestCooldownHours` | `72` | GLOBAL | Hours after a rejection before the same team accepts a new request (0 to 720). |
+| `teams.withdrawCooldownHours` | `1` | GLOBAL | Hours after a person withdraws a request before that team accepts a new one from them (0 to 720). |
+| `teams.joinRequestNotifications` | `true` | GLOBAL | Whether join-request notifications are sent: the requester's decision email, the Slack post on a new request, and the organization admins' email. `false` sends none. |
 
 ## Limitations
 
+- **Workflow launch and a join-request approval can deadlock.** An approval locks the organization row
+  and then the team's, as the other membership writes do; workflow launch locks a team and then its
+  organization, and also locks the launching user's row, which an approval's membership insert needs
+  a share lock on. A launch and an approval on the same team that overlap can make Postgres abort one
+  of them (`deadlock detected`), which the caller sees as a server error and can retry.
+- **The directory lists at most 500 organizations in its filter.** `organizationsTruncated` says when
+  more exist; the team list itself is paged and unaffected.
 - **Team secrets are not usable by agents, shell steps or container steps.** They reach only setup
   steps and app previews, so a credential an agent needs must come from somewhere else.
 - **Rotating a team secret does not warn about shadowing.** When a repository secret of the same
@@ -917,23 +994,19 @@ run-pinned.
 - **The overview refreshes only when read.** It carries no event stream and is as current as the
   request that built it.
 - **Repositories are capped at 200** on the overview; the repository list is the complete view.
-- **Only the app shows a request's status.** There is no email or Slack notification. A requester learns
-  the outcome by looking at **My requests**, and a reviewer sees a queue and counts but no alert.
-- **`teams.directoryScope` is deployment-wide, not per organization.** An operator cannot make one
-  organization's teams private while another's are listed.
 - **A request asks for a team, not a role.** The requester cannot ask for a role; the approver chooses it
   when approving.
-- **One person can hold both decisions and still decide twice.** Someone with `team.members.manage` and
-  `org.members.manage` (an administrator of the team's organization, or a platform `ADMIN`) must approve
-  a cross-organization request at the team step and then again at the organization step.
-- **Requests involving a deactivated user or team stay open.** An open request of a deactivated requester,
-  or to a deactivated team, is not closed by the deactivation. It counts toward the requester's
-  open-request cap, and only the requester withdrawing it or a platform `ADMIN` deciding it clears it.
-- **Withdrawing starts no cooldown.** Only a rejection does, so a person can withdraw and re-request
-  repeatedly. Each withdrawal and each new request writes an audit row.
-- **The requester's own list shows the newest 200 requests.**
-- **The organization step trusts the role the team step recorded.** It does not re-check the team
-  approver's rank at the time the organization approves.
-- **The default `teams.directoryScope` exposes the directory platform-wide.** Until it is set to
-  `organization`, every signed-in user sees every active team's name, slug, description, organization and
-  member count, and can ask to join any of them.
+- **The requester's own list shows the newest 200 requests.** `meta.truncated` says when older requests
+  exist, and there is no way to list them.
+- **The default `teams.directoryScope` exposes the directory platform-wide.** Until an operator sets
+  `organization`, at GLOBAL scope or for an organization, every signed-in user sees every active team's
+  name, slug, description, organization and member count, and can ask to join any of them.
+- **Notification delivery is not retried and not recorded.** A failed send is only logged.
+- **A team with no `slackNotifyChannel` posts nothing on a new request**, so its reviewers rely on the queue.
+- **Reactivating a user or team does not reopen requests that were closed by the deactivation.**
+- **An organization deactivated outside the API keeps its join requests open.** No route deactivates an
+  organization, so nothing closes its requests when one is deactivated by other means (for example
+  directly in the database). The requests stay open, keep counting toward each requester's open-request
+  cap, and the approval paths do not check the organization's active flag.
+- **The organization-admin email reaches the first 20 active organization admins.** A larger organization's
+  remaining admins are not emailed, and the omission is logged.
