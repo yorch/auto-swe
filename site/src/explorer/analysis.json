@@ -3894,7 +3894,7 @@
     {
       "body": "Record who was refused and who read something sensitive, first-party, with an opt-in page-view stream.",
       "category": "Governance",
-      "detail": "A response hook builds a row from the request object, not from request-scoped storage, and stores the route template that matched, never the URL, a query string or a body. A signed-in person answered 403 produces a denied row. A successful GET of a route that carries an activity tag (the audit log list and export, a run’s detail and the pull-request outcomes export) produces a read or export row on every mount of that route, deprecated aliases included; the activity views themselves, a run’s traces and transcript reads (which write their own access-log row) are not tagged. A 401, or a 403 with no identified person, writes no row and is only counted, by route template and status, in an OpenTelemetry counter. Authenticated callers are bounded, not unlimited: a read is written at most once per person and route every ten minutes (an export is never collapsed: each one writes a row within its budget), a denial once per person, route and status every minute, a page view once per person and page every five seconds, and each person has a separate per-minute budget for each kind (120 denials, 60 each of exports, reads and page views), so a flood of one kind cannot use up the budget that records an export; the excess is dropped and counted, and a dropped event does not mark its dedupe key. Rows pass through a bounded in-memory queue flushed in batches; when it is full a denial or export evicts the oldest page view, then read, before it would be dropped (it can still be dropped if the queue holds only denials and exports), and a failed write drops the batch, so events can be lost and the count is per gateway process. Recording never delays or fails a request, and shutdown waits only a few seconds for a flush. Page views are off unless an ADMIN switches on a registry setting; the dashboard then sends only the pathname, in batches of at most 20, never when the browser sends Do Not Track or Global Privacy Control, and the gateway reduces it to one of a fixed list of page route templates (a test keeps the list equal to the page tree) or drops it. Events are kept for a configurable number of days (90 by default, at least 7); a scheduled sweep that an environment switch can turn off deletes older ones in batches, at most a fixed number per run, so a backlog clears over several runs. The ADMIN-only activity page and routes show exact per-day counts by kind (queried at most three days at a time), the most-denied routes, recent events and this process’s drop count; the in-app assistant may not call them.",
+      "detail": "A response hook builds a row from the request object, not from request-scoped storage, and stores the route template that matched, never the URL, a query string or a body. A signed-in person answered 403 produces a denied row. A successful GET of a route that carries an activity tag (the audit log list and export, a run’s detail, the pull-request outcomes export and the people-analytics export, which answers CSV and is recorded as an export row) produces a read or export row on every mount of that route, deprecated aliases included; the activity views themselves, a run’s traces and transcript reads (which write their own access-log row) are not tagged. A 401, or a 403 with no identified person, writes no row and is only counted, by route template and status, in an OpenTelemetry counter. Authenticated callers are bounded, not unlimited: a read is written at most once per person and route every ten minutes (an export is never collapsed: each one writes a row within its budget), a denial once per person, route and status every minute, a page view once per person and page every five seconds, and each person has a separate per-minute budget for each kind (120 denials, 60 each of exports, reads and page views), so a flood of one kind cannot use up the budget that records an export; the excess is dropped and counted, and a dropped event does not mark its dedupe key. Rows pass through a bounded in-memory queue flushed in batches; when it is full a denial or export evicts the oldest page view, then read, before it would be dropped (it can still be dropped if the queue holds only denials and exports), and a failed write drops the batch, so events can be lost and the count is per gateway process. Recording never delays or fails a request, and shutdown waits only a few seconds for a flush. Page views are off unless an ADMIN switches on a registry setting; the dashboard then sends only the pathname, in batches of at most 20, never when the browser sends Do Not Track or Global Privacy Control, and the gateway reduces it to one of a fixed list of page route templates (a test keeps the list equal to the page tree) or drops it. A password sign-in that fails for a known address writes a sign-in failure row; the ADMIN failed-sign-in alert list counts those rows per account over a configurable window and marks accounts at or above a configurable threshold. A per-process counter records each threshold crossing. Alerts are shown on the dashboard and as a metric only, with no notification channel, and the list is built from those rows, so OAuth, magic-link and unknown-address failures do not appear in it. Events are kept for a configurable number of days (90 by default, at least 7); a scheduled sweep that an environment switch can turn off deletes older ones in batches, at most a fixed number per run, so a backlog clears over several runs. The ADMIN-only activity page and routes show exact per-day counts by kind (queried at most three days at a time), the most-denied routes, recent events and this process’s drop count; the in-app assistant may not call them.",
       "id": "activityEvents",
       "refs": [
         "activityHook",
@@ -3907,6 +3907,8 @@
         "activityRateBucket",
         "auditRetentionSweep",
         "prOutcomeExport",
+        "userAnalyticsExport",
+        "signInFailureAlerts",
         "pageViewClient"
       ],
       "status": "Implemented",
@@ -12432,6 +12434,22 @@
       "lines": 40,
       "path": "packages/gateway/src/routes/activity.ts",
       "title": "ADMIN-only activity list and summary"
+    },
+    {
+      "anchor": "'/analytics/users/export',",
+      "before": 3,
+      "id": "userAnalyticsExport",
+      "lines": 22,
+      "path": "packages/gateway/src/routes/userAnalytics.ts",
+      "title": "The people export is a tagged export route that answers CSV"
+    },
+    {
+      "anchor": "'/analytics/alerts',",
+      "before": 3,
+      "id": "signInFailureAlerts",
+      "lines": 24,
+      "path": "packages/gateway/src/routes/userAnalyticsAlerts.ts",
+      "title": "Accounts over the failed sign-in threshold are read from sign-in failure rows"
     },
     {
       "anchor": "          // A poller refreshing a page does not write a row per refresh. An export is",

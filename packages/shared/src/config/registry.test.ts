@@ -214,6 +214,29 @@ describe('retention settings', () => {
     expect(SETTING_DEFINITIONS[key].writeAccess).toBe('admin');
   });
 
+  it('failed sign-in alert settings are bounded, GLOBAL and ADMIN only', () => {
+    const t = 'analytics.failedSignInAlertThreshold';
+    const w = 'analytics.failedSignInAlertWindowMinutes';
+    for (const ok of [2, 5, 100]) {
+      expect(accepts(t, ok), String(ok)).toBe(true);
+    }
+    for (const bad of [1, 101, 2.5, '5']) {
+      expect(accepts(t, bad), String(bad)).toBe(false);
+    }
+    for (const ok of [1, 15, 1440]) {
+      expect(accepts(w, ok), String(ok)).toBe(true);
+    }
+    for (const bad of [0, 1441, 1.5]) {
+      expect(accepts(w, bad), String(bad)).toBe(false);
+    }
+    expect(SETTING_DEFINITIONS[t].defaultValue).toBe(5);
+    expect(SETTING_DEFINITIONS[w].defaultValue).toBe(15);
+    for (const k of [t, w] as const) {
+      expect(SETTING_DEFINITIONS[k].overridableAt).toEqual([]);
+      expect(SETTING_DEFINITIONS[k].writeAccess).toBe('admin');
+    }
+  });
+
   it('page-view events are off by default', () => {
     expect(SETTING_DEFINITIONS['analytics.uiEventsEnabled'].defaultValue).toBe(false);
   });

@@ -1144,3 +1144,38 @@ export function useShellAuditPrune() {
     },
   });
 }
+
+// ── Failed sign-in alerts ──
+
+export interface SignInAlert {
+  userId: string;
+  email: string | null;
+  name: string | null;
+  failures: number;
+  firstAt: string | null;
+  lastAt: string | null;
+  methods: string[];
+  signedInAfter: boolean;
+}
+
+export interface SignInAlerts {
+  threshold: number;
+  windowMinutes: number;
+  generatedAt: string;
+  truncated: boolean;
+  /** At most this many failures are recorded per account each minute (a per-actor bucket). */
+  failuresRecordedPerMinute?: number;
+  /** The most failures one account can have recorded inside the window. */
+  maxRecordable?: number;
+  /** False when the threshold is above `maxRecordable`, so no account can ever alert. */
+  thresholdReachable?: boolean;
+  alerts: SignInAlert[];
+}
+
+export function useSignInAlerts() {
+  return useQuery({
+    queryFn: () => api.get<SignInAlerts>('/api/v1/platform/analytics/alerts'),
+    queryKey: ['analytics', 'alerts'],
+    refetchInterval: 30_000,
+  });
+}

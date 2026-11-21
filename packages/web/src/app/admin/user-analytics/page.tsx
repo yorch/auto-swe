@@ -18,8 +18,10 @@ import { Stat } from '@/components/ui/Stat';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { type AnalyticsUserSort, useAnalyticsOverview, useAnalyticsUsers } from '@/hooks/useAdmin';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
+import { downloadCsv, exportErrorMessage } from './exportCsv';
 import { methodLabel, parseDays, personLabel, reasonLabel, WINDOW_DAYS } from './labels';
 import { MaybeTime } from './MaybeTime';
+import { SignInAlertsCard } from './SignInAlertsCard';
 
 const LIMIT = 25;
 const SORTS: AnalyticsUserSort[] = ['lastActive', 'actions', 'signIns', 'failed', 'email'];
@@ -45,6 +47,15 @@ function AnalyticsWorkspace() {
 
   const overview = useAnalyticsOverview(days);
   const users = useAnalyticsUsers({ days, limit: LIMIT, offset, order, q: q || undefined, sort });
+  const [exporting, setExporting] = useState(false);
+  const [exportFailed, setExportFailed] = useState<string | null>(null);
+  const exportPeople = () => {
+    setExporting(true);
+    setExportFailed(null);
+    downloadCsv({ days, order, q: q || undefined, sort })
+      .catch((err: unknown) => setExportFailed(exportErrorMessage(err)))
+      .finally(() => setExporting(false));
+  };
   const o = overview.data;
   const rows = users.data?.data ?? [];
   const total = users.data?.meta.total ?? 0;
@@ -98,6 +109,8 @@ function AnalyticsWorkspace() {
         subtitle="Who signs in, how often, and what they do."
         title="User analytics"
       />
+
+      <SignInAlertsCard />
 
       {overview.isError && (
         <Alert
@@ -347,6 +360,16 @@ function AnalyticsWorkspace() {
             )}
           </CardTitle>
           {/* Outside the boundary: typing refetches, and the field must keep focus. */}
+          <div className="flex w-full items-center gap-2 sm:w-auto">
+            <Button disabled={exporting} onClick={exportPeople} size="sm" variant="secondary">
+              {exporting ? 'Exporting…' : 'Export CSV'}
+            </Button>
+            {exportFailed && (
+              <span className="text-xs text-danger-400" role="alert">
+                {exportFailed}
+              </span>
+            )}
+          </div>
           <div className="w-full sm:w-64">
             <Input
               aria-label="Search people"

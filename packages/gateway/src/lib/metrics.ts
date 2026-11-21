@@ -86,11 +86,23 @@ function createInstruments() {
   for (const method of AUTH_METHODS) {
     signInFailed.add(0, { method });
   }
+  const signInThresholdExceeded = metrics
+    .getMeter('auto-swe-gateway')
+    .createCounter('auth.sign_in.threshold_exceeded', {
+      description:
+        'Accounts that crossed the failed-sign-in alert threshold, by method of the failure that ' +
+        'crossed it. Once per account per window, counted per gateway process.',
+      unit: '{account}',
+    });
+  for (const method of AUTH_METHODS) {
+    signInThresholdExceeded.add(0, { method });
+  }
   return {
     activityEventsDropped,
     httpDenied,
     runsFinalized,
     signInFailed,
+    signInThresholdExceeded,
     transcriptAccessLogFailures,
   };
 }
@@ -143,4 +155,9 @@ export function recordActivityEventsDropped(count: number): void {
 /** A sign-in attempt failed. Counted whether or not the person is known. */
 export function recordSignInFailed(method: SignInMethod): void {
   instruments().signInFailed.add(1, { method });
+}
+
+/** An account crossed the failed-sign-in alert threshold (once per window per process). */
+export function recordSignInThresholdExceeded(method: SignInMethod): void {
+  instruments().signInThresholdExceeded.add(1, { method });
 }

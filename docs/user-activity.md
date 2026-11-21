@@ -34,7 +34,7 @@ a filter or a run id never reaches the table. The sign-in kinds are not routed r
 A route opts in with `config: { activity: 'read' | 'export' }` on its definition, so every mount of
 it is covered, the deprecated `/api/v1/admin` aliases included. The tagged routes are the audit-log
 list and export, a run's detail, the pull-request outcomes export and one person's analytics
-profile (`/api/v1/platform/analytics/users/:id`). The activity views and the analytics overview and
+profile (`/api/v1/platform/analytics/users/:id`) and the people export (`/api/v1/platform/analytics/users/export`, section 10). The activity views and the analytics overview and
 people list are not tagged, so reading them records nothing. Neither is a run's traces or a
 transcript read (a transcript access already writes a fuller row to the transcript access log,
 [transcripts.md](./transcripts.md)).
@@ -55,8 +55,8 @@ An `onResponse` hook builds the row from the request object. It never fails or d
 Three bounds keep a poller or a hostile signed-in caller from flooding the table:
 
 - **Dedupe.** At most one `read` row per person and route every 10 minutes (an `export` row is never collapsed), one `denied`
-  row per person, route and status every minute, one sign-in event per person, kind and method every
-  minute, and one page view per person and page every five seconds. The remembered keys are a small
+  row per person, route and status every minute, one sign-in or sign-out event per person and method every
+  minute (failed sign-ins are not collapsed, so a burst of guesses is counted), and one page view per person and page every five seconds. The remembered keys are a small
   bounded map, so memory does not grow.
 - **Rate.** Each person has a budget per kind, refilled continuously: 120 denials, 60 exports, 60 reads
   and 60 page views a minute, and 30 each of sign-ins, failed sign-ins and sign-outs. The budgets are separate, so a flood of page views, reads or distinct
@@ -172,14 +172,16 @@ sign-ins with their methods and coarse browser and OS families, active sessions,
 by entity type, peak hours, the most active people and the 20 most recent failed sign-ins. It also
 lists every person, searchable by email or name and sortable. `/admin/user-analytics/users/[id]` is
 one person's profile: sign-in and sign-out history, sessions still valid, actions by entity type,
-daily counts and, when page views are on, the pages they viewed. Both are ADMIN only, and the
-in-app assistant is refused all three endpoints.
+daily counts and, when page views are on, the pages they viewed. The dashboard and the profile page are ADMIN only. The in-app assistant is refused every
+analytics endpoint, including the alert list and the export.
 
 | Route | Returns |
 |---|---|
 | `GET /api/v1/platform/analytics/overview?days=` | Tiles, per-day series, breakdowns, top people and recent failures |
 | `GET /api/v1/platform/analytics/users?days=&limit=&offset=&order=&sort=&q=` | One row per person; `sort` is `lastActive`, `actions`, `signIns`, `failed` or `email` |
 | `GET /api/v1/platform/analytics/users/:id?days=` | One person's profile. Tagged `read`, so opening it is itself recorded |
+| `GET /api/v1/platform/analytics/users/export?days=&order=&sort=&q=` | The people list as a CSV file, for every match up to 5,000 people. Tagged `export` (section 10) |
+| `GET /api/v1/platform/analytics/alerts` | Accounts over the failed sign-in threshold (section 9) |
 
 `days` is 1 to 30 (14 by default). The people list takes `limit` 1 to 100 (25 by default).
 
@@ -193,6 +195,93 @@ grouped count per UTC day and source, three days at a time, cached for 30 second
 back only where a grouped count cannot answer (methods, browsers, peak hours and histories), and
 every such read is capped. The scan and the caps are in
 `packages/gateway/src/routes/userAnalytics.ts`.
+
+## 9. Failed-sign-in alerts
+
+The alert list flags accounts that take repeated failed password sign-ins. It is read from the
+`sign_in_failed` rows of section 7, so it covers those failures and no others.
+
+**Settings.** `analytics.failedSignInAlertThreshold` (default 5 failures, 2 to 100) and
+`analytics.failedSignInAlertWindowMinutes` (default 15 minutes, 1 to 1440). Both are ADMIN, GLOBAL
+only, and take effect without a restart: the list reads them each time it is built.
+
+**The list.** `GET /api/v1/platform/analytics/alerts` (capability `platform.audit.read`) returns the
+accounts whose `sign_in_failed` rows inside the window reach the threshold, most failures first. Each
+entry gives the email and name, the failure count, the first and last failure, the methods seen, and
+`signedInAfter`, which is true when the account has a `sign_in` event later than its first failure
+in the window. The response lists at most 50 accounts and sets `truncated` when there were more. It
+is cached for 10 seconds per gateway process. The alert card on `/admin/user-analytics` shows the
+list; when the request fails the card says the state is unknown, not that no account is over the
+threshold.
+
+**What the count means.** Each failed password sign-in to a known address is one row, up to 30 rows
+per person a minute (section 2). A burst beyond that is dropped and counted, so the list can read
+lower than the real number of attempts. A threshold above 30 times the window in minutes can never
+be reached; the endpoint reports `thresholdReachable`, `failuresRecordedPerMinute` and
+`maxRecordable`, and the card warns when the configured threshold is unreachable.
+
+**The threshold counter.** `auth.sign_in.threshold_exceeded`, an OpenTelemetry counter labelled by
+`method`, rises once per account per window when failed password sign-ins to a known address reach
+the threshold. Its state is in memory in each gateway process, not in the database:
+
+- It counts every such attempt, including those beyond the 30-a-minute recording budget, so it can
+  see a burst that the list undercounts.
+- Its window slides, like the list's. It keeps the most recent failure times for the account, up to
+  the threshold, and reports when that many fall inside the configured length. It reports again only
+  after the count has dropped below the threshold.
+- Each replica keeps its own windows, so one burst split across replicas can cross nowhere, and a
+  single account can cross once per replica.
+- The map holds at most 10,000 accounts. When it is full, expired windows go first, then the oldest,
+  so a flood of distinct accounts can make an account report again.
+
+**Nothing else is notified.** Alerts appear on the dashboard and in the counter. There is no Slack,
+email or webhook delivery. The in-app assistant may not read the list.
+
+## 10. People export (CSV)
+
+`GET /api/v1/platform/analytics/users/export` (capability `platform.audit.read`) downloads the people
+table as a CSV file. It takes the people list's `days`, `q`, `sort` and `order`, and no paging. The
+file holds every person matching the search, in the list's order. When more than 5,000 people match,
+the route answers `413` with code `EXPORT_TOO_LARGE` and asks the admin to narrow the search with
+`q`; it never returns a partial file. It is
+served as an attachment named `user-analytics-<days>d.csv`, with `Cache-Control: no-store`, and is
+built from the same scan the list uses (section 8), so it shares that 30-second cache.
+
+Columns, in order: `email`, `name`, `role`, `userId`, `createdAt`, `lastActiveAt`, `lastSignInAt`,
+`signIns`, `failedSignIns`, `actions`, `activeDays`, `activeSessions`. Each matches the list's field
+of the same name in section 8. `lastSignInAt` is all-time, as it is in the list.
+
+Each successful download writes one `export` row (section 1). An export row is not deduplicated, so
+every download is recorded, within the export budget of 60 a minute per person. An export can still
+be dropped when the queue is full of other exports, denials and sign-ins (section 2). The row records
+who downloaded and when; it does not track the file after the download. The dashboard's export button
+calls this route.
+
+A text cell that starts with `=`, `+`, `-`, `@`, a tab or a carriage return is prefixed with `'`, so a
+spreadsheet does not run it as a formula. Numbers are written as they are. The file holds emails and
+names, which is why each download is recorded.
+
+## 11. Backfilling earlier sign-ins
+
+Sign-ins recorded before sign-in events carried a method exist only as `Session` audit rows, so
+section 8's figures leave them out until they are copied. An opt-in script copies them. It never runs
+at boot:
+
+```bash
+yarn workspace @auto-swe/gateway backfill:sign-ins -- --dry-run
+yarn workspace @auto-swe/gateway backfill:sign-ins
+```
+
+It reads audit rows with `afterJson.event = 'sign_in'`, no `method` key and an actor, created inside
+the activity retention window (`analytics.activityRetentionDays`). Each becomes a `sign_in` event at
+the audit row's timestamp, with route `auth:unknown`, `props.method` `unknown`, `props.backfilled`
+true, and the address the audit row kept. A row is skipped when the same person already has a
+`sign_in` event within five seconds of it, so a second run inserts nothing. It reads in batches of
+500 and stops at `--max-rows` (default 1,000,000); run it again to continue.
+
+Backfilled sign-ins count toward sign-in totals, last sign-in and active days. Their method shows as
+`unknown` on the person's page. The script copies no failed sign-ins, because the audit log never
+recorded them; failures from before the table are absent from section 9.
 
 ## Limitations
 
@@ -211,13 +300,13 @@ every such read is capped. The scan and the caps are in
 - Per-person rate limiting and dedupe state live in each gateway process, so with several replicas
   the bounds apply per replica.
 - A `403` from the gateway's own hooks before routing (an unmatched route is a `404`) is not an event.
-- Sign-in events start at the deployment of this code. Earlier sign-ins are in the audit log only and
-  are not counted by the analytics or the activity views.
+- Sign-in events start at the deployment of this code. Earlier sign-ins are counted only after the
+  backfill in section 11 has been run, and the backfill copies only those inside the retention window.
 - A failed sign-in is in the table only for a password sign-in to a known address. OAuth, magic-link
   and unknown-address failures are counted by `auth.sign_in.failed` alone, so the table cannot say
   who they were.
-- Failures are deduped to one row per person and method each minute, so a burst of guesses against
-  one account shows as one row, while the counter shows every attempt.
+- At most 30 failed sign-ins per person are recorded each minute, so a very fast burst is recorded
+  in part, while the counter sees every attempt.
 - A sign-out writes nothing when its session has already expired or its cookie is gone.
 - Active-user counts come from recorded events. With page views off, a person who only browses is
   not counted as active; they count once they sign in, read a tagged route, export or make a change.
@@ -228,3 +317,17 @@ every such read is capped. The scan and the caps are in
 - The analytics cache is 30 seconds per gateway process, so with several replicas two requests can
   show different numbers for up to that long.
 - Browser and OS are coarse families. An unrecognised browser or system shows as `Other`.
+- The alert list covers password sign-ins to a known address only. OAuth, magic-link and
+  unknown-address failures never reach it, and they are not in the counter either.
+- The methods shown for an alert come from the 2,000 most recent failure rows in the window. Past that
+  cap a method can be missing from the list, though the failure count is exact.
+- Alerts have no notification channel. The dashboard card and the counter are the only outputs.
+- The threshold counter is per process and in memory. It resets on restart, counts every attempt,
+  reports once per account per crossing, and reports separately from each replica (section 9).
+- The threshold counter holds at most 10,000 accounts, so an account can report again after eviction.
+- The alert list is capped at 50 accounts, sets `truncated` beyond that, and is cached for 10 seconds
+  per process.
+- The people export refuses with `413` when more than 5,000 people match, so a large deployment
+  exports a narrower search at a time. The file is a snapshot of the scan taken at request time.
+- The backfill copies sign-ins only, never failures, and each backfilled sign-in carries method
+  `unknown`. Sign-ins older than the retention window are not copied.

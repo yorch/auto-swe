@@ -226,6 +226,9 @@ days); activity events are kept for `analytics.activityRetentionDays` (ADMIN, GL
 at least 7); run-effect rows ([audit-log.md](./audit-log.md#5-run-effects)) are kept until
 `audit.runEffectRetentionDays` is set (ADMIN, GLOBAL only, default `0` = forever, otherwise at least 30
 days). See [audit-log.md](./audit-log.md#4-retention) and [user-activity.md](./user-activity.md).
+The failed-sign-in alert threshold and window are registry settings too: `analytics.failedSignInAlertThreshold`
+(ADMIN, GLOBAL only, default 5 failures, 2 to 100) and `analytics.failedSignInAlertWindowMinutes` (ADMIN, GLOBAL
+only, default 15 minutes, 1 to 1440). See [user-activity.md](./user-activity.md#9-failed-sign-in-alerts).
 Organization-wide reports and organization-scope digests are disabled by default; a platform ADMIN
 enables them for each organization with the organization override `analytics.orgWideReports`.
 Changes take up to `CONFIG_CACHE_TTL_MS` (30 seconds by default) to apply on other gateway

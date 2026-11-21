@@ -186,6 +186,32 @@ export const SETTING_DEFINITIONS = {
     unit: 'days',
     writeAccess: 'admin',
   }),
+  'analytics.failedSignInAlertThreshold': defineSetting({
+    defaultValue: 5,
+    description:
+      'How many failed sign-ins for one account inside the alert window put that account on the failed-sign-in alerts list and count one threshold crossing. At most 30 failed sign-ins per account are recorded each minute (a per-account rate limit), so a threshold above 30 times the window in minutes (plus 30) can never fire.',
+    group: 'analytics',
+    label: 'Failed sign-in alert threshold',
+    overridableAt: [],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(2).max(100),
+    unit: 'failures',
+    writeAccess: 'admin',
+  }),
+  'analytics.failedSignInAlertWindowMinutes': defineSetting({
+    defaultValue: 15,
+    description:
+      'The length of the sliding window in which failed sign-ins for one account are counted against the alert threshold. Only 30 failed sign-ins per account are recorded each minute, so a short window caps how many can ever be counted.',
+    group: 'analytics',
+    label: 'Failed sign-in alert window',
+    overridableAt: [],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(1440),
+    unit: 'minutes',
+    writeAccess: 'admin',
+  }),
   'analytics.orgWideReports': defineSetting({
     defaultValue: false,
     description: 'Whether platform admins enable organization-wide reporting data and digests.',

@@ -13,6 +13,7 @@ import {
   signInMethodFor,
 } from './authMethod.js';
 import { recordSignInFailed } from './metrics.js';
+import { trackFailedSignIn } from './signInAlerts.js';
 import { parseUserAgent } from './userAgent.js';
 
 /** The slice of a better-auth endpoint context these hooks read. */
@@ -51,10 +52,14 @@ function emitAuthEvent(
   try {
     const queue = currentActivityQueue();
     if (queue) {
-      queue.enqueue(row, {
-        key: `${row.kind}|${row.actorId}|${method}`,
-        ttlMs: AUTH_EVENT_DEDUPE_MS,
-      });
+      // A failed sign-in is never collapsed: the alerts query counts these rows, so a burst must
+      // stay countable. Its per-actor bucket already bounds how many are written.
+      queue.enqueue(
+        row,
+        row.kind === 'sign_in_failed'
+          ? undefined
+          : { key: `${row.kind}|${row.actorId}|${method}`, ttlMs: AUTH_EVENT_DEDUPE_MS }
+      );
       return;
     }
     void db.userActivityEvent
@@ -173,6 +178,7 @@ export async function observeSignInResult(
     if (!user) {
       return;
     }
+    trackFailedSignIn(user.id, method);
     emitAuthEvent(
       db,
       baseRow('sign_in_failed', user.id, `auth:${method}`, { ...userAgentOf(ctx), method, reason }),
