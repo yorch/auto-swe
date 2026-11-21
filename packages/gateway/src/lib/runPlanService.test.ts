@@ -228,7 +228,7 @@ function fakePrisma(
     team: { findMany: vi.fn(async () => []) },
     user: {
       findUnique: vi.fn(async () =>
-        opts.user === undefined ? { id: OWNER.sub, isActive: true, role: 'ENGINEER' } : opts.user
+        opts.user === undefined ? { id: OWNER.sub, isActive: true, role: 'USER' } : opts.user
       ),
     },
     workflowTemplate: {
@@ -343,7 +343,7 @@ describe('createPlanRecord', () => {
   });
 
   it.each([
-    ['an inactive user', { id: 'u', isActive: false, role: 'ENGINEER' }],
+    ['an inactive user', { id: 'u', isActive: false, role: 'USER' }],
     ['a user who is gone', null],
   ])('refuses %s', async (_name, user) => {
     const { prisma } = fakePrisma(null, { user });
@@ -420,6 +420,17 @@ describe('createPlanRecord', () => {
 });
 
 describe('approvePlan', () => {
+  it('decides the repository as the database role', async () => {
+    const { prisma } = fakePrisma(planRow(), {
+      user: { id: OWNER.sub, isActive: true, role: 'ADMIN' },
+    });
+    expect(await approvePlan(deps(prisma), OWNER, PLAN_ID)).toMatchObject({ ok: true });
+    expect(m.validate).toHaveBeenCalledWith(
+      expect.objectContaining({ user: expect.objectContaining({ role: 'ADMIN' }) }),
+      expect.anything()
+    );
+  });
+
   it('approves the owner’s pending plan: PENDING -> APPROVED, stamped with who and when', async () => {
     const { prisma, table } = fakePrisma(planRow());
     const result = await approvePlan(deps(prisma), OWNER, PLAN_ID);
@@ -581,7 +592,7 @@ describe('approvePlan', () => {
     ],
     [
       'a deactivated user',
-      () => fakePrisma(planRow(), { user: { id: 'user-1', isActive: false, role: 'ENGINEER' } }),
+      () => fakePrisma(planRow(), { user: { id: 'user-1', isActive: false, role: 'USER' } }),
       'FORBIDDEN',
     ],
   ];
@@ -706,6 +717,23 @@ describe('expirePlans', () => {
 
 describe('launchApprovedPlan', () => {
   const approved = () => planRow({ approvedAt: NOW, approvedById: OWNER.sub, status: 'APPROVED' });
+
+  it.each(['ADMIN', 'USER'] as const)(
+    'gives the validation and the persisted authorization the same %s database role',
+    async (role) => {
+      const { prisma } = fakePrisma(approved(), {
+        user: { id: OWNER.sub, isActive: true, role },
+      });
+      expect(await launchApprovedPlan(deps(prisma), OWNER, PLAN_ID)).toMatchObject({ ok: true });
+      expect(m.validate).toHaveBeenCalledWith(
+        expect.objectContaining({ user: expect.objectContaining({ role, sub: OWNER.sub }) }),
+        expect.anything()
+      );
+      expect(m.launch.mock.calls[0]?.[3]).toMatchObject({
+        sourceAuthorization: { actor: { role, sub: OWNER.sub } },
+      });
+    }
+  );
 
   it('starts the Planned Run template with only the plan id, as the approver', async () => {
     const { prisma } = fakePrisma(approved());

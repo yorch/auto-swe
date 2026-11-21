@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { PlatformRole } from '@auto-swe/shared';
+import type { PlatformRole } from '@auto-swe/shared';
 import { resolveSettings, snapshotPinnedSettings } from '@auto-swe/shared/config';
 import { AGENT_RUN_TEMPLATE_NAME, AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
 import {
@@ -236,27 +236,34 @@ function captureReply(): { reply: FastifyReply; refusal: () => PlanRefusal } {
 
 /**
  * The identity a run plan acts as when it validates a repository or launches: the person's `sub`
- * with today's stored role string. Every synthesized actor on the plan path is built here, so the
+ * with the platform role stored in the database. The role is a required argument, so no caller can
+ * fall back to a default, and every synthesized actor on the plan path is built here, so the
  * persisted `sourceAuthorization` and the validation payload cannot drift apart. The worker's
- * re-check (`plannedRunPin.ts`) reads the role from the database, never from this value.
+ * re-check (`plannedRunPin.ts`) reads the role from the database too.
  */
-function synthesizedPlanActor(sub: string): { role: PlatformRole; sub: string } {
-  return { role: PlatformRole.USER, sub };
+function synthesizedPlanActor(
+  sub: string,
+  role: PlatformRole
+): { role: PlatformRole; sub: string } {
+  return { role, sub };
 }
 
-/** The user row behind an actor: it must be an active user, and that is all the planner needs. */
+/**
+ * The user row behind an actor: it must be an active user. Returns the platform role stored in the
+ * database, which is what repository access is decided on (never the token's copy).
+ */
 export async function requireActivePlanUser(
   deps: RunPlanServiceDeps,
   actor: PlanActor
-): Promise<{ ok: true } | PlanRefusal> {
+): Promise<{ ok: true; role: PlatformRole } | PlanRefusal> {
   const user = await deps.prisma.user.findUnique({
-    select: { id: true, isActive: true },
+    select: { id: true, isActive: true, role: true },
     where: { id: actor.sub },
   });
   if (!user?.isActive) {
     return refuse(403, 'FORBIDDEN', 'Only an active user can use run plans');
   }
-  return { ok: true };
+  return { ok: true, role: user.role };
 }
 
 function parseStoredSpec(raw: unknown): WorkflowSpec | null {
@@ -313,6 +320,10 @@ export async function authorizeRepository(
     }
   | PlanRefusal
 > {
+  const person = await requireActivePlanUser(deps, actor);
+  if (!person.ok) {
+    return person;
+  }
   const captured = captureReply();
   const decision = await validateRunConnection(
     {
@@ -322,7 +333,7 @@ export async function authorizeRepository(
       prisma: deps.prisma,
       providerMeta: null,
       templateTeamId: null,
-      user: { exp: 0, iat: 0, ...synthesizedPlanActor(actor.sub) },
+      user: { exp: 0, iat: 0, ...synthesizedPlanActor(actor.sub, person.role) },
     },
     captured.reply
   );
@@ -1139,7 +1150,7 @@ export async function launchApprovedPlan(
         return still ? null : 'PLAN_NOT_LAUNCHABLE';
       },
       log: deps.log ?? { error: () => undefined },
-      sourceAuthorization: { actor: synthesizedPlanActor(actor.sub) },
+      sourceAuthorization: { actor: synthesizedPlanActor(actor.sub, engineer.role) },
     }
   );
   if (!result.ok) {

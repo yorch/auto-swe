@@ -36,8 +36,11 @@ approves it on the full preview.
 | Slack | The channel assistant's `proposeRun` tool offers a **Generate plan** button to the person who asked; the plan is previewed and approved on the dashboard (section 7) |
 
 Every route requires a signed-in user and is refused for service principals. A plan is visible to its
-owner only; anyone else gets `404`. The in-app assistant may create a plan with the user's
-confirmation and may never approve one.
+owner only; anyone else gets `404`. A platform ADMIN may plan on any active repository, subject to
+the same installation, host and budget checks; everyone else needs membership of the repository's
+owning team, or of a team it is shared with, with launch permission. The platform role is read
+from the database, as for every other launch. The in-app assistant may create a plan with the
+user's confirmation and may never approve one.
 
 ---
 

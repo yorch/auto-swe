@@ -159,7 +159,7 @@ describe('run plan routes', () => {
       raceOnCreate: false,
       reach: true,
       realStart: false,
-      role: 'ENGINEER',
+      role: 'USER',
       routed: [],
       routeResult: { matches: [], noneFit: true },
       routeThrows: false,
@@ -1636,6 +1636,55 @@ describe('run plan routes', () => {
         noneFit: false,
       };
       expect((await route()).json().data).toEqual({ matches: [], noneFit: true });
+    });
+
+    // Route wiring only: `validateRunConnection` is mocked with a stand-in that reads the same
+    // field the real one does (the role it is handed), so this proves the handler passes the
+    // database role to it, not the token's, and sends its refusal as 403. The real rule is
+    // proved by `runPlanService.access.test.ts`, which runs the real `validateRunConnection` and
+    // `decideRepoAccess` against a fake Prisma.
+    describe('repository access (route wiring only)', () => {
+      const refuseNonAdmin = async (
+        input: { user: { role: string } },
+        reply: { status: (code: number) => { send: (body: unknown) => void } }
+      ) => {
+        if (input.user.role !== 'ADMIN') {
+          reply.status(403).send({
+            error: { code: 'FORBIDDEN', message: 'You do not have access to this repository.' },
+          });
+          return { ok: false };
+        }
+        return { ok: true };
+      };
+
+      it('does not refuse an ADMIN outside the team, whatever the token says', async () => {
+        s.dbRole = 'ADMIN';
+        m.validate.mockImplementation(refuseNonAdmin);
+        const res = await route();
+        expect(res.statusCode).not.toBe(403);
+        expect(res.statusCode).toBe(200);
+        expect(m.validate).toHaveBeenCalledWith(
+          expect.objectContaining({ user: expect.objectContaining({ role: 'ADMIN', sub: USER }) }),
+          expect.anything()
+        );
+      });
+
+      it('ignores a token that claims ADMIN when the database says USER', async () => {
+        s.role = 'ADMIN';
+        s.dbRole = 'USER';
+        m.validate.mockImplementation(refuseNonAdmin);
+        expect((await route()).statusCode).toBe(403);
+        expect(m.validate).toHaveBeenCalledWith(
+          expect.objectContaining({ user: expect.objectContaining({ role: 'USER' }) }),
+          expect.anything()
+        );
+      });
+
+      it('still answers 403 for a USER outside the team', async () => {
+        s.dbRole = 'USER';
+        m.validate.mockImplementation(refuseNonAdmin);
+        expect((await route()).statusCode).toBe(403);
+      });
     });
 
     it('says nothing fits without calling the router when the caller has no candidate', async () => {
