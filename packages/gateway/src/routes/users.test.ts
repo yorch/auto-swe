@@ -47,6 +47,7 @@ async function buildApp() {
   const authState: AuthState = { role: 'ADMIN', sub: 'admin-1' };
 
   const mockPrisma = {
+    $executeRaw: vi.fn().mockResolvedValue(1),
     account: { create: vi.fn().mockResolvedValue({}) },
     configAuditLog: {
       create: vi.fn().mockResolvedValue({}),
@@ -61,6 +62,9 @@ async function buildApp() {
     },
     team: {
       findUnique: vi.fn(),
+    },
+    teamJoinRequest: {
+      updateManyAndReturn: vi.fn().mockResolvedValue([]),
     },
     teamMembership: {
       createMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -116,6 +120,7 @@ describe('userRoutes', () => {
     ctx.authState.sub = 'admin-1';
     ctx.mockPrisma.configAuditLog.create.mockReset();
     ctx.mockPrisma.team.findUnique.mockReset();
+    ctx.mockPrisma.teamJoinRequest.updateManyAndReturn.mockReset().mockResolvedValue([]);
     ctx.mockPrisma.teamMembership.createMany.mockReset().mockResolvedValue({ count: 1 });
     // By default the caller leads a team, as the lookup requires of anyone who is not an ADMIN.
     ctx.mockPrisma.teamMembership.findMany.mockReset().mockResolvedValue(LEADS_A_TEAM);
@@ -982,6 +987,111 @@ describe('userRoutes', () => {
           actorId: 'admin-1',
           userId: USER_ID,
         });
+      });
+
+      it('closes the deactivated user’s open join requests in the same transaction, audited', async () => {
+        ctx.mockPrisma.user.findUnique.mockResolvedValueOnce({ id: USER_ID, isActive: true });
+        ctx.mockPrisma.user.update.mockResolvedValueOnce({
+          email: 'other@example.com',
+          id: USER_ID,
+          isActive: false,
+          role: 'USER',
+          slackId: null,
+        });
+        const closed = {
+          closeReason: 'REQUESTER_DEACTIVATED',
+          grantedRole: null,
+          id: 'jr-1',
+          requiresOrgApproval: false,
+          status: 'WITHDRAWN',
+          teamId: 'team-1',
+          userId: USER_ID,
+        };
+        ctx.mockPrisma.teamJoinRequest.updateManyAndReturn
+          .mockResolvedValueOnce([closed])
+          .mockResolvedValueOnce([]);
+
+        const res = await ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'PATCH',
+          payload: { isActive: false },
+          url: `/api/v1/users/${USER_ID}`,
+        });
+
+        expect(res.statusCode).toBe(200);
+        const calls = ctx.mockPrisma.teamJoinRequest.updateManyAndReturn.mock
+          .calls as unknown as Array<
+          [{ data: Record<string, unknown>; where: Record<string, unknown> }]
+        >;
+        expect(calls.map(([arg]) => arg.where)).toEqual([
+          { status: 'PENDING_TEAM', userId: USER_ID },
+          { status: 'PENDING_ORG', userId: USER_ID },
+        ]);
+        expect(calls[0]?.[0].data).toMatchObject({
+          closeReason: 'REQUESTER_DEACTIVATED',
+          status: 'WITHDRAWN',
+          teamDecisionNote: 'Closed automatically: the requester was deactivated.',
+        });
+        const entities = ctx.mockPrisma.configAuditLog.create.mock.calls.map(
+          ([arg]) => (arg as { data: { entityId: string; entityType: string } }).data
+        );
+        expect(entities).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ entityId: 'jr-1', entityType: 'TeamJoinRequest' }),
+          ])
+        );
+      });
+
+      it('takes the join-request lock of the deactivated user before it closes anything', async () => {
+        ctx.mockPrisma.user.findUnique.mockResolvedValueOnce({ id: USER_ID, isActive: true });
+        ctx.mockPrisma.user.update.mockResolvedValueOnce({
+          email: 'other@example.com',
+          id: USER_ID,
+          isActive: false,
+          role: 'USER',
+          slackId: null,
+        });
+        const order: string[] = [];
+        const raw = ctx.mockPrisma.$executeRaw as unknown as ReturnType<typeof vi.fn>;
+        raw.mockClear();
+        raw.mockImplementation(async (_strings: TemplateStringsArray, ...values: unknown[]) => {
+          order.push(`lock:${values.join(',')}`);
+          return 1;
+        });
+        ctx.mockPrisma.teamJoinRequest.updateManyAndReturn.mockImplementation(async () => {
+          order.push('close');
+          return [];
+        });
+        const res = await ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'PATCH',
+          payload: { isActive: false },
+          url: `/api/v1/users/${USER_ID}`,
+        });
+        expect(res.statusCode).toBe(200);
+        // The key is the one `createJoinRequest` takes, taken before the first close.
+        expect(order[0]).toBe(`lock:join-request:${USER_ID}`);
+        expect(order).toContain('close');
+        ctx.mockPrisma.teamJoinRequest.updateManyAndReturn.mockReset();
+        ctx.mockPrisma.teamJoinRequest.updateManyAndReturn.mockResolvedValue([]);
+      });
+
+      it('closes nothing when the update does not deactivate anyone', async () => {
+        ctx.mockPrisma.user.findUnique.mockResolvedValueOnce({ id: USER_ID, isActive: true });
+        ctx.mockPrisma.user.update.mockResolvedValueOnce({
+          email: 'other@example.com',
+          id: USER_ID,
+          isActive: true,
+          role: 'USER',
+          slackId: null,
+        });
+        await ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'PATCH',
+          payload: { role: 'USER' },
+          url: `/api/v1/users/${USER_ID}`,
+        });
+        expect(ctx.mockPrisma.teamJoinRequest.updateManyAndReturn).not.toHaveBeenCalled();
       });
 
       it('leaves MCP grants alone when the update does not deactivate anyone', async () => {
