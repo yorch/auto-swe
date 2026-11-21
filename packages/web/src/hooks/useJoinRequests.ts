@@ -2,7 +2,7 @@
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { DirectoryPage, JoinRequestRow } from '@/lib/joinRequests';
+import type { DirectoryPage, JoinRequestRow, MyJoinRequests } from '@/lib/joinRequests';
 import type { TeamRoleValue } from '@/lib/roleLabels';
 import { PERMISSIONS_KEY } from './useEffectivePermissions';
 
@@ -51,8 +51,10 @@ export function useTeamDirectory(filters: { q: string; orgId: string }) {
 export function useMyJoinRequests(options: { enabled?: boolean } = {}) {
   return useQuery({
     enabled: options.enabled ?? true,
-    queryFn: () =>
-      api.get<{ data: JoinRequestRow[] }>('/api/v1/me/join-requests').then((r) => r.data),
+    queryFn: (): Promise<MyJoinRequests> =>
+      api
+        .get<{ data: JoinRequestRow[]; meta?: { truncated?: boolean } }>('/api/v1/me/join-requests')
+        .then((r) => ({ requests: r.data ?? [], truncated: r.meta?.truncated === true })),
     queryKey: JOIN_REQUEST_KEYS.mine,
   });
 }
@@ -140,8 +142,28 @@ export function useApproveTeamJoinRequest(teamId: string) {
       role?: TeamRoleValue;
       note?: string;
     }) => api.post(`/api/v1/teams/${teamId}/join-requests/${requestId}/approve`, body),
-    onSettled: () => invalidateAfterTeamDecision(qc, teamId),
+    onSettled: (result) => {
+      invalidateAfterTeamDecision(qc, teamId);
+      // A cross-organization request that comes back APPROVED had both steps taken at once
+      // (the approver also manages the organization), so the organization queue and its
+      // members changed too, not only the team's.
+      if (approvedStatus(result) === 'APPROVED') {
+        for (const queryKey of [['org-join-requests'], ['org-members']]) {
+          void qc.invalidateQueries({ queryKey });
+        }
+      }
+    },
   });
+}
+
+/** The status in an approve response, whether or not it is wrapped in `{ data }`. */
+function approvedStatus(result: unknown): string | undefined {
+  const body =
+    typeof result === 'object' && result !== null ? (result as Record<string, unknown>) : {};
+  const view = (typeof body.data === 'object' && body.data !== null ? body.data : body) as {
+    status?: unknown;
+  };
+  return typeof view.status === 'string' ? view.status : undefined;
 }
 
 export function useRejectTeamJoinRequest(teamId: string) {

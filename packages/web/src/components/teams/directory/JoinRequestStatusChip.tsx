@@ -10,12 +10,21 @@ const ICONS: Record<string, IconName> = {
   WITHDRAWN: 'stop',
 };
 
-/** A request's status as an icon and words, so it never rests on colour alone. */
-export function JoinRequestStatusChip({ status }: { status: string }) {
+/**
+ * A request's status as an icon and words, so it never rests on colour alone. A request the
+ * platform closed (`closeReason`) reads as closed automatically, not as a person's decision.
+ */
+export function JoinRequestStatusChip({
+  closeReason,
+  status,
+}: {
+  closeReason?: string | null;
+  status: string;
+}) {
   return (
     <Badge className="gap-1" tone={joinStatusTone(status)} variant="outline">
       <Icon name={ICONS[status] ?? 'info'} size={12} />
-      {joinStatusLabel(status)}
+      {joinStatusLabel(status, closeReason)}
     </Badge>
   );
 }
