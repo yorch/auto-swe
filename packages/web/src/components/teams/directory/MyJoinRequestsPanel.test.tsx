@@ -82,6 +82,46 @@ describe('MyJoinRequestsPanel', () => {
     );
   });
 
+  it('says why a request the platform closed was closed, in words', async () => {
+    setupFetchMock({
+      '/api/v1/me/join-requests': () => ({
+        data: [
+          row({ closeReason: 'TEAM_DEACTIVATED', id: 'a', status: 'REJECTED' }),
+          row({ closeReason: 'REQUESTER_DEACTIVATED', id: 'b', status: 'WITHDRAWN' }),
+          row({ closeReason: null, id: 'c', status: 'REJECTED' }),
+        ],
+      }),
+    });
+    render(withQuery(<MyJoinRequestsPanel />));
+    const items = within(
+      await screen.findByRole('list', { name: 'Your join requests' })
+    ).getAllByRole('listitem');
+    expect(within(items[0]).getByText('Closed automatically')).toBeTruthy();
+    expect(
+      within(items[0]).getByText('Closed automatically: the team was deactivated')
+    ).toBeTruthy();
+    expect(within(items[1]).getByText(/the requester account was deactivated/)).toBeTruthy();
+    expect(within(items[2]).getByText('Rejected')).toBeTruthy();
+    expect(within(items[2]).queryByText(/Closed automatically/)).toBeNull();
+  });
+
+  it('notes when the list was cut, and stays quiet otherwise or without meta', async () => {
+    setupFetchMock({
+      '/api/v1/me/join-requests': () => ({ data: [row({})], meta: { truncated: true } }),
+    });
+    const { unmount } = render(withQuery(<MyJoinRequestsPanel />));
+    expect(await screen.findByText('Showing your 200 most recent requests.')).toBeTruthy();
+    unmount();
+
+    for (const body of [{ data: [row({})], meta: { truncated: false } }, { data: [row({})] }]) {
+      setupFetchMock({ '/api/v1/me/join-requests': () => body });
+      const view = render(withQuery(<MyJoinRequestsPanel />));
+      await screen.findByRole('list', { name: 'Your join requests' });
+      expect(screen.queryByText(/most recent requests/)).toBeNull();
+      view.unmount();
+    }
+  });
+
   it('has an empty state', async () => {
     setupFetchMock({ '/api/v1/me/join-requests': () => ({ data: [] }) });
     render(withQuery(<MyJoinRequestsPanel />));

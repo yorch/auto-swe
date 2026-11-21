@@ -2,6 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { permissionsFor, resetPermissions, setPermissions } from '@/test/permissions';
 import { bodyOf, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import { TeamJoinRequestsPanel } from './TeamJoinRequestsPanel';
 
@@ -11,6 +12,7 @@ vi.mock('@/hooks/useEffectivePermissions', async () =>
 
 beforeEach(() => stubDialogPrototype());
 afterEach(() => {
+  resetPermissions();
   cleanup();
   vi.unstubAllGlobals();
 });
@@ -166,5 +168,78 @@ describe('TeamJoinRequestsPanel', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
     fireEvent.click(screen.getAllByRole('button', { name: 'Approve' }).at(-1) as HTMLElement);
     expect(await screen.findByText(/already decided or withdrawn/)).toBeTruthy();
+  });
+
+  describe('combined approval', () => {
+    const cross = req({ orgId: 'o1', requiresOrgApproval: true });
+    const open = async () => {
+      render(
+        withQuery(
+          <TeamJoinRequestsPanel grantableRoles={['MEMBER']} teamId="t1" teamName="Payments" />
+        )
+      );
+      fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+      return screen.findByRole('dialog');
+    };
+
+    it('says the approval also completes the organization step for an organization manager', async () => {
+      setPermissions(
+        permissionsFor({ orgs: [{ capabilities: ['org.members.manage'], orgId: 'o1' }] })
+      );
+      routeByStatus([cross], []);
+      const dialog = await open();
+      expect(
+        within(dialog).getByText(
+          'You also manage this organization, so this approval completes the organization step too.'
+        )
+      ).toBeTruthy();
+      expect(within(dialog).queryByText(/passes the request to the organization/)).toBeNull();
+    });
+
+    it('does not say it for a viewer who manages another organization, or for a same-organization request', async () => {
+      setPermissions(
+        permissionsFor({ orgs: [{ capabilities: ['org.members.manage'], orgId: 'o2' }] })
+      );
+      routeByStatus([cross], []);
+      const dialog = await open();
+      expect(within(dialog).queryByText(/also manage this organization/)).toBeNull();
+      expect(within(dialog).getByText(/passes the request to the organization/)).toBeTruthy();
+      cleanup();
+
+      setPermissions(
+        permissionsFor({ orgs: [{ capabilities: ['org.members.manage'], orgId: 'o1' }] })
+      );
+      routeByStatus([req({ orgId: 'o1', requiresOrgApproval: false })], []);
+      const same = await open();
+      expect(within(same).queryByText(/also manage this organization/)).toBeNull();
+    });
+
+    it('refetches the queues and drops the row once the approval returns APPROVED', async () => {
+      setPermissions(
+        permissionsFor({ orgs: [{ capabilities: ['org.members.manage'], orgId: 'o1' }] })
+      );
+      let approved = false;
+      const spy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const json = (body: unknown) =>
+          new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
+        if ((init?.method ?? 'GET').toUpperCase() === 'POST') {
+          approved = true;
+          return json({ data: { ...cross, status: 'APPROVED' } });
+        }
+        if (url.includes('PENDING_ORG')) {
+          return json({ data: [] });
+        }
+        return json({ data: approved ? [] : [cross] });
+      });
+      vi.stubGlobal('fetch', spy);
+      await open();
+      fireEvent.click(screen.getAllByRole('button', { name: 'Approve' }).at(-1) as HTMLElement);
+      expect(await screen.findByText('No requests are waiting for a decision.')).toBeTruthy();
+      // The awaiting-organization list was read again, so the row is not left there either.
+      await waitFor(() =>
+        expect(spy.mock.calls.filter(([u]) => String(u).includes('PENDING_ORG')).length).toBe(2)
+      );
+    });
   });
 });

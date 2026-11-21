@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from './api';
 import {
+  approvalCompletesOrgStep,
   approvalRoleOptions,
   buildApproveBody,
   buildCreateBody,
@@ -10,8 +11,10 @@ import {
   decisionNote,
   deriveSlug,
   directoryAction,
+  directoryOrgOptions,
   isOpenJoinRequest,
   isValidSlug,
+  joinCloseReasonText,
   joinRequestErrorMessage,
   joinRequestErrorStalesDirectory,
   joinStatusLabel,
@@ -196,6 +199,19 @@ describe('joinRequestErrorMessage', () => {
     ).toContain('in 30 minutes');
   });
 
+  it('words the cooldown by why it started', () => {
+    const d = { retryAfterSeconds: 7200 };
+    expect(
+      joinRequestErrorMessage(api(429, 'JOIN_REQUEST_COOLDOWN', { ...d, reason: 'withdrawn' }), NOW)
+    ).toBe('You withdrew a request to this team recently. You can ask again in about 2 hours.');
+    expect(
+      joinRequestErrorMessage(api(429, 'JOIN_REQUEST_COOLDOWN', { ...d, reason: 'rejected' }), NOW)
+    ).toBe('A recent request to this team was rejected. You can ask again in about 2 hours.');
+    expect(
+      joinRequestErrorMessage(api(429, 'JOIN_REQUEST_COOLDOWN', { reason: 'withdrawn' }), NOW)
+    ).toBe('You withdrew a request to this team recently. Try again later.');
+  });
+
   it('falls back when a cooldown names no usable time', () => {
     for (const details of [undefined, {}, { retryAt: 'nonsense' }, { retryAfterSeconds: -5 }]) {
       expect(joinRequestErrorMessage(api(429, 'JOIN_REQUEST_COOLDOWN', details), NOW)).toMatch(
@@ -270,5 +286,65 @@ describe('mergeOrgOptions', () => {
       'o3',
       'o2',
     ]);
+  });
+});
+
+describe('closeReason', () => {
+  it('words each system close and says nothing for a decision by a person', () => {
+    expect(joinCloseReasonText('TEAM_DEACTIVATED')).toBe(
+      'Closed automatically: the team was deactivated'
+    );
+    expect(joinCloseReasonText('ORGANIZATION_DEACTIVATED')).toBe(
+      'Closed automatically: the organization was deactivated'
+    );
+    expect(joinCloseReasonText('REQUESTER_DEACTIVATED')).toBe(
+      'Closed automatically: the requester account was deactivated'
+    );
+    expect(joinCloseReasonText('SOMETHING_NEW')).toBe('Closed automatically');
+    expect(joinCloseReasonText(null)).toBeNull();
+    expect(joinCloseReasonText(undefined)).toBeNull();
+  });
+
+  it('labels a system close in words, keeping the status for a decision by a person', () => {
+    expect(joinStatusLabel('REJECTED', 'TEAM_DEACTIVATED')).toBe('Closed automatically');
+    expect(joinStatusLabel('WITHDRAWN', 'REQUESTER_DEACTIVATED')).toBe('Closed automatically');
+    expect(joinStatusLabel('REJECTED', null)).toBe('Rejected');
+    expect(joinStatusLabel('REJECTED')).toBe('Rejected');
+    expect(joinStatusLabel('PENDING_TEAM', 'TEAM_DEACTIVATED')).toBe('Pending team approval');
+  });
+});
+
+describe('directoryOrgOptions', () => {
+  const listed = [
+    { id: 'o2', name: 'Zeta' },
+    { id: 'o1', name: 'Acme' },
+  ];
+  it('uses the gateway list, sorted, whatever pages were seen', () => {
+    expect(directoryOrgOptions({ creatable: [], known: [{ id: 'x', name: 'X' }], listed })).toEqual(
+      [
+        { id: 'o1', name: 'Acme' },
+        { id: 'o2', name: 'Zeta' },
+      ]
+    );
+  });
+  it('falls back to the organizations seen when the gateway sent none', () => {
+    expect(
+      directoryOrgOptions({
+        creatable: [{ id: 'o3', name: 'Mid' }],
+        known: [{ id: 'o1', name: 'Acme' }],
+        listed: undefined,
+      }).map((o) => o.id)
+    ).toEqual(['o1', 'o3']);
+  });
+});
+
+describe('approvalCompletesOrgStep', () => {
+  it('needs a cross-organization request with an organization and the viewer managing it', () => {
+    const row = { orgId: 'o1', requiresOrgApproval: true };
+    expect(approvalCompletesOrgStep(row, true)).toBe(true);
+    expect(approvalCompletesOrgStep(row, false)).toBe(false);
+    expect(approvalCompletesOrgStep({ orgId: 'o1', requiresOrgApproval: false }, true)).toBe(false);
+    expect(approvalCompletesOrgStep({ orgId: null, requiresOrgApproval: true }, true)).toBe(false);
+    expect(approvalCompletesOrgStep(null, true)).toBe(false);
   });
 });

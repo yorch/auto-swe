@@ -18,6 +18,7 @@ import {
   type CreatableOrg,
   type DirectoryTeam,
   directoryAction,
+  directoryOrgOptions,
   mergeOrgOptions,
 } from '@/lib/joinRequests';
 import { teamHref } from '@/lib/teamSpace';
@@ -44,7 +45,6 @@ export function TeamDirectoryView() {
   const teams = pages.flatMap((p) => p.teams);
   // The first page carries the viewer-level answer; it is the same on every page.
   const creatableOrgs = pages[0]?.creatableOrgs ?? [];
-  const scope = pages[0]?.scope;
 
   const loaded = directory.data;
   useEffect(() => {
@@ -54,13 +54,19 @@ export function TeamDirectoryView() {
       return next.length === known.length ? known : next;
     });
   }, [loaded]);
+  // The gateway's list is viewer-wide, so it is remembered across searches and filters: a new
+  // query has no pages yet, and the select must not lose its options (or the chosen one) then.
+  const listedNow = pages[0]?.organizations;
+  const [listed, setListed] = useState<CreatableOrg[] | null>(null);
+  useEffect(() => {
+    if (listedNow) {
+      setListed(listedNow);
+    }
+  }, [listedNow]);
   const orgOptions = useMemo(
     () =>
-      mergeOrgOptions(
-        orgs,
-        creatableOrgs.map((o) => ({ orgId: o.id, orgName: o.name }))
-      ),
-    [orgs, creatableOrgs]
+      directoryOrgOptions({ creatable: creatableOrgs, known: orgs, listed: listedNow ?? listed }),
+    [orgs, creatableOrgs, listedNow, listed]
   );
   const filtering = q.length > 0 || orgId !== '';
 
@@ -96,9 +102,6 @@ export function TeamDirectoryView() {
           />
         )}
       </Toolbar>
-      {scope === 'organization' && (
-        <p className="text-xs text-paper-500">Showing teams in the organizations you belong to.</p>
-      )}
       {notice && <Alert variant="success">{notice}</Alert>}
       <QueryBoundary
         error={directory.error}

@@ -1,7 +1,11 @@
 import type { ReactNode } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { RelativeTime } from '@/components/ui/RelativeTime';
-import { type JoinRequestRow as Row, requesterLabel } from '@/lib/joinRequests';
+import {
+  joinCloseReasonText,
+  type JoinRequestRow as Row,
+  requesterLabel,
+} from '@/lib/joinRequests';
 import { teamRoleLabel } from '@/lib/roleLabels';
 
 /**
@@ -33,6 +37,9 @@ export function JoinRequestItem({
             </Badge>
           )}
         </p>
+        {joinCloseReasonText(row.closeReason) && (
+          <p className="text-xs text-paper-400">{joinCloseReasonText(row.closeReason)}</p>
+        )}
         {row.grantedRole && (
           <p className="text-xs text-paper-400">
             Role granted by the team:{' '}

@@ -79,6 +79,55 @@ describe('TeamDirectoryView', () => {
     expect(await screen.findByRole('button', { name: 'Create team' })).toBeTruthy();
   });
 
+  it('does not claim the listed teams are limited to the viewer’s organizations', async () => {
+    // `scope` carries only the deployment-wide default; an organization may override it, so the
+    // view must not label the list by it, even when the default is 'organization'.
+    setupFetchMock({
+      '/api/v1/teams/directory': () =>
+        page([team({}), team({ id: 't2', orgId: 'o2', orgName: 'Zeta', slug: 'z' })], {
+          scope: 'organization',
+        }),
+    });
+    render(withQuery(<TeamDirectoryView />));
+    await screen.findByRole('list', { name: 'Teams' });
+    expect(screen.queryByText(/Showing teams in the organizations you belong to/)).toBeNull();
+  });
+
+  it('offers the organizations the gateway lists, and keeps them while a search loads', async () => {
+    const organizations = [
+      { id: 'o1', name: 'Acme' },
+      { id: 'o2', name: 'Zeta' },
+    ];
+    const spy = setupFetchMock({
+      '/api/v1/teams/directory': () => page([team({})], { organizations }),
+    });
+    render(withQuery(<TeamDirectoryView />));
+    await screen.findByRole('list', { name: 'Teams' });
+    // Only Acme appears on the page; Zeta is offered because the gateway named it.
+    fireEvent.click(screen.getByRole('button', { name: /Filter by organization/ }));
+    expect(screen.getAllByRole('option').map((o) => o.textContent?.replace('✓', ''))).toEqual([
+      'All organizations',
+      'Acme',
+      'Zeta',
+    ]);
+    fireEvent.click(screen.getByRole('option', { name: 'Zeta' }));
+    await waitFor(() =>
+      expect(spy.mock.calls.some(([u]) => String(u).includes('orgId=o2'))).toBe(true)
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Filter by organization/ }));
+    expect(screen.getAllByRole('option')).toHaveLength(3);
+  });
+
+  it('falls back to the organizations on the page when the gateway lists none', async () => {
+    setupFetchMock({
+      '/api/v1/teams/directory': () =>
+        page([team({}), team({ id: 't2', orgId: 'o2', orgName: 'Zeta', slug: 'z' })]),
+    });
+    render(withQuery(<TeamDirectoryView />));
+    await screen.findByRole('list', { name: 'Teams' });
+    expect(await screen.findByRole('button', { name: /Filter by organization/ })).toBeTruthy();
+  });
+
   it('loads the next page with the cursor', async () => {
     const spy = setupFetchMock({
       '/api/v1/teams/directory': () => page([team({})], { nextCursor: 'c1' }),
@@ -132,6 +181,12 @@ describe('TeamDirectoryView', () => {
     ['REQUEST_PENDING', 409, {}, /open request/],
     ['TOO_MANY_OPEN_REQUESTS', 429, {}, /too many open requests/],
     ['JOIN_REQUEST_COOLDOWN', 429, { retryAfterSeconds: 10_800 }, /in about 3 hours/],
+    [
+      'JOIN_REQUEST_COOLDOWN',
+      429,
+      { reason: 'withdrawn', retryAfterSeconds: 1800 },
+      /You withdrew a request to this team recently\. You can ask again in 30 minutes/,
+    ],
     ['TEAM_NOT_FOUND', 404, {}, /no longer available/],
   ])('keeps the dialog open and explains %s', async (code, status, details, text) => {
     setupFetchMock({
