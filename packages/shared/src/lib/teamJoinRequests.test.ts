@@ -1,20 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { JoinRequestStatus } from '../generated/prisma/enums.js';
+import { JoinRequestCloseReason, JoinRequestStatus } from '../generated/prisma/enums.js';
 import {
   approveJoinRequestBodySchema,
   canTransition,
+  clampGrantedRole,
+  countsTowardCooldown,
   createJoinRequestBodySchema,
   decideJoinRequestBodySchema,
   evaluateCooldown,
   evaluateOpenCap,
   FINAL_JOIN_REQUEST_STATUSES,
   isOpenStatus,
+  JOIN_REQUEST_CLOSE_REASONS,
   JOIN_REQUEST_STATUSES,
   JOIN_REQUEST_TRANSITIONS,
   MAX_JOIN_REQUEST_MESSAGE_LENGTH,
   OPEN_JOIN_REQUEST_STATUSES,
   resolveGrantedRole,
   statusAfterTeamApproval,
+  systemCloseFor,
 } from './teamJoinRequests.js';
 
 describe('status vocabulary', () => {
@@ -93,6 +97,7 @@ describe('evaluateCooldown', () => {
     });
     expect(result).toEqual({
       blocked: true,
+      reason: 'rejected',
       retryAfterSeconds: 24 * 3600,
       retryAt: new Date('2026-11-21T12:00:00Z'),
     });
@@ -156,5 +161,138 @@ describe('body schemas', () => {
   it('bounds a decision note', () => {
     expect(decideJoinRequestBodySchema.parse({})).toEqual({});
     expect(decideJoinRequestBodySchema.safeParse({ note: 'x'.repeat(501) }).success).toBe(false);
+  });
+});
+
+describe('close reasons', () => {
+  it('match the Prisma enum', () => {
+    expect([...JOIN_REQUEST_CLOSE_REASONS].sort()).toEqual(
+      Object.values(JoinRequestCloseReason).sort()
+    );
+  });
+
+  it('count toward a cooldown only when a person closed the request', () => {
+    expect(countsTowardCooldown({ closeReason: null })).toBe(true);
+    expect(countsTowardCooldown({ closeReason: undefined })).toBe(true);
+    for (const closeReason of JOIN_REQUEST_CLOSE_REASONS) {
+      expect(countsTowardCooldown({ closeReason })).toBe(false);
+    }
+  });
+
+  it('map to the status and note of a system close', () => {
+    expect(systemCloseFor('REQUESTER_DEACTIVATED')).toMatchObject({
+      closeReason: 'REQUESTER_DEACTIVATED',
+      status: 'WITHDRAWN',
+    });
+    expect(systemCloseFor('TEAM_DEACTIVATED').status).toBe('REJECTED');
+    expect(systemCloseFor('ORGANIZATION_DEACTIVATED').status).toBe('REJECTED');
+    const notes = JOIN_REQUEST_CLOSE_REASONS.map((r) => systemCloseFor(r).note);
+    expect(new Set(notes).size).toBe(3);
+    expect(notes.every((n) => n.length > 0 && n.length <= 500)).toBe(true);
+  });
+});
+
+describe('evaluateCooldown with a withdrawal cooldown', () => {
+  const now = new Date('2026-11-20T12:00:00Z');
+  const ago = (h: number) => new Date(now.getTime() - h * 3_600_000);
+
+  it('blocks on a recent withdrawal and names it', () => {
+    const r = evaluateCooldown({
+      cooldownHours: 72,
+      lastRejectedAt: null,
+      lastWithdrawnAt: ago(0.5),
+      now,
+      withdrawCooldownHours: 1,
+    });
+    expect(r).toMatchObject({ blocked: true, reason: 'withdrawn', retryAfterSeconds: 1800 });
+  });
+
+  it('lets a request through after the withdrawal cooldown or when it is 0', () => {
+    expect(
+      evaluateCooldown({
+        cooldownHours: 72,
+        lastRejectedAt: null,
+        lastWithdrawnAt: ago(2),
+        now,
+        withdrawCooldownHours: 1,
+      }).blocked
+    ).toBe(false);
+    expect(
+      evaluateCooldown({
+        cooldownHours: 72,
+        lastRejectedAt: null,
+        lastWithdrawnAt: ago(0.1),
+        now,
+        withdrawCooldownHours: 0,
+      }).blocked
+    ).toBe(false);
+  });
+
+  it('prefers the later retry time when both apply', () => {
+    const rejectedWins = evaluateCooldown({
+      cooldownHours: 72,
+      lastRejectedAt: ago(1),
+      lastWithdrawnAt: ago(0.1),
+      now,
+      withdrawCooldownHours: 1,
+    });
+    expect(rejectedWins).toMatchObject({ blocked: true, reason: 'rejected' });
+    const withdrawnWins = evaluateCooldown({
+      cooldownHours: 2,
+      lastRejectedAt: ago(1.9),
+      lastWithdrawnAt: ago(0.1),
+      now,
+      withdrawCooldownHours: 48,
+    });
+    expect(withdrawnWins).toMatchObject({ blocked: true, reason: 'withdrawn' });
+  });
+
+  it('keeps the rejection-only behaviour when the withdrawal inputs are absent', () => {
+    expect(evaluateCooldown({ cooldownHours: 72, lastRejectedAt: ago(1), now })).toMatchObject({
+      blocked: true,
+      reason: 'rejected',
+    });
+  });
+});
+
+describe('clampGrantedRole', () => {
+  const good = { active: true, canManageMembers: true };
+
+  it('keeps a grant within the approver rank', () => {
+    expect(
+      clampGrantedRole({ granted: 'LEAD', teamApproverStanding: { ...good, rank: 'ADMIN' } })
+    ).toEqual({ clamped: false, from: 'LEAD', role: 'LEAD', to: 'LEAD' });
+    expect(
+      clampGrantedRole({ granted: 'LEAD', teamApproverStanding: { ...good, rank: 'LEAD' } }).clamped
+    ).toBe(false);
+  });
+
+  it('clamps a grant above the approver rank to MEMBER', () => {
+    expect(
+      clampGrantedRole({ granted: 'ADMIN', teamApproverStanding: { ...good, rank: 'LEAD' } })
+    ).toEqual({ clamped: true, from: 'ADMIN', role: 'MEMBER', to: 'MEMBER' });
+  });
+
+  it('clamps when the approver is inactive, lost the capability or holds no rank', () => {
+    for (const standing of [
+      { ...good, active: false, rank: 'ADMIN' as const },
+      { ...good, canManageMembers: false, rank: 'ADMIN' as const },
+      { ...good, rank: null },
+    ]) {
+      expect(clampGrantedRole({ granted: 'LEAD', teamApproverStanding: standing })).toMatchObject({
+        clamped: true,
+        from: 'LEAD',
+        role: 'MEMBER',
+      });
+    }
+  });
+
+  it('never reports a clamp for a MEMBER or unset grant', () => {
+    expect(
+      clampGrantedRole({
+        granted: null,
+        teamApproverStanding: { ...good, active: false, rank: null },
+      })
+    ).toEqual({ clamped: false, from: 'MEMBER', role: 'MEMBER', to: 'MEMBER' });
   });
 });

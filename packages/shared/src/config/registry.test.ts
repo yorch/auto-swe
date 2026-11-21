@@ -913,11 +913,13 @@ describe('run plan settings', () => {
 describe('team directory and join-request settings', () => {
   it('declares the contract defaults, scopes and access', () => {
     const expected = {
-      'teams.directoryScope': { defaultValue: 'platform', overridableAt: [] },
+      'teams.directoryScope': { defaultValue: 'platform', overridableAt: ['ORGANIZATION'] },
       'teams.joinRequestCooldownHours': { defaultValue: 72, overridableAt: [] },
+      'teams.joinRequestNotifications': { defaultValue: true, overridableAt: [] },
       'teams.maxCreatedPerUser': { defaultValue: 3, overridableAt: ['ORGANIZATION'] },
       'teams.maxOpenJoinRequests': { defaultValue: 5, overridableAt: [] },
       'teams.selfServiceCreation': { defaultValue: false, overridableAt: ['ORGANIZATION'] },
+      'teams.withdrawCooldownHours': { defaultValue: 1, overridableAt: [] },
     } as const;
     for (const [key, want] of Object.entries(expected)) {
       const def = SETTING_DEFINITIONS[key as keyof typeof expected];
@@ -944,6 +946,14 @@ describe('team directory and join-request settings', () => {
       false,
       false,
     ]);
+    expect([0, 720].map((v) => accepts('teams.withdrawCooldownHours', v))).toEqual([true, true]);
+    expect([-1, 721, 1.5].map((v) => accepts('teams.withdrawCooldownHours', v))).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect(accepts('teams.joinRequestNotifications', false)).toBe(true);
+    expect(accepts('teams.joinRequestNotifications', 'false')).toBe(false);
     expect([1, 100].map((v) => accepts('teams.maxCreatedPerUser', v))).toEqual([true, true]);
     expect([0, 101].map((v) => accepts('teams.maxCreatedPerUser', v))).toEqual([false, false]);
     expect([1, 50].map((v) => accepts('teams.maxOpenJoinRequests', v))).toEqual([true, true]);

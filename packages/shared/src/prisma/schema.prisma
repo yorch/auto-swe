@@ -170,6 +170,14 @@ enum JoinRequestStatus {
   WITHDRAWN
 }
 
+/// Why the platform, not a person, closed a join request. Null on every request a person decided or
+/// withdrew. A system close never starts a cooldown.
+enum JoinRequestCloseReason {
+  REQUESTER_DEACTIVATED
+  TEAM_DEACTIVATED
+  ORGANIZATION_DEACTIVATED
+}
+
 enum ReportDigestScope {
   ORGANIZATION
   TEAM
@@ -1523,6 +1531,9 @@ model TeamJoinRequest {
   orgDecidedBy        User?             @relation("JoinRequestOrgDecider", fields: [orgDecidedById], references: [id], onDelete: SetNull)
   orgDecidedAt        DateTime?         @map("org_decided_at") @db.Timestamptz
   orgDecisionNote     String?           @map("org_decision_note")
+  /// Set when the platform closed the request because the requester, team or organization was
+  /// deactivated; null when a person decided or withdrew. Only null rows count toward a cooldown.
+  closeReason         JoinRequestCloseReason? @map("close_reason")
   createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz
   updatedAt           DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 

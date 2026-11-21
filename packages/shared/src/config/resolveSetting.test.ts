@@ -9,7 +9,9 @@ import { _resetConfigCacheForTests } from './cache.js';
 import {
   invalidateSettingsCache,
   resolveEffectiveSettings,
+  resolveOrganizationOverrides,
   resolveSetting,
+  resolveSettingForOrganizations,
   resolveSettings,
   snapshotPinnedSettings,
 } from './resolveSetting.js';
@@ -306,5 +308,192 @@ describe('tenant guard', () => {
   it('does not leave the exemption in place after resolution', async () => {
     await resolveSetting('channel.historyMessageLimit', TEAM_CTX);
     expect(isUnscoped('ConfigSetting')).toBe(false);
+  });
+});
+
+describe('resolveSettingForOrganizations', () => {
+  const KEY = 'teams.directoryScope';
+  type Stored = { key: string; orgId: string | null; scope: string; value: unknown };
+
+  /** A fake table that answers both query shapes the resolver issues, from the same rows. */
+  function table(stored: Stored[]) {
+    findMany.mockImplementation(async (args?: unknown) => {
+      const where = (args as { where: Record<string, unknown> }).where;
+      const or = where.OR as Array<Record<string, unknown>> | undefined;
+      return stored.filter((row) => {
+        if (row.key !== where.key && !(where.key as { in?: string[] })?.in?.includes(row.key)) {
+          return false;
+        }
+        if (!or) {
+          return row.scope === where.scope;
+        }
+        return or.some(
+          (c) => c.scope === row.scope && (c.scope === 'GLOBAL' || c.orgId === row.orgId)
+        );
+      });
+    });
+  }
+
+  it('answers what resolveSetting answers per organization, in two queries for any number of them', async () => {
+    const orgs = Array.from({ length: 1500 }, (_, i) => `org-${i}`);
+    const stored: Stored[] = [
+      { key: KEY, orgId: null, scope: 'GLOBAL', value: 'organization' },
+      { key: KEY, orgId: 'org-1', scope: 'ORGANIZATION', value: 'platform' },
+      { key: KEY, orgId: 'org-2', scope: 'ORGANIZATION', value: 'organization' },
+      // A value the schema rejects degrades to the GLOBAL value, as it does per organization.
+      { key: KEY, orgId: 'org-3', scope: 'ORGANIZATION', value: 'everyone' },
+      { key: 'channel.historyMessageLimit', orgId: 'org-4', scope: 'ORGANIZATION', value: 5 },
+    ];
+    table(stored);
+    const batch = await resolveSettingForOrganizations(KEY, orgs);
+    expect(findMany).toHaveBeenCalledTimes(2);
+
+    expect(batch.size).toBe(1500);
+    expect(batch.get('org-0')).toBe('organization'); // GLOBAL
+    expect(batch.get('org-1')).toBe('platform');
+    expect(batch.get('org-2')).toBe('organization');
+    expect(batch.get('org-3')).toBe('organization'); // invalid -> GLOBAL
+    expect(batch.get('org-4')).toBe('organization'); // another key's row is not read
+
+    _resetConfigCacheForTests();
+    for (const id of ['org-0', 'org-1', 'org-2', 'org-3', 'org-4', 'org-1499']) {
+      expect(batch.get(id)).toBe(await resolveSetting(KEY, { orgId: id }));
+    }
+  });
+
+  it('an invalid stored value falls back to the definition default when GLOBAL has none', async () => {
+    table([{ key: KEY, orgId: 'org-1', scope: 'ORGANIZATION', value: 7 }]);
+    const batch = await resolveSettingForOrganizations(KEY, ['org-1', 'org-2']);
+    expect([...batch.values()]).toEqual(['platform', 'platform']);
+  });
+
+  it('ignores a stray ORGANIZATION row for a key that does not allow an organization override', async () => {
+    const stray = 'teams.joinRequestCooldownHours';
+    table([{ key: stray, orgId: 'org-1', scope: 'ORGANIZATION', value: 1 }]);
+    const batch = await resolveSettingForOrganizations(stray, ['org-1']);
+    expect(batch.get('org-1')).toBe(await resolveSetting(stray, { orgId: 'org-1' }));
+    expect(batch.get('org-1')).toBe(72);
+  });
+
+  it('keeps the organization rows under one cache entry that an admin save drops', async () => {
+    table([{ key: KEY, orgId: 'org-1', scope: 'ORGANIZATION', value: 'organization' }]);
+    await resolveSettingForOrganizations(KEY, ['org-1']);
+    findMany.mockClear();
+    await resolveSettingForOrganizations(KEY, ['org-1', 'org-2', 'org-3']);
+    expect(findMany).not.toHaveBeenCalled();
+    invalidateSettingsCache();
+    await resolveSettingForOrganizations(KEY, ['org-1']);
+    expect(findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('runs its query under the tenant exemption', async () => {
+    let exempt: boolean | undefined;
+    findMany.mockImplementation(async () => {
+      exempt = isUnscoped('ConfigSetting');
+      return [];
+    });
+    await resolveSettingForOrganizations(KEY, ['org-1']);
+    expect(exempt).toBe(true);
+    expect(isUnscoped('ConfigSetting')).toBe(false);
+  });
+});
+
+describe('resolveOrganizationOverrides', () => {
+  const KEY = 'teams.directoryScope';
+  type Stored = { key: string; orgId: string | null; scope: string; value: unknown };
+
+  function table(stored: Stored[]) {
+    findMany.mockImplementation(async (args?: unknown) => {
+      const where = (args as { where: Record<string, unknown> }).where;
+      const or = where.OR as Array<Record<string, unknown>> | undefined;
+      return stored.filter((row) => {
+        if (row.key !== where.key && !(where.key as { in?: string[] })?.in?.includes(row.key)) {
+          return false;
+        }
+        if (!or) {
+          return row.scope === where.scope;
+        }
+        return or.some(
+          (c) => c.scope === row.scope && (c.scope === 'GLOBAL' || c.orgId === row.orgId)
+        );
+      });
+    });
+  }
+
+  it('answers the GLOBAL value and only the valid overrides, naming no organization', async () => {
+    table([
+      { key: KEY, orgId: null, scope: 'GLOBAL', value: 'organization' },
+      { key: KEY, orgId: 'org-1', scope: 'ORGANIZATION', value: 'platform' },
+      { key: KEY, orgId: 'org-2', scope: 'ORGANIZATION', value: 'organization' },
+      // Rejected by the schema, so it is not an override: that organization resolves to GLOBAL.
+      { key: KEY, orgId: 'org-3', scope: 'ORGANIZATION', value: 'everyone' },
+      { key: KEY, orgId: 'org-4', scope: 'ORGANIZATION', value: 7 },
+      { key: 'channel.historyMessageLimit', orgId: 'org-5', scope: 'ORGANIZATION', value: 5 },
+    ]);
+    const { fallback, overrides } = await resolveOrganizationOverrides(KEY);
+    expect(fallback).toBe('organization');
+    expect([...overrides]).toEqual([
+      ['org-1', 'platform'],
+      ['org-2', 'organization'],
+    ]);
+    // Each organization resolves exactly as the per-organization resolver says.
+    _resetConfigCacheForTests();
+    for (const id of ['org-1', 'org-2', 'org-3', 'org-4', 'org-5', 'org-6']) {
+      expect(overrides.get(id) ?? fallback).toBe(await resolveSetting(KEY, { orgId: id }));
+    }
+  });
+
+  it('reads the organization rows once and shares them with the batch resolver', async () => {
+    table([{ key: KEY, orgId: 'org-1', scope: 'ORGANIZATION', value: 'organization' }]);
+    await resolveOrganizationOverrides(KEY);
+    expect(findMany).toHaveBeenCalledTimes(2); // GLOBAL, then the organization rows
+    findMany.mockClear();
+    await resolveOrganizationOverrides(KEY);
+    await resolveSettingForOrganizations(KEY, ['org-1', 'org-2']);
+    expect(findMany).not.toHaveBeenCalled();
+    invalidateSettingsCache();
+    await resolveOrganizationOverrides(KEY);
+    expect(findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('hands out a copy, so a caller that edits its map cannot change what the next one reads', async () => {
+    table([{ key: KEY, orgId: 'org-1', scope: 'ORGANIZATION', value: 'organization' }]);
+    const first = await resolveOrganizationOverrides(KEY);
+    const mine = first.overrides as Map<string, unknown>;
+    mine.delete('org-1');
+    mine.set('org-9', 'organization');
+    const second = await resolveOrganizationOverrides(KEY);
+    expect(second.overrides).not.toBe(first.overrides);
+    expect([...second.overrides]).toEqual([['org-1', 'organization']]);
+    const batch = await resolveSettingForOrganizations(KEY, ['org-1', 'org-9']);
+    expect(batch.get('org-1')).toBe('organization');
+    expect(batch.get('org-9')).toBe('platform'); // the platform value, not the edit
+  });
+
+  it('has no overrides for a key that does not allow an organization override', async () => {
+    const stray = 'teams.joinRequestCooldownHours';
+    table([{ key: stray, orgId: 'org-1', scope: 'ORGANIZATION', value: 1 }]);
+    const { fallback, overrides } = await resolveOrganizationOverrides(stray);
+    expect(overrides.size).toBe(0);
+    expect(fallback).toBe(72);
+  });
+
+  it('falls back to the definition default when GLOBAL stores nothing', async () => {
+    table([]);
+    const { fallback, overrides } = await resolveOrganizationOverrides(KEY);
+    expect(fallback).toBe('platform');
+    expect(overrides.size).toBe(0);
+  });
+
+  it('runs its query under the tenant exemption', async () => {
+    let exempt: boolean | undefined;
+    findMany.mockImplementation(async (args?: unknown) => {
+      if ((args as { where: { scope?: string } }).where.scope === 'ORGANIZATION') {
+        exempt = isUnscoped('ConfigSetting');
+      }
+      return [];
+    });
+    await resolveOrganizationOverrides(KEY);
+    expect(exempt).toBe(true);
   });
 });

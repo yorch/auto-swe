@@ -20,7 +20,9 @@ export {
 export {
   invalidateSettingsCache,
   resolveEffectiveSettings,
+  resolveOrganizationOverrides,
   resolveSetting,
+  resolveSettingForOrganizations,
   resolveSettings,
   snapshotPinnedSettings,
 } from './resolveSetting.js';
