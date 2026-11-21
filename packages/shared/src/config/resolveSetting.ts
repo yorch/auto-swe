@@ -193,6 +193,88 @@ export async function resolveSetting<K extends SettingKey>(
   return resolveFrom(key, overrides, ctx).value;
 }
 
+/// Every VALID stored ORGANIZATION-scope value of one key, by organization id, in one query, parsed
+/// once per cache window (so a rejected value is reported once, not on every request). One cache
+/// entry per key (under the `settings:` prefix, so an admin's save invalidates it with the rest). A
+/// key that does not allow an ORGANIZATION override has none, whatever rows exist.
+function cachedOrganizationOverrides<K extends SettingKey>(
+  key: K
+): Promise<Map<string, SettingValue<K>>> {
+  return withCache(
+    `settings:organization-rows:${encodeURIComponent(key)}`,
+    configCacheTtlMs(),
+    () =>
+      // Deliberately cross-tenant: it reads the ORGANIZATION rows of one key, which callers pick
+      // out by id (or compare against the GLOBAL value) in memory.
+      runUnscoped(
+        'the ORGANIZATION-scope rows of one setting key, resolved for a caller-supplied list of organizations',
+        ['ConfigSetting'],
+        async () => {
+          const definition = getSettingDefinition(key) as unknown as SettingDefinition<
+            SettingValue<K>
+          >;
+          const byOrg = new Map<string, SettingValue<K>>();
+          if (!definition.overridableAt.includes('ORGANIZATION')) {
+            return byOrg;
+          }
+          const prisma = await db();
+          const found = await prisma.configSetting.findMany({
+            select: { orgId: true, value: true },
+            where: { key, scope: 'ORGANIZATION' },
+          });
+          for (const row of found) {
+            if (row.orgId) {
+              const value = accept(key, definition, row.value);
+              if (value !== undefined) {
+                byOrg.set(row.orgId, value);
+              }
+            }
+          }
+          return byOrg;
+        }
+      )
+  );
+}
+
+/// The GLOBAL-tier value of one key and the valid ORGANIZATION overrides stored for it, from the same
+/// two cached reads `resolveSettingForOrganizations` uses, WITHOUT naming any organization. An
+/// organization absent from `overrides` resolves to `fallback`, so a caller that must filter by an
+/// organization's value can say "the fallback, except these few" and never passes a list that grows
+/// with the number of organizations. A stored value the schema rejects, or a key that does not allow
+/// an ORGANIZATION override, is left out and falls through to `fallback` exactly as
+/// `resolveSetting(key, { orgId })` does. The map is as large as the admin-set overrides, no larger.
+/// It is a copy: the cached one is shared by every caller for the cache window, so a caller that
+/// edits its map must not be able to change what the next one reads.
+export async function resolveOrganizationOverrides<K extends SettingKey>(
+  key: K
+): Promise<{ fallback: SettingValue<K>; overrides: ReadonlyMap<string, SettingValue<K>> }> {
+  const fallback = await resolveSetting(key);
+  return { fallback, overrides: new Map(await cachedOrganizationOverrides(key)) };
+}
+
+/// Resolves one key for many organizations at once: the same answer `resolveSetting(key, { orgId })`
+/// gives for each, from one query for the key's ORGANIZATION rows plus the single GLOBAL resolution,
+/// however many organizations there are. A stored value the schema rejects, or a key that does not
+/// allow an ORGANIZATION override, falls through to the GLOBAL value exactly as it does there. Use it
+/// for a list; a call per organization would put one cache entry per organization in the shared
+/// cache and one query per miss.
+export async function resolveSettingForOrganizations<K extends SettingKey>(
+  key: K,
+  orgIds: readonly string[]
+): Promise<Map<string, SettingValue<K>>> {
+  const out = new Map<string, SettingValue<K>>();
+  if (orgIds.length === 0) {
+    return out;
+  }
+  // The cached map itself, read and never handed out, so a long list costs no copy of it.
+  const fallback = await resolveSetting(key);
+  const overrides = await cachedOrganizationOverrides(key);
+  for (const orgId of orgIds) {
+    out.set(orgId, overrides.get(orgId) ?? fallback);
+  }
+  return out;
+}
+
 /// Reads several settings in one round trip.
 export async function resolveSettings<K extends SettingKey>(
   keys: readonly K[],
