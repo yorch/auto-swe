@@ -30,7 +30,7 @@ import {
   isOrgMember,
   isOrgOverBudget,
   isTeamOverBudget,
-  ORG_ACCESS_REFUSAL,
+  orgAccessRefusal,
   orgBudgetRefusal,
   teamBudgetRefusal,
 } from './orgAccess.js';
@@ -223,7 +223,11 @@ export async function authorizeLaunch(
     if (!(await isOrgMember(prisma, actor, orgId))) {
       return {
         ok: false,
-        refusal: { body: { error: { ...ORG_ACCESS_REFUSAL } }, kind: 'org-access', status: 403 },
+        refusal: {
+          body: { error: await orgAccessRefusalFor(prisma, actor, orgId, input.repos, input.log) },
+          kind: 'org-access',
+          status: 403,
+        },
       };
     }
   }
@@ -243,6 +247,43 @@ export async function authorizeLaunch(
       input.teams
     )
   );
+}
+
+/**
+ * The org-access refusal body. Only on this path, and only for a caller on the OWNING team of one
+ * of the launch's repositories in that org, it looks the organization's name up so the message
+ * can say whom to ask; any other caller, or a failed lookup, gets the generic text.
+ */
+async function orgAccessRefusalFor(
+  prisma: PrismaClient,
+  actor: AccessActor,
+  orgId: string,
+  repos: LaunchRepo[],
+  log?: AccessLog
+): Promise<{ code: string; message: string }> {
+  const team = repos
+    .map((repo) => repo.team)
+    .find((t) => t.orgId === orgId && t.memberships.some((m) => m.userId === actor.sub));
+  if (!team) {
+    return orgAccessRefusal({ callerIsTeamMember: false });
+  }
+  try {
+    const org = await prisma.organization.findUnique({
+      select: { name: true },
+      where: { id: orgId },
+    });
+    return orgAccessRefusal({
+      callerIsTeamMember: true,
+      orgName: org?.name,
+      teamName: team.name,
+    });
+  } catch (err) {
+    log?.warn(
+      { err, orgId },
+      'org-access refusal: organization name lookup failed, using the generic text'
+    );
+    return orgAccessRefusal({ callerIsTeamMember: false });
+  }
 }
 
 /** Every org a launch spends against, each with its cap, the repositories' orgs first. */

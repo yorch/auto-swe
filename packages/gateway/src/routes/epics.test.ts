@@ -210,6 +210,7 @@ describe('epic routes', () => {
   let teamRoleByRepo: Record<string, string> = {};
   // Repositories the caller reaches only through a share (not a member of the owning team).
   let sharedOnlyRepos = new Set<string>();
+  let orgRow: { name: string } | null = { name: 'Org Name' };
   let activeWorkflowFixtures: ActiveWorkflowFixture[] = [];
   let workRequestFixtures: Array<Record<string, unknown>> = [];
   let epicStartShouldConflict = false;
@@ -316,12 +317,14 @@ describe('epic routes', () => {
                   r.memberIds.includes(currentSub) && !sharedOnlyRepos.has(r.id)
                     ? [{ userId: currentSub }]
                     : [],
+                name: 'Gamma Team',
                 organization: { id: r.orgId, monthlyBudgetUsdCents: r.monthlyBudgetUsdCents },
                 orgId: r.orgId,
               },
             }));
         },
       },
+      organization: { findUnique: async () => orgRow },
       organizationMembership: {
         findUnique: async (args: {
           where: { userId_orgId: { orgId: string; userId: string } };
@@ -416,6 +419,7 @@ describe('epic routes', () => {
     currentTeamRole = 'LEAD';
     teamRoleByRepo = {};
     sharedOnlyRepos = new Set();
+    orgRow = { name: 'Org Name' };
     activeWorkflowFixtures = [];
     workRequestFixtures = [];
     epicStartShouldConflict = false;
@@ -667,8 +671,28 @@ describe('epic routes', () => {
       expect(createdWorkRequests).toHaveLength(0);
     });
 
-    it('returns 403 for a non-admin who is not a member of the repo org (P5)', async () => {
-      // user-1 is on repo C's team, but not a member of org-3.
+    it('tells an owning-team member which organization to ask to add them (P5)', async () => {
+      // user-1 is on repo C's owning team, but not a member of org-3.
+      const res = await app.inject({
+        headers: auth,
+        method: 'POST',
+        payload: { ...payload, repoIds: [REPO_C] },
+        url: '/api/v1/epics',
+      });
+      expect(res.statusCode).toBe(403);
+      const body = JSON.parse(res.payload);
+      expect(body.error.code).toBe('FORBIDDEN');
+      expect(body.error.message).toBe(
+        'You are on team "Gamma Team" but not a member of its organization "Org Name". Ask an organization admin to add you to "Org Name", then try again.'
+      );
+      expect(startedEpicIds).toHaveLength(0);
+      expect(createdWorkRequests).toHaveLength(0);
+    });
+
+    // A share cannot launch an epic (it needs LEAD on the owning team, refused before the org
+    // check), so the generic text is exercised here through an organization the lookup misses.
+    it('gives the generic text when the organization name cannot be found (P5)', async () => {
+      orgRow = null;
       const res = await app.inject({
         headers: auth,
         method: 'POST',

@@ -30,7 +30,8 @@ vi.mock('@auto-swe/shared/lib/repoMembership', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@auto-swe/shared/lib/repoMembership')>()),
   isRepoMember: vi.fn(() => true),
 }));
-vi.mock('../orgAccess.js', () => ({
+vi.mock('../orgAccess.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../orgAccess.js')>()),
   isOrgOverBudget: vi.fn(async () => m.overBudget),
   isTeamOverBudget: vi.fn(async (_p: unknown, teamId: string) => m.overTeams.has(teamId)),
 }));
@@ -49,6 +50,7 @@ import { resolveSetting } from '@auto-swe/shared/config';
 import { CI_TRIAGE_INPUT_SCHEMA } from '@auto-swe/shared/lib/ciTrigger';
 import { PR_FEEDBACK_INPUT_SCHEMA } from '@auto-swe/shared/lib/prFeedback';
 import { FAKE_TEAM_SOURCE, fakeTeamSource } from '../../test/fakeTeamSource.js';
+import { authorizeLaunch } from '../launchAuthorization.js';
 import { isOrgOverBudget } from '../orgAccess.js';
 import {
   actorLaunchDecision,
@@ -1000,6 +1002,31 @@ describe('owners that are not a repository', () => {
     expect(findFirst).not.toHaveBeenCalled();
     await actorLaunchDecision(prisma, 'ghe.example.com/acme/api', '123', 'conn');
     expect(JSON.stringify(findFirst.mock.calls[0]?.[0])).toContain('ghe.example.com:123');
+  });
+
+  it('records only the generic text for an org-access refusal, never the team or organization', async () => {
+    const prisma = {
+      user: { findFirst: vi.fn(async () => ({ id: 'user-1', role: 'ENGINEER' })) },
+    } as never;
+    vi.mocked(authorizeLaunch).mockResolvedValueOnce({
+      ok: false,
+      refusal: {
+        body: {
+          error: {
+            code: 'ORG_ACCESS_DENIED',
+            message:
+              'You are on team "Payments" but not a member of its organization "Acme Org". Ask an organization admin to add you to "Acme Org", then try again.',
+          },
+        },
+        kind: 'org-access',
+        status: 403,
+      },
+    });
+    const decision = await actorLaunchDecision(prisma, 'github.com/acme/api', '123', 'conn');
+    expect(decision).toEqual({
+      refused: 'may not start work here (You are not a member of this organization)',
+    });
+    expect(JSON.stringify(decision)).not.toMatch(/Payments|Acme Org/);
   });
 });
 

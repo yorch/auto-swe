@@ -39,7 +39,7 @@ import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance } from 'fastify';
 import { getErrorName } from '../../plugins/auth.js';
 import { authorizeLaunch } from '../launchAuthorization.js';
-import { isOrgOverBudget, isTeamOverBudget } from '../orgAccess.js';
+import { isOrgOverBudget, isTeamOverBudget, ORG_ACCESS_REFUSAL } from '../orgAccess.js';
 import { webhookRepositoryWhere } from '../repositoryHost.js';
 import { runProvenance } from '../runProvenance.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../systemTemplate.js';
@@ -727,7 +727,13 @@ export async function actorLaunchDecision(
     }
   );
   if (!decision.ok) {
-    return { refused: `may not start work here (${decision.refusal.body.error.message})` };
+    // The refusal is written to the decision ledger, which the automation's owning team reads, and
+    // the actionable org-access text names a team and an organization for the refused user alone.
+    const reason =
+      decision.refusal.kind === 'org-access'
+        ? ORG_ACCESS_REFUSAL.message
+        : decision.refusal.body.error.message;
+    return { refused: `may not start work here (${reason})` };
   }
   return { userId: user.id };
 }

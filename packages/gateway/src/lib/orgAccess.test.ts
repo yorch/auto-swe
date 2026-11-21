@@ -11,6 +11,8 @@ import {
   assertOrgBudget,
   currentYearMonth,
   isOrgOverBudget,
+  ORG_ACCESS_REFUSAL,
+  orgAccessRefusal,
 } from './orgAccess.js';
 
 const ORG_ID = '00000000-0000-4000-8000-000000000001';
@@ -98,5 +100,35 @@ describe('isOrgOverBudget / assertOrgBudget', () => {
 describe('currentYearMonth', () => {
   it('returns a string matching YYYY-MM', () => {
     expect(currentYearMonth()).toMatch(/^\d{4}-\d{2}$/);
+  });
+});
+
+describe('orgAccessRefusal', () => {
+  it('tells a member of the owning team which organization to ask about', () => {
+    expect(
+      orgAccessRefusal({ callerIsTeamMember: true, orgName: 'Acme', teamName: 'Payments' })
+    ).toEqual({
+      code: 'FORBIDDEN',
+      message:
+        'You are on team "Payments" but not a member of its organization "Acme". Ask an organization admin to add you to "Acme", then try again.',
+    });
+  });
+
+  it('gives anyone outside the owning team the generic text, names or not', () => {
+    expect(
+      orgAccessRefusal({ callerIsTeamMember: false, orgName: 'Acme', teamName: 'Payments' })
+    ).toEqual(ORG_ACCESS_REFUSAL);
+  });
+
+  it('falls back to the generic text when a name is missing', () => {
+    expect(orgAccessRefusal({ callerIsTeamMember: true, teamName: 'Payments' })).toEqual(
+      ORG_ACCESS_REFUSAL
+    );
+    expect(orgAccessRefusal({ callerIsTeamMember: true, orgName: 'Acme' })).toEqual(
+      ORG_ACCESS_REFUSAL
+    );
+    expect(orgAccessRefusal({ callerIsTeamMember: true, orgName: null, teamName: null })).toEqual(
+      ORG_ACCESS_REFUSAL
+    );
   });
 });

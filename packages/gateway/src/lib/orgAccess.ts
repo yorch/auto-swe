@@ -31,6 +31,31 @@ export const ORG_ACCESS_REFUSAL = {
   message: 'You are not a member of this organization',
 } as const;
 
+/** What the org-access refusal may say about the caller's own team and its organization. */
+export interface OrgAccessRefusalContext {
+  teamName?: string | null;
+  orgName?: string | null;
+  /** Whether the caller belongs to the repository's OWNING team (a share does not count). */
+  callerIsTeamMember: boolean;
+}
+
+/**
+ * The 403 body for a caller outside the organization. It names the team and the organization,
+ * and says who can fix it, only when the caller is a member of the owning team: the team is
+ * already known to them, and the organization name is a small disclosure to a team member.
+ * Everyone else, and any missing name, gets {@link ORG_ACCESS_REFUSAL}. Individual admins are
+ * never named.
+ */
+export function orgAccessRefusal(ctx: OrgAccessRefusalContext): { code: string; message: string } {
+  if (ctx.callerIsTeamMember && ctx.teamName && ctx.orgName) {
+    return {
+      code: ORG_ACCESS_REFUSAL.code,
+      message: `You are on team "${ctx.teamName}" but not a member of its organization "${ctx.orgName}". Ask an organization admin to add you to "${ctx.orgName}", then try again.`,
+    };
+  }
+  return { ...ORG_ACCESS_REFUSAL };
+}
+
 /**
  * The 402 body. It names the state and not the cap: the amount is an ORG_ADMIN's to read, and a
  * refused engineer needs to know the budget is spent, not by how much.

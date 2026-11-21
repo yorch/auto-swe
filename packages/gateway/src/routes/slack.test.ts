@@ -359,6 +359,7 @@ function buildApp(state: FakeState): FastifyInstance {
     },
     // Used by buildRunModalView (the run picker the /auto-swe run slash command +
     // the global "Run a workflow" shortcut open).
+    organization: { findUnique: async () => ({ name: 'Org Name' }) },
     organizationMembership: {
       findUnique: async () => (state.orgMember ? { role: 'ORG_MEMBER' } : null),
     },
@@ -2955,6 +2956,7 @@ describe('POST /api/v1/auth/slack/interactive — run modal submission', () => {
       id: 'team-a',
       isActive: true,
       memberships: [{ userId: 'u1' }],
+      name: 'Payments',
       organization: { id: 'org-1', isActive: true, monthlyBudgetUsdCents: null },
       orgId: 'org-1',
     },
@@ -3075,10 +3077,29 @@ describe('POST /api/v1/auth/slack/interactive — run modal submission', () => {
     expect(state.runInputCreates).toHaveLength(0);
   });
 
-  it('refuses a requester outside the repository org', async () => {
+  it('tells a requester on the owning team which organization to ask to add them', async () => {
     // Platform ADMINs bypass org membership, so the requester is an engineer.
     (state.users[0] as { role: string }).role = 'ENGINEER';
     state.orgMember = false;
+    const res = await submit(runModalPayload());
+    expect(res.json()).toEqual({
+      errors: {
+        repo_block:
+          'You are on team "Payments" but not a member of its organization "Org Name". Ask an organization admin to add you to "Org Name", then try again.',
+      },
+      response_action: 'errors',
+    });
+    expect(state.runnableStarts).toHaveLength(0);
+  });
+
+  it('refuses a requester outside the repository org with the generic text on a shared repo', async () => {
+    (state.users[0] as { role: string }).role = 'ENGINEER';
+    state.orgMember = false;
+    state.connectionRow = {
+      ...GIT_REPO,
+      shares: [{ team: { memberships: [{ userId: 'u1' }] } }],
+      team: { ...GIT_REPO.team, memberships: [] },
+    };
     const res = await submit(runModalPayload());
     expect(res.json()).toEqual({
       errors: { repo_block: 'You are not a member of this organization' },

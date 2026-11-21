@@ -593,6 +593,12 @@ same transaction, with one audit row for each, carrying the `authority` of the d
 change is not a removal and cascades nothing. The transaction locks the organization first, then the
 affected teams in ascending id order, the order every membership write takes them in.
 
+A launch by a member of the repository's owning team who is not a member of its organization is
+refused with `You are on team "<team>" but not a member of its organization "<org>"` and told to ask
+an organization admin to add them. Anyone else, such as a team that reaches the repository through a
+share, gets the generic `You are not a member of this organization`, because naming the organization
+would disclose it to someone who is not in it. No individual admin is named.
+
 - Removing the organization's last organization `ADMIN` is refused with `409 LAST_ORG_ADMIN`, unless the
   actor is a platform ADMIN.
 - The cascade may leave a team with no ADMIN only when the actor holds organization or platform

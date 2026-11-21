@@ -51,8 +51,18 @@ function prisma(opts: {
   teamSpentUsd?: Record<string, number>;
   /** teamId -> the caller's role on it. */
   teamRoles?: Record<string, string>;
+  /** The organization name lookup; `'throws'` simulates a failed lookup. */
+  orgName?: string | 'throws';
 }) {
   return {
+    organization: {
+      findUnique: vi.fn(async () => {
+        if (opts.orgName === 'throws') {
+          throw new Error('db down');
+        }
+        return opts.orgName === undefined ? null : { name: opts.orgName };
+      }),
+    },
     organizationMembership: {
       findUnique: vi.fn(async ({ where }: { where: { userId_orgId: { orgId: string } } }) =>
         opts.orgMembers?.[where.userId_orgId.orgId] === false ? null : { role: 'ORG_MEMBER' }
@@ -135,6 +145,73 @@ describe('authorizeLaunch', () => {
       }
     );
     expect(decision).toMatchObject({ ok: false, refusal: { kind: 'org-access', status: 403 } });
+  });
+
+  it('tells an owning-team member which organization to ask to add them', async () => {
+    const decision = await authorizeLaunch(
+      prisma({ orgMembers: { 'org-1': false }, orgName: 'Acme Corp' }) as never,
+      USER,
+      { gate: GATE_OFF, repos: [repo({})] }
+    );
+    expect(decision).toMatchObject({
+      ok: false,
+      refusal: {
+        body: {
+          error: {
+            code: 'FORBIDDEN',
+            message:
+              'You are on team "Payments" but not a member of its organization "Acme Corp". Ask an organization admin to add you to "Acme Corp", then try again.',
+          },
+        },
+        kind: 'org-access',
+        status: 403,
+      },
+    });
+  });
+
+  it('gives a sharee the generic text and does not look the organization up', async () => {
+    const db = prisma({ orgMembers: { 'org-1': false }, orgName: 'Acme Corp' });
+    const decision = await authorizeLaunch(db as never, USER, {
+      gate: GATE_OFF,
+      repos: [repo({ member: false, shareCanLaunch: true })],
+    });
+    expect(decision).toMatchObject({
+      ok: false,
+      refusal: {
+        body: {
+          error: { code: 'FORBIDDEN', message: 'You are not a member of this organization' },
+        },
+        kind: 'org-access',
+      },
+    });
+    expect(db.organization.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('gives the generic text when the organization lookup fails or finds nothing', async () => {
+    for (const orgName of ['throws', undefined] as const) {
+      const decision = await authorizeLaunch(
+        prisma({ orgMembers: { 'org-1': false }, orgName }) as never,
+        USER,
+        { gate: GATE_OFF, repos: [repo({})] }
+      );
+      expect(decision).toMatchObject({
+        ok: false,
+        refusal: { body: { error: { message: 'You are not a member of this organization' } } },
+      });
+    }
+  });
+
+  it('logs a failed organization lookup at warn level', async () => {
+    const warn = vi.fn();
+    await authorizeLaunch(
+      prisma({ orgMembers: { 'org-1': false }, orgName: 'throws' }) as never,
+      USER,
+      { gate: GATE_OFF, log: { warn }, repos: [repo({})] }
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: 'org-1' }),
+      expect.stringContaining('organization name lookup failed')
+    );
   });
 
   it('checks every org a multi-org launch spends against', async () => {
