@@ -4,11 +4,17 @@ import {
   MAX_JOIN_REQUEST_NOTE_LENGTH,
 } from '@auto-swe/shared/lib/teamJoinRequests';
 import { TEAM_ROLES } from '@auto-swe/shared/permissions/roles';
-import { apiRequest, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
+import { apiRequest, apiRequestFull, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 import { FLAG_PRESENT, missingValue, parseFlags } from '../lib/flags.js';
 import { clean, parseOptionalPositiveInt } from '../lib/format.js';
-import { type JoinRequestView, orDash, printRequests, renderTable } from '../lib/joinRequests.js';
+import {
+  type JoinRequestView,
+  orDash,
+  printRequests,
+  renderTable,
+  withCooldownReason,
+} from '../lib/joinRequests.js';
 
 /**
  * `auto-swe teams` — the team directory and join requests (docs/teams.md).
@@ -54,6 +60,8 @@ interface DirectoryTeam {
 interface DirectoryPage {
   teams: DirectoryTeam[];
   creatableOrgs?: { id: string; name: string }[];
+  /** Every organization with a team the caller may see, sorted by name. */
+  organizations?: { id: string; name: string }[];
   scope?: string;
   nextCursor?: string | null;
 }
@@ -180,12 +188,17 @@ async function cmdRequest(args: string[], env: CliEnv): Promise<number> {
   if (message.length > MAX_JOIN_REQUEST_MESSAGE_LENGTH) {
     return fail(`--message must be at most ${MAX_JOIN_REQUEST_MESSAGE_LENGTH} characters`, usage);
   }
-  const created = await apiRequest<JoinRequestView>(
-    env,
-    'POST',
-    `/api/v1/teams/${teamId}/join-requests`,
-    { message }
-  );
+  let created: JoinRequestView;
+  try {
+    created = await apiRequest<JoinRequestView>(
+      env,
+      'POST',
+      `/api/v1/teams/${teamId}/join-requests`,
+      { message }
+    );
+  } catch (err) {
+    throw withCooldownReason(err);
+  }
   if (flags.json === FLAG_PRESENT) {
     printJson(created);
     return 0;
@@ -223,12 +236,19 @@ async function cmdListOwn(args: string[], env: CliEnv): Promise<number> {
   if (bad || positional.length > 0) {
     return fail(bad ?? `Unexpected argument: ${positional[0]}`, usage);
   }
-  const rows = await apiRequest<JoinRequestView[]>(env, 'GET', '/api/v1/me/join-requests');
+  const envelope = await apiRequestFull<{
+    data?: JoinRequestView[];
+    meta?: { truncated?: boolean };
+  }>(env, 'GET', '/api/v1/me/join-requests');
+  const rows = envelope.data ?? [];
   if (flags.json === FLAG_PRESENT) {
     printJson(rows);
     return 0;
   }
   printRequests(rows, 'own');
+  if (envelope.meta?.truncated === true) {
+    process.stdout.write('Only the newest requests are listed; older ones are not shown.\n');
+  }
   return 0;
 }
 

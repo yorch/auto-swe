@@ -2189,7 +2189,7 @@ read correctly, because the permissions module accepts the old spellings.
 
 ---
 
-### Team directory: deployments that keep teams private to an organization (`<fixing commit SHA>`)
+### Team directory: deployments that keep teams private to an organization (`1187a47`)
 
 **Affected.** Deployments that keep teams private to an organization, meaning a signed-in user of one
 organization should see only that organization's teams. Also affected: any deployment that applies
@@ -2225,3 +2225,53 @@ count, and any user may ask to join a team.
 **Verify.** With `teams.directoryScope` set to `organization`, `GET /api/v1/teams/directory` returns
 for a user only teams whose organization the user belongs to. `SELECT COUNT(*) FROM team_join_requests`
 returns a number rather than an error, and `\d teams` shows a `created_by_id` column.
+
+---
+
+### Join-request notification emails and per-organization directory scope (`<fixing commit SHA>`)
+
+**Affected.** Every deployment that runs migration `20261120100000_team_join_request_close_reason`, which
+the normal deployment migration step applies. Notifications are on by default, so no operator action is
+needed for them to start. A deployment that already has SMTP or Resend configured for sign-in email starts
+emailing requesters and organization admins about join requests. Any team with a `slackNotifyChannel`, on a
+deployment with a Slack bot token, starts getting a Slack post on each new request. Deployments that set
+`teams.directoryScope` at GLOBAL scope are also affected, because the setting can now be overridden per
+organization.
+
+**What changes.** A requester is emailed when a request is approved, rejected or moves to the
+organization step, and an organization's active admins (the first 20) are emailed when a request awaits the
+organization step. A new join request posts to the team's `slackNotifyChannel`. Emails use the SMTP or
+Resend transport that sign-in emails use, so no new delivery configuration is needed where sign-in email
+works. Without a transport, the sends are skipped and the gateway logs one warning per process; the rest of
+the request flow is unaffected. The Slack post needs the Slack bot token and a team that has a
+`slackNotifyChannel`.
+
+`teams.directoryScope` may be set for each organization, in addition to GLOBAL. An organization with no
+value of its own uses the GLOBAL value, so nothing changes for any organization until an admin sets one for
+it. This supersedes the sentence in the earlier team-directory entry ("The setting has no organization-level
+value, so one setting governs the whole deployment") and that entry's Verify step: an organization can now
+override the setting, and a viewer may see the teams of an organization whose override is `platform` even
+when the GLOBAL value is `organization`. The GLOBAL value alone no longer decides what the directory lists,
+and the `scope` field of `GET /api/v1/teams/directory` reports only that GLOBAL value.
+
+**Actions.**
+
+1. To stop every join-request notification (email and Slack), set `teams.joinRequestNotifications` to
+   `false` at `/admin/platform-settings`. To have the emails delivered, configure SMTP (`SMTP_HOST`,
+   `SMTP_PORT` and `AUTH_FROM_EMAIL`) or Resend (`RESEND_API_KEY` and `AUTH_FROM_EMAIL`), the same
+   configuration sign-in email requires.
+2. A deployment that keeps teams private to an organization by setting GLOBAL `teams.directoryScope` to
+   `organization` should check that no organization carries a `platform` override
+   (`SELECT org_id, value FROM config_settings WHERE key = 'teams.directoryScope' AND scope = 'ORGANIZATION'`),
+   because such an organization's teams are listed to every signed-in user. To give one organization its own
+   directory scope, a platform ADMIN sets `teams.directoryScope` at that organization's scope on
+   `/admin/platform-settings`; leave the GLOBAL value as it is for every other organization.
+
+**Verify.** Decide a join request as a team manager. With a transport configured, the requester receives the
+decision email. Without one, the gateway log holds one line containing `no email transport is configured`, and
+the decision is still recorded (`SELECT status FROM team_join_requests WHERE id = '<requestId>'`). With
+`teams.joinRequestNotifications` set to `false`, neither is sent. For the directory, a viewer sees the teams
+of each organization the viewer belongs to and the teams of every organization whose resolved
+`teams.directoryScope` is `platform`: that is the organization's own value when it has one, else the GLOBAL
+value. With GLOBAL `organization` and no organization override, `GET /api/v1/teams/directory` returns only
+teams whose organization the viewer belongs to.

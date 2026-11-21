@@ -727,20 +727,22 @@ to enabling `uiValidation.prInlineImages`. The public bucket policy is operator-
 
 ## Team directory and join requests
 
-The `teams` group holds the five settings that govern the team directory, join requests and
-self-service team creation. A platform ADMIN writes all five, and none is run-pinned.
+The `teams` group holds the seven settings that govern the team directory, join requests and
+self-service team creation. A platform ADMIN writes them, and none is run-pinned.
 
 | Key | Default | Scopes | Meaning |
 |---|---|---|---|
-| `teams.directoryScope` | `platform` | GLOBAL | `platform` lists every active team to every signed-in user and accepts a join request to any listed team; `organization` lists only the teams of organizations the viewer belongs to. |
+| `teams.directoryScope` | `platform` | GLOBAL, ORGANIZATION | `platform` lists every active team to every signed-in user and accepts a join request to any listed team; `organization` lists only the teams of organizations the viewer belongs to. Resolved per organization: a team's own organization's value decides whether it is listed, and an organization with no value of its own uses the GLOBAL value. |
 | `teams.selfServiceCreation` | `false` | GLOBAL, ORGANIZATION | Whether any member of an organization may create a team in it. The creator becomes the team ADMIN. |
 | `teams.maxCreatedPerUser` | `3` | GLOBAL, ORGANIZATION | Active teams one user may have created through self-service creation, counted across all organizations (1 to 100). Does not limit an organization or platform admin. |
 | `teams.maxOpenJoinRequests` | `5` | GLOBAL | Open join requests one user may hold at once (1 to 50). |
 | `teams.joinRequestCooldownHours` | `72` | GLOBAL | Hours after a rejection before the same team accepts a new request from that user (0 to 720). |
+| `teams.withdrawCooldownHours` | `1` | GLOBAL | Hours after a person withdraws a request before that team accepts a new one from them (0 to 720). `0` disables the wait. |
+| `teams.joinRequestNotifications` | `true` | GLOBAL | Whether join-request notifications are sent: the requester's decision email, the Slack post to the team's channel on a new request, and the organization admins' email on a request awaiting the organization step. `false` stops every one. Notifications are best effort and need an SMTP or Resend transport for email. |
 
 The default `teams.directoryScope` exposes each active team's name, slug, description, organization and
-member count to every signed-in user; set it to `organization` to keep teams private to their
-organization. Behaviour is in [teams.md](./teams.md#team-directory-and-join-requests).
+member count to every signed-in user; set it to `organization`, at GLOBAL scope or for an organization, to
+keep teams private to their organization. Behaviour is in [teams.md](./teams.md#team-directory-and-join-requests).
 
 ## Orchestration
 
