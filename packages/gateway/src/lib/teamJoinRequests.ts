@@ -12,19 +12,24 @@
  * later finds the status moved and loses: it matches no row and answers 409.
  */
 import type { Prisma } from '@auto-swe/shared';
-import { resolveSetting } from '@auto-swe/shared/config';
+import { resolveSetting, resolveSettingForOrganizations } from '@auto-swe/shared/config';
 import {
+  clampGrantedRole,
   evaluateCooldown,
   evaluateOpenCap,
   isOpenStatus,
+  type JoinRequestCloseReasonValue,
   type JoinRequestStatusValue,
   OPEN_JOIN_REQUEST_STATUSES,
   resolveGrantedRole,
   statusAfterTeamApproval,
+  systemCloseFor,
 } from '@auto-swe/shared/lib/teamJoinRequests';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
+  type Authority,
   actingRank,
+  decide,
   heldScope,
   loadStanding,
   TEAM_ROLE_RANK,
@@ -37,6 +42,7 @@ import type { FastifyInstance } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
 import type { AuditContext } from './auditContext.js';
 import { writeAuditLog } from './auditLog.js';
+import { type JoinRequestEvent, notifyJoinRequestEvent } from './joinRequestNotifier.js';
 import { isUniqueConstraintError } from './prismaErrors.js';
 
 type Db = FastifyInstance['prisma'];
@@ -44,7 +50,7 @@ type Db = FastifyInstance['prisma'];
 /** A refusal the route sends as `{ error: { code, message } }`. */
 export interface Refusal {
   ok: false;
-  status: 400 | 403 | 404 | 409 | 429;
+  status: 400 | 401 | 403 | 404 | 409 | 429;
   code: string;
   message: string;
   details?: Record<string, unknown>;
@@ -68,6 +74,7 @@ const OPEN = [...OPEN_JOIN_REQUEST_STATUSES];
 /* ── Views ─────────────────────────────────────────────────────────────────── */
 
 const REQUEST_SELECT = {
+  closeReason: true,
   createdAt: true,
   grantedRole: true,
   id: true,
@@ -96,6 +103,8 @@ type RequestRow = Prisma.TeamJoinRequestGetPayload<{ select: typeof REQUEST_SELE
 
 /** A request as its requester sees it: the team, the organization and the decisions, no person. */
 export interface RequesterView {
+  /** Why the platform closed the request; null when a person decided or withdrew. */
+  closeReason: JoinRequestCloseReasonValue | null;
   createdAt: Date;
   grantedRole: TeamRoleValue | null;
   id: string;
@@ -121,6 +130,7 @@ export interface ReviewerView extends RequesterView {
 
 export function requesterView(row: RequestRow): RequesterView {
   return {
+    closeReason: row.closeReason,
     createdAt: row.createdAt,
     grantedRole: row.grantedRole,
     id: row.id,
@@ -156,6 +166,7 @@ export function reviewerView(row: ReviewerRow): ReviewerView {
 }
 
 function requestAuditFields(row: {
+  closeReason?: string | null;
   grantedRole: string | null;
   id: string;
   requiresOrgApproval: boolean;
@@ -164,6 +175,7 @@ function requestAuditFields(row: {
   userId: string;
 }) {
   return {
+    closeReason: row.closeReason ?? null,
     grantedRole: row.grantedRole,
     id: row.id,
     requiresOrgApproval: row.requiresOrgApproval,
@@ -195,9 +207,74 @@ interface Viewer {
   sub: string;
 }
 
-/** `teams.directoryScope` (platform-wide, so it takes no context). */
-export function directoryScope(): Promise<DirectoryScope> {
-  return resolveSetting('teams.directoryScope');
+/**
+ * Tells the notifier, after a commit, that a request was created or decided. The notifier never
+ * rejects; the catch is a second line of defence, and nothing here is awaited into the caller's
+ * result, so a slow or failing send cannot change the outcome of the decision it reports.
+ */
+function notifyAfterCommit(fastify: FastifyInstance, event: JoinRequestEvent): void {
+  try {
+    void notifyJoinRequestEvent(fastify.prisma, event).catch((err: unknown) => {
+      fastify.log?.warn({ err, event: event.kind }, 'join request notification failed');
+    });
+  } catch (err) {
+    fastify.log?.warn({ err, event: event.kind }, 'join request notification failed');
+  }
+}
+
+/** How many organization names the directory filter lists; `organizationsTruncated` says more exist. */
+export const DIRECTORY_ORGANIZATIONS_LIMIT = 500;
+
+/**
+ * The directory's visibility rule as one `Team` filter, shared by the listing, the organization
+ * filter and the create path so they cannot disagree: a team is visible when it and its organization
+ * are active and (the viewer belongs to the organization, or the organization's effective
+ * `teams.directoryScope` is `platform`). The effective scope is the organization's own valid
+ * override, else the platform value.
+ *
+ * Nothing here scales with the number of organizations or of overrides. The platform value says
+ * which side is the short list, and the database joins the organizations' override rows itself
+ * (`configSettings` of the team's organization), so the only list sent as parameters is the
+ * viewer's own memberships. Under `platform` a team is visible unless its organization chose
+ * `organization`; under `organization` it is visible only if its organization chose `platform`.
+ * An override is valid only as the exact JSON string `platform` or `organization` (the registry
+ * schema is an enum); a JSON `equals` on that string treats any other stored value (wrong case, a
+ * number, an array, an object) as no override, so it falls through to the platform value exactly as
+ * `resolveSetting(key, { orgId })` does.
+ */
+async function directoryVisibility(
+  viewerOrgIds: readonly string[]
+): Promise<{ scope: DirectoryScope; where: Prisma.TeamWhereInput }> {
+  const scope = await resolveSetting('teams.directoryScope');
+  const chose = (value: DirectoryScope) => ({
+    key: 'teams.directoryScope',
+    scope: 'ORGANIZATION' as const,
+    value: { equals: value },
+  });
+  // The override rows are read through the team's organization relation, in the same statement.
+  const byOverride: Prisma.TeamWhereInput = {
+    organization: {
+      configSettings:
+        scope === 'platform' ? { none: chose('organization') } : { some: chose('platform') },
+    },
+  };
+  return {
+    scope,
+    where: {
+      isActive: true,
+      OR: [{ orgId: { in: [...viewerOrgIds] } }, byOverride],
+      organization: { isActive: true },
+    },
+  };
+}
+
+/**
+ * The advisory-lock key of one person's join requests. Creation and deactivation both take it, so
+ * both build it here, from the id in its canonical form: a UUID is case-insensitive to the database
+ * but not to a hash of its text, and a route parameter may arrive in upper case.
+ */
+export function joinRequestLockKey(userId: string): string {
+  return `join-request:${userId.toLowerCase()}`;
 }
 
 /** The organizations the viewer belongs to. Their own rows, by user, so named unscoped. */
@@ -260,13 +337,16 @@ export async function loadCreatableOrgs(
   const adminIds = new Set(adminOrgs.map((o) => o.id));
 
   const candidates = memberOrgIds.filter((id) => !adminIds.has(id));
-  const policies = await Promise.all(
-    candidates.map(async (orgId) => ({
-      enabled: await resolveSetting('teams.selfServiceCreation', { orgId }),
-      limit: await resolveSetting('teams.maxCreatedPerUser', { orgId }),
-      orgId,
-    }))
-  );
+  // One read of each setting's organization rows however many organizations the viewer is in.
+  const [enabledIn, limitIn] = await Promise.all([
+    resolveSettingForOrganizations('teams.selfServiceCreation', candidates),
+    resolveSettingForOrganizations('teams.maxCreatedPerUser', candidates),
+  ]);
+  const policies = candidates.map((orgId) => ({
+    enabled: enabledIn.get(orgId) === true,
+    limit: limitIn.get(orgId) ?? 0,
+    orgId,
+  }));
   const enabled = policies.filter((p) => p.enabled);
   let selfServiceOrgs: Array<{ id: string; name: string }> = [];
   if (enabled.length > 0) {
@@ -287,8 +367,9 @@ export async function loadCreatableOrgs(
  * or setting, and `requestId` is the viewer's own open request.
  */
 export async function loadDirectory(prisma: Db, viewer: Viewer, query: DirectoryQuery) {
-  const scope = await directoryScope();
   const memberOrgIds = await memberOrgIdsOf(prisma, viewer.sub);
+  // Each team's own organization decides who may list it (see `directoryVisibility`).
+  const { scope, where: visible } = await directoryVisibility(memberOrgIds);
 
   let after: string | null = null;
   if (query.cursor !== undefined) {
@@ -299,10 +380,7 @@ export async function loadDirectory(prisma: Db, viewer: Viewer, query: Directory
   }
 
   // A team of a deactivated organization is not joinable, so it is not listed.
-  const and: Prisma.TeamWhereInput[] = [{ isActive: true, organization: { isActive: true } }];
-  if (scope === 'organization') {
-    and.push({ orgId: { in: memberOrgIds } });
-  }
+  const and: Prisma.TeamWhereInput[] = [visible];
   if (query.orgId) {
     and.push({ orgId: query.orgId });
   }
@@ -336,7 +414,7 @@ export async function loadDirectory(prisma: Db, viewer: Viewer, query: Directory
     rows.length > query.limit ? encodeCursor(page[page.length - 1]?.name ?? '') : null;
   const ids = page.map((t) => t.id);
 
-  const [counts, memberOf, open, creatableOrgs] = await Promise.all([
+  const [counts, memberOf, open, creatableOrgs, orgsWithTeams] = await Promise.all([
     ids.length > 0
       ? prisma.teamMembership.groupBy({
           _count: { _all: true },
@@ -358,7 +436,17 @@ export async function loadDirectory(prisma: Db, viewer: Viewer, query: Directory
         })
       : Promise.resolve([]),
     loadCreatableOrgs(prisma, viewer, memberOrgIds),
+    // The organization filter lists organizations that have a team the viewer may see, whatever
+    // the search text or page, in name order and capped: one more than the cap says it was cut.
+    prisma.organization.findMany({
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true },
+      take: DIRECTORY_ORGANIZATIONS_LIMIT + 1,
+      where: { isActive: true, teams: { some: visible } },
+    }),
   ]);
+  const organizations = orgsWithTeams.slice(0, DIRECTORY_ORGANIZATIONS_LIMIT);
+  const organizationsTruncated = orgsWithTeams.length > DIRECTORY_ORGANIZATIONS_LIMIT;
   const sizeOf = new Map(counts.map((c) => [c.teamId, c._count._all]));
   const memberSet = new Set(memberOf.map((m) => m.teamId));
   const requestOf = new Map(open.map((r) => [r.teamId, r.id]));
@@ -378,38 +466,30 @@ export async function loadDirectory(prisma: Db, viewer: Viewer, query: Directory
       slug: t.slug,
     } as const;
   });
-  return { creatableOrgs, nextCursor, ok: true as const, scope, teams };
+  return {
+    creatableOrgs,
+    nextCursor,
+    ok: true as const,
+    organizations,
+    organizationsTruncated,
+    scope,
+    teams,
+  };
 }
 
 /**
- * The team, if `viewer` may see it in the directory: active, in an active organization, and inside
- * the directory scope. An unknown team, an inactive one (or of an inactive organization) and one
- * outside the scope are the same answer.
+ * The team, if `viewer` may see it in the directory: the same filter the listing applies. An unknown
+ * team, an inactive one (or of an inactive organization) and one outside the scope are the same
+ * answer.
  */
 async function visibleTeam(prisma: Db, viewerId: string, teamId: string) {
-  const team = await prisma.team.findUnique({
-    select: {
-      id: true,
-      isActive: true,
-      name: true,
-      organization: { select: { isActive: true } },
-      orgId: true,
-    },
-    where: { id: teamId },
-  });
-  if (!team?.isActive || !team.organization.isActive) {
-    return null;
-  }
-  if ((await directoryScope()) === 'organization') {
-    const member = await prisma.organizationMembership.findUnique({
-      select: { id: true },
-      where: { userId_orgId: { orgId: team.orgId, userId: viewerId } },
-    });
-    if (!member) {
-      return null;
-    }
-  }
-  return team;
+  const { where } = await directoryVisibility(await memberOrgIdsOf(prisma, viewerId));
+  return runUnscoped('the team directory lists public team fields', ['Team'], () =>
+    prisma.team.findFirst({
+      select: { id: true, name: true, orgId: true },
+      where: { AND: [where, { id: teamId }] },
+    })
+  );
 }
 
 /* ── Locks ─────────────────────────────────────────────────────────────────── */
@@ -461,29 +541,48 @@ export async function createJoinRequest(
       details: { requestId: pending.id },
     });
   }
-  const [cooldownHours, maxOpen] = await Promise.all([
-    resolveSetting('teams.joinRequestCooldownHours'),
-    resolveSetting('teams.maxOpenJoinRequests'),
+  const settingsCtx = { orgId: team.orgId, teamId };
+  const [cooldownHours, withdrawCooldownHours, maxOpen] = await Promise.all([
+    resolveSetting('teams.joinRequestCooldownHours', settingsCtx),
+    resolveSetting('teams.withdrawCooldownHours', settingsCtx),
+    resolveSetting('teams.maxOpenJoinRequests', settingsCtx),
   ]);
-  const rejected = await prisma.teamJoinRequest.findFirst({
-    orderBy: { updatedAt: 'desc' },
-    select: { orgDecidedAt: true, teamDecidedAt: true, updatedAt: true },
-    where: { status: 'REJECTED', teamId, userId: actor.sub },
-  });
+  // Only a closure a person made counts (`countsTowardCooldown`): a request the platform closed
+  // because someone was deactivated carries a `closeReason` and never starts a cooldown.
+  const [rejected, withdrawn] = await Promise.all([
+    prisma.teamJoinRequest.findFirst({
+      orderBy: { updatedAt: 'desc' },
+      select: { orgDecidedAt: true, teamDecidedAt: true, updatedAt: true },
+      where: { closeReason: null, status: 'REJECTED', teamId, userId: actor.sub },
+    }),
+    prisma.teamJoinRequest.findFirst({
+      orderBy: { updatedAt: 'desc' },
+      select: { updatedAt: true },
+      where: { closeReason: null, status: 'WITHDRAWN', teamId, userId: actor.sub },
+    }),
+  ]);
   const cooldown = evaluateCooldown({
     cooldownHours,
     lastRejectedAt: rejected
       ? (rejected.orgDecidedAt ?? rejected.teamDecidedAt ?? rejected.updatedAt)
       : null,
+    lastWithdrawnAt: withdrawn ? withdrawn.updatedAt : null,
     now: new Date(),
+    withdrawCooldownHours,
   });
   if (cooldown.blocked) {
     return refuse(
       429,
       'JOIN_REQUEST_COOLDOWN',
-      'This team rejected your last request; you may ask again later',
+      cooldown.reason === 'rejected'
+        ? 'This team rejected your last request; you may ask again later'
+        : 'You withdrew your last request to this team; you may ask again later',
       {
-        details: { retryAfterSeconds: cooldown.retryAfterSeconds, retryAt: cooldown.retryAt },
+        details: {
+          reason: cooldown.reason,
+          retryAfterSeconds: cooldown.retryAfterSeconds,
+          retryAt: cooldown.retryAt,
+        },
         retryAfterSeconds: cooldown.retryAfterSeconds,
       }
     );
@@ -494,10 +593,30 @@ export async function createJoinRequest(
   });
 
   try {
-    return await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       // CLAUDE.md §7 exception: Prisma cannot express a transaction-scoped advisory lock. It
       // serializes one person's requests, so two at once cannot both pass the open-request cap.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`join-request:${actor.sub}`}, 0))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${joinRequestLockKey(actor.sub)}, 0))`;
+      // A deactivation of this account or of this team may have committed since the checks above,
+      // and its closing of open requests has then already run: a request committed now would stay
+      // open for good. The account's deactivation takes this same lock before it closes, so past
+      // here the read below is the account's state when it commits; the team's deactivation holds
+      // the team row `FOR UPDATE`, so the share lock waits for it and the re-read sees its commit.
+      const requester = await tx.user.findUnique({
+        select: { isActive: true },
+        where: { id: actor.sub },
+      });
+      if (!requester?.isActive) {
+        return refuse(401, 'TOKEN_INVALID', 'The user this token was issued to is inactive');
+      }
+      // CLAUDE.md §7 exception: a share lock on the team row, held to commit, so a team deactivation
+      // (which takes the row `FOR UPDATE` and then closes its open requests) cannot slip between
+      // the re-check below and the insert.
+      await tx.$executeRaw`SELECT 1 FROM teams WHERE id = ${teamId}::uuid FOR SHARE`;
+      const live = await tx.team.findUnique({ select: { isActive: true }, where: { id: teamId } });
+      if (!live?.isActive) {
+        return refuse(404, 'TEAM_NOT_FOUND', 'Team not found');
+      }
       const openCount = await runUnscoped(
         "the number of the caller's own open join requests",
         ['TeamJoinRequest'],
@@ -525,6 +644,10 @@ export async function createJoinRequest(
       });
       return { ok: true as const, request: requesterView(created) };
     });
+    if (result.ok) {
+      notifyAfterCommit(fastify, { kind: 'created', requestId: result.request.id });
+    }
+    return result;
   } catch (err) {
     // The partial unique index decides a concurrent double request.
     if (isUniqueConstraintError(err)) {
@@ -686,7 +809,47 @@ async function grantTeamMembership(
   });
 }
 
-/** The team step: approve (`PENDING_TEAM` → `APPROVED` or `PENDING_ORG`) with an optional role. */
+/**
+ * What `actor` may do on `team` right now, read through `db`: the team step's rank and capability
+ * checks, and whether they could also take the organization step. It is called twice, on purpose:
+ * before any lock, to refuse cheaply, and again by the transaction once it holds the organization
+ * and team locks. Only the second answer decides, because a concurrent organization removal or
+ * role change commits while an approval waits for those locks, and a standing read before the wait
+ * would still grant authority the approver no longer has.
+ */
+async function teamApprover(
+  db: Prisma.TransactionClient | Db,
+  actor: JwtPayload,
+  team: { id: string; orgId: string },
+  role: TeamRoleValue
+): Promise<
+  Refusal | { ok: true; orgDecision: ReturnType<typeof decide>; teamAuthority: Authority }
+> {
+  const standing = await loadStanding(db, userActor(actor), { teamId: team.id });
+  const rank = actingRank(standing, team.id);
+  const teamDecision = decide(standing, 'team.members.manage', { teamId: team.id });
+  if (!rank || !teamDecision.allowed) {
+    return refuse(403, 'FORBIDDEN', 'You have no standing in this team');
+  }
+  // The hierarchy rule of member-add: no grant above the rank the approver acts at in this team.
+  if (exceeds(role, rank)) {
+    return refuse(403, 'PRIVILEGE_ESCALATION', 'Cannot grant a role higher than your own');
+  }
+  // Asked of the same standing, so the answer agrees with the organization queue's own route check.
+  return {
+    ok: true,
+    orgDecision: decide(standing, 'org.members.manage', { orgId: team.orgId }),
+    teamAuthority: teamDecision.authority,
+  };
+}
+
+/**
+ * The team step: approve (`PENDING_TEAM` → `APPROVED` or `PENDING_ORG`) with an optional role.
+ *
+ * When the request needs the organization step and the approver also holds `org.members.manage`
+ * for the team's organization, one transaction records both decisions: the request is `APPROVED`
+ * and the organization `MEMBER` and the team membership are created.
+ */
 export async function approveAtTeamStep(
   fastify: FastifyInstance,
   input: DecisionInput & { role?: TeamRoleValue | undefined; teamId: string }
@@ -714,19 +877,44 @@ export async function approveAtTeamStep(
   if (!team.isActive) {
     return refuse(409, 'TEAM_INACTIVE', 'The team is no longer active');
   }
-  // The hierarchy rule of member-add: no grant above the rank the approver acts at in this team.
   const role = resolveGrantedRole(input.role);
-  const rank = actingRank(await loadStanding(prisma, userActor(actor), { teamId }), teamId);
-  if (!rank) {
-    return refuse(403, 'FORBIDDEN', 'You have no standing in this team');
-  }
-  if (exceeds(role, rank)) {
-    return refuse(403, 'PRIVILEGE_ESCALATION', 'Cannot grant a role higher than your own');
+  // An early refusal only: the decision is made again under the locks, below.
+  const early = await teamApprover(prisma, actor, team, role);
+  if (!early.ok) {
+    return early;
   }
 
   try {
-    return await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       await lockOrgThenTeam(tx, team.orgId, team.id);
+      // The authoritative standing: read after the locks, so a removal that committed while this
+      // waited for them has taken effect.
+      // A team deactivated while this waited answers as such, not as a loss of standing in it.
+      const stillActive = await tx.team.findUnique({
+        select: { isActive: true },
+        where: { id: teamId },
+      });
+      if (!stillActive?.isActive) {
+        return refuse(409, 'TEAM_INACTIVE', 'The team is no longer active');
+      }
+      // The approver's own account, read under the locks too: `loadStanding` does not look at it, and
+      // an account deactivated while this waited is no longer one that may decide anything.
+      const deciding = await tx.user.findUnique({
+        select: { isActive: true },
+        where: { id: actor.sub },
+      });
+      if (!deciding?.isActive) {
+        return refuse(401, 'TOKEN_INVALID', 'The user this token was issued to is inactive');
+      }
+      const approver = await teamApprover(tx, actor, team, role);
+      if (!approver.ok) {
+        return approver;
+      }
+      const orgDecision = approver.orgDecision;
+      // The ground of the team step as read under the locks, not the route's earlier check: a team
+      // role removed while this waited leaves only what the approver still holds, and the audit
+      // rows say so.
+      const teamContext: AuditContext = { ...context, authority: approver.teamAuthority };
       const row = await tx.teamJoinRequest.findFirst({
         select: REQUEST_SELECT,
         where: { id: requestId, teamId },
@@ -761,25 +949,45 @@ export async function approveAtTeamStep(
       // The organization membership is read now, under its lock: whoever is in the organization
       // needs no second decision, and whoever left it since asking needs one.
       const needsOrg = !inOrg;
-      const next = member ? 'APPROVED' : statusAfterTeamApproval(needsOrg);
+      // One person holding both decisions makes them together.
+      const combined = needsOrg && !member && orgDecision.allowed;
+      const next = member || combined ? 'APPROVED' : statusAfterTeamApproval(needsOrg);
+      const now = new Date();
       const claim = await tx.teamJoinRequest.updateMany({
         data: {
           grantedRole: granted,
           requiresOrgApproval: needsOrg,
           status: next,
-          teamDecidedAt: new Date(),
+          teamDecidedAt: now,
           teamDecidedById: actor.sub,
           teamDecisionNote: input.note ?? null,
+          ...(combined
+            ? { orgDecidedAt: now, orgDecidedById: actor.sub, orgDecisionNote: input.note ?? null }
+            : {}),
         },
         where: { id: requestId, status: 'PENDING_TEAM', teamId },
       });
       if (claim.count !== 1) {
         return refuse(409, 'REQUEST_ALREADY_DECIDED', 'The request was decided by someone else');
       }
+      if (combined && orgDecision.allowed) {
+        const orgMembership = await tx.organizationMembership.create({
+          data: { orgId: team.orgId, role: 'MEMBER', userId: row.userId },
+        });
+        await writeAuditLog(fastify, {
+          action: 'CREATE',
+          actor,
+          after: { orgId: team.orgId, role: 'MEMBER', userId: row.userId },
+          client: tx,
+          context: { ...context, authority: orgDecision.authority },
+          entityId: orgMembership.id,
+          entityType: 'OrganizationMembership',
+        });
+      }
       if (next === 'APPROVED' && !member) {
         await grantTeamMembership(fastify, tx, {
           actor,
-          context,
+          context: teamContext,
           role,
           teamId,
           userId: row.userId,
@@ -792,15 +1000,33 @@ export async function approveAtTeamStep(
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,
-        after: requestAuditFields(after),
+        after: {
+          ...requestAuditFields(after),
+          ...(combined && orgDecision.allowed
+            ? {
+                combinedDecision: {
+                  authority: { organization: orgDecision.authority, team: approver.teamAuthority },
+                  steps: ['team', 'organization'],
+                },
+              }
+            : {}),
+        },
         before: requestAuditFields(row),
         client: tx,
-        context,
+        context: teamContext,
         entityId: requestId,
         entityType: 'TeamJoinRequest',
       });
       return { ok: true as const, request: reviewerView(after) };
     });
+    if (result.ok) {
+      notifyAfterCommit(fastify, {
+        kind: 'decided',
+        outcome: result.request.status === 'PENDING_ORG' ? 'PENDING_ORG' : 'APPROVED',
+        requestId,
+      });
+    }
+    return result;
   } catch (err) {
     if (isUniqueConstraintError(err)) {
       return refuse(409, 'ALREADY_MEMBER', 'The requester is already a member of this team');
@@ -847,7 +1073,7 @@ async function reject(
           orgDecidedById: actor.sub,
           orgDecisionNote: input.note ?? null,
         };
-  return fastify.prisma.$transaction(async (tx) => {
+  const result = await fastify.prisma.$transaction(async (tx) => {
     const claim = await tx.teamJoinRequest.updateMany({
       data: { ...decided, status: 'REJECTED' },
       where: { id: requestId, status: from, teamId },
@@ -871,6 +1097,10 @@ async function reject(
     });
     return { ok: true as const, request: reviewerView(after) };
   });
+  if (result.ok) {
+    notifyAfterCommit(fastify, { kind: 'decided', outcome: 'REJECTED', requestId });
+  }
+  return result;
 }
 
 /** The team step: reject. */
@@ -906,8 +1136,45 @@ export async function rejectAtOrgStep(
 }
 
 /**
+ * The team step's decider, as the organization step finds them now: still an active account, still
+ * holding `team.members.manage` for the team, and the rank they act at in it. Asked of the same
+ * standing resolver every other check uses, so this never invents a second rule.
+ */
+async function teamApproverStanding(
+  tx: Prisma.TransactionClient,
+  teamId: string,
+  deciderId: string | null
+): Promise<{ active: boolean; canManageMembers: boolean; rank: TeamRank | null }> {
+  const gone = { active: false, canManageMembers: false, rank: null };
+  if (!deciderId) {
+    return gone;
+  }
+  const decider = await tx.user.findUnique({
+    select: { id: true, isActive: true, role: true },
+    where: { id: deciderId },
+  });
+  if (!decider?.isActive) {
+    return gone;
+  }
+  const standing = await loadStanding(
+    tx,
+    { id: decider.id, kind: 'user', role: decider.role },
+    { teamId }
+  );
+  return {
+    active: true,
+    canManageMembers: decide(standing, 'team.members.manage', { teamId }).allowed,
+    rank: actingRank(standing, teamId),
+  };
+}
+
+/**
  * The organization step: approve (`PENDING_ORG` → `APPROVED`). Creates the organization `MEMBER`
  * membership and the team membership the team step granted, in one audited transaction.
+ *
+ * The role the team approver chose is re-checked against who they are now: if they were
+ * deactivated, lost `team.members.manage` or no longer outrank the role, it becomes `MEMBER` and
+ * the audit row says so. The request is never refused for this.
  */
 export async function approveAtOrgStep(
   fastify: FastifyInstance,
@@ -924,10 +1191,29 @@ export async function approveAtOrgStep(
     return refuse(403, 'SELF_DECISION', 'You cannot decide your own request');
   }
   try {
-    return await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       await lockOrgThenTeam(tx, orgId, teamId);
+      // The route checked `org.members.manage` before this waited for the locks; a removal that
+      // committed meanwhile has taken it away, so it is asked again of the standing read now.
+      // The approver's own account is read under the locks too: `loadStanding` does not look at it,
+      // and an account deactivated while this waited is no longer one that may decide anything.
+      const deciding = await tx.user.findUnique({
+        select: { isActive: true },
+        where: { id: actor.sub },
+      });
+      if (!deciding?.isActive) {
+        return refuse(401, 'TOKEN_INVALID', 'The user this token was issued to is inactive');
+      }
+      const standing = await loadStanding(tx, userActor(actor), { orgId });
+      const orgDecision = decide(standing, 'org.members.manage', { orgId });
+      if (!orgDecision.allowed) {
+        return refuse(403, 'FORBIDDEN', 'You no longer hold authority over this organization');
+      }
+      // The ground of this step as read under the locks, not the route's earlier check, so the audit
+      // rows say what the approver held when the decision was made.
+      const orgContext: AuditContext = { ...context, authority: orgDecision.authority };
       const row = await tx.teamJoinRequest.findFirst({
-        select: REQUEST_SELECT,
+        select: { ...REQUEST_SELECT, teamDecidedById: true },
         where: { id: requestId, team: { orgId }, teamId },
       });
       if (!row) {
@@ -948,7 +1234,7 @@ export async function approveAtOrgStep(
           where: { userId_orgId: { orgId, userId: row.userId } },
         }),
         tx.teamMembership.findUnique({
-          select: { id: true },
+          select: { id: true, role: true },
           where: { userId_teamId: { teamId, userId: row.userId } },
         }),
       ]);
@@ -958,11 +1244,20 @@ export async function approveAtOrgStep(
       if (!requester?.isActive) {
         return refuse(409, 'REQUESTER_INACTIVE', 'The requester is no longer an active user');
       }
-      // The role was bounded by the team approver's rank at the team step, and holding
-      // `org.members.manage` always acts at ADMIN rank, so no further bound applies here.
-      const role = resolveGrantedRole(row.grantedRole);
+      // The role was bounded by the team approver's rank at the team step; their standing may have
+      // changed in the time the request waited here, so it is bounded again by what it is now.
+      const computed = clampGrantedRole({
+        granted: row.grantedRole,
+        teamApproverStanding: await teamApproverStanding(tx, teamId, row.teamDecidedById),
+      });
+      // Someone who joined since keeps the role they hold and no membership is written, so the
+      // request records that role and nothing was clamped; the audit says the same.
+      const clamp = member
+        ? { clamped: false, from: member.role, role: member.role, to: member.role }
+        : computed;
       const claim = await tx.teamJoinRequest.updateMany({
         data: {
+          grantedRole: clamp.role,
           orgDecidedAt: new Date(),
           orgDecidedById: actor.sub,
           orgDecisionNote: input.note ?? null,
@@ -982,7 +1277,7 @@ export async function approveAtOrgStep(
           actor,
           after: { orgId, role: 'MEMBER', userId: row.userId },
           client: tx,
-          context,
+          context: orgContext,
           entityId: orgMembership.id,
           entityType: 'OrganizationMembership',
         });
@@ -990,8 +1285,8 @@ export async function approveAtOrgStep(
       if (!member) {
         await grantTeamMembership(fastify, tx, {
           actor,
-          context,
-          role,
+          context: orgContext,
+          role: clamp.role,
           teamId,
           userId: row.userId,
         });
@@ -1003,21 +1298,100 @@ export async function approveAtOrgStep(
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,
-        after: requestAuditFields(after),
+        after: {
+          ...requestAuditFields(after),
+          clamp: { clamped: clamp.clamped, from: clamp.from, to: clamp.to },
+        },
         before: requestAuditFields(row),
         client: tx,
-        context,
+        context: orgContext,
         entityId: requestId,
         entityType: 'TeamJoinRequest',
       });
       return { ok: true as const, request: reviewerView(after) };
     });
+    if (result.ok) {
+      notifyAfterCommit(fastify, { kind: 'decided', outcome: 'APPROVED', requestId });
+    }
+    return result;
   } catch (err) {
     if (isUniqueConstraintError(err)) {
       return refuse(409, 'ALREADY_MEMBER', 'The requester is already a member');
     }
     throw err;
   }
+}
+
+/* ── Deactivation ──────────────────────────────────────────────────────────── */
+
+/** Whose deactivation closes requests: the requester's own, a team's, or an organization's. */
+export type DeactivationScope =
+  | { reason: 'ORGANIZATION_DEACTIVATED'; orgId: string }
+  | { reason: 'REQUESTER_DEACTIVATED'; userId: string }
+  | { reason: 'TEAM_DEACTIVATED'; teamId: string };
+
+/**
+ * Closes every open request the deactivation strands, inside the caller's transaction, so the
+ * account, team or organization is never inactive with a request still waiting on it. The platform
+ * closes, not a person: `closeReason` is set (so no cooldown starts), no decision time or decider
+ * is recorded, the note names the reason, and nobody is notified. Each row closed gets an audit
+ * entry under the acting administrator.
+ *
+ * A request a reviewer claimed a moment earlier is no longer open, so the conditional update skips
+ * it and it is neither closed nor audited here: the decision won. Returns how many were closed.
+ */
+export async function closeOpenJoinRequests(
+  fastify: FastifyInstance,
+  tx: Prisma.TransactionClient,
+  input: { actor: JwtPayload | null; context?: AuditContext; scope: DeactivationScope }
+): Promise<number> {
+  const { actor, context, scope } = input;
+  const { closeReason, note, status } = systemCloseFor(scope.reason);
+  const target: Prisma.TeamJoinRequestWhereInput =
+    scope.reason === 'REQUESTER_DEACTIVATED'
+      ? { userId: scope.userId }
+      : scope.reason === 'TEAM_DEACTIVATED'
+        ? { teamId: scope.teamId }
+        : { team: { orgId: scope.orgId } };
+
+  let closed = 0;
+  for (const from of OPEN) {
+    // The note goes on the step the request was waiting at, so a reader finds it where a
+    // reviewer's own would have been.
+    const noteField = from === 'PENDING_TEAM' ? 'teamDecisionNote' : 'orgDecisionNote';
+    const rows = await runUnscoped(
+      'a deactivation closes the open join requests it strands',
+      ['TeamJoinRequest'],
+      () =>
+        tx.teamJoinRequest.updateManyAndReturn({
+          data: { closeReason, status, [noteField]: note },
+          select: {
+            closeReason: true,
+            grantedRole: true,
+            id: true,
+            requiresOrgApproval: true,
+            status: true,
+            teamId: true,
+            userId: true,
+          },
+          where: { ...target, status: from },
+        })
+    );
+    for (const row of rows) {
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor,
+        after: { ...requestAuditFields(row), note, systemClose: true },
+        before: { ...requestAuditFields({ ...row, closeReason: null }), status: from },
+        client: tx,
+        ...(context ? { context } : {}),
+        entityId: row.id,
+        entityType: 'TeamJoinRequest',
+      });
+    }
+    closed += rows.length;
+  }
+  return closed;
 }
 
 /** Pending requests at the team step, for the overview's count. */

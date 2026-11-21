@@ -26,7 +26,7 @@ import { inviteUser } from '../lib/inviteUser.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
-import { countCreatedTeams } from '../lib/teamJoinRequests.js';
+import { closeOpenJoinRequests, countCreatedTeams } from '../lib/teamJoinRequests.js';
 import {
   memberTeams,
   permissionRequirement,
@@ -74,10 +74,10 @@ const CreateTeamSchema = z.object({
 class OrganizationMemberRequired extends Error {}
 
 /** A self-service creator already has as many teams as `teams.maxCreatedPerUser` allows. */
-class TeamLimitReached extends Error {}
+export class TeamLimitReached extends Error {}
 
 /** What a self-service creation is held to; absent on the administrator path, which is not limited. */
-interface SelfServiceCreation {
+export interface SelfServiceCreation {
   /** `teams.maxCreatedPerUser` for the organization. */
   limit: number;
 }
@@ -120,7 +120,8 @@ async function ensureOrganizationMember(
   }
 }
 
-async function createTeam(
+/** Creates a team and its first admin in one transaction; exported for the database-backed suite. */
+export async function createTeam(
   fastify: FastifyInstance,
   actor: JwtPayload,
   body: z.infer<typeof CreateTeamSchema>,
@@ -812,6 +813,12 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         await tx.team.update({
           data: { isActive: false },
           where: { id: request.params.id },
+        });
+        // Requests to join the team close with it, under the same lock a decision takes.
+        await closeOpenJoinRequests(fastify, tx, {
+          actor: requireUser(request),
+          context: auditContextOf(request),
+          scope: { reason: 'TEAM_DEACTIVATED', teamId: team.id },
         });
         // The entry commits with the change it records: an audit failure must not leave a
         // deactivated team with no record of who deactivated it.

@@ -6,12 +6,14 @@ import { hashPassword } from 'better-auth/crypto';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { auditContextOf } from '../lib/auditContext.js';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { enrollDefaultTeam } from '../lib/defaultTeamMembership.js';
 import { getDefaultClientOrigin } from '../lib/env.js';
 import { sendError } from '../lib/httpErrors.js';
 import { revokeMcpGrants } from '../lib/mcpGrants.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
+import { closeOpenJoinRequests, joinRequestLockKey } from '../lib/teamJoinRequests.js';
 import { invalidateUserAuthCache, requireAuth, requireUser } from '../plugins/auth.js';
 
 // better-auth looks accounts up by lower-cased email, so every stored address is too.
@@ -404,6 +406,22 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         const updated =
           request.body.isActive === false
             ? await fastify.prisma.$transaction(async (tx) => {
+                // The account's open join requests close with it: a request nobody can act on
+                // for a person who cannot sign in would sit in a team's queue until it was noticed.
+                // This comes before the user row is updated, and the order matters: a change to
+                // the email or the Slack id locks the user row against a membership insert, which
+                // an approval in flight needs after it has claimed its request row. Taking the
+                // request rows first matches that order, so the two wait instead of deadlocking.
+                // The per-person lock a join request's creation takes, held before anything is
+                // closed: a request created concurrently either commits first (and is closed here)
+                // or waits, and then finds the account inactive and is refused.
+                // CLAUDE.md §7 exception: Prisma cannot express a transaction-scoped advisory lock.
+                await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${joinRequestLockKey(user.id)}, 0))`;
+                await closeOpenJoinRequests(fastify, tx, {
+                  actor,
+                  context: auditContextOf(request),
+                  scope: { reason: 'REQUESTER_DEACTIVATED', userId: request.params.id },
+                });
                 const row = await tx.user.update(updateArgs);
                 await revokeMcpGrants(tx, { actorId: actor.sub, userId: row.id });
                 return row;

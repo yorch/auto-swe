@@ -5,7 +5,10 @@ import { orgTeamRoutes, teamRoutes } from './teams.js';
 
 vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  resolveSetting: vi.fn(async () => ['pypi.org']),
+  // Self-service creation is on everywhere, so a test can show the legacy route ignores it.
+  resolveSetting: vi.fn(async (key: string) =>
+    key === 'teams.selfServiceCreation' ? true : ['pypi.org']
+  ),
 }));
 
 /**
@@ -59,6 +62,8 @@ interface State {
   teamQueries?: Array<{ include: Record<string, unknown>; where: Record<string, unknown> }>;
   /** The `include` the team detail read passed to `team.findUnique`. */
   detailIncludes?: Array<Record<string, unknown>>;
+  /** The `where` of every `teamJoinRequest.updateManyAndReturn` (requests closed by a deactivation). */
+  closedJoinRequests?: Array<{ data: Record<string, unknown>; where: Record<string, unknown> }>;
   /** Rows written to the configuration audit log. */
   audits?: Array<{ action: string; entityType: string; [key: string]: unknown }>;
 }
@@ -278,6 +283,15 @@ function buildApp(state: State): FastifyInstance {
           row.egressAllowlist = data.egressAllowlist;
         }
         return row;
+      },
+    },
+    teamJoinRequest: {
+      updateManyAndReturn: async (args: {
+        data: Record<string, unknown>;
+        where: Record<string, unknown>;
+      }) => {
+        state.closedJoinRequests = [...(state.closedJoinRequests ?? []), args];
+        return [];
       },
     },
     teamMembership: {
@@ -784,6 +798,24 @@ describe('POST /api/v1/teams', () => {
     ]);
   });
 
+  it('stays platform-admin-only: a member of the organization is refused even with self-service creation on', async () => {
+    // `freshState` makes the caller a plain member of the default organization, and the harness
+    // answers `teams.selfServiceCreation` true for it: the organization-scoped route would allow it.
+    const state = freshState({ userRole: 'USER' });
+    const app = buildApp(state);
+
+    const res = await app.inject({
+      body: { name: 'Payments', slug: 'payments' },
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'POST',
+      url: '/api/v1/teams',
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('FORBIDDEN');
+    expect(state.audits ?? []).toEqual([]);
+  });
+
   it('400s when the requested org does not exist (P5)', async () => {
     const state = freshState({ userRole: 'ADMIN' });
     const app = buildApp(state);
@@ -797,6 +829,33 @@ describe('POST /api/v1/teams', () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('ORG_NOT_FOUND');
+  });
+});
+
+describe('DELETE /api/v1/teams/:id', () => {
+  it('closes the team’s open join requests in the same transaction as the deactivation', async () => {
+    const state = freshState({ userRole: 'ADMIN' });
+    const app = buildApp(state);
+
+    const res = await app.inject({
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'DELETE',
+      url: `/api/v1/teams/${TEAM_ID}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ data: { deleted: true } });
+    // Both open steps, for this team only, closed as a rejection by the platform.
+    expect(state.closedJoinRequests?.map((c) => c.where)).toEqual([
+      { status: 'PENDING_TEAM', teamId: TEAM_ID },
+      { status: 'PENDING_ORG', teamId: TEAM_ID },
+    ]);
+    expect(state.closedJoinRequests?.[0]?.data).toMatchObject({
+      closeReason: 'TEAM_DEACTIVATED',
+      status: 'REJECTED',
+    });
+    // The team's own lock is taken before anything else changes.
+    expect(state.locks?.[0]).toBe(TEAM_ID);
   });
 });
 

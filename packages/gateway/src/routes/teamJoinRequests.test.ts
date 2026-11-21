@@ -6,22 +6,47 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('@auto-swe/shared/config', async (importOriginal) => {
   const original = await importOriginal<typeof import('@auto-swe/shared/config')>();
+  const resolve = (key: string, orgId?: string) => {
+    const settings = mocks.world?.settings ?? {};
+    const scoped = orgId ? settings[`${key}@${orgId}`] : undefined;
+    return (
+      scoped ??
+      settings[key] ??
+      (original.SETTING_DEFINITIONS as Record<string, { defaultValue: unknown }>)[key]?.defaultValue
+    );
+  };
   return {
     ...original,
-    resolveSetting: vi.fn(async (key: string, ctx?: { orgId?: string }) => {
+    resolveOrganizationOverrides: vi.fn(async (key: string) => {
       const settings = mocks.world?.settings ?? {};
-      const scoped = ctx?.orgId ? settings[`${key}@${ctx.orgId}`] : undefined;
-      return (
-        scoped ??
-        settings[key] ??
-        (original.SETTING_DEFINITIONS as Record<string, { defaultValue: unknown }>)[key]
-          ?.defaultValue
-      );
+      const overrides = new Map<string, unknown>();
+      for (const [name, value] of Object.entries(settings)) {
+        const [k, orgId] = name.split('@');
+        if (k === key && orgId) {
+          overrides.set(orgId, value);
+        }
+      }
+      return { fallback: resolve(key), overrides };
+    }),
+    resolveSetting: vi.fn(async (key: string, ctx?: { orgId?: string }) =>
+      resolve(key, ctx?.orgId)
+    ),
+    resolveSettingForOrganizations: vi.fn(async (key: string, orgIds: readonly string[]) => {
+      const out = new Map<string, unknown>();
+      for (const id of orgIds) {
+        out.set(id, resolve(key, id));
+      }
+      return out;
     }),
   };
 });
 
+// Delivery is the notifier's own concern; here only when the service calls it matters.
+const notify = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => undefined));
+vi.mock('../lib/joinRequestNotifier.js', () => ({ notifyJoinRequestEvent: notify }));
+
 import '../test/warmAuthImports.js';
+import { closeOpenJoinRequests } from '../lib/teamJoinRequests.js';
 import {
   buildWorldApp,
   emptyWorld,
@@ -98,6 +123,7 @@ function seed(w: World) {
       id,
       isActive: true,
       name: `User ${id.slice(-2)}`,
+      role: id === PLATFORM ? 'ADMIN' : 'USER',
     });
   }
   const org = (userId: string, orgId: string, role = 'MEMBER') =>
@@ -126,6 +152,7 @@ function addRequest(overrides: Record<string, unknown> = {}) {
   seq += 1;
   const now = new Date(Date.now() - 1000 * (1000 - seq));
   const row = {
+    closeReason: null,
     createdAt: now,
     grantedRole: null,
     id: uuid(900 + seq),
@@ -176,6 +203,7 @@ async function call(method: 'GET' | 'POST', url: string, payload?: unknown) {
 const audits = (entityType: string) => world.audits.filter((a) => a.entityType === entityType);
 
 beforeEach(async () => {
+  notify.mockClear();
   seq = 0;
   world = emptyWorld();
   mocks.world = world;
@@ -524,9 +552,77 @@ describe('POST /api/v1/teams/:id/join-requests', () => {
       expect((await call('POST', url(DELTA))).status).toBe(201);
     });
 
-    it('does not apply to a withdrawn request', async () => {
-      addRequest({ status: 'WITHDRAWN' });
+    it('names the rejection as the reason', async () => {
+      rejected(10);
+      const { body } = await call('POST', url());
+      expect(body.error.details.reason).toBe('rejected');
+    });
+
+    it('does not count a rejection the platform made when the team or organization closed', async () => {
+      rejected(1).closeReason = 'TEAM_DEACTIVATED';
       expect((await call('POST', url())).status).toBe(201);
+    });
+  });
+
+  describe('cooldown after a withdrawal', () => {
+    const withdrawn = (minutesAgo: number, overrides: Record<string, unknown> = {}) =>
+      addRequest({
+        status: 'WITHDRAWN',
+        updatedAt: new Date(Date.now() - minutesAgo * 60_000),
+        ...overrides,
+      });
+
+    it('refuses for the default hour, with the reason and the time to wait', async () => {
+      withdrawn(20);
+      const { body, res, status } = await call('POST', url());
+      expect(status).toBe(429);
+      expect(body.error.code).toBe('JOIN_REQUEST_COOLDOWN');
+      expect(body.error.details.reason).toBe('withdrawn');
+      expect(Number(res.headers['retry-after'])).toBeGreaterThan(39 * 60);
+      expect(Number(res.headers['retry-after'])).toBeLessThanOrEqual(40 * 60);
+      expect(body.error.details.retryAfterSeconds).toBe(Number(res.headers['retry-after']));
+      expect(world.teamJoinRequests).toHaveLength(1);
+    });
+
+    it('allows a new request once the hour has passed', async () => {
+      withdrawn(61);
+      expect((await call('POST', url())).status).toBe(201);
+    });
+
+    it('is read from the setting, and a zero turns it off', async () => {
+      withdrawn(20);
+      world.settings['teams.withdrawCooldownHours'] = 0;
+      expect((await call('POST', url())).status).toBe(201);
+    });
+
+    it('applies to the team withdrawn from, not to another', async () => {
+      withdrawn(5);
+      expect((await call('POST', url(DELTA))).status).toBe(201);
+    });
+
+    it('does not count a withdrawal the platform made when the requester was deactivated', async () => {
+      withdrawn(5, { closeReason: 'REQUESTER_DEACTIVATED' });
+      expect((await call('POST', url())).status).toBe(201);
+    });
+
+    it('names whichever cooldown lifts later when both apply', async () => {
+      addRequest({
+        status: 'REJECTED',
+        teamDecidedAt: new Date(Date.now() - 71 * 3_600_000),
+        updatedAt: new Date(Date.now() - 71 * 3_600_000),
+      });
+      withdrawn(1);
+      world.settings['teams.withdrawCooldownHours'] = 100;
+      const { body } = await call('POST', url());
+      expect(body.error.details.reason).toBe('withdrawn');
+    });
+
+    it('starts when the requester withdraws through the API', async () => {
+      const row = addRequest();
+      expect((await call('POST', `/api/v1/me/join-requests/${row.id}/withdraw`)).status).toBe(200);
+      const again = await call('POST', url());
+      expect(again.status).toBe(429);
+      expect(again.body.error.details.reason).toBe('withdrawn');
     });
   });
 
@@ -602,7 +698,8 @@ describe('GET /api/v1/me/join-requests and withdraw', () => {
     expect(body.data.status).toBe('WITHDRAWN');
     expect(world.teamJoinRequests[0].status).toBe('WITHDRAWN');
     expect(audits('TeamJoinRequest')).toMatchObject([{ action: 'UPDATE', actorId: REQUESTER }]);
-    // It frees the slot: a new request is allowed at once, with no cooldown.
+    // It frees the slot; only the withdrawal cooldown stands between the requester and a new one.
+    world.settings['teams.withdrawCooldownHours'] = 0;
     expect((await call('POST', `/api/v1/teams/${ALPHA}/join-requests`)).status).toBe(201);
   });
 
@@ -1251,5 +1348,571 @@ describe('the whole journey', () => {
     expect(mine.body.data[0]).toMatchObject({ id: created.id, status: 'APPROVED' });
     const directory = await call('GET', '/api/v1/teams/directory?q=alpha');
     expect(directory.body.teams[0].relationship).toBe('MEMBER');
+  });
+});
+
+describe('the directory per organization', () => {
+  const names = (body: { teams: Array<{ name: string }> }) => body.teams.map((t) => t.name);
+
+  it('lets an organization’s own scope decide who lists its teams', async () => {
+    world.settings[`teams.directoryScope@${ORG_B}`] = 'organization';
+    // Acme stays on the platform value, so the Acme member sees Acme's teams, but not Beta's.
+    const own = await call('GET', '/api/v1/teams/directory');
+    expect(names(own.body)).toEqual(['Alpha', 'Delta']);
+    as(OUTSIDER);
+    expect(names((await call('GET', '/api/v1/teams/directory')).body)).toEqual([
+      'Alpha',
+      'Bravo',
+      'Delta',
+    ]);
+  });
+
+  it('lets an organization open its teams up when the platform keeps them private', async () => {
+    world.settings['teams.directoryScope'] = 'organization';
+    world.settings[`teams.directoryScope@${ORG_B}`] = 'platform';
+    expect(names((await call('GET', '/api/v1/teams/directory')).body)).toEqual([
+      'Alpha',
+      'Bravo',
+      'Delta',
+    ]);
+    as(OUTSIDER);
+    // Beta's override does not open Acme's teams to Beta's members.
+    expect(names((await call('GET', '/api/v1/teams/directory')).body)).toEqual(['Bravo']);
+  });
+
+  it('applies the same rule to a request to join, answering a private team as an unknown one', async () => {
+    world.settings[`teams.directoryScope@${ORG_B}`] = 'organization';
+    const hidden = await call('POST', `/api/v1/teams/${BRAVO}/join-requests`);
+    const unknown = await call('POST', `/api/v1/teams/${uuid(999)}/join-requests`);
+    expect(hidden.status).toBe(404);
+    expect(hidden.body).toEqual(unknown.body);
+    expect(world.teamJoinRequests).toHaveLength(0);
+    // A team of an organization that kept the platform value stays reachable.
+    expect((await call('POST', `/api/v1/teams/${DELTA}/join-requests`)).status).toBe(201);
+  });
+
+  it('lists the organizations that have a team the viewer may see, sorted by name', async () => {
+    world.organizations.push({ id: uuid(103), isActive: true, name: 'Aardvark' });
+    const { body } = await call('GET', '/api/v1/teams/directory');
+    // Aardvark has no team and Gone is deactivated.
+    expect(body.organizations).toEqual([
+      { id: ORG_A, name: 'Acme' },
+      { id: ORG_B, name: 'Beta' },
+    ]);
+  });
+
+  it('leaves out an organization whose scope hides every team from the viewer', async () => {
+    world.settings[`teams.directoryScope@${ORG_B}`] = 'organization';
+    const { body } = await call('GET', '/api/v1/teams/directory');
+    expect(body.organizations).toEqual([{ id: ORG_A, name: 'Acme' }]);
+  });
+
+  it('does not narrow the organization list by the search or the page', async () => {
+    const { body } = await call('GET', '/api/v1/teams/directory?q=alpha&limit=1');
+    expect(names(body)).toEqual(['Alpha']);
+    expect(body.organizations.map((o: { name: string }) => o.name)).toEqual(['Acme', 'Beta']);
+  });
+});
+
+describe('closeReason in the views', () => {
+  it('is null for a request a person decided and the reason for one the platform closed', async () => {
+    addRequest({ status: 'REJECTED' });
+    addRequest({ closeReason: 'TEAM_DEACTIVATED', status: 'REJECTED', teamId: DELTA });
+    const { body } = await call('GET', '/api/v1/me/join-requests');
+    const reasons = body.data.map((r: { closeReason: string | null }) => r.closeReason);
+    expect(reasons).toHaveLength(2);
+    expect(reasons).toEqual(expect.arrayContaining([null, 'TEAM_DEACTIVATED']));
+    as(LEAD);
+    const queue = await call('GET', `/api/v1/teams/${ALPHA}/join-requests?status=REJECTED`);
+    expect(queue.body.data[0]).toHaveProperty('closeReason', null);
+  });
+});
+
+describe('combined approval', () => {
+  const approve = (id: string, body?: unknown) =>
+    call('POST', `/api/v1/teams/${ALPHA}/join-requests/${id}/approve`, body);
+  const fromOutside = () => addRequest({ requiresOrgApproval: true, userId: OUTSIDER });
+
+  it.each([
+    ['an organization admin', ORG_ADMIN, 'USER', 'org-admin'],
+    ['a platform admin', PLATFORM, 'ADMIN', 'platform-admin'],
+  ] as const)(
+    'lets %s complete both steps in one transaction',
+    async (_label, user, role, authority) => {
+      as(user, role);
+      const row = fromOutside();
+      const { body, status } = await approve(row.id, { note: 'both' });
+      expect(status).toBe(200);
+      expect(body.data).toMatchObject({
+        orgDecisionNote: 'both',
+        requiresOrgApproval: true,
+        status: 'APPROVED',
+        teamDecisionNote: 'both',
+      });
+      expect(world.teamJoinRequests[0]).toMatchObject({
+        orgDecidedById: user,
+        status: 'APPROVED',
+        teamDecidedById: user,
+      });
+      expect(
+        world.organizationMemberships.find((m) => m.userId === OUTSIDER && m.orgId === ORG_A)
+      ).toMatchObject({ role: 'MEMBER' });
+      expect(
+        world.teamMemberships.find((m) => m.userId === OUTSIDER && m.teamId === ALPHA)
+      ).toMatchObject({ role: 'MEMBER' });
+      const requestAudit = audits('TeamJoinRequest');
+      expect(requestAudit).toHaveLength(1);
+      expect(requestAudit[0].afterJson).toMatchObject({
+        combinedDecision: {
+          authority: { organization: authority },
+          steps: ['team', 'organization'],
+        },
+        status: 'APPROVED',
+      });
+      expect(audits('OrganizationMembership')).toMatchObject([
+        { action: 'CREATE', context: { authority } },
+      ]);
+      expect(audits('TeamMembership')).toHaveLength(1);
+      // The same lock order as a separate approval.
+      expect(world.locks[0]).toContain('FROM organizations');
+      expect(world.locks[1]).toContain('FROM teams');
+    }
+  );
+
+  it('applies the role the approver names', async () => {
+    as(ORG_ADMIN);
+    const row = fromOutside();
+    await approve(row.id, { role: 'ADMIN' });
+    expect(
+      world.teamMemberships.find((m) => m.userId === OUTSIDER && m.teamId === ALPHA)?.role
+    ).toBe('ADMIN');
+  });
+
+  it('leaves it at the organization step for an approver who is not an organization admin', async () => {
+    for (const user of [LEAD, TEAM_ADMIN]) {
+      as(user);
+      const row = fromOutside();
+      const { body } = await approve(row.id);
+      expect(body.data.status).toBe('PENDING_ORG');
+    }
+    expect(
+      world.organizationMemberships.some((m) => m.userId === OUTSIDER && m.orgId === ORG_A)
+    ).toBe(false);
+    expect(world.teamMemberships.some((m) => m.userId === OUTSIDER && m.teamId === ALPHA)).toBe(
+      false
+    );
+  });
+
+  it('is not an organization-step decision for a same-organization request', async () => {
+    as(ORG_ADMIN);
+    const row = addRequest();
+    const { body } = await approve(row.id);
+    expect(body.data.status).toBe('APPROVED');
+    expect(world.teamJoinRequests[0].orgDecidedById).toBeNull();
+    expect(audits('OrganizationMembership')).toHaveLength(0);
+  });
+
+  it('still refuses the approver’s own request', async () => {
+    as(ORG_ADMIN);
+    const row = addRequest({ requiresOrgApproval: true, userId: ORG_ADMIN });
+    const { body, status } = await approve(row.id);
+    expect(status).toBe(403);
+    expect(body.error.code).toBe('SELF_DECISION');
+  });
+
+  it('recomputes the need under the lock: a requester who joined the organization meanwhile needs no second step', async () => {
+    as(ORG_ADMIN);
+    const row = fromOutside();
+    world.organizationMemberships.push({
+      id: uuid(480),
+      orgId: ORG_A,
+      role: 'MEMBER',
+      userId: OUTSIDER,
+    });
+    const { body } = await approve(row.id);
+    expect(body.data).toMatchObject({ requiresOrgApproval: false, status: 'APPROVED' });
+    expect(audits('OrganizationMembership')).toHaveLength(0);
+    expect(
+      world.organizationMemberships.filter((m) => m.userId === OUTSIDER && m.orgId === ORG_A)
+    ).toHaveLength(1);
+  });
+});
+
+describe('the organization step re-checks the team approver', () => {
+  const approve = (id: string) =>
+    call('POST', `/api/v1/platform/organizations/${ORG_A}/join-requests/${id}/approve`);
+  const waiting = (overrides: Record<string, unknown> = {}) =>
+    addRequest({
+      grantedRole: 'LEAD',
+      requiresOrgApproval: true,
+      status: 'PENDING_ORG',
+      teamDecidedById: LEAD,
+      userId: OUTSIDER,
+      ...overrides,
+    });
+  const memberRole = () =>
+    world.teamMemberships.find((m) => m.userId === OUTSIDER && m.teamId === ALPHA)?.role;
+  const clampOf = () =>
+    (audits('TeamJoinRequest')[0]?.afterJson as { clamp?: unknown } | undefined)?.clamp;
+  const setRole = (userId: string, role: string) => {
+    for (const m of world.teamMemberships) {
+      if (m.userId === userId) {
+        m.role = role;
+      }
+    }
+  };
+
+  beforeEach(() => as(ORG_ADMIN));
+
+  it('keeps the granted role while the approver is unchanged, and audits that it was not clamped', async () => {
+    const row = waiting();
+    const { body, status } = await approve(row.id);
+    expect(status).toBe(200);
+    expect(memberRole()).toBe('LEAD');
+    expect(body.data.grantedRole).toBe('LEAD');
+    expect(clampOf()).toEqual({ clamped: false, from: 'LEAD', to: 'LEAD' });
+  });
+
+  it('clamps to MEMBER when the approver was deactivated meanwhile, and still approves', async () => {
+    const row = waiting();
+    deactivate(LEAD);
+    const { body, status } = await approve(row.id);
+    expect(status).toBe(200);
+    expect(body.data).toMatchObject({ grantedRole: 'MEMBER', status: 'APPROVED' });
+    expect(memberRole()).toBe('MEMBER');
+    expect(clampOf()).toEqual({ clamped: true, from: 'LEAD', to: 'MEMBER' });
+  });
+
+  it('clamps when the approver left the team', async () => {
+    const row = waiting();
+    world.teamMemberships = world.teamMemberships.filter((m) => m.userId !== LEAD);
+    expect((await approve(row.id)).status).toBe(200);
+    expect(memberRole()).toBe('MEMBER');
+    expect(clampOf()).toEqual({ clamped: true, from: 'LEAD', to: 'MEMBER' });
+  });
+
+  it('clamps when the approver was demoted below the role they granted', async () => {
+    const row = waiting();
+    setRole(LEAD, 'MEMBER');
+    await approve(row.id);
+    expect(memberRole()).toBe('MEMBER');
+    expect(clampOf()).toMatchObject({ clamped: true });
+  });
+
+  it('keeps a role at the approver’s own rank when they were demoted only as far as it', async () => {
+    const row = waiting({ grantedRole: 'LEAD', teamDecidedById: TEAM_ADMIN });
+    setRole(TEAM_ADMIN, 'LEAD');
+    await approve(row.id);
+    expect(memberRole()).toBe('LEAD');
+    expect(clampOf()).toMatchObject({ clamped: false });
+  });
+
+  it('clamps an ADMIN grant when the approver now ranks LEAD', async () => {
+    const row = waiting({ grantedRole: 'ADMIN', teamDecidedById: TEAM_ADMIN });
+    setRole(TEAM_ADMIN, 'LEAD');
+    await approve(row.id);
+    expect(memberRole()).toBe('MEMBER');
+    expect(clampOf()).toEqual({ clamped: true, from: 'ADMIN', to: 'MEMBER' });
+  });
+
+  it('counts an approver who holds the capability through organization authority', async () => {
+    const row = waiting({ grantedRole: 'ADMIN', teamDecidedById: ORG_ADMIN });
+    await approve(row.id);
+    expect(memberRole()).toBe('ADMIN');
+  });
+
+  it('clamps when the decider is unknown', async () => {
+    const row = waiting({ teamDecidedById: null });
+    await approve(row.id);
+    expect(memberRole()).toBe('MEMBER');
+  });
+
+  it('never refuses for it: a MEMBER grant is untouched and the request is approved', async () => {
+    const row = waiting({ grantedRole: null });
+    deactivate(LEAD);
+    expect((await approve(row.id)).status).toBe(200);
+    expect(clampOf()).toEqual({ clamped: false, from: 'MEMBER', to: 'MEMBER' });
+  });
+});
+
+describe('the organization step when the requester already joined', () => {
+  it('records the role they hold, and audits that nothing was clamped', async () => {
+    as(ORG_ADMIN);
+    const row = addRequest({
+      grantedRole: 'LEAD',
+      requiresOrgApproval: true,
+      status: 'PENDING_ORG',
+      teamDecidedById: LEAD,
+      userId: OUTSIDER,
+    });
+    // Added directly meanwhile, and the team approver is gone, so a clamp would have applied.
+    world.teamMemberships.push({ id: uuid(990), role: 'ADMIN', teamId: ALPHA, userId: OUTSIDER });
+    deactivate(LEAD);
+    const { body, status } = await call(
+      'POST',
+      `/api/v1/platform/organizations/${ORG_A}/join-requests/${row.id}/approve`
+    );
+    expect(status).toBe(200);
+    expect(body.data.grantedRole).toBe('ADMIN');
+    expect(
+      world.teamMemberships.filter((m) => m.userId === OUTSIDER && m.teamId === ALPHA)
+    ).toEqual([expect.objectContaining({ role: 'ADMIN' })]);
+    const audit = audits('TeamJoinRequest')[0]?.afterJson as { clamp?: unknown } | undefined;
+    expect(audit?.clamp).toEqual({ clamped: false, from: 'ADMIN', to: 'ADMIN' });
+  });
+});
+
+describe('notifications', () => {
+  const events = () => notify.mock.calls.map((c) => c[1]);
+
+  it('announces a created request after it is stored', async () => {
+    const { body } = await call('POST', `/api/v1/teams/${ALPHA}/join-requests`);
+    expect(events()).toEqual([{ kind: 'created', requestId: body.data.id }]);
+  });
+
+  it('announces nothing for a refused request', async () => {
+    addRequest();
+    await call('POST', `/api/v1/teams/${ALPHA}/join-requests`);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('announces APPROVED, PENDING_ORG and REJECTED decisions at the team step', async () => {
+    as(LEAD);
+    const same = addRequest();
+    await call('POST', `/api/v1/teams/${ALPHA}/join-requests/${same.id}/approve`);
+    const cross = addRequest({ requiresOrgApproval: true, userId: OUTSIDER });
+    await call('POST', `/api/v1/teams/${ALPHA}/join-requests/${cross.id}/approve`);
+    const no = addRequest({ teamId: ALPHA, userId: ORG_ADMIN });
+    await call('POST', `/api/v1/teams/${ALPHA}/join-requests/${no.id}/reject`);
+    expect(events()).toEqual([
+      { kind: 'decided', outcome: 'APPROVED', requestId: same.id },
+      { kind: 'decided', outcome: 'PENDING_ORG', requestId: cross.id },
+      { kind: 'decided', outcome: 'REJECTED', requestId: no.id },
+    ]);
+  });
+
+  it('announces a combined approval as APPROVED, once', async () => {
+    as(ORG_ADMIN);
+    const cross = addRequest({ requiresOrgApproval: true, userId: OUTSIDER });
+    await call('POST', `/api/v1/teams/${ALPHA}/join-requests/${cross.id}/approve`);
+    expect(events()).toEqual([{ kind: 'decided', outcome: 'APPROVED', requestId: cross.id }]);
+  });
+
+  it('announces the organization step’s decisions', async () => {
+    as(ORG_ADMIN);
+    const yes = addRequest({ requiresOrgApproval: true, status: 'PENDING_ORG', userId: OUTSIDER });
+    const no = addRequest({ requiresOrgApproval: true, status: 'PENDING_ORG', userId: REQUESTER });
+    await call('POST', `/api/v1/platform/organizations/${ORG_A}/join-requests/${yes.id}/approve`);
+    await call('POST', `/api/v1/platform/organizations/${ORG_A}/join-requests/${no.id}/reject`);
+    expect(events()).toEqual([
+      { kind: 'decided', outcome: 'APPROVED', requestId: yes.id },
+      { kind: 'decided', outcome: 'REJECTED', requestId: no.id },
+    ]);
+  });
+
+  it('announces nothing for a withdrawal or a decision that lost its race', async () => {
+    const row = addRequest();
+    await call('POST', `/api/v1/me/join-requests/${row.id}/withdraw`);
+    as(LEAD);
+    await call('POST', `/api/v1/teams/${ALPHA}/join-requests/${row.id}/approve`);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('does not let a notifier that rejects or throws change the answer', async () => {
+    notify.mockRejectedValueOnce(new Error('smtp down'));
+    const first = await call('POST', `/api/v1/teams/${ALPHA}/join-requests`);
+    expect(first.status).toBe(201);
+    notify.mockImplementationOnce(() => {
+      throw new Error('sync boom');
+    });
+    as(LEAD);
+    const row = addRequest({ teamId: ALPHA, userId: ORG_ADMIN });
+    const rejected = await call('POST', `/api/v1/teams/${ALPHA}/join-requests/${row.id}/reject`);
+    expect(rejected.status).toBe(200);
+    expect(rejected.body.data.status).toBe('REJECTED');
+  });
+});
+
+describe('a notification is sent only after the transaction commits', () => {
+  afterEach(() => {
+    notify.mockReset();
+    notify.mockImplementation(async () => undefined);
+  });
+
+  /** Makes the next audit write fail, which every decision makes after it has claimed its row. */
+  const failAuditWrites = () =>
+    vi.spyOn(ctx.prisma.configAuditLog, 'create').mockRejectedValue(new Error('audit down'));
+
+  /** The order in which a transaction callback returned and the notifier was called. */
+  function recordOrder() {
+    const order: string[] = [];
+    const real = ctx.prisma.$transaction;
+    vi.spyOn(ctx.prisma, '$transaction').mockImplementation(
+      async (fn: (tx: unknown) => Promise<unknown>) => {
+        const result = await real(fn);
+        order.push('commit');
+        return result;
+      }
+    );
+    notify.mockImplementation(async () => {
+      order.push('notify');
+      return undefined;
+    });
+    return order;
+  }
+
+  const teamStep = (id: string, verb: 'approve' | 'reject') =>
+    call('POST', `/api/v1/teams/${ALPHA}/join-requests/${id}/${verb}`);
+  const orgStep = (id: string, verb: 'approve' | 'reject') =>
+    call('POST', `/api/v1/platform/organizations/${ORG_A}/join-requests/${id}/${verb}`);
+
+  const cases: Array<{ name: string; run: () => Promise<{ status: number }> }> = [
+    { name: 'create', run: () => call('POST', `/api/v1/teams/${ALPHA}/join-requests`) },
+    {
+      name: 'team-step approve',
+      run: () => {
+        as(LEAD);
+        return teamStep(addRequest().id, 'approve');
+      },
+    },
+    {
+      name: 'combined approval',
+      run: () => {
+        as(ORG_ADMIN);
+        return teamStep(addRequest({ requiresOrgApproval: true, userId: OUTSIDER }).id, 'approve');
+      },
+    },
+    {
+      name: 'team-step reject',
+      run: () => {
+        as(LEAD);
+        return teamStep(addRequest({ userId: ORG_ADMIN }).id, 'reject');
+      },
+    },
+    {
+      name: 'organization-step approve',
+      run: () => {
+        as(ORG_ADMIN);
+        const row = addRequest({
+          grantedRole: 'MEMBER',
+          requiresOrgApproval: true,
+          status: 'PENDING_ORG',
+          teamDecidedById: LEAD,
+          userId: OUTSIDER,
+        });
+        return orgStep(row.id, 'approve');
+      },
+    },
+    {
+      name: 'organization-step reject',
+      run: () => {
+        as(ORG_ADMIN);
+        const row = addRequest({
+          requiresOrgApproval: true,
+          status: 'PENDING_ORG',
+          userId: OUTSIDER,
+        });
+        return orgStep(row.id, 'reject');
+      },
+    },
+  ];
+
+  for (const { name, run } of cases) {
+    it(`${name}: sends nothing when the transaction fails after its claim`, async () => {
+      failAuditWrites();
+      const { status } = await run();
+      expect(status).toBe(500);
+      expect(notify).not.toHaveBeenCalled();
+    });
+
+    it(`${name}: sends once, after the transaction callback has returned`, async () => {
+      const order = recordOrder();
+      const { status } = await run();
+      expect(status).toBeLessThan(300);
+      expect(order).toEqual(['commit', 'notify']);
+    });
+  }
+});
+
+describe('closing open requests when something is deactivated', () => {
+  const close = (scope: Parameters<typeof closeOpenJoinRequests>[2]['scope']) =>
+    closeOpenJoinRequests(ctx.app, ctx.prisma as never, {
+      actor: { exp: 0, iat: 0, role: 'ADMIN', sub: PLATFORM },
+      context: { authority: 'platform-admin' },
+      scope,
+    });
+
+  it('withdraws a deactivated requester’s open requests at both steps and leaves the rest', async () => {
+    const waitingTeam = addRequest();
+    const waitingOrg = addRequest({ status: 'PENDING_ORG', teamId: BRAVO });
+    const decided = addRequest({ status: 'APPROVED', teamId: DELTA });
+    const other = addRequest({ userId: MEMBER });
+    expect(await close({ reason: 'REQUESTER_DEACTIVATED', userId: REQUESTER })).toBe(2);
+    for (const row of [waitingTeam, waitingOrg]) {
+      expect(row).toMatchObject({ closeReason: 'REQUESTER_DEACTIVATED', status: 'WITHDRAWN' });
+    }
+    expect(waitingTeam.teamDecisionNote).toBe(
+      'Closed automatically: the requester was deactivated.'
+    );
+    expect(waitingOrg.orgDecisionNote).toBe('Closed automatically: the requester was deactivated.');
+    expect(decided).toMatchObject({ closeReason: null, status: 'APPROVED' });
+    expect(other).toMatchObject({ closeReason: null, status: 'PENDING_TEAM' });
+    const rows = audits('TeamJoinRequest');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      action: 'UPDATE',
+      actorId: PLATFORM,
+      afterJson: { closeReason: 'REQUESTER_DEACTIVATED', status: 'WITHDRAWN', systemClose: true },
+      beforeJson: { closeReason: null },
+      context: { authority: 'platform-admin' },
+    });
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('rejects the open requests of a deactivated team, and only that team’s', async () => {
+    const mine = addRequest();
+    const mineToo = addRequest({ status: 'PENDING_ORG', userId: OUTSIDER });
+    const elsewhere = addRequest({ teamId: DELTA });
+    expect(await close({ reason: 'TEAM_DEACTIVATED', teamId: ALPHA })).toBe(2);
+    for (const row of [mine, mineToo]) {
+      expect(row).toMatchObject({ closeReason: 'TEAM_DEACTIVATED', status: 'REJECTED' });
+    }
+    expect(mine.teamDecisionNote).toBe('Closed automatically: the team was deactivated.');
+    expect(elsewhere.status).toBe('PENDING_TEAM');
+    // No person decided: nobody is named as the decider.
+    expect(mine.teamDecidedById).toBeNull();
+  });
+
+  it('rejects the open requests for every team of a deactivated organization', async () => {
+    const inA = addRequest();
+    const inA2 = addRequest({ teamId: DELTA, userId: MEMBER });
+    const inB = addRequest({ teamId: BRAVO });
+    expect(await close({ orgId: ORG_A, reason: 'ORGANIZATION_DEACTIVATED' })).toBe(2);
+    for (const row of [inA, inA2]) {
+      expect(row).toMatchObject({ closeReason: 'ORGANIZATION_DEACTIVATED', status: 'REJECTED' });
+    }
+    expect(inB.status).toBe('PENDING_TEAM');
+  });
+
+  it('starts no cooldown, so the person may ask again at once', async () => {
+    addRequest();
+    await close({ reason: 'TEAM_DEACTIVATED', teamId: ALPHA });
+    expect((await call('POST', `/api/v1/teams/${ALPHA}/join-requests`)).status).toBe(201);
+    const row = world.teamJoinRequests.at(-1);
+    if (row) {
+      row.status = 'WITHDRAWN';
+      row.closeReason = 'REQUESTER_DEACTIVATED';
+    }
+    expect((await call('POST', `/api/v1/teams/${ALPHA}/join-requests`)).status).toBe(201);
+  });
+
+  it('skips a request a reviewer claimed first and audits only what it closed', async () => {
+    const row = addRequest();
+    world.beforeUpdateMany = () => {
+      row.status = 'APPROVED';
+    };
+    expect(await close({ reason: 'TEAM_DEACTIVATED', teamId: ALPHA })).toBe(0);
+    expect(row.status).toBe('APPROVED');
+    expect(audits('TeamJoinRequest')).toHaveLength(0);
   });
 });

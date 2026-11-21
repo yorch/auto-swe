@@ -79,9 +79,32 @@ export function authEmailAvailable(): boolean {
   return smtp || resend || devLogAllowed();
 }
 
-export async function deliverAuthEmail(message: AuthEmail): Promise<void> {
+export interface TransportMessage {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+}
+
+/** Whether an SMTP or Resend transport is configured (not whether it works). */
+export function emailTransportConfigured(): boolean {
+  const { authFromEmail, resendApiKey, smtpHost, smtpPort } = resolveAuthEmailConfig();
+  return Boolean(authFromEmail && ((smtpHost && smtpPort) || resendApiKey));
+}
+
+/**
+ * The one transport resolution: SMTP first, then Resend. Resolves `{ sent: true }` once a transport
+ * accepted the message and `{ sent: false, failures }` when none is configured or, with
+ * `continueOnError`, when every configured one failed. Without `continueOnError` a failing
+ * transport throws at once, which is what the sign-in path needs outside development/test.
+ * Error text never includes the message body.
+ */
+export async function sendViaConfiguredTransport(
+  message: TransportMessage,
+  options: { continueOnError: boolean }
+): Promise<{ sent: true } | { sent: false; failures: string[] }> {
   const { authFromEmail, resendApiKey } = resolveAuthEmailConfig();
-  const { kind, to, subject, text, html } = message;
+  const { to, subject, text, html } = message;
   const failures: string[] = [];
 
   const transporter = getSmtpTransporter();
@@ -100,9 +123,9 @@ export async function deliverAuthEmail(message: AuthEmail): Promise<void> {
       if ((info.rejected ?? []).length > 0 && (info.accepted ?? []).length === 0) {
         throw new Error(`SMTP relay rejected the recipient: ${info.response}`);
       }
-      return;
+      return { sent: true };
     } catch (err) {
-      if (!devLogAllowed()) {
+      if (!options.continueOnError) {
         throw err;
       }
       failures.push(`SMTP: ${(err as Error).message}`);
@@ -118,19 +141,30 @@ export async function deliverAuthEmail(message: AuthEmail): Promise<void> {
           'Content-Type': 'application/json',
         },
         method: 'POST',
+        redirect: 'error',
       });
       if (!res.ok) {
         const body = await res.text().catch(() => '');
         throw new Error(`Resend returned ${res.status}: ${body.slice(0, 200)}`);
       }
-      return;
+      return { sent: true };
     } catch (err) {
-      if (!devLogAllowed()) {
+      if (!options.continueOnError) {
         throw err;
       }
       failures.push(`Resend: ${(err as Error).message}`);
     }
   }
+  return { failures, sent: false };
+}
+
+export async function deliverAuthEmail(message: AuthEmail): Promise<void> {
+  const { kind } = message;
+  const result = await sendViaConfiguredTransport(message, { continueOnError: devLogAllowed() });
+  if (result.sent) {
+    return;
+  }
+  const failures = result.failures;
 
   if (!devLogAllowed()) {
     // No URL in this message: it reaches the logs, and the URL is a credential.
@@ -146,6 +180,6 @@ export async function deliverAuthEmail(message: AuthEmail): Promise<void> {
     console.warn(`[${kind}] ${failure}; falling back to the dev log`);
   }
   console.log(
-    `\n[${kind}] → ${to}\n[${kind}]   ${message.url}\n[${kind}]   (link expires in ${message.expiresIn})\n`
+    `\n[${kind}] → ${message.to}\n[${kind}]   ${message.url}\n[${kind}]   (link expires in ${message.expiresIn})\n`
   );
 }
