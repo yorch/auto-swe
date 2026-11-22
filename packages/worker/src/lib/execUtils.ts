@@ -12,6 +12,7 @@
 import type { ExecSyncOptions, SpawnSyncReturns } from 'node:child_process';
 import { exec, spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
+import { StringDecoder } from 'node:string_decoder';
 import { promisify } from 'node:util';
 import { Context, heartbeat } from '@temporalio/activity';
 
@@ -226,12 +227,18 @@ export function spawnCaptureAsync(
     }, timeoutMs);
     killTimer.unref?.();
 
-    const cap = (current: string, chunk: Buffer): string =>
-      current.length >= maxBuffer ? current : current + chunk.toString('utf-8');
+    // Decoded through a StringDecoder rather than `chunk.toString()` per chunk: a multi-byte
+    // character that straddles two pipe reads would otherwise arrive as replacement glyphs, and a
+    // capture that stops at the cap would carry them wherever the split happened to fall.
+    const stdoutDecoder = new StringDecoder('utf8');
+    const stderrDecoder = new StringDecoder('utf8');
+    const lineDecoder = new StringDecoder('utf8');
+    const cap = (current: string, chunk: Buffer, decoder: StringDecoder): string =>
+      current.length >= maxBuffer ? current : current + decoder.write(chunk);
     child.stdout?.on('data', (chunk: Buffer) => {
-      stdout = cap(stdout, chunk);
+      stdout = cap(stdout, chunk, stdoutDecoder);
       if (onStdoutLine) {
-        lineBuf += chunk.toString('utf-8');
+        lineBuf += lineDecoder.write(chunk);
         let nl = lineBuf.indexOf('\n');
         while (nl !== -1) {
           emitLine(lineBuf.slice(0, nl));
@@ -241,7 +248,7 @@ export function spawnCaptureAsync(
       }
     });
     child.stderr?.on('data', (chunk: Buffer) => {
-      stderr = cap(stderr, chunk);
+      stderr = cap(stderr, chunk, stderrDecoder);
     });
     // 'close' is not guaranteed after a spawn failure — settle on 'error' directly.
     child.on('error', (err) => {

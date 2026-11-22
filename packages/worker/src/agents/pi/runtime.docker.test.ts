@@ -123,6 +123,10 @@ async function startWorkspace() {
         );
         child.stdin?.end(stdin);
       }),
+    // `createWorkspace` resolves this from the base commit before any repository code runs. This
+    // container has no history to read, so the test supplies it — and writes something else into
+    // the working tree, which the adapter must not read.
+    repoContext: null as { commitSha: string; content: string; path: string } | null,
   };
   return { name, shell, workspace };
 }
@@ -156,7 +160,13 @@ afterAll(async () => {
 describe.skipIf(!enabled)('the Pi runtime against a real container', () => {
   it("runs Pi's own tools in the container, each decided and traced by the worker", async () => {
     const ws = await startWorkspace();
-    await ws.shell(`printf 'Answer tersely.\\n' > AGENTS.md`);
+    // The checkout's copy is not what the run follows; the base commit's is.
+    await ws.shell(`printf 'not the instructions\\n' > AGENTS.md`);
+    ws.workspace.repoContext = {
+      commitSha: 'a1b2c3d',
+      content: 'Answer tersely.',
+      path: `${REPO}/AGENTS.md`,
+    };
     const { model, prompts } = scriptedModel([
       { calls: [{ input: { content: 'one\ntwo\n', path: 'src/a.txt' }, name: 'write' }] },
       {
@@ -188,6 +198,7 @@ describe.skipIf(!enabled)('the Pi runtime against a real container', () => {
     ]);
     const seen = JSON.stringify(prompts);
     expect(seen).toContain('Answer tersely.');
+    expect(seen).not.toContain('not the instructions');
     expect(seen).toContain('one\\nTWO');
     expect(seen).toMatch(/AGENTS\.md\\n.*src\//);
     expect(outcome.usageByModel).toEqual([

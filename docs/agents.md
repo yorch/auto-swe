@@ -335,7 +335,7 @@ is appended after the image's own directories on `PATH`, so the commands the age
 tool but a tool never replaces a binary the image provides. See [repositories.md](./repositories.md)
 for how tools are declared and the catalog is managed.
 
-Governed knowledge adds two separate tool IDs, `searchKnowledge` and `submitLearning`. Governed KnowledgeItem results and learning submission require explicit grants on the resolved Agent; null or legacy `toolKeys` do not grant them. Governed search is available on Mastra, Claude Code and Pi; learning submission is Mastra-only. Search returns bounded, cited, trust-labeled knowledge as untrusted context; submission captures only local LEARNING items and requires persisted evidence. See [knowledge.md](./knowledge.md) for scope, lifecycle, and limitations.
+Governed knowledge adds two separate tool IDs, `searchKnowledge` and `submitLearning`. Governed KnowledgeItem results and learning submission require explicit grants on the resolved Agent; null or legacy `toolKeys` do not grant them. Governed search is available on Mastra, Claude Code and Pi; learning submission on Mastra and Pi (the Claude Code harness has no worker-side tool for it). Search returns bounded, cited, trust-labeled knowledge as untrusted context; submission captures only local LEARNING items and requires persisted evidence. See [knowledge.md](./knowledge.md) for scope, lifecycle, and limitations.
 
 `searchKnowledge` also searches [repository-backed KB chunks](./knowledge-bases.md) from snapshots
 pinned for the current run, with `kb:owner/repo@sha7 path` citations and an untrusted third-party
@@ -350,13 +350,13 @@ system prompt, without tools or a workspace. Failure omits that context; its ste
 
 ### 3.2 `loadSkill` Tool (always present when skills exist)
 
-When `skills` is non-empty, a further tool — `loadSkill` — is automatically added alongside the workspace tools. It is **not** listed in `IMPLEMENTER_TOOL_IDS` and is **not** part of `Agent.toolKeys` (it is auto-added).
+When `skills` is non-empty, a further tool — `loadSkill` — is automatically added alongside the workspace tools. It is **not** listed in `IMPLEMENTER_TOOL_IDS` and is **not** part of `Agent.toolKeys` (it is auto-added). The tool body is written once (`agents/skillDisclosure.ts`) and bound by every loop that offers a menu: the Mastra loop as a Mastra tool, Pi as a worker-side `WorkerTool`. The Claude Code harness has no such tool and receives skill text inline instead (§3.7).
 
 ```
 loadSkill({ name: string }) → { promptText: string }
 ```
 
-This enables **progressive skill disclosure**: the agent receives a compact L1 menu (skill name + description) in its system prompt and calls `loadSkill` to fetch the full `promptText` on demand. Only the skills the agent actively engages are counted against the context window.
+This enables **progressive skill disclosure**: the agent receives a compact L1 menu (skill name + description) in its system prompt and calls `loadSkill` to fetch the full `promptText` on demand. Only the skills the agent actively engages are counted against the context window. The menu is built by one function (`skillMenuSuffix`), so a session sees the same menu on either loop.
 
 The `promptSuffix` returned by `createImplementerAgent` is the L1 menu string injected into the system prompt:
 
@@ -376,7 +376,8 @@ See [memory.md](./memory.md#recall-modes-and-holdout) for assignment, tracing an
 
 When the session works on a repository — the implementer, and every fix session (`ciFixer`,
 `reviewFixer`, `gateFixer`) — two read-only tools are added beside the workspace tools, like
-`loadSkill` outside `toolKeys`. Both are bound to the session's repository in code, never by an
+`loadSkill` outside `toolKeys`, on every loop that can call a worker-side tool (Mastra and Pi). Both
+are written once (`agents/lessonTools.ts`) and bound to the session's repository in code, never by an
 argument the model passes:
 
 ```
@@ -397,10 +398,18 @@ lessons carry their ids, so the agent can ask about one. See
 
 ### 3.4 Write Tool Security Chain
 
-`writeFile` runs through two sequential checks before writing:
+`writeFile` runs through three sequential checks before writing:
 
 1. **Sensitive file scanner** (`checkSensitiveFilePath`) — hard-block. Rejects `.env`, PEM/key files, SSH private keys, credential JSON files. Returns the block message to the agent and records a trace with `error: 'blocked by sensitive file scanner'`.
-2. **Pre-write content scanner** (`wrapWriteToolWithSecurityCheck`) — soft-block. Regex-based check for secrets/tokens in file content. Returns a prefixed error string starting with `SECURITY_CHECK_FAILED_PREFIX` or `SECURITY_WARNINGS_PREFIX`. The trace `error` field is set to `'blocked by content security check'` or `'content security warning'` so the gateway query in `/admin/security` can classify the event without raw SQL. Every trace tag (including the shell scanner's `'blocked by shell command scanner'`) is defined once, in `SECURITY_TRACE_ERRORS` (`@auto-swe/shared/lib/scannerCache`), which the tools write and the security-events endpoint and the eval trajectory scorer's guardrail count both read.
+2. **Repository instruction file** (`repoContextWriteRefusal`) — hard-block. `AGENTS.md` and
+   `CLAUDE.md` at the checkout root are the repository's instructions every session reads
+   ([§3.7](#37-runtimes-mastra-and-the-harnesses), `agents/repoContext.ts`), so a run may not rewrite
+   what this session and the next one run under; a file of either name below the root is an
+   ordinary file. The
+   Pi runtime refuses the same two names in the same place, with the same `AgentTrace.error` tag
+   (`SECURITY_TRACE_ERRORS.FILE_BLOCK`), so `/admin/security` counts both. `bash` can still write the
+   file — this closes the tool that would otherwise do it silently.
+3. **Pre-write content scanner** (`wrapWriteToolWithSecurityCheck`) — soft-block. Regex-based check for secrets/tokens in file content. Returns a prefixed error string starting with `SECURITY_CHECK_FAILED_PREFIX` or `SECURITY_WARNINGS_PREFIX`. The trace `error` field is set to `'blocked by content security check'` or `'content security warning'` so the gateway query in `/admin/security` can classify the event without raw SQL. Every trace tag (including the shell scanner's `'blocked by shell command scanner'`) is defined once, in `SECURITY_TRACE_ERRORS` (`@auto-swe/shared/lib/scannerCache`), which the tools write and the security-events endpoint and the eval trajectory scorer's guardrail count both read.
 
 **Trying a scanner pattern.** The pattern editor at `/admin/scanner` has a "Try this pattern" area
 backed by `POST /api/v1/platform/scanner-patterns/test` (ADMIN). The body is `{ pattern, flags?,
@@ -884,7 +893,7 @@ Because the harness reads them again when the next turn starts, `Write` and `Edi
 them: anything under a `.claude` directory, `CLAUDE.md` and `CLAUDE.local.md` at any depth, and the
 root `.mcp.json` are refused.
 
-**Skills.** The Mastra loop discloses skills through a `loadSkill` tool; the harness has none, so it
+**Skills.** The Mastra loop discloses skills through a `loadSkill` tool; this harness has none, so it
 receives each skill's text inline in the system prompt. A prompt over 100 000 characters is staged as
 a file in the container, because it travels on a command line capped at 128 KiB per argument. The file
 is `/workspace/.harness/home/.claude/system-prompt.md`, inside the one directory outside the checkout
@@ -948,7 +957,16 @@ vocabulary (`bash` → `shell`; `write`, `edit` → `write`; `read` → `read`; 
 | `grep` | the worker's, in Pi's argument shape (`pattern`, `path`, `glob`, `ignoreCase`, `literal`, `context`, `limit`): ripgrep in the container when the image has it, else `grep -rn` | the same as Claude Code's `Grep`: the search root confined, `glob` relative and inside it |
 | `bash` | the worker's, in Pi's argument shape (`command`, `timeout` in seconds, at most 600): `bash -c` when the image has bash, else `sh -c`, in the checkout | audit line, then `scanShellCommand` |
 | `mcp__<tool>` | the Agent's MCP connection, relayed from the worker (`pi/mcp.ts`) | allowed by name, exactly the relayed tools; audit line in the relay |
+| `loadSkill`, `searchLessons`, `explainLesson`, `submitLearning`, `provisionTool` | the worker's own tool bodies, bound to Pi by the shared bridge (`agents/workerTool.ts`) — the same ones the Mastra loop binds for the same Agent row | allowed by name, exactly the ones this session bound; each runs in the worker and reaches the container only through its own body |
 | anything else | — | refused |
+
+**Tool parity with the Mastra loop.** The grants are the same and so is the surface: `loadSkill` when
+the Agent has skills (an implementer session, on either loop), the two lesson tools when the session names a repository, `submitLearning` and
+`provisionTool` only when `toolKeys` names them (an unrestricted list never implies either), knowledge
+search when the Agent names it or the step pins KB snapshots, `browser_*` on an explicit `browser`
+grant, and the relayed MCP tools. `workerToolsFor` (`agents/sessionTools.ts`) decides the worker-side
+set once for both loops, so a grant that binds a tool on one binds it on the other rather than being
+remembered separately in each.
 
 Pi resolves a tool's `path` itself before opening it: a leading `@` is dropped, a leading `~` is the
 loop's home directory (here the worker's), Unicode spaces are folded to ASCII, and a relative path is
@@ -1014,9 +1032,23 @@ their per-file queue. Neither reads or writes file content on the worker.
 
 **Pi's prompt and context.** The system prompt opens with Pi's own (its tool list and guidelines,
 without the paragraph pointing the model at Pi's documentation, which would be on the worker),
-followed by the caller's prompt with skills inline, then the repository's root `AGENTS.md` — else its
-`CLAUDE.md` — read once per session as text (at most 64 KiB) under Pi's "Project Context" heading.
-While that file is loaded, `write` and `edit` may not change `AGENTS.md` or `CLAUDE.md` at the root.
+followed by the caller's prompt — with the skill menu, not the skill text, for an implementer session
+(an agent node or agent run inlines skills on both loops) — then the repository's root `AGENTS.md`,
+else its `CLAUDE.md`, as Pi's "Project Context". One reader serves both loops
+(`agents/repoContext.ts`), once per session, at most 64 KiB: the entry at `Workspace.baseSha` — the
+base-branch tip the workspace was created against — resolved **once when the workspace is created**,
+right after that commit is fixed and before any repository code runs (the setup steps come later), with
+`git --no-replace-objects ls-tree`/`cat-file` reading the object id the tree listing named. The value
+rides on the workspace as `Workspace.repoContext`, so a prompt built later cannot be reading a clone
+that setup code has touched. Reading that commit rather than the working
+tree is what keeps the instructions from being something the agent — or an earlier session on the
+branch, or the pull request under review — wrote; it is the rule the repository's declared tools
+already follow, and it means a base-branch edit made after the run started does apply while the run's
+own commits do not. The entry's mode is what separates a file from a symlink (git stores a symlink as
+a blob holding its target path), and a symlink is followed inside the same commit — never out of the
+repository — so `AGENTS.md -> CLAUDE.md` still yields the real text. The merge-conflict resolver
+therefore never reads conflict markers. `write` and `edit` may not change `AGENTS.md` or
+`CLAUDE.md` at the root, on either loop.
 Turns after the first continue the same conversation, held in the worker. Every command the turn ran
 in the container carries the turn's exec tag, so the kill when the turn ends stops anything it left
 running.
@@ -1178,7 +1210,11 @@ Adding a harness is an adapter in its own directory, a `defineHarness` entry in 
 a new value in `IMPLEMENTER_RUNTIMES` (and in the `agents.runtime` CHECK constraint, by migration),
 unit tests, and a `*.docker.test.ts` named on the `docker-tests` job in `ci.yml` — and the adapter
 must honestly declare `enforcesPerCallPolicyInWorker`. A harness whose loop can run in the worker
-omits `provisioning` and acts on the container through `turn.exec`.
+omits `provisioning` and acts on the container through `turn.exec`. A new adapter is offered the same
+options every one is, including the two that carry a loop's parity with the Mastra loop: `skills`
+(disclose them by name, or ignore it and inline their text) and `workerTools` (the lesson tools,
+`submitLearning`, `provisionTool`, written once in `agents/sessionTools.ts`); a harness that does not
+bind them leaves that Agent's grants partly unbound, so say so in its row of the table above.
 
 **Harness profiles (plugins).** On the `claude-code` runtime an Agent version can also bind a list of
 approved harness profiles (`Agent.harnessProfiles`, their names in binding order). A platform-wide

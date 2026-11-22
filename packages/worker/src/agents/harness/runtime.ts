@@ -274,6 +274,7 @@ export function harnessRuntime<Report>(
           exec: command,
           heartbeat: () => heartbeat(adapter.kind),
           tag: `${tag}${execs.toString(16).padStart(8, '0')}`,
+          ...(workspace.toolsEnv ? { toolsEnv: workspace.toolsEnv() } : {}),
         });
       },
       failed(callId, { error, inputJson, toolName }) {

@@ -117,6 +117,8 @@ export interface CanonicalPolicyContext {
     /** Names the harness in the refusal (`Claude Code`). */
     label: string;
     matches(relativePath: string): boolean;
+    /** The trace tag the refusal carries, so security events count it as Mastra's does. */
+    securityTag?: string;
   };
 }
 
@@ -231,7 +233,8 @@ export async function decideCanonicalCall(
       }
       if (ctx.protectedConfig?.matches(target.rel)) {
         return deny(
-          `Path rejected: ${target.rel} is ${ctx.protectedConfig.label} configuration, which this run loads and may not change.`
+          `Path rejected: ${target.rel} is ${ctx.protectedConfig.label} configuration, which this run loads and may not change.`,
+          ctx.protectedConfig.securityTag
         );
       }
       const sensitive = await checkSensitiveFilePath(target.rel);

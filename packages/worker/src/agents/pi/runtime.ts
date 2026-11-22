@@ -2,6 +2,7 @@ import { getSettingDefinition } from '@auto-swe/shared/config';
 import type { ReasoningLevel } from '@auto-swe/shared/types/api';
 import type { AgentMessage, AgentTool } from '@earendil-works/pi-agent-core';
 import type { AssistantMessage, Message, ToolResultMessage } from '@earendil-works/pi-ai';
+import { ApplicationFailure } from '@temporalio/activity';
 import type { LanguageModel } from 'ai';
 import { resolveModel } from '../../lib/models.js';
 import { createSteeringDrain } from '../../lib/runSteering.js';
@@ -19,6 +20,9 @@ import { type HarnessRuntime, harnessRuntime } from '../harness/runtime.js';
 import { summedCallsUsage, type UsageTotals } from '../harness/usage.js';
 import { piKnowledgeTool } from '../knowledgeSearchBindings.js';
 import { bindKnowledgeSearch } from '../knowledgeTools.js';
+import { type RepoContext, readWorkspaceRepoContext, repoContextBlock } from '../repoContext.js';
+import { loadSkillWorkerTool } from '../skillDisclosure.js';
+import { toPiTool, type WorkerTool, workerToolNames } from '../workerTool.js';
 import {
   type CompactionResult,
   compactMessages,
@@ -31,6 +35,7 @@ import {
   canonicalisePiArgs,
   decidePiToolCall,
   PI_CAPABILITIES,
+  PI_TOOLS,
   type PiPolicyContext,
   type PiTool,
   piToolsFor,
@@ -56,7 +61,7 @@ export function piBrowserToolContent(result?: {
 }
 
 /** The most of the repository's context file the system prompt carries. */
-export const MAX_CONTEXT_FILE_BYTES = 64 * 1024;
+export { MAX_REPO_CONTEXT_BYTES as MAX_CONTEXT_FILE_BYTES } from '../repoContext.js';
 
 /** The Agent's resolved model, as the worker's own model binding takes it. */
 export interface PiAccess {
@@ -107,7 +112,7 @@ export function piSystemPrompt(input: {
   tools: readonly PiTool[];
   /** Tools beyond Pi's own (the Agent's MCP connection), by name and description. */
   extraTools?: readonly { name: string; description: string }[];
-  projectContext?: { path: string; content: string } | null;
+  projectContext?: RepoContext | null;
   date?: Date;
 }): string {
   const listed = [
@@ -141,29 +146,9 @@ ${guidelines.map((g) => `- ${g}`).join('\n')}`;
     prompt += `\n\n${input.system}`;
   }
   if (input.projectContext) {
-    prompt += `\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n## ${input.projectContext.path}\n\n${input.projectContext.content}\n\n`;
+    prompt += `\n\n${repoContextBlock(input.projectContext)}\n\n`;
   }
   return `${prompt}\nCurrent date: ${date}\nCurrent working directory: ${WORKSPACE_DIR}`;
-}
-
-/**
- * The repository's root `AGENTS.md`, else its `CLAUDE.md` — the context file Pi
- * reads — or null. Read once per session, as text, and capped.
- */
-async function readProjectContext(
-  turn: HarnessTurn
-): Promise<{ path: string; content: string } | null> {
-  for (const name of ['AGENTS.md', 'CLAUDE.md']) {
-    const out = await turn.exec({
-      args: [name],
-      script: `test -f "$1" && head -c ${MAX_CONTEXT_FILE_BYTES} -- "$1"`,
-      timeoutMs: 30_000,
-    });
-    if (out.exitCode === 0) {
-      return { content: out.stdout.toString('utf8'), path: `${WORKSPACE_DIR}/${name}` };
-    }
-  }
-  return null;
 }
 
 function textOfResult(result: { content: { type: string; text?: string }[] }): string {
@@ -171,7 +156,7 @@ function textOfResult(result: { content: { type: string; text?: string }[] }): s
 }
 
 /** What the trace records of a call's input: a write's path, not its content. */
-function traceInput(toolName: string, args: Record<string, unknown>): unknown {
+function traceInput(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
   return toolName === 'write' || toolName === 'edit' ? { path: args.path } : args;
 }
 
@@ -197,15 +182,39 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
     workspace.knowledgeBaseSnapshotIds ?? [],
     options.toolKeys?.includes('searchKnowledge') ?? false
   );
+  // Every worker-side tool this session binds: the harness's own (`workerTools`,
+  // which is the lesson recall tools, `submitLearning` and `provisionTool` the
+  // Mastra loop binds) and `loadSkill`, so a skill's full text is fetched on
+  // demand exactly as it is on the Mastra loop.
+  const skills = options.skills ?? [];
+  const workerTools: WorkerTool[] = [
+    ...(skills.length > 0 ? [loadSkillWorkerTool(skills, options.tracer)] : []),
+    ...(options.workerTools ?? []),
+  ];
   const policy: PiPolicyContext = {
     browserTools: [
       ...(options.browserToolset ? BROWSER_TOOLS.map((entry) => entry.name) : []),
       ...(options.evalLessonTools ?? []).map((entry) => entry.name),
     ],
     containerId: workspace.containerId,
-    projectContextLoaded: loadProjectSettings,
     tools,
+    workerTools: workerToolNames(workerTools),
   };
+  // Worker tools record their own call (`WorkerTool` bodies trace exactly as they do under the
+  // Mastra loop), so this loop must not record a second row for them. A call that throws is
+  // still traced here: the body had nothing to report.
+  const selfTracing = new Set(policy.workerTools);
+  // A worker tool may not take one of Pi's own names: the policy decides Pi's tools first, so
+  // the binding would be dead — and if the order ever changed, a call named `bash` would reach
+  // the container without a path check or a scanner. Refused where the session is built.
+  for (const name of selfTracing) {
+    if ((PI_TOOLS as readonly string[]).includes(name)) {
+      throw ApplicationFailure.nonRetryable(
+        `A worker tool is named '${name}', which is one of Pi's own tools. Rename it (mcp tools are prefixed 'mcp__', and the browser's 'browser_'), or the worker's policy cannot tell them apart.`,
+        'HARNESS_TOOL_NAME_COLLISION'
+      );
+    }
+  }
   const steer = options.steeringRunId
     ? createSteeringDrain(options.steeringRunId, options.tracer)
     : undefined;
@@ -216,8 +225,10 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
         browserTools: AgentTool[];
         /** The relayed MCP tools among `agentTools`. */
         mcpTools: AgentTool[];
+        /** The worker-side tools among `agentTools`, besides Pi's own. */
+        workerTools: AgentTool[];
         messages: AgentMessage[];
-        projectContext: { path: string; content: string } | null;
+        projectContext: RepoContext | null;
       }
     | undefined;
   let model: LanguageModel | undefined;
@@ -226,7 +237,7 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
   // without it, as on the Mastra loop).
   let relay: McpRelay | null = null;
 
-  async function openSession(turn: HarnessTurn) {
+  async function openSession() {
     if (!session) {
       const maxToolOutputChars =
         options.maxToolOutputChars ??
@@ -267,12 +278,16 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
         name: entry.name,
         parameters: entry.schema.toJSONSchema() as AgentTool['parameters'],
       }));
+      const own_worker = workerTools.map((tool) => toPiTool(tool));
       session = {
-        agentTools: [...own, ...mcpTools, ...browserTools, ...evalTools],
+        agentTools: [...own, ...mcpTools, ...browserTools, ...evalTools, ...own_worker],
         browserTools: [...browserTools, ...evalTools],
         mcpTools,
         messages: [],
-        projectContext: loadProjectSettings ? await readProjectContext(turn) : null,
+        // Resolved once, when the workspace was created, from the commit it was created against:
+        // the same value the Mastra loop reads, so both loops run under one file.
+        projectContext: loadProjectSettings ? readWorkspaceRepoContext(workspace) : null,
+        workerTools: own_worker,
       };
     }
     if (!session) {
@@ -297,13 +312,13 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
       | { budgetTokens: number; calls: number; last: Omit<CompactionResult, 'messages'> }
       | undefined;
     try {
-      const open = await openSession(turn);
+      const open = await openSession();
       model ??=
         options.languageModel ??
         resolveModel(access.spec, access.apiKey, access.apiBase ?? undefined, access.reasoning);
       const { runAgentLoop } = await import('@earendil-works/pi-agent-core');
       const systemPrompt = piSystemPrompt({
-        extraTools: [...open.mcpTools, ...open.browserTools],
+        extraTools: [...open.mcpTools, ...open.browserTools, ...open.workerTools],
         projectContext: open.projectContext,
         system,
         tools,
@@ -351,11 +366,16 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
           afterToolCall: async ({ args, isError, result, toolCall }) => {
             const inputJson = traceInput(toolCall.name, args as Record<string, unknown>);
             if (isError) {
+              // A worker tool's body traces its own result, not its throws, so this row is the
+              // only one an exception gets.
               turn.failed(toolCall.id, {
                 error: textOfResult(result),
                 inputJson,
                 toolName: toolCall.name,
               });
+              return undefined;
+            }
+            if (selfTracing.has(toolCall.name)) {
               return undefined;
             }
             const { warning } = turn.completed(toolCall.id, {

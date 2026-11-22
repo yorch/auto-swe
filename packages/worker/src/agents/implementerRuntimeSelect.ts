@@ -18,6 +18,9 @@ import {
 } from './implementer.js';
 import { type ImplementerRuntime, mastraRuntime } from './implementerRuntime.js';
 import { isMcpToolEnabled } from './mcpTools.js';
+import { readWorkspaceRepoContext } from './repoContext.js';
+import { workerToolsFor } from './sessionTools.js';
+import { skillMenuSuffix } from './skillDisclosure.js';
 
 /** One implementer session's loop, built for the runtime the agent resolved to. */
 export interface ImplementerTurnRunner {
@@ -122,6 +125,10 @@ export async function buildImplementerTurnRunner(input: {
     // One resolution binds the model that runs and names the Agent row that is stamped on its
     // trace rows, so a version cut mid-session cannot pair one version's id with another's model.
     const bound = await getBoundModel(agentKey, input.ctx);
+    // The repository's own instruction file belongs in the prompt on both loops. Pi reads it
+    // itself (`pi/runtime.ts`); the Mastra loop is handed what the same reader found, so a run
+    // reads the same file whichever loop drives it.
+    const repoContext = readWorkspaceRepoContext(input.workspace);
     const built = await buildImplementerForActivity(
       input.workspace,
       input.tracer,
@@ -129,7 +136,8 @@ export async function buildImplementerTurnRunner(input: {
       agentKey,
       input.repoId,
       bound.model,
-      ...(input.evalLessonTools ? ([input.evalLessonTools] as const) : [])
+      input.evalLessonTools,
+      repoContext
     );
     return runner({
       agent: bound.agent,
@@ -183,9 +191,20 @@ export async function buildImplementerTurnRunner(input: {
     ...(browserToolset ? { browserToolset } : {}),
     // The approved profiles the Agent is bound to (Claude Code only; see above).
     ...(profiles ? { profiles } : {}),
+    // The tools and skills that are the worker's on either loop: the memory
+    // tools bound to this repository, learning submission, the catalog
+    // installer, and skills disclosed by name instead of inlined.
+    skills: config.skills,
     // The Agent row's tools bound the harness as they bound the Mastra loop.
     toolKeys: config.toolKeys,
     tracer: input.tracer,
+    workerTools: workerToolsFor({
+      ctx: input.ctx,
+      repoId: input.repoId,
+      toolKeys: config.toolKeys,
+      tracer: input.tracer,
+      workspace: input.workspace,
+    }),
     workspace: input.workspace,
   });
   return runner({
@@ -195,7 +214,12 @@ export async function buildImplementerTurnRunner(input: {
     kind: harness.kind,
     kindSource,
     maxSteps: config.maxSteps,
-    promptSuffix: skillsToPromptSuffix(config.skills) ?? '',
+    // A harness that discloses skills by name gets the same menu the Mastra loop
+    // builds; one with no such tool (Claude Code) keeps its skills inline.
+    promptSuffix:
+      harness.kind === 'pi'
+        ? skillMenuSuffix(config.skills)
+        : (skillsToPromptSuffix(config.skills) ?? ''),
     runtime,
     skills: config.skills,
     toolKeys: config.toolKeys,

@@ -138,6 +138,8 @@ The tool bodies are the implementer's, so the tool-level scanners apply unchange
 checked against the sensitive-file patterns and the pre-write content rules, and every `bash` call
 against the shell-command scanner. Skills are inlined into the system prompt (no `loadSkill`), and the
 persona and skill fallbacks that `buildImplementerForActivity` applies to sub-role agents do not apply.
+`submitLearning` and `provisionTool` bind on the grants that name them whichever loop runs, and the
+harness is handed them from the same list the Mastra loop builds (`workerToolsFor`).
 
 **MCP tools** bind per the agent's own configuration (`'mcp'` in `toolKeys`, or `null`/`[]`, plus an
 `mcpConnectionId`), exactly as on an `agent` node, and only when the repository's team owns the

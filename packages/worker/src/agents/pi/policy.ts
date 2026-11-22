@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { SECURITY_TRACE_ERRORS } from '@auto-swe/shared/lib/scannerCache';
 import type { HarnessCapabilities } from '../harness/adapter.js';
 import { WORKSPACE_DIR } from '../harness/adapter.js';
 import {
@@ -11,6 +12,7 @@ import {
   type ToolDecision,
   type ToolVocabulary,
 } from '../harness/policy.js';
+import { isRepoContextFile } from '../repoContext.js';
 import { TOOL_OUTPUT_OFFLOAD_DIR } from '../toolOutputOffload.js';
 import { containsArgStub } from './compaction.js';
 
@@ -141,24 +143,19 @@ export interface PiPolicyContext {
   /** The Pi tools the Agent's `toolKeys` grant ({@link piToolsFor}). */
   tools: readonly PiTool[];
   /**
-   * The run reads the repository's root `AGENTS.md` (else `CLAUDE.md`) into the
-   * system prompt, so the agent may not rewrite either: a later session would
-   * run under what it wrote.
-   */
-  projectContextLoaded: boolean;
-  /**
    * The relayed MCP tools, by the name the model calls them
    * ({@link piMcpToolName}). Each runs in the worker against the Agent's MCP
    * connection and is audit-logged there; nothing about it runs in the container.
    */
   mcpTools?: readonly string[];
   browserTools?: readonly string[];
-}
-
-/** The repository's own context files the run reads, at the checkout's root. */
-export function isPiContextFile(rel: string): boolean {
-  const lower = rel.toLowerCase();
-  return lower === 'agents.md' || lower === 'claude.md';
+  /**
+   * The worker-side tools this session binds besides its own: `loadSkill`, the
+   * lesson recall tools, `submitLearning`, `provisionTool`. Each runs in the
+   * worker and reaches the container only through the worker's own tools, so it
+   * is allowed by name exactly as the relayed MCP ones are.
+   */
+  workerTools?: readonly string[];
 }
 
 /** One Pi tool call in the canonical vocabulary. */
@@ -225,13 +222,19 @@ export async function decidePiToolCall(
   input: Record<string, unknown>,
   ctx: PiPolicyContext
 ): Promise<ToolDecision> {
-  if (ctx.mcpTools?.includes(toolName)) {
-    return { allow: true };
-  }
-  if (ctx.browserTools?.includes(toolName)) {
-    return { allow: true };
-  }
+  // Pi's own names are decided here and can never be taken over by another
+  // binding, so a worker tool or a relayed MCP tool that spelled itself `bash`
+  // would still be scanned. The adapter refuses such a collision at build time.
   if (!(PI_TOOLS as readonly string[]).includes(toolName)) {
+    if (ctx.workerTools?.includes(toolName)) {
+      return { allow: true };
+    }
+    if (ctx.mcpTools?.includes(toolName)) {
+      return { allow: true };
+    }
+    if (ctx.browserTools?.includes(toolName)) {
+      return { allow: true };
+    }
     return deny(`The ${toolName} tool is not available in this workspace.`);
   }
   const tool = toolName as PiTool;
@@ -256,9 +259,13 @@ export async function decidePiToolCall(
       containerId: ctx.containerId,
       cwd: WORKSPACE_DIR,
       extraReadRoots: [TOOL_OUTPUT_OFFLOAD_DIR],
-      protectedConfig: ctx.projectContextLoaded
-        ? { label: 'Pi', matches: isPiContextFile }
-        : undefined,
+      // The repository's instruction file, read for every session: the same two
+      // names the Mastra loop refuses, with the same security tag.
+      protectedConfig: {
+        label: "the repository's project",
+        matches: isRepoContextFile,
+        securityTag: SECURITY_TRACE_ERRORS.FILE_BLOCK,
+      },
     },
     WORKSPACE_DIR
   );

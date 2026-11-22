@@ -3,10 +3,12 @@ import type { Readable, Writable } from 'node:stream';
 import type { NeedsInputQuestion } from '@auto-swe/shared/lib/needsInput';
 import type { Workspace } from '../../activities/workspace.js';
 import type { AgentTracer } from '../../lib/agentTracer.js';
+import type { ResolvedSkill } from '../../lib/config/agentSkills.js';
 import type { ResolvedHarnessProfile } from '../../lib/config/harnessProfile.js';
 import type { McpConnectionTarget } from '../../lib/config/mcpConnection.js';
 import type { EvalLessonTool } from '../../lib/evalLessonRecall.js';
 import type { BrowserToolset } from '../browserTools.js';
+import type { WorkerTool } from '../workerTool.js';
 import type { ContainerPlatform } from './binary.js';
 import type { ToolDecision } from './policy.js';
 import type { UsageNormaliser, UsageTotals } from './usage.js';
@@ -279,6 +281,22 @@ export interface HarnessRuntimeOptions<Access> {
   /** Available only for an explicit `browser` tool grant. */
   browserToolset?: BrowserToolset;
   evalLessonTools?: EvalLessonTool[];
+  /**
+   * The resolved Agent's skills, for a harness that discloses them by name
+   * instead of inlining their text: Pi binds `loadSkill` and gets the same
+   * compact menu the Mastra loop puts in front of its own `loadSkill`. A harness
+   * with no such tool (Claude Code) is given them inline in its prompt instead
+   * and ignores this.
+   */
+  skills?: ResolvedSkill[];
+  /**
+   * Worker-side tools the harness binds besides its own, written once for every
+   * loop (`workerTool.ts`): the lesson recall tools, `submitLearning`,
+   * `provisionTool`. Each runs in the worker, so a harness that serves them by
+   * name rather than in the container can offer exactly what the Mastra loop
+   * offers on the same Agent row.
+   */
+  workerTools?: WorkerTool[];
   /**
    * The approved harness profiles (plugins) the Agent is bound to, in binding order
    * (`resolveHarnessProfiles`), for a harness that loads them (Claude Code); ignored

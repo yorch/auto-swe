@@ -824,10 +824,12 @@ describe('runAgentNode', () => {
       );
     });
     const workspace = {
+      baseSha: 'e'.repeat(40),
       containerId: 'workspace-1',
       destroy: vi.fn(async () => {}),
-      exec: vi.fn(async () => ''),
+      exec: vi.fn(async (_command: string) => ''),
       gitAuthed: vi.fn(async () => ''),
+      repoContext: null as { commitSha: string; content: string; path: string } | null,
       runSetup: vi.fn(async () => null),
     };
 
@@ -1258,6 +1260,8 @@ describe('runAgentNode', () => {
 
       expect(vi.mocked(createWorkspace).mock.calls[0]?.[1]).toBe('auto/JIRA-1');
       expect(workspace.gitAuthed).toHaveBeenCalledWith('fetch origin auto/JIRA-1');
+      // The instructions are read host-side, from the workspace's base commit: no command runs in
+      // the container for them.
       expect(workspace.exec).not.toHaveBeenCalled();
       expect(workspace.runSetup).toHaveBeenCalledTimes(1);
       expect(events).toHaveBeenCalledWith({
@@ -1367,6 +1371,26 @@ describe('runAgentNode', () => {
       vi.useRealTimers();
     });
 
+    it("puts the repository's instruction file in the Mastra prompt, read at the base commit", async () => {
+      workspace.repoContext = {
+        commitSha: 'eeeeeee',
+        content: 'Run yarn test.\n',
+        path: '/workspace/target-repo/AGENTS.md',
+      };
+
+      await runAgentNode({
+        agentRef: 'reviewer',
+        workspace: { repoId: 'repo-1', ticketId: 'JIRA-1' },
+      });
+
+      const spec = mockedRunAgent.mock.calls.at(-1)?.[0];
+      const prompt = spec?.systemPrompt ?? '';
+      expect(prompt).toContain('# Project Context');
+      expect(prompt).toContain('Run yarn test.');
+      // Read from the commit the checkout started at, and it says so.
+      expect(prompt).toContain('(commit eeeeeee)');
+    });
+
     it('runs one harness turn in the checkout when the run pinned the agent to it', async () => {
       vi.mocked(resolveAgentRuntime).mockResolvedValueOnce({
         runtime: 'claude-code',
@@ -1413,6 +1437,8 @@ describe('runAgentNode', () => {
         mcp: null,
         toolKeys: ['readFile', 'bash', 'mcp'],
         tracer: expect.any(AgentTracer),
+        // The worker-side tools the Mastra branch would bind for the same grants.
+        workerTools: [],
         workspace,
       });
       // The profile is resolved with the runtime, before the clone, and none is passed on.

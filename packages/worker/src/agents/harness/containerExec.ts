@@ -32,6 +32,12 @@ export function execInContainer(options: {
   abort: AbortSignal;
   heartbeat: () => void;
   maxOutputBytes?: number;
+  /**
+   * The workspace's installed-tools `PATH=…` entry, when it has one: the same
+   * entry `exec`/`execCapture` pass, so a tool `provisionTool` installed resolves
+   * by name in a harness command too.
+   */
+  toolsEnv?: readonly string[];
 }): Promise<HarnessExecResult> {
   const { abort, containerId, exec, heartbeat, tag } = options;
   const cap = options.maxOutputBytes ?? MAX_EXEC_OUTPUT_BYTES;
@@ -43,7 +49,7 @@ export function execInContainer(options: {
       backend.attach(containerId),
       ['sh', '-c', exec.script, 'sh', ...(exec.args ?? [])],
       {
-        env: [`${EXEC_TAG_ENV}=${tag}`],
+        env: [`${EXEC_TAG_ENV}=${tag}`, ...(options.toolsEnv ?? [])],
         stdin: hasStdin,
         stdio: [hasStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
         workdir: WORKSPACE_DIR,

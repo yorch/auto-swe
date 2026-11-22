@@ -9,6 +9,11 @@ import { MAX_DEPENDENCY_CHECKOUTS } from '@auto-swe/shared/lib/knowledgeBaseReso
 import { detectedStacks } from '@auto-swe/shared/lib/stackDetection';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { assertShellImageAllowed, DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
+import {
+  MAX_REPO_CONTEXT_BYTES,
+  type RepoContext,
+  readRepoContext,
+} from '../agents/repoContext.js';
 import { currentWorkflowId } from '../lib/activityContext.js';
 import { auditLog, logWarn } from '../lib/activityLog.js';
 import { currentNodeTag } from '../lib/activityNodeTag.js';
@@ -44,6 +49,7 @@ import {
   loadSetupSecrets,
   type RepoSetupHost,
   type RepoSetupReport,
+  readSetupEntry,
   readSetupFile,
   resolveWorkspaceSetup,
   runSetupGitPhase,
@@ -95,6 +101,14 @@ export interface Workspace {
   redact?: (text: string) => string;
   readonly baseSha: string;
   readBaseFile: (path: string) => Promise<string | null>;
+  /**
+   * The repository's own instruction file (`AGENTS.md`, else `CLAUDE.md`, at the checkout's root,
+   * at most 64 KiB), read from the base commit once, during creation and before any repository code
+   * ran, or null when the repository has none. `createWorkspace` always sets it. Optional in the
+   * type only so a test double built elsewhere need not name it: a workspace without it offers no
+   * repository instructions.
+   */
+  repoContext?: RepoContext | null;
   knowledgeBaseSnapshotIds?: string[];
   knowledgeBases?: MountedKnowledgeBase[];
   containerId: string;
@@ -160,6 +174,13 @@ export interface Workspace {
    * double built elsewhere need not name it.
    */
   installedTools?: InstalledTool[];
+  /**
+   * The `PATH=…` entry every later command carries so the workspace's installed
+   * catalog tools resolve by name (`/workspace/.tools/bin`, last on `PATH`).
+   * Absent on a workspace that installs none. A harness that runs its own
+   * commands (`turn.exec`) includes it, exactly as `exec` and `execCapture` do.
+   */
+  toolsEnv?: () => string[];
   /**
    * Install more catalog tools mid-run, on an agent's request: the platform runs the same install
    * script as the container user, under the connection's authority (its deny list, the per-run
@@ -1135,6 +1156,9 @@ export async function createWorkspace(
   }
   let baseRef: () => Promise<string> = async () => 'HEAD';
   let trustedBaseSha = '';
+  // The repository's own instructions, read once below, while the base commit is still the only
+  // thing that has run.
+  let repoContext: RepoContext | null = null;
   let deliveryBase: string | undefined;
   let baseRefFetch: Promise<string> | undefined;
   // Secrets minted during setup (submodule credentials), scrubbed like the clone's own.
@@ -1759,6 +1783,13 @@ export async function createWorkspace(
       });
     }
 
+    // Resolved here, not when a prompt is built: at this point nothing from the repository has run
+    // (setup steps are still ahead), so the base commit's tree is still the trusted one. A read
+    // later in the run would be reading a container whose `.git` repository code can rewrite.
+    repoContext = await readRepoContext(trustedBaseSha, (rel) =>
+      readSetupEntry(setupHost, trustedBaseSha, rel, MAX_REPO_CONTEXT_BYTES)
+    );
+
     mountedKnowledgeBases = await cloneKnowledgeBases(
       { exec: (command, options) => rootExec(command, options?.timeoutMs, options?.secretEnv) },
       options?.knowledgeBases ?? []
@@ -1842,6 +1873,8 @@ export async function createWorkspace(
     },
     egressPolicy,
     readBaseFile: (path) => readSetupFile(setupHost, trustedBaseSha, path),
+    repoContext,
+    toolsEnv: () => toolsEnv,
     ...(setupPhase ? { finishSetup } : {}),
     exec: (command: string, options) => {
       const tag = newExecTag();

@@ -623,7 +623,10 @@ describe('runCaseDefault iteration cap', () => {
       ctx,
       'ciFixer',
       undefined,
-      expect.anything()
+      expect.anything(),
+      // No eval lesson tools in this case, and no context file in this workspace.
+      undefined,
+      null
     );
     expect(resolveAgent).toHaveBeenCalledWith('ciFixer', ctx);
     expect(generate).toHaveBeenCalledTimes(2);

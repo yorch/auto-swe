@@ -24,7 +24,6 @@ import {
 const REPO = '/workspace/target-repo';
 const ctx: PiPolicyContext = {
   containerId: 'workspace-abc',
-  projectContextLoaded: true,
   tools: [...PI_TOOLS],
 };
 
@@ -35,7 +34,7 @@ beforeEach(() => {
 });
 
 describe('tool grants', () => {
-  it('allows worker-owned knowledge search only when bound, never learning submission', async () => {
+  it('allows worker-owned knowledge search only when bound', async () => {
     await expect(
       decidePiToolCall('searchKnowledge', { query: 'parser' }, ctx)
     ).resolves.toMatchObject({ allow: false });
@@ -43,9 +42,23 @@ describe('tool grants', () => {
     await expect(decidePiToolCall('searchKnowledge', { query: 'parser' }, bound)).resolves.toEqual({
       allow: true,
     });
-    await expect(decidePiToolCall('submitLearning', {}, bound)).resolves.toMatchObject({
-      allow: false,
-    });
+  });
+
+  it('allows a worker-side tool only when this session bound it', async () => {
+    // The tools the adapter binds in the worker besides Pi's own: the skill menu's
+    // disclosure, the repository's lessons, learning submission and the installer.
+    const names = [
+      'loadSkill',
+      'searchLessons',
+      'explainLesson',
+      'submitLearning',
+      'provisionTool',
+    ];
+    const bound = { ...ctx, workerTools: names };
+    for (const name of names) {
+      await expect(decidePiToolCall(name, {}, ctx)).resolves.toMatchObject({ allow: false });
+      await expect(decidePiToolCall(name, {}, bound)).resolves.toEqual({ allow: true });
+    }
   });
   it('reads toolKeys as the Mastra implementer does', () => {
     expect(piToolsFor(null)).toEqual([...PI_TOOLS]);
@@ -205,18 +218,18 @@ describe('decidePiToolCall', () => {
     for (const name of ['AGENTS.md', 'claude.md']) {
       await expect(
         decidePiToolCall('write', { content: 'x', path: `${REPO}/${name}` }, ctx)
-      ).resolves.toMatchObject({ allow: false, reason: expect.stringContaining('Pi') });
+      ).resolves.toMatchObject({
+        allow: false,
+        reason: expect.stringContaining("the repository's project configuration"),
+      });
     }
     await expect(
       decidePiToolCall('write', { content: 'x', path: `${REPO}/docs/AGENTS.md` }, ctx)
     ).resolves.toEqual({ allow: true });
+    // Refused for every session, whatever it loaded: the file a later session would run under.
     await expect(
-      decidePiToolCall(
-        'write',
-        { content: 'x', path: `${REPO}/AGENTS.md` },
-        { ...ctx, projectContextLoaded: false }
-      )
-    ).resolves.toEqual({ allow: true });
+      decidePiToolCall('write', { content: 'x', path: `${REPO}/CLAUDE.md` }, ctx)
+    ).resolves.toMatchObject({ allow: false });
   });
 
   it('lets reads reach the offloaded tool output, and nothing else outside the checkout', async () => {

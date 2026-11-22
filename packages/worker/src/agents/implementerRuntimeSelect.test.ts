@@ -171,8 +171,33 @@ describe('buildImplementerTurnRunner', () => {
       given.ctx,
       'ciFixer',
       'repo-9',
-      { sentinel: 'bound-model' }
+      { sentinel: 'bound-model' },
+      // No eval lesson tools; and no context file: this workspace answers no
+      // command, so the run reads none (`repoContext.ts`).
+      undefined,
+      null
     );
+  });
+
+  it("hands the Mastra builder the repository's instruction file, read at the base commit", async () => {
+    const workspace = {
+      baseSha: 'f'.repeat(40),
+      containerId: 'workspace-1',
+      // What `createWorkspace` resolved, before any repository code ran.
+      repoContext: {
+        commitSha: 'fffffff',
+        content: 'Use pnpm, not yarn.\n',
+        path: '/workspace/target-repo/AGENTS.md',
+      },
+    };
+    await buildImplementerTurnRunner(input({ workspace }));
+
+    // The last argument, after the eval lesson tools: what the run read, which the agent puts
+    // in its prompt suffix.
+    expect(h.buildImplementerForActivity.mock.calls[0]?.[7]).toMatchObject({
+      commitSha: 'fffffff',
+      content: 'Use pnpm, not yarn.\n',
+    });
   });
 
   it('builds the Mastra agent, with its skill menu, only for the Mastra loop', async () => {
@@ -186,7 +211,9 @@ describe('buildImplementerTurnRunner', () => {
       'ciFixer',
       undefined,
       // The model that runs is the one the stamped Agent row resolved to.
-      { sentinel: 'bound-model' }
+      { sentinel: 'bound-model' },
+      undefined,
+      null
     );
     expect(turns.promptSuffix).toBe(MENU);
     expect(turns.systemPrompt('BASE')).toBe(`BASE\n\n${MENU}`);
@@ -212,7 +239,9 @@ describe('buildImplementerTurnRunner', () => {
 
   it('keeps the legacy builder arity without eval tools', async () => {
     await buildImplementerTurnRunner(input());
-    expect(h.buildImplementerForActivity.mock.calls[0]).toHaveLength(6);
+    // Six legacy positions, then the eval lesson tools and the repository's context file, which
+    // are both absent here.
+    expect(h.buildImplementerForActivity.mock.calls[0]).toHaveLength(8);
     expect(h.claudeCodeRuntime).not.toHaveBeenCalled();
     expect(h.piRuntime).not.toHaveBeenCalled();
   });
@@ -285,8 +314,12 @@ describe('buildImplementerTurnRunner', () => {
       maxToolOutputChars: 20_000,
       maxTurns: 42,
       mcp: null,
+      // The worker-side tools and skills every harness is offered; Claude Code binds
+      // neither (it inlines skills and has no such tools), and ignores both.
+      skills,
       toolKeys: null,
       tracer: given.tracer,
+      workerTools: [],
       workspace: given.workspace,
     });
   });
@@ -311,8 +344,11 @@ describe('buildImplementerTurnRunner', () => {
       maxToolOutputChars: 20_000,
       maxTurns: 42,
       mcp: null,
+      // Pi discloses these by name instead of inlining them.
+      skills,
       toolKeys: null,
       tracer: given.tracer,
+      workerTools: [],
       workspace: given.workspace,
     });
   });

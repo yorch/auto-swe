@@ -871,7 +871,10 @@ describe('resolveMergeConflict', () => {
       expect.anything(),
       'mergeConflictResolver',
       undefined,
-      expect.anything()
+      expect.anything(),
+      // No eval lesson tools either; and no context file in this workspace.
+      undefined,
+      null
     );
     const [messages, options] = generateMock.mock.calls[0] as [
       Array<{ role: string; content: string }>,
