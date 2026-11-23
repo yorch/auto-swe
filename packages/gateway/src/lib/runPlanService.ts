@@ -236,8 +236,8 @@ function captureReply(): { reply: FastifyReply; refusal: () => PlanRefusal } {
 
 /**
  * The identity a run plan acts as when it validates a repository or launches: the person's `sub`
- * with today's stored role string. Every synthesized actor on the plan path is built here, so the
- * persisted `sourceAuthorization` and the validation payload cannot drift apart. The worker's
+ * with the platform role `USER`. Every synthesized actor on the plan path is built here, so the
+ * launch's `sourceAuthorization` and the validation payload cannot drift apart. The worker's
  * re-check (`plannedRunPin.ts`) reads the role from the database, never from this value.
  */
 function synthesizedPlanActor(sub: string): { role: PlatformRole; sub: string } {

@@ -2295,3 +2295,47 @@ the inlined skill text. No migration and no configuration change is needed.
 commit; a write to root `AGENTS.md` answers `Path rejected: …` and `/admin/security` shows it; a Pi
 run records one tool-call trace row per `loadSkill`, `searchLessons` or `provisionTool` call; and a
 tool installed by `provisionTool` runs by name in the agent's `bash`.
+
+---
+
+### A team-role settings grant now covers every higher role in its team (`<fixing commit SHA>`)
+
+**Affected.** Deployments with role-grantee settings grants
+(`SELECT count(*) FROM config_permissions WHERE role IS NOT NULL` returns a non-zero count). A
+deployment with only user grants needs nothing.
+
+**What changes.** A grant to a team role used to cover only the people holding exactly that role in
+the grant's team. It now covers that role and every role above it in that team (`MEMBER` < `LEAD` <
+`ADMIN`): a `LEAD` grant also covers the team's `ADMIN`s, and a `MEMBER` grant covers every member.
+Stored rows are unchanged; only who they reach widens.
+
+**Actions.** Review each role grant at `/admin/config-grants` and narrow or remove any that should
+not reach the higher roles of its team (for example, replace a `MEMBER` grant with a `LEAD` grant).
+
+**Verify.** List what each role grant now newly covers:
+
+```sql
+SELECT cp.id, cp.key_pattern, cp.role AS grant_role, tm.user_id, tm.role AS member_role
+FROM config_permissions cp JOIN team_memberships tm ON tm.team_id = cp.team_id
+WHERE cp.role IS NOT NULL AND tm.role::text <> cp.role::text
+  AND (cp.role = 'MEMBER' OR (cp.role = 'LEAD' AND tm.role = 'ADMIN'));
+```
+
+Each row is a member the grant now covers that it did not before. A grant whose rows should not have
+that coverage needs narrowing or removing.
+
+---
+
+### Retired role spellings are no longer recognised (`<fixing commit SHA>`)
+
+**Affected.** Deployments that ran a build between the role split and this change and kept a stored
+role string anywhere other than the migrated enum columns.
+
+**What changes.** The permissions module no longer accepts the retired spellings `ENGINEER`,
+`ORG_ADMIN` and `ORG_MEMBER`; an unrecognised role string resolves to no standing. The stored enum
+columns carry none of them after `20261119000000_split_role_enums`. No decision is made from a
+persisted role string (the gateway and worker re-read the role from the database), so workflow
+inputs and histories that carry an old spelling, such as `sourceAuthorization.actor.role`, need no
+action.
+
+**Verify.** The queries in the role-split entry above return no old values.

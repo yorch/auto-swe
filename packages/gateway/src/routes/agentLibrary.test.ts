@@ -74,7 +74,7 @@ async function buildAdminApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   return { app, mockPrisma };
 }
 
-async function buildTeamApp(membershipRole: 'ADMIN' | 'ENGINEER' | null) {
+async function buildTeamApp(membershipRole: 'ADMIN' | 'MEMBER' | null) {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -652,7 +652,7 @@ describe('teamAgentLibraryRoutes — team owner', () => {
   });
 
   it('rejects a non-admin team member', async () => {
-    const { app } = await buildTeamApp('ENGINEER');
+    const { app } = await buildTeamApp('MEMBER');
     const res = await app.inject({
       body: { key: 'teamAgent', name: 'Team Agent' },
       headers: AUTH,
@@ -977,7 +977,7 @@ describe('agent credential pin', () => {
 
 describe('GET /api/v1/teams/:id/agent-library/options', () => {
   it('lets any team member list keys, names, models and bound plugin names only', async () => {
-    const { app, mockPrisma } = await buildTeamApp('ENGINEER');
+    const { app, mockPrisma } = await buildTeamApp('MEMBER');
     mockPrisma.agent.findMany.mockResolvedValue([
       {
         harnessProfiles: ['acme-pack'],

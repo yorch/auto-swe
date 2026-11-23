@@ -27,7 +27,7 @@ const USAGE_ROW = {
   yearMonth: '2026-06',
 };
 
-function buildApp(role: string, membershipRole: string | null = 'ORG_MEMBER') {
+function buildApp(role: string, membershipRole: string | null = 'MEMBER') {
   const app = makeAuthedApp({
     prisma: {
       organization: {
@@ -58,7 +58,7 @@ describe('GET /:orgId/budget', () => {
   afterEach(() => vi.clearAllMocks());
 
   it('returns budget + usage for an ORG_ADMIN', async () => {
-    const app = buildApp('LEAD', 'ORG_ADMIN');
+    const app = buildApp('LEAD', 'ADMIN');
     await app.ready();
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/budget` });
     expect(res.statusCode).toBe(200);
@@ -84,7 +84,7 @@ describe('GET /:orgId/budget', () => {
   });
 
   it("returns 403 for a plain ORG_MEMBER: the dollar figures are the admin's", async () => {
-    const app = buildApp('LEAD', 'ORG_MEMBER');
+    const app = buildApp('LEAD', 'MEMBER');
     await app.ready();
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/budget` });
     expect(res.statusCode).toBe(403);
@@ -103,7 +103,7 @@ describe('GET /:orgId/budget/status', () => {
   afterEach(() => vi.clearAllMocks());
 
   it('gives an ORG_MEMBER the state and the percentage, with no dollar field', async () => {
-    const app = buildApp('ENGINEER', 'ORG_MEMBER');
+    const app = buildApp('ENGINEER', 'MEMBER');
     await app.ready();
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/budget/status` });
     expect(res.statusCode).toBe(200);
@@ -119,7 +119,7 @@ describe('GET /:orgId/budget/status', () => {
   });
 
   it('reports no_cap when the org has none', async () => {
-    const app = buildApp('ENGINEER', 'ORG_MEMBER');
+    const app = buildApp('ENGINEER', 'MEMBER');
     (app.prisma.organization.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...ORG_ROW,
       monthlyBudgetUsdCents: null,
@@ -133,7 +133,7 @@ describe('GET /:orgId/budget/status', () => {
   });
 
   it('reports over when the spend has reached the cap', async () => {
-    const app = buildApp('ENGINEER', 'ORG_MEMBER');
+    const app = buildApp('ENGINEER', 'MEMBER');
     (app.prisma.orgMonthlyUsage.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       costUsdAccrued: '120',
     });
@@ -204,7 +204,7 @@ describe('PATCH /:orgId/budget', () => {
   });
 
   it('allows a platform-ENGINEER who is ORG_ADMIN to edit the cap', async () => {
-    const app = buildApp('ENGINEER', 'ORG_ADMIN');
+    const app = buildApp('ENGINEER', 'ADMIN');
     await app.ready();
     const res = await app.inject({
       body: JSON.stringify({ budgetAlertThresholdPercent: null, monthlyBudgetUsdCents: 5000 }),
@@ -216,7 +216,7 @@ describe('PATCH /:orgId/budget', () => {
   });
 
   it('returns 403 for a platform-ENGINEER who is only an ORG_MEMBER', async () => {
-    const app = buildApp('ENGINEER', 'ORG_MEMBER');
+    const app = buildApp('ENGINEER', 'MEMBER');
     await app.ready();
     const res = await app.inject({
       body: JSON.stringify({ budgetAlertThresholdPercent: null, monthlyBudgetUsdCents: 5000 }),

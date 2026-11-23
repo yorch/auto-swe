@@ -130,7 +130,7 @@ describe('callback endpoint management', () => {
   beforeAll(async () => {
     admin = await buildApp('ADMIN', null);
     lead = await buildApp('ENGINEER', 'LEAD');
-    engineer = await buildApp('ENGINEER', 'ENGINEER');
+    engineer = await buildApp('ENGINEER', 'MEMBER');
     outsider = await buildApp('LEAD', null);
   });
   afterAll(async () => {
@@ -417,7 +417,7 @@ describe('a run’s callback deliveries', () => {
   });
 
   it('show the target to whoever can see the run, and redeliver only to endpoint managers', async () => {
-    const viewer = await buildApp('ENGINEER', 'ENGINEER');
+    const viewer = await buildApp('ENGINEER', 'MEMBER');
     const manager = await buildApp('ENGINEER', 'LEAD');
     for (const { prisma } of [viewer, manager]) {
       prisma.workflowRun.findFirst.mockResolvedValue({

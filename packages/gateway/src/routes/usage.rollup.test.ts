@@ -697,7 +697,7 @@ describe('byUser visibility', () => {
         org: [],
         team: [
           { role: 'LEAD', teamId: TEAM_A, userId: 'lead-1' },
-          { role: 'ENGINEER', teamId: TEAM_A, userId: U_ALICE },
+          { role: 'MEMBER', teamId: TEAM_A, userId: U_ALICE },
         ],
       }
     );
@@ -721,10 +721,10 @@ describe('byUser visibility', () => {
       { role: 'ENGINEER', sub: 'oa-1' },
       {
         org: [
-          { orgId: ORG_1, role: 'ORG_ADMIN', userId: 'oa-1' },
-          { orgId: ORG_1, role: 'ORG_MEMBER', userId: U_ALICE },
+          { orgId: ORG_1, role: 'ADMIN', userId: 'oa-1' },
+          { orgId: ORG_1, role: 'MEMBER', userId: U_ALICE },
         ],
-        team: [{ role: 'ENGINEER', teamId: TEAM_B, teamOrgId: ORG_1, userId: U_CARL }],
+        team: [{ role: 'MEMBER', teamId: TEAM_B, teamOrgId: ORG_1, userId: U_CARL }],
       }
     );
     const data = await report(app, `orgId=${ORG_1}&window=30`);

@@ -121,7 +121,7 @@ describe('requireAuth — capability', () => {
   });
 
   it('refuses a team ENGINEER with 403 FORBIDDEN naming the missing capability', async () => {
-    const { reply } = await run({ capability: 'team.templates.write' }, { teamRole: 'ENGINEER' });
+    const { reply } = await run({ capability: 'team.templates.write' }, { teamRole: 'MEMBER' });
     expect(reply.statusCode).toBe(403);
     expect(reply.body).toMatchObject({
       error: { code: 'FORBIDDEN', missing: 'team.templates.write' },
@@ -150,10 +150,10 @@ describe('requireAuth — capability', () => {
   });
 
   it('applies the org rule to a governance capability and not to an operation', async () => {
-    const governance = await run({ capability: 'team.repos.manage' }, { orgRole: 'ORG_ADMIN' });
+    const governance = await run({ capability: 'team.repos.manage' }, { orgRole: 'ADMIN' });
     expect(governance.reply.statusCode).toBeUndefined();
     expect(governance.request.authority).toBe('org-admin');
-    const operation = await run({ capability: 'team.templates.write' }, { orgRole: 'ORG_ADMIN' });
+    const operation = await run({ capability: 'team.templates.write' }, { orgRole: 'ADMIN' });
     expect(operation.reply.statusCode).toBe(403);
   });
 
@@ -176,20 +176,20 @@ describe('requireAuth — capability', () => {
   it('decides an org capability from the org parameter', async () => {
     const ok = await run(
       { capability: 'org.settings.manage' },
-      { orgRole: 'ORG_ADMIN', params: { orgId: ORG } }
+      { orgRole: 'ADMIN', params: { orgId: ORG } }
     );
     expect(ok.reply.statusCode).toBeUndefined();
     const no = await run(
       { capability: 'org.settings.manage' },
-      { orgRole: 'ORG_MEMBER', params: { orgId: ORG } }
+      { orgRole: 'MEMBER', params: { orgId: ORG } }
     );
     expect(no.reply.statusCode).toBe(403);
   });
 
   it('a bare requireAuth() asks for no role: a team ENGINEER passes where a LEAD capability refuses', async () => {
-    const bare = await run({}, { teamRole: 'ENGINEER' });
+    const bare = await run({}, { teamRole: 'MEMBER' });
     expect(bare.reply.statusCode).toBeUndefined();
-    const guarded = await run({ capability: 'team.templates.write' }, { teamRole: 'ENGINEER' });
+    const guarded = await run({ capability: 'team.templates.write' }, { teamRole: 'MEMBER' });
     expect(guarded.reply.statusCode).toBe(403);
     expect((guarded.reply.body as { error: { missing: string } }).error.missing).toBe(
       'team.templates.write'
@@ -220,7 +220,7 @@ describe('can() from a handler', () => {
   });
 
   it('writes no request-wide authority or team role', async () => {
-    const { request } = makeRequest({ orgRole: 'ORG_ADMIN', teamRole: 'LEAD' });
+    const { request } = makeRequest({ orgRole: 'ADMIN', teamRole: 'LEAD' });
     asUser(request);
     await can(request, 'team.repos.manage', { teamId: TEAM });
     await can(request, 'team.templates.write', { teamId: TEAM });
@@ -259,7 +259,7 @@ describe('the handler-checked backstop', () => {
   });
 
   it('fires when the handler asked, was refused, ignored it and answered 200', async () => {
-    const { request } = makeRequest({ declared: ['team.templates.write'], teamRole: 'ENGINEER' });
+    const { request } = makeRequest({ declared: ['team.templates.write'], teamRole: 'MEMBER' });
     asUser(request);
     const decision = await can(request, 'team.templates.write', { teamId: TEAM });
     expect(decision.allowed).toBe(false);
@@ -344,7 +344,7 @@ describe('existence is not revealed', () => {
     expect(lead.reply.statusCode).toBeUndefined();
     const member = await run(
       { capability: 'platform.users.directory.read' },
-      { params: {}, teamRole: 'ENGINEER' }
+      { params: {}, teamRole: 'MEMBER' }
     );
     expect(member.reply.statusCode).toBe(403);
   });

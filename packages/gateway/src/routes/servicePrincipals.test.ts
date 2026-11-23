@@ -224,7 +224,7 @@ describe('service principal management routes', () => {
     });
 
     it('not an ENGINEER of the team', async () => {
-      s.teamRole = 'ENGINEER';
+      s.teamRole = 'MEMBER';
       expect((await send('GET', base)).statusCode).toBe(403);
     });
 
@@ -236,7 +236,7 @@ describe('service principal management routes', () => {
 
     it('not a platform LEAD who is only an ENGINEER of the team', async () => {
       s.platformRole = 'LEAD';
-      s.teamRole = 'ENGINEER';
+      s.teamRole = 'MEMBER';
       expect((await send('POST', base, { name: 'x' })).statusCode).toBe(403);
       expect(created).toHaveLength(0);
     });

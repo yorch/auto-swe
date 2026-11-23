@@ -70,7 +70,7 @@ async function buildAdminApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
 
 async function buildTeamApp(opts: {
   role?: 'ADMIN' | 'ENGINEER';
-  teamMembership?: { role: 'ADMIN' | 'LEAD' | 'ENGINEER' } | null;
+  teamMembership?: { role: 'ADMIN' | 'LEAD' | 'ENGINEER' | 'MEMBER' } | null;
 }) {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
@@ -551,7 +551,7 @@ describe('modelConfigRoutes — team-scoped credentials', () => {
   it('rejects a team engineer (insufficient role)', async () => {
     const { app } = await buildTeamApp({
       role: 'ENGINEER',
-      teamMembership: { role: 'ENGINEER' },
+      teamMembership: { role: 'MEMBER' },
     });
     const res = await app.inject({
       headers: AUTH,

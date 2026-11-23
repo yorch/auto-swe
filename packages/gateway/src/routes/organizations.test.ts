@@ -11,7 +11,7 @@ const ORG_ROW = { id: ORG_ID, name: 'Test Org', slug: 'test-org', trustedInvites
 const orgUpdate = vi.fn();
 const auditCreate = vi.fn().mockResolvedValue({});
 
-function buildApp(role: string, membershipRole: string | null = 'ORG_ADMIN') {
+function buildApp(role: string, membershipRole: string | null = 'ADMIN') {
   orgUpdate.mockResolvedValue({ ...ORG_ROW, trustedInvites: true });
   const app = makeAuthedApp({
     prisma: {
@@ -57,14 +57,14 @@ describe('PATCH /:orgId trustedInvites', () => {
   });
 
   it('refuses an ORG_ADMIN trusting its own organization', async () => {
-    const res = await patch(buildApp('ENGINEER', 'ORG_ADMIN'), { trustedInvites: true });
+    const res = await patch(buildApp('ENGINEER', 'ADMIN'), { trustedInvites: true });
 
     expect(res.statusCode).toBe(403);
     expect(orgUpdate).not.toHaveBeenCalled();
   });
 
   it('refuses an ORG_ADMIN clearing trust, even alongside other fields', async () => {
-    const res = await patch(buildApp('ENGINEER', 'ORG_ADMIN'), {
+    const res = await patch(buildApp('ENGINEER', 'ADMIN'), {
       name: 'Renamed',
       trustedInvites: false,
     });
@@ -74,7 +74,7 @@ describe('PATCH /:orgId trustedInvites', () => {
   });
 
   it('still lets an ORG_ADMIN rename the organization', async () => {
-    const res = await patch(buildApp('ENGINEER', 'ORG_ADMIN'), { name: 'Renamed' });
+    const res = await patch(buildApp('ENGINEER', 'ADMIN'), { name: 'Renamed' });
 
     expect(res.statusCode).toBe(200);
     expect(orgUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { name: 'Renamed' } }));
@@ -125,7 +125,7 @@ describe('organization budget dollars', () => {
   }
 
   it('GET /:orgId omits the cap for a plain ORG_MEMBER', async () => {
-    const app = budgetedApp('ENGINEER', 'ORG_MEMBER');
+    const app = budgetedApp('ENGINEER', 'MEMBER');
     await app.ready();
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}` });
     expect(res.statusCode).toBe(200);
@@ -134,20 +134,20 @@ describe('organization budget dollars', () => {
   });
 
   it('GET /:orgId keeps the cap for an ORG_ADMIN', async () => {
-    const app = budgetedApp('ENGINEER', 'ORG_ADMIN');
+    const app = budgetedApp('ENGINEER', 'ADMIN');
     await app.ready();
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}` });
     expect(JSON.parse(res.body).data.monthlyBudgetUsdCents).toBe(12345);
   });
 
   it('GET / drops the cap and the spend from a row the caller is only a member of', async () => {
-    const app = budgetedApp('LEAD', 'ORG_MEMBER');
+    const app = budgetedApp('LEAD', 'MEMBER');
     await app.ready();
     const res = await app.inject({ method: 'GET', url: PREFIX });
     const [row] = JSON.parse(res.body).data;
     expect(row).not.toHaveProperty('monthlyBudgetUsdCents');
     expect(row).not.toHaveProperty('currentMonthUsage');
-    expect(row).toMatchObject({ role: 'ORG_MEMBER', slug: 'test-org' });
+    expect(row).toMatchObject({ role: 'MEMBER', slug: 'test-org' });
     // 50 / 123.45 = 40.5021...% is rounded to one decimal; nothing else carries the cap.
     expect(row.alert.percent).toBe(40.5);
     expect(JSON.stringify(row)).not.toContain('12345');
@@ -155,7 +155,7 @@ describe('organization budget dollars', () => {
   });
 
   it('GET / keeps both for an ORG_ADMIN row', async () => {
-    const app = budgetedApp('LEAD', 'ORG_ADMIN');
+    const app = budgetedApp('LEAD', 'ADMIN');
     await app.ready();
     const res = await app.inject({ method: 'GET', url: PREFIX });
     const [row] = JSON.parse(res.body).data;

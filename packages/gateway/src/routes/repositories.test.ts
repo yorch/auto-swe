@@ -241,10 +241,10 @@ describe('repositoryRoutes', () => {
 
   describe('repository management roles', () => {
     it.each([
-      ['LEAD', 'ORG_MEMBER', true, true],
-      ['ENGINEER', 'ORG_ADMIN', true, true],
-      ['ENGINEER', 'ORG_MEMBER', true, false],
-      ['LEAD', 'ORG_ADMIN', false, false],
+      ['LEAD', 'MEMBER', true, true],
+      ['MEMBER', 'ADMIN', true, true],
+      ['MEMBER', 'MEMBER', true, false],
+      ['LEAD', 'ADMIN', false, false],
     ] as const)(
       'checks team role %s, org role %s, active %s',
       async (teamRole, orgRole, active, allowed) => {
@@ -3140,7 +3140,7 @@ describe('repositoryRoutes', () => {
     });
     const asOrgAdmin = () => {
       asTeamMember('LEAD');
-      ctx.standing.orgs[ORG_ID] = 'ORG_ADMIN';
+      ctx.standing.orgs[ORG_ID] = 'ADMIN';
     };
     const list = () =>
       ctx.app.inject({
@@ -3244,7 +3244,7 @@ describe('repositoryRoutes', () => {
 
     it('refuses an ORG_MEMBER', async () => {
       asTeamMember('LEAD');
-      ctx.standing.orgs[ORG_ID] = 'ORG_MEMBER';
+      ctx.standing.orgs[ORG_ID] = 'MEMBER';
       dataset({ orgId: ORG_ID, scope: 'ORGANIZATION', teamId: null });
       expect((await link(true)).statusCode).toBe(403);
     });

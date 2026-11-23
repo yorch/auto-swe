@@ -114,9 +114,7 @@ describe('report routes', () => {
       vi.mocked(resolveSetting).mockResolvedValue(orgWide);
       const { app, prisma } = await buildApp(role);
       prisma.organization.findMany.mockResolvedValue([budgetOrg]);
-      prisma.organizationMembership.findMany.mockResolvedValue([
-        { orgId: 'org-1', role: 'ORG_ADMIN' },
-      ]);
+      prisma.organizationMembership.findMany.mockResolvedValue([{ orgId: 'org-1', role: 'ADMIN' }]);
       const response = await app.inject({
         headers: AUTH,
         method: 'GET',
@@ -244,7 +242,7 @@ describe('report routes', () => {
 
     const matchingOrgAdmin = await buildApp('ENGINEER');
     matchingOrgAdmin.prisma.organizationMembership.findMany.mockResolvedValue([
-      { orgId: 'org-1', role: 'ORG_ADMIN' },
+      { orgId: 'org-1', role: 'ADMIN' },
     ]);
     matchingOrgAdmin.prisma.team.findUnique.mockResolvedValue({ orgId: 'org-1' });
     const authorizedResponse = await matchingOrgAdmin.app.inject({
@@ -259,7 +257,7 @@ describe('report routes', () => {
 
     const otherOrgAdmin = await buildApp('ENGINEER');
     otherOrgAdmin.prisma.organizationMembership.findMany.mockResolvedValue([
-      { orgId: 'org-1', role: 'ORG_ADMIN' },
+      { orgId: 'org-1', role: 'ADMIN' },
     ]);
     otherOrgAdmin.prisma.team.findUnique.mockResolvedValue({ orgId: 'org-2' });
     const forbiddenResponse = await otherOrgAdmin.app.inject({
@@ -367,7 +365,7 @@ describe('report routes', () => {
 
     const orgAdmin = await buildApp('ENGINEER');
     orgAdmin.prisma.organizationMembership.findMany.mockResolvedValue([
-      { orgId: 'org-1', role: 'ORG_ADMIN' },
+      { orgId: 'org-1', role: 'ADMIN' },
     ]);
     orgAdmin.prisma.team.findUnique.mockResolvedValue({ orgId: 'org-1' });
     orgAdmin.prisma.automation.findMany.mockResolvedValue([]);
