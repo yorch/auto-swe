@@ -66,9 +66,9 @@ async function collect(stream: AsyncIterable<Buffer | string>, limit: number): P
   return Buffer.concat(chunks);
 }
 /**
- * Read an upgrade request's body. Node detaches the parser at the 'upgrade' event, so body
- * bytes that arrived with the headers are in `head` and the rest arrives on the raw socket,
- * never on the request stream. Bytes past `length` are stdin and are returned in `rest`.
+ * Read the part of an upgrade request's body that the request stream did not deliver. On Node
+ * releases that detach the parser at 'upgrade', body bytes that arrived with the headers are in
+ * `head` and the rest arrives on the raw socket. Bytes past `length` are stdin and are returned in `rest`.
  */
 async function upgradeBody(
   socket: Duplex,
@@ -740,8 +740,14 @@ export class Broker {
       'invalid upgrade body'
     );
     req.socket.setTimeout(10_000, () => req.socket.destroy());
-    const { body, rest } = await upgradeBody(socket, head, length);
-    head = rest;
+    // Where body bytes land depends on the Node release: newer parsers hand them to `req` and
+    // leave only post-body bytes (stdin) in `head`; older ones detach at 'upgrade' and put them in
+    // `head` and on the socket. Read `req` first, then take any shortfall from `head` and the socket.
+    const fromRequest = await collect(req, this.config.maxJson);
+    check(fromRequest.length <= length, 'invalid upgrade body');
+    const missing = await upgradeBody(socket, head, length - fromRequest.length);
+    const body = Buffer.concat([fromRequest, missing.body]);
+    head = missing.rest;
     trace('authorize');
     const authorized = await this.authorize(req.method ?? '', req.url ?? '', body);
     trace('authorized');
