@@ -3,12 +3,24 @@ import { prisma } from '@auto-swe/shared/db';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { humanStepRoutes } from './humanSteps.js';
 import { pullRequestRoutes } from './pullRequests.js';
 import { repositoryRoutes } from './repositories.js';
 import { teamOverviewRoutes } from './teamOverview.js';
+import { teamRoutes } from './teams.js';
 import { workflowRunRoutes } from './workflowRuns.js';
+
+const gateHolder = vi.hoisted(() => ({
+  gate: { mode: 'off', staleAfterHours: 24 } as {
+    mode: 'enforce' | 'off';
+    staleAfterHours: number;
+  },
+}));
+vi.mock('@auto-swe/shared/lib/repoAccessGate', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  resolveRepoAccessGateOrLastKnown: async () => gateHolder.gate,
+}));
 
 /**
  * The `teamId` filter, the human-step count and the control-only attention state against real
@@ -26,7 +38,7 @@ const enabled = process.env.TEAM_SCOPE_PG_TEST === '1';
 
 /** More pending steps than the list's default page, so a count that rode the page would be wrong. */
 const ACTIONABLE_STEPS = 105;
-const PEOPLE = ['alice', 'bob', 'carol', 'lena', 'admin'];
+const PEOPLE = ['alice', 'bob', 'carol', 'lena', 'admin', 'oadmin', 'omember', 'xadmin'];
 
 describe.skipIf(!enabled)('team scope against Postgres', () => {
   let app: FastifyInstance;
@@ -132,6 +144,12 @@ describe.skipIf(!enabled)('team scope against Postgres', () => {
           data: { name: `ts-org-${suffix}`, slug: `ts-org-${suffix}` },
         })
       ).id;
+      // A second organization, whose ADMIN has no standing in the first.
+      ids.org2 = (
+        await prisma.organization.create({
+          data: { name: `ts-org2-${suffix}`, slug: `ts-org2-${suffix}` },
+        })
+      ).id;
       for (const key of ['a', 'b', 'c']) {
         ids[`team${key}`] = (
           await prisma.team.create({
@@ -161,6 +179,16 @@ describe.skipIf(!enabled)('team scope against Postgres', () => {
     await prisma.teamMembership.create({ data: { teamId: ids.teama, userId: ids.alice } });
     await prisma.teamMembership.create({
       data: { role: 'LEAD', teamId: ids.teama, userId: ids.lena },
+    });
+    // An organization ADMIN and a plain organization MEMBER who are on no team.
+    await prisma.organizationMembership.create({
+      data: { orgId: ids.org, role: 'ADMIN', userId: ids.oadmin },
+    });
+    await prisma.organizationMembership.create({
+      data: { orgId: ids.org, role: 'MEMBER', userId: ids.omember },
+    });
+    await prisma.organizationMembership.create({
+      data: { orgId: ids.org2, role: 'ADMIN', userId: ids.xadmin },
     });
     await prisma.teamMembership.create({ data: { teamId: ids.teamb, userId: ids.bob } });
     await prisma.teamMembership.create({ data: { teamId: ids.teamc, userId: ids.carol } });
@@ -205,6 +233,7 @@ describe.skipIf(!enabled)('team scope against Postgres', () => {
     await app.register(workflowRunRoutes, { prefix: '/api/v1/workflow-runs' });
     await app.register(repositoryRoutes, { prefix: '/api/v1/repositories' });
     await app.register(teamOverviewRoutes, { prefix: '/api/v1/teams' });
+    await app.register(teamRoutes, { prefix: '/api/v1/teams' });
     await app.register(pullRequestRoutes, { prefix: '/api/v1/pull-requests' });
     await app.register(humanStepRoutes, { prefix: '/api/v1/human-steps' });
     await app.ready();
@@ -217,13 +246,18 @@ describe.skipIf(!enabled)('team scope against Postgres', () => {
     await prisma.workflowRun.deleteMany({ where: { templateId: ids.tpl } }); // cascades steps
     await prisma.activeWorkflow.deleteMany({ where: { repoId: { in: repos } } });
     await prisma.runInput.deleteMany({ where: { requestedById: { in: people } } });
+    await prisma.organizationMembership.deleteMany({
+      where: { orgId: { in: [ids.org, ids.org2].filter(Boolean) } },
+    });
     await unscoped(async () => {
       await prisma.workflowTemplate.deleteMany({ where: { id: ids.tpl } });
       await prisma.connection.deleteMany({ where: { id: { in: repos } } });
       await prisma.team.deleteMany({
         where: { id: { in: [ids.teama, ids.teamb, ids.teamc].filter(Boolean) } },
       });
-      await prisma.organization.deleteMany({ where: { id: ids.org } });
+      await prisma.organization.deleteMany({
+        where: { id: { in: [ids.org, ids.org2].filter(Boolean) } },
+      });
     });
     await prisma.user.deleteMany({ where: { id: { in: people } } });
     await app?.close();
@@ -385,6 +419,48 @@ describe.skipIf(!enabled)('team scope against Postgres', () => {
     });
   });
 
+  describe('GET /teams/:id for an organization ADMIN who is not a member', () => {
+    type Detail = { repositories: { id: string }[]; memberships: unknown[] };
+    const detail = async (user: string, team: string) => call(user, `/api/v1/teams/${ids[team]}`);
+
+    it('answers 200, and the owned repositories honour the repo-access gate', async () => {
+      try {
+        gateHolder.gate = { mode: 'off', staleAfterHours: 24 };
+        const open = await detail('oadmin', 'teama');
+        expect(open.statusCode, open.body).toBe(200);
+        expect((open.json() as { data: Detail }).data.repositories.map((r) => r.id)).toEqual([
+          ids.repoa,
+        ]);
+        gateHolder.gate = { mode: 'enforce', staleAfterHours: 24 };
+        const gated = await detail('oadmin', 'teama');
+        expect(gated.statusCode, gated.body).toBe(200);
+        expect((gated.json() as { data: Detail }).data.repositories).toEqual([]);
+        expect(gated.body).not.toContain(`repo-a`);
+        // A member of the team is not filtered by this handler.
+        const member = await detail('alice', 'teama');
+        expect((member.json() as { data: Detail }).data.repositories.map((r) => r.id)).toEqual([
+          ids.repoa,
+        ]);
+      } finally {
+        gateHolder.gate = { mode: 'off', staleAfterHours: 24 };
+      }
+    });
+
+    it('lists the members for the same caller', async () => {
+      const res = await call('oadmin', `/api/v1/teams/${ids.teama}/members`);
+      expect(res.statusCode, res.body).toBe(200);
+    });
+
+    it('refuses a plain org member and an admin of another organization alike, and 404s an unknown id', async () => {
+      const plain = await detail('omember', 'teama');
+      const other = await detail('xadmin', 'teama');
+      expect(plain.statusCode).toBe(403);
+      expect(other.statusCode).toBe(403);
+      expect(other.body).toBe(plain.body);
+      expect((await call('oadmin', `/api/v1/teams/${crypto.randomUUID()}`)).statusCode).toBe(404);
+    });
+  });
+
   describe('GET /teams/:id/overview', () => {
     interface Overview {
       activity: { runId: string | null; state: string }[];
@@ -440,6 +516,63 @@ describe.skipIf(!enabled)('team scope against Postgres', () => {
       const res = await call('bob', `/api/v1/teams/${ids.teama}/overview`);
       expect(res.statusCode).toBe(404);
       expect((await overview('admin', 'teama')).viewerLevel).toBe('admin');
+    });
+
+    it('gives a non-member organization ADMIN the governance view and none of the work', async () => {
+      const raw = await call('oadmin', `/api/v1/teams/${ids.teama}/overview`);
+      expect(raw.statusCode, raw.body).toBe(200);
+      const view = (
+        raw.json() as {
+          data: Overview & { team: { access: string; myRole: string | null } };
+        }
+      ).data;
+      expect(view.team.access).toBe('org-admin');
+      expect(view.team.myRole).toBeNull();
+      expect(view.viewerLevel).toBe('admin');
+      // Run visibility is the caller's own: team A's run and its 105 pending steps are not theirs.
+      expect(view.activity).toEqual([]);
+      expect(view.needsYou.total).toBe(0);
+      expect(view.running).toBe(0);
+      expect(view.pullRequests.opened).toBe(0);
+      expect(view.repos).toEqual([]);
+      expect(view.lead).toEqual({ openPullRequests: 0, staleApprovals: 0, unownedFailures: 0 });
+      // A sum over the caller's visible runs would read as the team's spend: it is null instead.
+      expect(view.admin?.monthCostUsdCents).toBeNull();
+      expect(raw.body).not.toContain(ids.runa);
+      // The same holds for a team in the organization the person administers but cannot reach.
+      expect((await overview('oadmin', 'teamb')).activity).toEqual([]);
+    });
+
+    it('answers an admin of ANOTHER organization exactly as for an unknown team', async () => {
+      const unknown = await call('xadmin', `/api/v1/teams/${crypto.randomUUID()}/overview`);
+      const other = await call('xadmin', `/api/v1/teams/${ids.teama}/overview`);
+      expect(unknown.statusCode).toBe(404);
+      expect(other.statusCode).toBe(404);
+      expect(other.json()).toEqual(unknown.json());
+    });
+
+    it('labels access member for a member and platform-admin for a platform ADMIN', async () => {
+      const access = async (user: string, team: string) =>
+        (
+          (await call(user, `/api/v1/teams/${ids[team]}/overview`)).json() as {
+            data: { team: { access: string } };
+          }
+        ).data.team.access;
+      expect(await access('alice', 'teama')).toBe('member');
+      expect(await access('admin', 'teama')).toBe('platform-admin');
+    });
+
+    it('answers a plain organization member, a stranger and an unknown team with one 404', async () => {
+      const unknown = await call(
+        'omember',
+        '/api/v1/teams/00000000-0000-4000-8000-000000000000/overview'
+      );
+      expect(unknown.statusCode).toBe(404);
+      for (const user of ['omember', 'bob']) {
+        const res = await call(user, `/api/v1/teams/${ids.teama}/overview`);
+        expect(res.statusCode, user).toBe(404);
+        expect(res.body, user).toBe(unknown.body);
+      }
     });
 
     it('lists shared repositories for the sharee, and counts pull requests for the owner only', async () => {

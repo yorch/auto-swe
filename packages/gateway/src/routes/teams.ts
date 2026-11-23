@@ -571,6 +571,17 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      // A non-member organization admin (authority `org-admin`) sees the owned repositories under
+      // the same repo-access gate as the shared ones; a member's and a platform admin's response
+      // is not filtered here.
+      const ownedRepositories =
+        decision.authority === 'org-admin'
+          ? await fastify.prisma.connection.findMany({
+              select: { id: true, isActive: true, organizationName: true, repoName: true },
+              where: { teamId: team.id, ...permissionRequirement(user, request.repoAccessGate) },
+            })
+          : team.repositories;
+
       // Repositories other teams have shared with this one: read-only here,
       // and listed under the same visibility the Connections page applies —
       // active rows only, and under an enforcing repo-access gate only those
@@ -605,7 +616,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
           `${a.organizationName}/${a.repoName}`.localeCompare(`${b.organizationName}/${b.repoName}`)
         );
 
-      return { data: { ...team, sharedRepositories } };
+      return { data: { ...team, repositories: ownedRepositories, sharedRepositories } };
     }
   );
 

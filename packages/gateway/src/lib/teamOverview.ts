@@ -72,11 +72,21 @@ interface OverviewDeps {
   user: VisibilityActor;
 }
 
-/** The view a team role gets. The platform role never decides it, except for an ADMIN outside the team. */
-export function viewerLevelFor(teamRole: string | null, platformRole: string): ViewerLevel {
+type TeamAccess = TeamOverview['team']['access'];
+
+/**
+ * The view a team role gets. The platform role never decides it, except for an ADMIN outside the
+ * team; an organization admin outside the team (`orgAdminOutside`, decided by the capability
+ * resolver, never by a role compare here) gets the governance view as well.
+ */
+export function viewerLevelFor(
+  teamRole: string | null,
+  platformRole: string,
+  orgAdminOutside = false
+): ViewerLevel {
   const rank = teamRankOf(teamRole);
   if (rank === null) {
-    return isPlatformAdminRole(platformRole) ? 'admin' : 'member';
+    return isPlatformAdminRole(platformRole) || orgAdminOutside ? 'admin' : 'member';
   }
   if (teamRankMeets(rank, 'ADMIN')) {
     return 'admin';
@@ -293,8 +303,30 @@ async function monthCostCents(
 }
 
 /**
- * The team overview. Null when the team does not exist or the caller is neither a member nor a
- * platform ADMIN, so a route answers both the same way.
+ * How a caller reaches a team: as a member, as a platform ADMIN, or, without being a member, as an
+ * organization admin of its organization (`team.read` held on organization authority). Null for
+ * anyone else, whether or not the team exists, so a route answers all of them the same way.
+ */
+async function teamAccessOf(
+  deps: OverviewDeps,
+  team: { id: string },
+  myRole: string | null
+): Promise<TeamAccess | null> {
+  if (myRole !== null) {
+    return 'member';
+  }
+  if (isPlatformAdmin(deps.user)) {
+    return 'platform-admin';
+  }
+  const decision = await can(deps.prisma, userActor(deps.user), 'team.read', { teamId: team.id });
+  return decision.allowed && decision.authority === 'org-admin' ? 'org-admin' : null;
+}
+
+/**
+ * The team overview. Null when the team does not exist or the caller is neither a member, a
+ * platform ADMIN, nor an organization admin of the team's organization, so a route answers all of
+ * those the same way. A non-member sees a governance view: every section that reads runs is built
+ * with the caller's own visibility filter, so it holds nothing the caller could not already reach.
  *
  * The lead and admin sections are only queried, and only attached, for a viewer who may see them:
  * a lower role gets a response in which those keys do not exist.
@@ -317,10 +349,14 @@ export async function buildTeamOverview(
     where: { id: teamId },
   });
   const myRole = team?.memberships[0]?.role ?? null;
-  if (!team || (myRole === null && !isPlatformAdmin(user))) {
+  if (!team) {
     return null;
   }
-  const viewerLevel = viewerLevelFor(myRole, user.role);
+  const access = await teamAccessOf(deps, team, myRole);
+  if (access === null) {
+    return null;
+  }
+  const viewerLevel = viewerLevelFor(myRole, user.role, access === 'org-admin');
   const now = Date.now();
   const scope = teamDeskScope(team.id);
   const terms = deskRunTerms(user, gate, scope);
@@ -389,6 +425,7 @@ export async function buildTeamOverview(
     repos,
     running: counts.running,
     team: {
+      access,
       id: team.id,
       myRole,
       name: team.name,
@@ -491,6 +528,11 @@ export async function buildTeamOverview(
     !(await can(prisma, userActor(user), 'org.budget.manage', { orgId: team.orgId })).allowed
   ) {
     return { ...withLead, admin: {} };
+  }
+  // A non-member organization admin's runs are filtered to the ones they may see, so a sum would
+  // read as the team's spend and be far too low beside a real budget percentage: it is null.
+  if (access === 'org-admin') {
+    return { ...withLead, admin: { monthCostUsdCents: null } };
   }
   return { ...withLead, admin: { monthCostUsdCents: await monthCostCents(deps, team.id, now) } };
 }

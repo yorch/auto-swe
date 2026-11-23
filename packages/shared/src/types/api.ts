@@ -358,8 +358,14 @@ export interface TeamOverview {
     name: string;
     orgId: string;
     orgName: string;
-    /** The caller's own role in this team; null for a platform ADMIN who is not a member. */
+    /** The caller's own role in this team; null for someone who is not a member. */
     myRole: TeamRoleValue | null;
+    /**
+     * How the caller reached this team: as a `member`, as an `org-admin` of its organization
+     * without being a member, or as a `platform-admin`. A non-member sees a governance view, not
+     * the team's work: run visibility is a separate gate and is unchanged.
+     */
+    access: 'member' | 'org-admin' | 'platform-admin';
   };
   /** Which view the server built: the team role decides it, never the platform role. */
   viewerLevel: 'member' | 'lead' | 'admin';

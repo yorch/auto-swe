@@ -3,6 +3,13 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { orgTeamRoutes, teamRoutes } from './teams.js';
 
+const gateHolder = vi.hoisted(() => ({
+  gate: undefined as { mode: 'enforce' | 'off'; staleAfterHours: number } | undefined,
+}));
+vi.mock('@auto-swe/shared/lib/repoAccessGate', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  resolveRepoAccessGateOrLastKnown: async () => gateHolder.gate,
+}));
 vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   resolveSetting: vi.fn(async () => ['pypi.org']),
@@ -38,6 +45,13 @@ interface TeamRow {
   isActive?: boolean;
   orgId?: string;
   orgName?: string;
+  /** The owned repositories the detail read returns for a member. */
+  repositories?: Array<{
+    id: string;
+    isActive: boolean;
+    organizationName: string;
+    repoName: string;
+  }>;
 }
 
 interface State {
@@ -59,6 +73,11 @@ interface State {
   teamQueries?: Array<{ include: Record<string, unknown>; where: Record<string, unknown> }>;
   /** The `include` the team detail read passed to `team.findUnique`. */
   detailIncludes?: Array<Record<string, unknown>>;
+  /** The repo-access gate the app puts on every request (undefined: none). */
+  gate?: { mode: 'enforce' | 'off'; staleAfterHours: number };
+  /** What `connection.findMany` returns, and the queries it was asked. */
+  visibleRepositories?: Array<{ id: string; repoName: string }>;
+  connectionQueries?: Array<{ where: Record<string, unknown> }>;
   /** Rows written to the configuration audit log. */
   audits?: Array<{ action: string; entityType: string; [key: string]: unknown }>;
 }
@@ -127,6 +146,8 @@ function buildApp(state: State): FastifyInstance {
     }),
   } as unknown as never);
 
+  gateHolder.gate = state.gate;
+
   const prisma: Record<string, unknown> = {
     $executeRaw: async (_sql: TemplateStringsArray, ...values: unknown[]) => {
       state.locks = [...(state.locks ?? []), String(values[0])];
@@ -137,6 +158,12 @@ function buildApp(state: State): FastifyInstance {
       create: async ({ data }: { data: { action: string; entityType: string } }) => {
         state.audits = [...(state.audits ?? []), data];
         return data;
+      },
+    },
+    connection: {
+      findMany: async (args: { where: Record<string, unknown> }) => {
+        state.connectionQueries = [...(state.connectionQueries ?? []), args];
+        return state.visibleRepositories ?? [];
       },
     },
     connectionTeamShare: {
@@ -247,7 +274,7 @@ function buildApp(state: State): FastifyInstance {
         const found = state.teams.find((t) =>
           where.id ? t.id === where.id : t.slug === where.slug
         );
-        return found ? { orgId: TEAM_ID, ...found } : null;
+        return found ? { orgId: TEAM_ID, repositories: [], ...found } : null;
       },
       findUniqueOrThrow: async () => ({ orgId: TEAM_ID }),
       update: async ({
@@ -578,6 +605,78 @@ describe('GET /api/v1/teams/:id shared repositories', () => {
       connection: { isActive: true, type: 'git_repo' },
       teamId: TEAM_ID,
     });
+  });
+});
+
+describe('GET /api/v1/teams/:id for an organization admin who is not a member', () => {
+  const headers = { authorization: 'Bearer x' };
+  const OTHER_ORG = '00000000-0000-4000-8000-0000000000f2';
+  const OWNED = [
+    { id: 'r1', isActive: true, organizationName: 'acme', repoName: 'alpha' },
+    { id: 'r2', isActive: true, organizationName: 'acme', repoName: 'hidden' },
+  ];
+  const ENFORCE = { mode: 'enforce', staleAfterHours: 24 } as const;
+
+  /** The caller holds `orgRole` in `orgId` and no membership in the team (unless `member`). */
+  function stateFor(orgId: string, orgRole: string, member = false): State {
+    const state = freshState({
+      gate: ENFORCE,
+      memberships: member
+        ? [{ id: 'm-caller', role: 'MEMBER', teamId: TEAM_ID, userId: ADMIN_USER_ID }]
+        : [{ id: 'm-target', role: 'MEMBER', teamId: TEAM_ID, userId: TARGET_USER_ID }],
+      orgMemberships: [{ id: 'org-caller', orgId, role: orgRole, userId: ADMIN_USER_ID }],
+      userRole: 'USER',
+      visibleRepositories: [OWNED[0] as { id: string; repoName: string }],
+    });
+    Object.assign(state.teams[0] as TeamRow, { orgId: TEAM_ID, repositories: OWNED });
+    return state;
+  }
+
+  const get = (state: State, id = TEAM_ID) =>
+    buildApp(state).inject({ headers, method: 'GET', url: `/api/v1/teams/${id}` });
+
+  it('reads the team, and its owned repositories are filtered by the repo-access gate', async () => {
+    const state = stateFor(TEAM_ID, 'ADMIN');
+    const res = await get(state);
+    expect(res.statusCode).toBe(200);
+    // Only the repository the gate lets the caller reach; 'hidden' is not named.
+    expect(res.json().data.repositories.map((r: { repoName: string }) => r.repoName)).toEqual([
+      'alpha',
+    ]);
+    expect(state.connectionQueries?.[0]?.where).toMatchObject({
+      OR: expect.any(Array),
+      teamId: TEAM_ID,
+    });
+  });
+
+  it('leaves a member the unfiltered owned repositories', async () => {
+    const state = stateFor(TEAM_ID, 'MEMBER', true);
+    const res = await get(state);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.repositories).toEqual(OWNED);
+    expect(state.connectionQueries ?? []).toEqual([]);
+  });
+
+  it('answers a plain org member and an admin of another organization with the same 403', async () => {
+    const plain = await get(stateFor(TEAM_ID, 'MEMBER'));
+    const other = await get(stateFor(OTHER_ORG, 'ADMIN'));
+    expect(plain.statusCode).toBe(403);
+    expect(other.statusCode).toBe(403);
+    expect(other.payload).toBe(plain.payload);
+  });
+
+  it('answers 404 for an unknown team', async () => {
+    const res = await get(stateFor(TEAM_ID, 'ADMIN'), '00000000-0000-4000-8000-0000000000ff');
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('lets the same caller list the members', async () => {
+    const res = await buildApp(stateFor(TEAM_ID, 'ADMIN')).inject({
+      headers,
+      method: 'GET',
+      url: `/api/v1/teams/${TEAM_ID}/members`,
+    });
+    expect(res.statusCode).toBe(200);
   });
 });
 
