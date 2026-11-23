@@ -50,6 +50,7 @@ const base: TeamOverview = {
   ],
   running: 2,
   team: {
+    access: 'member',
     id: 't1',
     myRole: 'MEMBER',
     name: 'Payments',
@@ -324,5 +325,38 @@ describe('TeamOverviewView', () => {
     expect(within(viewOnly).getByText('View only')).toBeTruthy();
     expect(within(viewOnly).queryByRole('link', { name: 'Start work' })).toBeNull();
     expect(screen.getAllByRole('link', { name: 'Start work' })).toHaveLength(1);
+  });
+
+  describe('organization admin notice', () => {
+    const asOrgAdmin: TeamOverview = {
+      ...base,
+      team: { ...base.team, access: 'org-admin', myRole: null },
+    };
+
+    it('says the viewer is an organization admin and links to Members when they may manage them', () => {
+      render(<TeamOverviewView canManageMembers overview={asOrgAdmin} slug="payments" />);
+      expect(screen.getByText('Viewing as an organization admin')).toBeTruthy();
+      expect(screen.getByText(/run activity is not shown/)).toBeTruthy();
+      expect(screen.getByRole('link', { name: 'Members' }).getAttribute('href')).toBe(
+        '/teams/payments/members'
+      );
+    });
+
+    it('omits the Members link when the viewer cannot manage members', () => {
+      render(<TeamOverviewView overview={asOrgAdmin} slug="payments" />);
+      expect(screen.getByText('Viewing as an organization admin')).toBeTruthy();
+      expect(screen.queryByRole('link', { name: 'Members' })).toBeNull();
+    });
+
+    it.each(['member', 'platform-admin'] as const)('is not shown for access %s', (access) => {
+      render(
+        <TeamOverviewView
+          canManageMembers
+          overview={{ ...base, team: { ...base.team, access } }}
+          slug="payments"
+        />
+      );
+      expect(screen.queryByText('Viewing as an organization admin')).toBeNull();
+    });
   });
 });

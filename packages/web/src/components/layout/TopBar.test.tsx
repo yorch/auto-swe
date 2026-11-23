@@ -11,7 +11,9 @@ const route = vi.hoisted(() => ({ pathname: '/' }));
 vi.mock('@/components/setup/SetupIndicator', () => ({ SetupIndicator: () => null }));
 
 vi.mock('@/hooks/useGatewayStatus', () => ({ useGatewayStatus: () => status.value }));
-vi.mock('@/hooks/useTeamNav', () => ({ useTeamNav: () => ({ entries: [], isLoading: false }) }));
+vi.mock('@/hooks/useTeamNav', () => ({
+  useTeamNav: () => ({ administered: [], entries: [], isLoading: false }),
+}));
 vi.mock('@/hooks/useUserPreferences', () => ({
   useUserPreferences: () => ({ pinnedTeamSlugs: [], setPinnedTeamSlugs: () => undefined }),
 }));

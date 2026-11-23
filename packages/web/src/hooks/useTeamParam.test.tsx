@@ -40,7 +40,7 @@ describe('useTeamParam', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it('resolves the slug through the caller’s member teams only', async () => {
+  it('resolves the slug through the caller’s member teams first', async () => {
     resetNavigation('team=payments', '/requests');
     const spy = setupFetchMock({ '/api/v1/teams': () => MEMBER_TEAMS });
     const { result } = renderHook(() => useTeamParam(), { wrapper });
@@ -51,7 +51,31 @@ describe('useTeamParam', () => {
     expect(String(spy.mock.calls[0]?.[0])).toContain('member=true');
   });
 
-  it('ignores a slug that names no member team, without an error', async () => {
+  it('resolves a team the caller administers without belonging to', async () => {
+    resetNavigation('team=ops', '/requests');
+    // The member list lacks it; only the full visible list names it (myRole null).
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) =>
+        json(
+          String(input).includes('member=true')
+            ? MEMBER_TEAMS
+            : {
+                data: [
+                  ...MEMBER_TEAMS.data,
+                  { id: 'team-2', myRole: null, name: 'Ops', slug: 'ops' },
+                ],
+              }
+        )
+      )
+    );
+    const { result } = renderHook(() => useTeamParam(), { wrapper });
+    await waitFor(() => expect(result.current.team?.name).toBe('Ops'));
+    expect(result.current.teamId).toBe('team-2');
+    expect(result.current.blocked).toBe(false);
+  });
+
+  it('ignores a slug that names no visible team, without an error', async () => {
     resetNavigation('team=secret-team', '/requests');
     setupFetchMock({ '/api/v1/teams': () => MEMBER_TEAMS });
     const { result } = renderHook(() => useTeamParam(), { wrapper });
@@ -83,7 +107,7 @@ describe('useTeamParam', () => {
     expect(result.current.teamId).toBeUndefined();
   });
 
-  it('lets a platform ADMIN open a team they are not a member of, and only an ADMIN', async () => {
+  it('resolves a team the caller is not a member of when the server lists it, for a platform ADMIN or not', async () => {
     resetNavigation('team=elsewhere', '/requests');
     const all = {
       data: [{ id: 'team-9', myRole: null, name: 'Elsewhere', slug: 'elsewhere' }],
@@ -110,11 +134,18 @@ describe('useTeamParam', () => {
     await waitFor(() => expect(admin.result.current.teamId).toBe('team-9'));
     admin.unmount();
 
+    // Visibility is the server's answer, not the platform role: a person whose list carries the
+    // team (an organization admin) resolves it too, and one whose list lacks it gets nothing.
     who = 'l';
     useAuthStore.setState({ isAuthenticated: true, user: { role: 'USER', sub: 'l' } });
-    const lead = renderHook(() => useTeamParam(), { wrapper });
-    await waitFor(() => expect(lead.result.current.pending).toBe(false));
-    expect(lead.result.current.team).toBeNull();
-    expect(lead.result.current.isError).toBe(false);
+    const orgAdmin = renderHook(() => useTeamParam(), { wrapper });
+    await waitFor(() => expect(orgAdmin.result.current.teamId).toBe('team-9'));
+    orgAdmin.unmount();
+
+    resetNavigation('team=hidden', '/requests');
+    const stranger = renderHook(() => useTeamParam(), { wrapper });
+    await waitFor(() => expect(stranger.result.current.pending).toBe(false));
+    expect(stranger.result.current.team).toBeNull();
+    expect(stranger.result.current.isError).toBe(false);
   });
 });

@@ -19,6 +19,7 @@ vi.mock('@/hooks/useEffectivePermissions', async () =>
   (await import('@/test/permissions')).permissionsMock()
 );
 const teamNav = vi.hoisted(() => ({
+  administered: [] as { id: string; myRole: null; name: string; orgName: string; slug: string }[],
   entries: [] as {
     needsYou: number;
     team: { id: string; myRole: string; name: string; slug: string };
@@ -26,7 +27,11 @@ const teamNav = vi.hoisted(() => ({
   pinned: [] as string[],
 }));
 vi.mock('@/hooks/useTeamNav', () => ({
-  useTeamNav: () => ({ entries: teamNav.entries, isLoading: false }),
+  useTeamNav: () => ({
+    administered: teamNav.administered,
+    entries: teamNav.entries,
+    isLoading: false,
+  }),
 }));
 vi.mock('@/hooks/useUserPreferences', () => ({
   useUserPreferences: () => ({ pinnedTeamSlugs: teamNav.pinned }),
@@ -231,7 +236,29 @@ describe('Sidebar Teams group', () => {
 
   beforeEach(() => {
     teamNav.entries = [];
+    teamNav.administered = [];
     teamNav.pinned = [];
+  });
+
+  it('lists administered non-member teams in their own group, without badges', () => {
+    teamNav.entries = [entry('payments', 'Payments', 4)];
+    teamNav.administered = [
+      { id: 'id-ops', myRole: null, name: 'Ops', orgName: 'Acme', slug: 'ops' },
+    ];
+    resetNavigation('', '/');
+    render(<Sidebar onClose={() => undefined} open />);
+    const group = screen.getByRole('list', { name: 'Administered' });
+    const links = Array.from(group.querySelectorAll('a'));
+    expect(links.map((a) => a.getAttribute('href'))).toEqual(['/teams/ops']);
+    expect(links[0]?.querySelector('[data-testid="needs-you-badge"]')).toBeNull();
+    expect(screen.getByRole('list', { name: 'My teams' })).toBeTruthy();
+  });
+
+  it('shows no Administered group when there are none', () => {
+    teamNav.entries = [entry('payments', 'Payments')];
+    resetNavigation('', '/');
+    render(<Sidebar onClose={() => undefined} open />);
+    expect(screen.queryByRole('list', { name: 'Administered' })).toBeNull();
   });
 
   it('lists every member team with its needs-you badge when none is pinned', () => {

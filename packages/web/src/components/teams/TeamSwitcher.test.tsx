@@ -7,13 +7,14 @@ import { TeamSwitcher } from './TeamSwitcher';
 vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).navigationMock());
 
 const nav = vi.hoisted(() => ({
+  administered: [] as { id: string; myRole: null; name: string; orgName: string; slug: string }[],
   entries: [] as {
     needsYou: number;
     team: { id: string; myRole: string | null; name: string; slug: string };
   }[],
 }));
 vi.mock('@/hooks/useTeamNav', () => ({
-  useTeamNav: () => ({ entries: nav.entries, isLoading: false }),
+  useTeamNav: () => ({ administered: nav.administered, entries: nav.entries, isLoading: false }),
 }));
 
 const prefs = vi.hoisted(() => ({ pinned: [] as string[], set: vi.fn() }));
@@ -33,6 +34,7 @@ beforeEach(() => {
   prefs.pinned = [];
   prefs.set.mockClear();
   resetNavigation('', '/');
+  nav.administered = [];
   nav.entries = [
     entry('payments', 'Payments', 'LEAD', 3),
     entry('platform', 'Platform', 'MEMBER', 0),
@@ -63,6 +65,21 @@ describe('TeamSwitcher', () => {
     );
     // A team with nothing waiting shows no badge.
     expect(within(rows[2] as HTMLElement).queryByTestId('needs-you-badge')).toBeNull();
+  });
+
+  it('lists administered non-member teams under their own heading, with no badge or pin', () => {
+    nav.administered = [{ id: 'id-ops', myRole: null, name: 'Ops', orgName: 'Acme', slug: 'ops' }];
+    const menu = open('/teams/payments/work');
+    expect(menu.getByText('Administered')).toBeTruthy();
+    const ops = menu.getByRole('link', { name: /Ops/ });
+    expect(ops.getAttribute('href')).toBe('/teams/ops/work');
+    expect(within(ops).queryByTestId('needs-you-badge')).toBeNull();
+    expect(menu.queryByRole('button', { name: /Pin Ops/ })).toBeNull();
+  });
+
+  it('shows no Administered heading when there are none', () => {
+    const menu = open();
+    expect(menu.queryByText('Administered')).toBeNull();
   });
 
   it('keeps the tab the caller is on when it moves to another team', () => {
