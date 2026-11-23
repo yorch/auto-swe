@@ -11,7 +11,8 @@ vi.mock('../lib/lessonRecall.js', () => ({
 }));
 vi.mock('../lib/lessonRecallArm.js', () => ({ currentLessonRecallArm: armMock }));
 
-import { createLessonTools } from './lessonTools.js';
+import { lessonWorkerTools } from './lessonTools.js';
+import { toMastraTools } from './mastraTool.js';
 
 type Exec = (input: Record<string, unknown>) => Promise<Record<string, unknown>>;
 const exec = (tool: unknown) => (tool as { execute: Exec }).execute;
@@ -21,7 +22,14 @@ beforeEach(() => {
   armMock.mockResolvedValue('ON');
 });
 
-describe('createLessonTools', () => {
+/** The lesson tools as the Mastra loop binds them, through the bridge every loop uses. */
+const createLessonTools = (repoId: string, tracer?: never) =>
+  toMastraTools(lessonWorkerTools(repoId, tracer)) as unknown as {
+    explainLesson: { execute: (args: unknown) => Promise<unknown> };
+    searchLessons: { execute: (args: unknown) => Promise<unknown> };
+  };
+
+describe('the lesson tools', () => {
   it.each(['SHADOW', 'OFF'])(
     'refuses both tools in %s without passing the model any lessons',
     async (arm) => {

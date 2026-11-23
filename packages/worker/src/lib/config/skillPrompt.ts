@@ -31,3 +31,13 @@ export function skillMenuLine(
   const tag = s.provenance ? `[${s.provenance}] ` : '';
   return `- **${s.name}**: ${tag}${s.description || s.name}`;
 }
+
+/**
+ * A `loadSkill` result as the text a harness's tool message carries. The result
+ * was rendered by {@link skillPromptBlock}, so this is a pass-through — and the
+ * read lives here, beside the renderer, rather than at a runtime's tool binding
+ * that would then be a second site skill text leaves through.
+ */
+export function skillToolText(result: { promptText: string }): string {
+  return result.promptText;
+}

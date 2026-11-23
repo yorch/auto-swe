@@ -596,7 +596,10 @@ describe('runImplementerFixSession', () => {
       expect.anything(),
       'ciFixer',
       'repo-1',
-      expect.anything()
+      expect.anything(),
+      // No eval lesson tools, and no context file in this workspace.
+      undefined,
+      null
     );
     const messages = generateMock.mock.calls[0]?.[0] as Array<{ role: string; content: string }>;
     const system = messages.find((m) => m.role === 'system')?.content;

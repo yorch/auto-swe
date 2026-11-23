@@ -8,6 +8,7 @@ import {
   submitWorkflowLearning,
 } from '../lib/knowledgeRuntime.js';
 import { MemoryContentRefusedError } from '../lib/memoryGuard.js';
+import type { WorkerTool } from './workerTool.js';
 
 export const SEARCH_KNOWLEDGE_TOOL = 'searchKnowledge';
 export const SUBMIT_LEARNING_TOOL = 'submitLearning';
@@ -100,32 +101,59 @@ export function buildKnowledgeTools(
     outputSchema: SEARCH_KNOWLEDGE_OUTPUT_SCHEMA,
   });
   const submitLearningTool = createTool({
-    description: 'Submit a local unreviewed learning grounded in evidence from this workflow run.',
-    execute: async (input) => {
-      const started = Date.now();
-      let result: Awaited<ReturnType<typeof submitWorkflowLearning>>;
-      try {
-        result = await submitWorkflowLearning(input, resolveWorkflowKnowledgeEvidence);
-      } catch (err) {
-        // The refusal names the patterns it matched. The model must not see them,
-        // or it can rephrase until nothing matches; the security event keeps them.
-        if (err instanceof MemoryContentRefusedError) {
-          throw new Error(LEARNING_REFUSED_MESSAGE);
-        }
-        throw err;
-      }
-      const output = { id: result.id, status: 'UNREVIEWED', version: result.version };
-      tracer?.addToolCall({
-        durationMs: Date.now() - started,
-        inputJson: input,
-        outputJson: output,
-        toolName: SUBMIT_LEARNING_TOOL,
-      });
-      return output;
-    },
+    description: SUBMIT_LEARNING_DESCRIPTION,
+    execute: (input) => submitLearning(input, tracer),
     id: SUBMIT_LEARNING_TOOL,
     inputSchema: SUBMIT_LEARNING_INPUT_SCHEMA,
     outputSchema: SUBMIT_LEARNING_OUTPUT_SCHEMA,
   });
   return { searchKnowledge, submitLearning: submitLearningTool };
+}
+
+/** What the model is told `submitLearning` does, on every loop that offers it. */
+export const SUBMIT_LEARNING_DESCRIPTION =
+  'Submit a local unreviewed learning grounded in evidence from this workflow run.';
+
+/**
+ * The `submitLearning` body, written once for every loop that can call it: the
+ * Mastra loop's tool above, and a harness's, which binds this the same way it
+ * binds its lesson tools (`workerTool.ts`). Whether the tool is offered at all
+ * is the grant's decision (`Agent.toolKeys` naming it), never this function's.
+ */
+export async function submitLearning(
+  input: unknown,
+  tracer?: AgentTracer
+): Promise<{ id: string; status: string; version: number }> {
+  const parsed = SUBMIT_LEARNING_INPUT_SCHEMA.parse(input);
+  const started = Date.now();
+  let result: Awaited<ReturnType<typeof submitWorkflowLearning>>;
+  try {
+    result = await submitWorkflowLearning(parsed, resolveWorkflowKnowledgeEvidence);
+  } catch (err) {
+    // The refusal names the patterns it matched. The model must not see them,
+    // or it can rephrase until nothing matches; the security event keeps them.
+    if (err instanceof MemoryContentRefusedError) {
+      throw new Error(LEARNING_REFUSED_MESSAGE);
+    }
+    throw err;
+  }
+  const output = { id: result.id, status: 'UNREVIEWED', version: result.version };
+  tracer?.addToolCall({
+    durationMs: Date.now() - started,
+    inputJson: parsed,
+    outputJson: output,
+    toolName: SUBMIT_LEARNING_TOOL,
+  });
+  return output;
+}
+
+/** {@link submitLearning} in the runtime-neutral shape a harness binds. */
+export function submitLearningWorkerTool(tracer?: AgentTracer): WorkerTool {
+  return {
+    call: (args) => submitLearning(args, tracer),
+    description: SUBMIT_LEARNING_DESCRIPTION,
+    inputSchema: SUBMIT_LEARNING_INPUT_SCHEMA,
+    name: SUBMIT_LEARNING_TOOL,
+    outputSchema: SUBMIT_LEARNING_OUTPUT_SCHEMA,
+  };
 }

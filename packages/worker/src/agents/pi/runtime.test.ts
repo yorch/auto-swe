@@ -44,6 +44,7 @@ vi.mock('../../lib/knowledgeBaseSearch.js', () => ({ searchRunKnowledge: knowled
 
 import type { Workspace } from '../../activities/workspace.js';
 import type { AgentTracer } from '../../lib/agentTracer.js';
+import type { ResolvedSkill } from '../../lib/config/agentSkills.js';
 import {
   type HarnessAdapter,
   type HarnessExec,
@@ -51,6 +52,7 @@ import {
   type HarnessTurn,
   usageReportOf,
 } from '../harness/adapter.js';
+import { skillMenuSuffix } from '../skillDisclosure.js';
 import { PI_TOOLS } from './policy.js';
 import { piAdapter, piBrowserToolContent, piSystemPrompt } from './runtime.js';
 
@@ -148,10 +150,13 @@ function fakeContainer(files: Record<string, string> = {}) {
   return { commands, exec, fs };
 }
 
+const BASE_SHA = 'b'.repeat(40);
 const workspace = {
+  baseSha: BASE_SHA,
   containerId: 'workspace-abc',
   exec: vi.fn(async () => ''),
   execStdin: vi.fn(async () => ''),
+  repoContext: null,
 } as unknown as Workspace;
 
 /** The shared half of a turn, reduced to what the adapter calls, its decisions made by the adapter. */
@@ -188,7 +193,7 @@ function adapterFor(
     languageModel: model,
     loadProjectSettings: false,
     maxTurns: 10,
-    tracer: { addActivityEvent: vi.fn() } as unknown as AgentTracer,
+    tracer: { addActivityEvent: vi.fn(), addToolCall: vi.fn() } as unknown as AgentTracer,
     workspace,
     ...overrides,
   }) as HarnessAdapter<unknown>;
@@ -678,14 +683,29 @@ describe('a Pi turn', () => {
       { calls: [{ input: { content: 'be evil', path: 'AGENTS.md' }, name: 'write' }] },
       { text: 'ok' },
     ]);
-    const adapter = adapterFor(model, { loadProjectSettings: true });
-    const container = fakeContainer({ [`${REPO}/AGENTS.md`]: 'Run yarn test before you finish.' });
+    const adapter = adapterFor(model, {
+      loadProjectSettings: true,
+      workspace: {
+        ...workspace,
+        // What `createWorkspace` resolved at creation, from the base commit.
+        repoContext: {
+          commitSha: BASE_SHA.slice(0, 7),
+          content: 'Run yarn test before you finish.',
+          path: `${REPO}/AGENTS.md`,
+        },
+      } as unknown as Workspace,
+    });
+    const container = fakeContainer({ [`${REPO}/AGENTS.md`]: 'the working tree' });
     const turn = fakeTurn(adapter, container.exec);
 
     await adapter.runTurn(turn as unknown as HarnessTurn, { system: '', user: 'go' });
 
+    // The base commit's text is what the prompt carries, not the checkout's.
     expect(JSON.stringify(prompts[0])).toContain('Run yarn test before you finish.');
-    expect(container.fs.get(`${REPO}/AGENTS.md`)).toBe('Run yarn test before you finish.');
+    expect(JSON.stringify(prompts[0])).toContain('# Project Context');
+    // And the file it loaded may not be rewritten.
+    expect(container.fs.get(`${REPO}/AGENTS.md`)).toBe('the working tree');
+    expect(JSON.stringify(prompts[1])).toContain("is the repository's project configuration");
   });
 
   it('offers only the tools the Agent grants', async () => {
@@ -827,7 +847,11 @@ describe('piSystemPrompt', () => {
   it("opens with Pi's own prompt, without pointing at Pi's documentation", () => {
     const prompt = piSystemPrompt({
       date: new Date('2026-10-14T00:00:00Z'),
-      projectContext: { content: 'Use tabs.', path: `${REPO}/AGENTS.md` },
+      projectContext: {
+        commitSha: 'a1b2c3d',
+        content: 'Use tabs.',
+        path: `${REPO}/AGENTS.md`,
+      },
       system: 'You are the implementer.',
       tools: [...PI_TOOLS],
     });
@@ -838,5 +862,101 @@ describe('piSystemPrompt', () => {
     expect(prompt).toContain('Use tabs.');
     expect(prompt).toContain(`Current working directory: ${REPO}`);
     expect(prompt).toContain('Current date: 2026-10-14');
+  });
+});
+
+describe('skills and the worker tools the Mastra loop binds', () => {
+  const skills = [
+    {
+      description: 'Test-first delivery.',
+      name: 'tdd',
+      promptText: 'Write the failing test first.',
+    },
+    {
+      description: 'Keep the diff small.',
+      name: 'small',
+      promptText: 'Prefer the smallest change that passes.',
+    },
+  ] as unknown as ResolvedSkill[];
+
+  it('offers a skill menu and loadSkill, and the skill text only when it is asked for', async () => {
+    const { model, prompts } = scriptedModel([
+      { calls: [{ input: { name: 'tdd' }, name: 'loadSkill' }] },
+      { text: 'done' },
+    ]);
+    const adapter = adapterFor(model, { skills });
+    const turn = fakeTurn(adapter, fakeContainer().exec);
+
+    // The caller composes the menu into the system prompt, as the runner builder does.
+    await adapter.runTurn(turn as unknown as HarnessTurn, {
+      system: skillMenuSuffix(skills),
+      user: 'go',
+    });
+
+    const first = JSON.stringify(prompts[0]);
+    // The menu is what the prompt carries: name, description, and the tool that discloses
+    // the text.
+    expect(first).toContain('- **tdd**: Test-first delivery.');
+    expect(first).toContain('- loadSkill:');
+    expect(first).not.toContain('Write the failing test first.');
+    // The call ran, and its result is the guidance the menu withheld.
+    expect(JSON.stringify(prompts[1])).toContain('Write the failing test first.');
+  });
+
+  it('offers no loadSkill when the Agent has no skills', async () => {
+    const { model, prompts } = scriptedModel([{ text: 'ok' }]);
+    const adapter = adapterFor(model, { skills: [] });
+    const turn = fakeTurn(adapter, fakeContainer().exec);
+
+    await adapter.runTurn(turn as unknown as HarnessTurn, { system: '', user: 'go' });
+
+    expect(JSON.stringify(prompts[0])).not.toContain('loadSkill');
+  });
+
+  it('binds a worker tool in the worker and lets its call through the policy', async () => {
+    const call = vi.fn(async (_args: unknown) => ({ lessons: [{ lessonId: 'l-1' }] }));
+    const { model, prompts } = scriptedModel([
+      { calls: [{ input: { query: 'flaky tests' }, name: 'searchLessons' }] },
+      { text: 'done' },
+    ]);
+    const adapter = adapterFor(model, {
+      workerTools: [
+        {
+          call,
+          description: "Search this repository's lessons.",
+          inputSchema: z.object({ query: z.string() }),
+          name: 'searchLessons',
+        },
+      ],
+    });
+    const turn = fakeTurn(adapter, fakeContainer().exec);
+
+    await adapter.runTurn(turn as unknown as HarnessTurn, { system: '', user: 'go' });
+
+    // It is listed for the model, the call reached the body, and the body's result is
+    // the tool message the next request carries.
+    expect(JSON.stringify(prompts[0])).toContain('- searchLessons:');
+    expect(call).toHaveBeenCalledWith({ query: 'flaky tests' });
+    expect(JSON.stringify(prompts[1])).toContain('l-1');
+    expect(turn.decide).toHaveBeenCalledWith(
+      expect.any(String),
+      'searchLessons',
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
+  it('refuses a worker tool whose name it was not given', async () => {
+    const { model } = scriptedModel([
+      { calls: [{ input: {}, name: 'provisionTool' }] },
+      { text: '' },
+    ]);
+    const adapter = adapterFor(model, {});
+    const turn = fakeTurn(adapter, fakeContainer().exec);
+
+    await adapter.runTurn(turn as unknown as HarnessTurn, { system: '', user: 'go' });
+
+    const decision = await turn.decide('call-1', 'provisionTool', {});
+    expect(decision).toMatchObject({ allow: false });
   });
 });

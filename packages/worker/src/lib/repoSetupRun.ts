@@ -201,6 +201,55 @@ export async function readSetupFile(
   return result.stdout;
 }
 
+/** One entry of a commit's tree: its content and the mode git recorded. */
+export interface SetupEntry {
+  content: string;
+  /** `100644`, `100755`, `120000` (a symlink, whose content is its target path), … */
+  mode: string;
+}
+
+/**
+ * The entry at `<ref>:<path>` with its mode, or null when the commit has none.
+ *
+ * Read with `--no-replace-objects` for the same reason {@link readSetupFile} is: a repository can
+ * record a replace ref and rewrite what a commit's tree looks like — including from a branch, since
+ * setup code runs from the branch. Its mode is what tells a file from a symlink, which `cat-file -p`
+ * alone cannot: git stores a symlink as a blob holding the path it points at.
+ */
+export async function readSetupEntry(
+  host: RepoSetupHost,
+  ref: string,
+  path: string,
+  maxBytes: number
+): Promise<SetupEntry | null> {
+  if (!/^[0-9a-f]{7,64}$/i.test(ref)) {
+    // Never a revision expression or an option: this reads one commit's tree.
+    throw new TypeError(`readSetupEntry needs a commit id, not '${ref}'`);
+  }
+  const listed = await host.capture(
+    `git --no-replace-objects ls-tree -z ${shellQuote(ref)} -- ${shellQuote(path)}`,
+    { timeoutMs: 60_000 }
+  );
+  if (listed.exitCode !== 0) {
+    throw setupRunFailure(`could not list ${path}`, blocker('internal', tail(host, listed)));
+  }
+  const [record = ''] = listed.stdout.split('\0');
+  const match = /^(\d{6}) (\w+) ([0-9a-f]+)\t/.exec(record);
+  if (!match || match[2] !== 'blob') {
+    return null;
+  }
+  // By the object id the listing named, not `ref:path` again: one resolution, and a path holding a
+  // `:` or a revision expression cannot mean something else the second time.
+  const result = await host.capture(
+    `git --no-replace-objects cat-file -p ${shellQuote(match[3] as string)}`,
+    { maxOutputBytes: maxBytes + 1, timeoutMs: 60_000 }
+  );
+  if (result.exitCode !== 0) {
+    throw setupRunFailure(`could not read ${path}`, blocker('internal', tail(host, result)));
+  }
+  return { content: result.stdout, mode: match[1] as string };
+}
+
 /** Resolve the definition a workspace runs, or null when there is none. */
 export async function resolveWorkspaceSetup(
   host: RepoSetupHost,

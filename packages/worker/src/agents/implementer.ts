@@ -3,7 +3,6 @@ import { IMPLEMENTER_TOOL_IDS, MCP_TOOL_KEY } from '@auto-swe/shared/workflow/st
 import { Mastra } from '@mastra/core';
 import { Agent } from '@mastra/core/agent';
 import { createTool } from '@mastra/core/tools';
-import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import {
@@ -17,15 +16,17 @@ import {
   resolveAgentMcpBinding,
   resolveAgentMcpUrl,
 } from '../lib/config/mcpConnection.js';
-import { skillMenuLine, skillPromptBlock } from '../lib/config/skillPrompt.js';
+import { skillMenuLine } from '../lib/config/skillPrompt.js';
 import type { ResolveCtx } from '../lib/config/types.js';
 import type { EvalLessonTool } from '../lib/evalLessonRecall.js';
 import { getModel, type LanguageModel } from '../lib/models.js';
 import { BrowserToolset, createMastraBrowserTools } from './browserTools.js';
 import { buildKnowledgeTools } from './knowledgeTools.js';
-import { createLessonTools } from './lessonTools.js';
+import { toMastraTool, toMastraTools } from './mastraTool.js';
 import { isMcpToolEnabled, loadMcpTools, type McpToolRecord } from './mcpTools.js';
-import { createProvisionTool } from './provisionTool.js';
+import { type RepoContext, repoContextBlock } from './repoContext.js';
+import { workerToolsFor } from './sessionTools.js';
+import { loadSkillWorkerTool, skillMenuSuffix } from './skillDisclosure.js';
 import { buildWorkspaceTools } from './workspaceTools.js';
 
 /**
@@ -80,6 +81,12 @@ export interface ImplementerAgentOptions {
   knowledgeToolKeys?: string[];
   /** Browser access is supplied only when `browser` is explicitly granted. */
   browserToolset?: BrowserToolset;
+  /**
+   * The repository's own instruction file, read before the session started
+   * (`repoContext.ts`). Its text goes into the system prompt and `writeFile`
+   * refuses to change it, as the Pi runtime already refuses.
+   */
+  repoContext?: RepoContext | null;
 }
 
 export { skillMenuLine };
@@ -119,48 +126,15 @@ export async function createImplementerAgent(
       ? createMastraBrowserTools(options.browserToolset)
       : {};
 
-  // Build a name→skill index for the load_skill tool to look up full promptText.
+  // Build a name→skill index for the loadSkill tool to look up full promptText.
   const resolvedSkills = skills ?? [];
-  const skillsByName = new Map(resolvedSkills.map((s) => [s.name, s]));
 
   // Tool: Load the full prompt text for a skill on demand (progressive disclosure).
   // The agent sees a compact L1 menu (name + description) in the system prompt and
   // calls this tool to fetch the full reasoning guidance only when it decides to
-  // engage that skill — avoiding token bloat from skills that aren't needed.
-  const loadSkill = createTool({
-    description:
-      'Load the full guidance text for an available skill by name. ' +
-      'Call this when you want to apply a specific skill from the skills menu.',
-    execute: async ({ name }) => {
-      const start = Date.now();
-      const skill = skillsByName.get(name);
-      if (!skill) {
-        const result = {
-          promptText: `Unknown skill: ${name}. Available: ${[...skillsByName.keys()].join(', ')}`,
-        };
-        tracer?.addToolCall({
-          durationMs: Date.now() - start,
-          inputJson: { name },
-          outputJson: result,
-          toolName: 'loadSkill',
-        });
-        return result;
-      }
-      const result = { promptText: skillPromptBlock(skill) };
-      tracer?.addToolCall({
-        durationMs: Date.now() - start,
-        inputJson: { name },
-        outputJson: result,
-        toolName: 'loadSkill',
-      });
-      return result;
-    },
-    id: 'loadSkill',
-    inputSchema: z.object({ name: z.string().describe('Skill name from the skills menu') }),
-    outputSchema: z.object({ promptText: z.string() }),
-  });
-
-  // All available workspace tools keyed by toolKey.
+  // engage that skill — avoiding token bloat from skills that aren't needed. Pi
+  // binds the same body (`skillDisclosure.ts`), so both loops disclose skills alike.
+  const loadSkill = toMastraTool(loadSkillWorkerTool(resolvedSkills, tracer), tracer);
   const workspaceTools = { bash, listDirectory, readFile, writeFile };
   const noWorkspaceTools = tools?.includes('__noWorkspaceTools') ?? false;
 
@@ -186,6 +160,21 @@ export async function createImplementerAgent(
 
   const hasSkills = resolvedSkills.length > 0;
 
+  // The worker-side tools this Agent's grants open — the repository's lessons,
+  // learning submission, the catalog installer — from the one list every loop
+  // builds (`workerToolsFor`), so the Mastra loop and a harness cannot bind
+  // different sets for the same Agent row.
+  const workerTools = toMastraTools(
+    workerToolsFor({
+      ctx: options?.resolveCtx,
+      repoId: options?.lessonRepoId,
+      toolKeys: tools ?? null,
+      tracer,
+      workspace,
+    }),
+    tracer
+  );
+
   // Always include loadSkill when there are skills to load; this lets the agent
   // fetch full skill guidance on demand without pre-injecting all promptTexts.
   // The memory tools are read-only and bound to the run's repository, so like
@@ -193,7 +182,7 @@ export async function createImplementerAgent(
   const resolvedActiveTools = {
     ...resolvedWorkspaceTools,
     ...(hasSkills ? { loadSkill } : {}),
-    ...(options?.lessonRepoId ? createLessonTools(options.lessonRepoId, tracer) : {}),
+    ...workerTools,
     ...Object.fromEntries(
       (options?.evalLessonTools ?? []).map((entry) => [
         entry.name,
@@ -205,17 +194,6 @@ export async function createImplementerAgent(
         }),
       ])
     ),
-    // Like `browser`, granted only by name: a null or unlisted grant never binds it.
-    ...(tools?.includes('provisionTool')
-      ? {
-          provisionTool: createProvisionTool({
-            ctx: { orgId: options?.resolveCtx?.orgId, teamId: options?.resolveCtx?.teamId },
-            toolKeys: tools,
-            tracer,
-            workspace,
-          }),
-        }
-      : {}),
     ...(options?.knowledgeToolKeys?.includes('searchKnowledge') ||
     workspace.knowledgeBaseSnapshotIds?.length
       ? {
@@ -223,14 +201,6 @@ export async function createImplementerAgent(
             includeGoverned: options?.knowledgeToolKeys?.includes('searchKnowledge') ?? false,
             snapshotIds: workspace.knowledgeBaseSnapshotIds ?? [],
           }).searchKnowledge,
-        }
-      : {}),
-    ...(options?.knowledgeToolKeys?.includes('submitLearning')
-      ? {
-          submitLearning: buildKnowledgeTools(tracer, {
-            includeGoverned: options?.knowledgeToolKeys?.includes('searchKnowledge') ?? false,
-            snapshotIds: workspace.knowledgeBaseSnapshotIds ?? [],
-          }).submitLearning,
         }
       : {}),
   };
@@ -251,15 +221,16 @@ export async function createImplementerAgent(
   }
 
   // L1 skill menu: compact name + description list injected into system prompt.
-  // Agent calls load_skill(name) to get the full promptText when needed.
-  const promptSuffix = hasSkills
-    ? [
-        '## Available Skills',
-        'Use the `loadSkill` tool to load the full guidance for any skill before applying it.',
-        '',
-        ...resolvedSkills.map((s) => skillMenuLine(s)),
-      ].join('\n')
-    : '';
+  // Agent calls `loadSkill(name)` to get the full promptText when needed. The
+  // repository's own instruction file, when the run read one, follows it as
+  // reference material — as Pi places it, so a run reads the same two blocks on
+  // either loop.
+  const promptSuffix = [
+    hasSkills ? skillMenuSuffix(resolvedSkills) : '',
+    repoContextBlock(options?.repoContext ?? null),
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 
   const implementerAgent = new Agent({
     id: 'implementer',
@@ -437,7 +408,13 @@ export async function buildImplementerForActivity(
   lessonRepoId?: string,
   /** A model bound by the caller (see `getBoundModel`); omitted, the agent binds its own. */
   modelOverride?: LanguageModel,
-  evalLessonTools?: EvalLessonTool[]
+  evalLessonTools?: EvalLessonTool[],
+  /**
+   * The repository's instruction file, read before this session started. Its
+   * text joins the prompt and `writeFile` refuses to change it, so a Mastra run
+   * reads and respects the file exactly as a Pi run does.
+   */
+  repoContext?: RepoContext | null
 ): Promise<{
   agent: Agent;
   promptSuffix: string;
@@ -479,6 +456,7 @@ export async function buildImplementerForActivity(
         maxToolOutputChars,
         mcp: mcpTarget,
         resolveCtx: ctx,
+        ...(repoContext ? { repoContext } : {}),
         ...(browserToolset ? { browserToolset } : {}),
       },
       modelOverride

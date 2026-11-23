@@ -14,6 +14,7 @@ import {
   SECURITY_WARNINGS_PREFIX,
   wrapWriteToolWithSecurityCheck,
 } from './preWriteSecurityCheck.js';
+import { isRepoContextFile } from './repoContext.js';
 import { offloadIfLarge, packOffload } from './toolOutputOffload.js';
 
 /**
@@ -29,6 +30,22 @@ export function safePath(relPath: string): string {
     throw new Error(`Invalid characters in path: ${relPath}`);
   }
   return normalized;
+}
+
+/**
+ * Why a write to `rel` is refused, when it names one of the repository's
+ * instruction files at the checkout root, else null.
+ *
+ * The Mastra counterpart of the harness policy's protected-config refusal, on
+ * the same rule (`isRepoContextFile`): a run reads `AGENTS.md`/`CLAUDE.md` at the
+ * checkout root into its prompt, so neither loop lets the agent rewrite what a
+ * later session — including this one's next turn — would run under. `bash` can
+ * still write the file; this closes the tool that would otherwise do it silently.
+ */
+export function repoContextWriteRefusal(rel: string): string | null {
+  return isRepoContextFile(rel)
+    ? `Path rejected: ${rel} is the repository's project configuration, which this run loads and may not change.`
+    : null;
 }
 
 /**
@@ -118,6 +135,17 @@ export function buildWorkspaceTools(
             toolName: 'writeFile',
           });
           return { result: sensitiveBlock };
+        }
+        const contextBlock = repoContextWriteRefusal(safePath(path));
+        if (contextBlock) {
+          tracer?.addToolCall({
+            durationMs: Date.now() - start,
+            error: SECURITY_TRACE_ERRORS.FILE_BLOCK,
+            inputJson: { path },
+            outputJson: { result: contextBlock },
+            toolName: 'writeFile',
+          });
+          return { result: contextBlock };
         }
         const result = await writeExecute({ content, path });
         // Tag security violations explicitly so the gateway can query them without raw SQL.

@@ -14310,7 +14310,7 @@
       "title": "Repository lessons recalled into a fenced prompt block"
     },
     {
-      "anchor": "export function createLessonTools(repoId: string, tracer?: AgentTracer) {",
+      "anchor": "export function lessonWorkerTools(repoId: string, tracer?: AgentTracer): WorkerTool[] {",
       "before": 0,
       "id": "lessonTools",
       "lines": 60,
@@ -21516,7 +21516,7 @@
       "title": "Shadow recall retrieves and traces but injects nothing; off skips retrieval"
     },
     {
-      "anchor": "execute: async ({ query, limit }) => {",
+      "anchor": "arm === 'ON' ? await searchLessons(repoId, query, limit ?? 5).catch(() => []) : [];",
       "id": "lessonToolsArm",
       "lines": 12,
       "path": "packages/worker/src/agents/lessonTools.ts",

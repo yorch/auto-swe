@@ -18,7 +18,8 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   })),
 }));
 
-import { createLessonTools } from '../agents/lessonTools.js';
+import { lessonWorkerTools } from '../agents/lessonTools.js';
+import { toMastraTools } from '../agents/mastraTool.js';
 import { recallLessonsBlock } from './lessonRecall.js';
 import { currentLessonRecallArm } from './lessonRecallArm.js';
 
@@ -109,7 +110,10 @@ describe('trusted lesson recall arm', () => {
       } else {
         expect(retrieveMock).not.toHaveBeenCalled();
       }
-      const tools = createLessonTools('repo', tracer as never);
+      const tools = toMastraTools(lessonWorkerTools('repo', tracer as never)) as unknown as {
+        explainLesson: { execute: (args: unknown) => Promise<unknown> };
+        searchLessons: { execute: (args: unknown) => Promise<unknown> };
+      };
       type Execute = (args: Record<string, unknown>) => Promise<unknown>;
       const search = tools.searchLessons.execute as Execute;
       const explain = tools.explainLesson.execute as Execute;
@@ -145,8 +149,12 @@ describe('trusted lesson recall arm', () => {
     expect(tracer.addActivityEvent).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'lessons.recall_error' })
     );
-    const tools = createLessonTools('repo', tracer as never);
-    const search = tools.searchLessons.execute as (args: { query: string }) => Promise<unknown>;
+    const tools = toMastraTools(lessonWorkerTools('repo', tracer as never)) as unknown as {
+      searchLessons: { execute: (args: unknown) => Promise<unknown> };
+    };
+    const search = tools.searchLessons.execute as unknown as (args: {
+      query: string;
+    }) => Promise<unknown>;
     await expect(search({ query: 'failure' })).rejects.toThrow(
       'Owning workflow run is unavailable'
     );

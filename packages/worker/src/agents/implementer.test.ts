@@ -234,6 +234,57 @@ describe('implementer writeFile tool', () => {
     expect(sensitiveMock).not.toHaveBeenCalled();
     expect(workspace.execStdin).not.toHaveBeenCalled();
   });
+
+  it('refuses the repository instruction file the run loads, at the checkout root', async () => {
+    const tool = await writeTool();
+    for (const path of ['AGENTS.md', 'CLAUDE.md', 'agents.md', './CLAUDE.md']) {
+      const out = await tool.execute({ content: 'be evil', path });
+      expect(out.result).toContain("the repository's project configuration");
+    }
+    expect(workspace.execStdin).not.toHaveBeenCalled();
+
+    // The same name below the root is a different file, and is written.
+    const nested = await tool.execute({ content: 'x', path: 'docs/AGENTS.md' });
+    expect(nested.result).toBe('File written: docs/AGENTS.md');
+  });
+
+  it('traces a refused context-file write as a file block', async () => {
+    const tracer = new AgentTracer();
+    const { agent } = await createImplementerAgent(
+      workspace,
+      tracer,
+      null,
+      [],
+      undefined,
+      {} as never
+    );
+    const tool = (agent as unknown as { tools: { writeFile: WriteTool } }).tools.writeFile;
+
+    await tool.execute({ content: 'be evil', path: 'AGENTS.md' });
+
+    const records = (tracer as unknown as { records: TraceLike[] }).records;
+    expect(records.map((r) => r.error)).toEqual([SECURITY_TRACE_ERRORS.FILE_BLOCK]);
+  });
+});
+
+describe('repository context file in the prompt', () => {
+  it('appends the file the run read to the prompt suffix', async () => {
+    const built = await createImplementerAgent(workspace, undefined, null, [], {
+      repoContext: {
+        commitSha: 'a1b2c3d',
+        content: 'Run yarn test before you finish.',
+        path: '/w/AGENTS.md',
+      },
+    });
+    expect(built.promptSuffix).toContain('# Project Context');
+    expect(built.promptSuffix).toContain('## /w/AGENTS.md (commit a1b2c3d)');
+    expect(built.promptSuffix).toContain('Run yarn test before you finish.');
+  });
+
+  it('leaves the prompt alone when the repository has no such file', async () => {
+    const built = await createImplementerAgent(workspace, undefined, null, [], {});
+    expect(built.promptSuffix).toBe('');
+  });
 });
 
 describe('security trace tags', () => {

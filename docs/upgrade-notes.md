@@ -2253,3 +2253,45 @@ nothing. `--max-rows <n>` bounds a run (default 1,000,000); run again to continu
 
 **Verify.** A second run reports `would insert 0` under `--dry-run`, and the person's detail page
 lists the earlier sign-ins under the `unknown` method.
+
+### Both loops read the repository's instructions, and neither may rewrite them
+
+**Affected.** Deployments where an agent's work includes changing the repository's root `AGENTS.md`
+or `CLAUDE.md`, and repositories whose copies of those files differ between the base branch and the
+branch a run works on.
+
+**Fixing commit.** The change that introduces `Workspace.repoContext` and `agents/repoContext.ts`;
+where history is squashed, compare the source rather than commit ancestry.
+
+**What changes.** A workspace session reads the checkout root's `AGENTS.md`, else `CLAUDE.md`, into
+its system prompt on both the Mastra and the Pi loop — up to 64 KiB. It is resolved **once, while the
+workspace is being created**, right after the base commit is fixed and before any repository code runs:
+the clone is still untouched, which a read at prompt time could not promise. The source is
+`Workspace.baseSha`, the base-branch tip the workspace was created against — not the working tree, and
+not the branch the run pushes to. On the default `ticket-to-merge` flow those coincide at launch. They
+do not for a CI-fix, PR-feedback or review-fix session on a branch that already changed `AGENTS.md`,
+nor for a pull request that edits it: those runs read the base branch's instructions, not the ones the
+pull request proposes. A symlink is followed inside the same commit (never out of the repository), so
+`AGENTS.md -> CLAUDE.md` still yields the real text. A read that fails fails the workspace rather than
+running the session under `CLAUDE.md` instead. `writeFile` on the Mastra loop, and `write`/`edit` on
+Pi, refuse those two names at the root and are traced with the existing file-block tag
+(`blocked by sensitive file scanner` — no scanner ran; the tag is the one every refused write already
+carries); `bash` still writes them, and the refusal is a tool-level rule, not containment.
+
+Pi also discloses skills through the same `loadSkill` menu the Mastra loop uses instead of inlining
+their text, binds the lesson recall tools, `submitLearning` and `provisionTool` for the grants that
+already enable them, and puts the workspace's installed tools on `PATH` for the commands it runs.
+
+**Actions.** Before rolling out, check whether any template or agent relies on editing root
+`AGENTS.md`/`CLAUDE.md`: that write is now refused, so route it to a human step or a dedicated change
+rather than to the agent's write tool. Expect the prompt of every workspace session — Mastra
+implementer, fix sessions, agent nodes, agent runs — to carry up to 64 KiB of repository
+instructions it did not have before: resent on every model call, about 21k tokens at the harnesses'
+three-characters-per-token estimate (a sixth of Pi's default `workspace.harnessContextTokens`), and
+counted by the budget tiers. A Pi session's prompt also changes shape, since the skill menu replaces
+the inlined skill text. No migration and no configuration change is needed.
+
+**Verify.** A Mastra workspace run's system prompt carries `# Project Context` naming the base
+commit; a write to root `AGENTS.md` answers `Path rejected: …` and `/admin/security` shows it; a Pi
+run records one tool-call trace row per `loadSkill`, `searchLessons` or `provisionTool` call; and a
+tool installed by `provisionTool` runs by name in the agent's `bash`.

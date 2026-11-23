@@ -28,8 +28,10 @@ import type { BoundHarness } from '../agents/harness/registry.js';
 import { HARNESSES } from '../agents/harnessRegistry.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
 import { buildKnowledgeTools } from '../agents/knowledgeTools.js';
+import { toMastraTools } from '../agents/mastraTool.js';
 import { loadMcpTools } from '../agents/mcpTools.js';
-import { createProvisionTool, grantsProvisionTool } from '../agents/provisionTool.js';
+import { readWorkspaceRepoContext, repoContextBlock } from '../agents/repoContext.js';
+import { workerToolsFor } from '../agents/sessionTools.js';
 import { buildWorkspaceTools } from '../agents/workspaceTools.js';
 import {
   currentWorkflowId,
@@ -929,16 +931,17 @@ async function runOnMastra(
     closeFns.push(browserToolset.close.bind(browserToolset));
   }
   const browserTools = browserToolset ? createMastraBrowserTools(browserToolset) : undefined;
-  const provisionTools = grantsProvisionTool(resolved.toolKeys)
-    ? {
-        provisionTool: createProvisionTool({
-          ctx: input.settingsCtx,
-          toolKeys: resolved.toolKeys,
-          tracer,
-          workspace: input.workspace,
-        }),
-      }
-    : undefined;
+  // The worker-side tools this Agent's grants open — learning submission, the
+  // catalog installer — from the one list both loops build (`workerToolsFor`).
+  const workerToolset = toMastraTools(
+    workerToolsFor({
+      ctx: input.settingsCtx,
+      toolKeys: resolved.toolKeys,
+      tracer,
+      workspace: input.workspace,
+    }),
+    tracer
+  );
   onMcp(async () => {
     await Promise.allSettled(closeFns.map((close) => close()));
   });
@@ -947,15 +950,16 @@ async function runOnMastra(
       agentKey: key as ModelBackedAgentKey,
       // Knowledge tools are offered only when the Agent names them; resolveAgentSpec
       // intersects offered tools with `toolKeys`, so nothing else binds them.
+      // SAFETY: every value is a Mastra tool — `createTool` from the workspace builders,
+      // `createMastraBrowserTools`, `toMastraTools` — and `AgentTools` is Mastra's record of them
+      // keyed by name. The cast only reconciles the several independent record types the spreads
+      // produce into that one keyed record; no tool's shape is being asserted.
       availableTools: {
         ...selectAgentRunTools(built, resolved.toolKeys),
         ...(browserTools ?? {}),
-        ...(provisionTools ?? {}),
+        ...workerToolset,
         ...(resolved.toolKeys?.includes('searchKnowledge')
           ? { searchKnowledge: knowledgeTools.searchKnowledge }
-          : {}),
-        ...(resolved.toolKeys?.includes('submitLearning')
-          ? { submitLearning: knowledgeTools.submitLearning }
           : {}),
       } as unknown as AgentTools,
       basePrompt: '',
@@ -971,12 +975,19 @@ async function runOnMastra(
   if (input.workspace.knowledgeBaseSnapshotIds?.length) {
     spec.tools = { ...spec.tools, searchKnowledge: knowledgeTools.searchKnowledge } as AgentTools;
   }
-  // Likewise the `provisionTool` grant: named explicitly, checked by `grantsProvisionTool`.
-  if (provisionTools) {
-    spec.tools = { ...provisionTools, ...spec.tools } as AgentTools;
+  // Likewise the worker-side grants: named explicitly, and each re-checks its own
+  // grant when it is called.
+  if (Object.keys(workerToolset).length > 0) {
+    spec.tools = { ...workerToolset, ...spec.tools } as AgentTools;
   }
-  spec.systemPrompt =
-    `${spec.systemPrompt}\n\n${WORKSPACE_PREAMBLE}${await knowledgeBasePromptBlock(input.workspace)}`.trim();
+  spec.systemPrompt = [
+    `${spec.systemPrompt}\n\n${WORKSPACE_PREAMBLE}${await knowledgeBasePromptBlock(input.workspace)}`.trim(),
+    // The repository's own instruction file, at the end of the prompt as the Pi runtime
+    // places it, so an agent run reads the same file on either loop.
+    repoContextBlock(readWorkspaceRepoContext(input.workspace)),
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 
   // MCP per the agent's own configuration (a known exfiltration channel next
   // to a workspace; documented in docs/agent-runs.md). The agent resolves with
@@ -1007,7 +1018,7 @@ async function runOnMastra(
       : {}),
     // The workspace and MCP tools record their own calls on this tracer; any
     // other tool's calls are recorded from the loop's steps.
-    selfRecordingTools: boundToolKeys(spec.tools, built, mcpTools, browserTools, provisionTools),
+    selfRecordingTools: boundToolKeys(spec.tools, built, mcpTools, browserTools, workerToolset),
     spanName: 'llm.agent_run',
     tracer,
   });
@@ -1062,6 +1073,14 @@ async function runOnHarness(
           input,
           tracer
         ),
+    // The worker-side tools the Mastra branch binds for the same grants
+    // (`workerToolsFor`); a harness without them ignores this.
+    workerTools: workerToolsFor({
+      ctx: input.settingsCtx,
+      toolKeys: resolved.toolKeys,
+      tracer,
+      workspace: input.workspace,
+    }),
     ...(input.allowPause ? { allowPause: true } : {}),
     ...(input.profiles ? { profiles: input.profiles } : {}),
     // Claude Code and Pi drain steering at their tool boundaries.

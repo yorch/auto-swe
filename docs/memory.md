@@ -457,10 +457,11 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
   channel in a large table can get fewer matches than exist, or none. Even with it, the scan stops
   after `hnsw.max_scan_tuples` (pgvector's default, 20,000) index tuples, so a scope whose nearest
   memories lie beyond that many closer rows from other scopes is still cut short.
-- **The memory tools exist only under the Mastra loop.** A session on the Claude Code harness gets
-  recalled lessons in its prompt but no `searchLessons` / `explainLesson`; the harness has its own
-  tool set. Eval cases and the merge-conflict resolver get neither tools nor recall, so both sides
-  of an eval comparison see the same context.
+- **The memory tools need a loop that can call a worker-side tool: the Mastra loop and Pi.**
+  `searchLessons` and `explainLesson` are bound on both, for the same grants. A session on the Claude
+  Code harness gets recalled lessons in its prompt but no such tools; the harness has its own tool
+  set. Eval cases and the merge-conflict resolver get neither tools nor recall, so both sides of an
+  eval comparison see the same context.
 - **A failed channel summary stores the raw exchange.** When the summariser fails for a reason
   other than the memory gate or a refusal to spend (a malformed answer, a provider error), the
   turn's text and reply are stored undistilled, truncated to the summary and rationale lengths.

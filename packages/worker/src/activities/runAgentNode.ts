@@ -12,8 +12,10 @@ import { BrowserToolset, createMastraBrowserTools } from '../agents/browserTools
 import { HARNESSES } from '../agents/harnessRegistry.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
 import { buildKnowledgeTools } from '../agents/knowledgeTools.js';
+import { toMastraTools } from '../agents/mastraTool.js';
 import { loadMcpTools } from '../agents/mcpTools.js';
-import { createProvisionTool, grantsProvisionTool } from '../agents/provisionTool.js';
+import { readWorkspaceRepoContext, repoContextBlock } from '../agents/repoContext.js';
+import { workerToolsFor } from '../agents/sessionTools.js';
 import { buildWorkspaceTools } from '../agents/workspaceTools.js';
 import { persistActivityTrace, startTraceFlushing } from '../lib/activityContext.js';
 import { logWarn } from '../lib/activityLog.js';
@@ -464,6 +466,14 @@ async function runInCheckout(args: {
       // The connection the Mastra loop would bind, relayed from the worker.
       mcp: onboardingDraft ? null : await resolveAgentMcpUrl(key, resolveCtx, { tracer }),
       toolKeys: resolved.toolKeys,
+      // The worker-side tools this branch binds for the Mastra loop above
+      // (`workerToolsFor`): a harness without them ignores this.
+      workerTools: workerToolsFor({
+        ctx: resolveCtx,
+        toolKeys: resolved.toolKeys,
+        tracer,
+        workspace,
+      }),
       ...pausable(input.allowPause, loop.runtime),
       ...(profiles ? { profiles } : {}),
       tracer,
@@ -521,32 +531,28 @@ async function runInCheckout(args: {
     onOpen(browserToolset.close.bind(browserToolset));
   }
   const browserTools = browserToolset ? createMastraBrowserTools(browserToolset) : undefined;
-  // Offered only when the Agent names `provisionTool`; `null` never implies it.
-  const provisionTools = grantsProvisionTool(resolved.toolKeys)
-    ? {
-        provisionTool: createProvisionTool({
-          ctx: { orgId: resolveCtx?.orgId, teamId: resolveCtx?.teamId },
-          toolKeys: resolved.toolKeys,
-          tracer,
-          workspace,
-        }),
-      }
-    : undefined;
+  // The worker-side tools this Agent's grants open — learning submission, the
+  // catalog installer — from the one list both loops build (`workerToolsFor`).
+  const workerToolset = toMastraTools(
+    workerToolsFor({ ctx: resolveCtx, toolKeys: resolved.toolKeys, tracer, workspace }),
+    tracer
+  );
   const spec = await resolveAgentSpec(
     {
       agentKey: key as ModelBackedAgentKey,
       // Knowledge tools are offered only when the Agent names them; resolveAgentSpec
       // intersects offered tools with `toolKeys`, so nothing else binds them.
+      // SAFETY: every value is a Mastra tool — `createTool` from the workspace builders,
+      // `createMastraBrowserTools`, `toMastraTools` — and `AgentTools` is Mastra's record of them
+      // keyed by name. The cast only reconciles the several independent record types the spreads
+      // produce into that one keyed record; no tool's shape is being asserted.
       availableTools: {
         ...selectAgentRunTools(built, resolved.toolKeys),
         ...(browserTools ?? {}),
         ...(resolved.toolKeys?.includes('searchKnowledge')
           ? { searchKnowledge: knowledgeTools.searchKnowledge }
           : {}),
-        ...(resolved.toolKeys?.includes('submitLearning')
-          ? { submitLearning: knowledgeTools.submitLearning }
-          : {}),
-        ...(provisionTools ?? {}),
+        ...workerToolset,
       } as unknown as AgentTools,
       basePrompt: '',
       promptOverride: input.systemPrompt,
@@ -575,8 +581,19 @@ async function runInCheckout(args: {
   if (browserTools) {
     spec.tools = { ...browserTools, ...spec.tools } as AgentTools;
   }
-  spec.systemPrompt =
-    `${spec.systemPrompt}\n\n${CHECKOUT_PREAMBLE}${await knowledgeBasePromptBlock(workspace)}`.trim();
+  // Likewise the worker-side grants: named explicitly, and each re-checks its own
+  // grant when it is called.
+  if (Object.keys(workerToolset).length > 0) {
+    spec.tools = { ...workerToolset, ...spec.tools } as AgentTools;
+  }
+  spec.systemPrompt = [
+    `${spec.systemPrompt}\n\n${CHECKOUT_PREAMBLE}${await knowledgeBasePromptBlock(workspace)}`.trim(),
+    // The repository's own instruction file, at the end of the prompt as the Pi runtime
+    // places it, so a node reads the same file on either loop.
+    repoContextBlock(readWorkspaceRepoContext(workspace)),
+  ]
+    .filter(Boolean)
+    .join('\n\n');
   const mcpTools = onboardingDraft
     ? undefined
     : await bindMcpTools(key, resolveCtx, tracer, onOpen);
@@ -588,7 +605,7 @@ async function runInCheckout(args: {
     ctx: resolveCtx,
     // The workspace and MCP tools record their own calls on this tracer; any
     // other tool's calls are recorded from the loop's steps.
-    selfRecordingTools: boundToolKeys(spec.tools, built, mcpTools, browserTools, provisionTools),
+    selfRecordingTools: boundToolKeys(spec.tools, built, mcpTools, browserTools, workerToolset),
     spanName,
     tracer,
     ...limits?.runAgentOptions(),
