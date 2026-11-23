@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isPlatformAdmin,
+  isPlatformAdminRole,
   orgIsAdmin,
   orgRankMeets,
   orgRankOf,
@@ -12,21 +13,28 @@ import {
 } from './standing.js';
 
 describe('standing', () => {
-  it('maps stored team roles to ranks, old and new spellings alike, and unknowns to null', () => {
+  it('maps stored team roles to ranks and unknowns to null', () => {
     expect(teamRankOf('ADMIN')).toBe('ADMIN');
     expect(teamRankOf('LEAD')).toBe('LEAD');
-    expect(teamRankOf('ENGINEER')).toBe('MEMBER');
     expect(teamRankOf('MEMBER')).toBe('MEMBER');
     expect(teamRankOf('OWNER')).toBeNull();
     expect(teamRankOf(null)).toBeNull();
   });
   it('maps stored org roles to ranks', () => {
-    expect(orgRankOf('ORG_ADMIN')).toBe('ADMIN');
     expect(orgRankOf('ADMIN')).toBe('ADMIN');
-    expect(orgRankOf('ORG_MEMBER')).toBe('MEMBER');
     expect(orgRankOf('nope')).toBeNull();
-    expect(orgIsAdmin('ORG_ADMIN')).toBe(true);
-    expect(orgIsAdmin('ORG_MEMBER')).toBe(false);
+    expect(orgIsAdmin('ADMIN')).toBe(true);
+    expect(orgIsAdmin('MEMBER')).toBe(false);
+  });
+  it('resolves every retired spelling to no standing, never a privileged one', () => {
+    for (const retired of ['ENGINEER', 'ORG_ADMIN', 'ORG_MEMBER', 'OWNER', 'admin', '']) {
+      expect(teamRankOf(retired)).toBeNull();
+      expect(orgRankOf(retired)).toBeNull();
+      expect(orgIsAdmin(retired)).toBe(false);
+      expect(isPlatformAdminRole(retired)).toBe(false);
+      expect(teamRankMeets(teamRankOf(retired), 'MEMBER')).toBe(false);
+      expect(orgRankMeets(orgRankOf(retired), 'MEMBER')).toBe(false);
+    }
   });
   it('ranks MEMBER < LEAD < ADMIN', () => {
     expect(TEAM_ROLE_RANK.MEMBER).toBeLessThan(TEAM_ROLE_RANK.LEAD);
