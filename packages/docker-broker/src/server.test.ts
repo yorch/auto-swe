@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import http from 'node:http';
-import { type AddressInfo, createServer as netServer, type Socket } from 'node:net';
+import { type AddressInfo, createServer as netServer, Socket } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -604,6 +604,139 @@ describe('Docker policy broker', () => {
       }
       await new Promise<void>((resolve) => fake.close(() => resolve()));
     }
+  });
+  describe('upgrade body framing', () => {
+    const START = JSON.stringify({ Detach: false, Tty: false });
+    type Seen = { body: string; stdin: string };
+    async function upgradeVia(
+      kind: 'exec' | 'attach',
+      writes: Array<string | number>,
+      maxJson?: number
+    ) {
+      const id = await create();
+      const exec =
+        kind === 'exec'
+          ? await call('POST', `/containers/${id}/exec`, {
+              AttachStdin: true,
+              AttachStdout: true,
+              Cmd: ['cat'],
+            })
+          : undefined;
+      if (maxJson !== undefined) {
+        broker.config.maxJson = maxJson;
+      }
+      const seen: Seen = { body: '', stdin: '' };
+      const sockets = new Set<Socket>();
+      const fake = netServer((socket) => {
+        sockets.add(socket);
+        let bytes = Buffer.alloc(0);
+        let upgraded = false;
+        socket.on('data', (chunk: Buffer) => {
+          if (upgraded) {
+            seen.stdin += chunk.toString();
+            return;
+          }
+          bytes = Buffer.concat([bytes, chunk]);
+          const end = bytes.indexOf('\r\n\r\n');
+          if (end < 0) {
+            return;
+          }
+          const size = Number(
+            /content-length: (\d+)/i.exec(bytes.subarray(0, end).toString())?.[1] ?? 0
+          );
+          if (bytes.length < end + 4 + size) {
+            return;
+          }
+          upgraded = true;
+          seen.body = bytes.subarray(end + 4, end + 4 + size).toString();
+          seen.stdin += bytes.subarray(end + 4 + size).toString();
+          socket.write('HTTP/1.1 101 UPGRADED\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\nready');
+        });
+      });
+      await new Promise<void>((resolve) => fake.listen(0, '127.0.0.1', resolve));
+      broker.config.upstream = new URL(`http://127.0.0.1:${(fake.address() as AddressInfo).port}`);
+      const target =
+        kind === 'exec'
+          ? `/exec/${String(exec?.body.Id)}/start`
+          : `/containers/${id}/attach?stdin=1&stdout=1&stream=1`;
+      const bodyLength = kind === 'exec' ? Buffer.byteLength(START) : 0;
+      const client = new Socket();
+      const reply = new Promise<string>((resolve) => {
+        let out = '';
+        client.on('data', (d) => {
+          out += d.toString();
+          if (out.includes('ready') || out.includes('403')) {
+            resolve(out);
+          }
+        });
+        client.on('close', () => resolve(out));
+        client.on('error', () => resolve(out));
+      });
+      try {
+        await new Promise<void>((resolve) => {
+          const address_ = broker.server.address() as AddressInfo;
+          client.connect(address_.port, '127.0.0.1', resolve);
+        });
+        const head =
+          `POST ${target} HTTP/1.1\r\nHost: broker\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n` +
+          `Content-Type: application/json\r\nContent-Length: ${bodyLength}\r\n\r\n`;
+        // writes[0] is coalesced with the headers into one packet; a number is a pause in ms
+        let pending = head;
+        for (const write of writes) {
+          if (typeof write === 'number') {
+            client.write(pending);
+            pending = '';
+            await new Promise((r) => setTimeout(r, write));
+          } else {
+            pending += write;
+          }
+        }
+        if (pending) {
+          client.write(pending);
+        }
+        const out = await reply;
+        await new Promise((r) => setTimeout(r, 50));
+        return { out, seen };
+      } finally {
+        client.destroy();
+        for (const socket of sockets) {
+          socket.destroy();
+        }
+        await new Promise<void>((resolve) => fake.close(() => resolve()));
+      }
+    }
+    it('reads a body that arrived whole in the head buffer, and forwards trailing stdin once', async () => {
+      const { out, seen } = await upgradeVia('exec', [`${START}stdin`]);
+      expect(out).toContain('101');
+      expect(seen.body).toBe(START);
+      expect(seen.stdin).toBe('stdin');
+    });
+    it('reads a body split across the head buffer and the socket', async () => {
+      const { out, seen } = await upgradeVia('exec', [
+        START.slice(0, 10),
+        100,
+        `${START.slice(10)}stdin`,
+      ]);
+      expect(out).toContain('101');
+      expect(seen.body).toBe(START);
+      expect(seen.stdin).toBe('stdin');
+    });
+    it('refuses a declared body larger than maxJson without reading it', async () => {
+      const { out, seen } = await upgradeVia('exec', [START], 8);
+      expect(out).toContain('403');
+      expect(out).toContain('invalid upgrade body');
+      expect(seen.body).toBe('');
+    });
+    it('accepts an attach request with no body', async () => {
+      const { out, seen } = await upgradeVia('attach', ['stdin']);
+      expect(out).toContain('101');
+      expect(seen.body).toBe('');
+      expect(seen.stdin).toBe('stdin');
+    });
+    it('never forwards a body the client abandons part-way', async () => {
+      const { seen } = await upgradeVia('exec', [START.slice(0, 10), 100]);
+      expect(seen.body).toBe('');
+    });
   });
   it('keeps already-root container execs working after a non-root exec', async () => {
     const input = base();

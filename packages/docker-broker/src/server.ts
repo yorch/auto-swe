@@ -65,6 +65,52 @@ async function collect(stream: AsyncIterable<Buffer | string>, limit: number): P
   }
   return Buffer.concat(chunks);
 }
+/**
+ * Read the part of an upgrade request's body that the request stream did not deliver. On Node
+ * releases that detach the parser at 'upgrade', body bytes that arrived with the headers are in
+ * `head` and the rest arrives on the raw socket. Bytes past `length` are stdin and are returned in `rest`.
+ */
+async function upgradeBody(
+  socket: Duplex,
+  head: Buffer,
+  length: number
+): Promise<{ body: Buffer; rest: Buffer }> {
+  if (length === 0) {
+    return { body: Buffer.alloc(0), rest: head };
+  }
+  if (head.length >= length) {
+    return { body: head.subarray(0, length), rest: head.subarray(length) };
+  }
+  const chunks: Buffer[] = [head];
+  let size = head.length;
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      socket.off('data', onData);
+      socket.off('end', onEnd);
+      socket.off('error', onEnd);
+      socket.off('close', onEnd);
+      socket.pause();
+    };
+    const onEnd = () => {
+      cleanup();
+      reject(new Denied('incomplete upgrade body'));
+    };
+    const onData = (chunk: Buffer) => {
+      chunks.push(chunk);
+      size += chunk.length;
+      if (size >= length) {
+        cleanup();
+        const all = Buffer.concat(chunks);
+        resolve({ body: all.subarray(0, length), rest: all.subarray(length) });
+      }
+    };
+    socket.on('data', onData);
+    socket.once('end', onEnd);
+    socket.once('error', onEnd);
+    socket.once('close', onEnd);
+    socket.resume();
+  });
+}
 function limiter(max: number): Transform {
   let bytes = 0;
   return new Transform({
@@ -694,8 +740,14 @@ export class Broker {
       'invalid upgrade body'
     );
     req.socket.setTimeout(10_000, () => req.socket.destroy());
-    const body = length ? await collect(req, this.config.maxJson) : Buffer.alloc(0);
-    check(body.length === length, 'incomplete upgrade body');
+    // Where body bytes land depends on the Node release: newer parsers hand them to `req` and
+    // leave only post-body bytes (stdin) in `head`; older ones detach at 'upgrade' and put them in
+    // `head` and on the socket. Read `req` first, then take any shortfall from `head` and the socket.
+    const fromRequest = await collect(req, this.config.maxJson);
+    check(fromRequest.length <= length, 'invalid upgrade body');
+    const missing = await upgradeBody(socket, head, length - fromRequest.length);
+    const body = Buffer.concat([fromRequest, missing.body]);
+    head = missing.rest;
     trace('authorize');
     const authorized = await this.authorize(req.method ?? '', req.url ?? '', body);
     trace('authorized');
