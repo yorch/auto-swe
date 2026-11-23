@@ -17,9 +17,9 @@ afterEach(() => {
 
 const TEAM_ID = '11111111-1111-4111-8111-111111111111';
 
-function mock() {
+function mock(grants: unknown[] = []) {
   return setupFetchMock({
-    'GET /api/v1/platform/config/grants': () => ({ data: [] }),
+    'GET /api/v1/platform/config/grants': () => ({ data: grants }),
     'GET /api/v1/platform/config/grants/preview': () => ({
       data: {
         keyPattern: '*',
@@ -112,5 +112,50 @@ describe('config grants: a role grantee is a team role', () => {
     expect(await screen.findByText('a · platform admin')).toBeTruthy();
     expect(screen.getByText('c · platform admin or a grant')).toBeTruthy();
     expect(screen.getByText('Write access:')).toBeTruthy();
+  });
+});
+
+describe('config grants: a grant that is already covered', () => {
+  const WARNING = /An existing grant already covers this one/;
+  const existing = (role: string) => ({
+    createdAt: '2026-01-01T00:00:00.000Z',
+    id: 'g0',
+    keyPattern: 'channel.*',
+    orgId: null,
+    role,
+    scope: 'TEAM',
+    team: { name: 'Payments' },
+    teamId: TEAM_ID,
+    userId: null,
+  });
+
+  async function fillNewLeadGrant() {
+    await chooseTeamScope();
+    fireEvent.change(await screen.findByLabelText(/Key pattern/), {
+      target: { value: 'channel.*' },
+    });
+  }
+
+  it('warns when an existing grant names a lower role for the same pattern and team', async () => {
+    mock([existing('MEMBER')]);
+    render(withQuery(<GovernConfigGrantsPage />));
+    await fillNewLeadGrant();
+    expect(await screen.findByText(WARNING)).toBeTruthy();
+  });
+
+  it('warns when an existing grant names the same role', async () => {
+    mock([existing('LEAD')]);
+    render(withQuery(<GovernConfigGrantsPage />));
+    await fillNewLeadGrant();
+    expect(await screen.findByText(WARNING)).toBeTruthy();
+  });
+
+  it('does not warn when the existing grant names a higher role, which covers fewer people', async () => {
+    mock([existing('ADMIN')]);
+    render(withQuery(<GovernConfigGrantsPage />));
+    await fillNewLeadGrant();
+    // The existing grant has loaded into the table, so its absence of a warning is meaningful.
+    await waitFor(() => expect(screen.getAllByText('channel.*')).toHaveLength(2));
+    expect(screen.queryByText(WARNING)).toBeNull();
   });
 });

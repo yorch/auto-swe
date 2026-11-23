@@ -1,5 +1,6 @@
 'use client';
 
+import { teamRankMeets, teamRankOf } from '@auto-swe/shared/permissions/client';
 import { useMemo, useState } from 'react';
 import { EligibleUserSelect } from '@/components/EligibleUserSelect';
 import { ActionMenu } from '@/components/ui/ActionMenu';
@@ -53,6 +54,15 @@ const SORT_ACCESSORS = {
 /** A pattern that covers every setting is a broad grant. */
 function isBroadGrant(pattern: string) {
   return pattern.trim() === '*';
+}
+
+/**
+ * A role grant covers its role and every higher one, so a new grant for `role` adds nothing when an
+ * existing grant (for the same key pattern, team and scope) names an equal or lower role.
+ */
+function coveredByRoleGrant(role: string, existing: string | null | undefined) {
+  const existingRank = teamRankOf(existing);
+  return existingRank !== null && teamRankMeets(teamRankOf(role), existingRank);
 }
 
 export default function GovernConfigGrantsPage() {
@@ -155,7 +165,7 @@ export default function GovernConfigGrantsPage() {
 
   const granteeLabel =
     effectiveGranteeType === 'team-role'
-      ? `${teamRoleLabel(role)} role`
+      ? `${teamRoleLabel(role)} role or above`
       : (eligibleUsers.find((u) => u.id === userId)?.email ?? 'the selected user');
   const scopeLabel =
     scope === 'GLOBAL'
@@ -167,7 +177,9 @@ export default function GovernConfigGrantsPage() {
     (g) =>
       g.keyPattern === pattern.trim() &&
       g.scope === scope &&
-      (effectiveGranteeType === 'team-role' ? g.role === role : g.user?.email === granteeLabel) &&
+      (effectiveGranteeType === 'team-role'
+        ? coveredByRoleGrant(role, g.role)
+        : g.user?.email === granteeLabel) &&
       (scope === 'TEAM'
         ? g.team?.name === (teams ?? []).find((t) => t.id === teamId)?.name
         : true) &&
@@ -273,6 +285,7 @@ export default function GovernConfigGrantsPage() {
             />
             {effectiveGranteeType === 'team-role' ? (
               <Select
+                hint="This role or above in the team."
                 label="Team role"
                 onChange={(v) => setRole(v as TeamRoleValue)}
                 options={[...TEAM_ROLE_OPTIONS].reverse()}
@@ -361,7 +374,8 @@ export default function GovernConfigGrantsPage() {
           )}
           {duplicate && (
             <Alert variant="warning">
-              An identical grant already exists; creating it again adds nothing.
+              An existing grant already covers this one (same pattern, scope and grantee, or a lower
+              role); creating it again adds nothing.
             </Alert>
           )}
 
@@ -435,7 +449,7 @@ export default function GovernConfigGrantsPage() {
                         <span className="text-paper-200">{g.user.email}</span>
                       ) : g.role ? (
                         <Badge tone="neutral" variant="outline">
-                          {teamRoleLabel(g.role)} role
+                          {teamRoleLabel(g.role)} role or above
                         </Badge>
                       ) : (
                         <span className="text-paper-500">—</span>
