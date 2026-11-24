@@ -29,19 +29,6 @@ import { workerToolsFor } from './sessionTools.js';
 import { loadSkillWorkerTool, skillMenuSuffix } from './skillDisclosure.js';
 import { buildWorkspaceTools } from './workspaceTools.js';
 
-/**
- * Creates a Mastra Implementer agent with MCP-style tools bound to a specific workspace container.
- * Each tool call is translated to a `docker exec` command inside the workspace.
- *
- * If `tracer` is provided every tool execution is recorded so callers can
- * persist the full tool-call sequence to `agent_traces` after generation.
- *
- * `tools`: string[] of enabled tool keys (from AgentToolConfig). null = all 4 tools.
- * `skills`: prompt-fragment skills to inject into the system prompt (in sortOrder).
- */
-export type ImplementerToolId = (typeof IMPLEMENTER_TOOL_IDS)[number];
-export { IMPLEMENTER_TOOL_IDS };
-
 export interface ImplementerAgentOptions {
   /**
    * The resolved MCP connection of the Agent being run — its server URL, credentials, timeouts,
@@ -91,6 +78,16 @@ export interface ImplementerAgentOptions {
 
 export { skillMenuLine };
 
+/**
+ * Creates a Mastra Implementer agent with MCP-style tools bound to a specific workspace container.
+ * Each tool call is translated to a `docker exec` command inside the workspace.
+ *
+ * If `tracer` is provided every tool execution is recorded so callers can
+ * persist the full tool-call sequence to `agent_traces` after generation.
+ *
+ * `tools`: string[] of enabled tool keys (from AgentToolConfig). null = all 4 tools.
+ * `skills`: prompt-fragment skills to inject into the system prompt (in sortOrder).
+ */
 export async function createImplementerAgent(
   workspace: Workspace,
   tracer?: AgentTracer,

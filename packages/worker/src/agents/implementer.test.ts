@@ -248,7 +248,7 @@ describe('implementer writeFile tool', () => {
     expect(nested.result).toBe('File written: docs/AGENTS.md');
   });
 
-  it('traces a refused context-file write as a file block', async () => {
+  it('traces a refused context-file write under its own guard tag', async () => {
     const tracer = new AgentTracer();
     const { agent } = await createImplementerAgent(
       workspace,
@@ -263,7 +263,8 @@ describe('implementer writeFile tool', () => {
     await tool.execute({ content: 'be evil', path: 'AGENTS.md' });
 
     const records = (tracer as unknown as { records: TraceLike[] }).records;
-    expect(records.map((r) => r.error)).toEqual([SECURITY_TRACE_ERRORS.FILE_BLOCK]);
+    // Not the sensitive-file tag: no scanner ran, so the security view must not say one did.
+    expect(records.map((r) => r.error)).toEqual([SECURITY_TRACE_ERRORS.INSTRUCTION_FILE_BLOCK]);
   });
 });
 

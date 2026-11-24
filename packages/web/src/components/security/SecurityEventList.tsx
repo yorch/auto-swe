@@ -1,9 +1,11 @@
 'use client';
 
 import {
+  classifySecurityTrace,
   MEMORY_DROPPED_EVENTS,
   MEMORY_SECURITY_EVENTS,
   MEMORY_WRITE_REFUSED_EVENTS,
+  SECURITY_EVENT_TYPES,
   SECURITY_TRACE_ERRORS,
 } from '@auto-swe/shared/lib/securityTraceTags';
 import Link from 'next/link';
@@ -32,13 +34,19 @@ export const SECURITY_EVENT_META: Record<
   CONTENT_SECURITY_BLOCK: { group: 'blocked', label: 'Content blocked', tone: 'danger' },
   CONTENT_SECURITY_WARN: { group: 'advisory', label: 'Content warning', tone: 'warning' },
   FILE_BLOCK: { group: 'blocked', label: 'File write blocked', tone: 'danger' },
+  INSTRUCTION_FILE_BLOCK: {
+    group: 'blocked',
+    label: 'Instruction file write blocked',
+    tone: 'danger',
+  },
   LLM_SUSPICIOUS: { group: 'advisory', label: 'Suspicious model output', tone: 'accent2' },
   MEMORY_RECALL_DROPPED: { group: 'blocked', label: 'Memory recall dropped', tone: 'danger' },
   MEMORY_WRITE_REFUSED: { group: 'blocked', label: 'Memory write refused', tone: 'danger' },
   SHELL_BLOCK: { group: 'blocked', label: 'Command blocked', tone: 'danger' },
 };
 
-export const SECURITY_EVENT_TYPES = Object.keys(SECURITY_EVENT_META) as SecurityEventType[];
+/** The shared list, re-exported for the pages that build the type picker from it. */
+export { SECURITY_EVENT_TYPES };
 
 export function securityEventLabel(type: SecurityEventType): string {
   return SECURITY_EVENT_META[type].label;
@@ -73,7 +81,8 @@ function extractDetail(event: SecurityEvent): { primary: string; secondary?: str
         secondary: label ? `pattern: ${label}` : undefined,
       };
     }
-    case 'FILE_BLOCK': {
+    case 'FILE_BLOCK':
+    case 'INSTRUCTION_FILE_BLOCK': {
       const file = String(input?.path ?? '');
       const msg = String(output?.result ?? '');
       const label = msg.match(/\[([^\]]+)\]/)?.[1] ?? '';
@@ -337,40 +346,6 @@ export function classifyTraceAsSecurityEvent(trace: {
   toolName: string | null;
   type: string;
 }): SecurityEventType | null {
-  if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.SHELL_BLOCK)) {
-    return 'SHELL_BLOCK';
-  }
-  if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.FILE_BLOCK)) {
-    return 'FILE_BLOCK';
-  }
-  if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.CONTENT_BLOCK)) {
-    return 'CONTENT_SECURITY_BLOCK';
-  }
-  if (trace.error === SECURITY_TRACE_ERRORS.CONTENT_WARN) {
-    return 'CONTENT_SECURITY_WARN';
-  }
-  if (trace.type === 'activity_event' && trace.toolName === 'code_security.scan') {
-    return 'CODE_SECURITY';
-  }
-  if (trace.type === 'activity_event' && trace.toolName === 'llm.suspicious_output') {
-    return 'LLM_SUSPICIOUS';
-  }
-  if (trace.type === 'activity_event' && trace.toolName === 'channel.suspicious_input') {
-    return 'CHANNEL_SUSPICIOUS';
-  }
-  if (
-    trace.type === 'activity_event' &&
-    trace.toolName !== null &&
-    MEMORY_DROPPED_EVENTS.includes(trace.toolName)
-  ) {
-    return 'MEMORY_RECALL_DROPPED';
-  }
-  if (
-    trace.type === 'activity_event' &&
-    trace.toolName !== null &&
-    MEMORY_WRITE_REFUSED_EVENTS.includes(trace.toolName)
-  ) {
-    return 'MEMORY_WRITE_REFUSED';
-  }
-  return null;
+  // The gateway's classifier, imported rather than copied: two hand-written copies drifted.
+  return classifySecurityTrace(trace);
 }

@@ -10,7 +10,7 @@ import {
 import { MemoryContentRefusedError } from '../lib/memoryGuard.js';
 import type { WorkerTool } from './workerTool.js';
 
-export const SEARCH_KNOWLEDGE_TOOL = 'searchKnowledge';
+const SEARCH_KNOWLEDGE_TOOL = 'searchKnowledge';
 export const SUBMIT_LEARNING_TOOL = 'submitLearning';
 /** What a refused learning reports, to the model and to a run, without the patterns it matched. */
 export const LEARNING_REFUSED_MESSAGE = 'learning refused by the content policy';
@@ -111,7 +111,7 @@ export function buildKnowledgeTools(
 }
 
 /** What the model is told `submitLearning` does, on every loop that offers it. */
-export const SUBMIT_LEARNING_DESCRIPTION =
+const SUBMIT_LEARNING_DESCRIPTION =
   'Submit a local unreviewed learning grounded in evidence from this workflow run.';
 
 /**
@@ -120,7 +120,7 @@ export const SUBMIT_LEARNING_DESCRIPTION =
  * binds its lesson tools (`workerTool.ts`). Whether the tool is offered at all
  * is the grant's decision (`Agent.toolKeys` naming it), never this function's.
  */
-export async function submitLearning(
+async function submitLearning(
   input: unknown,
   tracer?: AgentTracer
 ): Promise<{ id: string; status: string; version: number }> {

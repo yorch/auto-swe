@@ -3,7 +3,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { SecurityEvent } from '@/hooks/useAdmin';
-import { SecurityEventList } from './SecurityEventList';
+import { classifyTraceAsSecurityEvent, SecurityEventList } from './SecurityEventList';
 
 const base: SecurityEvent = {
   createdAt: '2026-09-01T00:00:00Z',
@@ -113,5 +113,42 @@ describe('SecurityEventList rows', () => {
   it('names an event type in words, not enum text', () => {
     render(<SecurityEventList events={[base]} />);
     expect(screen.getByText('Command blocked')).toBeTruthy();
+  });
+});
+
+describe('classifying a trace the dashboard already holds', () => {
+  const trace = (error: string) => ({
+    error,
+    toolName: 'writeFile',
+    type: 'tool_call',
+  });
+
+  it('gives an instruction-file refusal its own event type, not the file scanner', () => {
+    expect(classifyTraceAsSecurityEvent(trace('blocked by repository instruction guard'))).toBe(
+      'INSTRUCTION_FILE_BLOCK'
+    );
+    expect(classifyTraceAsSecurityEvent(trace('blocked by sensitive file scanner'))).toBe(
+      'FILE_BLOCK'
+    );
+  });
+
+  it('renders it as a blocked instruction-file write, naming the file', () => {
+    render(
+      <SecurityEventList
+        events={[
+          {
+            ...base,
+            error: 'blocked by repository instruction guard',
+            eventType: 'INSTRUCTION_FILE_BLOCK',
+            inputJson: { path: 'AGENTS.md' },
+            outputJson: { result: "Path rejected: AGENTS.md is the repository's project …" },
+          },
+        ]}
+      />
+    );
+
+    // Its own badge, and the file it refused, without expanding anything.
+    expect(screen.getByText('Instruction file write blocked')).toBeTruthy();
+    expect(screen.getByText('AGENTS.md')).toBeTruthy();
   });
 });

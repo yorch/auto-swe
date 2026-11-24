@@ -16,6 +16,13 @@ export const SECURITY_TRACE_ERRORS = {
   CONTENT_WARN: 'content security warning',
   /** `writeFile` refused because the path matches a SENSITIVE_FILE pattern. */
   FILE_BLOCK: 'blocked by sensitive file scanner',
+  /**
+   * A write refused because the path is the repository's own instruction file
+   * (`AGENTS.md`/`CLAUDE.md` at the checkout root), which every session reads. No
+   * scanner ran: this is a path rule, and it gets its own tag so the security view
+   * does not file it as a sensitive-file hit.
+   */
+  INSTRUCTION_FILE_BLOCK: 'blocked by repository instruction guard',
   /** `bash` refused by the shell-command scanner. */
   SHELL_BLOCK: 'blocked by shell command scanner',
 } as const;
@@ -26,6 +33,7 @@ export type SecurityTraceError = (typeof SECURITY_TRACE_ERRORS)[keyof typeof SEC
 export const SECURITY_BLOCK_TRACE_ERRORS: readonly SecurityTraceError[] = [
   SECURITY_TRACE_ERRORS.CONTENT_BLOCK,
   SECURITY_TRACE_ERRORS.FILE_BLOCK,
+  SECURITY_TRACE_ERRORS.INSTRUCTION_FILE_BLOCK,
   SECURITY_TRACE_ERRORS.SHELL_BLOCK,
 ];
 
@@ -71,3 +79,86 @@ export const MEMORY_WRITE_REFUSED_EVENTS: readonly string[] = [
   MEMORY_SECURITY_EVENTS.CHANNEL_WRITE_REFUSED,
   MEMORY_SECURITY_EVENTS.KNOWLEDGE_LEARNING_REFUSED,
 ];
+
+/**
+ * The event types the security-events endpoint reports, and that the dashboard filters,
+ * counts and labels by.
+ *
+ * One list, in one place: the gateway derives its `SecurityEventType`, its per-type DB
+ * predicate map and its `?type=` request schema from this, and the dashboard derives its
+ * union, its labels and its type picker. Before this existed each was a hand-written copy,
+ * and adding a type to some of them left the filter rejecting a value the summary already
+ * counted. It lives in this module because it is the narrow, dependency-free one the
+ * browser imports — pulling it from the `scannerCache` barrel would bundle the pattern
+ * loader's Node and Prisma graph into the dashboard.
+ *
+ * Order is the order the dashboard lists them in: alphabetical, so a new type lands in a
+ * predictable place.
+ */
+export const SECURITY_EVENT_TYPES = [
+  'CHANNEL_SUSPICIOUS',
+  'CODE_SECURITY',
+  'CONTENT_SECURITY_BLOCK',
+  'CONTENT_SECURITY_WARN',
+  'FILE_BLOCK',
+  'INSTRUCTION_FILE_BLOCK',
+  'LLM_SUSPICIOUS',
+  'MEMORY_RECALL_DROPPED',
+  'MEMORY_WRITE_REFUSED',
+  'SHELL_BLOCK',
+] as const;
+
+export type SecurityEventType = (typeof SECURITY_EVENT_TYPES)[number];
+
+/** What one `AgentTrace` row has to say for {@link classifySecurityTrace} to name it. */
+export interface SecurityTraceLike {
+  error: string | null;
+  toolName: string | null;
+  type: string;
+}
+
+/**
+ * The event type a trace row is, or null when it is not a security event.
+ *
+ * One implementation, used by the gateway's feed and by the dashboard's run view: the two
+ * classifiers used to be hand-written copies, and the gateway's ended in a fall-through that
+ * labelled any unrecognised row a code-security finding. Every type is named explicitly here, so
+ * a type added to {@link SECURITY_EVENT_TYPES} without a sample fails the table test beside this
+ * file rather than being misfiled at run time.
+ */
+export function classifySecurityTrace(trace: SecurityTraceLike): SecurityEventType | null {
+  if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.SHELL_BLOCK)) {
+    return 'SHELL_BLOCK';
+  }
+  if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.FILE_BLOCK)) {
+    return 'FILE_BLOCK';
+  }
+  if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.INSTRUCTION_FILE_BLOCK)) {
+    return 'INSTRUCTION_FILE_BLOCK';
+  }
+  if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.CONTENT_BLOCK)) {
+    return 'CONTENT_SECURITY_BLOCK';
+  }
+  if (trace.error === SECURITY_TRACE_ERRORS.CONTENT_WARN) {
+    return 'CONTENT_SECURITY_WARN';
+  }
+  if (trace.type !== 'activity_event' || trace.toolName === null) {
+    return null;
+  }
+  if (trace.toolName === 'code_security.scan') {
+    return 'CODE_SECURITY';
+  }
+  if (trace.toolName === 'llm.suspicious_output') {
+    return 'LLM_SUSPICIOUS';
+  }
+  if (trace.toolName === 'channel.suspicious_input') {
+    return 'CHANNEL_SUSPICIOUS';
+  }
+  if (MEMORY_DROPPED_EVENTS.includes(trace.toolName)) {
+    return 'MEMORY_RECALL_DROPPED';
+  }
+  if (MEMORY_WRITE_REFUSED_EVENTS.includes(trace.toolName)) {
+    return 'MEMORY_WRITE_REFUSED';
+  }
+  return null;
+}

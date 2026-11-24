@@ -42,7 +42,7 @@ const GROUPS: {
 }[] = [
   {
     group: 'blocked',
-    hint: 'A scanner stopped the agent from doing this.',
+    hint: 'A guard stopped the agent from doing this.',
     title: 'Blocked',
     tone: 'danger',
   },
@@ -151,7 +151,7 @@ function SecurityWorkspace() {
   const range = parseDateRange(params);
   const bounds = dayBounds(range);
   const rawType = params.get('type');
-  const typeFilter = (SECURITY_EVENT_TYPES as string[]).includes(rawType ?? '')
+  const typeFilter = (SECURITY_EVENT_TYPES as readonly string[]).includes(rawType ?? '')
     ? (rawType as SecurityEventType)
     : '';
   const rawOffset = Number(params.get('offset') ?? 0);

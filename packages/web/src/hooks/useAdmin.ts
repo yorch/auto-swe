@@ -1,5 +1,8 @@
 'use client';
 
+// The shared event-type list: the gateway and this dashboard both derive from it.
+import type { SecurityEventType } from '@auto-swe/shared/lib/securityTraceTags';
+
 import type {
   AdminTokenSummary,
   EvalCaseDto,
@@ -227,16 +230,8 @@ export async function exportAuditLog(
   return { csv, limit, truncated };
 }
 
-export type SecurityEventType =
-  | 'SHELL_BLOCK'
-  | 'FILE_BLOCK'
-  | 'CONTENT_SECURITY_BLOCK'
-  | 'CONTENT_SECURITY_WARN'
-  | 'CODE_SECURITY'
-  | 'LLM_SUSPICIOUS'
-  | 'CHANNEL_SUSPICIOUS'
-  | 'MEMORY_WRITE_REFUSED'
-  | 'MEMORY_RECALL_DROPPED';
+// The shared list is the single definition; components keep importing the type from here.
+export type { SecurityEventType };
 
 export interface SecurityEvent {
   createdAt: string;

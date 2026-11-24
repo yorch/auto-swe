@@ -405,9 +405,10 @@ lessons carry their ids, so the agent can ask about one. See
    `CLAUDE.md` at the checkout root are the repository's instructions every session reads
    ([§3.7](#37-runtimes-mastra-and-the-harnesses), `agents/repoContext.ts`), so a run may not rewrite
    what this session and the next one run under; a file of either name below the root is an
-   ordinary file. The
-   Pi runtime refuses the same two names in the same place, with the same `AgentTrace.error` tag
-   (`SECURITY_TRACE_ERRORS.FILE_BLOCK`), so `/admin/security` counts both. `bash` can still write the
+   ordinary file. The Pi runtime refuses the same two names in the same place, with the same
+   `AgentTrace.error` tag (`SECURITY_TRACE_ERRORS.INSTRUCTION_FILE_BLOCK`, shown at
+   `/admin/security` as an **Instruction file write blocked** event), so both loops are counted the
+   same way and neither is filed as a scanner hit: no scanner ran for it. `bash` can still write the
    file — this closes the tool that would otherwise do it silently.
 3. **Pre-write content scanner** (`wrapWriteToolWithSecurityCheck`) — soft-block. Regex-based check for secrets/tokens in file content. Returns a prefixed error string starting with `SECURITY_CHECK_FAILED_PREFIX` or `SECURITY_WARNINGS_PREFIX`. The trace `error` field is set to `'blocked by content security check'` or `'content security warning'` so the gateway query in `/admin/security` can classify the event without raw SQL. Every trace tag (including the shell scanner's `'blocked by shell command scanner'`) is defined once, in `SECURITY_TRACE_ERRORS` (`@auto-swe/shared/lib/scannerCache`), which the tools write and the security-events endpoint and the eval trajectory scorer's guardrail count both read.
 
@@ -819,9 +820,11 @@ naming no workspace tool grants all six. A tool the keys do not grant is left ou
 tool list and refused by the policy as well. `loadSkill` and the `mcp` binding do not apply. A scanner
 that cannot complete throws and the call is refused, and so is a call the policy has not decided
 within 60 s. Decisions are granted explicitly (`permissionMode: 'default'` with a hook `allow`);
-`bypassPermissions` is not used, and the harness refuses it as root anyway. Refusals and warnings
-carry the same `AgentTrace.error` tags (`SECURITY_TRACE_ERRORS`) as the Mastra tools, so the
-security-events view counts them.
+`bypassPermissions` is not used, and the harness refuses it as root anyway. A call the scanners or
+the workspace rules refuse carries the same `AgentTrace.error` tags (`SECURITY_TRACE_ERRORS`) as the
+Mastra tools, so the security-events view counts it — with one exception, the harness's own
+configuration refusal below, which is tagged `blocked by workspace policy` and is therefore not a
+security event.
 
 **When the hook fails.** A `PreToolUse` hook the harness gives up on (its timeout is 120 s, past the
 worker's own 60 s deadline) falls back to Claude Code's ordinary permission evaluation. That fallback
@@ -891,7 +894,10 @@ runs without it, as on the Mastra loop.
 (`settingSources: ['project']`), so a flow ported from a developer machine behaves as it did there.
 Because the harness reads them again when the next turn starts, `Write` and `Edit` may not change
 them: anything under a `.claude` directory, `CLAUDE.md` and `CLAUDE.local.md` at any depth, and the
-root `.mcp.json` are refused.
+root `.mcp.json` are refused. That refusal is recorded as `blocked by workspace policy`, so it does
+not appear in `/admin/security`, and the harness-directory write refusal (`HARNESS_DIR`) carries the
+sensitive-file tag although no scanner runs for it. `SECURITY_TRACE_ERRORS.INSTRUCTION_FILE_BLOCK`
+covers the **Mastra and Pi** instruction-file refusals; the Claude Code harness has neither tag.
 
 **Skills.** The Mastra loop discloses skills through a `loadSkill` tool; this harness has none, so it
 receives each skill's text inline in the system prompt. A prompt over 100 000 characters is staged as

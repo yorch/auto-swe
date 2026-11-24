@@ -140,7 +140,8 @@ export function buildWorkspaceTools(
         if (contextBlock) {
           tracer?.addToolCall({
             durationMs: Date.now() - start,
-            error: SECURITY_TRACE_ERRORS.FILE_BLOCK,
+            // Its own tag: no scanner ran, and the security view should not file this as one.
+            error: SECURITY_TRACE_ERRORS.INSTRUCTION_FILE_BLOCK,
             inputJson: { path },
             outputJson: { result: contextBlock },
             toolName: 'writeFile',

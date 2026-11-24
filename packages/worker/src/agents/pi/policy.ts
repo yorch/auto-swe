@@ -264,7 +264,7 @@ export async function decidePiToolCall(
       protectedConfig: {
         label: "the repository's project",
         matches: isRepoContextFile,
-        securityTag: SECURITY_TRACE_ERRORS.FILE_BLOCK,
+        securityTag: SECURITY_TRACE_ERRORS.INSTRUCTION_FILE_BLOCK,
       },
     },
     WORKSPACE_DIR
