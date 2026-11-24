@@ -7,6 +7,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { useCan } from '@/hooks/useCan';
 import {
   useApproveTeamJoinRequest,
   useRejectTeamJoinRequest,
@@ -14,6 +15,7 @@ import {
   useTeamJoinRequestsAwaitingOrg,
 } from '@/hooks/useJoinRequests';
 import {
+  approvalCompletesOrgStep,
   approvalRoleOptions,
   buildApproveBody,
   buildDecisionBody,
@@ -44,7 +46,16 @@ export function TeamJoinRequestsPanel({
     row: JoinRequestRow;
   } | null>(null);
   const roles = approvalRoleOptions(grantableRoles);
-  const waiting = awaitingOrg.data ?? [];
+  // Only the rows still at their step belong in each list, whatever a cached answer says.
+  const waiting = (awaitingOrg.data ?? []).filter((r) => r.status === 'PENDING_ORG');
+  const open = (pending.data ?? []).filter((r) => r.status === 'PENDING_TEAM');
+  const orgOfDeciding = deciding?.row.requiresOrgApproval ? (deciding.row.orgId ?? null) : null;
+  // `useCan` without an organization asks "in any"; the hint is only for the request's own.
+  const managesOrg = useCan('org.members.manage', { orgId: orgOfDeciding ?? undefined });
+  const alsoCompletesOrgStep = approvalCompletesOrgStep(
+    deciding?.row ?? null,
+    !!orgOfDeciding && managesOrg
+  );
 
   return (
     <Card className="p-4 sm:p-6">
@@ -60,11 +71,11 @@ export function TeamJoinRequestsPanel({
         onRetry={() => void pending.refetch()}
         rows={2}
       >
-        {(pending.data ?? []).length === 0 ? (
+        {open.length === 0 ? (
           <p className="text-sm text-paper-500">No requests are waiting for a decision.</p>
         ) : (
           <ul aria-label="Requests awaiting a team decision" className="divide-y divide-ink-600">
-            {(pending.data ?? []).map((row) => (
+            {open.map((row) => (
               <li key={row.id}>
                 <JoinRequestItem
                   actions={
@@ -116,6 +127,7 @@ export function TeamJoinRequestsPanel({
         <Alert variant="warning">Requests waiting for the organization could not be loaded.</Alert>
       )}
       <DecideJoinRequestDialog
+        alsoCompletesOrgStep={alsoCompletesOrgStep}
         decision={deciding?.decision ?? 'approve'}
         onClose={() => setDeciding(null)}
         onSubmit={async ({ note, role }) => {

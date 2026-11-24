@@ -34,6 +34,11 @@ const TABLE: Record<Model, keyof Tables> = {
   user: 'users',
 };
 
+/** to-many relation name -> (foreign key on the OTHER model's rows, model it lists) */
+const MANY: Partial<Record<Model, Record<string, { fk: string; model: Model }>>> = {
+  organization: { teams: { fk: 'orgId', model: 'team' } },
+};
+
 /** relation name -> (foreign key on this row, model it points at) */
 const RELATIONS: Partial<Record<Model, Record<string, { fk: string; model: Model }>>> = {
   team: { organization: { fk: 'orgId', model: 'organization' } },
@@ -105,6 +110,9 @@ function fieldMatches(value: unknown, cond: unknown): boolean {
   if ('in' in cond) {
     return (cond.in as unknown[]).includes(value);
   }
+  if ('notIn' in cond) {
+    return !(cond.notIn as unknown[]).includes(value);
+  }
   if ('gt' in cond) {
     return String(value) > String(cond.gt);
   }
@@ -146,6 +154,33 @@ export function buildPrisma(world: World) {
         }
       } else if (key === 'userId_orgId' || key === 'userId_teamId') {
         if (!Object.entries(cond as Row).every(([k, v]) => row[k] === v)) {
+          return false;
+        }
+      } else if (model === 'organization' && key === 'configSettings' && isObject(cond)) {
+        // The override rows of `world.settings` (`key@orgId`), as `ConfigSetting` rows.
+        const stored = Object.entries(world.settings)
+          .map(([name, value]) => ({ name: name.split('@'), value }))
+          .filter(({ name }) => name[1] === row.id)
+          .map(({ name, value }) => ({
+            key: name[0],
+            orgId: name[1],
+            scope: 'ORGANIZATION',
+            value,
+          }));
+        const hit = (w: unknown) =>
+          stored.some((r) =>
+            Object.entries(w as Row).every(([k, c]) => fieldMatches((r as Row)[k], c))
+          );
+        if (('some' in cond && !hit(cond.some)) || ('none' in cond && hit(cond.none))) {
+          return false;
+        }
+      } else if (MANY[model]?.[key] && isObject(cond) && 'some' in cond) {
+        const rel = MANY[model][key];
+        if (
+          !rows(rel.model).some(
+            (r) => r[rel.fk] === row.id && matches(rel.model, r, cond.some as Row)
+          )
+        ) {
           return false;
         }
       } else if (RELATIONS[model]?.[key] && isObject(cond)) {
@@ -241,6 +276,14 @@ export function buildPrisma(world: World) {
         }
         return { count: hits.length };
       },
+      updateManyAndReturn: async (args: { data: Row; select?: Row; where: Row }) => {
+        world.beforeUpdateMany?.(model, args);
+        const hits = find(model, args);
+        for (const r of hits) {
+          Object.assign(r, args.data, { updatedAt: new Date() });
+        }
+        return hits.map((r) => project(model, r, args.select));
+      },
       ...extra,
     };
   }
@@ -294,6 +337,15 @@ export function buildPrisma(world: World) {
         world.teams.push(row);
         return row;
       },
+      /** Distinct `by` values of the rows `where` selects (only `orgId` is used). */
+      groupBy: async ({ by, where }: { by: string[]; where: Row }) => {
+        const seen = new Map<string, Row>();
+        for (const t of find('team', { where })) {
+          const key = by.map((k) => String(t[k])).join('|');
+          seen.set(key, Object.fromEntries(by.map((k) => [k, t[k]])));
+        }
+        return [...seen.values()];
+      },
     }),
     teamJoinRequest: delegate('teamJoinRequest', {
       create: async ({ data, select }: { data: Row; select?: Row }) => {
@@ -309,6 +361,7 @@ export function buildPrisma(world: World) {
         }
         const now = new Date();
         const row: Row = {
+          closeReason: null,
           createdAt: now,
           grantedRole: null,
           id: nextId(),

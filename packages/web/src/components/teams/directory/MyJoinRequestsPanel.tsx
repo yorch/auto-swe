@@ -15,6 +15,7 @@ import {
   decisionNote,
   isOpenJoinRequest,
   type JoinRequestRow,
+  joinCloseReasonText,
 } from '@/lib/joinRequests';
 import { teamRoleLabel } from '@/lib/roleLabels';
 import { teamHref } from '@/lib/teamSpace';
@@ -26,6 +27,7 @@ export function MyJoinRequestsPanel() {
   const withdraw = useWithdrawJoinRequest();
   const [confirming, setConfirming] = useState<JoinRequestRow | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const rows = requests.data?.requests ?? [];
 
   return (
     <div className="space-y-4">
@@ -38,7 +40,7 @@ export function MyJoinRequestsPanel() {
         label="your requests"
         onRetry={() => void requests.refetch()}
       >
-        {(requests.data ?? []).length === 0 ? (
+        {rows.length === 0 ? (
           <EmptyState
             bordered
             hint="Find a team in the Directory and choose Request to join."
@@ -47,12 +49,15 @@ export function MyJoinRequestsPanel() {
           />
         ) : (
           <ul aria-label="Your join requests" className="space-y-3">
-            {(requests.data ?? []).map((r) => (
+            {rows.map((r) => (
               <li key={r.id}>
                 <RequestCard onWithdraw={() => setConfirming(r)} row={r} />
               </li>
             ))}
           </ul>
+        )}
+        {requests.data?.truncated && (
+          <p className="text-xs text-paper-500">Showing your 200 most recent requests.</p>
         )}
       </QueryBoundary>
       <ConfirmModal
@@ -81,6 +86,7 @@ export function MyJoinRequestsPanel() {
 
 function RequestCard({ onWithdraw, row }: { onWithdraw: () => void; row: JoinRequestRow }) {
   const note = decisionNote(row);
+  const closed = joinCloseReasonText(row.closeReason);
   return (
     <Card className="p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -99,7 +105,7 @@ function RequestCard({ onWithdraw, row }: { onWithdraw: () => void; row: JoinReq
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <JoinRequestStatusChip status={row.status} />
+          <JoinRequestStatusChip closeReason={row.closeReason} status={row.status} />
           {isOpenJoinRequest(row.status) && (
             <Button
               aria-label={`Withdraw request to ${row.teamName ?? 'team'}`}
@@ -111,6 +117,9 @@ function RequestCard({ onWithdraw, row }: { onWithdraw: () => void; row: JoinReq
           )}
         </div>
       </div>
+      {closed && !isOpenJoinRequest(row.status) && (
+        <p className="mt-2 text-xs text-paper-400">{closed}</p>
+      )}
       {row.message && <p className="mt-3 text-sm text-paper-400">“{row.message}”</p>}
       {row.status === 'APPROVED' && row.grantedRole && (
         <p className="mt-2 text-xs text-paper-400">Joined as {teamRoleLabel(row.grantedRole)}.</p>

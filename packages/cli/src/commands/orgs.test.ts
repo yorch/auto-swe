@@ -83,6 +83,20 @@ describe('runOrgsCommand', () => {
       expect(out()).not.toContain('u-9');
     });
 
+    it('shows the close reason in the organization queue', async () => {
+      nextResponse = respond(200, [
+        {
+          closeReason: 'TEAM_DEACTIVATED',
+          id: 'req-1',
+          requester: { id: 'u-9', name: 'Ada' },
+          status: 'REJECTED',
+          teamName: 'Payments',
+        },
+      ]);
+      await runOrgsCommand(['requests', 'org-1'], ENV);
+      expect(out()).toContain('REJECTED (closed: team deactivated)');
+    });
+
     it('falls back from name to email to id for the requester', async () => {
       nextResponse = respond(200, [
         { id: 'r1', requester: { email: 'e@x.com', id: 'u1', name: null }, status: 'PENDING_ORG' },

@@ -1670,10 +1670,10 @@ export const SETTING_DEFINITIONS = {
   'teams.directoryScope': defineSetting<'platform' | 'organization'>({
     defaultValue: 'platform',
     description:
-      'Which teams the team directory lists to a signed-in user. `platform` lists every active team on the platform; `organization` lists only the teams of organizations the viewer belongs to, and a request to join may go only to a team the viewer can see. Platform-wide: it cannot be set per organization. A deployment that keeps teams private to an organization sets `organization`.',
+      'Which teams the team directory lists to a signed-in user. `platform` lists every active team on the platform; `organization` lists only the teams of organizations the viewer belongs to, and a request to join may go only to a team the viewer can see. The organization that owns a team decides who may list it: an organization may override this value, and the platform value applies to organizations with no override. A deployment that keeps teams private to an organization sets `organization`.',
     group: 'teams',
     label: 'Team directory scope',
-    overridableAt: [],
+    overridableAt: ['ORGANIZATION'],
     restartRequired: false,
     runPinned: false,
     schema: z.enum(['platform', 'organization']),
@@ -1690,6 +1690,18 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.number().int().min(0).max(720),
     unit: 'hours',
+    writeAccess: 'admin',
+  }),
+  'teams.joinRequestNotifications': defineSetting({
+    defaultValue: true,
+    description:
+      'Whether team join requests send notifications: an email to the requester when a request is decided, a Slack post to the team channel on a new request, and an email to organization admins on a request awaiting their approval. Off stops every join-request email and Slack post. Platform-wide.',
+    group: 'teams',
+    label: 'Join request notifications',
+    overridableAt: [],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
     writeAccess: 'admin',
   }),
   'teams.maxCreatedPerUser': defineSetting({
@@ -1728,6 +1740,19 @@ export const SETTING_DEFINITIONS = {
     restartRequired: false,
     runPinned: false,
     schema: z.boolean(),
+    writeAccess: 'admin',
+  }),
+  'teams.withdrawCooldownHours': defineSetting({
+    defaultValue: 1,
+    description:
+      'Hours a user must wait before asking to join a team again after they withdrew their own request to it. `0` allows an immediate new request. Platform-wide.',
+    group: 'teams',
+    label: 'Join request withdrawal cooldown',
+    overridableAt: [],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(0).max(720),
+    unit: 'hours',
     writeAccess: 'admin',
   }),
 

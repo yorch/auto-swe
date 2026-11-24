@@ -410,13 +410,37 @@ describe('startAppPreview', () => {
   });
 });
 
-function groupAlive(pgid: number): boolean {
+/**
+ * A killed process stays a zombie (`Z`) until whatever adopted it reaps it, and `kill(pid, 0)`
+ * keeps succeeding for a zombie. Under load, or when the adopting process never reaps, a process
+ * the preview already stopped would look alive, so liveness is read from the process state.
+ */
+function isDead(stat: { state: string } | null): boolean {
+  return stat === null || stat.state === 'Z' || stat.state === 'X';
+}
+
+function processAlive(pid: number): boolean {
   try {
-    process.kill(-pgid, 0);
-    return true;
+    process.kill(pid, 0);
   } catch {
     return false;
   }
+  return !isDead(processStat(pid));
+}
+
+function groupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+  } catch {
+    return false;
+  }
+  return fsSync
+    .readdirSync('/proc')
+    .filter((entry) => /^\d+$/.test(entry))
+    .some((entry) => {
+      const stat = processStat(Number(entry));
+      return stat !== null && stat.pgrp === pgid && !isDead(stat);
+    });
 }
 
 function processStat(pid: number): {
@@ -486,19 +510,12 @@ async function waitForFile(file: string): Promise<string> {
 async function waitForProcessGone(pid: number): Promise<boolean> {
   const deadline = Date.now() + 3000;
   while (Date.now() < deadline) {
-    try {
-      process.kill(pid, 0);
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    } catch {
+    if (!processAlive(pid)) {
       return true;
     }
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  try {
-    process.kill(pid, 0);
-    return false;
-  } catch {
-    return true;
-  }
+  return !processAlive(pid);
 }
 
 async function waitForMarkedProcessesGone(mark: string): Promise<boolean> {

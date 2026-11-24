@@ -15,7 +15,13 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveAuthEmailConfig: () => emailConfig.value,
 }));
 
-import { AuthEmailTransportError, authEmailAvailable, deliverAuthEmail } from './authEmail.js';
+import {
+  AuthEmailTransportError,
+  authEmailAvailable,
+  deliverAuthEmail,
+  emailTransportConfigured,
+  sendViaConfiguredTransport,
+} from './authEmail.js';
 
 const URL_WITH_TOKEN = 'https://api.example.com/api/auth/magic-link/verify?token=SECRET-TOKEN';
 
@@ -107,5 +113,58 @@ describe('deliverAuthEmail', () => {
     process.env.NODE_ENV = 'development';
     emailConfig.value = { ...emailConfig.value, resendApiKey: null };
     expect(authEmailAvailable()).toBe(true);
+  });
+});
+
+describe('shared transport', () => {
+  const originalEnv = process.env.NODE_ENV;
+  const body = { html: '<p>x</p>', subject: 's', text: 'x', to: 'a@example.com' };
+
+  beforeEach(() => {
+    emailConfig.value = {
+      authFromEmail: 'auth@x',
+      resendApiKey: 're_1',
+      smtpHost: null,
+      smtpPass: null,
+      smtpPort: undefined,
+      smtpUser: null,
+    };
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('down', { status: 503 }))
+    );
+  });
+  afterEach(() => {
+    process.env.NODE_ENV = originalEnv;
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('reports whether a transport is configured', () => {
+    expect(emailTransportConfigured()).toBe(true);
+    emailConfig.value = { ...emailConfig.value, resendApiKey: null };
+    expect(emailTransportConfigured()).toBe(false);
+  });
+
+  it('collects failures for a best-effort caller and throws for a strict one', async () => {
+    const lenient = await sendViaConfiguredTransport(body, { continueOnError: true });
+    expect(lenient).toMatchObject({ sent: false });
+    await expect(sendViaConfiguredTransport(body, { continueOnError: false })).rejects.toThrow(
+      /Resend returned 503/
+    );
+  });
+
+  it('keeps the sign-in path strict: production still throws, with and without a transport', async () => {
+    process.env.NODE_ENV = 'production';
+    const auth = {
+      ...body,
+      expiresIn: '10 min',
+      kind: 'password-reset' as const,
+      url: 'https://x/reset?token=T',
+    };
+    await expect(deliverAuthEmail(auth)).rejects.toThrow(/Resend returned 503/);
+    emailConfig.value = { ...emailConfig.value, resendApiKey: null };
+    await expect(deliverAuthEmail(auth)).rejects.toBeInstanceOf(AuthEmailTransportError);
   });
 });

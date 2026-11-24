@@ -6,6 +6,7 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import {
+  COMBINED_APPROVAL_HINT,
   decisionErrorMessage,
   type JoinRequestRow,
   lengthState,
@@ -25,6 +26,7 @@ export interface DecisionInput {
  * passes none and shows no role field.
  */
 export function DecideJoinRequestDialog({
+  alsoCompletesOrgStep = false,
   decision,
   onClose,
   onSubmit,
@@ -33,6 +35,8 @@ export function DecideJoinRequestDialog({
   roleOptions,
   teamName,
 }: {
+  /** The viewer also manages the request's organization, so a team approval completes both steps. */
+  alsoCompletesOrgStep?: boolean;
   decision: 'approve' | 'reject';
   onClose: () => void;
   onSubmit: (input: DecisionInput) => Promise<void>;
@@ -83,13 +87,16 @@ export function DecideJoinRequestDialog({
       subtitle={
         !approving
           ? `${who} sees the request was declined.`
-          : request?.requiresOrgApproval && roleOptions
+          : request?.requiresOrgApproval && roleOptions && !alsoCompletesOrgStep
             ? `${who} is not in this organization. Approving passes the request to the organization's admins for a final decision.`
             : `${who} joins ${teamName ?? 'the team'}.`
       }
       title={approving ? 'Approve request' : 'Reject request'}
     >
       <form className="space-y-5" onSubmit={submit}>
+        {approving && roleOptions && alsoCompletesOrgStep && (
+          <Alert variant="info">{COMBINED_APPROVAL_HINT}</Alert>
+        )}
         {approving && roleOptions && roleOptions.length > 0 && (
           <Select
             hint="Never above your own role."

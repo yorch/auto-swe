@@ -18,6 +18,14 @@ function respond(status: number, data: unknown): Response {
   } as unknown as Response;
 }
 
+function respondWithMeta(data: unknown, meta: Record<string, unknown>): Response {
+  return {
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({ data, meta }),
+  } as unknown as Response;
+}
+
 describe('runTeamsCommand', () => {
   let stderrWrites: string[];
   let stdoutWrites: string[];
@@ -142,6 +150,27 @@ describe('runTeamsCommand', () => {
       expect(calls).toHaveLength(0);
     });
 
+    it('passes the organizations list through unchanged in --json', async () => {
+      const organizations = [
+        { id: 'org-2', name: 'Beta' },
+        { id: 'org-1', name: 'Acme' },
+      ];
+      nextResponse = respond(200, { nextCursor: null, organizations, teams: [] });
+      const code = await runTeamsCommand(['directory', '--json'], ENV);
+      expect(code).toBe(0);
+      expect(JSON.parse(out())).toEqual({ nextCursor: null, organizations, teams: [] });
+    });
+
+    it('keeps the human table free of the organizations list', async () => {
+      nextResponse = respond(200, {
+        nextCursor: null,
+        organizations: [{ id: 'org-9', name: 'Zeta Holdings' }],
+        teams: [],
+      });
+      await runTeamsCommand(['directory'], ENV);
+      expect(out()).toBe('No teams match.\n');
+    });
+
     it('rejects an unknown flag', async () => {
       const code = await runTeamsCommand(['directory', '--bogus=1'], ENV);
       expect(code).toBe(1);
@@ -190,6 +219,32 @@ describe('runTeamsCommand', () => {
       expect(err()).toContain('Usage: teams request <teamId>');
     });
 
+    it('names the earlier decision when the cooldown reports a reason', async () => {
+      nextResponse = respond(429, {
+        error: {
+          code: 'JOIN_REQUEST_COOLDOWN',
+          details: { reason: 'withdrawn', retryAfterSeconds: 120 },
+          message: 'Try again later',
+        },
+      });
+      const code = await runTeamsCommand(['request', 'team-1'], ENV);
+      expect(code).toBe(2);
+      expect(err()).toContain('JOIN_REQUEST_COOLDOWN: Try again later (reason: withdrawn)');
+    });
+
+    it('leaves the cooldown message alone when the reason is not one it knows', async () => {
+      nextResponse = respond(429, {
+        error: {
+          code: 'JOIN_REQUEST_COOLDOWN',
+          details: { reason: 'expired' },
+          message: 'Try again later',
+        },
+      });
+      const code = await runTeamsCommand(['request', 'team-1'], ENV);
+      expect(code).toBe(2);
+      expect(err()).toBe('JOIN_REQUEST_COOLDOWN: Try again later\n');
+    });
+
     it('surfaces a gateway error code and exits 2', async () => {
       nextResponse = respond(429, {
         error: { code: 'JOIN_REQUEST_COOLDOWN', message: 'Try again later' },
@@ -225,6 +280,56 @@ describe('runTeamsCommand', () => {
     it('prints an empty message when there are no requests', async () => {
       await runTeamsCommand(['requests'], ENV);
       expect(out()).toContain('No join requests.');
+    });
+
+    it('shows why a deactivation closed a request', async () => {
+      nextResponse = respond(200, [
+        {
+          closeReason: 'TEAM_DEACTIVATED',
+          id: 'req-1',
+          status: 'REJECTED',
+          teamName: 'Payments',
+        },
+        { closeReason: null, id: 'req-2', status: 'WITHDRAWN', teamName: 'Platform' },
+      ]);
+      await runTeamsCommand(['requests'], ENV);
+      expect(out()).toContain('REJECTED (closed: team deactivated)');
+      expect(out()).not.toContain('WITHDRAWN (closed');
+    });
+
+    it('prints the closeReason unchanged in --json', async () => {
+      const rows = [{ closeReason: 'ORGANIZATION_DEACTIVATED', id: 'req-1', status: 'REJECTED' }];
+      nextResponse = respond(200, rows);
+      await runTeamsCommand(['requests', '--json'], ENV);
+      expect(JSON.parse(out())).toEqual(rows);
+    });
+
+    it('notes under the table when the server says the list is truncated', async () => {
+      nextResponse = respondWithMeta([{ id: 'req-1', status: 'PENDING_TEAM' }], {
+        truncated: true,
+      });
+      const code = await runTeamsCommand(['requests'], ENV);
+      expect(code).toBe(0);
+      const lines = out().trimEnd().split('\n');
+      expect(lines[lines.length - 1]).toBe(
+        'Only the newest requests are listed; older ones are not shown.'
+      );
+    });
+
+    it('prints no truncation note when the list is complete', async () => {
+      nextResponse = respondWithMeta([{ id: 'req-1', status: 'PENDING_TEAM' }], {
+        truncated: false,
+      });
+      await runTeamsCommand(['requests'], ENV);
+      expect(out()).not.toContain('older ones');
+    });
+
+    it('keeps the --json output a bare array when the list is truncated', async () => {
+      nextResponse = respondWithMeta([{ id: 'req-1', status: 'PENDING_TEAM' }], {
+        truncated: true,
+      });
+      await runTeamsCommand(['requests', '--json'], ENV);
+      expect(JSON.parse(out())).toEqual([{ id: 'req-1', status: 'PENDING_TEAM' }]);
     });
 
     it('prints the raw list with --json', async () => {
@@ -283,6 +388,19 @@ describe('runTeamsCommand', () => {
       expect(out()).toContain('Bo');
       expect(out()).not.toContain('u-1');
       expect(out()).toContain('yes');
+    });
+
+    it('shows the close reason in the reviewer queue', async () => {
+      nextResponse = respond(200, [
+        {
+          closeReason: 'REQUESTER_DEACTIVATED',
+          id: 'req-1',
+          requester: { id: 'u-1', name: 'Bo' },
+          status: 'WITHDRAWN',
+        },
+      ]);
+      await runTeamsCommand(['requests', 'pending', 'team-1'], ENV);
+      expect(out()).toContain('WITHDRAWN (closed: requester deactivated)');
     });
 
     it('accepts --status=ALL', async () => {

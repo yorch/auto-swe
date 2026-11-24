@@ -40,8 +40,31 @@ export interface CreatableOrg {
 export interface DirectoryPage {
   teams: DirectoryTeam[];
   creatableOrgs: CreatableOrg[];
-  scope: 'platform' | 'organization';
+  /**
+   * Every organization with at least one team the viewer may see, sorted by name. Absent on a
+   * gateway that predates it; the filter then falls back to the organizations seen in pages.
+   */
+  organizations?: CreatableOrg[];
+  /**
+   * The deployment-wide default of `teams.directoryScope`. It is not the scope of this viewer's
+   * results (an organization may override it), so the UI does not read it. Optional so a
+   * response that omits it still parses.
+   */
+  scope?: 'platform' | 'organization';
   nextCursor: string | null;
+}
+
+/** Why a request was closed by the platform instead of decided or withdrawn by a person. */
+export type JoinRequestCloseReason =
+  | 'REQUESTER_DEACTIVATED'
+  | 'TEAM_DEACTIVATED'
+  | 'ORGANIZATION_DEACTIVATED';
+
+/** `GET /me/join-requests`: the caller's requests, newest first, cut at a fixed count. */
+export interface MyJoinRequests {
+  requests: JoinRequestRow[];
+  /** True when the caller has more requests than the list carries. */
+  truncated: boolean;
 }
 
 export interface JoinRequestPerson {
@@ -69,6 +92,8 @@ export interface JoinRequestRow {
   message: string;
   status: JoinRequestStatusValue;
   requiresOrgApproval: boolean;
+  /** Set when the platform closed the request (a deactivation); null or absent when a person did. */
+  closeReason?: JoinRequestCloseReason | null;
   grantedRole?: TeamRoleValue | null;
   teamDecisionNote?: string | null;
   orgDecisionNote?: string | null;
@@ -88,8 +113,38 @@ const STATUS_LABELS: Record<JoinRequestStatusValue, string> = {
   WITHDRAWN: 'Withdrawn',
 };
 
-/** An unknown status (a newer gateway) reads as itself. */
-export function joinStatusLabel(status: string): string {
+const CLOSE_REASON_TEXT: Record<JoinRequestCloseReason, string> = {
+  ORGANIZATION_DEACTIVATED: 'the organization was deactivated',
+  REQUESTER_DEACTIVATED: 'the requester account was deactivated',
+  TEAM_DEACTIVATED: 'the team was deactivated',
+};
+
+/** True for a close reason this client knows how to word. */
+function knownCloseReason(reason: unknown): reason is JoinRequestCloseReason {
+  return typeof reason === 'string' && reason in CLOSE_REASON_TEXT;
+}
+
+/**
+ * "Closed automatically: the team was deactivated"; null when a person decided or withdrew.
+ * An unknown reason (a newer gateway) still reads as a system close.
+ */
+export function joinCloseReasonText(reason: string | null | undefined): string | null {
+  if (!reason) {
+    return null;
+  }
+  return knownCloseReason(reason)
+    ? `Closed automatically: ${CLOSE_REASON_TEXT[reason]}`
+    : 'Closed automatically';
+}
+
+/**
+ * An unknown status (a newer gateway) reads as itself. A request the platform closed reads as
+ * "Closed automatically" instead of Rejected or Withdrawn, which would suggest a person acted.
+ */
+export function joinStatusLabel(status: string, closeReason?: string | null): string {
+  if (closeReason && !isOpenJoinRequest(status)) {
+    return 'Closed automatically';
+  }
   return STATUS_LABELS[status as JoinRequestStatusValue] ?? status;
 }
 
@@ -256,6 +311,14 @@ function retryAtFromDetails(details: unknown, now: Date): Date | null {
   return null;
 }
 
+function cooldownReason(details: unknown): 'rejected' | 'withdrawn' {
+  return typeof details === 'object' &&
+    details !== null &&
+    (details as Record<string, unknown>).reason === 'withdrawn'
+    ? 'withdrawn'
+    : 'rejected';
+}
+
 /** "in about 3 hours", "in 12 minutes"; null when the time has passed. */
 export function retryIn(at: Date, now: Date): string | null {
   const minutes = Math.ceil((at.getTime() - now.getTime()) / 60_000);
@@ -284,9 +347,11 @@ export function joinRequestErrorMessage(err: unknown, now: Date = new Date()): s
       case 'JOIN_REQUEST_COOLDOWN': {
         const at = retryAtFromDetails(err.details, now);
         const when = at ? retryIn(at, now) : null;
-        return when
-          ? `A recent request to this team was rejected. You can ask again ${when}.`
-          : 'A recent request to this team was rejected. Try again later.';
+        const lead =
+          cooldownReason(err.details) === 'withdrawn'
+            ? 'You withdrew a request to this team recently.'
+            : 'A recent request to this team was rejected.';
+        return when ? `${lead} You can ask again ${when}.` : `${lead} Try again later.`;
       }
       case 'TOO_MANY_OPEN_REQUESTS':
         return 'You have too many open requests. Withdraw one or wait for a decision before asking another team.';
@@ -392,4 +457,40 @@ export function mergeOrgOptions(
     }
   }
   return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * The options the filter offers. The gateway's own list (`listed`) is used when it sent one, so
+ * every organization is offered whatever page or search is on screen. Without it (an older
+ * gateway) the organizations seen so far stand in, as `mergeOrgOptions` accumulates them.
+ */
+export function directoryOrgOptions(input: {
+  listed: readonly CreatableOrg[] | null | undefined;
+  known: readonly CreatableOrg[];
+  creatable: readonly CreatableOrg[];
+}): CreatableOrg[] {
+  if (input.listed) {
+    return [...input.listed].sort((a, b) => a.name.localeCompare(b.name));
+  }
+  return mergeOrgOptions(
+    input.known,
+    input.creatable.map((o) => ({ orgId: o.id, orgName: o.name }))
+  );
+}
+
+/* ── Combined approval ───────────────────────────────────────────────────────── */
+
+export const COMBINED_APPROVAL_HINT =
+  'You also manage this organization, so this approval completes the organization step too.';
+
+/**
+ * Whether a team-step approval of `row` also completes the organization step: the request crosses
+ * organizations and the viewer holds `org.members.manage` for the request's organization
+ * (`managesOrg`, from `useCan`). The server decides; this only words the dialog.
+ */
+export function approvalCompletesOrgStep(
+  row: Pick<JoinRequestRow, 'requiresOrgApproval' | 'orgId'> | null,
+  managesOrg: boolean
+): boolean {
+  return !!row && row.requiresOrgApproval && !!row.orgId && managesOrg;
 }

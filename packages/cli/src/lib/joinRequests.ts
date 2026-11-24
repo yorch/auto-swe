@@ -1,3 +1,4 @@
+import { GatewayError } from './api.js';
 import { clean } from './format.js';
 
 /**
@@ -22,7 +23,48 @@ export interface JoinRequestView {
   grantedRole?: string | null;
   teamDecisionNote?: string | null;
   orgDecisionNote?: string | null;
+  /** Set when a deactivation closed the request; null when a person decided or withdrew it. */
+  closeReason?: string | null;
   createdAt?: string;
+}
+
+/** Words for the close reasons the gateway sends (`JoinRequestCloseReason`). */
+const CLOSE_REASON_TEXT: Record<string, string> = {
+  ORGANIZATION_DEACTIVATED: 'organization deactivated',
+  REQUESTER_DEACTIVATED: 'requester deactivated',
+  TEAM_DEACTIVATED: 'team deactivated',
+};
+
+/** The status cell: the status, and why a deactivation closed the request when it did. */
+export function statusText(r: JoinRequestView): string {
+  if (!r.closeReason) {
+    return r.status;
+  }
+  const why = CLOSE_REASON_TEXT[r.closeReason] ?? r.closeReason.toLowerCase().replace(/_/g, ' ');
+  return `${r.status} (closed: ${why})`;
+}
+
+/**
+ * Adds `details.reason` ('rejected' or 'withdrawn') to a join-request cooldown refusal, so the
+ * message says which earlier decision starts the wait. Any other error passes through.
+ */
+export function withCooldownReason(err: unknown): unknown {
+  if (!(err instanceof GatewayError) || err.code !== 'JOIN_REQUEST_COOLDOWN') {
+    return err;
+  }
+  const reason =
+    typeof err.details === 'object' && err.details !== null && 'reason' in err.details
+      ? err.details.reason
+      : undefined;
+  if (reason !== 'rejected' && reason !== 'withdrawn') {
+    return err;
+  }
+  return new GatewayError(
+    err.statusCode,
+    err.code,
+    `${err.message} (reason: ${reason})`,
+    err.details
+  );
 }
 
 /** Column-aligned text table. The last column is not padded. */
@@ -65,7 +107,7 @@ export function printRequests(rows: JoinRequestView[], columns: 'own' | 'review'
     process.stdout.write(
       renderTable(
         ['ID', 'TEAM', 'ORGANIZATION', 'STATUS', 'NOTE'],
-        rows.map((r) => [r.id, orDash(r.teamName), orDash(r.orgName), r.status, latestNote(r)])
+        rows.map((r) => [r.id, orDash(r.teamName), orDash(r.orgName), statusText(r), latestNote(r)])
       )
     );
     return;
@@ -77,7 +119,7 @@ export function printRequests(rows: JoinRequestView[], columns: 'own' | 'review'
         rows.map((r) => [
           r.id,
           requesterText(r),
-          r.status,
+          statusText(r),
           r.requiresOrgApproval ? 'yes' : 'no',
           orDash(r.grantedRole ?? null),
           orDash(r.message ?? null),
@@ -93,7 +135,7 @@ export function printRequests(rows: JoinRequestView[], columns: 'own' | 'review'
         r.id,
         requesterText(r),
         orDash(r.teamName ?? r.teamId),
-        r.status,
+        statusText(r),
         orDash(r.grantedRole ?? null),
         orDash(r.message ?? null),
       ])

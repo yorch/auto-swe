@@ -185,13 +185,17 @@ teams directory [--query=q] [--org=<id>] [--limit=N] [--cursor=C] [--json]
                                      List the teams you can see and your relationship to each
 teams request <teamId> [--message=text] [--json]
                                      Ask to join a team (one open request per team); a team in
-                                     another organization also needs that organization's approval
-teams requests [--json]              List your own join requests, newest first
+                                     another organization also needs that organization's approval.
+                                     After a rejection or a withdrawal the team's cooldown applies
+teams requests [--json]              List your own join requests, newest first; a note under the
+                                     table says when only the newest are listed
 teams requests withdraw <requestId> [--json]
                                      Withdraw one of your open requests
 teams requests pending <teamId> [--status=S] [--json]
                                      List a team's join requests (team managers); S is a
-                                     status or ALL
+                                     status or ALL. A request a deactivation closed shows the
+                                     reason in its status, for example REJECTED (closed: team
+                                     deactivated)
 teams requests approve <teamId> <requestId> [--role=ADMIN|LEAD|MEMBER] [--note=text] [--json]
                                      Approve at the team step; the role defaults to MEMBER and may
                                      not exceed your own role
