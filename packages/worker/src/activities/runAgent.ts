@@ -401,7 +401,7 @@ function recordToolCalls(
           tracer.addToolCall({
             durationMs: Date.now() - start,
             inputJson: input ?? {},
-            outputJson: stripModelImage(output),
+            outputJson: textOnlyToolOutput(output) ?? output,
             toolName: name,
           });
           return output;
@@ -457,10 +457,26 @@ function recordStepToolCalls(
       (step.toolResults ?? []).map((r) => [r.payload.toolCallId, r.payload] as const)
     );
     for (const { payload: call } of step.toolCalls ?? []) {
-      if (skip.has(call.toolName) || liveCallIds.has(call.toolCallId)) {
+      if (liveCallIds.has(call.toolCallId)) {
         continue;
       }
       const result = results.get(call.toolCallId);
+      if (skip.has(call.toolName)) {
+        // The tool records its own row. The one call it cannot is one Mastra refused before the
+        // body ran: the validation error comes back as the tool's *result*, so only this side
+        // knows it never executed.
+        const rejected = mastraValidationError(result?.result);
+        if (rejected === undefined) {
+          continue;
+        }
+        tracer.addToolCall({
+          durationMs: 0,
+          error: rejected,
+          inputJson: call.args ?? {},
+          toolName: call.toolName,
+        });
+        continue;
+      }
       const succeeded = result !== undefined && !result.isError;
       tracer.addToolCall({
         durationMs: 0,
@@ -468,16 +484,40 @@ function recordStepToolCalls(
           ? undefined
           : (errors.get(call.toolCallId) ?? (result ? errorText(result.result) : NO_RESULT_ERROR)),
         inputJson: call.args ?? {},
-        outputJson: succeeded ? stripModelImage(result.result) : undefined,
+        outputJson: succeeded ? (textOnlyToolOutput(result.result) ?? result.result) : undefined,
         toolName: call.toolName,
       });
     }
   }
 }
 
-function stripModelImage(output: unknown): unknown {
+/**
+ * The error Mastra returns as a tool's *result* when the call's arguments failed the tool's
+ * schema — the body never ran, so nothing else recorded it. Undefined for every other result.
+ */
+function mastraValidationError(result: unknown): string | undefined {
+  if (typeof result !== 'object' || result === null) {
+    return undefined;
+  }
+  const payload = (result as { error?: unknown }).error;
+  if (typeof payload !== 'object' || payload === null) {
+    return undefined;
+  }
+  const { error: isError, message } = payload as { error?: unknown; message?: unknown };
+  return isError === true &&
+    typeof message === 'string' &&
+    message.startsWith('Tool input validation failed')
+    ? message
+    : undefined;
+}
+
+/**
+ * The tool's output without a model-visible image, or undefined when there is nothing to strip.
+ * Returning only the *change* keeps the caller in charge of the value it already holds.
+ */
+function textOnlyToolOutput(output: unknown): Record<string, unknown> | undefined {
   if (typeof output !== 'object' || output === null || Array.isArray(output)) {
-    return output;
+    return undefined;
   }
   const record = output as Record<string, unknown>;
   const image = record.image;
@@ -487,7 +527,7 @@ function stripModelImage(output: unknown): unknown {
     Array.isArray(image) ||
     typeof (image as Record<string, unknown>).data !== 'string'
   ) {
-    return output;
+    return undefined;
   }
   const { image: _image, ...textOnly } = record;
   return textOnly;

@@ -620,7 +620,8 @@ describe.skipIf(!enabled)('the Claude Code runtime against a real container', ()
 
       expect(await ws.shell(`cat ${DIR}/INSTRUCTIONS.md`)).toBe(instructions);
       expect(await ws.shell(`ls ${DIR}/plugins/kit/new.md 2>&1`)).toContain('No such file');
-      const refused = toolCalls.filter((c) => c.error === 'blocked by sensitive file scanner');
+      // The harness's own configuration refusals carry their own tag: no scanner ran for them.
+      const refused = toolCalls.filter((c) => c.error === 'blocked by run configuration guard');
       expect(refused.map((c) => c.toolName)).toEqual(['Bash', 'Bash', 'Write']);
     }, 300_000);
 

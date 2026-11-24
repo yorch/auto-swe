@@ -2,11 +2,8 @@
 
 import {
   classifySecurityTrace,
-  MEMORY_DROPPED_EVENTS,
   MEMORY_SECURITY_EVENTS,
-  MEMORY_WRITE_REFUSED_EVENTS,
   SECURITY_EVENT_TYPES,
-  SECURITY_TRACE_ERRORS,
 } from '@auto-swe/shared/lib/securityTraceTags';
 import Link from 'next/link';
 import { type ReactNode, useId, useState } from 'react';
@@ -42,6 +39,7 @@ export const SECURITY_EVENT_META: Record<
   LLM_SUSPICIOUS: { group: 'advisory', label: 'Suspicious model output', tone: 'accent2' },
   MEMORY_RECALL_DROPPED: { group: 'blocked', label: 'Memory recall dropped', tone: 'danger' },
   MEMORY_WRITE_REFUSED: { group: 'blocked', label: 'Memory write refused', tone: 'danger' },
+  RUN_CONFIG_BLOCK: { group: 'blocked', label: 'Run configuration write blocked', tone: 'danger' },
   SHELL_BLOCK: { group: 'blocked', label: 'Command blocked', tone: 'danger' },
 };
 
@@ -82,7 +80,8 @@ function extractDetail(event: SecurityEvent): { primary: string; secondary?: str
       };
     }
     case 'FILE_BLOCK':
-    case 'INSTRUCTION_FILE_BLOCK': {
+    case 'INSTRUCTION_FILE_BLOCK':
+    case 'RUN_CONFIG_BLOCK': {
       const file = String(input?.path ?? '');
       const msg = String(output?.result ?? '');
       const label = msg.match(/\[([^\]]+)\]/)?.[1] ?? '';

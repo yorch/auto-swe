@@ -60,6 +60,7 @@ import {
   relayedToolName,
   toolsWithPause,
   toolsWithProfile,
+  WORKER_MCP_SERVER,
 } from './policy.js';
 import {
   profileContainerDir,
@@ -71,6 +72,7 @@ import {
   profileToolGrants,
   withProfileInstructions,
 } from './profile.js';
+import { claudeWorkerServer, claudeWorkerToolNames, claudeWorkerTools } from './workerServer.js';
 
 export { POLICY_DECISION_MS } from '../harness/policy.js';
 
@@ -239,6 +241,9 @@ export interface ClaudeCodeAccess {
    */
   effort?: 'low' | 'medium' | 'high';
 }
+
+/** What a JSON body decodes to: the value itself, not `unknown` wearing a name. */
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 /**
  * Each of `toolKeys` stands for harness tools ({@link harnessToolsFor}); the
@@ -525,7 +530,8 @@ export function claudeCodeAdapter(
     endpoint: { baseUrl: string; apiKey: string; proxied: boolean },
     mcpServer: { instance: McpServer; timeout: number } | undefined,
     browserServer: ReturnType<typeof createSdkMcpServer> | undefined,
-    knowledgeServer: ReturnType<typeof createSdkMcpServer> | undefined
+    knowledgeServer: ReturnType<typeof createSdkMcpServer> | undefined,
+    workerServer: ReturnType<typeof createSdkMcpServer> | undefined
   ): Promise<HarnessTurnResult<ClaudeUsageReport>> {
     let result: SDKResultMessage | undefined;
     let toolCalls = 0;
@@ -632,6 +638,12 @@ export function claudeCodeAdapter(
         tool_name: toolName,
         tool_response: response,
       } = input as PostToolUseHookInput;
+      // A worker tool's body records its own row, exactly as on the other two loops; this hook is
+      // for the harness's own tools. A warning cannot apply here — the policy allows these by
+      // name — so nothing is lost by returning early.
+      if (policy.workerTools?.includes(toolName)) {
+        return {};
+      }
       const { warning } = turn.completed(toolUseId ?? '', {
         inputJson: toolInput,
         output: response,
@@ -706,6 +718,7 @@ export function claudeCodeAdapter(
           ...(mcpServer ? [MCP_RELAY_SERVER] : []),
           ...(browserServer ? [BROWSER_MCP_SERVER] : []),
           ...(knowledgeServer ? [KNOWLEDGE_MCP_SERVER] : []),
+          ...(workerServer ? [WORKER_MCP_SERVER] : []),
         ],
         model: access.modelId,
         ...(profiles.length > 0
@@ -769,7 +782,7 @@ export function claudeCodeAdapter(
         // fallback reaches `canUseTool` above, which refuses.
         // Worker-owned servers only: a repository's `.mcp.json` or the harness's
         // settings add no server.
-        ...(mcpServer || browserServer || knowledgeServer
+        ...(mcpServer || browserServer || knowledgeServer || workerServer
           ? {
               mcpServers: {
                 ...(mcpServer
@@ -784,6 +797,7 @@ export function claudeCodeAdapter(
                   : {}),
                 ...(browserServer ? { [BROWSER_MCP_SERVER]: browserServer } : {}),
                 ...(knowledgeServer ? { [KNOWLEDGE_MCP_SERVER]: knowledgeServer } : {}),
+                ...(workerServer ? { [WORKER_MCP_SERVER]: workerServer } : {}),
               },
             }
           : {}),
@@ -997,6 +1011,15 @@ export function claudeCodeAdapter(
         ...(knowledgeSearch ? [CLAUDE_KNOWLEDGE_TOOL] : []),
       ];
       const knowledgeServer = knowledgeSearch ? claudeKnowledgeServer(knowledgeSearch) : undefined;
+      // The platform's own tools reach this harness as MCP tools: the same bodies the Mastra
+      // loop and Pi bind, including the `loadSkill` that discloses a skill from the menu.
+      const workerTools = claudeWorkerTools({
+        ...(options.skills ? { skills: options.skills } : {}),
+        ...(options.tracer ? { tracer: options.tracer } : {}),
+        ...(options.workerTools ? { workerTools: options.workerTools } : {}),
+      });
+      const workerServer = claudeWorkerServer(workerTools);
+      policy.workerTools = claudeWorkerToolNames(workerTools);
       const mcpServer = mcpRelay
         ? { instance: mcpRelay.createServer(), timeout: mcpRelay.callTimeoutMs }
         : undefined;
@@ -1050,7 +1073,9 @@ export function claudeCodeAdapter(
             apiKey: access.apiKey,
             onCall: (call) => turn.callSpent(call.id, `anthropic/${call.model}`, call.usage),
             onExchange: (exchange) => {
-              const tryJson = (text: string): unknown => {
+              // The body is untyped by nature: whatever the provider sent, parsed when it is
+              // JSON and kept as text when it is not. The alias names that boundary.
+              const tryJson = (text: string): JsonValue => {
                 try {
                   return JSON.parse(text);
                 } catch {
@@ -1083,7 +1108,8 @@ export function claudeCodeAdapter(
             : { apiKey: access.apiKey, baseUrl, proxied: false },
           mcpServer,
           browserServer,
-          knowledgeServer
+          knowledgeServer,
+          workerServer
         );
       } finally {
         // Every call the turn made is reported before the turn's usage is settled.

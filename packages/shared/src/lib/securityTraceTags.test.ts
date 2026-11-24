@@ -73,6 +73,11 @@ describe('classifySecurityTrace', () => {
       toolName: MEMORY_WRITE_REFUSED_EVENTS[0] as string,
       type: 'activity_event',
     },
+    RUN_CONFIG_BLOCK: {
+      error: SECURITY_TRACE_ERRORS.RUN_CONFIG_BLOCK,
+      toolName: 'Write',
+      type: 'tool_call',
+    },
     SHELL_BLOCK: {
       error: `${SECURITY_TRACE_ERRORS.SHELL_BLOCK}: pipe-to-shell`,
       toolName: 'bash',

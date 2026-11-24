@@ -343,10 +343,11 @@ describe('a merge driver the agent planted', () => {
     sh('git add -A && git commit -qm big');
     const base = sh('git rev-parse HEAD').trim();
     sh('git checkout -q -b edit-late');
-    sh("sed -i 's/line 18/late/' big.txt && git commit -qam late");
+    // `perl -pi -e` edits in place on both BSD and GNU userlands; `sed -i` does not.
+    sh("perl -pi -e 's/line 18/late/' big.txt && git commit -qam late");
     sh('git update-ref refs/remotes/origin/edit-late edit-late');
     sh(`git checkout -q epic && git reset -q --hard ${base}`);
-    sh("sed -i 's/line 2$/early/' big.txt && git commit -qam early");
+    sh("perl -pi -e 's/line 2$/early/' big.txt && git commit -qam early");
     const head = sh('git rev-parse HEAD').trim();
     const { sourceTips } = await recordMergeInputs(ws, ['edit-late']);
     const step = await startMerge(ws, 'edit-late', sourceTips['edit-late'] as string, head);

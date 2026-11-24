@@ -480,6 +480,64 @@ describe('runAgent', () => {
     expect(tracer.size).toBe(4);
   });
 
+  it('records a self-recording tool whose arguments Mastra rejected before it ran', async () => {
+    generateMock.mockResolvedValue({
+      steps: [
+        {
+          toolCalls: [
+            { payload: { args: { name: 'nope' }, toolCallId: 'c1', toolName: 'mcp_search' } },
+          ],
+          // Mastra validates inside `execute` and returns the failure as the tool's *result*, so
+          // the body — the only thing that records its own row — never ran.
+          toolResults: [
+            {
+              payload: {
+                result: {
+                  error: {
+                    error: true,
+                    message:
+                      'Tool input validation failed for mcp_search. Please fix the following errors and try again:\n- name: too short',
+                  },
+                },
+                toolCallId: 'c1',
+              },
+            },
+          ],
+        },
+      ],
+      text: 'done',
+    });
+    const tracer = new AgentTracer();
+    const addToolCall = vi.spyOn(tracer, 'addToolCall');
+
+    await runAgent(makeSpec(), 'M', { selfRecordingTools: new Set(['mcp_search']), tracer });
+
+    expect(addToolCall.mock.calls.map(([c]) => c.toolName)).toEqual(['mcp_search']);
+    expect(addToolCall.mock.calls[0]?.[0].error).toContain('Tool input validation failed');
+    addToolCall.mockRestore();
+  });
+
+  it('leaves a self-recording tool that threw to the row it already wrote', async () => {
+    generateMock.mockResolvedValue({
+      steps: [
+        {
+          // A body that throws records its own failure (see `toMastraTool`) and produces no
+          // result, so this pass must not write a second row.
+          toolCalls: [{ payload: { args: {}, toolCallId: 'c1', toolName: 'mcp_search' } }],
+          toolResults: [],
+        },
+      ],
+      text: 'done',
+    });
+    const tracer = new AgentTracer();
+    const addToolCall = vi.spyOn(tracer, 'addToolCall');
+
+    await runAgent(makeSpec(), 'M', { selfRecordingTools: new Set(['mcp_search']), tracer });
+
+    expect(addToolCall.mock.calls).toEqual([]);
+    addToolCall.mockRestore();
+  });
+
   it('does not read the step budget for a tool-free agent', async () => {
     generateMock.mockResolvedValue({ text: 'x' });
     await runAgent(makeSpec(), 'M');

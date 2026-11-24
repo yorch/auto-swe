@@ -233,9 +233,10 @@ describe('GET /security-events/summary', () => {
       LLM_SUSPICIOUS: 1,
       MEMORY_RECALL_DROPPED: 1,
       MEMORY_WRITE_REFUSED: 1,
+      RUN_CONFIG_BLOCK: 1,
       SHELL_BLOCK: 1,
     });
-    expect(prisma.agentTrace.count).toHaveBeenCalledTimes(10);
+    expect(prisma.agentTrace.count).toHaveBeenCalledTimes(11);
     expect(prisma.agentTrace.findMany).not.toHaveBeenCalled();
   });
 

@@ -283,10 +283,11 @@ export interface HarnessRuntimeOptions<Access> {
   evalLessonTools?: EvalLessonTool[];
   /**
    * The resolved Agent's skills, for a harness that discloses them by name
-   * instead of inlining their text: Pi binds `loadSkill` and gets the same
-   * compact menu the Mastra loop puts in front of its own `loadSkill`. A harness
-   * with no such tool (Claude Code) is given them inline in its prompt instead
-   * and ignores this.
+   * instead of inlining their text: Pi binds `loadSkill`, Claude Code serves it
+   * from its `worker` MCP server, and both put the same compact menu in front of
+   * it that the Mastra loop puts in front of its own `loadSkill`. A caller with
+   * no menu to offer (an agent run, which inlines skill text on every loop) may
+   * leave this out; a harness that does is then given no `loadSkill`.
    */
   skills?: ResolvedSkill[];
   /**

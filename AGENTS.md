@@ -767,9 +767,11 @@ Limitations of this arrangement, stated so nothing above reads as more than it i
 `packages/shared/src/lib/securityTraceTags.ts` (imported through
 `@auto-swe/shared/lib/scannerCache`) — `'blocked by content security check'`,
 `'content security warning'`, `'blocked by sensitive file scanner'`,
-`'blocked by shell command scanner'` and `'blocked by repository instruction guard'` (a write
-refused to the repository's root `AGENTS.md`/`CLAUDE.md` — a path rule, not a scanner) — the one
-definition the worker writes and the gateway and trajectory scorer read. Advisory events write named `activity_event` rows (`'code_security.scan'`, `'llm.suspicious_output'`). The
+`'blocked by shell command scanner'`, `'blocked by repository instruction guard'` (a write refused to
+the repository's root `AGENTS.md`/`CLAUDE.md` — a path rule, not a scanner) and `'blocked by run
+configuration guard'` (a write refused to configuration a harness loads for itself: its harness
+directory, or the `CLAUDE.md`/`.claude`/`.mcp.json` it reads) — the one definition the worker writes
+and the gateway and trajectory scorer read. Advisory events write named `activity_event` rows (`'code_security.scan'`, `'llm.suspicious_output'`). The
 `GET /api/v1/platform/security-events` endpoint derives each `SecurityEventType` with DB-level
 predicates so pagination stays correct.
 

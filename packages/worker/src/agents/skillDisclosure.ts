@@ -17,11 +17,12 @@ const loadSkillOutputSchema = z.object({ promptText: z.string() });
  * provenance only, so a session that never applies a skill never pays for its
  * text. The model calls `loadSkill` to read one.
  *
- * One writer for both runtimes: the Mastra loop binds `loadSkill` itself and Pi
- * gets the same tool through `workerTool.ts`, so an implementer session sees the
- * same menu and the same on-demand text whichever loop drives it. An agent node
- * or agent run inlines skill text on both loops instead (`composeAgentPrompt`)
- * and binds no menu.
+ * One writer for every loop that offers a menu: the Mastra loop binds `loadSkill`
+ * itself, Pi gets it through `workerTool.ts`, and Claude Code serves it from its
+ * `worker` MCP server — so an implementer session sees the same menu and the
+ * same on-demand text whichever loop drives it. An agent node or agent run
+ * inlines skill text on all three instead (`composeAgentPrompt`) and binds no
+ * menu.
  */
 export function skillMenuSuffix(skills: readonly ResolvedSkill[]): string {
   if (skills.length === 0) {
@@ -42,7 +43,8 @@ export function skillMenuSuffix(skills: readonly ResolvedSkill[]): string {
  */
 export function loadSkillWorkerTool(
   skills: readonly ResolvedSkill[],
-  tracer?: AgentTracer
+  /** Only `addToolCall` is used, so a harness's narrower tracer type can bind this too. */
+  tracer?: Pick<AgentTracer, 'addToolCall'>
 ): WorkerTool {
   const byName = new Map(skills.map((s) => [s.name, s]));
   return {

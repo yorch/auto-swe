@@ -119,6 +119,9 @@ export function harnessToolsGranting(keys: readonly string[]): HarnessTool[] {
   return nativeTools(CLAUDE_CODE_TOOLS, canonicalToolsGranting(keys));
 }
 
+/** The in-process MCP server the worker's own tools are served from. */
+export const WORKER_MCP_SERVER = 'worker';
+
 /** The in-process MCP server an Agent's MCP connection is relayed through. */
 export const MCP_RELAY_SERVER = 'connection';
 export const BROWSER_MCP_SERVER = 'browser';
@@ -138,6 +141,11 @@ export const BROWSER_RELAYED_TOOL_NAMES = [
 /** The name the harness calls a relayed MCP tool by: `mcp__<server>__<tool>`. */
 export function relayedToolName(tool: string): string {
   return `mcp__${MCP_RELAY_SERVER}__${tool}`;
+}
+
+/** The name the harness calls a worker-side tool by (`mcp__worker__loadSkill`). */
+export function workerToolName(tool: string): string {
+  return `mcp__${WORKER_MCP_SERVER}__${tool}`;
 }
 
 export interface PolicyContext {
@@ -170,6 +178,13 @@ export interface PolicyContext {
    */
   mcpTools?: readonly string[];
   browserTools?: readonly string[];
+  /**
+   * The worker-side tools this run bound besides the harness's own — the repository's
+   * lessons, learning submission, the catalog installer and `loadSkill` — by the name the
+   * harness calls them ({@link workerToolName}). Each runs in the worker, so it is allowed
+   * by name exactly as a relayed MCP tool is; the adapter binds only what it was given.
+   */
+  workerTools?: readonly string[];
 }
 
 /**
@@ -212,7 +227,7 @@ const MUTATING_COMMAND =
  * floor; an agent with arbitrary shell can still change files in its own
  * container, which is why the profile is written again at the start of every turn.
  */
-export function shellWritesHarnessDir(command: string, cwd: string): boolean {
+function shellWritesHarnessDir(command: string, cwd: string): boolean {
   const targets = [
     ...extractShellWriteTargets(command),
     ...extractShellWriteTargets(canonicalizeShellForScan(command)),
@@ -331,6 +346,9 @@ export async function decideToolCall(
   if (ctx.browserTools?.includes(toolName)) {
     return { allow: true };
   }
+  if (ctx.workerTools?.includes(toolName)) {
+    return { allow: true };
+  }
   if (
     !(HARNESS_TOOLS as readonly string[]).includes(toolName) &&
     !isProfileTool(toolName) &&
@@ -361,7 +379,7 @@ export async function decideToolCall(
   if (writesHarnessDir) {
     return deny(
       `Path rejected: ${HARNESS_DIR} holds the harness and the approved profile, which this run may not change.`,
-      SECURITY_TRACE_ERRORS.FILE_BLOCK
+      SECURITY_TRACE_ERRORS.RUN_CONFIG_BLOCK
     );
   }
   const canonical = toCanonical(tool, input);
@@ -376,7 +394,11 @@ export async function decideToolCall(
       cwd: ctx.cwd,
       extraReadRoots: [`${ctx.home}/.claude`, ...(ctx.profileDirs ?? [])],
       protectedConfig: ctx.projectConfigLoaded
-        ? { label: 'Claude Code', matches: isHarnessConfig }
+        ? {
+            label: 'Claude Code',
+            matches: isHarnessConfig,
+            securityTag: SECURITY_TRACE_ERRORS.RUN_CONFIG_BLOCK,
+          }
         : undefined,
     },
     harnessCwd

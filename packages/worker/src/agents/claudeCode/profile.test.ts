@@ -126,9 +126,11 @@ describe('buildProfileTar', () => {
   it('is a well-formed ustar archive of root-owned files and directories with masked modes', () => {
     const lines = listTar(buildProfileTar(profile()));
     const entry = (name: string) => lines.find((l) => l.endsWith(` ${name}`));
-    expect(entry('plugins/foo/scripts/run.sh')).toMatch(/^-rwxr-xr-x 0\/0 /);
-    expect(entry('INSTRUCTIONS.md')).toMatch(/^-rw-r--r-- 0\/0 /);
-    expect(entry('plugins/foo/')).toMatch(/^drwxr-xr-x 0\/0 /);
+    // The mode, and root ownership: GNU tar prints `0/0`, BSD prints two fields (`0 0`), so each
+    // pattern accepts either below the mode.
+    expect(entry('plugins/foo/scripts/run.sh')).toMatch(/^-rwxr-xr-x\s+0(?:\/0|\s+0)\s/);
+    expect(entry('INSTRUCTIONS.md')).toMatch(/^-rw-r--r--\s+0(?:\/0|\s+0)\s/);
+    expect(entry('plugins/foo/')).toMatch(/^drwxr-xr-x\s+0(?:\/0|\s+0)\s/);
     // Nothing but files and directories: no link, device or FIFO.
     for (const line of lines) {
       expect(line[0], line).toMatch(/[-d]/);
