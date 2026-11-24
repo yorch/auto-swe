@@ -444,12 +444,14 @@ lifecycle changes and delegated configuration grants are managed under `/admin/a
   platform ADMIN; a member of a team that owns the run's template; the person recorded as having
   launched the run (`launchedById`, which a re-run changes and a schedule or child run inherits);
   a member of the team that owns the run's repository, who must also hold a fresh GitHub
-  permission on it when GitHub access enforcement is on; or, for a run with no connection, a
-  service principal of the caller's team. Control is per run, not per step, so the person who
-  requested a run and launched it can answer its gates. A service-principal token never answers a
-  step. The run page's verdict and a step card say only this in general terms (the owning team's
-  members with repository access, whoever launched the run, platform admins) and, for the viewer,
-  whether they can answer now; they do not name a person.
+  permission on it when GitHub access enforcement is on; or, for a run that names no repository
+  and was requested by a service principal, a member of the team that owns that principal. A
+  service-principal token itself never answers a step. Control is per run, not per step, so the
+  person who requested a run and launched it can answer its gates. The run page's verdict and a
+  step card say only this in general terms (the repository team's members, with repository access
+  when GitHub access is enforced; the launcher; platform admins) and, for the viewer, whether they
+  can answer the step; they do not name a person, and the template-owning team is covered by
+  "include", not listed.
 - **A PRD run is visible to the team of its first repository only.** It records its primary
   repository as its work request's connection; the teams of its other repositories see the per-repo
   work requests it submits, not the PRD run and its approval steps.

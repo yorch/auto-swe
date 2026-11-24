@@ -278,8 +278,8 @@ export function withControlledFixRetry<
     fixRetry: {
       allowed: false,
       reason: ownerTeam
-        ? `You cannot retry this fix. It is controlled by ${ownerTeam.name}: you need to belong to that team and have access to its repository.`
-        : 'You cannot retry this fix. It is controlled by the team that owns this repository: you need to belong to that team and have access to its repository.',
+        ? `You cannot retry this fix. Who can retry it includes members of ${ownerTeam.name} (with access to the repository when GitHub access is enforced), the launcher and admins.`
+        : 'You cannot retry this fix. Who can retry it includes members of the owning team (with access to the repository when GitHub access is enforced), the launcher and admins.',
     },
   };
 }

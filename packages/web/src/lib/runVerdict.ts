@@ -1,4 +1,8 @@
-import type { WorkflowRunDetail, WorkflowStepRecord } from '@auto-swe/shared/types/api';
+import type {
+  HumanStepSummary,
+  WorkflowRunDetail,
+  WorkflowStepRecord,
+} from '@auto-swe/shared/types/api';
 import { classifyAgentRunFailure } from '@/lib/agentRun';
 import { whoCanAnswer } from '@/lib/gateAnswerers';
 import { findFailedStep } from '@/lib/runFailure';
@@ -33,6 +37,8 @@ export interface PendingHumanStep {
   myResponse?: string | null;
   /** The team that owns the run's repository, when known. */
   ownerTeamName?: string | null;
+  /** When the gate times out, ISO 8601; null or absent when it has no deadline. */
+  timeoutAt?: string | null;
 }
 
 export type VerdictRun = Pick<
@@ -79,16 +85,46 @@ function recordedPrUrl(result: unknown): string | null {
 }
 
 /**
- * What the verdict says about people, from what the API reports about the viewer. `canAnswer` is
- * false for several reasons (already answered, expired, run not running, no control), so a gate the
- * viewer cannot answer is never blamed on a lack of control: the sentence says "right now" and then
- * states the general rule. Unknown (`canAnswer` absent) says nothing. `replacesApprovals` is true
- * when the sentence already carries the remaining-approvals count.
+ * The verdict's view of the run's open gates. A step's own run owner wins; the run page's owner
+ * is the fallback for payloads that carry none.
  */
-function peopleSentence(steps: readonly PendingHumanStep[]): {
-  text: string;
-  replacesApprovals: boolean;
-} {
+export function toPendingHumanSteps(
+  steps: readonly HumanStepSummary[],
+  runOwnerTeamName?: string | null
+): PendingHumanStep[] {
+  return steps.map((s) => ({
+    approvalsRemaining: s.approvalsRemaining,
+    canAnswer: s.canAnswer,
+    currentApprovers: s.currentApprovers,
+    kind: s.kind,
+    myResponse: s.myResponse,
+    ownerTeamName: s.run.ownerTeam?.name ?? runOwnerTeamName ?? null,
+    requiredApprovers: s.requiredApprovers,
+    timeoutAt: s.timeoutAt,
+    title: s.title,
+  }));
+}
+
+/** True when the gate has a deadline and it is not in the future. */
+function pastDeadline(step: PendingHumanStep, now: number): boolean {
+  if (!step.timeoutAt) {
+    return false;
+  }
+  const at = new Date(step.timeoutAt).getTime();
+  return Number.isFinite(at) && at <= now;
+}
+
+/**
+ * What the verdict says about people, from what the API reports about the viewer. `canAnswer` is
+ * false for several reasons (already answered, past its deadline, no control), so each gate the
+ * viewer cannot answer is explained by the reason it shows: answered, past its deadline, or the
+ * general rule. Unknown (`canAnswer` absent) says nothing. `replacesApprovals` is true when the
+ * sentence already carries the remaining-approvals count.
+ */
+function peopleSentence(
+  steps: readonly PendingHumanStep[],
+  now: number
+): { text: string; replacesApprovals: boolean } {
   const total = steps.length;
   const one = total === 1;
   const answerable = steps.filter((s) => s.canAnswer === true).length;
@@ -104,7 +140,9 @@ function peopleSentence(steps: readonly PendingHumanStep[]): {
     return { replacesApprovals: false, text: '' };
   }
   const answered = steps.filter((s) => Boolean(s.myResponse));
-  const unexplained = steps.filter((s) => !s.myResponse);
+  const open = steps.filter((s) => !s.myResponse);
+  const expired = open.filter((s) => pastDeadline(s, now));
+  const blocked = open.filter((s) => !pastDeadline(s, now));
   let text = '';
   let replacesApprovals = false;
   if (answered.length > 0) {
@@ -118,18 +156,36 @@ function peopleSentence(steps: readonly PendingHumanStep[]): {
       text += ` You answered ${answered.length === total ? 'all of them' : `${answered.length} of them`}.`;
     }
   }
-  if (unexplained.length > 0) {
-    const target = unexplained.length === total ? (one ? 'it' : 'them') : 'the others';
-    text += ` You cannot answer ${target} right now. ${whoCanAnswer(unexplained[0]?.ownerTeamName)}`;
+  if (expired.length > 0) {
+    text +=
+      expired.length === total
+        ? one
+          ? ' The deadline for responding has passed.'
+          : ' The deadline for responding has passed on all of them.'
+        : ` The deadline for responding has passed on ${expired.length === 1 ? '1 of them' : `${expired.length} of them`}.`;
+  }
+  if (blocked.length > 0) {
+    const alone = answered.length === 0 && expired.length === 0;
+    const target = alone
+      ? one
+        ? 'it'
+        : 'them'
+      : blocked.length === 1
+        ? 'the other'
+        : 'the others';
+    text += ` You cannot answer ${target}. ${whoCanAnswer(
+      blocked.map((s) => s.ownerTeamName),
+      blocked.length > 1
+    )}`;
   }
   return { replacesApprovals, text };
 }
 
-function pendingVerdict(steps: readonly PendingHumanStep[], cost: number): RunVerdict {
+function pendingVerdict(steps: readonly PendingHumanStep[], cost: number, now: number): RunVerdict {
   const first = steps[0];
   const more =
     steps.length > 1 ? ` and ${steps.length - 1} more gate${steps.length > 2 ? 's' : ''}` : '';
-  const people = peopleSentence(steps);
+  const people = peopleSentence(steps, now);
   const needs = people.replacesApprovals ? '' : approvalsSentence(first);
   return {
     detail: `The run is paused at "${first?.title}"${more} until a person responds.${needs}${people.text}${costSentence(cost, true)}`,
@@ -240,12 +296,14 @@ function successVerdict(run: VerdictRun): RunVerdict {
  */
 export function deriveRunVerdict(
   run: VerdictRun,
-  pendingHumanSteps: readonly PendingHumanStep[] = []
+  pendingHumanSteps: readonly PendingHumanStep[] = [],
+  /** The clock, injectable so a deadline can be tested. */
+  now: number = Date.now()
 ): RunVerdict {
   switch (run.status) {
     case 'RUNNING':
       if (pendingHumanSteps.length > 0) {
-        return pendingVerdict(pendingHumanSteps, run.costUsdAccrued);
+        return pendingVerdict(pendingHumanSteps, run.costUsdAccrued, now);
       }
       return {
         detail: `The run has not ended and no open gate is listed for it.${costSentence(run.costUsdAccrued, true)}`,

@@ -354,24 +354,16 @@ export function HumanStepCard({
   // The step carries its run's owner, so the inbox (which passes no ownerName) names it too.
   // A caller-supplied name is the fallback for payloads without one.
   const owner = step.run.ownerTeam?.name ?? ownerName ?? null;
-  // `canAnswer` is false for more than one reason (already answered, expired, run not running,
-  // no control over the run), so the text names the reason the step itself shows and otherwise
-  // claims no more than "not right now". Absent `canAnswer` (an older payload) leaves the controls
-  // on and lets the gateway refuse.
+  // `canAnswer` is false for several reasons, but this reason shows only while the controls are
+  // offered (pending, not expired, not already approved by the caller), so only two can apply: the
+  // run has ended, or the caller has no control over it. Absent `canAnswer` (an older payload)
+  // leaves the controls on and lets the gateway refuse.
   let answerBlocked: string | null = null;
   if (step.canAnswer === false) {
-    if (step.myResponse) {
-      answerBlocked =
-        (step.approvalsRemaining ?? 0) > 0
-          ? `You already answered this step. It needs ${step.approvalsRemaining} more from other people.`
-          : 'You already answered this step.';
-    } else if (expired) {
-      answerBlocked = 'This step has expired, so it can no longer be answered.';
-    } else if (step.run.status !== 'RUNNING') {
-      answerBlocked = 'This run is not running, so this step cannot be answered.';
-    } else {
-      answerBlocked = `You cannot answer this step right now. ${whoCanAnswer(owner)}`;
-    }
+    answerBlocked =
+      step.run.status === 'RUNNING'
+        ? `You cannot answer this step. ${whoCanAnswer(owner)}`
+        : 'This run is not running, so this step cannot be answered.';
   }
   const responses = step.responses ?? [];
   const requestId = step.run.workRequestId;

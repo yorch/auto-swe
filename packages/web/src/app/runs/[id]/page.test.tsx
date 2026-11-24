@@ -3,6 +3,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { Suspense } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { runControlReason } from '@/lib/teamPermissions';
 import { withQuery } from '@/test/rtl-helpers';
 
 const state = vi.hoisted(() => ({
@@ -232,7 +233,9 @@ describe('run page summary band', () => {
       expect(ids).toContain('cancel-run-hint');
       const reasons = ids.map((id) => document.getElementById(id)?.textContent ?? '');
       expect(
-        reasons.some((t) => /Only members of .* or the launcher can cancel this run\./.test(t))
+        reasons.some((t) =>
+          /Who can cancel this run includes members of .*the launcher and admins\./.test(t)
+        )
       ).toBe(true);
     } finally {
       run.status = 'FAILED';
@@ -250,9 +253,8 @@ describe('run page summary band', () => {
     try {
       await renderPage();
       const cancel = screen.getByRole('button', { name: 'Cancel run' });
-      expect(cancel.getAttribute('title')).toBe(
-        'Only members of Payments or the launcher can cancel this run.'
-      );
+      expect(cancel.getAttribute('title')).toBe(runControlReason('Payments', 'cancel'));
+      expect(cancel.getAttribute('title')).toContain('members of Payments (with access');
     } finally {
       run.status = 'FAILED';
       delete (run as Record<string, unknown>).review;

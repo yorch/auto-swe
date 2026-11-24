@@ -455,7 +455,23 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
 
     it('refuses for a viewer without control, without a team name when there is none', () => {
       const out = withControlledFixRetry({ canControl: false, fixRetry: { allowed: true } }, null);
-      expect(out.fixRetry).toEqual({ allowed: false, reason: expect.stringContaining('owns') });
+      expect(out.fixRetry).toEqual({
+        allowed: false,
+        reason: expect.stringContaining('members of the owning team (with access'),
+      });
+      expect(JSON.stringify(out.fixRetry)).not.toMatch(/controlled by|belong to that team/);
+    });
+
+    it('names the owning team, and says the rule includes the launcher and admins', () => {
+      const out = withControlledFixRetry(
+        { canControl: false, fixRetry: { allowed: true } },
+        { name: 'Payments' }
+      );
+      expect(out.fixRetry).toEqual({
+        allowed: false,
+        reason:
+          'You cannot retry this fix. Who can retry it includes members of Payments (with access to the repository when GitHub access is enforced), the launcher and admins.',
+      });
     });
   });
 
