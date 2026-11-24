@@ -72,14 +72,14 @@ async function run(mode: Mode, blind: () => void) {
 
 const routes: Array<{ name: string; blind: () => void; oldBlinded: Record<Mode, boolean> }> = [
   {
-    blind: () => sh('git config diff.external /bin/true'),
+    blind: () => sh('git config diff.external true'),
     name: 'an external diff driver (diff.external)',
     // The guarded range passed --no-ext-diff already.
     oldBlinded: { guarded: false, unguarded: true },
   },
   {
     blind: () => {
-      sh('git config diff.x.textconv /bin/true');
+      sh('git config diff.x.textconv true');
       write('.git/info/attributes', '* diff=x\n');
     },
     name: 'a textconv driver selected from .git/info/attributes',

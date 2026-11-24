@@ -913,6 +913,30 @@ describe('skills and the worker tools the Mastra loop binds', () => {
     expect(JSON.stringify(prompts[0])).not.toContain('loadSkill');
   });
 
+  it('traces a call whose arguments fail the tool schema, which the loop answered itself', async () => {
+    // `write` needs content and path; this call has neither, so Pi never reaches the policy or
+    // `afterToolCall`.
+    const { model } = scriptedModel([{ calls: [{ input: {}, name: 'write' }] }, { text: 'done' }]);
+    const adapter = adapterFor(model);
+    const container = fakeContainer();
+    const turn = fakeTurn(adapter, container.exec);
+
+    const outcome = await adapter.runTurn(turn as unknown as HarnessTurn, {
+      system: '',
+      user: 'go',
+    });
+
+    expect(outcome.text).toBe('done');
+    // One row for the call, carrying what the model was told, and nothing ran.
+    expect(turn.failed).toHaveBeenCalledTimes(1);
+    expect(turn.failed).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ toolName: 'write' })
+    );
+    expect(turn.completed).not.toHaveBeenCalled();
+    expect(container.fs.size).toBe(0);
+  });
+
   it('binds a worker tool in the worker and lets its call through the policy', async () => {
     const call = vi.fn(async (_args: unknown) => ({ lessons: [{ lessonId: 'l-1' }] }));
     const { model, prompts } = scriptedModel([

@@ -2415,3 +2415,46 @@ does. Nothing else needs changing, and no migration is needed.
 
 **Verify.** A refused write to root `AGENTS.md` shows as **Instruction file write blocked** in
 `/admin/security`, and `GET /api/v1/platform/security-events?type=INSTRUCTION_FILE_BLOCK` returns it.
+
+### The Claude Code harness gets the platform's tools, a skill menu, and its own refusal tag (`<fixing commit SHA>`)
+
+**Affected.** Deployments that run an agent on the `claude-code` runtime, and anything that filters
+`/api/v1/platform/security-events` or reads `/admin/security`.
+
+**Fixing commit.** The change that adds `SECURITY_TRACE_ERRORS.RUN_CONFIG_BLOCK` and the
+`mcp__worker__*` server; where history is squashed, compare the source.
+
+**What changes.** A Claude Code session now receives the worker's own tools — the repository's
+`searchLessons`/`explainLesson`, `submitLearning` and `provisionTool`, for the grants that enable
+them — through an in-process MCP server named `worker`. That applies to every surface the harness runs
+on: the implementer, the fix sessions, agent nodes and agent runs. An **implementer** session also
+discloses skills through the same compact menu and `loadSkill` tool as the Mastra loop and Pi, so its
+system prompt no longer carries every skill's text; agent nodes and agent runs still inline skill text,
+on all three loops. A deployment whose agents have a large skill library will see smaller implementer
+prompts, and one that relied on a skill being present without the model loading it will see the model
+call `loadSkill` instead.
+
+Writes refused to configuration the harness loads for itself (its harness directory, `CLAUDE.md` at
+any depth, `.claude/`, the root `.mcp.json`) are now traced with `blocked by run configuration guard`
+and appear as **Run configuration write blocked**; the harness-directory refusal used to carry the
+sensitive-file scanner's tag although no scanner ran, and the repository-config refusal used to carry
+no security tag at all, so neither was counted the way it claimed to be.
+
+**History.** Rows already written are not reclassified: an old harness-directory refusal keeps
+`blocked by sensitive file scanner` and an old repository-config refusal keeps
+`blocked by workspace policy`. For one retention window the summary therefore compares a
+`RUN_CONFIG_BLOCK` count that starts at zero with a previous window whose refusals were counted
+elsewhere.
+
+**Scoring.** `RUN_CONFIG_BLOCK` is a blocking tag, so the trajectory scorer now counts the
+repository-config refusal — which used to carry no security tag — as a guardrail hit. Runs scored
+before the upgrade had no such hit; their scores are not rewritten.
+
+**Actions.** No migration and no configuration change. If a saved filter or alert matched the
+harness-directory refusal by the `FILE_BLOCK` tag, point it at `RUN_CONFIG_BLOCK`. Check any agent
+instructions that assumed a skill's text was already in the system prompt.
+
+**Verify.** A Claude Code run's recorded server list includes `worker`, and its trace has one
+`loadSkill` row for a skill the model loaded (not two); a write to `.claude/settings.json` shows as
+**Run configuration write blocked** in `/admin/security`; and
+`GET /api/v1/platform/security-events?type=RUN_CONFIG_BLOCK` returns it.

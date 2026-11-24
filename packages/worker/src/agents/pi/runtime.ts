@@ -155,6 +155,51 @@ function textOfResult(result: { content: { type: string; text?: string }[] }): s
   return result.content.map((part) => (part.type === 'text' ? (part.text ?? '') : '')).join('');
 }
 
+/** The text of a tool result's content parts, which is what the model saw. */
+function textOfParts(content: readonly { text?: string; type: string }[]): string {
+  return content.map((part) => (part.type === 'text' ? (part.text ?? '') : '')).join('');
+}
+
+/**
+ * One row for each tool call the loop answered without running it.
+ *
+ * Pi validates a call's arguments against the tool's schema before `beforeToolCall`, and on a
+ * mismatch it produces the error result itself: neither the worker's `decide` nor `afterToolCall`
+ * runs, so nothing has traced the call. The model still made it and is still billed for it, so it
+ * is recorded here with the error the model saw — once, by call id. Two cases are outside it: a
+ * turn that throws before the loop returns records nothing from this pass, and a call the policy
+ * allowed that hit the loop's abort check after `beforeToolCall` stays untraced.
+ */
+function recordUnrunCalls(
+  turn: HarnessTurn,
+  decided: ReadonlySet<string>,
+  messages: readonly AgentMessage[]
+): void {
+  const results = new Map<string, ToolResultMessage>();
+  for (const message of messages) {
+    if (message.role === 'toolResult') {
+      results.set(message.toolCallId, message);
+    }
+  }
+  for (const message of messages) {
+    if (message.role !== 'assistant') {
+      continue;
+    }
+    for (const part of message.content) {
+      if (part.type !== 'toolCall' || decided.has(part.id)) {
+        continue;
+      }
+      const result = results.get(part.id);
+      turn.failed(part.id, {
+        error: result ? textOfParts(result.content) : 'the call was not executed',
+        // The same projection every other Pi row uses: a write's path, never its content.
+        inputJson: traceInput(part.name, part.arguments),
+        toolName: part.name,
+      });
+    }
+  }
+}
+
 /** What the trace records of a call's input: a write's path, not its content. */
 function traceInput(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
   return toolName === 'write' || toolName === 'edit' ? { path: args.path } : args;
@@ -356,6 +401,7 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
         };
       };
       const compactor = createCompactor({ budgetTokens, overheadChars, systemPrompt });
+      const decided = new Set<string>();
       const added = await runAgentLoop(
         [prompt],
         {
@@ -392,6 +438,7 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
           // same object.
           beforeToolCall: async ({ args, toolCall }) => {
             toolCalls += 1;
+            decided.add(toolCall.id);
             const verdict = await turn.decide(
               toolCall.id,
               toolCall.name,
@@ -443,6 +490,8 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
         streamFn
       );
 
+      // A call Pi refused for its arguments never reached the policy or `afterToolCall`.
+      recordUnrunCalls(turn, decided, added);
       const last = added.at(-1) as AssistantMessage | ToolResultMessage | undefined;
       const ended = last?.role === 'assistant' ? last : undefined;
       // A failed or aborted call leaves an empty message the next turn must not replay.

@@ -23,6 +23,13 @@ export const SECURITY_TRACE_ERRORS = {
    * does not file it as a sensitive-file hit.
    */
   INSTRUCTION_FILE_BLOCK: 'blocked by repository instruction guard',
+  /**
+   * A write refused because the path is configuration the running harness loads for
+   * itself — its harness directory outside the checkout, and the repository files it
+   * reads at the start of every turn (`CLAUDE.md`, `.claude/`, `.mcp.json`). A path
+   * rule like the one above, and no scanner ran, so it gets its own tag too.
+   */
+  RUN_CONFIG_BLOCK: 'blocked by run configuration guard',
   /** `bash` refused by the shell-command scanner. */
   SHELL_BLOCK: 'blocked by shell command scanner',
 } as const;
@@ -34,6 +41,7 @@ export const SECURITY_BLOCK_TRACE_ERRORS: readonly SecurityTraceError[] = [
   SECURITY_TRACE_ERRORS.CONTENT_BLOCK,
   SECURITY_TRACE_ERRORS.FILE_BLOCK,
   SECURITY_TRACE_ERRORS.INSTRUCTION_FILE_BLOCK,
+  SECURITY_TRACE_ERRORS.RUN_CONFIG_BLOCK,
   SECURITY_TRACE_ERRORS.SHELL_BLOCK,
 ];
 
@@ -105,6 +113,7 @@ export const SECURITY_EVENT_TYPES = [
   'LLM_SUSPICIOUS',
   'MEMORY_RECALL_DROPPED',
   'MEMORY_WRITE_REFUSED',
+  'RUN_CONFIG_BLOCK',
   'SHELL_BLOCK',
 ] as const;
 
@@ -135,6 +144,9 @@ export function classifySecurityTrace(trace: SecurityTraceLike): SecurityEventTy
   }
   if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.INSTRUCTION_FILE_BLOCK)) {
     return 'INSTRUCTION_FILE_BLOCK';
+  }
+  if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.RUN_CONFIG_BLOCK)) {
+    return 'RUN_CONFIG_BLOCK';
   }
   if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.CONTENT_BLOCK)) {
     return 'CONTENT_SECURITY_BLOCK';

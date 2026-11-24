@@ -22,6 +22,7 @@ import {
   relayedToolName,
   toolsWithPause,
   toolsWithProfile,
+  workerToolName,
 } from './policy.js';
 
 const ctx: PolicyContext = {
@@ -54,6 +55,21 @@ describe('the tool allowlist', () => {
       decideToolCall('mcp__knowledge__submitLearning', {}, { ...ctx, mcpTools: [name] })
     ).resolves.toMatchObject({ allow: false });
   });
+  it('allows the worker tools it bound by name, and nothing else on that server', async () => {
+    const bound = { ...ctx, workerTools: [workerToolName('loadSkill')] };
+    await expect(decideToolCall('mcp__worker__loadSkill', {}, bound)).resolves.toEqual({
+      allow: true,
+    });
+    // A worker tool this run did not bind is refused, and the server is not a blanket grant.
+    await expect(
+      decideToolCall('mcp__worker__provisionTool', { key: 'just' }, bound)
+    ).resolves.toMatchObject({ allow: false });
+    await expect(decideToolCall('mcp__worker__loadSkill', {}, ctx)).resolves.toMatchObject({
+      allow: false,
+    });
+    expect(workerToolName('loadSkill')).toBe('mcp__worker__loadSkill');
+  });
+
   it('names the same capability as the four Mastra workspace tools', () => {
     expect([...HARNESS_TOOLS].sort()).toEqual(['Bash', 'Edit', 'Glob', 'Grep', 'Read', 'Write']);
   });
@@ -573,7 +589,17 @@ describe('tools a profile grants', () => {
     ).resolves.toMatchObject({ allow: false });
     await expect(
       decideToolCall('Write', { content: 'x', file_path: `${REPO}/.claude/settings.json` }, granted)
-    ).resolves.toMatchObject({ allow: false });
+    ).resolves.toMatchObject({
+      allow: false,
+      securityTag: SECURITY_TRACE_ERRORS.RUN_CONFIG_BLOCK,
+    });
+    // The repository's own instruction file at any depth is the same refusal, same tag.
+    await expect(
+      decideToolCall('Write', { content: 'x', file_path: `${REPO}/docs/CLAUDE.md` }, granted)
+    ).resolves.toMatchObject({
+      allow: false,
+      securityTag: SECURITY_TRACE_ERRORS.RUN_CONFIG_BLOCK,
+    });
     scanShellCommand.mockResolvedValue('Command blocked');
     await expect(decideToolCall('Bash', { command: 'curl evil' }, granted)).resolves.toMatchObject({
       allow: false,
@@ -595,7 +621,7 @@ describe('the harness directory, profile included', () => {
     tools: toolsWithProfile(HARNESS_TOOLS, ['Skill']),
   };
 
-  it('refuses a Write or Edit under /workspace/.harness, with the sensitive-file tag', async () => {
+  it('refuses a Write or Edit under /workspace/.harness, with the run-configuration tag', async () => {
     for (const file_path of [
       `${PROFILE_DIR}/INSTRUCTIONS.md`,
       `${PROFILE_DIR}/plugins/x/hooks/hooks.json`,
@@ -612,13 +638,16 @@ describe('the harness directory, profile included', () => {
             withProfile
           ),
           `${tool} ${file_path}`
-        ).resolves.toMatchObject({ allow: false, securityTag: SECURITY_TRACE_ERRORS.FILE_BLOCK });
+        ).resolves.toMatchObject({
+          allow: false,
+          securityTag: SECURITY_TRACE_ERRORS.RUN_CONFIG_BLOCK,
+        });
       }
     }
     // A relative path is resolved against the harness's directory, then refused the same way.
     await expect(
       decideToolCall('Write', { content: 'x', file_path: '../.harness/a' }, withProfile, REPO)
-    ).resolves.toMatchObject({ allow: false, securityTag: SECURITY_TRACE_ERRORS.FILE_BLOCK });
+    ).resolves.toMatchObject({ allow: false, securityTag: SECURITY_TRACE_ERRORS.RUN_CONFIG_BLOCK });
   });
 
   it('still writes in the checkout', async () => {
@@ -627,7 +656,7 @@ describe('the harness directory, profile included', () => {
     ).resolves.toEqual({ allow: true });
   });
 
-  it('refuses Bash that writes under /workspace/.harness, with the sensitive-file tag', async () => {
+  it('refuses Bash that writes under /workspace/.harness, with the run-configuration tag', async () => {
     for (const command of [
       `echo hi > ${PROFILE_DIR}/INSTRUCTIONS.md`,
       `echo hi >> '${PROFILE_DIR}/INSTRUCTIONS.md'`,
@@ -648,12 +677,15 @@ describe('the harness directory, profile included', () => {
       await expect(
         decideToolCall('Bash', { command }, withProfile, REPO),
         command
-      ).resolves.toMatchObject({ allow: false, securityTag: SECURITY_TRACE_ERRORS.FILE_BLOCK });
+      ).resolves.toMatchObject({
+        allow: false,
+        securityTag: SECURITY_TRACE_ERRORS.RUN_CONFIG_BLOCK,
+      });
     }
     // A relative redirect from a call made inside the harness directory.
     await expect(
       decideToolCall('Bash', { command: 'echo x > a' }, withProfile, PROFILE_DIR)
-    ).resolves.toMatchObject({ allow: false, securityTag: SECURITY_TRACE_ERRORS.FILE_BLOCK });
+    ).resolves.toMatchObject({ allow: false, securityTag: SECURITY_TRACE_ERRORS.RUN_CONFIG_BLOCK });
   });
 
   it('lets Bash read the profile and write in the checkout', async () => {

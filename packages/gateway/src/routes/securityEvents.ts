@@ -16,7 +16,6 @@ import { requireAuth } from '../plugins/auth.js';
 
 // The type list is the shared one: the summary's predicate map and the `?type=` schema below
 // are both keyed on it, so a type cannot be counted by one and rejected by the other.
-export type { SecurityEventType };
 
 // Maps each SecurityEventType to the Prisma predicate that identifies it.
 // Keeping this inline in the query ensures pagination is correct — the type
@@ -41,6 +40,7 @@ const TYPE_PREDICATES: Record<SecurityEventType, object> = {
   LLM_SUSPICIOUS: activityEvent('llm.suspicious_output'),
   MEMORY_RECALL_DROPPED: activityEvent({ in: [...MEMORY_DROPPED_EVENTS] }),
   MEMORY_WRITE_REFUSED: activityEvent({ in: [...MEMORY_WRITE_REFUSED_EVENTS] }),
+  RUN_CONFIG_BLOCK: { error: { startsWith: SECURITY_TRACE_ERRORS.RUN_CONFIG_BLOCK } },
   SHELL_BLOCK: { error: { startsWith: SECURITY_TRACE_ERRORS.SHELL_BLOCK } },
 };
 

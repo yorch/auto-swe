@@ -3,7 +3,7 @@ import type { Workspace } from '../activities/workspace.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
 import { type AgentRuntimeSource, resolveAgentRuntime } from '../lib/config/agentRuntime.js';
-import { type ResolvedSkill, skillsToPromptSuffix } from '../lib/config/agentSkills.js';
+import type { ResolvedSkill } from '../lib/config/agentSkills.js';
 import { resolveProfileForRuntime } from '../lib/config/harnessProfile.js';
 import type { ResolveCtx } from '../lib/config/types.js';
 import type { EvalLessonTool } from '../lib/evalLessonRecall.js';
@@ -39,10 +39,9 @@ export interface ImplementerTurnRunner {
   /** What chose it: the run's pin, the Agent version, or the setting. */
   kindSource: AgentRuntimeSource;
   /**
-   * What this runtime needs appended to the system prompt: the Mastra loop's
-   * skill menu (it discloses skills through a `loadSkill` tool), or each
-   * skill's text inline for the harness, which has no such tool. `''` when the
-   * agent has no skills.
+   * What this runtime needs appended to the system prompt: the skill menu, which
+   * every loop discloses from through a `loadSkill` tool. `''` when the agent has
+   * no skills.
    */
   promptSuffix: string;
   skills: ResolvedSkill[];
@@ -214,12 +213,10 @@ export async function buildImplementerTurnRunner(input: {
     kind: harness.kind,
     kindSource,
     maxSteps: config.maxSteps,
-    // A harness that discloses skills by name gets the same menu the Mastra loop
-    // builds; one with no such tool (Claude Code) keeps its skills inline.
-    promptSuffix:
-      harness.kind === 'pi'
-        ? skillMenuSuffix(config.skills)
-        : (skillsToPromptSuffix(config.skills) ?? ''),
+    // Every harness now discloses skills by name: the menu the Mastra loop builds, and a
+    // `loadSkill` tool over its own in-process MCP server. Inlining the text cost a token
+    // budget for skills the session never applied.
+    promptSuffix: skillMenuSuffix(config.skills),
     runtime,
     skills: config.skills,
     toolKeys: config.toolKeys,

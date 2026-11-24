@@ -149,7 +149,7 @@ const attacks: Array<{
     agent: () => {
       commitEvil();
       sh(
-        'git pack-refs --all && sed -i "s#^[0-9a-f]* refs/remotes/origin/main#$(git rev-parse HEAD) refs/remotes/origin/main#" .git/packed-refs && rm -f .git/refs/remotes/origin/main'
+        'git pack-refs --all && perl -pi -e "s#^[0-9a-f]* refs/remotes/origin/main#$(git rev-parse HEAD) refs/remotes/origin/main#" .git/packed-refs && rm -f .git/refs/remotes/origin/main'
       );
     },
     name: 'A5 packed-refs edited so origin/main names the commit',

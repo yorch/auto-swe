@@ -407,11 +407,15 @@ describe('buildImplementerTurnRunner', () => {
     expect(turns.toolKeys).toEqual(['readFile', 'listDirectory']);
   });
 
-  it('inlines each skill’s text for the harness, which has no loadSkill tool', async () => {
+  it('gives the harness the same skill menu, not the skill text', async () => {
     h.resolveSetting.mockResolvedValue('claude-code');
     const turns = await buildImplementerTurnRunner(input());
-    expect(turns.promptSuffix).toBe('Write the test first.\n\nKeep diffs small.');
-    expect(turns.promptSuffix).not.toContain('loadSkill');
+    // The menu names each skill; its guidance is fetched through `loadSkill` when applied.
+    expect(turns.promptSuffix).toContain('## Available Skills');
+    expect(turns.promptSuffix).toContain('`loadSkill`');
+    expect(turns.promptSuffix).not.toContain('Write the test first.');
+    // And the harness is told which skills it can disclose.
+    expect(h.claudeCodeRuntime).toHaveBeenCalledWith(expect.objectContaining({ skills }));
   });
 
   it('has no suffix for the harness when the agent has no skills', async () => {

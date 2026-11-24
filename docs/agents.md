@@ -817,7 +817,11 @@ The tools are the same capability as the Mastra workspace tools under Claude Cod
 the Agent's `toolKeys` gate them the same way: `readFile` and `listDirectory` grant `Read`, `Glob`
 and `Grep`, `writeFile` grants `Write` and `Edit`, `bash` grants `Bash`, and `null`, `[]` or a list
 naming no workspace tool grants all six. A tool the keys do not grant is left out of the harness's
-tool list and refused by the policy as well. `loadSkill` and the `mcp` binding do not apply. A scanner
+tool list and refused by the policy as well. Beyond them, this harness is served the worker's own tools
+through an in-process MCP server named `worker`: `loadSkill` (when the Agent has skills), the
+repository's lesson tools, `submitLearning` and `provisionTool` for the grants that enable them — the
+same bodies the Mastra loop and Pi bind, called as `mcp__worker__<tool>` and allowed by name exactly
+as a relayed MCP tool is. A scanner
 that cannot complete throws and the call is refused, and so is a call the policy has not decided
 within 60 s. Decisions are granted explicitly (`permissionMode: 'default'` with a hook `allow`);
 `bypassPermissions` is not used, and the harness refuses it as root anyway. A call the scanners or
@@ -894,16 +898,20 @@ runs without it, as on the Mastra loop.
 (`settingSources: ['project']`), so a flow ported from a developer machine behaves as it did there.
 Because the harness reads them again when the next turn starts, `Write` and `Edit` may not change
 them: anything under a `.claude` directory, `CLAUDE.md` and `CLAUDE.local.md` at any depth, and the
-root `.mcp.json` are refused. That refusal is recorded as `blocked by workspace policy`, so it does
-not appear in `/admin/security`, and the harness-directory write refusal (`HARNESS_DIR`) carries the
-sensitive-file tag although no scanner runs for it. `SECURITY_TRACE_ERRORS.INSTRUCTION_FILE_BLOCK`
-covers the **Mastra and Pi** instruction-file refusals; the Claude Code harness has neither tag.
+root `.mcp.json` are refused, and so is a write anywhere under the harness directory (`HARNESS_DIR`).
+Both are path rules, so both are traced with `SECURITY_TRACE_ERRORS.RUN_CONFIG_BLOCK` — its own tag,
+because no scanner ran — and appear at `/admin/security` as **Run configuration write blocked**. The
+`INSTRUCTION_FILE_BLOCK` tag above covers the **Mastra and Pi** instruction-file refusals; this harness
+has its own file list and its own tag.
 
-**Skills.** The Mastra loop discloses skills through a `loadSkill` tool; this harness has none, so it
-receives each skill's text inline in the system prompt. A prompt over 100 000 characters is staged as
-a file in the container, because it travels on a command line capped at 128 KiB per argument. The file
-is `/workspace/.harness/home/.claude/system-prompt.md`, inside the one directory outside the checkout
-the policy lets `Read` reach.
+**Skills.** An implementer session discloses skills by name, as on the other two loops: the system
+prompt carries the compact menu and the harness calls `mcp__worker__loadSkill` for one skill's full
+text when it applies it. The menu replaced an inline copy of every skill (which cost their text on
+every turn), so that prompt no longer grows with the skill library. An agent node or agent run inlines
+skill text on every loop, this one included. A prompt over 100 000 characters is staged as a file in
+the container, because it travels on a command line capped at 128 KiB per argument. The file is
+`/workspace/.harness/home/.claude/system-prompt.md`, inside the one directory outside the checkout the
+policy lets `Read` reach.
 
 **Usage.** Every turn is metered per call: `runImplementerTurn` hands the runtime the turn's
 `onCallSpent` (`perCallAccounting`), each model call is debited and the budget re-checked as the call

@@ -147,7 +147,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 import type { AgentTracer } from '../../lib/agentTracer.js';
 import { spentUsageOf } from '../implementerRuntime.js';
-import { BROWSER_MCP_SERVER } from './policy.js';
+import { BROWSER_MCP_SERVER, WORKER_MCP_SERVER } from './policy.js';
 import {
   claudeCodeRuntime,
   normalizeAnthropicBaseUrl,
@@ -417,6 +417,46 @@ describe('browser screenshot MCP output', () => {
     });
     expect(call).toHaveBeenCalledWith({ query: 'task' });
   });
+  it('serves the worker tools and loadSkill from its own MCP server', async () => {
+    const call = vi.fn(async (_args: unknown) => ({ lessons: [{ lessonId: 'l-1' }] }));
+    const { runtime } = setup({
+      skills: [{ description: 'Test-first.', name: 'tdd', promptText: 'Write the test first.' }],
+      workerTools: [
+        {
+          call,
+          description: "Search this repository's lessons.",
+          inputSchema: z.object({ query: z.string() }),
+          name: 'searchLessons',
+        },
+      ],
+    });
+    h.script.push([[init('worker-tools'), success('done')]]);
+
+    await runtime.runTurn({ system: 'S', user: 'U' });
+
+    const options = h.queryCalls[0]?.options as QueryOptions & {
+      mcpServers: Record<
+        string,
+        { instance: { tools: { name: string; handler(input: unknown): Promise<unknown> }[] } }
+      >;
+    };
+    // One server for the platform's tools, `loadSkill` included, exactly as Pi binds them.
+    const names = options.mcpServers[WORKER_MCP_SERVER].instance.tools.map((t) => t.name);
+    expect(names.sort()).toEqual(['loadSkill', 'searchLessons']);
+
+    const tools = options.mcpServers[WORKER_MCP_SERVER].instance.tools;
+    const search = tools.find((t) => t.name === 'searchLessons');
+    expect(await search?.handler({ query: 'flaky' })).toEqual({
+      content: [{ text: JSON.stringify({ lessons: [{ lessonId: 'l-1' }] }), type: 'text' }],
+    });
+    expect(call).toHaveBeenCalledWith({ query: 'flaky' });
+    // A skill's guidance comes back as prose, not as escaped JSON.
+    const load = tools.find((t) => t.name === 'loadSkill');
+    expect(await load?.handler({ name: 'tdd' })).toEqual({
+      content: [{ text: 'Write the test first.', type: 'text' }],
+    });
+  });
+
   it('returns JPEG pixels as an MCP image content item', async () => {
     const browserToolset = {
       call: vi.fn(async () => ({
@@ -684,6 +724,36 @@ describe('sessions', () => {
 
     expect(h.queryCalls[0]?.options.resume).toBeUndefined();
     expect(h.queryCalls[1]?.options.resume).toBe('sess-1');
+  });
+});
+
+describe('the worker tools the harness is served', () => {
+  it('does not trace a second row for a call the tool body already recorded', async () => {
+    const search = {
+      call: vi.fn(async () => ({ lessons: [] })),
+      description: 'Search lessons.',
+      inputSchema: z.object({ query: z.string() }),
+      name: 'searchLessons',
+    };
+    const { runtime, toolCalls } = setup({ workerTools: [search] });
+    h.script.push([[init('worker-row'), success('done')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+
+    const options = h.queryCalls[0]?.options as QueryOptions & {
+      hooks: {
+        PostToolUse: { hooks: ((input: unknown) => Promise<unknown>)[] }[];
+      };
+    };
+    const post = options.hooks.PostToolUse[0]?.hooks[0];
+    const before = toolCalls.length;
+    // The hook sees the harness's name for the tool; the body has already written its row.
+    await post?.({
+      hook_event_name: 'PostToolUse',
+      tool_input: { query: 'flaky' },
+      tool_name: 'mcp__worker__searchLessons',
+      tool_response: { content: [{ text: '[]', type: 'text' }] },
+    });
+    expect(toolCalls).toHaveLength(before);
   });
 });
 
