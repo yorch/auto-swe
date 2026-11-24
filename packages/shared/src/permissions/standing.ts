@@ -2,11 +2,13 @@ import { ORG_ROLES, type OrgRoleValue, TEAM_ROLES, type TeamRoleValue } from './
 import type { OrgRank, TeamRank } from './types.js';
 
 /**
- * The only module that reads stored role values. It also alone keeps accepting the retired
- * spellings (`ENGINEER`, `ORG_ADMIN`, `ORG_MEMBER`, platform `LEAD`): Temporal histories and
- * persisted workflow inputs (`sourceAuthorization.actor.role`) written by earlier code carry them,
- * and a replay or a resumed run must still read them. Nothing new writes them. Everything else
- * works in `TeamRank`/`OrgRank` and booleans, so renaming the stored enums edits this file alone.
+ * The only module that reads stored role values. Everything else works in `TeamRank`/`OrgRank`
+ * and booleans, so renaming the stored enums edits this file alone.
+ *
+ * Only the current spellings are recognised. Every reader of these functions is fed a membership
+ * row read from the database in the same request or activity, where the enums hold nothing else;
+ * no authorization decision reads a role string persisted in a workflow input or Temporal history
+ * (the launch actor is used for its `sub`, and the role is re-read from the database).
  *
  * Unknown values map to `null`/`false`: a role this module has never heard of confers nothing.
  */
@@ -37,7 +39,6 @@ export function teamRankOf(role: string | null | undefined): TeamRank | null {
       return 'ADMIN';
     case 'LEAD':
       return 'LEAD';
-    case 'ENGINEER':
     case 'MEMBER':
       return 'MEMBER';
     default:
@@ -48,10 +49,8 @@ export function teamRankOf(role: string | null | undefined): TeamRank | null {
 /** A stored organization-membership role as a rank, or `null` for an unknown role. */
 export function orgRankOf(role: string | null | undefined): OrgRank | null {
   switch (role) {
-    case 'ORG_ADMIN':
     case 'ADMIN':
       return 'ADMIN';
-    case 'ORG_MEMBER':
     case 'MEMBER':
       return 'MEMBER';
     default:

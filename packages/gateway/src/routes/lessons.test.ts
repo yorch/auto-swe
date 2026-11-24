@@ -119,7 +119,7 @@ describe('GET /lessons/recall-experiment', () => {
     prisma.connection.findFirst.mockResolvedValue({ teamId: 'owning-team' });
     for (const membership of [
       null,
-      { role: 'ENGINEER', team: { isActive: true } },
+      { role: 'MEMBER', team: { isActive: true } },
       { role: 'LEAD', team: { isActive: false } },
     ]) {
       setMembership(prisma, membership);
@@ -697,7 +697,7 @@ describe('lesson flags', () => {
     built.prisma.memoryItem.findFirst.mockResolvedValue(lessonRow);
     built.prisma.connection.findFirst.mockResolvedValue({ teamId: 'team-1' });
     setMembership(built.prisma, {
-      role: lead ? 'LEAD' : 'ENGINEER',
+      role: lead ? 'LEAD' : 'MEMBER',
       team: { isActive: true },
     });
     return built;

@@ -448,7 +448,7 @@ describe('/api/v1/scheduled-work-requests', () => {
   });
 
   it('returns 403 for a plain ENGINEER team member', async () => {
-    membershipRole = 'ENGINEER';
+    membershipRole = 'MEMBER';
     const res = await inject({
       method: 'POST',
       payload: validBody,
@@ -1117,7 +1117,7 @@ describe('/api/v1/scheduled-work-requests', () => {
   });
 
   it('forbids fire-now for a plain ENGINEER team member', async () => {
-    membershipRole = 'ENGINEER';
+    membershipRole = 'MEMBER';
     scheduleRow = {
       budgetTier: 'STANDARD',
       cronExpression: '0 3 * * 1',
@@ -1365,7 +1365,7 @@ describe('/api/v1/scheduled-work-requests', () => {
     const createdTeam = () => scheduleCreates.at(-1)?.teamId;
 
     it('lets a shared-team lead create, owned by that team by default', async () => {
-      membershipRole = 'ENGINEER';
+      membershipRole = 'MEMBER';
       sharedTeams = [{ role: 'LEAD', teamId: SHARED }];
       expect((await create()).statusCode).toBe(201);
       expect(createdTeam()).toBe(SHARED);
@@ -1385,7 +1385,7 @@ describe('/api/v1/scheduled-work-requests', () => {
     });
 
     it('asks for teamId when the caller leads several shared teams', async () => {
-      membershipRole = 'ENGINEER';
+      membershipRole = 'MEMBER';
       sharedTeams = [
         { role: 'LEAD', teamId: SHARED },
         { role: 'LEAD', teamId: OTHER_SHARED },
@@ -1404,22 +1404,22 @@ describe('/api/v1/scheduled-work-requests', () => {
     });
 
     it('rejects a teamId of a shared team the caller does not lead', async () => {
-      membershipRole = 'ENGINEER';
+      membershipRole = 'MEMBER';
       sharedTeams = [
         { role: 'LEAD', teamId: SHARED },
-        { role: 'ENGINEER', teamId: OTHER_SHARED },
+        { role: 'MEMBER', teamId: OTHER_SHARED },
       ];
       expect((await create({ teamId: OTHER_SHARED })).statusCode).toBe(403);
     });
 
     it('does not let a mere shared-team member create', async () => {
-      membershipRole = 'ENGINEER';
-      sharedTeams = [{ role: 'ENGINEER', teamId: SHARED }];
+      membershipRole = 'MEMBER';
+      sharedTeams = [{ role: 'MEMBER', teamId: SHARED }];
       expect((await create()).statusCode).toBe(403);
     });
 
     it('lets a shared lead edit, fire and delete their own team schedule', async () => {
-      membershipRole = 'ENGINEER';
+      membershipRole = 'MEMBER';
       sharedTeams = [{ role: 'LEAD', teamId: SHARED }];
       scheduleRow = row();
       expect((await patch()).statusCode).toBe(200);
@@ -1428,10 +1428,10 @@ describe('/api/v1/scheduled-work-requests', () => {
     });
 
     it("forbids a shared lead from another team's schedule", async () => {
-      membershipRole = 'ENGINEER';
+      membershipRole = 'MEMBER';
       sharedTeams = [
         { role: 'LEAD', teamId: SHARED },
-        { role: 'ENGINEER', teamId: OTHER_SHARED },
+        { role: 'MEMBER', teamId: OTHER_SHARED },
       ];
       scheduleRow = row({ teamId: OTHER_SHARED });
       expect((await patch()).statusCode).toBe(403);
@@ -1440,7 +1440,7 @@ describe('/api/v1/scheduled-work-requests', () => {
     });
 
     it("forbids a shared lead from the owning team's schedule, legacy or not", async () => {
-      membershipRole = 'ENGINEER';
+      membershipRole = 'MEMBER';
       sharedTeams = [{ role: 'LEAD', teamId: SHARED }];
       for (const teamId of [null, 'team-1']) {
         scheduleRow = row({ teamId });
@@ -1462,13 +1462,13 @@ describe('/api/v1/scheduled-work-requests', () => {
       // A null team means the team was deleted: whose it was is unknown.
       scheduleRow = row({ teamId: null });
       expect((await patch()).statusCode).toBe(200);
-      membershipRole = 'ENGINEER';
+      membershipRole = 'MEMBER';
       sharedTeams = [{ role: 'LEAD', teamId: SHARED }];
       expect((await patch()).statusCode).toBe(403);
     });
 
     it('forbids a lead of a team the repository is no longer shared with', async () => {
-      membershipRole = 'ENGINEER';
+      membershipRole = 'MEMBER';
       sharedTeams = [];
       scheduleRow = row();
       expect((await patch()).statusCode).toBe(403);
@@ -1662,7 +1662,7 @@ describe('/api/v1/scheduled-work-requests', () => {
       scheduleRow = { ...row };
       membershipRole = 'LEAD';
       expect((await list('eng-token')).canManage).toBe(true);
-      membershipRole = 'ENGINEER';
+      membershipRole = 'MEMBER';
       expect((await list('eng-token')).canManage).toBe(false);
     });
 
@@ -1674,14 +1674,14 @@ describe('/api/v1/scheduled-work-requests', () => {
 
     it("is false for a shared team lead on another team's schedule", async () => {
       scheduleRow = { ...row };
-      membershipRole = 'ENGINEER';
+      membershipRole = 'MEMBER';
       sharedTeams = [{ role: 'LEAD', teamId: 'team-2' }];
       expect((await list('eng-token')).canManage).toBe(false);
     });
 
     it("is true for a shared team lead on their own team's schedule", async () => {
       scheduleRow = { ...row, teamId: 'team-2' };
-      membershipRole = 'ENGINEER';
+      membershipRole = 'MEMBER';
       sharedTeams = [{ role: 'LEAD', teamId: 'team-2' }];
       expect((await list('eng-token')).canManage).toBe(true);
     });

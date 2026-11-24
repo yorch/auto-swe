@@ -46,7 +46,7 @@ function leadOf(prisma: ReturnType<typeof newMockPrisma>, teamId: string, role: 
   ] as never);
 }
 
-async function buildApp(role: 'ADMIN' | 'LEAD' | 'ORG_ADMIN' | 'ENGINEER' = 'ADMIN') {
+async function buildApp(role: 'ADMIN' | 'LEAD' | 'USER' | 'ENGINEER' = 'ADMIN') {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -132,13 +132,11 @@ describe('usageRoutes GET /usage', () => {
     const { app, prisma } = await buildApp('ENGINEER');
     const url = `/api/v1/platform/usage?orgId=${ORG_A}`;
     prisma.organizationMembership.findMany.mockResolvedValueOnce([
-      { orgId: ORG_A, role: 'ORG_MEMBER' },
+      { orgId: ORG_A, role: 'MEMBER' },
     ]);
     expect((await app.inject({ headers: AUTH, method: 'GET', url })).statusCode).toBe(403);
 
-    prisma.organizationMembership.findMany.mockResolvedValueOnce([
-      { orgId: ORG_A, role: 'ORG_ADMIN' },
-    ]);
+    prisma.organizationMembership.findMany.mockResolvedValueOnce([{ orgId: ORG_A, role: 'ADMIN' }]);
     const res = await app.inject({ headers: AUTH, method: 'GET', url });
     expect(res.statusCode).toBe(200);
     for (const [args] of prisma.agentTrace.groupBy.mock.calls) {
@@ -458,11 +456,10 @@ describe('usageRoutes GET /usage/export', () => {
   });
 
   it('denies an organization admin who requests another organization', async () => {
-    const { app, prisma } = await buildApp('ORG_ADMIN');
+    const { app, prisma } = await buildApp('USER');
     prisma.organizationMembership.findMany.mockImplementation((async (args: {
       where: { orgId: { in: string[] } };
-    }) =>
-      args.where.orgId.in.includes(ORG_B) ? [{ orgId: ORG_B, role: 'ORG_ADMIN' }] : []) as never);
+    }) => (args.where.orgId.in.includes(ORG_B) ? [{ orgId: ORG_B, role: 'ADMIN' }] : [])) as never);
     const response = await app.inject({
       headers: AUTH,
       method: 'GET',
@@ -516,10 +513,10 @@ describe('usageRoutes GET /usage/scopes', () => {
   it('gives a non-admin only the teams they lead and the organizations they administer', async () => {
     const { app, prisma } = await buildApp('ENGINEER');
     prisma.teamMembership.findMany.mockResolvedValue([
-      { role: 'ENGINEER', team: { id: TEAM_B, isActive: true } },
+      { role: 'MEMBER', team: { id: TEAM_B, isActive: true } },
       { role: 'LEAD', team: { id: TEAM_A, isActive: true } },
     ]);
-    prisma.organizationMembership.findMany.mockResolvedValue([{ orgId: ORG_A, role: 'ORG_ADMIN' }]);
+    prisma.organizationMembership.findMany.mockResolvedValue([{ orgId: ORG_A, role: 'ADMIN' }]);
     // The names of the teams and organizations the held scope selected.
     prisma.team.findMany.mockImplementation((async (args: { where: { id: { in: string[] } } }) =>
       [

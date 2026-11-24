@@ -230,67 +230,109 @@ const SIDEBAR_TEAM_LIMIT = 8;
  * user pinned come first (in pin order); with none pinned, the member teams, up to a limit (pins are not capped here: they have their own).
  */
 function TeamsGroup({ pathname }: { pathname: string }) {
-  const { entries } = useTeamNav();
+  const { administered, entries } = useTeamNav();
   const { pinnedTeamSlugs } = useUserPreferences();
   const pinned = pinnedTeamSlugs
     .map((slug) => entries.find((e) => e.team.slug === slug))
     .filter((e): e is (typeof entries)[number] => !!e);
   const shown = pinned.length > 0 ? pinned : entries.slice(0, SIDEBAR_TEAM_LIMIT);
-  if (shown.length === 0) {
+  if (shown.length === 0 && administered.length === 0) {
     return null;
   }
   const currentSlug = teamSlugFromPath(pathname);
+  const linkClass = (active: boolean) =>
+    cn(
+      'relative mx-2.5 flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium no-underline transition-colors pointer-coarse:min-h-[44px]',
+      FOCUS_RING,
+      active
+        ? 'bg-ink-600 text-paper-50'
+        : 'text-paper-500 hover:bg-ink-700/70 hover:text-paper-200'
+    );
+  const headingClass =
+    'px-5 pt-5 pb-1.5 text-2xs font-semibold uppercase tracking-[0.08em] text-paper-600';
   return (
-    <div data-rail-group>
-      <div
-        className="px-5 pt-5 pb-1.5 text-2xs font-semibold uppercase tracking-[0.08em] text-paper-600"
-        data-rail-heading
-        id="nav-group-teams"
-      >
-        My teams
-      </div>
-      <ul aria-labelledby="nav-group-teams">
-        {shown.map(({ needsYou, team }) => {
-          const active = team.slug === currentSlug;
-          return (
-            <li key={team.id}>
-              <Link
-                aria-current={active ? 'page' : undefined}
-                aria-label={team.name}
-                className={cn(
-                  'relative mx-2.5 flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium no-underline transition-colors pointer-coarse:min-h-[44px]',
-                  FOCUS_RING,
-                  active
-                    ? 'bg-ink-600 text-paper-50'
-                    : 'text-paper-500 hover:bg-ink-700/70 hover:text-paper-200'
-                )}
-                data-rail-item
-                data-sidebar-label={team.name}
-                href={teamHref(team.slug)}
-              >
-                <span aria-hidden="true" className="sidebar-team-initials hidden">
-                  {team.name
-                    .split(/\s+/)
-                    .map((s) => s[0])
-                    .join('')
-                    .slice(0, 2)
-                    .toUpperCase()}
-                </span>
-                <span data-rail-label>
-                  <Icon name="teams" size={15} />
-                </span>
-                <span className="min-w-0 flex-1 truncate" data-rail-label>
-                  {team.name}
-                </span>
-                <span data-rail-label>
-                  <NeedsYouBadge count={needsYou} />
-                </span>
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
-    </div>
+    <>
+      {shown.length > 0 && (
+        <div data-rail-group>
+          <div
+            className="px-5 pt-5 pb-1.5 text-2xs font-semibold uppercase tracking-[0.08em] text-paper-600"
+            data-rail-heading
+            id="nav-group-teams"
+          >
+            My teams
+          </div>
+          <ul aria-labelledby="nav-group-teams">
+            {shown.map(({ needsYou, team }) => {
+              const active = team.slug === currentSlug;
+              return (
+                <li key={team.id}>
+                  <Link
+                    aria-current={active ? 'page' : undefined}
+                    aria-label={team.name}
+                    className={cn(
+                      'relative mx-2.5 flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium no-underline transition-colors pointer-coarse:min-h-[44px]',
+                      FOCUS_RING,
+                      active
+                        ? 'bg-ink-600 text-paper-50'
+                        : 'text-paper-500 hover:bg-ink-700/70 hover:text-paper-200'
+                    )}
+                    data-rail-item
+                    data-sidebar-label={team.name}
+                    href={teamHref(team.slug)}
+                  >
+                    <span aria-hidden="true" className="sidebar-team-initials hidden">
+                      {team.name
+                        .split(/\s+/)
+                        .map((s) => s[0])
+                        .join('')
+                        .slice(0, 2)
+                        .toUpperCase()}
+                    </span>
+                    <span data-rail-label>
+                      <Icon name="teams" size={15} />
+                    </span>
+                    <span className="min-w-0 flex-1 truncate" data-rail-label>
+                      {team.name}
+                    </span>
+                    <span data-rail-label>
+                      <NeedsYouBadge count={needsYou} />
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+      {administered.length > 0 && (
+        <div data-rail-group>
+          <div className={headingClass} data-rail-heading id="nav-group-administered">
+            Administered
+          </div>
+          <ul aria-labelledby="nav-group-administered">
+            {administered.map((team) => (
+              <li key={team.id}>
+                <Link
+                  aria-current={team.slug === currentSlug ? 'page' : undefined}
+                  aria-label={team.name}
+                  className={linkClass(team.slug === currentSlug)}
+                  data-rail-item
+                  data-sidebar-label={team.name}
+                  href={teamHref(team.slug)}
+                >
+                  <span data-rail-label>
+                    <Icon name="teams" size={15} />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate" data-rail-label>
+                    {team.name}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </>
   );
 }
 

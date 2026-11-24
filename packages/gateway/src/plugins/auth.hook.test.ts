@@ -589,7 +589,7 @@ describe('requireAuth — team capability', () => {
   it('rejects with 403 when the membership role is insufficient', async () => {
     const { reply } = await runCapability(
       { capability: 'team.templates.write' },
-      { params: { id: TEAM_ID }, teamRole: 'ENGINEER' }
+      { params: { id: TEAM_ID }, teamRole: 'MEMBER' }
     );
     expect(reply.statusCode).toBe(403);
   });
@@ -647,12 +647,12 @@ describe('requireAuth — org capability', () => {
   it('ORG_ADMIN holds an org governance capability; ORG_MEMBER does not', async () => {
     const ok = await runCapability(
       { capability: 'org.settings.manage' },
-      { orgRole: 'ORG_ADMIN', params: { orgId: ORG_ID } }
+      { orgRole: 'ADMIN', params: { orgId: ORG_ID } }
     );
     expect(ok.reply.statusCode).toBeUndefined();
     const no = await runCapability(
       { capability: 'org.settings.manage' },
-      { orgRole: 'ORG_MEMBER', params: { orgId: ORG_ID } }
+      { orgRole: 'MEMBER', params: { orgId: ORG_ID } }
     );
     expect(no.reply.statusCode).toBe(403);
   });
@@ -685,7 +685,7 @@ describe('requireAuth — org capability', () => {
   it('honors a custom org parameter name', async () => {
     const { reply } = await runCapability(
       { capability: 'org.settings.manage', org: { param: 'organization' } },
-      { orgRole: 'ORG_ADMIN', params: { organization: ORG_ID } }
+      { orgRole: 'ADMIN', params: { organization: ORG_ID } }
     );
     expect(reply.statusCode).toBeUndefined();
   });

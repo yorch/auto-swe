@@ -54,7 +54,7 @@ interface Fixture {
   auditError?: Error;
   createError?: Error;
   runs?: unknown[];
-  teamRole: 'ADMIN' | 'LEAD' | 'ENGINEER';
+  teamRole: 'ADMIN' | 'LEAD' | 'MEMBER';
 }
 
 async function build(fx: Fixture) {
@@ -203,7 +203,7 @@ describe('GET /api/v1/teams/:id/attention/failures', () => {
   });
 
   it('answers 403 to a team ENGINEER and reads no work', async () => {
-    const { prisma, res } = await call({ runs: unownedRuns(), teamRole: 'ENGINEER' }, 'GET');
+    const { prisma, res } = await call({ runs: unownedRuns(), teamRole: 'MEMBER' }, 'GET');
     expect(res.statusCode).toBe(403);
     expect(prisma.workflowRun.findMany).not.toHaveBeenCalled();
   });
@@ -333,7 +333,7 @@ describe('POST /api/v1/teams/:id/failure-assignments', () => {
   });
 
   it('answers 403 to a team ENGINEER', async () => {
-    const { prisma, res } = await call({ runs: unownedRuns(), teamRole: 'ENGINEER' }, 'POST', {
+    const { prisma, res } = await call({ runs: unownedRuns(), teamRole: 'MEMBER' }, 'POST', {
       assigneeId: ASSIGNEE,
       runId: RUN_A,
     });

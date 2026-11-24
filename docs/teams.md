@@ -81,9 +81,12 @@ ticket id.
 ## 2. Team overview
 
 `GET /api/v1/teams/:id/overview` (any signed-in user) is one team's landing page in one response.
-The caller must be a **member** of the team or a platform ADMIN; anyone else, and any unknown id,
-gets the same `404 TEAM_NOT_FOUND`. It is built by `buildTeamOverview()` in
-`gateway/src/lib/teamOverview.ts`.
+The caller must be a **member** of the team, a platform ADMIN, or an organization `ADMIN` of the
+team's organization (who holds `team.read` on organization authority); anyone else, including a
+plain organization `MEMBER`, a person in another organization and an unknown id, gets the same
+`404 TEAM_NOT_FOUND`, byte for byte. It is built by `buildTeamOverview()` in
+`gateway/src/lib/teamOverview.ts`. `team.access` says how the caller arrived: `member`,
+`org-admin` or `platform-admin` (a platform ADMIN who is also a member reads `member`).
 
 ### The view is decided by the team role
 
@@ -95,9 +98,24 @@ gets the same `404 TEAM_NOT_FOUND`. It is built by `buildTeamOverview()` in
 | `LEAD` | `lead` |
 | `MEMBER` | `member` |
 | none (platform ADMIN who is not a member) | `admin`, and `team.myRole` is `null` |
+| none (organization `ADMIN` of the team's organization who is not a member) | `admin`, `team.myRole` is `null`, `team.access` is `org-admin` |
 
 A platform `ADMIN` whose role in the team is `MEMBER` gets the `member` view. A platform
-`USER` who is not a member gets nothing: only the platform ADMIN is let in.
+`USER` who is not a member and not an organization admin of the team gets nothing.
+
+**A non-member organization admin gets a governance view, not the team's work.** Run visibility is
+a separate gate and is unchanged: `needsYou`, `mine`, `running`, `queued`, `last7d`, `activity`,
+`pullRequests` and the lead counts are all computed with the caller's own
+run-visibility filter, exactly as for anyone else, so for a person who cannot reach the team's
+repositories they are empty or partial. `repos` lists only the repositories the caller may reach.
+The governance parts (the team, `budget` as a percentage, `needsAdmin`, `pendingJoinRequests`, and
+the `lead` and `admin` blocks the server attaches by level, the spend in dollars following
+`org.budget.manage`) are returned. The spend figure `admin.monthCostUsdCents` is `null` for a
+non-member organization admin, because a sum over only the runs they may see would read as the
+team's spend beside a real budget percentage. The same caller reads the member roster at
+`GET /api/v1/teams/:id` and `GET /api/v1/teams/:id/members` (`team.members.read` carries
+organization authority), and the owned repositories of `GET /api/v1/teams/:id` pass the same
+repository-access gate as the shared ones. A platform ADMIN's view is unchanged.
 
 ### What it contains
 
@@ -115,7 +133,7 @@ A platform `ADMIN` whose role in the team is `MEMBER` gets the `member` view. A 
 | `lead` | `lead`, `admin` | `unownedFailures`, `staleApprovals`, `openPullRequests` |
 | `needsAdmin` | viewers holding `team.members.manage` on the team | `true` when the team has no ADMIN, which an organization removal can leave. Absent otherwise, never `false`; appoint one through the members tab |
 | `repos[].canLaunch` | everyone | `false` when the repository is shared to the team view-only; always `true` for an owned one |
-| `admin.monthCostUsdCents` | `admin` | This calendar month's spend (UTC) attributed to the team, in cents; `null` when it cannot be computed. Absent for a team ADMIN who is not an organization ADMIN when the binding cap is the organization's; present when the team's own cap binds |
+| `admin.monthCostUsdCents` | `admin` | This calendar month's spend (UTC) attributed to the team, in cents; `null` when it cannot be computed. Absent for a team ADMIN who is not an organization ADMIN when the binding cap is the organization's; present when the team's own cap binds; always `null` for an organization admin who is not a member |
 
 `lead`, `admin` and `needsAdmin` are **absent** from the JSON for a lower view, not `null`, and their queries are
 not run. The `activity` feed names a launcher by display name only. The feed's name is the run's credential launcher (`launchedById`), so it can differ from a run's initiator. Run lists are different: a run's
@@ -342,12 +360,17 @@ models resolve per agent through the configuration cascade rather than a single 
   The Home page title remains **My desk**.
 - **Sidebar My teams group.** The sidebar lists the member teams as links to their spaces, each with the
   same badge: the teams the user pinned first, in pin order, else the member teams up to a limit.
+- **Administered group.** For a caller who is not a platform admin, the switcher and the sidebar add an
+  **Administered** group below My teams: the teams in `GET /api/v1/teams` that the caller is not a member
+  of (an organization admin's teams), without badges or pins. A platform admin has no such group. A team
+  space opens for such a team, and its Overview carries a notice that the viewer is not a member and
+  that run activity is not shown.
 - **Preferences.** `PATCH /api/v1/me/preferences` stores two per-user hints beside the run-detail
   layout. `lastTeamSlug` records the last member team space the user opened; it does not redirect
   Home. `pinnedTeamSlugs` is an ordered list of up to 20 slugs that the sidebar shows, set
   by the pin toggle beside each team in the team switcher menu (a new pin goes last; the toggle is
   disabled at 20). The sidebar shows every pinned team and caps only its default list. Neither is checked against existing teams or
-  the caller's membership: the dashboard resolves a slug through the member team list, so a stale or
+  the caller's membership: the dashboard resolves a slug through the member team list and then the list the caller can see, so a stale or
   foreign one resolves to nothing and grants nothing.
 - **Sidebar approvals badge.** The badge on Approvals counts the steps waiting on the caller across
   every team; a team's own number is the badge on that team.
@@ -772,6 +795,11 @@ run-pinned.
   prevents new runs through it. Existing runs continue. Only platform admins can reactivate,
   unlink or relink installations. Self-service does not support per-host Apps or claiming an
   installation already registered; see [GitHub App setup](./github-app-setup.md#connecting-an-organization).
+
+- **An organization admin who is not on a team sees its overview as governance only.** The run
+  sections and the repository list follow the caller's own visibility, so they stay empty until the
+  admin joins the team or is given a share; there is no way to read a team's work through
+  organization authority alone ([§2](#2-team-overview)).
 
 - Team invitations require a new email address; existing users are added through the member-add
   route. A failed invitation email does not roll back the account or memberships.

@@ -402,7 +402,7 @@ describe('authorizeLaunch with requireOwningTeamLead', () => {
 
   it('names only the repositories whose owning team the caller does not lead', async () => {
     const decision = await authorizeLaunch(
-      prisma({ teamRoles: { 'team-1': 'LEAD', 'team-2': 'ENGINEER' } }) as never,
+      prisma({ teamRoles: { 'team-1': 'LEAD', 'team-2': 'MEMBER' } }) as never,
       USER,
       { gate: GATE_OFF, repos: two, requireOwningTeamLead: true }
     );

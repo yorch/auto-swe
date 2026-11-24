@@ -47,7 +47,7 @@ describe('effectivePermissions', () => {
   it('lists the teams and organizations the person belongs to, with the ground of each capability', async () => {
     const db = mockDb({
       memberOf: [{ role: 'ADMIN', team: TEAM_A }],
-      orgs: [{ organization: { name: 'Acme' }, orgId: 'org-1', role: 'ORG_MEMBER' }],
+      orgs: [{ organization: { name: 'Acme' }, orgId: 'org-1', role: 'MEMBER' }],
     });
     const result = await effectivePermissions(db, USER);
     expect(result.ok).toBe(true);
@@ -70,7 +70,7 @@ describe('effectivePermissions', () => {
 
   it('includes a named team held only through organization authority, tagged by authority', async () => {
     const db = mockDb({
-      orgs: [{ organization: { name: 'Acme' }, orgId: 'org-1', role: 'ORG_ADMIN' }],
+      orgs: [{ organization: { name: 'Acme' }, orgId: 'org-1', role: 'ADMIN' }],
     });
     const result = await effectivePermissions(db, USER, { teamId: 'team-b' });
     expect(result.ok).toBe(true);

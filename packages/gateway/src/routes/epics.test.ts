@@ -506,7 +506,7 @@ describe('epic routes', () => {
     });
 
     it('refuses a platform LEAD who is only a team ENGINEER on the owning team', async () => {
-      currentTeamRole = 'ENGINEER';
+      currentTeamRole = 'MEMBER';
       const res = await app.inject({
         headers: auth,
         method: 'POST',
@@ -552,7 +552,7 @@ describe('epic routes', () => {
 
     it('refuses a platform ENGINEER who is only a team ENGINEER on the owning team', async () => {
       currentRole = 'ENGINEER';
-      currentTeamRole = 'ENGINEER';
+      currentTeamRole = 'MEMBER';
       const res = await app.inject({
         headers: auth,
         method: 'POST',
@@ -585,7 +585,7 @@ describe('epic routes', () => {
       // REPO_B is reachable (a member of its team) but only as an ENGINEER; REPO_A is led.
       repoFixtures[1]?.memberIds.push('user-1');
       try {
-        teamRoleByRepo = { [REPO_B]: 'ENGINEER' };
+        teamRoleByRepo = { [REPO_B]: 'MEMBER' };
         const res = await app.inject({
           headers: auth,
           method: 'POST',
@@ -604,7 +604,7 @@ describe('epic routes', () => {
 
     it('reports a repository the caller cannot reach before the lead requirement', async () => {
       // REPO_B is not reachable at all, REPO_A is reachable but not led: access refuses first.
-      currentTeamRole = 'ENGINEER';
+      currentTeamRole = 'MEMBER';
       const res = await app.inject({
         headers: auth,
         method: 'POST',
@@ -630,7 +630,7 @@ describe('epic routes', () => {
 
     it('lets a platform ADMIN through whatever the team role', async () => {
       currentRole = 'ADMIN';
-      currentTeamRole = 'ENGINEER';
+      currentTeamRole = 'MEMBER';
       const res = await app.inject({
         headers: auth,
         method: 'POST',

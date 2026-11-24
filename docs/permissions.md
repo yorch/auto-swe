@@ -184,11 +184,11 @@ capability reads the team id from `team.param` (default `id`); an organization c
 organization id from `org.param` (default `orgId`).
 
 Every route's `config.authz` is one of `capability`, `handler-checked`, `service` (the route
-declares `serviceScopes`), `authenticated` (a bare `requireAuth()`), `legacy` (the older role
-options) or `public` (declared by the route). A `handler-checked` route that answers 2xx without
-`can()` having run throws under test and logs `authz.unchecked` elsewhere. The route-walk test
-`packages/gateway/src/routes/authzCoverage.test.ts` asserts every route's metadata and counts the
-routes still on the older declaration against a ratchet that only goes down.
+declares `serviceScopes`), `authenticated` (a bare `requireAuth()`) or `public` (declared by the
+route, with a reason). A `handler-checked` route that answers 2xx without `can()` having run throws
+under test and logs `authz.unchecked` elsewhere. The route-walk test
+`packages/gateway/src/routes/authzCoverage.test.ts` asserts every route declares one of them and
+pins the reviewed set of public routes.
 
 ## Constraints
 
@@ -279,11 +279,11 @@ _Generated from `packages/shared/src/permissions/catalog/` by `scripts/gen-permi
 | `team.delete` | team | governance | — | — | yes | yes | Delete a team. |
 | `team.join-requests.create` | team | operation | — | — | yes | yes | Ask to join a team. Any signed-in person who is not a member and can see the team may; the route checks that itself and needs no capability, so only a platform admin holds this one in the catalog. |
 | `team.members.manage` | team | governance | LEAD | ADMIN | yes | yes | Invite, add, change the role of and remove team members, never above the actor’s own rank. |
-| `team.members.read` | team | read | MEMBER | — | yes | no | List a team's members. |
+| `team.members.read` | team | read | MEMBER | ADMIN | yes | no | List a team's members. |
 | `team.persona.manage` | team | operation | LEAD | — | yes | yes | Set the prompt of a team's channel assistant, which can start runs. Organization admins do not hold it without a team role. |
 | `team.plugins.manage` | team | operation | ADMIN | — | yes | yes | Enable and disable plugins for a team. |
 | `team.plugins.read` | team | read | MEMBER | — | yes | no | See which plugins a team has enabled. |
-| `team.read` | team | read | MEMBER | — | yes | no | See a team's detail. |
+| `team.read` | team | read | MEMBER | ADMIN | yes | no | See a team's detail. |
 | `team.sandbox-policy.manage` | team | sensitive | — | — | yes | yes | Set a team's shell image allowlist and egress allowlist. Platform admin only. |
 | `team.sandbox-policy.read` | team | read | MEMBER | — | yes | no | Read a team's shell image allowlist and egress allowlist. |
 | `team.secrets.manage` | team | sensitive | ADMIN | — | yes | yes | Create, rotate and delete a team's secrets. |
@@ -369,8 +369,6 @@ _Generated from `packages/shared/src/permissions/catalog/` by `scripts/gen-permi
   capability. Run-plan, orchestration and agent-run ownership, transcript visibility, Slack
   identity linkage and personal access tokens are ownership or visibility rules and are not in the
   catalog.
-- A route still declared with the older role options is counted by the route-walk ratchet and is
-  decided by its own check, not by the catalog, until it is converted.
 - `{ anyTeam: true }` reaches organization authority only where the organization has a team the
   capability's class and activity rule would let that authority act on.
 - The resolver does not consult an organization's or a team's `isActive` beyond a capability's

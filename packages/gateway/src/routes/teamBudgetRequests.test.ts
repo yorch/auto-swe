@@ -11,8 +11,8 @@ const CREATED_AT = new Date('2026-11-16T10:00:00.000Z');
 
 interface Opts {
   platformRole?: string;
-  teamRole?: 'ADMIN' | 'LEAD' | 'ENGINEER' | null;
-  orgRole?: 'ORG_ADMIN' | 'ORG_MEMBER' | null;
+  teamRole?: 'ADMIN' | 'LEAD' | 'MEMBER' | null;
+  orgRole?: 'ADMIN' | 'MEMBER' | null;
 }
 
 interface Row {
@@ -156,7 +156,7 @@ describe('POST /teams/:id/budget-requests', () => {
   });
 
   it('refuses a team ENGINEER', async () => {
-    const { app, create } = build({ teamRole: 'ENGINEER' });
+    const { app, create } = build({ teamRole: 'MEMBER' });
     await app.ready();
     expect((await post(app, { reason: 'please' })).statusCode).toBe(403);
     expect(create).not.toHaveBeenCalled();
@@ -219,7 +219,7 @@ describe('GET /teams/:id/budget-requests', () => {
   });
 
   it('lists them for an ORG_ADMIN who is not on the team', async () => {
-    const { app } = await seeded({ orgRole: 'ORG_ADMIN' });
+    const { app } = await seeded({ orgRole: 'ADMIN' });
     expect((await list(app)).statusCode).toBe(200);
   });
 
@@ -269,7 +269,7 @@ describe('POST /teams/:id/budget-requests/:requestId/dismiss', () => {
   });
 
   it('lets an ORG_ADMIN who is not on the team dismiss', async () => {
-    const { app } = await seeded({ orgRole: 'ORG_ADMIN' });
+    const { app } = await seeded({ orgRole: 'ADMIN' });
     expect((await dismiss(app)).statusCode).toBe(200);
   });
 

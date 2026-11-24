@@ -1,5 +1,5 @@
 import type { PlatformRole, TeamRole } from '../generated/prisma/enums.js';
-import { isPlatformAdmin } from '../permissions/standing.js';
+import { isPlatformAdmin, teamRankMeets, teamRankOf } from '../permissions/standing.js';
 import { getSettingDefinition, isSettingKey, type SettingKey } from './registry.js';
 import type { SettingScope } from './types.js';
 
@@ -12,8 +12,9 @@ import type { SettingScope } from './types.js';
  *     admin or by an actor a grant covers. Grants are rows, not code, so
  *     widening who configures what is an admin action.
  *
- * A grant's grantee is a user, or a team role. A role grant is matched against
- * the actor's role in the grant's own team, never against a platform role.
+ * A grant's grantee is a user, or a team role. A role grant covers that role and
+ * every role above it, matched against the actor's role in the grant's own
+ * team, never against a platform role.
  *
  * Platform admins bypass grants entirely: they can already write every
  * singleton config table, so requiring them to grant themselves access would be
@@ -36,7 +37,7 @@ export function keyPatternMatches(pattern: string, key: string): boolean {
 
 /// A grant as the checker needs to see it. The grantee is `userId` XOR `role`;
 /// a role grant is only valid with `scope = 'TEAM'` and a `teamId`, and names
-/// the role a member must hold in that team.
+/// the lowest role that holds it in that team (every higher role holds it too).
 export interface ConfigGrant {
   keyPattern: string;
   userId: string | null;
@@ -85,7 +86,10 @@ function grantCovers(
     if (!grant.role || grant.scope !== 'TEAM' || !grant.teamId) {
       return false;
     }
-    if (actorTeamRoles.get(grant.teamId) !== grant.role) {
+    // ...and covers that role and every role above it in that team. An
+    // unknown or missing role has no rank and so covers nothing.
+    const required = teamRankOf(grant.role);
+    if (!required || !teamRankMeets(teamRankOf(actorTeamRoles.get(grant.teamId)), required)) {
       return false;
     }
   }

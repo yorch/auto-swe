@@ -45,7 +45,7 @@ interface Harness {
   /** Platform role the token carries. */
   role: 'ADMIN' | 'ENGINEER' | 'LEAD';
   /** The caller's role on the repository's owning team. */
-  teamRole: 'ADMIN' | 'ENGINEER' | 'LEAD';
+  teamRole: 'ADMIN' | 'LEAD' | 'MEMBER';
   /** Whether the caller belongs to the repository's org. */
   orgMember: boolean;
   /** The org's accrued spend this month, in USD, against a 1000-cent cap. */
@@ -308,7 +308,7 @@ describe('POST /prd-runs', () => {
 
   it('refuses a platform LEAD who is only a team ENGINEER on the owning team', async () => {
     h.role = 'LEAD';
-    h.teamRole = 'ENGINEER';
+    h.teamRole = 'MEMBER';
     const res = await submit(h);
     expect(res.statusCode).toBe(403);
     expect(res.json().error.reasons).toEqual([
@@ -339,7 +339,7 @@ describe('POST /prd-runs', () => {
 
   it('refuses a platform ENGINEER who is only a team ENGINEER on the owning team', async () => {
     h.role = 'ENGINEER';
-    h.teamRole = 'ENGINEER';
+    h.teamRole = 'MEMBER';
     const res = await submit(h);
     expect(res.statusCode).toBe(403);
     expect(res.json().error.reasons).toEqual([
@@ -350,7 +350,7 @@ describe('POST /prd-runs', () => {
 
   it('lets a platform ADMIN start one whatever the team role', async () => {
     h.role = 'ADMIN';
-    h.teamRole = 'ENGINEER';
+    h.teamRole = 'MEMBER';
     expect((await submit(h)).statusCode).toBe(201);
   });
 

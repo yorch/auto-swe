@@ -89,6 +89,7 @@ export const teamCapabilities = defineCapabilities({
   'team.members.read': {
     class: 'read',
     description: "List a team's members.",
+    org: 'ADMIN',
     scope: 'team',
     team: 'MEMBER',
   },
@@ -115,6 +116,7 @@ export const teamCapabilities = defineCapabilities({
   'team.read': {
     class: 'read',
     description: "See a team's detail.",
+    org: 'ADMIN',
     scope: 'team',
     team: 'MEMBER',
   },

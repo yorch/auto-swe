@@ -140,7 +140,7 @@ describe('repository onboarding routes', () => {
       'checks an ENGINEER organization admin against %s',
       async (orgId) => {
         setTeam(ctx.standing, TEAM, { orgId });
-        ctx.standing.orgs['own-org'] = 'ORG_ADMIN';
+        ctx.standing.orgs['own-org'] = 'ADMIN';
         expect((await post()).statusCode).toBe(orgId === 'own-org' ? 202 : 403);
       }
     );
@@ -390,7 +390,7 @@ describe('repository onboarding routes', () => {
 
     it('returns status to an ENGINEER who administers the owning organization', async () => {
       setTeam(ctx.standing, TEAM, { orgId: 'own-org' });
-      ctx.standing.orgs['own-org'] = 'ORG_ADMIN';
+      ctx.standing.orgs['own-org'] = 'ADMIN';
       ctx.temporal.getOnboardingPrStatus.mockResolvedValue({ status: 'running' });
       expect((await get()).statusCode).toBe(200);
     });
@@ -435,9 +435,9 @@ describe('repository onboarding routes', () => {
         url: `/api/v1/repositories/${REPO}/onboarding-checklist/dismiss`,
       });
     it.each([
-      ['LEAD', 'ORG_MEMBER', 200],
-      ['ENGINEER', 'ORG_ADMIN', 200],
-      ['ENGINEER', 'ORG_MEMBER', 403],
+      ['LEAD', 'MEMBER', 200],
+      ['ENGINEER', 'ADMIN', 200],
+      ['ENGINEER', 'MEMBER', 403],
     ] as const)('checks owning team/org roles: %s %s', async (teamRole, orgRole, status) => {
       setTeam(ctx.standing, TEAM, { orgId: 'org-1', role: teamRole });
       ctx.standing.orgs['org-1'] = orgRole;

@@ -331,7 +331,7 @@ widening who configures what is an admin action rather than a deploy:
 | Column | Meaning |
 |---|---|
 | `keyPattern` | An exact key, a `group.*` prefix, or `*`. Deliberately not a glob library — an operator reading a grant should know what it covers without learning a syntax. |
-| `userId` *or* `role` | Exactly one, enforced by a CHECK constraint. A role grant covers the members who hold exactly that role **in the grant's own team** (a `LEAD` grant does not cover the team's `ADMIN`s), not a platform role, so it is valid only with `scope = TEAM` and a `teamId`; the API refuses anything else with `400 ROLE_GRANT_REQUIRES_TEAM_SCOPE`. |
+| `userId` *or* `role` | Exactly one, enforced by a CHECK constraint. A role grant covers the members who hold that role **or any role above it** (`MEMBER` < `LEAD` < `ADMIN`) **in the grant's own team** (a `LEAD` grant covers the team's `ADMIN`s too, a `MEMBER` grant every member), not a platform role, so it is valid only with `scope = TEAM` and a `teamId`; the API refuses anything else with `400 ROLE_GRANT_REQUIRES_TEAM_SCOPE`. |
 | `scope` + `teamId`/`orgId` | The authority's reach. A TEAM grant covers that team and the channels and templates beneath it; an ORGANIZATION grant covers anything inside the org but never the GLOBAL row. |
 
 A write is authorised against the tenant it actually lands in, not the ids in the request: a CHANNEL

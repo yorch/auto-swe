@@ -134,7 +134,7 @@ describe('onboarding run trigger', () => {
   it('refuses a platform ENGINEER who is only an ENGINEER of the repository team', async () => {
     const ctx = await build();
     ctx.actor.role = 'ENGINEER';
-    setTeam(ctx.standing, TEAM, { orgId: 'org-1', role: 'ENGINEER' });
+    setTeam(ctx.standing, TEAM, { orgId: 'org-1', role: 'MEMBER' });
     const response = await ctx.post('direct-key');
     expect(response.statusCode).toBe(403);
     expect(response.json().error.code).toBe('REPO_SETUP_FORBIDDEN');

@@ -44,7 +44,7 @@ const prisma = {
   // `h.admin` decides whether the caller administers the organization the loader asks about.
   organizationMembership: {
     findMany: vi.fn(async (args: { where: { orgId: { in: string[] } } }) =>
-      (await h.admin()) ? args.where.orgId.in.map((orgId) => ({ orgId, role: 'ORG_ADMIN' })) : []
+      (await h.admin()) ? args.where.orgId.in.map((orgId) => ({ orgId, role: 'ADMIN' })) : []
     ),
   },
 };

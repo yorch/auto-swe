@@ -105,13 +105,40 @@ describe('team space layout', () => {
     expect(screen.getByText('tab content')).toBeTruthy();
   });
 
-  it('resolves the slug through the member list only', async () => {
+  it('resolves the slug through the member list first, then the full visible list', async () => {
     const spy = gateway([team('payments', 'Payments', 'LEAD')]);
     renderLayout('payments');
     await screen.findByRole('heading', { name: 'Payments' });
-    expect(spy.mock.calls.map(([u]) => String(u))).toEqual(
+    const urls = spy.mock.calls.map(([u]) => String(u));
+    expect(urls).toEqual(
       expect.arrayContaining([expect.stringContaining('/api/v1/teams?member=true')])
     );
+    expect(urls.some((u) => u.endsWith('/api/v1/teams'))).toBe(true);
+  });
+
+  it('opens a team the caller administers without belonging to, with no role badge', async () => {
+    gateway([], standing(['team.settings.manage'], null, 'org-admin'), {
+      'GET /api/v1/teams': () => ({ data: [team('payments', 'Payments', null)] }),
+    });
+    renderLayout('payments');
+    expect(await screen.findByRole('heading', { name: 'Payments' })).toBeTruthy();
+    expect(screen.queryByText(/you:/)).toBeNull();
+    expect(screen.getByText('tab content')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Settings' })).toBeTruthy();
+  });
+
+  it('renders the same not-found for a visible-list miss as for an unknown slug', async () => {
+    gateway([], standing([], null, 'org-admin'), {
+      'GET /api/v1/teams': () => ({ data: [team('ops', 'Ops', null)] }),
+    });
+    renderLayout('hr-confidential');
+    expect(await screen.findByText('Page not found')).toBeTruthy();
+    const first = document.body.textContent;
+    cleanup();
+    renderLayout('does-not-exist');
+    expect(await screen.findByText('Page not found')).toBeTruthy();
+    expect(document.body.textContent).toBe(first);
+    expect(screen.queryByText('tab content')).toBeNull();
   });
 
   it('renders the ordinary not-found page for a team the caller is not in, hinting nothing', async () => {

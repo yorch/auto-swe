@@ -3,14 +3,13 @@
 import type { TeamSummary } from '@auto-swe/shared/types/api';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback } from 'react';
-import { usePlatformAdmin } from '@/hooks/useCan';
 import { useEffectivePermissions } from '@/hooks/useEffectivePermissions';
 import { useTeams } from '@/hooks/useTeams';
 
 export interface TeamParam {
   /** The raw `?team=` value; empty when absent. */
   slug: string;
-  /** The member team it names; null when there is none, or the slug is unknown or foreign. */
+  /** The visible team it names; null when there is none, or the slug is unknown or foreign. */
   team: TeamSummary | null;
   /** `team.id`, for the list hooks' `teamId` option. */
   teamId: string | undefined;
@@ -35,8 +34,9 @@ export interface TeamParam {
 
 /**
  * The team filter of a global page: `?team=<slug>`. The slug is resolved through the caller's
- * member teams only, so a slug naming a team they are not in (or none at all) is ignored without
- * an error and says nothing about whether that team exists. The URL is the whole state. Callers
+ * member teams, then through the teams they can see without belonging to (an organization admin's
+ * administered teams, a platform admin's every team), so a slug naming a team they cannot see (or
+ * none at all) is ignored without an error and says nothing about whether that team exists. The URL is the whole state. Callers
  * render inside Suspense, as every `useSearchParams` reader does.
  */
 export function useTeamParam(): TeamParam {
@@ -44,20 +44,19 @@ export function useTeamParam(): TeamParam {
   const router = useRouter();
   const pathname = usePathname();
   const slug = params.get('team') ?? '';
-  const isPlatformAdmin = usePlatformAdmin();
   const permissions = useEffectivePermissions();
   const members = useTeams({ enabled: !!slug, memberOnly: true });
-  // A platform admin may open a team space they are not in, so the slug also resolves through
-  // the full list when the member lookup misses. Nobody else gets that fallback.
-  const all = useTeams({ enabled: !!slug && isPlatformAdmin });
-  const memberHit = slug ? members.data?.find((t) => t.slug === slug) : undefined;
+  // The full visible list adds the teams the caller administers without belonging to (an
+  // organization admin) and, for a platform admin, every team. A slug in neither resolves to
+  // nothing, whether or not the team exists.
+  const all = useTeams({ enabled: !!slug });
   const team =
-    memberHit ??
-    (slug && isPlatformAdmin ? all.data?.find((t) => t.slug === slug) : undefined) ??
-    null;
+    (slug
+      ? (members.data?.find((t) => t.slug === slug) ?? all.data?.find((t) => t.slug === slug))
+      : undefined) ?? null;
   const resolved = team !== null;
-  const lookups = isPlatformAdmin ? [members, all] : [members];
-  // Until the permissions load, a platform admin is not yet known to be one.
+  const lookups = [members, all];
+  // Until the permissions load, the caller's standing is not yet known.
   const pending =
     !!slug && !resolved && (permissions.isLoading || lookups.some((q) => q.isLoading));
   const isError = !!slug && !resolved && !pending && lookups.some((q) => q.isError);

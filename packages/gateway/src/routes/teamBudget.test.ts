@@ -17,8 +17,8 @@ const PREFIX = '/api/v1/teams';
 interface Opts {
   platformRole?: string;
   /** The caller's team role; null for a non-member. */
-  teamRole?: 'ADMIN' | 'LEAD' | 'ENGINEER' | null;
-  orgRole?: 'ORG_ADMIN' | 'ORG_MEMBER' | null;
+  teamRole?: 'ADMIN' | 'LEAD' | 'MEMBER' | null;
+  orgRole?: 'ADMIN' | 'MEMBER' | null;
   /** Which organization the caller's `orgRole` is held in; the team's own by default. */
   orgRoleIn?: typeof ORG | typeof OTHER_ORG;
   teamCap?: number | null;
@@ -115,7 +115,7 @@ describe('GET /teams/:id/budget', () => {
   });
 
   it.each([
-    ['an ORG_ADMIN who is not on the team', { orgRole: 'ORG_ADMIN' as const }],
+    ['an ORG_ADMIN who is not on the team', { orgRole: 'ADMIN' as const }],
     ['a platform ADMIN who is not on the team', { platformRole: 'ADMIN' }],
   ])('lets %s read it', async (_name, opts) => {
     const { app } = build(opts);
@@ -124,14 +124,14 @@ describe('GET /teams/:id/budget', () => {
   });
 
   it('lets an ORG_ADMIN of the same organization read it, and 404s one of another organization', async () => {
-    const same = build({ orgRole: 'ORG_ADMIN', teamCap: 5000 });
+    const same = build({ orgRole: 'ADMIN', teamCap: 5000 });
     await same.app.ready();
     const ok = await get(same.app, '/budget');
     expect(ok.statusCode).toBe(200);
     expect(ok.json().data).toMatchObject({ monthlyBudgetUsdCents: 5000 });
 
     // An ORG_ADMIN elsewhere has no standing here: the 404 an unknown team gets, no dollars.
-    const other = build({ orgRole: 'ORG_ADMIN', orgRoleIn: OTHER_ORG, teamCap: 5000 });
+    const other = build({ orgRole: 'ADMIN', orgRoleIn: OTHER_ORG, teamCap: 5000 });
     await other.app.ready();
     const refused = await get(other.app, '/budget');
     expect(refused.statusCode).toBe(404);
@@ -139,7 +139,7 @@ describe('GET /teams/:id/budget', () => {
   });
 
   it('refuses an ORG_MEMBER of the same organization who is not on the team', async () => {
-    const { app } = build({ orgRole: 'ORG_MEMBER', teamCap: 5000 });
+    const { app } = build({ orgRole: 'MEMBER', teamCap: 5000 });
     await app.ready();
     expect((await get(app, '/budget')).statusCode).toBe(404);
   });
@@ -147,7 +147,7 @@ describe('GET /teams/:id/budget', () => {
   it('refuses a team LEAD and a platform LEAD who is only a team engineer', async () => {
     for (const opts of [
       { teamRole: 'LEAD' as const },
-      { platformRole: 'LEAD', teamRole: 'ENGINEER' as const },
+      { platformRole: 'LEAD', teamRole: 'MEMBER' as const },
     ]) {
       const { app } = build({ teamCap: 5000, ...opts });
       await app.ready();
@@ -161,7 +161,7 @@ describe('GET /teams/:id/budget', () => {
     const answers = [];
     for (const opts of [
       { teamRole: null },
-      { orgRole: 'ORG_MEMBER' as const, platformRole: 'LEAD', teamRole: null },
+      { orgRole: 'MEMBER' as const, platformRole: 'LEAD', teamRole: null },
       { unknownTeam: true },
     ]) {
       const { app } = build(opts);
@@ -239,7 +239,7 @@ describe('PATCH /teams/:id/budget', () => {
   });
 
   it('clears with null and leaves an omitted key alone', async () => {
-    const { app, update } = build({ orgRole: 'ORG_ADMIN', teamCap: 100 });
+    const { app, update } = build({ orgRole: 'ADMIN', teamCap: 100 });
     await app.ready();
     await patch(app, { monthlyBudgetUsdCents: null });
     expect(update).toHaveBeenCalledWith(
@@ -267,14 +267,14 @@ describe('PATCH /teams/:id/budget', () => {
   });
 
   it('lets an ORG_ADMIN of the same organization write, and 404s one of another organization', async () => {
-    const same = build({ orgRole: 'ORG_ADMIN' });
+    const same = build({ orgRole: 'ADMIN' });
     await same.app.ready();
     expect((await patch(same.app, { monthlyBudgetUsdCents: 700 })).statusCode).toBe(200);
     expect(same.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { monthlyBudgetUsdCents: 700 }, where: { id: TEAM } })
     );
 
-    const other = build({ orgRole: 'ORG_ADMIN', orgRoleIn: OTHER_ORG });
+    const other = build({ orgRole: 'ADMIN', orgRoleIn: OTHER_ORG });
     await other.app.ready();
     expect((await patch(other.app, { monthlyBudgetUsdCents: 700 })).statusCode).toBe(404);
     expect(other.update).not.toHaveBeenCalled();
@@ -298,7 +298,7 @@ describe('GET /teams/:id/budget/status', () => {
       orgCap: 1_000_000,
       orgSpentUsd: 100,
       teamCap: 10_000,
-      teamRole: 'ENGINEER',
+      teamRole: 'MEMBER',
       teamSpentUsd: 50,
     });
     await app.ready();
@@ -317,7 +317,7 @@ describe('GET /teams/:id/budget/status', () => {
       orgCap: 10_000,
       orgSpentUsd: 90,
       teamCap: 100_000,
-      teamRole: 'ENGINEER',
+      teamRole: 'MEMBER',
       teamSpentUsd: 10,
     });
     await app.ready();
@@ -328,7 +328,7 @@ describe('GET /teams/:id/budget/status', () => {
   });
 
   it('is no_cap when neither is set, and 404s a non-member', async () => {
-    const { app } = build({ teamRole: 'ENGINEER' });
+    const { app } = build({ teamRole: 'MEMBER' });
     await app.ready();
     expect((await get(app, '/budget/status')).json().data).toMatchObject({ state: 'no_cap' });
     const out = build({ teamRole: null });
@@ -337,7 +337,7 @@ describe('GET /teams/:id/budget/status', () => {
   });
 
   it('reads as over at a zero team cap', async () => {
-    const { app } = build({ teamCap: 0, teamRole: 'ENGINEER' });
+    const { app } = build({ teamCap: 0, teamRole: 'MEMBER' });
     await app.ready();
     expect((await get(app, '/budget/status')).json().data).toMatchObject({
       percentUsed: 100,

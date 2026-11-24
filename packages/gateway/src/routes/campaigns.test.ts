@@ -560,7 +560,7 @@ describe('campaign routes', () => {
 
     it('refuses a platform ENGINEER who is only an ENGINEER on the owning team', async () => {
       currentRole = 'ENGINEER';
-      teamRoles[TEAM_1] = { 'user-1': 'ENGINEER' };
+      teamRoles[TEAM_1] = { 'user-1': 'MEMBER' };
       const res = await post(valid);
       expect(res.statusCode).toBe(403);
       expect(body(res).error.message).toContain('team LEAD or ADMIN');
@@ -568,7 +568,7 @@ describe('campaign routes', () => {
     });
 
     it('refuses a platform LEAD who is only an ENGINEER on the owning team', async () => {
-      teamRoles[TEAM_1] = { 'user-1': 'ENGINEER' };
+      teamRoles[TEAM_1] = { 'user-1': 'MEMBER' };
       const res = await post(valid);
       expect(res.statusCode).toBe(403);
       expect(body(res).error.code).toBe('FORBIDDEN');
@@ -582,7 +582,7 @@ describe('campaign routes', () => {
     });
 
     it('refuses a LEAD of the owning team who does not lead a target repository’s team', async () => {
-      teamRoles[TEAM_2] = { 'user-1': 'ENGINEER' };
+      teamRoles[TEAM_2] = { 'user-1': 'MEMBER' };
       const res = await post(valid);
       expect(res.statusCode).toBe(403);
       const { error } = body(res);
@@ -1268,7 +1268,7 @@ describe('campaign routes', () => {
         expect(body(res).error.code).toBe('CAMPAIGN_NOT_FOUND');
       }
       // A team-1 member cannot see a campaign wholly in another organization either.
-      as('u-1', 'ENGINEER', { [TEAM_1]: 'ENGINEER' });
+      as('u-1', 'ENGINEER', { [TEAM_1]: 'MEMBER' });
       expect((await detail(U(3))).statusCode).toBe(404);
     });
 
@@ -1330,7 +1330,7 @@ describe('campaign routes', () => {
 
     it('refuses an owning-team ENGINEER who is not the creator', async () => {
       seedActive();
-      as('u-1', 'ENGINEER', { [TEAM_1]: 'ENGINEER' });
+      as('u-1', 'ENGINEER', { [TEAM_1]: 'MEMBER' });
       const res = await cancel();
       expect(res.statusCode).toBe(403);
       expect(signalled).toHaveLength(0);

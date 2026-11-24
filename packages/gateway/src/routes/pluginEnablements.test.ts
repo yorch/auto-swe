@@ -53,7 +53,7 @@ describe('pluginEnablementRoutes', () => {
     ctx = await buildApp();
   });
   afterAll(() => ctx.app.close());
-  const asMember = (role: 'ADMIN' | 'ENGINEER' | null, platform = 'ENGINEER') => {
+  const asMember = (role: 'ADMIN' | 'MEMBER' | null, platform = 'ENGINEER') => {
     ctx.authState.role = platform;
     ctx.prisma.teamMembership.findUnique.mockImplementation(async ({ where }) =>
       role && where.userId_teamId.teamId === TEAM ? { role } : null
@@ -76,7 +76,7 @@ describe('pluginEnablementRoutes', () => {
 
   describe('GET /:teamId/plugins', () => {
     it('lists approved plugins, plus disabled ones the team holds an enablement for, with status, for any team member', async () => {
-      asMember('ENGINEER');
+      asMember('MEMBER');
       ctx.prisma.harnessProfile.findMany.mockResolvedValue([
         {
           description: 'A',
@@ -131,7 +131,7 @@ describe('pluginEnablementRoutes', () => {
     it('refuses a non-member', async () => {
       asMember(null);
       expect((await call('GET', `/${TEAM}/plugins`)).statusCode).toBe(403);
-      asMember('ENGINEER');
+      asMember('MEMBER');
       expect((await call('GET', `/${OTHER_TEAM}/plugins`)).statusCode).toBe(403);
     });
   });
@@ -183,7 +183,7 @@ describe('pluginEnablementRoutes', () => {
     });
 
     it('takes the team ADMIN role: a plain member is refused, a platform admin passes', async () => {
-      asMember('ENGINEER');
+      asMember('MEMBER');
       expect((await call('PUT', `/${TEAM}/plugins/a-kit`)).statusCode).toBe(403);
       asMember(null, 'ADMIN');
       ctx.prisma.pluginEnablement.findFirst.mockResolvedValue({ createdAt: since });
@@ -250,7 +250,7 @@ describe('pluginEnablementRoutes', () => {
       );
       ctx.prisma.pluginEnablement.deleteMany.mockResolvedValueOnce({ count: 0 });
       expect((await call('DELETE', `/${TEAM}/plugins/a-kit`)).statusCode).toBe(404);
-      asMember('ENGINEER');
+      asMember('MEMBER');
       expect((await call('DELETE', `/${TEAM}/plugins/a-kit`)).statusCode).toBe(403);
     });
   });

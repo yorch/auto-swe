@@ -22,7 +22,7 @@ const MENU_ID = 'team-switcher-menu';
  */
 export function TeamSwitcher({ variant = 'pill' }: { variant?: 'pill' | 'strip' }) {
   const pathname = usePathname();
-  const { entries } = useTeamNav();
+  const { administered, entries } = useTeamNav();
   const { pinnedTeamSlugs, setPinnedTeamSlugs } = useUserPreferences();
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -53,7 +53,9 @@ export function TeamSwitcher({ variant = 'pill' }: { variant?: 'pill' | 'strip' 
   }, [open]);
 
   const currentSlug = teamSlugFromPath(pathname);
-  const current = entries.find((e) => e.team.slug === currentSlug);
+  const current =
+    entries.find((e) => e.team.slug === currentSlug)?.team ??
+    administered.find((t) => t.slug === currentSlug);
   // Keep the tab the caller is on; a path outside any team space opens the overview.
   const tab: TeamTabId = teamTabFromPath(pathname) ?? 'overview';
   const totalNeeds = entries.reduce((sum, e) => sum + e.needsYou, 0);
@@ -83,9 +85,7 @@ export function TeamSwitcher({ variant = 'pill' }: { variant?: 'pill' | 'strip' 
         type="button"
       >
         <span className="text-paper-500">team:</span>
-        <span className="min-w-0 flex-1 truncate text-left">
-          {current?.team.name ?? 'All my teams'}
-        </span>
+        <span className="min-w-0 flex-1 truncate text-left">{current?.name ?? 'All my teams'}</span>
         {!current && <NeedsYouBadge count={totalNeeds} />}
         <Icon
           className={cn('shrink-0 text-paper-500 transition-transform', open && 'rotate-180')}
@@ -158,6 +158,34 @@ export function TeamSwitcher({ variant = 'pill' }: { variant?: 'pill' | 'strip' 
               </li>
             );
           })}
+          {administered.length > 0 && (
+            <li aria-labelledby="team-switcher-administered" role="presentation">
+              <div
+                className="px-3 pt-2 pb-1 text-2xs font-semibold uppercase tracking-[0.08em] text-paper-600"
+                id="team-switcher-administered"
+              >
+                Administered
+              </div>
+              <ul aria-labelledby="team-switcher-administered">
+                {administered.map((team) => (
+                  <li key={team.id}>
+                    <Link
+                      aria-current={team.slug === currentSlug ? 'page' : undefined}
+                      className={rowClass}
+                      href={teamHref(team.slug, tab)}
+                      onClick={() => setOpen(false)}
+                    >
+                      <Icon className="text-paper-500" name="teams" size={14} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate">{team.name}</span>
+                        <span className="block text-xs text-paper-500">{team.orgName}</span>
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </li>
+          )}
         </ul>
       )}
     </div>

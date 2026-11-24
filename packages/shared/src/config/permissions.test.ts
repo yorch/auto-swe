@@ -156,7 +156,50 @@ describe('checkSettingWrite', () => {
     ).toEqual({ allowed: true });
   });
 
-  it('does not let a team role grant match a role held in another team or a different role', () => {
+  describe('a team role grant covers that role and every role above it', () => {
+    const target = {
+      key: 'channel.historyMessageLimit',
+      scope: 'TEAM' as const,
+      targetOrgId: ORG,
+      targetTeamId: TEAM,
+    };
+    const cases: Array<[string, string | undefined, boolean]> = [
+      ['MEMBER', 'MEMBER', true],
+      ['MEMBER', 'LEAD', true],
+      ['MEMBER', 'ADMIN', true],
+      ['LEAD', 'MEMBER', false],
+      ['LEAD', 'LEAD', true],
+      ['LEAD', 'ADMIN', true],
+      ['ADMIN', 'MEMBER', false],
+      ['ADMIN', 'LEAD', false],
+      ['ADMIN', 'ADMIN', true],
+      ['MEMBER', 'UNKNOWN', false],
+      ['MEMBER', undefined, false],
+    ];
+    it.each(cases)('grant %s, actor holds %s: covered=%s', (grantRole, actorRole, covered) => {
+      const roles = new Map<string, string>(actorRole ? [[TEAM, actorRole]] : []);
+      const result = checkSettingWrite(
+        engineer,
+        target,
+        [teamGrant({ role: grantRole as 'MEMBER' | 'LEAD' | 'ADMIN' })],
+        roles
+      );
+      expect(result.allowed).toBe(covered);
+    });
+
+    it('does not cover a higher role held only in another team', () => {
+      expect(
+        checkSettingWrite(
+          engineer,
+          target,
+          [teamGrant({ role: 'MEMBER' })],
+          new Map([[OTHER_TEAM, 'ADMIN']])
+        ).allowed
+      ).toBe(false);
+    });
+  });
+
+  it('does not let a team role grant match a role held in another team or a lower role', () => {
     const target = {
       key: 'channel.historyMessageLimit',
       scope: 'TEAM' as const,
@@ -167,7 +210,7 @@ describe('checkSettingWrite', () => {
       checkSettingWrite(lead, target, [teamGrant()], new Map([[OTHER_TEAM, 'LEAD']]))
     ).toMatchObject({ allowed: false, code: 'NO_GRANT' });
     expect(
-      checkSettingWrite(lead, target, [teamGrant()], new Map([[TEAM, 'ENGINEER']]))
+      checkSettingWrite(lead, target, [teamGrant()], new Map([[TEAM, 'MEMBER']]))
     ).toMatchObject({ allowed: false, code: 'NO_GRANT' });
     expect(checkSettingWrite(lead, target, [teamGrant()])).toMatchObject({
       allowed: false,

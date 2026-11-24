@@ -52,11 +52,11 @@ vi.mock('@auto-swe/shared/db', () => ({
           role:
             where.userId === 'creator'
               ? mocks.creatorMayReadBudget
-                ? 'ORG_ADMIN'
-                : 'ORG_MEMBER'
+                ? 'ADMIN'
+                : 'MEMBER'
               : mocks.budgetReaderEmails.includes(where.userId)
-                ? 'ORG_ADMIN'
-                : 'ORG_MEMBER',
+                ? 'ADMIN'
+                : 'MEMBER',
         },
       ],
     },

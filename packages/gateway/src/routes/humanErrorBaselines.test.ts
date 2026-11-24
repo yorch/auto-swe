@@ -17,7 +17,7 @@ const ORG = '11111111-1111-4111-8111-111111111111';
  * explicit `runUnscoped`. A guarded query that neither scopes nor is unscoped
  * is exactly what `UnscopedTenantQueryError` refuses at run time — a 500.
  */
-async function buildApp(role: 'ADMIN' | 'LEAD', orgRole: 'ORG_ADMIN' | 'ORG_MEMBER' | null = null) {
+async function buildApp(role: 'ADMIN' | 'LEAD', orgRole: 'ADMIN' | 'MEMBER' | null = null) {
   const seen: Array<{ where: unknown; scoped: boolean; unscoped: boolean }> = [];
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
@@ -103,13 +103,13 @@ describe('writing human-error baselines', () => {
     app.inject({ headers: AUTH, method: 'POST', payload: body, url: '/api/v1/baselines' });
 
   it('lets an organization ADMIN record one, with no platform role', async () => {
-    const { app } = await buildApp('LEAD', 'ORG_ADMIN');
+    const { app } = await buildApp('LEAD', 'ADMIN');
     expect((await post(app)).statusCode).toBe(201);
     await app.close();
   });
 
   it('refuses a plain organization member and a non-member', async () => {
-    for (const orgRole of ['ORG_MEMBER', null] as const) {
+    for (const orgRole of ['MEMBER', null] as const) {
       const { app } = await buildApp('LEAD', orgRole);
       expect((await post(app)).statusCode).toBe(403);
       await app.close();
@@ -124,10 +124,10 @@ describe('writing human-error baselines', () => {
 
   it('removes a baseline only for an organization ADMIN of its organization', async () => {
     const url = '/api/v1/baselines/22222222-2222-4222-8222-222222222222';
-    const admin = await buildApp('LEAD', 'ORG_ADMIN');
+    const admin = await buildApp('LEAD', 'ADMIN');
     expect((await admin.app.inject({ headers: AUTH, method: 'DELETE', url })).statusCode).toBe(204);
     await admin.app.close();
-    const member = await buildApp('LEAD', 'ORG_MEMBER');
+    const member = await buildApp('LEAD', 'MEMBER');
     expect((await member.app.inject({ headers: AUTH, method: 'DELETE', url })).statusCode).toBe(
       403
     );

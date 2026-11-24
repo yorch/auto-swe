@@ -70,7 +70,7 @@ describe('heldScope', () => {
       teamMemberships: [
         { role: 'LEAD', team: { id: 't-lead', isActive: true }, teamId: 't-lead' },
         { role: 'ADMIN', team: { id: 't-admin', isActive: true }, teamId: 't-admin' },
-        { role: 'ENGINEER', team: { id: 't-member', isActive: true }, teamId: 't-member' },
+        { role: 'MEMBER', team: { id: 't-member', isActive: true }, teamId: 't-member' },
         { role: 'LEAD', team: { id: 't-off', isActive: false }, teamId: 't-off' },
       ],
     });
@@ -87,7 +87,7 @@ describe('heldScope', () => {
   it('keeps an inactive team for a read capability', async () => {
     const m = mockDb({
       teamMemberships: [
-        { role: 'ENGINEER', team: { id: 't-off', isActive: false }, teamId: 't-off' },
+        { role: 'MEMBER', team: { id: 't-off', isActive: false }, teamId: 't-off' },
       ],
     });
     expect((await heldScope(m.db, USER, 'team.read')).teamIds).toEqual(['t-off']);
@@ -96,8 +96,8 @@ describe('heldScope', () => {
   it('adds the active teams of an organization the actor administers, for a governance capability, in constant queries', async () => {
     const m = mockDb({
       orgMemberships: [
-        { orgId: 'o1', role: 'ORG_ADMIN' },
-        { orgId: 'o2', role: 'ORG_MEMBER' },
+        { orgId: 'o1', role: 'ADMIN' },
+        { orgId: 'o2', role: 'MEMBER' },
       ],
       teamMemberships: [{ role: 'LEAD', team: { id: 't-lead', isActive: true }, teamId: 't-lead' }],
       teams: [
@@ -118,8 +118,8 @@ describe('heldScope', () => {
   it('is the organizations where the actor meets an org-scoped capability', async () => {
     const m = mockDb({
       orgMemberships: [
-        { orgId: 'o1', role: 'ORG_ADMIN' },
-        { orgId: 'o2', role: 'ORG_MEMBER' },
+        { orgId: 'o1', role: 'ADMIN' },
+        { orgId: 'o2', role: 'MEMBER' },
       ],
     });
     expect((await heldScope(m.db, USER, 'org.settings.manage')).orgIds).toEqual(['o1']);
@@ -161,7 +161,7 @@ describe('can', () => {
 
   it('applies the org rule through the team’s organization', async () => {
     const m = mockDb({
-      orgMemberships: [{ orgId: 'o1', role: 'ORG_ADMIN' }],
+      orgMemberships: [{ orgId: 'o1', role: 'ADMIN' }],
       teams: [{ id: 't1', isActive: true, orgId: 'o1' }],
     });
     expect(await can(m.db, USER, 'team.repos.manage', { teamId: 't1' })).toEqual({

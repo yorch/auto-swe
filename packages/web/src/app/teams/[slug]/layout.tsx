@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/Badge';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { TabBar } from '@/components/ui/TabBar';
-import { useCan, usePlatformAdmin } from '@/hooks/useCan';
+import { useCan } from '@/hooks/useCan';
 import { useEffectivePermissions } from '@/hooks/useEffectivePermissions';
 import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useTeamOverview } from '@/hooks/useTeamOverview';
@@ -20,9 +20,10 @@ import { TEAM_TABS, type TeamTabId, teamHref, teamTabFromPath } from '@/lib/team
 
 /**
  * One team's space. The slug in the address is the scope: it resolves through the caller's own
- * teams, and a slug that names no team they belong to renders the ordinary not-found page, which
- * says nothing about whether such a team exists. A platform admin may also open a team they are
- * not in (they can already list every team), without a role badge.
+ * teams and then through the teams they can list without belonging to (an organization admin's
+ * administered teams, a platform admin's every team), without a role badge. A slug that names no
+ * team they can see renders the ordinary not-found page, which says nothing about whether such a
+ * team exists.
  */
 export default function TeamSpaceLayout({
   children,
@@ -34,15 +35,14 @@ export default function TeamSpaceLayout({
   const { slug: rawSlug } = use(params);
   const slug = validateRouteParam(rawSlug);
   const pathname = usePathname();
-  const isPlatformAdmin = usePlatformAdmin();
   const permissions = useEffectivePermissions();
   const memberTeams = useTeams({ memberOnly: true });
-  const allTeams = useTeams({ enabled: isPlatformAdmin });
+  const allTeams = useTeams();
   const { loaded, lastTeamSlug, setLastTeamSlug } = useUserPreferences();
 
   const team =
     (slug ? memberTeams.data?.find((t) => t.slug === slug) : undefined) ??
-    (isPlatformAdmin && slug ? allTeams.data?.find((t) => t.slug === slug) : undefined);
+    (slug ? allTeams.data?.find((t) => t.slug === slug) : undefined);
   // What the tabs offer is what the server says the caller holds on this team: Settings for the
   // team's configuration, Manage for what its leads run it with, the budget for the dollar figures.
   const scope = { orgId: team?.orgId, teamId: team?.id };
@@ -70,17 +70,24 @@ export default function TeamSpaceLayout({
     return <NotFound />;
   }
   if (!team) {
-    const waiting =
-      memberTeams.isLoading || permissions.isLoading || (isPlatformAdmin && allTeams.isLoading);
-    if (waiting || memberTeams.isError) {
+    const waiting = memberTeams.isLoading || permissions.isLoading || allTeams.isLoading;
+    const failed = memberTeams.isError || allTeams.isError;
+    if (waiting || failed) {
+      const failing = memberTeams.isError ? memberTeams : allTeams;
       return (
         <QueryBoundary
-          error={memberTeams.error}
-          isError={memberTeams.isError}
-          isFetching={memberTeams.isFetching}
+          error={failing.error}
+          isError={failed && !waiting}
+          isFetching={failing.isFetching}
           isLoading={waiting}
           label="team"
-          onRetry={() => void memberTeams.refetch()}
+          onRetry={() => {
+            for (const q of [memberTeams, allTeams]) {
+              if (q.isError) {
+                void q.refetch();
+              }
+            }
+          }}
           shape="detail"
         />
       );

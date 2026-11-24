@@ -41,7 +41,7 @@ async function buildApp(
       findMany: vi.fn(async (args: { where: { orgId?: { in: string[] } } }) =>
         (membership.orgIds ?? [])
           .filter((orgId) => !args.where.orgId || args.where.orgId.in.includes(orgId))
-          .map((orgId) => ({ orgId, role: 'ORG_ADMIN' }))
+          .map((orgId) => ({ orgId, role: 'ADMIN' }))
       ),
     },
     reportDigestSubscription: {

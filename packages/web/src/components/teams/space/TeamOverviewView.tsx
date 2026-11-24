@@ -87,11 +87,14 @@ function MineHint({ definition, href, link }: { definition: string; href: string
  */
 export function TeamOverviewView({
   canManageBudget = false,
+  canManageMembers = false,
   overview,
   slug,
 }: {
   /** True for a caller who holds `team.budget.manage` here (a team admin, an org admin); null while unknown. */
   canManageBudget?: boolean | null;
+  /** True for a caller who holds `team.members.manage` here; the notice then links to Members. */
+  canManageMembers?: boolean;
   overview: TeamOverviewData;
   slug: string;
 }) {
@@ -100,6 +103,21 @@ export function TeamOverviewView({
   const teamParam = encodeURIComponent(slug);
   return (
     <div className="space-y-6">
+      {overview.team.access === 'org-admin' && (
+        <Alert title="Viewing as an organization admin" variant="info">
+          You are not a member of this team, so its run activity is not shown.
+          {canManageMembers && (
+            <>
+              {' '}
+              Adding yourself is an audited step done from{' '}
+              <Link className="underline underline-offset-2" href={`/teams/${teamParam}/members`}>
+                Members
+              </Link>
+              .
+            </>
+          )}
+        </Alert>
+      )}
       {overview.needsAdmin && (
         <Alert title="This team has no admin" variant="warning">
           Make someone a team admin from{' '}

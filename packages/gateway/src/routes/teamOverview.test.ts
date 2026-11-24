@@ -66,6 +66,8 @@ interface Fixture {
   orgCapCents?: number | null;
   /** The viewer's role in the team's org (null: not a member). */
   orgRole?: 'ADMIN' | 'MEMBER' | null;
+  /** The viewer is ADMIN of a DIFFERENT organization ('org-2'), with no standing in the team's. */
+  otherOrgAdmin?: boolean;
   orgSpendUsd?: number;
   /** The team's own cap in cents (null: none) and its month-to-date spend in USD. */
   teamCapCents?: number | null;
@@ -93,6 +95,8 @@ interface Fixture {
   steps?: unknown[];
   teamRole: TeamRole;
   teamExists?: boolean;
+  /** Whether the team is active (default true). */
+  teamActive?: boolean;
   unowned?: unknown[];
 }
 
@@ -138,7 +142,10 @@ async function build(fx: Fixture) {
     },
     organizationMembership: {
       // The permissions loader's read of the viewer's standing in the organizations it names.
-      findMany: vi.fn(async () => (fx.orgRole ? [{ orgId: 'org-1', role: fx.orgRole }] : [])),
+      findMany: vi.fn(async () => [
+        ...(fx.orgRole ? [{ orgId: 'org-1', role: fx.orgRole }] : []),
+        ...(fx.otherOrgAdmin ? [{ orgId: 'org-2', role: 'ADMIN' }] : []),
+      ]),
       findUnique: vi.fn(async () => (fx.orgRole ? { role: fx.orgRole } : null)),
     },
     orgMonthlyUsage: {
@@ -171,7 +178,7 @@ async function build(fx: Fixture) {
       findMany: vi.fn(
         async (args: { select?: { isActive?: boolean }; where: { id: { in: string[] } } }) =>
           args.select?.isActive
-            ? [{ id: TEAM, isActive: true, orgId: 'org-1' }]
+            ? [{ id: TEAM, isActive: fx.teamActive ?? true, orgId: 'org-1' }]
             : [
                 { id: TEAM, monthlyBudgetUsdCents: fx.teamCapCents ?? null },
                 { id: OTHER_TEAM, monthlyBudgetUsdCents: fx.ownerCapCents ?? null },
@@ -184,7 +191,7 @@ async function build(fx: Fixture) {
           ? null
           : {
               id: TEAM,
-              isActive: true,
+              isActive: fx.teamActive ?? true,
               memberships: fx.teamRole ? [{ role: fx.teamRole }] : [],
               name: 'Alpha',
               organization: { name: 'Acme' },
@@ -282,6 +289,7 @@ describe('GET /api/v1/teams/:id/overview', () => {
     const { data } = res.json();
     expect(data.viewerLevel).toBe('member');
     expect(data.team).toEqual({
+      access: 'member',
       id: TEAM,
       myRole: 'MEMBER',
       name: 'Alpha',
@@ -527,8 +535,14 @@ describe('GET /api/v1/teams/:id/overview', () => {
     const { data } = res.json();
     expect(data.viewerLevel).toBe('admin');
     expect(data.team.myRole).toBeNull();
+    expect(data.team.access).toBe('platform-admin');
     expect(data.lead).toBeDefined();
     expect(data.admin).toBeDefined();
+  });
+
+  it('keeps access member for a platform ADMIN who is on the team', async () => {
+    const { res } = await get({ platformRole: 'ADMIN', teamRole: 'MEMBER' });
+    expect(res.json().data.team.access).toBe('member');
   });
 
   it('lets the team role, not the platform role, decide: a platform ADMIN on the team as MEMBER', async () => {
@@ -547,6 +561,77 @@ describe('GET /api/v1/teams/:id/overview', () => {
     const unknown = await get({ teamExists: false, teamRole: null });
     expect(unknown.res.statusCode).toBe(404);
     expect(unknown.res.body).toBe(nonMemberBody);
+  });
+
+  describe('an organization admin who is not a member', () => {
+    it('gets the governance view: access org-admin, level admin, no team role', async () => {
+      const { res } = await get({ orgRole: 'ADMIN', teamRole: null });
+      expect(res.statusCode, res.body).toBe(200);
+      const { data } = res.json();
+      expect(data.team.access).toBe('org-admin');
+      expect(data.team.myRole).toBeNull();
+      expect(data.viewerLevel).toBe('admin');
+      expect(data.lead).toBeDefined();
+      expect(data.admin).toBeDefined();
+    });
+
+    it('builds every run section from the caller own visibility filter', async () => {
+      const { prisma, res } = await get({ orgRole: 'ADMIN', teamRole: null });
+      expect(res.statusCode).toBe(200);
+      const calls = [
+        ...prisma.workflowRun.findMany.mock.calls,
+        ...prisma.workflowRun.aggregate.mock.calls,
+      ];
+      expect(calls.length).toBeGreaterThan(0);
+      for (const [args] of calls) {
+        // The visibility filter names the caller; an org-admin bypass would not.
+        expect(JSON.stringify((args as { where: unknown }).where)).toContain(ME);
+      }
+    });
+
+    it('reports the spend as null for a non-member org admin, whose visible runs are only part of the team', async () => {
+      // The figure is kept (the key is present, `org.budget.manage` holds) but it is null: a sum
+      // over the runs the caller may see would read as the team's spend beside a real percentage.
+      const { res } = await get({
+        costUsd: 5,
+        orgCapCents: 100_000,
+        orgRole: 'ADMIN',
+        teamRole: null,
+      });
+      expect(res.json().data.admin).toEqual({ monthCostUsdCents: null });
+    });
+
+    it('behaves as for any reader when the team is deactivated: members, platform and org admins read it, others get 404', async () => {
+      for (const fx of [
+        { teamRole: 'MEMBER' as const },
+        { platformRole: 'ADMIN' as const, teamRole: null },
+        { orgRole: 'ADMIN' as const, teamRole: null },
+      ]) {
+        const { res } = await get({ ...fx, teamActive: false });
+        expect(res.statusCode, JSON.stringify(fx)).toBe(200);
+        await open?.app.close();
+      }
+      const plain = await get({ orgRole: 'MEMBER', teamActive: false, teamRole: null });
+      expect(plain.res.statusCode).toBe(404);
+    });
+
+    it('answers the same 404 as an unknown team to an admin of another organization and a plain org member', async () => {
+      const unknown = await get({ teamExists: false, teamRole: null });
+      const unknownBody = unknown.res.body;
+      expect(unknown.res.statusCode).toBe(404);
+      await open?.app.close();
+      // An admin of ANOTHER organization holds no standing here: the loader finds no row for
+      // this team's organization.
+      const other = await get({ orgRole: null, otherOrgAdmin: true, teamRole: null });
+      expect(other.res.statusCode).toBe(404);
+      expect(other.res.body).toBe(unknownBody);
+      await open?.app.close();
+      const plain = await get({ orgRole: 'MEMBER', teamRole: null });
+      expect(plain.res.statusCode).toBe(404);
+      expect(plain.res.body).toBe(unknownBody);
+      expect(plain.res.json().error.code).toBe('TEAM_NOT_FOUND');
+      expect(plain.prisma.workflowRun.findMany).not.toHaveBeenCalled();
+    });
   });
 
   it('counts the desk items of this team, running and queued', async () => {
