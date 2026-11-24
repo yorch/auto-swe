@@ -1,7 +1,10 @@
 import {
+  classifySecurityTrace,
   MEMORY_DROPPED_EVENTS,
   MEMORY_WRITE_REFUSED_EVENTS,
+  SECURITY_EVENT_TYPES,
   SECURITY_TRACE_ERRORS,
+  type SecurityEventType,
 } from '@auto-swe/shared/lib/scannerCache';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
@@ -11,16 +14,9 @@ import { mapLimited } from '../lib/mapLimited.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { requireAuth } from '../plugins/auth.js';
 
-export type SecurityEventType =
-  | 'SHELL_BLOCK'
-  | 'FILE_BLOCK'
-  | 'CONTENT_SECURITY_BLOCK'
-  | 'CONTENT_SECURITY_WARN'
-  | 'CODE_SECURITY'
-  | 'LLM_SUSPICIOUS'
-  | 'CHANNEL_SUSPICIOUS'
-  | 'MEMORY_WRITE_REFUSED'
-  | 'MEMORY_RECALL_DROPPED';
+// The type list is the shared one: the summary's predicate map and the `?type=` schema below
+// are both keyed on it, so a type cannot be counted by one and rejected by the other.
+export type { SecurityEventType };
 
 // Maps each SecurityEventType to the Prisma predicate that identifies it.
 // Keeping this inline in the query ensures pagination is correct — the type
@@ -39,52 +35,14 @@ const TYPE_PREDICATES: Record<SecurityEventType, object> = {
   CONTENT_SECURITY_BLOCK: { error: { startsWith: SECURITY_TRACE_ERRORS.CONTENT_BLOCK } },
   CONTENT_SECURITY_WARN: { error: SECURITY_TRACE_ERRORS.CONTENT_WARN },
   FILE_BLOCK: { error: { startsWith: SECURITY_TRACE_ERRORS.FILE_BLOCK } },
+  INSTRUCTION_FILE_BLOCK: {
+    error: { startsWith: SECURITY_TRACE_ERRORS.INSTRUCTION_FILE_BLOCK },
+  },
   LLM_SUSPICIOUS: activityEvent('llm.suspicious_output'),
   MEMORY_RECALL_DROPPED: activityEvent({ in: [...MEMORY_DROPPED_EVENTS] }),
   MEMORY_WRITE_REFUSED: activityEvent({ in: [...MEMORY_WRITE_REFUSED_EVENTS] }),
   SHELL_BLOCK: { error: { startsWith: SECURITY_TRACE_ERRORS.SHELL_BLOCK } },
 };
-
-function classifyEvent(trace: {
-  error: string | null;
-  toolName: string | null;
-  type: string;
-}): SecurityEventType {
-  if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.SHELL_BLOCK)) {
-    return 'SHELL_BLOCK';
-  }
-  if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.FILE_BLOCK)) {
-    return 'FILE_BLOCK';
-  }
-  if (trace.error?.startsWith(SECURITY_TRACE_ERRORS.CONTENT_BLOCK)) {
-    return 'CONTENT_SECURITY_BLOCK';
-  }
-  if (trace.error === SECURITY_TRACE_ERRORS.CONTENT_WARN) {
-    return 'CONTENT_SECURITY_WARN';
-  }
-  if (trace.type === 'activity_event' && trace.toolName === 'llm.suspicious_output') {
-    return 'LLM_SUSPICIOUS';
-  }
-  if (trace.type === 'activity_event' && trace.toolName === 'channel.suspicious_input') {
-    return 'CHANNEL_SUSPICIOUS';
-  }
-  if (
-    trace.type === 'activity_event' &&
-    trace.toolName !== null &&
-    MEMORY_DROPPED_EVENTS.includes(trace.toolName)
-  ) {
-    return 'MEMORY_RECALL_DROPPED';
-  }
-  if (
-    trace.type === 'activity_event' &&
-    trace.toolName !== null &&
-    MEMORY_WRITE_REFUSED_EVENTS.includes(trace.toolName)
-  ) {
-    return 'MEMORY_WRITE_REFUSED';
-  }
-  // Remaining rows that passed the OR filter must be code_security.scan activity events
-  return 'CODE_SECURITY';
-}
 
 /**
  * The gateway's pg pool holds 10 connections; the per-type counts run this many
@@ -114,19 +72,7 @@ const ListQuery = paginationQuery({ defaultLimit: 50, maxLimit: 200 })
   .extend(WindowQuery.shape)
   .extend({
     runId: z.string().uuid().optional(),
-    type: z
-      .enum([
-        'SHELL_BLOCK',
-        'FILE_BLOCK',
-        'CONTENT_SECURITY_BLOCK',
-        'CONTENT_SECURITY_WARN',
-        'CODE_SECURITY',
-        'LLM_SUSPICIOUS',
-        'CHANNEL_SUSPICIOUS',
-        'MEMORY_WRITE_REFUSED',
-        'MEMORY_RECALL_DROPPED',
-      ])
-      .optional(),
+    type: z.enum(SECURITY_EVENT_TYPES).optional(),
   });
 
 export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
@@ -178,24 +124,34 @@ export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
           ])
       );
 
-      const events = rows.map((t) => ({
-        createdAt: t.createdAt,
-        error: t.error,
-        eventType: classifyEvent(t),
-        // `run` is null for workflows that keep no WorkflowRun row (e.g. evals,
-        // workflow authoring); the trace still carries its Temporal workflow ID.
-        externalTicketId: t.run?.workRequest?.externalTicketId ?? null,
-        id: t.id,
-        inputJson: t.inputJson,
-        nodeId: t.nodeId,
-        outputJson: t.outputJson,
-        runId: t.runId,
-        startedAt: t.run?.startedAt ?? null,
-        toolName: t.toolName,
-        // Rows that predate the column carry their workflow ID on the run.
-        workflowId: t.workflowId ?? t.run?.workflowId ?? null,
-        workRequestId: t.run?.workRequest?.id ?? null,
-      }));
+      const events = rows.flatMap((t) => {
+        // The query's OR set is built from the same predicates the classifier names, so this is
+        // null only for a row the endpoint should not report. It is never guessed at.
+        const eventType = classifySecurityTrace(t);
+        if (!eventType) {
+          return [];
+        }
+        return [
+          {
+            createdAt: t.createdAt,
+            error: t.error,
+            eventType,
+            // `run` is null for workflows that keep no WorkflowRun row (e.g. evals,
+            // workflow authoring); the trace still carries its Temporal workflow ID.
+            externalTicketId: t.run?.workRequest?.externalTicketId ?? null,
+            id: t.id,
+            inputJson: t.inputJson,
+            nodeId: t.nodeId,
+            outputJson: t.outputJson,
+            runId: t.runId,
+            startedAt: t.run?.startedAt ?? null,
+            toolName: t.toolName,
+            // Rows that predate the column carry their workflow ID on the run.
+            workflowId: t.workflowId ?? t.run?.workflowId ?? null,
+            workRequestId: t.run?.workRequest?.id ?? null,
+          },
+        ];
+      });
 
       return { data: events, meta: { limit, offset, total } };
     }
@@ -214,7 +170,7 @@ export const securityEventRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const { since, until } = request.query;
-      const types = Object.keys(TYPE_PREDICATES) as SecurityEventType[];
+      const types = [...SECURITY_EVENT_TYPES];
       const countAll = (from?: string, to?: string) =>
         // ADMIN-only totals across every tenant, like the feed above.
         mapLimited(types, COUNT_CONCURRENCY, (type) =>

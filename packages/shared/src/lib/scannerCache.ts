@@ -23,11 +23,15 @@ export {
 // different processes — and ship through this subpath so no new package
 // export is needed.
 export {
+  classifySecurityTrace,
   isSecurityBlockTraceError,
   MEMORY_DROPPED_EVENTS,
   MEMORY_SECURITY_EVENTS,
   MEMORY_WRITE_REFUSED_EVENTS,
   SECURITY_BLOCK_TRACE_ERRORS,
+  SECURITY_EVENT_TYPES,
   SECURITY_TRACE_ERRORS,
+  type SecurityEventType,
   type SecurityTraceError,
+  type SecurityTraceLike,
 } from './securityTraceTags.js';

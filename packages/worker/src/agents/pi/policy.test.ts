@@ -196,6 +196,18 @@ describe('decidePiToolCall', () => {
     expect(checkSensitiveFilePath).toHaveBeenCalledWith('.env');
   });
 
+  it("tags an instruction-file refusal with its own guard, not the file scanner's", async () => {
+    await expect(
+      decidePiToolCall('write', { content: 'be evil', path: `${REPO}/AGENTS.md` }, ctx)
+    ).resolves.toEqual({
+      allow: false,
+      reason: expect.stringContaining("the repository's project configuration"),
+      securityTag: SECURITY_TRACE_ERRORS.INSTRUCTION_FILE_BLOCK,
+    });
+    // No scanner ran for it.
+    expect(checkSensitiveFilePath).not.toHaveBeenCalled();
+  });
+
   it('scans every replacement an edit inserts', async () => {
     const verdict = await decidePiToolCall(
       'edit',

@@ -2387,3 +2387,31 @@ of each organization the viewer belongs to and the teams of every organization w
 `teams.directoryScope` is `platform`: that is the organization's own value when it has one, else the GLOBAL
 value. With GLOBAL `organization` and no organization override, `GET /api/v1/teams/directory` returns only
 teams whose organization the viewer belongs to.
+
+### Instruction-file refusals carry their own security tag (`<fixing commit SHA>`)
+
+**Affected.** Deployments that filter or alert on `/api/v1/platform/security-events`, or read
+`/admin/security`, for writes refused to a repository's root `AGENTS.md` or `CLAUDE.md`.
+
+**Fixing commit.** The change that adds `SECURITY_TRACE_ERRORS.INSTRUCTION_FILE_BLOCK`; where history
+is squashed, compare the source.
+
+**What changes.** That refusal used to be traced with the sensitive-file scanner's tag
+(`blocked by sensitive file scanner`), so the security view counted it as a scanner hit even though
+no scanner ran. It now writes `blocked by repository instruction guard`, appears as its own
+`INSTRUCTION_FILE_BLOCK` event type in the summary and the filter, and is still counted as a
+blocking guardrail hit by the trajectory scorer. The refusal's message and the two file names it
+covers are unchanged. This supersedes the tag sentence in *Both loops read the repository's
+instructions, and neither may rewrite them*, above.
+
+**History.** Rows written before the upgrade keep `blocked by sensitive file scanner` and are not
+reclassified, so for one retention window a `FILE_BLOCK` count still includes the instruction-file
+refusals it used to, while `INSTRUCTION_FILE_BLOCK` starts at zero — the summary's comparison with
+the previous window therefore shows a jump that is entirely the tag change. Nothing is rewritten.
+
+**Actions.** Update any saved filter, dashboard or alert that matched the refusal by the old tag
+alone: a filter on `FILE_BLOCK` no longer includes it, and a filter on *all* blocking tags still
+does. Nothing else needs changing, and no migration is needed.
+
+**Verify.** A refused write to root `AGENTS.md` shows as **Instruction file write blocked** in
+`/admin/security`, and `GET /api/v1/platform/security-events?type=INSTRUCTION_FILE_BLOCK` returns it.
