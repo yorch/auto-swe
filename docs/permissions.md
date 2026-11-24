@@ -194,7 +194,8 @@ pins the reviewed set of public routes.
 
 Some checks are not "may this role do this" but separation of duties or ownership: only the
 launcher steers an orchestration, a template's author may not review their own change, nobody
-removes or demotes themselves, a step assigned to named approvers is answered by one of them.
+removes or demotes themselves, a step assigned to named approvers is answered by one of them
+(declared; no step carries an assignee, see Limitations).
 These are **constraints**, in `packages/shared/src/permissions/constraints.ts`: `notSelf`,
 `isLauncher`, `notAuthor`, `isAssignee`. Domain code composes one with a capability:
 `can(...)` and `constraint(...)`. Platform `ADMIN` does not satisfy a constraint, and a constraint
@@ -360,6 +361,13 @@ _Generated from `packages/shared/src/permissions/catalog/` by `scripts/gen-permi
 
 ## Limitations
 
+- **`team.approvals.answer` and `isAssignee` are declared and not consulted.** Answering a human
+  step is decided by control of the run (`buildWorkflowRunControlFilter`, surfaced as `canAnswer`
+  on the human-step routes), not by this capability, and nothing assigns a step to named approvers,
+  so `isAssignee` has no caller on the answer path. A grant of `team.approvals.answer` or an
+  assignee constraint does not change who can answer a gate. Of the approval capabilities,
+  `team.approvals.nudge` (human-step routes) and `team.approvals.merge` (Slack merge action) are
+  checked.
 - Capability checks are per request and read memberships each time; there is no cross-request
   cache beyond the existing user-state cache.
 - An organization admin can obtain operation and sensitive powers by adding themselves to a team;

@@ -3,6 +3,7 @@
 import type { HumanStepSummary } from '@auto-swe/shared/types/api';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { WHO_UNKNOWN, whoCanAnswer } from '@/lib/gateAnswerers';
 import { stubDialogPrototype } from '@/test/rtl-helpers';
 import { HumanStepCard } from './HumanStepCard';
 
@@ -375,10 +376,10 @@ describe('HumanStepCard answer guard', () => {
     const button = screen.getByRole('button', { name: RESPOND });
     expect(button.getAttribute('aria-disabled')).toBe('true');
     expect(button.getAttribute('title')).toBe(
-      'You cannot answer this step. It is controlled by Payments: you need to belong to that team and have access to its repository.'
+      `You cannot answer this step. ${whoCanAnswer('Payments')}`
     );
     expect(screen.getByTestId('blocked-reason').textContent).toBe(
-      'You cannot answer this step. It is controlled by Payments: you need to belong to that team and have access to its repository.'
+      `You cannot answer this step. ${whoCanAnswer('Payments')}`
     );
     fireEvent.click(button);
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
@@ -390,7 +391,7 @@ describe('HumanStepCard answer guard', () => {
     expect(approve.getAttribute('aria-disabled')).toBe('true');
     fireEvent.click(approve);
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(screen.getAllByTestId('blocked-reason')[0].textContent).toContain('the owning team');
+    expect(screen.getAllByTestId('blocked-reason')[0].textContent).toContain(WHO_UNKNOWN);
   });
 
   it.each([true, undefined])('leaves the controls on when canAnswer is %s', (canAnswer) => {
@@ -404,6 +405,73 @@ describe('HumanStepCard answer guard', () => {
   });
 });
 
+describe('HumanStepCard answer guard reasons', () => {
+  const reasons = () => screen.queryAllByTestId('blocked-reason');
+
+  it('keeps every reason short, because it is the description of each answer button', () => {
+    render(<HumanStepCard ownerName="Payments" step={approvalStep({ canAnswer: false })} />);
+    expect(reasons()[0].textContent?.length).toBeLessThanOrEqual(160);
+  });
+
+  it('shows "You approved" and no reason when the caller already approved', () => {
+    render(
+      <HumanStepCard
+        step={approvalStep({ approvalsRemaining: 2, canAnswer: false, myResponse: 'approve' })}
+      />
+    );
+    expect(screen.getByText('You approved')).toBeTruthy();
+    expect(screen.queryByText('Expired')).toBeNull();
+    expect(reasons()).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: RESPOND })).toBeNull();
+  });
+
+  it('shows "Expired" and no reason when the step is past its deadline', () => {
+    render(
+      <HumanStepCard
+        step={approvalStep({
+          canAnswer: false,
+          timeoutAt: new Date(Date.now() - 60_000).toISOString(),
+        })}
+      />
+    );
+    expect(screen.getByText('Expired')).toBeTruthy();
+    expect(screen.queryByText('You approved')).toBeNull();
+    expect(reasons()).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: RESPOND })).toBeNull();
+  });
+
+  it('shows exactly one reason, and no badge, for a live step the caller cannot answer', () => {
+    render(<HumanStepCard ownerName="Payments" step={approvalStep({ canAnswer: false })} />);
+    expect(reasons()).toHaveLength(1);
+    expect(reasons()[0].textContent).toBe(
+      `You cannot answer this step. ${whoCanAnswer('Payments')}`
+    );
+    expect(screen.queryByText('Expired')).toBeNull();
+    expect(screen.queryByText('You approved')).toBeNull();
+  });
+
+  it('shows no reason when the caller can answer', () => {
+    render(<HumanStepCard step={approvalStep({ canAnswer: true })} />);
+    expect(reasons()).toHaveLength(0);
+  });
+
+  it('says the run is not running', () => {
+    const base = approvalStep({ canAnswer: false });
+    render(<HumanStepCard step={{ ...base, run: { ...base.run, status: 'CANCELLED' } }} />);
+    expect(screen.getByTestId('blocked-reason').textContent).toBe(
+      'This run is not running, so this step cannot be answered.'
+    );
+  });
+
+  it('never claims the caller lacks control, "right now", or names a person', () => {
+    render(<HumanStepCard ownerName="Payments" step={approvalStep({ canAnswer: false })} />);
+    const text = screen.getByTestId('blocked-reason').textContent ?? '';
+    expect(text).not.toMatch(/controlled by|you need to belong|right now|named approver/);
+    expect(text).toContain('members of Payments');
+    expect(text).toContain('when GitHub access is enforced');
+  });
+});
+
 describe('HumanStepCard owner name in the answer guard', () => {
   function ownedStep(ownerTeam: HumanStepSummary['run']['ownerTeam'] | undefined) {
     const step = approvalStep({ canAnswer: false });
@@ -413,10 +481,10 @@ describe('HumanStepCard owner name in the answer guard', () => {
   it('names the owning team from the step in the inbox, where no ownerName is passed', () => {
     render(<HumanStepCard step={ownedStep({ id: 't1', name: 'Payments', slug: 'payments' })} />);
     expect(screen.getByTestId('blocked-reason').textContent).toBe(
-      'You cannot answer this step. It is controlled by Payments: you need to belong to that team and have access to its repository.'
+      `You cannot answer this step. ${whoCanAnswer('Payments')}`
     );
     expect(screen.getByRole('button', { name: RESPOND }).getAttribute('title')).toBe(
-      'You cannot answer this step. It is controlled by Payments: you need to belong to that team and have access to its repository.'
+      `You cannot answer this step. ${whoCanAnswer('Payments')}`
     );
   });
 
@@ -437,7 +505,7 @@ describe('HumanStepCard owner name in the answer guard', () => {
   ])('falls back to the caller name when ownerTeam is %s', (_label, ownerTeam) => {
     render(<HumanStepCard ownerName="Design" step={ownedStep(ownerTeam)} />);
     expect(screen.getByTestId('blocked-reason').textContent).toBe(
-      'You cannot answer this step. It is controlled by Design: you need to belong to that team and have access to its repository.'
+      `You cannot answer this step. ${whoCanAnswer('Design')}`
     );
   });
 
@@ -445,11 +513,11 @@ describe('HumanStepCard owner name in the answer guard', () => {
     ['null', null],
     ['undefined', undefined],
   ])(
-    'falls back to "the owning team" when ownerTeam is %s and no name is passed',
+    'says the platform does not record who can answer when ownerTeam is %s and no name is passed',
     (_label, ownerTeam) => {
       render(<HumanStepCard step={ownedStep(ownerTeam)} />);
       expect(screen.getByTestId('blocked-reason').textContent).toBe(
-        'You cannot answer this step. It is controlled by the owning team: you need to belong to that team and have access to its repository.'
+        `You cannot answer this step. ${WHO_UNKNOWN}`
       );
     }
   );

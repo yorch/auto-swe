@@ -49,7 +49,7 @@ import { IMPLEMENTER_RUNTIME_LABELS } from '@/lib/evalRuntime';
 import { RUN_TOUR } from '@/lib/pageTours';
 import { validateRouteParam } from '@/lib/routeParams';
 import { findFailedStep } from '@/lib/runFailure';
-import { deriveRunVerdict } from '@/lib/runVerdict';
+import { deriveRunVerdict, toPendingHumanSteps } from '@/lib/runVerdict';
 import { runControlReason } from '@/lib/teamPermissions';
 import { buildTraceLinker } from '@/lib/traceLinkage';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
@@ -297,7 +297,7 @@ export default function RunDetailPage({ params }: PageProps) {
   }
   const traces = run.traces ?? [];
   const failedStep = findFailedStep(run.status, run.steps);
-  const verdict = deriveRunVerdict(run, pendingSteps);
+  const verdict = deriveRunVerdict(run, toPendingHumanSteps(pendingSteps, run.ownerTeam?.name));
   const tracesTrimmed = traces.some((t) => t.trimmed);
   // Hidden from the failure card once a re-run is in flight or started; the
   // header shows its progress.

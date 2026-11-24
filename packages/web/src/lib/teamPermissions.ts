@@ -1,3 +1,5 @@
+import { runControlWho } from '@/lib/gateAnswerers';
+
 /**
  * Why a control is unavailable. What a person may DO is read from the server's effective
  * permissions (`useCan`, `hooks/useCan.ts`); these only word the explanation next to a control
@@ -14,7 +16,7 @@ export function repoLeadReason(ownerTeamName: string | null | undefined): string
   return `Only leads of ${ownerTeamName ?? 'the owning team'}, an admin of its organization or a platform admin can do this.`;
 }
 
-/** Why a run control is unavailable: the owning team's members and the launcher may use it. */
+/** Why a run control is unavailable: the rule includes the owning team, the launcher and admins. */
 export function runControlReason(ownerTeamName: string | null | undefined, action: string): string {
-  return `Only members of ${ownerTeamName ?? 'the owning team'} or the launcher can ${action} this run.`;
+  return runControlWho(ownerTeamName, action);
 }

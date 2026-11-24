@@ -17,6 +17,7 @@ import { Textarea } from '@/components/ui/Textarea';
 import { useRespondToApproval } from '@/hooks/useApprovals';
 import { useTick } from '@/hooks/useTick';
 import { errMsg } from '@/lib/errors';
+import { whoCanAnswer } from '@/lib/gateAnswerers';
 import { requestHref } from '@/lib/requestDisplay';
 import { cn, FOCUS_RING, formatDate, formatRelativeTime } from '@/lib/utils';
 import { respondLabel, summarizeContext } from './contextSummary';
@@ -352,12 +353,18 @@ export function HumanStepCard({
   const canRespond = step.status === 'PENDING' && !expired && !youApproved;
   // The step carries its run's owner, so the inbox (which passes no ownerName) names it too.
   // A caller-supplied name is the fallback for payloads without one.
-  const owner = step.run.ownerTeam?.name ?? ownerName ?? 'the owning team';
-  // Absent `canAnswer` (an older payload) leaves the controls on and lets the gateway refuse.
-  const answerBlocked =
-    step.canAnswer === false
-      ? `You cannot answer this step. It is controlled by ${owner}: you need to belong to that team and have access to its repository.`
-      : null;
+  const owner = step.run.ownerTeam?.name ?? ownerName ?? null;
+  // `canAnswer` is false for several reasons, but this reason shows only while the controls are
+  // offered (pending, not expired, not already approved by the caller), so only two can apply: the
+  // run has ended, or the caller has no control over it. Absent `canAnswer` (an older payload)
+  // leaves the controls on and lets the gateway refuse.
+  let answerBlocked: string | null = null;
+  if (step.canAnswer === false) {
+    answerBlocked =
+      step.run.status === 'RUNNING'
+        ? `You cannot answer this step. ${whoCanAnswer(owner)}`
+        : 'This run is not running, so this step cannot be answered.';
+  }
   const responses = step.responses ?? [];
   const requestId = step.run.workRequestId;
 

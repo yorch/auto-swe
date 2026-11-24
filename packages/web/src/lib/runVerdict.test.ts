@@ -1,6 +1,7 @@
-import type { WorkflowStepRecord } from '@auto-swe/shared/types/api';
+import type { HumanStepSummary, WorkflowStepRecord } from '@auto-swe/shared/types/api';
 import { describe, expect, it } from 'vitest';
-import { deriveRunVerdict, type VerdictRun } from './runVerdict';
+import { WHO_UNKNOWN, WHO_UNKNOWN_MANY, whoCanAnswer } from './gateAnswerers';
+import { deriveRunVerdict, toPendingHumanSteps, type VerdictRun } from './runVerdict';
 
 function step(over: Partial<WorkflowStepRecord> = {}): WorkflowStepRecord {
   return {
@@ -20,6 +21,313 @@ function step(over: Partial<WorkflowStepRecord> = {}): WorkflowStepRecord {
 function run(over: Partial<VerdictRun> = {}): VerdictRun {
   return { costUsdAccrued: 0, result: null, status: 'SUCCESS', steps: [], ...over };
 }
+
+const NOW = Date.parse('2026-11-24T12:00:00Z');
+const PAST = '2026-11-24T11:00:00Z';
+const FUTURE = '2026-11-24T13:00:00Z';
+const WHO_PAYMENTS = whoCanAnswer('Payments');
+
+function pendingDetail(steps: Parameters<typeof deriveRunVerdict>[1]): string {
+  return deriveRunVerdict(run({ status: 'RUNNING' }), steps, NOW).detail;
+}
+
+describe('who can answer a pending gate', () => {
+  it('says nothing about people when canAnswer is unknown', () => {
+    const d = pendingDetail([{ ownerTeamName: 'Payments', title: 'Approve' }]);
+    expect(d).not.toMatch(/You can|You cannot|You answered|deadline|Answerers|who can answer/);
+  });
+
+  it('says so plainly when the viewer can answer', () => {
+    const d = pendingDetail([{ canAnswer: true, ownerTeamName: 'Payments', title: 'Approve' }]);
+    expect(d).toContain(' You can answer it.');
+    expect(d).not.toContain('Answerers');
+  });
+
+  it('says the viewer answered and how many more are needed, once', () => {
+    const d = pendingDetail([
+      {
+        approvalsRemaining: 1,
+        canAnswer: false,
+        currentApprovers: 1,
+        kind: 'APPROVAL',
+        myResponse: 'approve',
+        requiredApprovers: 2,
+        title: 'Approve',
+      },
+    ]);
+    expect(d).toContain('You answered; it needs 1 more from other people.');
+    expect(d).not.toContain('It still needs');
+    expect(d).not.toContain('Answerers');
+  });
+
+  it('states the general rule, briefly, when the viewer cannot answer', () => {
+    const d = pendingDetail([{ canAnswer: false, ownerTeamName: 'Payments', title: 'Approve' }]);
+    expect(d).toContain(` You cannot answer it. ${WHO_PAYMENTS}`);
+    expect(d).toContain('members of Payments (with access to the repository when GitHub');
+    expect(d).not.toMatch(/no control|do not control|controlled by|right now/);
+  });
+
+  it('says the platform does not record who can answer when the owner team is unknown', () => {
+    const d = pendingDetail([{ canAnswer: false, title: 'Approve' }]);
+    expect(d).toContain(` You cannot answer it. ${WHO_UNKNOWN}`);
+    expect(d).not.toContain('members of');
+  });
+
+  it('uses the plural unknown wording for several gates', () => {
+    const d = pendingDetail([
+      { canAnswer: false, title: 'A' },
+      { canAnswer: false, title: 'B' },
+    ]);
+    expect(d).toContain(` You cannot answer them. ${WHO_UNKNOWN_MANY}`);
+  });
+
+  it('any answerable gate wins among several', () => {
+    const d = pendingDetail([
+      { canAnswer: false, title: 'A' },
+      { canAnswer: true, title: 'B' },
+      { canAnswer: true, title: 'C' },
+    ]);
+    expect(d).toContain('You can answer 2 of them.');
+    expect(
+      pendingDetail([
+        { canAnswer: true, title: 'A' },
+        { canAnswer: true, title: 'B' },
+      ])
+    ).toContain('You can answer all of them.');
+  });
+
+  it('stays quiet about people when no gate is answerable and one is unknown', () => {
+    const d = pendingDetail([{ canAnswer: false, title: 'A' }, { title: 'B' }]);
+    expect(d).not.toMatch(/You can|You cannot|You answered|Answerers/);
+  });
+
+  it('keeps mixed states truthful: answered gates and gates it cannot answer', () => {
+    const d = pendingDetail([
+      { canAnswer: false, myResponse: 'approve', title: 'A' },
+      { canAnswer: false, ownerTeamName: 'Payments', title: 'B' },
+    ]);
+    expect(d).toContain('You answered 1 of them.');
+    expect(d).toContain(`You cannot answer the other. ${WHO_PAYMENTS}`);
+  });
+
+  it.each([
+    [1, 'You cannot answer the other.'],
+    [2, 'You cannot answer the others.'],
+    [3, 'You cannot answer the others.'],
+  ])('words %i other gates grammatically after an answered one', (others, phrase) => {
+    const d = pendingDetail([
+      { canAnswer: false, myResponse: 'approve', title: 'A' },
+      ...Array.from({ length: others }, (_, i) => ({
+        canAnswer: false,
+        ownerTeamName: 'Payments',
+        title: `B${i}`,
+      })),
+    ]);
+    expect(d).toContain(phrase);
+    expect(d).toContain('You answered 1 of them.');
+    expect(d).toContain(`more gate${others + 1 > 2 ? 's' : ''}`);
+  });
+
+  it.each([
+    [1, ' You cannot answer it.'],
+    [2, ' You cannot answer them.'],
+    [5, ' You cannot answer them.'],
+  ])('words %i unanswerable gates with no other state', (count, phrase) => {
+    const d = pendingDetail(
+      Array.from({ length: count }, (_, i) => ({
+        canAnswer: false,
+        ownerTeamName: 'Payments',
+        title: `G${i}`,
+      }))
+    );
+    expect(d).toContain(phrase);
+    expect(d).not.toContain('You answered');
+  });
+
+  it('names each distinct owner team once when the gates differ', () => {
+    const d = pendingDetail([
+      { canAnswer: false, ownerTeamName: 'Payments', title: 'A' },
+      { canAnswer: false, ownerTeamName: 'Design', title: 'B' },
+      { canAnswer: false, ownerTeamName: 'Payments', title: 'C' },
+    ]);
+    expect(d).toContain('members of Payments or Design (with access');
+  });
+
+  it('uses a later gate team when the first gate names none', () => {
+    const d = pendingDetail([
+      { canAnswer: false, ownerTeamName: '  ', title: 'A' },
+      { canAnswer: false, ownerTeamName: 'Design', title: 'B' },
+    ]);
+    expect(d).toContain('members of Design (with access');
+  });
+
+  it('never names a person or claims an approver exists, in any branch', () => {
+    // The fixture carries a person's name on the step; the verdict must not repeat it.
+    const base = {
+      id: 's1',
+      kind: 'APPROVAL',
+      nodeId: 'gate',
+      requestedAt: '2026-11-24T10:00:00Z',
+      responses: [{ action: 'approve', byName: 'Zelda Quill', comment: null, resolvedAt: null }],
+      run: {
+        id: 'r1',
+        ownerTeam: { id: 't', name: 'Payments', slug: 'p' },
+        status: 'RUNNING',
+        workflowId: 'w',
+      },
+      runId: 'r1',
+      status: 'PENDING',
+      title: 'Approve',
+    } as HumanStepSummary;
+    for (const canAnswer of [true, false, undefined]) {
+      const d = pendingDetail(toPendingHumanSteps([{ ...base, canAnswer }]));
+      expect(d).not.toContain('Zelda');
+      expect(d).not.toMatch(/waiting on [A-Z]|assigned to|requested by|requester|named approver/i);
+    }
+  });
+
+  it('an ended run ignores gates and success still avoids waiting language', () => {
+    const gate = [{ canAnswer: false, ownerTeamName: 'Payments', title: 'A' }];
+    expect(deriveRunVerdict(run({ status: 'SUCCESS' }), gate).detail).not.toMatch(
+      /waiting|waits|Answerers/i
+    );
+    expect(deriveRunVerdict(run({ status: 'FAILED' }), gate).detail).not.toContain('Answerers');
+  });
+});
+
+describe('a gate past its deadline', () => {
+  it('says the deadline passed, not who can answer, even for a viewer the rule includes', () => {
+    // The server reports canAnswer false for everyone once a still-pending gate is expired,
+    // an admin or a member of the owning team included.
+    const d = pendingDetail([
+      { canAnswer: false, ownerTeamName: 'Payments', timeoutAt: PAST, title: 'Approve' },
+    ]);
+    expect(d).toContain(' The deadline for responding has passed.');
+    expect(d).not.toMatch(/You cannot answer|Answerers|members of|who can answer/);
+  });
+
+  it('is judged against the injected clock', () => {
+    const step = { canAnswer: false, timeoutAt: '2026-11-24T12:00:00Z', title: 'A' };
+    expect(deriveRunVerdict(run({ status: 'RUNNING' }), [step], NOW - 1).detail).toContain(
+      'You cannot answer it.'
+    );
+    expect(deriveRunVerdict(run({ status: 'RUNNING' }), [step], NOW).detail).toContain(
+      'The deadline for responding has passed.'
+    );
+  });
+
+  it.each([
+    ['null', null],
+    ['absent', undefined],
+    ['future (clock skew)', FUTURE],
+    ['unparseable', 'not-a-date'],
+  ])('falls back to the general rule when timeoutAt is %s', (_label, timeoutAt) => {
+    const d = pendingDetail([
+      { canAnswer: false, ownerTeamName: 'Payments', timeoutAt, title: 'A' },
+    ]);
+    expect(d).toContain(`You cannot answer it. ${WHO_PAYMENTS}`);
+    expect(d).not.toContain('deadline');
+  });
+
+  it('stays truthful when only some gates are past their deadline', () => {
+    const d = pendingDetail([
+      { canAnswer: false, ownerTeamName: 'Payments', timeoutAt: PAST, title: 'A' },
+      { canAnswer: false, ownerTeamName: 'Payments', timeoutAt: FUTURE, title: 'B' },
+    ]);
+    expect(d).toContain('The deadline for responding has passed on 1 of them.');
+    expect(d).toContain(`You cannot answer the other. ${WHO_PAYMENTS}`);
+  });
+
+  it('says so for every gate when all are expired', () => {
+    const d = pendingDetail([
+      { canAnswer: false, timeoutAt: PAST, title: 'A' },
+      { canAnswer: false, timeoutAt: PAST, title: 'B' },
+    ]);
+    expect(d).toContain('The deadline for responding has passed on all of them.');
+    expect(d).not.toContain('You cannot answer');
+  });
+
+  it('an answerable gate still wins over an expired one', () => {
+    const d = pendingDetail([
+      { canAnswer: false, timeoutAt: PAST, title: 'A' },
+      { canAnswer: true, title: 'B' },
+    ]);
+    expect(d).toContain('You can answer 1 of them.');
+    expect(d).not.toContain('deadline');
+  });
+
+  it('an answered gate is reported as answered, not as expired', () => {
+    const d = pendingDetail([
+      { canAnswer: false, myResponse: 'approve', timeoutAt: PAST, title: 'A' },
+    ]);
+    expect(d).toContain('You answered it.');
+    expect(d).not.toContain('deadline');
+  });
+});
+
+describe('toPendingHumanSteps', () => {
+  function step(over: Partial<HumanStepSummary> & { ownerTeamName?: string | null } = {}) {
+    const { ownerTeamName, ...rest } = over;
+    return {
+      id: 's1',
+      kind: 'APPROVAL',
+      nodeId: 'gate',
+      requestedAt: '2026-11-24T10:00:00Z',
+      run: {
+        id: 'r1',
+        ownerTeam: ownerTeamName ? { id: 't', name: ownerTeamName, slug: 't' } : null,
+        status: 'RUNNING',
+        workflowId: 'w1',
+      },
+      runId: 'r1',
+      status: 'PENDING',
+      title: 'Approve',
+      ...rest,
+    } as HumanStepSummary;
+  }
+
+  it('carries the fields the verdict reads, including canAnswer, myResponse and timeoutAt', () => {
+    const [mapped] = toPendingHumanSteps([
+      step({
+        approvalsRemaining: 1,
+        canAnswer: false,
+        currentApprovers: 1,
+        myResponse: 'approve',
+        ownerTeamName: 'Payments',
+        requiredApprovers: 2,
+        timeoutAt: PAST,
+      }),
+    ]);
+    expect(mapped).toEqual({
+      approvalsRemaining: 1,
+      canAnswer: false,
+      currentApprovers: 1,
+      kind: 'APPROVAL',
+      myResponse: 'approve',
+      ownerTeamName: 'Payments',
+      requiredApprovers: 2,
+      timeoutAt: PAST,
+      title: 'Approve',
+    });
+  });
+
+  it("prefers the step's own owner team over the run's", () => {
+    const [mapped] = toPendingHumanSteps([step({ ownerTeamName: 'Payments' })], 'Design');
+    expect(mapped.ownerTeamName).toBe('Payments');
+  });
+
+  it("falls back to the run's owner team, and then to null", () => {
+    expect(toPendingHumanSteps([step()], 'Design')[0].ownerTeamName).toBe('Design');
+    expect(toPendingHumanSteps([step()], null)[0].ownerTeamName).toBeNull();
+    expect(toPendingHumanSteps([step()])[0].ownerTeamName).toBeNull();
+  });
+
+  it('keeps canAnswer unknown when the payload omits it, so the verdict stays quiet', () => {
+    const mapped = toPendingHumanSteps([step()], 'Design');
+    expect(mapped[0].canAnswer).toBeUndefined();
+    expect(pendingDetail(mapped)).not.toMatch(/You can|You cannot/);
+  });
+});
 
 describe('deriveRunVerdict', () => {
   it('running with no gate is info and claims nothing about people', () => {
