@@ -17,6 +17,7 @@ import { Textarea } from '@/components/ui/Textarea';
 import { useRespondToApproval } from '@/hooks/useApprovals';
 import { useTick } from '@/hooks/useTick';
 import { errMsg } from '@/lib/errors';
+import { whoCanAnswer } from '@/lib/gateAnswerers';
 import { requestHref } from '@/lib/requestDisplay';
 import { cn, FOCUS_RING, formatDate, formatRelativeTime } from '@/lib/utils';
 import { respondLabel, summarizeContext } from './contextSummary';
@@ -352,12 +353,26 @@ export function HumanStepCard({
   const canRespond = step.status === 'PENDING' && !expired && !youApproved;
   // The step carries its run's owner, so the inbox (which passes no ownerName) names it too.
   // A caller-supplied name is the fallback for payloads without one.
-  const owner = step.run.ownerTeam?.name ?? ownerName ?? 'the owning team';
-  // Absent `canAnswer` (an older payload) leaves the controls on and lets the gateway refuse.
-  const answerBlocked =
-    step.canAnswer === false
-      ? `You cannot answer this step. It is controlled by ${owner}: you need to belong to that team and have access to its repository.`
-      : null;
+  const owner = step.run.ownerTeam?.name ?? ownerName ?? null;
+  // `canAnswer` is false for more than one reason (already answered, expired, run not running,
+  // no control over the run), so the text names the reason the step itself shows and otherwise
+  // claims no more than "not right now". Absent `canAnswer` (an older payload) leaves the controls
+  // on and lets the gateway refuse.
+  let answerBlocked: string | null = null;
+  if (step.canAnswer === false) {
+    if (step.myResponse) {
+      answerBlocked =
+        (step.approvalsRemaining ?? 0) > 0
+          ? `You already answered this step. It needs ${step.approvalsRemaining} more from other people.`
+          : 'You already answered this step.';
+    } else if (expired) {
+      answerBlocked = 'This step has expired, so it can no longer be answered.';
+    } else if (step.run.status !== 'RUNNING') {
+      answerBlocked = 'This run is not running, so this step cannot be answered.';
+    } else {
+      answerBlocked = `You cannot answer this step right now. ${whoCanAnswer(owner)}`;
+    }
+  }
   const responses = step.responses ?? [];
   const requestId = step.run.workRequestId;
 

@@ -21,6 +21,107 @@ function run(over: Partial<VerdictRun> = {}): VerdictRun {
   return { costUsdAccrued: 0, result: null, status: 'SUCCESS', steps: [], ...over };
 }
 
+const WHO_PAYMENTS =
+  'The platform does not record a named approver. Who can answer is worked out from the run: it includes members of Payments who have access to the repository, the person who launched the run, and platform admins.';
+
+function pendingDetail(steps: Parameters<typeof deriveRunVerdict>[1]): string {
+  return deriveRunVerdict(run({ status: 'RUNNING' }), steps).detail;
+}
+
+describe('who can answer a pending gate', () => {
+  it('says nothing about people when canAnswer is unknown', () => {
+    const d = pendingDetail([{ ownerTeamName: 'Payments', title: 'Approve' }]);
+    expect(d).not.toMatch(/You can|You cannot|You answered|named approver|who can answer/);
+  });
+
+  it('says so plainly when the viewer can answer', () => {
+    const d = pendingDetail([{ canAnswer: true, ownerTeamName: 'Payments', title: 'Approve' }]);
+    expect(d).toContain(' You can answer it.');
+    expect(d).not.toContain('named approver');
+  });
+
+  it('says the viewer answered and how many more are needed, once', () => {
+    const d = pendingDetail([
+      {
+        approvalsRemaining: 1,
+        canAnswer: false,
+        currentApprovers: 1,
+        kind: 'APPROVAL',
+        myResponse: 'approve',
+        requiredApprovers: 2,
+        title: 'Approve',
+      },
+    ]);
+    expect(d).toContain('You answered; it needs 1 more from other people.');
+    expect(d).not.toContain('It still needs');
+    expect(d).not.toContain('named approver');
+  });
+
+  it('states the general rule, without claiming a lack of control, when the viewer cannot answer', () => {
+    const d = pendingDetail([{ canAnswer: false, ownerTeamName: 'Payments', title: 'Approve' }]);
+    expect(d).toContain(` You cannot answer it right now. ${WHO_PAYMENTS}`);
+    expect(d).not.toMatch(/no control|do not control|controlled by/);
+  });
+
+  it('says the platform does not record who can answer when the owner team is unknown', () => {
+    const d = pendingDetail([{ canAnswer: false, title: 'Approve' }]);
+    expect(d).toContain(
+      'You cannot answer it right now. The platform does not record who can answer this.'
+    );
+    expect(d).not.toContain('members of');
+  });
+
+  it('any answerable gate wins among several', () => {
+    const d = pendingDetail([
+      { canAnswer: false, title: 'A' },
+      { canAnswer: true, title: 'B' },
+      { canAnswer: true, title: 'C' },
+    ]);
+    expect(d).toContain('You can answer 2 of them.');
+    expect(
+      deriveRunVerdict(run({ status: 'RUNNING' }), [
+        { canAnswer: true, title: 'A' },
+        { canAnswer: true, title: 'B' },
+      ]).detail
+    ).toContain('You can answer all of them.');
+  });
+
+  it('stays quiet about people when no gate is answerable and one is unknown', () => {
+    const d = pendingDetail([{ canAnswer: false, title: 'A' }, { title: 'B' }]);
+    expect(d).not.toMatch(/You can|You cannot|You answered|named approver/);
+  });
+
+  it('keeps mixed states truthful: answered gates and gates it cannot answer', () => {
+    const d = pendingDetail([
+      { canAnswer: false, myResponse: 'approve', title: 'A' },
+      { canAnswer: false, ownerTeamName: 'Payments', title: 'B' },
+    ]);
+    expect(d).toContain('You answered 1 of them.');
+    expect(d).toContain(`You cannot answer the others right now. ${WHO_PAYMENTS}`);
+  });
+
+  it('never names a person or claims an approver exists, in any branch', () => {
+    const all = [
+      pendingDetail([{ canAnswer: true, title: 'A' }]),
+      pendingDetail([{ canAnswer: false, ownerTeamName: 'Payments', title: 'A' }]),
+      pendingDetail([{ canAnswer: false, title: 'A' }]),
+    ];
+    for (const d of all) {
+      expect(d).not.toMatch(/waiting on [A-Z]|assigned to|requested by|requester/i);
+    }
+  });
+
+  it('an ended run ignores gates and success still avoids waiting language', () => {
+    const gate = [{ canAnswer: false, ownerTeamName: 'Payments', title: 'A' }];
+    expect(deriveRunVerdict(run({ status: 'SUCCESS' }), gate).detail).not.toMatch(
+      /waiting|waits|named approver/i
+    );
+    expect(deriveRunVerdict(run({ status: 'FAILED' }), gate).detail).not.toContain(
+      'named approver'
+    );
+  });
+});
+
 describe('deriveRunVerdict', () => {
   it('running with no gate is info and claims nothing about people', () => {
     const v = deriveRunVerdict(run({ status: 'RUNNING' }));

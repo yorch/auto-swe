@@ -434,11 +434,22 @@ lifecycle changes and delegated configuration grants are managed under `/admin/a
   so after a team change the checklist's gate step can untick.
 - **A parked run holds a Temporal workflow open for its whole timeout.** Long timeouts are cheap but
   not free; a 7-day approval keeps the workflow alive for 7 days unless it is cancelled.
-- **Some runs are visible only to their requester and platform ADMINs.** Resolving a step, like
-  seeing or cancelling its run, needs run visibility (see
-  [`architecture.md`](./architecture.md#5-authentication)), and some shapes match no team term: a
+- **Some runs are visible only to their requester and platform ADMINs.** Seeing a run needs run
+  *visibility*; answering one of its steps needs run *control*, which is narrower (see
+  [`teams.md`](./teams.md#seeing-a-run-versus-controlling-it)). Some shapes match no team term: a
   template run launched with no connection on a GLOBAL template, and any run whose work request,
   channel and template all lack a team link. A team member cannot approve a step on one of those.
+- **A gate has no approver or assignee.** Nothing on a step names who may answer it, and no
+  per-step assignment exists. Who may answer is worked out from the run, for the caller asking: a
+  platform ADMIN; a member of a team that owns the run's template; the person recorded as having
+  launched the run (`launchedById`, which a re-run changes and a schedule or child run inherits);
+  a member of the team that owns the run's repository, who must also hold a fresh GitHub
+  permission on it when GitHub access enforcement is on; or, for a run with no connection, a
+  service principal of the caller's team. Control is per run, not per step, so the person who
+  requested a run and launched it can answer its gates. A service-principal token never answers a
+  step. The run page's verdict and a step card say only this in general terms (the owning team's
+  members with repository access, whoever launched the run, platform admins) and, for the viewer,
+  whether they can answer now; they do not name a person.
 - **A PRD run is visible to the team of its first repository only.** It records its primary
   repository as its work request's connection; the teams of its other repositories see the per-repo
   work requests it submits, not the PRD run and its approval steps.

@@ -297,7 +297,19 @@ export default function RunDetailPage({ params }: PageProps) {
   }
   const traces = run.traces ?? [];
   const failedStep = findFailedStep(run.status, run.steps);
-  const verdict = deriveRunVerdict(run, pendingSteps);
+  const verdict = deriveRunVerdict(
+    run,
+    pendingSteps.map((s) => ({
+      approvalsRemaining: s.approvalsRemaining,
+      canAnswer: s.canAnswer,
+      currentApprovers: s.currentApprovers,
+      kind: s.kind,
+      myResponse: s.myResponse,
+      ownerTeamName: s.run.ownerTeam?.name ?? run.ownerTeam?.name ?? null,
+      requiredApprovers: s.requiredApprovers,
+      title: s.title,
+    }))
+  );
   const tracesTrimmed = traces.some((t) => t.trimmed);
   // Hidden from the failure card once a re-run is in flight or started; the
   // header shows its progress.

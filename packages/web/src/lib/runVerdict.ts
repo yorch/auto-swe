@@ -1,5 +1,6 @@
 import type { WorkflowRunDetail, WorkflowStepRecord } from '@auto-swe/shared/types/api';
 import { classifyAgentRunFailure } from '@/lib/agentRun';
+import { whoCanAnswer } from '@/lib/gateAnswerers';
 import { findFailedStep } from '@/lib/runFailure';
 import { safeHttpUrl } from '@/lib/safeUrl';
 import { formatCost, isRecord } from '@/lib/utils';
@@ -26,6 +27,12 @@ export interface PendingHumanStep {
   approvalsRemaining?: number;
   currentApprovers?: number;
   requiredApprovers?: number;
+  /** Whether the viewer may answer it now. Absent means unknown, and the verdict then says nothing about people. */
+  canAnswer?: boolean;
+  /** What the viewer already answered on it, or null. */
+  myResponse?: string | null;
+  /** The team that owns the run's repository, when known. */
+  ownerTeamName?: string | null;
 }
 
 export type VerdictRun = Pick<
@@ -71,13 +78,61 @@ function recordedPrUrl(result: unknown): string | null {
   return typeof raw === 'string' ? safeHttpUrl(raw) : null;
 }
 
+/**
+ * What the verdict says about people, from what the API reports about the viewer. `canAnswer` is
+ * false for several reasons (already answered, expired, run not running, no control), so a gate the
+ * viewer cannot answer is never blamed on a lack of control: the sentence says "right now" and then
+ * states the general rule. Unknown (`canAnswer` absent) says nothing. `replacesApprovals` is true
+ * when the sentence already carries the remaining-approvals count.
+ */
+function peopleSentence(steps: readonly PendingHumanStep[]): {
+  text: string;
+  replacesApprovals: boolean;
+} {
+  const total = steps.length;
+  const one = total === 1;
+  const answerable = steps.filter((s) => s.canAnswer === true).length;
+  if (answerable > 0) {
+    const text = one
+      ? ' You can answer it.'
+      : answerable === total
+        ? ' You can answer all of them.'
+        : ` You can answer ${answerable} of them.`;
+    return { replacesApprovals: false, text };
+  }
+  if (steps.some((s) => s.canAnswer === undefined)) {
+    return { replacesApprovals: false, text: '' };
+  }
+  const answered = steps.filter((s) => Boolean(s.myResponse));
+  const unexplained = steps.filter((s) => !s.myResponse);
+  let text = '';
+  let replacesApprovals = false;
+  if (answered.length > 0) {
+    const remaining = answered[0]?.approvalsRemaining;
+    if (one && typeof remaining === 'number' && remaining > 0) {
+      text += ` You answered; it needs ${remaining} more from other people.`;
+      replacesApprovals = true;
+    } else if (one) {
+      text += ' You answered it.';
+    } else {
+      text += ` You answered ${answered.length === total ? 'all of them' : `${answered.length} of them`}.`;
+    }
+  }
+  if (unexplained.length > 0) {
+    const target = unexplained.length === total ? (one ? 'it' : 'them') : 'the others';
+    text += ` You cannot answer ${target} right now. ${whoCanAnswer(unexplained[0]?.ownerTeamName)}`;
+  }
+  return { replacesApprovals, text };
+}
+
 function pendingVerdict(steps: readonly PendingHumanStep[], cost: number): RunVerdict {
   const first = steps[0];
   const more =
     steps.length > 1 ? ` and ${steps.length - 1} more gate${steps.length > 2 ? 's' : ''}` : '';
-  const needs = approvalsSentence(first);
+  const people = peopleSentence(steps);
+  const needs = people.replacesApprovals ? '' : approvalsSentence(first);
   return {
-    detail: `The run is paused at "${first?.title}"${more} until a person responds.${needs}${costSentence(cost, true)}`,
+    detail: `The run is paused at "${first?.title}"${more} until a person responds.${needs}${people.text}${costSentence(cost, true)}`,
     headline: 'Waiting on a person',
     nextAction: {
       external: false,

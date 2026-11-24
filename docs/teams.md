@@ -221,7 +221,7 @@ A client unwraps each as its own shape.
 
 A member of a team a repository is shared to sees the owning team's runs, and cannot steer them:
 answering a run's human steps, cancelling it and retrying a review fix need control of the run
-(the owning team's members and whoever launched it; a platform ADMIN for any).
+(the owning team's members, who also need a fresh GitHub permission on the repository where access enforcement is on; members of a team that owns the run's template; whoever launched it; a platform ADMIN for any). A step names no approver: see [`hitl-workflows.md`](./hitl-workflows.md#limitations).
 
 - `GET /api/v1/human-steps` and `GET /api/v1/human-steps/:id` mark each step `canAnswer`: `true` when the caller may answer it now.
   It is the `actionable=true` predicate (pending, not expired, not already answered by the caller,
