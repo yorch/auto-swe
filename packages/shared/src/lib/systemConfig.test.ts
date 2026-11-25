@@ -19,6 +19,7 @@ import {
   assertScheduledSweepsEnv,
   assertWorkspaceInfraEnv,
   resolveApproverBotSlugs,
+  resolveAuthEmailConfig,
   resolveGitHubApproverAppConfig,
   resolveGitHubBaseUrl,
   resolveGitHubConfig,
@@ -1590,5 +1591,37 @@ describe('resolveKnowledgeBaseOrigin', () => {
       select: { allowPrivateNetwork: true, baseUrl: true },
       where: { id: 'default' },
     });
+  });
+});
+
+describe('resolveAuthEmailConfig smtpRequireTls', () => {
+  const saved = process.env.SMTP_REQUIRE_TLS;
+  afterEach(() => {
+    if (saved === undefined) {
+      delete process.env.SMTP_REQUIRE_TLS;
+    } else {
+      process.env.SMTP_REQUIRE_TLS = saved;
+    }
+  });
+
+  it.each([
+    [undefined, false],
+    ['', false],
+    ['false', false],
+    ['0', false],
+    ['No', false],
+    ['off', false],
+    ['true', true],
+    ['1', true],
+    ['on', true],
+    // Not recognisably off: a typo must not leave a plaintext path open.
+    ['ture', true],
+  ])('reads %j as %s', (raw, expected) => {
+    if (raw === undefined) {
+      delete process.env.SMTP_REQUIRE_TLS;
+    } else {
+      process.env.SMTP_REQUIRE_TLS = raw;
+    }
+    expect(resolveAuthEmailConfig().smtpRequireTls).toBe(expected);
   });
 });

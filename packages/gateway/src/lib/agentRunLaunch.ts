@@ -765,6 +765,7 @@ export function createAgentRunLauncher(fastify: FastifyInstance) {
         ...(service
           ? {
               guard: servicePrincipalLaunchGuard(service.servicePrincipalId, {
+                ...(user ? { actorId: user.sub } : {}),
                 connectionId: repo?.id ?? null,
               }),
             }

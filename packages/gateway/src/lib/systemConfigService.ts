@@ -17,6 +17,7 @@ import { WebClient } from '@slack/web-api';
 import type { FastifyBaseLogger } from 'fastify';
 import { auditContextData } from './auditContext.js';
 import { probeAppInstallation } from './connectionProbes.js';
+import { resolveDefaultOrganizationId } from './defaultOrganization.js';
 import { lockOrganizations } from './lockOrder.js';
 
 /**
@@ -1293,12 +1294,12 @@ export async function updateWorkflowDefaults(
     // deactivation takes before it reads which team is the default: one of the two wins, never both.
     const slug = data.defaultTeamSlug;
     await prisma.$transaction(async (tx) => {
-      const team = await tx.team.findUnique({ select: { orgId: true }, where: { slug } });
-      if (team) {
-        await lockOrganizations(tx, [team.orgId]);
+      const ownerOrgId = await resolveDefaultOrganizationId(tx, slug);
+      if (ownerOrgId) {
+        await lockOrganizations(tx, [ownerOrgId]);
         const owner = await tx.organization.findUnique({
           select: { isActive: true },
-          where: { id: team.orgId },
+          where: { id: ownerOrgId },
         });
         if (!owner?.isActive) {
           throw new DefaultTeamOrganizationInactive(slug);

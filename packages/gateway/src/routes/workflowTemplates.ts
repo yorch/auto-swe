@@ -2860,6 +2860,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           ...(service
             ? {
                 guard: servicePrincipalLaunchGuard(service.servicePrincipalId, {
+                  ...(user ? { actorId: user.sub } : {}),
                   connectionId,
                   templateId: tpl.id,
                 }),

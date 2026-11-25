@@ -6,6 +6,7 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { JwtPayload } from '../plugins/auth.js';
 import { organizationRoutes } from '../routes/organizations.js';
+import { resolveDefaultOrganizationId } from './defaultOrganization.js';
 import {
   approveAtOrgStep,
   approveAtTeamStep,
@@ -361,6 +362,67 @@ describe.skipIf(!enabled)('organization deactivation against Postgres', () => {
     expect(await isActive(s.orgId)).toBe(true);
     expect((await requestRow(open)).status).toBe('PENDING_TEAM');
     expect(await orgAudits(s.orgId)).toHaveLength(0);
+  });
+
+  /** The organization slugged `default`, created for the test when the database has none. */
+  async function seedOrganization() {
+    const found = await prisma.organization.findUnique({ where: { slug: 'default' } });
+    if (found) {
+      return found.id;
+    }
+    const created = await prisma.organization.create({
+      data: { name: name('seed-default'), slug: 'default' },
+    });
+    orgIds.push(created.id);
+    return created.id;
+  }
+
+  it('defines the default organization as the one that owns the default team', async () => {
+    const seeded = await seedOrganization();
+    const s = await scenario('resolver');
+    const slug = name('resolver-default-team');
+    await makeTeam('resolver-default', s.orgId, slug);
+
+    // The default team lives in another organization than the one slugged `default`.
+    expect(await resolveDefaultOrganizationId(prisma, slug)).toBe(s.orgId);
+    expect(await resolveDefaultOrganizationId(prisma, slug)).not.toBe(seeded);
+    // No such team: the organization slugged `default`.
+    expect(await resolveDefaultOrganizationId(prisma, name('no-such-team'))).toBe(seeded);
+    // Without an argument it reads the workflow defaults (here the environment fallback).
+    process.env.DEFAULT_TEAM_SLUG = slug;
+    expect(await resolveDefaultOrganizationId(prisma)).toBe(s.orgId);
+  });
+
+  it('can deactivate the organization slugged default when the default team lives elsewhere', async () => {
+    const seeded = await seedOrganization();
+    const s = await scenario('default-elsewhere');
+    const slug = name('elsewhere-default-team');
+    process.env.DEFAULT_TEAM_SLUG = slug;
+    await makeTeam('elsewhere-default', s.orgId, slug);
+    try {
+      const res = await setActive(seeded, false);
+
+      expect(res.statusCode, res.body).toBe(200);
+      expect(await isActive(seeded)).toBe(false);
+      // The organization that does own the default team is the protected one.
+      const protectedRes = await setActive(s.orgId, false);
+      expect(protectedRes.statusCode).toBe(409);
+      expect(protectedRes.json().error.code).toBe('DEFAULT_ORGANIZATION');
+      expect(await isActive(s.orgId)).toBe(true);
+    } finally {
+      await prisma.organization.update({ data: { isActive: true }, where: { id: seeded } });
+    }
+  });
+
+  it('refuses the organization slugged default when no default team exists', async () => {
+    const seeded = await seedOrganization();
+    process.env.DEFAULT_TEAM_SLUG = name('missing-default-team');
+
+    const res = await setActive(seeded, false);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('DEFAULT_ORGANIZATION');
+    expect(await isActive(seeded)).toBe(true);
   });
 
   it('answers 404 for an unknown organization', async () => {

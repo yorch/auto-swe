@@ -36,7 +36,11 @@ import {
  * Stopping: once the poller is told to stop, no new row and no new recipient is started. The rows
  * of the batch that were not started are released (due at once, lease value checked), and a row
  * stopped between two recipients goes back with what it reached recorded and no failed attempt
- * counted. A send already under way runs to its own deadline.
+ * counted. A send already under way gets `STOP_ABORT_GRACE_MS` to finish; after that it is aborted
+ * (the email socket is destroyed, no fallback starts) and the row is handed back the same way:
+ * due at once, the recipients already reached recorded, no failed attempt counted. The aborted
+ * recipient's outcome is unknown, so it is not recorded and is sent again, which can duplicate it
+ * if the relay had already accepted the message (at least once, never a recipient lost).
  */
 
 /** Wait between ticks. */
@@ -57,7 +61,13 @@ export const PURGE_BATCH_SIZE = 500;
 /** The least time between two retention purges of one poller. */
 export const PURGE_INTERVAL_MS = 60_000;
 /** Longest a closing server waits for a tick that is running. */
-const STOP_WAIT_MS = 30_000;
+export const STOP_WAIT_MS = 30_000;
+/**
+ * How long a closing poller lets a send that is under way finish before aborting it. Most sends
+ * take well under a second, so the grace spares them a duplicate; it is far below `STOP_WAIT_MS`,
+ * so the aborted row is written back before the server gives up waiting and closes the database.
+ */
+export const STOP_ABORT_GRACE_MS = 5_000;
 
 export interface RunOnceOptions extends DeliveryDeps {
   now?: () => Date;
@@ -65,6 +75,8 @@ export interface RunOnceOptions extends DeliveryDeps {
   leaseMs?: number;
   /** True once the poller is stopping (see the file comment). */
   shouldStop?: () => boolean;
+  /** Aborts a send under way once the stop grace has passed (see the file comment). */
+  signal?: AbortSignal;
   /** Replaces the delivery function. Tests only. */
   deliver?: (row: OutboxRow, deps: DeliveryDeps) => Promise<DeliveryOutcome>;
   /** False skips the retention purge. */
@@ -315,6 +327,7 @@ export async function runOnce(
         },
         renewLease,
         ...(options.shouldStop ? { shouldStop: options.shouldStop } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
         ...(options.emailDeadlineMs === undefined
           ? {}
           : { emailDeadlineMs: options.emailDeadlineMs }),
@@ -369,7 +382,9 @@ export interface Poller {
 /** A self-rescheduling timer: the next wait starts when a tick ends, so ticks never overlap. */
 export function createNotificationPoller(opts: {
   /** `stopping` turns true once `stop()` was called, so a long tick can wind down. */
-  tick: (stopping: () => boolean) => Promise<RunOnceResult>;
+  tick: (stopping: () => boolean, signal: AbortSignal) => Promise<RunOnceResult>;
+  /** Replaces `STOP_ABORT_GRACE_MS`. Tests only. */
+  abortGraceMs?: number;
   intervalMs: number;
   firstDelayMs: number;
   batchSize: number;
@@ -378,6 +393,7 @@ export function createNotificationPoller(opts: {
   let timer: NodeJS.Timeout | undefined;
   let stopped = false;
   let running: Promise<void> | undefined;
+  const abortController = new AbortController();
 
   const schedule = (ms: number) => {
     if (stopped) {
@@ -393,7 +409,7 @@ export function createNotificationPoller(opts: {
   const run = async () => {
     let more = false;
     try {
-      const result = await opts.tick(() => stopped);
+      const result = await opts.tick(() => stopped, abortController.signal);
       // A full batch means more may be due: go on at once instead of waiting a whole interval.
       more = result.claimed >= opts.batchSize;
     } catch (err) {
@@ -410,7 +426,16 @@ export function createNotificationPoller(opts: {
     stop: () => {
       stopped = true;
       clearTimeout(timer);
-      return running ?? Promise.resolve();
+      const inFlight = running;
+      if (!inFlight) {
+        return Promise.resolve();
+      }
+      // A tick is running: give a send under way the grace to finish, then abort it.
+      const abortTimer = setTimeout(
+        () => abortController.abort(),
+        opts.abortGraceMs ?? STOP_ABORT_GRACE_MS
+      );
+      return inFlight.finally(() => clearTimeout(abortTimer));
     },
   };
 }
@@ -433,7 +458,7 @@ export function startJoinRequestNotificationPoller(
     firstDelayMs: opts.firstDelayMs ?? FIRST_TICK_DELAY_MS,
     intervalMs: opts.intervalMs ?? POLL_INTERVAL_MS,
     log: fastify.log,
-    tick: (stopping) => {
+    tick: (stopping, signal) => {
       const due = Date.now() - lastPurgeAt >= PURGE_INTERVAL_MS;
       if (due) {
         lastPurgeAt = Date.now();
@@ -443,6 +468,7 @@ export function startJoinRequestNotificationPoller(
         log: fastify.log,
         purge: due,
         shouldStop: stopping,
+        signal,
       });
     },
   });

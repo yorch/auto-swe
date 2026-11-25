@@ -6,7 +6,12 @@ import {
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { assistantAccess, policyPatternFor } from '../lib/assistantPolicy.js';
+import {
+  assistantAccess,
+  assistantRefusedBodyFields,
+  assistantRefusedFieldsMessage,
+  policyPatternFor,
+} from '../lib/assistantPolicy.js';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -87,6 +92,15 @@ export const assistantActionRoutes: FastifyPluginAsync = async (fastify) => {
           422,
           'ASSISTANT_ACTION_NOT_CONFIRMABLE',
           'The assistant cannot make this call, with or without confirmation'
+        );
+      }
+      const refusedFields = assistantRefusedBodyFields(method, pattern, body);
+      if (refusedFields.length > 0) {
+        return sendError(
+          reply,
+          422,
+          'ASSISTANT_ACTION_NOT_CONFIRMABLE',
+          assistantRefusedFieldsMessage(refusedFields)
         );
       }
       const row = await fastify.prisma.assistantAction.create({

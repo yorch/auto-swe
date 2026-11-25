@@ -75,6 +75,15 @@ export function resetMcpWriteRateLimit() {
 const TERMINAL = [...ACTIVE_WORKFLOW_TERMINAL_STATUSES];
 
 /**
+ * The per-user advisory lock a bridged launch counts under: level 0 of `lib/lockOrder.ts`, so a
+ * transaction that will take a row lock calls it before the first one.
+ */
+export async function lockLauncherRuns(tx: Prisma.TransactionClient, userId: string) {
+  // CLAUDE.md §7 exception: Prisma cannot express a transaction-scoped advisory lock.
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`mcp-launch:${userId}`}, 0))`;
+}
+
+/**
  * The concurrency cap as a launch guard. Under a transaction-scoped advisory lock keyed by the
  * user, count the user's non-terminal `ActiveWorkflow` rows, whatever launched them. The lock is
  * held to the end of the transaction that then writes this launch's own rows, so the next
@@ -83,8 +92,7 @@ const TERMINAL = [...ACTIVE_WORKFLOW_TERMINAL_STATUSES];
  */
 export function runCapGuard(userId: string, cap: number): LaunchGuard {
   return async (tx: Prisma.TransactionClient) => {
-    // CLAUDE.md §7 exception: Prisma cannot express a transaction-scoped advisory lock.
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`mcp-launch:${userId}`}, 0))`;
+    await lockLauncherRuns(tx, userId);
     const inFlight = await tx.activeWorkflow.count({
       where: {
         currentStatus: { notIn: TERMINAL },

@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net';
 import net from 'node:net';
 import { invalidateSettingsCache } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
+import { _resetKeyCacheForTests } from '@auto-swe/shared/lib/crypto';
 import { NOTIFICATION_BACKOFF_MS } from '@auto-swe/shared/lib/teamJoinRequests';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -324,6 +325,8 @@ describe.skipIf(!enabled)('join-request notification outbox against Postgres', (
     'RESEND_API_KEY',
     'CORS_ORIGIN',
   ];
+  // Kept out of ENV_KEYS, which every test resets: it is set once for the suite and put back after it.
+  const savedEncryptionKey = process.env.CONFIG_ENCRYPTION_KEY;
 
   const actorOf = (id: string): JwtPayload => ({ exp: 0, iat: 0, role: 'USER', sub: id });
 
@@ -411,6 +414,9 @@ describe.skipIf(!enabled)('join-request notification outbox against Postgres', (
       savedEnv[key] = process.env[key];
     }
     process.env.CORS_ORIGIN = 'https://app.test.example';
+    // The keyed `reached` hashes derive from this key. CI exports one only in its Seed step, so the
+    // suite supplies its own when the environment has none.
+    process.env.CONFIG_ENCRYPTION_KEY ||= crypto.randomBytes(32).toString('base64');
     orgA = await makeOrg('a');
     orgB = await makeOrg('b');
     lead = await makeUser('lead', 'Lena Lead');
@@ -460,6 +466,11 @@ describe.skipIf(!enabled)('join-request notification outbox against Postgres', (
   });
 
   afterAll(async () => {
+    if (savedEncryptionKey === undefined) {
+      delete process.env.CONFIG_ENCRYPTION_KEY;
+    } else {
+      process.env.CONFIG_ENCRYPTION_KEY = savedEncryptionKey;
+    }
     for (const key of ENV_KEYS) {
       if (savedEnv[key] === undefined) {
         delete process.env[key];
@@ -1965,6 +1976,167 @@ describe.skipIf(!enabled)('join-request notification outbox against Postgres', (
       expect(sink.messages).toHaveLength(3);
       expect(sentTo(lead.email as string)).toBe(1);
       expect(sentTo(third.email as string)).toBe(1);
+    }, 60_000);
+
+    it('aborts a send in flight when the gateway closes: the row is due at once, no attempt is counted, and the recipients reached stay recorded', async () => {
+      reset();
+      useSink();
+      const { rowId, third } = await threeReviewers('stop-abort');
+      // The first recipient is accepted at once; the relay reads the second and then says nothing.
+      const pass = sink.holdNextAccept();
+      const stuck = sink.holdNextAccept();
+      pass.release();
+      const controller = new AbortController();
+      const t0 = later(1);
+      const started = Date.now();
+      try {
+        const running = tick(t0, {
+          shouldStop: () => controller.signal.aborted,
+          signal: controller.signal,
+        });
+        await within(stuck.arrived, 'the relay to hold the second message');
+        controller.abort();
+        const result = await within(running, 'the tick to end soon after the abort', 10_000);
+        // Nowhere near the 90 s message deadline, and not a failed attempt.
+        expect(Date.now() - started).toBeLessThan(10_000);
+        expect(result).toMatchObject({ claimed: 1, delivered: 0, failed: 0, released: 1 });
+      } finally {
+        stuck.release();
+      }
+      let row = await prisma.joinRequestNotification.findUniqueOrThrow({ where: { id: rowId } });
+      expect(row).toMatchObject({ attempts: 0, lastError: null, status: 'PENDING' });
+      // Due again now, not after the 10 minute lease.
+      expect(row.nextAttemptAt.getTime()).toBe(t0.getTime());
+      // Only the recipient the relay accepted is recorded; the aborted one is not, and nobody is lost.
+      expect(row.reached).toEqual([reachedKey(lead.email as string)]);
+      await within(
+        (async () => {
+          while (sink.openConnections > 0) {
+            await new Promise((r) => setTimeout(r, 20));
+          }
+        })(),
+        'the aborted connection to be closed',
+        5_000
+      );
+
+      // The next poller sends the aborted recipient again (at least once: the relay had read it)
+      // and the one never started; the first recipient is not repeated.
+      await tick(t0);
+      row = await prisma.joinRequestNotification.findUniqueOrThrow({ where: { id: rowId } });
+      expect(row.status).toBe('DELIVERED');
+      expect(sentTo(lead.email as string)).toBe(1);
+      expect(sentTo(teamAdmin.email as string)).toBe(2);
+      expect(sentTo(third.email as string)).toBe(1);
+    }, 60_000);
+
+    it('records a recipient under the keyed hash and honours the unkeyed hash an earlier build wrote', async () => {
+      reset();
+      useSink();
+      const { rowId } = await threeReviewers('reached-legacy');
+      const legacy = crypto
+        .createHash('sha256')
+        .update(`join-request-reached:${(lead.email as string).toLowerCase()}`)
+        .digest('hex')
+        .slice(0, 32);
+      await prisma.joinRequestNotification.update({
+        data: { reached: [legacy] },
+        where: { id: rowId },
+      });
+      await tick(later(1));
+      const row = await prisma.joinRequestNotification.findUniqueOrThrow({ where: { id: rowId } });
+      expect(row.status).toBe('DELIVERED');
+      // The lead was not emailed again, the other two were.
+      expect(sentTo(lead.email as string)).toBe(0);
+      expect(sink.messages).toHaveLength(2);
+      const reached = row.reached as string[];
+      expect(reached).toContain(legacy);
+      // What this build wrote is keyed, and carries nothing a plain hash of an address reproduces.
+      const written = reached.filter((k) => k !== legacy);
+      expect(written).toHaveLength(2);
+      for (const key of written) {
+        expect(key).toMatch(/^k1:[0-9a-f]{32}$/);
+      }
+      expect(written).toContain(reachedKey(teamAdmin.email as string));
+    }, 60_000);
+
+    it('survives a key rotation without resending, and costs one duplicate once the previous key is dropped', async () => {
+      reset();
+      useSink();
+      const saved = {
+        key: process.env.CONFIG_ENCRYPTION_KEY,
+        previous: process.env.CONFIG_ENCRYPTION_KEY_PREVIOUS,
+        version: process.env.CONFIG_ENCRYPTION_KEY_VERSION,
+      };
+      const setKeys = (env: Record<string, string | undefined>) => {
+        for (const [name, value] of Object.entries(env)) {
+          if (value === undefined) {
+            delete process.env[name];
+          } else {
+            process.env[name] = value;
+          }
+        }
+        _resetKeyCacheForTests();
+      };
+      try {
+        const { rowId } = await threeReviewers('reached-rotate');
+        // First poller, under the original key: reaches the lead, then stops.
+        const t0 = later(1);
+        await tick(t0, { shouldStop: () => sink.messages.length >= 1 });
+        expect(sink.messages).toHaveLength(1);
+
+        const leadUnderOriginalKey = reachedKey(lead.email as string);
+
+        // Rotated, previous key still configured: the lead is recognised, the other two are sent.
+        const newKey = crypto.randomBytes(32).toString('base64');
+        setKeys({
+          CONFIG_ENCRYPTION_KEY: newKey,
+          CONFIG_ENCRYPTION_KEY_PREVIOUS: saved.key,
+          CONFIG_ENCRYPTION_KEY_VERSION: '2',
+        });
+        await tick(t0);
+        let row = await prisma.joinRequestNotification.findUniqueOrThrow({ where: { id: rowId } });
+        expect(row.status).toBe('DELIVERED');
+        expect(sentTo(lead.email as string)).toBe(1);
+        expect(sink.messages).toHaveLength(3);
+        // The lead's entry keeps the key it was written under; the others are written under the new one.
+        expect(row.reached).toContain(leadUnderOriginalKey);
+        expect(row.reached).toContain(reachedKey(teamAdmin.email as string));
+        expect(reachedKey(lead.email as string)).not.toBe(leadUnderOriginalKey);
+
+        // A row that reached the lead under the ORIGINAL key, read once that key is gone entirely:
+        // the lead is no longer recognised and is sent once more. Nobody is missed.
+        setKeys({
+          CONFIG_ENCRYPTION_KEY: saved.key,
+          CONFIG_ENCRYPTION_KEY_PREVIOUS: undefined,
+          CONFIG_ENCRYPTION_KEY_VERSION: saved.version,
+        });
+        const oldKeyLead = leadUnderOriginalKey;
+        const second = await threeReviewers('reached-rotate-2');
+        await prisma.joinRequestNotification.update({
+          data: { reached: [oldKeyLead] },
+          where: { id: second.rowId },
+        });
+        reset();
+        setKeys({
+          CONFIG_ENCRYPTION_KEY: crypto.randomBytes(32).toString('base64'),
+          CONFIG_ENCRYPTION_KEY_VERSION: '3',
+        });
+        await tick(t0);
+        row = await prisma.joinRequestNotification.findUniqueOrThrow({
+          where: { id: second.rowId },
+        });
+        expect(row.status).toBe('DELIVERED');
+        expect(sink.messages).toHaveLength(3);
+        expect(sentTo(lead.email as string)).toBe(1);
+        expect(sentTo(teamAdmin.email as string)).toBe(1);
+        expect(sentTo(second.third.email as string)).toBe(1);
+      } finally {
+        setKeys({
+          CONFIG_ENCRYPTION_KEY: saved.key,
+          CONFIG_ENCRYPTION_KEY_PREVIOUS: saved.previous,
+          CONFIG_ENCRYPTION_KEY_VERSION: saved.version,
+        });
+      }
     }, 60_000);
 
     /* ── The mutations that used to survive ──────────────────────────────── */

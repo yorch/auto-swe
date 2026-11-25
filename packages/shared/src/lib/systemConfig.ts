@@ -865,7 +865,17 @@ export interface AuthEmailConfig {
   smtpHost: string | null;
   smtpPass: string | null;
   smtpPort: number | undefined;
+  /// `SMTP_REQUIRE_TLS`: refuse any SMTP session that is not encrypted (see `docs/configuration.md`).
+  smtpRequireTls: boolean;
   smtpUser: string | null;
+}
+
+const SMTP_REQUIRE_TLS_OFF = new Set(['', '0', 'false', 'no', 'off']);
+
+/// Only an explicit off value leaves TLS optional. A value that is neither recognisably on nor off
+/// (a typo such as `ture`) requires TLS: a security switch that fails open on a typo is not one.
+function parseRequireTls(raw: string | undefined): boolean {
+  return !SMTP_REQUIRE_TLS_OFF.has((raw ?? '').trim().toLowerCase());
 }
 
 export function resolveAuthEmailConfig(): AuthEmailConfig {
@@ -875,6 +885,7 @@ export function resolveAuthEmailConfig(): AuthEmailConfig {
     smtpHost: process.env.SMTP_HOST ?? null,
     smtpPass: process.env.SMTP_PASS ?? null,
     smtpPort: process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : undefined,
+    smtpRequireTls: parseRequireTls(process.env.SMTP_REQUIRE_TLS),
     smtpUser: process.env.SMTP_USER ?? null,
   };
 }

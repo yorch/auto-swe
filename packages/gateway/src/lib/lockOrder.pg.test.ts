@@ -798,6 +798,22 @@ describe.skipIf(!enabled)('the global lock order against Postgres', () => {
     // Other fields save whatever the default team's organization is.
     await updateWorkflowDefaults(prisma, { maxTddIterations: 5 });
 
+    // A slug that names no team resolves to the organization slugged `default`; while that one is
+    // inactive the save is refused too, because team creation would fall back to it.
+    const seeded = await prisma.organization.findUniqueOrThrow({
+      select: { id: true, isActive: true },
+      where: { slug: 'default' },
+    });
+    await setActive(seeded.id, false);
+    try {
+      await expect(
+        updateWorkflowDefaults(prisma, { defaultTeamSlug: name('still-no-such-team') })
+      ).rejects.toBeInstanceOf(DefaultTeamOrganizationInactive);
+      expect(await defaultSlug()).toBe(name('no-such-team'));
+    } finally {
+      await setActive(seeded.id, seeded.isActive);
+    }
+
     await setActive(closed, true);
     await updateWorkflowDefaults(prisma, { defaultTeamSlug: await slugOf(closedTeam) });
     expect(await defaultSlug()).toBe(await slugOf(closedTeam));

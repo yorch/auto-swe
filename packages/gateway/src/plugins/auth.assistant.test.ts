@@ -51,6 +51,10 @@ async function routes(app: FastifyInstance) {
     { onRequest: requireAuth({ capability: 'platform.users.manage' }) },
     handler
   );
+  // confirm, but with a body field the assistant may never send; once authenticated before the
+  // body is parsed and once after
+  app.patch('/api/v1/platform/organizations/:orgId', { onRequest: requireAuth() }, handler);
+  app.put('/api/v1/platform/config/workflow-defaults', { preHandler: requireAuth() }, handler);
   // never
   app.post('/api/v1/human-steps/:id/respond', { onRequest: requireAuth() }, handler);
   // DELETE, never whatever the table says
@@ -214,6 +218,86 @@ describe('requireAuth — assistant tokens', () => {
       expect(res.json().error.code).toBe('FORBIDDEN');
       // A refused request must not spend the user's confirmation.
       expect(prisma.assistantAction.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('body fields the assistant may never send', () => {
+    const ORG_URL = `/api/v1/platform/organizations/${RUN_ID}`;
+
+    it.each([false, true])('refuses isActive: %s even with a matching confirmation', async (v) => {
+      const body = { isActive: v };
+      confirmed({ body, method: 'PATCH', url: ORG_URL });
+      const res = await app.inject({
+        headers: { authorization: assistantBearer(app), 'x-assistant-action': ACTION_ID },
+        method: 'PATCH',
+        payload: body,
+        url: ORG_URL,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('ASSISTANT_NOT_ALLOWED');
+      expect(res.json().error.message).toContain('isActive');
+      expect(seen).toEqual([]);
+      // The confirmation is not spent by a request that was never going to run.
+      expect(prisma.assistantAction.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses isActive sent beside an allowed field', async () => {
+      const res = await app.inject({
+        headers: { authorization: assistantBearer(app), 'x-assistant-action': ACTION_ID },
+        method: 'PATCH',
+        payload: { isActive: false, name: 'Renamed' },
+        url: ORG_URL,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('ASSISTANT_NOT_ALLOWED');
+      expect(seen).toEqual([]);
+    });
+
+    it('still lets a confirmed edit of another field through', async () => {
+      const body = { name: 'Renamed' };
+      confirmed({ body, method: 'PATCH', url: ORG_URL });
+      const res = await app.inject({
+        headers: { authorization: assistantBearer(app), 'x-assistant-action': ACTION_ID },
+        method: 'PATCH',
+        payload: body,
+        url: ORG_URL,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(seen).toHaveLength(1);
+    });
+
+    it('still asks for a confirmation of an edit of another field', async () => {
+      const res = await app.inject({
+        headers: { authorization: assistantBearer(app) },
+        method: 'PATCH',
+        payload: { name: 'Renamed' },
+        url: ORG_URL,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('ASSISTANT_CONFIRMATION_REQUIRED');
+    });
+
+    it('does not touch the same field on another route', async () => {
+      const body = { isActive: false };
+      confirmed({ body, method: 'PUT', url: '/api/v1/platform/config/workflow-defaults' });
+      const res = await app.inject({
+        headers: { authorization: assistantBearer(app), 'x-assistant-action': ACTION_ID },
+        method: 'PUT',
+        payload: body,
+        url: '/api/v1/platform/config/workflow-defaults',
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('lets the person send isActive: the refusal is the assistant’s alone', async () => {
+      const res = await app.inject({
+        headers: { authorization: personBearer(app) },
+        method: 'PATCH',
+        payload: { isActive: false },
+        url: ORG_URL,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(seen).toEqual([undefined]);
     });
   });
 

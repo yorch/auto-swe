@@ -10,6 +10,11 @@ vi.mock('@auto-swe/shared/lib/repoAccessGate', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   resolveRepoAccessGateOrLastKnown: async () => gateHolder.gate,
 }));
+const defaultsHolder = vi.hoisted(() => ({ defaultTeamSlug: 'default' }));
+vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  resolveWorkflowDefaults: async () => ({ defaultTeamSlug: defaultsHolder.defaultTeamSlug }),
+}));
 vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   // Self-service creation is on everywhere, so a test can show the legacy route ignores it.
@@ -161,9 +166,10 @@ function buildApp(state: State): FastifyInstance {
       return 1;
     },
     // The row locks of `lib/lockOrder.ts`, recorded in the same list and answered as found.
-    $queryRaw: async (_sql: TemplateStringsArray, ...values: unknown[]) => {
+    $queryRaw: async (sql: TemplateStringsArray, ...values: unknown[]) => {
       state.locks = [...(state.locks ?? []), String(values[0])];
-      return [{ id: values[0] }];
+      // A bulk close locks the open requests it will close, and gets their ids back.
+      return sql.join('?').includes('team_join_requests') ? [{ id: 'jr-1' }] : [{ id: values[0] }];
     },
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
     configAuditLog: {
@@ -187,9 +193,11 @@ function buildApp(state: State): FastifyInstance {
     organization: {
       findUnique: async ({ where }: { where: { id?: string; slug?: string } }) =>
         // Single default org for the create-path test.
-        where.slug === 'default' || where.id === 'org-default' || where.id === TEAM_ID
-          ? { id: where.id ?? 'org-default', isActive: !state.orgInactive, slug: 'default' }
-          : null,
+        where.id === 'org-elsewhere'
+          ? { id: 'org-elsewhere', isActive: true, slug: 'elsewhere' }
+          : where.slug === 'default' || where.id === 'org-default' || where.id === TEAM_ID
+            ? { id: where.id ?? 'org-default', isActive: !state.orgInactive, slug: 'default' }
+            : null,
     },
     organizationMembership: {
       createMany: async ({ data }: { data: { userId: string; orgId: string; role: string } }) => {
@@ -891,6 +899,82 @@ describe('PATCH /api/v1/teams/:id', () => {
 });
 
 describe('POST /api/v1/teams', () => {
+  afterEach(() => {
+    defaultsHolder.defaultTeamSlug = 'default';
+  });
+
+  it('falls back to the organization that owns the default team, not the one slugged default', async () => {
+    // The default team lives in another organization; the organization slugged `default` exists
+    // too and is a different one. The fallback follows the default team, as account enrolment and
+    // the refusal to deactivate the default organization do.
+    defaultsHolder.defaultTeamSlug = 'the-default-team';
+    const state = freshState({
+      teams: [
+        {
+          egressAllowlist: [],
+          id: 'team-default',
+          name: 'The default team',
+          orgId: 'org-elsewhere',
+          shellImageAllowlist: [],
+          slug: 'the-default-team',
+        },
+      ],
+      userRole: 'ADMIN',
+    });
+    const app = buildApp(state);
+
+    const res = await app.inject({
+      body: { name: 'Payments', slug: 'payments' },
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'POST',
+      url: '/api/v1/teams',
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().data.orgId).toBe('org-elsewhere');
+  });
+
+  it('falls back to the organization slugged default when the default team does not exist', async () => {
+    defaultsHolder.defaultTeamSlug = 'no-such-team';
+    const app = buildApp(freshState({ userRole: 'ADMIN' }));
+
+    const res = await app.inject({
+      body: { name: 'Payments', slug: 'payments' },
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'POST',
+      url: '/api/v1/teams',
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().data.orgId).toBe('org-default');
+  });
+
+  it('an explicit orgId wins over the default organization', async () => {
+    defaultsHolder.defaultTeamSlug = 'the-default-team';
+    const state = freshState({
+      teams: [
+        {
+          egressAllowlist: [],
+          id: 'team-default',
+          name: 'The default team',
+          orgId: 'org-elsewhere',
+          shellImageAllowlist: [],
+          slug: 'the-default-team',
+        },
+      ],
+      userRole: 'ADMIN',
+    });
+    const res = await buildApp(state).inject({
+      body: { name: 'Payments', orgId: '00000000-0000-4000-8000-000000000001', slug: 'payments' },
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'POST',
+      url: '/api/v1/teams',
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().data.orgId).not.toBe('org-elsewhere');
+  });
+
   it('creates a team under the default org when no orgId is given (P5)', async () => {
     const state = freshState({ userRole: 'ADMIN' });
     const app = buildApp(state);
@@ -979,8 +1063,8 @@ describe('DELETE /api/v1/teams/:id', () => {
     expect(res.json()).toEqual({ data: { deleted: true } });
     // Both open steps, for this team only, closed as a rejection by the platform.
     expect(state.closedJoinRequests?.map((c) => c.where)).toEqual([
-      { status: 'PENDING_TEAM', teamId: TEAM_ID },
-      { status: 'PENDING_ORG', teamId: TEAM_ID },
+      { id: { in: ['jr-1'] }, status: 'PENDING_TEAM' },
+      { id: { in: ['jr-1'] }, status: 'PENDING_ORG' },
     ]);
     expect(state.closedJoinRequests?.[0]?.data).toMatchObject({
       closeReason: 'TEAM_DEACTIVATED',

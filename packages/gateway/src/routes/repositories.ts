@@ -70,6 +70,7 @@ import { availableGitHubRepos, verifiedImportInstallation } from '../lib/githubI
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema } from '../lib/idempotency.js';
 import { installationOrganizationProblem } from '../lib/installationOrganization.js';
+import { lockConnections } from '../lib/lockOrder.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { REPOSITORY_SWEEP_CAP, sweepArmedPullRequests } from '../lib/prEvaluationSweep.js';
@@ -1907,10 +1908,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
               ['ConnectionTeamShare', 'KnowledgeItem'],
               () =>
                 fastify.prisma.$transaction(async (tx) => {
-                  // CLAUDE.md §7 exception: serialize moves with repo-origin KnowledgeItem inserts.
-                  await tx.$queryRaw(
-                    Prisma.sql`SELECT id FROM connections WHERE id = ${repo.id}::uuid FOR UPDATE`
-                  );
+                  // The connection row, level 3 of `lib/lockOrder.ts`: serializes moves with
+                  // repo-origin KnowledgeItem inserts and with a launch's source checks.
+                  await lockConnections(tx, [repo.id]);
                   const existingKnowledge = await tx.knowledgeItem.count({
                     where: { repoId: repo.id },
                   });
@@ -2147,10 +2147,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         ['ConnectionTeamShare'],
         () =>
           fastify.prisma.$transaction(async (tx) => {
-            // CLAUDE.md §7 exception: serialize share replacement with source checks.
-            await tx.$queryRaw(
-              Prisma.sql`SELECT id FROM connections WHERE id = ${repo.id}::uuid FOR UPDATE`
-            );
+            // The connection row, level 3 of `lib/lockOrder.ts`: serializes share replacement
+            // with source checks.
+            await lockConnections(tx, [repo.id]);
             await tx.connectionTeamShare.deleteMany({
               where: { connectionId: repo.id, teamId: { notIn: teamIds } },
             });

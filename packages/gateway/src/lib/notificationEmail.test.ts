@@ -39,7 +39,13 @@ describe('sendNotificationEmailsEach', () => {
   it('asks for the bounded transport (finite SMTP timeouts) on every send', async () => {
     transport.send.mockImplementation(async () => ({ sent: true }));
     const out = await sendNotificationEmailsEach('k', [msg]);
-    expect(out).toEqual({ configured: true, delivered: ['a@example.com'], failed: 0, unknown: 0 });
+    expect(out).toEqual({
+      aborted: false,
+      configured: true,
+      delivered: ['a@example.com'],
+      failed: 0,
+      unknown: 0,
+    });
     expect(transport.send).toHaveBeenCalledWith(msg, {
       bounded: true,
       continueOnError: true,
@@ -54,7 +60,13 @@ describe('sendNotificationEmailsEach', () => {
     const pending = sendNotificationEmailsEach('k', [msg, msg], 20);
     await vi.runAllTimersAsync();
     const out = await pending;
-    expect(out).toEqual({ configured: true, delivered: [], failed: 2, unknown: 2 });
+    expect(out).toEqual({
+      aborted: false,
+      configured: true,
+      delivered: [],
+      failed: 2,
+      unknown: 2,
+    });
   });
 
   it('aborts the send at the deadline, so its socket is destroyed and its fallback never starts', async () => {
@@ -97,6 +109,54 @@ describe('sendNotificationEmailsEach', () => {
     expect(await sendNotificationEmailsEach('k', [msg], 50)).toMatchObject({
       delivered: ['a@example.com'],
       unknown: 0,
+    });
+  });
+
+  describe('a caller abort signal (a closing gateway)', () => {
+    it('abandons the send in flight at once, aborting the transport signal, and tries nothing after it', async () => {
+      const signals: AbortSignal[] = [];
+      transport.send.mockImplementation((_message, options) => {
+        signals.push(options?.signal as AbortSignal);
+        return new Promise(() => undefined);
+      });
+      const controller = new AbortController();
+      const pending = sendNotificationEmailsEach('k', [msg, msg], 60_000, controller.signal);
+      await Promise.resolve();
+      expect(signals).toHaveLength(1);
+      expect(signals[0]?.aborted).toBe(false);
+      controller.abort();
+      const out = await pending;
+      expect(signals[0]?.aborted).toBe(true);
+      expect(transport.send).toHaveBeenCalledTimes(1);
+      expect(out).toEqual({
+        aborted: true,
+        configured: true,
+        delivered: [],
+        failed: 1,
+        unknown: 1,
+      });
+    });
+
+    it('reports a send that was accepted just before the abort as delivered', async () => {
+      transport.send.mockResolvedValue({ sent: true });
+      const controller = new AbortController();
+      const out = await sendNotificationEmailsEach('k', [msg], 60_000, controller.signal);
+      controller.abort();
+      expect(out).toMatchObject({ aborted: false, delivered: ['a@example.com'] });
+    });
+
+    it('starts nothing when the signal is already aborted', async () => {
+      const controller = new AbortController();
+      controller.abort();
+      const out = await sendNotificationEmailsEach('k', [msg], 60_000, controller.signal);
+      expect(transport.send).not.toHaveBeenCalled();
+      expect(out).toEqual({
+        aborted: true,
+        configured: true,
+        delivered: [],
+        failed: 0,
+        unknown: 0,
+      });
     });
   });
 });

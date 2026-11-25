@@ -12,6 +12,7 @@ import { ACTIVE_WORKFLOW_TERMINAL_STATUSES } from '@auto-swe/shared/types/api';
 import type { FastifyReply } from 'fastify';
 import type { ServicePrincipalCaller } from '../plugins/auth.js';
 import { sendError } from './httpErrors.js';
+import { lockConnections, lockServicePrincipal, lockUser } from './lockOrder.js';
 import type { LaunchGuard } from './workflowLaunch.js';
 
 /** Refusal codes the launch guard returns; each maps to one response. */
@@ -54,6 +55,36 @@ export interface ServiceLaunchTarget {
   connectionId: string | null;
   /** A template run's template; absent for an agent run, which the connection allowlist governs. */
   templateId?: string;
+  /**
+   * The user the launch also acts as, when it carries one. A principal's own launch has none; a
+   * launch that did would lock this row before the principal's (`lockOrder.ts`).
+   */
+  actorId?: string | undefined;
+}
+
+/**
+ * The row locks of a principal's launch, in the global order (`lockOrder.ts`): the principal's row
+ * (level 2), then the target repository's connection (level 3), after the acting user's row
+ * (level 1) when the launch carries one. A launch by a principal carries none today. Returns false when the
+ * principal is gone. A transaction that takes a lock of a later level (an orchestration's row)
+ * calls this before it, so the guard's own locks are already held when the guard runs.
+ */
+export async function lockServiceLaunch(
+  tx: Prisma.TransactionClient,
+  servicePrincipalId: string,
+  connectionId: string | null,
+  actorId?: string
+): Promise<boolean> {
+  if (actorId) {
+    await lockUser(tx, actorId);
+  }
+  if (!(await lockServicePrincipal(tx, servicePrincipalId))) {
+    return false;
+  }
+  if (connectionId) {
+    await lockConnections(tx, [connectionId]);
+  }
+  return true;
 }
 
 /**
@@ -73,12 +104,8 @@ export function servicePrincipalLaunchGuard(
   target: ServiceLaunchTarget
 ): LaunchGuard {
   return async (tx: Prisma.TransactionClient) => {
-    // CLAUDE.md §7 exception: serialize this principal's launches with each other and with edits
-    // to its allowlists and limits; Prisma cannot express SELECT … FOR UPDATE.
-    const locked = await tx.$queryRaw<Array<{ id: string }>>`
-      SELECT id FROM service_principals WHERE id = ${servicePrincipalId}::uuid FOR UPDATE
-    `;
-    if (locked.length === 0) {
+    // The locks of one principal's launch, in the global order (`lockOrder.ts`).
+    if (!(await lockServiceLaunch(tx, servicePrincipalId, target.connectionId, target.actorId))) {
       return SERVICE_LAUNCH_REFUSALS.disabled;
     }
     const sp = await tx.servicePrincipal.findUnique({
@@ -103,11 +130,7 @@ export function servicePrincipalLaunchGuard(
       // The repository must still be the principal's team's, owned or shared: a share removed or
       // a repository moved since the grant ends the grant's effect. Share writers and repository
       // moves take this row lock, so the answer holds until the ledger rows commit.
-      // CLAUDE.md §7 exception: Prisma cannot express SELECT … FOR UPDATE.
-      const lockedConnection = await tx.$queryRaw<Array<{ id: string }>>`
-        SELECT id FROM connections WHERE id = ${target.connectionId}::uuid FOR UPDATE
-      `;
-      const connection = lockedConnection.length
+      const connection = (await lockConnections(tx, [target.connectionId])).length
         ? await tx.connection.findUnique({
             select: { isActive: true, shares: { select: { teamId: true } }, teamId: true },
             where: { id: target.connectionId },
