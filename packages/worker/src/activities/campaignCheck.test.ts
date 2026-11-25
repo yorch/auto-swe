@@ -10,13 +10,18 @@ const db = vi.hoisted(() => ({
   user: { findUnique: vi.fn() },
 }));
 const perms = vi.hoisted(() => ({ can: vi.fn() }));
-const enabled = vi.hoisted(() => ({ off: new Set<string>() }));
+const enabled = vi.hoisted(() => ({ off: new Set<string>(), regressionLimit: 3 }));
+const settingCalls = vi.hoisted(() => ({ regression: [] as unknown[] }));
 
 vi.mock('@auto-swe/shared/db', () => ({ prisma: db }));
 vi.mock('@auto-swe/shared/config', () => ({
-  resolveSetting: vi.fn(
-    async (_key: string, ctx: { teamId: string }) => !enabled.off.has(ctx.teamId)
-  ),
+  resolveSetting: vi.fn(async (key: string, ctx: { teamId: string }) => {
+    if (key === 'workflow.campaignRegressionLimit') {
+      settingCalls.regression.push(ctx);
+      return enabled.regressionLimit;
+    }
+    return !enabled.off.has(ctx.teamId);
+  }),
 }));
 vi.mock('@auto-swe/shared/permissions', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@auto-swe/shared/permissions')>()),
@@ -63,8 +68,11 @@ const runner = (out: Awaited<ReturnType<CheckDeps['run']>>) => {
 beforeEach(() => {
   vi.clearAllMocks();
   enabled.off.clear();
+  enabled.regressionLimit = 3;
+  settingCalls.regression.length = 0;
   db.campaign.findUnique.mockResolvedValue({
     orgId: ORG,
+    ownerTeamId: TEAM,
     recipeParams: { packageName: 'lodash', targetVersion: '4.17.21' },
     recipeRef: 'npm-dependency@2',
     state: 'ACTIVE',
@@ -157,6 +165,43 @@ describe('runCampaignCheck', () => {
     );
     expect(r).toMatchObject({ regressions: 4, state: 'NEEDS_ATTENTION' });
     expect(db.campaignTarget.updateMany.mock.calls[0]?.[0].data.failureReason).toMatch(/regressed/);
+  });
+
+  it('uses the campaign’s regression limit, resolved for its owning team: a lowered limit needs a person earlier', async () => {
+    enabled.regressionLimit = 1;
+    db.campaignTarget.findFirst.mockResolvedValue({
+      connectionId: 'conn-1',
+      lastCheckedAt: null,
+      regressions: 1,
+      state: 'SATISFIED',
+      teamId: TEAM,
+    });
+    const r = await runCampaignCheck(
+      { campaignId: CAMPAIGN, targetId: TARGET },
+      runner(NOT_SATISFIED_OUT).deps
+    );
+    // At the default of 3 this is a return to PENDING (see the test above, which starts at 1).
+    expect(r).toMatchObject({ regressions: 2, state: 'NEEDS_ATTENTION' });
+    expect(db.campaignTarget.updateMany.mock.calls[0]?.[0].data.failureReason).toBe(
+      'the check regressed more than 1 times after it was satisfied'
+    );
+    expect(settingCalls.regression).toEqual([{ orgId: ORG, teamId: TEAM }]);
+  });
+
+  it('keeps retrying a regressed target while it is within a raised limit', async () => {
+    enabled.regressionLimit = 5;
+    db.campaignTarget.findFirst.mockResolvedValue({
+      connectionId: 'conn-1',
+      lastCheckedAt: null,
+      regressions: 3,
+      state: 'SATISFIED',
+      teamId: TEAM,
+    });
+    const r = await runCampaignCheck(
+      { campaignId: CAMPAIGN, targetId: TARGET },
+      runner(NOT_SATISFIED_OUT).deps
+    );
+    expect(r).toMatchObject({ regressions: 4, state: 'PENDING' });
   });
 
   it('records a satisfied target that is still satisfied without moving it', async () => {

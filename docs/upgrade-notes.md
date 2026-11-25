@@ -2908,8 +2908,10 @@ needs action.
   assistant is refused both new routes.
 - A control action (not cancel) or pull-request event sent to a reconciled campaign whose workflow is not running
   now starts the workflow again from the campaign's rows.
-- When a campaign's draft pull request first becomes stale, the worker posts one message to the owning team's Slack
-  notification channel (`Team.slackNotifyChannel`).
+- When a pass finds one or more of a campaign's draft pull requests newly stale, the worker posts one digest
+  message for the pass to the owning team's Slack notification channel (`Team.slackNotifyChannel`). It names only
+  repositories of the owning team or shared with it (at most 10, then "and N more") and counts the rest without
+  naming them.
 
 **Actions.** None are required. To keep stale pull requests from producing Slack messages, leave the owning
 teams' Slack notification channel unset; the same channel also receives the team's other notices, so unsetting it
@@ -2918,3 +2920,19 @@ team's scope (the floor cannot go below 1); to forbid them, raise it.
 
 **Verify.** `/admin/platform-settings` lists `workflow.campaignRescanFloorHours` at 1. A `POST /api/v1/campaigns` with `rescanIntervalHours` below the configured floor answers
 `400 CAMPAIGN_RESCAN_TOO_FREQUENT`.
+
+### Campaign regression limit is a setting (`<fixing commit SHA>`)
+
+**Affected.** Every deployment that runs reconciled campaigns (`workflow.campaignReconciler` on). Nothing needs
+action.
+
+**What changes.** The number of times a satisfied target's check may regress before the target needs a person is
+the setting `workflow.campaignRegressionLimit` (1 to 20, default 3, overridable at team and organization scope,
+written by an administrator), resolved for the owning team on every check. The default equals the limit that was
+built in, so a campaign behaves as before until an administrator changes the setting, and a change reaches
+campaigns already running.
+
+**Actions.** None. To allow more or fewer regressions on a team, set the value at that team's scope in
+`/admin/platform-settings`.
+
+**Verify.** `/admin/platform-settings` lists `workflow.campaignRegressionLimit` at 3.

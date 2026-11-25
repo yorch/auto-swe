@@ -1991,6 +1991,20 @@ export const SETTING_DEFINITIONS = {
     schema: z.boolean(),
     writeAccess: 'admin',
   }),
+  // Read by the worker's check activity for the campaign's owning team, once per check. Not
+  // run-pinned: the check decides on the live value, so a change reaches campaigns already running.
+  'workflow.campaignRegressionLimit': defineSetting({
+    defaultValue: 3,
+    description:
+      "How many times the check of a campaign target may regress after it was satisfied before the target needs a person. Each regression sends the target back to pending for another attempt; once it has regressed more than this many times, the next regression moves it to needs attention instead. Resolved for the campaign's owning team on every check, so a change reaches campaigns already running.",
+    group: 'workflow',
+    label: 'Campaign regression limit',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(20),
+    writeAccess: 'admin',
+  }),
   // Read by the gateway at campaign launch (a rescanIntervalHours below it is refused) and by the
   // worker's reconciler on every pass, which re-checks at the longer of the campaign's own interval
   // and this floor, so a change reaches a running campaign. Not run-pinned, for the same reason.

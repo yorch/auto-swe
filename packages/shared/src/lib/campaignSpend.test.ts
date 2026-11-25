@@ -38,6 +38,23 @@ describe('campaignSpendUsd', () => {
     expect(await campaignSpendUsd(client, input)).toBe(2.5);
   });
 
+  it('prefers a finalized run’s figure over a different live-ledger figure', async () => {
+    // The ledgers disagree (the live row kept accruing after the run settled, or was never trimmed):
+    // the settled run is the record, so the live 9 is not counted and not added.
+    const client = fake([{ childWorkflowId: 'wf-5', run: { costUsdAccrued: 4, endedAt: ended } }], {
+      'wf-5': 9,
+    });
+    expect(await campaignSpendUsd(client, input)).toBe(4);
+  });
+
+  it('prefers the live ledger over an unfinalized run’s different figure', async () => {
+    // An in-flight attempt whose run row already carries a (stale) denormalised figure.
+    const client = fake([{ childWorkflowId: 'wf-6', run: { costUsdAccrued: 5, endedAt: null } }], {
+      'wf-6': 2.5,
+    });
+    expect(await campaignSpendUsd(client, input)).toBe(2.5);
+  });
+
   it('falls back to the run when no ledger row exists, and sums every attempt', async () => {
     const client = fake(
       [

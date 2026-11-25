@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const db = vi.hoisted(() => ({
-  activeWorkflow: { findMany: vi.fn() },
+  activeWorkflow: { findMany: vi.fn(), updateMany: vi.fn() },
   campaignAttempt: { findFirst: vi.fn(), updateMany: vi.fn() },
   pullRequest: { findFirst: vi.fn() },
   workflowRun: { findUnique: vi.fn() },
@@ -39,6 +39,7 @@ const snapshot = (result: Record<string, unknown>) => ({ result });
 beforeEach(() => {
   vi.resetAllMocks();
   db.campaignAttempt.updateMany.mockResolvedValue({ count: 1 });
+  db.activeWorkflow.updateMany.mockResolvedValue({ count: 1 });
   db.pullRequest.findFirst.mockResolvedValue(null);
   temporal.getHandle.mockReturnValue({ signal: temporal.signal });
   temporal.signal.mockResolvedValue(undefined);
@@ -282,6 +283,8 @@ describe('reconcileCampaignAttempt', () => {
       data: { failureReason: 'the run ended without starting', outcome: 'FAILED' },
       where: { id: 'att-1', outcome: null },
     });
+    // Its ledger rows are already terminal, so nothing is written to them.
+    expect(db.activeWorkflow.updateMany).not.toHaveBeenCalled();
   });
 
   it('does not fail an attempt whose workflow is still alive, or has no ledger row', async () => {
@@ -318,6 +321,40 @@ describe('reconcileCampaignAttempt', () => {
         data: { failureReason: 'the run never started', outcome: 'FAILED' },
         where: { id: 'att-1', outcome: null },
       });
+    });
+
+    it('moves a still-live ledger row to FAILED, only when non-terminal, after the attempt update', async () => {
+      db.activeWorkflow.findMany.mockResolvedValue([{ currentStatus: 'IMPLEMENTING' }]);
+      temporal.getHandle.mockReturnValue(settled('FAILED'));
+      await reconcileCampaignAttempt(attempt(), ATTEMPT_RUN_GRACE_MS + 1);
+      expect(db.activeWorkflow.updateMany).toHaveBeenCalledTimes(1);
+      expect(db.activeWorkflow.updateMany.mock.calls[0]?.[0]).toEqual({
+        data: { currentStatus: 'FAILED' },
+        where: {
+          currentStatus: { notIn: ['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED'] },
+          temporalWorkflowId: 'campaign-c1-w1',
+        },
+      });
+      expect(db.campaignAttempt.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+        db.activeWorkflow.updateMany.mock.invocationCallOrder[0] ?? 0
+      );
+    });
+
+    it('does not touch the ledger when the attempt was already closed by someone else', async () => {
+      temporal.getHandle.mockReturnValue(settled('FAILED'));
+      db.campaignAttempt.updateMany.mockResolvedValue({ count: 0 });
+      await expect(
+        reconcileCampaignAttempt(attempt(), ATTEMPT_RUN_GRACE_MS + 1)
+      ).resolves.toBeNull();
+      expect(db.activeWorkflow.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('still closes the attempt when the ledger write fails', async () => {
+      temporal.getHandle.mockReturnValue(settled('FAILED'));
+      db.activeWorkflow.updateMany.mockRejectedValue(new Error('db down'));
+      await expect(
+        reconcileCampaignAttempt(attempt(), ATTEMPT_RUN_GRACE_MS + 1)
+      ).resolves.toMatchObject({ attemptId: 'att-1' });
     });
 
     it('fails it when the child closed without creating a run, even with a ledger still saying it works', async () => {

@@ -406,6 +406,23 @@ describe('CampaignReconcilerWorkflow', () => {
     expect(world.starts).toEqual([]);
   });
 
+  it('does not run the planner for a campaign whose plan failure is already recorded', async () => {
+    // A signal-with-start restart carries no `planFailed`; the campaign row remembers instead.
+    world = makeWorld({
+      campaign: { plan: 'PLANNED', state: 'PLANNING' },
+      targets: [makeTarget('t1')],
+    });
+    world.planFailureRecorded = true;
+    world.onRead = (n, w) => {
+      if (n === 4) {
+        w.campaign.state = 'COMPLETED';
+      }
+    };
+    await run();
+    expect(world.plans).toBe(0);
+    expect(world.starts).toEqual([]);
+  });
+
   it('does not plan again after a continue-as-new that follows a failed plan', async () => {
     world = makeWorld({
       campaign: { plan: 'PLANNED', state: 'PLANNING' },

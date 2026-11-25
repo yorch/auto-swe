@@ -59,6 +59,8 @@ export interface World {
   /** Runs inside the campaign-state write, before the targets are re-counted. */
   beforeCampaignWrite?: (world: World) => void;
   failPlan: boolean;
+  /** `Campaign.planFailedAt` is already set when the workflow starts. */
+  planFailureRecorded?: boolean;
 
   // What happened
   reads: number;
@@ -243,6 +245,7 @@ export function worldActivities(world: World) {
       return structuredClone({
         campaign: world.campaign,
         nowMs: world.now,
+        planFailureRecorded: world.planFailureRecorded ?? false,
         planned: world.planned,
         proposalConnectionIds: world.proposalConnectionIds,
         targets: world.targets,

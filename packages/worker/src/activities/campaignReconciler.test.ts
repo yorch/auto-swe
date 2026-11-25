@@ -203,6 +203,13 @@ describe('readCampaignPass', () => {
     });
   });
 
+  it('reports a recorded plan failure, so a restarted execution does not plan again', async () => {
+    db.campaign.findUnique.mockResolvedValue(campaignRow({ planFailedAt: new Date(1000) }));
+    expect((await readCampaignPass({ campaignId: CAMPAIGN }))?.planFailureRecorded).toBe(true);
+    db.campaign.findUnique.mockResolvedValue(campaignRow({ planFailedAt: null }));
+    expect((await readCampaignPass({ campaignId: CAMPAIGN }))?.planFailureRecorded).toBe(false);
+  });
+
   it('says a campaign is planned once any target carries a brief, and has no check for a @1 recipe', async () => {
     db.campaign.findUnique.mockResolvedValue(campaignRow({ recipeRef: 'npm-dependency@1' }));
     db.campaignTarget.findMany.mockResolvedValue([targetRow({ brief: 'Bump it in the API' })]);
@@ -493,13 +500,22 @@ describe('recordCampaignPass', () => {
     };
 
     it('sends one notice when staleSince is first set, and only when the write landed', async () => {
-      db.campaignTarget.findMany.mockResolvedValue([{ id: TARGET, repoLabel: 'acme/api' }]);
+      db.campaignTarget.findMany.mockResolvedValue([
+        { connectionId: 'conn-1', id: TARGET, repoLabel: 'acme/api', teamId: TEAM },
+      ]);
       await recordCampaignPass({ ...base, updates: [staleUpdate] });
       expect(stale.notify).toHaveBeenCalledTimes(1);
       expect(stale.notify).toHaveBeenCalledWith({
         campaignId: CAMPAIGN,
         now: expect.any(Number),
-        targets: [{ repoLabel: 'acme/api', staleSince: 1_700_000_000_000 }],
+        targets: [
+          {
+            connectionId: 'conn-1',
+            repoLabel: 'acme/api',
+            staleSince: 1_700_000_000_000,
+            teamId: TEAM,
+          },
+        ],
       });
       // The write is a one-shot: it requires the flag to be unset in the row.
       expect(db.campaignTarget.updateMany.mock.calls[0]?.[0].where).toMatchObject({
@@ -532,7 +548,9 @@ describe('recordCampaignPass', () => {
       await expect(recordCampaignPass({ ...base, updates: [staleUpdate] })).resolves.toMatchObject({
         skipped: 0,
       });
-      db.campaignTarget.findMany.mockResolvedValue([{ id: TARGET, repoLabel: 'acme/api' }]);
+      db.campaignTarget.findMany.mockResolvedValue([
+        { connectionId: 'conn-1', id: TARGET, repoLabel: 'acme/api', teamId: TEAM },
+      ]);
       stale.notify.mockRejectedValue(new Error('slack down'));
       await expect(recordCampaignPass({ ...base, updates: [staleUpdate] })).resolves.toMatchObject({
         skipped: 0,

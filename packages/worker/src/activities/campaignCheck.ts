@@ -19,7 +19,6 @@ import { prisma } from '@auto-swe/shared/db';
 import { boundFailureReason } from '@auto-swe/shared/lib/campaignOutcome';
 import { recipeSupportsCheck } from '@auto-swe/shared/lib/campaignRecipes';
 import {
-  DEFAULT_CAMPAIGN_REGRESSION_LIMIT,
   isTargetFinal,
   normalizeTargetState,
   type TargetState,
@@ -197,7 +196,7 @@ export async function runCampaignCheck(
   });
 
   const campaign = await prisma.campaign.findUnique({
-    select: { orgId: true, recipeParams: true, recipeRef: true, state: true },
+    select: { orgId: true, ownerTeamId: true, recipeParams: true, recipeRef: true, state: true },
     where: { id: campaignId },
   });
   if (!campaign) {
@@ -261,10 +260,15 @@ export async function runCampaignCheck(
   }
 
   const satisfied = outcome.status === 'satisfied';
+  // Resolved once for this check, under the campaign's owning team (the campaign's own setting).
+  const regressionLimit = await resolveSetting('workflow.campaignRegressionLimit', {
+    orgId: campaign.orgId,
+    teamId: campaign.ownerTeamId,
+  });
   const next = transitionTarget(
     { regressions: target.regressions, state: current },
     { satisfied, type: 'check' },
-    { regressionLimit: DEFAULT_CAMPAIGN_REGRESSION_LIMIT }
+    { regressionLimit }
   );
   const moves = next.accepted && next.state !== normalizeTargetState(current);
   const failureReason: string | null | undefined = !moves
@@ -272,7 +276,7 @@ export async function runCampaignCheck(
     : next.state === 'NEEDS_ATTENTION'
       ? normalizeTargetState(current) === 'MERGED'
         ? MERGE_NOT_SATISFIED_REASON
-        : `the check regressed more than ${DEFAULT_CAMPAIGN_REGRESSION_LIMIT} times after it was satisfied`
+        : `the check regressed more than ${regressionLimit} times after it was satisfied`
       : null;
   const moved = await prisma.campaignTarget.updateMany({
     data: {

@@ -514,6 +514,12 @@ declare module 'fastify' {
        * not be read as "nothing was started".
        */
       workflowExecutionExists: (workflowId: string) => Promise<boolean>;
+      /**
+       * Whether the execution under this id is `'running'`, `'closed'` (still in retention, so the
+       * id cannot be reused under `REJECT_DUPLICATE`) or `'none'`. Like `workflowExecutionExists`,
+       * only `WorkflowNotFound` is `'none'`; any other failure propagates.
+       */
+      workflowExecutionState: (workflowId: string) => Promise<'running' | 'closed' | 'none'>;
       startEpicWorkflow: (workflowId: string, request: EpicRequest) => Promise<void>;
       /** Start a campaign's fan-out workflow. Its id is `campaign-<campaignId>`. */
       startCampaignWorkflow: (workflowId: string, input: CampaignWorkflowInput) => Promise<void>;
@@ -2228,6 +2234,18 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       } catch (err) {
         if (getErrorName(err) === 'WorkflowNotFoundError') {
           return false;
+        }
+        throw err;
+      }
+    },
+
+    async workflowExecutionState(workflowId: string): Promise<'running' | 'closed' | 'none'> {
+      try {
+        const description = await client.workflow.getHandle(workflowId).describe();
+        return description.status.name === 'RUNNING' ? 'running' : 'closed';
+      } catch (err) {
+        if (getErrorName(err) === 'WorkflowNotFoundError') {
+          return 'none';
         }
         throw err;
       }

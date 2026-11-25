@@ -97,6 +97,9 @@ describe('campaign control routes', () => {
   let beforeCreateMany: (() => void) | null = null;
   // Executions Temporal "has": started by a call, or made to exist though the call errored.
   const executions = new Set<string>();
+  // Executions that finished but still sit in Temporal's retention, holding their ids.
+  const closedExecutions = new Set<string>();
+  let cancelFailure: Error | null = null;
   let startLandsDespiteError = false;
   let afterStart: (() => void) | null = null;
   let describeFailure: Error | null = null;
@@ -164,7 +167,10 @@ describe('campaign control routes', () => {
         ...rest
       } = where as {
         id?: string;
-        targets?: { none: { brief: null } };
+        targets?: {
+          none?: { brief?: null; state?: { notIn?: string[] } };
+          some?: { state?: { notIn?: string[] } };
+        };
         ownerTeamId?: string;
         state?: string | { in?: string[]; notIn?: string[] };
         launchedById?: string | null;
@@ -177,8 +183,16 @@ describe('campaign control routes', () => {
       if (id && c.id !== id) {
         return false;
       }
-      if (targetsFilter && targets.some((t) => t.campaignId === c.id && t.brief == null)) {
-        return false;
+      if (targetsFilter) {
+        const mine = targets.filter((t) => t.campaignId === c.id);
+        const hit = (f: { brief?: null; state?: { notIn?: string[] } }) => (t: Row) =>
+          (f.brief !== null || t.brief == null) && !f.state?.notIn?.includes(t.state as string);
+        if (targetsFilter.none && mine.some(hit(targetsFilter.none))) {
+          return false;
+        }
+        if (targetsFilter.some && !mine.some(hit(targetsFilter.some))) {
+          return false;
+        }
       }
       if (ownerTeamId && c.ownerTeamId !== ownerTeamId) {
         return false;
@@ -219,7 +233,7 @@ describe('campaign control routes', () => {
         brief?: null;
         campaignId?: string;
         id?: string | { in: string[] };
-        state?: string | { in: string[] };
+        state?: string | { in?: string[]; notIn?: string[] };
         teamId?: string;
         connection?: unknown;
       };
@@ -244,8 +258,13 @@ describe('campaign control routes', () => {
       if (typeof state === 'string' && t.state !== state) {
         return false;
       }
-      if (state && typeof state === 'object' && !state.in.includes(t.state as string)) {
-        return false;
+      if (state && typeof state === 'object') {
+        if (state.in && !state.in.includes(t.state as string)) {
+          return false;
+        }
+        if (state.notIn?.includes(t.state as string)) {
+          return false;
+        }
       }
       if (connection) {
         reachable(connection);
@@ -538,6 +557,9 @@ describe('campaign control routes', () => {
     app.decorate('temporal', {
       cancelWorkflow: async (id: string) => {
         cancelledRuns.push(id);
+        if (cancelFailure) {
+          throw cancelFailure;
+        }
       },
       signalCampaignCancel: async () => 'signalled',
       signalCampaignWorkflow: async (
@@ -569,6 +591,12 @@ describe('campaign control routes', () => {
           throw describeFailure;
         }
         return executions.has(id);
+      },
+      workflowExecutionState: async (id: string) => {
+        if (describeFailure) {
+          throw describeFailure;
+        }
+        return closedExecutions.has(id) ? 'closed' : executions.has(id) ? 'running' : 'none';
       },
     } as unknown as never);
 
@@ -652,6 +680,8 @@ describe('campaign control routes', () => {
     beforeTargetUpdate = null;
     beforeCreateMany = null;
     executions.clear();
+    closedExecutions.clear();
+    cancelFailure = null;
     startLandsDespiteError = false;
     afterStart = null;
     describeFailure = null;
@@ -737,6 +767,89 @@ describe('campaign control routes', () => {
         expect(body(res).error.code).toBe('CAMPAIGN_PLAN_NOT_READY');
         expect(campaign().state).toBe('PLANNING');
         expect(signals).toHaveLength(0);
+      } finally {
+        real.count = original;
+      }
+    });
+
+    it('refuses to confirm once every target was removed (SKIPPED or CANCELLED rows are not a plan)', async () => {
+      as('launcher-1');
+      target(T_A).state = 'SKIPPED';
+      target(T_B).state = 'CANCELLED';
+      const res = await call('POST', `/${CAMPAIGN}/confirm`);
+      expect(res.statusCode).toBe(409);
+      expect(body(res).error.code).toBe('CAMPAIGN_PLAN_NOT_READY');
+      expect(campaign().state).toBe('PLANNING');
+      expect(signals).toHaveLength(0);
+    });
+
+    it('counts only live targets, for the briefs and for the total', async () => {
+      as('launcher-1');
+      const real = (
+        app.prisma as unknown as {
+          campaignTarget: { count: (args: { where: Record<string, unknown> }) => Promise<number> };
+        }
+      ).campaignTarget;
+      const original = real.count;
+      const wheres: Array<Record<string, unknown>> = [];
+      real.count = async (args) => {
+        wheres.push(args.where);
+        return original(args);
+      };
+      try {
+        expect((await call('POST', `/${CAMPAIGN}/confirm`)).statusCode).toBe(200);
+      } finally {
+        real.count = original;
+      }
+      expect(wheres).toHaveLength(2);
+      for (const where of wheres) {
+        expect(where.state).toEqual({ notIn: ['SKIPPED', 'CANCELLED'] });
+      }
+    });
+
+    it('is not blocked forever by a removed target that never got a brief', async () => {
+      as('launcher-1');
+      target(T_B).state = 'SKIPPED';
+      target(T_B).brief = null;
+      const res = await call('POST', `/${CAMPAIGN}/confirm`);
+      expect(res.statusCode).toBe(200);
+      expect(campaign().state).toBe('ACTIVE');
+    });
+
+    it('does not confirm when every target is removed between the check and the write', async () => {
+      as('launcher-1');
+      const real = (app.prisma as unknown as { campaignTarget: { count: () => Promise<number> } })
+        .campaignTarget;
+      const original = real.count;
+      real.count = (async (args?: { where?: { brief?: null } }) => {
+        // The checks see two briefed targets; both are removed before the write lands.
+        target(T_A).state = 'SKIPPED';
+        target(T_B).state = 'SKIPPED';
+        return args?.where && 'brief' in args.where ? 0 : 2;
+      }) as never;
+      try {
+        const res = await call('POST', `/${CAMPAIGN}/confirm`);
+        expect(res.statusCode).toBe(409);
+        expect(body(res).error.code).toBe('CAMPAIGN_PLAN_NOT_READY');
+        expect(campaign().state).toBe('PLANNING');
+      } finally {
+        real.count = original;
+      }
+    });
+
+    it('does not confirm when the targets disappear entirely between the check and the write', async () => {
+      as('launcher-1');
+      const real = (app.prisma as unknown as { campaignTarget: { count: () => Promise<number> } })
+        .campaignTarget;
+      const original = real.count;
+      real.count = (async (args?: { where?: { brief?: null } }) => {
+        targets = [];
+        return args?.where && 'brief' in args.where ? 0 : 2;
+      }) as never;
+      try {
+        const res = await call('POST', `/${CAMPAIGN}/confirm`);
+        expect(res.statusCode).toBe(409);
+        expect(campaign().state).toBe('PLANNING');
       } finally {
         real.count = original;
       }
@@ -1701,12 +1814,42 @@ describe('campaign control routes', () => {
       startFailure = Object.assign(new Error('already started'), {
         name: 'WorkflowExecutionAlreadyStartedError',
       });
+      startLandsDespiteError = true;
       const res = await attempt(T_A, { key: 'ambiguous' });
       expect(res.statusCode).toBe(201);
       expect(target(T_A).state).toBe('RUNNING');
       expect(attempts).toHaveLength(1);
       expect(runInputs).toHaveLength(1);
       expect(activeWorkflows).toHaveLength(1);
+    });
+
+    it('does not adopt a CLOSED execution holding the id: a coded refusal, rows compensated', async () => {
+      const workflowId = `campaign-${CAMPAIGN}-${REPO_A}`;
+      closedExecutions.add(workflowId);
+      startFailure = Object.assign(new Error('already started'), {
+        name: 'WorkflowExecutionAlreadyStartedError',
+      });
+      const res = await attempt(T_A, { key: 'closed' });
+      expect(refusal(res)).toBe('TARGET_NOT_STARTABLE');
+      expect(body(res).error.message).toBe(
+        'An earlier run under this attempt’s id has closed; its id cannot be reused'
+      );
+      expect(target(T_A).state).toBe('PENDING');
+      expect(attempts).toHaveLength(0);
+      expect(runInputs).toHaveLength(0);
+      expect(activeWorkflows).toHaveLength(0);
+    });
+
+    it('answers 5xx, keeping the ledger, when it cannot tell whether the existing execution runs', async () => {
+      startFailure = Object.assign(new Error('already started'), {
+        name: 'WorkflowExecutionAlreadyStartedError',
+      });
+      startLandsDespiteError = true;
+      describeFailure = new Error('temporal unreachable');
+      const res = await attempt(T_A, { key: 'blind-adopt' });
+      expect(res.statusCode).toBeGreaterThanOrEqual(500);
+      expect(attempts).toHaveLength(1);
+      expect(runInputs).toHaveLength(1);
     });
 
     it('still rolls back when the start definitely did not happen', async () => {
@@ -2082,6 +2225,100 @@ describe('campaign control routes', () => {
         expect(startOptions).toHaveLength(1);
         expect(attempts[0]).toMatchObject({ outcome: 'CANCELLED' });
         expect(target(T_A).state).toBe('CANCELLED');
+      });
+
+      it('asks once, best effort, for the cancel of an execution that may still land', async () => {
+        startFailure = ambiguous();
+        expect((await attempt(T_A, { key: 'late-land' })).statusCode).toBeGreaterThanOrEqual(500);
+        startFailure = null;
+        campaign().state = 'CANCELLING';
+        const retry = await attempt(T_A, { key: 'late-land' });
+        expect(refusal(retry)).toBe('CAMPAIGN_NOT_ACTIVE');
+        expect(cancelledRuns).toEqual([`campaign-${CAMPAIGN}-${REPO_A}`]);
+        expect(attempts[0]).toMatchObject({ outcome: 'CANCELLED' });
+        expect(target(T_A).state).toBe('CANCELLED');
+      });
+
+      it('ignores a failure of that cancel (the execution is not there yet): the refusal stands', async () => {
+        startFailure = ambiguous();
+        expect((await attempt(T_A, { key: 'late-fail' })).statusCode).toBeGreaterThanOrEqual(500);
+        startFailure = null;
+        campaign().state = 'CANCELLING';
+        cancelFailure = Object.assign(new Error('workflow not found'), {
+          name: 'WorkflowNotFoundError',
+        });
+        const retry = await attempt(T_A, { key: 'late-fail' });
+        expect(refusal(retry)).toBe('CAMPAIGN_NOT_ACTIVE');
+        expect(cancelledRuns).toHaveLength(1);
+        expect(attempts[0]).toMatchObject({ outcome: 'CANCELLED' });
+        cancelFailure = new Error('temporal unreachable');
+        const again = await attempt(T_A, { key: 'late-fail' });
+        expect(again.statusCode).toBeLessThan(500);
+      });
+
+      describe('a retry that would START the run re-checks the start conditions', () => {
+        const ambiguousFirst = async (key: string) => {
+          startFailure = ambiguous();
+          expect((await attempt(T_A, { key })).statusCode).toBeGreaterThanOrEqual(500);
+          startFailure = null;
+        };
+        const closedFailed = () => {
+          expect(startOptions).toHaveLength(1);
+          expect(startedRuns).toHaveLength(0);
+          expect(attempts).toHaveLength(1);
+          expect(attempts[0]).toMatchObject({ outcome: 'FAILED' });
+          expect(attempts[0]?.finishedAt).toBeInstanceOf(Date);
+          expect(target(T_A).state).toBe('PENDING');
+        };
+
+        it('starts nothing for a paused campaign, and fails the unstarted attempt', async () => {
+          await ambiguousFirst('paused');
+          campaign().state = 'PAUSED';
+          expect(refusal(await attempt(T_A, { key: 'paused' }))).toBe('CAMPAIGN_NOT_ACTIVE');
+          closedFailed();
+        });
+
+        it('starts nothing when the kill switch is off for the owning team', async () => {
+          await ambiguousFirst('off-owner');
+          settings.disabledTeams = new Set([TEAM_1]);
+          expect(refusal(await attempt(T_A, { key: 'off-owner' }))).toBe('CAMPAIGNS_DISABLED');
+          closedFailed();
+        });
+
+        it('starts nothing when the kill switch is off for the target’s team', async () => {
+          await ambiguousFirst('off-target');
+          settings.disabledTeams = new Set([REPOS[REPO_A]?.teamId as string]);
+          // The owning team is a different team than the target's in this fixture, or the same
+          // switch would be the owner's: make sure only the target's side is off.
+          campaign().ownerTeamId = TEAM_3;
+          teamRoles[TEAM_3] = { 'launcher-1': 'LEAD' };
+          expect(refusal(await attempt(T_A, { key: 'off-target' }))).toBe('CAMPAIGNS_DISABLED');
+          closedFailed();
+        });
+
+        it('starts nothing when the launcher is gone', async () => {
+          await ambiguousFirst('gone');
+          users['launcher-1'] = { isActive: false, role: 'LEAD' };
+          expect(refusal(await attempt(T_A, { key: 'gone' }))).toBe('LAUNCHER_UNAVAILABLE');
+          closedFailed();
+        });
+
+        it('lets the reconciler decide afterwards: the target starts again as attempt 2', async () => {
+          await ambiguousFirst('again');
+          campaign().state = 'PAUSED';
+          expect(refusal(await attempt(T_A, { key: 'again' }))).toBe('CAMPAIGN_NOT_ACTIVE');
+          campaign().state = 'ACTIVE';
+          const next = await attempt(T_A, { key: 'again-2' });
+          expect(next.statusCode).toBe(201);
+          expect(body(next).data.n).toBe(2);
+        });
+
+        it('still starts a healthy replay', async () => {
+          await ambiguousFirst('healthy');
+          const retry = await attempt(T_A, { key: 'healthy' });
+          expect(retry.statusCode).toBe(200);
+          expect(startedRuns).toHaveLength(1);
+        });
       });
 
       it('cancels a run that exists when a retry finds the campaign being cancelled', async () => {

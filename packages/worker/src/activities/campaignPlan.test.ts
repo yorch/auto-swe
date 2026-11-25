@@ -153,6 +153,37 @@ describe('planCampaignBriefs', () => {
     });
   });
 
+  it('lets a launcher’s edit win: a target whose brief is no longer null keeps its brief and its edges', async () => {
+    // The rows as the database holds them when the write runs: the launcher edited tg-api (its
+    // brief and edges) while the planner's call was in flight, after the targets were read.
+    const rows = new Map<string, { brief: string | null; dependsOn: string[] }>([
+      ['tg-lib', { brief: null, dependsOn: [] }],
+      ['tg-api', { brief: 'Launcher wording', dependsOn: ['tg-other'] }],
+    ]);
+    db.campaignTarget.updateMany.mockImplementation(
+      async (a: {
+        data: { brief: string; dependsOn: string[] };
+        where: { id: string; brief?: null };
+      }) => {
+        const row = rows.get(a.where.id);
+        if (!row || ('brief' in a.where && a.where.brief === null && row.brief !== null)) {
+          return { count: 0 };
+        }
+        row.brief = a.data.brief;
+        row.dependsOn = a.data.dependsOn;
+        return { count: 1 };
+      }
+    );
+    const r = await planCampaignBriefs({ campaignId: CAMPAIGN });
+    expect(rows.get('tg-api')).toEqual({ brief: 'Launcher wording', dependsOn: ['tg-other'] });
+    expect(rows.get('tg-lib')).toEqual({ brief: 'Bump the client in lib', dependsOn: [] });
+    // The edge the planner chose for the edited target was not written, so it is not counted.
+    expect(r.edges).toBe(0);
+    for (const [call] of db.campaignTarget.updateMany.mock.calls) {
+      expect(call.where.brief).toBeNull();
+    }
+  });
+
   it('writes nothing when the campaign was cancelled or confirmed while the planner ran', async () => {
     db.campaign.updateMany.mockResolvedValue({ count: 0 });
     await expect(planCampaignBriefs({ campaignId: CAMPAIGN })).resolves.toEqual({

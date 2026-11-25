@@ -97,6 +97,7 @@ export async function readCampaignPass(input: {
       orgId: true,
       ownerTeamId: true,
       plan: true,
+      planFailedAt: true,
       recipeRef: true,
       rescanIntervalHours: true,
       scopeKind: true,
@@ -312,6 +313,7 @@ export async function readCampaignPass(input: {
       state: campaign.state as CampaignStateValue,
     },
     nowMs,
+    planFailureRecorded: Boolean(campaign.planFailedAt),
     planned: rows.some((r) => r.brief !== null),
     proposalConnectionIds: proposals.map((p) => p.connectionId),
     targets,
@@ -502,8 +504,9 @@ export async function recordCampaignPass(
 }
 
 /**
- * Tell the owning team's Slack channel about targets that just went stale. Reads each target's
- * label under the campaign's tenant key; best effort, so a failure here never fails the pass.
+ * Tell the owning team's Slack channel about targets that just went stale, in one message. Reads
+ * each target's label, team and repository under the campaign's tenant key; the notice names only
+ * repositories that team may see. Best effort, so a failure here never fails the pass.
  */
 async function sendStaleNotices(
   campaignId: string,
@@ -519,20 +522,29 @@ async function sendStaleNotices(
       return;
     }
     const rows = await prisma.campaignTarget.findMany({
-      select: { id: true, repoLabel: true },
+      select: { connectionId: true, id: true, repoLabel: true, teamId: true },
       where: {
         campaign: { orgId: campaign.orgId },
         campaignId,
         id: { in: stale.map((t) => t.targetId) },
       },
     });
-    const labels = new Map(rows.map((r) => [r.id, r.repoLabel]));
+    const byId = new Map(rows.map((r) => [r.id, r]));
     await notifyCampaignStale({
       campaignId,
       now: nowMs,
       targets: stale.flatMap((t) => {
-        const repoLabel = labels.get(t.targetId);
-        return repoLabel === undefined ? [] : [{ repoLabel, staleSince: t.staleSince }];
+        const row = byId.get(t.targetId);
+        return row === undefined
+          ? []
+          : [
+              {
+                connectionId: row.connectionId,
+                repoLabel: row.repoLabel,
+                staleSince: t.staleSince,
+                teamId: row.teamId,
+              },
+            ];
       }),
     });
   } catch (err) {

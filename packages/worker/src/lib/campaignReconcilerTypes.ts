@@ -75,6 +75,12 @@ export interface CampaignPassSnapshot {
   campaign: PassCampaign;
   /** A planned campaign's briefs have been written. */
   planned: boolean;
+  /**
+   * The planner already failed for this campaign (`Campaign.planFailedAt` is set): a restarted
+   * execution does not run it again and spend the tokens twice. Absent in histories recorded before
+   * the field existed, which read as false.
+   */
+  planFailureRecorded?: boolean;
   targets: PassTarget[];
   /** Repositories discovery already recorded as proposals. */
   proposalConnectionIds: string[];

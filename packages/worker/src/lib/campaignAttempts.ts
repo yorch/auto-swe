@@ -6,6 +6,7 @@ import {
   campaignTargetOutcome,
 } from '@auto-swe/shared/lib/campaignOutcome';
 import type { CampaignAttemptOutcomeValue } from '@auto-swe/shared/lib/campaignState';
+import { ACTIVE_WORKFLOW_TERMINAL_STATUSES } from '@auto-swe/shared/types/api';
 import {
   CAMPAIGN_ATTEMPT_FINISHED_SIGNAL,
   type CampaignAttemptFinishedSignal,
@@ -281,6 +282,25 @@ async function childWorkflowRunning(workflowId: string): Promise<boolean | null>
   }
 }
 
+/**
+ * Moves the ledger row of an attempt whose run never started to `FAILED`, so it stops counting
+ * against its launcher's run cap. Only a row still non-terminal is written, and a failure here
+ * is logged and swallowed: the attempt is already closed.
+ */
+async function closeNeverStartedLedgerRow(childWorkflowId: string): Promise<void> {
+  try {
+    await prisma.activeWorkflow.updateMany({
+      data: { currentStatus: 'FAILED' },
+      where: {
+        currentStatus: { notIn: [...ACTIVE_WORKFLOW_TERMINAL_STATUSES] },
+        temporalWorkflowId: childWorkflowId,
+      },
+    });
+  } catch {
+    logWarn('campaign attempt ledger close failed', { childWorkflowId });
+  }
+}
+
 export interface UnfinishedAttempt {
   id: string;
   n: number;
@@ -356,6 +376,9 @@ export async function reconcileCampaignAttempt(
       },
       where: { id: attempt.id, outcome: null },
     });
+    if (moved.count > 0 && !ledgerDead) {
+      await closeNeverStartedLedgerRow(attempt.childWorkflowId);
+    }
     return moved.count > 0
       ? {
           attemptId: attempt.id,

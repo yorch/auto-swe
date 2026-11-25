@@ -55,6 +55,9 @@ const CLOSED_STATES: readonly string[] = [...CAMPAIGN_TERMINAL_STATES, 'CANCELLI
 
 const REASON_MAX = 500;
 
+/** Targets taken out of a campaign: they never start, so confirm neither briefs nor counts them. */
+const REMOVED_TARGETS = ['SKIPPED', 'CANCELLED'] as const;
+
 /**
  * Whether `goal` is reachable from any of `from` by following `edges` (target id to the ids it
  * depends on). Iterative, so a long chain cannot exhaust the stack, and a visited set bounds it on
@@ -285,12 +288,21 @@ export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
         ['CampaignTarget'],
         () =>
           Promise.all([
-            prisma.campaignTarget.count({ where: { brief: null, campaignId: campaign.id } }),
-            prisma.campaignTarget.count({ where: { campaignId: campaign.id } }),
+            prisma.campaignTarget.count({
+              where: {
+                brief: null,
+                campaignId: campaign.id,
+                state: { notIn: [...REMOVED_TARGETS] },
+              },
+            }),
+            prisma.campaignTarget.count({
+              where: { campaignId: campaign.id, state: { notIn: [...REMOVED_TARGETS] } },
+            }),
           ])
       );
-      // A plan with no targets has nothing to authorize: confirming it would start a campaign
-      // that can only complete empty.
+      // A plan with no live targets has nothing to authorize: confirming it would start a campaign
+      // that can only complete empty. A removed (SKIPPED) or cancelled target counts for neither
+      // side: it never starts, so it neither needs a brief nor makes a plan.
       if (unbriefed > 0 || total === 0) {
         return planNotReady();
       }
@@ -302,7 +314,10 @@ export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
           id: campaign.id,
           ownerTeamId: campaign.ownerTeamId,
           state: 'PLANNING',
-          targets: { none: { brief: null }, some: {} },
+          targets: {
+            none: { brief: null, state: { notIn: [...REMOVED_TARGETS] } },
+            some: { state: { notIn: [...REMOVED_TARGETS] } },
+          },
         },
       });
       if (moved.count === 0) {

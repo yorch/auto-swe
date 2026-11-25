@@ -231,3 +231,21 @@ describe('workflowExecutionExists', () => {
     await expect(app.temporal.workflowExecutionExists('wf-1')).rejects.toThrow('unreachable');
   });
 });
+
+describe('workflowExecutionState', () => {
+  it('tells a running execution from a closed one and from none, and propagates other failures', async () => {
+    const app = await build();
+    describe_.mockResolvedValueOnce({ status: { name: 'RUNNING' } });
+    await expect(app.temporal.workflowExecutionState('wf-1')).resolves.toBe('running');
+    describe_.mockResolvedValueOnce({ status: { name: 'COMPLETED' } });
+    await expect(app.temporal.workflowExecutionState('wf-1')).resolves.toBe('closed');
+    describe_.mockResolvedValueOnce({ status: { name: 'TERMINATED' } });
+    await expect(app.temporal.workflowExecutionState('wf-1')).resolves.toBe('closed');
+    describe_.mockRejectedValueOnce(
+      Object.assign(new Error('not found'), { name: 'WorkflowNotFoundError' })
+    );
+    await expect(app.temporal.workflowExecutionState('wf-1')).resolves.toBe('none');
+    describe_.mockRejectedValueOnce(new Error('unreachable'));
+    await expect(app.temporal.workflowExecutionState('wf-1')).rejects.toThrow('unreachable');
+  });
+});

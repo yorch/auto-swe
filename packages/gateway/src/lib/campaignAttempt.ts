@@ -290,6 +290,38 @@ async function cancelIfCampaignClosing(
   return true;
 }
 
+const CAMPAIGNS_DISABLED_MESSAGE =
+  'Campaigns are not enabled (workflow.campaignsEnabled) for the owning team or the target’s team';
+
+/**
+ * Whether `workflow.campaignsEnabled` holds for the owning team AND the target's team, with the
+ * repository row the target's team was read from (null when it is gone). One function for the
+ * fresh start and the replay that starts a run, so neither can skip a half of the switch.
+ */
+async function campaignsEnabledFor(
+  prisma: PrismaClient,
+  campaign: { orgId: string; ownerTeamId: string },
+  target: { connectionId: string | null; teamId: string },
+  launcherId: string | null
+) {
+  const repoRows = target.connectionId
+    ? await loadLaunchRepos(prisma, launcherId ?? '', [target.connectionId])
+    : [];
+  const repo = repoRows[0];
+  const targetCtx = {
+    orgId: repo?.team.orgId ?? campaign.orgId,
+    teamId: repo?.teamId ?? target.teamId,
+  };
+  const [ownerEnabled, targetEnabled] = await Promise.all([
+    resolveSetting('workflow.campaignsEnabled', {
+      orgId: campaign.orgId,
+      teamId: campaign.ownerTeamId,
+    }),
+    resolveSetting('workflow.campaignsEnabled', targetCtx),
+  ]);
+  return { enabled: Boolean(ownerEnabled && targetEnabled), repo };
+}
+
 const CAMPAIGN_CLOSING = (state: string) =>
   `The campaign is ${state}; the attempt that was starting was cancelled`;
 
@@ -308,8 +340,9 @@ async function answerReplay(
     workRequestId: string;
   },
   launcherId: string,
-  teamId: string
+  target: { connectionId: string | null; teamId: string }
 ): Promise<AttemptResult | null> {
+  const { teamId } = target;
   const prior = await findPrior(c, launcherId);
   if (!prior) {
     return null;
@@ -323,13 +356,38 @@ async function answerReplay(
   const exists = await c.fastify.temporal.workflowExecutionExists(prior.workflowId);
   if (!exists) {
     const now = await c.fastify.prisma.campaign.findFirst({
-      select: { state: true },
+      select: {
+        launchedById: true,
+        orgId: true,
+        ownerTeamId: true,
+        state: true,
+        workflowKind: true,
+      },
       where: { id: campaign.id, ownerTeamId: campaign.ownerTeamId },
     });
     if (now?.state === 'CANCELLING' || now?.state === 'CANCELLED') {
       // Nothing started and nothing will: close what the first call wrote.
-      await closeUnstartedAttempt(c, run);
+      await closeUnstartedAttempt(c, run, { outcome: 'CANCELLED' });
+      // A start that hit a client deadline may still land after this answer. Ask for the cancel
+      // once more, best effort and never fatal: found, the late execution is stopped; not there
+      // yet, this is a no-op, and the reconciler's cancel pass (which stops every child of a
+      // closing campaign it can see) is the backstop.
+      try {
+        await c.fastify.temporal.cancelWorkflow(prior.workflowId);
+      } catch (err) {
+        c.log.debug(
+          { err, workflowId: prior.workflowId },
+          'best-effort cancel of an unstarted attempt'
+        );
+      }
       return refuse('CAMPAIGN_NOT_ACTIVE', CAMPAIGN_CLOSING(now.state));
+    }
+    // The first call checked all of this, but that was before the retry: a replay that STARTS the
+    // run is a start, and answers to the same kill switch, pause state and launcher as one.
+    const recheck = await recheckBeforeReplayStart(c, now, launcherId, target);
+    if (recheck) {
+      await closeUnstartedAttempt(c, run, { outcome: 'FAILED', reason: recheck.message });
+      return recheck;
     }
     if (!prior.connectionId || !prior.templateId || prior.templateVersion === null) {
       return refuse('TARGET_UNAVAILABLE', 'The attempt’s repository or template is not recorded');
@@ -371,14 +429,23 @@ async function answerReplay(
   return { data: replayData(prior), ok: true, status: 200 };
 }
 
-/** Close an attempt whose run was never started, with its target, as cancelled. */
+/**
+ * Close an attempt whose run was never started. `CANCELLED` closes the target too, because its
+ * campaign is closing. `FAILED` hands the target back as `PENDING`: the start was refused, not
+ * the work, and the reconciler decides what happens to it next.
+ */
 async function closeUnstartedAttempt(
   c: AttemptContext,
-  run: { attemptId: string; targetId: string; teamId: string }
+  run: { attemptId: string; targetId: string; teamId: string },
+  how: { outcome: 'CANCELLED' } | { outcome: 'FAILED'; reason: string }
 ): Promise<void> {
   const finishedAt = new Date();
   await c.fastify.prisma.campaignAttempt.updateMany({
-    data: { finishedAt, outcome: 'CANCELLED' },
+    data: {
+      finishedAt,
+      outcome: how.outcome,
+      ...(how.outcome === 'FAILED' ? { failureReason: how.reason } : {}),
+    },
     where: { finishedAt: null, id: run.attemptId },
   });
   await runUnscoped(
@@ -386,10 +453,54 @@ async function closeUnstartedAttempt(
     ['CampaignTarget'],
     () =>
       c.fastify.prisma.campaignTarget.updateMany({
-        data: { finishedAt, state: 'CANCELLED' },
+        data:
+          how.outcome === 'CANCELLED'
+            ? { finishedAt, state: 'CANCELLED' }
+            : { finishedAt: null, startedAt: null, state: 'PENDING' },
         where: { id: run.targetId, state: 'RUNNING', teamId: run.teamId },
       })
   );
+}
+
+/**
+ * Steps 1 and 2 again, for a replay that is about to start a run: the campaign is reconciled and
+ * `ACTIVE` or `STARTING`, `workflow.campaignsEnabled` holds for both teams, and the launcher is
+ * still the one the attempt was written for and still available. Returns the refusal, or null.
+ */
+async function recheckBeforeReplayStart(
+  c: AttemptContext,
+  now: {
+    launchedById: string | null;
+    orgId: string;
+    ownerTeamId: string;
+    state: string;
+    workflowKind: string;
+  } | null,
+  launcherId: string,
+  target: { connectionId: string | null; teamId: string }
+): Promise<ReturnType<typeof refuse> | null> {
+  if (now?.workflowKind !== 'RECONCILER' || (now.state !== 'ACTIVE' && now.state !== 'STARTING')) {
+    return refuse(
+      'CAMPAIGN_NOT_ACTIVE',
+      `The campaign is ${now?.state ?? 'gone'} and starts no attempt`
+    );
+  }
+  const { enabled } = await campaignsEnabledFor(c.fastify.prisma, now, target, launcherId);
+  if (!enabled) {
+    return refuse('CAMPAIGNS_DISABLED', CAMPAIGNS_DISABLED_MESSAGE);
+  }
+  if (now.launchedById !== launcherId) {
+    return refuse(
+      'LAUNCHER_UNAVAILABLE',
+      'The campaign’s launcher changed since the attempt was written; try again'
+    );
+  }
+  const availability = await checkLauncherAvailable(c.fastify.prisma, {
+    launchedById: now.launchedById,
+    orgId: now.orgId,
+    ownerTeamId: now.ownerTeamId,
+  });
+  return availability.ok ? null : refuse('LAUNCHER_UNAVAILABLE', availability.message);
 }
 
 /** The `budget` tier the campaign was launched with, read from the launch request stored once. */
@@ -479,7 +590,7 @@ export async function startCampaignAttempt(c: AttemptContext): Promise<AttemptRe
 
   // A retried call is answered with its first call's attempt, before any check.
   if (launcherId) {
-    const replay = await answerReplay(c, campaign, launcherId, target.teamId);
+    const replay = await answerReplay(c, campaign, launcherId, target);
     if (replay) {
       return replay;
     }
@@ -492,26 +603,9 @@ export async function startCampaignAttempt(c: AttemptContext): Promise<AttemptRe
   ) {
     return refuse('CAMPAIGN_NOT_ACTIVE', `The campaign is ${campaign.state} and starts no attempt`);
   }
-  const repoRows = target.connectionId
-    ? await loadLaunchRepos(prisma, launcherId ?? '', [target.connectionId])
-    : [];
-  const repo = repoRows[0];
-  const targetCtx = {
-    orgId: repo?.team.orgId ?? campaign.orgId,
-    teamId: repo?.teamId ?? target.teamId,
-  };
-  const [ownerEnabled, targetEnabled] = await Promise.all([
-    resolveSetting('workflow.campaignsEnabled', {
-      orgId: campaign.orgId,
-      teamId: campaign.ownerTeamId,
-    }),
-    resolveSetting('workflow.campaignsEnabled', targetCtx),
-  ]);
-  if (!ownerEnabled || !targetEnabled) {
-    return refuse(
-      'CAMPAIGNS_DISABLED',
-      'Campaigns are not enabled (workflow.campaignsEnabled) for the owning team or the target’s team'
-    );
+  const { enabled, repo } = await campaignsEnabledFor(prisma, campaign, target, launcherId);
+  if (!enabled) {
+    return refuse('CAMPAIGNS_DISABLED', CAMPAIGNS_DISABLED_MESSAGE);
   }
 
   // 2. The launcher: account, organization and the lead of the owning team.
@@ -645,6 +739,18 @@ export async function startCampaignAttempt(c: AttemptContext): Promise<AttemptRe
     priorN,
     targetId: target.id,
   };
+  const undoAttemptRows = async () => {
+    await prisma.campaignAttempt.deleteMany({ where: { id: attemptId } }).catch(() => undefined);
+    await runUnscoped(
+      'undoing the RUNNING state this call wrote for the target it started',
+      ['CampaignTarget'],
+      () =>
+        prisma.campaignTarget.updateMany({
+          data: { state: previousState as never },
+          where: { id: target.id, state: 'RUNNING', teamId: target.teamId },
+        })
+    ).catch(() => undefined);
+  };
   try {
     launch = await launchTrackedWorkflow(
       prisma,
@@ -685,9 +791,24 @@ export async function startCampaignAttempt(c: AttemptContext): Promise<AttemptRe
           );
         } catch (err) {
           // An execution of this very id exists: a start whose reply was lost (the child did start
-          // and the call errored). Adopt it, keeping the attempt row and the target's RUNNING state.
+          // and the call errored). Adopt it, keeping the attempt row and the target's RUNNING
+          // state, but only a running one: a closed execution still in Temporal's retention holds
+          // the id too (`REJECT_DUPLICATE`), and adopting it would answer 201 for a run that will
+          // never do the work. A state that cannot be read is ambiguous, like any failed start.
           if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
-            return;
+            const state = await fastify.temporal.workflowExecutionState(childWorkflowId);
+            if (state === 'running') {
+              return;
+            }
+            if (state === 'none') {
+              // It vanished between the refusal and the look: nothing to adopt, nothing started.
+              throw err;
+            }
+            await undoAttemptRows();
+            throw new AttemptRollback(
+              'TARGET_NOT_STARTABLE',
+              'An earlier run under this attempt’s id has closed; its id cannot be reused'
+            );
           }
           if (!isDefiniteNonStart(err)) {
             // The call failed but the execution may exist. Nothing is undone: the rows a retry
@@ -697,18 +818,7 @@ export async function startCampaignAttempt(c: AttemptContext): Promise<AttemptRe
           }
           // The run definitely did not start: the attempt and the target's state go back as they
           // were, and the ledger is compensated, so the worker's retry starts a clean one.
-          await prisma.campaignAttempt
-            .deleteMany({ where: { id: attemptId } })
-            .catch(() => undefined);
-          await runUnscoped(
-            'undoing the RUNNING state this call wrote for the target it started',
-            ['CampaignTarget'],
-            () =>
-              prisma.campaignTarget.updateMany({
-                data: { state: previousState as never },
-                where: { id: target.id, state: 'RUNNING', teamId: target.teamId },
-              })
-          ).catch(() => undefined);
+          await undoAttemptRows();
           throw err;
         }
       },
@@ -728,7 +838,9 @@ export async function startCampaignAttempt(c: AttemptContext): Promise<AttemptRe
         },
         log: c.log,
         retainLedgerOnStartError: (err) =>
-          getErrorName(err) !== 'WorkflowExecutionAlreadyStartedError' && !isDefiniteNonStart(err),
+          !(err instanceof AttemptRollback) &&
+          getErrorName(err) !== 'WorkflowExecutionAlreadyStartedError' &&
+          !isDefiniteNonStart(err),
         sourceAuthorization: { actor },
       }
     );
@@ -747,7 +859,7 @@ export async function startCampaignAttempt(c: AttemptContext): Promise<AttemptRe
     }
     // The ledger's unique rows decided a race: a retried call, or two calls for one attempt.
     if (launcherId) {
-      const replay = await answerReplay(c, campaign, launcherId, target.teamId);
+      const replay = await answerReplay(c, campaign, launcherId, target);
       if (replay) {
         return replay;
       }

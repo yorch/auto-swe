@@ -293,7 +293,9 @@ export async function CampaignReconcilerWorkflow(
     // A planned campaign is decomposed once, then waits for its launcher to confirm. Nothing
     // else runs while it is PLANNING: no check, no discovery, no start.
     if (c.state === 'PLANNING') {
-      if (c.plan === 'PLANNED' && !snap.planned && !planFailed) {
+      // A failure the campaign row already records (an earlier execution's, before a
+      // signal-with-start restart) counts as much as one this execution saw.
+      if (c.plan === 'PLANNED' && !snap.planned && !planFailed && !snap.planFailureRecorded) {
         try {
           const planned = await planActivities.planCampaignBriefs({ campaignId });
           if (planned.planned === 0) {

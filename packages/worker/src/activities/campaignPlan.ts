@@ -206,18 +206,20 @@ async function planImpl(
     const briefByRepo = new Map(planned.map((p) => [p.repoId, p.description]));
     const depsByRepo = new Map(entries.map((e) => [e.repoId, e.dependsOn]));
 
-    // Every target gets a brief, the planner's or else the campaign's own, so the launcher always
-    // reviews a complete plan: a repository the planner left out, and one whose connection is gone,
-    // carry the campaign brief. The briefs and the edges land together or not at all.
+    // Every target still without a brief gets one, the planner's or else the campaign's own, so the
+    // launcher always reviews a complete plan: a repository the planner left out, and one whose
+    // connection is gone, carry the campaign brief. A target that already has a brief was edited by
+    // its launcher (during the planner's call, or before a retry), and that edit wins: the write
+    // below matches only targets whose brief is still null, so the brief and the edges the planner
+    // chose for a target land together or not at all, and an edited target keeps both its brief and
+    // its own edges.
     const fallback = cleanBrief(campaign.description, campaign.description);
-    let edges = 0;
     const writes = allTargets.map((t) => {
       const repoId = planable.find((p) => p.id === t.id)?.connectionId;
       const dependsOn = (repoId ? (depsByRepo.get(repoId) ?? []) : []).flatMap((dep) => {
         const upstream = targetByRepo.get(dep);
         return upstream ? [upstream.id] : [];
       });
-      edges += dependsOn.length;
       return {
         brief: cleanBrief(repoId ? (briefByRepo.get(repoId) ?? '') : '', fallback),
         dependsOn,
@@ -225,7 +227,9 @@ async function planImpl(
         teamId: t.teamId,
       };
     });
+    let edges = 0;
     const applied = await prisma.$transaction(async (tx) => {
+      edges = 0;
       // Touching the campaign row first takes its row lock and proves it is still PLANNING (and a
       // reconciler campaign); a cancel or a confirm that got in first leaves nothing to write, and
       // one that comes after waits for this transaction to commit.
@@ -242,10 +246,13 @@ async function planImpl(
         return false;
       }
       for (const w of writes) {
-        await tx.campaignTarget.updateMany({
+        const written = await tx.campaignTarget.updateMany({
           data: { brief: w.brief, dependsOn: w.dependsOn },
-          where: { campaignId, id: w.id, teamId: w.teamId },
+          where: { brief: null, campaignId, id: w.id, teamId: w.teamId },
         });
+        if (written.count > 0) {
+          edges += w.dependsOn.length;
+        }
       }
       return true;
     });

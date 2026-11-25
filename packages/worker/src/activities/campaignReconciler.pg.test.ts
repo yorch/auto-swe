@@ -17,7 +17,7 @@ vi.mock('@temporalio/activity', async (importOriginal) => ({
   heartbeat: vi.fn(),
 }));
 
-import { onCampaignRunFinalized } from '../lib/campaignAttempts.js';
+import { onCampaignRunFinalized, reconcileCampaignAttempt } from '../lib/campaignAttempts.js';
 import { discoverCampaignTargets, runCampaignCheck } from './campaignCheck.js';
 import {
   cancelCampaignAttempts,
@@ -383,9 +383,17 @@ describe.skipIf(!enabled)('campaign reconciler against Postgres', () => {
       await prisma.activeWorkflow.create({
         data: { costUsdAccrued: 3, currentStatus: 'RUNNING', temporalWorkflowId: inflightWf },
       });
-      // Finished: the same spend sits on both ledgers; it must count once.
+      // Finished: both ledgers hold it, with DIFFERENT figures (the live row is 9, the settled run
+      // 4); the finalized run's figure wins and it counts once.
       await prisma.activeWorkflow.create({
-        data: { costUsdAccrued: 4, currentStatus: 'COMPLETED', temporalWorkflowId: doneWf },
+        data: { costUsdAccrued: 9, currentStatus: 'COMPLETED', temporalWorkflowId: doneWf },
+      });
+      // The in-flight attempt's run row exists but is not finalized and carries a stale 6, which
+      // the live ledger's 3 overrides.
+      const inflightRun = await makeRun({
+        costUsdAccrued: 6,
+        status: 'RUNNING',
+        workflowId: inflightWf,
       });
       const done = await makeRun({
         costUsdAccrued: 4,
@@ -396,7 +404,7 @@ describe.skipIf(!enabled)('campaign reconciler against Postgres', () => {
       const t1 = await makeTarget('RUNNING');
       const t2 = await makeTarget('PR_OPENED');
       const a1 = await prisma.campaignAttempt.create({
-        data: { childWorkflowId: inflightWf, n: 1, targetId: t1.id },
+        data: { childWorkflowId: inflightWf, n: 1, runId: inflightRun.id, targetId: t1.id },
       });
       await prisma.campaignAttempt.create({
         data: { childWorkflowId: doneWf, n: 1, runId: done.id, targetId: t2.id },
@@ -406,7 +414,7 @@ describe.skipIf(!enabled)('campaign reconciler against Postgres', () => {
         return (await readCampaignPass({ campaignId: ids.campaign }))?.campaign.budgetExceeded;
       };
       try {
-        // 3 (in flight) + 4 (finished, once) = 7.
+        // 3 (in flight, live ledger) + 4 (finished, the run's figure, once) = 7.
         expect(await exceeded(7)).toBe(true);
         expect(await exceeded(7.5)).toBe(false);
         expect(await exceeded(3.5)).toBe(true);
@@ -565,6 +573,41 @@ describe.skipIf(!enabled)('campaign reconciler against Postgres', () => {
       expect(regress).toMatchObject({ changed: true, regressions: 1, state: 'PENDING' });
       const after = await prisma.campaignTarget.findUniqueOrThrow({ where: { id: merged.id } });
       expect(after).toMatchObject({ finishedAt: null, regressions: 1, state: 'PENDING' });
+    });
+
+    it('uses the owning organization’s regression limit: the default of 3, and a lowered limit', async () => {
+      const target = await makeTarget('SATISFIED', { regressions: 1 });
+      const regress = () =>
+        runCampaignCheck(
+          { campaignId: ids.campaign, targetId: target.id },
+          { run: async () => belowOut }
+        );
+      _resetConfigCacheForTests();
+      expect(await regress()).toMatchObject({ regressions: 2, state: 'PENDING' });
+
+      const lowered = await makeTarget('SATISFIED', { regressions: 1 });
+      await prisma.configSetting.create({
+        data: {
+          key: 'workflow.campaignRegressionLimit',
+          orgId: ids.org,
+          scope: 'ORGANIZATION',
+          value: 1,
+        },
+      });
+      try {
+        _resetConfigCacheForTests();
+        expect(
+          await runCampaignCheck(
+            { campaignId: ids.campaign, targetId: lowered.id },
+            { run: async () => belowOut }
+          )
+        ).toMatchObject({ regressions: 2, state: 'NEEDS_ATTENTION' });
+      } finally {
+        await prisma.configSetting.deleteMany({
+          where: { key: 'workflow.campaignRegressionLimit', orgId: ids.org },
+        });
+        _resetConfigCacheForTests();
+      }
     });
 
     it('records that a check could not run without moving the target', async () => {
@@ -781,6 +824,67 @@ describe.skipIf(!enabled)('campaign reconciler against Postgres', () => {
       temporal.signal.mockClear();
       await onCampaignRunFinalized(run.id);
       expect(temporal.signal).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('an attempt whose run never started', () => {
+    it('closes the attempt and moves its live ledger row to FAILED, leaving a terminal one alone', async () => {
+      seq += 1;
+      const liveWf = `${PREFIX}never-${seq}`;
+      const doneWf = `${PREFIX}never-done-${seq}`;
+      await prisma.activeWorkflow.create({
+        data: { currentStatus: 'IMPLEMENTING', temporalWorkflowId: liveWf },
+      });
+      await prisma.activeWorkflow.create({
+        data: { currentStatus: 'COMPLETED', temporalWorkflowId: doneWf },
+      });
+      const t1 = await makeTarget('RUNNING');
+      const t2 = await makeTarget('RUNNING');
+      const a1 = await prisma.campaignAttempt.create({
+        data: { childWorkflowId: liveWf, n: 1, targetId: t1.id },
+      });
+      const a2 = await prisma.campaignAttempt.create({
+        data: { childWorkflowId: doneWf, n: 1, targetId: t2.id },
+      });
+      temporal.getHandle.mockReturnValue({
+        describe: vi.fn().mockResolvedValue({ status: { name: 'FAILED' } }),
+      });
+      const attempt = (a: { id: string }, wf: string, targetId: string) => ({
+        campaignWorkflowId: workflowId,
+        childWorkflowId: wf,
+        id: a.id,
+        n: 1,
+        reconciler: true,
+        runId: null,
+        startedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+        targetId,
+      });
+      try {
+        const live = await reconcileCampaignAttempt(attempt(a1, liveWf, t1.id), Date.now());
+        expect(live).toMatchObject({ attemptId: a1.id });
+        const row = await prisma.activeWorkflow.findUniqueOrThrow({
+          where: { temporalWorkflowId: liveWf },
+        });
+        expect(row.currentStatus).toBe('FAILED');
+        expect(
+          (await prisma.campaignAttempt.findUniqueOrThrow({ where: { id: a1.id } })).outcome
+        ).toBe('FAILED');
+
+        // A ledger that is already terminal is never rewritten.
+        await reconcileCampaignAttempt(attempt(a2, doneWf, t2.id), Date.now());
+        expect(
+          (
+            await prisma.activeWorkflow.findUniqueOrThrow({
+              where: { temporalWorkflowId: doneWf },
+            })
+          ).currentStatus
+        ).toBe('COMPLETED');
+      } finally {
+        await prisma.campaignAttempt.deleteMany({ where: { id: { in: [a1.id, a2.id] } } });
+        await prisma.activeWorkflow.deleteMany({
+          where: { temporalWorkflowId: { in: [liveWf, doneWf] } },
+        });
+      }
     });
   });
 

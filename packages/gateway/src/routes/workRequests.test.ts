@@ -363,6 +363,7 @@ describe('POST /api/v1/work-requests', () => {
       triggerRevalidationNow: async () => {},
       triggerWorkRequestSchedule: async () => {},
       workflowExecutionExists: async () => true,
+      workflowExecutionState: async () => 'running',
       workflowSettledStatus: async () => null,
     });
 
