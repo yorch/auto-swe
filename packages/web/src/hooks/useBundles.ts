@@ -108,6 +108,12 @@ export function useInstallBundleFromFile() {
 export function useExportBundle() {
   return useMutation({
     mutationFn: (body: { name: string; version: string; origin?: string }) =>
-      api.post<{ data: unknown }>(`${BASE}/export`, body).then((r) => r.data),
+      api.post<{ data: unknown; warnings?: unknown }>(`${BASE}/export`, body).then((r) => ({
+        manifest: r.data,
+        // An older gateway answers without `warnings`; never trust the shape.
+        warnings: Array.isArray(r.warnings)
+          ? r.warnings.filter((w): w is string => typeof w === 'string')
+          : [],
+      })),
   });
 }
