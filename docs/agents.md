@@ -679,11 +679,13 @@ An Agent bound to one or more harness profiles (plugins, [harness-profiles.md](.
 gets them on `claude-code` only: the implementer family, agent runs and `agent` nodes with a workspace
 resolve each approved snapshot, write it into the container under `/workspace/.harness/profiles/`, load
 its plugins in binding order, append each profile's instructions to the system prompt behind its own
-provenance line, add the union of their `Skill` and `Agent` tools (a `Skill` only for what a profile's
+provenance line, relay the tools of each plugin MCP server an administrator mapped to an `mcp` Connection, only where the
+agent's `toolKeys` enable MCP as they do for its own connection (the agent's own connection is unchanged; [harness-profiles.md §17](./harness-profiles.md#17-plugin-mcp-servers)),
+add the union of their `Skill` and `Agent` tools (a `Skill` only for what a profile's
 own plugins declare, an `Agent` only in the foreground on the session's model), and stop stray processes
 and rewrite the profile directories from the snapshots before every turn (defence in depth: the
 container's own report of its files is never trusted). A profile's hook configuration is left out of the
-container when its platform-wide hook switch is off: every auto-run source (hooks, skill and command frontmatter hooks, monitors and LSP servers), with the run keeping the switch it pinned at its start. On any other loop the run proceeds without the
+container when its platform-wide hook switch is off: every auto-run source (hooks, frontmatter hooks in any markdown file of the plugin, monitors and LSP servers), with the run keeping the switch it pinned at its start. A plugin whose frontmatter cannot be read safely, including a skill or command whose frontmatter key is not a plain name, is refused with `PROFILE_HOOKS_UNREADABLE` ([harness-profiles.md §7](./harness-profiles.md#7-the-hook-switch)). On any other loop the run proceeds without the
 profiles and an `agent.profile_not_applicable` event says so; a profile that cannot be resolved fails a
 Claude Code run closed.
 
@@ -2221,6 +2223,7 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
 | `HarnessProfileVersion` | `harness_profile_versions` | One immutable, content-hashed snapshot of a profile at an exact commit |
 | `MarketplaceSource` | `marketplace_sources` | A tracked plugin marketplace (`.claude-plugin/marketplace.json`), pinned to the commit its catalog was read at ([harness-profiles.md §11](./harness-profiles.md#11-marketplaces)) |
 | `PluginEnablement` | `plugin_enablements` | A team's enablement of one approved profile; a TEAM-scoped binding on that team's agents needs one ([harness-profiles.md §12](./harness-profiles.md#12-team-enablement)) |
+| `PluginMcpMapping` | `plugin_mcp_mappings` | An administrator's mapping of one HTTP MCP server a plugin declares to an `mcp` Connection, relayed to the agents bound to that plugin ([harness-profiles.md §17](./harness-profiles.md#17-plugin-mcp-servers)) |
 | `Agent` | `agents` | Single source of truth per key/scope: model spec, system prompt, credential pin, tool keys, skill refs, runtime, reasoning level (versioned) |
 | `AgentSkillRef` | `agent_skill_refs` | Join from an `Agent` to a `Skill` with `sortOrder` |
 | `ProviderCredential` | `provider_credentials` | AES-256-GCM encrypted API keys per provider per scope |

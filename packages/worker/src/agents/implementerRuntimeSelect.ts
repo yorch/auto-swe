@@ -190,6 +190,8 @@ export async function buildImplementerTurnRunner(input: {
     ...(browserToolset ? { browserToolset } : {}),
     // The approved profiles the Agent is bound to (Claude Code only; see above).
     ...(profiles ? { profiles } : {}),
+    // The plugins' mapped MCP connections are held to the rule the Agent's own is: its tenant.
+    ...(profiles ? { pluginMcp: { tenant: input.ctx, toolKeys: config.toolKeys } } : {}),
     // The tools and skills that are the worker's on either loop: the memory
     // tools bound to this repository, learning submission, the catalog
     // installer, and skills disclosed by name instead of inlined.

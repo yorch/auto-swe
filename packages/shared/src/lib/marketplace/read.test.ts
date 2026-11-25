@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { type SkillSourceDeps, SkillSourceError } from '../skillSource/index.js';
-import { parseMarketplace } from './parse.js';
+import { ENTRY_REASONS, parseMarketplace } from './parse.js';
 import { entryFolder, MarketplaceInvalid, readMarketplace } from './read.js';
+import { treeHub } from './treeHub.testing.js';
 
 const SHA = 'a'.repeat(40);
 const blobId = (b: Buffer) =>
@@ -186,5 +187,162 @@ describe('entryFolder', () => {
   it('throws for an entry that is not installable', () => {
     const [e] = parsed([{ name: 'a', source: 'https://x/y.git' }]);
     expect(() => entryFolder(market, e as never, SHA)).toThrow(MarketplaceInvalid);
+  });
+});
+
+describe('readMarketplace on a repository whose recursive tree is truncated', () => {
+  const files = [
+    { content: 'x'.repeat(10), path: 'README.md' },
+    { content: 'y', path: 'plugins/a/commands/hi.md' },
+    { content: CATALOG, path: '.claude-plugin/marketplace.json' },
+    { content: CATALOG, path: 'sub/.claude-plugin/marketplace.json' },
+    { content: 'z', path: 'sub/other/file.md' },
+  ];
+  const truncatedRoot = (dir: string, recursive: boolean) => dir === '' && recursive;
+  const depsOf = (h: { fetchFn: typeof fetch }, over: Partial<SkillSourceDeps> = {}) => ({
+    ...deps(hub([])),
+    fetch: h.fetchFn,
+    ...over,
+  });
+
+  it('lists only the directories on the way to the catalog', async () => {
+    const h = treeHub(files, { commit: SHA, truncated: truncatedRoot });
+    const r = await readMarketplace(loc, {}, depsOf(h));
+    expect(r.marketplace.name).toBe('m');
+    // ref, recursive root (truncated), root, `.claude-plugin` (whole), the blob
+    expect(h.mock).toHaveBeenCalledTimes(5);
+    expect(h.urls.some((u) => u.includes('/plugins'))).toBe(false);
+  });
+
+  it('walks down to a catalog under a path', async () => {
+    const h = treeHub(files, { commit: SHA, truncated: truncatedRoot });
+    const r = await readMarketplace({ ...loc, path: 'sub' }, {}, depsOf(h));
+    expect(r.marketplace.name).toBe('m');
+    expect(r.location.path).toBe('sub');
+  });
+
+  it('lists a truncated catalog directory one level at a time', async () => {
+    const h = treeHub(files, {
+      commit: SHA,
+      truncated: (dir, recursive) => (dir === '' || dir === '.claude-plugin') && recursive,
+    });
+    const r = await readMarketplace(loc, {}, depsOf(h));
+    expect(r.marketplace.name).toBe('m');
+  });
+
+  it('treats a missing directory as a missing catalog', async () => {
+    const h = treeHub(files, { commit: SHA, truncated: truncatedRoot });
+    await expect(readMarketplace({ ...loc, path: 'nope' }, {}, depsOf(h))).rejects.toBeInstanceOf(
+      MarketplaceInvalid
+    );
+  });
+
+  it('refuses when a directory it needs cannot be listed whole', async () => {
+    const h = treeHub(files, { commit: SHA, truncated: (dir) => dir === '' });
+    await expect(readMarketplace(loc, {}, depsOf(h))).rejects.toMatchObject({
+      code: 'TREE_TRUNCATED',
+    });
+    const h2 = treeHub(files, {
+      commit: SHA,
+      truncated: (dir) => dir === '' || dir === '.claude-plugin',
+    });
+    await expect(readMarketplace(loc, {}, depsOf(h2))).rejects.toMatchObject({
+      code: 'TREE_TRUNCATED',
+    });
+  });
+
+  it('stays inside the request budget', async () => {
+    const h = treeHub(files, { commit: SHA, truncated: truncatedRoot });
+    await expect(
+      readMarketplace(loc, {}, depsOf(h, { limits: { maxRequests: 3 } }))
+    ).rejects.toMatchObject({ code: 'LIMIT_REQUESTS' });
+  });
+
+  it('keeps the size and object id checks on the fallback path', async () => {
+    const h = treeHub(files, { commit: SHA, truncated: truncatedRoot });
+    const bad = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const res = await (h.fetchFn as unknown as (u: unknown, i?: unknown) => Promise<Response>)(
+        url,
+        init
+      );
+      if (String(url).includes('/git/blobs/')) {
+        return new Response(
+          JSON.stringify({
+            content: Buffer.from('tampered').toString('base64'),
+            encoding: 'base64',
+          }),
+          { status: 200 }
+        );
+      }
+      return res;
+    });
+    await expect(
+      readMarketplace(loc, {}, depsOf(h, { fetch: bad as unknown as typeof fetch }))
+    ).rejects.toMatchObject({ code: 'BAD_RESPONSE' });
+  });
+});
+
+describe('entry source hosts', () => {
+  const GHE = 'ghe.example.com';
+  const catalog = (plugins: unknown[]) => JSON.stringify({ name: 'm', plugins });
+  const gh = (extra: Record<string, unknown> = {}) => ({
+    name: 'x',
+    source: { repo: 'a/b', source: 'github', ...extra },
+  });
+  const read = async (
+    market: string,
+    plugins: unknown[],
+    approved: string[],
+    over: Partial<SkillSourceDeps> = {}
+  ) => {
+    const f = hub([{ content: catalog(plugins), path: '.claude-plugin/marketplace.json' }]);
+    const r = await readMarketplace(
+      { ...loc, host: market },
+      {},
+      { ...deps(f), approvedHosts: async () => approved, ...over }
+    );
+    return r.marketplace.entries;
+  };
+
+  it('defaults a GitHub entry to the marketplace repository host', async () => {
+    const [e] = await read(GHE, [gh()], [GHE]);
+    expect(e).toMatchObject({ installable: true, source: { host: GHE, kind: 'github' } });
+    const [g] = await read('github.com', [gh()], []);
+    expect(g).toMatchObject({ installable: true, source: { host: 'github.com' } });
+  });
+
+  it('accepts an entry that names another approved host', async () => {
+    const [e] = await read('github.com', [gh({ host: 'GHE.example.com' })], [GHE]);
+    expect(e).toMatchObject({ installable: true, source: { host: GHE } });
+    const [f] = await read(GHE, [gh({ host: 'github.com' })], [GHE]);
+    expect(f).toMatchObject({ installable: true, source: { host: 'github.com' } });
+  });
+
+  it('lists an entry on an unapproved host, not installable, with the fixed reason', async () => {
+    const [e] = await read('github.com', [gh({ host: 'evil.example.com' })], [GHE]);
+    expect(e).toMatchObject({ installable: false, reason: ENTRY_REASONS.HOST_NOT_APPROVED });
+    expect(e?.source).toMatchObject({ host: 'evil.example.com', kind: 'github' });
+    expect(() => entryFolder(loc, e as never, SHA)).toThrow(MarketplaceInvalid);
+  });
+
+  it('refuses an Enterprise entry host in a github.com marketplace unless approved', async () => {
+    const [refused] = await read('github.com', [gh({ host: GHE })], []);
+    expect(refused?.installable).toBe(false);
+    const [allowed] = await read('github.com', [gh({ host: GHE })], [GHE]);
+    expect(allowed?.installable).toBe(true);
+  });
+
+  it('refuses an approved host that is a private address unless opted in', async () => {
+    const [refused] = await read('github.com', [gh({ host: '10.0.0.5' })], ['10.0.0.5']);
+    expect(refused?.installable).toBe(false);
+    const [allowed] = await read('github.com', [gh({ host: '10.0.0.5' })], ['10.0.0.5'], {
+      privateNetworkHosts: async () => ['10.0.0.5'],
+    });
+    expect(allowed?.installable).toBe(true);
+  });
+
+  it('refuses a host that is not a host name', async () => {
+    const [e] = await read('github.com', [gh({ host: 'a/b' })], []);
+    expect(e).toMatchObject({ installable: false, reason: ENTRY_REASONS.INVALID_REPO });
   });
 });

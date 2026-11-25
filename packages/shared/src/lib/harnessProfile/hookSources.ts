@@ -1,5 +1,13 @@
 import { createHash } from 'node:crypto';
-import { isAlias, isMap, isScalar, type Pair, parseDocument as parseYaml, visit } from 'yaml';
+import {
+  isAlias,
+  isMap,
+  isScalar,
+  isSeq,
+  type Pair,
+  parseDocument as parseYaml,
+  visit,
+} from 'yaml';
 import { safeDisplayPath } from '../skillSource/display.js';
 import { unsafeProfilePath } from './paths.js';
 import type { ProfileFile } from './types.js';
@@ -16,8 +24,10 @@ import type { ProfileFile } from './types.js';
  * The kinds:
  *  - `hooks-file`: `hooks/hooks.json`;
  *  - `plugin-json-hooks`: `hooks` in `plugin.json`, inline or naming a file;
- *  - `frontmatter-hooks`: a `hooks` key in the YAML frontmatter of a skill or command `.md`, which
- *    the harness's plugin loader attaches to the command;
+ *  - `frontmatter-hooks`: a `hooks` key in the YAML frontmatter of a `.md` file anywhere in the
+ *    plugin folder (skills and commands, but also agents, output styles and docs, since the loader
+ *    may read any of them as a skill or command), which the harness's plugin loader attaches to
+ *    the command;
  *  - `monitors`: `monitors/monitors.json`, `plugin.json` `monitors` and `experimental.monitors`
  *    (background watch scripts the host arms, unsandboxed, at the trust tier of hooks);
  *  - `lsp`: `.lsp.json` and `plugin.json` `lspServers` (language servers the host launches).
@@ -200,6 +210,13 @@ const isSkillFile = (p: string) => /(^|\/)skill\.md$/i.test(p);
 interface MdCandidates {
   /** Skill and command markdown files the harness loads, by path. */
   paths: Set<string>;
+  /**
+   * Every other `.md` file inside the plugin folder, at any depth (agents, output styles, docs,
+   * nested folders). The harness may load one as a skill or command by a route this module does
+   * not model, so each is a candidate; `readFrontmatter` is told it is not a known loader path so
+   * a file that cannot hold a `hooks` key costs no YAML parse.
+   */
+  others: Set<string>;
   /** `skills` / `commands` references that cannot be followed: [ref, why]. */
   unresolved: { key: string; ref: string; why: string }[];
 }
@@ -215,6 +232,7 @@ function markdownCandidates(
   manifestDoc: unknown
 ): MdCandidates {
   const paths = new Set<string>();
+  const others = new Set<string>();
   const unresolved: MdCandidates['unresolved'] = [];
   for (const f of files) {
     if (f.path.startsWith(`${dir}/skills/`) && isSkillFile(f.path)) {
@@ -251,7 +269,19 @@ function markdownCandidates(
       }
     }
   }
-  return { paths, unresolved };
+  for (const f of files) {
+    // Vendored dependencies are never a plugin's own skill, command or agent file; one the manifest
+    // names directly is already in `paths`.
+    if (
+      f.path.startsWith(`${dir}/`) &&
+      isMarkdown(f.path) &&
+      !paths.has(f.path) &&
+      !f.path.split('/').includes('node_modules')
+    ) {
+      others.add(f.path);
+    }
+  }
+  return { others, paths, unresolved };
 }
 
 // --- frontmatter -----------------------------------------------------------------------------
@@ -290,6 +320,33 @@ const LOADER_OPENER = /^---\s*\n/;
 const LOADER_FRONTMATTER = /^---\s*\n([\s\S]*?)---\s*\n?/;
 /** Text in the loader's reading that makes a disagreement with ours matter. */
 const RISKY_TEXT = /hooks|\\|<</i;
+
+/**
+ * Text that can spell a `hooks` key: the word itself, or a backslash (a double-quoted YAML key may
+ * write it as an escape, `"\\x68ooks"`). A markdown file outside the known skill and command
+ * locations whose frontmatter has neither cannot declare hooks, so it is not parsed.
+ */
+const GENERIC_RISKY_TEXT = /hooks|\\/i;
+
+/** Lossy UTF-8 decode (replacement characters), only to find where a generic file's frontmatter is. */
+const lossy = (bytes: Buffer): string =>
+  new TextDecoder('utf-8', { fatal: false, ignoreBOM: true }).decode(bytes);
+
+/**
+ * Conservative line scan: does `front` have a line that could open a top-level `hooks` key?
+ * Column 0, optional quote, `hooks`, optional quote, colon; also a quoted key with an escape in
+ * it, or a `?` complex-key marker, either of which could spell `hooks` some other way.
+ */
+function maySpellHooksKey(front: string): boolean {
+  return front
+    .split(/\r\n|\n|\r/)
+    .some(
+      (line) =>
+        /^["']?hooks["']?\s*:/i.test(line) ||
+        /^["'][^\n]*\\[^\n]*["']\s*:/.test(line) ||
+        /^\?/.test(line)
+    );
+}
 
 /** Whether any key of `doc`, at any depth, is a YAML merge key. */
 function hasMergeKey(doc: ReturnType<typeof parseYaml>): boolean {
@@ -342,9 +399,54 @@ function retryVariant(front: string): string {
 }
 
 /**
+ * A top-level key as the harness's reader (`Bun.YAML`) names it: the key is coerced the way JS
+ * `String(key)` does, so a sequence key `[hooks]` or `[[hooks]]` becomes the property `hooks`. Null
+ * when the coercion cannot be worked out (an alias), which callers treat as "could be hooks".
+ */
+function coercedKey(node: unknown, nested = false): string | null {
+  if (node === null || node === undefined) {
+    return nested ? '' : 'null';
+  }
+  if (isScalar(node)) {
+    const v = node.value;
+    return v === null || v === undefined ? (nested ? '' : 'null') : String(v);
+  }
+  if (isSeq(node)) {
+    const parts: string[] = [];
+    for (const item of node.items) {
+      const c = coercedKey(item, true);
+      if (c === null) {
+        return null;
+      }
+      parts.push(c);
+    }
+    return parts.join(',');
+  }
+  if (isMap(node)) {
+    return '[object Object]';
+  }
+  return null;
+}
+
+/** A key written as a bare or quoted name: a scalar with no anchor and no tag. */
+const isPlainKey = (key: unknown): boolean => isScalar(key) && !key.anchor && !key.tag;
+
+/** The keys of a document's top-level mapping (none when the document is not a mapping). */
+const topLevelKeys = (doc: ReturnType<typeof parseYaml>): unknown[] =>
+  isMap(doc.contents) ? doc.contents.items.map((p) => p.key) : [];
+
+/** Whether the harness's reader would name this key `hooks` (or we cannot tell). */
+const keyMayBeHooks = (key: unknown): boolean => {
+  const c = coercedKey(key);
+  return c === null || c === 'hooks';
+};
+
+/**
  * Whether the harness's own reading of `front` could find a top-level `hooks` key: parsed with YAML
- * merge keys ON, both as written and as its quote-and-retab retry text. Only called on text that has
- * no alias (so nothing here can expand).
+ * merge keys ON, both as written and as its quote-and-retab retry text, and with every key named
+ * the way the harness names it (a sequence key `[hooks]` is `hooks` there). Only the document tree is
+ * walked, so nothing expands. A merge key or an alias also counts: it is not followed, so it cannot
+ * be shown to hide no `hooks` key.
  */
 function harnessSeesHooks(front: string): boolean {
   for (const text of [front, retryVariant(front)]) {
@@ -353,13 +455,7 @@ function harnessSeesHooks(front: string): boolean {
       if (doc.errors.length > 0) {
         continue;
       }
-      const value = doc.toJS() as unknown;
-      if (
-        value !== null &&
-        typeof value === 'object' &&
-        !Array.isArray(value) &&
-        Object.hasOwn(value, 'hooks')
-      ) {
+      if (topLevelKeys(doc).some(keyMayBeHooks) || hasMergeKey(doc) || hasAlias(doc)) {
         return true;
       }
     } catch {
@@ -369,6 +465,56 @@ function harnessSeesHooks(front: string): boolean {
   return false;
 }
 
+function hasAlias(doc: ReturnType<typeof parseYaml>): boolean {
+  let aliased = false;
+  visit(doc, {
+    Alias() {
+      aliased = true;
+      return visit.BREAK;
+    },
+  });
+  return aliased || isAlias(doc.contents);
+}
+
+/**
+ * A generic file (not loadable as a skill or command) whose frontmatter we cannot read cleanly.
+ * It is not a hook source only when the text is not valid YAML as the loader reads it, or reads
+ * with no `hooks` key, AND no line could open a top-level `hooks` key; any doubt is `unreadable`.
+ */
+function genericVerdict(loader: string): Frontmatter {
+  const refuse = (why: string): Frontmatter => ({
+    digest: sha256(loader),
+    kind: 'unreadable',
+    why,
+  });
+  if (maySpellHooksKey(loader)) {
+    return refuse('its frontmatter may declare hooks and is not read cleanly');
+  }
+  const retried = () =>
+    harnessSeesHooks(loader)
+      ? refuse('its frontmatter is read differently by the loader')
+      : ({ kind: 'none' } as const);
+  let doc: ReturnType<typeof parseYaml>;
+  try {
+    doc = parseYaml(loader, { merge: true, uniqueKeys: false });
+  } catch {
+    // Strict parsing failed: the harness retries on a quoted, retabbed text and may then read hooks.
+    return retried();
+  }
+  if (doc.errors.length > 0) {
+    return retried();
+  }
+  if (
+    hasAlias(doc) ||
+    hasMergeKey(doc) ||
+    !topLevelKeys(doc).every(isPlainKey) ||
+    harnessSeesHooks(loader)
+  ) {
+    return refuse('its frontmatter is read differently by the loader');
+  }
+  return { kind: 'none' };
+}
+
 /**
  * Locate and parse a markdown file's YAML frontmatter exactly where the loader does: after one BOM,
  * `^---\s*\n`, up to the first `---` anywhere. Tolerates CRLF. A file whose frontmatter we cannot
@@ -376,10 +522,17 @@ function harnessSeesHooks(front: string): boolean {
  * that uses a merge key, or in which the loader's YAML reading shows a `hooks` key ours does not, is
  * `unreadable`, never "no frontmatter".
  */
-function readFrontmatter(bytes: Buffer): Frontmatter {
-  const text = utf8(bytes, true);
+function readFrontmatter(bytes: Buffer, generic = false): Frontmatter {
+  let text = utf8(bytes, true);
+  let lossyText = false;
   if (text === null) {
-    return { digest: sha256(bytes), kind: 'unreadable', why: 'not valid UTF-8' };
+    if (!generic) {
+      return { digest: sha256(bytes), kind: 'unreadable', why: 'not valid UTF-8' };
+    }
+    // A file the harness cannot load as a skill or command (a latin1 README): decode lossily just
+    // to find its frontmatter. It is never rewritten, so a source in it is refused below.
+    text = lossy(bytes);
+    lossyText = true;
   }
   const bom = text.charCodeAt(0) === 0xfeff ? 1 : 0;
   const body = text.slice(bom);
@@ -389,6 +542,21 @@ function readFrontmatter(bytes: Buffer): Frontmatter {
     // The loader finds no frontmatter, so it attaches no hooks.
     return { kind: 'none' };
   }
+  if (generic && !GENERIC_RISKY_TEXT.test(loader)) {
+    // Not a skill or command location, and nothing here can name `hooks`: leave it alone.
+    return { kind: 'none' };
+  }
+  if (lossyText) {
+    const fm = readFrontmatter(Buffer.from(text, 'utf8'), true);
+    if (fm.kind === 'ok' && fm.pairs.length > 0) {
+      return {
+        digest: sha256(bytes),
+        kind: 'unreadable',
+        why: 'not valid UTF-8 and its frontmatter has a hooks key',
+      };
+    }
+    return fm.kind === 'ok' ? { kind: 'none' } : fm;
+  }
   const start = bom + opener[0].length;
   const loaderEnd = start + loader.length;
   const closing = /^---[ \t]*(?:\r\n|\n|\r|$)/gm;
@@ -396,6 +564,10 @@ function readFrontmatter(bytes: Buffer): Frontmatter {
   let match = closing.exec(text);
   while (match && !(text[match.index - 1] === '\n' || text[match.index - 1] === '\r')) {
     match = closing.exec(text);
+  }
+  if (generic && (!match || match.index !== loaderEnd)) {
+    // The loader stops at a `---` that is not a fence line. Judge what the loader reads.
+    return genericVerdict(loader);
   }
   if (!match || match.index !== loaderEnd) {
     if (RISKY_TEXT.test(loader)) {
@@ -415,6 +587,9 @@ function readFrontmatter(bytes: Buffer): Frontmatter {
   const front = text.slice(start, end);
   const doc = parseDocument(front);
   if (!doc || doc.errors.length > 0) {
+    if (generic && doc) {
+      return genericVerdict(front);
+    }
     return {
       digest: sha256(front),
       kind: 'unreadable',
@@ -426,6 +601,15 @@ function readFrontmatter(bytes: Buffer): Frontmatter {
       digest: sha256(front),
       kind: 'unreadable',
       why: 'its frontmatter uses a YAML merge key',
+    };
+  }
+  if (!topLevelKeys(doc).every(isPlainKey)) {
+    // The harness names a key by coercing it to a string, so `[hooks]:`, `[[hooks]]:`, `? - hooks`
+    // and a tagged or anchored `hooks` are all its `hooks` key. We neither follow nor rewrite those.
+    return {
+      digest: sha256(front),
+      kind: 'unreadable',
+      why: 'its frontmatter has a key that is not a plain name',
     };
   }
   const pairs: Pair[] = [];
@@ -498,7 +682,11 @@ function withoutHooksKey(path: string, fm: Extract<Frontmatter, { kind: 'ok' }>)
   // Verify: the other keys are unchanged, no hooks key is left, and the body is byte-identical.
   const before = parseDocument(original)?.toJS() as unknown;
   const reread = readFrontmatter(Buffer.from(out, 'utf8'));
-  if (reread.kind !== 'ok' || reread.pairs.length > 0) {
+  if (
+    reread.kind !== 'ok' ||
+    reread.pairs.length > 0 ||
+    topLevelKeys(reread.doc).some(keyMayBeHooks)
+  ) {
     throw fail('the hooks key could not be removed from its frontmatter');
   }
   const after = reread.doc.toJS() as unknown;
@@ -615,12 +803,16 @@ export function autoRunSourcesOf(
         unreadable: u.why,
       });
     }
-    for (const path of [...md.paths].sort()) {
+    const candidates = [
+      ...[...md.paths].map((path) => ({ generic: false, path })),
+      ...[...md.others].map((path) => ({ generic: true, path })),
+    ].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    for (const { generic, path } of candidates) {
       const file = byPath.get(path);
       if (!file) {
         continue;
       }
-      const fm = readFrontmatter(file.bytes);
+      const fm = readFrontmatter(file.bytes, generic);
       if (fm.kind === 'unreadable') {
         add({
           commands: [],
@@ -653,8 +845,8 @@ export function autoRunSourcesOf(
  *  - `hooks/hooks.json`, `monitors/monitors.json`, `.lsp.json` and every file `plugin.json` names
  *    under `hooks`, `monitors`, `experimental.monitors` or `lspServers` are left out;
  *  - `plugin.json` is written again without those keys (and nothing else changed);
- *  - every skill and command `.md` is written again without its `hooks` frontmatter key, the body
- *    byte for byte.
+ *  - every `.md` file of the plugin whose frontmatter has a `hooks` key is written again without
+ *    it, the body byte for byte; other markdown is written as it is.
  *
  * Scripts and executables are still written. The input is never altered. Throws
  * `AutoRunSourceError` for a plugin directory that is not a safe path, a missing or unparseable
@@ -730,12 +922,16 @@ export function stripAutoRunSources(
       const u = md.unresolved[0];
       throw fail(`a ${u?.key} ${u?.why}`);
     }
-    for (const path of md.paths) {
+    const candidates = [
+      ...[...md.paths].map((path) => ({ generic: false, path })),
+      ...[...md.others].map((path) => ({ generic: true, path })),
+    ];
+    for (const { generic, path } of candidates) {
       const file = byPath.get(path);
       if (!file || dropped.has(path)) {
         continue;
       }
-      const fm = readFrontmatter(file.bytes);
+      const fm = readFrontmatter(file.bytes, generic);
       if (fm.kind === 'unreadable') {
         throw fail(`${display(path)}: ${fm.why}`);
       }

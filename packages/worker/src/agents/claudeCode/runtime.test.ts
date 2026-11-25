@@ -35,6 +35,7 @@ const h = vi.hoisted(() => ({
   decideToolCall: vi.fn(),
   ensureProfile: vi.fn(async () => {}),
   heartbeat: vi.fn(),
+  pluginBindings: vi.fn(),
   queryCalls: [] as { options: QueryOptions; prompt: string }[],
   script: [] as [unknown[], unknown?, Promise<unknown>?][],
   spawn: vi.fn(),
@@ -103,6 +104,10 @@ vi.mock('./binary.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./binary.js')>()),
   binarySha256: vi.fn(async () => BINARY_SHA),
   resolveClaudeBinary: vi.fn(() => '/app/node_modules/sdk-linux-x64-musl/claude'),
+}));
+vi.mock('../../lib/config/pluginMcp.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/config/pluginMcp.js')>()),
+  resolvePluginMcpBindings: h.pluginBindings,
 }));
 vi.mock('./profile.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./profile.js')>()),
@@ -250,6 +255,7 @@ beforeEach(() => {
   h.decideToolCall.mockResolvedValue({ allow: true });
   h.activityCancellationSignal.mockReturnValue(undefined);
   h.spawn.mockReturnValue({ pid: 1 });
+  h.pluginBindings.mockResolvedValue([]);
   h.transcriptRecorder = undefined;
   steeringDb.fail = false;
   steeringDb.queries = 0;
@@ -2750,5 +2756,178 @@ describe('a harness profile', () => {
     expect(options.tools).toEqual(['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep']);
     expect(options.systemPrompt.append).toBe('Base.');
     expect(h.ensureProfile).not.toHaveBeenCalled();
+  });
+});
+
+describe('the plugins’ mapped MCP connections', () => {
+  const PROFILE = {
+    commitSha: 'c0ffee'.padEnd(40, '1'),
+    contentHash: 'ab12cd34ef56'.padEnd(64, '0'),
+    files: [
+      { bytes: Buffer.from('Be careful.\n'), mode: '100644', path: 'INSTRUCTIONS.md' },
+      { bytes: Buffer.from('{}'), mode: '100644', path: 'profile.json' },
+    ],
+    hooksEnabled: true,
+    hooksLive: true,
+    hooksPinned: true,
+    manifest: { description: 'd', instructions: 'INSTRUCTIONS.md', name: 'demo' },
+    name: 'demo',
+    version: 4,
+  };
+  const binding = (server: string, url: string) => ({
+    connectionId: `conn-${server}`,
+    key: `a_${server}`,
+    plugin: 'a',
+    server,
+    target: { url },
+  });
+  const remote = (names: string[]) => ({
+    callTimeoutMs: 777,
+    close: vi.fn(async () => {}),
+    createServer: () => ({ close: relay.serverClose, marker: 'plugin server' }),
+    tools: names.map((name) => ({ inputSchema: { type: 'object' }, name })),
+  });
+  const withEvents = (overrides: Record<string, unknown> = {}) => {
+    const events: { name: string; outputJson: unknown }[] = [];
+    const tracer = {
+      addActivityEvent: (e: { name: string; outputJson: unknown }) => events.push(e),
+      addToolCall: vi.fn(),
+    };
+    return {
+      events,
+      ...setup({
+        modelProxy: null,
+        pluginMcp: { tenant: { teamId: 't1' }, toolKeys: null },
+        profiles: [PROFILE],
+        tracer,
+        ...overrides,
+      }),
+    };
+  };
+
+  it('relays each mapped connection under its own server, beside the Agent’s own, and allows exactly those tools', async () => {
+    const own = remote(['search']);
+    const docs = remote(['lookup']);
+    const wiki = remote(['page']);
+    relay.open.mockResolvedValueOnce(own).mockResolvedValueOnce(docs).mockResolvedValueOnce(wiki);
+    h.pluginBindings.mockResolvedValue([
+      binding('docs', 'https://docs.example/mcp'),
+      binding('wiki', 'https://wiki.example/mcp'),
+    ]);
+    const { events, runtime } = withEvents({ mcp: { url: 'https://own.example/mcp' } });
+    h.script.push([[init('s1'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+
+    expect(h.pluginBindings).toHaveBeenCalledTimes(1);
+    expect(h.pluginBindings.mock.calls[0]?.[0]).toMatchObject({
+      profiles: [PROFILE],
+      tenant: { teamId: 't1' },
+    });
+    const options = h.queryCalls[0]?.options as QueryOptions;
+    expect(Object.keys(options.mcpServers as object).sort()).toEqual([
+      'a_docs',
+      'a_wiki',
+      'connection',
+    ]);
+    expect(options.mcpServers).toMatchObject({
+      a_docs: { name: 'a_docs', timeout: 777, type: 'sdk' },
+    });
+    expect(options.strictMcpConfig).toBe(true);
+
+    // Each plugin connection opens through the Agent's own relay code, which drops names that cannot be served.
+    const accept = relay.open.mock.calls[1]?.[2] as { acceptTool: (n: string) => boolean };
+    expect(accept.acceptTool('lookup')).toBe(true);
+    expect(accept.acceptTool('bad.name')).toBe(false);
+
+    await options.hooks.PreToolUse[0]?.hooks[0]?.(
+      { cwd: '/workspace/target-repo', tool_input: {}, tool_name: 'mcp__a_docs__lookup' },
+      't'
+    );
+    const ctx = h.decideToolCall.mock.calls[0]?.[2] as { mcpTools: string[] };
+    expect(ctx.mcpTools).toEqual([
+      'mcp__connection__search',
+      'mcp__a_docs__lookup',
+      'mcp__a_wiki__page',
+    ]);
+
+    // One event per plugin: servers, connection ids, tool counts; never an address.
+    const mcpEvents = events.filter((e) => e.name === 'agent.plugin_mcp');
+    expect(mcpEvents).toHaveLength(1);
+    expect(mcpEvents[0]?.outputJson).toEqual({
+      plugin: 'a',
+      servers: [
+        { connectionId: 'conn-docs', server: 'docs', tools: 1 },
+        { connectionId: 'conn-wiki', server: 'wiki', tools: 1 },
+      ],
+    });
+    expect(JSON.stringify(events)).not.toMatch(/https?:\/\//);
+
+    await runtime.close?.();
+    expect(own.close).toHaveBeenCalledTimes(1);
+    expect(docs.close).toHaveBeenCalledTimes(1);
+    expect(wiki.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands the Agent’s toolKeys to the binding resolver, which gates the plugin servers on them', async () => {
+    h.pluginBindings.mockResolvedValue([]);
+    const { runtime } = withEvents({
+      pluginMcp: { tenant: { teamId: 't1' }, toolKeys: ['readFile', 'bash'] },
+      toolKeys: ['readFile', 'bash'],
+    });
+    h.script.push([[init('s1'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    expect(h.pluginBindings.mock.calls[0]?.[0]).toMatchObject({ toolKeys: ['readFile', 'bash'] });
+    expect(relay.open).not.toHaveBeenCalled();
+  });
+
+  it('closes the browser toolset even when opening the plugin relays rejected', async () => {
+    h.pluginBindings.mockRejectedValue(new Error('binding read failed'));
+    const browserToolset = { call: vi.fn(), close: vi.fn(async () => {}) };
+    const { runtime } = withEvents({ browserToolset });
+    h.script.push([[init('s1'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' }).catch(() => undefined);
+    await expect(runtime.close?.()).resolves.toBeUndefined();
+    expect(browserToolset.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the browser toolset and the plugin relays when the Agent’s own relay close throws', async () => {
+    const own = remote(['search']);
+    const docs = remote(['lookup']);
+    own.close.mockRejectedValue(new Error('boom'));
+    relay.open.mockResolvedValueOnce(own).mockResolvedValueOnce(docs);
+    h.pluginBindings.mockResolvedValue([binding('docs', 'https://docs.example/mcp')]);
+    const browserToolset = { call: vi.fn(), close: vi.fn(async () => {}) };
+    const { runtime } = withEvents({ browserToolset, mcp: { url: 'https://own.example/mcp' } });
+    h.script.push([[init('s1'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    await expect(runtime.close?.()).rejects.toThrow('boom');
+    expect(docs.close).toHaveBeenCalledTimes(1);
+    expect(browserToolset.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('relays nothing when no mapping resolves, and without a run context never looks', async () => {
+    const { runtime } = withEvents();
+    h.script.push([[init('s1'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    const sent = h.queryCalls[0]?.options as Record<string, unknown>;
+    expect(sent.mcpServers).toBeUndefined();
+    expect(relay.open).not.toHaveBeenCalled();
+
+    h.pluginBindings.mockClear();
+    const none = withEvents({ pluginMcp: undefined });
+    h.script.push([[init('s1'), success('ok')]]);
+    await none.runtime.runTurn({ system: 'S', user: 'U' });
+    expect(h.pluginBindings).not.toHaveBeenCalled();
+  });
+
+  it('leaves a connection that cannot be reached out and keeps the run going', async () => {
+    relay.open.mockResolvedValueOnce(null);
+    h.pluginBindings.mockResolvedValue([binding('docs', 'https://docs.example/mcp')]);
+    const { events, runtime } = withEvents();
+    h.script.push([[init('s1'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    const sent = h.queryCalls[0]?.options as Record<string, unknown>;
+    expect(sent.mcpServers).toBeUndefined();
+    expect(events.some((e) => e.name === 'agent.plugin_mcp')).toBe(false);
   });
 });

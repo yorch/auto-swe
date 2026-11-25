@@ -5,8 +5,8 @@
 > Enterprise repository at an exact commit. The approved copy is stored as a **harness profile**: an
 > immutable, content-hashed snapshot with its own name, hook switch and tracking state, which agents
 > bind by name. This page covers how a plugin is discovered, read, reviewed, approved, tracked,
-> enabled for a team, bound to an agent, written into a run container, and projected for runtimes
-> other than Claude Code.
+> enabled for a team, bound to an agent, written into a run container, relayed for its mapped MCP
+> servers, and projected for runtimes other than Claude Code.
 
 | Term | Meaning |
 |---|---|
@@ -14,6 +14,7 @@
 | Harness profile | The stored record of approved plugins: one folder of one or more plugins, optional instructions, its versions, and its settings (name, `hooksEnabled`, `status`, tracking). Agents bind profiles, not plugins. |
 | Marketplace | A repository's `.claude-plugin/marketplace.json` catalog. An administrator approves one of its entries as a harness profile holding that single plugin. |
 | Plugin enablement | A team's permission to bind a profile on its own (TEAM-scoped) agents: one row per profile and team. |
+| MCP mapping | An administrator's binding of one HTTP MCP server a plugin declares to an `mcp` Connection, whose tools the run relays to the agents bound to that plugin (section 17). |
 
 ---
 
@@ -46,11 +47,14 @@ control or invisible character, a `.git` segment, or two paths that collide afte
 normalisation and case folding. A profile that silently lacked a file would not be the profile the
 administrator reviewed.
 
-**Every file is stored**, whatever its type: scripts and binaries too. Plugin `.mcp.json` files are
-stored but never loaded at run time (section 9), and the preview says so.
+**Every file is stored**, whatever its type: scripts and binaries too. A plugin's `.mcp.json` is
+stored but the harness never loads it; an HTTP server it declares can be mapped and relayed instead
+(sections 9 and 17), and the preview lists the servers.
 
 A marketplace entry has no `profile.json`. Its plugin folder is read with the same rules and wrapped
-into a single-plugin profile (section 11).
+into a single-plugin profile (section 11). A `strict: false` entry without a `plugin.json` in its folder
+gets one synthesized from the entry's own fields, read from the catalog at the marketplace's pinned commit
+on each read (section 11).
 
 ## 2. Snapshot identity
 
@@ -68,6 +72,7 @@ version row is immutable: a change is recorded as another version.
 | `MarketplaceSource` | `marketplace_sources` | A tracked marketplace: source (`host`, `owner`, `repo`, `path`, `ref`), the `pinnedSha` its catalog is read at, `latestSha`, `lastCheckedAt`, `lastError` and `status` (`OK`, `UPDATE_AVAILABLE`, `ERROR` or `DISABLED`). Unique per `(host, owner, repo, path)`. |
 | `PluginEnablement` | `plugin_enablements` | A team's enablement of one profile: unique `(profileId, teamId)` and `enabledById`. Deleting the team removes its rows; a profile with rows cannot be deleted. |
 | `Agent.harnessProfiles` | `agents.harness_profiles` | Text array: the names of the profiles one Agent version is bound to, in binding order. It replaces the single `harness_profile` text column (section 8). |
+| `PluginMcpMapping` | `plugin_mcp_mappings` | One administrator's mapping of a plugin's declared HTTP MCP server (`profileId`, `serverName`, unique together) to an `mcp` Connection, with `mappedById`. Removed when its connection is deleted; the profile reference is restrictive (section 17). |
 | `Skill.pluginProfileId`, `Skill.pluginVersion` | `skills` | Set on a skill projected from a plugin (section 13); null for every other skill. |
 
 The blob is packed and unpacked by `packFiles` / `unpackFiles`
@@ -90,7 +95,11 @@ upstream text. It then:
 
 1. Resolves the ref to an exact commit sha (or reads a named commit; `SHA_MOVED` when the ref no
    longer resolves to the commit a preview showed).
-2. Lists the whole tree at that commit and refuses a truncated listing.
+2. Lists the tree at that commit. When the host truncates the recursive listing, it lists only the
+   directories on the way to the plugin folder, then the folder itself, recursively or directory by
+   directory, so a large repository is read without a full listing. The walk refuses with
+   `TREE_TRUNCATED` (`HARNESS_PROFILE_TREE_TRUNCATED`, 422) when one directory cannot be listed whole,
+   or when the collected entries pass 20,000. The same fallback serves the marketplace catalog read.
 3. Checks the folder against the rules above using the listing alone, so a refused folder costs no
    file downloads.
 4. Downloads every file by blob id, and checks that each blob's size and git object id match the
@@ -101,8 +110,10 @@ Reviewing one file (`file` in a preview body) lists the tree in full but downloa
 with the same size and object id checks.
 
 A fetch costs one request for the ref, one for the tree and one per file, so the request budget is
-the file limit plus two and the whole fetch has a 120 second deadline. Repository-supplied text
-shown to the administrator (paths, names) has control and invisible characters replaced.
+the file limit plus two. A truncated listing walk spends requests of the same budget, and a folder
+that leaves too few for its files fails with `LIMIT_REQUESTS` before any file is downloaded. The whole
+fetch has a 120 second deadline. Repository-supplied text shown to the administrator (paths, names)
+has control and invisible characters replaced.
 
 ## 5. Validation and scanning at approval
 
@@ -110,7 +121,8 @@ Validation is pure (`validateProfile`): it parses `profile.json`, checks the ins
 each plugin, applies the file rules, and computes the hash. It also produces warnings that never
 block:
 
-- plugin MCP servers are stored but never loaded at run time;
+- a plugin `.mcp.json` is stored and the harness never loads it (a mapped HTTP server is relayed
+  instead, section 17);
 - auto-run sources are present: hooks, frontmatter hooks, monitors or LSP servers (each runs
   commands inside the run container; section 7 lists them);
 - scripts are present;
@@ -121,15 +133,17 @@ Scanning (`scanProfile`) is advisory and executes nothing. The platform's skill-
 over the instructions and every plugin `.md`. The shell-command patterns run over every auto-run
 command of section 7: the commands of `hooks/hooks.json`, of a plugin's inline `hooks`, and of any
 hooks file a plugin's `plugin.json` names by path (a string, or an array mixing paths and inline
-objects) inside the plugin folder; the `hooks` frontmatter of each skill and command; the commands of
-monitors and LSP servers; and over every script, executable file and file that starts with `#!`.
+objects) inside the plugin folder; the `hooks` frontmatter of every markdown file of a plugin that the
+frontmatter rules of section 7 read; the commands of monitors and LSP servers; and over every script,
+executable file and file that starts with `#!`.
 A source that cannot be read, that names a path outside the plugin folder, or that names a missing
 file adds a `hooks-not-scanned` warning: the commands it names would still run. A scan that could
 not run every rule over everything adds a `scan-incomplete` warning rather than reading as clean.
 Binary content and invalid UTF-8 prose are reported as not scanned.
 
 For a marketplace entry, the approval warnings also list each MCP server the plugin declares
-(section 11): one per unsupported server, and one for the HTTP servers the harness does not load.
+(section 11): one per unsupported server, and one for the HTTP servers, which the harness does not load
+but an administrator can map to an `mcp` Connection after approval (section 17).
 
 **Approval needs acknowledgement.** When the preview has any warning (structure or scanner), create
 and accept refuse with `409 WARNINGS_UNACKNOWLEDGED` unless the request carries
@@ -148,6 +162,7 @@ administrator saw.
   a bundle's plugin references) is platform ADMIN only and platform-wide. A profile's hooks and
   scripts run commands in the run container, so who may bring one in is a platform decision.
 - Only a platform ADMIN changes the hook switch. Team admins never do.
+- Only a platform ADMIN maps a plugin's MCP server to a connection (section 17), platform-wide.
 - A team admin enables approved plugins for their own team (section 12). Enablement lets a team bind
   a plugin on its own agents; it does not approve anything.
 - Nothing is executed at preview or approval, and the worker never fetches a repository.
@@ -158,9 +173,10 @@ administrator saw.
 - Profiles are not deleted, because an agent may reference one by name. A disabled profile takes no
   further version, cannot be enabled by a team, and is not bound to an agent or pinned by a run that
   starts after it is disabled.
-- Every create, accept, status change, hook switch change, marketplace change and enablement change
-  is written to the audit log under the entity types `HarnessProfile`, `MarketplaceSource` and
-  `PluginEnablement`.
+- Every create, accept, status change, hook switch change, marketplace change, enablement change and
+  MCP mapping change is written to the audit log under the entity types `HarnessProfile`,
+  `MarketplaceSource` and `PluginEnablement`. A mapping change is a `HarnessProfile` entry that names
+  the server and the connection id, never a URL or a connection's configuration.
 
 ## 7. The hook switch
 
@@ -172,7 +188,9 @@ model asking for it:
 
 - `hooks/hooks.json`, the inline `hooks` of `plugin.json`, or a hooks file `plugin.json` names under
   `hooks`;
-- the `hooks` key of the YAML frontmatter of a skill or command `.md`;
+- the `hooks` key of the YAML frontmatter of any markdown (`.md`) file in the plugin folder: the skill
+  and command files the loader reads, and every other markdown file, since the loader may read one as
+  a skill or command;
 - monitors: `monitors/monitors.json`, and `monitors` or `experimental.monitors` in `plugin.json`;
 - LSP servers: `.lsp.json`, and `lspServers` in `plugin.json`.
 
@@ -186,12 +204,28 @@ folder, or that matches no file in the snapshot, is an unreadable source.
 
 Frontmatter is located as the harness loader locates it: after one byte-order mark is stripped, an
 opener `---` followed by whitespace and a line break (JavaScript `\s`, which includes form feed,
-vertical tab, NBSP, U+2028 and U+3000). A file is unreadable, never "no hooks", when its YAML does not
-parse, when a key at any depth is the YAML merge key `<<`, or when the loader reads a `hooks` key the
-module does not. Where the loader's closing `---` is not on a line of its own, the file is unreadable
+vertical tab, NBSP, U+2028 and U+3000). A skill or command file is unreadable, never "no hooks", when its YAML does not
+parse, when a key at any depth is the YAML merge key `<<`, when a top-level key is not a plain name, or
+when the loader reads a `hooks` key the module does not. A key is not a plain name when it is a sequence,
+a flow map, a `?` key whose content is not a scalar, or a scalar with a tag or an anchor. The harness names
+a key by coercing it to a string, so `[hooks]`, `[[hooks]]`, `["hooks"]`, `!!str hooks` and `&k hooks` all
+read as `hooks`, and the module refuses each of them rather than follow it. Where the loader's closing `---` is not on a line of its own, the file is unreadable
 only if the loader's text names `hooks`, a backslash or `<<`; otherwise the closing line is used. A
 file with no closing line is read as having no frontmatter, unless the loader's text names `hooks`, a
 backslash or `<<`, in which case it is unreadable.
+
+A markdown file outside the skill and command locations is read only when its frontmatter text names
+`hooks` or contains a backslash, the two ways a key can spell `hooks`; any other such file cannot declare
+a hook and is not parsed. A file that is read is unreadable when a line of its frontmatter may open a
+`hooks` key in a form this module does not read cleanly, when its frontmatter has an alias or a merge key,
+when a top-level key is not a plain name, or when the loader reads a `hooks` key the module does not. The
+check mirrors the harness's string coercion of keys and its retry parse (values quoted, leading tabs turned
+into spaces), and a file is judged not a source only after both. A file whose YAML does not parse is not a
+source unless one of those lines is present. A file that is not valid UTF-8 is read leniently to find its
+frontmatter, and a `hooks` key it declares makes it unreadable, because it is never rewritten. A markdown
+file under a `node_modules` path segment is not such a candidate unless the plugin's manifest names it.
+With the switch off, the worker reads each such markdown file of each plugin this way, so a plugin whose
+markdown cannot be read safely is refused (`PROFILE_HOOKS_UNREADABLE`, below).
 
 - **Decided at approval.** The approval request must send `hooksEnabled` explicitly: a folder
   approval, a marketplace entry approval (both have no default) and a bundle install (which always
@@ -209,8 +243,8 @@ backslash or `<<`, in which case it is unreadable.
   off, the worker leaves out of each plugin every auto-run source above: `hooks/hooks.json`,
   `monitors/monitors.json` and `.lsp.json`, whatever they hold, and each file a `plugin.json` key
   names. `plugin.json` is written again without its `hooks`, `monitors`, `experimental.monitors` and
-  `lspServers` keys and nothing else changed; each skill and command `.md` is written again without its
-  `hooks` key, its body byte for byte. Scripts and executable files are still written. The dashboard
+  `lspServers` keys and nothing else changed; each markdown file of the plugin whose frontmatter has a `hooks`
+  key is written again without it, its body byte for byte. Scripts and executable files are still written. The dashboard
   says so beside the switch.
 - **Unreadable sources.** A source the scan cannot read is kept with its reason. The reason appears on
   the source in the dashboard, in the hook diff (`unreadable` on the source or on a changed source), and
@@ -293,7 +327,11 @@ commit, content hash, manifest and files, and verifies the stored snapshot again
 before handing the files out.
 
 **Run pin.** `WorkflowRun.harnessProfileVersions` maps each profile name to what the run was given:
-a bare version number, or `{ version, hooks, verified }`. `hooks` is the platform switch at the pin.
+a bare version number, or `{ version, hooks?, verified?, mcp? }`. `hooks` is the platform switch at the pin.
+`mcp` lists the `<encodeURIComponent(server)>=<connection id>` pairs the run's mapped plugin servers are
+relayed from, set at the first activity that relays for the profile (section 17). A damaged list (not an
+array, or with any entry that is not a `<name>=<id>` pair, so a bare connection id included) reads as
+empty, and nothing is relayed from it. There is no upgrade from an id-only list.
 `verified` lists the bindings whose TEAM-scoped binding of the plugin passed the enablement check
 (section 12), each as `<teamId>:<agentKey>:<agentVersion>`. A verification therefore covers one team,
 one agent and one agent version. An entry in the bare agent-key form matches no binding, so it exempts
@@ -384,7 +422,10 @@ beyond them.
 them on the harness's command line (`--plugin-dir-no-mcp <path>`) and the custom spawn hands that
 command line, unchanged, to the binary started in the container, so the paths are read there. A
 plugin's commands, skills, sub-agents and auto-run sources (section 7) load; its MCP servers do not
-(`skipMcpDiscovery`, and `strictMcpConfig` stays on). Everything else the worker sets is unchanged:
+(`skipMcpDiscovery`, and `strictMcpConfig` stays on). An HTTP server an administrator mapped is relayed
+by the worker instead, its tools served to the harness through the worker's MCP relay (section 17).
+Everything
+else the worker sets is unchanged:
 the policy settings layers, `managedSettings`, the worker-side hooks, the `canUseTool` deny,
 `permissionMode`, the pinned API host and the tool allowlist rule.
 
@@ -450,15 +491,16 @@ still run on another loop: the run's runtime pin, an eval override, or a surface
 (`runAgentNode` without a workspace, which always runs on Mastra) puts it on Mastra or Pi. That is not
 an error. The run proceeds without the profiles, an `agent.profile_not_applicable` event names the
 agent, the profiles, the runtime it resolved to and the loop it ran on, and an `agent.plugin_partial`
-event names what that loop skipped (commands, hooks and sub-agents). The plugins' skills reach such a
-run as projected skills (section 13). The other `runAgent` callers (channel turns, memory passes,
+event names what that loop skipped: commands, hooks and sub-agents, and `mcp` when a plugin server is
+mapped. It does not name monitors or LSP servers, which that loop skips too. The plugins' skills reach
+such a run as projected skills (section 13). The other `runAgent` callers (channel turns, memory passes,
 workflow authoring) always run on Mastra and do not report it.
 
 ## 10. Update tracking
 
-Each profile follows the ref its source names: a branch or tag as the admin gave it, `HEAD` for a
-profile a bundle created (section 14), and for a marketplace entry the ref the entry or its
-marketplace names (section 11).
+Each profile follows the ref its source names: a branch or tag as the admin gave it, the ref of its
+plugin reference for a profile a bundle created, or `HEAD` when that reference names none (section 14),
+and for a marketplace entry the ref the entry or its marketplace names (section 11).
 
 **The check.** Resolving a profile's ref costs one request. The check records `latestSha` (the commit
 the ref names when the check runs), `lastCheckedAt`, `lastError` and `trackStatus`:
@@ -482,10 +524,13 @@ disabled profile answers `409 HARNESS_PROFILE_DISABLED`. The admin then reads th
 is a version and `hookChanges` (section 7), and accepts with `POST /harness-profiles/:name/accept`.
 Accepting the commit the last check found clears `lastError` and sets `trackStatus` to `OK`.
 
-**Marketplace-bound profiles** are re-read as the plugin folder they were approved from, wrapped in
-the same synthesized `profile.json` the approval used, so preview-update and accept read them exactly
-as approval did. Their update flag can come from a change elsewhere in the marketplace repository
-(Limitations).
+**Marketplace-bound profiles** are re-read as the plugin folder they were approved from, wrapped in a
+synthesized `profile.json`. When the folder has no `plugin.json` of its own, the manifest is re-derived
+from the current catalog entry at the marketplace source's pinned commit (a `strict: false` entry only);
+it is never taken from the stored version. A catalog change therefore shows as a change in
+preview-update. With hooks on, a change to the hook sources needs `acknowledgeHookChanges` at accept, as
+for any update (section 7). Their update flag can come from a change elsewhere in the marketplace
+repository, and a missing or strict entry fails closed (Limitations).
 
 ## 11. Marketplaces
 
@@ -493,19 +538,23 @@ A marketplace is a repository folder holding `.claude-plugin/marketplace.json`. 
 `MarketplaceSource` pinned to the commit its catalog was read at. The catalog is read again at each
 view; nothing installs from it except an explicit entry approval.
 
-**Catalog format.** Strict about the fields it reads: `name`, `owner`, `plugins[]` with `name`,
-`description`, `version` and `source`, and `metadata.pluginRoot`. Every other key is listed as
-`ignoredKeys` and is never an error (`strict` is one of them). One bad entry does not fail the file: it
-is listed as not installable with a fixed reason. A file over 1 MB, one with more than 500 entries, or
-one that is not valid UTF-8 JSON is refused with `MARKETPLACE_INVALID`.
+**Catalog format.** Two top-level fields are strict: `name` (1 to 200 characters) and `plugins`, which
+must be a list of at most 500 entries. `owner` is read only when it is an object with a string `name`,
+and `metadata.pluginRoot` is read when it is a safe folder. Within an entry, `name` must be a valid
+profile name and `source` must be one of the forms below. `description` and `version` are read
+leniently: a value of the wrong type, or a `version` over 64 characters, reads as absent. Every other key
+is listed as an ignored key (at most 20, sorted, each shown up to 60 characters) and is never an error.
+The entry's own `strict` key is read, so it is not listed as ignored. One bad entry does not fail the file:
+it is listed as not installable with a fixed reason. A file over 1 MB, one with more than 500 entries,
+or one that is not valid UTF-8 JSON is refused with `MARKETPLACE_INVALID` (422).
 
 **Entry sources.**
 
 | Source | Installable |
 |---|---|
 | A relative path, such as `./plugins/tools`, read at the pinned commit inside the marketplace repository (`metadata.pluginRoot` is joined in front of it). | Yes |
-| `{ "source": "github", "repo": "owner/name", "path"?, "ref"?, "sha"? }` on `github.com`. Without `sha` the ref is resolved at approval and the approval binds to that commit. | Yes |
-| A string that names a URL or scheme, a `{ "source": ... }` of another kind (git URL, npm, another host), or a path that is not a safe relative folder. | No, listed with a reason |
+| `{ "source": "github", "repo": "owner/name", "host"?, "path"?, "ref"?, "sha"? }`. Without `host` the entry resolves on the marketplace repository's own host. A different `host` is installable only when it passes the repository host policy (the instance's GitHub host or `github.repositoryHosts`) and the address checks; otherwise it is listed with `HOST_NOT_APPROVED`. Without `sha` the ref is resolved at approval and the approval binds to that commit. | Yes, when the host is approved |
+| A string that names a URL or scheme, a `{ "source": ... }` of another kind (git URL, npm), or a path that is not a safe relative folder. | No, listed with a reason |
 
 An entry whose name appears twice is not installable by either entry. A name that is not a valid
 profile name, or an entry that is not an object, is not installable.
@@ -541,21 +590,23 @@ profile name, or an entry that is not an object, is not installable.
    (`PREVIEW_STALE` otherwise), requires acknowledgement of any warnings, and creates a single-plugin
    profile at version 1, named after the entry, with `marketplaceSourceId` and `marketplaceEntry`
    set. A name already taken answers `HARNESS_PROFILE_NAME_EXISTS`.
-3. Approval does not project the plugin's skills (Limitations).
+3. The approval projects the plugin's skills for runtimes other than `claude-code` (section 13) and
+   returns `projection`, as a folder approval does.
 
 The catalog marks each entry with the profile approved from it (`profile`) and with `nameTaken` when
 another profile holds its name.
 
 **MCP servers.** The harness never loads a plugin's `.mcp.json`. The entry preview lists the servers
-the file declares, by name, transport and URL (origin and path only; no credentials, query or
-fragment; never commands, arguments, headers or environment values):
+the plugin declares, from `.mcp.json` and from an inline or file `mcpServers` in `plugin.json`, by name,
+transport and URL (origin and path only; no credentials, query or fragment; never commands, arguments,
+headers or environment values):
 
-- an HTTP server is a **declared dependency**. The warning asks an administrator to point the agent's
-  existing `mcpConnectionId` at a matching `mcp` Connection. The platform does not check the match,
-  and there is no mapping table and no run-time effect;
-- a stdio or sse server is flagged as not supported and is not available.
+- an HTTP server is a **declared server** that a platform ADMIN can map to an `mcp` Connection in the
+  plugin's details after approval (section 17). Until it is mapped nothing is relayed. The warning says
+  so, and the platform does not check the connection at approval;
+- a stdio or sse server is flagged as not supported and cannot be mapped.
 
-Because an HTTP server always adds a warning, approving a plugin that declares one needs
+Because an HTTP server always adds a warning, approving an entry that declares one needs
 `acknowledgeWarnings: true`.
 
 ## 12. Team enablement
@@ -599,8 +650,8 @@ are usable elsewhere, each `skills/<dir>/SKILL.md` of each plugin is projected i
   `isVerified` false (plugin text is third-party until a person verifies it), with `pluginProfileId`
   and `pluginVersion` set, and a `sourcePath` of `plugin:<profile>/<folder>`. `.md` and `.txt` files
   beside a `SKILL.md` are kept as reference files.
-- **When.** After a profile version commits: folder approval, an accepted update, and a bundle install
-  (section 14). A marketplace entry approval does not project (Limitations). A projection failure never
+- **When.** After a profile version commits: folder approval, a marketplace entry approval, an accepted
+  update, and a bundle install (section 14). A projection failure never
   undoes the approval; the response carries a `projection` object with `created`, `updated`, `refused`
   and `failed`.
 - **Never older.** A projection never moves a skill back to an older version of its profile. A row
@@ -642,7 +693,8 @@ A bundle carries a plugin **by reference** (`entities.plugins`, bundle schema v3
 its source coordinates, the exact commit, the profile's content hash and the agent keys it is bound to.
 The plugin's files never travel, and neither do the switch, the enablements or the tracking state.
 Export writes one reference for each profile a platform-wide agent in the bundle is bound to, at the
-newest approved commit. [bundles.md](./bundles.md) has the manifest, the trust model and the preview.
+newest approved commit, with a `ref` only when the profile follows something other than `HEAD`.
+[bundles.md](./bundles.md) has the manifest, the trust model and the preview.
 
 On install the gateway, for each plugin reference, reads the folder at the pinned commit through the
 guarded fetcher and requires the computed content hash to equal the bundle's:
@@ -651,8 +703,10 @@ guarded fetcher and requires the computed content hash to equal the bundle's:
   names another profile, answers `400 BUNDLE_PLUGIN_INVALID`; a refused or failed read answers
   `400 BUNDLE_PLUGIN_FETCH_FAILED`. Nothing is written in any of these cases.
 - A profile created by the install has `hooksEnabled: false`, its first version approved by the
-  installing admin, and `ref: HEAD`, so its update check follows the default branch. Only a platform
-  ADMIN switches hooks on, separately, against the latest version the admin reviewed (section 7).
+  installing admin, and as its ref the reference's optional `ref` (a branch or tag), or `HEAD` when the
+  reference has none. Its update check follows that ref. The install still reads exactly the referenced
+  `sha`, and a reused profile keeps the ref it has. Only a platform ADMIN switches hooks on, separately,
+  against the latest version the admin reviewed (section 7).
 - A profile of that name with the same content hash is reused and its switch is not touched. A name
   approved with different content answers `409 PROTECTED_CONTENT_OVERWRITE`, and `overwriteProtected`
   does not lift it.
@@ -672,8 +726,9 @@ guarded fetcher and requires the computed content hash to equal the bundle's:
 
 ## 15. API
 
-All routes are under `/api/v1/platform` and require the ADMIN role. None is available to the in-app
-assistant for writes; list and get are readable.
+The routes below are under `/api/v1/platform` and require the ADMIN role. The in-app assistant can call
+their list and get routes; every write, and every preview, is refused to it. The team enablement routes
+are in section 12.
 
 **Harness profiles** (`/api/v1/platform/harness-profiles`):
 
@@ -682,14 +737,17 @@ assistant for writes; list and get are readable.
 | `POST /preview` | Body `{ host?, owner, repo, path?, ref }`. Reads, validates and scans; writes nothing. Returns the manifest, files (path, size, mode), warnings, `sha`, `contentHash`, `warningsHash`, and name conflicts. With `{ file, sha }`, returns that one file's text for review (`binary: true` and `text: null` for non-text, cut at 200,000 characters with `truncated: true`). |
 | `POST /` | Body `{ ..., sha, contentHash, warningsHash, hooksEnabled, acknowledgeWarnings? }`. Creates the profile and version 1 at the previewed commit and returns the skill `projection`. `409 SHA_MOVED`, `409 PREVIEW_STALE`, `409 WARNINGS_UNACKNOWLEDGED`, `409 HARNESS_PROFILE_NAME_EXISTS`, `422 HARNESS_PROFILE_INVALID`. |
 | `GET /` | Profiles with their latest version and tracking state (no file lists, no content). |
-| `GET /:name` | One profile with every version and its file list, `boundAgents` (each with `stranded`), `enabledTeams` and `autoRunSources`: every auto-run source (section 7) of the latest version, with its `path`, `kind`, `commands` and `unreadable` reason. |
+| `GET /:name` | One profile with every version and its file list, `boundAgents` (each with `stranded`), `enabledTeams` and `autoRunSources`: every auto-run source (section 7) of the latest version, with its `path`, `kind`, `commands` and `unreadable` reason. It adds `mcpServers` (the servers the latest version declares), `mcpUnreadable` and `mcpMappings` (section 17). |
 | `POST /:name/preview-update` | Body `{ sha?, file? }`. Reads the profile's stored source again (or the named commit) and reports `matchesVersion`, `hookChanges` and `hooksEnabled`. The manifest name must equal `:name`. |
 | `POST /:name/accept` | Body `{ sha, contentHash, warningsHash, acknowledgeWarnings?, acknowledgeHookChanges? }`. Adds the next version and returns the skill `projection`. `409 PREVIEW_STALE`, `409 HARNESS_PROFILE_NO_CHANGE`, `409 HARNESS_PROFILE_DISABLED`, `409 HOOK_CHANGES_UNACKNOWLEDGED` (with `hookChanges`), `409 HARNESS_PROFILE_CHANGED` when another accept or a switch change won the race. |
 | `PATCH /:name` | Body `{ status?: 'OK' \| 'DISABLED', hooksEnabled?: boolean, expectedVersion?: number }`; at least one. The hook switch is set here and cuts no version. `hooksEnabled: true` needs `expectedVersion`, the latest version the admin reviewed: `400 HOOKS_EXPECTED_VERSION_REQUIRED` without it, `409 HOOKS_VERSION_STALE` (with `details.latestVersion`) when the profile has moved on (section 7). Disabling a profile also deactivates its projected skills (section 13). |
 | `POST /:name/check` | Resolves the ref on request and records the result (the sweep's check). `409 HARNESS_PROFILE_DISABLED`. Returns `recorded: false` when the profile changed under the check. |
 | `GET /:name/enablements` | The teams that enabled the profile. |
+| `PUT /:name/mcp-mappings/:serverName` | Body `{ connectionId }`. Maps a server the latest version declares to an active `mcp` Connection, and returns the mapping (section 17). `400 MCP_SERVER_NOT_DECLARED`, `400 MCP_SERVER_UNSUPPORTED` (stdio or sse), `400 MCP_SERVER_AMBIGUOUS` (the name is declared more than once, in a file or across plugins), `400 MCP_CONNECTION_INVALID`, `409 HARNESS_PROFILE_DISABLED`, `404 NOT_FOUND` for an unknown profile. |
+| `DELETE /:name/mcp-mappings/:serverName` | Removes the mapping, including one whose server the latest version no longer declares. `204`; `404 NOT_FOUND` when there is no such mapping. |
 
-There is no `DELETE`: an agent may reference a profile by name, so a profile is disabled, not removed.
+There is no `DELETE` for a profile: an agent may reference a profile by name, so a profile is disabled, not
+removed.
 
 **Marketplaces** (`/api/v1/platform/marketplaces`):
 
@@ -704,7 +762,7 @@ There is no `DELETE`: an agent may reference a profile by name, so a profile is 
 | `POST /:id/check` | Asks the host for the ref's commit on request and records the result. |
 | `POST /:id/accept-update` | Body `{ sha }`. Moves the pin; installs nothing and changes no profile. `409 MARKETPLACE_NO_CHANGE`, `409 MARKETPLACE_CHANGED`. |
 | `POST /:id/entries/preview` | Body `{ entry, sha? }`. The profile preview of one entry; writes nothing. |
-| `POST /:id/entries/approve` | Body `{ entry, sha, contentHash, warningsHash, hooksEnabled, acknowledgeWarnings? }`. Creates the single-plugin profile. |
+| `POST /:id/entries/approve` | Body `{ entry, sha, contentHash, warningsHash, hooksEnabled, acknowledgeWarnings? }`. Creates the single-plugin profile at version 1 and returns its skill `projection`. `409 PREVIEW_STALE`, `409 WARNINGS_UNACKNOWLEDGED`, `409 HARNESS_PROFILE_NAME_EXISTS`, `409 MARKETPLACE_DISABLED`. |
 
 **Team enablement** (`/api/v1/teams/:teamId/plugins`): the three routes in section 12.
 
@@ -729,8 +787,13 @@ second at `?tab=marketplaces`.
   and box. **Details** shows the source, every version with its files and the warnings acknowledged at
   approval, the hook switch (turning it on lists the latest version's hook sources, with the same
   "reviewed" box, and sends that version), the teams that enabled the plugin and
-  the agents bound to it (stranded ones marked), **Check for update** (preview-update, with the hook
-  diff), and disable or re-enable.
+  the agents bound to it (stranded ones marked), the **MCP servers** section, **Check for update**
+  (preview-update, with the hook diff), and disable or re-enable.
+  The MCP servers section lists each server the latest version declares, with its transport, its
+  plugin and its URL origin and path. An HTTP server gets a connection picker (**Map**, **Change**,
+  **Remove**); a stdio or sse server, and a name two plugins declare, are shown as not mappable. A
+  mapping whose server the latest version no longer declares is listed for removal. Every control is
+  disabled while the plugin is disabled (section 17).
 - **Marketplaces.** Add a marketplace (preview, then add at the previewed commit), see its catalog at
   the pinned commit with each entry's status and the profile approved from it, preview and approve an
   entry, check for an update, review and accept a moved pin, disable, or remove.
@@ -743,6 +806,95 @@ and invisible characters made visible, as plain text. Stored version content is 
 page: a file's text is read from a preview of a commit, and a stored version shows its file list and
 warnings only.
 
+## 17. Plugin MCP servers
+
+A plugin declares MCP servers in its `.mcp.json` and in the `mcpServers` of its `plugin.json`. The
+harness never loads them (`skipMcpDiscovery`, and `strictMcpConfig` stays on). A platform ADMIN can map
+an HTTP server a plugin declares to an existing `mcp` Connection, and the worker then relays that
+connection's tools to the agents bound to the plugin. Nothing is relayed until a mapping exists.
+
+**What can be mapped.** The servers are read from the latest version of each plugin of the profile
+(`declaredPluginMcpServers`): the `.mcp.json` at the plugin root, and the `mcpServers` of `plugin.json`,
+either an object inline or a path, or a list of paths, to JSON files inside the plugin folder. A server
+is `sse` when its `type` is `sse`, `http` when its `type` is `http` or it has a `url` and no `type`, and
+stdio otherwise. Only an `http` server with an `http` or `https` URL is supported. Stdio, sse and
+unusable HTTP servers are listed as unsupported and cannot be mapped. A name is shown with its hidden
+characters replaced by `?` and cut to 80 characters. Servers whose shown names are equal are listed as
+ambiguous and cannot be mapped when they come from one file or from two plugins of the profile: every
+one of them is flagged, none is picked. A name a plugin declares again in another of its files is dropped,
+and its first declaration is kept. A server file reads at most 50 servers. The
+bare root-object shape (a file that is itself the server map) is read only for a referenced file, never
+for `plugin.json`. A file that does not parse is listed as unreadable, with a fixed reason.
+
+**Mapping.** A mapping is per profile and server name, one row each (`PluginMcpMapping`, section 3).
+`PUT` and `DELETE /api/v1/platform/harness-profiles/:name/mcp-mappings/:serverName` (section 15) set and
+remove it, for a platform ADMIN only. The connection must be an active `mcp` Connection, checked as an
+agent's `mcpConnectionId` is at GLOBAL scope, so a connection any team owns passes. A mapping is refused
+for a server the latest version does not declare, for an unsupported or ambiguous one, and for a disabled
+profile. Each change is audited (section 6). The dashboard maps servers in the plugin details (section 16).
+
+**Run-time relay.** A Claude Code run relays the mappings of the profiles it was given (section 8).
+The relay takes the agent's `toolKeys` as a required option, so an omitted value is closed. Otherwise it
+follows the rule that gates the agent's own MCP connection (`isMcpToolEnabled`): an empty or null list
+enables it, and a non-empty list must name `mcp`. Where it is
+not enabled, nothing is relayed, and one `agent.plugin_mcp_skipped` event with the server `*` and the reason
+`mcp tool not enabled for the agent` is recorded when a mapping exists. Otherwise, before the first turn of
+each activity:
+
+1. A mapping counts only while the profile's pinned snapshot still declares its server as supported and
+   not ambiguous. Any other mapping is skipped, with an event (below).
+2. The run pins the server and connection pairs it relays in its profile pin, `mcp` (section 8), at the
+   first activity that relays for the profile. An activity relays only the pinned pairs that are still
+   mapped, so a mapping added after the pin does not reach the run, a server re-pointed to another
+   connection is not relayed under the new one, and a mapping removed stops at the next activity. A pin with
+   no `mcp` list (one written before the pairs existed) pins the live pairs at the first activity that
+   relays. A pin that cannot be read relays nothing for that activity, and a damaged list reads as empty.
+3. Each connection must be an active `mcp` Connection, and the agent's own binding rule must allow it for
+   the run's team, the rule the agent's `mcpConnectionId` is held to. This is checked before the
+   connection's credential is read. Where the run has a guard on its targets (an orchestration's approval
+   guard), that guard applies to the connection as it does to the agent's own.
+
+The relay then opens each connection through the code that opens the agent's own connection, so the
+connection's tool allowlist, result screening, audit log, timeouts and approval guard all apply. A
+connection that cannot be opened is left out of that activity, as the agent's own connection is when it
+fails to open. The relays open once per activity and serve each of its turns.
+
+A plugin's relay differs from the agent's own. Its audit line names the plugin and server
+(`plugin=<plugin> server=<server>`) and not the endpoint. Each value keeps only `A-Za-z0-9_.:-` (other
+characters become `_`) and is cut to 64 characters. The endpoint, its URL and its host, is replaced by
+`[endpoint]`, and so is any IPv4 or IPv6 literal and any `host:port`, in a failed call's error result, in
+the approval and screening messages and in the effect ledger's error. The server's own `instructions` are
+not offered to the harness, because they are text from the server and not from an administrator. Its tool
+text is neutralised before the harness sees it: control and format characters become spaces, each tool
+description is cut to 500 characters and each schema description or title to 200, with at most 3,000
+characters of description text per tool in all (text past that is dropped), and `examples` are dropped,
+so a property named `examples` is dropped too. Each text is screened against the injection patterns and
+replaced by `[description withheld: matched a prompt-injection pattern]` on a match or when the scan cannot
+complete. Tool names, types, required lists and property names are kept. A successful result is not
+scrubbed of the endpoint, and is screened only when its connection screens results or has an approval guard.
+
+Tools are named `mcp__<key>__<tool>`. The key is the plugin and server names reduced to letters, digits
+and underscores (`<plugin>_<server>`), cut to 24 characters with a six-digit hash of the pair when longer.
+A key that matches one of the run's own MCP servers, or the key of another plugin server, is skipped as
+ambiguous. A tool whose own name is not 1 to 64 letters, digits, `_` or `-`, or whose full name passes
+64 characters, is withheld, and the number withheld is recorded.
+
+Only a Claude Code run relays. On another runtime the plugin's servers are not relayed, and the
+`agent.plugin_partial` event names `mcp` (section 9).
+
+**Events.**
+
+- `agent.plugin_mcp` is recorded once per plugin with at least one relayed server. It names the plugin
+  and, for each server, the connection id, the server name, the number of tools it offers and the number
+  withheld, if any. It never names an endpoint, and the relay's own events name the plugin and server in
+  place of the URL.
+- `agent.plugin_mcp_skipped` is recorded for each mapping that is not relayed, with the plugin (the
+  profile's name when no plugin of the profile declares the server), the server name and one reason:
+  `server not declared`, `server name is ambiguous`, `server not supported`, `connection missing`,
+  `connection inactive`, `connection not allowed for the run`, `pin could not be read` or `mcp tool not
+  enabled for the agent` (the last two with the server `*`; the pin reason is recorded only when a mapping
+  is eligible). A skipped mapping never fails the run.
+
 ---
 
 ## Limitations
@@ -751,45 +903,67 @@ warnings only.
   source that the harness starts from a plugin, but that `hookSources.ts` does not name, is not left
   out when the switch is off, is not in the hook diff and is not scanned. Such a source is covered only
   once that module is extended.
+- **Markdown outside the skill and command locations is judged by its frontmatter text.** The module does
+  not run the harness's loader. A file whose text cannot spell a `hooks` key is not parsed; one that can is
+  read conservatively, and any doubt about how the loader reads its frontmatter makes the file unreadable,
+  not hook-free. That conservatism is a rule of this module, not a check against the loader.
 - **Scripts and executables are written when hooks are off.** The switch removes declared commands
   only. The agent can run a script the plugin ships, and the dashboard says so beside the switch.
 - **Turning hooks on does not reach a run in flight.** A run takes its hook switch from its pin, so a
   switch turned on takes effect only for runs that start afterwards. Turning it off reaches the next
   activity of a run in flight.
-- **Plugin MCP servers are never loaded.** The harness loads no MCP server from a plugin, and stdio and
-  sse servers are unsupported. An HTTP server is a declared dependency: the match to an `mcp`
-  Connection is a manual admin step that the platform does not check, and the agent's own connection
-  is what runs.
+- **A mapping is per profile and server name, and only an administrator sets it.** A team cannot map a
+  server for its own agents. An administrator's mapping accepts any active `mcp` Connection, whichever
+  team owns it, and a run skips a connection the agent-binding rule refuses for that run
+  (`connection not allowed for the run`). A saved mapping therefore does not guarantee that a run relays
+  its tools.
+- **A run's relayed set is capped at its first relay.** A mapping added after the profile's first relay in
+  a run does not reach that run. A run that cannot pin (no run row or another execution's pin, a pin for
+  another version, or a first pin that cannot be written) relays the live mapped pairs for that activity,
+  so a mapping made during the run can reach it; the next activity tries the pin again. A mapping removed, or a connection made inactive, stops being relayed at
+  the next activity. A connection that cannot be opened is left out of the activity that tried to open it.
+- **Plugin relays are opened once per activity, not once per run.** Each activity lists a mapped server's
+  tools again, so a tool list that changes between activities is offered from the next one. Within an
+  activity the list does not change.
+- **A plugin server's endpoint can appear in its successful results.** The endpoint is scrubbed from error
+  results, approval and screening messages and the effect ledger's error, not from a result the server
+  returns as a success (section 17).
+- **Relayed tools are not verified in a real harness.** The mapping routes, the declaration parser, the
+  resolution and skip reasons, the pin and the runtime wiring have unit tests, with the relay itself
+  mocked. No suite runs the Claude Code harness calling a relayed tool, and the Docker suite exercises no
+  mapping. The handling of a relayed tool's name, schema and result by the harness is therefore not
+  verified end to end.
+- **stdio and sse servers cannot be relayed.** They are listed as unsupported in the plugin details, and
+  an HTTP server whose URL is neither `http` nor `https` is unsupported too.
 - **Commands, hooks, sub-agents and the other auto-run sources apply only on `claude-code`.** Other
   runtimes get the plugin's skills as projected rows. The `agent.plugin_partial` event names commands,
-  hooks and sub-agents; monitors and LSP servers are skipped on those runtimes too, but the event does
-  not name them.
+  hooks and sub-agents, and `mcp` when a server is mapped; monitors and LSP servers are skipped on those
+  runtimes too, but the event does not name them.
 - **A binding verified by a run keeps working for that run after its team's enablement is removed.**
   The exemption covers the run's retries too, and only for that team, agent key and agent version. A
   binding first seen after the removal fails closed.
-- **The frontmatter scan reads only the markdown files it locates.** It reads a `hooks` key from
-  `skills/**/SKILL.md`, `commands/**/*.md`, a root `SKILL.md` and the `.md` files a `skills` or
-  `commands` ref names. A `.md` file outside those places is not read, so a `hooks` key in it is not a
-  source, the hook switch does not remove it, and it is not scanned. Whether the harness loads such a
-  file as a skill or command is not checked by the module.
-- **Approving a marketplace entry does not project its skills.** Folder approval, an accepted update and
-  a bundle install do.
 - **Projected skills are not removed upstream.** A skill that disappears from the plugin stays installed
   and is not reported. A hand edit is refused and never overwritten.
 - **A bundle that reuses an older version binds the latest.** The profile of the bundle's name, with
   the bundle's content hash, is reused, but its agents run the latest approved version. The install
   warns with both numbers, and the older version's skills are not projected.
-- **Bundle-created profiles track `HEAD`.** A bundle pins a commit, but the profile follows the default
-  branch, so a bundle gives no way to follow a tag or branch. Its update checks compare against the
-  commit the bundle named.
-- **A GitHub entry is read from `github.com` only.** A marketplace itself may sit on any approved host,
-  but a GitHub Enterprise repository named by an entry is not accepted as an entry source.
+- **A bundle reference without a `ref` tracks `HEAD`.** The install reads the commit the bundle names, but a
+  profile it creates from a reference with no `ref` follows the default branch, so its update checks can
+  move past the bundled commit. Set `ref` on the reference to follow a branch or tag. A reused profile keeps
+  its own ref.
 - **A marketplace-bound profile follows a moving commit.** A relative entry's profile tracks the
   marketplace repository's ref, so an update is flagged whenever anything in that repository moves, and
   a GitHub entry's profile follows the ref it names rather than the commit it was approved at.
   `preview-update` reports `matchesVersion` when the plugin's own content is unchanged.
-- **Large repositories are refused.** A tree listing that GitHub truncates refuses the read, for a
-  marketplace catalog and for a plugin folder alike.
+- **A `strict: false` entry's manifest follows the catalog, and a missing entry fails closed.** Its profile
+  is read against the entry as the catalog holds it at the marketplace's pinned commit. When the entry is
+  removed, becomes strict or non-installable, or its marketplace is disabled or its catalog cannot be read,
+  every read of the profile is refused with `422 HARNESS_PROFILE_INVALID` until the catalog holds an
+  installable entry again.
+- **A single directory the host cannot list whole is refused.** A plugin folder or a marketplace catalog read
+  walks the directories on the way to it when the host truncates the recursive listing. The read is refused
+  with `TREE_TRUNCATED` when one directory of that walk is itself truncated, or when the collected entries
+  pass 20,000. The walk spends the fetch's request budget.
 - **The profile check shares the skill-source schedule.** Switching `SKILL_SOURCE_SYNC_ENABLED` off stops
   the profile checks as well as the skill-source checks.
 - **The column replacement has no old-column fallback.** The migration converts `agents.harness_profile`

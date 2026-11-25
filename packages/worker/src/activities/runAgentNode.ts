@@ -476,6 +476,10 @@ async function runInCheckout(args: {
       }),
       ...pausable(input.allowPause, loop.runtime),
       ...(profiles ? { profiles } : {}),
+      // Withheld with the Agent's own connection: the onboarding draft binds no MCP server.
+      ...(profiles && !onboardingDraft
+        ? { pluginMcp: { tenant: resolveCtx, toolKeys: resolved.toolKeys } }
+        : {}),
       tracer,
       workspace,
     });

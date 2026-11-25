@@ -6,6 +6,7 @@ import type { AgentTracer } from '../../lib/agentTracer.js';
 import type { ResolvedSkill } from '../../lib/config/agentSkills.js';
 import type { ResolvedHarnessProfile } from '../../lib/config/harnessProfile.js';
 import type { McpConnectionTarget } from '../../lib/config/mcpConnection.js';
+import type { PluginMcpRun } from '../../lib/config/pluginMcp.js';
 import type { EvalLessonTool } from '../../lib/evalLessonRecall.js';
 import type { BrowserToolset } from '../browserTools.js';
 import type { WorkerTool } from '../workerTool.js';
@@ -304,6 +305,12 @@ export interface HarnessRuntimeOptions<Access> {
    * by the rest.
    */
   profiles?: ResolvedHarnessProfile[];
+  /**
+   * What the plugins' mapped MCP connections are checked against, for a harness that relays them
+   * (Claude Code, with `profiles`): the same tenant the Agent's own connection is checked against.
+   * Absent, no plugin MCP server is relayed.
+   */
+  pluginMcp?: PluginMcpRun;
   /**
    * The run can stop to ask a person (the workflow's ask-and-resume loop set it).
    * A harness that supports it offers its question tool and ends the turn when

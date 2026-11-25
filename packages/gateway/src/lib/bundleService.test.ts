@@ -267,6 +267,52 @@ describe('exportBundle', () => {
     expect(m.metadata.contentHash).toBe(computeContentHash(m));
   });
 
+  it('exports the profile’s ref only when it is not HEAD', async () => {
+    const profile = (name: string, ref: string) => ({
+      host: 'github.com',
+      name,
+      owner: 'acme',
+      path: '',
+      ref,
+      repo: 'tools',
+      versions: [{ commitSha: 'a'.repeat(40), contentHash: 'b'.repeat(64) }],
+    });
+    const prisma = {
+      agent: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            description: null,
+            harnessProfiles: ['kit-head', 'kit-branch'],
+            inheritsModelFrom: null,
+            isVerified: false,
+            key: 'a',
+            modelSpec: 'anthropic/claude-opus-5-5',
+            name: 'a',
+            origin: 'x',
+            runtime: 'claude-code',
+            skillRefs: [],
+            systemPrompt: null,
+            toolKeys: null,
+          },
+        ]),
+      },
+      harnessProfile: {
+        findMany: vi
+          .fn()
+          .mockResolvedValue([profile('kit-branch', 'release/1.x'), profile('kit-head', 'HEAD')]),
+      },
+      scannerPattern: { findMany: vi.fn().mockResolvedValue([]) },
+      skill: { findMany: vi.fn().mockResolvedValue([]) },
+      workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
+    } as unknown as Parameters<typeof exportBundle>[0];
+
+    const m = await exportBundle(prisma, { name: 'x', version: '1.0.0' });
+    const byName = Object.fromEntries((m.entities.plugins ?? []).map((p) => [p.name, p]));
+    expect(byName['kit-branch']?.ref).toBe('release/1.x');
+    expect(byName['kit-head']).not.toHaveProperty('ref');
+    expect(m.metadata.contentHash).toBe(computeContentHash(m));
+  });
+
   it('carries an agent’s reasoning level when it has one, and no field when it has none', async () => {
     const row = (key: string, reasoning: string | null) => ({
       description: null,

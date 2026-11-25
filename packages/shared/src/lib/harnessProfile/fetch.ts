@@ -3,7 +3,7 @@ import { safeDisplayPath } from '../skillSource/display.js';
 import {
   defaultDeps,
   fetchBlobBytes,
-  listTree,
+  listTreeUnder,
   mapLimited,
   normaliseLocation,
   resolveAccess,
@@ -73,14 +73,18 @@ export async function readProfileFolder(
   }
 
   const prefix = loc.path === '' ? '' : `${loc.path}/`;
-  const inFolder = (await listTree(access, loc, sha)).filter(
+  const inFolder = (await listTreeUnder(access, loc, sha, loc.path)).filter(
     (e) => e.type !== 'tree' && e.path.startsWith(prefix)
   );
   const { plan, problems } = planFolder(inFolder, prefix);
   if (problems.length > 0) {
     return { files: [], problems: problems.slice(0, MAX_PROBLEMS), sha };
   }
-  if (plan.length + FIXED_REQUESTS > access.budget.limits.maxRequests) {
+  // A truncated listing walked directory by directory has already spent requests.
+  if (
+    plan.length + Math.max(FIXED_REQUESTS, access.budget.requests) >
+    access.budget.limits.maxRequests
+  ) {
     throw new SkillSourceError('LIMIT_REQUESTS');
   }
 

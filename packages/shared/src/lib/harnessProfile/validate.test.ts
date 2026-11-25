@@ -149,9 +149,9 @@ describe('validateProfile', () => {
       return r.ok ? r.warnings.join('\n') : '';
     };
 
-    it('says plugin .mcp.json is ignored at run time', () => {
+    it('says the harness never loads plugin .mcp.json and only admin-mapped servers are relayed', () => {
       expect(warningsOf([...validFiles(), file('plugins/foo/.mcp.json', '{}')])).toContain(
-        'plugin MCP servers are stored but ignored at run time (plugins/foo/.mcp.json)'
+        "the harness never loads a plugin's .mcp.json; only servers an admin maps are relayed (plugins/foo/.mcp.json)"
       );
     });
 

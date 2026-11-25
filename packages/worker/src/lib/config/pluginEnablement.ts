@@ -48,7 +48,9 @@ export const PIN_EXECUTION_KEY = '__execution';
  * binding is exempt from re-checking enablement, so removing a team's enablement
  * cannot be bypassed through a version another agent's binding pinned.
  */
-export type HarnessPinEntry = number | { version: number; verified?: string[]; hooks?: boolean };
+export type HarnessPinEntry =
+  | number
+  | { version: number; verified?: string[]; hooks?: boolean; mcp?: string[] };
 
 export interface ParsedPin {
   version: number;
@@ -58,6 +60,25 @@ export interface ParsedPin {
    * plugin. Undefined for a pin written without it: the first use pins it.
    */
   hooks?: boolean;
+  /**
+   * The server-to-connection PAIRS this plugin's MCP mappings held when the run first used the
+   * plugin (sorted {@link mcpPinPair} strings; possibly empty). A list with any entry that is not
+   * a `<name>=<id>` pair reads as EMPTY. Undefined for a pin written without it: the first use
+   * pins the live pairs. What an activity relays is this set INTERSECTED with the
+   * live mappings, so neither a connection nor a server key is gained mid-run.
+   */
+  mcp?: readonly string[];
+}
+
+/** The pin string for one plugin server mapped to one connection: `<server>=<connectionId>`. */
+export function mcpPinPair(server: string, connectionId: string): string {
+  // `=` is encoded in the name, so the first one in an entry always separates the two.
+  return `${encodeURIComponent(server)}=${connectionId}`;
+}
+
+/** Whether a stored `mcp` pin entry has the `<name>=<id>` shape ({@link mcpPinPair}). */
+function isMcpPinPair(entry: unknown): entry is string {
+  return typeof entry === 'string' && /^[^=]+=.+$/.test(entry);
 }
 
 /** A stored pin entry (either shape) parsed, or undefined when it is neither. */
@@ -69,15 +90,22 @@ export function parsePinEntry(value: unknown): ParsedPin | undefined {
     return { verified: new Set(), version: bare };
   }
   if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const { version, verified, hooks } = value as {
+    const { version, verified, hooks, mcp } = value as {
       version?: unknown;
       verified?: unknown;
       hooks?: unknown;
+      mcp?: unknown;
     };
     const v = asVersion(version);
     if (v !== undefined) {
       return {
         ...(typeof hooks === 'boolean' ? { hooks } : {}),
+        // A damaged list (not an array, or with any entry that is not a `<name>=<id>` pair) reads
+        // as an EMPTY pin, never as an absent one: an absent pin means "pin the live set at first
+        // use", which would widen what the run relays.
+        ...('mcp' in (value as object)
+          ? { mcp: Array.isArray(mcp) && mcp.every(isMcpPinPair) ? [...mcp] : [] }
+          : {}),
         verified: new Set(
           Array.isArray(verified) ? verified.filter((k): k is string => typeof k === 'string') : []
         ),

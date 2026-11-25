@@ -11,6 +11,8 @@ import type {
   HarnessProfileSummary,
   HarnessProfileTrackStatus,
   HarnessProfileVersionDto,
+  PluginMcpMappingDto,
+  PluginMcpServerDto,
 } from '@auto-swe/shared/types/api';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -64,10 +66,13 @@ export interface AutoRunSource {
   unreadable: string | null;
 }
 
-/** `GET /:name`: the profile with the auto-run sources of its latest version. */
+/** `GET /:name`: the profile with the auto-run sources and MCP servers of its latest version. */
 export type HarnessProfileDetailWithSources = HarnessProfileDetail & {
   autoRunSources?: AutoRunSource[];
 };
+
+export type PluginMcpServerDecl = PluginMcpServerDto;
+export type PluginMcpMappingRow = PluginMcpMappingDto & { declared: boolean; supported: boolean };
 
 export type HarnessProfileLocation = HarnessProfileSource;
 
@@ -285,5 +290,37 @@ export function useProfileEnablements(name: string | null) {
         .get<{ data: ProfileEnablement[] }>(`${nameUrl(name as string)}/enablements`)
         .then((r) => r.data),
     queryKey: [...KEY, 'enablements', name],
+  });
+}
+
+/** Maps (or re-maps) a declared server to a connection; ADMIN only. */
+export function useSetMcpMapping() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({
+      name,
+      serverName,
+      connectionId,
+    }: {
+      name: string;
+      serverName: string;
+      connectionId: string;
+    }) =>
+      api
+        .put<{ data: PluginMcpMappingRow }>(
+          `${nameUrl(name)}/mcp-mappings/${encodeURIComponent(serverName)}`,
+          { connectionId }
+        )
+        .then((r) => r.data),
+    onSuccess: invalidate,
+  });
+}
+
+export function useRemoveMcpMapping() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ name, serverName }: { name: string; serverName: string }) =>
+      api.delete<unknown>(`${nameUrl(name)}/mcp-mappings/${encodeURIComponent(serverName)}`),
+    onSuccess: invalidate,
   });
 }

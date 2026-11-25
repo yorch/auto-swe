@@ -284,8 +284,14 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'user-1' }),
   } as unknown as never);
+  const projectSkills = vi.fn(async (_db: unknown, _input: Record<string, unknown>) => ({
+    created: ['fmt:hi'],
+    refused: [] as unknown[],
+    updated: [] as string[],
+  }));
   await app.register(marketplaceRoutes, {
     prefix: '/api/v1/platform',
+    projectSkills: projectSkills as never,
     readDeps: { scanners, source },
   });
   await app.ready();
@@ -296,7 +302,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
       payload: payload as never,
       url: `/api/v1/platform/marketplaces${url}`,
     });
-  return { call, fetchFn, hub, prisma, scanners, state };
+  return { call, fetchFn, hub, prisma, projectSkills, scanners, source, state };
 }
 
 const LOC = { owner: 'acme', ref: 'main', repo: 'market' };
@@ -562,11 +568,17 @@ describe('marketplace routes', () => {
       expect(d.warningsHash).toMatch(/^[0-9a-f]{64}$/);
       expect(d.files.map((f: { path: string }) => f.path)).toContain('plugins/fmt/commands/hi.md');
       expect(d.mcpServers).toEqual([
-        { name: 'docs', supported: true, transport: 'http', url: 'https://mcp.example.com/mcp' },
-        { name: 'local', supported: false, transport: 'stdio', url: null },
+        {
+          duplicate: false,
+          name: 'docs',
+          supported: true,
+          transport: 'http',
+          url: 'https://mcp.example.com/mcp',
+        },
+        { duplicate: false, name: 'local', supported: false, transport: 'stdio', url: null },
       ]);
       expect(d.warnings.join('\n')).toContain('local (stdio) is not supported');
-      expect(d.warnings.join('\n')).toContain('mcpConnectionId');
+      expect(d.warnings.join('\n')).toContain('platform administrator can map them');
       expect(JSON.stringify(d)).not.toContain('SECRET');
       expect(d.hasHooks).toBe(false);
       expect(d.entry).toMatchObject({ name: 'fmt', version: '1.0.0' });
@@ -698,6 +710,38 @@ describe('marketplace routes', () => {
       expect((await approve(id, 'fmt', { acknowledgeWarnings: true })).statusCode).toBe(201);
     });
 
+    it('approve projects the plugin skills and returns the projection; a failure keeps the approval', async () => {
+      const { id } = await add();
+      const res = await approve(id, 'fmt');
+      expect(res.statusCode).toBe(201);
+      expect(t.projectSkills).toHaveBeenCalledTimes(1);
+      expect(t.projectSkills.mock.calls[0]?.[1]).toMatchObject({
+        commitSha: SHA,
+        createdById: 'user-1',
+        profileName: 'fmt',
+        version: 1,
+      });
+      expect(res.json().projection).toEqual({
+        created: ['fmt:hi'],
+        failed: false,
+        refused: [],
+        updated: [],
+      });
+      t.state.profiles.length = 0;
+      t.projectSkills.mockRejectedValueOnce(new Error('secret text'));
+      const failed = await approve(id, 'fmt');
+      expect(failed.statusCode).toBe(201);
+      expect(failed.json().projection).toMatchObject({ failed: true });
+      expect(JSON.stringify(failed.json())).not.toContain('secret text');
+      expect(t.state.profiles).toHaveLength(1);
+    });
+
+    it('does not project a refused approval', async () => {
+      const { id } = await add();
+      expect((await approve(id, 'fmt', { contentHash: 'f'.repeat(64) })).statusCode).toBe(409);
+      expect(t.projectSkills).not.toHaveBeenCalled();
+    });
+
     it('approve refuses a taken name, case-insensitively', async () => {
       const { id } = await add();
       t.state.profiles.push({ id: 'p0', name: 'FMT', status: 'OK' });
@@ -768,6 +812,155 @@ describe('marketplace routes', () => {
       const res = await t.call('POST', `/${id}/entries/preview`, { entry: 'x' });
       expect(res.statusCode).toBe(422);
       expect(res.json().error.code).toBe('HARNESS_PROFILE_INVALID');
+    });
+  });
+
+  describe('entries on other GitHub hosts', () => {
+    const market = (source: Record<string, unknown>) => {
+      t.hub.repos.market = [
+        {
+          content: JSON.stringify({
+            name: 'm',
+            plugins: [{ name: 'x', source: { repo: 'a/b', source: 'github', ...source } }],
+          }),
+          path: '.claude-plugin/marketplace.json',
+        },
+      ];
+      t.hub.repos.b = pluginFiles('');
+    };
+
+    it('lists an unapproved host not installable and refuses to read it', async () => {
+      market({ host: 'ghe.example.com' });
+      const { id } = await add();
+      const d = (await t.call('GET', `/${id}`)).json().data;
+      expect(d.catalog.entries[0]).toMatchObject({ installable: false });
+      expect(d.catalog.entries[0].reason).toMatch(/approved repository host/);
+      const res = await t.call('POST', `/${id}/entries/preview`, { entry: 'x' });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().error.code).toBe('MARKETPLACE_ENTRY_NOT_INSTALLABLE');
+    });
+
+    it('reads an entry on an approved host, with the credential resolved for that host', async () => {
+      market({ host: 'ghe.example.com' });
+      const credential = vi.fn(async (_loc: unknown, _cfg: unknown) => ({ scope: 'none' }));
+      t.source.approvedHosts = async () => ['ghe.example.com'];
+      t.source.platformCredential = credential as never;
+      const { id } = await add();
+      const res = await t.call('POST', `/${id}/entries/preview`, { entry: 'x' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.entry.source).toMatchObject({ host: 'ghe.example.com' });
+      expect(credential.mock.calls.at(-1)?.[0]).toMatchObject({
+        baseUrl: 'https://ghe.example.com',
+      });
+    });
+  });
+
+  describe('strict: false entries', () => {
+    const loose = (extra: Record<string, unknown> = {}) => {
+      t.hub.repos.market = [
+        {
+          content: JSON.stringify({
+            name: 'm',
+            plugins: [
+              {
+                description: 'Entry description',
+                name: 'loose',
+                skills: ['./skills/a'],
+                source: './plugins/loose',
+                strict: false,
+                version: '3.0.0',
+                ...extra,
+              },
+            ],
+          }),
+          path: '.claude-plugin/marketplace.json',
+        },
+        { content: 'Say hi', path: 'plugins/loose/commands/hi.md' },
+      ];
+    };
+
+    it('lists inline mcpServers of a synthesized plugin.json in the preview', async () => {
+      loose({
+        mcpServers: { inline: { type: 'http', url: 'https://i.example.com/mcp?t=SECRET' } },
+      });
+      const { id } = await add();
+      const pv = (await t.call('POST', `/${id}/entries/preview`, { entry: 'loose' })).json().data;
+      expect(pv.mcpServers).toEqual([
+        {
+          duplicate: false,
+          name: 'inline',
+          supported: true,
+          transport: 'http',
+          url: 'https://i.example.com/mcp',
+        },
+      ]);
+      expect(JSON.stringify(pv.mcpServers)).not.toContain('SECRET');
+    });
+
+    it('synthesizes plugin.json from the entry, previews it as synthesized, and stores it', async () => {
+      loose();
+      const { id } = await add();
+      const pv = (await t.call('POST', `/${id}/entries/preview`, { entry: 'loose' })).json().data;
+      expect(pv.synthesizedFiles).toEqual(['plugins/loose/.claude-plugin/plugin.json']);
+      expect(pv.files.map((f: { path: string }) => f.path)).toContain(
+        'plugins/loose/.claude-plugin/plugin.json'
+      );
+      const res = await approve(id, 'loose');
+      expect(res.statusCode).toBe(201);
+      const files = unpackFiles(Buffer.from(t.state.versions[0]?.files as Uint8Array));
+      const doc = JSON.parse(
+        files
+          .find((f) => f.path === 'plugins/loose/.claude-plugin/plugin.json')
+          ?.bytes.toString() ?? 'null'
+      );
+      expect(doc).toEqual({
+        description: 'Entry description',
+        name: 'loose',
+        skills: ['./skills/a'],
+        version: '3.0.0',
+      });
+    });
+
+    it('the folder plugin.json wins, and a strict entry without one is still refused', async () => {
+      loose();
+      t.hub.repos.market.push({
+        content: '{"name":"loose","description":"from the folder"}',
+        path: 'plugins/loose/.claude-plugin/plugin.json',
+      });
+      const { id } = await add();
+      const pv = (await t.call('POST', `/${id}/entries/preview`, { entry: 'loose' })).json().data;
+      expect(pv.synthesizedFiles).toEqual([]);
+      const strict = await buildApp();
+      strict.hub.repos.market = [
+        t.hub.repos.market[0] as Entry,
+        { content: 'Say hi', path: 'plugins/loose/commands/hi.md' },
+      ];
+      strict.hub.repos.market[0] = {
+        content: JSON.stringify({
+          name: 'm',
+          plugins: [{ name: 'loose', source: './plugins/loose' }],
+        }),
+        path: '.claude-plugin/marketplace.json',
+      };
+      const sid = (await strict.call('POST', '', { ...LOC, sha: SHA })).json().data.id;
+      const res = await strict.call('POST', `/${sid}/entries/preview`, { entry: 'loose' });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().error.code).toBe('HARNESS_PROFILE_INVALID');
+    });
+
+    it('hands inline hooks to the same hook logic (plugin.json hooks are an auto-run source)', async () => {
+      loose({ hooks: { PreToolUse: [{ hooks: [{ command: 'echo hi', type: 'command' }] }] } });
+      const { id } = await add();
+      const pv = (await t.call('POST', `/${id}/entries/preview`, { entry: 'loose' })).json().data;
+      expect(pv.hasHooks).toBe(true);
+    });
+
+    it('does not put the synthesis input in the catalog', async () => {
+      loose();
+      const { id } = await add();
+      const d = (await t.call('GET', `/${id}`)).json().data;
+      expect(d.catalog.entries[0]).not.toHaveProperty('pluginManifest');
+      expect(d.catalog.entries[0].strict).toBe(false);
     });
   });
 });

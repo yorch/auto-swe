@@ -1925,7 +1925,7 @@ it posts no comment and logs `Tracker sync skipped`.
 
 ---
 
-### Plugins: the agent binding becomes a list, and hooks and team enablement are per plugin (`b03322e`)
+### Plugins: the agent binding becomes a list, and hooks and team enablement are per plugin (`95c23b9`)
 
 **Affected.** Any deployment that upgrades across migrations `20261117200000_plugins` and
 `20261117200001_plugin_skill_deactivation`. In a deployment that ran earlier code with an agent bound
@@ -2458,3 +2458,40 @@ instructions that assumed a skill's text was already in the system prompt.
 `loadSkill` row for a skill the model loaded (not two); a write to `.claude/settings.json` shows as
 **Run configuration write blocked** in `/admin/security`; and
 `GET /api/v1/platform/security-events?type=RUN_CONFIG_BLOCK` returns it.
+
+---
+
+### Plugin MCP mappings: a new table, and a plugin's MCP servers are relayed only once mapped (`<fixing commit SHA>`)
+
+**Affected.** Any deployment that upgrades across migration `20261125000000_plugin_mcp_mappings`. The
+migration is additive: it creates the `plugin_mcp_mappings` table and changes no existing row.
+
+**What changes.** A platform ADMIN can map an HTTP MCP server that a plugin declares to an `mcp`
+Connection, on the plugin's details page (`/admin/harness-profiles`). The worker then relays that
+connection's tools to the agents bound to the plugin. Nothing is relayed until a mapping exists, and only for
+agents whose `toolKeys` enable MCP (an empty or null list does; a list must name `mcp`), so a plugin that a
+mapping does not reach behaves as before the upgrade. The harness still never loads a plugin's `.mcp.json`.
+
+Two further changes apply to every deployment, whether or not it maps a server:
+
+- **With hooks off, the worker reads the frontmatter of every markdown file of each approved plugin for a `hooks`
+  key** (files under `node_modules` excepted). A plugin with a skill or command whose frontmatter has a key that
+  is not a plain name, or with other markdown whose frontmatter has such a key and names hooks, is refused with
+  `PROFILE_HOOKS_UNREADABLE` and does not run until it is reviewed and re-approved, or hooks are switched on after
+  reading the hook sources on the plugin details page.
+- **A rolling deploy can drop a run's MCP pin.** An older worker that rewrites a run's profile pin entry drops
+  the entry's `mcp` set. The run then pins the live set again at its next activity, so a mapping added after
+  the run started can reach it.
+
+**Actions.**
+
+1. Upgrade the gateway and the worker together, in one deployment step, as for the plugin upgrade above.
+   Do not run old and new code side by side against the migrated database, because of the pin behaviour above.
+2. Optional: for each approved plugin whose agents should use one of its HTTP MCP servers, map that server
+   on the plugin's details page. Nothing is relayed before a mapping is saved.
+3. No environment-variable change is needed.
+
+**Verify.** `GET /api/v1/platform/harness-profiles/:name` lists the plugin's `mcpServers` and its
+`mcpMappings`. After a mapping is saved, a run of an agent bound to that plugin records an
+`agent.plugin_mcp` event for the server, or an `agent.plugin_mcp_skipped` event with the reason it was not
+relayed.

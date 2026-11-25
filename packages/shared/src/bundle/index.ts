@@ -7,6 +7,7 @@ import {
 } from 'node:crypto';
 import { z } from 'zod';
 import { isReservedTemplateName, isReservedTemplateOrigin } from '../lib/agentRun.js';
+import { validRef } from '../lib/gitRefName.js';
 import { ProfileNameSchema } from '../lib/harnessProfile/manifest.js';
 import { inputSchemaProblems } from '../lib/inputSchema.js';
 import { parseProviderModelSpec } from '../lib/modelSpec.js';
@@ -216,6 +217,12 @@ export const BundlePluginSchema = z.object({
   contentHash: z.string().regex(/^[0-9a-f]{64}$/),
   /** The profile name (`profile.json` `name`). */
   name: ProfileNameSchema,
+  /**
+   * A branch or tag name the created profile follows for later update checks. Optional with no
+   * default (absent hashes as before; the profile's ref is then `HEAD`). The install still reads
+   * exactly `sha`; the ref never selects content. See `pluginRefProblem` for what a ref may be.
+   */
+  ref: z.string().min(1).max(255).optional(),
   /** The 40-hex commit the folder is read at. */
   sha: z.string().regex(/^[0-9a-f]{40}$/),
   source: BundlePluginSourceSchema,
@@ -525,6 +532,31 @@ export function validateBundleAgents(manifest: BundleManifest): string[] {
 
 const OWNER_REPO_RE = /^[A-Za-z0-9_.-]{1,100}$/;
 
+/**
+ * Why a plugin `ref` is not a usable branch or tag name; null when it is. The skill-source read
+ * path's rule (`validRef`) plus: no `@{`, no leading `refs/`, no `#`, and not a bare
+ * 40- or 64-hex commit id (a ref names a moving branch or tag, `sha` pins the commit).
+ */
+export function pluginRefProblem(ref: string): string | null {
+  if (ref.length < 1 || ref.length > 255) {
+    return 'ref must be 1 to 255 characters';
+  }
+  // The same rule the install reads the ref under, so a ref that validates here also installs.
+  if (!validRef(ref)) {
+    return 'ref is not a valid branch or tag name';
+  }
+  // Stricter than the read path on purpose: a bundle is signed, shared content, and a ref that
+  // git reads as a revision expression (`x@{1}`), a fully qualified name or a URL fragment is
+  // never what an author means by "the branch or tag to follow".
+  if (ref.includes('@{') || ref.startsWith('refs/') || ref.includes('#')) {
+    return "ref must be a plain branch or tag name (no '@{', leading 'refs/' or '#')";
+  }
+  if (/^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(ref)) {
+    return 'ref is a commit id; name a branch or tag (the sha field pins the commit)';
+  }
+  return null;
+}
+
 /** Why a plugin's source coordinates cannot name a repository folder; null when they can. */
 function pluginSourceProblem(src: BundlePluginSource): string | null {
   if (!OWNER_REPO_RE.test(src.owner) || src.owner === '.' || src.owner === '..') {
@@ -563,6 +595,10 @@ export function validateBundlePlugins(manifest: BundleManifest): string[] {
     const problem = pluginSourceProblem(p.source);
     if (problem) {
       errors.push(`plugin '${p.name}': ${problem}`);
+    }
+    const refProblem = p.ref === undefined ? null : pluginRefProblem(p.ref);
+    if (refProblem) {
+      errors.push(`plugin '${p.name}': ${refProblem}`);
     }
     const keys = new Set<string>();
     for (const b of p.bindings) {

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
+import { treeHub } from '../marketplace/treeHub.testing.js';
 import type { SkillSourceDeps } from '../skillSource/index.js';
 import { readProfileFolder } from './fetch.js';
 
@@ -279,5 +280,56 @@ describe('readProfileFolder', () => {
       code: 'BAD_RESPONSE',
     });
     expect(h.urls.filter((u) => u.includes('/git/blobs/')).length).toBeLessThan(40);
+  });
+});
+
+describe('readProfileFolder on a repository whose recursive tree is truncated', () => {
+  const files = [
+    { content: 'a', path: 'README.md' },
+    { content: '{"name":"demo"}', path: 'profiles/demo/profile.json' },
+    { content: 'hi', path: 'profiles/demo/plugins/a/commands/hi.md' },
+    { content: 'o', path: 'profiles/other/profile.json' },
+  ];
+  const rootOnly = (dir: string, recursive: boolean) => dir === '' && recursive;
+
+  it('lists only the directories the folder needs and reads every file in it', async () => {
+    const h = treeHub(files, { commit: SHA, truncated: rootOnly });
+    const r = await readProfileFolder(loc, {}, deps(h));
+    expect(r.problems).toEqual([]);
+    expect(r.files.map((f) => f.path)).toEqual(['plugins/a/commands/hi.md', 'profile.json']);
+    expect(h.urls.some((u) => u.includes('profiles/other'))).toBe(false);
+  });
+
+  it('walks a folder directory by directory when its own recursive listing is truncated', async () => {
+    const h = treeHub(files, {
+      commit: SHA,
+      truncated: (dir, recursive) => recursive && (dir === '' || dir === 'profiles/demo'),
+    });
+    const r = await readProfileFolder(loc, {}, deps(h));
+    expect(r.files.map((f) => f.path)).toEqual(['plugins/a/commands/hi.md', 'profile.json']);
+  });
+
+  it('refuses when one directory cannot be listed whole', async () => {
+    const h = treeHub(files, {
+      commit: SHA,
+      truncated: (dir, recursive) => (dir === '' && recursive) || dir === 'profiles/demo',
+    });
+    await expect(readProfileFolder(loc, {}, deps(h))).rejects.toMatchObject({
+      code: 'TREE_TRUNCATED',
+    });
+  });
+
+  it('counts the listing requests against the budget before downloading', async () => {
+    const h = treeHub(files, { commit: SHA, truncated: rootOnly });
+    await expect(
+      readProfileFolder(loc, {}, deps(h, { limits: { maxRequests: 6 } }))
+    ).rejects.toMatchObject({ code: 'LIMIT_REQUESTS' });
+    expect(h.urls.some((u) => u.includes('/git/blobs/'))).toBe(false);
+  });
+
+  it('reports a missing folder as a problem', async () => {
+    const h = treeHub(files, { commit: SHA, truncated: rootOnly });
+    const r = await readProfileFolder({ ...loc, path: 'profiles/none' }, {}, deps(h));
+    expect(r.problems).toEqual(['the folder is empty or does not exist at that commit']);
   });
 });

@@ -14,6 +14,8 @@ const MAX_DESCRIPTION = 1000;
 /** Why an entry cannot be installed. Fixed sentences: an entry is repository text. */
 export const ENTRY_REASONS = {
   DUPLICATE_NAME: 'another entry has the same name',
+  HOST_NOT_APPROVED:
+    'the source host is not an approved repository host (github.repositoryHosts) or is a refused address',
   INVALID_ENTRY: 'the entry has no valid name or source',
   INVALID_PATH: 'the source path is not a safe relative path',
   INVALID_REPO: 'the source repository, ref or commit is not valid',
@@ -22,7 +24,62 @@ export const ENTRY_REASONS = {
 } as const;
 
 const KNOWN_TOP = new Set(['name', 'owner', 'plugins', 'metadata']);
-const KNOWN_ENTRY = new Set(['name', 'description', 'version', 'source']);
+const KNOWN_ENTRY = new Set(['name', 'description', 'version', 'source', 'strict']);
+
+/**
+ * The plugin manifest a `strict: false` entry carries: the entry stands in for the plugin's own
+ * `plugin.json`. Metadata first, then the component fields the Claude Code marketplace schema
+ * allows on an entry, in this fixed order so the synthesized file hashes the same every time.
+ */
+const SYNTH_METADATA = ['author', 'homepage', 'repository', 'license', 'keywords'] as const;
+export const SYNTH_COMPONENTS = [
+  'skills',
+  'commands',
+  'agents',
+  'hooks',
+  'mcpServers',
+  'lspServers',
+  'outputStyles',
+] as const;
+const SYNTH_KEYS = new Set<string>([...SYNTH_METADATA, ...SYNTH_COMPONENTS]);
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** The plugin.json an entry stands for. Metadata keys of the wrong type are left out; components pass through verbatim. */
+function pluginManifestOf(
+  obj: Record<string, unknown>,
+  name: string,
+  description: string | null,
+  version: string | null
+): Record<string, unknown> {
+  const doc: Record<string, unknown> = { name };
+  if (description !== null) {
+    doc.description = description;
+  }
+  if (version !== null) {
+    doc.version = version;
+  }
+  for (const key of SYNTH_METADATA) {
+    const v = obj[key];
+    const ok =
+      key === 'author'
+        ? typeof v === 'string' || isObject(v)
+        : key === 'keywords'
+          ? Array.isArray(v) && v.every((k) => typeof k === 'string')
+          : typeof v === 'string';
+    if (ok) {
+      doc[key] = v;
+    }
+  }
+  for (const key of SYNTH_COMPONENTS) {
+    const v = obj[key];
+    if (v !== undefined && v !== null) {
+      doc[key] = v;
+    }
+  }
+  return doc;
+}
 
 const shown = (s: string, max: number) => {
   const clean = s.replace(HIDDEN_CHARACTERS, '?');
@@ -68,6 +125,7 @@ const Top = z.looseObject({
 });
 
 const GithubSource = z.looseObject({
+  host: z.string().max(253).optional(),
   path: z.string().max(1000).optional(),
   ref: z.string().min(1).max(255).optional(),
   repo: z.string().regex(/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/),
@@ -77,7 +135,9 @@ const GithubSource = z.looseObject({
 
 type SourceResult = { source: EntrySource } | { reason: string; source: EntrySource | null };
 
-function parseSource(raw: unknown, pluginRoot: string): SourceResult {
+const HOST_RE = /^[a-z0-9.-]+(:[0-9]{1,5})?$/;
+
+function parseSource(raw: unknown, pluginRoot: string, defaultHost: string): SourceResult {
   if (typeof raw === 'string') {
     // `git@host:x/y`, `https://...`, `npm:pkg` and the like.
     if (raw.includes(':')) {
@@ -108,7 +168,11 @@ function parseSource(raw: unknown, pluginRoot: string): SourceResult {
     if (!parsed.success) {
       return { reason: ENTRY_REASONS.INVALID_REPO, source: null };
     }
-    const { path, ref, repo, sha } = parsed.data;
+    const { host, path, ref, repo, sha } = parsed.data;
+    const sourceHost = (host ?? defaultHost).trim().toLowerCase();
+    if (!HOST_RE.test(sourceHost)) {
+      return { reason: ENTRY_REASONS.INVALID_REPO, source: null };
+    }
     const [owner, name] = repo.split('/') as [string, string];
     const folder = path === undefined ? '' : safeRelativeFolder(path);
     if (folder === null) {
@@ -119,7 +183,7 @@ function parseSource(raw: unknown, pluginRoot: string): SourceResult {
     }
     try {
       const loc = normaliseLocation({
-        host: 'github.com',
+        host: sourceHost,
         owner,
         path: folder,
         ref: ref ?? 'HEAD',
@@ -154,14 +218,16 @@ function pluginRootOf(metadata: unknown): string {
   return safeRelativeFolder(raw) ?? '';
 }
 
-function parseEntry(raw: unknown, pluginRoot: string): MarketplaceEntry {
+function parseEntry(raw: unknown, pluginRoot: string, defaultHost: string): MarketplaceEntry {
   const bad = (reason: string): MarketplaceEntry => ({
     description: null,
     ignoredKeys: [],
     installable: false,
     name: null,
+    pluginManifest: null,
     reason,
     source: null,
+    strict: true,
     version: null,
   });
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -171,13 +237,22 @@ function parseEntry(raw: unknown, pluginRoot: string): MarketplaceEntry {
   const name = ProfileNameSchema.safeParse(obj.name);
   const description = typeof obj.description === 'string' ? obj.description : null;
   const version = typeof obj.version === 'string' && obj.version.length <= 64 ? obj.version : null;
+  const strict = obj.strict !== false;
+  const shownDescription = description === null ? null : shown(description, MAX_DESCRIPTION);
+  const shownVersion = version === null ? null : shown(version, 64);
   const base = {
-    description: description === null ? null : shown(description, MAX_DESCRIPTION),
-    ignoredKeys: ignored(obj, KNOWN_ENTRY),
+    description: shownDescription,
+    // A `strict: false` entry is its plugin's manifest, so the keys that build it are read.
+    ignoredKeys: ignored(obj, strict ? KNOWN_ENTRY : new Set([...KNOWN_ENTRY, ...SYNTH_KEYS])),
     name: name.success ? name.data : null,
-    version: version === null ? null : shown(version, 64),
+    pluginManifest:
+      !strict && name.success
+        ? pluginManifestOf(obj, name.data, shownDescription, shownVersion)
+        : null,
+    strict,
+    version: shownVersion,
   };
-  const source = parseSource(obj.source, pluginRoot);
+  const source = parseSource(obj.source, pluginRoot, defaultHost);
   if (!name.success) {
     return {
       ...base,
@@ -208,9 +283,16 @@ export type ParseMarketplaceResult =
  * Parse a Claude Code `marketplace.json`. Strict about the types it reads (`name`, `owner`,
  * `plugins[]` with `name`, `description`, `version`, `source`), lenient about every other key (they
  * are listed as ignored, never an error). One bad entry never fails the file: it is listed, not
- * installable, with a fixed reason. Pure: nothing is fetched. Errors are fixed sentences.
+ * installable, with a fixed reason. A `github` source reads from its own `host` or, when it names
+ * none, from `defaultHost` (the marketplace repository's host; `github.com` when not given); whether
+ * that host is allowed is decided by `applyEntryHostPolicy`. Pure: nothing is fetched. Errors are
+ * fixed sentences.
  */
-export function parseMarketplace(bytes: Buffer): ParseMarketplaceResult {
+export function parseMarketplace(
+  bytes: Buffer,
+  opts: { defaultHost?: string } = {}
+): ParseMarketplaceResult {
+  const defaultHost = opts.defaultHost ?? 'github.com';
   if (bytes.length > MAX_MARKETPLACE_BYTES) {
     return { errors: [`marketplace.json exceeds ${MAX_MARKETPLACE_BYTES} bytes`], ok: false };
   }
@@ -233,7 +315,7 @@ export function parseMarketplace(bytes: Buffer): ParseMarketplaceResult {
     owner && typeof owner === 'object' && typeof (owner as { name?: unknown }).name === 'string'
       ? shown((owner as { name: string }).name, 200)
       : null;
-  const entries = plugins.map((p) => parseEntry(p, pluginRoot));
+  const entries = plugins.map((p) => parseEntry(p, pluginRoot, defaultHost));
   const seen = new Set<string>();
   const duplicates = new Set<string>();
   for (const e of entries) {

@@ -9,6 +9,7 @@ export {
   safeRelativeFolder,
 } from './parse.js';
 export {
+  applyEntryHostPolicy,
   type EntryFolder,
   entryFolder,
   MarketplaceInvalid,

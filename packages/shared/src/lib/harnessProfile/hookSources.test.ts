@@ -57,10 +57,10 @@ describe('autoRunSourcesOf', () => {
     );
   });
 
-  it('ignores markdown without hooks and agents', () => {
+  it('ignores markdown without hooks', () => {
     const files = plugin([
       f(SKILL, '---\nname: x\n---\nbody'),
-      f('plugins/a/agents/z.md', '---\nhooks:\n  Stop: []\n---\nbody'),
+      f('plugins/a/agents/z.md', '---\nname: z\n---\nbody'),
     ]);
     expect(sources(files)).toEqual([]);
   });
@@ -352,5 +352,255 @@ describe('stripAutoRunSources', () => {
     ['unparseable frontmatter', plugin([f(SKILL, '---\nhooks: [oops\n---\nb')]), manifest],
   ])('throws a typed error for %s', (_why, files, m) => {
     expect(() => stripAutoRunSources(files, m)).toThrow(AutoRunSourceError);
+  });
+});
+
+describe('hooks in any markdown file of a plugin', () => {
+  const md = `---\nname: n\n${HOOKS_YAML}---${BODY}`;
+  const want = `---\nname: n\n---${BODY}`;
+  const where = [
+    ['an agent', 'plugins/a/agents/x.md'],
+    ['nested docs', 'plugins/a/docs/guide/README.md'],
+    ['an output style', 'plugins/a/output-styles/terse.md'],
+    ['the plugin root', 'plugins/a/README.md'],
+    ['a dotted folder', 'plugins/a/.github/notes.MD'],
+  ] as const;
+
+  it.each(where)('finds and strips hooks in %s', (_n, path) => {
+    const files = plugin([f(path, md)]);
+    expect(sources(files)).toMatchObject([
+      { commands: ['curl evil'], kind: 'frontmatter-hooks', path: `${path}#hooks` },
+    ]);
+    expect(text(stripAutoRunSources(files, manifest), path)).toBe(want);
+  });
+
+  it('reads and strips a file with CRLF and a BOM', () => {
+    const crlf = `\ufeff---\r\nname: n\r\nhooks:\r\n  Stop:\r\n    - hooks:\r\n        - command: c1\r\n---\r\nbody\r\n`;
+    const path = 'plugins/a/docs/crlf.md';
+    const files = plugin([f(path, crlf)]);
+    expect(sources(files)[0]?.commands).toEqual(['c1']);
+    expect(text(stripAutoRunSources(files, manifest), path)).toBe(
+      '\ufeff---\r\nname: n\r\n---\r\nbody\r\n'
+    );
+  });
+
+  it('a skill path keeps one entry, not two', () => {
+    expect(sources(plugin([f(SKILL, md)]))).toHaveLength(1);
+  });
+
+  it('does not flag a horizontal rule that is not frontmatter, and leaves it byte-identical', () => {
+    const hr = 'plugins/a/docs/hr.md';
+    const rule = f(hr, 'Intro about hooks:\n\n---\n\nhooks:\n  Stop: []\n\n---\nend\n');
+    const files = plugin([rule]);
+    expect(sources(files)).toEqual([]);
+    const out = stripAutoRunSources(files, manifest);
+    expect(out.find((x) => x.path === hr)?.bytes).toBe(rule.bytes);
+  });
+
+  it('leaves frontmatter that does not mention hooks untouched, and ignores it when unparseable', () => {
+    const plain = f('plugins/a/docs/p.md', '---\nname: x\n---\nbody');
+    const bad = f('plugins/a/docs/bad.md', '---\nname: [unclosed\n---\nbody');
+    const merge = f('plugins/a/docs/merge.md', '---\nname: a\nx:\n  <<: {y: 1}\n---\nb');
+    const files = plugin([plain, bad, merge]);
+    expect(sources(files)).toEqual([]);
+    const out = stripAutoRunSources(files, manifest);
+    for (const orig of [plain, bad, merge]) {
+      expect(out.find((x) => x.path === orig.path)?.bytes).toBe(orig.bytes);
+    }
+  });
+
+  it('makes the plugin unreadable when unparseable frontmatter mentions hooks, in any case', () => {
+    const cases: [string, string][] = [
+      ['plugins/a/agents/bad.md', 'name: [unclosed\nHooks: x'],
+      [SKILL, 'name: [unclosed\nHooks: x'],
+      [SKILL, 'name: [unclosed\n# HOOKS'],
+    ];
+    for (const [path, body] of cases) {
+      const files = plugin([f(path, `---\n${body}\n---\nb`)]);
+      expect(sources(files)).toMatchObject([
+        { kind: 'frontmatter-hooks', unreadable: expect.any(String) },
+      ]);
+      expect(() => stripAutoRunSources(files, manifest)).toThrow(AutoRunSourceError);
+    }
+  });
+
+  it('does not count a hooks comment in unparseable frontmatter of a file the harness cannot load as a skill', () => {
+    const files = plugin([f('plugins/a/agents/bad.md', '---\nname: [unclosed\n# HOOKS\n---\nb')]);
+    expect(sources(files)).toEqual([]);
+  });
+
+  it('sees a hooks key spelled with a YAML escape', () => {
+    const esc = f('plugins/a/docs/esc.md', '---\nname: n\n"\\x68ooks": {Stop: []}\n---\nb');
+    const files = plugin([esc]);
+    expect(sources(files)).toHaveLength(1);
+    expect(text(stripAutoRunSources(files, manifest), esc.path)).not.toContain('Stop');
+  });
+
+  it('refuses a merge key in a markdown file that names hooks', () => {
+    const files = plugin([
+      f('plugins/a/docs/m.md', '---\nname: a\n<<: {hooks: {Stop: []}}\n---\nb'),
+    ]);
+    expect(() => stripAutoRunSources(files, manifest)).toThrow(AutoRunSourceError);
+  });
+
+  it('with hooks on nothing is rewritten: the strip is never applied to the input', () => {
+    const files = plugin([f('plugins/a/agents/x.md', md)]);
+    stripAutoRunSources(files, manifest);
+    expect(text(files, 'plugins/a/agents/x.md')).toBe(md);
+  });
+
+  it('reads 500 plain markdown files quickly without parsing YAML', () => {
+    const docs = Array.from({ length: 500 }, (_v, i) =>
+      f(`plugins/a/docs/d${i}.md`, `---\ntitle: doc ${i}\n---\n# Doc ${i}\n`)
+    );
+    const files = plugin([...docs, f('plugins/a/agents/x.md', md)]);
+    const t0 = performance.now();
+    const found = sources(files);
+    const out = stripAutoRunSources(files, manifest);
+    const ms = performance.now() - t0;
+    expect(found.map((s) => s.path)).toEqual(['plugins/a/agents/x.md#hooks']);
+    expect(out).toHaveLength(files.length);
+    expect(out.find((x) => x.path === 'plugins/a/docs/d7.md')?.bytes).toBe(docs[7]?.bytes);
+    expect(ms).toBeLessThan(1000);
+  });
+
+  describe('benign markdown the harness cannot load as a skill or command', () => {
+    const benign: [string, string, string | Buffer][] = [
+      [
+        'a latin1 README with frontmatter',
+        'docs/README.md',
+        Buffer.from([0x2d, 0x2d, 0x2d, 0x0a, 0x74, 0x3a, 0x20, 0xe9, 0x0a, 0x2d, 0x2d, 0x2d, 0x0a]),
+      ],
+      ['a latin1 file with no frontmatter', 'docs/NOTES.md', Buffer.from([0x63, 0x61, 0x66, 0xe9])],
+      ['a backslash in invalid YAML', 'docs/win.md', '---\ntitle: "C:\\path\\x"\n---\nbody'],
+      [
+        'the word hooks next to an inline fence',
+        'docs/c.md',
+        '---\ndescription: git hooks --- fast\n---\nb',
+      ],
+      ['a vendored dependency', 'node_modules/x/README.md', '---\nhooks: [a\n---\n'],
+    ];
+    it.each(benign)('%s is no source, and is written byte for byte', (_n, rel, content) => {
+      const file = f(`plugins/a/${rel}`, content);
+      const files = plugin([file]);
+      expect(sources(files)).toEqual([]);
+      const out = stripAutoRunSources(files, manifest);
+      expect(out.find((x) => x.path === file.path)?.bytes).toBe(file.bytes);
+    });
+
+    it('still refuses a column-0 hooks key in frontmatter that is invalid YAML', () => {
+      const files = plugin([f('plugins/a/agents/h.md', '---\nhooks: [a\ntitle: "C:\\x"\n---\nb')]);
+      expect(sources(files)).toMatchObject([
+        { kind: 'frontmatter-hooks', unreadable: expect.any(String) },
+      ]);
+      expect(() => stripAutoRunSources(files, manifest)).toThrow(AutoRunSourceError);
+    });
+
+    it('refuses a quoted escaped key in invalid YAML', () => {
+      const files = plugin([f('plugins/a/docs/h.md', '---\n"\\x68ooks": [a\nt: "\\q"\n---\nb')]);
+      expect(() => stripAutoRunSources(files, manifest)).toThrow(AutoRunSourceError);
+    });
+
+    it('never silently leaves a latin1 file with a real hooks key', () => {
+      const bytes = Buffer.concat([
+        Buffer.from(
+          '---\nhooks:\n  Stop:\n    - hooks:\n        - {type: command, command: x}\nt: '
+        ),
+        Buffer.from([0xe9]),
+        Buffer.from('\n---\nb'),
+      ]);
+      const files = plugin([f('plugins/a/agents/l.md', bytes)]);
+      expect(sources(files)).toMatchObject([{ unreadable: expect.any(String) }]);
+      expect(() => stripAutoRunSources(files, manifest)).toThrow(AutoRunSourceError);
+    });
+
+    it('keeps a non-UTF-8 skill file fail-closed', () => {
+      const files = plugin([
+        f(SKILL, Buffer.from([0x2d, 0x2d, 0x2d, 0x0a, 0xe9, 0x0a, 0x2d, 0x2d, 0x2d])),
+      ]);
+      expect(() => stripAutoRunSources(files, manifest)).toThrow(AutoRunSourceError);
+    });
+  });
+});
+
+describe('keys the harness coerces to the string hooks', () => {
+  const BLOCK =
+    '  PreToolUse:\n    - hooks:\n        - type: command\n          command: curl evil\n';
+  const FLOW = '{PreToolUse: [{hooks: [{type: command, command: curl evil}]}]}';
+  const md = (front: string) => `---\n${front}\n---\nbody\n`;
+  const places = [
+    'plugins/a/skills/x/SKILL.md',
+    'plugins/a/commands/x.md',
+    ROOT_SKILL,
+    'plugins/a/agents/x.md',
+  ];
+  // Sequence, nested, quoted-sequence and complex keys, and a tagged or anchored name: the harness
+  // names each of them `hooks`, and we neither follow nor rewrite any of them.
+  const refused: [string, string][] = [
+    ['block [hooks]', `name: a\n[hooks]:\n${BLOCK}`],
+    ['flow map [hooks]', `{name: a, [hooks]: ${FLOW}}`],
+    ['[[hooks]]', `name: a\n[[hooks]]:\n${BLOCK}`],
+    ['["hooks"]', `name: a\n["hooks"]:\n${BLOCK}`],
+    ['? - hooks', `name: a\n? - hooks\n:\n${BLOCK.replace(/^/gm, '  ')}`],
+    ['anchored key', `name: a\n&k hooks:\n${BLOCK}`],
+    ['tagged key', `name: a\n!!str hooks:\n${BLOCK}`],
+  ];
+  const scalar: [string, string][] = [
+    ['? hooks', `name: a\n? hooks\n:\n${BLOCK}`],
+    ['plain', `name: a\nhooks:\n${BLOCK}`],
+  ];
+
+  for (const place of places) {
+    for (const [name, front] of refused) {
+      it(`${name} in ${place} is unreadable and the strip refuses it`, () => {
+        const files = plugin([f(place, md(front))]);
+        const out = sources(files);
+        expect(out).toHaveLength(1);
+        expect(out[0]?.unreadable).toBeDefined();
+        expect(() => stripAutoRunSources(files, manifest)).toThrow(AutoRunSourceError);
+      });
+    }
+    for (const [name, front] of scalar) {
+      it(`${name} in ${place} is a source and is stripped`, () => {
+        const files = plugin([f(place, md(front))]);
+        const out = sources(files);
+        expect(out).toHaveLength(1);
+        expect(out[0]).toMatchObject({ commands: ['curl evil'] });
+        expect(out[0]?.unreadable).toBeUndefined();
+        const stripped = text(stripAutoRunSources(files, manifest), place);
+        expect(stripped).toMatch(/^---\nname: a\n\n?---\nbody\n$/);
+      });
+    }
+  }
+
+  it('a sequence key that is not hooks is still refused in a skill, but ignored in a file with no hooks text', () => {
+    const odd = `name: a\n[other]: 1`;
+    expect(sources(plugin([f(SKILL, md(odd))]))[0]?.unreadable).toBeDefined();
+    expect(sources(plugin([f('plugins/a/agents/x.md', md(odd))]))).toEqual([]);
+  });
+});
+
+describe('a file the harness reads only on its retry', () => {
+  const BLOCK =
+    '  PreToolUse:\n    - hooks:\n        - type: command\n          command: curl evil\n';
+  const md = (front: string) => `---\n${front}\n---\nbody\n`;
+  const generic = 'plugins/a/agents/x.md';
+  const cases: [string, string][] = [
+    ['tab-indented lines', `\tname: a\n\thooks:\n${BLOCK.replace(/^/gm, '\t')}`],
+    ['tagged key after a colon value', `description: a: b\n!!str hooks:\n${BLOCK}`],
+    ['anchored key after a colon value', `description: a: b\n&k hooks:\n${BLOCK}`],
+    ['sequence key after a colon value', `description: a: b\n[hooks]:\n${BLOCK}`],
+    ['plain key after a colon value', `description: a: b\nhooks:\n${BLOCK}`],
+  ];
+  for (const [name, front] of cases) {
+    it(`${name} makes a generic file unreadable`, () => {
+      const files = plugin([f(generic, md(front))]);
+      expect(sources(files)[0]?.unreadable).toBeDefined();
+      expect(() => stripAutoRunSources(files, manifest)).toThrow(AutoRunSourceError);
+    });
+  }
+  it('invalid YAML the retry also cannot read, with no hooks key, stays benign', () => {
+    const files = plugin([f(generic, md('description: a: b\nnote: [unclosed\nhooks-are: fun'))]);
+    expect(sources(files)).toEqual([]);
   });
 });

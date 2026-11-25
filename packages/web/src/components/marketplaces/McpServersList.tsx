@@ -6,8 +6,8 @@ import { visibleText } from '@/lib/visibleText';
 
 /**
  * The MCP servers a plugin's `.mcp.json` declares. They are dependencies, not connections: the
- * harness does not load the plugin's own `.mcp.json`. An http server can be reached through an
- * existing `mcp` Connection; a stdio server cannot be supported.
+ * harness does not load the plugin's own `.mcp.json`. An http server can be mapped to an
+ * `mcp` Connection in the plugin's details after approval; a stdio server cannot be supported.
  */
 export function McpServersList({ servers }: { servers: PluginMcpServer[] }) {
   if (servers.length === 0) {
@@ -35,9 +35,9 @@ export function McpServersList({ servers }: { servers: PluginMcpServer[] }) {
         ))}
       </ul>
       <Alert announce={false} variant="info">
-        An admin must point the agent’s existing MCP connection at a matching <code>mcp</code>{' '}
-        Connection for each supported server; approving the plugin does not connect it. Servers
-        marked unsupported (stdio) are not available.
+        Approving the plugin does not connect these servers. After approval, an admin can map each
+        supported server to an <code>mcp</code> Connection in the plugin’s details. Servers marked
+        unsupported (stdio) are not available.
       </Alert>
     </div>
   );
