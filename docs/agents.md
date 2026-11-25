@@ -684,7 +684,8 @@ agent's `toolKeys` enable MCP as they do for its own connection (the agent's own
 add the union of their `Skill` and `Agent` tools (a `Skill` only for what a profile's
 own plugins declare, an `Agent` only in the foreground on the session's model), and stop stray processes
 and rewrite the profile directories from the snapshots before every turn (defence in depth: the
-container's own report of its files is never trusted). A profile's hook configuration is left out of the
+container's own report of its files is never trusted). A run that cannot establish a profile's pin relays none of that profile's plugin servers for the activity,
+and an `agent.plugin_mcp_skipped` event says why. A profile's hook configuration is left out of the
 container when its platform-wide hook switch is off: every auto-run source (hooks, frontmatter hooks in any markdown file of the plugin, monitors and LSP servers), with the run keeping the switch it pinned at its start. A plugin whose frontmatter cannot be read safely, including a skill or command whose frontmatter key is not a plain name, is refused with `PROFILE_HOOKS_UNREADABLE` ([harness-profiles.md §7](./harness-profiles.md#7-the-hook-switch)). On any other loop the run proceeds without the
 profiles and an `agent.profile_not_applicable` event says so; a profile that cannot be resolved fails a
 Claude Code run closed.

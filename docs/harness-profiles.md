@@ -336,8 +336,12 @@ empty, and nothing is relayed from it. There is no upgrade from an id-only list.
 (section 12), each as `<teamId>:<agentKey>:<agentVersion>`. A verification therefore covers one team,
 one agent and one agent version. An entry in the bare agent-key form matches no binding, so it exempts
 nothing and its bindings are checked again. A reserved `__execution` key names the Temporal run id the map was taken for; a map
-that names another execution is ignored, so a reused workflow id never inherits an earlier run's pins
-or verified bindings.
+that names another execution is read as holding no pins for this run. A later execution of a reused
+workflow id CLAIMS such a map with its first write: the whole map is replaced by that execution's entry
+alone, so nothing of the earlier execution (its versions, `verified` bindings, hook switch or `mcp` pairs)
+carries over. The execution the row was created for (`temporalRunId`) never claims, so a stale original
+cannot take the map back. A reused workflow id therefore never inherits an earlier run's pins or verified
+bindings.
 
 At run start the worker pins the latest version of every OK profile bound to an agent the run can
 resolve (same scope and agent-version pins as the runtime snapshot; channel turns too). A profile
@@ -846,32 +850,68 @@ each activity:
 2. The run pins the server and connection pairs it relays in its profile pin, `mcp` (section 8), at the
    first activity that relays for the profile. An activity relays only the pinned pairs that are still
    mapped, so a mapping added after the pin does not reach the run, a server re-pointed to another
-   connection is not relayed under the new one, and a mapping removed stops at the next activity. A pin with
-   no `mcp` list (one written before the pairs existed) pins the live pairs at the first activity that
-   relays. A pin that cannot be read relays nothing for that activity, and a damaged list reads as empty.
+   connection is not relayed under that connection, and a mapping removed stops at the next activity. A pin
+   entry with no `mcp` list (one written before the pairs existed) takes the live pairs at the first
+   activity that relays, written as a compare-and-set on the entry, so the list stored first is the one the
+   run keeps. A damaged list reads as empty, and nothing is relayed from it.
 3. Each connection must be an active `mcp` Connection, and the agent's own binding rule must allow it for
    the run's team, the rule the agent's `mcpConnectionId` is held to. This is checked before the
    connection's credential is read. Where the run has a guard on its targets (an orchestration's approval
    guard), that guard applies to the connection as it does to the agent's own.
 
+**A run that cannot establish its pin relays nothing for the activity.** The live set is never a fallback,
+since it may hold a connection mapped after the run began. The activity relays nothing and records one
+`agent.plugin_mcp_skipped` event per plugin that has an eligible mapping, with server `*` and one of these
+reasons: `run could not be pinned` (no run row or execution context, or no entry for the profile), `pin belongs to another
+execution` (the run's pin map names another execution), `pinned version differs` (the entry pins another
+version than the one the activity resolved), `pin could not be written` (the first pin does not write, or
+the stored entry does not read back as the pinned version with a list), or `pin could not be read` (the
+read itself fails), or `pin is damaged` (the stored list is not an array of `<name>=<id>` pairs, so it reads
+as empty). A mapping that the run's pin does not hold is skipped with `mapped after the run pinned` and its
+own server name. The next activity tries again.
+
 The relay then opens each connection through the code that opens the agent's own connection, so the
 connection's tool allowlist, result screening, audit log, timeouts and approval guard all apply. A
 connection that cannot be opened is left out of that activity, as the agent's own connection is when it
-fails to open. The relays open once per activity and serve each of its turns.
+fails to open.
+
+**An activity is the boundary a relay cannot outlive.** Each activity opens its relays once, and they serve
+each of its turns. Each activity therefore lists a mapped server's tools again, so a tool list that changes
+between activities is offered from the next one; within an activity it does not change. `agent.plugin_mcp`
+is recorded once per activity, not once per run.
 
 A plugin's relay differs from the agent's own. Its audit line names the plugin and server
 (`plugin=<plugin> server=<server>`) and not the endpoint. Each value keeps only `A-Za-z0-9_.:-` (other
-characters become `_`) and is cut to 64 characters. The endpoint, its URL and its host, is replaced by
-`[endpoint]`, and so is any IPv4 or IPv6 literal and any `host:port`, in a failed call's error result, in
-the approval and screening messages and in the effect ledger's error. The server's own `instructions` are
+characters become `_`) and is cut to 64 characters. The server's own `instructions` are
 not offered to the harness, because they are text from the server and not from an administrator. Its tool
 text is neutralised before the harness sees it: control and format characters become spaces, each tool
 description is cut to 500 characters and each schema description or title to 200, with at most 3,000
 characters of description text per tool in all (text past that is dropped), and `examples` are dropped,
 so a property named `examples` is dropped too. Each text is screened against the injection patterns and
 replaced by `[description withheld: matched a prompt-injection pattern]` on a match or when the scan cannot
-complete. Tool names, types, required lists and property names are kept. A successful result is not
-scrubbed of the endpoint, and is screened only when its connection screens results or has an approval guard.
+complete. Tool names, types, required lists and property names are kept.
+
+**Endpoint scrub.** Before the effect ledger and the screening see a result of a plugin's server, the
+connection's own endpoint is replaced by `[endpoint]` in it. The names matched are the URL as stored and its
+normalised form, its origin with its path (with and without a trailing slash), its host and hostname, the
+pathname, each path segment of eight or more characters that holds a digit, each query value and the fragment,
+and the user name and password. The URL, host and hostname forms are matched case-insensitively and only where
+they are not a piece of a longer name or address, so an endpoint on `corp.io` leaves `wiki.corp.io` intact. Each
+name is also matched percent-encoded and percent-decoded, and the URL, the query values and the userinfo are
+matched in base64 and base64url (unpadded, so a padded copy matches too).
+
+The scrub walks the whole result: every field of every content block, `structuredContent`, `_meta`,
+`annotations` and any other top-level field, and every object key (a key that collides after the rewrite keeps
+a `_2` or `_3` suffix). Only the `data` and `blob` strings of a non-text content block, and of the `resource` it
+embeds, are left alone. A subtree nested deeper than 16 levels is replaced by `[truncated]`. A result that cannot
+be walked is replaced by a generic error result. When the scrub changes `structuredContent` it is dropped, since
+the harness checks it against the tool's output schema; the `content` blocks remain the model-visible payload.
+
+A success and a server-reported error (`isError`) both get the endpoint scrub. An error the server reports, and
+the message of a call that throws, also get a wider scrub that replaces every other http or https URL, every
+IPv4 or IPv6 literal and every `host:port`. A success keeps other addresses as the server wrote them, because
+they are data the agent asked for. Results are screened only when the connection screens results or has an
+approval guard.
 
 Tools are named `mcp__<key>__<tool>`. The key is the plugin and server names reduced to letters, digits
 and underscores (`<plugin>_<server>`), cut to 24 characters with a six-digit hash of the pair when longer.
@@ -888,12 +928,15 @@ Only a Claude Code run relays. On another runtime the plugin's servers are not r
   and, for each server, the connection id, the server name, the number of tools it offers and the number
   withheld, if any. It never names an endpoint, and the relay's own events name the plugin and server in
   place of the URL.
-- `agent.plugin_mcp_skipped` is recorded for each mapping that is not relayed, with the plugin (the
-  profile's name when no plugin of the profile declares the server), the server name and one reason:
-  `server not declared`, `server name is ambiguous`, `server not supported`, `connection missing`,
-  `connection inactive`, `connection not allowed for the run`, `pin could not be read` or `mcp tool not
-  enabled for the agent` (the last two with the server `*`; the pin reason is recorded only when a mapping
-  is eligible). A skipped mapping never fails the run.
+- `agent.plugin_mcp_skipped` is recorded for each mapping that is not relayed, with the plugin (the plugin's
+  own name; the profile's name when no plugin of the profile declares the server), the server name and one
+  reason: `server not declared`, `server name is ambiguous`, `server not supported`, `connection missing`,
+  `connection inactive`, `connection not allowed for the run` or `mapped after the run pinned`. The pin reasons
+  (`run could not be pinned`, `pin belongs to another execution`, `pinned version differs`, `pin could not be
+  written`, `pin could not be read` and `pin is damaged`) are recorded with the server `*`, once per plugin with
+  an eligible mapping. So is `mcp tool not enabled for the agent` (the gate reason), once per activity when a
+  mapping exists; the gate reason names the run's first profile in place of a plugin. A skipped mapping never
+  fails the run.
 
 ---
 
@@ -917,22 +960,33 @@ Only a Claude Code run relays. On another runtime the plugin's servers are not r
   team owns it, and a run skips a connection the agent-binding rule refuses for that run
   (`connection not allowed for the run`). A saved mapping therefore does not guarantee that a run relays
   its tools.
-- **A run's relayed set is capped at its first relay.** A mapping added after the profile's first relay in
-  a run does not reach that run. A run that cannot pin (no run row or another execution's pin, a pin for
-  another version, or a first pin that cannot be written) relays the live mapped pairs for that activity,
-  so a mapping made during the run can reach it; the next activity tries the pin again. A mapping removed, or a connection made inactive, stops being relayed at
-  the next activity. A connection that cannot be opened is left out of the activity that tried to open it.
-- **Plugin relays are opened once per activity, not once per run.** Each activity lists a mapped server's
-  tools again, so a tool list that changes between activities is offered from the next one. Within an
-  activity the list does not change.
-- **A plugin server's endpoint can appear in its successful results.** The endpoint is scrubbed from error
-  results, approval and screening messages and the effect ledger's error, not from a result the server
-  returns as a success (section 17).
-- **Relayed tools are not verified in a real harness.** The mapping routes, the declaration parser, the
-  resolution and skip reasons, the pin and the runtime wiring have unit tests, with the relay itself
-  mocked. No suite runs the Claude Code harness calling a relayed tool, and the Docker suite exercises no
-  mapping. The handling of a relayed tool's name, schema and result by the harness is therefore not
-  verified end to end.
+- **A plugin server's result can name another address of that server.** A success keeps every address other
+  than the connection's own endpoint as the server wrote it. The wider scrub on an error covers URLs, IP literals
+  and `host:port`, but not another plain host name of the server.
+- **The endpoint scrub is a literal match, and some copies of the endpoint pass through it.** Not scrubbed: hex,
+  rot13 or double-encoded copies; a secret split across lines or tokens; a base64 copy embedded at a non-zero byte
+  offset of a larger encoded blob; a path segment shorter than eight characters or with no digit (the whole path
+  is matched, not its segments); a query value, a path or a password shorter than four characters, and a
+  one-character password on its own; the `data` and `blob` payloads of non-text blocks, so an endpoint name
+  encoded inside an image's bytes is kept. Matching covers at most 64 names per endpoint, names of at most 8,192
+  characters and 65,536 characters of names in all; a name past any of those limits is not scrubbed.
+- **A hostname that is an ordinary word is scrubbed wherever it stands alone.** An endpoint whose host is a word
+  such as `localhost` has that word replaced in any result, so ordinary text can change.
+- **A reset race can flip a pin map between two claiming executions.** A map that names another execution is
+  claimed by the next execution's first write (section 8). The execution the row was created for never claims,
+  but two later executions of a reused workflow id can each claim the map in turn. If a reset lets them run
+  together, each activity reads back whatever entry the map holds after its own write, so one can relay the
+  connections the other pinned, or skip with `pin could not be written`. The claim is a compare-and-set, not a
+  lock, and nothing serialises the two executions.
+- **The relay's tests stop short of a real harness, database and activity.** `pluginMcpRelay.integration.test.ts`
+  (run by `yarn test`) drives the real resolver, opener, relay, tool-text neutraliser and endpoint scrub against an
+  in-process MCP server over the real Streamable HTTP transport. It fakes the database, the connection URL lookup,
+  the pin store, the SSRF guard (the server listens on loopback, so a plain `fetch` stands in), the memory scanner
+  and the effect ledger. One Docker-suite case (`runtime.docker.test.ts`, run only where `CLAUDE_CODE_DOCKER_TEST=1`
+  is set, as in CI) has a Claude Code container's harness call a mapped plugin server's tool through the relay. That
+  case replaces the whole binding resolver with a fixed list, so the mapping, gate and pin checks are not exercised
+  there, and the model is a scripted Messages API. Not covered: a real Claude Code harness choosing a plugin's
+  skill, a real database, and a real Temporal activity.
 - **stdio and sse servers cannot be relayed.** They are listed as unsupported in the plugin details, and
   an HTTP server whose URL is neither `http` nor `https` is unsupported too.
 - **Commands, hooks, sub-agents and the other auto-run sources apply only on `claude-code`.** Other
