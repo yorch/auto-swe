@@ -43,7 +43,7 @@ Decisions taken, with the alternatives discarded:
 |---|---|---|
 | Unit of the concept | One `Campaign`: goal, check, target set, work definition, order, completion condition. An epic is a campaign whose work is planned; the current campaign is one whose work is uniform | Keeping epics and campaigns separate and adding tracking to campaigns only. Folding campaigns into orchestrations (an orchestration is a conversation about one repository; a campaign is a durable set) |
 | Source of truth | Database rows, reconciled by a workflow that sleeps between events and `continueAsNew`s | A workflow that holds the queue in memory for up to 30 days, as `CampaignWorkflow` does |
-| Delivery state | Read from `PullRequest` (already updated by webhooks), never copied onto the target | A second copy of merged and closed on `CampaignTarget`, which would drift from the pull-request views |
+| Delivery state | Read from `PullRequest` (already updated by webhooks) through the latest attempt's `runId`, never copied onto the target | A second copy of merged and closed on `CampaignTarget`, which would drift from the pull-request views |
 | What "done" means for a target | The check passes on the base branch: `SATISFIED`, whether the platform's pull request merged or not | `MERGED` as the only finish (a person may fix a repository by hand, and a repository can be satisfied before the campaign starts) |
 | The check | A recipe gains a read-only mode: the same script, run without commit or push, answering satisfied or not | Parsing manifests in the gateway; a model judging satisfaction |
 | Target discovery | A **scope** (a team, or the organization) plus the recipe's check, re-evaluated on a schedule. A newly matching repository is added only if the launcher is still authorized for it | Discovery that starts work by itself. Dependabot and code-scanning alert sources (deferred, see Limitations) |
@@ -139,7 +139,7 @@ The wake-ups are signals, with a daily backstop that reads the database for any 
 | Signal | Sent by |
 |---|---|
 | `attemptFinished` | Run finalization, as orchestration's child-finished signal |
-| `pullRequestChanged` | The pull-request webhook handler, when a `PullRequest` row a target points to is merged, closed or reopened |
+| `pullRequestChanged` | The pull-request webhook handler, when a `PullRequest` row opened by a target's latest attempt is merged, closed or reopened |
 | `control` | The routes: pause, resume, cancel, retry, add or remove a target, take over |
 
 State is therefore recoverable from rows alone. A reconciler that crashed and restarted, or a campaign
@@ -169,9 +169,12 @@ a campaign token scoped to that one call, the same mechanism as the orchestratio
    permission gate, the organization and team budgets, the campaign's own budget (§8).
 6. A transaction under that lock writes the attempt and the target's `RUNNING` state.
 
-The GitHub permission gate judges a request's token and the worker has none. Orchestration checks push
-permission live at each spawn through the gateway, so the same route can close the "checked at launch
-only" limitation. That needs confirming against the code before it is promised.
+The worker has no request token, so the permission check cannot use the launch gate's token path.
+`checkPushPermission` (`gateway/src/lib/orchestrationAccess.ts`) already answers push permission live
+from a user id, through the user's saved credential or verified GitHub login, and fails closed.
+The attempt route calls it for the launcher at every start, which closes the "checked at launch only"
+limitation for push permission. The repository-access gate that judges a request's own token stays a
+launch-time check.
 
 An attempt retried with the same key is answered with the attempt its first call started.
 
@@ -231,6 +234,12 @@ retry the upstream target, which unblocks the rest, or remove the edge.
 A launcher whose account is deactivated, or who leaves the organization, does not cancel the campaign.
 It moves to `PAUSED` with `pausedReason: launcher-unavailable`, and an owning-team `LEAD` takes over.
 
+**The kill switch pauses.** When `workflow.campaignsEnabled` turns off for a campaign's owning team or
+for a team that owns a target, the next reconciler pass moves the campaign to `PAUSED` with
+`pausedReason: disabled` (a running attempt finishes; nothing starts, and rescans stop). Turning the
+setting back on resumes nothing by itself: an owning-team `LEAD` or ADMIN resumes it, and the attempt
+route re-checks the setting at every start (§4, step 1), so a resume that races a switch-off is refused.
+
 ## 8. Budget
 
 A campaign gets a budget of its own: `budgetUsd`, optional, frozen at launch. Children are metered per
@@ -249,15 +258,16 @@ the launch; nothing starts without one.
 
 **Epics.** `POST /api/v1/epics` becomes a launch of a `PLANNED` campaign with `scope` unset,
 `gate: OPENED` (today's meaning: a downstream repository starts once upstream's run succeeded) and
-`recipe` unset. The `/epics` pages, the CLI epic commands and `GET /api/v1/epics` read the same rows
+`recipe` unset. A campaign with edges defaults to `gate: OPENED`; a launcher opts in to `MERGED`
+per campaign. The `/epics` pages, the CLI epic commands and `GET /api/v1/epics` read the same rows
 filtered by `plan = PLANNED`, so existing links keep working. Epics already running finish on
 `EpicOrchestratorWorkflow`.
 
 **Cross-organization.** Epics can span organizations today, spending against each. A campaign is
 one organization. The first release keeps epics' behaviour by allowing a `PLANNED` campaign to name
 repositories of more than one organization, with each attempt billed to its repository's team and
-organization, as epic children are. A `UNIFORM` campaign stays single-organization. This is open
-(see below), because it sets a different authorization shape for the two modes.
+organization, as epic children are. A `UNIFORM` campaign stays single-organization. The two modes
+therefore have two authorization shapes, and the launch route decides by `plan`.
 
 ## 10. Data model
 
@@ -266,7 +276,7 @@ All additive. No existing column is dropped.
 | Change | Detail |
 |---|---|
 | `campaigns` | `plan` (`UNIFORM`, `PLANNED`), `gate` (`OPENED`, `MERGED`), `scopeKind` and `scopeId` (null, `TEAM`, `ORG`), `maxOpenPullRequests`, `staleAfterDays`, `rescanIntervalHours`, `budgetUsd`, `expiresAt`, `launchedById` (replaces reading `createdById` as the acting identity), `pausedReason`, `launcherChangedAt`. New state values `PLANNING`, `PAUSED`, `MONITORING` |
-| `campaign_targets` | `brief` (planned work), `dependsOn` (uuid array of target ids), `evidence` (JSON), `regressions`, `staleSince`, `lastCheckedAt`, `lastCheckedSha`, `pullRequestId` (nullable FK to `pull_requests`, `SetNull`). New state values `BLOCKED`, `MERGED`, `SATISFIED`, `NEEDS_ATTENTION` |
+| `campaign_targets` | `brief` (planned work), `dependsOn` (uuid array of target ids), `evidence` (JSON), `regressions`, `staleSince`, `lastCheckedAt`, `lastCheckedSha`. There is no pull-request column: a target finds its pull request through its latest attempt's `runId` (`pull_requests.run_id`, already indexed). New state values `BLOCKED`, `MERGED`, `SATISFIED`, `NEEDS_ATTENTION` |
 | `campaign_attempts` | `targetId`, `n`, `runId`, `childWorkflowId` (unique), `path`, `verification`, `outcome`, `failureReason`, `startedAt`, `finishedAt`. Unique on `(targetId, n)` |
 | `campaign_proposals` | A repository found by discovery and not started: `campaignId`, `connectionId`, `reason`, `decidedAt`. Unique on `(campaignId, connectionId)` |
 
@@ -379,20 +389,3 @@ beside the existing cancel, behind the confirmations cancel has.
   attempt, not at launch.
 - **Draft pull requests already opened are never closed by a cancel or a removal.**
 - **No CLI command** for the new routes until the CLI package adds them.
-
-## Open questions
-
-1. **Cross-organization.** Keep the §9 split (planned campaigns may span organizations, uniform ones may
-   not), or make every campaign one organization and tell epic users to split? The split preserves
-   today's epics; one organization halves the authorization cases.
-2. **Is `MERGED` as a gate worth its latency?** Gate `MERGED` makes ordering real and makes a chain of
-   five repositories take as long as five reviews. Default it to `OPENED` and let a launcher opt in?
-3. **Can the GitHub permission gate run on the gateway at every child start with no request token?**
-   Orchestration does it for push permission; confirm that the same mechanism covers the full gate
-   before §4 relies on it.
-4. **Does `PullRequest` carry every pull request a campaign opens?** Targets point at it by id. A
-   recipe's pull request is opened by the template, not an agent run; confirm both paths write the row
-   before the delivery state is read from it.
-5. **Should the existing `campaignsEnabled` kill switch pause running campaigns, not only refuse
-   starts?** Today it stops the remaining targets of a running campaign. With a monitoring state,
-   turning it off should plausibly move every campaign to `PAUSED`.
