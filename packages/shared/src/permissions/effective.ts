@@ -90,24 +90,36 @@ function heldOn(
 /**
  * The configuration grants that could apply to a person: their own, and the role grants of the
  * teams they are on. The one query both the effective-permissions view and the gateway's write
- * check use. The caller wraps it in `runUnscoped` where the tenant guard needs it.
+ * check use. It runs unscoped: a grant is looked up by the person, not by tenant.
  */
 export async function loadGrantRows(
   prisma: Pick<PrismaClient, 'configPermission'>,
   userId: string,
   teamIds: string[]
 ): Promise<ConfigGrant[]> {
-  const rows = await prisma.configPermission.findMany({
-    select: { keyPattern: true, orgId: true, role: true, scope: true, teamId: true, userId: true },
-    where: {
-      OR: [
-        { userId },
-        ...(teamIds.length
-          ? [{ scope: 'TEAM' as const, teamId: { in: teamIds }, userId: null }]
-          : []),
-      ],
-    },
-  });
+  const rows = await runUnscoped(
+    "the person's own configuration grants and the role grants of the teams they are on",
+    ['ConfigPermission'],
+    () =>
+      prisma.configPermission.findMany({
+        select: {
+          keyPattern: true,
+          orgId: true,
+          role: true,
+          scope: true,
+          teamId: true,
+          userId: true,
+        },
+        where: {
+          OR: [
+            { userId },
+            ...(teamIds.length
+              ? [{ scope: 'TEAM' as const, teamId: { in: teamIds }, userId: null }]
+              : []),
+          ],
+        },
+      })
+  );
   return rows as ConfigGrant[];
 }
 
