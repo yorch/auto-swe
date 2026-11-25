@@ -406,7 +406,19 @@ describe('campaign routes', () => {
           return { count: rows.length };
         },
       },
-      campaignProposal: { findMany: async () => proposals },
+      campaignProposal: {
+        count: async () => proposals.length,
+        findMany: async (args: { where: { connection?: unknown } }) => {
+          if (args.where.connection) {
+            assertReachableShape(args.where.connection);
+          }
+          return proposals.filter(
+            (p) =>
+              !args.where.connection ||
+              isMember(REPOS[p.connectionId as string]?.teamId as string, currentSub)
+          );
+        },
+      },
       campaignTarget: {
         createMany: async (args: { data: Array<Record<string, unknown>> }) => {
           for (const d of args.data) {
@@ -1782,8 +1794,17 @@ describe('campaign routes', () => {
             repoLabel: 'org/secret-repo',
           },
         ]);
+        // An owning-team member who cannot reach the proposed repository (REPO_X is another
+        // team's) gets a count, not the name.
         as('u-1', 'ENGINEER', { [TEAM_1]: 'ENGINEER' });
-        expect(body(await detail(U(1))).data.proposals).toHaveLength(1);
+        const ownerView = await detail(U(1));
+        expect(body(ownerView).data.proposals).toEqual([]);
+        expect(body(ownerView).data.hiddenProposalCount).toBe(1);
+        expect(ownerView.payload).not.toContain('secret-repo');
+        as('u-3', 'ENGINEER', { [TEAM_1]: 'ENGINEER', [TEAM_3]: 'ENGINEER' });
+        const reaching = body(await detail(U(1))).data;
+        expect(reaching.proposals).toHaveLength(1);
+        expect(reaching.hiddenProposalCount).toBe(0);
         as('u-2', 'ENGINEER', { [TEAM_2]: 'ENGINEER' });
         const other = await detail(U(1));
         expect(body(other).data.proposals).toEqual([]);

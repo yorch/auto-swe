@@ -101,6 +101,15 @@ export function isTargetFinal(state: TargetState): boolean {
   return CAMPAIGN_TARGET_FINAL_STATES.includes(normalizeTargetState(state));
 }
 
+/**
+ * Whether a target is final for a campaign. A campaign with no check ends when its targets' pull
+ * requests merge, so for it `MERGED` is final (no regression detection, no proof). With a check,
+ * `MERGED` is transient: the check still has to confirm it.
+ */
+export function isTargetFinalFor(state: TargetState, opts: { hasCheck: boolean }): boolean {
+  return isTargetFinal(state) || (!opts.hasCheck && normalizeTargetState(state) === 'MERGED');
+}
+
 /** A campaign in one of these states never moves again. */
 export const CAMPAIGN_FINAL_STATES: readonly CampaignStateValue[] = [
   'COMPLETED',
@@ -520,7 +529,8 @@ function dependencyBlock(
 /**
  * Which `PENDING` and `BLOCKED` targets start now, in `position` order, and why the rest wait.
  * A target is blocked first by its gate, then by `maxParallel` (children in flight, counting the
- * ones this call starts), then by `maxOpenPullRequests` (drafts of this campaign awaiting review).
+ * ones this call starts), then by `maxOpenPullRequests` (open drafts plus running attempts, which will become drafts, plus
+ * the starts of this call).
  * A campaign that is not `ACTIVE` (or `STARTING`) starts nothing and reports no blocks, so its
  * rows are left as they are.
  */
@@ -539,6 +549,7 @@ export function decideSchedule(input: ScheduleInput): ScheduleDecision {
       openDrafts += 1;
     }
   }
+  // A running attempt becomes a draft, so it counts toward the draft bound now.
   const candidates = input.targets
     .filter((t) => t.state === 'PENDING' || t.state === 'BLOCKED')
     .slice()
@@ -553,7 +564,10 @@ export function decideSchedule(input: ScheduleInput): ScheduleDecision {
       blocked.push({ reason: gateReason, targetId: target.id });
     } else if (inFlight + start.length >= maxParallel) {
       blocked.push({ reason: { kind: 'max-parallel', limit: maxParallel }, targetId: target.id });
-    } else if (input.maxOpenPullRequests !== null && openDrafts >= input.maxOpenPullRequests) {
+    } else if (
+      input.maxOpenPullRequests !== null &&
+      openDrafts + inFlight + start.length >= input.maxOpenPullRequests
+    ) {
       blocked.push({
         reason: { kind: 'max-open-pull-requests', limit: input.maxOpenPullRequests },
         targetId: target.id,
@@ -703,6 +717,8 @@ export interface CampaignStateDecisionInput {
   targetStates: readonly TargetState[];
   /** Whether a scope is set, so the campaign can find new targets. */
   hasScope: boolean;
+  /** Whether the campaign's recipe has a check. Without one, `MERGED` is a final target state. */
+  hasCheck: boolean;
   /** Epoch milliseconds; null means no expiry. */
   expiresAt: number | null;
   now: number;
@@ -714,7 +730,8 @@ export interface CampaignStateDecisionInput {
  * cancel path, not by this decision.
  *
  * - Some target is not final: `ACTIVE`. A `MONITORING` campaign whose target regressed returns here.
- * - Every target is final (`SATISFIED`, `SKIPPED`, `CANCELLED`; none at all counts) and there is no
+ * - Every target is final (`SATISFIED`, `SKIPPED`, `CANCELLED`, and `MERGED` when there is no
+ *   check; none at all counts) and there is no
  *   scope, or `expiresAt` has passed: `COMPLETED`.
  * - Every target is final and a scope is set, and the campaign has not expired: `MONITORING`.
  */
@@ -726,7 +743,7 @@ export function decideCampaignState(input: CampaignStateDecisionInput): {
     return { changed: false, state: input.state };
   }
   let next: CampaignStateValue;
-  if (!input.targetStates.every(isTargetFinal)) {
+  if (!input.targetStates.every((s) => isTargetFinalFor(s, { hasCheck: input.hasCheck }))) {
     next = 'ACTIVE';
   } else {
     const expired = input.expiresAt !== null && input.now >= input.expiresAt;

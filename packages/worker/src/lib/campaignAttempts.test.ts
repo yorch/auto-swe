@@ -16,6 +16,7 @@ vi.mock('./activityLog.js', () => ({ logWarn: vi.fn() }));
 
 import {
   ATTEMPT_NEVER_STARTED_MS,
+  ATTEMPT_RUN_GRACE_MS,
   attemptOutcomeFromRun,
   completeCampaignAttemptForRun,
   markCampaignAttemptRunStarted,
@@ -293,6 +294,57 @@ describe('reconcileCampaignAttempt', () => {
     await expect(
       reconcileCampaignAttempt(attempt(), ATTEMPT_NEVER_STARTED_MS + 1)
     ).resolves.toBeNull();
+  });
+
+  describe('a run row that never appeared and a ledger that cannot say', () => {
+    const settled = (status: string) => ({
+      describe: vi.fn().mockResolvedValue({ status: { name: status } }),
+    });
+
+    beforeEach(() => {
+      db.workflowRun.findUnique.mockResolvedValue(null);
+      db.activeWorkflow.findMany.mockResolvedValue([]);
+    });
+
+    it('fails the attempt once Temporal no longer knows its child, so it stops holding a slot', async () => {
+      temporal.getHandle.mockReturnValue({
+        describe: vi
+          .fn()
+          .mockRejectedValue(Object.assign(new Error('nf'), { name: 'WorkflowNotFoundError' })),
+      });
+      const done = await reconcileCampaignAttempt(attempt(), ATTEMPT_RUN_GRACE_MS + 1);
+      expect(done).toMatchObject({ attemptId: 'att-1' });
+      expect(db.campaignAttempt.updateMany.mock.calls[0]?.[0]).toMatchObject({
+        data: { failureReason: 'the run never started', outcome: 'FAILED' },
+        where: { id: 'att-1', outcome: null },
+      });
+    });
+
+    it('fails it when the child closed without creating a run, even with a ledger still saying it works', async () => {
+      db.activeWorkflow.findMany.mockResolvedValue([{ currentStatus: 'IMPLEMENTING' }]);
+      temporal.getHandle.mockReturnValue(settled('FAILED'));
+      await expect(
+        reconcileCampaignAttempt(attempt(), ATTEMPT_RUN_GRACE_MS + 1)
+      ).resolves.toMatchObject({ attemptId: 'att-1' });
+    });
+
+    it('leaves it while the child is running, within the grace, or when Temporal cannot be asked', async () => {
+      temporal.getHandle.mockReturnValue(settled('RUNNING'));
+      await expect(
+        reconcileCampaignAttempt(attempt(), ATTEMPT_RUN_GRACE_MS + 1)
+      ).resolves.toBeNull();
+      temporal.getHandle.mockReturnValue(settled('FAILED'));
+      await expect(
+        reconcileCampaignAttempt(attempt(), ATTEMPT_RUN_GRACE_MS - 1)
+      ).resolves.toBeNull();
+      temporal.getHandle.mockReturnValue({
+        describe: vi.fn().mockRejectedValue(new Error('unavailable')),
+      });
+      await expect(
+        reconcileCampaignAttempt(attempt(), ATTEMPT_RUN_GRACE_MS + 1)
+      ).resolves.toBeNull();
+      expect(db.campaignAttempt.updateMany).not.toHaveBeenCalled();
+    });
   });
 
   it('never throws', async () => {

@@ -1943,7 +1943,7 @@ export const SETTING_DEFINITIONS = {
   'workflow.campaignMaxOpenPullRequests': defineSetting({
     defaultValue: 10,
     description:
-      "The most draft pull requests one campaign may hold open at once. It is the default for a campaign's maxOpenPullRequests when a launch does not set one, and the ceiling a launch may not exceed.",
+      "The most draft pull requests one campaign may hold open at once; a target whose attempt is running counts, because it will become a draft. It is the default for a campaign's maxOpenPullRequests when a launch does not set one, and the ceiling a launch may not exceed.",
     group: 'workflow',
     label: 'Campaign open pull request limit',
     overridableAt: ['TEAM', 'ORGANIZATION'],
@@ -2007,7 +2007,7 @@ export const SETTING_DEFINITIONS = {
   'workflow.campaignStaleAfterDays': defineSetting({
     defaultValue: 14,
     description:
-      "The default number of days a campaign's draft pull request may stay open before its target is flagged stale, for a campaign that does not set its own threshold. A stale flag changes no state and starts nothing; it only notifies the owning team.",
+      "The default number of days a campaign's draft pull request may stay open before its target is flagged stale, for a campaign that does not set its own threshold. A stale flag changes no state and starts nothing; it only marks the target so a person sees it.",
     group: 'workflow',
     label: 'Campaign stale pull request age',
     overridableAt: ['TEAM', 'ORGANIZATION'],

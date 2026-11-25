@@ -986,10 +986,30 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         graph,
         visible
       );
-      const [targetViews, proposals] = await Promise.all([
+      const [targetViews, proposalView] = await Promise.all([
         targetDtos(fastify.prisma, targets, blocked),
-        ownerMember ? proposalDtos(fastify.prisma, id) : Promise.resolve([]),
+        ownerMember
+          ? proposalDtos(
+              fastify.prisma,
+              id,
+              // The proposals name other teams' repositories: only those the caller can reach.
+              isAdmin
+                ? undefined
+                : {
+                    AND: [
+                      {
+                        OR: [
+                          { team: memberTeams(user) },
+                          { shares: { some: { team: memberTeams(user) } } },
+                        ],
+                      },
+                      permissionRequirement(user, gate),
+                    ],
+                  }
+            )
+          : Promise.resolve({ hiddenCount: 0, proposals: [] }),
       ]);
+      const proposals = proposalView.proposals;
 
       const summary = summaryOf(campaign, counts);
       const detail: CampaignDetailDto & Record<string, unknown> = {
@@ -998,6 +1018,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         cancelledAt: iso(campaign.cancelledAt),
         cancelledById: campaign.cancelledById ?? null,
         completedAt: iso(campaign.completedAt),
+        hiddenProposalCount: proposalView.hiddenCount,
         hiddenTargetCount: Math.max(0, counts.total - targets.length),
         launcherChangedAt: iso(campaign.launcherChangedAt),
         maxOpenPullRequests: campaign.maxOpenPullRequests ?? null,

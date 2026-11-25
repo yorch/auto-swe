@@ -43,7 +43,14 @@ import type {
   RunCampaignCheckResult,
 } from '../lib/campaignReconcilerTypes.js';
 import { maskCredentialShapes } from '../lib/redactToken.js';
-import { MERGE_NOT_SATISFIED_REASON } from '../workflows/campaignReconcilerPass.js';
+import {
+  DISCOVERY_ACTIVITY_MARGIN_MS,
+  DISCOVERY_ACTIVITY_TIMEOUT_MS,
+  DISCOVERY_CHUNK,
+  DISCOVERY_CLONE_ALLOWANCE_MS,
+  DISCOVERY_MAX_CANDIDATES,
+  MERGE_NOT_SATISFIED_REASON,
+} from '../workflows/campaignReconcilerPass.js';
 import { runShellCheck, type ShellCheckInput, type ShellCheckResult } from './shellStep.js';
 
 /** The campaign states in which a check may run: it is a rescan, and a paused campaign has none. */
@@ -51,13 +58,14 @@ const CHECKABLE_CAMPAIGN_STATES = new Set(['STARTING', 'ACTIVE', 'MONITORING', '
 /** The targets a check is run for; every other state is moved by a run or a person. */
 const CHECKABLE_TARGET_STATES = new Set<TargetState>(['MERGED', 'SATISFIED']);
 
-/** Repositories one discovery call checks before it hands the walk back to the workflow. */
-export const DISCOVERY_CHUNK = 25;
-/** Candidates one scope walk returns at most, so the workflow's history stays bounded. */
-export const DISCOVERY_MAX_CANDIDATES = 500;
+// The walk's limits are constants of the workflow's pure module (the isolate cannot import this
+// file); they are re-exported so the activity and its callers name one definition.
+export { DISCOVERY_CHUNK, DISCOVERY_MAX_CANDIDATES };
 
 export interface CheckDeps {
   run: (input: ShellCheckInput) => Promise<ShellCheckResult>;
+  /** The clock, in epoch milliseconds; tests replace it. */
+  now?: () => number;
 }
 
 const defaultDeps: CheckDeps = { run: runShellCheck };
@@ -303,9 +311,18 @@ export async function runCampaignCheck(
  * proposals. `cursor` is the offset to resume from; the answer's `nextCursor` is null when the
  * scope has been walked to its end.
  *
- * A repository the launcher cannot see is never checked and never named. One they can see but not
- * start work in is checked and reported unreachable, with the reason, so the owning team can
- * decide; nothing is ever started from here.
+ * A call is bounded three ways, and the cursor it returns is exactly where it stopped:
+ *  - `limit` repositories (at most {@link DISCOVERY_CHUNK});
+ *  - `maxCandidates`: it stops right after the candidate that reaches it, so the workflow's
+ *    per-walk cap is enforced across chunks;
+ *  - its own time: a repository is started only while the worst case of one check (the recipe's
+ *    timeout plus a clone allowance) still fits inside the activity's `startToCloseTimeout`, so a
+ *    chunk of slow repositories hands back a short answer instead of timing out and losing it.
+ *
+ * A repository that is already a target (in any state) or a recorded proposal is skipped before
+ * anything is cloned. A repository the launcher cannot see is never checked and never named. One
+ * they can see but not start work in is checked and reported unreachable, with the reason, so the
+ * owning team can decide; nothing is ever started from here.
  */
 export async function discoverCampaignTargets(
   input: DiscoverCampaignTargetsInput,
@@ -313,6 +330,13 @@ export async function discoverCampaignTargets(
 ): Promise<DiscoverCampaignTargetsResult> {
   const { campaignId, cursor } = input;
   assertCurrentWorkflowOwnsCampaign(campaignId);
+  const take = Math.max(1, Math.min(Math.floor(input.limit ?? DISCOVERY_CHUNK), DISCOVERY_CHUNK));
+  const maxCandidates = Math.max(
+    1,
+    Math.min(Math.floor(input.maxCandidates ?? DISCOVERY_MAX_CANDIDATES), DISCOVERY_MAX_CANDIDATES)
+  );
+  const clock = deps.now ?? Date.now;
+  const startedAt = clock();
   const campaign = await prisma.campaign.findUnique({
     select: {
       launchedById: true,
@@ -377,7 +401,7 @@ export async function discoverCampaignTargets(
           orderBy: { id: 'asc' },
           select: { id: true, organizationName: true, repoName: true, teamId: true },
           skip: cursor,
-          take: DISCOVERY_CHUNK,
+          take,
           where: where as never,
         })
     ),
@@ -410,9 +434,21 @@ export async function discoverCampaignTargets(
       : { ok: false, reason: 'the launcher does not lead the team that owns the repository' };
   };
 
+  // One repository's worst case: its check's own timeout and the clone before it.
+  const worstCaseMs =
+    recipeRuntime(campaign.recipeRef as Parameters<typeof recipeRuntime>[0]).timeoutMs +
+    DISCOVERY_CLONE_ALLOWANCE_MS;
+  const budgetMs = DISCOVERY_ACTIVITY_TIMEOUT_MS - DISCOVERY_ACTIVITY_MARGIN_MS;
+
   const candidates: DiscoveredCandidate[] = [];
+  let processed = 0;
   for (const repo of repos) {
+    // The first repository is always checked, so a walk makes progress whatever the recipe's bound.
+    if (processed > 0 && clock() - startedAt + worstCaseMs > budgetMs) {
+      break;
+    }
     heartbeat('campaign discovery: checking a repository');
+    processed += 1;
     if (skip.has(repo.id)) {
       continue;
     }
@@ -429,12 +465,12 @@ export async function discoverCampaignTargets(
       teamId: repo.teamId,
       ...(reach.ok ? {} : { unreachableReason: reach.reason }),
     });
-    if (candidates.length >= DISCOVERY_MAX_CANDIDATES) {
-      return { candidates, nextCursor: null };
+    if (candidates.length >= maxCandidates) {
+      break;
     }
   }
-  return {
-    candidates,
-    nextCursor: repos.length < DISCOVERY_CHUNK ? null : cursor + repos.length,
-  };
+  // The scope ended only when this call read every repository it asked for and got fewer than it
+  // asked for; a call that stopped early resumes right after the last repository it checked.
+  const ended = processed === repos.length && repos.length < take;
+  return { candidates, nextCursor: ended ? null : cursor + processed };
 }

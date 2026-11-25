@@ -3,7 +3,7 @@ import type { AccessActor, AccessLog } from '@auto-swe/shared/lib/accessActor';
 import type { RepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
 import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { isPlatformAdmin } from '@auto-swe/shared/permissions';
+import { isPlatformAdmin, can as sharedCan, userActor } from '@auto-swe/shared/permissions';
 import type { FastifyRequest } from 'fastify';
 import { can } from './authz.js';
 import { authorizeLaunch, type LaunchRepo } from './launchAuthorization.js';
@@ -107,6 +107,9 @@ export async function loadLaunchRepos(prisma: PrismaClient, userId: string, ids:
 
 export type LoadedLaunchRepo = Awaited<ReturnType<typeof loadLaunchRepos>>[number];
 
+/** The one reason given for a repository that is missing or that the caller may not lead. */
+export const NOT_LED_REASON = 'not found, or you may not start work in it';
+
 export type TargetLaunchDecision = { ok: true } | { ok: false; reason: string };
 
 /**
@@ -121,7 +124,19 @@ export async function decideTargetLaunch(
   repo: LoadedLaunchRepo | undefined,
   options: { gate: RepoAccessGate | undefined; log?: AccessLog }
 ): Promise<TargetLaunchDecision> {
-  if (!repo?.isActive || repo.type !== 'git_repo' || !repo.team.isActive) {
+  if (!repo) {
+    return { ok: false, reason: NOT_LED_REASON };
+  }
+  // Authorization first, as the launch route orders it: whether the repository is inactive, on
+  // another provider or in another organization is told only to someone who may start work in
+  // its team, so a caller cannot probe arbitrary connection ids.
+  if (
+    !(await sharedCan(prisma, userActor(actor), 'team.launch.multi-repo', { teamId: repo.teamId }))
+      .allowed
+  ) {
+    return { ok: false, reason: NOT_LED_REASON };
+  }
+  if (!repo.isActive || repo.type !== 'git_repo' || !repo.team.isActive) {
     return { ok: false, reason: 'the repository no longer exists or is inactive' };
   }
   if (repo.scmProvider !== 'github') {

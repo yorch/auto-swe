@@ -183,6 +183,14 @@ describe('assistantAccess', () => {
     expect(assistantAccess('GET', '/api/v1/campaigns/:id')).toBe('read');
   });
 
+  it('keeps campaign pause and resume behind a confirmation, deliberately', () => {
+    // Spec docs/specs/2026-11-25-campaigns-as-tracked-goals.md §11: the assistant may pause and
+    // resume a campaign after the person confirms. Resume restarts pull requests as the launcher,
+    // so it is 'confirm', never 'read' and not 'never' (the person may ask for it by chat).
+    expect(assistantAccess('POST', '/api/v1/campaigns/:id/pause')).toBe('confirm');
+    expect(assistantAccess('POST', '/api/v1/campaigns/:id/resume')).toBe('confirm');
+  });
+
   it('keeps the pull request evaluation mode out of the assistant, and its reads open', () => {
     // The body picks the mode, including `auto`, so a confirmation cannot audit it per mode.
     expect(assistantAccess('PUT', '/api/v1/repositories/:id/pr-evaluation')).toBe('never');

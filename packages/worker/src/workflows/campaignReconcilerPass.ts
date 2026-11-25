@@ -44,6 +44,72 @@ export const MIN_SLEEP_MS = 1000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// ── Discovery walks ──
+
+/** Repositories one discovery call checks at most before it hands the walk back to the workflow. */
+export const DISCOVERY_CHUNK = 25;
+/** Candidates one walk of a scope collects at most, so the workflow's history stays bounded. */
+export const DISCOVERY_MAX_CANDIDATES = 500;
+/**
+ * Repositories one walk clones at most (a satisfied repository is not a candidate, so this, not the
+ * candidate cap, bounds the sandbox time of a scope of mostly satisfied repositories). A walk that
+ * stops here leaves its cursor where it stopped and the next walk resumes from it, so a scope larger
+ * than the cap is covered over successive rescan intervals.
+ */
+export const DISCOVERY_MAX_REPOS = 1000;
+/** The most chunks one pass reads; a walk that is not done carries on in the next pass. */
+export const DISCOVERY_MAX_CHUNKS = 200;
+/** One discovery chunk's `startToCloseTimeout`. */
+export const DISCOVERY_ACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
+/** What the chunk keeps back from that timeout, so a result is returned before it fires. */
+export const DISCOVERY_ACTIVITY_MARGIN_MS = 2 * 60 * 1000;
+/** Clone time added to a recipe's own check timeout when sizing the worst case of one repository. */
+export const DISCOVERY_CLONE_ALLOWANCE_MS = 5 * 60 * 1000;
+
+/** Where a scope walk stands. Carried in the workflow input so it survives `continueAsNew`. */
+export interface DiscoveryWalk {
+  /** The offset the next chunk starts from. */
+  cursor: number;
+  /** Repositories this walk has checked. */
+  walked: number;
+  /** Candidates this walk has collected. */
+  candidates: number;
+}
+
+export const NEW_DISCOVERY_WALK: DiscoveryWalk = { candidates: 0, cursor: 0, walked: 0 };
+
+/** What the next chunk of a walk may check and collect (never more than a chunk). */
+export function nextChunkLimits(walk: DiscoveryWalk): { limit: number; maxCandidates: number } {
+  return {
+    limit: Math.max(1, Math.min(DISCOVERY_CHUNK, DISCOVERY_MAX_REPOS - walk.walked)),
+    maxCandidates: Math.max(1, DISCOVERY_MAX_CANDIDATES - walk.candidates),
+  };
+}
+
+/**
+ * The walk after one chunk answered. A walk is done when the scope ended (the next walk starts at
+ * the beginning), or when it reached its repository or candidate cap (the next walk resumes from
+ * the cursor). Only a finished walk is a rescan: the caller records `lastDiscoveryAt` then and
+ * never on a walk that merely paused.
+ */
+export function advanceWalk(
+  walk: DiscoveryWalk,
+  chunk: { candidates: number; nextCursor: number | null }
+): { walk: DiscoveryWalk; done: boolean } {
+  if (chunk.nextCursor === null) {
+    return { done: true, walk: NEW_DISCOVERY_WALK };
+  }
+  const advanced: DiscoveryWalk = {
+    candidates: walk.candidates + chunk.candidates,
+    cursor: chunk.nextCursor,
+    walked: walk.walked + Math.max(0, chunk.nextCursor - walk.cursor),
+  };
+  if (advanced.walked >= DISCOVERY_MAX_REPOS || advanced.candidates >= DISCOVERY_MAX_CANDIDATES) {
+    return { done: true, walk: { candidates: 0, cursor: advanced.cursor, walked: 0 } };
+  }
+  return { done: false, walk: advanced };
+}
+
 export const PR_CLOSED_REASON = 'the pull request was closed without merging';
 export const CANCELLED_OUTSIDE_REASON =
   'the run was cancelled outside the campaign; the campaign itself was not cancelled';
@@ -271,7 +337,7 @@ export function decideBlockUpdates(
  * legacy `RUNNING`) is read as `ACTIVE`; the decision is the shared one (spec §2).
  */
 export function decideCampaignWrite(
-  campaign: Pick<PassCampaign, 'state' | 'hasScope' | 'expiresAt'>,
+  campaign: Pick<PassCampaign, 'state' | 'hasScope' | 'hasCheck' | 'expiresAt'>,
   targets: readonly PassTarget[],
   now: number
 ): { state: CampaignStateValue; write: CampaignStateWrite | null } {
@@ -279,6 +345,7 @@ export function decideCampaignWrite(
     campaign.state === 'STARTING' || campaign.state === 'RUNNING' ? 'ACTIVE' : campaign.state;
   const decided = decideCampaignState({
     expiresAt: campaign.expiresAt,
+    hasCheck: campaign.hasCheck,
     hasScope: campaign.hasScope,
     now,
     state: reading,

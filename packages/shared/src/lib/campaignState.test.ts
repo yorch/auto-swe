@@ -15,6 +15,7 @@ import {
   diffDiscovery,
   isDue,
   isTargetFinal,
+  isTargetFinalFor,
   nextDueAt,
   normalizeTargetState,
   type ScheduleInput,
@@ -357,6 +358,33 @@ describe('decideSchedule', () => {
     expect(schedule(targets, { maxOpenPullRequests: null }).start).toEqual(['c']);
   });
 
+  it('bounds open drafts: starts chosen in one decision count toward maxOpenPullRequests', () => {
+    const r = schedule([t('a', 'PENDING', 0), t('b', 'PENDING', 1), t('c', 'PENDING', 2)], {
+      maxOpenPullRequests: 1,
+      maxParallel: 5,
+    });
+    expect(r.start).toEqual(['a']);
+    expect(r.blocked.map((b) => b.reason)).toEqual([
+      { kind: 'max-open-pull-requests', limit: 1 },
+      { kind: 'max-open-pull-requests', limit: 1 },
+    ]);
+  });
+
+  it('counts a running attempt as a future draft against maxOpenPullRequests', () => {
+    const r = schedule([t('a', 'RUNNING', 0), t('b', 'PENDING', 1)], {
+      maxOpenPullRequests: 1,
+      maxParallel: 5,
+    });
+    expect(r.start).toEqual([]);
+    expect(r.blocked[0]?.reason).toEqual({ kind: 'max-open-pull-requests', limit: 1 });
+    // running + draft + new start share one bound
+    const mixed = schedule(
+      [t('a', 'RUNNING', 0), t('b', 'PR_OPENED', 1), t('c', 'PENDING', 2), t('d', 'PENDING', 3)],
+      { maxOpenPullRequests: 3, maxParallel: 5 }
+    );
+    expect(mixed.start).toEqual(['c']);
+  });
+
   it('re-evaluates BLOCKED targets and starts one whose reason cleared', () => {
     const r = schedule([t('a', 'BLOCKED', 0), t('b', 'PENDING', 1)], { maxParallel: 1 });
     expect(r.start).toEqual(['a']);
@@ -677,10 +705,11 @@ describe('decideCampaignState', () => {
   const decide = (
     state: CampaignStateValue,
     targetStates: TargetState[],
-    over: { hasScope?: boolean; expiresAt?: number | null } = {}
+    over: { hasScope?: boolean; expiresAt?: number | null; hasCheck?: boolean } = {}
   ) =>
     decideCampaignState({
       expiresAt: over.expiresAt ?? null,
+      hasCheck: over.hasCheck ?? true,
       hasScope: over.hasScope ?? false,
       now: NOW,
       state,
@@ -699,6 +728,21 @@ describe('decideCampaignState', () => {
     ] as const) {
       expect(decide('ACTIVE', ['SATISFIED', s])).toEqual({ changed: false, state: 'ACTIVE' });
     }
+  });
+
+  it('treats MERGED as final only for a campaign with no check', () => {
+    expect(isTargetFinalFor('MERGED', { hasCheck: false })).toBe(true);
+    expect(isTargetFinalFor('MERGED', { hasCheck: true })).toBe(false);
+    expect(isTargetFinalFor('SATISFIED', { hasCheck: true })).toBe(true);
+    expect(isTargetFinalFor('PR_OPENED', { hasCheck: false })).toBe(false);
+    expect(decide('ACTIVE', ['MERGED', 'SKIPPED'], { hasCheck: false })).toEqual({
+      changed: true,
+      state: 'COMPLETED',
+    });
+    expect(decide('ACTIVE', ['MERGED'], { hasCheck: false, hasScope: true }).state).toBe(
+      'MONITORING'
+    );
+    expect(decide('ACTIVE', ['MERGED'], { hasCheck: true }).state).toBe('ACTIVE');
   });
 
   it('completes when every target is final and there is no scope', () => {

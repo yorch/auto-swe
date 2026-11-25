@@ -7,9 +7,16 @@ import { describe, expect, it } from 'vitest';
 import type { PassTarget } from '../lib/campaignReconcilerTypes.js';
 import {
   ATTEMPT_FAILED_REASON,
+  advanceWalk,
   applyCheckResult,
   CANCELLED_OUTSIDE_REASON,
   CHECK_RETRY_MS,
+  DISCOVERY_ACTIVITY_MARGIN_MS,
+  DISCOVERY_ACTIVITY_TIMEOUT_MS,
+  DISCOVERY_CHUNK,
+  DISCOVERY_CLONE_ALLOWANCE_MS,
+  DISCOVERY_MAX_CANDIDATES,
+  DISCOVERY_MAX_REPOS,
   decideBlockUpdates,
   decideCampaignWrite,
   deriveDeliveryUpdates,
@@ -17,6 +24,8 @@ import {
   INFLIGHT_POLL_MS,
   MAX_CHECKS_PER_PASS,
   MIN_SLEEP_MS,
+  NEW_DISCOVERY_WALK,
+  nextChunkLimits,
   nextSleepMs,
   PR_CLOSED_REASON,
   planDueChecks,
@@ -310,7 +319,7 @@ describe('decideBlockUpdates', () => {
 });
 
 describe('decideCampaignWrite', () => {
-  const base = { expiresAt: null, hasScope: false };
+  const base = { expiresAt: null, hasCheck: true, hasScope: false };
 
   it('reads STARTING as ACTIVE and writes the move', () => {
     const r = decideCampaignWrite({ ...base, state: 'STARTING' }, [t('t1')], T0);
@@ -343,11 +352,33 @@ describe('decideCampaignWrite', () => {
 
   it('completes a monitored campaign at its expiry', () => {
     const r = decideCampaignWrite(
-      { expiresAt: T0 - 1, hasScope: true, state: 'MONITORING' },
+      { expiresAt: T0 - 1, hasCheck: true, hasScope: true, state: 'MONITORING' },
       [t('t1', { state: 'SATISFIED' })],
       T0
     );
     expect(r.write).toEqual({ from: 'MONITORING', to: 'COMPLETED' });
+  });
+
+  it('keeps a campaign with a check ACTIVE while a target is only MERGED', () => {
+    const r = decideCampaignWrite({ ...base, state: 'ACTIVE' }, [t('t1', { state: 'MERGED' })], T0);
+    expect(r.write).toBeNull();
+  });
+
+  it('completes a campaign with no check when its targets’ pull requests merge', () => {
+    const r = decideCampaignWrite(
+      { ...base, hasCheck: false, state: 'ACTIVE' },
+      [t('t1', { state: 'MERGED' }), t('t2', { state: 'SKIPPED' })],
+      T0
+    );
+    expect(r.write).toEqual({ from: 'ACTIVE', to: 'COMPLETED' });
+    // An open draft is not a merge.
+    expect(
+      decideCampaignWrite(
+        { ...base, hasCheck: false, state: 'ACTIVE' },
+        [t('t1', { state: 'PR_OPENED' })],
+        T0
+      ).write
+    ).toBeNull();
   });
 
   it('never moves a paused or planning campaign', () => {
@@ -357,6 +388,69 @@ describe('decideCampaignWrite', () => {
 
   it('leaves an ACTIVE campaign with work left as it is', () => {
     expect(decideCampaignWrite({ ...base, state: 'ACTIVE' }, [t('t1')], T0).write).toBeNull();
+  });
+});
+
+describe('planDueChecks for a campaign with no check', () => {
+  it('plans no check, not even for a MERGED target', () => {
+    expect(
+      planDueChecks(
+        [t('t1', { state: 'MERGED' }), t('t2', { state: 'SATISFIED' })],
+        { hasCheck: false, rescanIntervalHours: 24 },
+        T0
+      )
+    ).toEqual({ due: [], more: false });
+  });
+});
+
+describe('discovery walks', () => {
+  it('starts every chunk from the cursor and never asks for more than a chunk or what is left of a cap', () => {
+    expect(nextChunkLimits(NEW_DISCOVERY_WALK)).toEqual({
+      limit: DISCOVERY_CHUNK,
+      maxCandidates: DISCOVERY_MAX_CANDIDATES,
+    });
+    expect(
+      nextChunkLimits({ candidates: DISCOVERY_MAX_CANDIDATES - 3, cursor: 0, walked: 0 })
+    ).toMatchObject({ maxCandidates: 3 });
+    expect(
+      nextChunkLimits({ candidates: 0, cursor: 0, walked: DISCOVERY_MAX_REPOS - 4 })
+    ).toMatchObject({ limit: 4 });
+  });
+
+  it('carries the cursor between chunks and is not done until the scope ends', () => {
+    let step = advanceWalk(NEW_DISCOVERY_WALK, { candidates: 2, nextCursor: 25 });
+    expect(step).toEqual({ done: false, walk: { candidates: 2, cursor: 25, walked: 25 } });
+    step = advanceWalk(step.walk, { candidates: 1, nextCursor: 50 });
+    expect(step.walk).toEqual({ candidates: 3, cursor: 50, walked: 50 });
+    // The scope ended: the walk is done and the next one starts at the beginning.
+    expect(advanceWalk(step.walk, { candidates: 0, nextCursor: null })).toEqual({
+      done: true,
+      walk: NEW_DISCOVERY_WALK,
+    });
+  });
+
+  it('enforces the candidate cap across chunks, and the next walk resumes where this one stopped', () => {
+    const step = advanceWalk(
+      { candidates: DISCOVERY_MAX_CANDIDATES - 1, cursor: 100, walked: 100 },
+      { candidates: 1, nextCursor: 117 }
+    );
+    expect(step).toEqual({ done: true, walk: { candidates: 0, cursor: 117, walked: 0 } });
+  });
+
+  it('enforces the repository cap across chunks the same way', () => {
+    const step = advanceWalk(
+      { candidates: 0, cursor: 975, walked: DISCOVERY_MAX_REPOS - DISCOVERY_CHUNK },
+      { candidates: 0, nextCursor: 1000 }
+    );
+    expect(step).toEqual({ done: true, walk: { candidates: 0, cursor: 1000, walked: 0 } });
+  });
+
+  it('gives the chunk activity a timeout it can size itself to', () => {
+    expect(DISCOVERY_ACTIVITY_TIMEOUT_MS).toBeGreaterThan(DISCOVERY_ACTIVITY_MARGIN_MS);
+    // A chunk of the full size at the slowest check would not fit; the activity cuts it short.
+    expect(DISCOVERY_CHUNK * (600_000 + DISCOVERY_CLONE_ALLOWANCE_MS)).toBeGreaterThan(
+      DISCOVERY_ACTIVITY_TIMEOUT_MS
+    );
   });
 });
 

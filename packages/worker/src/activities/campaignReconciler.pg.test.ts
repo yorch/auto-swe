@@ -692,7 +692,8 @@ describe.skipIf(!enabled)('campaign reconciler against Postgres', () => {
       .join('\n')
       .split(/;\s*(?:\n|$)/)
       .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+      // The closing `ALTER … SET NOT NULL` is DDL after the backfill, not a data statement.
+      .filter((s) => s.length > 0 && !s.startsWith('ALTER TABLE'));
 
     it('finds every statement of the backfill', () => {
       expect(backfill).toHaveLength(4);
@@ -816,11 +817,12 @@ describe.skipIf(!enabled)('campaign reconciler against Postgres', () => {
     });
   });
 
-  describe('the campaign row lock', () => {
-    // The attempt route serializes starts on the campaign row (spec §4 step 4). This is the
-    // database behaviour that design rests on: transactions that lock the row, count what is in
-    // flight and start only under the limit cannot both pass a limit of one.
-    it('lets one of several concurrent starts through a limit of one', async () => {
+  describe('Postgres SELECT … FOR UPDATE on the campaigns row', () => {
+    // This proves the database behaviour the attempt route's design rests on (spec §4 step 4), and
+    // nothing about the route itself: the gateway's guard is inline in `startCampaignAttempt`
+    // (it needs a Fastify instance and the launch machinery) and cannot be imported from the
+    // worker without the gateway server. Its own tests are in `packages/gateway`.
+    it('lets one of several concurrent lock-count-write transactions through a limit of one', async () => {
       const targets = await Promise.all([
         makeTarget('PENDING'),
         makeTarget('PENDING'),
@@ -848,6 +850,118 @@ describe.skipIf(!enabled)('campaign reconciler against Postgres', () => {
         });
       const started = await Promise.all(targets.map((t) => start(t.id)));
       expect(started.filter(Boolean)).toHaveLength(1);
+    });
+  });
+
+  describe('settling a campaign (COMPLETED or MONITORING)', () => {
+    /** A campaign of its own, so its targets are exactly what the test makes. */
+    async function makeCampaign(recipeRef: string | null) {
+      seq += 1;
+      const id = uuid();
+      const runInput = await prisma.runInput.create({
+        data: { externalTicketId: `${PREFIX}settle-${seq}`, requestPayload: '{}' },
+      });
+      await prisma.campaign.create({
+        data: {
+          description: 'Raise lodash everywhere',
+          id,
+          launchedById: ids.leader,
+          maxParallel: 2,
+          name: `${PREFIX}settle-${seq}`,
+          orgId: ids.org,
+          ownerTeamId: ids.team,
+          recipeRef,
+          state: 'ACTIVE',
+          templateId: ids.template,
+          templateVersion: 1,
+          temporalWorkflowId: `campaign-${id}`,
+          workflowKind: 'RECONCILER',
+          workRequestId: runInput.id,
+        },
+      });
+      return id;
+    }
+    async function addTarget(campaignId: string, state: string) {
+      seq += 1;
+      const connection = await prisma.connection.create({
+        data: {
+          organizationName: 'acme',
+          repoName: `${PREFIX}settle-repo-${seq}`,
+          teamId: ids.team,
+        },
+      });
+      return prisma.campaignTarget.create({
+        data: {
+          campaignId,
+          connectionId: connection.id,
+          position: seq,
+          repoLabel: `acme/${PREFIX}settle-repo-${seq}`,
+          state: state as never,
+          teamId: ids.team,
+        },
+      });
+    }
+    const settle = (campaignId: string, to: 'COMPLETED' | 'MONITORING') =>
+      recordCampaignPass({
+        addTargets: [],
+        campaign: { from: 'ACTIVE', to },
+        campaignId,
+        proposals: [],
+        updates: [],
+      });
+
+    it('refuses to complete over a target inserted after the pass read its targets, and settles once it is final', async () => {
+      const campaignId = await makeCampaign('npm-dependency@2');
+      await addTarget(campaignId, 'SATISFIED');
+      // The pass reads: every target is final, so it decides COMPLETED...
+      const snapshot = await readCampaignPass({ campaignId });
+      expect(snapshot?.targets.every((t) => t.state === 'SATISFIED')).toBe(true);
+      // ...a person adds a repository before the write...
+      const added = await addTarget(campaignId, 'PENDING');
+      const refused = await settle(campaignId, 'COMPLETED');
+      expect(refused.campaignChanged).toBe(false);
+      const after = await prisma.campaign.findUniqueOrThrow({ where: { id: campaignId } });
+      expect(after.state).toBe('ACTIVE');
+      expect(after.completedAt).toBeNull();
+      // ...and the next pass sees it.
+      expect((await readCampaignPass({ campaignId }))?.targets.map((t) => t.state).sort()).toEqual([
+        'PENDING',
+        'SATISFIED',
+      ]);
+      await prisma.campaignTarget.update({ data: { state: 'SKIPPED' }, where: { id: added.id } });
+      expect((await settle(campaignId, 'COMPLETED')).campaignChanged).toBe(true);
+      const done = await prisma.campaign.findUniqueOrThrow({ where: { id: campaignId } });
+      expect(done.state).toBe('COMPLETED');
+      expect(done.completedAt).toBeInstanceOf(Date);
+    });
+
+    it('refuses a MONITORING write over an open target too', async () => {
+      const campaignId = await makeCampaign('npm-dependency@2');
+      await addTarget(campaignId, 'SATISFIED');
+      await addTarget(campaignId, 'RUNNING');
+      expect((await settle(campaignId, 'MONITORING')).campaignChanged).toBe(false);
+      expect((await prisma.campaign.findUniqueOrThrow({ where: { id: campaignId } })).state).toBe(
+        'ACTIVE'
+      );
+    });
+
+    it('treats a MERGED target as done for a campaign with no check, and as open for one with a check', async () => {
+      const noCheck = await makeCampaign(null);
+      await addTarget(noCheck, 'MERGED');
+      expect((await settle(noCheck, 'COMPLETED')).campaignChanged).toBe(true);
+      const withCheck = await makeCampaign('npm-dependency@2');
+      await addTarget(withCheck, 'MERGED');
+      expect((await settle(withCheck, 'COMPLETED')).campaignChanged).toBe(false);
+    });
+
+    it('lets one of two concurrent settles through, and none over a campaign that already moved', async () => {
+      const campaignId = await makeCampaign('npm-dependency@2');
+      await addTarget(campaignId, 'SATISFIED');
+      const results = await Promise.all([
+        settle(campaignId, 'COMPLETED'),
+        settle(campaignId, 'COMPLETED'),
+      ]);
+      expect(results.filter((r) => r.campaignChanged)).toHaveLength(1);
     });
   });
 });

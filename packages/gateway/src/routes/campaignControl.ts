@@ -22,11 +22,13 @@ import {
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { can } from '../lib/authz.js';
 import {
   decideTargetLaunch,
   loadLaunchRepos,
   mayControlCampaign,
   mayTakeOverCampaign,
+  NOT_LED_REASON,
   visibleToMember,
 } from '../lib/campaignAccess.js';
 import { startCampaignAttempt } from '../lib/campaignAttempt.js';
@@ -195,12 +197,42 @@ export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
           `Campaign is ${campaign.state}, not waiting to be confirmed`
         );
       }
+      // Confirming authorizes the briefs, so every target must have one. The planner's last write
+      // gives each target a brief in one step, so a target without one means it has not finished.
+      const planNotReady = () =>
+        sendError(
+          reply,
+          409,
+          'CAMPAIGN_PLAN_NOT_READY',
+          'The plan is not ready: the planner has not finished writing a brief for every target'
+        );
+      const unbriefed = await runUnscoped(
+        'confirm checks that every target of the campaign has a brief; only a count leaves',
+        ['CampaignTarget'],
+        () => prisma.campaignTarget.count({ where: { brief: null, campaignId: campaign.id } })
+      );
+      if (unbriefed > 0) {
+        return planNotReady();
+      }
+      // The update repeats both conditions, so a target added or a state moved since the checks
+      // above cannot be confirmed past.
       const moved = await prisma.campaign.updateMany({
         data: { pausedReason: null, state: 'ACTIVE' },
-        where: { id: campaign.id, ownerTeamId: campaign.ownerTeamId, state: 'PLANNING' },
+        where: {
+          id: campaign.id,
+          ownerTeamId: campaign.ownerTeamId,
+          state: 'PLANNING',
+          targets: { none: { brief: null } },
+        },
       });
       if (moved.count === 0) {
-        return sendError(reply, 409, 'CAMPAIGN_NOT_PLANNING', 'Campaign was already confirmed');
+        const now = await prisma.campaign.findFirst({
+          select: { state: true },
+          where: { id: campaign.id },
+        });
+        return now?.state === 'PLANNING'
+          ? planNotReady()
+          : sendError(reply, 409, 'CAMPAIGN_NOT_PLANNING', 'Campaign was already confirmed');
       }
       const signal = await wake(request, campaign, 'confirm');
       await audit(request, campaign.id, { state: 'PLANNING' }, { signal, state: 'ACTIVE' });
@@ -308,6 +340,41 @@ export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
           'CAMPAIGNS_DISABLED',
           'Campaigns are not enabled (workflow.campaignsEnabled) for the owning team'
         );
+      }
+      // A pause for the kill switch is lifted only when it holds for every team the campaign
+      // works in, or the reconciler pauses it again at once. Nothing is named about other teams.
+      if (campaign.pausedReason === 'disabled') {
+        const targetTeams = await runUnscoped(
+          'resume checks the kill switch of every team that owns a target; only the code is returned',
+          ['CampaignTarget', 'Team'],
+          async () => {
+            const rows = await prisma.campaignTarget.findMany({
+              distinct: ['teamId'],
+              select: { teamId: true },
+              where: { campaignId: campaign.id },
+            });
+            const ids = rows.map((r) => r.teamId).filter((id) => id !== campaign.ownerTeamId);
+            return ids.length === 0
+              ? []
+              : prisma.team.findMany({
+                  select: { id: true, orgId: true },
+                  where: { id: { in: ids } },
+                });
+          }
+        );
+        const decided = await Promise.all(
+          targetTeams.map((t) =>
+            resolveSetting('workflow.campaignsEnabled', { orgId: t.orgId, teamId: t.id })
+          )
+        );
+        if (decided.some((on) => on === false)) {
+          return sendError(
+            reply,
+            409,
+            'CAMPAIGNS_DISABLED',
+            'Campaigns are not enabled (workflow.campaignsEnabled) for every team the campaign works in'
+          );
+        }
       }
       const launcher = campaign.launchedById
         ? await prisma.user.findUnique({
@@ -559,12 +626,22 @@ export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
       const enabledByTeam = new Map<string, boolean>();
       for (const connectionId of request.body.repoIds) {
         const repo = repoById.get(connectionId);
+        // Authorization before any other refusal, as the launch route orders it: a missing
+        // repository and one the caller may not lead read the same, so an id cannot be probed for
+        // its organization, provider, state or settings.
+        if (
+          !repo ||
+          !(await can(request, 'team.launch.multi-repo', { teamId: repo.teamId })).allowed
+        ) {
+          refused.push({ connectionId, reason: NOT_LED_REASON });
+          continue;
+        }
         if (known.has(connectionId)) {
           refused.push({ connectionId, reason: 'already a target of this campaign' });
           continue;
         }
-        if (!repo) {
-          refused.push({ connectionId, reason: 'not found, or you may not start work in it' });
+        if (repo.scmProvider !== 'github') {
+          refused.push({ connectionId, reason: 'the repository is not on GitHub' });
           continue;
         }
         if (campaign.plan === 'UNIFORM' && repo.team.orgId !== campaign.orgId) {

@@ -63,7 +63,7 @@ export const CAMPAIGN_FORM_LIMITS = {
   budgetUsd: { label: 'Monthly budget', max: 1_000_000, min: 0 },
   lifetimeDays: { label: 'Lifetime', max: 365, min: 1 },
   maxOpenPullRequests: { label: 'Open pull requests at most', max: 200, min: 1 },
-  rescanIntervalHours: { label: 'Re-check interval', max: 8760, min: 1 },
+  rescanIntervalHours: { label: 'Re-check interval', max: 720, min: 1 },
   staleAfterDays: { label: 'Stale after', max: 365, min: 1 },
 } as const;
 

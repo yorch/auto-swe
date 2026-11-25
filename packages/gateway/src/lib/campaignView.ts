@@ -412,32 +412,45 @@ export async function targetDtos(
   });
 }
 
-/** The discovery proposals of a campaign, for a viewer who may see the repositories they name. */
+/**
+ * The discovery proposals of a campaign, for a viewer who may see the repositories they name.
+ * A proposal names a repository the launcher could not start work in, often another team's: a
+ * non-admin gets only the proposals whose repository they can reach (`reach`, the same predicate
+ * the target list uses), and the rest are counted, never named. An ADMIN passes no predicate.
+ */
 export async function proposalDtos(
   prisma: Prisma,
-  campaignId: string
-): Promise<CampaignProposalDto[]> {
-  const rows = await prisma.campaignProposal.findMany({
-    orderBy: { createdAt: 'asc' },
-    select: {
-      connection: { select: { organizationName: true, repoName: true } },
-      connectionId: true,
-      createdAt: true,
-      decidedAt: true,
-      id: true,
-      reason: true,
-    },
-    where: { campaignId },
-  });
-  return rows.map((r) => ({
-    connectionId: r.connectionId,
-    createdAt: r.createdAt.toISOString(),
-    decidedAt: iso(r.decidedAt),
-    id: r.id,
-    reason: r.reason,
-    repoLabel:
-      r.connection?.organizationName && r.connection.repoName
-        ? `${r.connection.organizationName}/${r.connection.repoName}`
-        : null,
-  }));
+  campaignId: string,
+  reach?: Record<string, unknown>
+): Promise<{ proposals: CampaignProposalDto[]; hiddenCount: number }> {
+  const select = {
+    connection: { select: { organizationName: true, repoName: true } },
+    connectionId: true,
+    createdAt: true,
+    decidedAt: true,
+    id: true,
+    reason: true,
+  } as const;
+  const [rows, total] = await Promise.all([
+    prisma.campaignProposal.findMany({
+      orderBy: { createdAt: 'asc' },
+      select,
+      where: { campaignId, ...(reach ? { connection: reach } : {}) },
+    }),
+    reach ? prisma.campaignProposal.count({ where: { campaignId } }) : Promise.resolve(null),
+  ]);
+  return {
+    hiddenCount: total === null ? 0 : Math.max(0, total - rows.length),
+    proposals: rows.map((r) => ({
+      connectionId: r.connectionId,
+      createdAt: r.createdAt.toISOString(),
+      decidedAt: iso(r.decidedAt),
+      id: r.id,
+      reason: r.reason,
+      repoLabel:
+        r.connection?.organizationName && r.connection.repoName
+          ? `${r.connection.organizationName}/${r.connection.repoName}`
+          : null,
+    })),
+  };
 }

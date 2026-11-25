@@ -8,6 +8,7 @@ import type {
   ReconcilerTargetState,
   TargetState,
 } from '@auto-swe/shared/lib/campaignState';
+import type { CampaignReconcilerInput } from '@auto-swe/shared/types/workflow';
 
 /**
  * The shapes that cross the boundary between `CampaignReconcilerWorkflow` and its activities.
@@ -165,7 +166,26 @@ export interface DiscoverCampaignTargetsInput {
   campaignId: string;
   /** Where the previous call stopped; 0 for the first. */
   cursor: number;
+  /** Repositories to check at most (never more than one chunk); a chunk when absent. */
+  limit?: number;
+  /** Candidates to collect at most; the call stops right after the one that reaches it. */
+  maxCandidates?: number;
 }
+
+/** Where a scope walk stands (see `DiscoveryWalk` in the workflow's pure module). */
+export interface DiscoveryWalkState {
+  cursor: number;
+  walked: number;
+  candidates: number;
+}
+
+/**
+ * The reconciler's input: the shared start input plus the walk a previous execution left, which
+ * only `continueAsNew` sets.
+ */
+export type ReconcilerWorkflowInput = CampaignReconcilerInput & {
+  discoveryWalk?: DiscoveryWalkState | null;
+};
 
 export interface DiscoveredCandidate {
   connectionId: string;

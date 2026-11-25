@@ -93,6 +93,7 @@ describe('campaign control routes', () => {
   let repoOverrides: Record<string, Record<string, unknown>> = {};
   let startFailure: Error | null = null;
   let controlFailure: Error | null = null;
+  let beforeTargetUpdate: (() => void) | null = null;
   const startedRuns: Array<{ id: string; input: Record<string, unknown> }> = [];
   const signals: Array<{ id: string; name: string; payload: unknown }> = [];
 
@@ -146,8 +147,16 @@ describe('campaign control routes', () => {
     };
 
     const matchCampaign = (c: Row, where: Record<string, unknown>) => {
-      const { id, ownerTeamId, state, OR, ...rest } = where as {
+      const {
+        id,
+        ownerTeamId,
+        state,
+        OR,
+        targets: targetsFilter,
+        ...rest
+      } = where as {
         id?: string;
+        targets?: { none: { brief: null } };
         ownerTeamId?: string;
         state?: string | { in?: string[]; notIn?: string[] };
         launchedById?: string | null;
@@ -158,6 +167,9 @@ describe('campaign control routes', () => {
         throw new Error(`unrecognised Campaign where: ${JSON.stringify(unknown)}`);
       }
       if (id && c.id !== id) {
+        return false;
+      }
+      if (targetsFilter && targets.some((t) => t.campaignId === c.id && t.brief == null)) {
         return false;
       }
       if (ownerTeamId && c.ownerTeamId !== ownerTeamId) {
@@ -195,7 +207,8 @@ describe('campaign control routes', () => {
     };
 
     const matchTarget = (t: Row, where: Record<string, unknown>) => {
-      const { campaignId, id, state, teamId, connection, ...rest } = where as {
+      const { campaignId, id, state, teamId, connection, brief, ...rest } = where as {
+        brief?: null;
         campaignId?: string;
         id?: string;
         state?: string | { in: string[] };
@@ -204,6 +217,9 @@ describe('campaign control routes', () => {
       };
       if (Object.keys(rest).length > 0) {
         throw new Error(`unrecognised CampaignTarget where: ${JSON.stringify(rest)}`);
+      }
+      if (brief === null && t.brief != null) {
+        return false;
       }
       if (campaignId && t.campaignId !== campaignId) {
         return false;
@@ -322,6 +338,8 @@ describe('campaign control routes', () => {
       },
       campaignProposal: { findMany: async () => [] },
       campaignTarget: {
+        count: async (args: { where: Record<string, unknown> }) =>
+          targets.filter((t) => matchTarget(t, args.where)).length,
         createMany: async (args: { data: Row[] }) => {
           for (const d of args.data) {
             targets.push({
@@ -354,6 +372,7 @@ describe('campaign control routes', () => {
           where: Record<string, unknown>;
           data: Record<string, unknown>;
         }) => {
+          beforeTargetUpdate?.();
           const rows = targets.filter((t) => matchTarget(t, args.where));
           for (const row of rows) {
             Object.assign(row, args.data);
@@ -571,6 +590,7 @@ describe('campaign control routes', () => {
     signals.length = 0;
     startFailure = null;
     controlFailure = null;
+    beforeTargetUpdate = null;
     push.result = { ok: true };
     settings.disabledTeams = new Set();
     settings.maxTargets = 25;
@@ -595,6 +615,39 @@ describe('campaign control routes', () => {
   describe('POST /:id/confirm', () => {
     beforeEach(() => {
       campaigns = [campaignRow({ plan: 'PLANNED', state: 'PLANNING' })];
+      for (const t of targets) {
+        t.brief = `Change ${t.repoLabel}`;
+      }
+    });
+
+    it('refuses to confirm while any target has no brief (the planner has not finished)', async () => {
+      as('launcher-1');
+      target(T_B).brief = null;
+      const res = await call('POST', `/${CAMPAIGN}/confirm`);
+      expect(res.statusCode).toBe(409);
+      expect(body(res).error.code).toBe('CAMPAIGN_PLAN_NOT_READY');
+      expect(campaign().state).toBe('PLANNING');
+      expect(signals).toHaveLength(0);
+    });
+
+    it('does not confirm when a brief goes missing between the check and the write', async () => {
+      as('launcher-1');
+      const real = (app.prisma as unknown as { campaignTarget: { count: () => Promise<number> } })
+        .campaignTarget;
+      const original = real.count;
+      real.count = async () => {
+        // The check sees a complete plan; a target without a brief lands before the write.
+        target(T_B).brief = null;
+        return 0;
+      };
+      try {
+        const res = await call('POST', `/${CAMPAIGN}/confirm`);
+        expect(res.statusCode).toBe(409);
+        expect(body(res).error.code).toBe('CAMPAIGN_PLAN_NOT_READY');
+        expect(campaign().state).toBe('PLANNING');
+      } finally {
+        real.count = original;
+      }
     });
 
     it('moves PLANNING to ACTIVE for the launcher only, and signals the reconciler', async () => {
@@ -697,6 +750,20 @@ describe('campaign control routes', () => {
         expect(res.statusCode, state).toBe(409);
         expect(body(res).error.code).toBe('CAMPAIGN_NOT_PAUSABLE');
       }
+    });
+
+    it('does not resume a kill-switch pause while a target team has campaigns off, and says nothing of which', async () => {
+      as('lead-1');
+      campaign().state = 'PAUSED';
+      campaign().pausedReason = 'disabled';
+      settings.disabledTeams = new Set([TEAM_2]);
+      const res = await call('POST', `/${CAMPAIGN}/resume`);
+      expect(res.statusCode).toBe(409);
+      expect(body(res).error.code).toBe('CAMPAIGNS_DISABLED');
+      expect(res.payload).not.toContain(TEAM_2);
+      expect(campaign().state).toBe('PAUSED');
+      settings.disabledTeams = new Set();
+      expect((await call('POST', `/${CAMPAIGN}/resume`)).statusCode).toBe(200);
     });
 
     it('resumes a paused campaign, and refuses while the setting is off or the launcher is gone', async () => {
@@ -869,6 +936,21 @@ describe('campaign control routes', () => {
       expect(body(off).data.refused[0].reason).toContain('not enabled');
     });
 
+    it('gives one generic reason for a repository the caller cannot lead, whatever else is wrong with it', async () => {
+      // lead-1 leads no team that owns REPO_X (another organization): it must not learn that it is
+      // in another organization, that its team has campaigns off, or that it is inactive.
+      as('lead-1');
+      const probe = async () =>
+        body(await call('POST', `/${CAMPAIGN}/targets`, { repoIds: [REPO_X, REPO_GONE] })).data
+          .refused as Array<{ reason: string }>;
+      const plain = await probe();
+      expect(plain.map((r) => r.reason)).toEqual([plain[1]?.reason, plain[1]?.reason]);
+      settings.disabledTeams = new Set([TEAM_3]);
+      repoOverrides[REPO_X] = { isActive: false, scmProvider: 'gitlab' };
+      expect((await probe()).map((r) => r.reason)).toEqual([plain[1]?.reason, plain[1]?.reason]);
+      expect(plain[0]?.reason).not.toMatch(/organization|enabled|inactive|GitHub/);
+    });
+
     it('refuses a plain member, a finished campaign and a legacy one', async () => {
       as('member-1');
       expect((await call('POST', `/${CAMPAIGN}/targets`, { repoIds: [REPO_C] })).statusCode).toBe(
@@ -1026,6 +1108,74 @@ describe('campaign control routes', () => {
       );
     });
 
+    it('rolls the attempt back when the target was removed after the checks (updateMany matched nothing)', async () => {
+      beforeTargetUpdate = () => {
+        // A concurrent remove commits between the unlocked read and the write.
+        target(T_A).state = 'CANCELLED';
+        beforeTargetUpdate = null;
+      };
+      const res = await attempt(T_A, { key: 'race' });
+      expect(refusal(res)).toBe('TARGET_NOT_STARTABLE');
+      expect(startedRuns).toHaveLength(0);
+      expect(attempts).toHaveLength(0);
+      expect(target(T_A).state).toBe('CANCELLED');
+    });
+
+    it('re-reads the target under the campaign lock', async () => {
+      let locks = 0;
+      const original = (app.prisma as unknown as { $queryRaw: () => Promise<unknown> }).$queryRaw;
+      (app.prisma as unknown as { $queryRaw: () => Promise<unknown> }).$queryRaw = async () => {
+        locks += 1;
+        target(T_A).state = 'SKIPPED';
+        return [{ id: 'locked' }];
+      };
+      try {
+        const res = await attempt(T_A, { key: 'locked' });
+        expect(refusal(res)).toBe('TARGET_NOT_STARTABLE');
+        expect(locks).toBe(1);
+        expect(startedRuns).toHaveLength(0);
+        expect(attempts).toHaveLength(0);
+      } finally {
+        (app.prisma as unknown as { $queryRaw: () => Promise<unknown> }).$queryRaw = original;
+      }
+    });
+
+    it('refuses when a take-over changed the launcher after the checks ran', async () => {
+      const original = (app.prisma as unknown as { $queryRaw: () => Promise<unknown> }).$queryRaw;
+      (app.prisma as unknown as { $queryRaw: () => Promise<unknown> }).$queryRaw = async () => {
+        campaign().launchedById = 'lead-1';
+        return [{ id: 'locked' }];
+      };
+      try {
+        const res = await attempt(T_A, { key: 'takeover' });
+        expect(refusal(res)).toBe('LAUNCHER_UNAVAILABLE');
+        expect(startedRuns).toHaveLength(0);
+        expect(attempts).toHaveLength(0);
+      } finally {
+        (app.prisma as unknown as { $queryRaw: () => Promise<unknown> }).$queryRaw = original;
+      }
+    });
+
+    it('adopts an execution that already started under this id instead of rolling back', async () => {
+      startFailure = Object.assign(new Error('already started'), {
+        name: 'WorkflowExecutionAlreadyStartedError',
+      });
+      const res = await attempt(T_A, { key: 'ambiguous' });
+      expect(res.statusCode).toBe(201);
+      expect(target(T_A).state).toBe('RUNNING');
+      expect(attempts).toHaveLength(1);
+      expect(runInputs).toHaveLength(1);
+      expect(activeWorkflows).toHaveLength(1);
+    });
+
+    it('still rolls back when the start definitely did not happen', async () => {
+      startFailure = new Error('connection refused');
+      const res = await attempt(T_A, { key: 'down' });
+      expect(res.statusCode).toBeGreaterThanOrEqual(500);
+      expect(target(T_A).state).toBe('PENDING');
+      expect(attempts).toHaveLength(0);
+    });
+
     it('answers a retried call with its first call’s attempt and starts nothing twice', async () => {
       const first = await attempt(T_A, { key: 'same' });
       expect(first.statusCode).toBe(201);
@@ -1180,6 +1330,15 @@ describe('campaign control routes', () => {
       campaign().maxOpenPullRequests = 2;
       // An earlier PENDING sibling does not hold the slot the worker asked this target to take.
       expect((await attempt(T_C, { key: 'late' })).statusCode).toBe(201);
+    });
+
+    it('step 4: a running attempt counts toward maxOpenPullRequests, since it will become a draft', async () => {
+      campaign().maxParallel = 5;
+      campaign().maxOpenPullRequests = 1;
+      target(T_B).state = 'RUNNING';
+      expect(refusal(await attempt(T_A))).toBe('MAX_OPEN_PULL_REQUESTS');
+      campaign().maxOpenPullRequests = 2;
+      expect((await attempt(T_A, { key: 'room' })).statusCode).toBe(201);
     });
 
     it('step 4 is decided under a row lock on the campaign', async () => {

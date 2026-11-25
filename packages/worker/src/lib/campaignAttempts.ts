@@ -260,6 +260,26 @@ export async function onCampaignRunFinalized(runId: string): Promise<void> {
 
 /** An attempt whose run row never appeared is failed after this long, once its ledger is dead. */
 export const ATTEMPT_NEVER_STARTED_MS = 10 * 60 * 1000;
+/**
+ * An attempt whose run row never appeared is failed after this long when Temporal says its child
+ * workflow is gone or closed, whatever the ledger says (a child that died before it wrote a ledger
+ * row, or before anything updated one, would otherwise hold a `maxParallel` slot forever).
+ */
+export const ATTEMPT_RUN_GRACE_MS = 30 * 60 * 1000;
+
+/**
+ * Whether Temporal still has the child workflow running. `null` when that cannot be told (the
+ * server could not be asked): nothing is decided on a guess.
+ */
+async function childWorkflowRunning(workflowId: string): Promise<boolean | null> {
+  try {
+    const description = await getTemporalClient().workflow.getHandle(workflowId).describe();
+    return description.status.name === 'RUNNING';
+  } catch (err) {
+    const name = (err as { name?: string } | null)?.name ?? '';
+    return /NotFound/i.test(name) ? false : null;
+  }
+}
 
 export interface UnfinishedAttempt {
   id: string;
@@ -275,8 +295,10 @@ export interface UnfinishedAttempt {
 /**
  * Settle one attempt that has no outcome yet, from what the database says now: name its run when
  * the run exists, record its outcome when the run ended, and fail it when its run never appeared
- * and its workflow's ledger row says the workflow is dead. Returns the outcome recorded, or null
- * when the attempt is still in flight. Never throws for a row that cannot be read.
+ * and its workflow is dead: the ledger row says so (after {@link ATTEMPT_NEVER_STARTED_MS}), or
+ * Temporal says the child is gone or closed (after {@link ATTEMPT_RUN_GRACE_MS}). Returns the
+ * outcome recorded, or null when the attempt is still in flight. Never throws for a row that
+ * cannot be read.
  */
 export async function reconcileCampaignAttempt(
   attempt: UnfinishedAttempt,
@@ -310,17 +332,25 @@ export async function reconcileCampaignAttempt(
       select: { currentStatus: true },
       where: { temporalWorkflowId: attempt.childWorkflowId },
     });
-    const dead =
+    const ledgerDead =
       ledger.length > 0 &&
       ledger.every((l) =>
         ['FAILED', 'CANCELLED', 'TIMED_OUT', 'COMPLETED'].includes(l.currentStatus)
       );
-    if (!dead) {
-      return null;
+    let reason = 'the run ended without starting';
+    if (!ledgerDead) {
+      // The ledger cannot say (no row, or one nobody updated): after the grace, ask Temporal.
+      if (nowMs - attempt.startedAt.getTime() < ATTEMPT_RUN_GRACE_MS) {
+        return null;
+      }
+      if ((await childWorkflowRunning(attempt.childWorkflowId)) !== false) {
+        return null;
+      }
+      reason = 'the run never started';
     }
     const moved = await prisma.campaignAttempt.updateMany({
       data: {
-        failureReason: 'the run ended without starting',
+        failureReason: reason,
         finishedAt: new Date(),
         outcome: 'FAILED',
       },

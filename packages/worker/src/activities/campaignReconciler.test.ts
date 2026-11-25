@@ -5,29 +5,38 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const db = vi.hoisted(() => ({
   $transaction: vi.fn(),
-  campaign: { findUnique: vi.fn(), update: vi.fn() },
+  campaign: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   campaignAttempt: { findMany: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
   campaignProposal: { createMany: vi.fn(), findMany: vi.fn() },
   campaignTarget: {
     aggregate: vi.fn(),
+    count: vi.fn(),
     createMany: vi.fn(),
     findMany: vi.fn(),
     updateMany: vi.fn(),
   },
   organizationMembership: { findUnique: vi.fn() },
   pullRequest: { findMany: vi.fn() },
+  team: { findMany: vi.fn() },
   user: { findUnique: vi.fn() },
   workflowRun: { aggregate: vi.fn(), updateMany: vi.fn() },
 }));
-const settings = vi.hoisted(() => ({ disabledTeams: new Set<string>(), maxTargets: 50 }));
+const settings = vi.hoisted(() => ({
+  disabledOrgs: new Set<string>(),
+  disabledTeams: new Set<string>(),
+  maxTargets: 50,
+}));
 const reconcile = vi.hoisted(() => ({ fn: vi.fn() }));
 const temporal = vi.hoisted(() => ({ cancel: vi.fn(), getHandle: vi.fn() }));
 
 vi.mock('@auto-swe/shared/db', () => ({ prisma: db }));
+vi.mock('@auto-swe/shared/lib/tenantGuard', () => ({
+  runUnscoped: (_why: string, _models: string[], fn: () => unknown) => fn(),
+}));
 vi.mock('@auto-swe/shared/config', () => ({
-  resolveSetting: vi.fn(async (key: string, ctx: { teamId: string }) => {
+  resolveSetting: vi.fn(async (key: string, ctx: { teamId: string; orgId?: string }) => {
     if (key === 'workflow.campaignsEnabled') {
-      return !settings.disabledTeams.has(ctx.teamId);
+      return !settings.disabledTeams.has(ctx.teamId) && !settings.disabledOrgs.has(ctx.orgId ?? '');
     }
     if (key === 'workflow.campaignMaxTargets') {
       return settings.maxTargets;
@@ -97,7 +106,14 @@ const targetRow = (over: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   vi.resetAllMocks();
   settings.disabledTeams.clear();
+  settings.disabledOrgs.clear();
   settings.maxTargets = 50;
+  db.team.findMany.mockResolvedValue([]);
+  // An interactive transaction runs its callback against the same mocked client; a throw is a
+  // rollback (the mock keeps no state to undo).
+  db.$transaction.mockImplementation(async (fn: (tx: typeof db) => unknown) => fn(db));
+  db.campaign.updateMany.mockResolvedValue({ count: 1 });
+  db.campaignTarget.count.mockResolvedValue(0);
   db.campaign.findUnique.mockResolvedValue(campaignRow());
   db.campaignTarget.findMany.mockResolvedValue([targetRow()]);
   db.campaignProposal.findMany.mockResolvedValue([]);
@@ -200,6 +216,35 @@ describe('readCampaignPass', () => {
     expect((await readCampaignPass({ campaignId: CAMPAIGN }))?.campaign.campaignsEnabled).toBe(
       true
     );
+  });
+
+  it('resolves the kill switch under each target team’s own organization', async () => {
+    const OTHER_ORG = '77777777-7777-4777-8777-777777777778';
+    db.campaignTarget.findMany.mockResolvedValue([
+      targetRow({ id: 'a', state: 'PENDING', teamId: 'team-x' }),
+    ]);
+    db.team.findMany.mockResolvedValue([
+      { id: TEAM, orgId: ORG },
+      { id: 'team-x', orgId: OTHER_ORG },
+    ]);
+    // An org-level disable on the cross-org target's organization pauses the campaign.
+    settings.disabledOrgs.add(OTHER_ORG);
+    expect((await readCampaignPass({ campaignId: CAMPAIGN }))?.campaign.campaignsEnabled).toBe(
+      false
+    );
+    // The same disable on the campaign's own organization does not reach team-x's own org.
+    settings.disabledOrgs.clear();
+    settings.disabledOrgs.add('unrelated-org');
+    expect((await readCampaignPass({ campaignId: CAMPAIGN }))?.campaign.campaignsEnabled).toBe(
+      true
+    );
+    const { resolveSetting } = await import('@auto-swe/shared/config');
+    const calls = vi
+      .mocked(resolveSetting)
+      .mock.calls.filter(([key]) => key === 'workflow.campaignsEnabled')
+      .map(([, ctx]) => ctx);
+    expect(calls).toContainEqual({ orgId: OTHER_ORG, teamId: 'team-x' });
+    expect(calls).not.toContainEqual({ orgId: ORG, teamId: 'team-x' });
   });
 
   it('reports an unavailable launcher: no launcher, a deactivated one, or one who left the organization', async () => {
@@ -451,14 +496,14 @@ describe('recordCampaignPass', () => {
 
   it('stamps completedAt when the campaign completes and clears the pause reason when it resumes', async () => {
     db.campaign.update.mockResolvedValue({});
+    db.campaign.findUnique.mockResolvedValue({ orgId: ORG, recipeRef: 'npm-dependency@2' });
     await recordCampaignPass({ ...base, campaign: { from: 'ACTIVE', to: 'COMPLETED' } });
-    expect(db.campaign.update.mock.calls[0]?.[0].data).toMatchObject({
-      pausedReason: null,
-      state: 'COMPLETED',
-    });
-    expect(db.campaign.update.mock.calls[0]?.[0].data.completedAt).toBeInstanceOf(Date);
+    const settle = db.campaign.updateMany.mock.calls[0]?.[0];
+    expect(settle.where).toEqual({ id: CAMPAIGN, orgId: ORG, state: 'ACTIVE' });
+    expect(settle.data).toMatchObject({ pausedReason: null, state: 'COMPLETED' });
+    expect(settle.data.completedAt).toBeInstanceOf(Date);
     await recordCampaignPass({ ...base, campaign: { from: 'MONITORING', to: 'ACTIVE' } });
-    expect(db.campaign.update.mock.calls[1]?.[0].data).toEqual({
+    expect(db.campaign.update.mock.calls[0]?.[0].data).toEqual({
       pausedReason: null,
       state: 'ACTIVE',
     });
@@ -468,19 +513,77 @@ describe('recordCampaignPass', () => {
     db.campaign.update.mockRejectedValue(Object.assign(new Error('gone'), { code: 'P2025' }));
     const r = await recordCampaignPass({
       ...base,
-      campaign: { from: 'ACTIVE', to: 'MONITORING' },
+      campaign: { from: 'ACTIVE', pausedReason: 'budget', to: 'PAUSED' },
     });
     expect(r.campaignChanged).toBe(false);
+    db.campaign.findUnique.mockResolvedValue({ orgId: ORG, recipeRef: 'npm-dependency@2' });
+    db.campaign.updateMany.mockResolvedValue({ count: 0 });
+    expect(
+      (await recordCampaignPass({ ...base, campaign: { from: 'ACTIVE', to: 'MONITORING' } }))
+        .campaignChanged
+    ).toBe(false);
     db.campaign.update.mockClear();
+    db.campaign.updateMany.mockClear();
     await recordCampaignPass({ ...base, campaign: { from: 'CANCELLED', to: 'ACTIVE' } });
+    await recordCampaignPass({ ...base, campaign: { from: 'COMPLETED', to: 'MONITORING' } });
     expect(db.campaign.update).not.toHaveBeenCalled();
+    expect(db.campaign.updateMany).not.toHaveBeenCalled();
   });
 
   it('rethrows any other database error', async () => {
     db.campaign.update.mockRejectedValue(new Error('connection lost'));
     await expect(
+      recordCampaignPass({
+        ...base,
+        campaign: { from: 'ACTIVE', pausedReason: 'budget', to: 'PAUSED' },
+      })
+    ).rejects.toThrow('connection lost');
+    db.campaign.findUnique.mockResolvedValue({ orgId: ORG, recipeRef: 'npm-dependency@2' });
+    db.campaign.updateMany.mockRejectedValue(new Error('connection lost'));
+    await expect(
       recordCampaignPass({ ...base, campaign: { from: 'ACTIVE', to: 'MONITORING' } })
     ).rejects.toThrow('connection lost');
+  });
+
+  describe('settling a campaign (COMPLETED or MONITORING)', () => {
+    beforeEach(() => {
+      db.campaign.findUnique.mockResolvedValue({ orgId: ORG, recipeRef: 'npm-dependency@2' });
+    });
+
+    it('re-counts the targets that are not final, in the write’s own transaction, and refuses when one is open', async () => {
+      // A target was added after the pass read its targets.
+      db.campaignTarget.count.mockResolvedValue(1);
+      const r = await recordCampaignPass({
+        ...base,
+        campaign: { from: 'ACTIVE', to: 'COMPLETED' },
+      });
+      expect(r.campaignChanged).toBe(false);
+      expect(db.$transaction).toHaveBeenCalledTimes(1);
+      const count = db.campaignTarget.count.mock.calls[0]?.[0];
+      expect(count.where).toMatchObject({ campaign: { orgId: ORG }, campaignId: CAMPAIGN });
+      // With a check, MERGED is still to be worked; SATISFIED, SKIPPED and CANCELLED are not.
+      expect(count.where.state.notIn).toEqual(
+        expect.arrayContaining(['SATISFIED', 'SKIPPED', 'CANCELLED'])
+      );
+      expect(count.where.state.notIn).not.toContain('MERGED');
+      expect(count.where.state.notIn).not.toContain('PENDING');
+    });
+
+    it('writes when no target is open', async () => {
+      expect(
+        (await recordCampaignPass({ ...base, campaign: { from: 'ACTIVE', to: 'MONITORING' } }))
+          .campaignChanged
+      ).toBe(true);
+    });
+
+    it('counts MERGED as final for a campaign with no check, and not for one with a check', async () => {
+      db.campaign.findUnique.mockResolvedValue({ orgId: ORG, recipeRef: 'npm-dependency@1' });
+      await recordCampaignPass({ ...base, campaign: { from: 'ACTIVE', to: 'COMPLETED' } });
+      expect(db.campaignTarget.count.mock.calls[0]?.[0].where.state.notIn).toContain('MERGED');
+      db.campaign.findUnique.mockResolvedValue({ orgId: ORG, recipeRef: null });
+      await recordCampaignPass({ ...base, campaign: { from: 'ACTIVE', to: 'COMPLETED' } });
+      expect(db.campaignTarget.count.mock.calls[1]?.[0].where.state.notIn).toContain('MERGED');
+    });
   });
 });
 
@@ -565,11 +668,41 @@ describe('startCampaignAttempt', () => {
     expect((r as { message: string }).message).not.toContain('camp_abc');
   });
 
-  it('reads a 404 with no code as the target being unavailable', async () => {
-    const { impl } = gatewayFetch(404, { error: { message: 'Not found' } });
+  it('throws a retryable error on a 404 with no code, never skipping the target', async () => {
+    // A rolling-deploy gateway without the route, or an ingress 404: not an answer about the target.
+    for (const body of [{ error: { message: 'Not found' } }, 'Cannot POST /api/v1/x', {}]) {
+      const { impl } = gatewayFetch(404, body);
+      const err = await startCampaignAttempt(input, {
+        baseUrl: 'http://gw:8080',
+        fetchImpl: impl,
+      }).then(
+        () => null,
+        (e: unknown) => e
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect((err as { nonRetryable?: boolean }).nonRetryable).not.toBe(true);
+      expect((err as Error).message).toMatch(/HTTP 404/);
+    }
+  });
+
+  it('reads a coded 404 as the gateway’s answer', async () => {
     await expect(
-      startCampaignAttempt(input, { baseUrl: 'http://gw:8080', fetchImpl: impl })
+      startCampaignAttempt(input, {
+        baseUrl: 'http://gw:8080',
+        fetchImpl: gatewayFetch(404, {
+          error: { code: 'TARGET_UNAVAILABLE', message: 'The repository is gone' },
+        }).impl,
+      })
     ).resolves.toMatchObject({ code: 'TARGET_UNAVAILABLE', ok: false });
+    // The campaign no longer exists: stop (CAMPAIGN_NOT_ACTIVE), never skip a target for it.
+    await expect(
+      startCampaignAttempt(input, {
+        baseUrl: 'http://gw:8080',
+        fetchImpl: gatewayFetch(404, {
+          error: { code: 'CAMPAIGN_NOT_FOUND', message: 'Campaign not found' },
+        }).impl,
+      })
+    ).resolves.toMatchObject({ code: 'CAMPAIGN_NOT_ACTIVE', ok: false });
   });
 
   it('throws on a server error, so Temporal retries with the same key', async () => {

@@ -90,15 +90,19 @@ export async function planCampaignBriefs(input: {
       'CAMPAIGN_PLAN_EMPTY'
     );
   }
-  if (planable.every((t) => t.brief !== null)) {
-    return { edges: 0, planned: planable.length };
+  if (targets.every((t) => t.brief !== null)) {
+    return { edges: 0, planned: targets.length };
   }
-  return withSpendOwner(ownerOfTeam(campaign.ownerTeamId), () => planImpl(campaign, planable));
+  return withSpendOwner(ownerOfTeam(campaign.ownerTeamId), () =>
+    planImpl(campaignId, campaign, planable, targets)
+  );
 }
 
 async function planImpl(
+  campaignId: string,
   campaign: { description: string; orgId: string },
-  planable: Array<{ id: string; connectionId: string; teamId: string }>
+  planable: Array<{ id: string; connectionId: string; teamId: string }>,
+  allTargets: ReadonlyArray<{ id: string; teamId: string }>
 ): Promise<PlanCampaignBriefsResult> {
   heartbeat('fetching repo metadata');
   const repos = await runUnscoped(
@@ -156,27 +160,57 @@ async function planImpl(
     const briefByRepo = new Map(planned.map((p) => [p.repoId, p.description]));
     const depsByRepo = new Map(entries.map((e) => [e.repoId, e.dependsOn]));
 
+    // Every target gets a brief, the planner's or else the campaign's own, so the launcher always
+    // reviews a complete plan: a repository the planner left out, and one whose connection is gone,
+    // carry the campaign brief. The briefs and the edges land together or not at all.
+    const fallback = cleanBrief(campaign.description, campaign.description);
     let edges = 0;
-    const writes = planable.map((t) => {
-      const dependsOn = (depsByRepo.get(t.connectionId) ?? []).flatMap((repoId) => {
-        const upstream = targetByRepo.get(repoId);
+    const writes = allTargets.map((t) => {
+      const repoId = planable.find((p) => p.id === t.id)?.connectionId;
+      const dependsOn = (repoId ? (depsByRepo.get(repoId) ?? []) : []).flatMap((dep) => {
+        const upstream = targetByRepo.get(dep);
         return upstream ? [upstream.id] : [];
       });
       edges += dependsOn.length;
-      return prisma.campaignTarget.updateMany({
-        data: {
-          brief: cleanBrief(briefByRepo.get(t.connectionId) ?? '', campaign.description),
-          dependsOn,
-        },
-        where: { id: t.id, teamId: t.teamId },
-      });
+      return {
+        brief: cleanBrief(repoId ? (briefByRepo.get(repoId) ?? '') : '', fallback),
+        dependsOn,
+        id: t.id,
+        teamId: t.teamId,
+      };
     });
-    await prisma.$transaction(writes);
+    const applied = await prisma.$transaction(async (tx) => {
+      // Touching the campaign row first takes its row lock and proves it is still PLANNING (and a
+      // reconciler campaign); a cancel or a confirm that got in first leaves nothing to write, and
+      // one that comes after waits for this transaction to commit.
+      const still = await tx.campaign.updateMany({
+        data: { state: 'PLANNING' },
+        where: {
+          id: campaignId,
+          orgId: campaign.orgId,
+          state: 'PLANNING',
+          workflowKind: 'RECONCILER',
+        },
+      });
+      if (still.count === 0) {
+        return false;
+      }
+      for (const w of writes) {
+        await tx.campaignTarget.updateMany({
+          data: { brief: w.brief, dependsOn: w.dependsOn },
+          where: { campaignId, id: w.id, teamId: w.teamId },
+        });
+      }
+      return true;
+    });
+    if (!applied) {
+      return { edges: 0, planned: 0 };
+    }
     tracer.addActivityEvent({
       name: 'campaign.plan',
       outputJson: { edges, repos: planable.length },
     });
-    return { edges, planned: planable.length };
+    return { edges, planned: allTargets.length };
   } finally {
     await persistActivityTrace(tracer, 'planner').catch(() => false);
   }

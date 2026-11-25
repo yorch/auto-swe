@@ -25,12 +25,15 @@ import {
 import { boundFailureReason, CAMPAIGN_TERMINAL_STATES } from '@auto-swe/shared/lib/campaignOutcome';
 import { recipeSupportsCheck } from '@auto-swe/shared/lib/campaignRecipes';
 import {
+  CAMPAIGN_TARGET_STATE_VALUES,
   type CampaignAttemptOutcomeValue,
   type CampaignStateValue,
   isTargetFinal,
+  isTargetFinalFor,
   type PullRequestStatusValue,
   type TargetState,
 } from '@auto-swe/shared/lib/campaignState';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import { ApplicationFailure } from '@temporalio/activity';
 import { logWarn } from '../lib/activityLog.js';
@@ -237,10 +240,26 @@ export async function readCampaignPass(input: {
       liveTeams.add(t.teamId);
     }
   }
+  // Each team is resolved under its own organization: a cross-organization target's team answers
+  // for its organization's setting, not for the campaign's. A team that cannot be found (deleted)
+  // falls back to the campaign's organization.
+  const teamOrg = new Map(
+    (
+      await runUnscoped(
+        'teams are looked up by id to resolve the kill switch under each one’s own organization',
+        ['Team'],
+        () =>
+          prisma.team.findMany({
+            select: { id: true, orgId: true },
+            where: { id: { in: [...liveTeams] } },
+          })
+      )
+    ).map((team) => [team.id, team.orgId])
+  );
   let campaignsEnabled = true;
   for (const teamId of [...liveTeams].sort()) {
     const enabled = await resolveSetting('workflow.campaignsEnabled', {
-      orgId: campaign.orgId,
+      orgId: teamOrg.get(teamId) ?? campaign.orgId,
       teamId,
     });
     if (!enabled) {
@@ -426,25 +445,93 @@ export async function recordCampaignPass(
   if (input.campaign) {
     const { from, to, pausedReason } = input.campaign;
     if (!(CAMPAIGN_TERMINAL_STATES as readonly string[]).includes(from)) {
-      try {
-        await prisma.campaign.update({
-          data:
-            to === 'COMPLETED'
-              ? { completedAt: now, pausedReason: null, state: to }
-              : to === 'PAUSED'
-                ? { pausedReason: pausedReason ?? 'manual', state: to }
-                : { pausedReason: null, state: to },
-          where: { id: campaignId, state: from },
-        });
-        campaignChanged = true;
-      } catch (err) {
-        if (!isNoRowError(err)) {
-          throw err;
-        }
-      }
+      const data =
+        to === 'COMPLETED'
+          ? { completedAt: now, pausedReason: null, state: to }
+          : to === 'PAUSED'
+            ? { pausedReason: pausedReason ?? 'manual', state: to }
+            : { pausedReason: null, state: to };
+      campaignChanged =
+        to === 'COMPLETED' || to === 'MONITORING'
+          ? await writeSettledState(campaignId, from, data)
+          : await writeCampaignState(campaignId, from, data);
     }
   }
   return { added, campaignChanged, skipped };
+}
+
+/** The campaign write, conditional on the state it was decided from. */
+async function writeCampaignState(
+  campaignId: string,
+  from: CampaignStateValue,
+  data: Record<string, unknown>
+): Promise<boolean> {
+  try {
+    await prisma.campaign.update({ data, where: { id: campaignId, state: from } });
+    return true;
+  } catch (err) {
+    if (isNoRowError(err)) {
+      return false;
+    }
+    throw err;
+  }
+}
+
+/** Thrown inside the settle transaction to roll its write back. */
+class TargetStillOpen extends Error {}
+
+/**
+ * Write `COMPLETED` or `MONITORING`: a campaign whose targets are all final. The pass decided that
+ * from the targets it read, and a person can add a target (or discovery another pass's worth) after
+ * the read, so the decision is made again here, in the write's own transaction: the campaign row is
+ * updated first (which takes its row lock, the one an attempt start takes `FOR UPDATE`), the
+ * targets that are not final are counted, and a count above zero rolls the write back. The campaign
+ * then stays as it was and the next pass reads the new target. A campaign with a check is waiting
+ * on `MERGED` targets too; one without a check is done at `MERGED` (the owner's decision).
+ */
+async function writeSettledState(
+  campaignId: string,
+  from: CampaignStateValue,
+  data: Record<string, unknown>
+): Promise<boolean> {
+  const campaign = await prisma.campaign.findUnique({
+    select: { orgId: true, recipeRef: true },
+    where: { id: campaignId },
+  });
+  if (!campaign) {
+    return false;
+  }
+  const hasCheck = campaign.recipeRef !== null && recipeSupportsCheck(campaign.recipeRef);
+  const final = CAMPAIGN_TARGET_STATE_VALUES.filter((state) =>
+    isTargetFinalFor(state, { hasCheck })
+  );
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const moved = await tx.campaign.updateMany({
+        data,
+        where: { id: campaignId, orgId: campaign.orgId, state: from },
+      });
+      if (moved.count === 0) {
+        return false;
+      }
+      const open = await tx.campaignTarget.count({
+        where: {
+          campaign: { orgId: campaign.orgId },
+          campaignId,
+          state: { notIn: [...final] },
+        },
+      });
+      if (open > 0) {
+        throw new TargetStillOpen();
+      }
+      return true;
+    });
+  } catch (err) {
+    if (err instanceof TargetStillOpen) {
+      return false;
+    }
+    throw err;
+  }
 }
 
 // ── Starting an attempt ──
@@ -502,7 +589,15 @@ export async function startCampaignAttempt(
     return { code: err.code, message, ok: false };
   }
   if (res.status === 404) {
-    return { code: 'TARGET_UNAVAILABLE', message, ok: false };
+    // Only the gateway's own answer is a refusal. A 404 with no code is a route that does not
+    // exist (a gateway still on the previous release during a rolling deploy) or an ingress that
+    // lost its upstream: reading it as TARGET_UNAVAILABLE would skip the target for good. Throw,
+    // and Temporal retries it.
+    if (err?.code === 'CAMPAIGN_NOT_FOUND') {
+      // The campaign is gone: nothing more can start. The workflow reads this as "stop".
+      return { code: 'CAMPAIGN_NOT_ACTIVE', message, ok: false };
+    }
+    throw new Error('the gateway answered HTTP 404 without a refusal code');
   }
   // 401/403 without a coded refusal: the token was not accepted. Retrying cannot change that.
   throw ApplicationFailure.nonRetryable(

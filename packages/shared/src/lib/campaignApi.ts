@@ -87,7 +87,7 @@ export const CampaignCreateBodySchema = z.object({
     .min(1)
     .max(CAMPAIGN_MAX_REPO_IDS)
     .refine((ids) => new Set(ids).size === ids.length, 'repoIds must be unique'),
-  rescanIntervalHours: z.number().int().min(1).max(8760).optional(),
+  rescanIntervalHours: z.number().int().min(1).max(720).optional(),
   scope: CampaignScopeBodySchema.optional(),
   staleAfterDays: z.number().int().min(1).max(365).optional(),
 });
@@ -259,6 +259,8 @@ export const CampaignDetailDtoSchema = CampaignSummaryDtoSchema.extend({
   cancelledAt: z.string().nullable(),
   cancelledById: z.string().nullable(),
   completedAt: z.string().nullable(),
+  /** Discovery proposals naming a repository the viewer may not reach: counted, never named. */
+  hiddenProposalCount: z.number().int(),
   /** Targets the viewer may not see: counted, never named. */
   hiddenTargetCount: z.number().int(),
   launcherChangedAt: z.string().nullable(),

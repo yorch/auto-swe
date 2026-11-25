@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const db = vi.hoisted(() => ({
   $transaction: vi.fn(),
-  campaign: { findUnique: vi.fn() },
+  campaign: { findUnique: vi.fn(), updateMany: vi.fn() },
   campaignTarget: { findMany: vi.fn(), updateMany: vi.fn() },
   connection: { findMany: vi.fn() },
 }));
@@ -120,24 +120,65 @@ describe('planCampaignBriefs', () => {
       { dependsOn: ['lib'], description: 'Adapt the api to the new client', repoId: 'api' },
     ]);
     planner.loadStoredUpstream.mockResolvedValue(new Map([['api', ['lib']]]));
-    db.campaignTarget.updateMany.mockImplementation((arg: unknown) => arg);
-    db.$transaction.mockResolvedValue([]);
+    db.campaignTarget.updateMany.mockResolvedValue({ count: 1 });
+    db.campaign.updateMany.mockResolvedValue({ count: 1 });
+    // An interactive transaction: the callback runs against the same mocked client.
+    db.$transaction.mockImplementation(async (fn: (tx: typeof db) => unknown) => fn(db));
   });
+
+  /** The target writes of the transaction, as [id, teamId, brief, dependsOn]. */
+  const targetWrites = () =>
+    db.campaignTarget.updateMany.mock.calls.map(([a]) => [
+      a.where.id,
+      a.where.teamId,
+      a.data.brief,
+      a.data.dependsOn,
+    ]);
 
   it('writes a brief per target and the edges the graph confirms, as target ids, in one transaction', async () => {
     const r = await planCampaignBriefs({ campaignId: CAMPAIGN });
     expect(r).toEqual({ edges: 1, planned: 2 });
     expect(planner.decomposeEpic.mock.calls[0]?.[0]).toBe('Migrate to the new client');
     expect(db.$transaction).toHaveBeenCalledTimes(1);
-    const writes = db.$transaction.mock.calls[0]?.[0] as Array<{
-      data: { brief: string; dependsOn: string[] };
-      where: { id: string; teamId: string };
-    }>;
-    expect(writes.map((w) => [w.where.id, w.where.teamId, w.data.brief, w.data.dependsOn])).toEqual(
-      [
-        ['tg-lib', 't1', 'Bump the client in lib', []],
-        ['tg-api', 't1', 'Adapt the api to the new client', ['tg-lib']],
-      ]
+    expect(targetWrites()).toEqual([
+      ['tg-lib', 't1', 'Bump the client in lib', []],
+      ['tg-api', 't1', 'Adapt the api to the new client', ['tg-lib']],
+    ]);
+    // The write is conditional on the campaign still being a PLANNING reconciler campaign.
+    expect(db.campaign.updateMany.mock.calls[0]?.[0].where).toEqual({
+      id: CAMPAIGN,
+      orgId: ORG,
+      state: 'PLANNING',
+      workflowKind: 'RECONCILER',
+    });
+  });
+
+  it('writes nothing when the campaign was cancelled or confirmed while the planner ran', async () => {
+    db.campaign.updateMany.mockResolvedValue({ count: 0 });
+    await expect(planCampaignBriefs({ campaignId: CAMPAIGN })).resolves.toEqual({
+      edges: 0,
+      planned: 0,
+    });
+    expect(db.campaignTarget.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('gives every target a brief, including one the planner omitted and one whose repository is gone', async () => {
+    db.campaignTarget.findMany.mockResolvedValue([
+      ...targets,
+      { brief: null, connectionId: null, id: 'tg-gone', teamId: 't1' },
+    ]);
+    planner.decomposeEpic.mockResolvedValue([
+      { dependsOn: [], description: 'Bump the client in lib', repoId: 'lib' },
+    ]);
+    const r = await planCampaignBriefs({ campaignId: CAMPAIGN });
+    expect(r.planned).toBe(3);
+    expect(targetWrites()).toEqual([
+      ['tg-lib', 't1', 'Bump the client in lib', []],
+      ['tg-api', 't1', 'Migrate to the new client', []],
+      ['tg-gone', 't1', 'Migrate to the new client', []],
+    ]);
+    expect(targetWrites().every(([, , brief]) => typeof brief === 'string' && brief !== '')).toBe(
+      true
     );
   });
 
@@ -150,8 +191,7 @@ describe('planCampaignBriefs', () => {
   it('falls back to the campaign’s own brief for a repository the planner left blank', async () => {
     planner.decomposeEpic.mockResolvedValue([{ dependsOn: [], description: '  ', repoId: 'lib' }]);
     await planCampaignBriefs({ campaignId: CAMPAIGN });
-    const writes = db.$transaction.mock.calls[0]?.[0] as Array<{ data: { brief: string } }>;
-    expect(writes.map((w) => w.data.brief)).toEqual([
+    expect(targetWrites().map(([, , brief]) => brief)).toEqual([
       'Migrate to the new client',
       'Migrate to the new client',
     ]);

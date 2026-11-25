@@ -73,14 +73,22 @@ beforeAll(async () => {
 
 describe('CampaignReconcilerWorkflow — history replay', () => {
   it('has a fixture for every control-flow shape worth guarding', () => {
-    expect(fixtures.map((f) => [f.name, f.type])).toEqual([
-      ['complete', 'CampaignReconcilerWorkflow'],
-      ['continue-as-new', 'CampaignReconcilerWorkflow'],
-      ['gate-blocked', 'CampaignReconcilerWorkflow'],
-      ['pause-resume', 'CampaignReconcilerWorkflow'],
-      ['pull-request-signal', 'CampaignReconcilerWorkflow'],
-      ['regression', 'CampaignReconcilerWorkflow'],
-    ]);
+    expect(fixtures.map((f) => [f.name, f.type])).toEqual(
+      [
+        'cancel-workflow',
+        'cancel',
+        'check-failed',
+        'complete',
+        'continue-as-new',
+        'discovery',
+        'gate-blocked',
+        'pause-resume',
+        'planning-confirm',
+        'pull-request-signal',
+        'refusal-pause',
+        'regression',
+      ].map((name) => [name, 'CampaignReconcilerWorkflow'])
+    );
   });
 
   it.each(fixtures)(
@@ -104,6 +112,7 @@ describe('CampaignReconcilerWorkflow — history replay', () => {
     expect(types.at(-1)).toBeOneOf([
       EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED,
       EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW,
+      EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED,
     ]);
   });
 
@@ -150,6 +159,62 @@ describe('CampaignReconcilerWorkflow — history replay', () => {
       const start = acts.indexOf('startCampaignAttempt');
       expect(check).toBeGreaterThan(-1);
       expect(start).toBeGreaterThan(check);
+    });
+
+    it('cancel closed the rows when the campaign said CANCELLING, and ended completed', () => {
+      const acts = activitiesOf('cancel');
+      expect(acts.filter((a) => a === 'startCampaignAttempt')).toHaveLength(1);
+      expect(signalsOf('cancel')).toEqual(['campaignControl']);
+      // Attempts are cancelled before the rows are finalized, then the domain state is written.
+      const cancel = acts.indexOf('cancelCampaignAttempts');
+      expect(cancel).toBeGreaterThan(-1);
+      expect(acts.indexOf('finalizeCampaignReconciler')).toBeGreaterThan(cancel);
+      expect(typesOf('cancel').at(-1)).toBe(EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED);
+    });
+
+    it('cancel-workflow closed the rows when the workflow itself was cancelled', () => {
+      const acts = activitiesOf('cancel-workflow');
+      expect(acts).toContain('cancelCampaignAttempts');
+      expect(acts).toContain('finalizeCampaignReconciler');
+      expect(typesOf('cancel-workflow').at(-1)).toBe(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED
+      );
+    });
+
+    it('planning-confirm planned once, started nothing until the confirm, then ran both targets', () => {
+      const acts = activitiesOf('planning-confirm');
+      expect(acts.filter((a) => a === 'planCampaignBriefs')).toHaveLength(1);
+      expect(signalsOf('planning-confirm')).toContain('campaignControl');
+      const firstStart = acts.indexOf('startCampaignAttempt');
+      expect(acts.indexOf('planCampaignBriefs')).toBeLessThan(firstStart);
+      expect(acts.filter((a) => a === 'startCampaignAttempt')).toHaveLength(2);
+      expect(acts).toContain('finalizeCampaignReconciler');
+    });
+
+    it('discovery walked the scope in chunks and wrote a chunk before reading the next', () => {
+      const acts = activitiesOf('discovery');
+      expect(acts.filter((a) => a === 'discoverCampaignTargets')).toHaveLength(2);
+      // A write for the first chunk's findings sits between the two walks of the scope.
+      const first = acts.indexOf('discoverCampaignTargets');
+      const second = acts.lastIndexOf('discoverCampaignTargets');
+      expect(acts.slice(first, second)).toContain('recordCampaignPass');
+      expect(acts.filter((a) => a === 'startCampaignAttempt')).toHaveLength(1);
+    });
+
+    it('refusal-pause paused on the gateway’s refusal and went on after a resume', () => {
+      const acts = activitiesOf('refusal-pause');
+      // The refused start, the pause write, then the start that succeeded after the resume.
+      expect(acts.filter((a) => a === 'startCampaignAttempt')).toHaveLength(2);
+      expect(acts).toContain('recordCampaignPass');
+      expect(signalsOf('refusal-pause')).toEqual(['campaignControl', 'campaignAttemptFinished']);
+    });
+
+    it('check-failed ran the check once, kept the campaign open and ended when a person skipped it', () => {
+      const acts = activitiesOf('check-failed');
+      expect(acts.filter((a) => a === 'runCampaignCheck')).toHaveLength(1);
+      expect(acts).not.toContain('startCampaignAttempt');
+      expect(signalsOf('check-failed')).toEqual(['campaignControl']);
+      expect(acts.at(-1)).toBe('updateDomainState');
     });
 
     it('continue-as-new polled through 200 passes before it continued', () => {

@@ -8,6 +8,7 @@
  */
 import {
   isTargetFinal,
+  isTargetFinalFor,
   normalizeTargetState,
   type ReconcilerTargetState,
   type TargetState,
@@ -48,6 +49,13 @@ export interface World {
   /** Refusals the gateway answers a start with, per target. */
   refusals: Map<string, { code: string; message: string }>;
   discovery: DiscoveredCandidate[];
+  /**
+   * Scripted discovery chunks, answered in order (an Error is thrown instead). Without a script
+   * every call answers `discovery` with the walk done.
+   */
+  discoveryScript?: Array<{ candidates: DiscoveredCandidate[]; nextCursor: number | null } | Error>;
+  /** Runs inside the campaign-state write, before the targets are re-counted. */
+  beforeCampaignWrite?: (world: World) => void;
   failPlan: boolean;
 
   // What happened
@@ -56,6 +64,7 @@ export interface World {
   records: RecordCampaignPassInput[];
   checks: string[];
   discoveries: number;
+  discoveryCalls: Array<{ cursor: number; limit?: number; maxCandidates?: number }>;
   plans: number;
   cancelledAttempts: number;
   finalized: Array<'COMPLETED' | 'CANCELLED'>;
@@ -116,6 +125,7 @@ export function makeWorld(
     checks: [],
     discoveries: 0,
     discovery: [],
+    discoveryCalls: [],
     domainStates: [],
     failPlan: false,
     finalized: [],
@@ -175,11 +185,29 @@ export function worldActivities(world: World) {
       };
     },
 
-    async discoverCampaignTargets(): Promise<{
+    async discoverCampaignTargets(input?: {
+      cursor: number;
+      limit?: number;
+      maxCandidates?: number;
+    }): Promise<{
       candidates: DiscoveredCandidate[];
       nextCursor: number | null;
     }> {
       world.discoveries += 1;
+      world.discoveryCalls.push({
+        cursor: input?.cursor ?? 0,
+        ...(input?.limit !== undefined ? { limit: input.limit } : {}),
+        ...(input?.maxCandidates !== undefined ? { maxCandidates: input.maxCandidates } : {}),
+      });
+      if (world.discoveryScript) {
+        const next = world.discoveryScript.shift();
+        if (next instanceof Error) {
+          throw next;
+        }
+        if (next) {
+          return next;
+        }
+      }
       return { candidates: world.discovery, nextCursor: null };
     },
 
@@ -265,6 +293,17 @@ export function worldActivities(world: World) {
       }
       let campaignChanged = false;
       if (input.campaign && world.campaign.state === input.campaign.from) {
+        world.beforeCampaignWrite?.(world);
+        // The real write re-counts the targets that are not final and refuses a settle over one.
+        const settles = input.campaign.to === 'COMPLETED' || input.campaign.to === 'MONITORING';
+        if (
+          settles &&
+          world.targets.some(
+            (t) => !isTargetFinalFor(t.state, { hasCheck: world.campaign.hasCheck })
+          )
+        ) {
+          return { added, campaignChanged: false, skipped };
+        }
         world.campaign.state = input.campaign.to;
         world.pausedReason =
           input.campaign.to === 'PAUSED' ? (input.campaign.pausedReason ?? null) : null;

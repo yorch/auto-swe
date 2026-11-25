@@ -29,8 +29,8 @@ import type * as activitiesType from '../activities/index.js';
 import type {
   CampaignPassSnapshot,
   CampaignStateWrite,
-  DiscoveredCandidate,
   PassTarget,
+  ReconcilerWorkflowInput,
   StartCampaignAttemptResult,
   TargetUpdate,
 } from '../lib/campaignReconcilerTypes.js';
@@ -40,12 +40,17 @@ import {
   CAMPAIGN_PULL_REQUEST_CHANGED_SIGNAL,
 } from '../lib/workflowEngine.js';
 import {
+  advanceWalk,
   applyCheckResult,
+  DISCOVERY_ACTIVITY_TIMEOUT_MS,
+  DISCOVERY_MAX_CHUNKS,
   decideBlockUpdates,
   decideCampaignWrite,
   deriveDeliveryUpdates,
   discoveryDue,
   FAILURE_RETRY_MS,
+  NEW_DISCOVERY_WALK,
+  nextChunkLimits,
   nextSleepMs,
   planDueChecks,
   REFUSAL_RETRY_MS,
@@ -115,13 +120,19 @@ const startActivities = proxyActivities<Pick<typeof activitiesType, 'startCampai
   startToCloseTimeout: T_2M,
 });
 
-// A check clones a repository into a sandbox; discovery walks a chunk of them.
-const sandboxActivities = proxyActivities<
-  Pick<typeof activitiesType, 'discoverCampaignTargets' | 'runCampaignCheck'>
->({
+// A check clones a repository into a sandbox.
+const sandboxActivities = proxyActivities<Pick<typeof activitiesType, 'runCampaignCheck'>>({
   heartbeatTimeout: T_2M,
   retry: RETRY_SANDBOX,
   startToCloseTimeout: T_30M,
+});
+
+// Discovery walks a chunk of repositories. The activity sizes its chunk to this timeout (it starts
+// no repository whose worst case no longer fits), so the bound is one constant both sides read.
+const discoverActivities = proxyActivities<Pick<typeof activitiesType, 'discoverCampaignTargets'>>({
+  heartbeatTimeout: T_2M,
+  retry: RETRY_SANDBOX,
+  startToCloseTimeout: DISCOVERY_ACTIVITY_TIMEOUT_MS,
 });
 
 const planActivities = proxyActivities<Pick<typeof activitiesType, 'planCampaignBriefs'>>({
@@ -149,8 +160,6 @@ export const campaignControlSignal = defineSignal<[CampaignControlSignal]>(CAMPA
 
 /** Checks run this many at a time within a pass. */
 const CHECK_CONCURRENCY = 3;
-/** The most discovery chunks one walk of a scope reads (a guard against a cursor that never ends). */
-const DISCOVERY_MAX_CHUNKS = 200;
 /** Passes in a row that may read again at once before the workflow sleeps a minute. */
 const MAX_IMMEDIATE_PASSES = 5;
 
@@ -175,7 +184,7 @@ function errorText(err: unknown): string {
 }
 
 export async function CampaignReconcilerWorkflow(
-  input: CampaignReconcilerInput
+  input: ReconcilerWorkflowInput
 ): Promise<CampaignReconcilerResult> {
   const { campaignId, campaignWorkflowId } = input;
   const firstExecution = input.passes === undefined;
@@ -183,6 +192,9 @@ export async function CampaignReconcilerWorkflow(
   let executionPasses = 0;
   let lastDiscoveryAt = input.lastDiscoveryAt ?? null;
   let lastBackstopAt = input.lastBackstopAt ?? null;
+  // Where the walk of the scope stands. It is written to the rows chunk by chunk, so what a restart
+  // loses is only this cursor, and `continueAsNew` carries it.
+  let walk = input.discoveryWalk ?? NEW_DISCOVERY_WALK;
   let planFailed = false;
   /** Consecutive passes that asked to read again at once; bounded so a stuck row cannot spin. */
   let immediateStreak = 0;
@@ -446,58 +458,72 @@ export async function CampaignReconcilerWorkflow(
         }
       }
 
-      // Discover new targets in the scope.
+      // Discover new targets in the scope, one chunk at a time. Each chunk's findings are written
+      // before the next is read, so a walk that times out or is interrupted resumes at its cursor
+      // and loses nothing; only a walk that finished counts as a rescan.
       if (discoveryDue(c, lastDiscoveryAt, now)) {
         try {
-          const candidates: DiscoveredCandidate[] = [];
-          let cursor: number | null = 0;
-          for (let chunk = 0; cursor !== null && chunk < DISCOVERY_MAX_CHUNKS; chunk++) {
-            const found: Awaited<ReturnType<typeof sandboxActivities.discoverCampaignTargets>> =
-              await sandboxActivities.discoverCampaignTargets({ campaignId, cursor });
-            candidates.push(...found.candidates);
-            cursor = found.nextCursor;
-          }
-          const diff = diffDiscovery({
-            candidates,
-            maxTargets: c.maxTargets,
-            proposalConnectionIds: snap.proposalConnectionIds,
-            targetConnectionIds: targets.flatMap((t) => (t.connectionId ? [t.connectionId] : [])),
-            targetCount: targets.length,
-          });
-          if (diff.add.length > 0 || diff.propose.length > 0) {
-            const written = await record([], {
-              addTargets: diff.add.map((a) => ({
-                connectionId: a.connectionId,
-                label: a.label,
-                teamId: a.teamId,
-              })),
-              proposals: diff.propose.map((p) => ({
-                connectionId: p.connectionId,
-                reason: p.reason,
-              })),
-            });
-            for (const added of written.added) {
-              targets.push({
-                attemptFailureReason: null,
-                attemptN: 0,
-                attemptOutcome: null,
-                connectionId: added.connectionId,
-                dependsOn: [],
-                failureReason: null,
-                id: added.targetId,
-                label: added.label,
-                lastCheckedAt: null,
-                position: added.position,
-                prOpenedAt: null,
-                prStatus: null,
-                regressions: 0,
-                staleSince: null,
-                state: 'PENDING',
-                teamId: added.teamId,
+          const proposed = new Set(snap.proposalConnectionIds);
+          for (let chunk = 0; chunk < DISCOVERY_MAX_CHUNKS; chunk++) {
+            const found: Awaited<ReturnType<typeof discoverActivities.discoverCampaignTargets>> =
+              await discoverActivities.discoverCampaignTargets({
+                campaignId,
+                cursor: walk.cursor,
+                ...nextChunkLimits(walk),
               });
+            const diff = diffDiscovery({
+              candidates: found.candidates,
+              maxTargets: c.maxTargets,
+              proposalConnectionIds: [...proposed],
+              targetConnectionIds: targets.flatMap((t) => (t.connectionId ? [t.connectionId] : [])),
+              targetCount: targets.length,
+            });
+            if (diff.add.length > 0 || diff.propose.length > 0) {
+              const written = await record([], {
+                addTargets: diff.add.map((a) => ({
+                  connectionId: a.connectionId,
+                  label: a.label,
+                  teamId: a.teamId,
+                })),
+                proposals: diff.propose.map((p) => ({
+                  connectionId: p.connectionId,
+                  reason: p.reason,
+                })),
+              });
+              for (const p of diff.propose) {
+                proposed.add(p.connectionId);
+              }
+              for (const added of written.added) {
+                targets.push({
+                  attemptFailureReason: null,
+                  attemptN: 0,
+                  attemptOutcome: null,
+                  connectionId: added.connectionId,
+                  dependsOn: [],
+                  failureReason: null,
+                  id: added.targetId,
+                  label: added.label,
+                  lastCheckedAt: null,
+                  position: added.position,
+                  prOpenedAt: null,
+                  prStatus: null,
+                  regressions: 0,
+                  staleSince: null,
+                  state: 'PENDING',
+                  teamId: added.teamId,
+                });
+              }
+            }
+            const step = advanceWalk(walk, {
+              candidates: found.candidates.length,
+              nextCursor: found.nextCursor,
+            });
+            walk = step.walk;
+            if (step.done) {
+              lastDiscoveryAt = now;
+              break;
             }
           }
-          lastDiscoveryAt = now;
         } catch (err) {
           if (isCancellation(err)) {
             throw err;
@@ -665,6 +691,7 @@ export async function CampaignReconcilerWorkflow(
         await continueAsNew<typeof CampaignReconcilerWorkflow>({
           campaignId,
           campaignWorkflowId,
+          discoveryWalk: walk,
           lastBackstopAt,
           lastDiscoveryAt,
           passes,

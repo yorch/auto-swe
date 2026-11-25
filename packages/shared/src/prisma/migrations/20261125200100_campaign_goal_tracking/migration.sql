@@ -140,3 +140,7 @@ WHERE "state" = 'NOT_AFFECTED'
 UPDATE "campaign_targets" SET "state" = 'NEEDS_ATTENTION'
 WHERE "state" = 'FAILED'
   AND "campaign_id" IN (SELECT "id" FROM "campaigns" WHERE "state" IN ('COMPLETED', 'COMPLETED_WITH_FAILURES', 'CANCELLED', 'FAILED_TO_START'));
+
+-- Hand-written: Prisma cannot express NOT NULL on a list column. Set after the backfill, so an
+-- unset list cannot turn every dependency read into a null check.
+ALTER TABLE "campaign_targets" ALTER COLUMN "depends_on" SET NOT NULL;

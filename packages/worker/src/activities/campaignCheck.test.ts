@@ -414,6 +414,93 @@ describe('discoverCampaignTargets', () => {
     });
   });
 
+  it('stops right after the candidate that reaches maxCandidates, with the cursor just past it', async () => {
+    db.connection.findMany.mockResolvedValue(['a', 'b', 'c', 'd', 'e'].map((id) => repo(id)));
+    const { deps, run } = runner(NOT_SATISFIED_OUT);
+    const r = await discoverCampaignTargets(
+      { campaignId: CAMPAIGN, cursor: 100, maxCandidates: 2 },
+      deps
+    );
+    expect(r.candidates.map((c) => c.connectionId)).toEqual(['a', 'b']);
+    expect(run).toHaveBeenCalledTimes(2);
+    // The walk resumes at `c`, not at the end of the chunk.
+    expect(r.nextCursor).toBe(102);
+  });
+
+  it('counts a satisfied repository toward the cursor but not toward the candidates', async () => {
+    db.connection.findMany.mockResolvedValue(['a', 'b', 'c'].map((id) => repo(id)));
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce(SATISFIED_OUT)
+      .mockResolvedValueOnce(NOT_SATISFIED_OUT)
+      .mockResolvedValueOnce(NOT_SATISFIED_OUT);
+    const r = await discoverCampaignTargets(
+      { campaignId: CAMPAIGN, cursor: 0, maxCandidates: 1 },
+      { run }
+    );
+    expect(r.candidates.map((c) => c.connectionId)).toEqual(['b']);
+    expect(r.nextCursor).toBe(2);
+  });
+
+  it('honours a smaller limit than a chunk', async () => {
+    db.connection.findMany.mockResolvedValue([repo('a'), repo('b')]);
+    const r = await discoverCampaignTargets(
+      { campaignId: CAMPAIGN, cursor: 0, limit: 2 },
+      runner(SATISFIED_OUT).deps
+    );
+    expect(db.connection.findMany.mock.calls[0]?.[0].take).toBe(2);
+    // A full page of what was asked for: the scope may go on.
+    expect(r.nextCursor).toBe(2);
+  });
+
+  it('starts no repository whose worst case no longer fits the activity timeout, and resumes there', async () => {
+    // npm-dependency@2: a 10 minute check and a 5 minute clone allowance is 15 minutes worst case,
+    // against a 30 minute activity less its 2 minute margin. Each repository here takes 6 minutes.
+    db.connection.findMany.mockResolvedValue(
+      Array.from({ length: DISCOVERY_CHUNK }, (_, i) => repo(`r${i}`))
+    );
+    let clock = 0;
+    const run = vi.fn(async () => {
+      clock += 6 * 60_000;
+      return NOT_SATISFIED_OUT;
+    });
+    const r = await discoverCampaignTargets(
+      { campaignId: CAMPAIGN, cursor: 0 },
+      { now: () => clock, run }
+    );
+    // Started at 0, 6 and 12 minutes (12 + 15 = 27 fits 28); at 18 minutes it would not.
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(r.candidates).toHaveLength(3);
+    expect(r.nextCursor).toBe(3);
+  });
+
+  it('always checks the first repository, whatever a check may cost', async () => {
+    db.connection.findMany.mockResolvedValue([repo('a'), repo('b')]);
+    let clock = 0;
+    const run = vi.fn(async () => {
+      clock += 40 * 60_000;
+      return NOT_SATISFIED_OUT;
+    });
+    const r = await discoverCampaignTargets(
+      { campaignId: CAMPAIGN, cursor: 0 },
+      { now: () => clock, run }
+    );
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(r.nextCursor).toBe(1);
+  });
+
+  it('clones neither a repository that is already a target in any state nor a recorded proposal', async () => {
+    db.connection.findMany.mockResolvedValue([repo('sat'), repo('prop'), repo('new')]);
+    // A SATISFIED target is still a target: its rescan is the check activity's, not discovery's.
+    db.campaignTarget.findMany.mockResolvedValue([{ connectionId: 'sat' }]);
+    db.campaignProposal.findMany.mockResolvedValue([{ connectionId: 'prop' }]);
+    const { deps, run } = runner(NOT_SATISFIED_OUT);
+    const r = await discoverCampaignTargets({ campaignId: CAMPAIGN, cursor: 0 }, deps);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls[0]?.[0].repoId).toBe('new');
+    expect(r.candidates.map((c) => c.connectionId)).toEqual(['new']);
+  });
+
   it('finds nothing for a campaign with no scope, no check, no launcher or a deactivated one', async () => {
     const { deps, run } = runner(NOT_SATISFIED_OUT);
     for (const over of [

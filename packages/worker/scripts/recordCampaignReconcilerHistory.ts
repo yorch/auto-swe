@@ -2,7 +2,9 @@
  * Records the execution histories `campaignReconciler.replay.test.ts` replays against current
  * `CampaignReconcilerWorkflow` code, one fixture per control-flow shape: reconcile to completion, a
  * gate that holds a target BLOCKED, a pause and a resume, a wake by a pull-request signal, a
- * regression, and `continueAsNew`.
+ * regression, `continueAsNew`, a cancel (by the campaign row and by the workflow's own
+ * cancellation), planning and a confirm, a chunked discovery walk, a pause by a refusal, and a
+ * failed check.
  *
  * A separate script from `recordReplayHistory.ts` on purpose: the reconciler's fixtures live in
  * their own directory (`__fixtures__/campaign-reconciler/`), so the replay suites of the other
@@ -204,6 +206,128 @@ const SCENARIOS: Scenario[] = [
           world.campaign.hasScope = false;
         }
       };
+      return w;
+    },
+  },
+  {
+    // The gateway's cancel route: the row says CANCELLING and a control signal wakes the
+    // reconciler, which cancels the attempt in flight, closes the rows and ends.
+    drive: async (handle, w) => {
+      await waitFor(() => w.starts.length === 1, 't1 to start');
+      w.campaign.state = 'CANCELLING';
+      await handle.signal(CAMPAIGN_CONTROL_SIGNAL, { action: 'cancel' });
+    },
+    name: 'cancel',
+    world: () =>
+      makeWorld({ campaign: { maxParallel: 1 }, targets: [makeTarget('t1'), makeTarget('t2')] }),
+  },
+  {
+    // The workflow itself is cancelled (handle.cancel()): same closing of the rows, and the
+    // execution ends cancelled.
+    drive: async (handle, w) => {
+      await waitFor(() => w.starts.length === 1, 't1 to start');
+      await (handle as unknown as { cancel(): Promise<void> }).cancel();
+    },
+    name: 'cancel-workflow',
+    world: () =>
+      makeWorld({ campaign: { maxParallel: 1 }, targets: [makeTarget('t1'), makeTarget('t2')] }),
+  },
+  {
+    // A planned campaign is decomposed once, then waits in PLANNING (nothing starts) until its
+    // launcher confirms; after the confirm both targets run and the campaign completes.
+    drive: async (handle, w) => {
+      await waitFor(() => w.plans === 1 && w.planned, 'the plan to be written');
+      w.onStart = finishesOnStart('NO_CHANGE');
+      w.campaign.state = 'ACTIVE';
+      await handle.signal(CAMPAIGN_CONTROL_SIGNAL, { action: 'confirm' });
+    },
+    name: 'planning-confirm',
+    world: () =>
+      makeWorld({
+        campaign: { plan: 'PLANNED', state: 'PLANNING' },
+        targets: [makeTarget('t1'), makeTarget('t2')],
+      }),
+  },
+  {
+    // A walk of the scope in two chunks: each chunk's findings are written as it is read, a
+    // reachable repository is added at the end and one the launcher cannot start work in is
+    // recorded as a proposal; once the walk is done the scope is taken away so the campaign ends.
+    name: 'discovery',
+    world: () => {
+      const w = makeWorld({
+        campaign: { hasCheck: true, hasScope: true, maxTargets: 10, rescanIntervalHours: 24 },
+        targets: [makeTarget('t1', { attemptN: 1, lastCheckedAt: T0, state: 'SATISFIED' })],
+      });
+      w.discoveryScript = [
+        {
+          candidates: [
+            {
+              connectionId: 'conn-new',
+              label: 'acme/new',
+              reachable: true,
+              satisfied: false,
+              teamId: 'team-a',
+            },
+          ],
+          nextCursor: 25,
+        },
+        {
+          candidates: [
+            {
+              connectionId: 'conn-other',
+              label: 'other/repo',
+              reachable: false,
+              satisfied: false,
+              teamId: 'team-b',
+              unreachableReason: 'the launcher does not lead the team that owns the repository',
+            },
+          ],
+          nextCursor: null,
+        },
+      ];
+      w.onStart = finishesOnStart('NO_CHANGE');
+      w.onRead = (_n, world) => {
+        if (world.discoveryCalls.length >= 2) {
+          world.campaign.hasScope = false;
+        }
+      };
+      return w;
+    },
+  },
+  {
+    // The gateway refuses a start for the budget: the campaign is paused with that reason and
+    // starts nothing; a person lifts the pause and the target runs to the end.
+    drive: async (handle, w) => {
+      await waitFor(() => w.campaign.state === 'PAUSED', 'the campaign to pause');
+      w.refusals.clear();
+      w.onStart = finishesOnStart('NO_CHANGE');
+      w.campaign.state = 'ACTIVE';
+      await handle.signal(CAMPAIGN_CONTROL_SIGNAL, { action: 'resume' });
+    },
+    name: 'refusal-pause',
+    world: () => {
+      const w = makeWorld({ targets: [makeTarget('t1')] });
+      w.refusals.set('t1', { code: 'BUDGET_EXCEEDED', message: 'The monthly budget is spent' });
+      return w;
+    },
+  },
+  {
+    // A merged draft whose check still fails goes to NEEDS_ATTENTION and keeps the campaign
+    // ACTIVE; a person skips it and the campaign completes.
+    drive: async (handle, w) => {
+      await waitFor(() => target(w, 't1').state === 'NEEDS_ATTENTION', 'the failed check');
+      target(w, 't1').state = 'SKIPPED';
+      await handle.signal(CAMPAIGN_CONTROL_SIGNAL, { action: 'removeTarget', targetId: 't1' });
+    },
+    name: 'check-failed',
+    world: () => {
+      const w = makeWorld({
+        campaign: { hasCheck: true },
+        targets: [
+          makeTarget('t1', { attemptN: 1, prOpenedAt: T0, prStatus: 'MERGED', state: 'PR_OPENED' }),
+        ],
+      });
+      w.checkAnswers.set('t1', ['not-satisfied']);
       return w;
     },
   },

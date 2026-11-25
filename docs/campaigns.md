@@ -436,7 +436,7 @@ owning team, or a team that owns a target still to be worked, has it off (§11.6
 | `workflow.campaignReconciler` | off | Whether a campaign launches on the reconciler workflow (on) or the campaign workflow (off). Recorded at launch; a campaign runs to the end on the workflow it launched on. An epic launches as a planned campaign only while it is on (§12) |
 | `workflow.campaignMaxOpenPullRequests` | 10 | The default for a campaign's `maxOpenPullRequests`, and its ceiling (1 to 100) |
 | `workflow.campaignStaleAfterDays` | 14 | The default age, in days, after which a campaign's draft pull request is flagged stale (1 to 365). A stale flag changes no state and starts nothing |
-| `workflow.campaignRescanIntervalHours` | 24 | The default hours between re-checks of a satisfied target (1 to 720). The floor of 1 means a campaign cannot recheck every minute; a launch may set its own interval from 1 to 8,760 hours |
+| `workflow.campaignRescanIntervalHours` | 24 | The default hours between re-checks of a satisfied target (1 to 720). The floor of 1 means a campaign cannot recheck every minute; a launch may set its own interval within the same range |
 | `workflow.campaignLifetimeDays` | 90 | The default days a campaign runs before it expires (1 to 365). The expiry is fixed at launch |
 
 A legacy campaign's Temporal history is bounded by what each child's start event carries: the brief,
