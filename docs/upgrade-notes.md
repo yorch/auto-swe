@@ -2686,3 +2686,15 @@ A row delivered after the upgrade has `reached` entries beginning `k1:`
 - Roll gateway replicas without long overlap, and retry a request that fails with a deadlock error during the overlap.
 
 **Verify.** With the default team in another organization, `POST /api/v1/teams` with no `orgId` returns a team whose `orgId` is that organization's.
+
+---
+
+### Platform role on member responses is withheld from callers who cannot manage users (`<fixing commit SHA>`)
+
+**Affected.** Integrations and scripts that read the platform role (`user.role`) from `GET /api/v1/teams/:id/members`, from the `memberships` of `GET /api/v1/teams/:id`, or from `GET /api/v1/platform/organizations/:orgId/members` (and its `/api/v1/admin/organizations` alias), and that call those routes as a person who does not hold `platform.users.manage`. A caller who holds it, which in practice means a platform admin, is unaffected.
+
+**What changes.** The `role` key of each member's `user` is returned only to a caller who holds `platform.users.manage`. For any other caller the key is absent, not null or a placeholder. The team and organization roles on the membership rows are unchanged.
+
+**Actions.** A script that needs the platform role must run with a token that holds `platform.users.manage`, or stop reading the field. Treat an absent `role` as unknown, not as `USER`.
+
+**Verify.** Call `GET /api/v1/teams/<teamId>/members` with a token for a team member who is not a platform admin: no `user` object carries a `role` key. Repeat the call with a platform admin's token: each `user` carries `role`.
