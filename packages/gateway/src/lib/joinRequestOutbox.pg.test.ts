@@ -325,6 +325,8 @@ describe.skipIf(!enabled)('join-request notification outbox against Postgres', (
     'RESEND_API_KEY',
     'CORS_ORIGIN',
   ];
+  // Kept out of ENV_KEYS, which every test resets: it is set once for the suite and put back after it.
+  const savedEncryptionKey = process.env.CONFIG_ENCRYPTION_KEY;
 
   const actorOf = (id: string): JwtPayload => ({ exp: 0, iat: 0, role: 'USER', sub: id });
 
@@ -412,6 +414,9 @@ describe.skipIf(!enabled)('join-request notification outbox against Postgres', (
       savedEnv[key] = process.env[key];
     }
     process.env.CORS_ORIGIN = 'https://app.test.example';
+    // The keyed `reached` hashes derive from this key. CI exports one only in its Seed step, so the
+    // suite supplies its own when the environment has none.
+    process.env.CONFIG_ENCRYPTION_KEY ||= crypto.randomBytes(32).toString('base64');
     orgA = await makeOrg('a');
     orgB = await makeOrg('b');
     lead = await makeUser('lead', 'Lena Lead');
@@ -461,6 +466,11 @@ describe.skipIf(!enabled)('join-request notification outbox against Postgres', (
   });
 
   afterAll(async () => {
+    if (savedEncryptionKey === undefined) {
+      delete process.env.CONFIG_ENCRYPTION_KEY;
+    } else {
+      process.env.CONFIG_ENCRYPTION_KEY = savedEncryptionKey;
+    }
     for (const key of ENV_KEYS) {
       if (savedEnv[key] === undefined) {
         delete process.env[key];
