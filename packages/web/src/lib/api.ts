@@ -1,5 +1,6 @@
 import { API_BASE, COOKIE_ACCESS_TOKEN, COOKIE_SESSION_MARKER } from './config';
 import { gatewayUnreachableMessage } from './networkErrors';
+import { refusalMessage } from './refusalMessage';
 import { isRecord } from './utils';
 
 function hasSessionMarkerCookie(): boolean {
@@ -30,6 +31,8 @@ export class ApiError extends Error {
   readonly code: string | null;
   /** The gateway's `error.details`, when it sends some (e.g. the names behind a 409). Untrusted. */
   readonly details: unknown;
+  /** The capability key a 403 `FORBIDDEN` names in `error.missing`; null otherwise. */
+  readonly missing: string | null;
   /**
    * Addresses the gateway names beside a string-form error (e.g. recipients that are not members
    * of the scope). Untrusted; null when the response named none.
@@ -49,13 +52,15 @@ export class ApiError extends Error {
     code: string | null,
     details?: unknown,
     addresses?: { offendingAddresses?: string[]; optedOutAddresses?: string[] },
-    reasons?: unknown
+    reasons?: unknown,
+    missing?: string | null
   ) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
     this.details = details;
+    this.missing = missing ?? null;
     this.offendingAddresses = addresses?.offendingAddresses ?? null;
     this.optedOutAddresses = addresses?.optedOutAddresses ?? null;
     this.reasons = refusalReasons(reasons);
@@ -263,7 +268,16 @@ export class ApiClient {
         ? err.message
         : `HTTP ${res.status}`;
     const code = err && typeof err.code === 'string' ? err.code : null;
-    return new ApiError(message, res.status, code, err?.details, undefined, err?.reasons);
+    const missing = err && typeof err.missing === 'string' ? err.missing : null;
+    return new ApiError(
+      res.status === 403 && code === 'FORBIDDEN' ? refusalMessage(message, missing) : message,
+      res.status,
+      code,
+      err?.details,
+      undefined,
+      err?.reasons,
+      missing
+    );
   }
 
   private tryRefresh(): Promise<boolean> {
