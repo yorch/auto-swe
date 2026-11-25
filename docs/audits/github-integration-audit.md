@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Scope | GitHub identity, App/installation handling, repository authorization, agent credential delivery, Git attribution, GitHub.com + GHES |
-| Method | Read-only static review of the repository at `10cbe77`. No workflows were run, no GitHub calls made, no code changed. |
+| Method | Read-only static review. First pass at `10cbe77`; re-assessed after rebasing onto `0702018` (45 later commits) by three independent sub-agents (Opus, Sonnet, Haiku) given the scope but not these conclusions, with every disputed or new claim re-checked in code (§3A). No workflows were run, no GitHub calls made, no code changed. |
 | Evidence convention | `path:line` is verified by reading the source. **[V]** verified in code; **[D]** stated in docs/comments only; **[U]** unverified (needs runtime or GitHub-side evidence). |
 
 > This audit lives under `docs/audits/`, outside the living-doc rules in `CLAUDE.md` §5 (it is a point-in-time review, not a capability reference). Paths below are relative to the repository root.
@@ -31,7 +31,7 @@
 4. **GitHub OAuth access tokens are persisted in `accounts.access_token`** with no application-level encryption configured (F-06), while the platform separately encrypts every other credential with AES-256-GCM.
 5. **GitHub sign-in is single-instance** (one `github` provider id, one OAuth client) — it cannot sign users in from github.com *and* a GHES instance at once, although repository access supports multiple hosts (F-09).
 
-**Most significant risks** (none rated Critical; no confirmed unauthenticated exploit found): F-01 (High), F-03 (High), F-04 (Medium), F-05 dependency checkouts bypass the launcher's GitHub check (Medium), F-06 plaintext OAuth tokens (Medium).
+**Most significant risks** (none rated Critical; no confirmed unauthenticated exploit found): F-01 (High), F-03 (High for ordinary runs), F-17 repository-controlled `.gitmodules` mints credentials for other repositories (Medium–High), F-04 (Medium), F-05 dependency checkouts bypass the launcher's GitHub check (Medium), F-06 plaintext OAuth tokens (Medium), F-15/F-16 launch-gate identity weaknesses (Medium). §3A records the re-assessment after rebasing onto current main with three independent reviewers.
 
 **Production-enterprise suitability.** *Appropriate with conditions.* The design is sound enough for production enterprise use **provided** operators run `repoAccess.mode = enforce` with the sweep enabled and every user's GitHub login backfilled, and accept the F-03 residual risk. Out of the box (`off`) the platform's authorization model is team-membership-only, which is a weaker guarantee than most enterprises will assume from "GitHub-integrated".
 
@@ -308,6 +308,58 @@ Severity legend: **Confirmed** = reproducible from code reading; **Concern** = d
 
 ---
 
+## 3A. Re-assessment after rebase (main at `0702018`)
+
+**What changed on main that matters here.** `repoAccess.mode` is still `off` by default (`packages/shared/src/config/registry.ts:1498-1499`). The ADMIN bypass now reads `isPlatformAdmin(user)` instead of `user.role === 'ADMIN'` (`repoAccessDecision.ts`, `repoAccessGate.ts`); behaviour is the same. Planned runs now re-run `decideRepoAccess` (`worker/src/lib/plannedRunPin.ts:122-190`) and HITL answers are gated (`gateway/src/lib/hitlResolve.ts:309-314`). Workspaces now read the repository's own `AGENTS.md`/`CLAUDE.md` into agent context from the trusted base commit (`workspace.ts`, `readRepoContext`). Line numbers in §3 refer to the first pass and have drifted; symbols are stable.
+
+**Convergence.** All three independent audits reproduced F-01 (gate default `off`), F-04 (no `permissions` narrowing), F-06 (plaintext OAuth tokens), F-05 (dependency checkouts), F-07 (no `installation_repositories`), F-09 (single sign-in host) and the long-run token problem (F-08). None of them found a Critical issue.
+
+**Corrections to the first pass**
+
+| Item | Correction |
+|---|---|
+| F-03 | Too broad as written. Scheduled fires **and planned runs** re-decide launcher access, and HITL answers are gated. Still unchecked: ordinary in-flight runs, deferred channel tasks (`templates.ts` comment "nothing re-asks GitHub"), and runs of a user deactivated mid-run (`gateway/src/routes/users.ts` revokes MCP grants and closes join requests; no run cancellation seen by two reviewers). Severity stays High for ordinary runs; Medium overall. |
+| F-08 | Understated. The delivery workspace is created *after* the agent loop from a clone URL minted at activity start (`runAgentTask.ts:311`, reused ~`:497`); agent runs may last up to 4 h plus 2 h headroom (`proxyOptions.ts:201-210`). In App mode, a run past roughly one hour fails at push regardless of the cache margin. Reliability, Medium. |
+| "Verified-good": login ownership | Overstated. `verifiedGithubLoginFor` returns the login for `ok`, `unlinked` and `unverifiable` and refuses only `reassigned` (`repoPermission.ts:250`; statuses at `githubIdentityCheck.ts:168-180`). See F-15. |
+| §5 GHES row | "Per-host … id-collision defences" holds for account ids but not for the login the gate sends to a repository's host (F-16). |
+
+### New findings from the re-assessment
+
+**F-15 — Login accepted after failed or absent verification at the launch gate** · Medium · Confirmed (Sonnet; re-verified)
+`verifiedGithubLoginFor` (`packages/shared/src/lib/repoPermission.ts:235-251`) treats every status except `reassigned` as usable. `unlinked` has just cleared the stored login yet still authorizes that one launch; `unverifiable` (GitHub unreachable, no credential for the account's host, several accounts with no recorded source) passes a possibly recycled username under `enforce`. The "an outage is not evidence" rule is right for listings, not for the decision that starts a write. *Fix:* at the launch gate, require `ok`; keep the lenient path for sweeps. Low complexity.
+
+**F-16 — Login is not bound to the host it was issued on** · Medium · Confirmed code; impact only with `enforce` and more than one host (Sonnet, Opus; re-verified)
+`launchRefusal` (`repoAccessGate.ts:260-323`) and `lookupRepoPermission` (`repoPermission.ts:81-139`) send `users.github_login` to the repository's own host without comparing it to `github_login_account_id`'s host (`parseAccountId`, `githubIdentityCheck.ts:52`, is available). With github.com sign-in and a GHES repository, `alice` is judged as the GHES `alice`. The onboarding check (`routes/repositories.ts`, `onboardingAccessProblem`) has the same shape. *Fix:* refuse as `no-github-identity` when hosts differ. Low–Medium.
+
+**F-17 — Repository-controlled `.gitmodules` can make the worker mint a token for another repository** · Medium–High · Confirmed code path; gating of the submodule feature unverified (Opus; re-verified)
+`worker/src/lib/repoSetupRun.ts:403-432` takes owner/name from `.gitmodules` and calls `host.mintCredential`, which resolves through `mintGitHubCloneUrl` (`worker/src/activities/workspace.ts:328-353`). That lookup spans all teams (no tenant filter) and, when no Connection matches, falls back to the instance's installation. The only guard is that the host matches. A committer to repository A can therefore get another team's repository, or an un-onboarded one the installation can see, cloned into their workspace. This is a confused deputy that does not need a team membership or the dependency graph. *Fix:* resolve submodules only against Connections the launcher's team can reach (or a consent edge), refuse unknown repositories, mint `contents: read`. Medium.
+
+**F-18 — Dependency-checkout credential exposed to processes left by setup** · Medium · Concern (ordering confirmed; exploitation not exercised) (Opus; re-verified)
+`executeImplementation.ts:370-376` runs `runSetup()` (repository-defined commands), then `prepareCrossRepoContext()`, and only then `finishSetup()`. The dependency clones go through the agent-facing `workspace.exec` (`workspace.ts:~731`) with the header expanded into git's command line (`:375-376`; the code's own note at `:487` says that is readable via `/proc/<pid>/cmdline`), without the stray-process kill that `gitAuthed` performs. A background process started by a setup step could capture a write-capable token for a dependency repository. *Fix:* clone dependencies before setup, in a trusted container, or call `killStrays` first; mint them read-only (F-04). Low–Medium.
+
+**F-19 — A launcher who loses access silently falls back to the platform credential** · Medium · Confirmed (Opus, Sonnet; re-verified)
+`resolveUserCredential` returns `null` for an inactive or removed user (`connectionCredential.ts:~236-250`); `launcherToken` returns `null` and `runToken` continues with the platform credential (`scm/github.ts:197-222, 274-290`). A run launched "as the user" can change identity mid-run with a broader credential. *Fix:* pin the identity at launch; fail the run instead of falling back. Low–Medium.
+
+**F-20 — Webhook deliveries are not de-duplicated by `X-GitHub-Delivery`** · Low · Confirmed (Haiku, Sonnet)
+Only PR evaluation derives IDs from the delivery id; run-starting events such as `workflow_run` have no replay store, so a captured signed delivery can start a duplicate run. Installation handlers re-ask GitHub and are unaffected. *Fix:* TTL store of delivery ids. Low.
+
+**F-21 — Token-mint and installation-lookup requests set no `redirect` policy** · Low · Confirmed (all three; re-verified)
+`githubInstallation.ts:168` (mint, carries the App JWT) and `:360` (installation lookup) call bare `fetch`; the file is outside `invariants:check`'s redirect globs. Undici drops `Authorization` on cross-origin redirects and the URL is admin-set, so impact is low, but it breaks the stated convention. *Fix:* `redirect: 'error'` and add the file to the invariant. Low.
+
+**F-22 — Repository rename/delete/recreate is not synced to `Connection` rows** · Low · Concern (Opus, Sonnet)
+`repoAccessWebhook.ts` refreshes the permission projection on `repository` events but never updates or deactivates the Connection, and tokens are minted by name. A repository deleted and recreated under the same name, or another renamed into an old name, inherits the connection. (Extends F-07.) *Fix:* use the repository's immutable id as the binding; reconcile on events.
+
+**F-23 — `repoAccess.mode=enforce` without the sweep serves stale listings; `REPO_ACCESS_SYNC_ENABLED` defaults to false** · Low–Medium · Confirmed (all three)
+`systemConfig.ts:1669`; the only signal is a log line (`repoAccessGate.ts:88-97`). Launch decisions stay live, so this affects visibility, not write access. *Fix:* refuse `enforce` without the sweep, or enable the sweep with it.
+
+**Informational.** Service principals launch with no GitHub check (`launchAuthorization.ts:~351`); connections without org/repo coordinates are exempt (`repoAccessDecision.ts:225-227`); the GHES sign-in provider allows `http` base URLs with a warning only, and `cloneCredentials` then embeds no token (`scm/github.ts:485`); `automations/prFeedback.ts` falls back to a `github.com` link for any repository; the PR-feedback bot-nudge path has no human actor (rests on a bot-id allowlist, not traced).
+
+### Where the models disagreed
+Opus rated plaintext OAuth tokens High on the premise that sign-in uses a GitHub *App* (so stored tokens are user-to-server tokens with App permissions); Sonnet and Haiku rated it Medium/High on storage alone. The premise is **[U]**: `githubImport.ts` tolerates a non-App token ("a sign-in token need not be an App user token"), and the requested scopes (`read:user user:email`) are those of an OAuth flow. F-06 stays Medium until the deployment's client type is known. Haiku rated "no re-validation" Medium and Sonnet Medium; this report keeps the ordinary-run case High because the launch gate defaults to `off` and an unchecked run keeps a write-capable credential for hours.
+
+
+---
+
 ## 4. Threat Scenario Analysis
 
 | # | Scenario | Existing mitigations | Missing controls | Exploitability | Impact |
@@ -418,13 +470,16 @@ flowchart LR
 | **P0** | Make `repoAccess.mode=enforce` the default for new installs; add a startup health failure when enforcing without sweep/logins; document the promotion path (F-01) | Closes the default confused-deputy | Low | Login backfill script, sweep enabled | Users without a linked GitHub login are refused until they link |
 | **P0** | Pre-publish + HITL-resume re-validation of the launcher (F-03); cancel on user deactivation | Enforces the stated property during long runs | Medium | `decideRepoLaunch` reuse; Temporal activity | Extra GitHub call at publish; new refusal path mid-run |
 | **P1** | Per-purpose `permissions` on installation tokens + cache key (F-04) | Real least privilege; limits blast radius | Low–Medium | Audit of every `octokitFor` caller | Mint returns 422 if the App lacks a requested permission |
-| **P1** | Launcher check + read-only tokens for dependency checkouts (F-05) | Closes cross-repo read gap | Medium | F-04 | Some dependency clones disappear for users lacking access |
+| **P1** | Confine `.gitmodules` credential minting to reachable Connections; refuse unknown repositories (F-17) | Closes a confused-deputy that needs no team membership | Medium | F-04 | Submodules of repositories outside the team's reach stop cloning |
+| **P1** | Launch gate requires `ok` identity verification and a host-bound login (F-15, F-16) | Removes recycled-username and cross-host mix-ups | Low–Medium | — | Users with unverifiable identity are refused during GitHub outages |
+| **P1** | Launch gate: fail runs instead of falling back to the platform credential when a launcher's token becomes unusable (F-19) | Identity pinned for the run | Low–Medium | — | Some in-flight runs fail where they used to continue |
+| **P1** | Launcher check + read-only tokens for dependency checkouts (F-05); clone dependencies before setup or after `killStrays` (F-18) | Closes cross-repo read gap | Medium | F-04 | Some dependency clones disappear for users lacking access |
 | **P1** | Encrypt or drop `accounts` OAuth tokens (F-06) | Removes plaintext user tokens at rest | Low–Medium | better-auth config + key mgmt; data migration to re-encrypt existing rows | Existing rows need one-time migration |
 | **P1** | ADMIN-bypass setting and audit entry (F-02) | Operator control + traceability | Low | — | Default unchanged |
 | **P2** | Handle `installation_repositories` / `repository` events; health on removal (F-07); clear cache on retirement (F-14) | Prompt, accurate drift detection | Medium | Webhook verification path | None |
 | **P2** | Multi-host sign-in providers (F-09) | Parity with multi-host repo access | High | better-auth provider-per-host; account id scheme exists | `github` id preserved for the default host |
-| **P2** | Token lifetime floor / in-workspace re-mint (F-08) | Removes flaky late pushes | Low | — | None |
-| **P2** | Validate installation on admin create (F-10); explicit session TTLs (F-13) | Early error; hygiene | Low | — | None |
+| **P2** | Re-mint for delivery and per `gitAuthed` call (F-08: runs up to 4 h + 2 h headroom) | Fixes deterministic push failures after ~1 h in App mode | Low–Medium | — | None |
+| **P2** | Validate installation on admin create (F-10); explicit session TTLs (F-13); `redirect: 'error'` on mint/lookup + invariant (F-21); delivery-id store (F-20); refuse `enforce` without sweep (F-23); bind Connections to repository id (F-22) | Hygiene and drift | Low | — | None |
 | **P2** | KMS/HSM-backed App signing or signing sidecar | Reduces blast radius of host compromise (Scenario 4/10) | Medium–High | Infra | Deployment changes |
 | **P3** | `co-author-trailer` default and run/launcher footer on PRs (F-12) | GitHub-side traceability | Low | `git.launcherAttribution` | Commit message format |
 | **P3** | Adversarial hostile-repo test suite for `gitAuthed` (F-11) | Regression-proof the main boundary | Medium | Docker CI job | None |
@@ -443,7 +498,9 @@ flowchart LR
 7. **Audit-log completeness**: does every push/PR/comment/merge-enablement write an audit row with (user, run, repo, operation)? Trace `lib/auditLog.ts` call sites and verify against `docs/audit-log.md`.
 8. **Behaviour of custom repository roles and rulesets**: collaborator `permission` returns `none/read/write/admin` only (maintain/triage are folded); the platform cannot distinguish `maintain`. Branch protection/rulesets are enforced by GitHub against the App identity — whether the App is on bypass lists is a GitHub-side setting.
 9. **Rate-limit behaviour** of the permission lookup at sweep scale on large GHES instances.
-10. **Tests missing/to add** (from the test inventory in `packages/shared/src/lib/*.test.ts`): (a) a launch → queue → permission-revoked → publish integration test; (b) a token-mint test asserting `permissions` in the body; (c) dependency-checkout authorisation; (d) `installation_repositories` delivery; (e) a hostile `.git/config` fixture against `gitAuthed`; (f) a test that `accounts.access_token` is not stored in plaintext.
+10. **Submodule and dependency feature gating**: is `.gitmodules` fetching enabled by connection config alone or only by the repository's own setup file (F-17), and do workspaces run as root (a root process can replace `git` and defeat the per-call header, F-18)?
+11. **Deactivation behaviour**: does anything cancel a deactivated user's in-flight runs or delete their saved tokens (F-03, F-19)?
+12. **Tests missing/to add** (from the test inventory in `packages/shared/src/lib/*.test.ts`): (a) a launch → queue → permission-revoked → publish integration test; (b) a token-mint test asserting `permissions` in the body; (c) dependency-checkout authorisation; (d) `installation_repositories` delivery; (e) a hostile `.git/config` fixture against `gitAuthed`; (f) a test that `accounts.access_token` is not stored in plaintext.
 
 ---
 
