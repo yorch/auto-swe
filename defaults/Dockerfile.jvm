@@ -1,5 +1,5 @@
 # Default executor image for JVM projects (Maven; Gradle via the repo's wrapper)
-FROM eclipse-temurin:21-jdk@sha256:ebfbb18d11ff163ee83b21258acf12248af48d22a0fdfdc68fa1a1516c05976a
+FROM eclipse-temurin:21-jdk@sha256:8ad118b146aa92da815b576441acd6b42b38236797ad0b6edc8c200b85bb0734
 
 # git is required for workspace operations, tar for copy in/out, bash for the
 # agent's shell tooling, ripgrep so Pi's grep honours .gitignore. Gradle is not
