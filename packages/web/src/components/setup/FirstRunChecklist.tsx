@@ -3,14 +3,16 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { OnboardingCard } from '@/components/setup/OnboardingCard';
+import { useOrgGovernance } from '@/components/setup/OrgGovernanceCard';
 import { Button } from '@/components/ui/Button';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { useAnsweredGate } from '@/hooks/useAnsweredGate';
-import { usePlatformAdmin, useTeamIdsCan } from '@/hooks/useCan';
+import { useOrgIdsCan, usePlatformAdmin, useTeamIdsCan } from '@/hooks/useCan';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useRequests } from '@/hooks/useRequests';
 import { usePullRequests } from '@/hooks/useWorkViews';
+import { orgCanConfer } from '@/lib/capabilities';
 import { focusMainContent, useDismissed } from '@/lib/dismissed';
 import { cn, FOCUS_RING } from '@/lib/utils';
 
@@ -34,16 +36,23 @@ interface Step {
  */
 export function FirstRunChecklist() {
   const isAdmin = usePlatformAdmin();
-  if (isAdmin) {
+  const governance = useOrgGovernance();
+  // An organization admin with no team has nothing here to do yet: Home shows a governance card.
+  // While the permissions load the two cannot be told apart, so the checklist waits.
+  if (isAdmin || governance === null || governance.orgs.length > 0) {
     return null;
   }
   return <FirstRunChecklistBody />;
 }
 
 function FirstRunChecklistBody() {
-  // Whoever may create a repository on some team of theirs is told to connect one.
+  // Whoever may create a repository on a team of theirs, or on any team of an organization they
+  // administer (the catalog gives the organization that reach), is told to connect one.
   const ledTeamIds = useTeamIdsCan('team.repos.create');
-  const isLead = (ledTeamIds?.size ?? 0) > 0;
+  const administeredOrgs = useOrgIdsCan('org.settings.manage');
+  const isLead =
+    (ledTeamIds?.size ?? 0) > 0 ||
+    (orgCanConfer('team.repos.create') && (administeredOrgs?.size ?? 0) > 0);
   const { ready, dismissed, dismiss } = useDismissed(FIRST_RUN_DISMISS_KEY);
   // Personal progress across every team, so neither list is narrowed to one.
   // Connections of every type come back, so the repository step looks for a git repository.
@@ -60,7 +69,8 @@ function FirstRunChecklistBody() {
 
   const queries = [repos, requests, answered, merged];
   // The teams word the repository step, so wait for them: the wording must not flip.
-  const settled = queries.every((q) => !q.isLoading) && ledTeamIds !== null;
+  const settled =
+    queries.every((q) => !q.isLoading) && ledTeamIds !== null && administeredOrgs !== null;
   // A query that failed cannot say a step is open, so show nothing rather than a false prompt.
   if (!ready || dismissed || !settled || queries.some((q) => q.isError)) {
     return null;

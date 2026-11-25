@@ -19,7 +19,8 @@ export interface OrgMemberRow {
     id: string;
     email: string;
     name: string | null;
-    role: string;
+    /** The member's platform role; sent only to a caller who may manage users. */
+    role?: string;
   };
 }
 

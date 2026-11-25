@@ -14,6 +14,7 @@ vi.mock('@/hooks/useGatewayStatus', () => ({ useGatewayStatus: () => status.valu
 vi.mock('@/hooks/useTeamNav', () => ({
   useTeamNav: () => ({ administered: [], entries: [], isLoading: false }),
 }));
+vi.mock('@/hooks/useTeams', () => ({ useTeams: () => ({ data: undefined }) }));
 vi.mock('@/hooks/useUserPreferences', () => ({
   useUserPreferences: () => ({ pinnedTeamSlugs: [], setPinnedTeamSlugs: () => undefined }),
 }));

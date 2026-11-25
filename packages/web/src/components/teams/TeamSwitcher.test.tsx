@@ -17,6 +17,15 @@ vi.mock('@/hooks/useTeamNav', () => ({
   useTeamNav: () => ({ administered: nav.administered, entries: nav.entries, isLoading: false }),
 }));
 
+const visible = vi.hoisted(() => ({
+  teams: [] as { id: string; myRole: null; name: string; slug: string }[],
+}));
+vi.mock('@/hooks/useTeams', () => ({
+  useTeams: (options: { enabled?: boolean } = {}) => ({
+    data: options.enabled === false ? undefined : visible.teams,
+  }),
+}));
+
 const prefs = vi.hoisted(() => ({ pinned: [] as string[], set: vi.fn() }));
 vi.mock('@/hooks/useUserPreferences', () => ({
   useUserPreferences: () => ({
@@ -35,6 +44,7 @@ beforeEach(() => {
   prefs.set.mockClear();
   resetNavigation('', '/');
   nav.administered = [];
+  visible.teams = [];
   nav.entries = [
     entry('payments', 'Payments', 'LEAD', 3),
     entry('platform', 'Platform', 'MEMBER', 0),
@@ -110,6 +120,12 @@ describe('TeamSwitcher', () => {
     cleanup();
     open('/');
     expect(screen.getByRole('button', { name: 'Switch team, current: All my teams' })).toBeTruthy();
+  });
+
+  it('names a team the person is not on, rather than "All my teams"', () => {
+    visible.teams = [{ id: 'id-ops', myRole: null, name: 'Operations', slug: 'ops' }];
+    open('/teams/ops/members');
+    expect(screen.getByRole('button', { name: 'Switch team, current: Operations' })).toBeTruthy();
   });
 
   it('closes when focus moves outside, and stays open when it moves within', () => {

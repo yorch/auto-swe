@@ -3,17 +3,19 @@
 import { usePathname } from 'next/navigation';
 import { type ReactNode, use, useEffect, useRef } from 'react';
 import NotFound from '@/app/not-found';
+import { RoleModelHint } from '@/components/RoleModelHint';
 import { TeamSpaceProvider } from '@/components/teams/space/TeamSpaceContext';
 import { Badge } from '@/components/ui/Badge';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { TabBar } from '@/components/ui/TabBar';
-import { useCanState } from '@/hooks/useCan';
+import { useCanState, usePlatformAdmin } from '@/hooks/useCan';
 import { useEffectivePermissions } from '@/hooks/useEffectivePermissions';
 import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useTeamOverview } from '@/hooks/useTeamOverview';
 import { useTeams } from '@/hooks/useTeams';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
+import { teamEntry } from '@/lib/capabilities';
 import { teamRoleLabel } from '@/lib/roleLabels';
 import { validateRouteParam } from '@/lib/routeParams';
 import { TEAM_TABS, type TeamTabId, teamHref, teamTabFromPath } from '@/lib/teamSpace';
@@ -38,6 +40,7 @@ export default function TeamSpaceLayout({
   const permissions = useEffectivePermissions();
   const memberTeams = useTeams({ memberOnly: true });
   const allTeams = useTeams();
+  const platformAdmin = usePlatformAdmin();
   const { loaded, lastTeamSlug, setLastTeamSlug } = useUserPreferences();
 
   const team =
@@ -62,6 +65,31 @@ export default function TeamSpaceLayout({
   // Open join requests, counted on the Members tab for those who decide them.
   const overview = useTeamOverview(team?.id, { enabled: canManageMembers });
   const pendingRequests = canManageMembers ? (overview.data?.pendingJoinRequests ?? 0) : 0;
+
+  // Which authority the person acts under here, beside their own team role: a non-member reaches
+  // the team as an organization admin or a platform admin, and a member may hold governance on it
+  // through their organization too (the server tags each held capability with its authority).
+  // The team's own answer names the org authority only where the team role does not already confer
+  // the capability, so a lead who is also an org admin is read from the organization's entry: it
+  // holds `org.members.manage` only through the organization's admin authority.
+  const viaOrg =
+    !!team &&
+    !!permissions.data &&
+    (teamEntry(permissions.data, team.id)?.capabilities.some(
+      (c) => c.key === 'team.members.manage' && c.authority === 'org-admin'
+    ) === true ||
+      permissions.data.organizations?.some(
+        (o) => o.orgId === team.orgId && o.capabilities.some((c) => c.key === 'org.members.manage')
+      ) === true);
+  const accessChip = !team
+    ? null
+    : team.myRole
+      ? viaOrg
+        ? 'and org admin'
+        : null
+      : platformAdmin
+        ? 'Platform admin'
+        : `Org admin of ${team.orgName}`;
 
   useEntityTitle(team?.name);
   // Remember the visit as the user's last team. Written once per slug: a failed write must not
@@ -153,6 +181,12 @@ export default function TeamSpaceLayout({
                   you: {teamRoleLabel(team.myRole)}
                 </Badge>
               )}
+              {accessChip && (
+                <Badge tone="accent" variant="outline">
+                  {accessChip}
+                </Badge>
+              )}
+              {accessChip && <RoleModelHint className="basis-full" />}
             </span>
           }
           title={team.name}

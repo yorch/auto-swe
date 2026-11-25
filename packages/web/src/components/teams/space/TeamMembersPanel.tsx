@@ -1,6 +1,7 @@
 'use client';
 
 import type { TeamSummary } from '@auto-swe/shared/types/api';
+import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { AddMemberModal } from '@/components/teams/AddMemberModal';
 import { InviteTeamMemberModal } from '@/components/teams/InviteTeamMemberModal';
@@ -18,9 +19,10 @@ import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { RoleSelectCell } from '@/components/users/RoleSelectCell';
-import { useCan, useGrantableTeamRoles } from '@/hooks/useCan';
+import { useCan, useGrantableTeamRoles, usePlatformAdmin } from '@/hooks/useCan';
+import { useEffectivePermissions } from '@/hooks/useEffectivePermissions';
 import { usePagedRows } from '@/hooks/usePagedRows';
-import { useRemoveTeamMember, useTeam, useUpdateTeamMember } from '@/hooks/useTeams';
+import { useLeaveTeam, useRemoveTeamMember, useTeam, useUpdateTeamMember } from '@/hooks/useTeams';
 import {
   platformRoleLabel,
   type TeamRoleValue,
@@ -43,9 +45,20 @@ export function TeamMembersPanel({ team: summary }: { team: TeamSummary }) {
   const { data: team, error, isError, isFetching, isLoading, refetch } = useTeam(id);
   const updateMember = useUpdateTeamMember(id);
   const removeMember = useRemoveTeamMember(id);
+  const leaveTeam = useLeaveTeam(id);
+  const router = useRouter();
   const canManage = useCan('team.members.manage', { orgId: summary.orgId, teamId: id });
   const grantableRoles = useGrantableTeamRoles(id);
   const sub = useAuthStore((s) => s.user?.sub ?? null);
+  // An organization or platform admin on the team reaches it through that authority, so leaving
+  // drops their team role and nothing else. The organization's own governance entry says which.
+  const platformAdmin = usePlatformAdmin();
+  const { data: perms } = useEffectivePermissions();
+  const keepsGovernance =
+    platformAdmin ||
+    (perms?.organizations ?? []).some(
+      (o) => o.orgId === summary.orgId && o.capabilities.some((c) => c.key === 'org.members.manage')
+    );
   // The server refuses a change to a member who outranks the caller's effective rank, and the
   // roles the caller may grant run up to that rank, so the highest of them bounds who is editable.
   const topGrantableRank = Math.max(-1, ...grantableRoles.map(teamRoleRank));
@@ -54,6 +67,7 @@ export function TeamMembersPanel({ team: summary }: { team: TeamSummary }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [confirmRemoveEmail, setConfirmRemoveEmail] = useState<string | null>(null);
+  const [confirmLeave, setConfirmLeave] = useState(false);
   const [memberSearch, setMemberSearch] = useState('');
   const memberships = team?.memberships ?? [];
   const memberQuery = memberSearch.trim().toLowerCase();
@@ -139,35 +153,48 @@ export function TeamMembersPanel({ team: summary }: { team: TeamSummary }) {
               </Toolbar>
             )}
             <DataTable
-              actions={
-                canManage
-                  ? (m) =>
-                      // A person cannot remove themselves, and a member above the caller's own
-                      // rank is not theirs to remove: the server refuses both.
-                      m.user?.id &&
-                      m.user.id !== sub &&
-                      teamRoleRank(m.role) <= topGrantableRank ? (
-                        <ActionMenu
-                          items={[
-                            {
-                              disabled: removeMember.isPending,
-                              icon: 'trash',
-                              id: 'remove',
-                              label: 'Remove from team',
-                              onAction: () => {
-                                if (m.user?.id) {
-                                  setConfirmRemoveId(m.user.id);
-                                  setConfirmRemoveEmail(m.user.email ?? null);
-                                }
-                              },
-                              tone: 'danger',
-                            },
-                          ]}
-                          label={`More actions for ${m.user.email ?? 'member'}`}
-                        />
-                      ) : null
-                  : undefined
-              }
+              actions={(m) => {
+                // Anyone may leave; the server refuses the last admin and the dialog says so.
+                if (m.user?.id && m.user.id === sub) {
+                  return (
+                    <ActionMenu
+                      items={[
+                        {
+                          disabled: leaveTeam.isPending,
+                          icon: 'trash',
+                          id: 'leave',
+                          label: 'Leave team',
+                          onAction: () => setConfirmLeave(true),
+                          tone: 'danger',
+                        },
+                      ]}
+                      label={`More actions for ${m.user.email ?? 'member'}`}
+                    />
+                  );
+                }
+                // A member above the caller's own rank is not theirs to remove: the server
+                // refuses it.
+                return canManage && m.user?.id && teamRoleRank(m.role) <= topGrantableRank ? (
+                  <ActionMenu
+                    items={[
+                      {
+                        disabled: removeMember.isPending,
+                        icon: 'trash',
+                        id: 'remove',
+                        label: 'Remove from team',
+                        onAction: () => {
+                          if (m.user?.id) {
+                            setConfirmRemoveId(m.user.id);
+                            setConfirmRemoveEmail(m.user.email ?? null);
+                          }
+                        },
+                        tone: 'danger',
+                      },
+                    ]}
+                    label={`More actions for ${m.user.email ?? 'member'}`}
+                  />
+                ) : null;
+              }}
               className="max-sm:px-4"
               columns={[
                 {
@@ -175,7 +202,9 @@ export function TeamMembersPanel({ team: summary }: { team: TeamSummary }) {
                   header: 'Member',
                   id: 'member',
                   primary: true,
-                  secondary: (m) => <>Platform role: {platformRoleLabel(m.user?.role ?? '')}</>,
+                  // The server sends the platform role only to people who manage users.
+                  secondary: (m) =>
+                    m.user?.role ? <>Platform role: {platformRoleLabel(m.user.role)}</> : null,
                 },
                 {
                   cell: (m) =>
@@ -249,6 +278,22 @@ export function TeamMembersPanel({ team: summary }: { team: TeamSummary }) {
         onInvited={setNotice}
         open={inviting}
         teamId={id}
+      />
+      <ConfirmModal
+        confirmLabel="Leave team"
+        dangerous
+        message={
+          keepsGovernance
+            ? `You will leave ${team.name} as a member and lose your team role. You keep access to it through your organization or platform administration.`
+            : `You will lose access to ${team.name} and its repositories. A team admin can add you back.`
+        }
+        onClose={() => setConfirmLeave(false)}
+        onConfirm={async () => {
+          await leaveTeam.mutateAsync();
+          router.push('/teams');
+        }}
+        open={confirmLeave}
+        title={`Leave ${team.name}?`}
       />
       <ConfirmModal
         confirmLabel="Remove"

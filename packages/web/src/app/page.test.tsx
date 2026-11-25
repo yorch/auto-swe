@@ -40,6 +40,7 @@ vi.mock('@/components/setup/FirstRunChecklist', () => ({
 }));
 vi.mock('@/components/setup/RestoreGuides', () => ({ RestoreGuides: () => null }));
 
+import { NO_PERMISSIONS, permissionsFor, setPermissions } from '@/test/permissions';
 import HomePage from './page';
 
 const ready = { error: null, isError: false, isFetching: false, isLoading: false, isSuccess: true };
@@ -85,6 +86,8 @@ function summary(items: MeNeedsYouItem[] = [], total = items.length): MeSummary 
 const withSummary = (data: MeSummary) => useMeSummary.mockReturnValue({ ...ready, data });
 
 beforeEach(() => {
+  // Permissions have loaded and name no standing, unless a test says otherwise.
+  setPermissions(NO_PERMISSIONS);
   useUserPreferences.mockReturnValue({ lastTeamSlug: null, loaded: true });
   useTeams.mockReturnValue({
     data: [{ id: 't1', myRole: 'LEAD', name: 'Payments', slug: 'payments' }],
@@ -96,6 +99,62 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+});
+
+describe('Home for an organization admin with no team', () => {
+  const orgAdmin = (extra: string[] = []) =>
+    permissionsFor({
+      orgs: [
+        { capabilities: ['org.settings.manage', ...extra] as never, orgId: 'o1', role: 'ADMIN' },
+      ],
+    });
+  afterEach(() => setPermissions(undefined));
+
+  it('shows a governance card with the org links and no Start work prompts', () => {
+    setPermissions(orgAdmin(['org.members.manage']));
+    useRequests.mockReturnValue(bucket(0));
+    withSummary(summary());
+    render(<HomePage />);
+    const card = within(screen.getByTestId('org-governance-card'));
+    expect(card.getByText(/To run work, add yourself to a team/)).toBeTruthy();
+    expect(card.getByRole('link', { name: 'Teams' }).getAttribute('href')).toBe('/teams');
+    expect(card.getByRole('link', { name: 'Manage organization' }).getAttribute('href')).toBe(
+      '/admin/organizations/o1'
+    );
+    expect(screen.queryByRole('link', { name: 'Start work' })).toBeNull();
+    expect(screen.queryByText(/Choose Start work/)).toBeNull();
+  });
+
+  it('shows no Start work prompt while the permissions are still loading', () => {
+    setPermissions(undefined);
+    useRequests.mockReturnValue(bucket(0));
+    withSummary(summary());
+    render(<HomePage />);
+    expect(screen.queryByRole('link', { name: 'Start work' })).toBeNull();
+    expect(screen.queryByText(/Choose Start work/)).toBeNull();
+  });
+
+  it('omits the organization link without the members capability', () => {
+    setPermissions(orgAdmin());
+    useRequests.mockReturnValue(bucket(0));
+    withSummary(summary());
+    render(<HomePage />);
+    expect(screen.queryByRole('link', { name: 'Manage organization' })).toBeNull();
+  });
+
+  it('keeps Start work and shows no card for someone on a team', () => {
+    setPermissions(
+      permissionsFor({
+        orgs: [{ capabilities: ['org.settings.manage'] as never, orgId: 'o1', role: 'ADMIN' }],
+        teams: [{ capabilities: ['team.read'] as never, role: 'MEMBER', teamId: 't1' }],
+      })
+    );
+    useRequests.mockReturnValue(bucket(0));
+    withSummary(summary());
+    render(<HomePage />);
+    expect(screen.queryByTestId('org-governance-card')).toBeNull();
+    expect(screen.getAllByRole('link', { name: 'Start work' }).length).toBeGreaterThan(0);
+  });
 });
 
 describe('Home product tour', () => {

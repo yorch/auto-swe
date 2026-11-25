@@ -437,8 +437,9 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                       primary: true,
                       secondary: (m) => (
                         <span className="block truncate">
-                          {m.user.name ? `${m.user.name} · ` : ''}Platform role:{' '}
-                          {platformRoleLabel(m.user.role)}
+                          {m.user.name ? `${m.user.name}` : ''}
+                          {m.user.name && m.user.role ? ' · ' : ''}
+                          {m.user.role ? `Platform role: ${platformRoleLabel(m.user.role)}` : ''}
                         </span>
                       ),
                       sortable: true,

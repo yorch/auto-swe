@@ -80,9 +80,25 @@ describe('requesterLabel', () => {
 
 describe('directoryAction', () => {
   it('offers a request only to someone with no tie to the team', () => {
-    expect(directoryAction('NONE')).toEqual({ badge: null, canRequest: true });
-    expect(directoryAction('MEMBER')).toEqual({ badge: 'Member', canRequest: false });
-    expect(directoryAction('REQUESTED')).toEqual({ badge: 'Requested', canRequest: false });
+    expect(directoryAction('NONE')).toEqual({ badge: null, canOpen: false, canRequest: true });
+    expect(directoryAction('MEMBER')).toEqual({
+      badge: 'Member',
+      canOpen: true,
+      canRequest: false,
+    });
+    expect(directoryAction('REQUESTED')).toEqual({
+      badge: 'Requested',
+      canOpen: false,
+      canRequest: false,
+    });
+  });
+
+  it('opens the team instead of offering a request to someone who governs it', () => {
+    expect(directoryAction('GOVERNS')).toEqual({
+      badge: 'Administered',
+      canOpen: true,
+      canRequest: false,
+    });
   });
 });
 

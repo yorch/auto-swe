@@ -127,6 +127,60 @@ describe('team space layout', () => {
     expect(screen.getByRole('link', { name: 'Settings' })).toBeTruthy();
   });
 
+  it('names the authority a non-member acts under beside no team role', async () => {
+    gateway([], standing(['team.settings.manage'], null, 'org-admin'), {
+      'GET /api/v1/teams': () => ({ data: [team('payments', 'Payments', null)] }),
+    });
+    renderLayout('payments');
+    expect(await screen.findByText('Org admin of Acme Corp')).toBeTruthy();
+    expect(screen.getByTestId('role-model-hint')).toBeTruthy();
+    expect(screen.queryByText(/you:/)).toBeNull();
+  });
+
+  it('names a platform admin who is not on the team', async () => {
+    gateway([], PLATFORM_ADMIN, {
+      'GET /api/v1/teams': () => ({ data: [team('payments', 'Payments', null)] }),
+    });
+    renderLayout('payments');
+    expect(await screen.findByText('Platform admin')).toBeTruthy();
+  });
+
+  it('adds "and org admin" when a member holds governance on the team through the organization', async () => {
+    gateway(
+      [team('payments', 'Payments', 'MEMBER')],
+      standing(['team.members.manage'], 'MEMBER', 'org-admin')
+    );
+    renderLayout('payments');
+    expect(await screen.findByText('you: Team member')).toBeTruthy();
+    expect(screen.getByText('and org admin')).toBeTruthy();
+  });
+
+  it('adds "and org admin" for a team lead who is also an administrator of the organization', async () => {
+    const answer = standing(['team.members.manage'], 'LEAD', 'team-role');
+    gateway([team('payments', 'Payments', 'LEAD')], {
+      ...answer,
+      organizations: [
+        {
+          capabilities: [{ authority: 'org-admin', key: 'org.members.manage' }],
+          name: 'Acme Corp',
+          orgId: 'org-1',
+          role: '',
+        },
+      ],
+    });
+    renderLayout('payments');
+    expect(await screen.findByText('you: Team lead')).toBeTruthy();
+    expect(screen.getByText('and org admin')).toBeTruthy();
+  });
+
+  it('adds no authority chip for a member who holds everything through the team role', async () => {
+    gateway([team('payments', 'Payments', 'LEAD')]);
+    renderLayout('payments');
+    await screen.findByText('you: Team lead');
+    expect(screen.queryByText('and org admin')).toBeNull();
+    expect(screen.queryByTestId('role-model-hint')).toBeNull();
+  });
+
   it('renders the same not-found for a visible-list miss as for an unknown slug', async () => {
     gateway([], standing([], null, 'org-admin'), {
       'GET /api/v1/teams': () => ({ data: [team('ops', 'Ops', null)] }),

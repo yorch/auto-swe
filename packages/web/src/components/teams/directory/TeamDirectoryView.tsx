@@ -18,6 +18,7 @@ import {
   type DirectoryTeam,
   directoryAction,
   directoryOrgOptions,
+  GOVERNS_NOTE,
   mergeOrgOptions,
 } from '@/lib/joinRequests';
 import { teamHref } from '@/lib/teamSpace';
@@ -190,7 +191,16 @@ function DirectoryRow({ onRequest, team }: { onRequest: () => void; team: Direct
             <p className="truncate text-xs text-paper-500">{team.orgName}</p>
           </div>
           {action.badge && (
-            <Badge tone={team.relationship === 'MEMBER' ? 'success' : 'warning'} variant="outline">
+            <Badge
+              tone={
+                team.relationship === 'MEMBER'
+                  ? 'success'
+                  : team.relationship === 'GOVERNS'
+                    ? 'info'
+                    : 'warning'
+              }
+              variant="outline"
+            >
               {action.badge}
             </Badge>
           )}
@@ -200,6 +210,9 @@ function DirectoryRow({ onRequest, team }: { onRequest: () => void; team: Direct
         >
           {team.description || 'No description'}
         </p>
+        {team.relationship === 'GOVERNS' && (
+          <p className="mt-2 text-xs text-paper-500">{GOVERNS_NOTE}</p>
+        )}
         <div className="mt-4 flex items-center justify-between gap-3 border-t border-ink-600 pt-3 text-xs text-paper-400">
           <span className="inline-flex items-center gap-1.5">
             <Icon className="text-paper-500" name="users" size={13} />
@@ -214,7 +227,7 @@ function DirectoryRow({ onRequest, team }: { onRequest: () => void; team: Direct
             >
               Request to join
             </Button>
-          ) : team.relationship === 'MEMBER' ? (
+          ) : action.canOpen ? (
             <Link
               aria-label={`Open ${team.name}`}
               className="text-accent-400 hover:underline"

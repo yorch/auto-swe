@@ -38,6 +38,18 @@ function gateway(accounts: { id: string; providerId: string; accountId: string }
   setupFetchMock({
     'GET /api/auth/list-accounts': () => accounts,
     'GET /api/v1/auth/providers': () => PROVIDERS,
+    'GET /api/v1/me/permissions': () => ({
+      canWriteAnySetting: false,
+      organizations: [
+        { capabilities: [], name: 'Acme', orgId: 'o1', role: 'ADMIN' },
+        { capabilities: [], name: 'Beta', orgId: 'o2', role: 'MEMBER' },
+      ],
+      platformCapabilities: [],
+      platformRole: 'USER',
+      teams: [
+        { capabilities: [], name: 'Payments', orgId: 'o1', role: 'LEAD', slug: 'p', teamId: 't1' },
+      ],
+    }),
   });
 }
 
@@ -48,6 +60,22 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+
+describe('settings: your access', () => {
+  it('lists the platform role, each organization and each team with its role, and the explainer', async () => {
+    gateway([]);
+    render(withQuery(<SettingsPage />));
+    const list = await screen.findByTestId('your-access');
+    expect(screen.getByText('Platform role')).toBeTruthy();
+    const text = list.textContent ?? '';
+    expect(text).toContain('Whole deployment');
+    expect(text).toContain('User');
+    expect(text).toContain('AcmeOrg admin');
+    expect(text).toContain('BetaOrg member');
+    expect(text).toContain('PaymentsTeam lead');
+    expect(screen.getByTestId('role-model-hint')).toBeTruthy();
+  });
 });
 
 describe('settings: sign-in methods', () => {

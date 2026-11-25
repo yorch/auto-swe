@@ -113,6 +113,16 @@ function mock(
 }
 
 describe('organization admin page', () => {
+  it('shows the platform role of a member only when the server sends it', async () => {
+    const { role: _omitted, ...withoutRole } = member('u2', 'other@x.com', 'MEMBER').user;
+    mock([
+      member('me', 'me@x.com', 'ADMIN'),
+      { ...member('u2', 'other@x.com', 'MEMBER'), user: withoutRole } as never,
+    ]);
+    render(withQuery(<OrgAdminPage params={params} />));
+    await screen.findByText('other@x.com');
+    expect(screen.getAllByText(/Platform role:/)).toHaveLength(1);
+  });
   it('offers GitHub connections to an organization admin who is no platform admin', async () => {
     mock([member('me', 'me@x.com', 'ADMIN')]);
     render(withQuery(<OrgAdminPage params={params} />));
