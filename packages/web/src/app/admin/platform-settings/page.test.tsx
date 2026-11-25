@@ -7,6 +7,7 @@ import { stubDialogPrototype } from '@/test/rtl-helpers';
 const { state } = vi.hoisted(() => ({
   state: {
     admin: true,
+    canWrite: undefined as boolean | undefined,
     params: new URLSearchParams(),
     pending: null as { reject: (e: Error) => void; resolve: (value?: unknown) => void } | null,
     teamsError: false,
@@ -56,7 +57,15 @@ vi.mock('@/hooks/useConfigSettings', () => ({
   useConfigSettings: (selection: unknown) => {
     selections.push(selection);
     return {
-      data: [{ group: 'workflow', key: 'workflow.x', label: 'X', source: 'GLOBAL' }],
+      data: [
+        {
+          canWrite: state.canWrite,
+          group: 'workflow',
+          key: 'workflow.x',
+          label: 'X',
+          source: 'GLOBAL',
+        },
+      ],
       isError: false,
       isLoading: false,
     };
@@ -110,6 +119,7 @@ beforeEach(() => {
   state.params = new URLSearchParams();
   state.pending = null;
   state.admin = true;
+  state.canWrite = undefined;
   state.teamsError = false;
   state.update = vi.fn();
   clearKeys.length = 0;
@@ -144,6 +154,14 @@ describe('platform settings page', () => {
     expect(screen.getByRole('link', { name: /Who may change these/ }).getAttribute('href')).toBe(
       '/docs/configuration#3-who-may-change-what'
     );
+  });
+
+  it('says the settings are view-only, not that a save reaches every scope, when none is writable', () => {
+    state.canWrite = false;
+    render(<Page />);
+    expect(screen.getByText('You can view these settings')).toBeTruthy();
+    expect(screen.getByText(/Grants you hold apply at team scope/)).toBeTruthy();
+    expect(screen.queryByText('Platform-wide saves reach every scope below')).toBeNull();
   });
 
   it('records a save that settles in the view it started in', async () => {

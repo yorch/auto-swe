@@ -88,9 +88,11 @@ describe('config grants: a role grantee is a team role', () => {
     expect(await screen.findByText('No active users left to add')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Team role/ })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Grant to/ }));
-    expect(screen.getAllByRole('option').map((o) => o.textContent?.replace('✓', ''))).toEqual([
-      'A specific user',
-    ]);
+    // The team role stays listed, disabled, with the reason.
+    const teamRole = screen.getByRole('option', { name: /A team role/ });
+    expect(teamRole.getAttribute('aria-disabled')).toBe('true');
+    expect(teamRole.textContent).toMatch(/Team roles apply at team scope/);
+    expect(screen.getByRole('option', { name: /A specific user/ })).toBeTruthy();
   });
 
   it('offers the team roles, with the labels people read, once the scope is a team', async () => {
@@ -99,9 +101,9 @@ describe('config grants: a role grantee is a team role', () => {
     await chooseTeamScope();
     fireEvent.click(await screen.findByRole('button', { name: /Team role/ }));
     expect(screen.getAllByRole('option').map((o) => o.textContent?.replace('✓', ''))).toEqual([
-      'Team admin',
-      'Team lead',
-      'Team member',
+      'Team admins',
+      'Team leads and admins',
+      'All members of this team',
     ]);
   });
 

@@ -273,6 +273,10 @@ export default function GovernSettingsPage() {
         ? 'saves reach every team in it without an override of its own'
         : 'saves change only this scope';
   const totalCount = settings.data?.length ?? 0;
+  // Every listed setting is locked for this person here (a grant they hold applies at team scope):
+  // the save warnings below would describe a write they cannot make.
+  const nothingWritable =
+    (settings.data?.length ?? 0) > 0 && (settings.data ?? []).every((s) => s.canWrite === false);
   const shownCount = visibleGroups.reduce((n, [, items]) => n + items.length, 0);
   const filtering = needle !== '' || show !== 'all';
 
@@ -289,30 +293,39 @@ export default function GovernSettingsPage() {
         title={navLabel('/admin/platform-settings')}
       />
 
-      <Alert
-        action={
-          <DocLink
-            anchor={HELP_LINKS.configGrants.anchor}
-            label="Who may change these"
-            slug={HELP_LINKS.configGrants.slug}
-          />
-        }
-        announce={false}
-        title={
-          selection.scope === 'GLOBAL' || selection.scope === 'ORGANIZATION'
-            ? selection.scope === 'GLOBAL'
-              ? 'Platform-wide saves reach every scope below'
-              : 'Organization saves reach every team in it'
-            : `Saves here change only ${scopeName}`
-        }
-        variant={
-          selection.scope === 'GLOBAL' || selection.scope === 'ORGANIZATION' ? 'warning' : 'info'
-        }
-      >
-        {selection.scope === 'GLOBAL' || selection.scope === 'ORGANIZATION'
-          ? 'A value saved while viewing platform-wide is the live value for every team, channel and template that has no override for that key. Check the view scope before you save: a save made while viewing a team, channel or workflow template changes only that scope, but one made while viewing an organization reaches every team in it that has no override of its own.'
-          : 'A value saved here is an override at this scope; broader scopes keep their own values. Check the view scope before you save.'}
-      </Alert>
+      {nothingWritable && (
+        <Alert announce={false} title="You can view these settings" variant="info">
+          Grants you hold apply at team scope: choose a team in the scope picker above to change a
+          setting there.
+        </Alert>
+      )}
+
+      {!nothingWritable && (
+        <Alert
+          action={
+            <DocLink
+              anchor={HELP_LINKS.configGrants.anchor}
+              label="Who may change these"
+              slug={HELP_LINKS.configGrants.slug}
+            />
+          }
+          announce={false}
+          title={
+            selection.scope === 'GLOBAL' || selection.scope === 'ORGANIZATION'
+              ? selection.scope === 'GLOBAL'
+                ? 'Platform-wide saves reach every scope below'
+                : 'Organization saves reach every team in it'
+              : `Saves here change only ${scopeName}`
+          }
+          variant={
+            selection.scope === 'GLOBAL' || selection.scope === 'ORGANIZATION' ? 'warning' : 'info'
+          }
+        >
+          {selection.scope === 'GLOBAL' || selection.scope === 'ORGANIZATION'
+            ? 'A value saved while viewing platform-wide is the live value for every team, channel and template that has no override for that key. Check the view scope before you save: a save made while viewing a team, channel or workflow template changes only that scope, but one made while viewing an organization reaches every team in it that has no override of its own.'
+            : 'A value saved here is an override at this scope; broader scopes keep their own values. Check the view scope before you save.'}
+        </Alert>
+      )}
 
       <div
         className="sticky top-0 z-10 -mx-1 mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg border border-ink-400 bg-ink-800 px-4 py-2.5 text-sm"

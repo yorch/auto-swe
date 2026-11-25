@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Alert } from '@/components/ui/Alert';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
@@ -10,6 +11,7 @@ import {
   DEFAULT_PLATFORM_ROLE,
   PLATFORM_ROLE_OPTIONS,
   type PlatformRoleValue,
+  platformRoleConsequence,
 } from '@/lib/roleLabels';
 
 /** Invites one person by email: a magic link, and an already-approved account on the default team. */
@@ -77,6 +79,11 @@ export function InviteUserModal({
           options={[...PLATFORM_ROLE_OPTIONS]}
           value={role}
         />
+        {platformRoleConsequence(role).dangerous && (
+          <Alert announce={false} variant="warning">
+            This person will have {platformRoleConsequence(role).effect}.
+          </Alert>
+        )}
         <ModalFooter
           isPending={invite.isPending}
           onCancel={close}

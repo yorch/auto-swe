@@ -65,6 +65,17 @@ function coveredByRoleGrant(role: string, existing: string | null | undefined) {
   return existingRank !== null && teamRankMeets(teamRankOf(role), existingRank);
 }
 
+const ROLE_AUDIENCE: Record<string, string> = {
+  ADMIN: 'Team admins',
+  LEAD: 'Team leads and admins',
+  MEMBER: 'All members of this team',
+};
+
+/** Who a role grant reaches: the role and every higher one, members of the grant's team only. */
+function roleAudience(role: string): string {
+  return ROLE_AUDIENCE[role] ?? `${teamRoleLabel(role)} or above`;
+}
+
 export default function GovernConfigGrantsPage() {
   const {
     data: grants,
@@ -165,7 +176,7 @@ export default function GovernConfigGrantsPage() {
 
   const granteeLabel =
     effectiveGranteeType === 'team-role'
-      ? `${teamRoleLabel(role)} role or above`
+      ? roleAudience(role)
       : (eligibleUsers.find((u) => u.id === userId)?.email ?? 'the selected user');
   const scopeLabel =
     scope === 'GLOBAL'
@@ -277,18 +288,29 @@ export default function GovernConfigGrantsPage() {
               label="Grant to"
               onChange={(v) => setGranteeType(v as 'team-role' | 'user')}
               options={[
-                // A role is a team role, so it needs the team scope (and a team) to mean anything.
-                ...(roleGranteeAllowed ? [{ label: 'A team role', value: 'team-role' }] : []),
+                // A role is a team role, so it needs the team scope (and a team) to mean anything;
+                // outside it the option stays listed, disabled, with the reason.
+                roleGranteeAllowed
+                  ? { label: 'A team role', value: 'team-role' }
+                  : {
+                      description: 'Team roles apply at team scope',
+                      disabled: true,
+                      label: 'A team role',
+                      value: 'team-role',
+                    },
                 { label: 'A specific user', value: 'user' },
               ]}
               value={effectiveGranteeType}
             />
             {effectiveGranteeType === 'team-role' ? (
               <Select
-                hint="This role or above in the team."
+                hint="Members of this team with this role or a higher one."
                 label="Team role"
                 onChange={(v) => setRole(v as TeamRoleValue)}
-                options={[...TEAM_ROLE_OPTIONS].reverse()}
+                options={[...TEAM_ROLE_OPTIONS].reverse().map((o) => ({
+                  label: roleAudience(o.value),
+                  value: o.value,
+                }))}
                 value={role}
               />
             ) : (
@@ -449,7 +471,7 @@ export default function GovernConfigGrantsPage() {
                         <span className="text-paper-200">{g.user.email}</span>
                       ) : g.role ? (
                         <Badge tone="neutral" variant="outline">
-                          {teamRoleLabel(g.role)} role or above
+                          {roleAudience(g.role)}
                         </Badge>
                       ) : (
                         <span className="text-paper-500">—</span>
