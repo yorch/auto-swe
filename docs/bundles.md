@@ -78,7 +78,7 @@ backslash, `..`, `//`, a `.` path component, a trailing `/` or `.lock`, no leadi
 update checks. It never selects content: the install reads exactly `sha`. A bundle with no `ref` is
 byte-for-byte what it was without the field, and hashes the same; the schema version stays 3. An
 installation that predates the field does not read `ref`, so a bundle carrying one needs this version
-for its profile to follow that ref. An export writes `ref` only for a profile whose ref is not `HEAD` and passes this rule. The
+for its profile to follow that ref. An export writes `ref` only for a profile whose ref is not `HEAD` and passes this rule; a ref that does not pass is left out and named in the export's `warnings` (see [Exporting a bundle](#exporting-a-bundle)). The
 hash covers these entries, so a signature binds the commit and the expected content.
 
 ## Trust model
@@ -140,6 +140,22 @@ auto-swe bundle sign ./support-pack/manifest.json --key=release-key.pem
 that checkout once, and install the scaffold with Yarn or pnpm, which understand `link:`. The
 starter agent's key is namespaced by the bundle name (`<name>.reviewer`) so installing the starter
 cannot replace the platform's own `reviewer`.
+
+## Exporting a bundle
+
+A platform ADMIN exports the GLOBAL library with `POST /api/v1/platform/bundles/export`, body `{ name, version,
+origin? }`. `origin` selects the content with one provenance tag, such as `swe-starter`; omitted, the export takes
+all GLOBAL content. The CLI runs the same export: `auto-swe bundles export <name> <version> [--origin=TAG]
+[-o <path>]`.
+
+The response is `{ data, warnings }`. `data` is the manifest. `warnings` is an array of fixed-format strings and
+is always present, empty when no warning applies. The CLI prints each warning to stderr as `warning: <text>` and
+keeps stdout to the manifest, so a redirect captures the manifest alone.
+
+A warning says what the export could not carry faithfully. A plugin reference whose profile ref is not exportable
+(a commit id, a name under `refs/`, one with `#` or `@{`, or one outside the rule under Plugin references) is
+exported without a `ref`, so the imported profile follows `HEAD`. The warning names the plugin and the reason, and
+never the ref.
 
 ## Installing a bundle
 
@@ -318,10 +334,10 @@ separately.
   read (always `sha`), and a reused profile keeps its own ref, so installing a bundle never moves
   an existing profile onto a branch. The bytes are read from the source host at install time, so
   an install needs that host to be reachable and approved (`github.repositoryHosts`).
-- **An export drops a plugin's ref it cannot carry, without a warning.** A profile whose ref fails the
-  bundle rule (see Plugin references in the manifest format) is exported with no `ref`, and no export
-  warning says so. The imported profile then follows the default branch (`HEAD`), not the branch or tag the
-  exporting profile followed.
+- **An export skips a plugin with no usable approved commit, and does not say so.** A profile an exported agent
+  is bound to is left out of the plugin references when it has no version, or when its newest version's commit is
+  not a full 40-character sha. No warning names it, and the bindings it would have carried are not exported
+  either, so an import does not bind those agents to that plugin.
 - **Plugins are exported only for bound agents.** An export writes a plugin reference for each
   profile that the head version of an exported GLOBAL agent is bound to, at its newest approved
   commit; a profile no exported agent uses is not exported, and neither are enablements or hook

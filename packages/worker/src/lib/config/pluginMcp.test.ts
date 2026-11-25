@@ -18,7 +18,7 @@ vi.mock('@auto-swe/shared/db', () => ({
 }));
 vi.mock('./harnessProfile.js', () => ({
   pinHarnessProfile: h.pin,
-  readHarnessPin: h.readPin,
+  readHarnessPinState: h.readPin,
 }));
 vi.mock('./mcpConnection.js', () => ({ mcpUrlForConnection: h.target }));
 
@@ -82,7 +82,21 @@ const connection = (over: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   vi.resetAllMocks();
-  h.readPin.mockResolvedValue(undefined);
+  // By default the run's pin already holds exactly the live mappings, so only a test about the pin
+  // itself sees anything but the live set.
+  h.readPin.mockImplementation(async () => {
+    const rows = ((await h.mappingFind()) ?? []) as { connectionId: string; serverName: string }[];
+    return {
+      kind: 'pinned',
+      pin: {
+        mcp: rows.map((r) => `${r.serverName}=${r.connectionId}`),
+        verified: new Set(),
+        version: 3,
+      },
+      runId: 'exec-1',
+      workflowId: 'wf-1',
+    };
+  });
   h.connectionFind.mockResolvedValue(connection());
   h.target.mockImplementation(async (id: string) => ({ url: `https://${id}.example/mcp` }));
 });
@@ -321,6 +335,7 @@ describe('resolvePluginMcpBindings', () => {
     ];
     const prof = () => single({ a: http('https://a.example/'), b: http('https://b.example/') });
     const pinned = (mcp: string[] | undefined, version = 3) => ({
+      kind: 'pinned',
       pin: { mcp, verified: new Set(), version },
       runId: 'exec-1',
       workflowId: 'wf-1',
@@ -372,10 +387,11 @@ describe('resolvePluginMcpBindings', () => {
     });
 
     it('treats a pin without the set as "pin the live pairs now", and uses what was recorded', async () => {
-      h.readPin.mockResolvedValue(pinned(undefined));
+      h.readPin.mockResolvedValueOnce(pinned(undefined)).mockResolvedValueOnce(pinned(['a=c1']));
       h.pin.mockResolvedValue({ hooks: true, mcp: ['a=c1'], version: 3 });
       expect(await run()).toEqual(['c1']);
       expect(h.pin).toHaveBeenCalledWith('wf-1', 'kit', 3, {
+        claim: true,
         mcpPins: ['a=c1', 'b=c2'],
         runId: 'exec-1',
       });
@@ -388,8 +404,7 @@ describe('resolvePluginMcpBindings', () => {
       expect(h.pin).not.toHaveBeenCalled();
     });
 
-    it('relays nothing, and says so, when the pin cannot be read', async () => {
-      h.readPin.mockRejectedValue(new Error('db down'));
+    const runWithEvents = async () => {
       const t = tracer();
       const out = await resolvePluginMcpBindings({
         profiles: [prof()],
@@ -397,24 +412,180 @@ describe('resolvePluginMcpBindings', () => {
         toolKeys: null,
         tracer: t,
       });
-      expect(out).toEqual([]);
-      expect(t.events).toEqual([
-        {
-          name: 'agent.plugin_mcp_skipped',
-          outputJson: { plugin: 'kit', reason: 'pin could not be read', server: '*' },
-        },
-      ]);
+      return { events: t.events, ids: out.map((b) => b.connectionId) };
+    };
+    const refusal = (reason: string) => [
+      {
+        name: 'agent.plugin_mcp_skipped',
+        outputJson: { plugin: 'acme', reason, server: '*' },
+      },
+    ];
+
+    it('relays nothing, and says so, when the pin cannot be read', async () => {
+      h.readPin.mockRejectedValue(new Error('db down'));
+      const { events, ids } = await runWithEvents();
+      expect(ids).toEqual([]);
+      expect(events).toEqual(refusal('pin could not be read'));
       expect(h.connectionFind).not.toHaveBeenCalled();
     });
 
-    it('uses the live set when the run cannot pin (no entry, another version, a failed write)', async () => {
-      h.readPin.mockResolvedValue(undefined);
-      expect(await run()).toEqual(['c1', 'c2']);
-      h.readPin.mockResolvedValue(pinned(['a=c1'], 2));
-      expect(await run()).toEqual(['c1', 'c2']);
+    it.each([
+      ['no run row / outside an activity', { kind: 'unavailable' }, 'run could not be pinned'],
+      ['no entry to pin against', { kind: 'unpinned' }, 'run could not be pinned'],
+      ['another execution’s pin', { kind: 'foreign' }, 'pin belongs to another execution'],
+      ['a different version', pinned(['a=c1'], 2), 'pinned version differs'],
+    ])('relays nothing, reads no connection, for %s', async (_label, state, reason) => {
+      h.readPin.mockResolvedValue(state);
+      const { events, ids } = await runWithEvents();
+      expect(ids).toEqual([]);
+      expect(events).toEqual(refusal(reason));
+      expect(h.connectionFind).not.toHaveBeenCalled();
+      expect(h.target).not.toHaveBeenCalled();
+      expect(h.pin).not.toHaveBeenCalled();
+    });
+
+    const mappedLate = (server: string, plugin = 'acme') => [
+      {
+        name: 'agent.plugin_mcp_skipped',
+        outputJson: { plugin, reason: 'mapped after the run pinned', server },
+      },
+    ];
+
+    it('says which eligible mapping the pin does not hold, once each, and relays the rest', async () => {
+      h.readPin.mockResolvedValue(pinned(['a=c1']));
+      const { events, ids } = await runWithEvents();
+      expect(ids).toEqual(['c1']);
+      expect(events).toEqual(mappedLate('b'));
+      expect(JSON.stringify(events)).not.toContain('example');
+    });
+
+    it('says so for every mapping after a first use that pinned an empty set', async () => {
+      h.readPin.mockResolvedValue(pinned([]));
+      const { events, ids } = await runWithEvents();
+      expect(ids).toEqual([]);
+      expect(events).toEqual([...mappedLate('a'), ...mappedLate('b')]);
+    });
+
+    it('says a damaged pin list is damaged, once per plugin, and relays nothing', async () => {
+      h.readPin.mockResolvedValue({
+        kind: 'pinned',
+        pin: { mcp: [], mcpDamaged: true, verified: new Set(), version: 3 },
+        runId: 'exec-1',
+        workflowId: 'wf-1',
+      });
+      const { events, ids } = await runWithEvents();
+      expect(ids).toEqual([]);
+      expect(events).toEqual(refusal('pin is damaged'));
+    });
+
+    describe('claiming another execution’s map (a reused workflow id)', () => {
+      const foreign = (claimable: boolean) => ({
+        claimable,
+        kind: 'foreign',
+        runId: 'exec-1',
+        workflowId: 'wf-1',
+      });
+
+      it('claims it with the first write and relays what was then stored', async () => {
+        h.readPin
+          .mockResolvedValueOnce(foreign(true))
+          .mockResolvedValueOnce(pinned(['a=c1', 'b=c2']));
+        h.pin.mockResolvedValue({ hooks: undefined, mcp: ['a=c1', 'b=c2'], version: 3 });
+        expect((await runWithEvents()).ids).toEqual(['c1', 'c2']);
+        expect(h.pin).toHaveBeenCalledWith('wf-1', 'kit', 3, {
+          claim: true,
+          mcpPins: ['a=c1', 'b=c2'],
+          runId: 'exec-1',
+        });
+      });
+
+      it('relays nothing when the claim is lost to an execution that owns the map', async () => {
+        h.readPin.mockResolvedValueOnce(foreign(true)).mockResolvedValueOnce(foreign(false));
+        h.pin.mockResolvedValue({ hooks: undefined, mcp: ['a=c1', 'b=c2'], version: 3 });
+        const { events, ids } = await runWithEvents();
+        expect(ids).toEqual([]);
+        expect(events).toEqual(refusal('pin could not be written'));
+      });
+
+      it('never claims where the state says the execution may not', async () => {
+        h.readPin.mockResolvedValue(foreign(false));
+        const { events, ids } = await runWithEvents();
+        expect(ids).toEqual([]);
+        expect(events).toEqual(refusal('pin belongs to another execution'));
+        expect(h.pin).not.toHaveBeenCalled();
+      });
+    });
+
+    it('uses the winner’s set when pinning threw after lost compare-and-set races', async () => {
+      h.readPin.mockResolvedValueOnce(pinned(undefined)).mockResolvedValueOnce(pinned(['a=c1']));
+      h.pin.mockRejectedValue(new Error('could not pin harness profile'));
+      const { ids } = await runWithEvents();
+      expect(ids).toEqual(['c1']);
+    });
+
+    it('reports a read-back that throws as unreadable, not unwritable', async () => {
+      h.readPin.mockResolvedValueOnce(pinned(undefined)).mockRejectedValueOnce(new Error('db'));
+      h.pin.mockResolvedValue({ hooks: true, mcp: ['a=c1', 'b=c2'], version: 3 });
+      expect((await runWithEvents()).events).toEqual(refusal('pin could not be read'));
+      h.readPin.mockResolvedValueOnce(pinned(undefined)).mockRejectedValueOnce(new Error('db'));
+      h.pin.mockRejectedValue(new Error('cas'));
+      expect((await runWithEvents()).events).toEqual(refusal('pin could not be read'));
+    });
+
+    it('relays nothing when the first pin cannot be written', async () => {
       h.readPin.mockResolvedValue(pinned(undefined));
       h.pin.mockRejectedValue(new Error('cas'));
-      expect(await run()).toEqual(['c1', 'c2']);
+      const { events, ids } = await runWithEvents();
+      expect(ids).toEqual([]);
+      expect(events).toEqual(refusal('pin could not be written'));
+      expect(h.connectionFind).not.toHaveBeenCalled();
+    });
+
+    it('relays nothing when the write reports success but nothing is stored', async () => {
+      // pinHarnessProfile returns the candidates when the run row vanished or changed owner.
+      h.readPin.mockResolvedValue(pinned(undefined));
+      h.pin.mockResolvedValue({ hooks: true, mcp: ['a=c1', 'b=c2'], version: 3 });
+      const { events, ids } = await runWithEvents();
+      expect(ids).toEqual([]);
+      expect(events).toEqual(refusal('pin could not be written'));
+    });
+
+    it('uses the winner’s pin, intersected with the live mappings, when the compare-and-set was lost', async () => {
+      h.readPin
+        .mockResolvedValueOnce(pinned(undefined))
+        // The read back after our (lost) write sees the other activity's set.
+        .mockResolvedValueOnce(pinned(['a=c1']));
+      h.pin.mockResolvedValue({ hooks: true, mcp: ['a=c1'], version: 3 });
+      const { events, ids } = await runWithEvents();
+      expect(ids).toEqual(['c1']);
+      // `b` was mapped after the winner pinned its set.
+      expect(events).toEqual(mappedLate('b'));
+    });
+
+    it('emits one event per plugin, and none where no mapping exists', async () => {
+      h.readPin.mockResolvedValue({ kind: 'foreign' });
+      const two = profile({
+        a: { name: 'acme', servers: { a: http('https://a.example/') } },
+        b: { name: 'beta', servers: { b: http('https://b.example/') } },
+      });
+      const t = tracer();
+      await resolvePluginMcpBindings({ profiles: [two], toolKeys: null, tracer: t });
+      expect(t.events.map((e) => (e.outputJson as { plugin: string }).plugin).sort()).toEqual([
+        'acme',
+        'beta',
+      ]);
+      h.mappingFind.mockResolvedValue([]);
+      const quiet = tracer();
+      await resolvePluginMcpBindings({ profiles: [two], toolKeys: null, tracer: quiet });
+      expect(quiet.events).toEqual([]);
+    });
+
+    it('writes the first pin from the live pairs and relays what was stored', async () => {
+      h.readPin
+        .mockResolvedValueOnce(pinned(undefined))
+        .mockResolvedValueOnce(pinned(['a=c1', 'b=c2']));
+      h.pin.mockResolvedValue({ hooks: true, mcp: ['a=c1', 'b=c2'], version: 3 });
+      expect((await runWithEvents()).ids).toEqual(['c1', 'c2']);
     });
 
     it('relays nothing for a damaged (empty) pin', async () => {

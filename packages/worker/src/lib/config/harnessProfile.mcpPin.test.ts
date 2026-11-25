@@ -24,7 +24,12 @@ vi.mock('@auto-swe/shared/db', () => ({
 vi.mock('./agentResolver.js', () => ({ resolveAgent: h.resolveAgent }));
 
 import { Prisma } from '@auto-swe/shared';
-import { pinHarnessProfile, readHarnessPin, resolveProfileForRuntime } from './harnessProfile.js';
+import {
+  pinHarnessProfile,
+  readHarnessPin,
+  readHarnessPinState,
+  resolveProfileForRuntime,
+} from './harnessProfile.js';
 import { parsePinEntry } from './pluginEnablement.js';
 
 /** A run row whose pin map the compare-and-set reads and writes. */
@@ -147,6 +152,110 @@ describe('readHarnessPin', () => {
     expect(await readHarnessPin('other')).toBeUndefined();
     runRow({ kit: 4 }, 'exec-OTHER');
     expect(await readHarnessPin('kit')).toBeUndefined();
+  });
+});
+
+describe('readHarnessPinState', () => {
+  it('tells an entry, no entry, and another execution’s pin apart', async () => {
+    runRow({ kit: { mcp: ['a=c1'], version: 4 } });
+    expect(await readHarnessPinState('kit')).toMatchObject({
+      kind: 'pinned',
+      pin: { mcp: ['a=c1'], version: 4 },
+    });
+    expect(await readHarnessPinState('other')).toEqual({ kind: 'unpinned' });
+    runRow({ kit: 4 }, 'exec-OTHER');
+    expect(await readHarnessPinState('kit')).toEqual({
+      claimable: true,
+      kind: 'foreign',
+      runId: 'exec-1',
+      workflowId: 'wf-1',
+    });
+    // The execution the row was created for is the stale side of a later execution's map.
+    runRow({ __execution: 'exec-9', kit: 4 }, 'exec-1');
+    expect(await readHarnessPinState('kit')).toMatchObject({ claimable: false, kind: 'foreign' });
+  });
+});
+
+describe('pinHarnessProfile claim', () => {
+  it('replaces another execution’s map with the current one’s own, dropping every old entry', async () => {
+    const row = runRow(
+      {
+        kit: { hooks: false, mcp: ['a=c1'], verified: ['t:k:1'], version: 2 },
+        other: 5,
+      },
+      'exec-0'
+    );
+    const out = await pinHarnessProfile('wf-1', 'kit', 3, {
+      claim: true,
+      hooksEnabled: true,
+      mcpPins: ['b=c2'],
+      runId: 'exec-1',
+    });
+    expect(out).toEqual({ hooks: true, mcp: ['b=c2'], version: 3 });
+    expect(row.harnessProfileVersions).toEqual({
+      __execution: 'exec-1',
+      kit: { hooks: true, mcp: ['b=c2'], version: 3 },
+    });
+  });
+
+  it('claims a map stamped for another execution the same way', async () => {
+    const row = runRow({ __execution: 'exec-0', kit: { mcp: ['a=c1'], version: 2 } }, 'exec-0');
+    await pinHarnessProfile('wf-1', 'kit', 3, { claim: true, mcpPins: [], runId: 'exec-1' });
+    expect(row.harnessProfileVersions).toEqual({
+      __execution: 'exec-1',
+      kit: { mcp: [], version: 3 },
+    });
+  });
+
+  it('claims a row with no map at all when the row names another execution', async () => {
+    const row = runRow(null, 'exec-0');
+    await pinHarnessProfile('wf-1', 'kit', 3, { claim: true, runId: 'exec-1' });
+    expect(row.harnessProfileVersions).toEqual({ __execution: 'exec-1', kit: 3 });
+  });
+
+  it('never claims without being asked, nor as the execution the row was created for', async () => {
+    const a = runRow({ __execution: 'exec-9', kit: 2 }, 'exec-1');
+    await pinHarnessProfile('wf-1', 'kit', 3, { claim: true, mcpPins: [], runId: 'exec-1' });
+    expect(a.harnessProfileVersions).toEqual({ __execution: 'exec-9', kit: 2 });
+    const b = runRow({ kit: 2 }, 'exec-0');
+    await pinHarnessProfile('wf-1', 'kit', 3, { mcpPins: [], runId: 'exec-1' });
+    expect(b.harnessProfileVersions).toEqual({ kit: 2 });
+  });
+
+  it('converges concurrent claims on one winner, the loser keeping the winner’s entry', async () => {
+    const row = runRow({ kit: 2 }, 'exec-0');
+    const [x, y] = await Promise.all([
+      pinHarnessProfile('wf-1', 'kit', 3, { claim: true, mcpPins: ['x=c1'], runId: 'exec-1' }),
+      pinHarnessProfile('wf-1', 'kit', 4, { claim: true, mcpPins: ['y=c2'], runId: 'exec-1' }),
+    ]);
+    expect(x).toEqual(y);
+    expect(row.harnessProfileVersions).toEqual({
+      __execution: 'exec-1',
+      kit: { mcp: x.mcp, version: x.version },
+    });
+  });
+
+  it('keeps a still-running old execution from overwriting the new owner’s map (compare-and-set on the map it read)', async () => {
+    const row = runRow({ kit: 2 }, 'exec-0');
+    const claimed = { __execution: 'exec-1', kit: { mcp: ['n=c9'], version: 3 } };
+    // exec-1 claims between the old execution's read and its write.
+    h.runFind.mockImplementationOnce(async () => {
+      const seen = { ...row };
+      row.harnessProfileVersions = claimed;
+      return seen;
+    });
+    const out = await pinHarnessProfile('wf-1', 'kit', 2, {
+      claim: true,
+      mcpPins: ['old=c0'],
+      runId: 'exec-0',
+    });
+    // Its write named the stale map and lost; the retry sees another owner and, being the
+    // execution the row was created for, does not claim.
+    expect(h.runUpdateMany.mock.calls[0]?.[0].where.harnessProfileVersions).toEqual({
+      equals: { kit: 2 },
+    });
+    expect(row.harnessProfileVersions).toEqual(claimed);
+    expect(out.mcp).toEqual(['old=c0']);
   });
 });
 

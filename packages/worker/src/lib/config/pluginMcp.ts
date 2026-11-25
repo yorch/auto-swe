@@ -14,10 +14,10 @@ import { type AgentConnectionTenant, agentMayUseConnection } from '../connection
 import {
   pinHarnessProfile,
   type ResolvedHarnessProfile,
-  readHarnessPin,
+  readHarnessPinState,
 } from './harnessProfile.js';
 import { type McpConnectionTarget, mcpUrlForConnection } from './mcpConnection.js';
-import { mcpPinPair } from './pluginEnablement.js';
+import { mcpPinPair, type ParsedPin } from './pluginEnablement.js';
 
 /**
  * Why a plugin's mapped MCP server is not relayed on a run. Fixed strings: an event never carries
@@ -26,11 +26,17 @@ import { mcpPinPair } from './pluginEnablement.js';
 export const PLUGIN_MCP_SKIP = {
   ambiguous: 'server name is ambiguous',
   inactive: 'connection inactive',
+  mappedAfterPin: 'mapped after the run pinned',
   mcpNotEnabled: 'mcp tool not enabled for the agent',
   missing: 'connection missing',
   notAllowed: 'connection not allowed for the run',
   notDeclared: 'server not declared',
+  pinDamaged: 'pin is damaged',
+  pinForeign: 'pin belongs to another execution',
   pinUnreadable: 'pin could not be read',
+  pinUnwritable: 'pin could not be written',
+  pinVersionDiffers: 'pinned version differs',
+  runNotPinnable: 'run could not be pinned',
   unsupported: 'server not supported',
 } as const;
 
@@ -186,17 +192,35 @@ export async function resolvePluginMcpBindings(
       continue;
     }
 
-    const pinned = await pinnedPairs(
+    const outcome = await pinnedPairs(
       profile,
       eligible.map((e) => mcpPinPair(e.server, e.connectionId))
     );
-    if (!pinned) {
-      if (eligible.length > 0) {
-        skip(profile.name, '*', PLUGIN_MCP_SKIP.pinUnreadable);
+    if (!('pairs' in outcome)) {
+      // Fail closed: no connection is read and no relay opens. One fixed-reason event per plugin
+      // that has a mapping this withholds; none where nothing is mapped.
+      for (const plugin of new Set(eligible.map((e) => e.plugin))) {
+        skip(plugin, '*', outcome.reason);
       }
       continue;
     }
-    for (const entry of eligible.filter((e) => pinned.has(mcpPinPair(e.server, e.connectionId)))) {
+    const pinned = outcome.pairs;
+    if (outcome.damaged) {
+      // The stored list reads as empty: one event per plugin, not one per mapping.
+      for (const plugin of new Set(eligible.map((e) => e.plugin))) {
+        skip(plugin, '*', PLUGIN_MCP_SKIP.pinDamaged);
+      }
+    }
+    const relayable: Eligible[] = [];
+    for (const entry of eligible) {
+      if (pinned.has(mcpPinPair(entry.server, entry.connectionId))) {
+        relayable.push(entry);
+      } else if (!outcome.damaged) {
+        // Mapped after the run pinned its set (or pinned empty): never gained mid-run, but said.
+        skip(entry.plugin, entry.server, PLUGIN_MCP_SKIP.mappedAfterPin);
+      }
+    }
+    for (const entry of relayable) {
       // Before the connection is read: a name that cannot be told apart never reads a credential.
       const key = pluginServerKey(entry.plugin, entry.server);
       if (RESERVED_SERVER_KEYS.has(key) || usedKeys.has(key)) {
@@ -256,38 +280,73 @@ async function eligibleMappings(
 }
 
 /**
- * The server=connection pairs this run pinned for the plugin; the live ones when the run cannot pin
- * (no run row, another execution's pin, a caller-supplied version) or a first pin cannot be
- * written. A pin that cannot be READ (a transient error) yields null: the activity relays nothing
- * rather than a live set that may include a connection mapped after the run began.
+ * The server=connection pairs this run pinned for the plugin, or the fixed reason it relays nothing.
+ * A run that cannot be pinned (no run row, no entry, another execution's pin it may not claim, a
+ * different version, a first pin that cannot be written or read back, a pin that cannot be read)
+ * fails closed: the live set is never a fallback, since it may include a connection mapped after
+ * the run began. The live pairs are used only to write the first pin, and what is relayed is then
+ * what the run's pin holds (the winner's, when another activity pinned first) intersected with the
+ * live mappings by the caller.
+ *
+ * A map owned by ANOTHER execution of a reused workflow id is claimed by the first write of this
+ * one ({@link pinHarnessProfile} `claim`): the old entries (its `mcp`, `verified` and hook switch
+ * included) are dropped, never carried over. Only the execution the run row was created for may not
+ * claim, so a stale one cannot take the map back.
  */
 async function pinnedPairs(
   profile: ResolvedHarnessProfile,
   live: readonly string[]
-): Promise<Set<string> | null> {
-  let current: Awaited<ReturnType<typeof readHarnessPin>>;
+): Promise<{ pairs: Set<string>; damaged: boolean } | { reason: PluginMcpSkipReason }> {
+  const refuse = (reason: PluginMcpSkipReason) => ({ reason });
+  const usable = (pin: ParsedPin) => ({
+    damaged: pin.mcpDamaged === true,
+    pairs: new Set(pin.mcp),
+  });
+  let state: Awaited<ReturnType<typeof readHarnessPinState>>;
   try {
-    current = await readHarnessPin(profile.name);
+    state = await readHarnessPinState(profile.name);
   } catch {
-    return null;
+    return refuse(PLUGIN_MCP_SKIP.pinUnreadable);
   }
-  if (!current || current.pin.version !== profile.version) {
-    return new Set(live);
+  if (state.kind === 'unavailable' || state.kind === 'unpinned') {
+    return refuse(PLUGIN_MCP_SKIP.runNotPinnable);
   }
-  if (current.pin.mcp !== undefined) {
-    return new Set(current.pin.mcp);
+  if (state.kind === 'foreign') {
+    if (!state.claimable) {
+      return refuse(PLUGIN_MCP_SKIP.pinForeign);
+    }
+  } else {
+    if (state.pin.version !== profile.version) {
+      return refuse(PLUGIN_MCP_SKIP.pinVersionDiffers);
+    }
+    if (state.pin.mcp !== undefined) {
+      return usable(state.pin);
+    }
   }
+  // A pin without a set, or another execution's map this one may claim.
+  const { runId, workflowId } = state;
   try {
-    const pinned = await pinHarnessProfile(current.workflowId, profile.name, profile.version, {
+    // pinHarnessProfile retries a lost compare-and-set and keeps a set another activity wrote
+    // first, so concurrent first uses converge on the winner's.
+    await pinHarnessProfile(workflowId, profile.name, profile.version, {
+      claim: true,
       mcpPins: live,
-      runId: current.runId,
+      runId,
     });
-    return new Set(pinned.mcp ?? live);
   } catch {
-    // Unpinnable now: this activity relays the live pairs (no pin existed to be widened), and the
-    // next one tries again.
-    return new Set(live);
+    // Three lost races (or a database error): a winner's pin may still exist, so read it back.
   }
+  let after: Awaited<ReturnType<typeof readHarnessPinState>>;
+  try {
+    // What is stored: the call also "succeeds" when it had nothing to write to.
+    after = await readHarnessPinState(profile.name);
+  } catch {
+    return refuse(PLUGIN_MCP_SKIP.pinUnreadable);
+  }
+  if (after.kind === 'pinned' && after.pin.version === profile.version && after.pin.mcp) {
+    return usable(after.pin);
+  }
+  return refuse(PLUGIN_MCP_SKIP.pinUnwritable);
 }
 
 /** The connection's target when it is an active `mcp` Connection the run's tenant may use. */

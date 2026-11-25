@@ -2461,7 +2461,7 @@ instructions that assumed a skill's text was already in the system prompt.
 
 ---
 
-### Plugin MCP mappings: a new table, and a plugin's MCP servers are relayed only once mapped (`<fixing commit SHA>`)
+### Plugin MCP mappings: a new table, and a plugin's MCP servers are relayed only once mapped (`ce802844`)
 
 **Affected.** Any deployment that upgrades across migration `20261125000000_plugin_mcp_mappings`. The
 migration is additive: it creates the `plugin_mcp_mappings` table and changes no existing row.
@@ -2607,3 +2607,26 @@ deactivate it through the API.
 audit row for the organization names `closedJoinRequests`, and
 `SELECT count(*) FROM team_join_requests r JOIN teams t ON t.id = r.team_id WHERE t.org_id = '<orgId>' AND r.status IN ('PENDING_TEAM', 'PENDING_ORG')`
 returns 0.
+
+### Plugin MCP servers wait for a pin, and bundle exports return `warnings` (`<fixing commit SHA>`)
+
+**Affected.** Deployments that map a plugin's MCP server (`plugin_mcp_mappings`), and tooling that reads the
+response of `POST /api/v1/platform/bundles/export`.
+
+**What changes.** A run's plugin MCP servers are relayed to an activity only when that run's profile pin can be
+established for the activity ([harness-profiles.md](./harness-profiles.md#17-plugin-mcp-servers)). Earlier builds
+relayed the live mappings when a run could not pin, for example when its run row was missing or its pin belonged
+to another execution. Such an activity relays none of the plugin's servers and records one
+`agent.plugin_mcp_skipped` event per plugin with a mapping, with server `*` and reason `run could not be pinned`,
+`pin belongs to another execution`, `pinned version differs`, `pin could not be written` or `pin could not be read`.
+The next activity tries again.
+
+The bundle export response carries a `warnings` array beside `data`: fixed-format strings, empty when no warning
+applies. The addition is additive, so a consumer that reads `data` is unaffected. The `bundles export` CLI prints
+each warning to stderr as `warning: <text>`; stdout stays the manifest.
+
+**Actions.** None for the bundle change. If a plugin's MCP tools are missing from a run, look for
+`agent.plugin_mcp_skipped` events on that run's trace with the reasons above; they name the cause.
+
+**Verify.** `POST /api/v1/platform/bundles/export` answers `{ data, warnings }`, with `warnings` an array in every
+response (empty when no warning applies).

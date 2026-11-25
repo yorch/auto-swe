@@ -20,6 +20,10 @@ const enabled = process.env.CLAUDE_CODE_DOCKER_TEST === '1';
 
 const h = vi.hoisted(() => ({
   cancellation: { signal: undefined as AbortSignal | undefined },
+  /** The run's pin map for the plugin scenario: the in-memory stand-in for the run row. */
+  pins: new Map<string, { mcp?: string[]; version: number }>(),
+  pluginMappings: [] as { connectionId: string; serverName: string }[],
+  pluginTargets: new Map<string, { url: string }>(),
 }));
 
 vi.mock('@temporalio/activity', async (importOriginal) => ({
@@ -48,6 +52,63 @@ vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
     artifacts.set(id, Buffer.from(input.body));
     return { id };
   },
+}));
+// A plugin's mapped connections are read from the database. The resolver is the production code
+// (`resolvePluginMcpBindings`, with its fail-closed pin); what is faked is the database rows it
+// reads (the mapping and the connection), the connection's target and tenant check, and the run's
+// pin store, an in-memory map that `pinHarnessProfile` writes and `readHarnessPinState` reads
+// back, so the first use pins the live set and the relay is what that pin holds.
+vi.mock('@auto-swe/shared/db', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@auto-swe/shared/db')>();
+  const fakes: Record<string, unknown> = {
+    connection: {
+      findUnique: async () => ({ isActive: true, shares: [], teamId: 't1', type: 'mcp' }),
+    },
+    pluginMcpMapping: {
+      count: async () => h.pluginMappings.length,
+      findMany: async () => h.pluginMappings,
+    },
+  };
+  return {
+    ...original,
+    prisma: new Proxy(original.prisma, {
+      get: (target, key, receiver) =>
+        typeof key === 'string' && key in fakes ? fakes[key] : Reflect.get(target, key, receiver),
+    }),
+  };
+});
+vi.mock('../../lib/config/harnessProfile.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/config/harnessProfile.js')>()),
+  pinHarnessProfile: async (
+    workflowId: string,
+    name: string,
+    candidate: number,
+    opts: { mcpPins?: readonly string[] } = {}
+  ) => {
+    const existing = h.pins.get(`${workflowId}/${name}`);
+    const entry = { mcp: existing?.mcp ?? [...(opts.mcpPins ?? [])], version: candidate };
+    h.pins.set(`${workflowId}/${name}`, entry);
+    return { hooks: undefined, mcp: entry.mcp, version: entry.version };
+  },
+  readHarnessPinState: async (name: string) => {
+    const pin = h.pins.get(`wf-plugin/${name}`);
+    return pin
+      ? {
+          kind: 'pinned',
+          pin: { ...pin, verified: new Set() },
+          runId: 'exec-plugin',
+          workflowId: 'wf-plugin',
+        }
+      : { kind: 'unpinned' };
+  },
+}));
+vi.mock('../../lib/config/mcpConnection.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/config/mcpConnection.js')>()),
+  mcpUrlForConnection: async (id: string) => h.pluginTargets.get(id) ?? null,
+}));
+vi.mock('../../lib/connectionAccess.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/connectionAccess.js')>()),
+  agentMayUseConnection: async () => 'allowed',
 }));
 // The scanners read their patterns from the database; the policy is under test, not them.
 vi.mock('../../lib/shellCommandScanner.js', async (importOriginal) => ({
@@ -212,6 +273,7 @@ async function makeRuntime(
     allowPause?: boolean;
     apiBase?: string;
     mcp?: { url: string };
+    pluginMcp?: { tenant: { teamId: string }; toolKeys: null };
     modelProxy?: ModelProxy;
     profile?: ResolvedHarnessProfile;
   } = {}
@@ -238,6 +300,7 @@ async function makeRuntime(
     ...(overrides.allowPause ? { allowPause: true } : {}),
     ...(overrides.modelProxy ? { modelProxy: overrides.modelProxy } : {}),
     ...(overrides.mcp ? { mcp: overrides.mcp } : {}),
+    ...(overrides.pluginMcp ? { pluginMcp: overrides.pluginMcp } : {}),
   });
   return { events, runtime, toolCalls };
 }
@@ -422,6 +485,80 @@ describe.skipIf(!enabled)('the Claude Code runtime against a real container', ()
       expect(api.requests[0]?.tools).toContain('mcp__connection__echo');
       expect(calls).toEqual(['from the harness']);
       expect(toolCalls).toEqual([expect.objectContaining({ toolName: 'mcp__connection__echo' })]);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 180_000);
+
+  it('relays a plugin’s mapped MCP server: the harness calls its tool, the worker runs it', async () => {
+    const calls: string[] = [];
+    const server = http.createServer(async (req, res) => {
+      const mcp = new McpServer({ name: 'remote', version: '1.0.0' });
+      mcp.registerTool(
+        'echo',
+        { description: 'Echo the text back', inputSchema: { text: z.string() } },
+        async ({ text }) => {
+          calls.push(text);
+          return { content: [{ text: `echo: ${text}`, type: 'text' }] };
+        }
+      );
+      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+      res.on('close', () => {
+        void transport.close();
+        void mcp.close();
+      });
+      await mcp.connect(transport);
+      let body = '';
+      for await (const chunk of req) {
+        body += chunk;
+      }
+      await transport.handleRequest(req, res, body ? JSON.parse(body) : undefined);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const ws = await startWorkspace();
+      const { port } = server.address() as AddressInfo;
+      const url = `http://127.0.0.1:${port}/mcp?k=plugin-token-5521`;
+      // An approved profile whose plugin declares an HTTP server, mapped to that connection.
+      const base = kitProfile();
+      const profile: ResolvedHarnessProfile = {
+        ...base,
+        files: base.files.map((f) =>
+          f.path === 'plugins/kit/.claude-plugin/plugin.json'
+            ? text(
+                f.path,
+                JSON.stringify({
+                  mcpServers: { docs: { type: 'http', url: 'https://declared.example/mcp' } },
+                  name: 'kit',
+                  version: '1.0.0',
+                })
+              )
+            : f
+        ),
+      };
+      h.pluginMappings = [{ connectionId: 'conn-docs', serverName: 'docs' }];
+      h.pluginTargets.set('conn-docs', { url });
+      // The run has an entry for the plugin (the resolver pinned its version at first use).
+      h.pins.set('wf-plugin/kit', { version: profile.version });
+      const { events, runtime, toolCalls } = await makeRuntime(ws, {
+        pluginMcp: { tenant: { teamId: 't1' }, toolKeys: null },
+        profile,
+      });
+      api.requests.length = 0;
+
+      const outcome = await runtime.runTurn({ system: 'S', user: 'PLUGINCALL please' });
+      await runtime.close?.();
+
+      expect(outcome.text).toBe('all done');
+      // The model was offered the plugin server's tool, and the call reached the remote server.
+      expect(api.requests[0]?.tools).toContain('mcp__kit_docs__echo');
+      expect(calls).toEqual(['from the harness']);
+      expect(toolCalls).toEqual([expect.objectContaining({ toolName: 'mcp__kit_docs__echo' })]);
+      // Neither the connection's URL nor its token is in anything the run recorded.
+      expect(JSON.stringify(events)).not.toMatch(
+        new RegExp(`127\\.0\\.0\\.1:${port}|plugin-token-5521`)
+      );
     } finally {
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));

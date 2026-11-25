@@ -204,3 +204,48 @@ describe('Install from file', () => {
     expect(previews).toHaveLength(1);
   });
 });
+
+describe('Export', () => {
+  const MANIFEST = { entities: {}, metadata: { name: 'out', version: '1.0.0' } };
+  const base = {
+    'GET /api/v1/platform/bundles': () => ({ data: [] }),
+    'GET /api/v1/platform/bundles/limits': () => ({ data: { maxBytes: 5_000_000 } }),
+  };
+
+  async function exportOnce(exportBody: Record<string, unknown>) {
+    const createObjectURL = vi.fn(() => 'blob:x');
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() }));
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    setupFetchMock({ ...base, 'POST /api/v1/platform/bundles/export': () => exportBody });
+    render(withQuery(<StudioBundlesPage />));
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'out' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Export and download' }));
+    expect(await screen.findByText('Downloaded out.bundle.json.')).toBeTruthy();
+    return createObjectURL;
+  }
+
+  it('shows each warning as plain text with control characters visible', async () => {
+    const createObjectURL = await exportOnce({
+      data: MANIFEST,
+      warnings: ['Plugin "<b>x</b>\u001b[31m" ref could not be exported.'],
+    });
+    const item = await screen.findByText(/ref could not be exported/);
+    expect(item.innerHTML).not.toContain('<b>');
+    expect(item.textContent).not.toContain('\u001b');
+    expect(screen.getByText(/follow the default branch/)).toBeTruthy();
+    const blob = (createObjectURL.mock.calls as unknown as [Blob][])[0][0];
+    expect(JSON.parse(await blob.text())).toEqual(MANIFEST);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByText(/ref could not be exported/)).toBeNull();
+  });
+
+  it('shows no warning alert when warnings is empty or missing', async () => {
+    await exportOnce({ data: MANIFEST, warnings: [] });
+    expect(screen.queryByText(/default branch/)).toBeNull();
+  });
+
+  it('survives an older gateway that answers without warnings', async () => {
+    await exportOnce({ data: MANIFEST });
+    expect(screen.queryByText(/default branch/)).toBeNull();
+  });
+});

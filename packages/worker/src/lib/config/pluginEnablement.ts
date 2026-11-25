@@ -68,6 +68,8 @@ export interface ParsedPin {
    * live mappings, so neither a connection nor a server key is gained mid-run.
    */
   mcp?: readonly string[];
+  /** True when the stored `mcp` list was damaged (and so reads as empty). */
+  mcpDamaged?: boolean;
 }
 
 /** The pin string for one plugin server mapped to one connection: `<server>=<connectionId>`. */
@@ -104,7 +106,9 @@ export function parsePinEntry(value: unknown): ParsedPin | undefined {
         // as an EMPTY pin, never as an absent one: an absent pin means "pin the live set at first
         // use", which would widen what the run relays.
         ...('mcp' in (value as object)
-          ? { mcp: Array.isArray(mcp) && mcp.every(isMcpPinPair) ? [...mcp] : [] }
+          ? Array.isArray(mcp) && mcp.every(isMcpPinPair)
+            ? { mcp: [...mcp] }
+            : { mcp: [], mcpDamaged: true }
           : {}),
         verified: new Set(
           Array.isArray(verified) ? verified.filter((k): k is string => typeof k === 'string') : []

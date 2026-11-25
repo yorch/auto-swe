@@ -120,7 +120,7 @@ describe('exportBundle', () => {
       workflowTemplateVersion: { findMany: versionFindMany, groupBy },
     } as unknown as Parameters<typeof exportBundle>[0];
 
-    const m = await exportBundle(prisma, { name: 'x', version: '1.0.0' });
+    const { manifest: m } = await exportBundle(prisma, { name: 'x', version: '1.0.0' });
 
     // Only the unpinned templates need their highest version looked up.
     expect(groupBy).toHaveBeenCalledTimes(1);
@@ -164,7 +164,11 @@ describe('exportBundle', () => {
       workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
     } as unknown as Parameters<typeof exportBundle>[0];
 
-    const m = await exportBundle(prisma, { name: 'swe', origin: 'swe-starter', version: '1.0.0' });
+    const { manifest: m } = await exportBundle(prisma, {
+      name: 'swe',
+      origin: 'swe-starter',
+      version: '1.0.0',
+    });
 
     expect(m.entities.agents).toEqual([
       {
@@ -207,7 +211,7 @@ describe('exportBundle', () => {
       workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
     } as unknown as Parameters<typeof exportBundle>[0];
 
-    const m = await exportBundle(prisma, { name: 'x', version: '1.0.0' });
+    const { manifest: m } = await exportBundle(prisma, { name: 'x', version: '1.0.0' });
 
     expect(m.entities.agents[0]).toMatchObject({ key: 'a', runtime: 'claude-code' });
     expect(m.entities.agents[1]).not.toHaveProperty('runtime');
@@ -250,7 +254,7 @@ describe('exportBundle', () => {
       workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
     } as unknown as Parameters<typeof exportBundle>[0];
 
-    const m = await exportBundle(prisma, { name: 'x', version: '1.0.0' });
+    const { manifest: m } = await exportBundle(prisma, { name: 'x', version: '1.0.0' });
 
     expect(m.entities.agents[0]).toMatchObject({ key: 'a', runtime: 'claude-code' });
     expect(m.entities.agents[0]).not.toHaveProperty('harnessProfiles');
@@ -267,7 +271,8 @@ describe('exportBundle', () => {
     expect(m.metadata.contentHash).toBe(computeContentHash(m));
   });
 
-  it('exports the profile’s ref only when it is not HEAD', async () => {
+  it('exports the profile’s ref only when it is not HEAD, and warns for one it cannot carry', async () => {
+    const hostile = `refs/heads/${'x'.repeat(40)}-SECRET`;
     const profile = (name: string, ref: string) => ({
       host: 'github.com',
       name,
@@ -277,12 +282,19 @@ describe('exportBundle', () => {
       repo: 'tools',
       versions: [{ commitSha: 'a'.repeat(40), contentHash: 'b'.repeat(64) }],
     });
+    const profiles = [
+      profile('kit-branch', 'release/1.x'),
+      profile('kit-head', 'HEAD'),
+      profile('kit-sha', 'a'.repeat(40)),
+      profile('kit-full', hostile),
+      profile('kit-hash', 'v1#frag'),
+    ];
     const prisma = {
       agent: {
         findMany: vi.fn().mockResolvedValue([
           {
             description: null,
-            harnessProfiles: ['kit-head', 'kit-branch'],
+            harnessProfiles: profiles.map((p) => p.name),
             inheritsModelFrom: null,
             isVerified: false,
             key: 'a',
@@ -296,21 +308,40 @@ describe('exportBundle', () => {
           },
         ]),
       },
-      harnessProfile: {
-        findMany: vi
-          .fn()
-          .mockResolvedValue([profile('kit-branch', 'release/1.x'), profile('kit-head', 'HEAD')]),
-      },
+      harnessProfile: { findMany: vi.fn().mockResolvedValue(profiles) },
       scannerPattern: { findMany: vi.fn().mockResolvedValue([]) },
       skill: { findMany: vi.fn().mockResolvedValue([]) },
       workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
     } as unknown as Parameters<typeof exportBundle>[0];
 
-    const m = await exportBundle(prisma, { name: 'x', version: '1.0.0' });
+    const { manifest: m, warnings } = await exportBundle(prisma, { name: 'x', version: '1.0.0' });
     const byName = Object.fromEntries((m.entities.plugins ?? []).map((p) => [p.name, p]));
     expect(byName['kit-branch']?.ref).toBe('release/1.x');
-    expect(byName['kit-head']).not.toHaveProperty('ref');
+    for (const n of ['kit-head', 'kit-sha', 'kit-full', 'kit-hash']) {
+      expect(byName[n]).not.toHaveProperty('ref');
+    }
+    expect(warnings).toHaveLength(3);
+    expect(warnings).toContain(
+      'plugin "kit-sha": the profile\'s ref is not exportable (ref is a commit id; name a branch or tag (the sha field pins the commit)); the imported profile follows HEAD'
+    );
+    expect(
+      warnings.some((w) => w.startsWith('plugin "kit-full": ') && /plain branch/.test(w))
+    ).toBe(true);
+    expect(warnings.some((w) => w.startsWith('plugin "kit-hash": '))).toBe(true);
+    expect(warnings.some((w) => w.includes('SECRET') || w.includes('release/1.x'))).toBe(false);
+    expect(warnings.some((w) => w.startsWith('plugin "kit-head"'))).toBe(false);
     expect(m.metadata.contentHash).toBe(computeContentHash(m));
+  });
+
+  it('answers an empty warnings array, not an omitted one, when nothing was lost', async () => {
+    const prisma = {
+      agent: { findMany: vi.fn().mockResolvedValue([]) },
+      scannerPattern: { findMany: vi.fn().mockResolvedValue([]) },
+      skill: { findMany: vi.fn().mockResolvedValue([]) },
+      workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
+    } as unknown as Parameters<typeof exportBundle>[0];
+    const res = await exportBundle(prisma, { name: 'x', version: '1.0.0' });
+    expect(res.warnings).toEqual([]);
   });
 
   it('carries an agent’s reasoning level when it has one, and no field when it has none', async () => {
@@ -337,7 +368,7 @@ describe('exportBundle', () => {
       workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
     } as unknown as Parameters<typeof exportBundle>[0];
 
-    const m = await exportBundle(prisma, { name: 'x', version: '1.0.0' });
+    const { manifest: m } = await exportBundle(prisma, { name: 'x', version: '1.0.0' });
 
     expect(m.entities.agents[0]).toMatchObject({ key: 'a', reasoning: 'high' });
     expect(m.entities.agents[1]).not.toHaveProperty('reasoning');

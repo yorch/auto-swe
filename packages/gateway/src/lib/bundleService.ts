@@ -413,6 +413,15 @@ function deriveDependencies(entities: BundleEntities): BundleDependency[] {
 }
 
 /**
+ * What {@link exportBundle} produces: the manifest, and one fixed-format warning for each thing
+ * the export could not carry faithfully (always present, empty when nothing was lost).
+ */
+export interface BundleExport {
+  manifest: BundleManifest;
+  warnings: string[];
+}
+
+/**
  * Serialize a tagged set of GLOBAL library entities into a {@link BundleManifest}.
  * `origin` selects the set (e.g. 'swe-starter'); omit to export all GLOBAL content.
  * Deployment-local fields (ids, team/credential/mcp bindings, versions, timestamps)
@@ -421,7 +430,7 @@ function deriveDependencies(entities: BundleEntities): BundleDependency[] {
 export async function exportBundle(
   prisma: PrismaClient,
   opts: { name: string; version: string; origin?: string }
-): Promise<BundleManifest> {
+): Promise<BundleExport> {
   const originWhere = opts.origin !== undefined ? { origin: opts.origin } : {};
 
   const agentRows = await prisma.agent.findMany({
@@ -520,7 +529,7 @@ export async function exportBundle(
     });
   }
 
-  const plugins = await exportPlugins(prisma, agents);
+  const { plugins, warnings } = await exportPlugins(prisma, agents);
   const entities: BundleEntities = {
     agents,
     ...(plugins.length > 0 ? { plugins } : {}),
@@ -531,13 +540,14 @@ export async function exportBundle(
   // Assembly + hashing live in `@auto-swe/shared/bundle` (`buildBundleManifest`)
   // so this and the SDK's `defineBundle` cannot drift over what the v2 hash
   // covers — identity included.
-  return buildBundleManifest({
+  const manifest = buildBundleManifest({
     dependencies: deriveDependencies(entities),
     entities,
     name: opts.name,
     version: opts.version,
     ...(opts.origin !== undefined ? { source: opts.origin } : {}),
   });
+  return { manifest, warnings };
 }
 
 /**
@@ -545,10 +555,14 @@ export async function exportBundle(
  * to, at its newest approved commit, with the exported agents it is bound on. Hooks and the other
  * deployment decisions about a profile are not exported; the importing admin makes them.
  */
-async function exportPlugins(prisma: PrismaClient, agents: BundleAgent[]): Promise<BundlePlugin[]> {
+async function exportPlugins(
+  prisma: PrismaClient,
+  agents: BundleAgent[]
+): Promise<{ plugins: BundlePlugin[]; warnings: string[] }> {
+  const warnings: string[] = [];
   const exported = new Set(agents.map((a) => a.key));
   if (exported.size === 0) {
-    return [];
+    return { plugins: [], warnings };
   }
   const bound = await prisma.agent.findMany({
     orderBy: [{ key: 'asc' }, { version: 'desc' }],
@@ -573,7 +587,7 @@ async function exportPlugins(prisma: PrismaClient, agents: BundleAgent[]): Promi
     }
   }
   if (bindings.size === 0) {
-    return [];
+    return { plugins: [], warnings };
   }
   const profiles = await prisma.harnessProfile.findMany({
     orderBy: { name: 'asc' },
@@ -598,14 +612,21 @@ async function exportPlugins(prisma: PrismaClient, agents: BundleAgent[]): Promi
     if (!latest || !/^[0-9a-f]{40}$/.test(latest.commitSha)) {
       continue;
     }
+    // Only a profile that follows a branch or tag carries a ref; `HEAD` is what absent means.
+    // A ref the bundle cannot express is dropped and reported by name and fixed reason only: the
+    // ref is operator data and is never echoed.
+    const hasRef = typeof p.ref === 'string' && p.ref !== 'HEAD';
+    const refProblem = hasRef ? pluginRefProblem(p.ref as string) : null;
+    if (refProblem !== null) {
+      warnings.push(
+        `plugin "${p.name}": the profile's ref is not exportable (${refProblem}); the imported profile follows HEAD`
+      );
+    }
     plugins.push({
       bindings: (bindings.get(p.name) ?? []).sort().map((agentKey) => ({ agentKey })),
       contentHash: latest.contentHash,
       name: p.name,
-      // Only a profile that follows a branch or tag carries one; `HEAD` is what absent means.
-      ...(typeof p.ref === 'string' && p.ref !== 'HEAD' && pluginRefProblem(p.ref) === null
-        ? { ref: p.ref }
-        : {}),
+      ...(hasRef && refProblem === null ? { ref: p.ref as string } : {}),
       sha: latest.commitSha,
       source: {
         host: p.host,
@@ -615,7 +636,7 @@ async function exportPlugins(prisma: PrismaClient, agents: BundleAgent[]): Promi
       },
     });
   }
-  return plugins;
+  return { plugins, warnings };
 }
 
 /**

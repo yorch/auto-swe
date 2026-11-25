@@ -27,6 +27,7 @@ import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { navLabel } from '@/lib/navigation';
 import { cn } from '@/lib/utils';
+import { visibleText } from '@/lib/visibleText';
 import { BundlePreviewModal } from './BundlePreviewModal';
 
 const SEMVER = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
@@ -61,6 +62,7 @@ export default function StudioBundlesPage() {
   const [installDone, setInstallDone] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportDone, setExportDone] = useState<string | null>(null);
+  const [exportWarnings, setExportWarnings] = useState<string[]>([]);
 
   async function handlePreview() {
     setInstallError(null);
@@ -106,6 +108,7 @@ export default function StudioBundlesPage() {
   async function handleExport() {
     setExportError(null);
     setExportDone(null);
+    setExportWarnings([]);
     if (!exportForm.name.trim()) {
       setExportError('Give the bundle a name.');
       return;
@@ -115,7 +118,7 @@ export default function StudioBundlesPage() {
       return;
     }
     try {
-      const manifest = await exportBundle.mutateAsync({
+      const { manifest, warnings } = await exportBundle.mutateAsync({
         name: exportForm.name.trim(),
         origin: exportForm.origin || undefined,
         version: exportForm.version.trim(),
@@ -129,6 +132,7 @@ export default function StudioBundlesPage() {
       a.click();
       URL.revokeObjectURL(href);
       setExportDone(`Downloaded ${exportForm.name.trim()}.bundle.json.`);
+      setExportWarnings(warnings);
     } catch (e) {
       setExportError(errMsg(e, 'Export failed'));
     }
@@ -297,6 +301,28 @@ export default function StudioBundlesPage() {
           {exportDone && (
             <Alert className="mt-4" variant="success">
               {exportDone}
+            </Alert>
+          )}
+          {exportWarnings.length > 0 && (
+            <Alert
+              action={
+                <Button onClick={() => setExportWarnings([])} size="sm" variant="ghost">
+                  Dismiss
+                </Button>
+              }
+              className="mt-4"
+              title="Some plugin references could not be pinned"
+              variant="warning"
+            >
+              <p>
+                The exported file makes each imported plugin below follow the default branch of its
+                source instead of a fixed revision.
+              </p>
+              <ul className="mt-2 list-disc pl-5">
+                {exportWarnings.map((w) => (
+                  <li key={w}>{visibleText(w)}</li>
+                ))}
+              </ul>
             </Alert>
           )}
           <div className="mt-5 flex justify-end border-t border-ink-600 pt-4">
