@@ -637,6 +637,9 @@ describe.skipIf(Boolean(certDir))('SMTP over TLS', () => {
         delete env[key];
       }
     }
+    // CI forces colour on; the summary line is matched below as plain text.
+    delete env.FORCE_COLOR;
+    env.NO_COLOR = '1';
     env[CERT_DIR_ENV] = dir;
     env.NODE_EXTRA_CA_CERTS = path.join(dir, 'trusted-ca.pem');
     const root = path.resolve(path.dirname(here), '../../../..');
@@ -646,7 +649,8 @@ describe.skipIf(Boolean(certDir))('SMTP over TLS', () => {
       [vitestBin, 'run', '--root', root, path.relative(root, here)],
       { cwd: root, encoding: 'utf8', env, timeout: 150_000 }
     );
-    expect(`${result.stdout}\n${result.stderr}`).toMatch(/Tests\s+\d+ passed/);
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const output = `${result.stdout}\n${result.stderr}`;
+    expect(output).toMatch(/Tests\s+\d+ passed/);
+    expect(result.status, output).toBe(0);
   }, 180_000);
 });
