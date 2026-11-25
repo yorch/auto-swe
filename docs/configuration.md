@@ -761,9 +761,16 @@ only after an SMTP failure.
 - **Modes.** Plain SMTP; implicit TLS on port 465; STARTTLS on any other port; AUTH PLAIN and LOGIN. Certificate
   chain and hostname verification are on, and SNI is sent for host names. A private CA is trusted only through
   the `NODE_EXTRA_CA_CERTS` environment variable of the gateway process.
-- **No require-TLS setting.** STARTTLS is opportunistic: on a port other than 465, a relay that does not offer
-  it is used in plaintext, AUTH included, and an attacker who strips STARTTLS can downgrade the connection.
-  Use port 465, or a relay on a network where that cannot happen.
+- **`SMTP_REQUIRE_TLS`.** Environment-only, off by default; `true`, `1`, `yes` or `on` turn it on, `false`,
+  `0`, `no`, `off` or an empty value leave it off, and any other value counts as on, so a typo never leaves a
+  plaintext path open. Off, STARTTLS is opportunistic: on a port other than 465 a relay that does not offer it
+  is used in plaintext, AUTH included, and an attacker who strips STARTTLS can downgrade the connection. On,
+  port 465 stays implicit TLS, and any other port must upgrade with STARTTLS (the client sends STARTTLS
+  whether or not the relay advertises it) or the send is refused before AUTH or any message is written,
+  with nothing sent in plaintext. A refused join-request email is a failed attempt, retried with the usual
+  backoff. The switch applies to every SMTP send: sign-in and password-reset links, join-request
+  notifications and report digests. A plain-SMTP relay (a local MTA on port 25 without TLS) stops working
+  when it is on. The Resend fallback is HTTPS and is unaffected. Changing it needs a gateway and worker restart.
 - **Timeouts.** Join-request notifications use a bounded profile: 15 s to connect, 15 s for the greeting, 30 s
   of socket silence, and a 90 s deadline per message; Resend requests are aborted after 30 s. Sign-in email
   keeps nodemailer's defaults.

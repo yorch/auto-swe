@@ -81,7 +81,10 @@ interface ServerOptions {
   cert?: string;
   /** Require AUTH before MAIL FROM and accept exactly these credentials. */
   auth?: { user: string; pass: string; mechanisms: string[] };
-  /** starttls mode only: do not advertise STARTTLS (a relay that cannot upgrade). */
+  /**
+   * starttls mode only: a relay that cannot upgrade. It does not advertise STARTTLS and refuses the
+   * command (502), which is what a relay without it, or one an attacker strips it from, answers.
+   */
   hideStartTls?: boolean;
   /** Go silent: never answer from this point on. */
   stall?: 'handshake' | 'greeting' | 'after-starttls' | 'data';
@@ -190,7 +193,7 @@ async function startServer(options: ServerOptions, dir: string): Promise<SmtpSer
           send(`250${i === caps.length - 1 ? ' ' : '-'}${cap}`);
         }
       } else if (upper === 'STARTTLS') {
-        if (!secureContext) {
+        if (!secureContext || options.hideStartTls) {
           send('502 not available');
           return;
         }
@@ -361,6 +364,7 @@ const ENV_KEYS = [
   'SMTP_HOST',
   'SMTP_PASS',
   'SMTP_PORT',
+  'SMTP_REQUIRE_TLS',
   'SMTP_USER',
 ];
 
@@ -573,9 +577,9 @@ describe.skipIf(!certDir)('SMTP over TLS (child process, throwaway CA trusted)',
   });
 
   it('is exactly as permissive as the unbounded profile when a relay offers no STARTTLS', async () => {
-    // Neither profile has a requireTLS setting: a relay that does not advertise STARTTLS on a
-    // non-465 port is used in plaintext, by both. Parity is the point (the bounded profile must not
-    // be weaker), and this documents the shared limit.
+    // With SMTP_REQUIRE_TLS unset, a relay that does not advertise STARTTLS on a non-465 port is
+    // used in plaintext, by both profiles. Parity is the point (the bounded profile must not be
+    // weaker); the switch above is what closes it.
     const outcomes: Record<Profile, { sent: boolean; encrypted: boolean | undefined }> = {
       bounded: { encrypted: undefined, sent: false },
       unbounded: { encrypted: undefined, sent: false },
@@ -587,6 +591,130 @@ describe.skipIf(!certDir)('SMTP over TLS (child process, throwaway CA trusted)',
       outcomes[profile] = { encrypted: server.rec.delivered[0]?.encrypted, sent: result.sent };
     }
     expect(outcomes.bounded).toEqual(outcomes.unbounded);
+  });
+
+  describe('SMTP_REQUIRE_TLS', () => {
+    /** Nothing but the greeting and capability exchange may have crossed the wire in clear. */
+    const expectNothingSensitiveInClear = (server: SmtpServer) => {
+      expect(server.rec.delivered).toHaveLength(0);
+      expect(server.rec.auths).toHaveLength(0);
+      expect(server.rec.mailEncrypted).toHaveLength(0);
+      expect(server.rec.commands.filter((c) => /^(AUTH|MAIL|RCPT|DATA)/i.test(c))).toEqual([]);
+    };
+    const creds = { pass: 's3cret', user: 'mailer' } as const;
+    const authRelay = { auth: { mechanisms: ['PLAIN', 'LOGIN'], ...creds } };
+
+    describe.each(PROFILES)('%s profile', (profile) => {
+      it('refuses a relay that does not offer STARTTLS: no AUTH, no message, nothing in clear', async () => {
+        const server = await start({
+          ...authRelay,
+          cert: 'good',
+          hideStartTls: true,
+          mode: 'starttls',
+        });
+        configure(server.port, creds);
+        process.env.SMTP_REQUIRE_TLS = 'true';
+        expect((await attempt(profile)).sent).toBe(false);
+        expectNothingSensitiveInClear(server);
+      });
+
+      it('refuses a plain relay (no TLS at all) the same way', async () => {
+        const server = await start({ ...authRelay, mode: 'plain' });
+        configure(server.port, creds);
+        process.env.SMTP_REQUIRE_TLS = '1';
+        expect((await attempt(profile)).sent).toBe(false);
+        expectNothingSensitiveInClear(server);
+      });
+
+      it('refuses when the STARTTLS command itself is stripped (advertised, then refused)', async () => {
+        // Advertises STARTTLS but has no certificate, so it answers the command with a 502: what
+        // an attacker who blocks the upgrade looks like to the client.
+        const server = await start({ ...authRelay, mode: 'starttls' });
+        configure(server.port, creds);
+        process.env.SMTP_REQUIRE_TLS = 'true';
+        expect((await attempt(profile)).sent).toBe(false);
+        expectNothingSensitiveInClear(server);
+      });
+
+      it('still delivers through a relay that upgrades, with AUTH only over TLS', async () => {
+        const server = await start({ ...authRelay, cert: 'good', mode: 'starttls' });
+        configure(server.port, creds);
+        process.env.SMTP_REQUIRE_TLS = 'true';
+        expect(await attempt(profile)).toEqual({ sent: true });
+        expect(server.rec.auths).toHaveLength(1);
+        expect(server.rec.auths[0]).toMatchObject({ encrypted: true, ok: true });
+        expect(server.rec.mailEncrypted).toEqual([true]);
+        expectMessage(server.rec.delivered[0]);
+        expect(server.rec.delivered[0]?.encrypted).toBe(true);
+      });
+
+      it('leaves implicit TLS (port 465) working', async () => {
+        const server = await start({ ...authRelay, cert: 'good', mode: 'implicit' });
+        secureOverride.value = true;
+        configure(server.port, creds);
+        process.env.SMTP_REQUIRE_TLS = 'true';
+        expect(await attempt(profile)).toEqual({ sent: true });
+        expect(server.rec.delivered[0]?.encrypted).toBe(true);
+      });
+
+      it('does not require TLS when the switch is explicitly off', async () => {
+        const server = await start({ cert: 'good', hideStartTls: true, mode: 'starttls' });
+        configure(server.port);
+        process.env.SMTP_REQUIRE_TLS = 'false';
+        expect(await attempt(profile)).toEqual({ sent: true });
+        expect(server.rec.delivered[0]?.encrypted).toBe(false);
+      });
+
+      it('treats a value it cannot read as on, so a typo never opens a plaintext path', async () => {
+        const server = await start({ cert: 'good', hideStartTls: true, mode: 'starttls' });
+        configure(server.port);
+        process.env.SMTP_REQUIRE_TLS = 'ture';
+        expect((await attempt(profile)).sent).toBe(false);
+        expect(server.rec.delivered).toHaveLength(0);
+      });
+    });
+
+    it('throws for sign-in email (it shares the transport) instead of sending in clear', async () => {
+      const server = await start({
+        ...authRelay,
+        cert: 'good',
+        hideStartTls: true,
+        mode: 'starttls',
+      });
+      configure(server.port, creds);
+      process.env.SMTP_REQUIRE_TLS = 'true';
+      await expect(
+        sendViaConfiguredTransport(message, { continueOnError: false })
+      ).rejects.toThrow();
+      expectNothingSensitiveInClear(server);
+    });
+
+    it('is a refusal, not an unknown outcome, for the notification path', async () => {
+      const server = await start({
+        ...authRelay,
+        cert: 'good',
+        hideStartTls: true,
+        mode: 'starttls',
+      });
+      configure(server.port, creds);
+      process.env.SMTP_REQUIRE_TLS = 'true';
+      const result = await sendNotificationEmailsEach('test', [message], 5000);
+      expect(result).toMatchObject({ configured: true, delivered: [], failed: 1, unknown: 0 });
+      expectNothingSensitiveInClear(server);
+    });
+
+    it('does not rebuild the shared sign-in transporter around a stale setting', async () => {
+      const plain = await start({ cert: 'good', hideStartTls: true, mode: 'starttls' });
+      configure(plain.port);
+      expect((await sendViaConfiguredTransport(message, { continueOnError: true })).sent).toBe(
+        true
+      );
+      process.env.SMTP_REQUIRE_TLS = 'true';
+      expect((await sendViaConfiguredTransport(message, { continueOnError: true })).sent).toBe(
+        false
+      );
+      expect(plain.rec.delivered).toHaveLength(1);
+    });
   });
 
   describe('the deadline over TLS', () => {

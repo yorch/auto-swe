@@ -196,6 +196,7 @@ SMTP_PORT=587
 SMTP_USER=postmaster@example.com
 SMTP_PASS=<from secrets manager>
 AUTH_FROM_EMAIL=auth@example.com
+# SMTP_REQUIRE_TLS=true   # refuse any SMTP session that cannot be encrypted (see configuration.md)
 # Option B — Resend
 # RESEND_API_KEY=re_...
 # AUTH_FROM_EMAIL=auth@example.com

@@ -54,16 +54,22 @@ export const NOTIFICATION_SMTP_TIMEOUTS = {
 let defaultTransporter: { key: string; transporter: Transporter } | undefined;
 
 function smtpOptions(socket?: net.Socket) {
-  const { authFromEmail, smtpHost, smtpPass, smtpPort, smtpUser } = resolveAuthEmailConfig();
+  const { authFromEmail, smtpHost, smtpPass, smtpPort, smtpRequireTls, smtpUser } =
+    resolveAuthEmailConfig();
   if (!(smtpHost && smtpPort && authFromEmail)) {
     return null;
   }
   return {
-    key: JSON.stringify([smtpHost, smtpPort, smtpUser, smtpPass]),
+    key: JSON.stringify([smtpHost, smtpPort, smtpUser, smtpPass, smtpRequireTls]),
     options: {
       auth: smtpUser && smtpPass ? { pass: smtpPass, user: smtpUser } : undefined,
       host: smtpHost,
       port: smtpPort,
+      // `SMTP_REQUIRE_TLS`: on a STARTTLS port nodemailer sends STARTTLS whether or not the relay
+      // advertises it (an attacker can strip the advertisement) and refuses the session unless the
+      // upgrade succeeds, so a relay without it is never used in plaintext and never sees AUTH. A
+      // no-op on 465, which is encrypted from the first byte.
+      requireTLS: smtpRequireTls,
       // STARTTLS on 587, implicit TLS on 465. Match real-world provider defaults.
       secure: smtpPort === 465,
       ...(socket ? { socket, ...NOTIFICATION_SMTP_TIMEOUTS } : {}),

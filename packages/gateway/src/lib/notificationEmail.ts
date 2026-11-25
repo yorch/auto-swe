@@ -4,7 +4,8 @@
  * share the sign-in transport resolution in `authEmail.ts` but use its BOUNDED profile (finite
  * connection timeouts and an abort signal) so that one slow relay cannot hold an outbox row past
  * its lease. This module only reports, per message, whether a transport accepted it, refused it or
- * left the outcome unknown; what a failure means (retry with backoff, skip, warn once) is decided
+ * left the outcome unknown (a deadline, or the caller's abort signal when the process is closing);
+ * what a failure means (retry with backoff, skip, warn once) is decided
  * by the outbox poller. It never throws.
  */
 import {
@@ -35,17 +36,28 @@ type SendVerdict = 'accepted' | 'refused' | 'unknown';
 
 async function sendWithDeadline(
   message: NotificationEmail,
-  deadlineMs: number
+  deadlineMs: number,
+  outer?: AbortSignal
 ): Promise<SendVerdict> {
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
+  let onOuterAbort: (() => void) | undefined;
   const expired = new Promise<'unknown'>((resolve) => {
-    timer = setTimeout(() => {
+    const abandon = () => {
       // Abort first: it destroys the SMTP socket and forbids the Resend fallback, so the send that
       // loses the race below cannot go on in the background.
       controller.abort();
       resolve('unknown');
-    }, deadlineMs);
+    };
+    timer = setTimeout(abandon, deadlineMs);
+    // The caller's own abort (a closing gateway) abandons the send exactly as the deadline does.
+    if (outer) {
+      onOuterAbort = abandon;
+      outer.addEventListener('abort', abandon, { once: true });
+      if (outer.aborted) {
+        abandon();
+      }
+    }
   });
   try {
     const verdict = await Promise.race([
@@ -65,6 +77,9 @@ async function sendWithDeadline(
     return controller.signal.aborted && verdict !== 'accepted' ? 'unknown' : verdict;
   } finally {
     clearTimeout(timer);
+    if (outer && onOuterAbort) {
+      outer.removeEventListener('abort', onOuterAbort);
+    }
   }
 }
 
@@ -80,6 +95,11 @@ export interface EachEmailResult {
    * delivered anyway.
    */
   unknown: number;
+  /**
+   * True when the caller's `signal` aborted: the send in flight, if any, was abandoned (counted in
+   * `failed` and `unknown`) and the messages after it were never attempted.
+   */
+  aborted: boolean;
 }
 
 /**
@@ -91,17 +111,21 @@ export interface EachEmailResult {
 export async function sendNotificationEmailsEach(
   kind: string,
   messages: readonly NotificationEmail[],
-  deadlineMs: number = NOTIFICATION_SEND_DEADLINE_MS
+  deadlineMs: number = NOTIFICATION_SEND_DEADLINE_MS,
+  signal?: AbortSignal
 ): Promise<EachEmailResult> {
   if (!emailTransportConfigured()) {
-    return { configured: false, delivered: [], failed: 0, unknown: 0 };
+    return { aborted: false, configured: false, delivered: [], failed: 0, unknown: 0 };
   }
   const delivered: string[] = [];
   let failed = 0;
   let unknown = 0;
   for (const message of messages) {
+    if (signal?.aborted) {
+      break;
+    }
     try {
-      const verdict = await sendWithDeadline(message, deadlineMs);
+      const verdict = await sendWithDeadline(message, deadlineMs, signal);
       if (verdict === 'accepted') {
         delivered.push(message.to);
       } else {
@@ -114,12 +138,13 @@ export async function sendNotificationEmailsEach(
       failed += 1;
     }
   }
+  const aborted = signal?.aborted === true;
   if (failed > 0) {
     console.warn(
-      `[${kind}] ${failed} of ${messages.length} email(s) were not accepted${unknown > 0 ? ` (${unknown} gave no answer in time and may still arrive)` : ''}`
+      `[${kind}] ${failed} of ${messages.length} email(s) were not accepted${unknown > 0 ? ` (${unknown} gave no answer${aborted ? ' before the process stopped' : ' in time'} and may still arrive)` : ''}`
     );
   }
-  return { configured: true, delivered, failed, unknown };
+  return { aborted, configured: true, delivered, failed, unknown };
 }
 
 /** Escapes text for an HTML body. Every person-written string goes through this. */

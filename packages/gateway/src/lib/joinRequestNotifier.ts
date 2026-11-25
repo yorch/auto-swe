@@ -1,6 +1,11 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import type { PrismaClient } from '@auto-swe/shared';
 import { resolveSetting } from '@auto-swe/shared/config';
+import {
+  currentKeyVersion,
+  deriveSubkey,
+  deriveSubkeyForVersion,
+} from '@auto-swe/shared/lib/crypto';
 import {
   resolveBetterAuthConfig,
   resolveSlackBotTokenForSlackChannel,
@@ -74,6 +79,14 @@ export interface DeliveryDeps {
   shouldStop?: () => boolean;
   /** Replaces the per-message email deadline (`NOTIFICATION_SEND_DEADLINE_MS`). Tests only. */
   emailDeadlineMs?: number;
+  /**
+   * Aborts a send that is in flight, for a gateway that is closing. An email send abandoned this
+   * way has an unknown outcome, exactly like one that hit its deadline: the delivery ends as
+   * `interrupted` (no failed attempt counted) and the recipient is not recorded, so the next
+   * attempt sends to it again. It may already have been delivered, which is the at-least-once
+   * duplicate the module comment on `sendEach` describes.
+   */
+  signal?: AbortSignal;
 }
 
 const MESSAGE_MAX_CHARS = 500;
@@ -96,15 +109,67 @@ function webBaseUrl(): string {
   return resolveBetterAuthConfig().clientOrigin.replace(/\/+$/, '');
 }
 
+/** The HKDF purpose string of the key `reachedKey` signs with; never reuse it for anything else. */
+const REACHED_KEY_PURPOSE = 'auto-swe/join-request-reached/v1';
+/** Marks the keyed form, so it can never be mistaken for the 32-hex unkeyed form it replaced. */
+const REACHED_KEYED_PREFIX = 'k1:';
+
+function normaliseAddress(address: string): string {
+  return address.trim().toLowerCase();
+}
+
+function keyedReached(key: Buffer, address: string): string {
+  return `${REACHED_KEYED_PREFIX}${createHmac('sha256', key)
+    .update(normaliseAddress(address))
+    .digest('hex')
+    .slice(0, 32)}`;
+}
+
 /**
- * What `reached` stores for an address: a hash of the lower-cased address, so a row at rest and an
- * export of it name nobody, and a retry still recognises who it already reached.
+ * What `reached` stores for an address: a keyed hash (HMAC-SHA256, truncated to 128 bits) of the
+ * lower-cased address. The key is derived from `CONFIG_ENCRYPTION_KEY` for this one purpose
+ * (HKDF-SHA256, domain separated; the encryption key itself is never the MAC key), so a row at rest,
+ * an export of it, and the users table together cannot be used to test a guessed address: that
+ * needs the key. A retry still recognises who it already reached, because the same key yields the
+ * same value. The only form ever written.
  */
 export function reachedKey(address: string): string {
+  return keyedReached(deriveSubkey(REACHED_KEY_PURPOSE).key, address);
+}
+
+/**
+ * The unkeyed form earlier builds wrote: a SHA-256 of the lower-cased address with a fixed prefix.
+ * Read, never written, so a row queued before the keyed form existed does not send again to a
+ * recipient it already reached.
+ */
+function legacyReachedKey(address: string): string {
   return createHash('sha256')
-    .update(`join-request-reached:${address.trim().toLowerCase()}`)
+    .update(`join-request-reached:${normaliseAddress(address)}`)
     .digest('hex')
     .slice(0, 32);
+}
+
+/**
+ * Every spelling under which `address` counts as already reached: the keyed form under the
+ * current `CONFIG_ENCRYPTION_KEY`, under `CONFIG_ENCRYPTION_KEY_PREVIOUS` while a rotation is in
+ * flight, and the legacy unkeyed form. The first element is the one to write.
+ *
+ * After the previous key is dropped, an old-key entry no longer matches: a row still pending
+ * across that moment can send once more to a recipient it had reached (a duplicate, never a
+ * missed recipient). Rows do not live long enough for that to matter in practice, since they retry
+ * for hours and are purged after the retention period.
+ */
+export function reachedKeyForms(address: string): string[] {
+  const forms = [reachedKey(address)];
+  const version = currentKeyVersion();
+  if (version > 1) {
+    const previous = deriveSubkeyForVersion(REACHED_KEY_PURPOSE, version - 1);
+    if (previous) {
+      forms.push(keyedReached(previous, address));
+    }
+  }
+  forms.push(legacyReachedKey(address));
+  return forms;
 }
 
 async function loadRequest(prisma: PrismaClient, requestId: string) {
@@ -273,7 +338,8 @@ function warnNoTransport(channel: 'email' | 'slack'): void {
  * ACCEPTED the message, so a message whose outcome is unknown (abandoned at the send deadline, the
  * connection lost after the relay read it, a crash before `persistReached`) is not recorded and
  * the retry sends it again. That message may already have been delivered, and then the recipient
- * gets a second copy. No other recipient is repeated.
+ * gets a second copy. No other recipient is repeated. A recipient counts as reached under any form
+ * of its key (`reachedKeyForms`); only the current keyed form is written.
  */
 async function sendEach(
   messages: Array<Rendered & { to: string }>,
@@ -284,8 +350,8 @@ async function sendEach(
   const done = new Set(reached);
   let failed = false;
   for (const message of messages) {
-    const key = reachedKey(message.to);
-    if (done.has(key)) {
+    const [key = '', ...otherForms] = reachedKeyForms(message.to);
+    if (done.has(key) || otherForms.some((form) => done.has(form))) {
       continue;
     }
     if (deps.shouldStop?.()) {
@@ -297,7 +363,8 @@ async function sendEach(
     const result = await sendNotificationEmailsEach(
       'join-request-notify',
       [message],
-      deps.emailDeadlineMs
+      deps.emailDeadlineMs,
+      deps.signal
     );
     if (!result.configured) {
       warnNoTransport('email');
@@ -307,6 +374,10 @@ async function sendEach(
       done.add(key);
       reached = mergeReached(reached, [key]);
       await deps.persistReached?.(reached);
+    } else if (result.aborted === true) {
+      // Abandoned because the gateway is closing, not because the recipient failed: hand the row
+      // back unpenalised. This recipient's outcome is unknown, so it is not recorded.
+      return { kind: 'interrupted', reached };
     } else {
       failed = true;
     }

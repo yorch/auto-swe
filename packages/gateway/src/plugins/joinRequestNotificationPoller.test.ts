@@ -7,6 +7,8 @@ import {
   createNotificationPoller,
   POLL_INTERVAL_MS,
   PURGE_INTERVAL_MS,
+  STOP_ABORT_GRACE_MS,
+  STOP_WAIT_MS,
   startJoinRequestNotificationPoller,
 } from './joinRequestNotificationPoller.js';
 
@@ -79,5 +81,88 @@ describe('a stopping poller tells the tick that is running', () => {
     await stopped;
     await vi.advanceTimersByTimeAsync(100);
     expect(tick).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('a stopping poller aborts a send that outlasts the grace', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const empty = {
+    claimed: 0,
+    delivered: 0,
+    failed: 0,
+    leaseLost: 0,
+    purged: 0,
+    released: 0,
+    skipped: 0,
+  };
+
+  function pollerWith(tick: Parameters<typeof createNotificationPoller>[0]['tick']) {
+    return createNotificationPoller({
+      batchSize: 20,
+      firstDelayMs: 1,
+      intervalMs: 5,
+      log: { error: vi.fn() },
+      tick,
+    });
+  }
+
+  it('leaves the abort grace well inside the wait a closing server allows', () => {
+    expect(STOP_ABORT_GRACE_MS).toBeLessThan(STOP_WAIT_MS);
+  });
+
+  it('aborts the signal only once the grace has passed, then lets the tick write its row back', async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    let wroteBack = false;
+    const poller = pollerWith(async (_stopping, s) => {
+      signal = s;
+      // The tick waits on an in-flight send until it is aborted, then writes the row back.
+      await new Promise<void>((resolve) => s.addEventListener('abort', () => resolve()));
+      wroteBack = true;
+      return empty;
+    });
+    poller.start();
+    await vi.advanceTimersByTimeAsync(2);
+    const stopped = poller.stop();
+    await vi.advanceTimersByTimeAsync(STOP_ABORT_GRACE_MS - 1);
+    expect(signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(signal?.aborted).toBe(true);
+    await stopped;
+    expect(wroteBack).toBe(true);
+  });
+
+  it('never aborts a send that finishes within the grace', async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    let finish: () => void = () => undefined;
+    const poller = pollerWith(async (_stopping, s) => {
+      signal = s;
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      return empty;
+    });
+    poller.start();
+    await vi.advanceTimersByTimeAsync(2);
+    const stopped = poller.stop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    finish();
+    await stopped;
+    await vi.advanceTimersByTimeAsync(STOP_ABORT_GRACE_MS * 2);
+    expect(signal?.aborted).toBe(false);
+  });
+
+  it('stops at once, with nothing to abort, when no tick is running', async () => {
+    vi.useFakeTimers();
+    const tick = vi.fn(async () => empty);
+    const poller = pollerWith(tick);
+    poller.start();
+    await expect(poller.stop()).resolves.toBeUndefined();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(tick).not.toHaveBeenCalled();
   });
 });

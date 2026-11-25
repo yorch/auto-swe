@@ -7,7 +7,13 @@ function transporterFor(config: ReturnType<typeof resolveAuthEmailConfig>): Tran
   if (!(config.smtpHost && config.smtpPort && config.authFromEmail)) {
     return null;
   }
-  const key = JSON.stringify([config.smtpHost, config.smtpPort, config.smtpUser, config.smtpPass]);
+  const key = JSON.stringify([
+    config.smtpHost,
+    config.smtpPort,
+    config.smtpUser,
+    config.smtpPass,
+    config.smtpRequireTls === true,
+  ]);
   if (cached?.key !== key) {
     cached = {
       key,
@@ -18,6 +24,8 @@ function transporterFor(config: ReturnType<typeof resolveAuthEmailConfig>): Tran
             : undefined,
         host: config.smtpHost,
         port: config.smtpPort,
+        // `SMTP_REQUIRE_TLS`: STARTTLS or no send, never plaintext (a no-op on implicit-TLS 465).
+        requireTLS: config.smtpRequireTls === true,
         secure: config.smtpPort === 465,
       }),
     };

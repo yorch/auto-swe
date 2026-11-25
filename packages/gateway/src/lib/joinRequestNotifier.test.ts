@@ -1,15 +1,26 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   postSlackMessage: vi.fn(async (..._args: unknown[]) => '1.2' as string | null),
   resolveSetting: vi.fn(async (..._args: unknown[]) => true as boolean),
   sendEach: vi.fn(
-    async (_kind: string, messages: ReadonlyArray<{ to: string }>) =>
+    async (
+      _kind: string,
+      messages: ReadonlyArray<{ to: string }>,
+      _deadlineMs?: number,
+      _signal?: AbortSignal
+    ) =>
       ({
         configured: true,
         delivered: messages.map((m) => m.to),
         failed: 0,
-      }) as { configured: boolean; delivered: string[]; failed: number }
+      }) as {
+        aborted?: boolean;
+        configured: boolean;
+        delivered: string[];
+        failed: number;
+        unknown?: number;
+      }
   ),
   slackToken: vi.fn(async (..._args: unknown[]) => 'xoxb-test' as string | null),
 }));
@@ -32,13 +43,43 @@ vi.mock('./notificationEmail.js', async (orig) => ({
   sendNotificationEmailsEach: mocks.sendEach,
 }));
 
+import { createHash } from 'node:crypto';
+import { _resetKeyCacheForTests } from '@auto-swe/shared/lib/crypto';
 import {
   type DeliveryOutcome,
   deliverJoinRequestNotification,
   type OutboxRow,
   reachedKey,
+  reachedKeyForms,
   resetDeliveryWarningsForTests,
 } from './joinRequestNotifier.js';
+
+const KEY_ENV = [
+  'CONFIG_ENCRYPTION_KEY',
+  'CONFIG_ENCRYPTION_KEY_PREVIOUS',
+  'CONFIG_ENCRYPTION_KEY_VERSION',
+];
+const keyA = Buffer.alloc(32, 7).toString('base64');
+const keyB = Buffer.alloc(32, 9).toString('base64');
+
+/** Sets the encryption key environment and drops the cached key material. */
+function useKeys(env: Record<string, string | undefined>): void {
+  for (const name of KEY_ENV) {
+    if (env[name] === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = env[name];
+    }
+  }
+  _resetKeyCacheForTests();
+}
+
+/** The unkeyed form earlier builds wrote. */
+const legacyKey = (address: string) =>
+  createHash('sha256')
+    .update(`join-request-reached:${address.trim().toLowerCase()}`)
+    .digest('hex')
+    .slice(0, 32);
 
 const REQUESTER_EMAIL = 'requester@example.com';
 
@@ -103,7 +144,16 @@ function sent(): Array<{ to: string; subject: string; text: string; html: string
   );
 }
 
+const savedKeyEnv: Record<string, string | undefined> = {};
+beforeAll(() => {
+  for (const name of KEY_ENV) {
+    savedKeyEnv[name] = process.env[name];
+  }
+});
+afterAll(() => useKeys(savedKeyEnv));
+
 beforeEach(() => {
+  useKeys({ CONFIG_ENCRYPTION_KEY: keyA });
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   mocks.resolveSetting.mockResolvedValue(true);
   mocks.slackToken.mockResolvedValue('xoxb-test');
@@ -415,5 +465,97 @@ describe('email transport', () => {
     );
     expect(out.kind).toBe('delivered');
     expect(mocks.sendEach).not.toHaveBeenCalled();
+  });
+});
+
+describe('the reached key', () => {
+  it('is keyed: the same address gives a different value under a different key, and no plain hash of it', () => {
+    const a = reachedKey('Someone@Example.com ');
+    expect(reachedKey('someone@example.com')).toBe(a);
+    expect(a).toMatch(/^k1:[0-9a-f]{32}$/);
+    expect(a).not.toBe(legacyKey('someone@example.com'));
+    expect(a).not.toContain(legacyKey('someone@example.com'));
+    useKeys({ CONFIG_ENCRYPTION_KEY: keyB });
+    expect(reachedKey('someone@example.com')).not.toBe(a);
+  });
+
+  it('is not derived from the raw encryption key', () => {
+    // An HMAC keyed with the raw key (no domain-separated derivation) must not equal it.
+    const raw = createHash('sha256').update(Buffer.from(keyA, 'base64')).digest('hex');
+    expect(reachedKey('someone@example.com')).not.toContain(raw.slice(0, 32));
+    const forms = reachedKeyForms('someone@example.com');
+    expect(forms[0]).toBe(reachedKey('someone@example.com'));
+    expect(forms.at(-1)).toBe(legacyKey('someone@example.com'));
+  });
+
+  it('writes only the keyed form, and skips a recipient recorded in the legacy form', async () => {
+    const prisma = makePrisma(request(), { reviewers: ['a@example.com', 'b@example.com'] });
+    const out = (await deliver(
+      prisma,
+      row({ audience: 'TEAM_REVIEWERS', reached: [legacyKey('A@example.com')] })
+    )) as Extract<DeliveryOutcome, { kind: 'delivered' }>;
+    expect(out.kind).toBe('delivered');
+    expect(sent().map((m) => m.to)).toEqual(['b@example.com']);
+    expect(out.reached).toEqual([legacyKey('a@example.com'), reachedKey('b@example.com')]);
+    expect(out.reached.filter((k) => !k.startsWith('k1:'))).toEqual([legacyKey('a@example.com')]);
+  });
+
+  it('after a rotation, still recognises hashes written under the previous key', async () => {
+    useKeys({ CONFIG_ENCRYPTION_KEY: keyA });
+    const underOld = reachedKey('a@example.com');
+    useKeys({
+      CONFIG_ENCRYPTION_KEY: keyB,
+      CONFIG_ENCRYPTION_KEY_PREVIOUS: keyA,
+      CONFIG_ENCRYPTION_KEY_VERSION: '2',
+    });
+    expect(reachedKey('a@example.com')).not.toBe(underOld);
+    const out = await deliver(
+      makePrisma(request(), { reviewers: ['a@example.com'] }),
+      row({ audience: 'TEAM_REVIEWERS', reached: [underOld] })
+    );
+    expect(out.kind).toBe('delivered');
+    expect(mocks.sendEach).not.toHaveBeenCalled();
+  });
+
+  it('once the previous key is gone, an old-key entry costs one duplicate and loses no recipient', async () => {
+    useKeys({ CONFIG_ENCRYPTION_KEY: keyA });
+    const underOld = reachedKey('a@example.com');
+    useKeys({ CONFIG_ENCRYPTION_KEY: keyB, CONFIG_ENCRYPTION_KEY_VERSION: '2' });
+    const out = (await deliver(
+      makePrisma(request(), { reviewers: ['a@example.com', 'b@example.com'] }),
+      row({ audience: 'TEAM_REVIEWERS', reached: [underOld] })
+    )) as Extract<DeliveryOutcome, { kind: 'delivered' }>;
+    // Both are sent: `a` again (the one duplicate), `b` for the first time.
+    expect(sent().map((m) => m.to)).toEqual(['a@example.com', 'b@example.com']);
+    expect(out.reached).toContain(reachedKey('a@example.com'));
+    expect(out.reached).toContain(reachedKey('b@example.com'));
+  });
+});
+
+describe('a closing gateway', () => {
+  it('hands the row back as interrupted, recording who was reached and not the aborted recipient', async () => {
+    const controller = new AbortController();
+    mocks.sendEach.mockImplementation(async (_k, messages) => {
+      if (messages[0]?.to === 'b@example.com') {
+        controller.abort();
+        return { aborted: true, configured: true, delivered: [], failed: 1, unknown: 1 };
+      }
+      return {
+        aborted: false,
+        configured: true,
+        delivered: [messages[0]?.to ?? ''],
+        failed: 0,
+        unknown: 0,
+      };
+    });
+    const persisted: string[][] = [];
+    const out = await deliver(
+      makePrisma(request(), { reviewers: ['a@example.com', 'b@example.com', 'c@example.com'] }),
+      row({ audience: 'TEAM_REVIEWERS' }),
+      { persistReached: async (r: string[]) => void persisted.push(r), signal: controller.signal }
+    );
+    expect(out).toEqual({ kind: 'interrupted', reached: [reachedKey('a@example.com')] });
+    expect(sent().map((m) => m.to)).toEqual(['a@example.com', 'b@example.com']);
+    expect(mocks.sendEach.mock.calls[0]?.[3]).toBe(controller.signal);
   });
 });

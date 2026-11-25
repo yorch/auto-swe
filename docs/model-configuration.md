@@ -549,6 +549,12 @@ interrupted run leaves a mix of versions that a re-run finishes.
 current one. That is the only state a rotation passes through; a general version→key map would let
 arbitrarily many retired keys linger, which is the opposite of the point.
 
+The key also seeds the keyed hashes of the join-request notification outbox (see
+[teams.md](./teams.md#team-directory-and-join-requests)). Those rows are not re-encrypted by
+`yarn keys:rotate`. While `CONFIG_ENCRYPTION_KEY_PREVIOUS` is set the hashes written under it are still
+recognised; once it is dropped, a join-request notification still pending that had reached some recipients
+under the old key sends each of them one more copy. No recipient is lost.
+
 **Do not drop the previous key while `yarn keys:rotate` still reports failures.** It exits non-zero
 and names each row it could not decrypt; those rows are left untouched and are unrecoverable if the
 key that wrote them is gone.
