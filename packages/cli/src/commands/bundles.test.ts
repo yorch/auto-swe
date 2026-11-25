@@ -123,6 +123,23 @@ describe('runBundlesCommand (gateway-backed)', () => {
     );
   });
 
+  it('export prints warnings to stderr and keeps stdout the manifest', async () => {
+    const manifest = { bundleSchemaVersion: 3, metadata: { name: 'x' } };
+    globalThis.fetch = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({ data: manifest, warnings: ['plugin "k": the ref is not exportable'] }),
+        }) as Response
+    ) as typeof fetch;
+    const code = await runBundlesCommand(['export', 'x', '1.0.0'], ENV);
+    expect(code).toBe(0);
+    expect(JSON.parse(stdoutWrites.join(''))).toEqual(manifest);
+    expect(stderrWrites.join('')).toBe('warning: plugin "k": the ref is not exportable\n');
+  });
+
   it('export requires both name and version', async () => {
     const code = await runBundlesCommand(['export', 'onlyname'], ENV);
     expect(code).toBe(1);

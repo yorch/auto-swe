@@ -264,8 +264,8 @@ export const bundleRoutes: FastifyPluginAsync<BundleRouteOptions> = async (fasti
     '/bundles/export',
     { onRequest: adminOnly, schema: { body: ExportBody } },
     async (request) => {
-      const manifest = await exportBundle(fastify.prisma, request.body);
-      return { data: manifest };
+      const { manifest, warnings } = await exportBundle(fastify.prisma, request.body);
+      return { data: manifest, warnings };
     }
   );
 

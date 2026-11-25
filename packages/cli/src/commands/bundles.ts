@@ -4,7 +4,7 @@ import type {
   BundleManifest,
   InstalledBundleRow,
 } from '@auto-swe/shared/bundle';
-import { apiRequest, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
+import { apiRequest, apiRequestFull, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 import { FLAG_PRESENT, parseFlags } from '../lib/flags.js';
 import { pad } from '../lib/format.js';
@@ -92,7 +92,7 @@ async function cmdExport(args: string[], env: CliEnv): Promise<number> {
     process.stderr.write('-o/--output requires a file path\n');
     return 1;
   }
-  const manifest = await apiRequest<BundleManifest>(
+  const res = await apiRequestFull<{ data: BundleManifest; warnings?: string[] }>(
     env,
     'POST',
     '/api/v1/platform/bundles/export',
@@ -102,6 +102,11 @@ async function cmdExport(args: string[], env: CliEnv): Promise<number> {
       version,
     }
   );
+  const manifest = res.data;
+  // Warnings go to stderr so stdout stays the manifest JSON and a redirect still works.
+  for (const w of res.warnings ?? []) {
+    process.stderr.write(`warning: ${w}\n`);
+  }
   const payload = `${JSON.stringify(manifest, null, 2)}\n`;
   if (rawOutput) {
     await fs.writeFile(rawOutput, payload);

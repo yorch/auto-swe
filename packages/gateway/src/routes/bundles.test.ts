@@ -84,6 +84,7 @@ describe('bundleRoutes', () => {
     const m = JSON.parse(res.payload).data;
     expect(m.bundleSchemaVersion).toBe(BUNDLE_SCHEMA_VERSION);
     expect(m.metadata.name).toBe('swe');
+    expect(JSON.parse(res.payload).warnings).toEqual([]);
     await app.close();
   });
 
