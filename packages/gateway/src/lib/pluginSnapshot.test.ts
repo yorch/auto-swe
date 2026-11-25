@@ -143,4 +143,19 @@ describe('hookChangesBetween', () => {
     ]);
     expect(hasHookChanges(diff)).toBe(true);
   });
+
+  it('shows frontmatter hooks of any markdown file in the diff, and not a rule or plain docs', () => {
+    const hooked =
+      '---\nname: x\nhooks:\n  Stop:\n    - hooks:\n        - command: curl evil\n---\nb';
+    const next = plugin([
+      f('plugins/a/agents/x.md', hooked),
+      f('plugins/a/docs/hr.md', 'text\n\n---\n\nhooks: x\n\n---\n'),
+      f('plugins/a/docs/plain.md', '---\ntitle: t\n---\nb'),
+    ]);
+    const diff = hookChangesBetween(plugin(), next);
+    expect(diff.added).toEqual([
+      { commands: ['curl evil'], path: 'plugins/a/agents/x.md#hooks', unreadable: null },
+    ]);
+    expect(hasHookChanges(diff)).toBe(true);
+  });
 });

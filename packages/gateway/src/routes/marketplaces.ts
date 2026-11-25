@@ -1,4 +1,4 @@
-import { warningsHash } from '@auto-swe/shared/lib/harnessProfile';
+import { projectPluginSkills, warningsHash } from '@auto-swe/shared/lib/harnessProfile';
 import {
   type CatalogEntryDto,
   checkMarketplaceSource,
@@ -19,7 +19,12 @@ import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
-import { HarnessProfileInvalid, type ProfileReadDeps } from '../lib/harnessProfileService.js';
+import {
+  HarnessProfileInvalid,
+  type ProfileReadDeps,
+  type ProjectPluginSkills,
+  projectProfileSkills,
+} from '../lib/harnessProfileService.js';
 import { sendError } from '../lib/httpErrors.js';
 import {
   type EntryProfileRead,
@@ -49,8 +54,12 @@ import { STATUS_BY_CODE } from './skillSources.js';
  *   POST   /api/v1/platform/marketplaces/:id/entries/approve     Create the single-plugin profile from the previewed entry
  *
  * MCP: the harness ignores a plugin's `.mcp.json`. Its HTTP servers are shown in the entry preview
- * as declared dependencies (an administrator points the agent's existing `mcpConnectionId` at a
- * matching `mcp` Connection); stdio servers are flagged unsupported. There is no mapping table.
+ * as declared dependencies. After approval an administrator maps each server to an `mcp`
+ * Connection in the plugin details; nothing is relayed to a run until it is mapped. stdio and sse
+ * servers cannot be loaded and are flagged unsupported.
+ *
+ * Approving an entry projects the plugin's skills for runtimes other than `claude-code`, like the
+ * folder approval; the response carries `projection`.
  */
 
 const Sha = z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/);
@@ -158,6 +167,8 @@ const locationOf = (s: {
 export interface MarketplaceRouteOptions {
   /** Test seam: replaces the fetch machinery and the scanners. */
   readDeps?: ProfileReadDeps;
+  /** Test seam: replaces the skill projection. */
+  projectSkills?: ProjectPluginSkills;
 }
 
 export const marketplaceRoutes: FastifyPluginAsync<MarketplaceRouteOptions> = async (
@@ -167,6 +178,7 @@ export const marketplaceRoutes: FastifyPluginAsync<MarketplaceRouteOptions> = as
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const adminOnly = requireAuth({ capability: 'platform.integrations.manage' });
   const readDeps = options.readDeps ?? {};
+  const projectSkills = options.projectSkills ?? (projectPluginSkills as ProjectPluginSkills);
   const sourceDeps: SkillSourceDeps | undefined = readDeps.source;
 
   /** A refused marketplace read as its fixed response; anything unexpected is rethrown. */
@@ -273,8 +285,10 @@ export const marketplaceRoutes: FastifyPluginAsync<MarketplaceRouteOptions> = as
       const taken = profiles.some(
         (p) => !!e.name && p !== own && p.name.toLowerCase() === e.name.toLowerCase()
       );
+      // The synthesis input of a `strict: false` entry is server-side only.
+      const { pluginManifest: _manifest, ...shown } = e;
       return {
-        ...e,
+        ...shown,
         nameTaken: taken,
         profile: own
           ? { latestVersion: own.latestVersion, name: own.name, status: own.status }
@@ -752,6 +766,21 @@ export const marketplaceRoutes: FastifyPluginAsync<MarketplaceRouteOptions> = as
           });
           return profile;
         });
+        // The approval stands whatever the projection does; its problems ride along.
+        const projection = await projectProfileSkills(
+          projectSkills,
+          fastify.prisma,
+          {
+            commitSha: read.sha,
+            createdById: actor.sub,
+            files: read.files,
+            manifest,
+            profileId: created.id,
+            profileName: created.name,
+            version: 1,
+          },
+          request.log
+        );
         return reply.status(201).send({
           data: {
             commitSha: read.sha,
@@ -762,6 +791,7 @@ export const marketplaceRoutes: FastifyPluginAsync<MarketplaceRouteOptions> = as
             status: created.status,
             version: 1,
           },
+          projection,
         });
       } catch (err) {
         if (isUniqueConstraintError(err)) {

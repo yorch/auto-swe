@@ -6,6 +6,7 @@ import {
   unpackFiles,
   warningsHash,
 } from '@auto-swe/shared/lib/harnessProfile';
+import { readMarketplace } from '@auto-swe/shared/lib/marketplace';
 import { SKILL_SOURCE_ERRORS, SkillSourceError } from '@auto-swe/shared/lib/skillSource';
 import { checkHarnessProfile } from '@auto-swe/shared/lib/skillSourceSync';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
@@ -36,10 +37,12 @@ import {
 } from '../lib/harnessProfileService.js';
 import { sendError } from '../lib/httpErrors.js';
 import { synthesizeEntryProfile } from '../lib/marketplaceService.js';
+import { pluginMcpDetail } from '../lib/pluginMcpMappings.js';
 import { setProjectedSkillsActive } from '../lib/pluginSkillPolicy.js';
 import { hasHookChanges, hookChangesBetween } from '../lib/pluginSnapshot.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
+import { registerPluginMcpMappingRoutes } from './pluginMcpMappings.js';
 import { STATUS_BY_CODE } from './skillSources.js';
 
 /**
@@ -58,6 +61,7 @@ import { STATUS_BY_CODE } from './skillSources.js';
  *   PATCH /api/v1/platform/harness-profiles/:name                Disable / re-enable, and the hook switch (`hooksEnabled`)
  *   POST  /api/v1/platform/harness-profiles/:name/check          Ask the host which commit the ref names now (what the sweep does)
  *   GET   /api/v1/platform/harness-profiles/:name/enablements    The teams that enabled the profile
+ *   PUT / DELETE /:name/mcp-mappings/:serverName                 Map a declared MCP server to a Connection (pluginMcpMappings.ts)
  *
  * There is no DELETE: an Agent may reference a profile by name, so a profile is disabled, not removed.
  */
@@ -207,15 +211,63 @@ export const harnessProfileRoutes: FastifyPluginAsync<HarnessProfileRouteOptions
   const projectSkills = options.projectSkills ?? (projectPluginSkills as ProjectPluginSkills);
 
   /**
+   * The manifest a `strict: false` marketplace entry stands in for, re-derived from the CURRENT
+   * catalog: the profile's marketplace source read at the source's pinned commit, the entry found
+   * by name. The synthesized `plugin.json` therefore follows the marketplace pin, which moves only
+   * through accept-update, so a catalog change is reviewed (and its hooks diffed) at that step,
+   * while a plain re-read of an unchanged pin rebuilds byte-identical content (`matchesVersion`).
+   * It is never taken from the stored version. Called only when the plugin folder has no
+   * `plugin.json` of its own; a strict or missing entry, a gone or disabled source, or an
+   * unreadable catalog fails closed.
+   */
+  const catalogPluginManifest = async (existing: ProfileRow): Promise<Record<string, unknown>> => {
+    const refuse = () => new HarnessProfileInvalid(['the plugin folder has no plugin.json']);
+    if (!existing.marketplaceSourceId) {
+      throw refuse();
+    }
+    try {
+      const source = await fastify.prisma.marketplaceSource.findUnique({
+        select: {
+          host: true,
+          owner: true,
+          path: true,
+          pinnedSha: true,
+          ref: true,
+          repo: true,
+          status: true,
+        },
+        where: { id: existing.marketplaceSourceId },
+      });
+      if (!source || source.status === 'DISABLED') {
+        throw refuse();
+      }
+      const read = await readMarketplace(source, { atSha: source.pinnedSha }, readDeps.source);
+      const entry = read.marketplace.entries.find((e) => e.name === existing.marketplaceEntry);
+      if (entry?.installable && !entry.strict && entry.pluginManifest) {
+        return entry.pluginManifest;
+      }
+    } catch {
+      // Any failure reading the catalog is the same refusal.
+    }
+    throw refuse();
+  };
+
+  /**
    * Re-read a stored profile's source. A profile approved from a marketplace entry stores the
    * plugin folder itself (no profile.json), so it is wrapped exactly as approving the entry did.
+   *
+   * A `plugin.json` the folder has always wins (strict behaviour, nothing synthesized). When it
+   * has none, the manifest is re-derived from the current catalog entry (see
+   * `catalogPluginManifest`), never from the stored snapshot.
    */
-  const readExisting = (
+  const readExisting = async (
     existing: ProfileRow,
     opts: { atSha?: string; expectSha?: string }
   ): Promise<ReadProfile> =>
     existing.marketplaceEntry
-      ? synthesizeEntryProfile(existing, existing.name, existing.description, opts, readDeps)
+      ? synthesizeEntryProfile(existing, existing.name, existing.description, opts, readDeps, () =>
+          catalogPluginManifest(existing)
+        )
       : readAndCheckProfile(existing, opts, readDeps);
 
   /** A refused read as its fixed response; anything unexpected is rethrown to the error handler. */
@@ -477,6 +529,8 @@ export const harnessProfileRoutes: FastifyPluginAsync<HarnessProfileRouteOptions
     };
   });
 
+  registerPluginMcpMappingRoutes(fastify, adminOnly);
+
   // GET /harness-profiles/:name
   app.get(
     '/harness-profiles/:name',
@@ -530,8 +584,14 @@ export const harnessProfileRoutes: FastifyPluginAsync<HarnessProfileRouteOptions
           ];
         }
       }
+      const mcp = await pluginMcpDetail(fastify.prisma, row.id, latestRow).catch(() => ({
+        mcpMappings: [],
+        mcpServers: [],
+        mcpUnreadable: [],
+      }));
       const detail: HarnessProfileDetail = {
         ...summaryOf(rest, dtos.find((v) => v.version === row.latestVersion) ?? null),
+        ...mcp,
         autoRunSources,
         boundAgents,
         enabledTeams,

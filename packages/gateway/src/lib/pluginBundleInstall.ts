@@ -109,9 +109,10 @@ function locationOf(plugin: BundlePlugin): SourceLocation {
     host: plugin.source.host ?? 'github.com',
     owner: plugin.source.owner,
     path: plugin.source.path ?? '',
-    // The bundle names a commit, not a ref; `HEAD` is the default branch a later update check
-    // follows. The read below is pinned to the commit and never resolves it.
-    ref: 'HEAD',
+    // The read is pinned to the commit and never resolves the ref. A created profile follows the
+    // bundle's `ref` (a branch or tag) for later update checks; without one, `HEAD`, the default
+    // branch. A reused profile keeps whatever ref it has.
+    ref: plugin.ref ?? 'HEAD',
     repo: plugin.source.repo,
   };
 }

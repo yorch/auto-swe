@@ -272,6 +272,51 @@ describe('installBundle with plugin references', () => {
     expect(ok.warnings).toContain("plugin 'acme-pack': ships a script");
   });
 
+  it('creates the profile on the bundle’s ref, still reading the exact commit', async () => {
+    const read = reader();
+    await installBundle(asArg(), manifestFor({ plugins: [plugin({ ref: 'release/1.x' })] }), {
+      allowUnverified: true,
+      installedById: 'u1',
+      pluginReader: read,
+    });
+    expect(read).toHaveBeenCalledWith(
+      { host: 'github.com', owner: 'Acme', path: 'plugins', ref: 'release/1.x', repo: 'Tools' },
+      { atSha: SHA }
+    );
+    expect(prisma.harnessProfile.create.mock.calls[0]?.[0].data).toMatchObject({
+      ref: 'release/1.x',
+    });
+  });
+
+  it('creates the profile on HEAD when the reference has no ref', async () => {
+    await installBundle(asArg(), manifestFor({ plugins: [plugin()] }), {
+      allowUnverified: true,
+      pluginReader: reader(),
+    });
+    expect(prisma.harnessProfile.create.mock.calls[0]?.[0].data).toMatchObject({ ref: 'HEAD' });
+  });
+
+  it('leaves a reused profile’s stored ref alone', async () => {
+    prisma.harnessProfile.findMany.mockResolvedValue([
+      { id: 'hp-9', latestVersion: 4, name: 'acme-pack', status: 'OK' },
+    ]);
+    prisma.harnessProfileVersion.findFirst.mockResolvedValue({ version: 4 });
+    await installBundle(asArg(), manifestFor({ plugins: [plugin({ ref: 'v2' })] }), {
+      allowUnverified: true,
+      pluginReader: reader(),
+    });
+    expect(prisma.harnessProfile.create).not.toHaveBeenCalled();
+    expect(prisma.harnessProfile.update).not.toHaveBeenCalled();
+  });
+
+  it('shows the ref in the preview', async () => {
+    const res = await previewBundle(asArg(), manifestFor({ plugins: [plugin({ ref: 'v2' })] }), {
+      allowUnverified: true,
+      pluginReader: reader(),
+    });
+    expect(res.plugins?.[0]).toMatchObject({ action: 'create', ref: 'v2' });
+  });
+
   it('reuses an approved profile with the same content and leaves its hook switch alone', async () => {
     prisma.harnessProfile.findMany.mockResolvedValue([
       { id: 'hp-9', latestVersion: 4, name: 'acme-pack', status: 'OK' },

@@ -16,6 +16,7 @@ import {
   type InstalledBundleRow,
   materializeBundleSpec,
   parseBundle,
+  pluginRefProblem,
   type TrustedKey,
   unsupportedBundleDependencies,
   validateBundleAgents,
@@ -581,6 +582,7 @@ async function exportPlugins(prisma: PrismaClient, agents: BundleAgent[]): Promi
       name: true,
       owner: true,
       path: true,
+      ref: true,
       repo: true,
       versions: {
         orderBy: { version: 'desc' },
@@ -600,6 +602,10 @@ async function exportPlugins(prisma: PrismaClient, agents: BundleAgent[]): Promi
       bindings: (bindings.get(p.name) ?? []).sort().map((agentKey) => ({ agentKey })),
       contentHash: latest.contentHash,
       name: p.name,
+      // Only a profile that follows a branch or tag carries one; `HEAD` is what absent means.
+      ...(typeof p.ref === 'string' && p.ref !== 'HEAD' && pluginRefProblem(p.ref) === null
+        ? { ref: p.ref }
+        : {}),
       sha: latest.commitSha,
       source: {
         host: p.host,
@@ -1091,6 +1097,8 @@ export interface BundlePreviewPlugin {
   action: 'create' | 'reuse' | 'conflict';
   name: string;
   sha: string;
+  /** The ref a created profile follows; absent when the reference names none (`HEAD`). */
+  ref?: string;
   contentHash: string;
   /** Hooks are off on a created profile; null for a reused one (its switch is not touched). */
   hooksEnabled: false | null;
@@ -1271,6 +1279,7 @@ async function previewPlugins(
       contentHash: plugin.contentHash,
       hooksEnabled: d.action === 'create' ? false : null,
       name: plugin.name,
+      ...(plugin.ref !== undefined ? { ref: plugin.ref } : {}),
       sha: plugin.sha,
       warnings: d.plan.warnings,
     });

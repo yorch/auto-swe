@@ -1,5 +1,6 @@
 import {
   autoRunSourcesOf,
+  declaredPluginMcpServers,
   MANIFEST_PATH,
   type ProfileFile,
   type ProfileManifest,
@@ -13,7 +14,6 @@ import {
   type MarketplaceEntry,
   mcpWarnings,
   type PluginMcpServer,
-  pluginMcpServers,
 } from '@auto-swe/shared/lib/marketplace';
 import { SkillSourceError, type SourceLocation } from '@auto-swe/shared/lib/skillSource';
 import type { HarnessProfilePreview } from '@auto-swe/shared/types/api';
@@ -40,10 +40,18 @@ import {
  * effect.
  */
 
+/** A declared server as the preview lists it; `duplicate` is set when another plugin declares the name. */
+export type PreviewMcpServer = PluginMcpServer & { duplicate: boolean };
+
 export interface EntryProfileRead extends ReadProfile {
-  mcpServers: PluginMcpServer[];
+  mcpServers: PreviewMcpServer[];
   hasHooks: boolean;
+  /** Profile paths of files made here rather than read from the plugin folder. */
+  synthesizedFiles: string[];
 }
+
+/** Where a plugin's own manifest lives inside its folder. */
+export const PLUGIN_MANIFEST = '.claude-plugin/plugin.json';
 
 /** The profile name a plugin entry is installed under (already a valid profile name). */
 const pluginDir = (name: string) => `plugins/${name}`;
@@ -91,7 +99,8 @@ export async function readEntryProfile(
     name,
     entry.description?.trim() || `Marketplace plugin ${name}`,
     opts,
-    deps
+    deps,
+    entry.pluginManifest
   );
 }
 
@@ -105,13 +114,35 @@ export async function synthesizeEntryProfile(
   name: string,
   description: string,
   opts: { atSha?: string; expectSha?: string },
-  deps: ProfileReadDeps = {}
+  deps: ProfileReadDeps = {},
+  pluginManifest:
+    | Record<string, unknown>
+    | null
+    | (() => Promise<Record<string, unknown> | null>) = null
 ): Promise<EntryProfileRead> {
   const read = await readProfileFolder(location, opts, deps.source);
   if (read.problems.length > 0) {
     throw new HarnessProfileInvalid(read.problems);
   }
   const dir = pluginDir(name);
+  // A `strict: false` entry is its plugin's manifest: when the folder has no `plugin.json` of its
+  // own, the entry's fields become one. A `plugin.json` in the folder always wins. The file is
+  // made before validation, so it is hashed, scanned, previewed and stored like any other.
+  const synthesizedFiles: string[] = [];
+  const folderFiles = [...read.files];
+  const synthesized = folderFiles.some((f) => f.path === PLUGIN_MANIFEST)
+    ? null
+    : typeof pluginManifest === 'function'
+      ? await pluginManifest()
+      : pluginManifest;
+  if (synthesized !== null) {
+    folderFiles.push({
+      bytes: Buffer.from(JSON.stringify(synthesized)),
+      mode: '100644',
+      path: PLUGIN_MANIFEST,
+    });
+    synthesizedFiles.push(`${dir}/${PLUGIN_MANIFEST}`);
+  }
   const manifest: ProfileManifest = {
     description,
     name,
@@ -123,21 +154,32 @@ export async function synthesizeEntryProfile(
       mode: '100644',
       path: MANIFEST_PATH,
     },
-    ...read.files.map((f) => ({ ...f, path: `${dir}/${f.path}` })),
+    ...folderFiles.map((f) => ({ ...f, path: `${dir}/${f.path}` })),
   ];
   const validation = validateProfile(files);
   if (!validation.ok) {
     throw new HarnessProfileInvalid(validation.errors);
   }
   const scan = await scanProfile(files, validation.manifest, validation.pluginDirs, deps.scanners);
-  const mcpFile = files.find((f) => f.path === `${dir}/.mcp.json`);
-  const mcpServers = mcpFile ? pluginMcpServers(mcpFile.bytes) : [];
+  // `.mcp.json` and the inline `mcpServers` of plugin.json (a synthesized one included), read by
+  // the one parser the mapping feature uses.
+  const mcpServers: PreviewMcpServer[] = declaredPluginMcpServers(
+    files,
+    validation.manifest
+  ).servers.map((s) => ({
+    duplicate: s.duplicate,
+    name: s.name,
+    supported: s.supported,
+    transport: s.transport,
+    url: s.url,
+  }));
   return {
     files,
     hasHooks: hasHooks(files, dir),
     location,
     mcpServers,
     sha: read.sha,
+    synthesizedFiles,
     validated: validation,
     warnings: [...validation.warnings, ...scan, ...mcpWarnings(mcpServers)],
   };
@@ -146,6 +188,8 @@ export async function synthesizeEntryProfile(
 export type EntryPreview = HarnessProfilePreview & {
   mcpServers: PluginMcpServer[];
   hasHooks: boolean;
+  /** Profile paths of files the server made from the entry's own fields (listed in `files` too). */
+  synthesizedFiles: string[];
 };
 
 export function entryPreviewOf(
@@ -156,6 +200,7 @@ export function entryPreviewOf(
     ...previewOf(read, { conflicts, matchesVersion: null }),
     hasHooks: read.hasHooks,
     mcpServers: read.mcpServers,
+    synthesizedFiles: read.synthesizedFiles,
   };
 }
 

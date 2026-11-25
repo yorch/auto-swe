@@ -77,7 +77,12 @@ async function buildApp(
   )
 ) {
   const hub = { entries: [...BASE] as Entry[], sha: SHA };
-  const state = { audit: [] as Row[], profiles: [] as Row[], versions: [] as Row[] };
+  const state = {
+    audit: [] as Row[],
+    profiles: [] as Row[],
+    sources: [] as Row[],
+    versions: [] as Row[],
+  };
   let seq = 0;
   const id = () => `00000000-0000-4000-a000-${String(++seq).padStart(12, '0')}`;
 
@@ -236,6 +241,12 @@ async function buildApp(
     },
     harnessProfile: profileModel,
     harnessProfileVersion: versionModel,
+    marketplaceSource: {
+      findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
+        const row = state.sources.find((x) => x.id === where.id);
+        return row ? { ...row } : null;
+      }),
+    },
     pluginEnablement: {
       count: vi.fn(async () => enablements.length),
       findMany: vi.fn(async () => enablements.map((e) => ({ ...e }))),
@@ -1114,6 +1125,9 @@ describe('harness profile routes', () => {
   describe('marketplace-bound profile', () => {
     const hooksDoc = (command: string) =>
       JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ command, type: 'command' }] }] } });
+    const hooksJson = (command: string) => ({
+      PreToolUse: [{ hooks: [{ command, type: 'command' }] }],
+    });
     const folder = (command: string): Entry[] => [
       { content: '{"name":"mk"}', path: 'p/.claude-plugin/plugin.json' },
       { content: hooksDoc(command), path: 'p/hooks/hooks.json' },
@@ -1222,6 +1236,213 @@ describe('harness profile routes', () => {
       expect(ok.statusCode).toBe(201);
       expect((t.state.profiles[0] as Row).hooksEnabled).toBe(true);
       expect((t.state.profiles[0] as Row).latestVersion).toBe(2);
+    });
+
+    describe('synthesized plugin.json (strict: false, no plugin.json upstream)', () => {
+      // Key order is the parser's (name first), so the stored bytes equal a fresh synthesis.
+      const SYNTH = JSON.parse(
+        '{"name":"mk","description":"From the entry","version":"2.0.0"}'
+      ) as Record<string, unknown>;
+      const ENTRY = {
+        description: 'From the entry',
+        name: 'mk',
+        source: './p',
+        strict: false,
+        version: '2.0.0',
+      };
+      /** The catalog entry the marketplace holds now; null leaves the marketplace without it. */
+      let catalogEntry: Record<string, unknown> | null = ENTRY;
+      const catalogFile = (): Entry[] => [
+        {
+          content: JSON.stringify({
+            name: 'cat',
+            plugins: catalogEntry ? [catalogEntry] : [{ name: 'other', source: './p' }],
+          }),
+          path: 'm/.claude-plugin/marketplace.json',
+        },
+      ];
+      const loose = (command: string): Entry[] => [
+        { content: hooksDoc(command), path: 'p/hooks/hooks.json' },
+        ...catalogFile(),
+      ];
+
+      function seedSynth(opts: { hooksEnabled?: boolean } = {}) {
+        catalogEntry = ENTRY;
+        seed(opts.hooksEnabled ?? false);
+        const manifest = {
+          description: 'Marketplace plugin mk',
+          name: 'mk',
+          plugins: ['plugins/mk'],
+        };
+        const files: ProfileFile[] = [
+          { bytes: Buffer.from(JSON.stringify(manifest)), mode: '100644', path: 'profile.json' },
+          {
+            bytes: Buffer.from(hooksDoc('echo one')),
+            mode: '100644',
+            path: 'plugins/mk/hooks/hooks.json',
+          },
+          {
+            bytes: Buffer.from(JSON.stringify(SYNTH)),
+            mode: '100644',
+            path: 'plugins/mk/.claude-plugin/plugin.json',
+          },
+        ];
+        const v = validateProfile(files);
+        const row = t.state.versions[0] as Row;
+        row.files = new Uint8Array(packFiles(files));
+        row.fileCount = files.length;
+        if (v.ok) {
+          row.contentHash = v.contentHash;
+          row.fileIndex = v.fileIndex;
+          row.totalBytes = v.totalBytes;
+        }
+        t.state.sources.push({
+          host: 'github.com',
+          id: 'src-1',
+          owner: 'acme',
+          path: 'm',
+          pinnedSha: SHA,
+          ref: 'main',
+          repo: 'profiles',
+          status: 'OK',
+        } as Row);
+        (t.state.profiles[0] as Row).marketplaceSourceId = 'src-1';
+        t.hub.entries = loose('echo one');
+      }
+
+      it('an unchanged upstream and pin match the stored version', async () => {
+        seedSynth();
+        const res = await t.call('POST', '/mk/preview-update', {});
+        expect(res.statusCode).toBe(200);
+        expect(res.json().data.matchesVersion).toBe(1);
+      });
+
+      it('a plugin.json in the folder wins and the catalog is not consulted', async () => {
+        seed(false);
+        const res = await t.call('POST', '/mk/preview-update', {});
+        expect(res.statusCode).toBe(200);
+        expect(res.json().data.matchesVersion).toBe(1);
+        expect(t.prisma.marketplaceSource.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('an added upstream file is a change', async () => {
+        seedSynth();
+        t.hub.sha = SHA2;
+        t.hub.entries = [...loose('echo one'), { content: 'new', path: 'p/commands/new.md' }];
+        const data = await preview(SHA2);
+        expect(data.matchesVersion).toBeNull();
+        expect(data.files.map((f: { path: string }) => f.path)).toContain(
+          'plugins/mk/.claude-plugin/plugin.json'
+        );
+      });
+
+      it('diffs hooks against the stored version', async () => {
+        seedSynth();
+        t.hub.sha = SHA2;
+        t.hub.entries = loose('echo two');
+        const data = await preview(SHA2);
+        expect(data.hookChanges.changed).toEqual([
+          {
+            addedCommands: ['echo two'],
+            path: 'plugins/mk/hooks/hooks.json',
+            removedCommands: ['echo one'],
+            unreadable: null,
+          },
+        ]);
+      });
+
+      it('accepts an update and keeps the synthesized plugin.json', async () => {
+        seedSynth();
+        t.hub.sha = SHA2;
+        t.hub.entries = loose('echo two');
+        const ok = await acceptMk();
+        expect(ok.statusCode).toBe(201);
+        expect((t.state.profiles[0] as Row).latestVersion).toBe(2);
+        const stored = unpackFiles(Buffer.from((t.state.versions[1] as Row).files as Uint8Array));
+        const doc = stored.find((f) => f.path === 'plugins/mk/.claude-plugin/plugin.json');
+        expect(JSON.parse(doc?.bytes.toString() ?? 'null')).toEqual(SYNTH);
+      });
+
+      it('reads a file for review from the wrapped folder', async () => {
+        seedSynth();
+        const file = await t.call('POST', '/mk/preview-update', {
+          file: 'plugins/mk/.claude-plugin/plugin.json',
+          sha: SHA,
+        });
+        expect(file.statusCode).toBe(200);
+        expect(file.json().data.text).toContain('2.0.0');
+      });
+
+      it('a catalog entry that gains hooks is a change that needs acknowledgement', async () => {
+        seedSynth({ hooksEnabled: true });
+        catalogEntry = { ...ENTRY, hooks: hooksJson('echo catalog') };
+        t.hub.sha = SHA2;
+        t.hub.entries = loose('echo one');
+        const data = await preview(SHA2);
+        expect(data.matchesVersion).toBeNull();
+        expect(data.hookChanges.added.length + data.hookChanges.changed.length).toBeGreaterThan(0);
+        expect(JSON.stringify(data.hookChanges)).toContain('echo catalog');
+        const refused = await acceptMk();
+        expect(refused.statusCode).toBe(409);
+        expect(refused.json().error.code).toBe('HOOK_CHANGES_UNACKNOWLEDGED');
+        const ok = await acceptMk({ acknowledgeHookChanges: true });
+        expect(ok.statusCode).toBe(201);
+        const stored = unpackFiles(Buffer.from((t.state.versions[1] as Row).files as Uint8Array));
+        const doc = stored.find((f) => f.path === 'plugins/mk/.claude-plugin/plugin.json');
+        expect(doc?.bytes.toString()).toContain('echo catalog');
+      });
+
+      it('refuses when a strict entry loses its plugin.json upstream', async () => {
+        seedSynth();
+        catalogEntry = { name: 'mk', source: './p' };
+        t.hub.entries = loose('echo one');
+        const res = await t.call('POST', '/mk/preview-update', {});
+        expect(res.statusCode).toBe(422);
+        expect(res.json().error.code).toBe('HARNESS_PROFILE_INVALID');
+        expect(JSON.stringify(res.json().error.details)).toContain(
+          'the plugin folder has no plugin.json'
+        );
+        t.hub.sha = SHA2;
+        const accepted = await t.call('POST', '/mk/accept', {
+          acknowledgeWarnings: true,
+          contentHash: 'f'.repeat(64),
+          sha: SHA2,
+          warningsHash: 'f'.repeat(64),
+        });
+        expect(accepted.statusCode).toBe(422);
+        expect(t.state.versions).toHaveLength(1);
+      });
+
+      it('refuses when the entry is gone from the catalog', async () => {
+        seedSynth();
+        catalogEntry = null;
+        t.hub.entries = loose('echo one');
+        const res = await t.call('POST', '/mk/preview-update', {});
+        expect(res.statusCode).toBe(422);
+        expect(res.json().error.code).toBe('HARNESS_PROFILE_INVALID');
+      });
+
+      it('refuses when the marketplace source was deleted', async () => {
+        seedSynth();
+        (t.state.profiles[0] as Row).marketplaceSourceId = null;
+        const res = await t.call('POST', '/mk/preview-update', {});
+        expect(res.statusCode).toBe(422);
+        expect(res.json().error.code).toBe('HARNESS_PROFILE_INVALID');
+      });
+
+      it('refuses when the marketplace source is disabled', async () => {
+        seedSynth();
+        (t.state.sources[0] as Row).status = 'DISABLED';
+        const res = await t.call('POST', '/mk/preview-update', {});
+        expect(res.statusCode).toBe(422);
+      });
+
+      it('refuses when the catalog cannot be read', async () => {
+        seedSynth();
+        t.hub.entries = loose('echo one').filter((e) => !e.path.startsWith('m/'));
+        const res = await t.call('POST', '/mk/preview-update', {});
+        expect(res.statusCode).toBe(422);
+      });
     });
 
     it('accepts changed hooks without acknowledgement when hooks are off, and keeps them off', async () => {

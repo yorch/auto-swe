@@ -70,6 +70,9 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'DELETE /api/v1/integrations/github-approver-app': { never: 'secret' },
   'DELETE /api/v1/knowledge-base-links/:id': 'confirm',
   'DELETE /api/v1/knowledge-bases/:id': 'confirm',
+  'DELETE /api/v1/platform/harness-profiles/:name/mcp-mappings/:serverName': {
+    never: 'trustDecision',
+  },
   'DELETE /api/v1/platform/review-presets/:id': 'confirm',
   'DELETE /api/v1/platform/review-presets/:id/attachments': 'confirm',
   'DELETE /api/v1/pull-requests/:id/drafts/:draftId': { never: 'humanDecision' },
@@ -599,6 +602,9 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'PUT /api/v1/platform/embedding-config': { never: 'secret' },
   'PUT /api/v1/platform/evals/:id/lessons': 'confirm',
   'PUT /api/v1/platform/evals/:id/setup-secrets-repository': { never: 'secret' },
+  'PUT /api/v1/platform/harness-profiles/:name/mcp-mappings/:serverName': {
+    never: 'trustDecision',
+  },
   'PUT /api/v1/platform/model-catalog/:id': 'confirm',
   'PUT /api/v1/platform/scanner-patterns/:id': 'confirm',
   'PUT /api/v1/platform/skills/:id': 'confirm',
