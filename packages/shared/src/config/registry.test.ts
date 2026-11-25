@@ -938,7 +938,9 @@ describe('team directory and join-request settings', () => {
     const expected = {
       'teams.directoryScope': { defaultValue: 'platform', overridableAt: ['ORGANIZATION'] },
       'teams.joinRequestCooldownHours': { defaultValue: 72, overridableAt: [] },
+      'teams.joinRequestNotificationRetentionDays': { defaultValue: 30, overridableAt: [] },
       'teams.joinRequestNotifications': { defaultValue: true, overridableAt: [] },
+      'teams.joinRequestReviewerEmail': { defaultValue: true, overridableAt: [] },
       'teams.maxCreatedPerUser': { defaultValue: 3, overridableAt: ['ORGANIZATION'] },
       'teams.maxOpenJoinRequests': { defaultValue: 5, overridableAt: [] },
       'teams.selfServiceCreation': { defaultValue: false, overridableAt: ['ORGANIZATION'] },
@@ -977,6 +979,15 @@ describe('team directory and join-request settings', () => {
     ]);
     expect(accepts('teams.joinRequestNotifications', false)).toBe(true);
     expect(accepts('teams.joinRequestNotifications', 'false')).toBe(false);
+    expect(accepts('teams.joinRequestReviewerEmail', false)).toBe(true);
+    expect(accepts('teams.joinRequestReviewerEmail', 'false')).toBe(false);
+    expect([1, 3650].map((v) => accepts('teams.joinRequestNotificationRetentionDays', v))).toEqual([
+      true,
+      true,
+    ]);
+    expect(
+      [0, 3651, 1.5].map((v) => accepts('teams.joinRequestNotificationRetentionDays', v))
+    ).toEqual([false, false, false]);
     expect([1, 100].map((v) => accepts('teams.maxCreatedPerUser', v))).toEqual([true, true]);
     expect([0, 101].map((v) => accepts('teams.maxCreatedPerUser', v))).toEqual([false, false]);
     expect([1, 50].map((v) => accepts('teams.maxOpenJoinRequests', v))).toEqual([true, true]);

@@ -44,9 +44,21 @@ export const platformCapabilities = defineCapabilities({
       'Configure GitHub credentials, webhook secrets and installations, system config, Slack install, MCP connections, package registries, marketplaces, skill sources and bundles.',
     scope: 'platform',
   },
+  'platform.join-request-notifications.manage': {
+    class: 'operation',
+    description:
+      'List the team join-request notification outbox and re-queue a failed notification.',
+    scope: 'platform',
+  },
   'platform.lessons.stats': {
     class: 'read',
     description: 'Read platform-wide lesson statistics.',
+    scope: 'platform',
+  },
+  'platform.orgs.deactivate': {
+    class: 'governance',
+    description:
+      "Deactivate and reactivate an organization. Deactivating closes its teams' open join requests.",
     scope: 'platform',
   },
   'platform.orgs.trust-invites.manage': {

@@ -255,3 +255,236 @@ export type DecideJoinRequestBody = z.infer<typeof decideJoinRequestBodySchema>;
 
 /** `?status=` on the team and organization queues. */
 export const joinRequestStatusSchema = z.enum(JOIN_REQUEST_STATUSES);
+
+// ---------------------------------------------------------------------------------------------
+// Notification outbox (`JoinRequestNotification`). Pure rules: the gateway's poller owns the I/O.
+// ---------------------------------------------------------------------------------------------
+
+/** The values of the Prisma enum `JoinRequestNotificationEvent`. */
+export const JOIN_REQUEST_NOTIFICATION_EVENTS = [
+  'CREATED',
+  'APPROVED',
+  'REJECTED',
+  'PENDING_ORG',
+] as const;
+export type JoinRequestNotificationEventValue = (typeof JOIN_REQUEST_NOTIFICATION_EVENTS)[number];
+
+/** The values of the Prisma enum `JoinRequestNotificationChannel`. */
+export const JOIN_REQUEST_NOTIFICATION_CHANNELS = ['SLACK', 'EMAIL'] as const;
+export type JoinRequestNotificationChannelValue =
+  (typeof JOIN_REQUEST_NOTIFICATION_CHANNELS)[number];
+
+/** The values of the Prisma enum `JoinRequestNotificationAudience`. */
+export const JOIN_REQUEST_NOTIFICATION_AUDIENCES = [
+  'TEAM_CHANNEL',
+  'TEAM_REVIEWERS',
+  'REQUESTER',
+  'ORG_ADMINS',
+] as const;
+export type JoinRequestNotificationAudienceValue =
+  (typeof JOIN_REQUEST_NOTIFICATION_AUDIENCES)[number];
+
+/** The values of the Prisma enum `JoinRequestNotificationStatus`. */
+export const JOIN_REQUEST_NOTIFICATION_STATUSES = [
+  'PENDING',
+  'DELIVERED',
+  'SKIPPED',
+  'FAILED',
+] as const;
+export type JoinRequestNotificationStatusValue =
+  (typeof JOIN_REQUEST_NOTIFICATION_STATUSES)[number];
+
+/**
+ * Where a notification row may go next. `PENDING` ends as `DELIVERED`, `SKIPPED` or `FAILED`;
+ * `FAILED` returns to `PENDING` only through an admin retry. `DELIVERED` and `SKIPPED` are final.
+ */
+export const JOIN_REQUEST_NOTIFICATION_TRANSITIONS: Readonly<
+  Record<JoinRequestNotificationStatusValue, readonly JoinRequestNotificationStatusValue[]>
+> = {
+  DELIVERED: [],
+  FAILED: ['PENDING'],
+  PENDING: ['DELIVERED', 'SKIPPED', 'FAILED'],
+  SKIPPED: [],
+};
+
+/** Whether a notification row may move from `from` to `to`. */
+export function canTransitionNotification(
+  from: JoinRequestNotificationStatusValue,
+  to: JoinRequestNotificationStatusValue
+): boolean {
+  return JOIN_REQUEST_NOTIFICATION_TRANSITIONS[from].includes(to);
+}
+
+/** Whether an admin may re-queue a row in this status (only `FAILED`). */
+export function isNotificationRetryable(status: JoinRequestNotificationStatusValue): boolean {
+  return canTransitionNotification(status, 'PENDING');
+}
+
+/** Failed attempts after which a row stops retrying and is `FAILED`. */
+export const MAX_NOTIFICATION_ATTEMPTS = 6;
+
+/** Delay before the next attempt, indexed by the number of failed attempts so far minus one. */
+export const NOTIFICATION_BACKOFF_MS: readonly number[] = [
+  30_000, // 30 s
+  120_000, // 2 min
+  600_000, // 10 min
+  3_600_000, // 1 h
+  21_600_000, // 6 h
+];
+
+/**
+ * When the poller may next claim a row that has now failed `attempts` times (so the first failure
+ * is `attempts` 1), or `null` when the attempts are exhausted and the row becomes `FAILED`.
+ */
+export function nextAttempt(attempts: number, now: Date): Date | null {
+  if (!Number.isInteger(attempts) || attempts < 1 || attempts >= MAX_NOTIFICATION_ATTEMPTS) {
+    return null;
+  }
+  const delay = NOTIFICATION_BACKOFF_MS[attempts - 1];
+  return delay === undefined ? null : new Date(now.getTime() + delay);
+}
+
+export type NotificationFailureOutcome =
+  | { status: 'PENDING'; attempts: number; nextAttemptAt: Date }
+  | { status: 'FAILED'; attempts: number; nextAttemptAt: null };
+
+/** What a failed send does to a row that had made `previousAttempts` failed attempts. */
+export function outcomeAfterFailure(
+  previousAttempts: number,
+  now: Date
+): NotificationFailureOutcome {
+  const attempts = previousAttempts + 1;
+  const next = nextAttempt(attempts, now);
+  return next
+    ? { attempts, nextAttemptAt: next, status: 'PENDING' }
+    : { attempts, nextAttemptAt: null, status: 'FAILED' };
+}
+
+/** What an admin retry writes: attempts reset, due now, error cleared. */
+export function retryReset(now: Date): {
+  status: 'PENDING';
+  attempts: 0;
+  nextAttemptAt: Date;
+  lastError: null;
+} {
+  return { attempts: 0, lastError: null, nextAttemptAt: now, status: 'PENDING' };
+}
+
+/** The most recipients one reviewer or organization-admin email goes to. */
+export const MAX_NOTIFICATION_RECIPIENTS = 20;
+
+/**
+ * Fixed `lastError` vocabulary. A value is never an address, a body or a credential; the sender
+ * maps every failure to one of these.
+ */
+export const JOIN_REQUEST_NOTIFICATION_ERROR_CODES = [
+  'transport_not_configured',
+  'transport_error',
+  'slack_error',
+  'no_recipients',
+  'request_state_changed',
+  'notifications_disabled',
+  'party_inactive',
+] as const;
+export type JoinRequestNotificationErrorCode =
+  (typeof JOIN_REQUEST_NOTIFICATION_ERROR_CODES)[number];
+
+/** The channel an audience is delivered over. */
+export const AUDIENCE_CHANNEL: Readonly<
+  Record<JoinRequestNotificationAudienceValue, JoinRequestNotificationChannelValue>
+> = {
+  ORG_ADMINS: 'EMAIL',
+  REQUESTER: 'EMAIL',
+  TEAM_CHANNEL: 'SLACK',
+  TEAM_REVIEWERS: 'EMAIL',
+};
+
+export interface NotificationRouteInput {
+  event: JoinRequestNotificationEventValue;
+  /** The team has a Slack channel and the workspace has a bot token. */
+  teamHasSlackChannel: boolean;
+  /** `teams.joinRequestReviewerEmail`. */
+  reviewerEmailEnabled: boolean;
+}
+
+export interface NotificationRoute {
+  audience: JoinRequestNotificationAudienceValue;
+  channel: JoinRequestNotificationChannelValue;
+}
+
+/**
+ * The outbox rows to write for an event. `CREATED` goes to the team's Slack channel when it has
+ * one, otherwise to its reviewers by email when that is enabled (possibly none). `APPROVED` and
+ * `REJECTED` go to the requester; `PENDING_ORG` to the requester and the organization's admins.
+ */
+export function routeAudiences(input: NotificationRouteInput): NotificationRoute[] {
+  const audiences: JoinRequestNotificationAudienceValue[] = [];
+  switch (input.event) {
+    case 'CREATED':
+      if (input.teamHasSlackChannel) {
+        audiences.push('TEAM_CHANNEL');
+      } else if (input.reviewerEmailEnabled) {
+        audiences.push('TEAM_REVIEWERS');
+      }
+      break;
+    case 'APPROVED':
+    case 'REJECTED':
+      audiences.push('REQUESTER');
+      break;
+    case 'PENDING_ORG':
+      audiences.push('REQUESTER', 'ORG_ADMINS');
+      break;
+  }
+  return audiences.map((audience) => ({ audience, channel: AUDIENCE_CHANNEL[audience] }));
+}
+
+/** Deduplicates (case-insensitively, keeping the first spelling) and caps a recipient list. */
+export function capRecipients(
+  recipients: readonly string[],
+  max: number = MAX_NOTIFICATION_RECIPIENTS
+): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const recipient of recipients) {
+    const key = recipient.trim().toLowerCase();
+    if (key === '' || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(recipient.trim());
+    if (out.length >= max) {
+      break;
+    }
+  }
+  return out;
+}
+
+/**
+ * The `reached` array after a partly successful send: the union of what was reached before and
+ * now, deduplicated (case-insensitively) with the earlier spelling kept and order preserved. A
+ * value that is not an array (a corrupt row) counts as empty.
+ */
+export function mergeReached(reached: unknown, newlyReached: readonly string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: unknown) => {
+    if (typeof value !== 'string') {
+      return;
+    }
+    const key = value.trim().toLowerCase();
+    if (key === '' || seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    out.push(value.trim());
+  };
+  if (Array.isArray(reached)) {
+    for (const value of reached) {
+      add(value);
+    }
+  }
+  for (const value of newlyReached) {
+    add(value);
+  }
+  return out;
+}

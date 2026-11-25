@@ -230,7 +230,9 @@ _Generated from `packages/shared/src/permissions/catalog/` by `scripts/gen-permi
 | `platform.catalog.manage` | platform | governance | — | — | yes | — | Manage the model and tool catalogs, global skills and agents, autonomy policies, harness profiles, evals, readiness and outcome reports. |
 | `platform.config.grants.manage` | platform | governance | — | — | yes | — | Create and remove settings grants. |
 | `platform.integrations.manage` | platform | sensitive | — | — | yes | — | Configure GitHub credentials, webhook secrets and installations, system config, Slack install, MCP connections, package registries, marketplaces, skill sources and bundles. |
+| `platform.join-request-notifications.manage` | platform | operation | — | — | yes | — | List the team join-request notification outbox and re-queue a failed notification. |
 | `platform.lessons.stats` | platform | read | — | — | yes | — | Read platform-wide lesson statistics. |
+| `platform.orgs.deactivate` | platform | governance | — | — | yes | — | Deactivate and reactivate an organization. Deactivating closes its teams' open join requests. |
 | `platform.orgs.trust-invites.manage` | platform | governance | — | — | yes | — | Decide which email domains an organization trusts for invitations. |
 | `platform.pr-evaluation.auto-mode` | platform | sensitive | — | — | yes | — | Set a repository's pull-request evaluation to auto mode, or enable bot approval. |
 | `platform.repo-dependencies.scan` | platform | operation | — | — | yes | — | Start a repository dependency scan. |
