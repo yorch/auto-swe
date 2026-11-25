@@ -260,6 +260,22 @@ describe('definePlugin and plugin validation', () => {
     expect(validateBundle(bundle).ok).toBe(true);
   });
 
+  it('keeps a ref through definePlugin and validates it', () => {
+    const build = (r: string) =>
+      validateBundle(
+        defineBundle({ name: 'b', plugins: [definePlugin({ ...ref, ref: r })], version: '1' })
+      );
+    expect(definePlugin({ ...ref, ref: 'v2' }).ref).toBe('v2');
+    expect('ref' in definePlugin(ref)).toBe(false);
+    expect(build('release/1.x').ok).toBe(true);
+    const bad = build('a..b');
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) {
+      expect(bad.errors.join()).toMatch(/ref/);
+    }
+    expect(build('a'.repeat(40)).ok).toBe(false);
+  });
+
   it('leaves the plugins key out of a bundle that has none', () => {
     expect('plugins' in defineBundle({ name: 'b', plugins: [], version: '1' }).entities).toBe(
       false

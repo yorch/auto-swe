@@ -1,3 +1,4 @@
+import { validRef } from '../gitRefName.js';
 import { MAX_SKILL_PROMPT_TEXT_LENGTH } from '../regexSafety.js';
 import { safeDisplayPath } from './display.js';
 import { SkillSourceError } from './errors.js';
@@ -160,22 +161,6 @@ export function normaliseLocation(input: SourceLocation): SourceLocation {
   return { host, owner, path, ref, repo };
 }
 
-function validRef(ref: string): boolean {
-  return (
-    ref.length > 0 &&
-    ref.length <= 255 &&
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: refusing control characters is the point
-    !/[\u0000- \u007f~^:?*[\\]/.test(ref) &&
-    !ref.includes('..') &&
-    !ref.split('/').includes('.') &&
-    !ref.startsWith('-') &&
-    !ref.startsWith('/') &&
-    !ref.endsWith('/') &&
-    !ref.includes('//') &&
-    !ref.endsWith('.lock')
-  );
-}
-
 /**
  * A repo-relative path with no `.`/`..`/empty segments, no backslash and no
  * leading slash; '' for the root. Null when it is anything else.
@@ -238,9 +223,16 @@ export async function listTree(access: SourceAccess, loc: SourceLocation, sha: s
   if (body.truncated === true) {
     throw new SkillSourceError('TREE_TRUNCATED');
   }
+  return parseTreeEntries(body.tree, '');
+}
+
+function parseTreeEntries(raw: unknown[], prefix: string): TreeEntry[] {
   const entries: TreeEntry[] = [];
-  for (const raw of body.tree as Array<Record<string, unknown>>) {
-    const { path, mode, type, sha: entrySha, size } = raw;
+  for (const item of raw as Array<Record<string, unknown>>) {
+    if (!item || typeof item !== 'object') {
+      throw new SkillSourceError('BAD_RESPONSE');
+    }
+    const { path, mode, type, sha: entrySha, size } = item;
     if (
       typeof path !== 'string' ||
       typeof mode !== 'string' ||
@@ -249,19 +241,98 @@ export async function listTree(access: SourceAccess, loc: SourceLocation, sha: s
     ) {
       throw new SkillSourceError('BAD_RESPONSE');
     }
+    const full = `${prefix}${path}`;
     // Git forbids these in a path; one here means the listing is not to be trusted.
-    if (unsafeTreePath(path)) {
+    if (unsafeTreePath(full)) {
       throw new SkillSourceError('BAD_PATH');
     }
     entries.push({
       mode,
-      path,
+      path: full,
       sha: entrySha,
       size: typeof size === 'number' ? size : 0,
       type,
     });
   }
   return entries;
+}
+
+/** The most entries a by-directory listing may collect: past it the tree is refused as truncated. */
+const MAX_DIRECTORY_WALK_ENTRIES = 20_000;
+
+async function getTree(access: SourceAccess, loc: SourceLocation, ref: string, recursive: boolean) {
+  const body = (await apiGet(
+    access,
+    `${repoApi(loc)}/git/trees/${ref}${recursive ? '?recursive=1' : ''}`
+  )) as { tree?: unknown; truncated?: unknown } | null;
+  if (!body || !Array.isArray(body.tree)) {
+    throw new SkillSourceError('BAD_RESPONSE');
+  }
+  return { tree: body.tree as unknown[], truncated: body.truncated === true };
+}
+
+/**
+ * Every entry at or under `folder` (a repo-relative path; '' is the whole repository) at a commit,
+ * with full paths. One recursive listing when the host returns the whole tree. When that listing is
+ * truncated, only the directories on the way to `folder` are listed (one non-recursive request per
+ * path segment, starting from the commit's own tree), and then `folder` itself: recursively when
+ * the host can, directory by directory when that too is truncated. It spends the access's request
+ * budget like any other call, so a folder that needs more than the budget allows is refused
+ * (`LIMIT_REQUESTS`), and a single directory the host cannot list whole is `TREE_TRUNCATED`.
+ * A folder that does not exist is an empty list. Entries outside `folder` may be present in the
+ * single-listing path; callers filter by prefix as they already do.
+ */
+export async function listTreeUnder(
+  access: SourceAccess,
+  loc: SourceLocation,
+  sha: string,
+  folder: string
+): Promise<TreeEntry[]> {
+  const first = await getTree(access, loc, sha, true);
+  if (!first.truncated) {
+    return parseTreeEntries(first.tree, '');
+  }
+  const segments = folder === '' ? [] : folder.split('/');
+  let treeRef = sha;
+  for (let i = 0; i < segments.length; i++) {
+    const level = await getTree(access, loc, treeRef, false);
+    if (level.truncated) {
+      throw new SkillSourceError('TREE_TRUNCATED');
+    }
+    const here = segments.slice(0, i + 1).join('/');
+    const next = parseTreeEntries(level.tree, i === 0 ? '' : `${segments.slice(0, i).join('/')}/`)
+      .filter((e) => e.path === here)
+      .find((e) => e.type === 'tree');
+    if (!next) {
+      return [];
+    }
+    treeRef = next.sha;
+  }
+  const out: TreeEntry[] = [];
+  const walk = async (ref: string, prefix: string): Promise<void> => {
+    const whole = await getTree(access, loc, ref, true);
+    if (!whole.truncated) {
+      out.push(...parseTreeEntries(whole.tree, prefix));
+    } else {
+      const level = await getTree(access, loc, ref, false);
+      if (level.truncated) {
+        throw new SkillSourceError('TREE_TRUNCATED');
+      }
+      const entries = parseTreeEntries(level.tree, prefix);
+      for (const e of entries) {
+        if (e.type === 'tree') {
+          await walk(e.sha, `${e.path}/`);
+        } else {
+          out.push(e);
+        }
+      }
+    }
+    if (out.length > MAX_DIRECTORY_WALK_ENTRIES) {
+      throw new SkillSourceError('TREE_TRUNCATED');
+    }
+  };
+  await walk(treeRef, folder === '' ? '' : `${folder}/`);
+  return out;
 }
 
 /** `..`/`.`/empty segments, an absolute path or a backslash: never in a real git listing. */

@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import {
   defaultDeps,
   fetchBlobBytes,
-  listTree,
+  hostPermitted,
+  listTreeUnder,
   normaliseLocation,
   resolveAccess,
   resolveSha,
@@ -11,6 +12,7 @@ import {
   SkillSourceError,
   type SourceLocation,
 } from '../skillSource/index.js';
+import { checkProbeUrl } from '../ssrfGuard.js';
 import {
   ENTRY_REASONS,
   MARKETPLACE_FILE,
@@ -59,7 +61,10 @@ export async function readMarketplace(
     throw new SkillSourceError('SHA_MOVED');
   }
   const wanted = location.path === '' ? MARKETPLACE_FILE : `${location.path}/${MARKETPLACE_FILE}`;
-  const entry = (await listTree(access, location, sha)).find((e) => e.path === wanted);
+  // The whole tree when the host returns it; when it truncates, only the directories on the way to
+  // the catalog's own folder.
+  const folder = wanted.slice(0, wanted.lastIndexOf('/'));
+  const entry = (await listTreeUnder(access, location, sha, folder)).find((e) => e.path === wanted);
   if (entry?.type !== 'blob') {
     throw new MarketplaceInvalid([`${MARKETPLACE_FILE} not found at that path and commit`]);
   }
@@ -80,11 +85,45 @@ export async function readMarketplace(
   if (bytes.length !== entry.size || id !== entry.sha) {
     throw new SkillSourceError('BAD_RESPONSE');
   }
-  const parsed = parseMarketplace(bytes);
+  const parsed = parseMarketplace(bytes, { defaultHost: location.host });
   if (!parsed.ok) {
     throw new MarketplaceInvalid(parsed.errors);
   }
+  await applyEntryHostPolicy(parsed.marketplace, location.host, deps);
   return { location, marketplace: parsed.marketplace, sha };
+}
+
+/**
+ * An entry that names a source host other than the marketplace's own stays listed but is not
+ * installable unless the host passes the repository host policy: the instance's GitHub host,
+ * `github.com`, or one an admin listed in `github.repositoryHosts`; and the address checks of the
+ * SSRF guard (a private address only for a host both approved and opted in through
+ * `skills.import.privateNetworkHosts`). The marketplace's own host was vetted to read the catalog.
+ * Reading the entry vets the host again, and only that host's own platform credential is sent to it.
+ */
+export async function applyEntryHostPolicy(
+  marketplace: ParsedMarketplace,
+  marketplaceHost: string,
+  deps: SkillSourceDeps = defaultDeps
+): Promise<void> {
+  const foreign = marketplace.entries.filter(
+    (e) => e.installable && e.source?.kind === 'github' && e.source.host !== marketplaceHost
+  );
+  if (foreign.length === 0) {
+    return;
+  }
+  const approved = (await deps.approvedHosts()).map((h) => h.toLowerCase());
+  const optedIn = (await deps.privateNetworkHosts()).map((h) => h.toLowerCase());
+  for (const entry of foreign) {
+    const host = entry.source?.kind === 'github' ? entry.source.host : '';
+    const safe = checkProbeUrl(`https://${host}`, {
+      allowPrivate: approved.includes(host) && optedIn.includes(host),
+    });
+    if (!hostPermitted(host, approved) || !safe.ok) {
+      entry.installable = false;
+      entry.reason = ENTRY_REASONS.HOST_NOT_APPROVED;
+    }
+  }
 }
 
 /** Where to read an installable entry's plugin folder. */

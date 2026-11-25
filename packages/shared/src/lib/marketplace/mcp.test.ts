@@ -61,7 +61,7 @@ describe('mcpWarnings', () => {
     );
     expect(w).toHaveLength(2);
     expect(w[0]).toContain('b (stdio) is not supported');
-    expect(w[1]).toContain('mcpConnectionId');
+    expect(w[1]).toContain('platform administrator can map them');
   });
   it('is empty without servers', () => {
     expect(mcpWarnings([])).toEqual([]);

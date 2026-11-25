@@ -2333,6 +2333,31 @@ export interface SkillPluginRef {
   version: number | null;
 }
 
+/** One HTTP, stdio or sse MCP server a plugin of a profile declares (`declaredPluginMcpServers`). */
+export interface PluginMcpServerDto {
+  plugin: string;
+  /** The mapping key. */
+  name: string;
+  transport: 'http' | 'stdio' | 'sse';
+  /** Origin and path only; http servers only. */
+  url: string | null;
+  /** True for an http server; only a supported, non-duplicate server can be mapped. */
+  supported: boolean;
+  /** Another plugin of the profile declares the same name, so it cannot be mapped. */
+  duplicate: boolean;
+}
+
+/** An administrator's binding of a declared plugin server to an `mcp` Connection. */
+export interface PluginMcpMappingDto {
+  serverName: string;
+  connectionId: string;
+  connectionName: string | null;
+  /** ISO timestamp of the last write. */
+  mappedAt: string;
+  /** Display name or email of the administrator; null once that user is gone. */
+  mappedBy: string | null;
+}
+
 export interface HarnessProfileDetail extends HarnessProfileSummary {
   versions: HarnessProfileVersionDto[];
   /** Present on `GET /:name`: the agents bound to this profile. */
@@ -2341,6 +2366,12 @@ export interface HarnessProfileDetail extends HarnessProfileSummary {
   enabledTeams?: number;
   /** Present on `GET /:name`: the auto-run command sources of the LATEST version (what hooks on would arm). */
   autoRunSources?: { path: string; kind: string; commands: string[]; unreadable: string | null }[];
+  /** Present on `GET /:name`: the MCP servers the LATEST version's plugins declare. */
+  mcpServers?: PluginMcpServerDto[];
+  /** Present on `GET /:name`: declarations of the latest version that could not be read. */
+  mcpUnreadable?: { plugin: string; file: string; reason: string }[];
+  /** Present on `GET /:name`: every stored mapping; `declared: false` marks an orphan. */
+  mcpMappings?: (PluginMcpMappingDto & { declared: boolean; supported: boolean })[];
 }
 
 /** Create and accept answer `{ data, projection }`: projection problems never undo the approval. */

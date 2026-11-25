@@ -17,6 +17,13 @@ export {
 } from './manifest.js';
 export { collisionKey, unsafeProfilePath } from './paths.js';
 export {
+  type DeclaredPluginMcp,
+  type DeclaredPluginMcpServer,
+  declaredPluginMcpServers,
+  PLUGIN_MCP_UNREADABLE,
+  type UnreadablePluginMcp,
+} from './pluginMcp.js';
+export {
   type ProjectionFile,
   type ProjectPluginSkillsInput,
   type ProjectPluginSkillsResult,

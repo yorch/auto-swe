@@ -1,5 +1,6 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import { normaliseLocation } from '../lib/skillSource/index.js';
 import { BUILTIN_SHELL_IMAGES } from '../workflow/shellImageAllowlist.js';
 import { SPEC_SCHEMA_VERSION } from '../workflow/spec.js';
 import {
@@ -12,6 +13,7 @@ import {
   bundleContainerImageWarnings,
   computeContentHash,
   parseBundle,
+  pluginRefProblem,
   signContentHash,
   validateBundleAgents,
   validateBundlePlugins,
@@ -683,6 +685,79 @@ describe('schema v3 plugin references', () => {
     const a = withPlugins([plugin]);
     const b = withPlugins([{ ...plugin, sha: 'c'.repeat(40) }]);
     expect(a.metadata.contentHash).not.toBe(b.metadata.contentHash);
+  });
+
+  it('hashes a bundle whose plugins carry no ref exactly as before (golden)', () => {
+    const m = withPlugins([plugin]);
+    expect(m.metadata.contentHash).toBe(
+      'ac4692bac97e191832bbfb571045042be236d52057d9c064f7f9da2b9e3eda78'
+    );
+  });
+
+  it('accepts a ref, hashes it, and round-trips it', () => {
+    const withRef = withPlugins([{ ...plugin, ref: 'release/1.x' }]);
+    expect(withRef.entities.plugins?.[0]?.ref).toBe('release/1.x');
+    expect(withRef.metadata.contentHash).not.toBe(withPlugins([plugin]).metadata.contentHash);
+    const parsed = parseBundle(JSON.parse(JSON.stringify(withRef)));
+    expect(verifyContentHash(parsed).ok).toBe(true);
+    expect(validateBundlePlugins(parsed)).toEqual([]);
+  });
+
+  it('refuses a ref that is not a branch or tag name', () => {
+    const bad = [
+      'a..b',
+      '-x',
+      '/x',
+      'a b',
+      'a\\b',
+      'a\u0007b',
+      'a'.repeat(40),
+      'A'.repeat(64),
+      'x'.repeat(256),
+      'a:b',
+      'x?y',
+      'v1^',
+      'a~1',
+      'feat*',
+      'a[b',
+      'a/./b',
+      'x.lock',
+      'x@{1}',
+      'a#b',
+      'refs/heads/main',
+      'a//b',
+      'a/',
+    ];
+    for (const ref of bad) {
+      const errors = (() => {
+        try {
+          return validateBundlePlugins(withPlugins([{ ...plugin, ref }]));
+        } catch {
+          return ['schema'];
+        }
+      })();
+      expect(errors.length, JSON.stringify(ref)).toBeGreaterThan(0);
+    }
+    expect(pluginRefProblem('v1.2.3')).toBeNull();
+    expect(pluginRefProblem('feature/x-1')).toBeNull();
+    expect(pluginRefProblem('release-1.2')).toBeNull();
+  });
+
+  it('never accepts a ref the install read path refuses', () => {
+    const refs = ['a:b', 'x?y', 'v1^', 'a~1', 'feat*', 'a[b', 'a/./b', 'x.lock', 'a b', 'main'];
+    for (const ref of refs) {
+      const installs = (() => {
+        try {
+          normaliseLocation({ host: 'github.com', owner: 'o', path: '', ref, repo: 'r' });
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+      if (pluginRefProblem(ref) === null) {
+        expect(installs, ref).toBe(true);
+      }
+    }
   });
 
   it('writes an empty plugin list as no list, so there is one spelling', () => {

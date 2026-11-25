@@ -28,13 +28,19 @@ function bareUrl(raw: unknown): string | null {
  * The MCP servers a plugin's `.mcp.json` declares, as declared dependencies.
  *
  * The harness never loads a plugin's `.mcp.json` (`skipMcpDiscovery` plus the strict MCP
- * configuration), so nothing here is wired up. An administrator points the agent's existing
- * `mcpConnectionId` at an `mcp` Connection that matches an `http` server; a `stdio` (or `sse`)
- * server is flagged unsupported. There is no mapping table. Both accepted file shapes are read:
+ * configuration), so nothing here is wired up by itself. An administrator maps a declared `http`
+ * server to an `mcp` Connection in the plugin details; only a mapped server is relayed to the
+ * run, and nothing is relayed until it is mapped. A `stdio` or `sse` server cannot be loaded and
+ * is flagged unsupported. Mapping declared servers is `declaredPluginMcpServers` and the plugin
+ * mapping routes. Servers whose names collide after display sanitising are marked `ambiguous`.
+ * Both accepted file shapes are read (the bare one only when `opts.rootShape` is not `false`):
  * `{ "mcpServers": { name: {...} } }` and `{ name: {...} }`. Returns `[]` for a file that is not
  * JSON. Never returns commands, arguments, headers or environment values.
  */
-export function pluginMcpServers(bytes: Buffer): PluginMcpServer[] {
+export function pluginMcpServers(
+  bytes: Buffer,
+  opts: { rootShape?: boolean } = {}
+): PluginMcpServer[] {
   let json: unknown;
   try {
     json = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
@@ -45,10 +51,15 @@ export function pluginMcpServers(bytes: Buffer): PluginMcpServer[] {
     return [];
   }
   const root = json as Record<string, unknown>;
-  const servers =
-    root.mcpServers && typeof root.mcpServers === 'object' && !Array.isArray(root.mcpServers)
-      ? (root.mcpServers as Record<string, unknown>)
-      : root;
+  const wrapped =
+    root.mcpServers && typeof root.mcpServers === 'object' && !Array.isArray(root.mcpServers);
+  // The bare `{ name: {...} }` shape belongs to a `.mcp.json`-style document. In any other file
+  // (a `plugin.json` whose `mcpServers` is a path back to itself) unrelated objects such as
+  // `author` or `repository` would read as servers, so the caller says when it is not allowed.
+  if (!wrapped && opts.rootShape === false) {
+    return [];
+  }
+  const servers = wrapped ? (root.mcpServers as Record<string, unknown>) : root;
   const out: PluginMcpServer[] = [];
   for (const [name, raw] of Object.entries(servers).slice(0, MAX_SERVERS)) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -66,6 +77,15 @@ export function pluginMcpServers(bytes: Buffer): PluginMcpServer[] {
       url,
     });
   }
+  const counts = new Map<string, number>();
+  for (const s of out) {
+    counts.set(s.name, (counts.get(s.name) ?? 0) + 1);
+  }
+  for (const s of out) {
+    if ((counts.get(s.name) ?? 0) > 1) {
+      s.ambiguous = true;
+    }
+  }
   return out;
 }
 
@@ -81,7 +101,7 @@ export function mcpWarnings(servers: readonly PluginMcpServer[]): string[] {
   }
   if (servers.some((s) => s.supported)) {
     out.push(
-      'plugin declares HTTP MCP servers; the harness does not load them, so an administrator must point the agent mcpConnectionId at a matching mcp Connection'
+      'plugin declares HTTP MCP servers; the harness does not load them, but a platform administrator can map them to mcp Connections in the plugin details after approval (stdio and sse servers cannot be loaded)'
     );
   }
   return out;

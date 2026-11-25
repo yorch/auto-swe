@@ -845,6 +845,7 @@ model Connection {
   workflowRuns          WorkflowRun[]
   attributedRepoRuns    WorkflowRun[]         @relation("WorkflowRunAttributedRepo")
   mcpAgents             Agent[]                @relation("AgentMcpConnection")
+  pluginMcpMappings     PluginMcpMapping[]
   /// Repo dependency graph edges (repo-dependency-graph feature). `dependenciesFrom`
   /// are edges where this repo is the dependent; `dependenciesTo` where it is depended upon.
   dependenciesFrom      RepoDependency[]       @relation("RepoDependencyFrom")
@@ -1988,6 +1989,7 @@ model User {
   skillSources          SkillSource[]            @relation("SkillSourceCreator")
   marketplaceSources    MarketplaceSource[]      @relation("MarketplaceSourceCreator")
   pluginEnablementsGiven PluginEnablement[]      @relation("PluginEnablementEnabler")
+  pluginMcpMappingsMade  PluginMcpMapping[]      @relation("PluginMcpMappingMapper")
   harnessProfileVersions HarnessProfileVersion[] @relation("HarnessProfileApprover")
   schedulesActingAs     ScheduledWorkRequest[]   @relation("ScheduleActsAs")
   automations           Automation[]             @relation("AutomationCreator")
@@ -4715,6 +4717,7 @@ model HarnessProfile {
 
   versions        HarnessProfileVersion[]
   enablements     PluginEnablement[]
+  mcpMappings     PluginMcpMapping[]
   projectedSkills Skill[]                 @relation("PluginProjectedSkills")
 
   @@index([marketplaceSourceId])
@@ -4809,6 +4812,29 @@ model PluginEnablement {
   @@index([teamId])
   @@index([enabledById])
   @@map("plugin_enablements")
+}
+
+/// An administrator's binding of one HTTP MCP server a plugin declares (by the key in its
+/// `mcpServers`) to an existing `mcp` Connection. The worker relays the connection's tools to
+/// agents bound to the plugin; the plugin's own file is never loaded. Deleting the connection
+/// removes the mapping.
+model PluginMcpMapping {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  profileId    String         @map("profile_id") @db.Uuid
+  profile      HarnessProfile @relation(fields: [profileId], references: [id], onDelete: Restrict)
+  /// The key in the plugin's `mcpServers`, 1 to 128 characters.
+  serverName   String         @map("server_name")
+  connectionId String         @map("connection_id") @db.Uuid
+  connection   Connection     @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  mappedById   String?        @map("mapped_by_id") @db.Uuid
+  mappedBy     User?          @relation("PluginMcpMappingMapper", fields: [mappedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([profileId, serverName])
+  @@index([connectionId])
+  @@index([mappedById])
+  @@map("plugin_mcp_mappings")
 }
 
 enum ScannerPatternType {

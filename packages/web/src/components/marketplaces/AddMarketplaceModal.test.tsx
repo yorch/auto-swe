@@ -36,6 +36,7 @@ const previewed = (over: Partial<MarketplacePreview> = {}): MarketplacePreview =
         profile: null,
         reason: null,
         source: { kind: 'relative', path: 'plugins/kit' },
+        strict: false,
         version: null,
       },
     ],

@@ -20,7 +20,7 @@ export interface MarketplaceLocation {
 export type EntrySource =
   /** A folder inside the marketplace repository, at the marketplace's own commit. */
   | { kind: 'relative'; path: string }
-  /** A GitHub repository (`host` is always `github.com`); `sha` is null when the entry names none. */
+  /** A GitHub repository on `host` (the marketplace's own unless the entry names another); `sha` is null when the entry names none. */
   | {
       kind: 'github';
       host: string;
@@ -39,6 +39,13 @@ export interface MarketplaceEntry {
   description: string | null;
   version: string | null;
   source: EntrySource | null;
+  /** `false` when the entry says `strict: false`: it stands in for the plugin's own `plugin.json`. */
+  strict: boolean;
+  /**
+   * The `plugin.json` a `strict: false` entry stands for (name, description, version, metadata and
+   * the component fields it carries); null for a strict entry. Not part of the admin API's catalog.
+   */
+  pluginManifest: Record<string, unknown> | null;
   installable: boolean;
   /** A fixed sentence; null when installable. */
   reason: string | null;
@@ -55,7 +62,7 @@ export interface ParsedMarketplace {
 }
 
 /** One catalog entry as the admin API returns it. */
-export interface CatalogEntryDto extends MarketplaceEntry {
+export interface CatalogEntryDto extends Omit<MarketplaceEntry, 'pluginManifest'> {
   /** The profile approved from this entry of this marketplace, if any. */
   profile: { name: string; status: string; latestVersion: number } | null;
   /** A profile with this entry's name exists that did not come from this entry. */
@@ -104,4 +111,9 @@ export interface PluginMcpServer {
   url: string | null;
   /** True for an http server. The harness does not load it either way. */
   supported: boolean;
+  /**
+   * Set by the parser when another server of the same file has the same name after the display
+   * sanitising (truncation, hidden characters); every server of such a group carries it.
+   */
+  ambiguous?: boolean;
 }

@@ -90,7 +90,7 @@ async function scanAdvisory(description: string, promptText: string): Promise<st
 }
 
 /** The plugin's name: `plugin.json`'s `name`, else its directory's. Null when neither is usable. */
-function pluginNameOf(dir: string, byPath: Map<string, ProjectionFile>): string | null {
+export function pluginNameOf(dir: string, byPath: Map<string, ProjectionFile>): string | null {
   const manifest = byPath.get(`${dir}/${PLUGIN_MANIFEST}`);
   let named: unknown;
   if (manifest) {

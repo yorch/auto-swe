@@ -217,7 +217,7 @@ function profileWarnings(
   const mcp = pluginFiles.filter((f) => f.path.split('/').pop() === '.mcp.json');
   if (mcp.length > 0) {
     warnings.push(
-      `plugin MCP servers are stored but ignored at run time (${listed(mcp.map((f) => f.path))})`
+      `the harness never loads a plugin's .mcp.json; only servers an admin maps are relayed (${listed(mcp.map((f) => f.path))})`
     );
   }
   const hooks = pluginFiles.filter(

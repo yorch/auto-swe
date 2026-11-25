@@ -14,6 +14,7 @@ const entry = (over: Partial<CatalogEntryDto>): CatalogEntryDto => ({
   profile: null,
   reason: null,
   source: { kind: 'relative', path: 'plugins/kit' },
+  strict: false,
   version: '1.0.0',
   ...over,
 });

@@ -54,8 +54,10 @@ describe('parseMarketplace', () => {
       ignoredKeys: ['author', 'category'],
       installable: true,
       name: 'fmt',
+      pluginManifest: null,
       reason: null,
       source: { kind: 'relative', path: 'plugins/fmt' },
+      strict: true,
       version: '1.2.0',
     });
   });
@@ -82,6 +84,69 @@ describe('parseMarketplace', () => {
     });
     expect(m.entries[1]?.source).toMatchObject({ path: 'sub/dir', ref: 'v1', sha: SHA });
     expect(m.entries.every((e) => e.installable)).toBe(true);
+  });
+
+  it('puts a GitHub source on its own host, else the default host, else github.com', () => {
+    const bytes = Buffer.from(
+      JSON.stringify({
+        name: 'm',
+        plugins: [
+          { name: 'a', source: { repo: 'x/a', source: 'github' } },
+          { name: 'b', source: { host: 'Other.Example.com', repo: 'x/b', source: 'github' } },
+        ],
+      })
+    );
+    const r = parseMarketplace(bytes, { defaultHost: 'ghe.example.com' });
+    const hosts = (res: typeof r) =>
+      res.ok
+        ? res.marketplace.entries.map((e) => e.source && 'host' in e.source && e.source.host)
+        : [];
+    expect(hosts(r)).toEqual(['ghe.example.com', 'other.example.com']);
+    expect(hosts(parseMarketplace(bytes))).toEqual(['github.com', 'other.example.com']);
+  });
+
+  it('builds the plugin manifest of a strict: false entry and leaves a strict entry alone', () => {
+    const m = ok({
+      name: 'm',
+      plugins: [
+        {
+          author: { name: 'Me' },
+          commands: ['./commands/x.md'],
+          description: 'D',
+          hooks: { PreToolUse: [] },
+          keywords: ['a', 'b'],
+          license: 'MIT',
+          mcpServers: { s: { type: 'http', url: 'https://x.example.com' } },
+          name: 'loose',
+          skills: './skills',
+          source: './p',
+          strict: false,
+          unknownThing: 1,
+          version: '2.0.0',
+        },
+        { commands: ['./c'], name: 'tight', source: './q' },
+        { author: 5, name: 'bad-author', source: './r', strict: false },
+      ],
+    });
+    expect(m.entries[0]?.pluginManifest).toEqual({
+      author: { name: 'Me' },
+      commands: ['./commands/x.md'],
+      description: 'D',
+      hooks: { PreToolUse: [] },
+      keywords: ['a', 'b'],
+      license: 'MIT',
+      mcpServers: { s: { type: 'http', url: 'https://x.example.com' } },
+      name: 'loose',
+      skills: './skills',
+      version: '2.0.0',
+    });
+    expect(m.entries[0]).toMatchObject({ ignoredKeys: ['unknownThing'], strict: false });
+    expect(m.entries[1]).toMatchObject({
+      ignoredKeys: ['commands'],
+      pluginManifest: null,
+      strict: true,
+    });
+    expect(m.entries[2]?.pluginManifest).toEqual({ name: 'bad-author' });
   });
 
   it('lists a git URL, npm and another source type as not installable', () => {
