@@ -14,6 +14,9 @@ const { accept, checkFn, readFn, state } = vi.hoisted(() => ({
   readFn: vi.fn(),
   state: { detail: null as unknown, enablements: [] as unknown[] },
 }));
+vi.mock('@/hooks/useMcpConnections', () => ({
+  useMcpConnections: () => ({ data: [], isError: false }),
+}));
 vi.mock('@/hooks/useHarnessProfiles', () => ({
   useAcceptProfileVersion: () => ({ isPending: false, mutateAsync: accept }),
   useCheckProfile: () => ({ isPending: false, mutateAsync: vi.fn() }),
@@ -21,7 +24,9 @@ vi.mock('@/hooks/useHarnessProfiles', () => ({
   usePatchProfile: () => ({ isPending: false, mutateAsync: vi.fn() }),
   usePreviewProfileUpdate: () => ({ isPending: false, mutateAsync: checkFn }),
   useProfileEnablements: () => ({ data: state.enablements }),
+  useRemoveMcpMapping: () => ({ isPending: false, mutateAsync: vi.fn() }),
   useReviewUpdateFile: () => ({ isPending: false, mutateAsync: readFn }),
+  useSetMcpMapping: () => ({ isPending: false, mutateAsync: vi.fn() }),
 }));
 
 const { ProfileDetailModal } = await import('./ProfileDetailModal');

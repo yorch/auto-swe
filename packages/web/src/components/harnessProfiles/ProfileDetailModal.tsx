@@ -24,6 +24,7 @@ import { formatDate } from '@/lib/utils';
 import { visibleText } from '@/lib/visibleText';
 import { HookChangesDiff } from './HookChangesDiff';
 import { HooksSwitch } from './HooksSwitch';
+import { McpMappings } from './McpMappings';
 import { ProfilePreview } from './ProfilePreview';
 import { BoundAgents, EnabledTeams } from './ProfileUsage';
 import { ProjectionResult } from './ProjectionResult';
@@ -376,6 +377,7 @@ export function ProfileDetailModal({
             </dl>
             <BoundAgents agents={data.boundAgents ?? []} />
             <EnabledTeams count={data.enabledTeams} enablements={enablements.data} />
+            <McpMappings profile={data} />
             <UpdateReview profile={data} />
             <Versions profile={data} />
           </div>

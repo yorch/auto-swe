@@ -18,9 +18,7 @@ describe('McpServersList', () => {
     expect(screen.getByText('https://mcp.example.com/x')).toBeTruthy();
     expect(screen.getByText('Supported')).toBeTruthy();
     expect(screen.getByText('Unsupported')).toBeTruthy();
-    expect(
-      screen.getByText(/must point the agent’s existing MCP connection at a matching/)
-    ).toBeTruthy();
+    expect(screen.getByText(/can map each supported server to an/)).toBeTruthy();
   });
 
   it('says when there are none', () => {
