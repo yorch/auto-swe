@@ -143,6 +143,34 @@ describe('TeamJoinRequestsPanel', () => {
     expect(screen.getByText('No requests are waiting for a decision.')).toBeTruthy();
   });
 
+  it('links an organization admin to the org queue and tells others who decides', async () => {
+    const waiting = [
+      req({ id: 'r9', orgId: 'o1', requiresOrgApproval: true, status: 'PENDING_ORG' }),
+    ];
+    setPermissions(
+      permissionsFor({ orgs: [{ capabilities: ['org.members.manage'], orgId: 'o1' }] })
+    );
+    routeByStatus([], waiting);
+    const first = render(
+      withQuery(
+        <TeamJoinRequestsPanel grantableRoles={['MEMBER']} teamId="t1" teamName="Payments" />
+      )
+    );
+    const link = await screen.findByRole('link', { name: 'Decide in organization approvals' });
+    expect(link.getAttribute('href')).toBe('/admin/organizations/o1');
+    first.unmount();
+
+    setPermissions(permissionsFor({}));
+    routeByStatus([], waiting);
+    render(
+      withQuery(
+        <TeamJoinRequestsPanel grantableRoles={['MEMBER']} teamId="t1" teamName="Payments" />
+      )
+    );
+    expect(await screen.findByText(/An organization admin decides this step/)).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Decide in organization approvals' })).toBeNull();
+  });
+
   it('keeps the dialog open and says so when the request was already decided', async () => {
     const base = routeByStatus([req({})], []);
     const inner = base.getMockImplementation();

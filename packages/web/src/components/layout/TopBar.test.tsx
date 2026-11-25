@@ -69,13 +69,13 @@ describe('TopBar context and wayfinding', () => {
     (path) => {
       route.pathname = path;
       renderBar('online');
-      expect(screen.queryByRole('button', { name: 'Switch team' })).toBeNull();
+      expect(screen.queryByRole('button', { name: /^Switch team/ })).toBeNull();
     }
   );
   it('shows the pill and mobile strip on a scoped list', () => {
     route.pathname = '/requests';
     renderBar('online');
-    expect(screen.getAllByRole('button', { name: 'Switch team' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: /^Switch team/ })).toHaveLength(2);
     expect(screen.getAllByText('All my teams')).toHaveLength(2);
   });
   it('links the parent list, shows the entity, and never uses another route’s title', () => {

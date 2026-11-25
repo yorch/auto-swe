@@ -44,9 +44,20 @@ export function TeamSwitcher({ variant = 'pill' }: { variant?: 'pill' | 'strip' 
         trigger.current?.focus();
       }
     };
+    // Tabbing out of the menu closes it. A null target (a click on a non-focusable part of the
+    // menu, or the window losing focus) is left alone: the pointer handler covers outside clicks.
+    const onFocusOut = (e: FocusEvent) => {
+      const next = e.relatedTarget as Node | null;
+      if (next && !root.current?.contains(next)) {
+        setOpen(false);
+      }
+    };
+    const rootEl = root.current;
+    rootEl?.addEventListener('focusout', onFocusOut);
     document.addEventListener('mousedown', onPointer);
     document.addEventListener('keydown', onKey, true);
     return () => {
+      rootEl?.removeEventListener('focusout', onFocusOut);
       document.removeEventListener('mousedown', onPointer);
       document.removeEventListener('keydown', onKey, true);
     };
@@ -72,7 +83,7 @@ export function TeamSwitcher({ variant = 'pill' }: { variant?: 'pill' | 'strip' 
       <button
         aria-controls={MENU_ID}
         aria-expanded={open}
-        aria-label="Switch team"
+        aria-label={`Switch team, current: ${current?.name ?? 'All my teams'}`}
         className={cn(
           'flex items-center gap-2 text-sm text-paper-200 transition-colors pointer-coarse:min-h-[44px]',
           variant === 'strip'

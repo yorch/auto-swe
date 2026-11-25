@@ -95,12 +95,19 @@ export default function TeamsPage() {
         >
           {all.length === 0 ? (
             <EmptyState
-              action={newTeamButton('sm')}
+              action={
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  {newTeamButton('sm')}
+                  <Button onClick={() => setView('directory')} size="sm" variant="secondary">
+                    Browse the directory
+                  </Button>
+                </div>
+              }
               bordered
               hint={
                 canCreate
-                  ? 'Create a team to group members and repositories.'
-                  : 'Organization admins and platform admins create teams. Ask one to create a team or add you to one.'
+                  ? 'Create a team to group members and repositories, or browse the directory to request to join one.'
+                  : 'Organization admins and platform admins create teams. Browse the directory to request to join one, or ask an admin to add you.'
               }
               icon="teams"
               title="No teams yet"

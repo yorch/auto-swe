@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/stores/authStore';
 import { setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import TeamsPage from './page';
+
+vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).navigationMock());
 
 beforeEach(() => {
   stubDialogPrototype();
@@ -56,5 +58,20 @@ describe('team creation gate', () => {
       await new Promise((r) => setTimeout(r, 50));
       expect(screen.queryByRole('button', { name: 'New team' })).toBeNull();
     }
+  });
+});
+
+describe('a person in no team', () => {
+  it('is offered the directory instead of a dead end', async () => {
+    setupFetchMock({
+      '/api/v1/me/permissions': () => answer({}),
+      '/api/v1/teams': () => ({ data: [] }),
+    });
+    render(withQuery(<TeamsPage />));
+    await screen.findByText('No teams yet');
+    fireEvent.click(screen.getByRole('button', { name: 'Browse the directory' }));
+    expect(screen.getByRole('tab', { name: 'Directory' }).getAttribute('aria-selected')).toBe(
+      'true'
+    );
   });
 });

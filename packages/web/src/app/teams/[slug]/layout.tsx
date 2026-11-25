@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/Badge';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { TabBar } from '@/components/ui/TabBar';
-import { useCan } from '@/hooks/useCan';
+import { useCanState } from '@/hooks/useCan';
 import { useEffectivePermissions } from '@/hooks/useEffectivePermissions';
 import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useTeamOverview } from '@/hooks/useTeamOverview';
@@ -46,10 +46,19 @@ export default function TeamSpaceLayout({
   // What the tabs offer is what the server says the caller holds on this team: Settings for the
   // team's configuration, Manage for what its leads run it with, the budget for the dollar figures.
   const scope = { orgId: team?.orgId, teamId: team?.id };
-  const canSeeSettings = useCan('team.settings.manage', scope);
-  const canSeeManage = useCan('team.attention.read', scope);
-  const canManageBudget = useCan('team.budget.manage', scope);
-  const canManageMembers = useCan('team.members.manage', scope);
+  const settingsState = useCanState('team.settings.manage', scope);
+  const manageState = useCanState('team.attention.read', scope);
+  const budgetState = useCanState('team.budget.manage', scope);
+  const membersState = useCanState('team.members.manage', scope);
+  const canSeeSettings = settingsState.allowed;
+  const canSeeManage = manageState.allowed;
+  const canManageBudget = budgetState.allowed;
+  const canManageMembers = membersState.allowed;
+  const checks = [settingsState, manageState, budgetState, membersState];
+  // An organization admin without a team role is described by a per-team answer that arrives after
+  // the team resolves: wait for it, and show its failure, instead of a missing tab or a not-found.
+  const checking = checks.some((c) => c.pending);
+  const checkFailed = checks.find((c) => c.error);
   // Open join requests, counted on the Members tab for those who decide them.
   const overview = useTeamOverview(team?.id, { enabled: canManageMembers });
   const pendingRequests = canManageMembers ? (overview.data?.pendingJoinRequests ?? 0) : 0;
@@ -96,8 +105,27 @@ export default function TeamSpaceLayout({
   }
   // The tabs depend on what the server says the caller holds here: wait rather than flash a
   // missing Settings tab, or a not-found page on a direct link to one.
-  if (permissions.isLoading) {
+  if (permissions.isLoading || checking) {
     return <QueryBoundary isError={false} isLoading label="team" shape="detail" />;
+  }
+  if (checkFailed) {
+    return (
+      <QueryBoundary
+        error={checkFailed.error}
+        isError
+        isFetching={false}
+        isLoading={false}
+        label="team permissions"
+        onRetry={() => {
+          for (const c of checks) {
+            if (c.error) {
+              c.retry();
+            }
+          }
+        }}
+        shape="detail"
+      />
+    );
   }
 
   const tabs = TEAM_TABS.filter(

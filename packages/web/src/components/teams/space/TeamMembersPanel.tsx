@@ -28,6 +28,7 @@ import {
   teamRoleLabel,
   teamRoleRank,
 } from '@/lib/roleLabels';
+import { useAuthStore } from '@/stores/authStore';
 
 /** Teams with this many members or fewer are listed without a search box. */
 const MEMBER_SEARCH_THRESHOLD = 10;
@@ -44,6 +45,10 @@ export function TeamMembersPanel({ team: summary }: { team: TeamSummary }) {
   const removeMember = useRemoveTeamMember(id);
   const canManage = useCan('team.members.manage', { orgId: summary.orgId, teamId: id });
   const grantableRoles = useGrantableTeamRoles(id);
+  const sub = useAuthStore((s) => s.user?.sub ?? null);
+  // The server refuses a change to a member who outranks the caller's effective rank, and the
+  // roles the caller may grant run up to that rank, so the highest of them bounds who is editable.
+  const topGrantableRank = Math.max(-1, ...grantableRoles.map(teamRoleRank));
   const [adding, setAdding] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -70,6 +75,20 @@ export function TeamMembersPanel({ team: summary }: { team: TeamSummary }) {
       />
     );
   }
+  // The roles offered on a row, or none when the row is read-only. Someone else's row offers every
+  // grantable role when the caller outranks them or ties. The caller's own row offers only a raise
+  // (the path an organization or platform admin on the team takes team powers): the server refuses
+  // any lowering as SELF_DEMOTION.
+  const editableRoles = (m: { role: string; user?: { id?: string } | null }): TeamRoleValue[] => {
+    if (!grantableRoles.includes(m.role as TeamRoleValue)) {
+      return [];
+    }
+    if (m.user?.id !== sub) {
+      return [...grantableRoles];
+    }
+    const above = grantableRoles.filter((r) => teamRoleRank(r) > teamRoleRank(m.role));
+    return above.length > 0 ? [m.role as TeamRoleValue, ...above] : [];
+  };
   const existingUserIds = memberships.map((m) => m.user?.id ?? '').filter(Boolean);
 
   return (
@@ -90,6 +109,9 @@ export function TeamMembersPanel({ team: summary }: { team: TeamSummary }) {
             </Button>
           )}
         </CardHeader>
+        {!canManage && (
+          <p className="mb-3 text-sm text-paper-500">Team leads and admins manage members.</p>
+        )}
         {memberships.length === 0 ? (
           <EmptyState
             action={
@@ -120,7 +142,11 @@ export function TeamMembersPanel({ team: summary }: { team: TeamSummary }) {
               actions={
                 canManage
                   ? (m) =>
-                      m.user?.id ? (
+                      // A person cannot remove themselves, and a member above the caller's own
+                      // rank is not theirs to remove: the server refuses both.
+                      m.user?.id &&
+                      m.user.id !== sub &&
+                      teamRoleRank(m.role) <= topGrantableRank ? (
                         <ActionMenu
                           items={[
                             {
@@ -153,7 +179,7 @@ export function TeamMembersPanel({ team: summary }: { team: TeamSummary }) {
                 },
                 {
                   cell: (m) =>
-                    canManage && m.user?.id && grantableRoles.includes(m.role as TeamRoleValue) ? (
+                    canManage && m.user?.id && editableRoles(m).length > 0 ? (
                       <RoleSelectCell
                         apply={(role) =>
                           updateMember.mutateAsync({
@@ -171,7 +197,7 @@ export function TeamMembersPanel({ team: summary }: { team: TeamSummary }) {
                               }
                             : null
                         }
-                        options={grantableRoles.map((r) => ({
+                        options={editableRoles(m).map((r) => ({
                           label: teamRoleLabel(r),
                           value: r,
                         }))}

@@ -9,6 +9,7 @@ import {
   useCan,
   useCanOnTeams,
   useCanOwned,
+  useCanState,
   useGrantableTeamRoles,
   usePlatformAdmin,
   useTeamIdsCan,
@@ -265,6 +266,54 @@ describe('useCan', () => {
     expect(second.result.current).toBe(false);
     await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
     expect(second.result.current).toBe(false);
+  });
+});
+
+describe('useCanState', () => {
+  const scope = { orgId: 'org-1', teamId: 't-org' };
+
+  it('is pending until the per-team answer lands, then allowed', async () => {
+    respond(ORG_ADMIN_ANSWER, NARROWED_ORG_ADMIN);
+    const { result } = renderHook(() => useCanState('team.members.manage', scope), { wrapper });
+    expect(result.current.pending).toBe(true);
+    expect(result.current.allowed).toBe(false);
+    await waitFor(() => expect(result.current.allowed).toBe(true));
+    expect(result.current.pending).toBe(false);
+    expect(result.current.error).toBeNull();
+  });
+
+  it('reads a refusal as not allowed with no error, and any other failure as an error', async () => {
+    get.mockImplementation(async (url: string) => {
+      if (url.includes('?teamId=')) {
+        throw Object.assign(new Error('refused'), { status: 403 });
+      }
+      return ORG_ADMIN_ANSWER;
+    });
+    const refused = renderHook(() => useCanState('team.members.manage', scope), { wrapper });
+    await waitFor(() => expect(refused.result.current.pending).toBe(false));
+    expect(refused.result.current).toMatchObject({ allowed: false, error: null });
+    refused.unmount();
+
+    client.clear();
+    get.mockImplementation(async (url: string) => {
+      if (url.includes('?teamId=')) {
+        throw Object.assign(new Error('down'), { status: 500 });
+      }
+      return ORG_ADMIN_ANSWER;
+    });
+    const failed = renderHook(() => useCanState('team.members.manage', scope), { wrapper });
+    await waitFor(() => expect(failed.result.current.error).toBeTruthy());
+    expect(failed.result.current).toMatchObject({ allowed: false, pending: false });
+  });
+
+  it('is not pending for a member team, which needs no per-team request', async () => {
+    respond(MEMBER_ANSWER);
+    const { result } = renderHook(
+      () => useCanState('team.members.manage', { orgId: 'org-1', teamId: 't-lead' }),
+      { wrapper }
+    );
+    await waitFor(() => expect(result.current.allowed).toBe(true));
+    expect(result.current.pending).toBe(false);
   });
 });
 

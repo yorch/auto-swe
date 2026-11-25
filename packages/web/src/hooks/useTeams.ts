@@ -2,6 +2,7 @@
 
 import type { TeamDetail, TeamSummary } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ME_SUMMARY_KEY } from '@/hooks/useMeSummary';
 import { api } from '@/lib/api';
 import { holdsCapability, isPlatformAdminAnswer } from '@/lib/capabilities';
 import type { TeamRoleValue } from '@/lib/roleLabels';
@@ -119,6 +120,8 @@ export function useAddTeamMember(teamId: string) {
       qc.invalidateQueries({ queryKey: PERMISSIONS_KEY });
       qc.invalidateQueries({ queryKey: ['teams'] });
       qc.invalidateQueries({ queryKey: ['team', teamId] });
+      qc.invalidateQueries({ queryKey: ['team-overview', teamId] });
+      qc.invalidateQueries({ queryKey: ME_SUMMARY_KEY });
     },
   });
 }
@@ -155,6 +158,8 @@ export function useUpdateTeamMember(teamId: string) {
       qc.invalidateQueries({ queryKey: PERMISSIONS_KEY });
       qc.invalidateQueries({ queryKey: ['teams'] });
       qc.invalidateQueries({ queryKey: ['team', teamId] });
+      qc.invalidateQueries({ queryKey: ['team-overview', teamId] });
+      qc.invalidateQueries({ queryKey: ME_SUMMARY_KEY });
     },
   });
 }
@@ -168,6 +173,8 @@ export function useRemoveTeamMember(teamId: string) {
       qc.invalidateQueries({ queryKey: PERMISSIONS_KEY });
       qc.invalidateQueries({ queryKey: ['teams'] });
       qc.invalidateQueries({ queryKey: ['team', teamId] });
+      qc.invalidateQueries({ queryKey: ['team-overview', teamId] });
+      qc.invalidateQueries({ queryKey: ME_SUMMARY_KEY });
     },
   });
 }

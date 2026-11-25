@@ -230,6 +230,54 @@ describe('team space layout', () => {
     expect(await screen.findByRole('link', { name: 'Settings' })).toBeTruthy();
   });
 
+  describe('an organization admin with no team role', () => {
+    const orgAdmin = {
+      organizations: [{ capabilities: [], name: 'Acme', orgId: 'org-1', role: 'ADMIN' }],
+      platformCapabilities: [],
+      platformRole: '',
+      teams: [],
+    };
+    const narrowedAnswer = standing(['team.settings.manage'], null, 'org-admin');
+
+    function withNarrowed(handle: (narrowed: () => Promise<Response>) => Promise<Response>) {
+      gateway([], orgAdmin, {
+        'GET /api/v1/teams': () => ({ data: [team('payments', 'Payments', null)] }),
+      });
+      const inner = globalThis.fetch;
+      vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes('/api/v1/me/permissions?teamId=')) {
+          return handle(async () => Response.json(narrowedAnswer));
+        }
+        return inner(input, init);
+      });
+    }
+
+    it('shows the loading shape, not a missing tab or not-found, while the per-team answer is pending', async () => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      withNarrowed(async (answer) => {
+        await gate;
+        return answer();
+      });
+      renderLayout('payments');
+      await new Promise((r) => setTimeout(r, 50));
+      expect(screen.queryByRole('navigation', { name: 'Team sections' })).toBeNull();
+      expect(screen.queryByText('tab content')).toBeNull();
+      release();
+      expect(await screen.findByRole('link', { name: 'Settings' })).toBeTruthy();
+    });
+
+    it('shows the failure of the per-team answer instead of a tab bar without Settings', async () => {
+      withNarrowed(async () => new Response('{}', { status: 500 }));
+      renderLayout('payments');
+      expect(await screen.findByText(/Could not load team permissions/)).toBeTruthy();
+      expect(screen.queryByRole('navigation', { name: 'Team sections' })).toBeNull();
+      expect(screen.queryByText('tab content')).toBeNull();
+    });
+  });
+
   it('offers a platform admin Settings, and any team they can list', async () => {
     gateway([], PLATFORM_ADMIN, {
       'GET /api/v1/teams': () => ({ data: [team('payments', 'Payments', null)] }),

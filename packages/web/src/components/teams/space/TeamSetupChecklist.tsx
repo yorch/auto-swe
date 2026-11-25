@@ -15,6 +15,7 @@ export function TeamSetupChecklist({ team }: { team: TeamSummary }) {
 }
 
 function Checklist({ team }: { team: TeamSummary }) {
+  const canManageBudget = useCan('team.budget.manage', { orgId: team.orgId, teamId: team.id });
   const query = useTeam(team.id, { refetchOnMount: 'always' });
   if (!query.data) {
     return (
@@ -45,7 +46,7 @@ function Checklist({ team }: { team: TeamSummary }) {
     },
     {
       done: detail.monthlyBudgetUsdCents != null,
-      href: `${teamHref(team.slug, 'settings')}?tab=budget`,
+      href: canManageBudget ? `${teamHref(team.slug, 'settings')}?tab=budget` : null,
       label: 'Set a team budget',
     },
   ];
@@ -64,12 +65,18 @@ function Checklist({ team }: { team: TeamSummary }) {
             <span aria-label={item.done ? 'Complete' : 'Incomplete'} role="img">
               {item.done ? '✓' : '○'}
             </span>
-            <Link
-              className="text-paper-200 underline underline-offset-4 hover:text-paper-50"
-              href={item.href}
-            >
-              {item.label}
-            </Link>
+            {item.href ? (
+              <Link
+                className="text-paper-200 underline underline-offset-4 hover:text-paper-50"
+                href={item.href}
+              >
+                {item.label}
+              </Link>
+            ) : (
+              <span className="text-paper-300">
+                {item.label}: a team or organization admin sets the budget
+              </span>
+            )}
           </li>
         ))}
       </ul>

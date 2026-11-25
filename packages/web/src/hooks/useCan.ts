@@ -45,7 +45,31 @@ export function usePlatformAdmin(): boolean {
  * what the server decided and never grants from a role. The server checks every request itself.
  */
 export function useCan(capability: CapabilityKey, scope: CapabilityScope = {}): boolean {
-  const { data: perms } = useEffectivePermissions();
+  return useCanState(capability, scope).allowed;
+}
+
+/** What `useCanState` knows about one capability check. */
+export interface CanState {
+  /** The same answer `useCan` gives: false while anything is unknown. */
+  allowed: boolean;
+  /** The question is still being answered: the person's permissions or the narrowed per-team one. */
+  pending: boolean;
+  /**
+   * The narrowed per-team answer failed for a reason other than "no standing" (a 403 is that, and
+   * reads as `allowed: false`); null otherwise. Distinguishes "refused" from "could not be asked".
+   */
+  error: unknown;
+  /** Asks the failed narrowed question again. */
+  retry: () => void;
+}
+
+/**
+ * `useCan` with what a page needs to tell "no" from "not yet" and "could not ask": a direct link
+ * to a tab only an organization admin holds renders before the narrowed per-team answer arrives,
+ * and a not-found page there would be wrong for as long as the request is in flight or failed.
+ */
+export function useCanState(capability: CapabilityKey, scope: CapabilityScope = {}): CanState {
+  const { data: perms, isLoading } = useEffectivePermissions();
   const teamId = scope.teamId ?? null;
   const needsNarrowed =
     !!perms &&
@@ -57,7 +81,13 @@ export function useCan(capability: CapabilityKey, scope: CapabilityScope = {}): 
     // An organization the person is not in confers nothing: skip the request that would 403.
     mayHoldViaOrg(perms, scope.orgId);
   const narrowed = useTeamPermissions(teamId, needsNarrowed);
-  return holdsCapability(perms, capability, scope, narrowed.data);
+  const failed = narrowed.isError && (narrowed.error as { status?: number } | null)?.status !== 403;
+  return {
+    allowed: holdsCapability(perms, capability, scope, narrowed.data),
+    error: failed ? narrowed.error : null,
+    pending: isLoading || (needsNarrowed && narrowed.isLoading),
+    retry: () => void narrowed.refetch(),
+  };
 }
 
 /**

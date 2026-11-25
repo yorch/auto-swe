@@ -101,6 +101,9 @@ export function TeamOverviewView({
   const { last7d, pullRequests: pr } = overview;
   const q = `?team=${encodeURIComponent(slug)}`;
   const teamParam = encodeURIComponent(slug);
+  // An organization admin who is not a member sees no run figures: the server scopes them to the
+  // caller's own runs and the team's run activity, so each would read as a misleading zero.
+  const orgAdminView = overview.team.access === 'org-admin';
   return (
     <div className="space-y-6">
       {overview.team.access === 'org-admin' && (
@@ -127,91 +130,95 @@ export function TeamOverviewView({
           , so the team keeps someone who can run it.
         </Alert>
       )}
-      <Card aria-label="My work" data-testid="my-work">
-        <CardHeader className="mb-3">
-          <CardTitle>My work</CardTitle>
-        </CardHeader>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <Stat
-            hint={
-              <MineHint
-                definition="Requests you launched that are running"
-                href={`/requests?scope=MINE&state=active&team=${teamParam}`}
-                link="Browse active requests"
-              />
-            }
-            label="Running"
-            value={overview.mine.running}
-          />
-          <Stat
-            hint={
-              <MineHint
-                definition="Failed attempts you launched or were assigned, last 30 days"
-                href={`/requests?scope=MINE&state=failed&team=${teamParam}`}
-                link="Browse failed requests"
-              />
-            }
-            label="Failed"
-            value={overview.mine.failed}
-          />
-          <Stat
-            hint={
-              <MineHint
-                definition="Pull requests of your requests awaiting a merge"
-                href={`/pull-requests?scope=MINE&state=OPEN&team=${teamParam}`}
-                link="Browse open pull requests"
-              />
-            }
-            label="PRs awaiting merge"
-            value={overview.mine.prsAwaitingMerge}
-          />
-        </div>
-      </Card>
+      {!orgAdminView && (
+        <Card aria-label="My work" data-testid="my-work">
+          <CardHeader className="mb-3">
+            <CardTitle>My work</CardTitle>
+          </CardHeader>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <Stat
+              hint={
+                <MineHint
+                  definition="Requests you launched that are running"
+                  href={`/requests?scope=MINE&state=active&team=${teamParam}`}
+                  link="Browse active requests"
+                />
+              }
+              label="Running"
+              value={overview.mine.running}
+            />
+            <Stat
+              hint={
+                <MineHint
+                  definition="Failed attempts you launched or were assigned, last 30 days"
+                  href={`/requests?scope=MINE&state=failed&team=${teamParam}`}
+                  link="Browse failed requests"
+                />
+              }
+              label="Failed"
+              value={overview.mine.failed}
+            />
+            <Stat
+              hint={
+                <MineHint
+                  definition="Pull requests of your requests awaiting a merge"
+                  href={`/pull-requests?scope=MINE&state=OPEN&team=${teamParam}`}
+                  link="Browse open pull requests"
+                />
+              }
+              label="PRs awaiting merge"
+              value={overview.mine.prsAwaitingMerge}
+            />
+          </div>
+        </Card>
+      )}
 
-      <section aria-label="Team numbers" className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat
-          hint={
-            <Link
-              className="underline-offset-2 hover:underline"
-              href={`/approvals${q}&actionable=1`}
-            >
-              Open your steps
-            </Link>
-          }
-          label="Needs you"
-          tone={overview.needsYou.total > 0 ? 'warning' : 'default'}
-          value={overview.needsYou.total}
-          variant="tile"
-        />
-        <Stat
-          hint={`${overview.queued} queued`}
-          label="Running"
-          value={overview.running}
-          variant="tile"
-        />
-        <Stat
-          hint={`${last7d.succeeded} of ${last7d.started} started succeeded, ${last7d.failed} failed`}
-          label="7-day success"
-          value={percent(last7d.succeeded, last7d.started)}
-          variant="tile"
-        />
-        <Stat
-          hint={`${pr.opened} opened, ${pr.closedUnmerged} closed unmerged · 30 days${
-            pr.timeToMergeP50Hours === null
-              ? ''
-              : ` · median ${Math.round(pr.timeToMergeP50Hours)} h to merge`
-          }`}
-          label="PRs merged"
-          value={pr.merged}
-          variant="tile"
-        />
-      </section>
+      {!orgAdminView && (
+        <section aria-label="Team numbers" className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <Stat
+            hint={
+              <Link
+                className="underline-offset-2 hover:underline"
+                href={`/approvals${q}&actionable=1`}
+              >
+                Open your steps
+              </Link>
+            }
+            label="Needs you"
+            tone={overview.needsYou.total > 0 ? 'warning' : 'default'}
+            value={overview.needsYou.total}
+            variant="tile"
+          />
+          <Stat
+            hint={`${overview.queued} queued`}
+            label="Running"
+            value={overview.running}
+            variant="tile"
+          />
+          <Stat
+            hint={`${last7d.succeeded} of ${last7d.started} started succeeded, ${last7d.failed} failed`}
+            label="7-day success"
+            value={percent(last7d.succeeded, last7d.started)}
+            variant="tile"
+          />
+          <Stat
+            hint={`${pr.opened} opened, ${pr.closedUnmerged} closed unmerged · 30 days${
+              pr.timeToMergeP50Hours === null
+                ? ''
+                : ` · median ${Math.round(pr.timeToMergeP50Hours)} h to merge`
+            }`}
+            label="PRs merged"
+            value={pr.merged}
+            variant="tile"
+          />
+        </section>
+      )}
 
       {overview.budget && (
         <Card data-testid="budget-panel">
           <CardHeader className="mb-2">
             <CardTitle>Budget</CardTitle>
-            {(overview.viewerLevel === 'admin' || canManageBudget) && (
+            {canManageBudget && (
               <Link
                 className={cn(
                   'text-xs text-paper-300 underline-offset-2 hover:underline',
@@ -227,7 +234,7 @@ export function TeamOverviewView({
         </Card>
       )}
 
-      {overview.lead && (
+      {overview.lead && !orgAdminView && (
         <Card data-testid="lead-panel">
           <CardHeader className="mb-3">
             <CardTitle>Team attention</CardTitle>
@@ -282,34 +289,41 @@ export function TeamOverviewView({
                 : dollars(overview.admin.monthCostUsdCents)}
             </p>
           )}
+          {overview.admin.monthCostUsdCents === null && orgAdminView && (
+            <p className="mt-1 text-xs text-paper-500" data-testid="admin-spend-org-admin">
+              Not computed for non-members; the budget above is the team’s share used.
+            </p>
+          )}
         </Card>
       )}
 
       <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-        <Card className="p-0">
-          <CardHeader className="mb-0 px-4 pt-4 pb-2">
-            <CardTitle>Recent activity</CardTitle>
-          </CardHeader>
-          {overview.activity.length === 0 ? (
-            <EmptyState
-              className="py-8"
-              hint="Requests on this team's repositories appear here."
-              icon="inbox"
-              title="No recent activity"
-            />
-          ) : (
-            <ul className="divide-y divide-ink-600">
-              {overview.activity.map((item) => (
-                <ActivityRow
-                  item={item}
-                  key={`${item.requestId ?? item.runId}-${item.occurredAt}`}
-                />
-              ))}
-            </ul>
-          )}
-        </Card>
+        {!orgAdminView && (
+          <Card className="p-0">
+            <CardHeader className="mb-0 px-4 pt-4 pb-2">
+              <CardTitle>Recent activity</CardTitle>
+            </CardHeader>
+            {overview.activity.length === 0 ? (
+              <EmptyState
+                className="py-8"
+                hint="Requests on this team's repositories appear here."
+                icon="inbox"
+                title="No recent activity"
+              />
+            ) : (
+              <ul className="divide-y divide-ink-600">
+                {overview.activity.map((item) => (
+                  <ActivityRow
+                    item={item}
+                    key={`${item.requestId ?? item.runId}-${item.occurredAt}`}
+                  />
+                ))}
+              </ul>
+            )}
+          </Card>
+        )}
 
-        <Card>
+        <Card className={orgAdminView ? 'lg:col-span-2' : undefined}>
           <CardHeader className="mb-2">
             <CardTitle>Repositories</CardTitle>
             <span className="tabular text-xs text-paper-500">{overview.repos.length}</span>
@@ -317,9 +331,15 @@ export function TeamOverviewView({
           {overview.repos.length === 0 ? (
             <EmptyState
               className="py-6"
-              hint="Add one from Connections, or ask for one to be shared."
+              hint={
+                orgAdminView
+                  ? 'See Settings for the team’s repositories.'
+                  : 'Add one from Connections, or ask for one to be shared.'
+              }
               icon="repositories"
-              title="No repositories yet"
+              title={
+                orgAdminView ? 'No repositories you can reach on this team' : 'No repositories yet'
+              }
             />
           ) : (
             <ul className="divide-y divide-ink-600">

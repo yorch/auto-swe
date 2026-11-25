@@ -45,7 +45,7 @@ afterEach(cleanup);
 function open(path = '/') {
   resetNavigation('', path);
   render(<TeamSwitcher />);
-  fireEvent.click(screen.getByRole('button', { name: 'Switch team' }));
+  fireEvent.click(screen.getByRole('button', { name: /^Switch team/ }));
   return within(screen.getByRole('list', { name: 'Teams' }));
 }
 
@@ -98,10 +98,29 @@ describe('TeamSwitcher', () => {
 
   it('names the current team and marks it', () => {
     open('/teams/payments/members');
-    expect(screen.getByRole('button', { name: 'Switch team' }).textContent).toContain('Payments');
+    expect(screen.getByRole('button', { name: /^Switch team/ }).textContent).toContain('Payments');
     expect(screen.getByRole('link', { name: /Payments/ }).getAttribute('aria-current')).toBe(
       'page'
     );
+  });
+
+  it('puts the current team in the accessible name', () => {
+    open('/teams/payments');
+    expect(screen.getByRole('button', { name: 'Switch team, current: Payments' })).toBeTruthy();
+    cleanup();
+    open('/');
+    expect(screen.getByRole('button', { name: 'Switch team, current: All my teams' })).toBeTruthy();
+  });
+
+  it('closes when focus moves outside, and stays open when it moves within', () => {
+    open();
+    const inside = screen.getByRole('link', { name: /Payments/ });
+    fireEvent.focusOut(screen.getByRole('button', { name: /^Switch team/ }), {
+      relatedTarget: inside,
+    });
+    expect(screen.getByRole('list', { name: 'Teams' })).toBeTruthy();
+    fireEvent.focusOut(inside, { relatedTarget: document.body });
+    expect(screen.queryByRole('list', { name: 'Teams' })).toBeNull();
   });
 
   it('closes on Escape', () => {

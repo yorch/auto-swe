@@ -2,6 +2,7 @@
 import type { TeamSummary } from '@auto-swe/shared/types/api';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useAuthStore } from '@/stores/authStore';
 import {
   ADMIN_PERMISSIONS,
   NO_PERMISSIONS,
@@ -22,6 +23,7 @@ beforeEach(stubDialogPrototype);
 afterEach(() => {
   cleanup();
   resetPermissions();
+  useAuthStore.setState({ isAuthenticated: false, user: null });
   vi.unstubAllGlobals();
 });
 const base: TeamSummary = {
@@ -132,5 +134,82 @@ describe('team roles in the member list', () => {
     await screen.findByText('member@acme.com');
     fireEvent.click(screen.getByRole('button', { name: /Team role for member@acme.com/ }));
     expect(screen.getByRole('option', { name: 'Team admin' })).toBeTruthy();
+  });
+});
+
+describe('rows the server would refuse', () => {
+  const rows = [
+    ...MEMBERS,
+    {
+      id: 'm3',
+      role: 'LEAD',
+      user: { email: 'me@acme.com', id: 'me', isActive: true, role: 'USER' },
+    },
+  ];
+  const showFor = async (perms: ReturnType<typeof permissionsFor>) => {
+    setPermissions(perms);
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'USER', sub: 'me' } as never });
+    setupFetchMock({ '/api/v1/teams/t1': () => ({ data: { ...base, memberships: rows } }) });
+    render(withQuery(<TeamMembersPanel team={base} />));
+    await screen.findByText('member@acme.com');
+  };
+
+  it('offers a lead no removal of themselves or of an admin, and no role change on their own row', async () => {
+    await showFor(leadsTeam);
+    expect(screen.getByRole('button', { name: 'More actions for member@acme.com' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'More actions for me@acme.com' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'More actions for admin@acme.com' })).toBeNull();
+    // A lead cannot raise themselves above lead, so the own row is a plain badge.
+    expect(screen.queryByRole('button', { name: /Team role for me@acme.com/ })).toBeNull();
+  });
+
+  it('offers an admin on the team a raise-only select on their own row: none, as nothing is above', async () => {
+    const adminRows = [
+      {
+        id: 'm4',
+        role: 'ADMIN',
+        user: { email: 'me@acme.com', id: 'me', isActive: true, role: 'USER' },
+      },
+      ...MEMBERS,
+    ];
+    setPermissions(
+      permissionsFor({
+        teams: [{ capabilities: ['team.members.manage'], role: 'ADMIN', teamId: 't1' }],
+      })
+    );
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'USER', sub: 'me' } as never });
+    setupFetchMock({ '/api/v1/teams/t1': () => ({ data: { ...base, memberships: adminRows } }) });
+    render(withQuery(<TeamMembersPanel team={base} />));
+    await screen.findByText('member@acme.com');
+    expect(screen.queryByRole('button', { name: /Team role for me@acme.com/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'More actions for me@acme.com' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'More actions for admin@acme.com' })).toBeTruthy();
+  });
+
+  it('offers a platform admin who sits on the team only a raise on their own row', async () => {
+    setPermissions(ADMIN_PERMISSIONS);
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ADMIN', sub: 'me' } as never });
+    const own = [
+      {
+        id: 'm5',
+        role: 'LEAD',
+        user: { email: 'me@acme.com', id: 'me', isActive: true, role: 'ADMIN' },
+      },
+    ];
+    setupFetchMock({ '/api/v1/teams/t1': () => ({ data: { ...base, memberships: own } }) });
+    render(withQuery(<TeamMembersPanel team={base} />));
+    await screen.findByText('me@acme.com');
+    expect(screen.queryByRole('button', { name: 'More actions for me@acme.com' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Team role for me@acme.com/ }));
+    expect(screen.getByRole('option', { name: 'Team admin' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'Member' })).toBeNull();
+  });
+
+  it('tells a plain member who manages members', async () => {
+    setPermissions(permissionsFor({ teams: [{ capabilities: [], role: 'MEMBER', teamId: 't1' }] }));
+    setupFetchMock({ '/api/v1/teams/t1': () => ({ data: { ...base, memberships: MEMBERS } }) });
+    render(withQuery(<TeamMembersPanel team={base} />));
+    await screen.findByText('member@acme.com');
+    expect(screen.getByText('Team leads and admins manage members.')).toBeTruthy();
   });
 });
