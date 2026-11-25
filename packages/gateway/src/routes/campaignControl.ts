@@ -688,9 +688,51 @@ export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
         position += 1;
       }
       if (rows.length > 0) {
-        await prisma.campaignTarget.createMany({
-          data: rows.map((r) => ({ ...r, campaignId: campaign.id })),
+        // The worker settles COMPLETED / MONITORING under this same campaign row lock after
+        // re-counting non-final targets, so a target inserted here either lands before that count
+        // (and keeps the campaign open) or finds the campaign closed and is refused.
+        const outcome = await prisma.$transaction(async (tx) => {
+          // CLAUDE.md §7 exception: Prisma cannot express SELECT … FOR UPDATE. Same row, same
+          // reason, and same position in the lock order as the attempt route (`lockOrder.ts`).
+          await tx.$queryRaw`SELECT id FROM campaigns WHERE id = ${campaign.id}::uuid FOR UPDATE`;
+          const current = await tx.campaign.findFirst({
+            select: { state: true },
+            where: { id: campaign.id, ownerTeamId: campaign.ownerTeamId },
+          });
+          if (!current || CLOSED_STATES.includes(current.state)) {
+            return { closed: current?.state ?? 'gone' } as const;
+          }
+          // Another add may have landed since the first read: take positions from what is there now.
+          const now = await runUnscoped(
+            'the positions of the targets of a campaign the caller may control',
+            ['CampaignTarget'],
+            () =>
+              tx.campaignTarget.findMany({
+                select: { position: true },
+                where: { campaignId: campaign.id },
+              })
+          );
+          const base = now.reduce((max, t) => Math.max(max, t.position), -1) + 1;
+          await tx.campaignTarget.createMany({
+            data: rows.map((r, i) => ({ ...r, campaignId: campaign.id, position: base + i })),
+          });
+          if (current.state === 'MONITORING') {
+            // An open target now exists, so the campaign is no longer only watching.
+            await tx.campaign.updateMany({
+              data: { state: 'ACTIVE' },
+              where: { id: campaign.id, ownerTeamId: campaign.ownerTeamId, state: 'MONITORING' },
+            });
+          }
+          return { closed: null } as const;
         });
+        if (outcome.closed !== null) {
+          return sendError(
+            reply,
+            409,
+            'CAMPAIGN_NOT_ACTIVE',
+            `Campaign is ${outcome.closed} and takes no new targets`
+          );
+        }
         const signal = await wake(request, campaign, 'addTargets');
         await audit(
           request,

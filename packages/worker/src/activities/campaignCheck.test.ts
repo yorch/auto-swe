@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const db = vi.hoisted(() => ({
   campaign: { findUnique: vi.fn() },
+  campaignDiscoveryCheck: { deleteMany: vi.fn(), findMany: vi.fn(), upsert: vi.fn() },
   campaignProposal: { findMany: vi.fn() },
   campaignTarget: { findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
   connection: { findMany: vi.fn() },
@@ -319,6 +320,9 @@ describe('discoverCampaignTargets', () => {
     db.user.findUnique.mockResolvedValue({ isActive: true, role: 'USER' });
     db.campaignTarget.findMany.mockResolvedValue([]);
     db.campaignProposal.findMany.mockResolvedValue([]);
+    db.campaignDiscoveryCheck.findMany.mockResolvedValue([]);
+    db.campaignDiscoveryCheck.deleteMany.mockResolvedValue({ count: 1 });
+    db.campaignDiscoveryCheck.upsert.mockResolvedValue({});
     db.connection.findMany.mockResolvedValue([]);
     perms.can.mockResolvedValue({ allowed: true });
   });
@@ -499,6 +503,97 @@ describe('discoverCampaignTargets', () => {
     expect(run).toHaveBeenCalledTimes(1);
     expect(run.mock.calls[0]?.[0].repoId).toBe('new');
     expect(r.candidates.map((c) => c.connectionId)).toEqual(['new']);
+  });
+
+  describe('the satisfied marker', () => {
+    const tipOf = (sha: string | null) => vi.fn().mockResolvedValue(sha);
+
+    it('records a marker for a non-target repository that checks satisfied', async () => {
+      db.connection.findMany.mockResolvedValue([repo('c')]);
+      const { deps } = runner(SATISFIED_OUT);
+      await discoverCampaignTargets({ campaignId: CAMPAIGN, cursor: 0 }, deps);
+      expect(db.campaignDiscoveryCheck.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: { baseSha: SHA, campaignId: CAMPAIGN, connectionId: 'c' },
+          where: { campaignId_connectionId: { campaignId: CAMPAIGN, connectionId: 'c' } },
+        })
+      );
+    });
+
+    it('skips an unchanged marked repository without cloning it, and still advances the cursor', async () => {
+      db.connection.findMany.mockResolvedValue([repo('m'), repo('n')]);
+      db.campaignDiscoveryCheck.findMany.mockResolvedValue([{ baseSha: SHA, connectionId: 'm' }]);
+      const run = vi.fn().mockResolvedValue(NOT_SATISFIED_OUT);
+      const resolveTip = tipOf(SHA);
+      const r = await discoverCampaignTargets(
+        { campaignId: CAMPAIGN, cursor: 0, limit: 2 },
+        { resolveTip, run }
+      );
+      expect(resolveTip).toHaveBeenCalledWith('m');
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(run.mock.calls[0]?.[0].repoId).toBe('n');
+      expect(r.candidates.map((c) => c.connectionId)).toEqual(['n']);
+      expect(r.nextCursor).toBe(2);
+    });
+
+    it('does not count a marker skip toward maxCandidates', async () => {
+      db.connection.findMany.mockResolvedValue([repo('m'), repo('n'), repo('o')]);
+      db.campaignDiscoveryCheck.findMany.mockResolvedValue([{ baseSha: SHA, connectionId: 'm' }]);
+      const r = await discoverCampaignTargets(
+        { campaignId: CAMPAIGN, cursor: 0, maxCandidates: 2 },
+        { resolveTip: tipOf(SHA), run: vi.fn().mockResolvedValue(NOT_SATISFIED_OUT) }
+      );
+      expect(r.candidates.map((c) => c.connectionId)).toEqual(['n', 'o']);
+    });
+
+    it('re-checks a marked repository whose base moved, and refreshes the marker when still satisfied', async () => {
+      const moved = 'c'.repeat(40);
+      db.connection.findMany.mockResolvedValue([repo('m')]);
+      db.campaignDiscoveryCheck.findMany.mockResolvedValue([{ baseSha: moved, connectionId: 'm' }]);
+      const { run } = runner(SATISFIED_OUT);
+      await discoverCampaignTargets(
+        { campaignId: CAMPAIGN, cursor: 0 },
+        { resolveTip: tipOf(SHA), run }
+      );
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(db.campaignDiscoveryCheck.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ update: expect.objectContaining({ baseSha: SHA }) })
+      );
+    });
+
+    it('checks normally, fail-closed, when the tip cannot be resolved', async () => {
+      db.connection.findMany.mockResolvedValue([repo('m')]);
+      db.campaignDiscoveryCheck.findMany.mockResolvedValue([{ baseSha: SHA, connectionId: 'm' }]);
+      for (const resolveTip of [tipOf(null), vi.fn().mockRejectedValue(new Error('host down'))]) {
+        const run = vi.fn().mockResolvedValue(NOT_SATISFIED_OUT);
+        await discoverCampaignTargets({ campaignId: CAMPAIGN, cursor: 0 }, { resolveTip, run });
+        expect(run).toHaveBeenCalledTimes(1);
+      }
+    });
+
+    it('deletes the marker when a re-check is not satisfied', async () => {
+      db.connection.findMany.mockResolvedValue([repo('m')]);
+      db.campaignDiscoveryCheck.findMany.mockResolvedValue([
+        { baseSha: 'c'.repeat(40), connectionId: 'm' },
+      ]);
+      await discoverCampaignTargets(
+        { campaignId: CAMPAIGN, cursor: 0 },
+        { resolveTip: tipOf(SHA), run: vi.fn().mockResolvedValue(NOT_SATISFIED_OUT) }
+      );
+      expect(db.campaignDiscoveryCheck.deleteMany).toHaveBeenCalledWith({
+        where: { campaign: { orgId: ORG }, campaignId: CAMPAIGN, connectionId: 'm' },
+      });
+    });
+
+    it('deletes the marker of a repository that has become a target', async () => {
+      db.connection.findMany.mockResolvedValue([repo('m')]);
+      db.campaignTarget.findMany.mockResolvedValue([{ connectionId: 'm' }]);
+      db.campaignDiscoveryCheck.findMany.mockResolvedValue([{ baseSha: SHA, connectionId: 'm' }]);
+      const { deps, run } = runner(NOT_SATISFIED_OUT);
+      await discoverCampaignTargets({ campaignId: CAMPAIGN, cursor: 0 }, deps);
+      expect(run).not.toHaveBeenCalled();
+      expect(db.campaignDiscoveryCheck.deleteMany).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('finds nothing for a campaign with no scope, no check, no launcher or a deactivated one', async () => {

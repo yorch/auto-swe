@@ -522,6 +522,13 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       // With the campaign reconciler on, an epic is a PLANNED campaign (docs/campaigns.md). It is
       // launched as one only when the reconciler's own preconditions hold for every team it
       // touches: otherwise the epic path below runs, exactly as it does with the setting off.
+      // The owner team is the team of the FIRST repository the caller listed, not of the largest,
+      // alphabetically first or most numerous team. The caller chose the order, `authorizeLaunch`
+      // above already required LEAD on every owning team, so the first-listed one is a team the
+      // caller leads and the one they pointed to as the epic's home; the campaign's settings, its
+      // template and its visibility to ordinary members are then decided in that team's scope,
+      // deterministically for the same request. `repos` comes back in query order, so it is looked
+      // up by id, with `repos[0]` only as the fallback.
       const owner = (repos.find((r) => r.id === repoIds[0]) ?? repos[0])?.team;
       if (owner && (await epicRunsAsCampaign(request, repos, owner, repoIds.length))) {
         return launchEpicAsCampaign(fastify, request, reply, {

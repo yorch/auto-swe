@@ -1812,6 +1812,20 @@ describe('campaign routes', () => {
       });
     });
 
+    it('reports a planning failure from its columns, and null when none is recorded', async () => {
+      seedUuids();
+      as('admin-1', 'ADMIN', {});
+      expect(body(await detail(U(1))).data.planFailure).toBeNull();
+      Object.assign(campaigns.find((x) => x.id === U(1)) as CampaignRow, {
+        planFailedAt: new Date('2026-06-04T00:00:00Z'),
+        planFailureReason: 'The planner returned no usable plan',
+      });
+      expect(body(await detail(U(1))).data.planFailure).toEqual({
+        at: '2026-06-04T00:00:00.000Z',
+        reason: 'The planner returned no usable plan',
+      });
+    });
+
     it('shows an ADMIN every target', async () => {
       seedUuids();
       as('admin-1', 'ADMIN', {});

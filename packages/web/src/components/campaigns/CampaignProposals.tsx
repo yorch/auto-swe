@@ -6,8 +6,15 @@ import { RelativeTime } from '@/components/ui/RelativeTime';
  * Repositories discovery found that match the goal but that the person the campaign runs as is not
  * authorized to start work in. Nothing starts in them; each says why.
  */
-export function CampaignProposals({ proposals }: { proposals: readonly CampaignProposalDto[] }) {
-  if (proposals.length === 0) {
+export function CampaignProposals({
+  hiddenCount = 0,
+  proposals,
+}: {
+  /** Proposals naming a repository the viewer cannot see: counted, never named. */
+  hiddenCount?: number;
+  proposals: readonly CampaignProposalDto[];
+}) {
+  if (proposals.length === 0 && hiddenCount <= 0) {
     return null;
   }
   return (
@@ -16,7 +23,7 @@ export function CampaignProposals({ proposals }: { proposals: readonly CampaignP
         <CardTitle hint="Found by discovery but not authorized for the person this campaign runs as, so nothing starts in them.">
           Found, not started
         </CardTitle>
-        <span className="tabular text-sm text-paper-400">{proposals.length}</span>
+        <span className="tabular text-sm text-paper-400">{proposals.length + hiddenCount}</span>
       </CardHeader>
       <ul className="divide-y divide-ink-600">
         {proposals.map((proposal) => (
@@ -36,6 +43,15 @@ export function CampaignProposals({ proposals }: { proposals: readonly CampaignP
           </li>
         ))}
       </ul>
+      {hiddenCount > 0 && (
+        <p
+          className="mt-3 text-xs text-paper-500 first:mt-0"
+          data-testid="campaign-hidden-proposals"
+        >
+          {hiddenCount} more {hiddenCount === 1 ? 'repository was' : 'repositories were'} found that
+          you cannot see.
+        </p>
+      )}
     </Card>
   );
 }

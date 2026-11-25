@@ -900,6 +900,7 @@ model Connection {
 
   campaignTargets CampaignTarget[]
   campaignProposals CampaignProposal[]
+  campaignDiscoveryChecks CampaignDiscoveryCheck[]
   runPlans        RunPlan[]
   @@index([teamId])
   @@index([installationId])
@@ -5682,6 +5683,10 @@ model Campaign {
   launcherChangedAt  DateTime?            @map("launcher_changed_at") @db.Timestamptz
   /// Why the campaign is PAUSED: `manual`, `launcher-unavailable`, `disabled` or `budget`.
   pausedReason       String?              @map("paused_reason")
+  /// Why the planner produced no plan (fixed wording, bounded); null while none failed. Set and
+  /// cleared only in PLANNING.
+  planFailureReason  String?              @map("plan_failure_reason")
+  planFailedAt       DateTime?            @map("plan_failed_at") @db.Timestamptz
   temporalWorkflowId String           @unique @map("temporal_workflow_id")
   workRequestId      String           @unique @map("work_request_id") @db.Uuid
   workRequest        RunInput         @relation(fields: [workRequestId], references: [id], onDelete: Cascade)
@@ -5695,6 +5700,7 @@ model Campaign {
   updatedAt          DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   targets            CampaignTarget[]
   proposals          CampaignProposal[]
+  discoveryChecks    CampaignDiscoveryCheck[]
 
   @@index([ownerTeamId, createdAt])
   @@index([orgId, createdAt])
@@ -5777,6 +5783,23 @@ model CampaignProposal {
   @@unique([campaignId, connectionId])
   @@index([connectionId])
   @@map("campaign_proposals")
+}
+
+/// "This repository was checked SATISFIED at base sha X for this campaign." Lets discovery skip an
+/// unchanged non-target repository without cloning it. Dropped when the repository becomes a target
+/// or a later check is not satisfied.
+model CampaignDiscoveryCheck {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  campaignId   String     @map("campaign_id") @db.Uuid
+  campaign     Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  connectionId String     @map("connection_id") @db.Uuid
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  baseSha      String     @map("base_sha")
+  checkedAt    DateTime   @default(now()) @map("checked_at") @db.Timestamptz
+
+  @@unique([campaignId, connectionId])
+  @@index([connectionId])
+  @@map("campaign_discovery_checks")
 }
 
 // ── Orchestrated agent runs ──────────────────────────────────────────────────

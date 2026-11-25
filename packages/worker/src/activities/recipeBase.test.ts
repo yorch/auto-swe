@@ -11,7 +11,7 @@ vi.mock('../lib/scm/index.js', () => ({
   toRepoRef: (repo: { id: string }) => ({ id: repo.id, scmProvider: 'github' }),
 }));
 
-import { pinRecipeBase } from './recipeBase.js';
+import { pinRecipeBase, resolveCheckBaseTip } from './recipeBase.js';
 
 const BASE = 'a'.repeat(40);
 const request = { externalTicketId: 'CAMPAIGN-x', payload: {}, repoId: 'repo-1' } as never;
@@ -74,5 +74,28 @@ describe('pinRecipeBase', () => {
       ok: true,
     });
     expect(resolveRef).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveCheckBaseTip', () => {
+  it('returns the default branch head sha without cloning', async () => {
+    await expect(resolveCheckBaseTip('repo-1')).resolves.toBe(BASE);
+    expect(resolveBranchHead.mock.calls.map((c) => c[1])).toEqual(['main']);
+  });
+
+  it('is null, never a guess, when the host cannot answer or answers oddly', async () => {
+    resolveBranchHead.mockRejectedValueOnce(new Error('host down'));
+    await expect(resolveCheckBaseTip('repo-1')).resolves.toBeNull();
+    resolveBranchHead.mockResolvedValueOnce('not-a-sha');
+    await expect(resolveCheckBaseTip('repo-1')).resolves.toBeNull();
+    resolveBranchHead.mockResolvedValueOnce(null);
+    await expect(resolveCheckBaseTip('repo-1')).resolves.toBeNull();
+    findUniqueOrThrow.mockRejectedValueOnce(new Error('gone'));
+    await expect(resolveCheckBaseTip('repo-1')).resolves.toBeNull();
+  });
+
+  it('gives up after its bound', async () => {
+    resolveBranchHead.mockImplementation(() => new Promise(() => undefined));
+    await expect(resolveCheckBaseTip('repo-1', 20)).resolves.toBeNull();
   });
 });

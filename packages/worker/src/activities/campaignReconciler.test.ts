@@ -7,6 +7,7 @@ const db = vi.hoisted(() => ({
   $transaction: vi.fn(),
   campaign: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   campaignAttempt: { findMany: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
+  campaignDiscoveryCheck: { deleteMany: vi.fn() },
   campaignProposal: { createMany: vi.fn(), findMany: vi.fn() },
   campaignTarget: {
     aggregate: vi.fn(),
@@ -461,6 +462,14 @@ describe('recordCampaignPass', () => {
     const where = db.campaignTarget.findMany.mock.calls[0]?.[0].where;
     expect(where.campaign).toEqual({ orgId: ORG });
     expect(where.position).toEqual({ gte: 5, lt: 7 });
+    // A repository that became a target loses its "checked satisfied" marker.
+    expect(db.campaignDiscoveryCheck.deleteMany).toHaveBeenCalledWith({
+      where: {
+        campaign: { orgId: ORG },
+        campaignId: CAMPAIGN,
+        connectionId: { in: ['c-a', 'c-b'] },
+      },
+    });
   });
 
   it('records proposals once', async () => {

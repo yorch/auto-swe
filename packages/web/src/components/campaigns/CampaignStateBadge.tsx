@@ -36,6 +36,18 @@ export function CampaignStateBadge({ state }: { state: CampaignStateValue }) {
 }
 
 /** A target's state; a retired value shows as the state that replaced it. */
-export function TargetStateBadge({ state }: { state: TargetState }) {
-  return <StateBadge label={targetStateLabel(state)} tone={targetStateTone(state)} />;
+export function TargetStateBadge({
+  hasCheck,
+  state,
+}: {
+  /** False for a campaign with no check, where a merge is final. */
+  hasCheck?: boolean;
+  state: TargetState;
+}) {
+  return (
+    <StateBadge
+      label={targetStateLabel(state, { hasCheck })}
+      tone={targetStateTone(state, { hasCheck })}
+    />
+  );
 }

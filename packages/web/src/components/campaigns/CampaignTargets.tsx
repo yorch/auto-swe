@@ -19,6 +19,7 @@ import { TargetStateBadge } from './CampaignStateBadge';
 import {
   ATTEMPT_OUTCOME_LABELS,
   BLOCKED_KIND_LABELS,
+  campaignHasCheck,
   campaignProgress,
   canRemoveTarget,
   canRetryTarget,
@@ -61,8 +62,9 @@ export function CampaignTargets({
   const [pending, setPending] = useState<PendingAction | null>(null);
   const retry = useRetryCampaignTarget(campaign.id);
   const remove = useRemoveCampaignTarget(campaign.id);
-  const progress = campaignProgress(campaign.counts);
-  const groups = groupTargets(campaign.targets);
+  const hasCheck = campaignHasCheck(campaign);
+  const progress = campaignProgress(campaign.counts, { hasCheck });
+  const groups = groupTargets(campaign.targets, { hasCheck });
   const labels = new Map(campaign.targets.map((t) => [t.id, t.repoLabel]));
   const planned = campaign.plan === 'PLANNED';
   const active =
@@ -74,17 +76,17 @@ export function CampaignTargets({
       <CardHeader className="mb-0 px-5 pt-5 pb-3">
         <CardTitle>Repositories</CardTitle>
         <span className="tabular text-sm text-paper-400">
-          {progress.satisfied} of {progress.total} satisfied
+          {progress.done} of {progress.total} {hasCheck ? 'satisfied' : 'done'}
           {progress.needsAttention > 0 && ` · ${progress.needsAttention} need attention`}
         </span>
       </CardHeader>
       {progress.total > 0 && (
         <div className="px-5 pb-4">
           <div
-            aria-label="Repositories satisfied"
+            aria-label={hasCheck ? 'Repositories satisfied' : 'Repositories done'}
             aria-valuemax={progress.total}
             aria-valuemin={0}
-            aria-valuenow={progress.satisfied}
+            aria-valuenow={progress.done}
             className="h-1.5 w-full overflow-hidden rounded-full bg-ink-600"
             role="progressbar"
           >
@@ -231,7 +233,7 @@ function TargetRow({
             )}
           </p>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <TargetStateBadge state={target.state} />
+            <TargetStateBadge hasCheck={campaignHasCheck(campaign)} state={target.state} />
             {target.liveStatus && (
               <span className="text-xs text-paper-500">
                 {target.liveStatus.replace(/_/g, ' ').toLowerCase()}

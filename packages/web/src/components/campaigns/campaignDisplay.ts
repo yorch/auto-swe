@@ -4,6 +4,7 @@ import type {
   CampaignCountsDto,
   CampaignTargetDto,
 } from '@auto-swe/shared/lib/campaignApi';
+import { recipeSupportsCheck } from '@auto-swe/shared/lib/campaignRecipes';
 import {
   type CampaignAttemptOutcomeValue,
   type CampaignGateValue,
@@ -12,6 +13,7 @@ import {
   type CampaignScopeKindValue,
   type CampaignStateValue,
   type CampaignWorkflowKindValue,
+  isTargetFinalFor,
   normalizeTargetState,
   type PullRequestStatusValue,
   type ReconcilerTargetState,
@@ -149,16 +151,38 @@ export function campaignStateLabel(state: CampaignStateValue): string {
 }
 
 /**
+ * Whether the campaign has a check that confirms a merge. A campaign without one is done when its
+ * pull requests merge. A legacy campaign never ran the reconciler, so it keeps the original
+ * reading (`MERGED` is not final for it).
+ */
+export function campaignHasCheck(campaign: {
+  recipeRef: string | null;
+  workflowKind: CampaignWorkflowKindValue;
+}): boolean {
+  return campaign.workflowKind === 'LEGACY' || recipeSupportsCheck(campaign.recipeRef);
+}
+
+/** What a merged target is called for a campaign with no check: nothing is left to confirm it. */
+export const MERGED_NO_CHECK_LABEL = 'Merged (no check to confirm)';
+
+/**
  * A target's state as a person reads it. The retired values the legacy workflow writes are read
  * as the states that replaced them first, so a legacy `FAILED` row says "Needs attention".
  */
-export function targetStateLabel(state: TargetState): string {
+export function targetStateLabel(state: TargetState, opts: { hasCheck?: boolean } = {}): string {
   const normalized = normalizeTargetState(state);
+  if (normalized === 'MERGED' && opts.hasCheck === false) {
+    return MERGED_NO_CHECK_LABEL;
+  }
   return TARGET_STATE_LABELS[normalized] ?? normalized.replace(/_/g, ' ').toLowerCase();
 }
 
-export function targetStateTone(state: TargetState): StateTone {
-  return TARGET_STATE_TONES[normalizeTargetState(state)] ?? 'neutral';
+export function targetStateTone(state: TargetState, opts: { hasCheck?: boolean } = {}): StateTone {
+  const normalized = normalizeTargetState(state);
+  if (normalized === 'MERGED' && opts.hasCheck === false) {
+    return 'success';
+  }
+  return TARGET_STATE_TONES[normalized] ?? 'neutral';
 }
 
 /** Why a campaign is paused, in a few words for a list row. */
@@ -238,18 +262,29 @@ export const WORKFLOW_KIND_LABELS: Record<CampaignWorkflowKindValue, string> = {
 // ── Counts ──
 
 export interface CampaignProgress {
+  /** Repositories whose part is finished: satisfied, plus merged for a campaign with no check. */
+  done: number;
   needsAttention: number;
   percent: number;
   satisfied: number;
   total: number;
 }
 
-/** Progress is how many repositories satisfy the goal, over every repository including hidden ones. */
-export function campaignProgress(counts: CampaignCountsDto): CampaignProgress {
+/**
+ * Progress is how many repositories satisfy the goal, over every repository including hidden ones.
+ * With no check (`hasCheck` false) a merged pull request is as far as a repository goes, so it
+ * counts as done; `satisfied` stays the number the check confirmed.
+ */
+export function campaignProgress(
+  counts: CampaignCountsDto,
+  opts: { hasCheck?: boolean } = {}
+): CampaignProgress {
   const total = counts.total;
+  const done = counts.satisfied + (opts.hasCheck === false ? counts.merged : 0);
   return {
+    done,
     needsAttention: counts.needsAttention,
-    percent: total ? Math.round((counts.satisfied / total) * 100) : 0,
+    percent: total ? Math.round((done / total) * 100) : 0,
     satisfied: counts.satisfied,
     total,
   };
@@ -259,10 +294,14 @@ export function campaignProgress(counts: CampaignCountsDto): CampaignProgress {
  * "2 in review · 3 running · 1 blocked": what is left besides satisfied and needing a person,
  * which the list shows on their own. Non-zero buckets only, in the order a reader asks about them.
  */
-export function breakdownText(counts: CampaignCountsDto): string {
+export function breakdownText(
+  counts: CampaignCountsDto,
+  opts: { hasCheck?: boolean } = {}
+): string {
   const parts: [number, string][] = [
     [counts.prOpened, 'in review'],
-    [counts.merged, 'merged, checking'],
+    // With no check a merge is counted as done, so it is not "left" and not listed here.
+    [opts.hasCheck === false ? 0 : counts.merged, 'merged, checking'],
     [counts.running, 'running'],
     [counts.blocked, 'blocked'],
     [counts.pending, 'not started'],
@@ -324,11 +363,28 @@ const GROUPS: { hint: string; id: TargetGroupId; title: string }[] = [
  * waiting for review, what is moving, what is done, what was dropped. Empty groups are left out and
  * each group keeps the launch order. A retired state is grouped as the state that replaced it.
  */
-export function groupTargets(targets: readonly CampaignTargetDto[]): TargetGroup[] {
+export function groupTargets(
+  targets: readonly CampaignTargetDto[],
+  opts: { hasCheck?: boolean } = {}
+): TargetGroup[] {
   const sorted = [...targets].sort((a, b) => a.position - b.position);
+  const hasCheck = opts.hasCheck !== false;
+  const groupOf = (state: TargetState): TargetGroupId => {
+    const normalized = normalizeTargetState(state);
+    // A merge is final for a campaign with no check, so it sits with the done targets.
+    return normalized === 'MERGED' && isTargetFinalFor(normalized, { hasCheck })
+      ? 'satisfied'
+      : GROUP_OF[normalized];
+  };
   return GROUPS.map((group) => ({
     ...group,
-    targets: sorted.filter((t) => GROUP_OF[normalizeTargetState(t.state)] === group.id),
+    ...(group.id === 'satisfied' && !hasCheck
+      ? {
+          hint: 'Merged pull requests, and repositories that needed no change. The campaign has no check to confirm a merge.',
+          title: 'Done',
+        }
+      : {}),
+    targets: sorted.filter((t) => groupOf(t.state) === group.id),
   })).filter((group) => group.targets.length > 0);
 }
 

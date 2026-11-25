@@ -603,6 +603,106 @@ describe.skipIf(!enabled)('campaign reconciler against Postgres', () => {
       expect(out.candidates.every((c) => c.teamId === ids.team)).toBe(true);
       expect(out.nextCursor).toBeNull();
     });
+
+    it('skips an unchanged satisfied repository by its marker without cloning, and re-checks it when the base moved', async () => {
+      const scoped = await prisma.campaign.create({
+        data: {
+          description: 'Marker',
+          id: uuid(),
+          launchedById: ids.leader,
+          maxParallel: 1,
+          name: `${PREFIX}marker`,
+          orgId: ids.org,
+          ownerTeamId: ids.team,
+          recipeParams: { packageName: 'lodash', targetVersion: '4.17.21' },
+          recipeRef: 'npm-dependency@2',
+          scopeId: ids.team,
+          scopeKind: 'TEAM',
+          state: 'ACTIVE',
+          templateId: ids.template,
+          templateVersion: 1,
+          temporalWorkflowId: `campaign-${uuid()}`,
+          workflowKind: 'RECONCILER',
+          workRequestId: (
+            await prisma.runInput.create({
+              data: { externalTicketId: `${PREFIX}marker`, requestPayload: '{}' },
+            })
+          ).id,
+        },
+      });
+      const repo = await prisma.connection.create({
+        data: { organizationName: 'acme', repoName: `${PREFIX}marker-repo`, teamId: ids.team },
+      });
+      const sha1 = '1'.repeat(40);
+      const sha2 = '2'.repeat(40);
+      let tip = sha1;
+      let verdict =
+        'CAMPAIGN_CHECK evidence=declared-at-target detail=at declared=4.17.21 resolved=-\n';
+      const clones: string[] = [];
+      const deps = {
+        resolveTip: async () => tip,
+        run: async (input: { repoId: string }) => {
+          clones.push(input.repoId);
+          return { baseSha: tip, exitCode: verdict.includes('below') ? 1 : 0, stdout: verdict };
+        },
+      };
+      const walk = async () => {
+        clones.length = 0;
+        return discoverCampaignTargets({ campaignId: scoped.id, cursor: 0 }, deps);
+      };
+      const marker = () =>
+        prisma.campaignDiscoveryCheck.findFirst({
+          where: { campaignId: scoped.id, connectionId: repo.id },
+        });
+
+      // First walk: checked (cloned), satisfied, marker written at sha1.
+      await walk();
+      expect(clones).toContain(repo.id);
+      expect((await marker())?.baseSha).toBe(sha1);
+
+      // Second walk, base unchanged: not cloned; the cursor still passes it.
+      const again = await walk();
+      expect(clones).not.toContain(repo.id);
+      expect(again.candidates.some((c) => c.connectionId === repo.id)).toBe(false);
+
+      // Base moved and the repository regressed: re-checked, reported, marker removed.
+      tip = sha2;
+      verdict = 'CAMPAIGN_CHECK evidence=below-target detail=below declared=4.17.20 resolved=-\n';
+      const moved = await walk();
+      expect(clones).toContain(repo.id);
+      expect(moved.candidates.some((c) => c.connectionId === repo.id)).toBe(true);
+      expect(await marker()).toBeNull();
+
+      // Satisfied again at the new base: the marker is refreshed in place (one row, new sha).
+      verdict =
+        'CAMPAIGN_CHECK evidence=declared-at-target detail=at declared=4.17.21 resolved=-\n';
+      await walk();
+      expect(
+        await prisma.campaignDiscoveryCheck.count({
+          where: { campaignId: scoped.id, connectionId: repo.id },
+        })
+      ).toBe(1);
+      expect((await marker())?.baseSha).toBe(sha2);
+
+      // An unreadable tip is checked normally.
+      deps.resolveTip = async () => null as never;
+      await walk();
+      expect(clones).toContain(repo.id);
+
+      // Becoming a target drops the marker on the next walk.
+      await prisma.campaignTarget.create({
+        data: {
+          campaignId: scoped.id,
+          connectionId: repo.id,
+          position: 0,
+          repoLabel: 'acme/marker',
+          state: 'PENDING',
+          teamId: ids.team,
+        },
+      });
+      await walk();
+      expect(await marker()).toBeNull();
+    });
   });
 
   describe('run finalization', () => {

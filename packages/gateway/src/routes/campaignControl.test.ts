@@ -968,6 +968,44 @@ describe('campaign control routes', () => {
     });
   });
 
+  describe('POST /:id/targets under the campaign lock', () => {
+    const raw = () => app.prisma as unknown as { $queryRaw: () => Promise<unknown> };
+
+    it('refuses, and inserts nothing, when the campaign settled before the lock was taken', async () => {
+      as('lead-1');
+      const original = raw().$queryRaw;
+      raw().$queryRaw = async () => {
+        campaign().state = 'COMPLETED';
+        return [{ id: 'locked' }];
+      };
+      try {
+        const res = await call('POST', `/${CAMPAIGN}/targets`, { repoIds: [REPO_C] });
+        expect(res.statusCode).toBe(409);
+        expect(body(res).error.code).toBe('CAMPAIGN_NOT_ACTIVE');
+        expect(targets).toHaveLength(2);
+        expect(signals).toHaveLength(0);
+      } finally {
+        raw().$queryRaw = original;
+      }
+    });
+
+    it('moves a MONITORING campaign back to ACTIVE with the insert', async () => {
+      as('lead-1');
+      campaign().state = 'MONITORING';
+      const res = await call('POST', `/${CAMPAIGN}/targets`, { repoIds: [REPO_C] });
+      expect(res.statusCode).toBe(200);
+      expect(targets).toHaveLength(3);
+      expect(campaign().state).toBe('ACTIVE');
+    });
+
+    it('leaves an ACTIVE campaign as it is', async () => {
+      as('lead-1');
+      campaign().state = 'ACTIVE';
+      await call('POST', `/${CAMPAIGN}/targets`, { repoIds: [REPO_C] });
+      expect(campaign().state).toBe('ACTIVE');
+    });
+  });
+
   describe('POST /:id/targets/:targetId/retry', () => {
     it('moves a target that needs attention back to PENDING, for the creator, a LEAD or an ADMIN', async () => {
       for (const [sub, role] of [

@@ -52,3 +52,40 @@ export async function pinRecipeBase(request: RepoWorkRequest, branch: string): P
   }
   return { baseBranch, baseSha, ok: true };
 }
+
+/**
+ * The sha the repository's base branch points at on the host right now, resolved the way
+ * {@link pinRecipeBase} resolves it (a branch head, never a tag) and the way a campaign check clones
+ * it (the repository's default branch), without cloning. Bounded by `timeoutMs`, and fail-closed:
+ * any failure, timeout or malformed answer is `null`, which the caller reads as "not known", never
+ * as "unchanged".
+ */
+export async function resolveCheckBaseTip(
+  repoId: string,
+  timeoutMs = 15_000
+): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const lookup = (async () => {
+      const repo = await prisma.connection.findUniqueOrThrow({
+        include: { installation: { select: { host: true, installationId: true } } },
+        where: { id: repoId },
+      });
+      const repoRef = toRepoRef(repo);
+      const baseBranch = await resolveRequestBaseBranch({ payload: {} }, repo);
+      const sha = await getScmProvider(repoRef).resolveBranchHead(repoRef, baseBranch);
+      return sha !== null && SHA.test(sha) ? sha : null;
+    })();
+    lookup.catch(() => undefined);
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), timeoutMs);
+    });
+    return await Promise.race([lookup, timeout]);
+  } catch {
+    return null;
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}

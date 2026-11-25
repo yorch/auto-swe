@@ -5,6 +5,7 @@ import type { CampaignSummary } from '@/hooks/useCampaigns';
 import { CampaignStateBadge } from './CampaignStateBadge';
 import {
   breakdownText,
+  campaignHasCheck,
   campaignProgress,
   PAUSED_REASON_LABELS,
   PLAN_LABELS,
@@ -40,12 +41,13 @@ const COLUMNS: DataTableColumn<CampaignSummary>[] = [
   },
   {
     cell: (campaign) => {
-      const progress = campaignProgress(campaign.counts);
-      const rest = breakdownText(campaign.counts);
+      const hasCheck = campaignHasCheck(campaign);
+      const progress = campaignProgress(campaign.counts, { hasCheck });
+      const rest = breakdownText(campaign.counts, { hasCheck });
       return (
         <div>
           <span className="tabular text-paper-200">
-            {progress.satisfied} of {progress.total} satisfied
+            {progress.done} of {progress.total} {hasCheck ? 'satisfied' : 'done'}
           </span>
           {progress.needsAttention > 0 && (
             <span className="tabular block text-xs font-medium text-danger-400">

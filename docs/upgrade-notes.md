@@ -2714,11 +2714,12 @@ in the same transaction, so the new enum values are added alone and the next mig
    values (`RUNNING`, `COMPLETED_WITH_FAILURES`, `NOT_AFFECTED`, `FAILED`) stay in the enums.
 2. `20261125200100_campaign_goal_tracking` adds the plan, gate, scope, limit, budget, expiry and launcher
    columns to `campaigns`, the brief, `depends_on`, evidence, regression, stale and last-checked columns to
-   `campaign_targets`, and the tables `campaign_attempts` and `campaign_proposals`. Every existing campaign
+   `campaign_targets` (`depends_on` is `NOT NULL` with an empty default, set after the backfill), and the
+   tables `campaign_attempts` and `campaign_proposals`. Every existing campaign
    reads `workflow_kind = 'LEGACY'`. It then backfills: `launched_by_id` takes the value of `created_by_id`;
    every target that started a child becomes attempt 1 with that child's workflow ID, path, verification and
    outcome; and the targets of campaigns that are **already in a final state** (`COMPLETED`,
-   `COMPLETED_WITH_FAILURES`, `CANCELLED`, `FAILED_TO_START`) are remapped: `NOT_AFFECTED` becomes `SATISFIED`
+   `COMPLETED_WITH_FAILURES`, `CANCELLED`, `FAILED_TO_START`) are remapped, and only those: `NOT_AFFECTED` becomes `SATISFIED`
    with `evidence = {"kind":"initial"}`, and `FAILED` becomes `NEEDS_ATTENTION`. `PR_OPENED` stays. A campaign
    still `STARTING`, `RUNNING` or `CANCELLING` keeps the target values the earlier workflow reads and writes,
    and a campaign that finished before the migration is not reopened or reconciled.
@@ -2796,7 +2797,9 @@ every campaign, legacy included. The retired values are folded in: `NOT_AFFECTED
 same way, so `GET /api/v1/campaigns/:id` shows `SATISFIED` and `NEEDS_ATTENTION` where it showed
 `NOT_AFFECTED` and `FAILED`. A campaign that launched on the campaign workflow keeps those values on its
 targets until it finishes, and `PR_OPENED` is still final for it. For a reconciled campaign `PR_OPENED` is
-not final: the target moves on to `MERGED` and `SATISFIED`, or to `NEEDS_ATTENTION`. The campaign states
+not final: the target moves on to `MERGED` and `SATISFIED`, or to `NEEDS_ATTENTION`. A reconciled campaign with
+no check (no recipe, an `@1` recipe, or a planned campaign) has no step after the merge, so `MERGED` is final
+for it and the campaign completes when its pull requests have merged. The campaign states
 `ACTIVE`, `PLANNING`, `PAUSED` and `MONITORING` exist for reconciled campaigns, which never end
 `COMPLETED_WITH_FAILURES`: a target that needs a person keeps the campaign `ACTIVE`. The list accepts a `plan`
 filter, and summaries carry `plan`, `gate`, `workflowKind`, `pausedReason` and `expiresAt`.
@@ -2804,7 +2807,7 @@ filter, and summaries carry `plan`, `gate`, `workflowKind`, `pausedReason` and `
 **Actions.** Update every consumer to the camelCase counts, and treat `COMPLETED`, `COMPLETED_WITH_FAILURES`,
 `CANCELLED` and `FAILED_TO_START` as the final states (a `MONITORING` campaign is satisfied everywhere and still
 watching, not finished). A client that waited for every target to be `PR_OPENED` or `NOT_AFFECTED` as the end
-state must wait for `SATISFIED`, or for the campaign's own final state. Deploy the web build with the gateway:
+state must wait for `SATISFIED` (or `MERGED` for a campaign with no check), or for the campaign's own final state. Deploy the web build with the gateway:
 an older dashboard reads `counts.PR_OPENED` and shows zeros.
 
 **Verify.** `GET /api/v1/campaigns` answers rows whose `counts` has a `total` key, and a campaign finished
@@ -2866,3 +2869,20 @@ WHERE temporal_workflow_id LIKE 'epic-%' AND parent_workflow_id IS NULL
 **Verify.** In the Temporal admin tools,
 `temporal workflow list --query 'WorkflowType = "CampaignWorkflow" AND ExecutionStatus = "Running"'` returns
 nothing once the first query is 0 (and the same for `EpicOrchestratorWorkflow` against the second).
+
+### Campaign planning failures and discovery records: one additive migration (`<fixing commit SHA>`)
+
+**Affected.** Every deployment that runs the migration `20261125220000_campaign_plan_failure_and_discovery_checks`,
+which the normal deployment migration step applies. Nothing is dropped and no existing row changes.
+
+**What changes.** The migration adds two nullable columns to `campaigns`, `plan_failed_at` and
+`plan_failure_reason`, which record why the planner produced no plan for a planned campaign, and the table
+`campaign_discovery_checks` (campaign, repository, base sha, time; unique per campaign and repository, deleted
+with either), which lets discovery skip a repository it found satisfied while that repository's base branch is
+unchanged. The columns are null and the table is empty until a worker of this build writes them.
+
+**Actions.** None. No environment variable or setting changes.
+
+**Verify.**
+`SELECT column_name FROM information_schema.columns WHERE table_name = 'campaigns' AND column_name IN ('plan_failed_at', 'plan_failure_reason')`
+returns both rows, and `SELECT count(*) FROM campaign_discovery_checks` answers without an error.

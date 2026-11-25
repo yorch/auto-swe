@@ -254,6 +254,14 @@ export const CampaignSummaryDtoSchema = z.object({
 });
 export type CampaignSummaryDto = z.infer<typeof CampaignSummaryDtoSchema>;
 
+/** Why the planner produced no plan: fixed wording, never raw error text. Null when none failed. */
+export const CampaignPlanFailureDtoSchema = z.object({
+  /** ISO time of the failure. */
+  at: z.string(),
+  reason: z.string().max(300),
+});
+export type CampaignPlanFailureDto = z.infer<typeof CampaignPlanFailureDtoSchema>;
+
 export const CampaignDetailDtoSchema = CampaignSummaryDtoSchema.extend({
   budgetUsd: z.number().nullable(),
   cancelledAt: z.string().nullable(),
@@ -266,6 +274,7 @@ export const CampaignDetailDtoSchema = CampaignSummaryDtoSchema.extend({
   launcherChangedAt: z.string().nullable(),
   maxOpenPullRequests: z.number().int().nullable(),
   maxParallel: z.number().int(),
+  planFailure: CampaignPlanFailureDtoSchema.nullable(),
   proposals: z.array(CampaignProposalDtoSchema),
   rescanIntervalHours: z.number().int().nullable(),
   scopeId: z.string().nullable(),

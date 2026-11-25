@@ -80,6 +80,16 @@ function sameRequest(stored: string | null | undefined, current: string): boolea
   }
 }
 
+/** The recorded planning failure, from its two columns; null when none is recorded. */
+function planFailureOf(row: {
+  planFailedAt?: Date | null;
+  planFailureReason?: string | null;
+}): CampaignDetailDto['planFailure'] {
+  const at = row.planFailedAt;
+  // The reason is the fixed-wording string the worker stored; it is passed through as is.
+  return at ? { at: at.toISOString(), reason: row.planFailureReason ?? '' } : null;
+}
+
 export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -917,6 +927,8 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
           maxOpenPullRequests: true,
           maxParallel: true,
           orgId: true,
+          planFailedAt: true,
+          planFailureReason: true,
           rescanIntervalHours: true,
           scopeId: true,
           scopeKind: true,
@@ -1024,6 +1036,8 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         maxOpenPullRequests: campaign.maxOpenPullRequests ?? null,
         maxParallel: campaign.maxParallel,
         orgId: campaign.orgId,
+        // The reason is the fixed-wording string the worker stored; it is passed through as is.
+        planFailure: planFailureOf(campaign),
         proposals,
         rescanIntervalHours: campaign.rescanIntervalHours ?? null,
         scopeId: campaign.scopeId ?? null,

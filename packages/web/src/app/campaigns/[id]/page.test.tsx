@@ -109,6 +109,7 @@ const CAMPAIGN = {
   description: 'Raise lodash everywhere',
   expiresAt: null,
   gate: 'OPENED',
+  hiddenProposalCount: 0,
   hiddenTargetCount: 2,
   id: 'c1',
   launchedById: 'creator',
@@ -121,6 +122,7 @@ const CAMPAIGN = {
   ownerTeamId: 't1',
   pausedReason: null,
   plan: 'UNIFORM',
+  planFailure: null,
   proposals: [],
   recipeParams: { packageName: 'lodash', targetVersion: '4.17.21' },
   recipeRef: 'npm-dependency@2',
@@ -394,6 +396,20 @@ describe('Campaign detail page: targets', () => {
     expect(screen.getByTestId('campaign-hidden-targets').textContent).toMatch(/2 repositories/);
   });
 
+  it('says how many proposals the viewer cannot see, without naming them', async () => {
+    show({ ...CAMPAIGN, hiddenProposalCount: 3 });
+    await renderPage();
+    expect(screen.getByTestId('campaign-hidden-proposals').textContent).toBe(
+      '3 more repositories were found that you cannot see.'
+    );
+  });
+
+  it('shows no such note when nothing is hidden', async () => {
+    show(CAMPAIGN);
+    await renderPage();
+    expect(screen.queryByTestId('campaign-hidden-proposals')).toBeNull();
+  });
+
   it('lists repositories discovery found but the launcher may not start in, with the reason', async () => {
     show({
       ...CAMPAIGN,
@@ -412,6 +428,50 @@ describe('Campaign detail page: targets', () => {
     expect(screen.getByText('Found, not started')).toBeTruthy();
     expect(screen.getByText('acme/billing')).toBeTruthy();
     expect(screen.getByText(/does not lead the team that owns/)).toBeTruthy();
+  });
+});
+
+describe('Campaign detail page: no check', () => {
+  const NO_CHECK = {
+    ...CAMPAIGN,
+    counts: { ...CAMPAIGN.counts, merged: 1, needsAttention: 0, satisfied: 1, total: 3 },
+    hiddenTargetCount: 0,
+    recipeRef: null,
+    targets: [
+      target({ id: 't-m', position: 0, repoLabel: 'acme/merged', state: 'MERGED' }),
+      target({ id: 't-s', position: 1, repoLabel: 'acme/same', state: 'SATISFIED' }),
+      target({ id: 't-p', position: 2, repoLabel: 'acme/open', state: 'PR_OPENED' }),
+    ],
+  };
+
+  it('counts a merge as done and groups it with the done targets', async () => {
+    show(NO_CHECK);
+    await renderPage();
+    expect(screen.getByText('2 of 3 done')).toBeTruthy();
+    const done = screen.getByRole('region', { name: /Done/ });
+    expect(within(done).getByText('acme/merged')).toBeTruthy();
+    expect(within(done).getByText('Merged (no check to confirm)')).toBeTruthy();
+    const review = screen.getByRole('region', { name: /In review/ });
+    expect(within(review).queryByText('acme/merged')).toBeNull();
+  });
+
+  it('keeps a merge under In review, still being checked, when the campaign has a check', async () => {
+    show({
+      ...NO_CHECK,
+      recipeRef: 'npm-dependency@2',
+      targets: [target({ id: 't-m', repoLabel: 'acme/merged', state: 'MERGED' })],
+    });
+    await renderPage();
+    const review = screen.getByRole('region', { name: /In review/ });
+    expect(within(review).getByText('acme/merged')).toBeTruthy();
+    expect(within(review).getByText('Merged, checking')).toBeTruthy();
+  });
+
+  it('reads a legacy campaign as before', async () => {
+    show({ ...NO_CHECK, workflowKind: 'LEGACY' });
+    await renderPage();
+    expect(screen.getByText('1 of 3 satisfied')).toBeTruthy();
+    expect(screen.getByText('Merged, checking')).toBeTruthy();
   });
 });
 
@@ -632,6 +692,7 @@ describe('Campaign detail page: planning', () => {
       total: 2,
     },
     plan: 'PLANNED',
+    planFailure: null,
     state: 'PLANNING',
     targets: [
       target({
@@ -682,6 +743,43 @@ describe('Campaign detail page: planning', () => {
     expect(action.confirm).not.toHaveBeenCalled();
     await confirmDialog('Confirm and start');
     expect(action.confirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a planning failure as text and keeps confirm disabled', async () => {
+    auth.user = { email: 'a@acme.test', role: 'USER', sub: 'creator' };
+    show({ ...PLANNING, planFailure: { at: AGO(1), reason: '<b>planner</b> timed out' } });
+    await renderPage();
+    expect(screen.getByText(/Planning failed: <b>planner<\/b> timed out/)).toBeTruthy();
+    const confirm = screen.getByRole('button', { name: 'Confirm and start' }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    const why = document.getElementById(confirm.getAttribute('aria-describedby') ?? '');
+    expect(why?.textContent).toMatch(/Planning failed/);
+    expect(screen.queryByText('Awaiting confirmation', { selector: 'p, div' })).toBeNull();
+  });
+
+  it('keeps confirm disabled while a repository has no brief', async () => {
+    auth.user = { email: 'a@acme.test', role: 'USER', sub: 'creator' };
+    show({
+      ...PLANNING,
+      targets: [PLANNING.targets[0], { ...PLANNING.targets[1], brief: '  ' }],
+    });
+    await renderPage();
+    const confirm = screen.getByRole('button', { name: 'Confirm and start' }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    expect(screen.getByText(/1 repository has no brief yet/)).toBeTruthy();
+  });
+
+  it('shows the gateway’s plan-not-ready refusal beside the button', async () => {
+    stubDialogPrototype();
+    auth.user = { email: 'a@acme.test', role: 'USER', sub: 'creator' };
+    action.confirm.mockRejectedValue(
+      new ApiError('Some targets have no brief', 409, 'CAMPAIGN_PLAN_NOT_READY')
+    );
+    show(PLANNING);
+    await renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm and start' }));
+    await confirmDialog('Confirm and start');
+    expect(screen.getByRole('alert').textContent).toMatch(/plan is not ready/);
   });
 
   it('leaves confirmation to the launcher', async () => {

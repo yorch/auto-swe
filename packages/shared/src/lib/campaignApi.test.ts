@@ -139,6 +139,7 @@ describe('response schemas', () => {
       ownerTeamId: UUID,
       pausedReason: null,
       plan: 'UNIFORM',
+      planFailure: null,
       proposals: [],
       recipeRef: null,
       rescanIntervalHours: null,
@@ -153,6 +154,24 @@ describe('response schemas', () => {
       workflowKind: 'RECONCILER',
     };
     expect(CampaignDetailDtoSchema.safeParse(detail).success).toBe(true);
+    // planFailure is required: absent is a malformed answer, not "none".
+    const { planFailure: _omitted, ...without } = detail;
+    expect(CampaignDetailDtoSchema.safeParse(without).success).toBe(false);
+    expect(
+      CampaignDetailDtoSchema.safeParse({
+        ...detail,
+        planFailure: {
+          at: '2026-11-25T12:00:00.000Z',
+          reason: 'the planner could not produce a plan',
+        },
+      }).success
+    ).toBe(true);
+    expect(
+      CampaignDetailDtoSchema.safeParse({
+        ...detail,
+        planFailure: { at: '2026-11-25T12:00:00.000Z', reason: 'x'.repeat(301) },
+      }).success
+    ).toBe(false);
   });
 });
 

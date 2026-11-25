@@ -47,11 +47,23 @@ const ROW: CampaignSummary = {
 describe('CampaignList', () => {
   it('shows satisfied over total, the count that needs attention and the plan', () => {
     render(<CampaignList campaigns={[ROW]} />);
-    expect(screen.getByText('5 of 8 satisfied')).toBeTruthy();
+    expect(screen.getByText('5 of 8 done')).toBeTruthy();
     expect(screen.getByText('2 need attention')).toBeTruthy();
     expect(screen.getByText('1 in review')).toBeTruthy();
     expect(screen.getByText('Awaiting confirmation')).toBeTruthy();
     expect(screen.getByText(/Planned per repository · Agent only/)).toBeTruthy();
+  });
+
+  it('says satisfied when the campaign has a check', () => {
+    render(<CampaignList campaigns={[{ ...ROW, recipeRef: 'npm-dependency@2' }]} />);
+    expect(screen.getByText('5 of 8 satisfied')).toBeTruthy();
+  });
+
+  it('counts merged pull requests as done when the campaign has no check', () => {
+    const row = { ...ROW, counts: { ...ROW.counts, merged: 2 }, recipeRef: null };
+    render(<CampaignList campaigns={[row]} />);
+    expect(screen.getByText('7 of 8 done')).toBeTruthy();
+    expect(screen.queryByText(/merged, checking/)).toBeNull();
   });
 
   it('leaves out the team and starter columns when the gateway names neither', () => {

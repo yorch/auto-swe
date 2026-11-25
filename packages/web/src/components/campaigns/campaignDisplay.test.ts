@@ -23,6 +23,7 @@ import {
   CAMPAIGN_FORM_LIMITS,
   CAMPAIGN_STATE_LABELS,
   CAMPAIGN_STATE_TONES,
+  campaignHasCheck,
   campaignProgress,
   campaignStateLabel,
   canRemoveTarget,
@@ -147,9 +148,29 @@ const COUNTS = {
   total: 15,
 };
 
+describe('campaigns with no check', () => {
+  it('count a merge as done, label it, and leave it out of the breakdown', () => {
+    expect(campaignProgress(COUNTS, { hasCheck: false }).done).toBe(5);
+    expect(campaignProgress(COUNTS).done).toBe(4);
+    expect(breakdownText(COUNTS, { hasCheck: false })).not.toMatch(/merged/);
+    expect(targetStateLabel('MERGED', { hasCheck: false })).toBe('Merged (no check to confirm)');
+    expect(targetStateLabel('MERGED')).toBe('Merged, checking');
+  });
+
+  it('decide check support from the recipe, and a legacy campaign keeps the original reading', () => {
+    expect(campaignHasCheck({ recipeRef: null, workflowKind: 'RECONCILER' })).toBe(false);
+    expect(campaignHasCheck({ recipeRef: 'npm-dependency@1', workflowKind: 'RECONCILER' })).toBe(
+      false
+    );
+    expect(campaignHasCheck({ recipeRef: 'go-module@2', workflowKind: 'RECONCILER' })).toBe(true);
+    expect(campaignHasCheck({ recipeRef: null, workflowKind: 'LEGACY' })).toBe(true);
+  });
+});
+
 describe('progress', () => {
   it('is satisfied over total, with the people-needed count beside it', () => {
     expect(campaignProgress(COUNTS)).toEqual({
+      done: 4,
       needsAttention: 2,
       percent: 27,
       satisfied: 4,

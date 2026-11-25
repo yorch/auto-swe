@@ -406,6 +406,14 @@ export async function recordCampaignPass(
         })),
         skipDuplicates: true,
       });
+      // A target is no longer a "checked satisfied, not a target" repository.
+      await prisma.campaignDiscoveryCheck.deleteMany({
+        where: {
+          campaign: { orgId: campaign.orgId },
+          campaignId,
+          connectionId: { in: input.addTargets.map((a) => a.connectionId) },
+        },
+      });
       const created = await prisma.campaignTarget.findMany({
         orderBy: { position: 'asc' },
         select: { connectionId: true, id: true, position: true, repoLabel: true, teamId: true },

@@ -51,6 +51,7 @@ import {
   DISCOVERY_MAX_CANDIDATES,
   MERGE_NOT_SATISFIED_REASON,
 } from '../workflows/campaignReconcilerPass.js';
+import { resolveCheckBaseTip } from './recipeBase.js';
 import { runShellCheck, type ShellCheckInput, type ShellCheckResult } from './shellStep.js';
 
 /** The campaign states in which a check may run: it is a rescan, and a paused campaign has none. */
@@ -66,9 +67,14 @@ export interface CheckDeps {
   run: (input: ShellCheckInput) => Promise<ShellCheckResult>;
   /** The clock, in epoch milliseconds; tests replace it. */
   now?: () => number;
+  /**
+   * The sha the repository's base branch points at on the host, or null when it cannot be read.
+   * Tests replace it; the default asks the host without cloning.
+   */
+  resolveTip?: (repoId: string) => Promise<string | null>;
 }
 
-const defaultDeps: CheckDeps = { run: runShellCheck };
+const defaultDeps: CheckDeps = { resolveTip: resolveCheckBaseTip, run: runShellCheck };
 
 const REASON_MAX = 200;
 
@@ -406,6 +412,22 @@ export async function discoverCampaignTargets(
         })
     ),
   ]);
+  // What a previous walk learned: "this repository was SATISFIED at this base sha". Read for the
+  // chunk's repositories only, and through the campaign's organization like every campaign read.
+  const markerRows = await prisma.campaignDiscoveryCheck.findMany({
+    select: { baseSha: true, connectionId: true },
+    where: {
+      campaign: { orgId: campaign.orgId },
+      campaignId,
+      connectionId: { in: repos.map((r) => r.id) },
+    },
+  });
+  const markers = new Map(markerRows.map((m) => [m.connectionId, m.baseSha]));
+  const resolveTip = deps.resolveTip ?? resolveCheckBaseTip;
+  const dropMarker = (connectionId: string) =>
+    prisma.campaignDiscoveryCheck.deleteMany({
+      where: { campaign: { orgId: campaign.orgId }, campaignId, connectionId },
+    });
   const skip = new Set<string>([
     ...known.flatMap((k) => (k.connectionId ? [k.connectionId] : [])),
     ...knownProposals.map((p) => p.connectionId),
@@ -450,11 +472,44 @@ export async function discoverCampaignTargets(
     heartbeat('campaign discovery: checking a repository');
     processed += 1;
     if (skip.has(repo.id)) {
+      // A repository that is a target (or a proposal) is no longer a "satisfied, not a target" one.
+      if (markers.has(repo.id)) {
+        await dropMarker(repo.id);
+      }
       continue;
+    }
+    const markedSha = markers.get(repo.id);
+    if (markedSha) {
+      // Unchanged since it was found satisfied: skip it without cloning. A tip that cannot be read
+      // is "not known", and the repository is checked normally.
+      let tip: string | null = null;
+      try {
+        tip = await resolveTip(repo.id);
+      } catch (err) {
+        if (err instanceof CancelledFailure) {
+          throw err;
+        }
+        tip = null;
+      }
+      if (tip !== null && tip === markedSha) {
+        continue;
+      }
     }
     const outcome = await checkRepository(campaign.recipeRef, campaign.recipeParams, repo.id, deps);
     if (outcome.status === 'satisfied') {
+      if (outcome.baseSha) {
+        await prisma.campaignDiscoveryCheck.upsert({
+          create: { baseSha: outcome.baseSha, campaignId, connectionId: repo.id },
+          update: { baseSha: outcome.baseSha, checkedAt: new Date() },
+          where: { campaignId_connectionId: { campaignId, connectionId: repo.id } },
+        });
+      } else if (markedSha) {
+        await dropMarker(repo.id);
+      }
       continue;
+    }
+    if (markedSha) {
+      await dropMarker(repo.id);
     }
     const reach = await reachability(repo.teamId);
     candidates.push({

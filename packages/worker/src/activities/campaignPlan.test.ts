@@ -238,6 +238,65 @@ describe('planCampaignBriefs', () => {
     });
   });
 
+  const failureWrites = () =>
+    db.campaign.updateMany.mock.calls.filter(([a]) => a.data.planFailureReason);
+
+  it('records a fixed-wording failure, under the plan write’s conditions, when the planner throws', async () => {
+    planner.decomposeEpic.mockRejectedValue(
+      new Error('sk-secret401 provider exploded\n  at stack')
+    );
+    await expect(planCampaignBriefs({ campaignId: CAMPAIGN })).rejects.toThrow();
+    const writes = failureWrites();
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.[0].where).toEqual({
+      id: CAMPAIGN,
+      orgId: ORG,
+      state: 'PLANNING',
+      workflowKind: 'RECONCILER',
+    });
+    expect(writes[0]?.[0].data.planFailureReason).toBe('the planner could not produce a plan');
+    expect(writes[0]?.[0].data.planFailureReason).not.toContain('secret');
+    expect(writes[0]?.[0].data.planFailedAt).toBeInstanceOf(Date);
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('records a failure and writes no brief when the planner returns no plan', async () => {
+    planner.decomposeEpic.mockResolvedValue([]);
+    await expect(planCampaignBriefs({ campaignId: CAMPAIGN })).resolves.toEqual({
+      edges: 0,
+      planned: 0,
+    });
+    expect(failureWrites()[0]?.[0].data.planFailureReason).toBe('the planner returned no plan');
+    expect(db.campaignTarget.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('records the empty-campaign refusal too', async () => {
+    db.campaignTarget.findMany.mockResolvedValue([
+      { brief: null, connectionId: null, id: 'tg', teamId: 't1' },
+    ]);
+    await expect(planCampaignBriefs({ campaignId: CAMPAIGN })).rejects.toMatchObject({
+      type: 'CAMPAIGN_PLAN_EMPTY',
+    });
+    expect(failureWrites()[0]?.[0].data.planFailureReason).toBe(
+      'the campaign has no repository the planner can plan against'
+    );
+  });
+
+  it('still throws the planner’s own error when recording the failure fails', async () => {
+    planner.decomposeEpic.mockRejectedValue(new Error('boom'));
+    db.campaign.updateMany.mockRejectedValue(new Error('db down'));
+    await expect(planCampaignBriefs({ campaignId: CAMPAIGN })).rejects.toThrow('boom');
+  });
+
+  it('clears a recorded failure in the same write that lands the plan', async () => {
+    await planCampaignBriefs({ campaignId: CAMPAIGN });
+    expect(db.campaign.updateMany.mock.calls[0]?.[0].data).toEqual({
+      planFailedAt: null,
+      planFailureReason: null,
+      state: 'PLANNING',
+    });
+  });
+
   it('reads the targets under the campaign’s tenant', async () => {
     await planCampaignBriefs({ campaignId: CAMPAIGN });
     expect(db.campaignTarget.findMany.mock.calls[0]?.[0].where).toEqual({

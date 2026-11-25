@@ -165,7 +165,7 @@ export default function CampaignDetailPage({ params }: PageProps) {
           .
         </Alert>
       )}
-      {campaign.state === 'PLANNING' && (
+      {campaign.state === 'PLANNING' && !campaign.planFailure && (
         <Alert title="Awaiting confirmation" variant="info">
           The planner has written the work below. Nothing starts until the person who started this
           campaign confirms it.
@@ -182,7 +182,10 @@ export default function CampaignDetailPage({ params }: PageProps) {
               {campaign.description || <span className="text-paper-500">No description</span>}
             </p>
           </Card>
-          <CampaignProposals proposals={campaign.proposals ?? []} />
+          <CampaignProposals
+            hiddenCount={campaign.hiddenProposalCount ?? 0}
+            proposals={campaign.proposals ?? []}
+          />
           {campaign.state === 'PLANNING' ? (
             <CampaignPlanReview campaign={campaign} isLauncher={isLauncher} />
           ) : (

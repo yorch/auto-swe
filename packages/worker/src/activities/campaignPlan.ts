@@ -64,6 +64,33 @@ export function cleanBrief(text: string, fallback: string): string {
   return cleaned === '' ? fallback : cleaned;
 }
 
+/** The fixed wordings a plan failure is recorded under; no raw error text ever reaches the row. */
+export const PLAN_FAILURE_REASONS = {
+  empty: 'the campaign has no repository the planner can plan against',
+  failed: 'the planner could not produce a plan',
+  none: 'the planner returned no plan',
+} as const;
+
+/**
+ * Record that planning produced no plan, on the campaign row. Conditional on the same state the
+ * plan write is (PLANNING, a reconciler campaign, its organization), so a campaign that has moved
+ * on is left alone; best effort, because a failure to record must not replace the failure itself.
+ */
+async function recordPlanFailure(
+  campaignId: string,
+  orgId: string,
+  reason: (typeof PLAN_FAILURE_REASONS)[keyof typeof PLAN_FAILURE_REASONS]
+): Promise<void> {
+  try {
+    await prisma.campaign.updateMany({
+      data: { planFailedAt: new Date(), planFailureReason: reason },
+      where: { id: campaignId, orgId, state: 'PLANNING', workflowKind: 'RECONCILER' },
+    });
+  } catch {
+    // The failure itself is what the caller reports.
+  }
+}
+
 export async function planCampaignBriefs(input: {
   campaignId: string;
 }): Promise<PlanCampaignBriefsResult> {
@@ -85,6 +112,7 @@ export async function planCampaignBriefs(input: {
     (t): t is typeof t & { connectionId: string } => t.connectionId !== null
   );
   if (planable.length === 0) {
+    await recordPlanFailure(campaignId, campaign.orgId, PLAN_FAILURE_REASONS.empty);
     throw ApplicationFailure.nonRetryable(
       'The campaign has no repository to plan against',
       'CAMPAIGN_PLAN_EMPTY'
@@ -93,9 +121,21 @@ export async function planCampaignBriefs(input: {
   if (targets.every((t) => t.brief !== null)) {
     return { edges: 0, planned: targets.length };
   }
-  return withSpendOwner(ownerOfTeam(campaign.ownerTeamId), () =>
-    planImpl(campaignId, campaign, planable, targets)
-  );
+  try {
+    return await withSpendOwner(ownerOfTeam(campaign.ownerTeamId), () =>
+      planImpl(campaignId, campaign, planable, targets)
+    );
+  } catch (err) {
+    // Every attempt records; a later attempt that succeeds clears it in the plan write.
+    await recordPlanFailure(
+      campaignId,
+      campaign.orgId,
+      err instanceof ApplicationFailure && err.type === 'CAMPAIGN_PLAN_EMPTY'
+        ? PLAN_FAILURE_REASONS.empty
+        : PLAN_FAILURE_REASONS.failed
+    );
+    throw err;
+  }
 }
 
 async function planImpl(
@@ -146,6 +186,12 @@ async function planImpl(
       skillSuffix || undefined
     );
 
+    if (planned.length === 0) {
+      // A planner that names no repository has produced no plan: record it and write no briefs.
+      await recordPlanFailure(campaignId, campaign.orgId, PLAN_FAILURE_REASONS.none);
+      return { edges: 0, planned: 0 };
+    }
+
     let storedUpstream = new Map<string, string[]>();
     try {
       storedUpstream = await loadStoredUpstream(repos);
@@ -184,7 +230,7 @@ async function planImpl(
       // reconciler campaign); a cancel or a confirm that got in first leaves nothing to write, and
       // one that comes after waits for this transaction to commit.
       const still = await tx.campaign.updateMany({
-        data: { state: 'PLANNING' },
+        data: { planFailedAt: null, planFailureReason: null, state: 'PLANNING' },
         where: {
           id: campaignId,
           orgId: campaign.orgId,

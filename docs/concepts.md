@@ -28,8 +28,8 @@ through the **scope cascade**, so one platform can behave differently per team.
 
 - **Campaign** — A goal over a set of repositories, worked until it holds: a check says whether one
   repository satisfies it, a target set can grow, and each target follows its draft pull request to
-  merge. A campaign can be paused, retried per repository, and taken over by another lead. See
-  [campaigns.md](./campaigns.md).
+  merge. A campaign with no check ends when its pull requests merge. A campaign can be paused,
+  retried per repository, and taken over by another lead. See [campaigns.md](./campaigns.md).
 
 - **Epic** — A brief that spans several repositories. A planner agent splits it into per-repository
   runs and starts them in dependency order. With the campaign reconciler on, an epic is a campaign
