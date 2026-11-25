@@ -62,6 +62,7 @@ when empty, so a bundle with no plugins has one spelling and one hash; a v2 bund
   "name": "acme-pack",
   "source": { "host": "github.com", "owner": "acme", "repo": "tools", "path": "plugins/pack" },
   "sha": "<40-hex commit>",
+  "ref": "release/1.x",
   "contentHash": "<64-hex profile content hash>",
   "bindings": [{ "agentKey": "implementer" }]
 }
@@ -70,8 +71,15 @@ when empty, so a bundle with no plugins has one spelling and one hash; a v2 bund
 `name` is the harness profile name (`profile.json`). `host` defaults to `github.com` and `path` to the
 repository root. `sha` is the exact commit the folder is read at and `contentHash` the profile content
 hash that read must reproduce ([harness-profiles.md](./harness-profiles.md)). `bindings` name GLOBAL
-agents by key; a key may name an agent the bundle carries or one already installed. The hash covers
-these entries, so a signature binds the commit and the expected content.
+agents by key; a key may name an agent the bundle carries or one already installed. `ref` is
+optional: a branch or tag name (1 to 255 characters; no control characters, space, DEL, `~ ^ : ? * [`,
+backslash, `..`, `//`, a `.` path component, a trailing `/` or `.lock`, no leading `-` or `/`; and no
+`@{`, leading `refs/` or `#`, and not a 40- or 64-hex commit id) that the created profile follows for
+update checks. It never selects content: the install reads exactly `sha`. A bundle with no `ref` is
+byte-for-byte what it was without the field, and hashes the same; the schema version stays 3. An
+installation that predates the field does not read `ref`, so a bundle carrying one needs this version
+for its profile to follow that ref. An export writes `ref` only for a profile whose ref is not `HEAD` and passes this rule. The
+hash covers these entries, so a signature binds the commit and the expected content.
 
 ## Trust model
 
@@ -197,8 +205,9 @@ requires the computed content hash to equal the bundle's. All of that happens be
 - A profile of that name is created with `hooksEnabled: false` and its first version approved by the
   installing admin. Only a platform admin switches hooks on, separately, and that switch needs the
   latest version the admin reviewed ([harness-profiles.md §7](./harness-profiles.md#7-the-hook-switch)).
-  The profile's `ref` is
-  `HEAD`, so its update check follows the repository's default branch.
+  The profile's `ref` is the reference's `ref`, or `HEAD` when it has none, so its update check
+  follows that branch or tag, or the repository's default branch. A reused profile keeps the ref it
+  has. The preview shows the ref.
 - A profile of that name that already holds a version with the same content hash is reused, and its
   hook switch is not touched. A name approved with different content answers
   `409 PROTECTED_CONTENT_OVERWRITE` with the name under `conflicts.plugins`; `overwriteProtected`
@@ -305,10 +314,14 @@ separately.
   choice, so only an explicit `null` clears it on re-install, and a new agent starts with none. An
   export writes each field only for an agent that has a value, so a bundle of agents with none
   hashes as it did before the fields existed.
-- **A bundle's plugin references pin a commit, not a ref.** An installed profile tracks `HEAD`, so a
-  bundle gives no way to follow a tag or branch. The bytes are read from the source host at install
-  time, so an install needs that host to be reachable and approved
-  (`github.repositoryHosts`).
+- **A plugin reference's `ref` only sets a created profile's ref.** It does not change the commit
+  read (always `sha`), and a reused profile keeps its own ref, so installing a bundle never moves
+  an existing profile onto a branch. The bytes are read from the source host at install time, so
+  an install needs that host to be reachable and approved (`github.repositoryHosts`).
+- **An export drops a plugin's ref it cannot carry, without a warning.** A profile whose ref fails the
+  bundle rule (see Plugin references in the manifest format) is exported with no `ref`, and no export
+  warning says so. The imported profile then follows the default branch (`HEAD`), not the branch or tag the
+  exporting profile followed.
 - **Plugins are exported only for bound agents.** An export writes a plugin reference for each
   profile that the head version of an exported GLOBAL agent is bound to, at its newest approved
   commit; a profile no exported agent uses is not exported, and neither are enablements or hook
