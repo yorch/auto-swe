@@ -132,6 +132,9 @@ than failing a run:
 - **The epic planner.** Stored edges are merged into the planner's proposed ordering, so a known
   dependency is authoritative rather than guessed. A stored edge that would close a cycle is dropped,
   since the orchestrator's ready-queue would never drain.
+- **The planned campaign.** An epic launched as a campaign ([campaigns.md](./campaigns.md#12-epics))
+  keeps a planner's ordering only where the graph holds the same `active` edge, so the graph is the
+  only source of order there: an inferred edge with no stored edge is dropped.
 
 Repo names are flattened and length-capped before they enter a prompt: names are operator-supplied, and
 a name containing newlines and headings would otherwise be able to append instructions of its own.

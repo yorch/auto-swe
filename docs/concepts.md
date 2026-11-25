@@ -26,9 +26,15 @@ through the **scope cascade**, so one platform can behave differently per team.
   wrote as a branch or a draft pull request, after deterministic checks and the security gate. See
   [agent-runs.md](./agent-runs.md).
 
+- **Campaign** — A goal over a set of repositories, worked until it holds: a check says whether one
+  repository satisfies it, a target set can grow, and each target follows its draft pull request to
+  merge. A campaign can be paused, retried per repository, and taken over by another lead. See
+  [campaigns.md](./campaigns.md).
+
 - **Epic** — A brief that spans several repositories. A planner agent splits it into per-repository
-  runs and starts them in dependency order. See
-  [repo-dependency-graph.md](./repo-dependency-graph.md).
+  runs and starts them in dependency order. With the campaign reconciler on, an epic is a campaign
+  whose plan is decomposed per repository; otherwise it runs on the epic workflow. See
+  [campaigns.md](./campaigns.md#12-epics) and [repo-dependency-graph.md](./repo-dependency-graph.md).
 
 - **Budget tier** — The token ceiling a run is held to — `STANDARD`, `LARGE`, or `EPIC`. A run that
   exceeds it is stopped with `BUDGET_EXCEEDED`. The input cap counts dollar-equivalent tokens, so

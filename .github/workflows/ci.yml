@@ -663,6 +663,17 @@ jobs:
           BILLING_PG_TEST: '1'
         run: yarn test packages/shared/src/lib/billing.pg.test.ts
 
+      # The campaign reconciler's activities and the campaign tables: every query runs under the
+      # real tenant guard, a conditional write loses a race to exactly one winner, the discovery
+      # scope selects only the repositories the launcher may see, the attempt completion finds its
+      # run by workflow id, and the migration's backfill (the real SQL, over temp tables that shadow
+      # the real ones) maps the legacy states. The campaign-row lock the attempt route relies on is
+      # shown as the database behaviour it rests on. A mocked Prisma shows none of it.
+      - name: Campaign reconciler (database-backed tests)
+        env:
+          CAMPAIGN_RECONCILER_PG_TEST: '1'
+        run: yarn test packages/worker/src/activities/campaignReconciler.pg.test.ts
+
       # Run-pinned settings pinned on first read: the compare-and-set on the
       # JSON column (and on SQL NULL) is what keeps concurrent activities of one
       # run from overwriting each other's pin, which a mocked Prisma does not

@@ -5,6 +5,7 @@ import {
   CAMPAIGN_RECIPES,
   isCampaignRecipeRef,
   parseRecipeParams,
+  recipeSupportsCheck,
 } from './campaignRecipes.js';
 
 const HOSTILE = [
@@ -33,8 +34,13 @@ const HOSTILE = [
 ];
 
 describe('recipe catalogue', () => {
-  it('names two recipes, each on an allowlisted image', () => {
-    expect(CAMPAIGN_RECIPE_REFS.sort()).toEqual(['go-module@1', 'npm-dependency@1']);
+  it('names four recipe refs, each on an allowlisted image', () => {
+    expect([...CAMPAIGN_RECIPE_REFS].sort()).toEqual([
+      'go-module@1',
+      'go-module@2',
+      'npm-dependency@1',
+      'npm-dependency@2',
+    ]);
     for (const recipe of Object.values(CAMPAIGN_RECIPES)) {
       expect(BUILTIN_SHELL_IMAGES).toContain(recipe.image);
     }
@@ -42,10 +48,66 @@ describe('recipe catalogue', () => {
 
   it('recognises only catalogue refs, including inherited property names', () => {
     expect(isCampaignRecipeRef('npm-dependency@1')).toBe(true);
-    expect(isCampaignRecipeRef('npm-dependency@2')).toBe(false);
+    expect(isCampaignRecipeRef('npm-dependency@2')).toBe(true);
+    expect(isCampaignRecipeRef('npm-dependency@3')).toBe(false);
     expect(isCampaignRecipeRef('toString')).toBe(false);
     expect(isCampaignRecipeRef('__proto__')).toBe(false);
     expect(isCampaignRecipeRef(undefined)).toBe(false);
+  });
+});
+
+describe('recipeSupportsCheck', () => {
+  it('is true for the @2 refs only', () => {
+    expect(recipeSupportsCheck('npm-dependency@2')).toBe(true);
+    expect(recipeSupportsCheck('go-module@2')).toBe(true);
+    expect(recipeSupportsCheck('npm-dependency@1')).toBe(false);
+    expect(recipeSupportsCheck('go-module@1')).toBe(false);
+    expect(recipeSupportsCheck('toString')).toBe(false);
+    expect(recipeSupportsCheck(undefined)).toBe(false);
+  });
+});
+
+describe('@2 parameters are as strict as @1', () => {
+  it.each(HOSTILE)('rejects a hostile value %j for both @2 refs', (value) => {
+    expect(
+      parseRecipeParams('npm-dependency@2', { packageName: value, targetVersion: '1.0.0' }).ok
+    ).toBe(false);
+    expect(
+      parseRecipeParams('npm-dependency@2', { packageName: 'lodash', targetVersion: value }).ok
+    ).toBe(false);
+    expect(
+      parseRecipeParams('go-module@2', { packageName: value, targetVersion: 'v1.0.0' }).ok
+    ).toBe(false);
+    expect(
+      parseRecipeParams('go-module@2', { packageName: 'github.com/a/b', targetVersion: value }).ok
+    ).toBe(false);
+  });
+
+  it('accepts valid parameters and rejects a range, a bare version for Go and extra keys', () => {
+    expect(
+      parseRecipeParams('npm-dependency@2', { packageName: 'lodash', targetVersion: '4.17.21' })
+    ).toEqual({
+      ok: true,
+      params: { packageName: 'lodash', targetVersion: '4.17.21' },
+      ref: 'npm-dependency@2',
+    });
+    expect(
+      parseRecipeParams('npm-dependency@2', { packageName: 'lodash', targetVersion: '^4.17.21' }).ok
+    ).toBe(false);
+    expect(
+      parseRecipeParams('go-module@2', { packageName: 'github.com/a/b', targetVersion: 'v1.9.0' })
+        .ok
+    ).toBe(true);
+    expect(
+      parseRecipeParams('go-module@2', { packageName: 'github.com/a/b', targetVersion: '1.9.0' }).ok
+    ).toBe(false);
+    expect(
+      parseRecipeParams('go-module@2', {
+        extra: 1,
+        packageName: 'github.com/a/b',
+        targetVersion: 'v1.9.0',
+      }).ok
+    ).toBe(false);
   });
 });
 

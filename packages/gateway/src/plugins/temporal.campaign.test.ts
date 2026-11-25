@@ -20,6 +20,9 @@ vi.mock('@temporalio/client', () => ({
 
 import {
   CAMPAIGN_CANCEL_SIGNAL,
+  CAMPAIGN_CONTROL_SIGNAL,
+  CAMPAIGN_PULL_REQUEST_CHANGED_SIGNAL,
+  type CampaignReconcilerInput,
   type CampaignWorkflowInput,
 } from '@auto-swe/shared/types/workflow';
 import temporalPlugin from './temporal.js';
@@ -83,5 +86,57 @@ describe('signalCampaignCancel', () => {
     signal.mockRejectedValueOnce(new Error('unreachable'));
     const app = await build();
     await expect(app.temporal.signalCampaignCancel('campaign-c1')).rejects.toThrow('unreachable');
+  });
+});
+
+describe('startCampaignReconcilerWorkflow', () => {
+  it('starts CampaignReconcilerWorkflow under the same `campaign-<id>` id, with no execution timeout', async () => {
+    const app = await build();
+    const input: CampaignReconcilerInput = {
+      campaignId: 'c1',
+      campaignWorkflowId: 'campaign-c1',
+    };
+    await app.temporal.startCampaignReconcilerWorkflow('campaign-c1', input);
+    expect(start).toHaveBeenCalledWith('CampaignReconcilerWorkflow', {
+      args: [input],
+      taskQueue: 'engineering-workflow',
+      workflowId: 'campaign-c1',
+    });
+  });
+
+  it('surfaces a start failure so the launch can compensate', async () => {
+    start.mockRejectedValueOnce(new Error('unreachable'));
+    const app = await build();
+    await expect(
+      app.temporal.startCampaignReconcilerWorkflow('campaign-c1', {} as CampaignReconcilerInput)
+    ).rejects.toThrow('unreachable');
+  });
+});
+
+describe('signalCampaignWorkflow', () => {
+  it('sends the named signal with its payload to the campaign’s workflow', async () => {
+    const app = await build();
+    await expect(
+      app.temporal.signalCampaignWorkflow('campaign-c1', CAMPAIGN_CONTROL_SIGNAL, {
+        action: 'pause',
+      })
+    ).resolves.toBe('signalled');
+    expect(getHandle).toHaveBeenCalledWith('campaign-c1');
+    expect(signal).toHaveBeenCalledWith('campaignControl', { action: 'pause' });
+    expect(CAMPAIGN_PULL_REQUEST_CHANGED_SIGNAL).toBe('campaignPullRequestChanged');
+  });
+
+  it('counts a workflow that has already closed as not running, and surfaces any other failure', async () => {
+    signal.mockRejectedValueOnce(
+      Object.assign(new Error('not found'), { name: 'WorkflowNotFoundError' })
+    );
+    const app = await build();
+    await expect(
+      app.temporal.signalCampaignWorkflow('campaign-c1', CAMPAIGN_CONTROL_SIGNAL, {})
+    ).resolves.toBe('not-running');
+    signal.mockRejectedValueOnce(new Error('unreachable'));
+    await expect(
+      app.temporal.signalCampaignWorkflow('campaign-c1', CAMPAIGN_CONTROL_SIGNAL, {})
+    ).rejects.toThrow('unreachable');
   });
 });

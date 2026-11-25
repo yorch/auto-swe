@@ -470,9 +470,13 @@ export function renderTranscript(
         return `[person${label(row.childId)}] ${body}`;
       }
       if (row.role === 'ORCHESTRATOR') {
-        return row.kind === 'ATTACH_REQUEST'
-          ? `[you] (asked the person to attach a repository) ${body}`
-          : `[you${label(row.childId)}] ${body}`;
+        if (row.kind === 'ATTACH_REQUEST') {
+          return `[you] (asked the person to attach a repository) ${body}`;
+        }
+        if (row.kind === 'CAMPAIGN_PROPOSAL') {
+          return `[you] (proposed a campaign for the person to review; nothing has started) ${body}`;
+        }
+        return `[you${label(row.childId)}] ${body}`;
       }
       if (row.kind === 'NOTICE') {
         const code = payloadCode(row.payload);

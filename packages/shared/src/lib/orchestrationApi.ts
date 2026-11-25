@@ -1,6 +1,8 @@
 import { z } from 'zod';
+import { CAMPAIGN_DESCRIPTION_MAX_LENGTH } from '../types/workflow.js';
 import {
   APPROVAL_STATUSES,
+  CAMPAIGN_PROPOSAL_MAX_REPOS,
   CHILD_ROLES,
   CHILD_STATUSES,
   ChildResultSchema,
@@ -241,6 +243,36 @@ export const AttachRequestPayloadSchema = z.object({
   resolution: z.enum(['ATTACHED', 'DECLINED']).optional(),
 });
 export type AttachRequestPayload = z.infer<typeof AttachRequestPayloadSchema>;
+
+/**
+ * The payload of a `CAMPAIGN_PROPOSAL` message: the validated proposal and nothing else. Model
+ * text (`name`, `brief`) in it is shown as plain text and pre-fills the campaign Start form; the
+ * person launches through `POST /api/v1/campaigns`. `droppedRepoCount` is how many named
+ * repositories the launcher could not reach (never which).
+ */
+export const CampaignProposalPayloadSchema = z.object({
+  brief: z.string().max(CAMPAIGN_DESCRIPTION_MAX_LENGTH),
+  droppedRepoCount: z.number().int().min(0).max(CAMPAIGN_PROPOSAL_MAX_REPOS),
+  name: z.string().max(120),
+  /** The orchestration's named team, offered as the campaign's owning team. */
+  ownerTeamId: z.string().uuid().nullable().optional(),
+  plan: z.enum(['UNIFORM', 'PLANNED']),
+  recipe: z
+    .object({
+      params: z.object({ packageName: z.string().max(255), targetVersion: z.string().max(128) }),
+      ref: z.string().max(64),
+    })
+    .optional(),
+  repoIds: z.array(z.string().uuid()).max(CAMPAIGN_PROPOSAL_MAX_REPOS),
+});
+export type CampaignProposalPayload = z.infer<typeof CampaignProposalPayloadSchema>;
+
+/** The gateway's answer to a recorded proposal (`POST /orchestrations/:id/campaign-proposals`). */
+export const CampaignProposalResponseSchema = z.object({
+  droppedRepoCount: z.number().int().min(0),
+  messageId: z.string(),
+});
+export type CampaignProposalResponse = z.infer<typeof CampaignProposalResponseSchema>;
 
 export const ApprovalRequestPayloadSchema = z.object({
   approvalId: z.string(),

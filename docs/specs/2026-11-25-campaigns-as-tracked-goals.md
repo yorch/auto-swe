@@ -275,14 +275,14 @@ All additive. No existing column is dropped.
 
 | Change | Detail |
 |---|---|
-| `campaigns` | `plan` (`UNIFORM`, `PLANNED`), `gate` (`OPENED`, `MERGED`), `scopeKind` and `scopeId` (null, `TEAM`, `ORG`), `maxOpenPullRequests`, `staleAfterDays`, `rescanIntervalHours`, `budgetUsd`, `expiresAt`, `launchedById` (replaces reading `createdById` as the acting identity), `pausedReason`, `launcherChangedAt`. New state values `PLANNING`, `PAUSED`, `MONITORING` |
+| `campaigns` | `plan` (`UNIFORM`, `PLANNED`), `gate` (`OPENED`, `MERGED`), `scopeKind` and `scopeId` (null, `TEAM`, `ORG`), `maxOpenPullRequests`, `staleAfterDays`, `rescanIntervalHours`, `budgetUsd`, `expiresAt`, `launchedById` (replaces reading `createdById` as the acting identity), `pausedReason`, `launcherChangedAt`. New state values `ACTIVE`, `PLANNING`, `PAUSED`, `MONITORING` (legacy campaigns keep `RUNNING`) |
 | `campaign_targets` | `brief` (planned work), `dependsOn` (uuid array of target ids), `evidence` (JSON), `regressions`, `staleSince`, `lastCheckedAt`, `lastCheckedSha`. There is no pull-request column: a target finds its pull request through its latest attempt's `runId` (`pull_requests.run_id`, already indexed). New state values `BLOCKED`, `MERGED`, `SATISFIED`, `NEEDS_ATTENTION` |
 | `campaign_attempts` | `targetId`, `n`, `runId`, `childWorkflowId` (unique), `path`, `verification`, `outcome`, `failureReason`, `startedAt`, `finishedAt`. Unique on `(targetId, n)` |
 | `campaign_proposals` | A repository found by discovery and not started: `campaignId`, `connectionId`, `reason`, `decidedAt`. Unique on `(campaignId, connectionId)` |
 
 `CampaignTarget.childWorkflowId`, `path` and `verification` move to the attempt; the target keeps the
 last attempt's values as read-time fields on the API, not as columns. The migration copies each
-existing target with a child into attempt 1 and maps states: `PR_OPENED` stays; `NOT_AFFECTED` becomes
+existing target with a child into attempt 1 and, for campaigns already in a final state, maps states: `PR_OPENED` stays; `NOT_AFFECTED` becomes
 `SATISFIED` with `evidence: { kind: 'initial' }`; `FAILED` becomes `NEEDS_ATTENTION`. Because `PR_OPENED`
 stops being final, a campaign that finished before the migration is not re-opened: it keeps its
 `COMPLETED*` state and its targets are not reconciled.

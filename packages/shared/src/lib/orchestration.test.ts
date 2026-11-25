@@ -975,3 +975,96 @@ describe('isAttachRequestPending', () => {
     expect(isAttachRequestPending(null)).toBe(true);
   });
 });
+
+describe('validateCampaignProposal', () => {
+  const R1 = '00000000-0000-4000-8000-0000000000b2';
+  const base = { brief: 'Raise lodash everywhere.', name: 'Raise lodash', repoIds: [R1] };
+
+  it('accepts a proposal and defaults the plan to UNIFORM and the repositories to none', async () => {
+    const { validateCampaignProposal } = await import('./orchestration.js');
+    const ok = validateCampaignProposal({ brief: 'b', name: 'n' });
+    expect(ok).toEqual({
+      ok: true,
+      proposal: { brief: 'b', name: 'n', plan: 'UNIFORM', repoIds: [] },
+    });
+    expect(validateCampaignProposal({ ...base, plan: 'PLANNED' })).toMatchObject({
+      ok: true,
+      proposal: { plan: 'PLANNED', repoIds: [R1] },
+    });
+  });
+
+  it('runs the strict recipe parameter check of the launch route', async () => {
+    const { validateCampaignProposal } = await import('./orchestration.js');
+    const good = validateCampaignProposal({
+      ...base,
+      recipe: {
+        params: { packageName: '@scope/pkg', targetVersion: '1.2.3' },
+        ref: 'npm-dependency@2',
+      },
+    });
+    expect(good).toMatchObject({
+      ok: true,
+      proposal: { recipe: { params: { packageName: '@scope/pkg' }, ref: 'npm-dependency@2' } },
+    });
+    for (const params of [
+      { packageName: 'git:evil', targetVersion: '1.2.3' },
+      { packageName: 'lodash', targetVersion: '^1.2.3' },
+      { extra: 'x', packageName: 'lodash', targetVersion: '1.2.3' },
+      {},
+    ]) {
+      const bad = validateCampaignProposal({
+        ...base,
+        recipe: { params, ref: 'npm-dependency@2' },
+      });
+      expect(bad.ok).toBe(false);
+    }
+    expect(validateCampaignProposal({ ...base, recipe: { params: {}, ref: 'nope@1' } }).ok).toBe(
+      false
+    );
+  });
+
+  it('applies the campaign name and brief rules', async () => {
+    const { validateCampaignProposal } = await import('./orchestration.js');
+    expect(validateCampaignProposal({ ...base, brief: 'a\u0000b' }).ok).toBe(false);
+    expect(validateCampaignProposal({ ...base, brief: '\ud800' }).ok).toBe(false);
+    expect(validateCampaignProposal({ ...base, brief: 'x'.repeat(8001) }).ok).toBe(false);
+    expect(validateCampaignProposal({ ...base, name: ' ' }).ok).toBe(false);
+    // Tab and line breaks are allowed in a brief.
+    expect(validateCampaignProposal({ ...base, brief: 'a\n\tb' }).ok).toBe(true);
+  });
+
+  it('bounds and de-duplicates the repository list', async () => {
+    const { validateCampaignProposal, CAMPAIGN_PROPOSAL_MAX_REPOS } = await import(
+      './orchestration.js'
+    );
+    const ids = Array.from(
+      { length: CAMPAIGN_PROPOSAL_MAX_REPOS + 1 },
+      (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`
+    );
+    expect(validateCampaignProposal({ ...base, repoIds: ids }).ok).toBe(false);
+    expect(validateCampaignProposal({ ...base, repoIds: ids.slice(0, 200) }).ok).toBe(true);
+    expect(validateCampaignProposal({ ...base, repoIds: [R1, R1.toUpperCase()] }).ok).toBe(false);
+    expect(validateCampaignProposal({ ...base, repoIds: ['x'] }).ok).toBe(false);
+  });
+
+  it('never echoes a rejected value', async () => {
+    const { validateCampaignProposal } = await import('./orchestration.js');
+    const bad = validateCampaignProposal({
+      ...base,
+      recipe: {
+        params: { packageName: 'LEAKED-SECRET', targetVersion: '1.2.3' },
+        ref: 'npm-dependency@2',
+      },
+    });
+    expect(bad.ok).toBe(false);
+    expect(JSON.stringify(bad)).not.toContain('LEAKED-SECRET');
+  });
+
+  it('has a message kind of its own and a fixed cap', async () => {
+    const { MESSAGE_KINDS, MAX_CAMPAIGN_PROPOSALS_PER_ORCHESTRATION } = await import(
+      './orchestration.js'
+    );
+    expect(MESSAGE_KINDS).toContain('CAMPAIGN_PROPOSAL');
+    expect(MAX_CAMPAIGN_PROPOSALS_PER_ORCHESTRATION).toBe(5);
+  });
+});

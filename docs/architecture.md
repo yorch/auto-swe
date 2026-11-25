@@ -134,7 +134,8 @@ packages/
 | `src/workflows/runnableSteps.ts` | `STEP_EXECUTORS` — one executor per step name, mapping a step node's `config` + `inputs` onto its activity |
 | `src/workflows/runnableActivities.ts` | The activity proxies (timeouts and retry policies) the dispatcher and step executors call |
 | `src/workflows/runnableContext.ts` | Bounds step records before they enter history; spills oversized run-context values to artifacts at finalization (read back through `GET /workflow-runs/:id/artifacts/:artifactId`) |
-| `src/workflows/epicOrchestrator.ts` | **`EpicOrchestratorWorkflow`** — decomposes multi-repo epics, fans out children in dependency order |
+| `src/workflows/epicOrchestrator.ts` | **`EpicOrchestratorWorkflow`** — decomposes multi-repo epics, fans out children in dependency order (an epic runs here while `workflow.campaignReconciler` is off) |
+| `src/workflows/campaignReconciler.ts` | **`CampaignReconcilerWorkflow`** — works a campaign's database rows toward its goal: delivery, checks, discovery, scheduling, attempt starts through the gateway ([campaigns.md](./campaigns.md#11-the-reconciler)). The older `CampaignWorkflow` finishes the campaigns launched on it |
 | `src/activities/executeImplementation.ts` | **Core agent loop** — DinD workspace, clone, implementer agent, TDD loop |
 | `src/activities/runReviewNetwork.ts` | Security / domain / performance reviewers in parallel via `Promise.allSettled` |
 | `src/activities/qualityGates.ts` | `runLint` / `runTypecheck` / `runTests` / `runBuild` / `runVulnScan` / `runPerfBench` |
@@ -417,7 +418,7 @@ A hand-authored template that pushes by some other route and then waits on `ciPi
 its first verdict and silently ignores every later one, failing at the wait's own timeout rather
 than at the point of the mistake.
 
-**Multi-repo epics.** `POST /api/v1/epics` starts `EpicOrchestratorWorkflow` instead. It takes team LEAD or team ADMIN membership of the team that **owns** every repository the epic names, whatever the caller's platform role (`authorizeLaunch` with `requireOwningTeamLead`; a platform ADMIN passes, and a share does not count). A refusal is `403 FORBIDDEN` naming the repositories, in the `reasons` list as `team-lead-required`, and never the owning team. `POST /api/v1/prd-runs` takes the same requirement for the repositories a PRD run names. The epic route is the only path that starts an epic; schedules, automations and the Slack modal start other workflows. The workflow: the planner
+**Multi-repo epics.** `POST /api/v1/epics` starts `EpicOrchestratorWorkflow` instead, or, while `workflow.campaignReconciler` is on and the repositories' teams have campaigns enabled, launches the epic as a planned campaign ([campaigns.md](./campaigns.md#12-epics)); the description below is the epic workflow's. It takes team LEAD or team ADMIN membership of the team that **owns** every repository the epic names, whatever the caller's platform role (`authorizeLaunch` with `requireOwningTeamLead`; a platform ADMIN passes, and a share does not count). A refusal is `403 FORBIDDEN` naming the repositories, in the `reasons` list as `team-lead-required`, and never the owning team. `POST /api/v1/prd-runs` takes the same requirement for the repositories a PRD run names. The epic route is the only path that starts an epic; schedules, automations and the Slack modal start other workflows. The workflow: the planner
 agent decomposes the brief into per-repo subtasks (every repository the epic names is in the plan;
 the planner only orders them), a dependency graph is built, and each repo's child
 `RunnableWorkflow` starts as soon as the repos it depends on have succeeded — it does not wait for

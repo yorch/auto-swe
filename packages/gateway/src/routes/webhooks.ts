@@ -1029,6 +1029,7 @@ async function aggregateCheckRuns(
 }
 
 import { isInstallationRetired } from '@auto-swe/shared/lib/repoAccessDecision';
+import { notifyCampaignsOfPullRequest } from '../lib/campaignSignals.js';
 import { refreshInvalidatedAccess } from '../lib/repoAccessRefresh.js';
 import { classifyAccessEvent } from '../lib/repoAccessWebhook.js';
 
@@ -1047,7 +1048,7 @@ async function recordPullRequestChange(
 ) {
   const row = await fastify.prisma.pullRequest.findFirst({
     orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
-    select: { id: true },
+    select: { id: true, runId: true, workflow: { select: { temporalWorkflowId: true } } },
     where: { prNumber: event.prNumber, repository: repositoryWhere },
   });
   if (!row) {
@@ -1102,6 +1103,15 @@ async function recordPullRequestChange(
         return fastify.prisma.pullRequest.updateMany({ data: { title: event.title }, where });
     }
   })();
+  // A campaign target follows its draft to merge: a close or a reopen wakes its reconciler. Only a
+  // delivery that moved the row says something new.
+  if ((event.type === 'closed' || event.type === 'reopened') && result.count > 0) {
+    await notifyCampaignsOfPullRequest(fastify, {
+      runId: row.runId,
+      status: event.type === 'closed' ? 'CLOSED' : 'OPEN',
+      workflowId: row.workflow?.temporalWorkflowId ?? null,
+    });
+  }
   if (event.type === 'pushed' && result.count === 0) {
     fastify.log.debug(
       { prNumber: event.prNumber },
@@ -1418,6 +1428,14 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             'Merge signal target workflow no longer exists; keeping PR MERGED'
           );
         }
+
+        // A campaign target follows its draft to merge: tell the reconciler of every campaign
+        // whose latest attempt opened this pull request. Best-effort, never fails the delivery.
+        await notifyCampaignsOfPullRequest(fastify, {
+          runId: pullRequest.runId,
+          status: 'MERGED',
+          workflowId: pullRequest.workflow.temporalWorkflowId,
+        });
 
         // P0 evals: capture the human merge label as a normalized signal,
         // resolving the WorkflowRun by workflowId (there is no direct PR→Run FK).

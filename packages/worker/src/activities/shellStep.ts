@@ -228,7 +228,9 @@ interface RepoMeta {
   token: string;
 }
 
-async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
+async function loadRepoMeta(
+  request: Pick<RepoWorkRequest, 'payload' | 'repoId'>
+): Promise<RepoMeta> {
   const repo = await prisma.connection.findUniqueOrThrow({
     include: {
       installation: { select: { host: true, installationId: true } },
@@ -832,6 +834,98 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
   } finally {
     // Idempotent: a second release after the inner one is a no-op.
     await registry?.registration.release().catch(() => {});
+    await backend.removeVolume(volumeName);
+  }
+}
+
+// ── The read-only check ──
+
+export interface ShellCheckInput {
+  /** The repository whose base branch is checked. */
+  repoId: string;
+  image: string;
+  command: string;
+  timeoutMs?: number;
+  /** The base branch to check; the repository's default branch when absent. */
+  baseBranch?: string;
+}
+
+export interface ShellCheckResult {
+  /** The command's exit code; null when it was killed (timeout, signal) or never ran. */
+  exitCode: number | null;
+  /** The command's stdout, redacted. */
+  stdout: string;
+  /** Why the command did not run at all (an image off the team's allowlist); absent otherwise. */
+  refused?: string;
+  /** The commit the base branch pointed at when it was cloned; null when it could not be read. */
+  baseSha: string | null;
+}
+
+/**
+ * Run a read-only command against a repository's base branch, as a campaign check does
+ * (docs/specs/2026-11-25-campaigns-as-tracked-goals.md §5).
+ *
+ * The same sandbox as {@link runShellStep}: an allowlisted image, the repository cloned into a
+ * fresh volume whose `origin` holds no credential, the lock-down flags of the ephemeral container,
+ * and no model. Two differences make it a check and not a step. The network is always `none`, so a
+ * check cannot reach anything (it reads the files, nothing else). And there is no finalize: the
+ * volume is never committed, never pushed and is removed afterwards, whatever the command did to
+ * the working tree. A failure of the sandbox itself throws; the caller treats that as "could not
+ * run", never as a verdict.
+ */
+export async function runShellCheck(input: ShellCheckInput): Promise<ShellCheckResult> {
+  const meta = await loadRepoMeta({
+    payload: input.baseBranch ? { baseBranch: input.baseBranch } : {},
+    repoId: input.repoId,
+  });
+  try {
+    assertShellImageAllowed(input.image, meta.teamAllowlist);
+  } catch (err) {
+    if (err instanceof ShellImageNotAllowedError) {
+      return { baseSha: null, exitCode: null, refused: err.message, stdout: '' };
+    }
+    throw err;
+  }
+  const helperImage = await resolveSetting('workspace.gitHelperImage', {
+    teamId: meta.teamId || undefined,
+  });
+  const gitIdentity = await resolveGitIdentity({ teamId: meta.teamId || null });
+
+  const requestedVolume = `shellvol-${crypto.randomBytes(8).toString('hex')}`;
+  const backend = workspaceBackend();
+  const volumeName = (await backend.createVolume(requestedVolume)) ?? requestedVolume;
+  try {
+    heartbeat('shell-check: cloning the base branch into a workspace volume');
+    await cloneIntoVolume(volumeName, meta, meta.defaultBranch, helperImage, gitIdentity);
+    let baseSha: string | null = null;
+    try {
+      const head = (
+        await runHelper(
+          'cd /workspace/repo && git rev-parse --verify HEAD',
+          volumeName,
+          helperImage,
+          meta.token
+        )
+      ).trim();
+      baseSha = /^[0-9a-f]{40,64}$/.test(head) ? head : null;
+    } catch {
+      baseSha = null;
+    }
+    heartbeat('shell-check: running the check');
+    const result = await runEphemeralContainer({
+      command: input.command,
+      image: input.image,
+      network: 'none',
+      timeoutMs: input.timeoutMs,
+      workdir: '/workspace/repo',
+      workspaceMount: volumeName,
+    });
+    return {
+      baseSha,
+      exitCode: result.signal ? null : result.exitCode,
+      stdout: maskCredentialShapes(redactToken(result.stdout, meta.token)),
+    };
+  } finally {
     await backend.removeVolume(volumeName);
   }
 }

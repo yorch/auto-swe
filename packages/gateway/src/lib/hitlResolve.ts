@@ -47,6 +47,7 @@ export type HitlAuthMethod =
   | 'mcp'
   | 'assistant'
   | 'orchestration'
+  | 'campaign'
   | 'service';
 
 export function resolvedViaForAuthMethod(
@@ -63,6 +64,7 @@ export function resolvedViaForAuthMethod(
     case 'assistant':
       return 'assistant';
     case 'orchestration':
+    case 'campaign':
     case 'service':
       return null;
     default:

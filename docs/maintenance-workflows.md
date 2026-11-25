@@ -108,12 +108,13 @@ package, ends `SUCCESS` with `changed: false` and opens nothing.
 ## 3. Dependency upgrade campaign
 
 `dependency-upgrade-campaign` applies one planned change to one repository, deterministically
-first, and is the template every child of a campaign runs. It is a complete workflow on its own.
+first, and is the template every child of a uniform [campaign](./campaigns.md) runs. It is a complete
+workflow on its own.
 
 | Input | Meaning |
 |---|---|
 | `connectionId` | The repository |
-| `recipe` | A recipe in the code-owned catalogue: `npm-dependency@1` or `go-module@1`. Leave empty for an agent-only change |
+| `recipe` | A recipe in the code-owned catalogue: `npm-dependency@1`, `npm-dependency@2`, `go-module@1` or `go-module@2` (the `@2` refs also run read-only as a campaign's check, [campaigns.md §3.1](./campaigns.md#31-the-check); the run itself applies them the same way). Leave empty for an agent-only change |
 | `packageName` | The npm package, or the Go module path |
 | `targetVersion` | The exact version to raise it to: `4.17.21` (npm) or `v1.9.0` (Go). Ranges and tags are refused |
 | `description` | The brief. The agent reads it; an agent-only change is described here |
@@ -124,7 +125,8 @@ are validated against a strict shape (a registry package name or a Go module pat
 version), by the gateway at launch and again by the worker, and reach the script only as quoted
 environment values. `npm-dependency@1` handles a root `package.json` with a `package-lock.json`
 (`npm install --package-lock-only --ignore-scripts`, keeping the declared range style and
-section); `go-module@1` handles a root `go.mod` (`go get`, `go mod tidy`). A repository whose root
+section); `go-module@1` handles a root `go.mod` (`go get`, `go mod tidy`). The `@2` refs make the
+same change. A repository whose root
 manifest does not declare the package (a transitive-only use included), or already has the
 version, changes nothing ([campaigns.md, Limitations](./campaigns.md#limitations)). A layout the recipe cannot handle (a
 Yarn, pnpm or Bun lockfile, an npm shrinkwrap, a workspaces repository that does not list the

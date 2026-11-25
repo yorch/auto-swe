@@ -9,19 +9,23 @@ import {
 import {
   firstOverlap,
   isAttachRequestPending,
+  MAX_CAMPAIGN_PROPOSALS_PER_ORCHESTRATION,
   ORCHESTRATION_SIGNALS,
   ORCHESTRATION_STATUSES,
   OrchestrationLaunchSchema,
   orchestrationWorkflowId,
   type ParsedScope,
   SpawnIntentSchema,
+  validateCampaignProposal,
   validatePathScopes,
 } from '@auto-swe/shared/lib/orchestration';
 import {
   ApprovalDecisionBodySchema,
   AttachRepoBodySchema,
+  type CampaignProposalPayload,
   OrchestrationBodySchema,
 } from '@auto-swe/shared/lib/orchestrationApi';
+import { repoMemberWhere } from '@auto-swe/shared/lib/repoMembership';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { isLauncher, isPlatformAdmin } from '@auto-swe/shared/permissions';
 import { ACTIVE_WORKFLOW_TERMINAL_STATUSES } from '@auto-swe/shared/types/api';
@@ -206,7 +210,8 @@ type OrchestrationAction =
   | 'steer'
   | 'attach'
   | 'approval'
-  | 'cancel';
+  | 'cancel'
+  | 'propose';
 
 export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -2305,6 +2310,180 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // Cancel one child: the launcher, or the orchestrator's `cancelAgent` (token).
+  // ── Campaign proposal (orchestration token only) ───────────────────────────
+  //
+  // The orchestrator can RECORD a proposal for a campaign and nothing more. This route validates it
+  // with the functions the campaign launch route uses where they can run without launching (the
+  // name and brief rules, the strict recipe parameter check, the target limit), keeps only the
+  // repositories the launcher can reach, and writes a CAMPAIGN_PROPOSAL message. It never creates a
+  // campaign: a person confirms on the card and launches through `POST /api/v1/campaigns`, which
+  // makes every launch decision itself.
+
+  app.post(
+    '/:id/campaign-proposals',
+    {
+      config: { orchestrationToken: 'caller' },
+      onRequest: requireAuth(),
+      onSend: async (_request, reply, payload) => normalizeRefusalBody(reply.statusCode, payload),
+      schema: { body: z.record(z.string(), z.unknown()), params: IdParams },
+    },
+    async (request, reply) => {
+      if (!request.orchestration) {
+        return sendError(
+          reply,
+          403,
+          'ORCHESTRATION_TOKEN_REQUIRED',
+          'Campaigns are proposed by the orchestrator, with its orchestration token'
+        );
+      }
+      // 1. The proposal's shape, text and recipe. Never echoes a rejected value.
+      const checked = validateCampaignProposal(request.body);
+      if (!checked.ok) {
+        return sendError(
+          reply,
+          422,
+          'INVALID_INTENT',
+          `The campaign proposal is malformed: ${checked.error}`
+        );
+      }
+      const proposal = checked.proposal;
+      const orch = await prisma.orchestration.findFirst({
+        select: { id: true, launchedById: true, orgId: true, status: true, teamId: true },
+        where: { id: request.params.id },
+      });
+      if (!orch) {
+        return sendError(reply, 404, 'NOT_FOUND', 'Orchestration not found');
+      }
+      let audited = false;
+      const refuse = async (code: string, message: string) => {
+        if (!audited) {
+          audited = true;
+          await audit(request, orch.id, 'refusal', { code, kind: 'proposeCampaign' });
+        }
+        return refusal(reply, 409, code, message);
+      };
+
+      // 2. Active, and the kill switch is on.
+      if (!ORCHESTRATION_LIVE_STATUSES.includes(orch.status as never)) {
+        return refuse('ORCHESTRATION_NOT_ACTIVE', 'This orchestration has ended');
+      }
+      const on = await switchOn(request, reply);
+      if (on === 'sent') {
+        return reply;
+      }
+      if (!on) {
+        return refuse('ORCHESTRATION_NOT_ACTIVE', 'Orchestrated runs are turned off');
+      }
+      // 3. A person to review it. A service principal acts as no one, so nobody could.
+      const launcherId = orch.launchedById;
+      if (!launcherId) {
+        return refuse(
+          'PROPOSAL_NOT_AVAILABLE',
+          'This orchestration has no person to review a proposal'
+        );
+      }
+      // 4. The orchestration's cap on proposals (re-checked under the row lock below).
+      const proposalsSoFar = () =>
+        prisma.orchestrationMessage.count({
+          where: { kind: 'CAMPAIGN_PROPOSAL', orchestrationId: orch.id },
+        });
+      if ((await proposalsSoFar()) >= MAX_CAMPAIGN_PROPOSALS_PER_ORCHESTRATION) {
+        return refuse(
+          'PROPOSAL_LIMIT',
+          `At most ${MAX_CAMPAIGN_PROPOSALS_PER_ORCHESTRATION} campaign proposals can be recorded in one orchestration`
+        );
+      }
+      // 5. The target limit the launch route applies, read for the orchestration's team. Counted
+      // on the ids as sent, so the answer says nothing about which of them the launcher can reach.
+      let maxTargets: number;
+      try {
+        maxTargets = await resolveSetting('workflow.campaignMaxTargets', {
+          orgId: orch.orgId ?? undefined,
+          teamId: orch.teamId,
+        });
+      } catch (err) {
+        request.log.error({ err }, 'workflow.campaignMaxTargets could not be read');
+        return sendError(reply, 503, 'ORCHESTRATION_UNAVAILABLE', 'Orchestrations are unavailable');
+      }
+      if (proposal.repoIds.length > maxTargets) {
+        return sendError(
+          reply,
+          422,
+          'INVALID_INTENT',
+          `A campaign may name at most ${maxTargets} repositories (workflow.campaignMaxTargets)`
+        );
+      }
+      // 6. Only repositories the launcher can reach stay. The others are counted, never named.
+      const reachable = proposal.repoIds.length
+        ? await runUnscoped(
+            'repository reach is membership of the owning team or a team it is shared with, which is scoped to the launcher, not to one tenant',
+            ['Connection'],
+            () =>
+              prisma.connection.findMany({
+                select: { id: true },
+                where: {
+                  id: { in: proposal.repoIds },
+                  isActive: true,
+                  type: 'git_repo',
+                  ...repoMemberWhere({ userId: launcherId }),
+                },
+              })
+          )
+        : [];
+      const reachableIds = new Set(reachable.map((r) => r.id));
+      const repoIds = proposal.repoIds.filter((id) => reachableIds.has(id));
+      const droppedRepoCount = proposal.repoIds.length - repoIds.length;
+
+      const payload: CampaignProposalPayload = {
+        brief: proposal.brief,
+        droppedRepoCount,
+        name: proposal.name,
+        ownerTeamId: orch.teamId,
+        plan: proposal.plan,
+        ...(proposal.recipe ? { recipe: proposal.recipe } : {}),
+        repoIds,
+      };
+      // The body is the one line the transcript and the orchestrator's next turn show; the brief
+      // lives only in the payload, which the card renders as text.
+      const body = `Proposed campaign: ${proposal.name.replace(/\s+/g, ' ').trim()}`.slice(0, 200);
+
+      // 7. Written under the orchestration's row lock, so concurrent proposals cannot pass the cap.
+      const message = await prisma.$transaction(async (tx) => {
+        // CLAUDE.md §7 exception: serialize proposals of one orchestration so the cap holds.
+        await tx.$queryRaw`SELECT id FROM orchestrations WHERE id = ${orch.id}::uuid FOR UPDATE`;
+        const count = await tx.orchestrationMessage.count({
+          where: { kind: 'CAMPAIGN_PROPOSAL', orchestrationId: orch.id },
+        });
+        if (count >= MAX_CAMPAIGN_PROPOSALS_PER_ORCHESTRATION) {
+          return null;
+        }
+        return tx.orchestrationMessage.create({
+          data: {
+            body,
+            kind: 'CAMPAIGN_PROPOSAL',
+            orchestrationId: orch.id,
+            payload: payload as unknown as Prisma.InputJsonValue,
+            role: 'ORCHESTRATOR',
+          },
+        });
+      });
+      if (!message) {
+        return refuse(
+          'PROPOSAL_LIMIT',
+          `At most ${MAX_CAMPAIGN_PROPOSALS_PER_ORCHESTRATION} campaign proposals can be recorded in one orchestration`
+        );
+      }
+      await audit(request, orch.id, 'propose', {
+        droppedRepoCount,
+        messageId: message.id,
+        plan: proposal.plan,
+        recipe: proposal.recipe?.ref ?? null,
+        repoCount: repoIds.length,
+      });
+      return reply.status(201).send({ data: { droppedRepoCount, messageId: message.id } });
+    }
+  );
+
   app.post(
     '/:id/children/:childId/cancel',
     {

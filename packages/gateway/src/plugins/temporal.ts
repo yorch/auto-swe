@@ -41,7 +41,9 @@ import type {
 } from '@auto-swe/shared/types/api';
 import {
   CAMPAIGN_CANCEL_SIGNAL,
+  CAMPAIGN_RECONCILER_WORKFLOW_TYPE,
   CAMPAIGN_WORKFLOW_TYPE,
+  type CampaignReconcilerInput,
   type CampaignWorkflowInput,
   type ChannelAssistantTurnInput,
   type ConsolidateLessonsInput,
@@ -507,6 +509,25 @@ declare module 'fastify' {
        * a finalizer that failed would otherwise leave them open for good.
        */
       signalCampaignCancel: (workflowId: string) => Promise<'signalled' | 'not-running'>;
+      /**
+       * Start a reconciler campaign's workflow. Its id is `campaign-<campaignId>`, as the legacy
+       * workflow's. It holds no queue and `continueAsNew`s, so it carries no execution timeout.
+       */
+      startCampaignReconcilerWorkflow: (
+        workflowId: string,
+        input: CampaignReconcilerInput
+      ) => Promise<void>;
+      /**
+       * Deliver one of the reconciler's signals (`CAMPAIGN_CONTROL_SIGNAL`,
+       * `CAMPAIGN_PULL_REQUEST_CHANGED_SIGNAL`). `'not-running'` when Temporal has no running
+       * execution to signal. The database is the source of truth, so a caller treats a failed
+       * delivery as a delay (the reconciler's backstop reads the rows), never as a failed action.
+       */
+      signalCampaignWorkflow: (
+        workflowId: string,
+        signalName: string,
+        payload: unknown
+      ) => Promise<'signalled' | 'not-running'>;
       /**
        * Generate a WorkflowSpec from a natural-language description. Unlike the
        * other helpers this is request/response: it starts WorkflowAuthorWorkflow
@@ -1557,6 +1578,22 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       }
     },
 
+    async signalCampaignWorkflow(
+      workflowId: string,
+      signalName: string,
+      payload: unknown
+    ): Promise<'signalled' | 'not-running'> {
+      try {
+        await client.workflow.getHandle(workflowId).signal(signalName, payload);
+        return 'signalled';
+      } catch (err) {
+        if (getErrorName(err) !== 'WorkflowNotFoundError') {
+          throw err;
+        }
+        return 'not-running';
+      }
+    },
+
     async signalWithStartOrchestration(orchestrationId, input, signal) {
       await client.workflow.signalWithStart(ORCHESTRATION_WORKFLOW_TYPE, {
         args: [input],
@@ -1574,6 +1611,17 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
     ): Promise<void> {
       const handle = client.workflow.getHandle(workflowId);
       await handle.signal(signalName, ...args);
+    },
+
+    async startCampaignReconcilerWorkflow(
+      workflowId: string,
+      input: CampaignReconcilerInput
+    ): Promise<void> {
+      await client.workflow.start(CAMPAIGN_RECONCILER_WORKFLOW_TYPE, {
+        args: [input],
+        taskQueue: 'engineering-workflow',
+        workflowId,
+      });
     },
 
     async startCampaignWorkflow(workflowId: string, input: CampaignWorkflowInput): Promise<void> {

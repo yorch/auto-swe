@@ -21,6 +21,13 @@ it('keeps scoped review preset reads and writes under the existing read/confirm 
   expect(assistantAccess('PATCH', '/api/v1/platform/review-presets/:id')).toBe('confirm');
 });
 
+it("keeps campaign launch and the orchestrator's campaign proposals out of the assistant's reach", () => {
+  // A person launches a campaign; the orchestrator can only record a proposal for one.
+  expect(assistantAccess('POST', '/api/v1/campaigns')).toBe('never');
+  expect(assistantAccess('POST', '/api/v1/orchestrations/:id/campaign-proposals')).toBe('never');
+  expect(ASSISTANT_ROUTE_POLICY['POST /api/v1/campaigns']).toEqual({ never: 'runsWorkload' });
+});
+
 /**
  * The policy table against the routes production registers. Every route must have a decision, every
  * decision must name a real route, and the categories the assistant may never touch must be refused

@@ -6,7 +6,7 @@ the two places that need it") and watches the work happen: the orchestrator star
 what each one found, asks the person for a repository when it needs one, and reports back. A person can
 steer the orchestrator or any running sub-agent at any time.
 
-The orchestrator never reads a file, runs a command or calls the platform. Its four tools only **record
+The orchestrator never reads a file, runs a command or calls the platform. Its five tools only **record
 intents**. Fixed gateway code validates every intent and applies it through the same launch path a
 person would use, **as the person who launched the orchestration**. Each sub-agent is an ordinary
 [agent run](./agent-runs.md) that returns exactly one structured result. That result, fenced and
@@ -204,7 +204,7 @@ conversation: a signal queue, one turn activity per batch of events, and `contin
 ### The orchestrator
 
 `orchestrator` is a seeded, model-backed agent (default `anthropic/claude-opus-5-5`) with no workspace
-tools and no MCP binding. It is not launchable as an agent run. Its four tools are bound in code, each
+tools and no MCP binding. It is not launchable as an agent run. Its five tools are bound in code, each
 validates its input's shape and records the intent, and none holds a credential, a database handle or a
 network client:
 
@@ -214,12 +214,13 @@ network client:
 | `messageAgent` | A steering message for a running child, by `childId` |
 | `cancelAgent` | A cancel for a running child |
 | `requestRepo` | A request that the launcher attach a repository: a `reason`, and optionally a `candidate` repository |
+| `proposeCampaign` | A proposal for a campaign card (section 5.1): `name`, `brief`, `plan`, optionally a `recipe` and repository ids |
 
 A turn takes at most 12 tool steps and records at most 16 intents; a second `requestRepo` in a turn is
 refused. When the model stops calling tools, its text is posted as an `ORCHESTRATOR` message, and fixed
-workflow code applies the recorded intents in order: a spawn, message or cancel is a call to the gateway
-with the orchestration token (section 8), and a repository request becomes a confirmation card (section
-5). A refusal is never retried; it becomes a `SYSTEM` notice carrying the gateway's code, and the
+workflow code applies the recorded intents in order: a spawn, message, cancel or campaign proposal is a call
+to the gateway with the orchestration token (section 8), and a repository request becomes a confirmation card
+(section 5). A refusal is never retried; it becomes a `SYSTEM` notice carrying the gateway's code, and the
 orchestrator is woken once to read it (at most three consecutive wakes that only a refusal caused).
 
 ### What the orchestrator reads
@@ -527,6 +528,42 @@ A repository is attached **at most once**: a second attach is `409 REPO_ALREADY_
 orchestration launched with `repoId` is already attached. A declined request can be asked again. From the
 attach on, writers become possible and split ownership applies (section 3).
 
+### 5.1 Proposing a campaign
+
+A [campaign](./campaigns.md) applies one planned change to many repositories and opens a draft pull
+request in each, so no model starts one. The orchestrator may only **record a proposal**, which becomes a
+card the launcher confirms, as a repository request does.
+
+1. The orchestrator records `proposeCampaign`: `name`, `brief` (the agent instructions and pull request
+   text), `plan` (`UNIFORM`, the default, or `PLANNED`), optionally a `recipe` (`{ ref, params }`), and up
+   to 200 `repoIds`. At most two are recorded in one turn.
+2. The worker screens the text (name, brief and recipe values) with the memory guard's injection patterns;
+   a match, or a scan that cannot finish, refuses the proposal with a `PROPOSAL_SCREENED` notice that
+   quotes nothing of it.
+3. The worker calls `POST /api/v1/orchestrations/:id/campaign-proposals` with the orchestration token.
+   The gateway validates in this order and stops at the first refusal: the proposal's shape and text, with
+   the campaign launch route's own name and brief rules and its strict recipe parameter check
+   (`422 INVALID_INTENT`, never echoing a value); the orchestration is `ACTIVE` or `WAITING` and
+   `orchestration.enabled` is on (`ORCHESTRATION_NOT_ACTIVE`); the orchestration has a launching person
+   (`PROPOSAL_NOT_AVAILABLE`); fewer than **5** proposals are already recorded (`PROPOSAL_LIMIT`; a
+   constant, not a setting, so an injected orchestrator cannot flood the transcript, re-checked under the
+   orchestration's row lock); the repository count is within `workflow.campaignMaxTargets` for the
+   orchestration's team (`422 INVALID_INTENT`).
+4. Repositories are then reduced to the active `git_repo` connections the launcher can reach (membership of
+   the owning or a shared team). The rest are dropped and only **counted**: the answer, the card and a fixed
+   `PROPOSAL_REPOS_DROPPED` notice carry the number, never an id or a reason.
+5. The gateway writes an `ORCHESTRATOR` message of kind `CAMPAIGN_PROPOSAL` and one audit entry
+   (`action: propose`, carrying the counts, the plan and the recipe ref, not the text). The message body is
+   one line, `Proposed campaign: <name>`; the brief lives only in the payload, which the orchestrator never
+   reads back. An orchestration with no repository attached may propose: it is a proposal only.
+
+The dashboard shows the card in the transcript with the name, brief, plan, recipe and the number of
+repositories, all as plain text. The launcher's **Review and start** opens the campaign Start form
+pre-filled from the payload (name, brief, plan, owning team, recipe, repositories); the person edits it and
+launches through `POST /api/v1/campaigns` as for any campaign, with every launch decision made there
+(lead on every repository's team, organization, limits, the template). Nothing starts from the card, the
+orchestrator cannot launch, and the in-app assistant is refused both routes.
+
 ---
 
 ## 6. MCP write approval
@@ -635,8 +672,8 @@ under it); the HMAC, compared in constant time; the claims; the lifetime (a toke
 exceeds five minutes, or whose expiry is more than five minutes ahead, is refused even when correctly
 signed); then expiry. A refusal at any of these is `401`.
 
-- **Three routes only.** `requireAuth` admits it on `POST …/children`, `POST …/children/:childId/messages`
-  and `POST …/children/:childId/cancel`, and only for the orchestration named in the path. Anywhere else
+- **Four routes only.** `requireAuth` admits it on `POST …/children`, `POST …/children/:childId/messages`,
+  `POST …/children/:childId/cancel` and `POST …/campaign-proposals`, and only for the orchestration named in the path. Anywhere else
   it answers `403 ORCHESTRATION_TOKEN_NOT_ALLOWED`. A person's session on the spawn route answers
   `403 ORCHESTRATION_TOKEN_REQUIRED`: children are started by the orchestrator. A token minted for one
   orchestration is refused for another.
@@ -652,7 +689,7 @@ signed); then expiry. A refusal at any of these is `401`.
   an audit row. The worker masks any `orch_` value in an error before it reaches a log or a notice.
 - **Replay inside the window is not prevented.** The payload carries a random id (`jti`), but the gateway
   mints no record of it and checks none: a token captured in transit can be presented again, any number of
-  times, until it expires. What a captured token can do in that window is what any token can: call the three
+  times, until it expires. What a captured token can do in that window is what any token can: call the four
   routes above for **its one orchestration** while that orchestration is `ACTIVE` or `WAITING`, as the
   launcher's current standing allows (every spawn still passes the allowlist, caps and path-scope checks).
   It cannot reach another orchestration or any other route, and it dies with the orchestration. Its
@@ -685,6 +722,7 @@ All routes need a signed-in user (a service principal holds no role and is admit
 | `POST /api/v1/orchestrations/:id/messages` | Launcher, or its principal | `{ "body" }` (1 to 4,000 characters). `201`. `409 ORCHESTRATION_NOT_ACTIVE` once cancelled or failed |
 | `POST /api/v1/orchestrations/:id/children/:childId/messages` | Launcher, its principal, or the orchestration token | Same body. `409 CHILD_NOT_ALLOWED` for a finished child or one with no run yet |
 | `POST /api/v1/orchestrations/:id/children` | Orchestration token only | Body `{ "intent", "turnKey" }`. Section 3. `200` for a retried turn, `422 INVALID_INTENT`, `409` with a refusal code |
+| `POST /api/v1/orchestrations/:id/campaign-proposals` | Orchestration token only | A `proposeCampaign` intent. Section 5.1. `201 { messageId, droppedRepoCount }`, `422 INVALID_INTENT`, `409 PROPOSAL_LIMIT`, `409 PROPOSAL_NOT_AVAILABLE`, `409 ORCHESTRATION_NOT_ACTIVE`. Never starts a campaign |
 | `POST /api/v1/orchestrations/:id/children/:childId/cancel` | Launcher, its principal, or the orchestration token | `409 CHILD_NOT_ALLOWED` for a finished child; `502 TEMPORAL_CANCEL_FAILED` |
 | `POST /api/v1/orchestrations/:id/attach` | Launcher | `{ "repoId" }`. Section 5. `409 NO_PENDING_ATTACH`, `409 REPO_ALREADY_ATTACHED`, `502 ATTACH_SIGNAL_FAILED` |
 | `POST /api/v1/orchestrations/:id/attach/decline` | Launcher | `409 NO_PENDING_ATTACH` |
@@ -766,7 +804,7 @@ has no workflow run to pin on; the gateway freezes the bounds into the workflow 
 ## 11. Observability
 
 - **Transcript.** `GET /api/v1/orchestrations/:id/messages` serves the conversation: the launcher's and
-  the orchestrator's messages, `CHILD_RESULT` markers, `ATTACH_REQUEST` and `APPROVAL_REQUEST` cards,
+  the orchestrator's messages, `CHILD_RESULT` markers, `ATTACH_REQUEST`, `APPROVAL_REQUEST` and `CAMPAIGN_PROPOSAL` cards,
   and system notices with a stable code in their payload (refusals, `RESULT_SCREENED`, `TURN_FAILED`,
   `LIFETIME_REACHED` and the like).
 - **Children.** Each child has its own run, run viewer, traces and transcripts, unchanged. The
@@ -917,6 +955,11 @@ the user, so a client polls and tries again after a slot frees.
 - **A repo-less orchestration is read-only for the length of its life.** If the launcher declines or
   never answers a repository request, the orchestrator can only read, and cannot be given one without
   asking again.
+- **A campaign proposal is a suggestion, not a launch.**
+  The proposal's repositories are those the launcher can reach, which is wider than the campaign launch
+  decision (lead on each repository's team), so the form or the launch route may still refuse some. At most
+  5 proposals are recorded per orchestration, a constant. A proposal's screening runs in the worker before
+  the gateway call; the gateway validates shape, text and recipe but does not rescreen for injection.
 - **The orchestrator is a model.** It can ask for the wrong agent, an over-broad scope or an unneeded
   repository. The checks above bound what it can do, not whether what it asks is wise; the launcher is
   the control, and a prompt-injected orchestrator's most it can do is propose.
@@ -930,7 +973,8 @@ the user, so a client polls and tries again after a slot frees.
 | `packages/shared/src/lib/orchestration.ts` | Intent and result schemas, the overlap and shared-file rules, `fenceChildResult`, the read-only classifier |
 | `packages/shared/src/lib/pathScope.ts` | The path-scope grammar |
 | `packages/shared/src/lib/orchestrationApi.ts` | The wire shapes of the API |
-| `packages/gateway/src/routes/orchestrations.ts` | The routes |
+| `packages/gateway/src/routes/orchestrations.ts` | The routes, campaign proposals included |
+| `packages/web/src/components/orchestrations/CampaignProposalCard.tsx` | The campaign proposal card and its pre-fill |
 | `packages/gateway/src/lib/orchestrationService.ts` | Views, redaction, width checks |
 | `packages/gateway/src/lib/orchestrationAccess.ts` | The repo-less launch decision and the push-permission check |
 | `packages/shared/src/lib/orchestrationTokenKey.ts` | Minting and verifying the per-call token |

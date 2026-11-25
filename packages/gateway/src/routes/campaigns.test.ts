@@ -9,11 +9,22 @@ vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
   ...(await import('../test/billingMock.js')),
 }));
 
+// A pull request's link is derived from the instance's GitHub host.
+vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  resolveGitHubBaseUrl: async () => 'https://github.com',
+}));
+
 // The three campaign settings come from a table a test edits; everything else keeps its default.
 const settings = vi.hoisted(() => ({
   disabledTeams: new Set<string>(),
+  lifetimeDays: 90,
+  maxOpenPullRequests: 10,
   maxParallel: 3,
   maxTargets: 25,
+  reconciler: false,
+  rescanIntervalHours: 24,
+  staleAfterDays: 14,
 }));
 vi.mock('@auto-swe/shared/config', async (importOriginal) => {
   const original = await importOriginal<typeof import('@auto-swe/shared/config')>();
@@ -28,6 +39,21 @@ vi.mock('@auto-swe/shared/config', async (importOriginal) => {
       }
       if (key === 'workflow.campaignMaxParallelChildren') {
         return settings.maxParallel;
+      }
+      if (key === 'workflow.campaignReconciler') {
+        return settings.reconciler;
+      }
+      if (key === 'workflow.campaignMaxOpenPullRequests') {
+        return settings.maxOpenPullRequests;
+      }
+      if (key === 'workflow.campaignStaleAfterDays') {
+        return settings.staleAfterDays;
+      }
+      if (key === 'workflow.campaignRescanIntervalHours') {
+        return settings.rescanIntervalHours;
+      }
+      if (key === 'workflow.campaignLifetimeDays') {
+        return settings.lifetimeDays;
       }
       throw new Error(`unexpected setting ${key}`);
     },
@@ -65,7 +91,10 @@ const TEMPLATE = {
       budget: { enum: ['STANDARD', 'LARGE', 'EPIC'], type: 'string' },
       connectionId: { connectionType: 'git_repo', type: 'connection' },
       packageName: { maxLength: 255, pattern: '[A-Za-z0-9@][A-Za-z0-9._~/-]*', type: 'string' },
-      recipe: { enum: ['npm-dependency@1', 'go-module@1'], type: 'string' },
+      recipe: {
+        enum: ['npm-dependency@1', 'go-module@1', 'npm-dependency@2', 'go-module@2'],
+        type: 'string',
+      },
       targetVersion: { maxLength: 128, pattern: '[v0-9][0-9A-Za-z.+-]*', type: 'string' },
     },
     required: ['connectionId'],
@@ -74,6 +103,7 @@ const TEMPLATE = {
 };
 
 interface CampaignRow {
+  [extra: string]: unknown;
   id: string;
   name: string;
   description: string;
@@ -96,6 +126,7 @@ interface CampaignRow {
 }
 
 interface TargetRow {
+  [extra: string]: unknown;
   id: string;
   campaignId: string;
   connectionId: string | null;
@@ -162,6 +193,17 @@ describe('campaign routes', () => {
   const connectionSelects: Array<Record<string, unknown>> = [];
   let campaigns: CampaignRow[] = [];
   let targets: TargetRow[] = [];
+  let pullRequests: Array<Record<string, unknown>> = [];
+  let proposals: Array<Record<string, unknown>> = [];
+  let attempts: Array<{
+    [extra: string]: unknown;
+    childWorkflowId: string | null;
+    finishedAt: Date | null;
+    outcome?: string;
+    targetId: string;
+  }> = [];
+  let cancelFailure: Error | null = null;
+  const cancelled: string[] = [];
   let runInputs: Array<Record<string, unknown>> = [];
   let activeWorkflows: Array<Record<string, unknown>> = [];
   let audits: Array<Record<string, unknown>> = [];
@@ -169,6 +211,8 @@ describe('campaign routes', () => {
   /** connectionId → its `scmProvider` when it is not GitHub. */
   let scmProviders: Record<string, string> = {};
   const started: Array<{ id: string; input: Record<string, unknown> }> = [];
+  const startedReconciler: Array<{ id: string; input: Record<string, unknown> }> = [];
+  const controlSignals: Array<{ id: string; name: string; payload: unknown }> = [];
   const signalled: string[] = [];
 
   const isMember = (teamId: string, sub = currentSub) => teamRoles[teamId]?.[sub] !== undefined;
@@ -217,14 +261,22 @@ describe('campaign routes', () => {
     };
 
     const matchesCampaign = (c: CampaignRow, where: Where): boolean => {
-      const { id, ownerTeamId, state, OR, ...rest } = where as {
+      const { id, ownerTeamId, state, OR, ownerTeam, plan, ...rest } = where as {
         id?: string;
         ownerTeamId?: string;
         state?: string;
+        plan?: string;
+        ownerTeam?: { memberships: { some: { userId: string } } };
         OR?: Array<Record<string, unknown>>;
       };
       if (Object.keys(rest).length > 0) {
         throw new Error(`unrecognised Campaign where: ${JSON.stringify(rest)}`);
+      }
+      if (ownerTeam && !isMember(c.ownerTeamId, ownerTeam.memberships.some.userId)) {
+        return false;
+      }
+      if (plan && (c.plan ?? 'UNIFORM') !== plan) {
+        return false;
       }
       if ((id && c.id !== id) || (ownerTeamId && c.ownerTeamId !== ownerTeamId)) {
         return false;
@@ -330,22 +382,54 @@ describe('campaign routes', () => {
           return { count: rows.length };
         },
       },
+      campaignAttempt: {
+        findMany: async (args: { where: { finishedAt?: null; target?: { campaignId: string } } }) =>
+          attempts.filter(
+            (a) =>
+              (args.where.target === undefined ||
+                targets.find((t) => t.id === a.targetId)?.campaignId ===
+                  args.where.target.campaignId) &&
+              (args.where.finishedAt === undefined || a.finishedAt === null)
+          ),
+        updateMany: async (args: {
+          where: { finishedAt: null; target: { campaignId: string } };
+          data: Record<string, unknown>;
+        }) => {
+          const rows = attempts.filter(
+            (a) =>
+              a.finishedAt === null &&
+              targets.find((t) => t.id === a.targetId)?.campaignId === args.where.target.campaignId
+          );
+          for (const row of rows) {
+            Object.assign(row, args.data);
+          }
+          return { count: rows.length };
+        },
+      },
+      campaignProposal: { findMany: async () => proposals },
       campaignTarget: {
         createMany: async (args: { data: Array<Record<string, unknown>> }) => {
           for (const d of args.data) {
             targets.push({
+              brief: null,
               childWorkflowId: null,
+              dependsOn: [],
+              evidence: null,
               failureReason: null,
               finishedAt: null,
               id: `t-${targets.length + 1}`,
+              lastCheckedAt: null,
+              lastCheckedSha: null,
               path: null,
               prNumber: null,
               prUrl: null,
+              regressions: 0,
+              staleSince: null,
               startedAt: null,
               state: 'PENDING',
               verification: null,
               ...d,
-            } as TargetRow);
+            } as unknown as TargetRow);
           }
           return { count: args.data.length };
         },
@@ -364,7 +448,19 @@ describe('campaign routes', () => {
                 (t.connectionId !== null && isMember(t.teamId, currentSub))
             )
             .sort((a, b) => a.position - b.position)
-            .map((t) => pick(t as unknown as Record<string, unknown>, args.select));
+            .map((t) =>
+              pick(
+                {
+                  ...t,
+                  connection: {
+                    githubUrl: null,
+                    organizationName: 'org',
+                    repoName: REPOS[t.connectionId ?? '']?.repoName ?? null,
+                  },
+                } as unknown as Record<string, unknown>,
+                args.select
+              )
+            );
         },
         groupBy: async (args: { where: { campaignId: { in: string[] } } }) => {
           const out = new Map<string, { campaignId: string; state: string; n: number }>();
@@ -422,6 +518,10 @@ describe('campaign routes', () => {
         }),
       },
       orgMonthlyUsage: { findUnique: async () => null },
+      pullRequest: {
+        findMany: async (args: { where: { runId: { in: string[] } } }) =>
+          pullRequests.filter((p) => args.where.runId.in.includes(p.runId as string)),
+      },
       runInput: {
         create: async (args: { data: Record<string, unknown> }) => {
           runInputs.push(args.data);
@@ -438,6 +538,10 @@ describe('campaign routes', () => {
           runInputs.find((r) => r.id === args.where.id) ?? null,
       },
       team: {
+        findFirst: async (args: { where: { id: string; orgId: string } }) => {
+          const team = TEAMS[args.where.id];
+          return team && team.orgId === args.where.orgId ? { id: args.where.id } : null;
+        },
         findMany: async (args: { where: { id: { in: string[] } } }) =>
           args.where.id.in.flatMap((id) =>
             TEAMS[id] ? [{ id, isActive: true, orgId: TEAMS[id].orgId }] : []
@@ -472,6 +576,7 @@ describe('campaign routes', () => {
       user: {
         findUnique: async () => ({ id: currentSub, isActive: true, role: currentRole }),
       },
+      workflowRun: { findMany: async () => [] },
       workflowTemplate: {
         findFirst: async () => (templateFound ? TEMPLATE : null),
       },
@@ -479,6 +584,12 @@ describe('campaign routes', () => {
 
     app.decorate('prisma', prismaMock as unknown as never);
     app.decorate('temporal', {
+      cancelWorkflow: async (id: string) => {
+        if (cancelFailure) {
+          throw cancelFailure;
+        }
+        cancelled.push(id);
+      },
       signalCampaignCancel: async (id: string) => {
         if (signalFailure) {
           throw signalFailure;
@@ -488,6 +599,22 @@ describe('campaign routes', () => {
         }
         signalled.push(id);
         return 'signalled';
+      },
+      signalCampaignWorkflow: async (id: string, name: string, payload: unknown) => {
+        if (signalFailure) {
+          throw signalFailure;
+        }
+        if (workflowGone) {
+          return 'not-running';
+        }
+        controlSignals.push({ id, name, payload });
+        return 'signalled';
+      },
+      startCampaignReconcilerWorkflow: async (id: string, input: Record<string, unknown>) => {
+        if (startFailure) {
+          throw startFailure;
+        }
+        startedReconciler.push({ id, input });
       },
       startCampaignWorkflow: async (id: string, input: Record<string, unknown>) => {
         if (startFailure) {
@@ -514,16 +641,28 @@ describe('campaign routes', () => {
     workflowGone = false;
     campaigns = [];
     targets = [];
+    attempts = [];
+    pullRequests = [];
+    proposals = [];
+    cancelFailure = null;
+    cancelled.length = 0;
     runInputs = [];
     activeWorkflows = [];
     audits = [];
     liveStatuses = {};
     scmProviders = {};
     started.length = 0;
+    startedReconciler.length = 0;
+    controlSignals.length = 0;
     signalled.length = 0;
     settings.disabledTeams = new Set();
     settings.maxParallel = 3;
     settings.maxTargets = 25;
+    settings.reconciler = false;
+    settings.lifetimeDays = 90;
+    settings.maxOpenPullRequests = 10;
+    settings.rescanIntervalHours = 24;
+    settings.staleAfterDays = 14;
   });
 
   const auth = { authorization: 'Bearer test-token' };
@@ -935,6 +1074,213 @@ describe('campaign routes', () => {
     });
   });
 
+  // ── The reconciler launch ──
+
+  describe('POST /api/v1/campaigns — reconciler and legacy workflows', () => {
+    const reconciled = {
+      ...valid,
+      recipe: { ...npmRecipe, ref: 'npm-dependency@2' },
+    };
+
+    it('starts the legacy workflow, recorded on the row, and the reconciler-only inputs are refused by name', async () => {
+      const ok = await post(valid);
+      expect(ok.statusCode).toBe(201);
+      expect(body(ok).data.state).toBe('STARTING');
+      expect(campaigns[0]).toMatchObject({ launchedById: 'user-1', workflowKind: 'LEGACY' });
+      // Nothing of the reconciler's is written on a legacy campaign.
+      expect(campaigns[0]).not.toHaveProperty('expiresAt');
+      expect(campaigns[0]).not.toHaveProperty('maxOpenPullRequests');
+      expect(started).toHaveLength(1);
+      expect(startedReconciler).toHaveLength(0);
+
+      for (const extra of [
+        { plan: 'PLANNED' },
+        { gate: 'MERGED' },
+        { scope: { kind: 'ORG' } },
+        { maxOpenPullRequests: 3 },
+        { staleAfterDays: 5 },
+        { rescanIntervalHours: 6 },
+        { budgetUsd: 50 },
+        { lifetimeDays: 30 },
+        { recipe: { ...npmRecipe, ref: 'npm-dependency@2' } },
+      ]) {
+        const res = await post({ ...valid, ...extra });
+        expect(res.statusCode).toBe(400);
+        expect(body(res).error.code).toBe('CAMPAIGN_RECONCILER_REQUIRED');
+      }
+      expect(campaigns).toHaveLength(1);
+    });
+
+    it('accepts an explicit UNIFORM plan on the legacy workflow: it is the legacy meaning', async () => {
+      expect((await post({ ...valid, plan: 'UNIFORM' })).statusCode).toBe(201);
+    });
+
+    it('starts the reconciler for a uniform campaign, freezing the defaults and the launcher into the row', async () => {
+      settings.reconciler = true;
+      settings.lifetimeDays = 30;
+      settings.staleAfterDays = 9;
+      settings.rescanIntervalHours = 12;
+      settings.maxOpenPullRequests = 4;
+      const before = Date.now();
+      const res = await post({
+        ...reconciled,
+        budgetUsd: 250,
+        gate: 'MERGED',
+        maxOpenPullRequests: 99,
+      });
+      expect(res.statusCode).toBe(201);
+      const { data } = body(res);
+      expect(data).toMatchObject({ state: 'STARTING', workflowId: data.temporalWorkflowId });
+      expect(started).toHaveLength(0);
+      expect(startedReconciler).toEqual([
+        {
+          id: data.temporalWorkflowId,
+          input: { campaignId: data.campaignId, campaignWorkflowId: data.temporalWorkflowId },
+        },
+      ]);
+      const row = campaigns[0] as CampaignRow;
+      expect(row).toMatchObject({
+        budgetUsd: 250,
+        createdById: 'user-1',
+        gate: 'MERGED',
+        launchedById: 'user-1',
+        // Clamped to the setting's ceiling.
+        maxOpenPullRequests: 4,
+        plan: 'UNIFORM',
+        recipeRef: 'npm-dependency@2',
+        rescanIntervalHours: 12,
+        staleAfterDays: 9,
+        state: 'STARTING',
+        workflowKind: 'RECONCILER',
+      });
+      const expiresAt = (row.expiresAt as Date).getTime();
+      expect(expiresAt).toBeGreaterThanOrEqual(before + 30 * 86_400_000);
+      expect(expiresAt).toBeLessThanOrEqual(Date.now() + 30 * 86_400_000);
+      expect(audits.find((a) => a.entityType === 'Campaign')?.afterJson).toMatchObject({
+        gate: 'MERGED',
+        launchedById: 'user-1',
+        plan: 'UNIFORM',
+        workflowKind: 'RECONCILER',
+      });
+    });
+
+    it('takes the request’s own lifetime, interval and threshold over the defaults', async () => {
+      settings.reconciler = true;
+      const res = await post({
+        ...reconciled,
+        lifetimeDays: 7,
+        rescanIntervalHours: 6,
+        staleAfterDays: 3,
+      });
+      expect(res.statusCode).toBe(201);
+      const row = campaigns[0] as CampaignRow;
+      expect(row).toMatchObject({ rescanIntervalHours: 6, staleAfterDays: 3 });
+      expect((row.expiresAt as Date).getTime() - Date.now()).toBeLessThan(7 * 86_400_000 + 1000);
+      expect(row.maxOpenPullRequests).toBe(10);
+    });
+
+    it('launches a planned campaign into PLANNING, with a pending target for the planner to brief', async () => {
+      settings.reconciler = true;
+      const { recipe: _recipe, ...noRecipe } = valid;
+      const res = await post({ ...noRecipe, plan: 'PLANNED' });
+      expect(res.statusCode).toBe(201);
+      expect(body(res).data.state).toBe('PLANNING');
+      expect(campaigns[0]).toMatchObject({
+        gate: 'OPENED',
+        plan: 'PLANNED',
+        state: 'PLANNING',
+        workflowKind: 'RECONCILER',
+      });
+      expect(targets.map((t) => t.state)).toEqual(['PENDING', 'PENDING']);
+      expect(startedReconciler).toHaveLength(1);
+    });
+
+    it('refuses a recipe or a scope on a planned campaign', async () => {
+      settings.reconciler = true;
+      const withRecipe = await post({ ...valid, plan: 'PLANNED' });
+      expect(withRecipe.statusCode).toBe(400);
+      expect(body(withRecipe).error.code).toBe('CAMPAIGN_PLAN_INVALID');
+      const { recipe: _recipe, ...noRecipe } = valid;
+      const withScope = await post({ ...noRecipe, plan: 'PLANNED', scope: { kind: 'ORG' } });
+      expect(withScope.statusCode).toBe(400);
+      expect(body(withScope).error.code).toBe('CAMPAIGN_SCOPE_INVALID');
+      expectNothingWritten();
+    });
+
+    it('lets a planned campaign span organizations when the launcher leads every target’s team', async () => {
+      settings.reconciler = true;
+      teamRoles[TEAM_3] = { 'user-1': 'LEAD' };
+      const { recipe: _recipe, ...noRecipe } = valid;
+      const planned = await post({ ...noRecipe, plan: 'PLANNED', repoIds: [REPO_A, REPO_X] });
+      expect(planned.statusCode).toBe(201);
+      expect(targets.map((t) => t.teamId)).toEqual([TEAM_1, TEAM_3]);
+      // A uniform campaign stays one organization.
+      campaigns = [];
+      targets = [];
+      const uniform = await post({ ...reconciled, repoIds: [REPO_A, REPO_X] });
+      expect(uniform.statusCode).toBe(400);
+      expect(body(uniform).error.code).toBe('CAMPAIGN_CROSS_ORG');
+    });
+
+    it('refuses a planned campaign naming a repository whose team the launcher does not lead', async () => {
+      settings.reconciler = true;
+      const { recipe: _recipe, ...noRecipe } = valid;
+      const res = await post({ ...noRecipe, plan: 'PLANNED', repoIds: [REPO_A, REPO_X] });
+      expect(res.statusCode).toBe(403);
+      expect(body(res).error.code).toBe('FORBIDDEN');
+    });
+
+    it('takes a scope only with a recipe that has a check, in the campaign’s own organization', async () => {
+      settings.reconciler = true;
+      const noCheck = await post({ ...valid, scope: { kind: 'ORG' } });
+      expect(noCheck.statusCode).toBe(400);
+      expect(body(noCheck).error.code).toBe('CAMPAIGN_SCOPE_INVALID');
+      const foreign = await post({ ...reconciled, scope: { id: TEAM_3, kind: 'TEAM' } });
+      expect(foreign.statusCode).toBe(400);
+      expect(body(foreign).error.code).toBe('CAMPAIGN_SCOPE_INVALID');
+      expectNothingWritten();
+
+      const org = await post({ ...reconciled, scope: { kind: 'ORG' } });
+      expect(org.statusCode).toBe(201);
+      expect(campaigns[0]).toMatchObject({ scopeId: 'org-1', scopeKind: 'ORG' });
+      campaigns = [];
+      targets = [];
+      const team = await post({ ...reconciled, scope: { id: TEAM_2, kind: 'TEAM' } });
+      expect(team.statusCode).toBe(201);
+      expect(campaigns[0]).toMatchObject({ scopeId: TEAM_2, scopeKind: 'TEAM' });
+    });
+
+    it('compares the new fields too when a key is retried', async () => {
+      settings.reconciler = true;
+      const postKeyed = (payload: unknown) =>
+        app.inject({
+          headers: { ...auth, 'idempotency-key': 'k-1' },
+          method: 'POST',
+          payload: payload as object,
+          url: '/api/v1/campaigns',
+        });
+      const first = await postKeyed({ ...reconciled, gate: 'OPENED' });
+      expect(first.statusCode).toBe(201);
+      const retry = await postKeyed({ ...reconciled, gate: 'OPENED' });
+      expect(retry.statusCode).toBe(200);
+      expect(body(retry).data).toMatchObject({ deduplicated: true, state: 'STARTING' });
+      const changed = await postKeyed({ ...reconciled, gate: 'MERGED' });
+      expect(changed.statusCode).toBe(422);
+      expect(body(changed).error.code).toBe('IDEMPOTENCY_KEY_MISMATCH');
+      expect(startedReconciler).toHaveLength(1);
+    });
+
+    it('compensates a failed reconciler start like a legacy one', async () => {
+      settings.reconciler = true;
+      startFailure = new Error('temporal unreachable');
+      const res = await post(reconciled);
+      expect(res.statusCode).toBe(500);
+      expect(campaigns).toHaveLength(0);
+      expect(targets).toHaveLength(0);
+      expect(runInputs).toHaveLength(0);
+    });
+  });
+
   // ── Visibility ──
 
   /** Four campaigns: C1 owned by team 1 over repos A and B, C2 owned by team 2 over B, C3 owned
@@ -959,6 +1305,7 @@ describe('campaign routes', () => {
       templateVersion: 3,
       temporalWorkflowId: `campaign-${id}`,
       updatedAt: new Date(),
+      workflowKind: 'LEGACY',
       workRequestId: `wr-${id}`,
     });
     const target = (
@@ -967,17 +1314,24 @@ describe('campaign routes', () => {
       position: number,
       state = 'PENDING'
     ): TargetRow => ({
+      brief: null,
       campaignId,
       childWorkflowId: state === 'RUNNING' ? `campaign-${campaignId}-${repo}` : null,
       connectionId: repo,
+      dependsOn: [],
+      evidence: null,
       failureReason: null,
       finishedAt: null,
       id: `t-${campaignId}-${position}`,
+      lastCheckedAt: null,
+      lastCheckedSha: null,
       path: null,
       position,
       prNumber: null,
       prUrl: null,
+      regressions: 0,
       repoLabel: `org/${REPOS[repo]?.repoName}`,
+      staleSince: null,
       startedAt: null,
       state,
       teamId: REPOS[repo]?.teamId as string,
@@ -1145,13 +1499,16 @@ describe('campaign routes', () => {
       const res = await list();
       const c1 = body(res).data.find((c: { id: string }) => c.id === 'c1');
       expect(c1.counts).toEqual({
-        CANCELLED: 0,
-        FAILED: 0,
-        NOT_AFFECTED: 0,
-        PENDING: 0,
-        PR_OPENED: 1,
-        RUNNING: 1,
-        SKIPPED: 0,
+        blocked: 0,
+        cancelled: 0,
+        merged: 0,
+        needsAttention: 0,
+        pending: 0,
+        prOpened: 1,
+        running: 1,
+        satisfied: 0,
+        skipped: 0,
+        total: 2,
       });
       expect(c1).not.toHaveProperty('targets');
       expect(c1.ownerTeam).toEqual({ id: TEAM_1, name: 'alpha-team' });
@@ -1220,8 +1577,8 @@ describe('campaign routes', () => {
       const { data } = body(res);
       expect(data.targets.map((t: { repoLabel: string }) => t.repoLabel)).toEqual(['org/alpha']);
       expect(data.hiddenTargetCount).toBe(1);
-      expect(data.counts.PR_OPENED).toBe(1);
-      expect(data.counts.RUNNING).toBe(1);
+      expect(data.counts.prOpened).toBe(1);
+      expect(data.counts.running).toBe(1);
       // The hidden target’s identity, PR and reason never cross.
       expect(res.payload).not.toContain('org/beta');
       expect(res.payload).not.toContain(REPO_B);
@@ -1234,7 +1591,7 @@ describe('campaign routes', () => {
       expect(res.statusCode).toBe(200);
       expect(body(res).data.targets).toEqual([]);
       expect(body(res).data.hiddenTargetCount).toBe(1);
-      expect(body(res).data.counts.PENDING).toBe(1);
+      expect(body(res).data.counts.pending).toBe(1);
     });
 
     it('takes liveStatus from the child’s ledger row for a RUNNING target only', async () => {
@@ -1248,6 +1605,190 @@ describe('campaign routes', () => {
       expect(byLabel['org/alpha'].liveStatus).toBe('IMPLEMENTING');
       expect(byLabel['org/beta'].liveStatus).toBeNull();
       expect(data.hiddenTargetCount).toBe(0);
+    });
+
+    describe('a reconciled campaign’s targets', () => {
+      const run = (n: string) => `run-${n}`;
+      function seedReconciled() {
+        seedUuids();
+        const c = campaigns.find((x) => x.id === U(1)) as CampaignRow;
+        Object.assign(c, {
+          gate: 'OPENED',
+          launchedById: 'creator-1',
+          maxOpenPullRequests: 1,
+          pausedReason: null,
+          plan: 'PLANNED',
+          state: 'ACTIVE',
+          workflowKind: 'RECONCILER',
+        });
+        const [alpha, beta] = targets.filter((t) => t.campaignId === U(1)) as TargetRow[];
+        // alpha (position 0) has a draft; beta (position 1) waits for it and is blocked.
+        (alpha as TargetRow).state = 'PR_OPENED';
+        (alpha as TargetRow).staleSince = new Date('2026-06-02T00:00:00Z');
+        (alpha as TargetRow).evidence = { kind: 'declared-at-target' };
+        (beta as TargetRow).state = 'BLOCKED';
+        (beta as TargetRow).dependsOn = [(alpha as TargetRow).id];
+        (beta as TargetRow).brief = 'Move beta to the new client';
+        attempts = [
+          {
+            childWorkflowId: 'campaign-a-1',
+            failureReason: 'tests failed',
+            finishedAt: new Date('2026-06-01T01:00:00Z'),
+            id: 'att-1',
+            n: 1,
+            outcome: 'FAILED',
+            path: 'AGENT',
+            runId: run('1'),
+            startedAt: new Date('2026-06-01T00:00:00Z'),
+            targetId: (alpha as TargetRow).id,
+            verification: 'FAILED',
+          },
+          {
+            childWorkflowId: 'campaign-a-2',
+            failureReason: null,
+            finishedAt: new Date('2026-06-01T03:00:00Z'),
+            id: 'att-2',
+            n: 2,
+            outcome: 'PR_OPENED',
+            path: 'RECIPE',
+            runId: run('2'),
+            startedAt: new Date('2026-06-01T02:00:00Z'),
+            targetId: (alpha as TargetRow).id,
+            verification: 'PASSED',
+          },
+        ];
+        // The first attempt's draft was closed; the second's is open, and is the one shown.
+        pullRequests = [
+          {
+            ciStatus: 'PASSING',
+            isDraft: true,
+            mergedAt: null,
+            openedAt: new Date('2026-06-01T03:00:00Z'),
+            prNumber: 12,
+            runId: run('2'),
+            status: 'OPEN',
+          },
+          {
+            ciStatus: 'FAILING',
+            isDraft: false,
+            mergedAt: null,
+            openedAt: new Date('2026-06-01T01:00:00Z'),
+            prNumber: 11,
+            runId: run('1'),
+            status: 'CLOSED',
+          },
+        ];
+      }
+
+      it('reads delivery from the pull request of the latest attempt, with every attempt listed', async () => {
+        seedReconciled();
+        as('admin-1', 'ADMIN', {});
+        const { data } = body(await detail(U(1)));
+        const alpha = data.targets.find((t: { repoLabel: string }) => t.repoLabel === 'org/alpha');
+        expect(alpha.attempts.map((a: { n: number; outcome: string }) => [a.n, a.outcome])).toEqual(
+          [
+            [1, 'FAILED'],
+            [2, 'PR_OPENED'],
+          ]
+        );
+        expect(alpha.delivery).toEqual({
+          ciStatus: 'PASSING',
+          isDraft: true,
+          mergedAt: null,
+          openedAt: '2026-06-01T03:00:00.000Z',
+          prNumber: 12,
+          prUrl: 'https://github.com/org/alpha/pull/12',
+          status: 'OPEN',
+        });
+        // The target's last-attempt fields are the latest attempt's.
+        expect(alpha).toMatchObject({
+          childWorkflowId: 'campaign-a-2',
+          evidence: { kind: 'declared-at-target' },
+          failureReason: null,
+          path: 'RECIPE',
+          prNumber: 12,
+          staleSince: '2026-06-02T00:00:00.000Z',
+          verification: 'PASSED',
+        });
+        expect(data).toMatchObject({
+          counts: { blocked: 1, prOpened: 1, total: 2 },
+          gate: 'OPENED',
+          launchedById: 'creator-1',
+          plan: 'PLANNED',
+          workflowKind: 'RECONCILER',
+        });
+      });
+
+      it('says what a blocked target waits for, and what it depends on', async () => {
+        seedReconciled();
+        // One open draft is the campaign's limit, so beta waits for review as well as for alpha.
+        as('admin-1', 'ADMIN', {});
+        const { data } = body(await detail(U(1)));
+        const beta = data.targets.find((t: { repoLabel: string }) => t.repoLabel === 'org/beta');
+        // `OPENED` gate and an open draft upstream: the gate is open, the limit is what holds it.
+        expect(beta.blockedReason).toMatchObject({ kind: 'max-open-pull-requests' });
+        expect(beta.dependsOn).toEqual([data.targets[0].id]);
+        expect(beta.brief).toBe('Move beta to the new client');
+      });
+
+      it('names an upstream repository only to someone who can see it', async () => {
+        seedReconciled();
+        // beta waits for alpha, which has not opened a draft yet.
+        const [alpha] = targets.filter((t) => t.campaignId === U(1)) as TargetRow[];
+        (alpha as TargetRow).state = 'PENDING';
+        as('admin-1', 'ADMIN', {});
+        const admin = body(await detail(U(1))).data.targets.find(
+          (t: { repoLabel: string }) => t.repoLabel === 'org/beta'
+        );
+        expect(admin.blockedReason).toMatchObject({
+          kind: 'waiting-upstream',
+          upstreamLabel: 'org/alpha',
+        });
+        // team 2 reaches beta only: alpha is not named, and its id is not in dependsOn.
+        as('u-2', 'ENGINEER', { [TEAM_2]: 'ENGINEER' });
+        const res = await detail(U(1));
+        const beta = body(res).data.targets[0];
+        expect(beta.repoLabel).toBe('org/beta');
+        expect(beta.blockedReason).toMatchObject({
+          kind: 'waiting-upstream',
+          upstreamId: null,
+          upstreamLabel: null,
+        });
+        expect(beta.blockedReason.text).not.toContain('alpha');
+        expect(beta.dependsOn).toEqual([]);
+        expect(res.payload).not.toContain('org/alpha');
+      });
+
+      it('shows discovery proposals to the owning team and ADMINs, not to someone who only reaches a target', async () => {
+        seedReconciled();
+        proposals = [
+          {
+            connection: { organizationName: 'org', repoName: 'secret-repo' },
+            connectionId: REPO_X,
+            createdAt: new Date('2026-06-03T00:00:00Z'),
+            decidedAt: null,
+            id: 'prop-1',
+            reason: 'The launcher may not start work in this repository',
+          },
+        ];
+        as('admin-1', 'ADMIN', {});
+        expect(body(await detail(U(1))).data.proposals).toEqual([
+          {
+            connectionId: REPO_X,
+            createdAt: '2026-06-03T00:00:00.000Z',
+            decidedAt: null,
+            id: 'prop-1',
+            reason: 'The launcher may not start work in this repository',
+            repoLabel: 'org/secret-repo',
+          },
+        ]);
+        as('u-1', 'ENGINEER', { [TEAM_1]: 'ENGINEER' });
+        expect(body(await detail(U(1))).data.proposals).toHaveLength(1);
+        as('u-2', 'ENGINEER', { [TEAM_2]: 'ENGINEER' });
+        const other = await detail(U(1));
+        expect(body(other).data.proposals).toEqual([]);
+        expect(other.payload).not.toContain('secret-repo');
+      });
     });
 
     it('shows an ADMIN every target', async () => {
@@ -1303,7 +1844,7 @@ describe('campaign routes', () => {
       as('creator-1', 'ENGINEER', { [TEAM_1]: 'ENGINEER' });
       const res = await cancel();
       expect(res.statusCode).toBe(202);
-      expect(body(res).data).toEqual({ campaignId: U(1), state: 'CANCELLING' });
+      expect(body(res).data).toEqual({ campaignId: U(1), id: U(1), state: 'CANCELLING' });
       expect(campaigns[0]).toMatchObject({ cancelledById: 'creator-1', state: 'CANCELLING' });
       expect(campaigns[0]?.cancelledAt).toBeInstanceOf(Date);
       expect(signalled).toEqual([`campaign-${U(1)}`]);
@@ -1388,7 +1929,7 @@ describe('campaign routes', () => {
       workflowGone = true;
       const res = await cancel();
       expect(res.statusCode).toBe(200);
-      expect(body(res).data).toEqual({ campaignId: U(1), state: 'CANCELLED' });
+      expect(body(res).data).toEqual({ campaignId: U(1), id: U(1), state: 'CANCELLED' });
       expect(campaigns[0]).toMatchObject({ cancelledById: 'admin-1', state: 'CANCELLED' });
       expect(campaigns[0]?.completedAt).toBeInstanceOf(Date);
       // A finished target keeps its outcome; the open ones are closed with the campaign.
@@ -1417,7 +1958,7 @@ describe('campaign routes', () => {
       workflowGone = true;
       const res = await cancel();
       expect(res.statusCode).toBe(202);
-      expect(body(res).data).toEqual({ campaignId: U(1), state: 'CANCELLING' });
+      expect(body(res).data).toEqual({ campaignId: U(1), id: U(1), state: 'CANCELLING' });
       expect(campaigns[0]).toMatchObject({ cancelledById: 'admin-1', state: 'CANCELLING' });
       expect(campaigns[0]?.completedAt ?? null).toBeNull();
       // No target is closed: the workflow's re-check stops them when it starts.
@@ -1436,6 +1977,93 @@ describe('campaign routes', () => {
       const again = await cancel();
       expect(again.statusCode).toBe(200);
       expect(campaigns[0]?.state).toBe('CANCELLED');
+    });
+
+    describe('a reconciled campaign', () => {
+      function seedReconciled(state = 'ACTIVE') {
+        seedActive(state);
+        (campaigns[0] as CampaignRow).workflowKind = 'RECONCILER';
+        const [running, review] = targets.filter((t) => t.campaignId === U(1)) as TargetRow[];
+        (running as TargetRow).childWorkflowId = null;
+        (review as TargetRow).state = 'PR_OPENED';
+        targets.push({
+          ...(running as TargetRow),
+          connectionId: REPO_X,
+          id: 't-blocked',
+          state: 'BLOCKED',
+        });
+        targets.push({
+          ...(running as TargetRow),
+          connectionId: REPO_X,
+          id: 't-attn',
+          state: 'NEEDS_ATTENTION',
+        });
+        attempts = [
+          {
+            childWorkflowId: `campaign-${U(1)}-a`,
+            finishedAt: null,
+            targetId: (running as TargetRow).id,
+          },
+          {
+            childWorkflowId: `campaign-${U(1)}-old`,
+            finishedAt: new Date(),
+            targetId: (running as TargetRow).id,
+          },
+        ];
+      }
+
+      it('cancels each running attempt’s run, then signals the reconciler, 202 CANCELLING', async () => {
+        seedReconciled();
+        const res = await cancel();
+        expect(res.statusCode).toBe(202);
+        expect(cancelled).toEqual([`campaign-${U(1)}-a`]);
+        // Not the legacy cancel signal: the reconciler's control signal.
+        expect(signalled).toEqual([]);
+        expect(controlSignals).toEqual([
+          { id: `campaign-${U(1)}`, name: 'campaignControl', payload: { action: 'cancel' } },
+        ]);
+        expect(campaigns[0]).toMatchObject({ cancelledById: 'user-1', state: 'CANCELLING' });
+      });
+
+      it('answers 503 and leaves it CANCELLING when a running attempt cannot be cancelled', async () => {
+        seedReconciled();
+        cancelFailure = new Error('temporal down');
+        const res = await cancel();
+        expect(res.statusCode).toBe(503);
+        expect(body(res).error.code).toBe('CAMPAIGN_SIGNAL_FAILED');
+        expect(campaigns[0]?.state).toBe('CANCELLING');
+        expect(controlSignals).toEqual([]);
+      });
+
+      it('treats a run Temporal no longer has as already stopped', async () => {
+        seedReconciled();
+        cancelFailure = Object.assign(new Error('gone'), { name: 'WorkflowNotFoundError' });
+        expect((await cancel()).statusCode).toBe(202);
+      });
+
+      it('closes the rows when the workflow is gone: open, blocked and attention targets and open attempts', async () => {
+        seedReconciled();
+        workflowGone = true;
+        const res = await cancel();
+        expect(res.statusCode).toBe(200);
+        expect(body(res).data).toEqual({ campaignId: U(1), id: U(1), state: 'CANCELLED' });
+        const states = Object.fromEntries(targets.map((t) => [t.id, t.state]));
+        // The open draft is left as it is; everything that could still start is cancelled.
+        expect(states['t-blocked']).toBe('CANCELLED');
+        expect(states['t-attn']).toBe('CANCELLED');
+        expect(targets.find((t) => t.state === 'PR_OPENED')).toBeDefined();
+        expect(attempts.find((a) => a.childWorkflowId?.endsWith('-a'))).toMatchObject({
+          outcome: 'CANCELLED',
+        });
+      });
+
+      it('leaves a STARTING reconciled campaign with no execution CANCELLING', async () => {
+        seedReconciled('STARTING');
+        workflowGone = true;
+        const res = await cancel();
+        expect(res.statusCode).toBe(202);
+        expect(campaigns[0]?.state).toBe('CANCELLING');
+      });
     });
 
     it('closes a campaign left CANCELLING by a finalizer that never ran', async () => {

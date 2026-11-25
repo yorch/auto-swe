@@ -88,7 +88,7 @@ export function mergeStoredDependencies(
  * "proposals and dismissed edges never reach an agent" rule has exactly one
  * implementation.
  */
-async function loadStoredUpstream(
+export async function loadStoredUpstream(
   repos: { id: string; team: { orgId: string } }[]
 ): Promise<Map<string, string[]>> {
   const pairs = await Promise.all(

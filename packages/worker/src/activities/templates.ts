@@ -51,6 +51,7 @@ import {
   runCallbackFor,
   runPullRequestUrl,
 } from '../lib/callbackOutbox.js';
+import { markCampaignAttemptRunStarted, onCampaignRunFinalized } from '../lib/campaignAttempts.js';
 import { backfillPinnedSettings } from '../lib/config/pinnedSettings.js';
 import { PIN_EXECUTION_KEY, pinMapOwner } from '../lib/config/pluginEnablement.js';
 import { recordTrackerSync } from '../lib/effectLedger.js';
@@ -936,6 +937,18 @@ export async function createWorkflowRun(
     }
   }
 
+  // A campaign attempt's child run names itself on its attempt, so the attempt finds its pull
+  // request and its finish through the run. A run that belongs to no attempt changes nothing;
+  // best-effort, since the reconciler's read completes the same move.
+  try {
+    await markCampaignAttemptRunStarted({ runId: run.id, workflowId: input.workflowId });
+  } catch (err) {
+    logWarn('could not name the run on its campaign attempt; the reconciler will', {
+      err: String(err),
+      runId: run.id,
+    });
+  }
+
   // A reused workflow id keeps the first execution's row (`update` writes nothing), and so
   // its plugin pins, which name that execution. This execution resolves plugins fresh: its
   // own snapshot replaces the earlier one's, compare-and-set so a concurrent activity's
@@ -1616,6 +1629,10 @@ export async function finalizeRun(
   if (run?.orchestrationId) {
     await onOrchestrationRunFinalized(runId);
   }
+
+  // A child a campaign started as an attempt: record its outcome and tell the campaign's
+  // workflow. A no-op for every other run. Never throws, and the run is already ended.
+  await onCampaignRunFinalized(runId);
 
   // The side effects below (Slack notifications + channel task finalization +
   // tracker sync) are non-idempotent. Only fire them when we actually finalized

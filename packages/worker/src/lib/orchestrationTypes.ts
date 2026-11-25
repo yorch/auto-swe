@@ -2,6 +2,7 @@ import type {
   CancelIntent,
   MessageIntent,
   OrchestrationStatusValue,
+  ProposeCampaignIntent,
   RequestRepoIntent,
   SpawnIntent,
 } from '@auto-swe/shared/lib/orchestration';
@@ -31,7 +32,8 @@ export type OrchestratorIntent =
   | { kind: 'spawn'; intent: SpawnIntent }
   | { kind: 'message'; intent: MessageIntent }
   | { kind: 'cancel'; intent: CancelIntent }
-  | { kind: 'requestRepo'; intent: RequestRepoIntent };
+  | { kind: 'requestRepo'; intent: RequestRepoIntent }
+  | { kind: 'proposeCampaign'; intent: ProposeCampaignIntent };
 
 /** The bounds the workflow decides on, run-pinned at launch so a replay never takes another path. */
 export interface OrchestrationPinned {

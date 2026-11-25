@@ -163,7 +163,7 @@ app log as run evidence, and runs the e2e command when one is configured. A repo
 
 ### 5.2 Multi-repo epic
 
-A planner agent decomposes a brief spanning ≥2 repos into a per-repo dependency graph; `EpicOrchestratorWorkflow` fans out child runs in dependency order, each running the full standard flow, with auto merge-conflict resolution. Surfaced as a dependency graph at `/epics/:id`.
+A planner agent decomposes a brief spanning ≥2 repos into a per-repo plan and the order between repositories. With the campaign reconciler on (`workflow.campaignReconciler`), the epic is a planned campaign ([campaigns.md](./campaigns.md#12-epics)): the launcher confirms the plan, children start in dependency order under the campaign's parallelism and open-pull-request limits, each running the full standard flow, and every target is followed from draft to merge, with pause, per-repository retry and take-over. With it off, `EpicOrchestratorWorkflow` fans out child runs in dependency order, with auto merge-conflict resolution. Surfaced at `/epics/:id`.
 
 ### 5.3 Human-in-the-loop approvals
 

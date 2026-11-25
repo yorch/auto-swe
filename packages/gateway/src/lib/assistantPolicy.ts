@@ -67,6 +67,8 @@ export type RoutePolicyEntry = 'read' | 'confirm' | { read: string } | { never: 
 export type AssistantAccess = 'read' | 'confirm' | 'never';
 
 export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> = {
+  // Takes a target out of a campaign: a destructive change to someone else's tracked goal.
+  'DELETE /api/v1/campaigns/:id/targets/:targetId': { never: 'destructive' },
   'DELETE /api/v1/integrations/github-approver-app': { never: 'secret' },
   'DELETE /api/v1/knowledge-base-links/:id': 'confirm',
   'DELETE /api/v1/knowledge-bases/:id': 'confirm',
@@ -386,6 +388,20 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/campaigns': { never: 'runsWorkload' },
   // Only stops work: opened drafts are left alone.
   'POST /api/v1/campaigns/:id/cancel': 'confirm',
+  // Confirms the planner's briefs: the launcher's own decision, which authorizes draft pull requests
+  // in other teams' repositories.
+  'POST /api/v1/campaigns/:id/confirm': { never: 'humanDecision' },
+  // Stops and restarts the starting of new attempts; opened drafts and running attempts are untouched.
+  'POST /api/v1/campaigns/:id/pause': 'confirm',
+  'POST /api/v1/campaigns/:id/resume': 'confirm',
+  // Hands the campaign, and so the identity of every child, to another person.
+  'POST /api/v1/campaigns/:id/takeover': { never: 'identity' },
+  // Adds repositories whose pull requests the platform will open, and retries a target: each
+  // authorizes a run in another team's repository.
+  'POST /api/v1/campaigns/:id/targets': { never: 'runsWorkload' },
+  // The worker's call, authenticated by a campaign token. It starts a run, so never a tool call.
+  'POST /api/v1/campaigns/:id/targets/:targetId/attempts': { never: 'runsWorkload' },
+  'POST /api/v1/campaigns/:id/targets/:targetId/retry': { never: 'runsWorkload' },
   'POST /api/v1/epics': 'confirm',
   'POST /api/v1/human-error-baselines': 'confirm',
   'POST /api/v1/human-steps/:id/nudge': 'confirm',
@@ -409,6 +425,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/orchestrations/:id/approvals/:approvalId': { never: 'humanDecision' },
   'POST /api/v1/orchestrations/:id/attach': { never: 'humanDecision' },
   'POST /api/v1/orchestrations/:id/attach/decline': { never: 'humanDecision' },
+  'POST /api/v1/orchestrations/:id/campaign-proposals': { never: 'runsWorkload' },
   'POST /api/v1/orchestrations/:id/cancel': { never: 'destructive' },
   'POST /api/v1/orchestrations/:id/children': { never: 'runsWorkload' },
   'POST /api/v1/orchestrations/:id/children/:childId/cancel': { never: 'destructive' },

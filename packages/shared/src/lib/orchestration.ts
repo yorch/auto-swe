@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { BUDGET_TIERS } from '../types/workflow.js';
 import { AGENT_REF_RE, AGENT_RUN_DELIVERIES, type AgentRunDelivery } from './agentRun.js';
+import { CAMPAIGN_MAX_REPO_IDS, CampaignCreateBodySchema } from './campaignApi.js';
+import { type CampaignRecipeParams, parseRecipeParams } from './campaignRecipes.js';
 import { isSafeGitBranchName } from './gitRef.js';
 import {
   hasUnsafeChars,
@@ -79,6 +81,7 @@ export const MESSAGE_KINDS = [
   'APPROVAL_REQUEST',
   'CHILD_RESULT',
   'NOTICE',
+  'CAMPAIGN_PROPOSAL',
 ] as const;
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
 
@@ -608,6 +611,93 @@ export const RequestRepoIntentSchema = z.object({
   reason: z.string().min(1).max(500),
 });
 export type RequestRepoIntent = z.infer<typeof RequestRepoIntentSchema>;
+
+// ── Campaign proposal ────────────────────────────────────────────────────────
+
+/**
+ * Most `CAMPAIGN_PROPOSAL` cards one orchestration may hold, over its whole life. A constant, not a
+ * setting: a prompt-injected orchestrator cannot flood the transcript with cards, and a person who
+ * wants more starts campaigns themselves. A refused proposal does not count.
+ */
+export const MAX_CAMPAIGN_PROPOSALS_PER_ORCHESTRATION = 5;
+
+/** Most repositories one proposal may name; the campaign launch route's own bound. */
+export const CAMPAIGN_PROPOSAL_MAX_REPOS = CAMPAIGN_MAX_REPO_IDS;
+
+/** Most keys a proposal's recipe parameters may carry; the catalogue's recipes take two. */
+const CAMPAIGN_PROPOSAL_PARAM_KEYS_MAX = 4;
+
+/**
+ * The orchestrator's `proposeCampaign` intent. The text rules ARE the campaign launch route's
+ * (`CampaignCreateBodySchema`'s name and brief: length and character rules), so a proposal the
+ * gateway records is one the Start form would accept as text. The recipe and the repository list
+ * are checked again, with the same functions as the launch route, by
+ * {@link validateCampaignProposal}. Nothing here starts anything.
+ */
+export const ProposeCampaignIntentSchema = z.object({
+  brief: CampaignCreateBodySchema.shape.description,
+  name: CampaignCreateBodySchema.shape.name,
+  plan: z.enum(['UNIFORM', 'PLANNED']).default('UNIFORM'),
+  recipe: z
+    .object({
+      params: z
+        .record(z.string().max(64), z.unknown())
+        .refine((p) => Object.keys(p).length <= CAMPAIGN_PROPOSAL_PARAM_KEYS_MAX, {
+          message: 'too many parameters',
+        }),
+      ref: z.string().max(64),
+    })
+    .optional(),
+  repoIds: z
+    .array(z.string().uuid())
+    .max(CAMPAIGN_PROPOSAL_MAX_REPOS)
+    .refine((ids) => new Set(ids.map((i) => i.toLowerCase())).size === ids.length, {
+      message: 'repoIds must be unique',
+    })
+    .default([]),
+});
+export type ProposeCampaignIntent = z.infer<typeof ProposeCampaignIntentSchema>;
+
+/** A proposal that passed {@link validateCampaignProposal}: the recipe is the catalogue's own parse. */
+export interface ValidCampaignProposal {
+  brief: string;
+  name: string;
+  plan: 'UNIFORM' | 'PLANNED';
+  recipe?: { params: CampaignRecipeParams; ref: string };
+  repoIds: string[];
+}
+
+export type CampaignProposalCheck =
+  | { ok: true; proposal: ValidCampaignProposal }
+  | { error: string; ok: false };
+
+/**
+ * Validate a raw `proposeCampaign` intent without launching anything: the shape and text rules of
+ * {@link ProposeCampaignIntentSchema}, then the strict recipe parameter check the campaign launch
+ * route runs (`parseRecipeParams`). The error never echoes a rejected value.
+ */
+export function validateCampaignProposal(raw: unknown): CampaignProposalCheck {
+  const parsed = ProposeCampaignIntentSchema.safeParse(raw);
+  if (!parsed.success) {
+    const detail = parsed.error.issues
+      .slice(0, 5)
+      .map((i) => `${i.path.join('.') || 'input'}: ${i.message}`)
+      .join('; ');
+    return { error: detail.slice(0, 300), ok: false };
+  }
+  const { brief, name, plan, recipe, repoIds } = parsed.data;
+  if (!recipe) {
+    return { ok: true, proposal: { brief, name, plan, repoIds } };
+  }
+  const checked = parseRecipeParams(recipe.ref, recipe.params);
+  if (!checked.ok) {
+    return { error: `recipe: ${checked.error}`, ok: false };
+  }
+  return {
+    ok: true,
+    proposal: { brief, name, plan, recipe: { params: checked.params, ref: checked.ref }, repoIds },
+  };
+}
 
 // ── Child result (spec section 4.2) ──────────────────────────────────────────
 

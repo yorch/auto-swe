@@ -127,7 +127,7 @@ import { registryWorkspaceEnv } from '../lib/registryProxy/render.js';
 import type { WorkspaceRegistryAccess } from '../lib/registryProxy/workspaceWiring.js';
 import { getScmProvider } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
-import { finalizeScript, parseFinalizeOutput, runShellStep } from './shellStep.js';
+import { finalizeScript, parseFinalizeOutput, runShellCheck, runShellStep } from './shellStep.js';
 import { GIT_AUTH_ENV, shellQuote } from './workspace.js';
 
 // The clone is issued hardened (`git -c … clone --depth=50 …`), so `git clone` never appears.
@@ -1121,5 +1121,83 @@ describe('parseFinalizeOutput', () => {
 
   it('reports no commit when nothing changed', () => {
     expect(parseFinalizeOutput('NO_CHANGES\n')).toEqual({ filesChanged: [] });
+  });
+});
+
+describe('runShellCheck', () => {
+  const SHA = 'a'.repeat(40);
+  const CHECK = { command: 'exit 0', image: 'alpine/git:latest', repoId: 'repo-1' };
+
+  beforeEach(() => {
+    mockedExec.mockImplementation(async (command: string) =>
+      command.includes('rev-parse --verify HEAD') ? `${SHA}\n` : ''
+    );
+  });
+
+  it('clones the base branch, reads its sha and runs the command with no network', async () => {
+    mockedRunEphemeral.mockResolvedValue({ exitCode: 1, stderr: '', stdout: 'verdict' } as never);
+    const result = await runShellCheck({ ...CHECK, timeoutMs: 60_000 });
+
+    expect(result).toEqual({ baseSha: SHA, exitCode: 1, stdout: 'verdict' });
+    const clone = helperScripts().find((s) => s.includes(CLONE_MARK)) ?? '';
+    expect(clone).toContain(`-b ${shellQuote('main')}`);
+    expect(mockedRunEphemeral).toHaveBeenCalledTimes(1);
+    expect(mockedRunEphemeral.mock.calls[0]?.[0]).toMatchObject({
+      command: 'exit 0',
+      image: 'alpine/git:latest',
+      network: 'none',
+      timeoutMs: 60_000,
+      workdir: '/workspace/repo',
+    });
+  });
+
+  it('never commits, pushes or stores an artifact, and removes the volume', async () => {
+    await runShellCheck(CHECK);
+    expect(helperScripts().some((s) => s.includes('push --no-verify'))).toBe(false);
+    expect(helperScripts().some((s) => s.includes('git commit') || s.includes('add -A'))).toBe(
+      false
+    );
+    expect(mockedPutArtifact).not.toHaveBeenCalled();
+    expect(backendRemoveVolume).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the credential out of the clone’s origin and the output', async () => {
+    mockedRunEphemeral.mockResolvedValue({
+      exitCode: 0,
+      stderr: '',
+      stdout: `leak ${TOKEN}`,
+    } as never);
+    const result = await runShellCheck(CHECK);
+    expect(result.stdout).not.toContain(TOKEN);
+    const clone = helperScripts().find((s) => s.includes(CLONE_MARK)) ?? '';
+    expect(clone).not.toContain(TOKEN);
+  });
+
+  it('reports a command that was killed as having no exit code', async () => {
+    mockedRunEphemeral.mockResolvedValue({
+      exitCode: 137,
+      signal: 'SIGKILL',
+      stderr: '',
+      stdout: '',
+    } as never);
+    expect((await runShellCheck(CHECK)).exitCode).toBeNull();
+  });
+
+  it('throws when the sandbox itself fails, after removing the volume', async () => {
+    mockedRunEphemeral.mockRejectedValue(new Error('docker is down'));
+    await expect(runShellCheck(CHECK)).rejects.toThrow('docker is down');
+    expect(backendRemoveVolume).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a sha it could not read as null rather than failing the check', async () => {
+    mockedExec.mockImplementation(async (command: string) => {
+      if (command.includes('rev-parse --verify HEAD')) {
+        throw new Error('not a git repository');
+      }
+      return '';
+    });
+    const result = await runShellCheck(CHECK);
+    expect(result.baseSha).toBeNull();
+    expect(result.exitCode).toBe(0);
   });
 });

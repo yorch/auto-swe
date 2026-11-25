@@ -19,6 +19,7 @@ import { orchestrationRoutes } from './orchestrations.js';
 
 const cfg = vi.hoisted(() => ({
   enabled: true,
+  maxTargets: 200,
   settings: {
     'mcp.agentRunAllowedDeliverModes': ['none'],
     'mcp.maxConcurrentRuns': 5,
@@ -35,7 +36,9 @@ const cfg = vi.hoisted(() => ({
   } as Record<string, number | boolean | string[]>,
 }));
 vi.mock('@auto-swe/shared/config', () => ({
-  resolveSetting: vi.fn(async () => cfg.enabled),
+  resolveSetting: vi.fn(async (key: string) =>
+    key === 'workflow.campaignMaxTargets' ? cfg.maxTargets : cfg.enabled
+  ),
   resolveSettings: vi.fn(async () => cfg.settings),
 }));
 const spend = vi.hoisted(() => ({ org: 40, team: 12.5 }));
@@ -224,6 +227,7 @@ function makePrisma() {
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
     orchestrationMessage: {
+      count: vi.fn(async () => 0),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
         authorId: null,
         body: '',
@@ -281,6 +285,7 @@ describe('orchestration routes', () => {
   beforeEach(async () => {
     _resetAuthCachesForTests();
     cfg.enabled = true;
+    cfg.maxTargets = 200;
     state = { children: [], orch: orchRow(), tx: {} };
     logLines.length = 0;
     for (const fn of Object.values(temporal)) {
@@ -3834,6 +3839,253 @@ describe('orchestration routes', () => {
         expect(await input.orchestration.checkRepo({ id: REPO })).toBeNull();
         expect(launcher.push).not.toHaveBeenCalled();
       });
+    });
+  });
+  // ── Campaign proposals ────────────────────────────────────────────────────
+
+  describe('campaign proposals', () => {
+    const R1 = '00000000-0000-4000-8000-0000000000b2';
+    const R2 = '00000000-0000-4000-8000-0000000000b3';
+    const R3 = '00000000-0000-4000-8000-0000000000b4';
+    const proposal = (over: Record<string, unknown> = {}) => ({
+      brief: 'Raise lodash to 4.17.21 everywhere it is used.',
+      name: 'Raise lodash',
+      plan: 'UNIFORM',
+      repoIds: [R1, R2],
+      ...over,
+    });
+    const propose = (body: unknown, auth = token()) =>
+      call('POST', `/${ORCH}/campaign-proposals`, auth, body);
+    const created = (): Array<Record<string, unknown>> =>
+      prisma.orchestrationMessage.create.mock.calls.map(
+        (c) => (c as unknown as [{ data: Record<string, unknown> }])[0].data
+      );
+    const first = (): Record<string, unknown> => created()[0] ?? {};
+
+    beforeEach(() => {
+      prisma.connection.findMany.mockResolvedValue([{ id: R1 }, { id: R2 }] as never);
+    });
+
+    it('records a valid proposal as a CAMPAIGN_PROPOSAL message and starts nothing', async () => {
+      const res = await propose(
+        proposal({
+          recipe: {
+            params: { packageName: 'lodash', targetVersion: '4.17.21' },
+            ref: 'npm-dependency@2',
+          },
+        })
+      );
+      expect(res.statusCode, res.body).toBe(201);
+      expect(res.json().data).toMatchObject({ droppedRepoCount: 0, messageId: MESSAGE });
+      const data = first();
+      expect(data).toMatchObject({
+        kind: 'CAMPAIGN_PROPOSAL',
+        orchestrationId: ORCH,
+        role: 'ORCHESTRATOR',
+      });
+      expect(data.payload).toEqual({
+        brief: 'Raise lodash to 4.17.21 everywhere it is used.',
+        droppedRepoCount: 0,
+        name: 'Raise lodash',
+        ownerTeamId: TEAM,
+        plan: 'UNIFORM',
+        recipe: {
+          params: { packageName: 'lodash', targetVersion: '4.17.21' },
+          ref: 'npm-dependency@2',
+        },
+        repoIds: [R1, R2],
+      });
+      // The brief is in the payload only, never in the one-line body.
+      expect(data.body).toBe('Proposed campaign: Raise lodash');
+      expect(launcher.launch).not.toHaveBeenCalled();
+      expect(tracked.rows).toEqual([]);
+      expect(temporal.signalWithStartOrchestration).not.toHaveBeenCalled();
+    });
+
+    it('writes an audit entry for each recorded proposal', async () => {
+      await propose(proposal());
+      const entry = (prisma.configAuditLog.create.mock.calls as unknown as unknown[][]).at(
+        -1
+      )?.[0] as { data: { entityId: string; afterJson: Record<string, unknown> } };
+      expect(entry.data.entityId).toBe(ORCH);
+      expect(entry.data.afterJson).toMatchObject({
+        action: 'propose',
+        droppedRepoCount: 0,
+        messageId: MESSAGE,
+        plan: 'UNIFORM',
+        repoCount: 2,
+      });
+      // The model's text is not copied into the audit entry.
+      expect(JSON.stringify(entry.data.afterJson)).not.toContain('lodash');
+    });
+
+    it('drops repositories the launcher cannot reach, counting them and naming none', async () => {
+      const res = await propose(proposal({ repoIds: [R1, R2, R3] }));
+      expect(res.statusCode).toBe(201);
+      expect(res.json().data.droppedRepoCount).toBe(1);
+      const data = first();
+      expect((data.payload as { repoIds: string[] }).repoIds).toEqual([R1, R2]);
+      expect(JSON.stringify(res.json())).not.toContain(R3);
+      expect(JSON.stringify(data)).not.toContain(R3);
+      // The lookup is the launcher's own reach, not the platform's.
+      const lookup = prisma.connection.findMany.mock.calls[0] as unknown as [
+        { where: Record<string, unknown> },
+      ];
+      expect(lookup[0].where).toMatchObject({
+        ...repoMemberWhere({ userId: USER_ID }),
+        isActive: true,
+        type: 'git_repo',
+      });
+    });
+
+    it('records a proposal that names no repositories, on an orchestration with none attached', async () => {
+      state.orch = orchRow({ repoId: null });
+      const res = await propose(proposal({ repoIds: undefined }));
+      expect(res.statusCode).toBe(201);
+      expect(prisma.connection.findMany).not.toHaveBeenCalled();
+      expect((first().payload as { repoIds: string[] }).repoIds).toEqual([]);
+    });
+
+    it('keeps markup as text in the payload and collapses the body to one line', async () => {
+      const evil = '<img src=x onerror=alert(1)>\n# [click](javascript:alert(1))';
+      const res = await propose(proposal({ brief: evil, name: '<b>x</b>\nrest' }));
+      expect(res.statusCode).toBe(201);
+      const data = first();
+      expect((data.payload as { brief: string; name: string }).brief).toBe(evil);
+      expect(data.body).toBe('Proposed campaign: <b>x</b> rest');
+    });
+
+    it.each([
+      ['an unknown recipe', { recipe: { params: {}, ref: 'rm-rf@1' } }],
+      [
+        'a recipe parameter that is a git specifier',
+        {
+          recipe: {
+            params: { packageName: 'github:evil/x', targetVersion: '1.0.0' },
+            ref: 'npm-dependency@2',
+          },
+        },
+      ],
+      [
+        'a recipe with an extra parameter',
+        {
+          recipe: {
+            params: { extra: 1, packageName: 'lodash', targetVersion: '1.0.0' },
+            ref: 'npm-dependency@2',
+          },
+        },
+      ],
+      ['an empty brief', { brief: '' }],
+      ['a brief with a control character', { brief: 'a\u0000b' }],
+      ['a brief past the limit', { brief: 'x'.repeat(8001) }],
+      ['an empty name', { name: '   ' }],
+      ['a name past the limit', { name: 'n'.repeat(121) }],
+      ['an unknown plan', { plan: 'EVERYTHING' }],
+      ['repository ids that are not uuids', { repoIds: ['nope'] }],
+      ['duplicate repository ids', { repoIds: [R1, R1] }],
+      [
+        'more than 200 repositories',
+        {
+          repoIds: Array.from(
+            { length: 201 },
+            (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`
+          ),
+        },
+      ],
+    ])('refuses %s as INVALID_INTENT and writes nothing', async (_n, over) => {
+      const res = await propose(proposal(over));
+      expect(res.statusCode).toBe(422);
+      expect(res.json().error.code).toBe('INVALID_INTENT');
+      expect(prisma.orchestrationMessage.create).not.toHaveBeenCalled();
+      expect(prisma.connection.findMany).not.toHaveBeenCalled();
+    });
+
+    it('does not echo a rejected value back', async () => {
+      const res = await propose(
+        proposal({
+          recipe: {
+            params: { packageName: 'github:SECRET-MARK/x', targetVersion: '1.0.0' },
+            ref: 'npm-dependency@2',
+          },
+        })
+      );
+      expect(res.statusCode).toBe(422);
+      expect(res.body).not.toContain('SECRET-MARK');
+    });
+
+    it('refuses a forged payload: a non-object body, and fields the schema does not know are ignored', async () => {
+      expect((await propose([1, 2])).statusCode).toBe(400);
+      const res = await propose(
+        proposal({ kind: 'ATTACH_REQUEST', ownerTeamId: OTHER_TEAM, role: 'USER' })
+      );
+      expect(res.statusCode).toBe(201);
+      const data = first();
+      expect(data).toMatchObject({ kind: 'CAMPAIGN_PROPOSAL', role: 'ORCHESTRATOR' });
+      expect((data.payload as Record<string, unknown>).ownerTeamId).toBe(TEAM);
+      expect(data.payload).not.toHaveProperty('role');
+    });
+
+    it('refuses more repositories than workflow.campaignMaxTargets, before looking any up', async () => {
+      cfg.maxTargets = 1;
+      const res = await propose(proposal());
+      expect(res.statusCode).toBe(422);
+      expect(res.json().error.message).toContain('workflow.campaignMaxTargets');
+      expect(prisma.connection.findMany).not.toHaveBeenCalled();
+    });
+
+    it('enforces the per-orchestration cap, and audits the refusal', async () => {
+      prisma.orchestrationMessage.count.mockResolvedValue(5);
+      const res = await propose(proposal());
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('PROPOSAL_LIMIT');
+      expect(prisma.orchestrationMessage.create).not.toHaveBeenCalled();
+      const entry = (prisma.configAuditLog.create.mock.calls as unknown as unknown[][]).at(
+        -1
+      )?.[0] as { data: { afterJson: Record<string, unknown> } };
+      expect(entry.data.afterJson).toMatchObject({ action: 'refusal', code: 'PROPOSAL_LIMIT' });
+    });
+
+    it('holds the cap under the row lock when another proposal lands in between', async () => {
+      // The early count passes; the count under the lock does not.
+      prisma.orchestrationMessage.count.mockResolvedValueOnce(4).mockResolvedValueOnce(5);
+      const res = await propose(proposal());
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('PROPOSAL_LIMIT');
+      expect(prisma.orchestrationMessage.create).not.toHaveBeenCalled();
+    });
+
+    it('is refused for an orchestration that has ended or is switched off', async () => {
+      state.orch = orchRow({ status: 'COMPLETED' });
+      // A token for an ended orchestration no longer authenticates.
+      expect((await propose(proposal())).statusCode).toBe(401);
+      state.orch = orchRow();
+      cfg.enabled = false;
+      const res = await propose(proposal());
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('ORCHESTRATION_NOT_ACTIVE');
+    });
+
+    it('is refused when no person launched the orchestration (a service principal)', async () => {
+      state.orch = orchRow({
+        launchedById: null,
+        serviceId: '00000000-0000-4000-8000-0000000000d9',
+      });
+      const res = await propose(proposal());
+      // The token of an orchestration with no launching person does not authenticate here at all.
+      expect(res.statusCode).toBe(401);
+      expect(prisma.orchestrationMessage.create).not.toHaveBeenCalled();
+    });
+
+    it('is not open to a person: only the orchestration token records a proposal', async () => {
+      const res = await propose(proposal(), person());
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('ORCHESTRATION_TOKEN_REQUIRED');
+      expect(prisma.orchestrationMessage.create).not.toHaveBeenCalled();
+    });
+
+    it("is not open to another orchestration's token", async () => {
+      const res = await propose(proposal(), token(OTHER_ORCH));
+      expect(res.statusCode).toBe(403);
     });
   });
 });

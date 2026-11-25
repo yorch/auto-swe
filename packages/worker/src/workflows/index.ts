@@ -3,6 +3,12 @@
 export { AssistantConversationWorkflow, assistantTurnSignal } from './assistantConversation.js';
 export { AssistantTitleWorkflow } from './assistantTitle.js';
 export { CampaignWorkflow, campaignCancelSignal } from './campaign.js';
+export {
+  CampaignReconcilerWorkflow,
+  campaignAttemptFinishedSignal,
+  campaignControlSignal,
+  campaignPullRequestChangedSignal,
+} from './campaignReconciler.js';
 export { ChannelAmbientWorkflow } from './channelAmbient.js';
 export { ChannelAssistantWorkflow } from './channelAssistant.js';
 export { ChannelReactiveWorkflow } from './channelReactive.js';
