@@ -232,7 +232,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
       setInviteNotice(
         result.data.isActive
           ? `Invite sent to ${email}. Their account is approved when they follow the link.`
-          : `Invite sent to ${email}. They wait in the platform approval queue until an admin approves them.`
+          : `Invite sent to ${email}. They wait in the platform approval queue until a platform admin approves them.`
       );
       setInviteEmail('');
       setInviteRole(DEFAULT_ORG_ROLE);
@@ -437,8 +437,9 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                       primary: true,
                       secondary: (m) => (
                         <span className="block truncate">
-                          {m.user.name ? `${m.user.name} · ` : ''}Platform role:{' '}
-                          {platformRoleLabel(m.user.role)}
+                          {m.user.name ? `${m.user.name}` : ''}
+                          {m.user.name && m.user.role ? ' · ' : ''}
+                          {m.user.role ? `Platform role: ${platformRoleLabel(m.user.role)}` : ''}
                         </span>
                       ),
                       sortable: true,
@@ -457,12 +458,12 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                                 ? {
                                     confirmLabel: 'Make organization admin',
                                     dangerous: true,
-                                    message: `${m.user.email} will be able to manage this organization's members, budget and profile, and to invite people.`,
+                                    message: `${m.user.email} will be able to manage this organization's members, budget and profile, and to invite people. They also govern every team in it (members, repositories, budget, shares) without being a member, and can add themselves to any team.`,
                                     title: 'Make organization admin?',
                                   }
                                 : {
                                     confirmLabel: 'Remove admin rights',
-                                    message: `${m.user.email} will no longer be able to manage this organization's members, budget or profile.`,
+                                    message: `${m.user.email} will no longer be able to manage this organization's members, budget or profile, or to govern its teams (members, repositories, budget, shares) without being a member of them.`,
                                     title: 'Remove organization admin rights?',
                                   }
                             }

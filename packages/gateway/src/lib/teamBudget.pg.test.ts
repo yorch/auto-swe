@@ -3,7 +3,10 @@ import { prisma } from '@auto-swe/shared/db';
 import { billedOrgId, teamMonthSpend } from '@auto-swe/shared/lib/billing';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { resolveWorkflowRunAttribution } from '@auto-swe/shared/workflow';
+import Fastify, { type FastifyInstance } from 'fastify';
+import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { teamBudgetRequestRoutes } from '../routes/teamBudgetRequests.js';
 import { findLaunchRepo } from './automations/access.js';
 import { authorizeLaunch } from './launchAuthorization.js';
 import { bindingBudgetStatuses, ownerLaunchBudgets } from './teamBudgetStatus.js';
@@ -31,12 +34,14 @@ describe.skipIf(!enabled)('team budgets against Postgres', () => {
         'Connection',
         'ConnectionTeamShare',
         'Team',
+        'TeamBudgetRequest',
         'TeamMembership',
         'WorkflowTemplate',
       ],
       fn
     );
   let seq = 0;
+  let bqApp: FastifyInstance;
 
   /** A run of the fixture template, attributed to `team` as the worker attributes it at creation. */
   async function run(opts: {
@@ -157,6 +162,45 @@ describe.skipIf(!enabled)('team budgets against Postgres', () => {
     await prisma.connectionTeamShare.create({
       data: { canLaunch: true, connectionId: ids.ownRepo as string, teamId: ids.shr as string },
     });
+    // The budget-request routes: two leads of one team, and a lead of another team.
+    for (const key of ['bqTeam', 'bqOtherTeam']) {
+      ids[key] = (
+        await prisma.team.create({
+          data: { name: `${prefix}${key}`, orgId: ids.org as string, slug: `${prefix}${key}` },
+        })
+      ).id;
+    }
+    for (const [key, team] of [
+      ['leadA', 'bqTeam'],
+      ['leadB', 'bqTeam'],
+      ['leadOther', 'bqOtherTeam'],
+    ] as const) {
+      ids[key] = (
+        await prisma.user.create({
+          data: { email: `${prefix}${key}@example.test`, emailVerified: true, name: key },
+        })
+      ).id;
+      await prisma.organizationMembership.create({
+        data: { orgId: ids.org as string, userId: ids[key] as string },
+      });
+      await prisma.teamMembership.create({
+        data: { role: 'LEAD', teamId: ids[team] as string, userId: ids[key] as string },
+      });
+    }
+    bqApp = Fastify();
+    bqApp.setValidatorCompiler(validatorCompiler);
+    bqApp.setSerializerCompiler(serializerCompiler);
+    bqApp.decorate('auth', {
+      verifyAccessToken: (token: string) => ({
+        exp: 9_999_999_999,
+        iat: 0,
+        role: 'USER',
+        sub: token,
+      }),
+    } as unknown as never);
+    bqApp.decorate('prisma', prisma as unknown as never);
+    await bqApp.register(teamBudgetRequestRoutes, { prefix: '/api/v1/teams' });
+    await bqApp.ready();
     ids.tpl = (
       await unscoped(() =>
         prisma.workflowTemplate.create({
@@ -180,6 +224,7 @@ describe.skipIf(!enabled)('team budgets against Postgres', () => {
   });
 
   afterAll(async () => {
+    await bqApp?.close();
     await cleanup();
     await prisma.$disconnect();
   });
@@ -417,7 +462,77 @@ describe.skipIf(!enabled)('team budgets against Postgres', () => {
     });
   });
 
+  describe('budget requests: /mine and /cancel', () => {
+    const call = (as: string, method: 'GET' | 'POST', team: string, path: string, body?: object) =>
+      bqApp.inject({
+        headers: { authorization: `Bearer ${ids[as]}` },
+        method,
+        payload: body,
+        url: `/api/v1/teams/${ids[team]}/budget-requests${path}`,
+      });
+    const pendingOf = (team: string) =>
+      unscoped(() =>
+        prisma.teamBudgetRequest.findMany({
+          where: { resolvedAt: null, teamId: ids[team] as string },
+        })
+      );
+
+    it('shows the pending request to a colleague, lets only its sender cancel it, and accepts a new one after', async () => {
+      const created = await call('leadA', 'POST', 'bqTeam', '', { reason: 'more headroom' });
+      expect(created.statusCode, created.body).toBe(201);
+      const requestId = created.json().data.id as string;
+
+      const mineForA = await call('leadA', 'GET', 'bqTeam', '/mine');
+      const mineForB = await call('leadB', 'GET', 'bqTeam', '/mine');
+      expect(mineForA.json().data).toMatchObject({ id: requestId, requestedBy: { id: ids.leadA } });
+      expect(mineForB.json().data).toMatchObject({ id: requestId, requestedBy: { id: ids.leadA } });
+
+      // A colleague who may only ask cannot withdraw it, and it stays pending.
+      const byColleague = await call('leadB', 'POST', 'bqTeam', `/${requestId}/cancel`);
+      expect(byColleague.statusCode).toBe(404);
+      expect(await pendingOf('bqTeam')).toHaveLength(1);
+
+      // Another team's lead cannot reach it through their own team's path either.
+      const crossTeam = await call('leadOther', 'POST', 'bqOtherTeam', `/${requestId}/cancel`);
+      expect(crossTeam.statusCode).toBe(404);
+      expect(await pendingOf('bqTeam')).toHaveLength(1);
+
+      const cancelled = await call('leadA', 'POST', 'bqTeam', `/${requestId}/cancel`);
+      expect(cancelled.statusCode, cancelled.body).toBe(200);
+      expect((await call('leadA', 'GET', 'bqTeam', '/mine')).json().data).toBeNull();
+      // A second cancel finds nothing pending.
+      expect((await call('leadA', 'POST', 'bqTeam', `/${requestId}/cancel`)).statusCode).toBe(404);
+
+      // The partial unique index lets a new request in once the first is resolved.
+      const again = await call('leadB', 'POST', 'bqTeam', '', { reason: 'second try' });
+      expect(again.statusCode, again.body).toBe(201);
+      const duplicate = await call('leadA', 'POST', 'bqTeam', '', { reason: 'third' });
+      expect(duplicate.statusCode).toBe(409);
+      expect(await pendingOf('bqTeam')).toHaveLength(1);
+    });
+
+    it('answers 404 for a request id that belongs to another team, and leaves that request pending', async () => {
+      const created = await call('leadOther', 'POST', 'bqOtherTeam', '', { reason: 'theirs' });
+      expect(created.statusCode, created.body).toBe(201);
+      const foreign = created.json().data.id as string;
+      const res = await call('leadA', 'POST', 'bqTeam', `/${foreign}/cancel`);
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe('BUDGET_REQUEST_NOT_FOUND');
+      expect(await pendingOf('bqOtherTeam')).toHaveLength(1);
+    });
+  });
+
   async function cleanup() {
+    await unscoped(() =>
+      prisma.teamBudgetRequest.deleteMany({ where: { team: { slug: { startsWith: prefix } } } })
+    );
+    const actors = await prisma.user.findMany({
+      select: { id: true },
+      where: { email: { startsWith: prefix } },
+    });
+    await prisma.configAuditLog.deleteMany({
+      where: { actorId: { in: actors.map((u) => u.id) } },
+    });
     const runs = await prisma.workflowRun.findMany({
       select: { id: true },
       where: { workflowId: { startsWith: prefix } },

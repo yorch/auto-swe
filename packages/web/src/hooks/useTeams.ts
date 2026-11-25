@@ -2,6 +2,7 @@
 
 import type { TeamDetail, TeamSummary } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ME_SUMMARY_KEY } from '@/hooks/useMeSummary';
 import { api } from '@/lib/api';
 import { holdsCapability, isPlatformAdminAnswer } from '@/lib/capabilities';
 import type { TeamRoleValue } from '@/lib/roleLabels';
@@ -119,6 +120,8 @@ export function useAddTeamMember(teamId: string) {
       qc.invalidateQueries({ queryKey: PERMISSIONS_KEY });
       qc.invalidateQueries({ queryKey: ['teams'] });
       qc.invalidateQueries({ queryKey: ['team', teamId] });
+      qc.invalidateQueries({ queryKey: ['team-overview', teamId] });
+      qc.invalidateQueries({ queryKey: ME_SUMMARY_KEY });
     },
   });
 }
@@ -155,6 +158,8 @@ export function useUpdateTeamMember(teamId: string) {
       qc.invalidateQueries({ queryKey: PERMISSIONS_KEY });
       qc.invalidateQueries({ queryKey: ['teams'] });
       qc.invalidateQueries({ queryKey: ['team', teamId] });
+      qc.invalidateQueries({ queryKey: ['team-overview', teamId] });
+      qc.invalidateQueries({ queryKey: ME_SUMMARY_KEY });
     },
   });
 }
@@ -168,6 +173,27 @@ export function useRemoveTeamMember(teamId: string) {
       qc.invalidateQueries({ queryKey: PERMISSIONS_KEY });
       qc.invalidateQueries({ queryKey: ['teams'] });
       qc.invalidateQueries({ queryKey: ['team', teamId] });
+      qc.invalidateQueries({ queryKey: ['team-overview', teamId] });
+      qc.invalidateQueries({ queryKey: ME_SUMMARY_KEY });
+    },
+  });
+}
+
+/** The signed-in person leaves the team. The server refuses the team's last admin. */
+export function useLeaveTeam(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.delete(`/api/v1/teams/${teamId}/members/me`),
+    onSuccess: () => {
+      // The team is no longer theirs to read: drop it rather than refetch it into a 403.
+      qc.removeQueries({ queryKey: ['team', teamId] });
+      qc.removeQueries({ queryKey: ['team-overview', teamId] });
+      qc.invalidateQueries({ queryKey: PERMISSIONS_KEY });
+      qc.invalidateQueries({ queryKey: ['teams'] });
+      qc.invalidateQueries({ queryKey: ME_SUMMARY_KEY });
+      // The directory row and the person's own join requests describe their standing on the team.
+      qc.invalidateQueries({ queryKey: ['team-directory'] });
+      qc.invalidateQueries({ queryKey: ['my-join-requests'] });
     },
   });
 }

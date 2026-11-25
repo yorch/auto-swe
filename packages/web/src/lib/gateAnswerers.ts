@@ -4,8 +4,8 @@
  *
  * The platform stores no approver or assignee on a gate. Control is worked out per run: a platform
  * admin, a member of a team that owns the run's template, whoever launched the run, or a member of
- * the team that owns its repository (with access to that repository when GitHub access is
- * enforced). The text names the repository team, the launcher and admins and says "include", so it
+ * the team that owns its repository (with repository access to that repository when GitHub access is
+ * enforced). The text names the repository team, the launcher and platform admins and says "include", so it
  * stays short and true without listing the template team; it never names a person and never
  * claims a gate has an approver. The full rule is in docs/hitl-workflows.md (Limitations).
  */
@@ -33,7 +33,7 @@ function orList(items: readonly string[]): string {
 
 /** The people the rule includes, for a run owned by the named team(s). */
 export function controllersOf(teamNames: readonly string[]): string {
-  return `members of ${orList(teamNames)} (with access to the repository when GitHub access is enforced), the launcher and admins`;
+  return `members of ${orList(teamNames)} (with repository access when GitHub access is enforced), the launcher and platform admins`;
 }
 
 /**

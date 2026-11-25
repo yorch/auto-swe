@@ -120,6 +120,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
     reviewVersion,
     saveError,
     saveWarnings,
+    reviewBlockedReason,
     selectedNeedsReview,
     selectedNodeId,
     setCancelConfirmOpen,
@@ -192,6 +193,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
       promoteBlocked={promoteBlocked}
       promoteReason={promoteReason}
       promoteVariant={promoteVariant}
+      reviewBlockedReason={reviewBlockedReason}
       reviewPending={reviewVersion.isPending}
       savePending={createVersion.isPending}
       selectedNeedsReview={selectedNeedsReview}
@@ -289,7 +291,9 @@ export default function TemplateDetailPage({ params }: PageProps) {
               ? 'Unsaved changes'
               : mode === 'edit' || (mode === 'json' && canManage)
                 ? `Editing v${effectiveVersion} — saves as a new version`
-                : 'Read only'}
+                : template.team
+                  ? `Read only: leads and admins of ${template.team.name} edit this workflow`
+                  : 'Read only: platform admins edit global workflows'}
           </span>
           <nav aria-label="Workflow reports" className="flex flex-wrap items-center gap-1">
             <ButtonLink href={`/library/${id}/analytics`} size="sm" variant="ghost">

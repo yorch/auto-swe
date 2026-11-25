@@ -27,7 +27,7 @@ import {
 const SUB_HELP = `auto-swe teams — the team directory and join requests
 
   teams directory [--query=q] [--org=<id>] [--limit=N] [--cursor=C] [--json]
-        List the teams you can see, with your relationship to each (member, requested, none)
+        List the teams you can see, with your relationship to each (member, requested, governs, none)
   teams directory organizations [--query=q] [--limit=N] [--cursor=C] [--json]
         List the organizations the directory lists a team of, by name (for the --org filter)
   teams request <teamId> [--message=text] [--json]
@@ -55,7 +55,7 @@ interface DirectoryTeam {
   orgId: string;
   orgName: string;
   memberCount: number;
-  relationship: 'MEMBER' | 'REQUESTED' | 'NONE';
+  relationship: 'MEMBER' | 'REQUESTED' | 'GOVERNS' | 'NONE';
   requestId?: string | null;
 }
 

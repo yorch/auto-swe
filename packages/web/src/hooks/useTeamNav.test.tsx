@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/stores/authStore';
 import { setupFetchMock } from '@/test/rtl-helpers';
-import { useTeamNav } from './useTeamNav';
+import { splitTeamsByStanding, useTeamNav } from './useTeamNav';
 
 beforeEach(() =>
   useAuthStore.setState({ isAuthenticated: true, user: { role: 'USER', sub: 'me' } })
@@ -98,5 +98,17 @@ describe('useTeamNav', () => {
     );
     await new Promise((r) => setTimeout(r, 50));
     expect(result.current.administered).toEqual([]);
+  });
+});
+
+describe('splitTeamsByStanding', () => {
+  it('separates teams the caller is on from the ones reached by authority, by name', () => {
+    const { administered, member } = splitTeamsByStanding([
+      team('z', 'Zeta', null),
+      team('b', 'Beta', 'MEMBER'),
+      team('a', 'Alpha', null),
+    ] as never);
+    expect(member.map((t) => t.name)).toEqual(['Beta']);
+    expect(administered.map((t) => t.name)).toEqual(['Alpha', 'Zeta']);
   });
 });

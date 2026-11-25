@@ -2,8 +2,13 @@
 
 import { render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { permissionsFor, resetPermissions, setPermissions } from '@/test/permissions';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
 import { TriggersCard } from './TriggersCard';
+
+vi.mock('@/hooks/useEffectivePermissions', async () =>
+  (await import('@/test/permissions')).permissionsMock()
+);
 
 const template = { id: 'tpl-1', name: 'ci-triage-and-fix', status: 'ACTIVE', team: null };
 
@@ -35,7 +40,10 @@ const schedule = (over: Record<string, unknown>) => ({
   ...over,
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  resetPermissions();
+});
 
 describe('TriggersCard', () => {
   it('says the webhook is unsigned when it has no signing secret', async () => {
@@ -116,6 +124,7 @@ describe('TriggersCard', () => {
   });
 
   it('notes that sources can be switched off in Platform settings', async () => {
+    setPermissions(permissionsFor({ canWriteAnySetting: true }));
     setupFetchMock({
       '/api/v1/automations': () => ({ data: [] }),
       '/api/v1/scheduled-work-requests': () => ({ data: [] }),
@@ -129,6 +138,21 @@ describe('TriggersCard', () => {
       (await screen.findByRole('link', { name: 'Platform settings' })).getAttribute('href')
     ).toBe('/admin/platform-settings');
     expect(screen.getByText(/fires only while its source is on/)).toBeTruthy();
+  });
+
+  it('names Platform settings without a link for someone who may not change a setting', async () => {
+    setPermissions(permissionsFor({ canWriteAnySetting: false }));
+    setupFetchMock({
+      '/api/v1/automations': () => ({ data: [] }),
+      '/api/v1/scheduled-work-requests': () => ({ data: [] }),
+    });
+    render(
+      withQuery(
+        <TriggersCard template={template} webhookConfigured={false} webhookSigned={false} />
+      )
+    );
+    expect(await screen.findByText(/Platform settings; a listed automation/)).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Platform settings' })).toBeNull();
   });
 
   it('still shows schedules when the automations request fails', async () => {

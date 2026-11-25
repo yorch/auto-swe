@@ -3725,6 +3725,39 @@ describe('orchestration routes', () => {
         }
       });
 
+      it('reports canEmergencyStop on the detail by the rule the stop routes enforce', async () => {
+        state.children = [];
+        const detail = async (who: ReturnType<typeof person>) =>
+          OrchestrationDetailDtoSchema.parse((await call('GET', `/${ORCH}`, who)).json().data);
+        // The operator: not the launcher, may stop it.
+        const operator = await detail(admin());
+        expect(operator.canControl).toBe(false);
+        expect(operator.canEmergencyStop).toBe(true);
+        // The same caller is accepted by the stop route.
+        expect((await call('POST', `/${ORCH}/cancel`, admin())).statusCode).toBe(200);
+      });
+
+      it('reports canEmergencyStop false for a non-ADMIN, and for a person-launched one', async () => {
+        state.children = [];
+        const detail = async (who: ReturnType<typeof person>) =>
+          OrchestrationDetailDtoSchema.parse((await call('GET', `/${ORCH}`, who)).json().data);
+        prisma.user.findUnique.mockResolvedValue({
+          isActive: true,
+          role: 'ENGINEER',
+          slackId: null,
+        } as never);
+        expect((await detail(person(OTHER_USER_ID))).canEmergencyStop).toBe(false);
+        const refused = await call('POST', `/${ORCH}/cancel`, person(OTHER_USER_ID));
+        expect(refused.statusCode).toBe(403);
+        prisma.user.findUnique.mockResolvedValue({
+          isActive: true,
+          role: 'ADMIN',
+          slackId: null,
+        } as never);
+        state.orch = orchRow({ launchedById: USER_ID, serviceId: null });
+        expect((await detail(admin())).canEmergencyStop).toBe(false);
+      });
+
       it('does not let a non-ADMIN member stop it', async () => {
         prisma.user.findUnique.mockResolvedValue({
           isActive: true,

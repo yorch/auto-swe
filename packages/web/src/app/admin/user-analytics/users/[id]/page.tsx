@@ -15,6 +15,7 @@ import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useAnalyticsUser } from '@/hooks/useAdmin';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { ApiError } from '@/lib/api';
+import { platformRoleLabel, teamRoleLabel } from '@/lib/roleLabels';
 import { validateRouteParam } from '@/lib/routeParams';
 import {
   KIND_LABEL,
@@ -54,14 +55,14 @@ function UserWorkspace({ id }: { id: string }) {
             the browser is a coarse family; no token or full user agent is kept.
           </p>
         }
-        subtitle={d ? `${d.user.email} · ${d.user.role}` : undefined}
+        subtitle={d ? `${d.user.email} · ${platformRoleLabel(d.user.role)}` : undefined}
         title={d ? (d.user.name ?? d.user.email) : 'Person'}
       />
       {d && (
         <p className="-mt-6 text-sm text-paper-400">
           {d.user.teams.length === 0
             ? 'Not on any team.'
-            : `Teams: ${d.user.teams.map((t) => `${t.slug} (${t.role})`).join(', ')}`}
+            : `Teams: ${d.user.teams.map((t) => `${t.slug} (${teamRoleLabel(t.role)})`).join(', ')}`}
           {' · Joined '}
           <RelativeTime value={d.user.createdAt} />
         </p>

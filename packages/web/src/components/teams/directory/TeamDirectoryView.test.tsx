@@ -64,6 +64,21 @@ describe('TeamDirectoryView', () => {
     expect(within(rows[2]).queryByRole('button')).toBeNull();
   });
 
+  it('offers Open team, not Request to join, for a team the viewer governs', async () => {
+    setupFetchMock({
+      '/api/v1/teams/directory': () =>
+        page([team({ id: 't9', name: 'Ops', relationship: 'GOVERNS', slug: 'ops' })]),
+    });
+    render(withQuery(<TeamDirectoryView />));
+    const list = await screen.findByRole('list', { name: 'Teams' });
+    const row = within(list).getAllByRole('listitem')[0];
+    expect(within(row).queryByRole('button', { name: /Request to join/ })).toBeNull();
+    const link = within(row).getByRole('link', { name: 'Open Ops' });
+    expect(link.getAttribute('href')).toBe('/teams/ops');
+    expect(within(row).getByText('Administered')).toBeTruthy();
+    expect(within(row).getByText(/audited step on its Members tab/)).toBeTruthy();
+  });
+
   it('offers Create team only when the server names organizations to create in', async () => {
     setupFetchMock({ '/api/v1/teams/directory': () => page([team({})]) });
     const { unmount } = render(withQuery(<TeamDirectoryView />));

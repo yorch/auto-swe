@@ -23,6 +23,11 @@ import { AdminNav } from './AdminNav';
 
 const PEOPLE = {
   admin: ADMIN_PERMISSIONS,
+  // A plain team member a configuration grant covers: the server says they may write a setting.
+  grantHolder: permissionsFor({
+    canWriteAnySetting: true,
+    teams: [{ capabilities: ['team.read'], role: 'MEMBER', teamId: 't1' }],
+  }),
   lead: permissionsFor({
     orgs: [{ capabilities: ['org.baselines.read'], orgId: 'o1' }],
     teams: [{ capabilities: ['team.settings.manage'], role: 'LEAD', teamId: 't1' }],
@@ -75,10 +80,18 @@ describe('AdminNav', () => {
     resetNavigation('', '/admin/organizations');
     render(<AdminNav />);
     const hrefs = links();
-    expect(hrefs).toContain('/admin/platform-settings');
+    // Platform settings follows the server's `canWriteAnySetting`, which a lead without a grant lacks.
+    expect(hrefs).not.toContain('/admin/platform-settings');
     expect(hrefs).toContain('/admin/baselines');
     expect(hrefs).not.toContain('/admin/users');
     expect(hrefs).not.toContain('/admin/scanner');
+  });
+
+  it('offers Platform settings to a grant holder who leads nothing', () => {
+    useWho('grantHolder');
+    resetNavigation('', '/admin/organizations');
+    render(<AdminNav />);
+    expect(links()).toContain('/admin/platform-settings');
   });
 
   it('marks the current page, and the parent entry on a page without its own', () => {

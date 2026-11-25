@@ -15,9 +15,13 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { useCancelBudgetRequest, useMyTeamBudgetRequest } from '@/hooks/useTeamBudgetRequest';
 import { useTeamOverview } from '@/hooks/useTeamOverview';
 import { useTeam } from '@/hooks/useTeams';
+import { errMsg } from '@/lib/errors';
 import { VIEW_ONLY_CHIP } from '@/lib/repoLaunch';
+import { formatRelativeTime } from '@/lib/utils';
+import { useAuthStore } from '@/stores/authStore';
 
 function repoName(r: { organizationName: string; repoName: string }): string {
   return `${r.organizationName}/${r.repoName}`;
@@ -101,6 +105,12 @@ function TeamBudgetPanel({
   const { data, error, isError, isFetching, isLoading, refetch } = useTeamOverview(team.id);
   const [requesting, setRequesting] = useState(false);
   const trigger = useRef<HTMLSpanElement>(null);
+  const pending = useMyTeamBudgetRequest(team.id, canManageBudget === false);
+  const cancel = useCancelBudgetRequest(team.id);
+  const request = pending.data ?? null;
+  const sub = useAuthStore((s) => s.user?.sub ?? null);
+  // The team has one pending request, whoever sent it; only its sender may withdraw it here.
+  const ownRequest = !!request && request.requestedBy.id === sub;
   return (
     <Card data-testid="manage-budget">
       <CardHeader className="mb-2">
@@ -127,7 +137,34 @@ function TeamBudgetPanel({
         ) : (
           <p className="text-sm text-paper-400">No budget limit applies to this team.</p>
         )}
-        {canManageBudget === false && (
+        {canManageBudget === false && request && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-paper-400" data-testid="budget-request-pending">
+              Budget change requested {formatRelativeTime(request.createdAt)}: {request.reason}. A
+              team or organization admin decides this.
+            </p>
+            {ownRequest ? (
+              <Button
+                disabled={cancel.isPending}
+                onClick={() => cancel.mutate(request.id)}
+                size="sm"
+                variant="secondary"
+              >
+                Cancel request
+              </Button>
+            ) : (
+              <p className="text-sm text-paper-400" data-testid="budget-request-requester">
+                Requested by {request.requestedBy.name ?? 'a teammate'}; only they can cancel it.
+              </p>
+            )}
+            {cancel.isError && (
+              <p className="w-full text-sm text-danger-400" role="alert">
+                {errMsg(cancel.error, 'Could not cancel the request.')}
+              </p>
+            )}
+          </div>
+        )}
+        {canManageBudget === false && !request && !pending.isLoading && (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-paper-400">Ask a team or organization admin to change it.</p>
             <span ref={trigger}>

@@ -65,14 +65,19 @@ export function OrchestrationHeader({
 }) {
   const cancel = useCancelOrchestration(detail.id);
   const end = useEndOrchestration(detail.id);
-  const [confirm, setConfirm] = useState<'cancel' | 'end' | null>(null);
+  const [confirm, setConfirm] = useState<'cancel' | 'emergency' | 'end' | null>(null);
   const live = isOrchestrationLive(detail.status);
   const showActions = detail.canControl && live;
-  const action = confirm === 'cancel' ? cancel : end;
+  // An operator's emergency stop of a service principal's orchestration: a separate, labelled act
+  // (the same cancel the launcher has), offered only to someone who is not its launcher.
+  const showEmergency = detail.canEmergencyStop === true && !detail.canControl && live;
+  const showLauncherOnly = !detail.canControl && !showEmergency && live;
+  const action = confirm === 'end' ? end : cancel;
+  const stopsAll = confirm === 'cancel' || confirm === 'emergency';
   const billing = detail.billing ?? null;
   const tier = detail.budget?.tier ?? detail.budgetTier;
   const tierLabel = BUDGET_TIER_OPTIONS.find((o) => o.value === tier)?.label ?? tier;
-  const openConfirm = (which: 'cancel' | 'end') => {
+  const openConfirm = (which: 'cancel' | 'emergency' | 'end') => {
     // A refusal from an earlier attempt must not greet the next one.
     cancel.reset();
     end.reset();
@@ -93,6 +98,13 @@ export function OrchestrationHeader({
             {detail.launchedByName && <span>Launched by {detail.launchedByName}</span>}
           </div>
         </div>
+        {showEmergency && (
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => openConfirm('emergency')} variant="danger">
+              Emergency stop (platform admin)
+            </Button>
+          </div>
+        )}
         {showActions && (
           <div className="flex flex-wrap gap-2">
             <Button onClick={() => openConfirm('end')} variant="secondary">
@@ -104,6 +116,11 @@ export function OrchestrationHeader({
           </div>
         )}
       </div>
+      {showLauncherOnly && (
+        <p className="text-sm text-paper-400">
+          Only {detail.launchedByName ?? 'the launcher'} can end this orchestration.
+        </p>
+      )}
       <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
         <div className="min-w-0">
           <dt className="label-mono">Repository</dt>
@@ -147,20 +164,34 @@ export function OrchestrationHeader({
         </div>
       </dl>
       <ConfirmModal
-        confirmLabel={confirm === 'cancel' ? 'Cancel orchestration' : 'End orchestration'}
-        dangerous={confirm === 'cancel'}
+        confirmLabel={
+          confirm === 'emergency'
+            ? 'Emergency stop'
+            : confirm === 'cancel'
+              ? 'Cancel orchestration'
+              : 'End orchestration'
+        }
+        dangerous={stopsAll}
         error={action.isError ? describeOrchestrationError(action.error) : undefined}
         message={
-          confirm === 'cancel'
-            ? 'This stops every running agent. Branches already pushed stay in place.'
-            : 'This ends the conversation. You can start a new orchestration afterwards.'
+          confirm === 'emergency'
+            ? 'You are stopping an orchestration a service principal launched, as a platform admin. This stops every running agent; branches already pushed stay in place. The stop is recorded in the audit log under your name.'
+            : confirm === 'cancel'
+              ? 'This stops every running agent. Branches already pushed stay in place.'
+              : 'This ends the conversation. You can start a new orchestration afterwards.'
         }
         onClose={() => setConfirm(null)}
         onConfirm={async () => {
           await action.mutateAsync();
         }}
         open={confirm !== null}
-        title={confirm === 'cancel' ? 'Cancel this orchestration?' : 'End this orchestration?'}
+        title={
+          confirm === 'emergency'
+            ? 'Emergency stop this orchestration?'
+            : confirm === 'cancel'
+              ? 'Cancel this orchestration?'
+              : 'End this orchestration?'
+        }
       />
     </div>
   );

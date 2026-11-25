@@ -1,10 +1,12 @@
 'use client';
 
+import type { TeamSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useState } from 'react';
+import { CreateTeamDialog } from '@/components/teams/directory/CreateTeamDialog';
 import { MyJoinRequestsPanel } from '@/components/teams/directory/MyJoinRequestsPanel';
 import { TeamDirectoryView } from '@/components/teams/directory/TeamDirectoryView';
-import { TeamFormModal } from '@/components/teams/TeamFormModal';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -14,9 +16,12 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { TabBar } from '@/components/ui/TabBar';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
-import { useCan } from '@/hooks/useCan';
+import { usePlatformAdmin } from '@/hooks/useCan';
+import { useTeamDirectory } from '@/hooks/useJoinRequests';
+import { splitTeamsByStanding } from '@/hooks/useTeamNav';
 import { useTeams } from '@/hooks/useTeams';
 import { navLabel } from '@/lib/navigation';
+import { orgRoleLabel, platformRoleLabel, teamRoleLabel } from '@/lib/roleLabels';
 import { teamHref } from '@/lib/teamSpace';
 import { cn, FOCUS_RING, plural } from '@/lib/utils';
 
@@ -33,12 +38,18 @@ const SEARCH_THRESHOLD = 3;
 
 export default function TeamsPage() {
   const { data: teams, isLoading, isError, isFetching, refetch, error: loadError } = useTeams();
-  const canCreate = useCan('org.teams.create');
+  // The organizations the server lets this person create a team in: the directory's answer, the
+  // same one its own "Create team" button reads, so self-service members see the entry here too.
+  const directory = useTeamDirectory({ orgId: '', q: '' });
+  const creatableOrgs = directory.data?.pages[0]?.creatableOrgs ?? [];
+  const canCreate = creatableOrgs.length > 0;
+  const platformAdmin = usePlatformAdmin();
   const [creating, setCreating] = useState(false);
   const [search, setSearch] = useState('');
   const [view, setView] = useState<TeamsView>('mine');
 
   const all = [...(teams ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+  const authorityChip = platformAdmin ? platformRoleLabel('ADMIN') : orgRoleLabel('ADMIN');
   const query = search.trim().toLowerCase();
   const visible = query
     ? all.filter(
@@ -48,6 +59,8 @@ export default function TeamsPage() {
           (t.description ?? '').toLowerCase().includes(query)
       )
     : all;
+
+  const { administered, member } = splitTeamsByStanding(visible);
 
   const newTeamButton = (size: 'sm' | 'md') =>
     canCreate && (
@@ -95,12 +108,19 @@ export default function TeamsPage() {
         >
           {all.length === 0 ? (
             <EmptyState
-              action={newTeamButton('sm')}
+              action={
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  {newTeamButton('sm')}
+                  <Button onClick={() => setView('directory')} size="sm" variant="secondary">
+                    Browse the directory
+                  </Button>
+                </div>
+              }
               bordered
               hint={
                 canCreate
-                  ? 'Create a team to group members and repositories.'
-                  : 'Organization admins and platform admins create teams. Ask one to create a team or add you to one.'
+                  ? 'Create a team to group members and repositories, or browse the directory to request to join one.'
+                  : 'Organization admins and platform admins create teams. Browse the directory to request to join one, or ask an admin to add you.'
               }
               icon="teams"
               title="No teams yet"
@@ -137,60 +157,110 @@ export default function TeamsPage() {
                   title="No teams match this search"
                 />
               ) : (
-                <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {visible.map((t) => (
-                    <li key={t.id}>
-                      <Link
-                        aria-label={t.name}
-                        className={cn('group block h-full rounded-xl', FOCUS_RING)}
-                        href={teamHref(t.slug)}
-                      >
-                        <Card className="flex h-full flex-col p-5 group-hover:border-ink-300">
-                          <div className="flex items-start gap-3">
-                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-ink-400 bg-ink-700 text-paper-400 group-hover:text-paper-200">
-                              <Icon name="teams" size={16} />
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <h2 className="truncate text-base font-semibold text-paper-50">
-                                {t.name}
-                              </h2>
-                              <p className="truncate font-mono text-xs text-paper-500">{t.slug}</p>
-                            </div>
-                            <Icon
-                              className="mt-1 shrink-0 text-paper-600 transition-colors group-hover:text-paper-300"
-                              name="chevronRight"
-                              size={16}
-                            />
-                          </div>
-                          <p
-                            className={cn(
-                              'mt-3 line-clamp-2 flex-1 text-sm leading-relaxed',
-                              t.description ? 'text-paper-400' : 'text-paper-500 italic'
-                            )}
-                          >
-                            {t.description || 'No description'}
-                          </p>
-                          <div className="mt-4 flex gap-4 border-t border-ink-600 pt-3 text-xs text-paper-400">
-                            <span className="inline-flex items-center gap-1.5">
-                              <Icon className="text-paper-500" name="users" size={13} />
-                              {plural(t._count?.memberships ?? 0, 'member')}
-                            </span>
-                            <span className="inline-flex items-center gap-1.5">
-                              <Icon className="text-paper-500" name="repositories" size={13} />
-                              {plural(t._count?.repositories ?? 0, 'repo')}
-                            </span>
-                          </div>
-                        </Card>
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
+                <div className="space-y-6">
+                  <TeamGroup
+                    chip={(t) => teamRoleLabel(t.myRole)}
+                    heading={administered.length > 0 ? 'Member' : null}
+                    teams={member}
+                  />
+                  <TeamGroup
+                    chip={() => authorityChip}
+                    heading="Administered"
+                    teams={administered}
+                  />
+                </div>
               )}
             </>
           )}
         </QueryBoundary>
       )}
-      <TeamFormModal mode={{ kind: 'create' }} onClose={() => setCreating(false)} open={creating} />
+      <CreateTeamDialog
+        creatableOrgs={creatableOrgs}
+        onClose={() => setCreating(false)}
+        open={creating}
+      />
     </div>
+  );
+}
+
+/** One group of team cards; nothing at all when it is empty. */
+function TeamGroup({
+  chip,
+  heading,
+  teams,
+}: {
+  chip: (team: TeamSummary) => string;
+  heading: string | null;
+  teams: TeamSummary[];
+}) {
+  if (teams.length === 0) {
+    return null;
+  }
+  const id = heading ? `teams-group-${heading.toLowerCase()}` : undefined;
+  return (
+    <section aria-labelledby={id}>
+      {heading && (
+        <h2
+          className="mb-3 text-xs font-semibold uppercase tracking-[0.08em] text-paper-500"
+          id={id}
+        >
+          {heading}
+        </h2>
+      )}
+      <ul
+        aria-label={heading ?? 'Teams'}
+        className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"
+      >
+        {teams.map((t) => (
+          <li key={t.id}>
+            <Link
+              aria-label={t.name}
+              className={cn('group block h-full rounded-xl', FOCUS_RING)}
+              href={teamHref(t.slug)}
+            >
+              <Card className="flex h-full flex-col p-5 group-hover:border-ink-300">
+                <div className="flex items-start gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-ink-400 bg-ink-700 text-paper-400 group-hover:text-paper-200">
+                    <Icon name="teams" size={16} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="truncate text-base font-semibold text-paper-50">{t.name}</h3>
+                    <p className="truncate font-mono text-xs text-paper-500">{t.slug}</p>
+                  </div>
+                  {chip(t) && (
+                    <Badge tone="neutral" variant="outline">
+                      {chip(t)}
+                    </Badge>
+                  )}
+                  <Icon
+                    className="mt-1 shrink-0 text-paper-600 transition-colors group-hover:text-paper-300"
+                    name="chevronRight"
+                    size={16}
+                  />
+                </div>
+                <p
+                  className={cn(
+                    'mt-3 line-clamp-2 flex-1 text-sm leading-relaxed',
+                    t.description ? 'text-paper-400' : 'text-paper-500 italic'
+                  )}
+                >
+                  {t.description || 'No description'}
+                </p>
+                <div className="mt-4 flex gap-4 border-t border-ink-600 pt-3 text-xs text-paper-400">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Icon className="text-paper-500" name="users" size={13} />
+                    {plural(t._count?.memberships ?? 0, 'member')}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <Icon className="text-paper-500" name="repositories" size={13} />
+                    {plural(t._count?.repositories ?? 0, 'repo')}
+                  </span>
+                </div>
+              </Card>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

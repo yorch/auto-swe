@@ -401,4 +401,66 @@ describe.skipIf(!enabled)('me summary against Postgres', () => {
     // The approvals behind the desk count the same steps.
     expect(await stepTotal('alice', 'actionable=true&mine=true')).toBe(STEPS_A);
   });
+
+  it('reports canWriteAnySetting from the person’s own grants and their team’s role grants, under the tenant guard', async () => {
+    const grants = <T>(fn: () => Promise<T>) =>
+      runUnscoped('test fixture: configuration grants', ['ConfigPermission'], fn);
+    const canWrite = async (user: string) =>
+      (await json<{ canWriteAnySetting: boolean }>(user, '/api/v1/me/permissions'))
+        .canWriteAnySetting;
+
+    // No grant: a team member and a platform admin differ.
+    expect(await canWrite('alice')).toBe(false);
+    expect(await canWrite('root')).toBe(true);
+
+    // A grant of a setting only a platform admin may write adds nothing.
+    await grants(() =>
+      prisma.configPermission.create({
+        data: {
+          keyPattern: 'git.authorEmail',
+          scope: 'TEAM',
+          teamId: ids.teama,
+          userId: ids.alice,
+        },
+      })
+    );
+    expect(await canWrite('alice')).toBe(false);
+
+    // A role grant of a team the person is not on, and another person's grant, add nothing.
+    await grants(() =>
+      prisma.configPermission.createMany({
+        data: [
+          { keyPattern: '*', role: 'MEMBER', scope: 'TEAM', teamId: ids.teamb },
+          { keyPattern: '*', scope: 'TEAM', teamId: ids.teama, userId: ids.erin },
+        ],
+      })
+    );
+    expect(await canWrite('alice')).toBe(false);
+
+    // A user grant of a grantable setting does.
+    await grants(() =>
+      prisma.configPermission.create({
+        data: {
+          keyPattern: 'channel.historyMessageLimit',
+          scope: 'TEAM',
+          teamId: ids.teama,
+          userId: ids.alice,
+        },
+      })
+    );
+    expect(await canWrite('alice')).toBe(true);
+
+    // A role grant covers the people holding that team role, and no one below it.
+    await grants(() =>
+      prisma.configPermission.create({
+        data: { keyPattern: '*', role: 'LEAD', scope: 'TEAM', teamId: ids.teamc },
+      })
+    );
+    expect(await canWrite('carol')).toBe(false);
+    await prisma.teamMembership.update({
+      data: { role: 'LEAD' },
+      where: { userId_teamId: { teamId: ids.teamc, userId: ids.carol } },
+    });
+    expect(await canWrite('carol')).toBe(true);
+  });
 });

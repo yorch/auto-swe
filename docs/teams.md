@@ -308,7 +308,7 @@ announced in Slack; otherwise the answer is `409 NUDGE_UNAVAILABLE`.
 **Budget requests.** A team `LEAD` who is not an organization admin sees **Request a change** on the
 Budget section and asks for a change with `POST /api/v1/teams/:id/budget-requests` and `{ reason }`. The reason is 1 to 500 characters after
 trimming. A request carries no amount. A team has one pending request at a time; a second one
-answers `409 REQUEST_PENDING`. The request is audited with the reason's length, not the reason.
+answers `409 REQUEST_PENDING`. The request is audited with the reason's length, not the reason. While it is pending, the lead sees it in the Manage tab's Budget card as "Budget change requested <age>: <reason>", with a **Cancel request** button. `GET /api/v1/teams/:id/budget-requests/mine` returns the team's pending request, or `null`, to whoever may ask (`team.budget-requests.create`). `POST /api/v1/teams/:id/budget-requests/:requestId/cancel` withdraws one: a requester cancels only their own request, and a holder of `team.budget.manage` may cancel any request in the team. A cancel answers `404 BUDGET_REQUEST_NOT_FOUND` for a request that is not pending in that team, and is audited. A cancelled request is closed, so the lead may ask again.
 The team ADMIN, an organization ADMIN of the organization and a platform ADMIN list the pending requests
 with `GET /api/v1/teams/:id/budget-requests`, oldest first, and see them in Settings, Budget. Nobody
 is notified of a request. A `PATCH /api/v1/teams/:id/budget` whose body names
@@ -365,6 +365,9 @@ models resolve per agent through the configuration cascade rather than a single 
   of (an organization admin's teams), without badges or pins. A platform admin has no such group. A team
   space opens for such a team, and its Overview carries a notice that the viewer is not a member and
   that run activity is not shown.
+- **My teams on `/teams`.** The **My teams** view lists the member teams under **Member** and the administered teams under **Administered**. The **Member** heading appears only when there is an Administered group too.
+- **Access chip.** The team header states the caller's standing on the team. A caller who reaches the team without being a member sees **Platform admin** (a platform admin) or **Org admin of <organization>**. A member who also holds `team.members.manage` through organization authority sees **and org admin** beside their team role.
+- **Governance card on Home.** An organization admin who is not a platform admin and belongs to no team sees a governance card on Home, in place of the first-run steps and the Start work prompts.
 - **Preferences.** `PATCH /api/v1/me/preferences` stores two per-user hints beside the run-detail
   layout. `lastTeamSlug` records the last member team space the user opened; it does not redirect
   Home. `pinnedTeamSlugs` is an ordered list of up to 20 slugs that the sidebar shows, set
@@ -574,9 +577,7 @@ stops the secrets it holds from resolving for the repositories it owns.
 
 ## Creating teams and managing membership
 
-On `/teams`, **New team** is available to platform ADMINs and anyone who administers an
-organization. Organization admins choose among their administered organizations (the picker is
-omitted for a single organization). The optional **First team admin** lists that organization's
+On `/teams`, **New team** is offered for the organizations the directory lists as `creatableOrgs`: every active organization for a platform ADMIN, each organization an organization `ADMIN` administers, and each organization where `teams.selfServiceCreation` is on and the caller has not reached `teams.maxCreatedPerUser`. The dialog lists those organizations, and shows the name alone when there is only one. The optional **First team admin** lists that organization's
 members and defaults to the creator. The organization detail page at `/admin/organizations/:orgId`
 offers the same action for its admins and platform ADMINs. Name/slug conflicts and first-admin
 organization-membership errors stay in the dialog with guidance.
@@ -635,6 +636,14 @@ and team roles are preserved; repeated enrollment creates neither duplicate memb
 Enrollment failures are logged without failing account creation, and neither membership is committed
 if that enrollment transaction fails.
 
+### Leaving a team
+
+Any member may remove their own membership with `DELETE /api/v1/teams/:id/members/me`. The route asks only for a signed-in user, and the handler checks the membership: a caller who is not a member gets `404 NOT_A_MEMBER`. The last team `ADMIN` is refused with `409 LAST_TEAM_ADMIN`, so a team cannot be left without an admin; another member has to be made an admin first. The removal takes the same locks and last-admin check as a removal by someone else, and writes an audit row. It does not change organization membership. On the Members tab, the menu of your own row offers **Leave team** behind a confirmation. A failure assigned to the leaver lapses back to unowned ([Manage](#manage)).
+
+### Platform role in member responses
+
+`GET /api/v1/teams/:id/members`, the `memberships` of `GET /api/v1/teams/:id`, and `GET /api/v1/platform/organizations/:orgId/members` (and its `/api/v1/admin/organizations` alias) return each member's platform role as `user.role`. The field is returned only to a caller who holds `platform.users.manage`. For anyone else the `role` key is absent from `user`, not null.
+
 ### Inviting someone directly into a team
 
 `POST /api/v1/teams/:id/members/invite` accepts `email` and an optional team `role`
@@ -666,7 +675,7 @@ has `auto-swe teams directory`, `teams request`, `teams requests` and `orgs requ
 
 `GET /api/v1/teams/directory?q=&orgId=&limit=&cursor=` lists active teams with their public fields only:
 name, slug, description, organization, member count, and the caller's `relationship` to the team, which
-is `MEMBER`, `REQUESTED` (with the open `requestId`) or `NONE`. The member count covers active users
+is `MEMBER`, `GOVERNS`, `REQUESTED` (with the open `requestId`) or `NONE`. `GOVERNS` is a viewer who is not on the team but holds `team.read` there through organization or platform authority (an organization admin's team, or any team for a platform ADMIN). Its row opens the team and offers no request. The member count covers active users
 only. A team of a deactivated organization is not listed. The response also carries `creatableOrgs`,
 the organizations where the caller may create a team now.
 
@@ -697,7 +706,7 @@ organization by setting `organization` at GLOBAL scope or for that organization.
 ### Requesting to join
 
 `POST /api/v1/teams/:id/join-requests` opens a request with an optional `message` of up to 500
-characters. Any active team the caller can see in the directory accepts one. The gateway refuses a
+characters. Any active team the caller can see in the directory accepts one; the web directory offers the request only for a team of relationship `NONE` ([Limitations](#limitations)). The gateway refuses a
 request with:
 
 - `404 TEAM_NOT_FOUND` when the team is unknown, inactive, belongs to a deactivated organization or is
@@ -1261,3 +1270,5 @@ The keys are declared in the setting registry and edited at `/admin/platform-set
 - **Reactivating a user, a team or an organization does not reopen requests that were closed by the deactivation.**
 - **The organization-admin email reaches the first 20 active organization admins.** A larger organization's
   remaining admins are not emailed, and the omission is logged.
+- **A governed team still accepts a join request.** The directory shows a `GOVERNS` team as **Open team** and offers no request, but `POST /api/v1/teams/:id/join-requests` does not refuse one for such a team, so a request sent to it directly is recorded like any other.
+- **The access chip reads the effective permissions.** The chip is decided from the `GET /api/v1/me/permissions` answer. The **and org admin** form appears only when the viewer holds `team.members.manage` on the team through organization authority, so a platform admin who is also a member sees no chip.

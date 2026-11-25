@@ -117,11 +117,13 @@ function layoutAccess(href: string): Access {
 /** What the dashboard reads from `GET /me/permissions`, for the cases below. */
 function permissions(opts: {
   admin?: boolean;
+  settingWriter?: boolean;
   orgCapabilities?: string[];
   teamCapabilities?: string[];
 }): Permissions {
   const held = (keys: string[]) => keys.map((key) => ({ authority: 'team-role', key }));
   return {
+    canWriteAnySetting: opts.admin || opts.settingWriter || false,
     organizations: opts.orgCapabilities
       ? [{ capabilities: held(opts.orgCapabilities), name: 'Org', orgId: 'o1', role: 'MEMBER' }]
       : [],
@@ -148,9 +150,8 @@ const LEAD = permissions({
   teamCapabilities: ['team.read', 'team.settings.manage'],
 });
 const ADMIN = permissions({ admin: true });
-
-/** Pages whose layout leaves them open and whose navigation entry is narrower on purpose. */
-const NARROWER_THAN_LAYOUT = new Set(['/admin/platform-settings']);
+/** A plain team member a configuration grant covers: holds no `team.settings.manage`. */
+const GRANT_HOLDER = permissions({ settingWriter: true, teamCapabilities: ['team.read'] });
 
 describe('NAV_GROUPS', () => {
   it('places Epics after Requests and keeps each destination active independently', () => {
@@ -210,11 +211,6 @@ describe('NAV_GROUPS', () => {
     (href, access) => {
       // A nav entry looser than the layout bounces users off the page; a
       // stricter one hides a page they may use.
-      if (NARROWER_THAN_LAYOUT.has(href)) {
-        expect(layoutAccess(href)).toBe('any');
-        expect(access).not.toBe('any');
-        return;
-      }
       expect(access).toBe(layoutAccess(href));
     }
   );
@@ -293,11 +289,20 @@ describe('visibleNavGroups', () => {
   it('shows a team lead the pages their capabilities open, not the platform admin pages', () => {
     const hrefs = hrefsFor(LEAD);
     expect(hrefs).toContain('/admin/baselines');
-    expect(hrefs).toContain('/admin/platform-settings');
+    // A lead with no configuration grant has no setting to change, so the layout would bounce them.
+    expect(hrefs).not.toContain('/admin/platform-settings');
     expect(hrefs).toContain('/admin/organizations');
     expect(hrefs).not.toContain('/skills');
     expect(hrefs).not.toContain('/mcp');
     expect(hrefs).not.toContain('/admin/integrations');
+  });
+
+  it('offers Platform settings to a grant holder and a platform admin, as the layout does', () => {
+    const offered = (perms: Permissions) => hrefsFor(perms).includes('/admin/platform-settings');
+    expect(offered(GRANT_HOLDER)).toBe(true);
+    expect(offered(ADMIN)).toBe(true);
+    expect(offered(MEMBER)).toBe(false);
+    expect(layoutAccess('/admin/platform-settings')).toBe('settings-writer');
   });
 
   it('offers LLM usage by usage scope, not by anything else', () => {

@@ -26,8 +26,9 @@ import {
   useCreateHumanErrorBaseline,
   useDeleteHumanErrorBaseline,
   useHumanErrorBaselines,
-  useUserOrgs,
+  useOrganizationDirectory,
 } from '@/hooks/useAdmin';
+import { useOrgIdsCan, usePlatformAdmin } from '@/hooks/useCan';
 import { errMsg } from '@/lib/errors';
 import { navLabel } from '@/lib/navigation';
 import { formatDate, formatPercent, formatRelativeTime } from '@/lib/utils';
@@ -137,9 +138,7 @@ function CreateBaselineModal({
     <Modal onClose={close} open={open} title="New human error baseline">
       <form className="space-y-4" onSubmit={handleSubmit}>
         {orgs.length === 0 && (
-          <Alert variant="warning">
-            You do not belong to an organization, so a baseline cannot be recorded for one.
-          </Alert>
+          <Alert variant="warning">There is no organization you may record a baseline for.</Alert>
         )}
         <Combobox
           id="baseline-org"
@@ -226,7 +225,13 @@ export default function GovernBaselinesPage() {
     isFetching: orgsIsFetching,
     refetch: refetchOrgs,
     error: orgsError,
-  } = useUserOrgs();
+  } = useOrganizationDirectory();
+  // Recording and deleting are organization-admin actions (`org.baselines.manage`); a platform
+  // admin holds it in every organization, the directory lists them all.
+  const platformAdmin = usePlatformAdmin();
+  const manageOrgIds = useOrgIdsCan('org.baselines.manage');
+  const manageOrgs = (orgs ?? []).filter((o) => platformAdmin || manageOrgIds?.has(o.id));
+  const canManage = manageOrgs.length > 0;
   const {
     data: baselines,
     isLoading: baselinesLoading,
@@ -245,10 +250,12 @@ export default function GovernBaselinesPage() {
     <div className="space-y-6">
       <PageHeader
         actions={
-          <Button onClick={() => setNewOpen(true)} variant="primary">
-            <Icon name="plus" size={14} />
-            New baseline
-          </Button>
+          canManage ? (
+            <Button onClick={() => setNewOpen(true)} variant="primary">
+              <Icon name="plus" size={14} />
+              New baseline
+            </Button>
+          ) : undefined
         }
         help={<p>Baselines are scoped to an organization and domain.</p>}
         subtitle="Manually-recorded human error rates that the analytics dashboard compares agent error rates against (the “vs human” column)."
@@ -290,25 +297,33 @@ export default function GovernBaselinesPage() {
           {!baselines || baselines.length === 0 ? (
             <EmptyState
               action={
-                <Button onClick={() => setNewOpen(true)} size="sm">
-                  New baseline
-                </Button>
+                canManage ? (
+                  <Button onClick={() => setNewOpen(true)} size="sm">
+                    New baseline
+                  </Button>
+                ) : undefined
               }
-              hint="Record how often people get a kind of work wrong, so analytics can show whether agents do better or worse."
+              hint={
+                canManage
+                  ? 'Record how often people get a kind of work wrong, so analytics can show whether agents do better or worse.'
+                  : 'Organization admins record baselines, so analytics can show whether agents do better or worse than people.'
+              }
               icon="target"
               title="No baselines recorded yet"
             />
           ) : (
             <div className="-mx-4">
               <DataTable
-                actions={(b) => (
-                  <IconButton
-                    aria-label={`Delete ${baselineName(b)} baseline`}
-                    onClick={() => setDeleteTarget(b)}
-                  >
-                    <Icon name="trash" size={14} />
-                  </IconButton>
-                )}
+                actions={(b) =>
+                  canManage ? (
+                    <IconButton
+                      aria-label={`Delete ${baselineName(b)} baseline`}
+                      onClick={() => setDeleteTarget(b)}
+                    >
+                      <Icon name="trash" size={14} />
+                    </IconButton>
+                  ) : null
+                }
                 className="max-sm:px-4"
                 columns={[
                   {
@@ -381,7 +396,7 @@ export default function GovernBaselinesPage() {
       <CreateBaselineModal
         onClose={() => setNewOpen(false)}
         open={newOpen}
-        orgs={(orgs ?? []).map((o) => ({ id: o.id, name: o.name }))}
+        orgs={manageOrgs.map((o) => ({ id: o.id, name: o.name }))}
       />
       <ConfirmModal
         confirmLabel="Delete"

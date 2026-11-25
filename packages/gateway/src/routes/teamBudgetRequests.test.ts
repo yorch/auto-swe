@@ -43,6 +43,9 @@ function build(opts: Opts = {}) {
     return row;
   });
   const findMany = vi.fn(async (_args: unknown) => rows.filter((r) => r.resolvedAt === null));
+  const findFirst = vi.fn(
+    async (_args: unknown) => rows.find((r) => r.resolvedAt === null) ?? null
+  );
   // A dismissal matches only a pending request of the team named in the where clause.
   const updateMany = vi.fn(
     async ({
@@ -50,10 +53,17 @@ function build(opts: Opts = {}) {
       where,
     }: {
       data: { resolvedAt: Date };
-      where: { id: string; teamId: string; resolvedAt: null };
+      where: { id: string; teamId: string; resolvedAt: null; requestedById?: string };
     }) => {
       const hit =
-        where.teamId === TEAM ? rows.find((r) => r.id === where.id && !r.resolvedAt) : null;
+        where.teamId === TEAM
+          ? rows.find(
+              (r) =>
+                r.id === where.id &&
+                !r.resolvedAt &&
+                (where.requestedById === undefined || r.requestedBy.id === where.requestedById)
+            )
+          : null;
       if (hit) {
         hit.resolvedAt = data.resolvedAt;
       }
@@ -88,7 +98,7 @@ function build(opts: Opts = {}) {
         orgId: ORG,
       })),
     },
-    teamBudgetRequest: { create, findMany, updateMany },
+    teamBudgetRequest: { create, findFirst, findMany, updateMany },
     teamMembership: {
       // The permissions loader's read of the caller's membership.
       findMany: vi.fn(async () => (opts.teamRole ? [{ role: opts.teamRole, teamId: TEAM }] : [])),
@@ -97,7 +107,7 @@ function build(opts: Opts = {}) {
   };
   const app = makeAuthedApp({ prisma, role: opts.platformRole ?? 'ENGINEER', sub: USER });
   app.register(teamBudgetRequestRoutes, { prefix: PREFIX });
-  return { app, create, findMany, prisma, rows, updateMany };
+  return { app, create, findFirst, findMany, prisma, rows, updateMany };
 }
 
 afterEach(() => vi.clearAllMocks());
@@ -303,5 +313,106 @@ describe('POST /teams/:id/budget-requests/:requestId/dismiss', () => {
     const { app } = await seeded({ teamRole: null });
     expect((await dismiss(app)).statusCode).toBe(404);
     expect((await dismiss(app, 'nope')).statusCode).toBe(400);
+  });
+});
+
+describe('GET /teams/:id/budget-requests/mine', () => {
+  const mine = (app: ReturnType<typeof build>['app']) =>
+    app.inject({ method: 'GET', url: `${PREFIX}/${TEAM}/budget-requests/mine` });
+
+  it('returns the pending request to a team LEAD, with no amount', async () => {
+    const built = build({ teamRole: 'LEAD' });
+    built.rows.push({
+      createdAt: CREATED_AT,
+      id: '00000000-0000-4000-8000-0000000000b2',
+      reason: 'more please',
+      requestedBy: { id: USER, name: 'Ada' },
+      resolvedAt: null,
+    });
+    await built.app.ready();
+    const res = await mine(built.app);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toEqual({
+      createdAt: CREATED_AT.toISOString(),
+      id: '00000000-0000-4000-8000-0000000000b2',
+      reason: 'more please',
+      requestedBy: { id: USER, name: 'Ada' },
+    });
+    expect(res.body).not.toMatch(/cents|usd/i);
+    expect(built.findFirst.mock.calls[0]?.[0]).toMatchObject({
+      where: { resolvedAt: null, teamId: TEAM },
+    });
+  });
+
+  it('returns null when nothing is pending', async () => {
+    const { app } = build({ teamRole: 'LEAD' });
+    await app.ready();
+    expect((await mine(app)).json().data).toBeNull();
+  });
+
+  it('refuses a team MEMBER', async () => {
+    const { app, findFirst } = build({ teamRole: 'MEMBER' });
+    await app.ready();
+    expect((await mine(app)).statusCode).toBe(403);
+    expect(findFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /teams/:id/budget-requests/:requestId/cancel', () => {
+  const REQUEST = '00000000-0000-4000-8000-0000000000b2';
+  const cancel = (app: ReturnType<typeof build>['app'], id = REQUEST) =>
+    app.inject({ method: 'POST', url: `${PREFIX}/${TEAM}/budget-requests/${id}/cancel` });
+
+  async function seeded(opts: Opts, requester = USER) {
+    const built = build(opts);
+    built.rows.push({
+      createdAt: CREATED_AT,
+      id: REQUEST,
+      reason: 'more please',
+      requestedBy: { id: requester, name: null },
+      resolvedAt: null,
+    });
+    await built.app.ready();
+    return built;
+  }
+
+  it('lets the requesting LEAD withdraw their request and audits it', async () => {
+    const { app, prisma, rows, updateMany } = await seeded({ teamRole: 'LEAD' });
+    const res = await cancel(app);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toEqual({ id: REQUEST });
+    expect(updateMany.mock.calls[0]?.[0]).toMatchObject({
+      where: { id: REQUEST, requestedById: USER, resolvedAt: null, teamId: TEAM },
+    });
+    expect(rows[0]?.resolvedAt).toBeInstanceOf(Date);
+    expect(prisma.configAuditLog.create).toHaveBeenCalledTimes(1);
+    const arg = JSON.stringify(prisma.configAuditLog.create.mock.calls[0]?.[0]);
+    expect(arg).toContain('TeamBudgetRequest');
+    expect(arg).toContain('"cancelled":true');
+  });
+
+  it('does not let a LEAD withdraw a colleague’s request', async () => {
+    const { app, prisma, rows } = await seeded(
+      { teamRole: 'LEAD' },
+      '00000000-0000-4000-8000-0000000000cc'
+    );
+    const res = await cancel(app);
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('BUDGET_REQUEST_NOT_FOUND');
+    expect(rows[0]?.resolvedAt).toBeNull();
+    expect(prisma.configAuditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('lets a team ADMIN cancel anyone’s request', async () => {
+    const { app } = await seeded({ teamRole: 'ADMIN' }, '00000000-0000-4000-8000-0000000000cc');
+    expect((await cancel(app)).statusCode).toBe(200);
+  });
+
+  it('refuses a team MEMBER and 404s a caller with no standing', async () => {
+    const member = await seeded({ teamRole: 'MEMBER' });
+    expect((await cancel(member.app)).statusCode).toBe(403);
+    expect(member.updateMany).not.toHaveBeenCalled();
+    const none = await seeded({ teamRole: null });
+    expect((await cancel(none.app)).statusCode).toBe(404);
   });
 });

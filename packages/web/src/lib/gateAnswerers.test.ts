@@ -10,7 +10,7 @@ import {
 describe('whoCanAnswer', () => {
   it('names the team and qualifies repository access by enforcement', () => {
     expect(whoCanAnswer('Payments')).toBe(
-      'Answerers include members of Payments (with access to the repository when GitHub access is enforced), the launcher and admins.'
+      'Answerers include members of Payments (with repository access when GitHub access is enforced), the launcher and platform admins.'
     );
   });
 
@@ -34,7 +34,7 @@ describe('whoCanAnswer', () => {
 describe('runControlWho', () => {
   it('says the rule includes the team, the launcher and admins', () => {
     expect(runControlWho('Payments', 'cancel')).toBe(
-      'Who can cancel this run includes members of Payments (with access to the repository when GitHub access is enforced), the launcher and admins.'
+      'Who can cancel this run includes members of Payments (with repository access when GitHub access is enforced), the launcher and platform admins.'
     );
     expect(runControlWho(null, 're-run')).toContain('members of the owning team (');
   });

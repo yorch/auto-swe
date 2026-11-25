@@ -11,6 +11,7 @@ import { HowItWorks } from '@/components/help/HowItWorks';
 import { RequestList } from '@/components/requests/RequestList';
 import { FirstRunChecklist } from '@/components/setup/FirstRunChecklist';
 import { GovernanceGuide } from '@/components/setup/GovernanceGuide';
+import { OrgGovernanceCard, useOrgGovernance } from '@/components/setup/OrgGovernanceCard';
 import { RestoreGuides } from '@/components/setup/RestoreGuides';
 import { SetupReadiness } from '@/components/setup/SetupReadiness';
 import { TourLauncher } from '@/components/tour/TourLauncher';
@@ -67,7 +68,7 @@ function useMine(state: RequestState) {
   return useRequests({ limit: 5, scope: 'MINE', state });
 }
 
-function WorkSection({ spec }: { spec: WorkSectionSpec }) {
+function WorkSection({ spec, canStart }: { spec: WorkSectionSpec; canStart: boolean }) {
   const query = useMine(spec.state);
   const requests = query.data?.data ?? [];
   const total = query.data?.meta.total ?? 0;
@@ -122,7 +123,7 @@ function WorkSection({ spec }: { spec: WorkSectionSpec }) {
           <EmptyState
             bordered
             className="py-7"
-            hint={spec.empty.hint}
+            hint={canStart ? spec.empty.hint : 'Work you launch from a team appears here.'}
             icon={spec.icon}
             title={spec.empty.title}
           />
@@ -189,6 +190,12 @@ function AccessDeniedNotice() {
 
 export default function HomePage() {
   const summary = useMeSummary();
+  // Someone who administers an organization and belongs to no team governs; they do not run work.
+  const governance = useOrgGovernance();
+  const governs = (governance?.orgs.length ?? 0) > 0;
+  // Until the permissions answer arrives nobody can tell a governance-only person from one who runs
+  // work, so the prompts to start work stay hidden rather than flash and vanish.
+  const canStart = governance !== null && !governs;
   return (
     <div className="space-y-8">
       <Suspense fallback={null}>
@@ -201,10 +208,12 @@ export default function HomePage() {
             <ButtonLink href="/library" variant="secondary">
               Browse workflows
             </ButtonLink>
-            <ButtonLink href="/start" variant="primary">
-              <Icon name="plus" size={14} />
-              Start work
-            </ButtonLink>
+            {canStart && (
+              <ButtonLink href="/start" variant="primary">
+                <Icon name="plus" size={14} />
+                Start work
+              </ButtonLink>
+            )}
           </>
         }
         learnMore={{ ...HELP_LINKS.concepts, label: 'Requests, runs and gates explained' }}
@@ -213,11 +222,12 @@ export default function HomePage() {
       />
       <HowItWorks />
       <SetupReadiness />
+      {governance && governs && <OrgGovernanceCard orgs={governance.orgs} />}
       <FirstRunChecklist />
       <DeskSummary summary={summary} />
       <div className="min-w-0 space-y-8">
-        <WorkSection spec={IN_FLIGHT} />
-        <WorkSection spec={RECENT} />
+        <WorkSection canStart={canStart} spec={IN_FLIGHT} />
+        <WorkSection canStart={canStart} spec={RECENT} />
       </div>
       <GovernanceGuide />
       <RestoreGuides />

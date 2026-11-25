@@ -35,6 +35,15 @@ export function orgRoleLabel(role: string | null | undefined): string {
   return role ? (ORG_ROLE_LABELS[role] ?? role) : '';
 }
 
+/** Who may launch work that spans repositories (epics, PRD runs), as one phrase for notices. */
+export const MULTI_REPO_LAUNCHERS =
+  'a lead or admin of the team that owns the repositories, or a platform admin';
+
+/** Who manages a repository: the owning team's leads and admins, the org's admins, platform admins. */
+export function repoManagersPhrase(ownerTeamName: string | null | undefined): string {
+  return `team leads and admins of ${ownerTeamName ?? 'the owning team'}, an admin of its organization or a platform admin`;
+}
+
 /** The platform roles a person can be given, lowest first. */
 export const PLATFORM_ROLE_OPTIONS = [
   { label: PLATFORM_ROLE_LABELS.USER, value: 'USER' },

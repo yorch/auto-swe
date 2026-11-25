@@ -1,3 +1,9 @@
+import {
+  type ConfigGrant,
+  canWriteAnySetting as grantsReachAnySetting,
+} from '../config/permissions.js';
+import type { PrismaClient } from '../generated/prisma/client.js';
+import type { PlatformRole } from '../generated/prisma/enums.js';
 import { runUnscoped } from '../lib/tenantGuard.js';
 import { decide } from './can.js';
 import { CATALOG, type CapabilityKey } from './catalog/index.js';
@@ -39,7 +45,16 @@ export interface EffectivePermissions {
   platformCapabilities: CapabilityKey[];
   teams: EffectiveTeam[];
   organizations: EffectiveOrganization[];
+  /**
+   * Whether the caller may change at least one registered setting somewhere: a platform
+   * administrator, or a person a configuration grant covers for a setting a grant can reach. It is
+   * the question behind the Platform settings entry, answered by the settings write rule itself.
+   */
+  canWriteAnySetting: boolean;
 }
+
+/** What the effective-permissions view reads: the standing tables plus the configuration grants. */
+export type EffectivePermissionsDb = PermissionsDb & Pick<PrismaClient, 'configPermission'>;
 
 /**
  * Why a narrowed answer was refused. Both reasons are one response to the caller: the team a
@@ -73,6 +88,42 @@ function heldOn(
 }
 
 /**
+ * The configuration grants that could apply to a person: their own, and the role grants of the
+ * teams they are on. The one query both the effective-permissions view and the gateway's write
+ * check use. It runs unscoped: a grant is looked up by the person, not by tenant.
+ */
+export async function loadGrantRows(
+  prisma: Pick<PrismaClient, 'configPermission'>,
+  userId: string,
+  teamIds: string[]
+): Promise<ConfigGrant[]> {
+  const rows = await runUnscoped(
+    "the person's own configuration grants and the role grants of the teams they are on",
+    ['ConfigPermission'],
+    () =>
+      prisma.configPermission.findMany({
+        select: {
+          keyPattern: true,
+          orgId: true,
+          role: true,
+          scope: true,
+          teamId: true,
+          userId: true,
+        },
+        where: {
+          OR: [
+            { userId },
+            ...(teamIds.length
+              ? [{ scope: 'TEAM' as const, teamId: { in: teamIds }, userId: null }]
+              : []),
+          ],
+        },
+      })
+  );
+  return rows as ConfigGrant[];
+}
+
+/**
  * The caller's effective permissions. For every team and organization the person is a member of it
  * lists the capabilities they hold, each tagged with its authority. With `teamId` it is narrowed to
  * that team, and includes the team when the person holds capabilities on it only through
@@ -81,7 +132,7 @@ function heldOn(
  * same whether the team exists or not.
  */
 async function effectivePermissionsUnscoped(
-  prisma: PermissionsDb,
+  prisma: EffectivePermissionsDb,
   actor: Extract<Actor, { kind: 'user' }>,
   opts: { teamId?: string } = {}
 ): Promise<EffectiveResult> {
@@ -147,9 +198,22 @@ async function effectivePermissionsUnscoped(
     return decide(standing, key, def.team ? { anyTeam: true } : undefined).allowed;
   });
 
+  const canWriteAnySetting = platformAdmin
+    ? true
+    : grantsReachAnySetting(
+        { id: actor.id, role: actor.role as PlatformRole },
+        await loadGrantRows(
+          prisma,
+          actor.id,
+          teamRows.map((m) => m.team.id)
+        ),
+        new Map(teamRows.map((m) => [m.team.id, m.role as string]))
+      );
+
   return {
     ok: true,
     value: {
+      canWriteAnySetting,
       organizations: orgs
         .map((o) => ({
           capabilities: heldOn(standing, 'org', { orgId: o.orgId }),
@@ -176,13 +240,13 @@ async function effectivePermissionsUnscoped(
 
 /** See {@link effectivePermissionsUnscoped}; the caller's own memberships span tenants by definition. */
 export function effectivePermissions(
-  prisma: PermissionsDb,
+  prisma: EffectivePermissionsDb,
   actor: Extract<Actor, { kind: 'user' }>,
   opts: { teamId?: string } = {}
 ): Promise<EffectiveResult> {
   return runUnscoped(
     "the effective-permissions view reads the caller's own memberships",
-    ['Team', 'TeamMembership', 'OrganizationMembership'],
+    ['Team', 'TeamMembership', 'OrganizationMembership', 'ConfigPermission'],
     () => effectivePermissionsUnscoped(prisma, actor, opts)
   );
 }

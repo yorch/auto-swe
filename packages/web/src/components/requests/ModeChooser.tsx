@@ -57,7 +57,7 @@ export function modeChoices(
         }
       : {
           mode: 'epic',
-          note: `${epicReason ?? 'Only team leads and administrators can start an epic.'} For several repositories, ask one, or start a workflow or an agent on each repository separately.`,
+          note: `${epicReason ?? 'Only team leads and admins can start an epic.'} For several repositories, ask one, or start a workflow or an agent on each repository separately.`,
           question: 'The change spans several repositories.',
         },
     canStartEpic
@@ -68,7 +68,7 @@ export function modeChoices(
         }
       : {
           mode: 'prd',
-          note: epicReason ?? 'Only team leads and administrators can start a PRD run.',
+          note: epicReason ?? 'Only team leads and admins can start a PRD run.',
           question: 'You have a product requirements document to break into stories.',
         },
   ];

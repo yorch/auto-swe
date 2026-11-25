@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { ProviderMark } from '@/components/auth/ProviderMark';
+import { RoleModelHint } from '@/components/RoleModelHint';
 import { AccessTokensSection } from '@/components/settings/AccessTokensSection';
 import { ConnectedAppsSection } from '@/components/settings/ConnectedAppsSection';
 import { GitHubCredentialsSection } from '@/components/settings/GitHubCredentialsSection';
@@ -16,9 +17,10 @@ import { Icon } from '@/components/ui/Icon';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useAuthProviders, useLinkedAccounts } from '@/hooks/useAccountSettings';
+import { useEffectivePermissions } from '@/hooks/useEffectivePermissions';
 import { API_BASE } from '@/lib/config';
 import { errMsg } from '@/lib/errors';
-import { platformRoleLabel } from '@/lib/roleLabels';
+import { orgRoleLabel, platformRoleLabel, teamRoleLabel } from '@/lib/roleLabels';
 import { type SocialProviderId, useAuthStore } from '@/stores/authStore';
 
 interface Provider {
@@ -36,6 +38,51 @@ const SOCIAL_PROVIDERS: Provider[] = [
     label: 'Okta',
   },
 ];
+
+/** Every level the person holds a role on: the platform, each organization, each team. */
+function YourAccess() {
+  const { data: perms } = useEffectivePermissions();
+  if (!perms) {
+    return null;
+  }
+  const rows: { key: string; level: string; where: string; role: string }[] = [
+    {
+      key: 'platform',
+      level: 'Platform',
+      role: platformRoleLabel(perms.platformRole) || 'User',
+      where: 'Whole deployment',
+    },
+    ...(perms.organizations ?? []).map((o) => ({
+      key: `org-${o.orgId}`,
+      level: 'Organization',
+      role: orgRoleLabel(o.role),
+      where: o.name,
+    })),
+    ...(perms.teams ?? []).map((t) => ({
+      key: `team-${t.teamId}`,
+      level: 'Team',
+      role: t.role ? teamRoleLabel(t.role) : 'Through organization or platform authority',
+      where: t.name,
+    })),
+  ];
+  return (
+    <div className="border-t border-ink-600 py-4" data-testid="your-access">
+      <h3 className="label-mono">Your access</h3>
+      <ul className="mt-2 divide-y divide-ink-600">
+        {rows.map((r) => (
+          <li className="flex flex-wrap items-baseline gap-x-3 py-1.5 text-sm" key={r.key}>
+            <span className="w-28 shrink-0 text-paper-400">{r.level}</span>
+            <span className="min-w-0 flex-1 text-paper-100">{r.where}</span>
+            <Badge tone="neutral" variant="outline">
+              {r.role}
+            </Badge>
+          </li>
+        ))}
+      </ul>
+      <RoleModelHint className="mt-3" />
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -167,7 +214,7 @@ export default function SettingsPage() {
               <dd className="mt-0.5 break-all text-sm text-paper-100">{user?.email ?? '—'}</dd>
             </div>
             <div>
-              <dt className="label-mono">Role</dt>
+              <dt className="label-mono">Platform role</dt>
               <dd className="mt-1">
                 <Badge tone="accent" variant="outline">
                   {roleLabel}
@@ -176,6 +223,7 @@ export default function SettingsPage() {
             </div>
           </dl>
         </div>
+        <YourAccess />
       </SettingsSection>
 
       <SettingsSection

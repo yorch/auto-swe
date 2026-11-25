@@ -5,9 +5,11 @@ import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/stores/authStore';
 import { useCan } from './useCan';
+import { ME_SUMMARY_KEY } from './useMeSummary';
 import {
   useAddTeamMember,
   useAuthoringTeams,
+  useLeaveTeam,
   useRemoveTeamMember,
   useUpdateTeamMember,
 } from './useTeams';
@@ -148,4 +150,34 @@ describe('membership mutations refresh the effective permissions', () => {
       await waitFor(() => expect(can.result.current).toBe(false));
     }
   );
+});
+
+describe('membership mutations refresh the team overview and the summary', () => {
+  it.each([
+    ['add', () => useAddTeamMember('l'), { userId: 'u2' }],
+    ['update', () => useUpdateTeamMember('l'), { role: 'MEMBER', userId: 'u1' }],
+    ['remove', () => useRemoveTeamMember('l'), 'u1'],
+  ] as const)('after %s', async (_name, useMutationHook, variables) => {
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    const mutation = renderHook(() => useMutationHook(), { wrapper });
+    act(() => (mutation.result.current as { mutate: (v: unknown) => void }).mutate(variables));
+    await waitFor(() => {
+      const keys = spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
+      expect(keys).toContain(JSON.stringify(['team-overview', 'l']));
+      expect(keys).toContain(JSON.stringify(ME_SUMMARY_KEY));
+    });
+  });
+});
+
+describe('leaving a team', () => {
+  it('refreshes the directory and the person’s own join requests', async () => {
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    const mutation = renderHook(() => useLeaveTeam('l'), { wrapper });
+    act(() => mutation.result.current.mutate());
+    await waitFor(() => {
+      const keys = spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
+      expect(keys).toContain(JSON.stringify(['team-directory']));
+      expect(keys).toContain(JSON.stringify(['my-join-requests']));
+    });
+  });
 });

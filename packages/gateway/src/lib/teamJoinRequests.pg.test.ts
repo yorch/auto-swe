@@ -400,6 +400,57 @@ describe.skipIf(!enabled)('team join requests against Postgres', () => {
     ]);
   });
 
+  it('labels a team GOVERNS from organization and platform authority, with MEMBER and REQUESTED first', async () => {
+    const org = await makeOrg('governs');
+    const governor = await makeUser('governs-admin');
+    const plain = await makeUser('governs-plain');
+    await inOrg(governor, org, 'ADMIN');
+    await inOrg(plain, org);
+    const tOpen = await makeTeam('governs-open', org);
+    const tOwn = await makeTeam('governs-own', org);
+    const tAsked = await makeTeam('governs-asked', org);
+    await onTeam(governor, tOwn, 'MEMBER');
+    // The governor asked to join before being promoted: the request is still theirs to withdraw.
+    const asked = await create(governor, tAsked);
+    if (!asked.ok) {
+      throw new Error('setup failed');
+    }
+
+    const relationships = async (viewer: string, role: 'ADMIN' | 'USER' = 'USER') => {
+      const result = await loadDirectory(
+        prisma,
+        { role, sub: viewer },
+        { limit: 100, q: name('team-governs') }
+      );
+      if (!result.ok) {
+        throw new Error('directory failed');
+      }
+      return new Map(result.teams.map((t) => [t.id, t]));
+    };
+
+    const asGovernor = await relationships(governor);
+    expect(asGovernor.get(tOpen)?.relationship).toBe('GOVERNS');
+    expect(asGovernor.get(tOwn)?.relationship).toBe('MEMBER');
+    expect(asGovernor.get(tAsked)).toMatchObject({
+      relationship: 'REQUESTED',
+      requestId: asked.request.id,
+    });
+
+    // An ordinary organization member has no authority over any of them.
+    const asPlain = await relationships(plain);
+    expect([tOpen, tOwn, tAsked].map((id) => asPlain.get(id)?.relationship)).toEqual([
+      'NONE',
+      'NONE',
+      'NONE',
+    ]);
+    expect('requestId' in (asPlain.get(tOpen) ?? {})).toBe(false);
+
+    // A platform administrator governs every team they are not on.
+    const asPlatform = await relationships(platformAdmin, 'ADMIN');
+    expect(asPlatform.get(tOpen)?.relationship).toBe('GOVERNS');
+    expect(asPlatform.get(tOwn)?.relationship).toBe('GOVERNS');
+  });
+
   /* ── Follow-up: organization step, combined approval, clamp ─────────────── */
 
   const actAs = (id: string) => ({ authorization: `Bearer ${id}` });

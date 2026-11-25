@@ -2,6 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useAuthStore } from '@/stores/authStore';
 import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import { TeamManagePanel } from './TeamManagePanel';
 
@@ -14,6 +15,7 @@ vi.mock('@/components/teams/ServicePrincipalsSection', () => ({
 beforeEach(stubDialogPrototype);
 afterEach(() => {
   cleanup();
+  useAuthStore.setState({ isAuthenticated: false, user: null });
   vi.unstubAllGlobals();
 });
 
@@ -63,6 +65,7 @@ function gateway(extra: Record<string, () => unknown> = {}) {
         lead: { openPullRequests: 0, staleApprovals: 0, unownedFailures: 0 },
       },
     }),
+    [`GET /api/v1/teams/${TEAM_ID}/budget-requests/mine`]: () => ({ data: null }),
     ...extra,
   });
 }
@@ -147,5 +150,67 @@ describe('TeamManagePanel', () => {
     expect(within(budget).queryByRole('button', { name: 'Request a change' })).toBeNull();
     expect(within(budget).queryByRole('link')).toBeNull();
     expect(within(budget).queryByText('Ask a team or organization admin to change it.')).toBeNull();
+  });
+
+  describe('a pending budget request', () => {
+    const pending = () => ({
+      data: {
+        createdAt: new Date(Date.now() - 3 * 3600_000).toISOString(),
+        id: 'b9',
+        reason: 'Launch month',
+        requestedBy: { id: 'u1', name: 'Ada' },
+      },
+    });
+
+    beforeEach(() => {
+      useAuthStore.setState({ isAuthenticated: true, user: { role: 'USER', sub: 'u1' } as never });
+    });
+
+    it('names the requester and offers no cancel when a colleague sent it', async () => {
+      useAuthStore.setState({ isAuthenticated: true, user: { role: 'USER', sub: 'u2' } as never });
+      gateway({ [`GET /api/v1/teams/${TEAM_ID}/budget-requests/mine`]: pending });
+      render(withQuery(<TeamManagePanel canManageBudget={false} team={team} />));
+      const who = await screen.findByTestId('budget-request-requester');
+      expect(who.textContent).toBe('Requested by Ada; only they can cancel it.');
+      expect(screen.queryByRole('button', { name: 'Cancel request' })).toBeNull();
+    });
+
+    it('shows its age, reason and who decides it instead of the request form', async () => {
+      gateway({ [`GET /api/v1/teams/${TEAM_ID}/budget-requests/mine`]: pending });
+      render(withQuery(<TeamManagePanel canManageBudget={false} team={team} />));
+      const note = await screen.findByTestId('budget-request-pending');
+      expect(note.textContent).toMatch(/Budget change requested .*3.*: Launch month\./);
+      expect(note.textContent).toContain('A team or organization admin decides this.');
+      expect(screen.queryByRole('button', { name: 'Request a change' })).toBeNull();
+    });
+
+    it('cancels the request and offers the form again', async () => {
+      let open = true;
+      const spy = gateway({
+        [`GET /api/v1/teams/${TEAM_ID}/budget-requests/mine`]: () =>
+          open ? pending() : { data: null },
+        [`POST /api/v1/teams/${TEAM_ID}/budget-requests/b9/cancel`]: () => {
+          open = false;
+          return { data: { id: 'b9' } };
+        },
+      });
+      render(withQuery(<TeamManagePanel canManageBudget={false} team={team} />));
+      fireEvent.click(await screen.findByRole('button', { name: 'Cancel request' }));
+      expect(await screen.findByRole('button', { name: 'Request a change' })).toBeTruthy();
+      expect(
+        spy.mock.calls.some((c) =>
+          String(c[0]).endsWith(`/teams/${TEAM_ID}/budget-requests/b9/cancel`)
+        )
+      ).toBe(true);
+    });
+
+    it('does not read the request for a caller who may edit the cap', async () => {
+      const spy = gateway();
+      render(withQuery(<TeamManagePanel canManageBudget team={team} />));
+      await within(await screen.findByTestId('manage-budget')).findByRole('progressbar');
+      expect(spy.mock.calls.some((c) => String(c[0]).includes('/budget-requests/mine'))).toBe(
+        false
+      );
+    });
   });
 });

@@ -130,14 +130,14 @@ describe('approvals page filters and state', () => {
     steps.rows = Array.from({ length: 100 }, (_, i) => step(String(i), 'APPROVAL', `S${i}`));
     render(<GovernApprovalsPage />);
     expect(screen.getByText(/Showing 100 pending steps, the most this list loads/)).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Pending (100 for you)' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Pending (100)' })).toBeTruthy();
   });
 
   it('shows the exact gateway total on the tab, past the list cap, with no plus', () => {
     steps.rows = Array.from({ length: 100 }, (_, i) => step(String(i), 'APPROVAL', `S${i}`));
     steps.count = 150;
     render(<GovernApprovalsPage />);
-    expect(screen.getByRole('tab', { name: 'Pending (150 for you)' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Pending (150)' })).toBeTruthy();
   });
 
   it('keeps the tab, kind and overdue choices in the address', () => {
@@ -257,8 +257,38 @@ describe('approvals page team filter', () => {
     steps.count = 40;
     steps.teamCount = 3;
     render(<GovernApprovalsPage />);
-    expect(screen.getByRole('tab', { name: /Pending \(3 for you\)/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Pending (3)' })).toBeTruthy();
     steps.teamCount = null;
+  });
+
+  it('labels the tab with both counts and lists answerable steps first', () => {
+    cardProps.seen = [];
+    steps.rows = [
+      { ...step('a', 'APPROVAL', 'Locked A'), canAnswer: false },
+      step('b', 'APPROVAL', 'Open B'),
+      { ...step('c', 'APPROVAL', 'Locked C'), canAnswer: false },
+      { ...step('d', 'APPROVAL', 'Open D'), canAnswer: true },
+    ];
+    steps.count = 2;
+    render(<GovernApprovalsPage />);
+    expect(screen.getByRole('tab', { name: 'Pending (4 · 2 you can answer)' })).toBeTruthy();
+    const ids = cardProps.seen.slice(-4).map((c) => (c.step as { id: string }).id);
+    expect(ids).toEqual(['b', 'd', 'a', 'c']);
+    steps.count = null;
+  });
+
+  it('counts only pending steps on the Pending label while the All tab lists decided ones', () => {
+    nav.search = 'tab=ALL';
+    steps.rows = [
+      { ...step('a', 'APPROVAL', 'A'), status: 'PENDING' },
+      { ...step('b', 'APPROVAL', 'B'), status: 'RESOLVED' },
+      { ...step('c', 'APPROVAL', 'C'), status: 'RESOLVED' },
+      { ...step('d', 'APPROVAL', 'D'), status: 'TIMED_OUT' },
+    ];
+    steps.count = 1;
+    render(<GovernApprovalsPage />);
+    expect(screen.getByRole('tab', { name: 'Pending (1)' })).toBeTruthy();
+    steps.count = null;
   });
 
   it('lists only the steps the caller can answer for ?actionable=1, and offers a toggle to undo it', () => {

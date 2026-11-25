@@ -127,6 +127,60 @@ describe('team space layout', () => {
     expect(screen.getByRole('link', { name: 'Settings' })).toBeTruthy();
   });
 
+  it('names the authority a non-member acts under beside no team role', async () => {
+    gateway([], standing(['team.settings.manage'], null, 'org-admin'), {
+      'GET /api/v1/teams': () => ({ data: [team('payments', 'Payments', null)] }),
+    });
+    renderLayout('payments');
+    expect(await screen.findByText('Org admin of Acme Corp')).toBeTruthy();
+    expect(screen.getByTestId('role-model-hint')).toBeTruthy();
+    expect(screen.queryByText(/you:/)).toBeNull();
+  });
+
+  it('names a platform admin who is not on the team', async () => {
+    gateway([], PLATFORM_ADMIN, {
+      'GET /api/v1/teams': () => ({ data: [team('payments', 'Payments', null)] }),
+    });
+    renderLayout('payments');
+    expect(await screen.findByText('Platform admin')).toBeTruthy();
+  });
+
+  it('adds "and org admin" when a member holds governance on the team through the organization', async () => {
+    gateway(
+      [team('payments', 'Payments', 'MEMBER')],
+      standing(['team.members.manage'], 'MEMBER', 'org-admin')
+    );
+    renderLayout('payments');
+    expect(await screen.findByText('you: Team member')).toBeTruthy();
+    expect(screen.getByText('and org admin')).toBeTruthy();
+  });
+
+  it('adds "and org admin" for a team lead who is also an administrator of the organization', async () => {
+    const answer = standing(['team.members.manage'], 'LEAD', 'team-role');
+    gateway([team('payments', 'Payments', 'LEAD')], {
+      ...answer,
+      organizations: [
+        {
+          capabilities: [{ authority: 'org-admin', key: 'org.members.manage' }],
+          name: 'Acme Corp',
+          orgId: 'org-1',
+          role: '',
+        },
+      ],
+    });
+    renderLayout('payments');
+    expect(await screen.findByText('you: Team lead')).toBeTruthy();
+    expect(screen.getByText('and org admin')).toBeTruthy();
+  });
+
+  it('adds no authority chip for a member who holds everything through the team role', async () => {
+    gateway([team('payments', 'Payments', 'LEAD')]);
+    renderLayout('payments');
+    await screen.findByText('you: Team lead');
+    expect(screen.queryByText('and org admin')).toBeNull();
+    expect(screen.queryByTestId('role-model-hint')).toBeNull();
+  });
+
   it('renders the same not-found for a visible-list miss as for an unknown slug', async () => {
     gateway([], standing([], null, 'org-admin'), {
       'GET /api/v1/teams': () => ({ data: [team('ops', 'Ops', null)] }),
@@ -228,6 +282,54 @@ describe('team space layout', () => {
     expect(screen.queryByRole('navigation', { name: 'Team sections' })).toBeNull();
     release();
     expect(await screen.findByRole('link', { name: 'Settings' })).toBeTruthy();
+  });
+
+  describe('an organization admin with no team role', () => {
+    const orgAdmin = {
+      organizations: [{ capabilities: [], name: 'Acme', orgId: 'org-1', role: 'ADMIN' }],
+      platformCapabilities: [],
+      platformRole: '',
+      teams: [],
+    };
+    const narrowedAnswer = standing(['team.settings.manage'], null, 'org-admin');
+
+    function withNarrowed(handle: (narrowed: () => Promise<Response>) => Promise<Response>) {
+      gateway([], orgAdmin, {
+        'GET /api/v1/teams': () => ({ data: [team('payments', 'Payments', null)] }),
+      });
+      const inner = globalThis.fetch;
+      vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes('/api/v1/me/permissions?teamId=')) {
+          return handle(async () => Response.json(narrowedAnswer));
+        }
+        return inner(input, init);
+      });
+    }
+
+    it('shows the loading shape, not a missing tab or not-found, while the per-team answer is pending', async () => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      withNarrowed(async (answer) => {
+        await gate;
+        return answer();
+      });
+      renderLayout('payments');
+      await new Promise((r) => setTimeout(r, 50));
+      expect(screen.queryByRole('navigation', { name: 'Team sections' })).toBeNull();
+      expect(screen.queryByText('tab content')).toBeNull();
+      release();
+      expect(await screen.findByRole('link', { name: 'Settings' })).toBeTruthy();
+    });
+
+    it('shows the failure of the per-team answer instead of a tab bar without Settings', async () => {
+      withNarrowed(async () => new Response('{}', { status: 500 }));
+      renderLayout('payments');
+      expect(await screen.findByText(/Could not load team permissions/)).toBeTruthy();
+      expect(screen.queryByRole('navigation', { name: 'Team sections' })).toBeNull();
+      expect(screen.queryByText('tab content')).toBeNull();
+    });
   });
 
   it('offers a platform admin Settings, and any team they can list', async () => {

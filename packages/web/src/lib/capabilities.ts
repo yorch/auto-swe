@@ -179,9 +179,11 @@ export function grantableTeamRoles(
 
 /**
  * What a page or navigation entry needs: any signed-in person (`'any'`, the API narrows what the
- * page shows), a platform administrator, or a capability of the catalog held anywhere.
+ * page shows), a platform administrator, a person who may change at least one setting
+ * (`'settings-writer'`: the server's `canWriteAnySetting`, which counts configuration grants), or a
+ * capability of the catalog held anywhere.
  */
-export type Access = 'any' | 'platform-admin' | CapabilityKey;
+export type Access = 'any' | 'platform-admin' | 'settings-writer' | CapabilityKey;
 
 /** Whether `perms` meets `access`. Not loaded is `false` for everything but `'any'`. */
 export function holdsAccess(perms: Permissions | null | undefined, access: Access): boolean {
@@ -190,6 +192,9 @@ export function holdsAccess(perms: Permissions | null | undefined, access: Acces
   }
   if (access === 'platform-admin') {
     return isPlatformAdminAnswer(perms);
+  }
+  if (access === 'settings-writer') {
+    return perms?.canWriteAnySetting === true;
   }
   return holdsCapability(perms, access);
 }

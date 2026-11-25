@@ -36,6 +36,7 @@ import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { useWorkflowProcess } from '@/hooks/useWorkflowProcess';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { requestHref } from '@/lib/requestDisplay';
+import { MULTI_REPO_LAUNCHERS } from '@/lib/roleLabels';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -203,7 +204,7 @@ function Step({
   );
 }
 
-const BASE_EPIC_REASON = 'Requires team lead or administrator.';
+const BASE_EPIC_REASON = `Requires ${MULTI_REPO_LAUNCHERS}.`;
 
 /**
  * Whether the caller may start an epic, and why not. The caller must hold `team.launch.multi-repo`

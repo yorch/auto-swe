@@ -33,9 +33,11 @@ export function permissionsFor(
     teams?: TeamStanding[];
     orgs?: OrgStanding[];
     platformRole?: string;
+    canWriteAnySetting?: boolean;
   } = {}
 ): Permissions {
   return {
+    canWriteAnySetting: opts.canWriteAnySetting ?? false,
     organizations: (opts.orgs ?? []).map((o) => ({
       capabilities: o.capabilities.map((key) => ({ authority: 'org-admin', key })),
       name: o.orgId,
@@ -57,6 +59,7 @@ export function permissionsFor(
 
 /** A platform administrator: every platform capability the dashboard asks about is held. */
 export const ADMIN_PERMISSIONS: Permissions = permissionsFor({
+  canWriteAnySetting: true,
   platform: ['platform.users.manage'],
 });
 

@@ -124,6 +124,12 @@ export const OrchestrationDetailDtoSchema = OrchestrationSummaryDtoSchema.extend
   budgetTier: z.string(),
   /** True for the launcher: the only caller who sees the message box, attach and approvals. */
   canControl: z.boolean(),
+  /**
+   * True when the viewer is not the launcher but may stop this as an operator's emergency stop:
+   * a `team.orchestrations.stop` holder looking at one a service principal launched. Computed by
+   * the rule the cancel and end routes enforce.
+   */
+  canEmergencyStop: z.boolean().optional(),
   children: z.array(OrchestrationChildDtoSchema),
   connections: z.array(z.object({ id: z.string(), name: z.string().nullable() })),
   /** Spend of the orchestrator's own turns, of its children, and the sum. */

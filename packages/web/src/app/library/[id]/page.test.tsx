@@ -15,6 +15,7 @@ const hooks = vi.hoisted(() => ({
   editorProps: null as { baseVersion?: number; onChange?: (spec: unknown) => void } | null,
   mutateAsync: vi.fn(),
   permissionsLoaded: true,
+  platformAdmin: false,
   refineProps: null as { onSaved?: (v: number) => void } | null,
   template: {
     activeVersion: 1,
@@ -22,7 +23,7 @@ const hooks = vi.hoisted(() => ({
     id: '11111111-1111-4111-8111-111111111111',
     name: 'Broken',
     status: 'DRAFT',
-    team: { id: 't1' },
+    team: { id: 't1', name: 'Payments' },
     versions: [{ createdAt: '2026-01-01T00:00:00.000Z', version: 1 }],
     webhookSignatureRequiredByPolicy: false,
     webhookSigning: {
@@ -34,7 +35,8 @@ const hooks = vi.hoisted(() => ({
   },
   triggerRenders: 0,
   version: {
-    generatedBy: null,
+    createdBy: null as string | null,
+    generatedBy: null as string | null,
     reviewedAt: null,
     spec: {
       entry: 'start',
@@ -80,6 +82,7 @@ vi.mock('@/hooks/useModelCatalog', () => ({ useRolePricing: () => ({ data: undef
 vi.mock('@/hooks/useCan', () => ({
   useCanOwned: (capability: string) =>
     capability === 'team.templates.write' ? hooks.canWrite : hooks.canShell,
+  usePlatformAdmin: () => hooks.platformAdmin,
 }));
 vi.mock('@/hooks/useEffectivePermissions', () => ({
   useEffectivePermissions: () => ({ data: hooks.permissionsLoaded ? {} : undefined }),
@@ -123,6 +126,7 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+import { useAuthStore } from '@/stores/authStore';
 import TemplateDetailPage from './page';
 
 beforeEach(() => {
@@ -138,6 +142,9 @@ beforeEach(() => {
   hooks.versionQuery.refetch.mockReset();
   hooks.template.versions = [{ createdAt: '2026-01-01T00:00:00.000Z', version: 1 }];
   hooks.canWrite = true;
+  hooks.platformAdmin = false;
+  hooks.version.createdBy = null;
+  hooks.version.generatedBy = null;
   hooks.canShell = true;
   hooks.permissionsLoaded = true;
 });
@@ -418,9 +425,41 @@ describe('the workspace tabs', () => {
 
   it('says what editing will do only while editing', async () => {
     await renderPage();
-    expect(screen.getByText('Read only')).toBeTruthy();
+    expect(screen.getByText(/^Read only/)).toBeTruthy();
     fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
     expect(await screen.findByText('Editing v1 — saves as a new version')).toBeTruthy();
+  });
+
+  it('says who edits the workflow when the caller cannot', async () => {
+    hooks.canWrite = false;
+    hooks.canShell = false;
+    await renderPage();
+    expect(
+      screen.getByText('Read only: leads and admins of Payments edit this workflow')
+    ).toBeTruthy();
+  });
+
+  it('disables review on a version the caller generated, with the reason, unless a platform admin', async () => {
+    useAuthStore.setState({ user: { role: 'ENGINEER', sub: 'u1' } as never });
+    hooks.version.generatedBy = 'workflow_author';
+    hooks.version.createdBy = 'u1';
+    try {
+      const view = await renderPage();
+      const button = await screen.findByRole('button', { name: /Review & (approve|activate)/ });
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+      expect(
+        screen.getByText('Someone other than the person who generated this version must review it')
+      ).toBeTruthy();
+      view.unmount();
+      hooks.platformAdmin = true;
+      await renderPage();
+      const enabled = await screen.findByRole('button', { name: /Review & (approve|activate)/ });
+      // The fixture's lint error may still block it; the self-review reason must be gone.
+      expect(enabled.getAttribute('aria-describedby')).not.toBe('review-blocked-reason');
+      expect(screen.queryByText(/Someone other than the person who generated/)).toBeNull();
+    } finally {
+      useAuthStore.setState({ user: null });
+    }
   });
 });
 

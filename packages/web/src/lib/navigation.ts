@@ -211,7 +211,7 @@ const ADMIN_PAGES: NavItem[] = [
     section: 'Spend & insights',
   },
   {
-    access: 'team.settings.manage',
+    access: 'settings-writer',
     href: '/admin/platform-settings',
     icon: 'settings',
     label: 'Platform settings',

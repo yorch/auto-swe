@@ -170,6 +170,23 @@ describe('GET /:orgId/members', () => {
     expect(body.data[0].userId).toBe(TARGET_USER);
   });
 
+  it('sends the platform role of each member to a platform admin', async () => {
+    const app = buildApp('ADMIN');
+    await app.ready();
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/members` });
+    expect(res.json().data[0].user.role).toBe('USER');
+  });
+
+  it('leaves the platform role out for a caller who does not manage users', async () => {
+    const app = buildApp('USER', 'ADMIN');
+    await app.ready();
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/members` });
+    expect(res.statusCode).toBe(200);
+    const user = res.json().data[0].user;
+    expect(user).toEqual({ email: 'lead@test.com', id: TARGET_USER, name: null });
+    expect('role' in user).toBe(false);
+  });
+
   it('returns 403 when non-member tries to list', async () => {
     const app = buildApp('USER', null);
     await app.ready();

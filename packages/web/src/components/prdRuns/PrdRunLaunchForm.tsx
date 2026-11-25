@@ -21,6 +21,7 @@ import { errMsg } from '@/lib/errors';
 import { groupReposByTeam } from '@/lib/repoGroups';
 import { launchBudgetHint, launchBudgetReason } from '@/lib/repoLaunch';
 import { requestHref } from '@/lib/requestDisplay';
+import { MULTI_REPO_LAUNCHERS } from '@/lib/roleLabels';
 
 /** The gateway's reason for a repository whose owning team the caller does not lead. */
 const TEAM_LEAD_REQUIRED = 'team-lead-required';
@@ -87,7 +88,7 @@ export function PrdRunLaunchForm({ reviewBeforeLaunch = false }: { reviewBeforeL
   const [started, setStarted] = useState<CreatePrdRunResponse | null>(null);
 
   if (!canCreate) {
-    return <Alert variant="info">Starting a PRD run needs a team lead or administrator.</Alert>;
+    return <Alert variant="info">Starting a PRD run needs {MULTI_REPO_LAUNCHERS}.</Alert>;
   }
   if (started) {
     return <StartedPrdRun started={started} />;

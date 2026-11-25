@@ -95,7 +95,8 @@ describe('UserAnalyticsDetailPage', () => {
     render(withQuery(<UserAnalyticsDetailPage params={resolvedParams({ id: UID })} />));
 
     expect(await screen.findByRole('heading', { name: 'Alice' })).toBeTruthy();
-    expect(screen.getByText(/payments \(LEAD\)/)).toBeTruthy();
+    expect(screen.getByText(/payments \(Team lead\)/)).toBeTruthy();
+    expect(screen.getByText(/alice@example.com · Platform admin/)).toBeTruthy();
     expect(screen.getByText('Signed in')).toBeTruthy();
     expect(screen.getByText('Failed')).toBeTruthy();
     expect(screen.getAllByText('Invalid credentials').length).toBeGreaterThan(0);

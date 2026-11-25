@@ -17,7 +17,11 @@ import { DEFAULT_TEAM_ROLE, teamRoleRank } from './roleLabels';
 export type { JoinRequestStatusValue };
 export { MAX_JOIN_REQUEST_MESSAGE_LENGTH, MAX_JOIN_REQUEST_NOTE_LENGTH };
 
-export type JoinRelationship = 'MEMBER' | 'REQUESTED' | 'NONE';
+/**
+ * `GOVERNS`: the viewer is not on the team but holds `team.read` there through their
+ * organization or the platform, so the team opens instead of being asked to join.
+ */
+export type JoinRelationship = 'MEMBER' | 'GOVERNS' | 'REQUESTED' | 'NONE';
 
 export interface DirectoryTeam {
   id: string;
@@ -201,20 +205,28 @@ export function requesterLabel(row: Pick<JoinRequestRow, 'requester' | 'user'>):
 
 export interface DirectoryAction {
   /** The badge text beside the team name; null for a team the viewer has no tie to. */
-  badge: 'Member' | 'Requested' | null;
+  badge: 'Member' | 'Administered' | 'Requested' | null;
   /** Whether Request to join is offered. */
   canRequest: boolean;
+  /** Whether the row links to the team's space. */
+  canOpen: boolean;
 }
+
+/** Said under a governed team's row: adding yourself is a recorded step on the team's Members tab. */
+export const GOVERNS_NOTE =
+  'You administer this team. Adding yourself is an audited step on its Members tab.';
 
 /** What a directory row offers for the viewer's relationship to the team. */
 export function directoryAction(relationship: JoinRelationship): DirectoryAction {
   switch (relationship) {
     case 'MEMBER':
-      return { badge: 'Member', canRequest: false };
+      return { badge: 'Member', canOpen: true, canRequest: false };
+    case 'GOVERNS':
+      return { badge: 'Administered', canOpen: true, canRequest: false };
     case 'REQUESTED':
-      return { badge: 'Requested', canRequest: false };
+      return { badge: 'Requested', canOpen: false, canRequest: false };
     default:
-      return { badge: null, canRequest: true };
+      return { badge: null, canOpen: false, canRequest: true };
   }
 }
 

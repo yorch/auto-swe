@@ -100,6 +100,14 @@ describe('holdsAccess', () => {
     expect(holdsAccess(null, 'platform-admin')).toBe(false);
   });
 
+  it('asks the server flag for "settings-writer"', () => {
+    expect(holdsAccess(perms({ canWriteAnySetting: true }), 'settings-writer')).toBe(true);
+    expect(holdsAccess(perms({ canWriteAnySetting: false }), 'settings-writer')).toBe(false);
+    // An answer from a gateway that does not send the flag grants nothing.
+    expect(holdsAccess(LEAD, 'settings-writer')).toBe(false);
+    expect(holdsAccess(null, 'settings-writer')).toBe(false);
+  });
+
   it('asks a capability anywhere', () => {
     expect(holdsAccess(LEAD, 'team.repos.manage')).toBe(true);
     expect(holdsAccess(LEAD, 'org.baselines.read')).toBe(false);

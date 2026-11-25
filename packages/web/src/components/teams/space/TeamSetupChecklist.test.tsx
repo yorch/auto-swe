@@ -21,6 +21,15 @@ vi.mock('@/hooks/useEffectivePermissions', async () =>
 const LEAD = permissionsFor({
   teams: [{ capabilities: ['team.members.manage'], role: 'LEAD', teamId: 't1' }],
 });
+const BUDGET_LEAD = permissionsFor({
+  teams: [
+    {
+      capabilities: ['team.members.manage', 'team.budget.manage'],
+      role: 'ADMIN',
+      teamId: 't1',
+    },
+  ],
+});
 
 afterEach(() => {
   resetPermissions();
@@ -70,8 +79,26 @@ describe('team setup checklist', () => {
     expect(client.getQueryData(['team', 't1'])).toMatchObject({ monthlyBudgetUsdCents: 10000 });
   });
 
-  it('shows missing setup to a team lead and links to the working surfaces', async () => {
+  it('shows the budget item as plain text to a caller who cannot manage the budget', async () => {
     setPermissions(LEAD);
+    setupFetchMock({
+      '/api/v1/teams/t1': () => ({
+        data: {
+          memberships: [{}],
+          monthlyBudgetUsdCents: null,
+          repositories: [],
+          sharedRepositories: [],
+        },
+      }),
+    });
+    render(withQuery(<TeamSetupChecklist team={team} />));
+    expect(await screen.findByText('Team setup')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: /budget/ })).toBeNull();
+    expect(screen.getByText(/Set a team budget/)).toBeTruthy();
+  });
+
+  it('shows missing setup to a team lead and links to the working surfaces', async () => {
+    setPermissions(BUDGET_LEAD);
     setupFetchMock({
       '/api/v1/teams/t1': () => ({
         data: {

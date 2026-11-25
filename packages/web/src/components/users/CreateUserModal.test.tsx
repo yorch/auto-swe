@@ -63,6 +63,14 @@ function setupFetchMock(handlers: Record<string, (body?: unknown) => unknown>) {
 }
 
 describe('CreateUserModal', () => {
+  it('warns what a platform admin can do once that role is chosen, and not for a user', () => {
+    render(withQuery(<ControlledHost onCloseSpy={vi.fn()} />));
+    expect(screen.queryByText(/every capability on every team/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Platform role/ }));
+    fireEvent.click(screen.getByRole('option', { name: 'Platform admin' }));
+    expect(screen.getByText(/This person will have every capability on every team/)).toBeTruthy();
+  });
+
   it('with an explicit password: closes the modal directly (no secret reveal)', async () => {
     const onClose = vi.fn();
     const fetchSpy = setupFetchMock({

@@ -553,6 +553,137 @@ describe.skipIf(!enabled)('the global lock order against Postgres', () => {
     }
   }, 180_000);
 
+  /* ── Leaving a team ──────────────────────────────────────────────────────── */
+
+  /** The caller's `DELETE /teams/:id/members/me`, started and not awaited. */
+  const leave = (userId: string, teamId: string) =>
+    settle(
+      app.inject({
+        headers: { authorization: `Bearer ${userId}` },
+        method: 'DELETE',
+        url: `/api/v1/teams/${teamId}/members/me`,
+      })
+    );
+
+  async function adminsOf(teamId: string) {
+    return prisma.teamMembership.count({ where: { role: 'ADMIN', teamId } });
+  }
+
+  it('lets a member leave and refuses the last admin, answering a second leave with 404', async () => {
+    const orgId = await makeOrg('leave-basic');
+    const teamId = await makeTeam('leave-basic', orgId);
+    const admin = await makeUser('leave-admin');
+    const member = await makeUser('leave-member');
+    await onTeam(admin, teamId, 'ADMIN');
+    await onTeam(member, teamId, 'MEMBER');
+
+    const refused = await leave(admin, teamId);
+    expect(refused.ok && refused.value.statusCode).toBe(409);
+    expect(refused.ok && refused.value.json().error.code).toBe('LAST_TEAM_ADMIN');
+    expect(await adminsOf(teamId)).toBe(1);
+
+    const left = await leave(member, teamId);
+    expect(left.ok && left.value.statusCode).toBe(200);
+    const again = await leave(member, teamId);
+    expect(again.ok && again.value.statusCode).toBe(404);
+    expect(again.ok && again.value.json().error.code).toBe('NOT_A_MEMBER');
+  });
+
+  it('settles two admins leaving at once: one leaves, the other is refused as the last admin', async () => {
+    for (let i = 0; i < ITERATIONS; i += 1) {
+      const orgId = await makeOrg(`leave-two-${i}`);
+      const teamId = await makeTeam(`leave-two-${i}`, orgId);
+      const one = await makeUser(`leave-two-a-${i}`);
+      const two = await makeUser(`leave-two-b-${i}`);
+      await onTeam(one, teamId, 'ADMIN');
+      await onTeam(two, teamId, 'ADMIN');
+      const blocker = await holdRow('teams', teamId);
+      let first: ReturnType<typeof leave>;
+      let second: ReturnType<typeof leave>;
+      try {
+        first = leave(one, teamId);
+        await until(
+          'the first leave waits for the team',
+          async () => (await waitingBehind(blocker.pid)) >= 1
+        );
+        second = leave(two, teamId);
+        await until(
+          'the second leave waits for the team',
+          async () => (await waitingBehind(blocker.pid)) >= 2
+        );
+      } finally {
+        await blocker.release();
+      }
+      const results = [await first, await second];
+      expectNoDeadlock(...results);
+      const codes = results.map((r) => (r.ok ? r.value.statusCode : 0)).sort();
+      expect(codes).toEqual([200, 409]);
+      expect(await adminsOf(teamId)).toBe(1);
+    }
+  }, 180_000);
+
+  it('decides a leave from the role under the lock: a member promoted while waiting is the last admin', async () => {
+    for (let i = 0; i < ITERATIONS; i += 1) {
+      const orgId = await makeOrg(`leave-promote-${i}`);
+      const teamId = await makeTeam(`leave-promote-${i}`, orgId);
+      const admin = await makeUser(`leave-promote-a-${i}`);
+      const member = await makeUser(`leave-promote-m-${i}`);
+      await onTeam(admin, teamId, 'ADMIN');
+      await onTeam(member, teamId, 'MEMBER');
+      const blocker = await holdRow('teams', teamId);
+      let adminLeave: ReturnType<typeof leave>;
+      let memberLeave: ReturnType<typeof leave>;
+      try {
+        adminLeave = leave(admin, teamId);
+        await until(
+          'the admin leave waits for the team',
+          async () => (await waitingBehind(blocker.pid)) >= 1
+        );
+        memberLeave = leave(member, teamId);
+        await until(
+          'the member leave waits for the team',
+          async () => (await waitingBehind(blocker.pid)) >= 2
+        );
+        // The member was read as a MEMBER before the lock; the promotion lands while both wait.
+        await prisma.teamMembership.update({
+          data: { role: 'ADMIN' },
+          where: { userId_teamId: { teamId, userId: member } },
+        });
+      } finally {
+        await blocker.release();
+      }
+      const results = [await adminLeave, await memberLeave];
+      expectNoDeadlock(...results);
+      // The admin leaves first (two admins stand); the promoted member is then the last one.
+      expect(results[0].ok && results[0].value.statusCode).toBe(200);
+      expect(results[1].ok && results[1].value.statusCode).toBe(409);
+      expect(await adminsOf(teamId)).toBe(1);
+    }
+  }, 180_000);
+
+  it('answers 404 to a second leave submitted while the first waits for the team lock', async () => {
+    const orgId = await makeOrg('leave-double');
+    const teamId = await makeTeam('leave-double', orgId);
+    const admin = await makeUser('leave-double-a');
+    const member = await makeUser('leave-double-m');
+    await onTeam(admin, teamId, 'ADMIN');
+    await onTeam(member, teamId, 'MEMBER');
+    const blocker = await holdRow('teams', teamId);
+    let one: ReturnType<typeof leave>;
+    let two: ReturnType<typeof leave>;
+    try {
+      one = leave(member, teamId);
+      await until('the first leave waits', async () => (await waitingBehind(blocker.pid)) >= 1);
+      two = leave(member, teamId);
+      await until('the second leave waits', async () => (await waitingBehind(blocker.pid)) >= 2);
+    } finally {
+      await blocker.release();
+    }
+    const results = [await one, await two];
+    const codes = results.map((r) => (r.ok ? r.value.statusCode : 0)).sort();
+    expect(codes).toEqual([200, 404]);
+  });
+
   /* ── The deactivation of the launcher ────────────────────────────────────── */
 
   /**

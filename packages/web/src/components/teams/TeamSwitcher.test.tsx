@@ -17,6 +17,15 @@ vi.mock('@/hooks/useTeamNav', () => ({
   useTeamNav: () => ({ administered: nav.administered, entries: nav.entries, isLoading: false }),
 }));
 
+const visible = vi.hoisted(() => ({
+  teams: [] as { id: string; myRole: null; name: string; slug: string }[],
+}));
+vi.mock('@/hooks/useTeams', () => ({
+  useTeams: (options: { enabled?: boolean } = {}) => ({
+    data: options.enabled === false ? undefined : visible.teams,
+  }),
+}));
+
 const prefs = vi.hoisted(() => ({ pinned: [] as string[], set: vi.fn() }));
 vi.mock('@/hooks/useUserPreferences', () => ({
   useUserPreferences: () => ({
@@ -35,6 +44,7 @@ beforeEach(() => {
   prefs.set.mockClear();
   resetNavigation('', '/');
   nav.administered = [];
+  visible.teams = [];
   nav.entries = [
     entry('payments', 'Payments', 'LEAD', 3),
     entry('platform', 'Platform', 'MEMBER', 0),
@@ -45,7 +55,7 @@ afterEach(cleanup);
 function open(path = '/') {
   resetNavigation('', path);
   render(<TeamSwitcher />);
-  fireEvent.click(screen.getByRole('button', { name: 'Switch team' }));
+  fireEvent.click(screen.getByRole('button', { name: /^Switch team/ }));
   return within(screen.getByRole('list', { name: 'Teams' }));
 }
 
@@ -98,10 +108,35 @@ describe('TeamSwitcher', () => {
 
   it('names the current team and marks it', () => {
     open('/teams/payments/members');
-    expect(screen.getByRole('button', { name: 'Switch team' }).textContent).toContain('Payments');
+    expect(screen.getByRole('button', { name: /^Switch team/ }).textContent).toContain('Payments');
     expect(screen.getByRole('link', { name: /Payments/ }).getAttribute('aria-current')).toBe(
       'page'
     );
+  });
+
+  it('puts the current team in the accessible name', () => {
+    open('/teams/payments');
+    expect(screen.getByRole('button', { name: 'Switch team, current: Payments' })).toBeTruthy();
+    cleanup();
+    open('/');
+    expect(screen.getByRole('button', { name: 'Switch team, current: All my teams' })).toBeTruthy();
+  });
+
+  it('names a team the person is not on, rather than "All my teams"', () => {
+    visible.teams = [{ id: 'id-ops', myRole: null, name: 'Operations', slug: 'ops' }];
+    open('/teams/ops/members');
+    expect(screen.getByRole('button', { name: 'Switch team, current: Operations' })).toBeTruthy();
+  });
+
+  it('closes when focus moves outside, and stays open when it moves within', () => {
+    open();
+    const inside = screen.getByRole('link', { name: /Payments/ });
+    fireEvent.focusOut(screen.getByRole('button', { name: /^Switch team/ }), {
+      relatedTarget: inside,
+    });
+    expect(screen.getByRole('list', { name: 'Teams' })).toBeTruthy();
+    fireEvent.focusOut(inside, { relatedTarget: document.body });
+    expect(screen.queryByRole('list', { name: 'Teams' })).toBeNull();
   });
 
   it('closes on Escape', () => {

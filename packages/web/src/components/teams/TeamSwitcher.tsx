@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NeedsYouBadge } from '@/components/teams/NeedsYouBadge';
 import { Icon } from '@/components/ui/Icon';
 import { useTeamNav } from '@/hooks/useTeamNav';
+import { useTeams } from '@/hooks/useTeams';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { teamRoleLabel } from '@/lib/roleLabels';
 import { canPinMore, togglePinnedTeam } from '@/lib/teamPins';
@@ -44,18 +45,34 @@ export function TeamSwitcher({ variant = 'pill' }: { variant?: 'pill' | 'strip' 
         trigger.current?.focus();
       }
     };
+    // Tabbing out of the menu closes it. A null target (a click on a non-focusable part of the
+    // menu, or the window losing focus) is left alone: the pointer handler covers outside clicks.
+    const onFocusOut = (e: FocusEvent) => {
+      const next = e.relatedTarget as Node | null;
+      if (next && !root.current?.contains(next)) {
+        setOpen(false);
+      }
+    };
+    const rootEl = root.current;
+    rootEl?.addEventListener('focusout', onFocusOut);
     document.addEventListener('mousedown', onPointer);
     document.addEventListener('keydown', onKey, true);
     return () => {
+      rootEl?.removeEventListener('focusout', onFocusOut);
       document.removeEventListener('mousedown', onPointer);
       document.removeEventListener('keydown', onKey, true);
     };
   }, [open]);
 
   const currentSlug = teamSlugFromPath(pathname);
-  const current =
+  const known =
     entries.find((e) => e.team.slug === currentSlug)?.team ??
     administered.find((t) => t.slug === currentSlug);
+  // A team the person is not on and the lists above do not carry (a platform admin's): the
+  // visible-teams list names it, so the trigger never says "All my teams" inside another team.
+  const lookup = useTeams({ enabled: !!currentSlug && !known });
+  const current = known ?? lookup.data?.find((t) => t.slug === currentSlug);
+  const currentName = current?.name ?? currentSlug ?? 'All my teams';
   // Keep the tab the caller is on; a path outside any team space opens the overview.
   const tab: TeamTabId = teamTabFromPath(pathname) ?? 'overview';
   const totalNeeds = entries.reduce((sum, e) => sum + e.needsYou, 0);
@@ -72,7 +89,7 @@ export function TeamSwitcher({ variant = 'pill' }: { variant?: 'pill' | 'strip' 
       <button
         aria-controls={MENU_ID}
         aria-expanded={open}
-        aria-label="Switch team"
+        aria-label={`Switch team, current: ${currentName}`}
         className={cn(
           'flex items-center gap-2 text-sm text-paper-200 transition-colors pointer-coarse:min-h-[44px]',
           variant === 'strip'
@@ -85,8 +102,8 @@ export function TeamSwitcher({ variant = 'pill' }: { variant?: 'pill' | 'strip' 
         type="button"
       >
         <span className="text-paper-500">team:</span>
-        <span className="min-w-0 flex-1 truncate text-left">{current?.name ?? 'All my teams'}</span>
-        {!current && <NeedsYouBadge count={totalNeeds} />}
+        <span className="min-w-0 flex-1 truncate text-left">{currentName}</span>
+        {!currentSlug && <NeedsYouBadge count={totalNeeds} />}
         <Icon
           className={cn('shrink-0 text-paper-500 transition-transform', open && 'rotate-180')}
           name="chevronDown"

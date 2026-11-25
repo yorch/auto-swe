@@ -10,7 +10,22 @@ import { FirstRunChecklist } from './FirstRunChecklist';
 // while the permissions load.
 let who: 'member' | 'lead' | 'admin' = 'member';
 let ledLoading = false;
+// Organizations whose admin the person is (`org.settings.manage`), and whether they have no team.
+let administered: string[] = [];
+let governs = false;
+let governanceLoading = false;
+vi.mock('@/components/setup/OrgGovernanceCard', () => ({
+  useOrgGovernance: () =>
+    governanceLoading
+      ? null
+      : {
+          orgs: governs
+            ? administered.map((orgId) => ({ canManageMembers: true, name: orgId, orgId }))
+            : [],
+        },
+}));
 vi.mock('@/hooks/useCan', () => ({
+  useOrgIdsCan: () => new Set(administered),
   usePlatformAdmin: () => who === 'admin',
   useTeamIdsCan: () => {
     if (ledLoading) {
@@ -79,6 +94,9 @@ beforeEach(() => {
   reset();
   who = 'member';
   ledLoading = false;
+  administered = [];
+  governs = false;
+  governanceLoading = false;
   installMemoryStorage();
   useAuthStore.setState({ user: { role: 'USER', sub: 'u1' } });
 });
@@ -127,6 +145,25 @@ describe('FirstRunChecklist', () => {
     who = 'lead';
     render(<FirstRunChecklist />);
     expect(screen.getByRole('link', { name: /Connect a repository/ })).toBeTruthy();
+  });
+
+  it('words the repository step for an organization admin who is a plain team member', () => {
+    administered = ['org-1'];
+    render(<FirstRunChecklist />);
+    expect(screen.getByRole('link', { name: /Connect a repository/ })).toBeTruthy();
+  });
+
+  it('is hidden for an organization admin with no team, whose Home shows the governance card', () => {
+    administered = ['org-1'];
+    governs = true;
+    const { container } = render(<FirstRunChecklist />);
+    expect(container.textContent).toBe('');
+  });
+
+  it('shows nothing while the governance answer is still loading, so it cannot flash', () => {
+    governanceLoading = true;
+    const { container } = render(<FirstRunChecklist />);
+    expect(container.textContent).toBe('');
   });
 
   it('shows nothing until the led teams are known, so the wording does not flip', () => {

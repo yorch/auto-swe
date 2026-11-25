@@ -340,7 +340,11 @@ describe('StartWork', () => {
     const radio = screen.getByRole('radio', { name: /multi-repo epic/i }) as HTMLInputElement;
     expect(radio.disabled).toBe(true);
     // The epic and PRD options share the one reason.
-    expect(screen.getAllByText('Requires team lead or administrator.')).toHaveLength(2);
+    expect(
+      screen.getAllByText(
+        'Requires a lead or admin of the team that owns the repositories, or a platform admin.'
+      )
+    ).toHaveLength(2);
   });
 
   it('offers a PRD run on the same gating as an epic', async () => {
@@ -436,7 +440,7 @@ describe('StartWork', () => {
     fireEvent.click(screen.getByText('Need help choosing?'));
     const chooser = within(screen.getByTestId('mode-hint'));
     expect(chooser.queryByRole('button', { name: /epic/i })).toBeNull();
-    expect(chooser.getByText(/Only team leads and administrators can start an epic/)).toBeTruthy();
+    expect(chooser.getByText(/Only team leads and admins can start an epic/)).toBeTruthy();
     expect(chooser.getAllByRole('button').map((b) => b.textContent)).toEqual([
       'Pick a workflow',
       'Run an agent',

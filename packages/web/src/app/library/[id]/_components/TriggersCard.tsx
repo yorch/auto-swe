@@ -3,7 +3,9 @@ import Link from 'next/link';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { type AutomationSummary, useAllAutomations } from '@/hooks/useAutomations';
+import { useEffectivePermissions } from '@/hooks/useEffectivePermissions';
 import { useSchedules } from '@/hooks/useSchedules';
+import { holdsAccess } from '@/lib/capabilities';
 import { errMsg } from '@/lib/errors';
 import { RailCard } from './RailCard';
 
@@ -65,6 +67,8 @@ export function TriggersCard({
 }) {
   const all = useAllAutomations();
   const schedules = useSchedules();
+  // The settings page admits only those who may change a setting; to anyone else a link is a dead end.
+  const settingsWriter = holdsAccess(useEffectivePermissions().data, 'settings-writer');
 
   const rows: TriggerRow[] = [
     ...(all.data ?? [])
@@ -149,9 +153,13 @@ export function TriggersCard({
           )}
           <p className="text-xs leading-relaxed text-paper-500">
             Event sources can be switched off platform-wide in{' '}
-            <Link className="text-accent-400 hover:underline" href="/admin/platform-settings">
-              Platform settings
-            </Link>
+            {settingsWriter ? (
+              <Link className="text-accent-400 hover:underline" href="/admin/platform-settings">
+                Platform settings
+              </Link>
+            ) : (
+              'Platform settings'
+            )}
             ; a listed automation fires only while its source is on.
           </p>
           <p className="flex gap-3 text-xs">

@@ -141,7 +141,7 @@ decide(standing, capability, resource?)    // Decision, with no database
 
 `GET /api/v1/me/permissions[?teamId=]` returns the caller's effective permissions, derived from the
 same standing and decision code as the checks above, so it cannot disagree with them. See
-[teams](./teams.md#leaving-an-organization) for the shape. The in-app assistant may call it.
+[teams](./teams.md#leaving-an-organization) for the shape. The in-app assistant may call it. The answer also carries `canWriteAnySetting`, true for a platform admin or a person a configuration grant covers for at least one setting. It decides the **Platform settings** navigation entry and page; each write is still checked per setting and scope.
 
 ### In the dashboard
 
@@ -169,6 +169,9 @@ usePlatformAdmin()                          // the person holds every capability
   authority held through the organization or the platform, the person's own team role and below for
   authority held through a team role. The gateway applies the same rule and refuses the rest.
 - This only hides controls. Every request is checked again by the gateway.
+- A `403 FORBIDDEN` from any request refreshes the cached permissions, at most once every five seconds, because it may mean the person's role changed. A refused permissions read does not refresh itself.
+- A refusal that reads `Requires <ROLE> in this team or <ROLE> in the team's organization` is shown with role labels (for example "Needs a Team lead in this team or an Org admin in the team's organization") and the capability's description. Any other message is shown as the server wrote it.
+- **Your access** on `/settings` lists the person's platform role, each organization role and each team role. A team entry with no role of its own is shown as held through organization or platform authority.
 
 ### Declaring a route
 
@@ -387,3 +390,4 @@ _Generated from `packages/shared/src/permissions/catalog/` by `scripts/gen-permi
 - The audit context's `authority` is the one decision of the route's own capability check. A
   `handler-checked` route's handler passes the authority of its decision to the audit writer
   itself; nothing records it for it.
+- **The permissions refresh is throttled, and the refusal wording is narrow.** A refusal within five seconds of the last refresh does not refetch the permissions, so a stale control can stay visible for that window. Refusal wording is rewritten only for the gateway's `Requires ...` message; any other message is shown unchanged.

@@ -6,6 +6,23 @@ import { useEffectivePermissions } from '@/hooks/useEffectivePermissions';
 import { useMeSummary } from '@/hooks/useMeSummary';
 import { useTeams } from '@/hooks/useTeams';
 
+/**
+ * Splits the teams a caller can see into the ones they are on (`member`, with a role of their
+ * own) and the ones they reach through organization or platform authority (`administered`), each
+ * sorted by name. Where the authority comes from is the server's answer; `myRole` is only whether
+ * the caller has a membership row.
+ */
+export function splitTeamsByStanding(teams: readonly TeamSummary[]): {
+  member: TeamSummary[];
+  administered: TeamSummary[];
+} {
+  const sorted = [...teams].sort((a, b) => a.name.localeCompare(b.name));
+  return {
+    administered: sorted.filter((t) => t.myRole == null),
+    member: sorted.filter((t) => t.myRole != null),
+  };
+}
+
 export interface TeamNavEntry {
   team: TeamSummary;
   /** Items waiting on the caller on this team's work; 0 until the desk has answered. */

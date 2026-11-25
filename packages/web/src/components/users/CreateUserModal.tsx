@@ -13,6 +13,7 @@ import {
   DEFAULT_PLATFORM_ROLE,
   PLATFORM_ROLE_OPTIONS,
   type PlatformRoleValue,
+  platformRoleConsequence,
 } from '@/lib/roleLabels';
 
 export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -85,6 +86,11 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
             options={[...PLATFORM_ROLE_OPTIONS]}
             value={role}
           />
+          {platformRoleConsequence(role).dangerous && (
+            <Alert announce={false} variant="warning">
+              This person will have {platformRoleConsequence(role).effect}.
+            </Alert>
+          )}
           <Input
             autoComplete="new-password"
             hint="At least 8 characters. Leave blank to generate one, shown once."

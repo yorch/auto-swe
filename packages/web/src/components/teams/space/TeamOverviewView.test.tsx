@@ -192,11 +192,20 @@ describe('TeamOverviewView', () => {
       state: 'ok' as const,
     };
     const { rerender } = render(
-      <TeamOverviewView overview={{ ...base, budget, viewerLevel: 'admin' }} slug="payments" />
+      <TeamOverviewView
+        canManageBudget
+        overview={{ ...base, budget, viewerLevel: 'admin' }}
+        slug="payments"
+      />
     );
     expect(screen.getByRole('link', { name: 'Manage budget' }).getAttribute('href')).toBe(
       '/teams/payments/settings?tab=budget'
     );
+    // The view level alone grants nothing: the capability decides.
+    rerender(
+      <TeamOverviewView overview={{ ...base, budget, viewerLevel: 'admin' }} slug="payments" />
+    );
+    expect(screen.queryByRole('link', { name: 'Manage budget' })).toBeNull();
     rerender(
       <TeamOverviewView overview={{ ...base, budget, viewerLevel: 'lead' }} slug="payments" />
     );
@@ -346,6 +355,44 @@ describe('TeamOverviewView', () => {
       render(<TeamOverviewView overview={asOrgAdmin} slug="payments" />);
       expect(screen.getByText('Viewing as an organization admin')).toBeTruthy();
       expect(screen.queryByRole('link', { name: 'Members' })).toBeNull();
+    });
+
+    it('omits run figures and sections that would read as misleading zeros', () => {
+      render(
+        <TeamOverviewView
+          overview={{
+            ...asOrgAdmin,
+            lead: {
+              openPullRequests: 0,
+              staleApprovals: 0,
+              unownedFailures: 0,
+            },
+          }}
+          slug="payments"
+        />
+      );
+      expect(screen.queryByTestId('my-work')).toBeNull();
+      expect(screen.queryByLabelText('Team numbers')).toBeNull();
+      expect(screen.queryByTestId('lead-panel')).toBeNull();
+      expect(screen.queryByText('Recent activity')).toBeNull();
+    });
+
+    it('words an empty repository list for a caller who reaches none', () => {
+      render(<TeamOverviewView overview={{ ...asOrgAdmin, repos: [] }} slug="payments" />);
+      expect(screen.getByText('No repositories you can reach on this team')).toBeTruthy();
+      expect(screen.queryByText('No repositories yet')).toBeNull();
+    });
+
+    it('explains an uncomputed spend', () => {
+      render(
+        <TeamOverviewView
+          overview={{ ...asOrgAdmin, admin: { monthCostUsdCents: null } }}
+          slug="payments"
+        />
+      );
+      expect(screen.getByTestId('admin-spend-org-admin').textContent).toContain(
+        'Not computed for non-members'
+      );
     });
 
     it.each(['member', 'platform-admin'] as const)('is not shown for access %s', (access) => {

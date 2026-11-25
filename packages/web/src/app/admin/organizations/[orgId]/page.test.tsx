@@ -113,6 +113,16 @@ function mock(
 }
 
 describe('organization admin page', () => {
+  it('shows the platform role of a member only when the server sends it', async () => {
+    const { role: _omitted, ...withoutRole } = member('u2', 'other@x.com', 'MEMBER').user;
+    mock([
+      member('me', 'me@x.com', 'ADMIN'),
+      { ...member('u2', 'other@x.com', 'MEMBER'), user: withoutRole } as never,
+    ]);
+    render(withQuery(<OrgAdminPage params={params} />));
+    await screen.findByText('other@x.com');
+    expect(screen.getAllByText(/Platform role:/)).toHaveLength(1);
+  });
   it('offers GitHub connections to an organization admin who is no platform admin', async () => {
     mock([member('me', 'me@x.com', 'ADMIN')]);
     render(withQuery(<OrgAdminPage params={params} />));
@@ -166,6 +176,24 @@ describe('organization admin page', () => {
     expect(screen.getByTitle('You cannot change your own role').textContent).toBe('Org admin');
   });
 
+  it('says an organization admin also governs every team, when promoting and when demoting', async () => {
+    mock([
+      member('me', 'me@x.com', 'ADMIN'),
+      member('u3', 'plain@x.com', 'MEMBER'),
+      member('u4', 'boss@x.com', 'ADMIN'),
+    ]);
+    render(withQuery(<OrgAdminPage params={params} />));
+    fireEvent.click(await screen.findByRole('button', { name: /Org role for plain@x.com/ }));
+    fireEvent.click(screen.getByRole('option', { name: 'Org admin' }));
+    expect(
+      await screen.findByText(/govern every team in it .* can add themselves to any team/)
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Org role for boss@x.com/ }));
+    fireEvent.click(screen.getByRole('option', { name: 'Org member' }));
+    expect(await screen.findByText(/or to govern its teams/)).toBeTruthy();
+  });
+
   it('shows an org member the percentage meter and never asks for the dollar budget', async () => {
     setPermissions(ORG_MEMBER);
     const spy = mock([member('me', 'me@x.com', 'MEMBER'), member('u2', 'a@x.com', 'ADMIN')]);
@@ -202,7 +230,7 @@ describe('organization admin page', () => {
     fireEvent.click(screen.getByRole('button', { name: /Team role/ }));
     fireEvent.click(screen.getByRole('option', { name: 'Team lead' }));
     fireEvent.click(screen.getByRole('button', { name: 'Send invite' }));
-    await screen.findByText(/wait in the platform approval queue/);
+    await screen.findByText(/until a platform admin approves them/);
     expect(bodyOf(spy, `/organizations/${ORG_ID}/members/invite`)).toEqual({
       email: 'new@acme.com',
       orgRole: 'MEMBER',

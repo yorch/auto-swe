@@ -1366,6 +1366,8 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
       const viewer = viewerOf(request);
       const detail = await buildDetail(prisma, row, {
         canControl: launchedByViewer(viewer, row),
+        // The same rule the cancel and end routes apply, so the button and the refusal agree.
+        canEmergencyStop: await isAdminStop(request, row),
         viewer,
       });
       return { data: detail };

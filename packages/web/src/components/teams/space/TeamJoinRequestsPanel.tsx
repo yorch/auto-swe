@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { DecideJoinRequestDialog } from '@/components/teams/directory/DecideJoinRequestDialog';
 import { JoinRequestItem } from '@/components/teams/directory/JoinRequestRow';
@@ -7,7 +8,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { useCan } from '@/hooks/useCan';
+import { useCan, useOrgIdsCan, usePlatformAdmin } from '@/hooks/useCan';
 import {
   useApproveTeamJoinRequest,
   useRejectTeamJoinRequest,
@@ -52,6 +53,8 @@ export function TeamJoinRequestsPanel({
   const orgOfDeciding = deciding?.row.requiresOrgApproval ? (deciding.row.orgId ?? null) : null;
   // `useCan` without an organization asks "in any"; the hint is only for the request's own.
   const managesOrg = useCan('org.members.manage', { orgId: orgOfDeciding ?? undefined });
+  const orgsIManage = useOrgIdsCan('org.members.manage');
+  const platformAdmin = usePlatformAdmin();
   const alsoCompletesOrgStep = approvalCompletesOrgStep(
     deciding?.row ?? null,
     !!orgOfDeciding && managesOrg
@@ -113,7 +116,17 @@ export function TeamJoinRequestsPanel({
                 <JoinRequestItem
                   actions={
                     <span className="text-xs text-paper-500">
-                      Approved by the team; waiting for organization approval
+                      Approved by the team; waiting for organization approval.{' '}
+                      {row.orgId && (platformAdmin || orgsIManage?.has(row.orgId)) ? (
+                        <Link
+                          className="text-accent-400 underline"
+                          href={`/admin/organizations/${row.orgId}`}
+                        >
+                          Decide in organization approvals
+                        </Link>
+                      ) : (
+                        'An organization admin decides this step.'
+                      )}
                     </span>
                   }
                   row={row}

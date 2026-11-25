@@ -103,7 +103,14 @@ function GovernApprovals() {
   const atCap = loaded >= SERVER_CAP[filter];
   const narrowed = kind !== 'all' || q.trim() !== '';
   // Kind and text are applied by the gateway, so the list is every match up to the cap.
-  const steps = allSteps ?? [];
+  // Steps the caller can answer come first; the chosen sort still orders each group (the sort is
+  // stable). A payload without `canAnswer` counts as answerable.
+  const steps =
+    filter === 'PENDING'
+      ? [...(allSteps ?? [])].sort(
+          (a, b) => Number(a.canAnswer === false) - Number(b.canAnswer === false)
+        )
+      : (allSteps ?? []);
   const count = steps.length;
   const pageCount = Math.max(1, Math.ceil(count / PAGE_SIZE));
   const current = Math.min(page, pageCount - 1);
@@ -119,13 +126,27 @@ function GovernApprovals() {
     // The answered card is about to leave the list; keep the reader's place in it.
     listRef.current?.focus();
   };
+  // The list shows every pending step the caller may see; the number the gateway counts is the ones
+  // they can answer. With no filter the tab shows both, and drops the second part when they match.
+  function pendingTabLabel(): string {
+    const unfiltered = !narrowed && !overdueOnly && !actionableOnly;
+    // `loaded` counts the rows of the open tab, so it counts pending steps only on Pending; on All
+    // the loaded set holds decided steps too, and only its pending ones count.
+    const loadedPending =
+      filter === 'PENDING' ? loaded : (allSteps ?? []).filter((s) => s.status === 'PENDING').length;
+    const total = unfiltered ? Math.max(loadedPending, pendingTotal) : pendingTotal;
+    if (total === 0) {
+      return 'Pending';
+    }
+    if (!unfiltered) {
+      return `Pending (${pendingTotal} you can answer)`;
+    }
+    return pendingTotal >= total
+      ? `Pending (${total})`
+      : `Pending (${total} · ${pendingTotal} you can answer)`;
+  }
   const tabs = TABS.map((tab) =>
-    tab.id === 'PENDING' && pendingTotal > 0
-      ? {
-          ...tab,
-          label: `Pending (${pendingTotal} for you)`,
-        }
-      : tab
+    tab.id === 'PENDING' ? { ...tab, label: pendingTabLabel() } : tab
   );
 
   return (

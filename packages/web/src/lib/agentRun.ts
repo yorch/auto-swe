@@ -305,7 +305,9 @@ export function describeLaunchError(err: unknown): LaunchErrorView {
       const scope = code === 'TEAM_BUDGET_EXCEEDED' ? 'team' : 'organization';
       // Only an organization admin can change the organization's cap.
       const who =
-        code === 'TEAM_BUDGET_EXCEEDED' ? 'your team lead' : 'an organization administrator';
+        code === 'TEAM_BUDGET_EXCEEDED'
+          ? 'a team admin or an organization admin'
+          : 'an organization administrator';
       return {
         hint: `Ask ${who} to raise the limit or review spend; work can start again once the budget allows it.`,
         message: `This launch was refused because the ${scope} has reached its monthly budget.`,
