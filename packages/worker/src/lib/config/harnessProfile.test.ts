@@ -504,12 +504,27 @@ describe('several plugins, hooks, enablement and collisions', () => {
       });
     });
 
-    it('resolves the latest version and writes nothing into the earlier execution’s pins', async () => {
+    it('resolves the latest version and claims the map, carrying over nothing of the earlier execution', async () => {
       rows.alpha = pluginRow('alpha', 'alpha');
-      runRow({ alpha: 1 }, 'exec-0');
+      const row = runRow(
+        { alpha: { hooks: false, mcp: ['a=c1'], verified: ['t1:implementer:4'], version: 1 } },
+        'exec-0'
+      );
+      const [p] = await resolveHarnessProfiles('implementer', {}, binding(['alpha']));
+      expect(p?.version).toBe(2);
+      expect(row.harnessProfileVersions).toEqual({
+        __execution: 'exec-1',
+        alpha: { hooks: true, version: 2 },
+      });
+    });
+
+    it('does not let the execution the row was created for claim a later execution’s map', async () => {
+      rows.alpha = pluginRow('alpha', 'alpha');
+      const row = runRow({ __execution: 'exec-9', alpha: 1 }, 'exec-1');
       const [p] = await resolveHarnessProfiles('implementer', {}, binding(['alpha']));
       expect(p?.version).toBe(2);
       expect(h.runUpdateMany).not.toHaveBeenCalled();
+      expect(row.harnessProfileVersions).toEqual({ __execution: 'exec-9', alpha: 1 });
     });
 
     it('trusts a map that names this execution even when the row names the first', async () => {

@@ -34,7 +34,7 @@ vi.mock('../../lib/effectLedger.js', async (importOriginal) => ({
 }));
 
 import { relayedToolName } from '../claudeCode/policy.js';
-import { openMcpRelay } from './mcpRelay.js';
+import { openMcpRelay, scrubResultEndpoint } from './mcpRelay.js';
 
 /** A real MCP server over streamable HTTP, with one tool, recording the auth it saw. */
 async function remoteServer(
@@ -304,6 +304,22 @@ describe('openMcpRelay: a third-party (plugin) relay', () => {
     await own?.close();
   });
 
+  it('scrubs the connection’s own endpoint from a successful result, for a plugin only', async () => {
+    remote = await remoteServer();
+    const own = await openMcpRelay({ url: remote.url });
+    const relay = await openMcpRelay({ url: remote.url }, undefined, {
+      thirdParty: { label: 'plugin=acme server=docs', scrub: (t) => t },
+    });
+    const text = `${remote.url} and 10.9.8.7:80 and https://other.example/x`;
+    const mine = await own?.callTool('echo', { text });
+    expect(JSON.stringify(mine)).toContain(remote.url);
+    const theirs = JSON.stringify(await relay?.callTool('echo', { text }));
+    expect(theirs).not.toContain(new URL(remote.url).host);
+    expect(theirs).toContain('echo: [endpoint] and 10.9.8.7:80 and https://other.example/x');
+    await relay?.close();
+    await own?.close();
+  });
+
   it('scrubs the endpoint from an error returned to the model', async () => {
     remote = await remoteServer();
     const relay = await openMcpRelay({ url: remote.url }, undefined, {
@@ -318,6 +334,281 @@ describe('openMcpRelay: a third-party (plugin) relay', () => {
     expect(JSON.stringify(result)).toContain('[endpoint]');
     const recorded = h.record.mock.calls.at(-1)?.[0] as { error: unknown };
     expect(String(recorded.error)).not.toContain('127.0.0.1');
+    vi.restoreAllMocks();
+    await relay?.close();
+  });
+});
+
+describe('scrubResultEndpoint', () => {
+  const URL_ = 'https://mcp.internal.example:8443/v1/mcp';
+  const textOf = (text: string) => ({ content: [{ text, type: 'text' as const }] });
+  const textBack = (r: { content: unknown[] }) => (r.content[0] as { text: string }).text;
+
+  it('replaces the connection’s URL and its host, wherever a result echoes them', () => {
+    expect(textBack(scrubResultEndpoint(textOf(`see ${URL_} for more`), URL_) as never)).toBe(
+      'see [endpoint] for more'
+    );
+    expect(
+      textBack(scrubResultEndpoint(textOf('refused by mcp.internal.example:8443'), URL_) as never)
+    ).toBe('refused by [endpoint]');
+    expect(
+      textBack(
+        scrubResultEndpoint(
+          textOf('mcp.internal.example and https://mcp.internal.example:8443/v1/mcp'),
+          URL_
+        ) as never
+      )
+    ).toBe('[endpoint] and [endpoint]');
+  });
+
+  it('leaves a different URL, an IP literal and another host:port untouched', () => {
+    const text =
+      'docs at https://other.example/page, db 10.1.2.3:5432, v6 [::1]:80, svc api.example:9000';
+    expect(textBack(scrubResultEndpoint(textOf(text), URL_) as never)).toBe(text);
+  });
+
+  it('scrubs structured content strings, nested', () => {
+    const out = scrubResultEndpoint(
+      {
+        content: [],
+        structuredContent: { items: [{ link: URL_, n: 3 }], note: 'host mcp.internal.example' },
+      },
+      URL_
+    );
+    // Changed structured content is dropped (see scrubResultEndpoint): it may no longer fit the schema.
+    expect(out.structuredContent).toBeUndefined();
+    expect(JSON.stringify(out)).not.toContain('mcp.internal.example');
+  });
+
+  it('treats regex metacharacters, userinfo and a query as literal text, and leaks none of them', () => {
+    const url = 'https://user:p%40ss@h.example.com:8443/a+b(c)[d]/mcp?token=s3cr3t&x=.*';
+    const out = scrubResultEndpoint(
+      textOf(
+        `exact ${url} bare https://h.example.com:8443/a+b(c)[d]/mcp host h.example.com:8443 axb(c)/mcp`
+      ),
+      url
+    );
+    const text = textBack(out as never);
+    expect(text).toBe('exact [endpoint] bare [endpoint] host [endpoint] axb(c)/mcp');
+    expect(text).not.toMatch(/s3cr3t|p%40ss|user/);
+  });
+
+  it('does not scrub a degenerate host, and changes no non-text content but its strings', () => {
+    expect(textBack(scrubResultEndpoint(textOf('a.b and abc'), 'http://a.b/x') as never)).toBe(
+      'a.b and abc'
+    );
+    const image = { data: 'aGVsbG8=', mimeType: 'image/png', type: 'image' as const };
+    const out = scrubResultEndpoint(
+      {
+        content: [
+          image,
+          { resource: { text: `at ${URL_}`, uri: 'file:///x' }, type: 'resource' as const },
+        ],
+      } as never,
+      URL_
+    );
+    expect(out.content[0]).toEqual(image);
+    expect(JSON.stringify(out.content[1])).toContain('at [endpoint]');
+  });
+
+  it('replaces a subtree past the depth limit, even a cyclic one, rather than returning it raw', () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    cyclic.url = URL_;
+    const result = { content: [], structuredContent: cyclic } as never;
+    const out = JSON.stringify(scrubResultEndpoint(result, URL_));
+    expect(out).not.toContain('mcp.internal.example');
+    // Changed structured content is dropped, so the deep copy is not offered either.
+    expect(scrubResultEndpoint(result, URL_).structuredContent).toBeUndefined();
+    let deep: unknown = { text: URL_ };
+    for (let i = 0; i < 30; i += 1) {
+      deep = { child: deep };
+    }
+    const out2 = scrubResultEndpoint({ _meta: deep, content: [] } as never, URL_);
+    expect(JSON.stringify(out2)).toContain('[truncated]');
+    expect(JSON.stringify(out2)).not.toContain('mcp.internal.example');
+  });
+});
+
+describe('scrubResultEndpoint: names, spellings and boundaries', () => {
+  const textOf = (text: string) => ({ content: [{ text, type: 'text' as const }] });
+  const scrub = (text: string, url: string) =>
+    (scrubResultEndpoint(textOf(text), url).content[0] as { text: string }).text;
+  const SECRET_URL = 'https://mcp.example.com/api/s/SECRET123/mcp?token=QTOK1';
+
+  it('scrubs a path and a query secret echoed in any other form', () => {
+    const out = scrub(
+      'GET https://mcp.example.com/api/s/SECRET123/mcp?a=1&token=QTOK1 -> 404 Not Found: /api/s/SECRET123/mcp',
+      SECRET_URL
+    );
+    expect(out).toBe('GET [endpoint]?a=1&token=[endpoint] -> 404 Not Found: [endpoint]');
+    expect(out).not.toMatch(/SECRET123|QTOK1/);
+  });
+
+  it('matches the scheme and host case-insensitively', () => {
+    expect(scrub('see HTTPS://MCP.EXAMPLE.COM/api/s/SECRET123/mcp now', SECRET_URL)).toBe(
+      'see [endpoint] now'
+    );
+    expect(scrub('host Mcp.Example.COM down', SECRET_URL)).toBe('host [endpoint] down');
+  });
+
+  it('scrubs percent-encoded, decoded, base64 and base64url copies', () => {
+    const url = 'https://mcp.example.com/mcp?token=a%20b/c+dQ';
+    const decoded = 'a b/c+dQ';
+    for (const spelling of [
+      'a%20b/c+dQ',
+      decoded,
+      encodeURIComponent(decoded),
+      encodeURIComponent(url),
+      Buffer.from(url).toString('base64'),
+      Buffer.from(url).toString('base64url'),
+      Buffer.from(decoded).toString('base64'),
+      Buffer.from(decoded).toString('base64url'),
+    ]) {
+      const out = scrub(`echo ${spelling} end`, url);
+      expect(out).toBe('echo [endpoint] end');
+    }
+    const info = 'https://alice:hunter22@mcp.example.com/mcp';
+    expect(
+      scrub(`u=alice:hunter22 p=hunter22 ${Buffer.from('hunter22').toString('base64')}`, info)
+    ).not.toMatch(/hunter22|aHVudGVyMjI/);
+  });
+
+  it('leaves a host that is only part of a longer one, and words around it, alone', () => {
+    const url = 'https://corp.io/mcp';
+    const data =
+      'wiki https://wiki.corp.io/page, mail bob@corp.io, word corp.ion, a.corp.io corp.io-x';
+    expect(scrub(data, url)).toBe(data);
+    expect(scrub('at corp.io, then corp.io.', url)).toBe('at [endpoint], then [endpoint].');
+    expect(scrub('host=corp.io;', url)).toBe('host=[endpoint];');
+    const ip = 'http://10.0.0.5/mcp';
+    const numbers = '10.0.0.55 and 110.0.0.5 and 10.0.0.5.7';
+    expect(scrub(numbers, ip)).toBe(numbers);
+    expect(scrub('GET http://10.0.0.5/mcp and 10.0.0.5:80', ip)).toBe(
+      'GET [endpoint] and [endpoint]:80'
+    );
+  });
+
+  it('replaces only the endpoint prefix when the stored URL has no path', () => {
+    const url = 'https://mcp.example.com';
+    expect(scrub('GET https://mcp.example.com/other/page and https://mcp.example.com', url)).toBe(
+      'GET [endpoint]/other/page and [endpoint]'
+    );
+    expect(scrub('GET https://mcp.example.com.evil.io/x', url)).toBe(
+      'GET https://mcp.example.com.evil.io/x'
+    );
+  });
+
+  it('leaves other URLs, addresses and hosts byte-identical', () => {
+    const data =
+      'https://other.example/a?b=1 10.1.2.3:5432 [::1]:80 api.example:9000 wiki.corp.io corp.ion 10.0.0.55';
+    expect(scrub(data, SECRET_URL)).toBe(data);
+  });
+
+  it('scrubs data and blob fields inside structured content and metadata, not an image payload', () => {
+    const image = { data: 'aGVsbG8=', mimeType: 'image/png', type: 'image' as const };
+    const out = scrubResultEndpoint(
+      {
+        _meta: { data: SECRET_URL, other: { blob: SECRET_URL } },
+        content: [
+          image,
+          {
+            resource: { blob: 'QUJD', text: `at ${SECRET_URL}`, uri: 'file:///x' },
+            type: 'resource',
+          },
+          {
+            _meta: { src: SECRET_URL },
+            annotations: { note: SECRET_URL },
+            text: 'ok',
+            type: 'text',
+          },
+        ],
+        structuredContent: { data: SECRET_URL },
+      } as never,
+      SECRET_URL
+    ) as unknown as Record<string, unknown>;
+    const content = out.content as Array<Record<string, unknown>>;
+    expect(content[0]).toEqual(image);
+    expect((content[1] as { resource: { blob: string } }).resource.blob).toBe('QUJD');
+    const dump = JSON.stringify({ ...out, content: content.slice(1) });
+    expect(dump).not.toMatch(/SECRET123|QTOK1|mcp\.example\.com/);
+    expect(out.structuredContent).toBeUndefined();
+    expect(JSON.stringify(out._meta)).toBe('{"data":"[endpoint]","other":{"blob":"[endpoint]"}}');
+  });
+
+  it('rewrites object keys and keeps colliding keys apart', () => {
+    const out = scrubResultEndpoint(
+      {
+        _meta: { [SECRET_URL]: 1, '[endpoint]': 2, [`${SECRET_URL}`.toUpperCase()]: 3 },
+        content: [],
+      } as never,
+      SECRET_URL
+    ) as unknown as { _meta: Record<string, number> };
+    expect(Object.values(out._meta).sort()).toEqual([1, 2, 3]);
+    expect(Object.keys(out._meta).join('')).not.toMatch(/SECRET123/i);
+  });
+
+  it('keeps structured content that scrubbing did not change, drops one it changed', () => {
+    const same = { content: [], structuredContent: { a: 'https://other.example/x' } } as never;
+    expect(scrubResultEndpoint(same, SECRET_URL).structuredContent).toEqual({
+      a: 'https://other.example/x',
+    });
+    const changed = {
+      content: [{ text: 'x', type: 'text' }],
+      structuredContent: { a: SECRET_URL },
+    } as never;
+    expect(scrubResultEndpoint(changed, SECRET_URL).structuredContent).toBeUndefined();
+  });
+
+  it('applies the wider scrub to an error result only', () => {
+    const text = 'upstream 10.1.2.3:8443 internal.corp:9000 failed';
+    const wide = (t: string) => t.replace(/10\.1\.2\.3:8443|internal\.corp:9000/g, '[endpoint]');
+    const err = scrubResultEndpoint(
+      { content: [{ text, type: 'text' }], isError: true, structuredContent: { m: text } } as never,
+      SECRET_URL,
+      { wide }
+    );
+    expect((err.content[0] as { text: string }).text).toBe('upstream [endpoint] [endpoint] failed');
+    expect(err.structuredContent).toBeUndefined();
+    const ok = scrubResultEndpoint({ content: [{ text, type: 'text' }] } as never, SECRET_URL, {
+      wide,
+    });
+    expect((ok.content[0] as { text: string }).text).toBe(text);
+  });
+
+  it('stays fast on a 20 MB string, 100,000 blocks and a pathological repeat', () => {
+    const url = 'https://mcp.example.com/api/s/SECRET123/mcp?token=QTOK1&k=ABCDEFGH';
+    const big = `${'lorem ipsum dolor Mcp.Example.com '.repeat(600_000)}`.slice(0, 20_000_000);
+    let t = Date.now();
+    scrubResultEndpoint(textOf(big), url);
+    expect(Date.now() - t).toBeLessThan(5_000);
+    const blocks = Array.from({ length: 100_000 }, (_, i) => ({ text: `row ${i}`, type: 'text' }));
+    t = Date.now();
+    scrubResultEndpoint({ content: blocks } as never, url);
+    expect(Date.now() - t).toBeLessThan(5_000);
+    t = Date.now();
+    scrubResultEndpoint(textOf('a'.repeat(20_000_000)), 'https://aaaa.example/aaaaaaaa?x=aaaa');
+    expect(Date.now() - t).toBeLessThan(5_000);
+  });
+});
+
+describe('openMcpRelay: a plugin relay scrubs an error result with the wider scrub', () => {
+  it('hides addresses in a server-returned error, but not in a success', async () => {
+    remote = await remoteServer();
+    const relay = await openMcpRelay({ url: remote.url }, undefined, {
+      thirdParty: {
+        label: 'plugin=acme server=docs',
+        scrub: (t) => t.replace(/10\.1\.2\.3:8443|internal\.corp:9000/g, '[endpoint]'),
+      },
+    });
+    const text = 'upstream 10.1.2.3:8443 internal.corp:9000 failed';
+    const spy = vi.spyOn(Client.prototype, 'callTool');
+    spy.mockResolvedValueOnce({ content: [{ text, type: 'text' }], isError: true } as never);
+    const err = await relay?.callTool('echo', { text: 'x' });
+    expect(JSON.stringify(err)).toContain('upstream [endpoint] [endpoint] failed');
+    spy.mockResolvedValueOnce({ content: [{ text, type: 'text' }] } as never);
+    const ok = await relay?.callTool('echo', { text: 'x' });
+    expect(JSON.stringify(ok)).toContain(text);
     vi.restoreAllMocks();
     await relay?.close();
   });

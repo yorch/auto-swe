@@ -15,6 +15,7 @@ import {
   enabledProfileIds,
   enablementTeamId,
   type ParsedPin,
+  PIN_EXECUTION_KEY,
   parsePinEntry,
   pinMapOwner,
   verifiedBindingKey,
@@ -115,9 +116,9 @@ async function resolveOne(
 
   const execution = ambientExecution();
   const supplied = ctx?.harnessProfileVersions?.[name];
-  const { pin, writable } = execution
+  const { pin, writable, claim } = execution
     ? await readPin(execution, name)
-    : { pin: undefined, writable: false };
+    : { claim: false, pin: undefined, writable: false };
   const needsEnablement = bindingNeedsEnablement(binding.scope);
   // Only a binding this run already verified skips the team's enablement check.
   // Keyed by team, agent key and agent version: another team, or a newer version of the
@@ -146,6 +147,7 @@ async function resolveOne(
     if (version === undefined) {
       // A concurrent resolution pinned first: its answer is the run's.
       const pinned = await pinHarnessProfile(execution.workflowId, name, profile.latestVersion, {
+        claim,
         hooksEnabled: live,
         runId: execution.runId,
         verifiedKey: needsEnablement ? verifiedKey : undefined,
@@ -156,6 +158,7 @@ async function resolveOne(
       // Passed the check just now (this binding is the run's own from here on), or
       // the pin predates the hook switch: the first use pins it, never overwriting.
       const pinned = await pinHarnessProfile(execution.workflowId, name, version, {
+        claim,
         hooksEnabled: live,
         runId: execution.runId,
         verifiedKey: needsEnablement && !verifiedByPin ? verifiedKey : undefined,
@@ -325,14 +328,63 @@ function ambientExecution(): { workflowId: string; runId: string } | undefined {
 export async function readHarnessPin(
   name: string
 ): Promise<{ pin: ParsedPin; workflowId: string; runId: string } | undefined> {
+  const state = await readHarnessPinState(name);
+  return state.kind === 'pinned'
+    ? { pin: state.pin, runId: state.runId, workflowId: state.workflowId }
+    : undefined;
+}
+
+/**
+ * Why a pin can or cannot be used by the plugin MCP relay: `unavailable` (outside an activity or
+ * no run row), `foreign` (the row's pins belong to another execution), `unpinned` (writable, but
+ * no entry for the profile), or `pinned`.
+ */
+export type HarnessPinState =
+  | { kind: 'unavailable' }
+  | { kind: 'unpinned' }
+  | {
+      kind: 'foreign';
+      /** Whether this execution may claim the map ({@link pinHarnessProfile} `claim`). */
+      claimable: boolean;
+      workflowId: string;
+      runId: string;
+    }
+  | { kind: 'pinned'; pin: ParsedPin; workflowId: string; runId: string };
+
+/**
+ * Whether a pin map owned by another execution can be CLAIMED by `runId`. Never the execution the
+ * row was created for (`temporalRunId`): once a later execution claimed or replaced the map, the
+ * original one (still running after a reset, say) is the stale side and must not take it back.
+ */
+function mayClaim(rowTemporalRunId: string | null | undefined, runId: string): boolean {
+  return rowTemporalRunId !== runId;
+}
+
+/** {@link readHarnessPin}, telling the ways there is no usable pin apart. */
+export async function readHarnessPinState(name: string): Promise<HarnessPinState> {
   const execution = ambientExecution();
   if (!execution) {
-    return undefined;
+    return { kind: 'unavailable' };
   }
-  const { pin, writable } = await readPin(execution, name);
-  return pin && writable
-    ? { pin, runId: execution.runId, workflowId: execution.workflowId }
-    : undefined;
+  const row = await prisma.workflowRun.findUnique({
+    select: { harnessProfileVersions: true, temporalRunId: true },
+    where: { workflowId: execution.workflowId },
+  });
+  if (!row) {
+    return { kind: 'unavailable' };
+  }
+  if (pinMapOwner(row.harnessProfileVersions, row.temporalRunId) !== execution.runId) {
+    return {
+      claimable: mayClaim(row.temporalRunId, execution.runId),
+      kind: 'foreign',
+      runId: execution.runId,
+      workflowId: execution.workflowId,
+    };
+  }
+  const pin = parsePinEntry(asPinMap(row.harnessProfileVersions)?.[name]);
+  return pin
+    ? { kind: 'pinned', pin, runId: execution.runId, workflowId: execution.workflowId }
+    : { kind: 'unpinned' };
 }
 
 function asPinMap(value: unknown): Record<string, unknown> | null {
@@ -350,15 +402,25 @@ function asPinMap(value: unknown): Record<string, unknown> | null {
 async function readPin(
   execution: { workflowId: string; runId: string },
   name: string
-): Promise<{ pin: ParsedPin | undefined; writable: boolean }> {
+): Promise<{ pin: ParsedPin | undefined; writable: boolean; claim: boolean }> {
   const row = await prisma.workflowRun.findUnique({
     select: { harnessProfileVersions: true, temporalRunId: true },
     where: { workflowId: execution.workflowId },
   });
-  if (!row || pinMapOwner(row.harnessProfileVersions, row.temporalRunId) !== execution.runId) {
-    return { pin: undefined, writable: false };
+  if (!row) {
+    return { claim: false, pin: undefined, writable: false };
   }
-  return { pin: parsePinEntry(asPinMap(row.harnessProfileVersions)?.[name]), writable: true };
+  if (pinMapOwner(row.harnessProfileVersions, row.temporalRunId) !== execution.runId) {
+    // Another execution's map: read nothing from it. A later execution may claim it with its
+    // first write (it resolves fresh, so its version is its own); the row's original may not.
+    const claim = mayClaim(row.temporalRunId, execution.runId);
+    return { claim, pin: undefined, writable: claim };
+  }
+  return {
+    claim: false,
+    pin: parsePinEntry(asPinMap(row.harnessProfileVersions)?.[name]),
+    writable: true,
+  };
 }
 
 /**
@@ -399,6 +461,16 @@ export async function pinHarnessProfile(
      * entry already has a set.
      */
     mcpPins?: readonly string[];
+    /**
+     * With `runId`: when the stored map belongs to another execution, CLAIM it for `runId`. The
+     * write replaces the whole map with `{ __execution: runId, [name]: entry }`, carrying over
+     * nothing of the old execution (not its versions, `verified` bindings, hook switches or `mcp`
+     * sets, which were taken for that execution), through a compare-and-set on the map that was
+     * read, so concurrent claims converge on one winner and the others read its map. Refused for
+     * the execution the row was created for (`temporalRunId`), which is the stale side once a later
+     * execution owns the map.
+     */
+    claim?: boolean;
   } = {}
 ): Promise<{ version: number; hooks: boolean | undefined; mcp?: readonly string[] }> {
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -409,14 +481,20 @@ export async function pinHarnessProfile(
     if (!row) {
       return { hooks: opts.hooksEnabled, mcp: opts.mcpPins, version: candidate };
     }
+    const stored = asPinMap(row.harnessProfileVersions);
+    let current = stored;
+    let claiming = false;
     if (
       opts.runId !== undefined &&
       pinMapOwner(row.harnessProfileVersions, row.temporalRunId) !== opts.runId
     ) {
-      return { hooks: opts.hooksEnabled, mcp: opts.mcpPins, version: candidate };
+      if (!opts.claim || !mayClaim(row.temporalRunId, opts.runId)) {
+        return { hooks: opts.hooksEnabled, mcp: opts.mcpPins, version: candidate };
+      }
+      claiming = true;
+      current = { [PIN_EXECUTION_KEY]: opts.runId };
     }
-    const current = asPinMap(row.harnessProfileVersions);
-    const existing = parsePinEntry(current?.[name]);
+    const existing = claiming ? undefined : parsePinEntry(current?.[name]);
     const key = opts.verifiedKey;
     const needsKey = key !== undefined && !existing?.verified.has(key);
     const needsHooks = opts.hooksEnabled !== undefined && existing?.hooks === undefined;
@@ -446,8 +524,9 @@ export async function pinHarnessProfile(
         harnessProfileVersions: { ...current, [name]: entry } as Prisma.InputJsonObject,
       },
       where: {
-        harnessProfileVersions: current
-          ? { equals: current as Prisma.InputJsonObject }
+        // The map as it was READ (the other execution's, when claiming): a lost race re-reads.
+        harnessProfileVersions: stored
+          ? { equals: stored as Prisma.InputJsonObject }
           : { equals: Prisma.DbNull },
         id: row.id,
       },

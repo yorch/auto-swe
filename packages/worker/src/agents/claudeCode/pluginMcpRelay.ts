@@ -1,5 +1,5 @@
 import { type PluginMcpBinding, pluginToolNameFits } from '../../lib/config/pluginMcp.js';
-import { type McpRelay, openMcpRelay } from '../harness/mcpRelay.js';
+import { type McpRelay, openMcpRelay, scrubEndpointNames } from '../harness/mcpRelay.js';
 import type { McpTracer } from '../mcpTools.js';
 
 /** A plugin's mapped connection, opened for the run. */
@@ -23,7 +23,9 @@ const HOST_PORT = /\b[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9-]+)
 
 /** Text with the connection's endpoint (its URL, then any URL, its host, or an address) replaced. */
 export function scrubEndpoint(text: string, url: string): string {
-  let out = text.split(url).join('[endpoint]');
+  // The endpoint's own names first (URL forms, query and path secrets, encodings), then the wider
+  // sweep: this one is for errors and screening messages, where an address is not data.
+  let out = scrubEndpointNames(text, url).split(url).join('[endpoint]');
   try {
     const { host, hostname } = new URL(url);
     for (const name of [host, hostname]) {

@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({ open: vi.fn() }));
-vi.mock('../harness/mcpRelay.js', () => ({ openMcpRelay: h.open }));
+vi.mock('../harness/mcpRelay.js', async (importActual) => ({
+  ...(await importActual<typeof import('../harness/mcpRelay.js')>()),
+  openMcpRelay: h.open,
+}));
 vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
 
 import { openPluginMcpRelays, safeAuditValue, scrubEndpoint } from './pluginMcpRelay.js';
@@ -173,5 +176,14 @@ describe('scrubEndpoint', () => {
       'GET [endpoint] then [endpoint]'
     );
     expect(scrubEndpoint('tool failed: bad argument', url)).toBe('tool failed: bad argument');
+  });
+
+  it('also hides a query or path secret of the URL in another spelling', () => {
+    const secret = 'https://mcp.example.com/api/s/SECRET123/mcp?token=QTOK1';
+    const out = scrubEndpoint(
+      'GET HTTPS://MCP.EXAMPLE.COM/x?a=1&token=QTOK1 /api/s/SECRET123/mcp',
+      secret
+    );
+    expect(out).not.toMatch(/QTOK1|SECRET123|mcp\.example/i);
   });
 });

@@ -29,6 +29,8 @@ type Block =
 
 /** A task with this word asks for the relayed MCP tool instead of a shell command. */
 const MCP_TOOL = 'mcp__connection__echo';
+/** A task with `PLUGINCALL` asks for the `echo` tool of a plugin's relayed server (`mcp__<key>__echo`). */
+const PLUGIN_MCP_TOOL = /^mcp__(?!connection__)[A-Za-z0-9_-]+__echo$/;
 
 /**
  * A task can also carry its own command as `RUN[[command]]` (no double quotes
@@ -111,7 +113,12 @@ export function startMockMessagesApi(): Promise<MockMessagesApi> {
       );
       const task = JSON.stringify(messages[0] ?? '');
       const asksForMcp = task.includes('MCPCALL') && tools.includes(MCP_TOOL) && !hasToolResult;
-      const asksForTool = asksForMcp || (tools.includes('Bash') && !hasToolResult);
+      const pluginTool = task.includes('PLUGINCALL')
+        ? tools.find((name) => PLUGIN_MCP_TOOL.test(name))
+        : undefined;
+      const asksForPluginMcp = pluginTool !== undefined && !hasToolResult;
+      const asksForTool =
+        asksForMcp || asksForPluginMcp || (tools.includes('Bash') && !hasToolResult);
       const command =
         SUBCOMMAND.exec(task)?.[1] ??
         RUN.exec(task)?.[1] ??
@@ -126,6 +133,7 @@ export function startMockMessagesApi(): Promise<MockMessagesApi> {
         tools.includes('Agent') &&
         !hasToolResult &&
         !asksForMcp &&
+        !asksForPluginMcp &&
         !asksForSkill;
       const asked = messages.some(
         (m) =>
@@ -174,25 +182,34 @@ export function startMockMessagesApi(): Promise<MockMessagesApi> {
                     type: 'tool_use',
                   },
                 ]
-              : asksForMcp
+              : asksForPluginMcp
                 ? [
                     {
                       id: 'toolu_1',
                       input: { text: 'from the harness' },
-                      name: MCP_TOOL,
+                      name: pluginTool as string,
                       type: 'tool_use',
                     },
                   ]
-                : asksForTool
+                : asksForMcp
                   ? [
                       {
                         id: 'toolu_1',
-                        input: { command, description: 'mock' },
-                        name: 'Bash',
+                        input: { text: 'from the harness' },
+                        name: MCP_TOOL,
                         type: 'tool_use',
                       },
                     ]
-                  : [{ text: hasToolResult ? 'all done' : 'ok', type: 'text' }];
+                  : asksForTool
+                    ? [
+                        {
+                          id: 'toolu_1',
+                          input: { command, description: 'mock' },
+                          name: 'Bash',
+                          type: 'tool_use',
+                        },
+                      ]
+                    : [{ text: hasToolResult ? 'all done' : 'ok', type: 'text' }];
       const stop = content.some((b) => b.type === 'tool_use') ? 'tool_use' : 'end_turn';
       const message = {
         content,
