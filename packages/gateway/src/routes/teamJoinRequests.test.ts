@@ -41,9 +41,13 @@ vi.mock('@auto-swe/shared/config', async (importOriginal) => {
   };
 });
 
-// Delivery is the notifier's own concern; here only when the service calls it matters.
-const notify = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => undefined));
-vi.mock('../lib/joinRequestNotifier.js', () => ({ notifyJoinRequestEvent: notify }));
+// Delivery is the poller's concern. Here only the outbox rows the service writes matter; whether a
+// bot token resolves for a team channel decides the audience of a new request.
+const slackToken = vi.hoisted(() => vi.fn(async (_channel: string) => null as string | null));
+vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/lib/systemConfig')>()),
+  resolveSlackBotTokenForSlackChannel: slackToken,
+}));
 
 import '../test/warmAuthImports.js';
 import { closeOpenJoinRequests } from '../lib/teamJoinRequests.js';
@@ -203,7 +207,8 @@ async function call(method: 'GET' | 'POST', url: string, payload?: unknown) {
 const audits = (entityType: string) => world.audits.filter((a) => a.entityType === entityType);
 
 beforeEach(async () => {
-  notify.mockClear();
+  slackToken.mockReset();
+  slackToken.mockResolvedValue(null);
   seq = 0;
   world = emptyWorld();
   mocks.world = world;
@@ -1662,21 +1667,64 @@ describe('the organization step when the requester already joined', () => {
   });
 });
 
-describe('notifications', () => {
-  const events = () => notify.mock.calls.map((c) => c[1]);
-
-  it('announces a created request after it is stored', async () => {
-    const { body } = await call('POST', `/api/v1/teams/${ALPHA}/join-requests`);
-    expect(events()).toEqual([{ kind: 'created', requestId: body.data.id }]);
+describe('notification outbox', () => {
+  const setAlphaChannel = (channel: string) => {
+    for (const t of world.teams) {
+      if (t.id === ALPHA) {
+        t.slackNotifyChannel = channel;
+      }
+    }
+  };
+  /** The rows written, as the poller will see them. */
+  const outbox = () =>
+    world.joinRequestNotifications.map((r) => ({
+      audience: r.audience,
+      channel: r.channel,
+      event: r.event,
+      requestId: r.requestId,
+      status: r.status,
+    }));
+  const row = (requestId: unknown, event: string, audience: string, channel: string) => ({
+    audience,
+    channel,
+    event,
+    requestId,
+    status: 'PENDING',
   });
 
-  it('announces nothing for a refused request', async () => {
+  it('queues the team reviewers for a new request when the team has no Slack channel', async () => {
+    const { body } = await call('POST', `/api/v1/teams/${ALPHA}/join-requests`);
+    expect(outbox()).toEqual([row(body.data.id, 'CREATED', 'TEAM_REVIEWERS', 'EMAIL')]);
+  });
+
+  it('queues the team channel when the team has a channel and a bot token resolves for it', async () => {
+    setAlphaChannel('C123');
+    slackToken.mockResolvedValue('xoxb-test');
+    const { body } = await call('POST', `/api/v1/teams/${ALPHA}/join-requests`);
+    expect(slackToken).toHaveBeenCalledWith('C123');
+    expect(outbox()).toEqual([row(body.data.id, 'CREATED', 'TEAM_CHANNEL', 'SLACK')]);
+  });
+
+  it('counts a channel with no bot token as no channel', async () => {
+    setAlphaChannel('C123');
+    const { body } = await call('POST', `/api/v1/teams/${ALPHA}/join-requests`);
+    expect(outbox()).toEqual([row(body.data.id, 'CREATED', 'TEAM_REVIEWERS', 'EMAIL')]);
+  });
+
+  it('queues nothing for a team without a channel when reviewer email is off', async () => {
+    world.settings['teams.joinRequestReviewerEmail'] = false;
+    const { status } = await call('POST', `/api/v1/teams/${ALPHA}/join-requests`);
+    expect(status).toBe(201);
+    expect(outbox()).toEqual([]);
+  });
+
+  it('queues nothing for a refused request', async () => {
     addRequest();
     await call('POST', `/api/v1/teams/${ALPHA}/join-requests`);
-    expect(notify).not.toHaveBeenCalled();
+    expect(outbox()).toEqual([]);
   });
 
-  it('announces APPROVED, PENDING_ORG and REJECTED decisions at the team step', async () => {
+  it('queues the requester for APPROVED, PENDING_ORG (with the organization admins) and REJECTED at the team step', async () => {
     as(LEAD);
     const same = addRequest();
     await call('POST', `/api/v1/teams/${ALPHA}/join-requests/${same.id}/approve`);
@@ -1684,99 +1732,88 @@ describe('notifications', () => {
     await call('POST', `/api/v1/teams/${ALPHA}/join-requests/${cross.id}/approve`);
     const no = addRequest({ teamId: ALPHA, userId: ORG_ADMIN });
     await call('POST', `/api/v1/teams/${ALPHA}/join-requests/${no.id}/reject`);
-    expect(events()).toEqual([
-      { kind: 'decided', outcome: 'APPROVED', requestId: same.id },
-      { kind: 'decided', outcome: 'PENDING_ORG', requestId: cross.id },
-      { kind: 'decided', outcome: 'REJECTED', requestId: no.id },
+    expect(outbox()).toEqual([
+      row(same.id, 'APPROVED', 'REQUESTER', 'EMAIL'),
+      row(cross.id, 'PENDING_ORG', 'REQUESTER', 'EMAIL'),
+      row(cross.id, 'PENDING_ORG', 'ORG_ADMINS', 'EMAIL'),
+      row(no.id, 'REJECTED', 'REQUESTER', 'EMAIL'),
     ]);
   });
 
-  it('announces a combined approval as APPROVED, once', async () => {
+  it('queues a combined approval as APPROVED, once', async () => {
     as(ORG_ADMIN);
     const cross = addRequest({ requiresOrgApproval: true, userId: OUTSIDER });
     await call('POST', `/api/v1/teams/${ALPHA}/join-requests/${cross.id}/approve`);
-    expect(events()).toEqual([{ kind: 'decided', outcome: 'APPROVED', requestId: cross.id }]);
+    expect(outbox()).toEqual([row(cross.id, 'APPROVED', 'REQUESTER', 'EMAIL')]);
   });
 
-  it('announces the organization step’s decisions', async () => {
+  it('queues the organization step’s decisions', async () => {
     as(ORG_ADMIN);
     const yes = addRequest({ requiresOrgApproval: true, status: 'PENDING_ORG', userId: OUTSIDER });
     const no = addRequest({ requiresOrgApproval: true, status: 'PENDING_ORG', userId: REQUESTER });
     await call('POST', `/api/v1/platform/organizations/${ORG_A}/join-requests/${yes.id}/approve`);
     await call('POST', `/api/v1/platform/organizations/${ORG_A}/join-requests/${no.id}/reject`);
-    expect(events()).toEqual([
-      { kind: 'decided', outcome: 'APPROVED', requestId: yes.id },
-      { kind: 'decided', outcome: 'REJECTED', requestId: no.id },
+    expect(outbox()).toEqual([
+      row(yes.id, 'APPROVED', 'REQUESTER', 'EMAIL'),
+      row(no.id, 'REJECTED', 'REQUESTER', 'EMAIL'),
     ]);
   });
 
-  it('announces nothing for a withdrawal or a decision that lost its race', async () => {
-    const row = addRequest();
-    await call('POST', `/api/v1/me/join-requests/${row.id}/withdraw`);
+  it('queues nothing for a withdrawal or a decision that lost its race', async () => {
+    const withdrawn = addRequest();
+    await call('POST', `/api/v1/me/join-requests/${withdrawn.id}/withdraw`);
     as(LEAD);
-    await call('POST', `/api/v1/teams/${ALPHA}/join-requests/${row.id}/approve`);
-    expect(notify).not.toHaveBeenCalled();
+    await call('POST', `/api/v1/teams/${ALPHA}/join-requests/${withdrawn.id}/approve`);
+    expect(outbox()).toEqual([]);
   });
 
-  it('does not let a notifier that rejects or throws change the answer', async () => {
-    notify.mockRejectedValueOnce(new Error('smtp down'));
-    const first = await call('POST', `/api/v1/teams/${ALPHA}/join-requests`);
-    expect(first.status).toBe(201);
-    notify.mockImplementationOnce(() => {
-      throw new Error('sync boom');
+  it('is idempotent: enqueueing the same event again writes no second row', async () => {
+    const { body } = await call('POST', `/api/v1/teams/${ALPHA}/join-requests`);
+    const { enqueueJoinRequestNotifications } = await import('../lib/joinRequestOutbox.js');
+    const count = await enqueueJoinRequestNotifications(ctx.prisma as never, {
+      event: 'CREATED',
+      requestId: body.data.id,
+      reviewerEmailEnabled: true,
+      team: { hasSlackChannel: false },
     });
-    as(LEAD);
-    const row = addRequest({ teamId: ALPHA, userId: ORG_ADMIN });
-    const rejected = await call('POST', `/api/v1/teams/${ALPHA}/join-requests/${row.id}/reject`);
-    expect(rejected.status).toBe(200);
-    expect(rejected.body.data.status).toBe('REJECTED');
+    expect(count).toBe(0);
+    expect(outbox()).toHaveLength(1);
   });
 });
 
-describe('a notification is sent only after the transaction commits', () => {
-  afterEach(() => {
-    notify.mockReset();
-    notify.mockImplementation(async () => undefined);
-  });
+describe('an outbox row commits with the transaction that makes it', () => {
+  const outbox = () => world.joinRequestNotifications;
 
-  /** Makes the next audit write fail, which every decision makes after it has claimed its row. */
+  /** Makes every audit write fail; each decision writes its audit rows after it has queued its notice. */
   const failAuditWrites = () =>
     vi.spyOn(ctx.prisma.configAuditLog, 'create').mockRejectedValue(new Error('audit down'));
-
-  /** The order in which a transaction callback returned and the notifier was called. */
-  function recordOrder() {
-    const order: string[] = [];
-    const real = ctx.prisma.$transaction;
-    vi.spyOn(ctx.prisma, '$transaction').mockImplementation(
-      async (fn: (tx: unknown) => Promise<unknown>) => {
-        const result = await real(fn);
-        order.push('commit');
-        return result;
-      }
-    );
-    notify.mockImplementation(async () => {
-      order.push('notify');
-      return undefined;
-    });
-    return order;
-  }
 
   const teamStep = (id: string, verb: 'approve' | 'reject') =>
     call('POST', `/api/v1/teams/${ALPHA}/join-requests/${id}/${verb}`);
   const orgStep = (id: string, verb: 'approve' | 'reject') =>
     call('POST', `/api/v1/platform/organizations/${ORG_A}/join-requests/${id}/${verb}`);
 
-  const cases: Array<{ name: string; run: () => Promise<{ status: number }> }> = [
-    { name: 'create', run: () => call('POST', `/api/v1/teams/${ALPHA}/join-requests`) },
+  const cases: Array<{ name: string; rows: number; run: () => Promise<{ status: number }> }> = [
+    { name: 'create', rows: 1, run: () => call('POST', `/api/v1/teams/${ALPHA}/join-requests`) },
     {
       name: 'team-step approve',
+      rows: 1,
       run: () => {
         as(LEAD);
         return teamStep(addRequest().id, 'approve');
       },
     },
     {
+      name: 'team-step approve to the organization',
+      rows: 2,
+      run: () => {
+        as(LEAD);
+        return teamStep(addRequest({ requiresOrgApproval: true, userId: OUTSIDER }).id, 'approve');
+      },
+    },
+    {
       name: 'combined approval',
+      rows: 1,
       run: () => {
         as(ORG_ADMIN);
         return teamStep(addRequest({ requiresOrgApproval: true, userId: OUTSIDER }).id, 'approve');
@@ -1784,6 +1821,7 @@ describe('a notification is sent only after the transaction commits', () => {
     },
     {
       name: 'team-step reject',
+      rows: 1,
       run: () => {
         as(LEAD);
         return teamStep(addRequest({ userId: ORG_ADMIN }).id, 'reject');
@@ -1791,45 +1829,49 @@ describe('a notification is sent only after the transaction commits', () => {
     },
     {
       name: 'organization-step approve',
+      rows: 1,
       run: () => {
         as(ORG_ADMIN);
-        const row = addRequest({
+        const pending = addRequest({
           grantedRole: 'MEMBER',
           requiresOrgApproval: true,
           status: 'PENDING_ORG',
           teamDecidedById: LEAD,
           userId: OUTSIDER,
         });
-        return orgStep(row.id, 'approve');
+        return orgStep(pending.id, 'approve');
       },
     },
     {
       name: 'organization-step reject',
+      rows: 1,
       run: () => {
         as(ORG_ADMIN);
-        const row = addRequest({
+        const pending = addRequest({
           requiresOrgApproval: true,
           status: 'PENDING_ORG',
           userId: OUTSIDER,
         });
-        return orgStep(row.id, 'reject');
+        return orgStep(pending.id, 'reject');
       },
     },
   ];
 
-  for (const { name, run } of cases) {
-    it(`${name}: sends nothing when the transaction fails after its claim`, async () => {
+  for (const { name, rows, run } of cases) {
+    it(`${name}: leaves no outbox row when the transaction fails after queueing it`, async () => {
+      const createMany = vi.spyOn(ctx.prisma.joinRequestNotification, 'createMany');
       failAuditWrites();
       const { status } = await run();
       expect(status).toBe(500);
-      expect(notify).not.toHaveBeenCalled();
+      // The notice was written, then rolled back with everything else.
+      expect(createMany).toHaveBeenCalled();
+      expect(outbox()).toEqual([]);
     });
 
-    it(`${name}: sends once, after the transaction callback has returned`, async () => {
-      const order = recordOrder();
+    it(`${name}: leaves exactly the expected rows when it commits`, async () => {
       const { status } = await run();
       expect(status).toBeLessThan(300);
-      expect(order).toEqual(['commit', 'notify']);
+      expect(outbox()).toHaveLength(rows);
     });
   }
 });
@@ -1866,7 +1908,7 @@ describe('closing open requests when something is deactivated', () => {
       beforeJson: { closeReason: null },
       context: { authority: 'platform-admin' },
     });
-    expect(notify).not.toHaveBeenCalled();
+    expect(world.joinRequestNotifications).toEqual([]);
   });
 
   it('rejects the open requests of a deactivated team, and only that team’s', async () => {

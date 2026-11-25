@@ -68,7 +68,12 @@ function buildApp(
       lockOrder.push(`team:${id}`);
       return 1;
     }),
-    $queryRaw: vi.fn(async () => {
+    // The row locks of `lib/lockOrder.ts`: an organization's, or a team's, by the statement.
+    $queryRaw: vi.fn(async (strings: TemplateStringsArray, id: string) => {
+      if (strings.join('?').includes('FROM teams')) {
+        lockOrder.push(`team:${id}`);
+        return [{ id }];
+      }
       lockOrder.push('org');
       orgLockCalls.push(ORG_ID);
       return [{ id: ORG_ID }];

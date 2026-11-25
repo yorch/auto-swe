@@ -42,7 +42,8 @@ import type { FastifyInstance } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
 import type { AuditContext } from './auditContext.js';
 import { writeAuditLog } from './auditLog.js';
-import { type JoinRequestEvent, notifyJoinRequestEvent } from './joinRequestNotifier.js';
+import { enqueueJoinRequestEvent, resolveCreatedRouting } from './joinRequestOutbox.js';
+import { lockOrganizations, lockOrgThenTeam } from './lockOrder.js';
 import { isUniqueConstraintError } from './prismaErrors.js';
 
 type Db = FastifyInstance['prisma'];
@@ -207,65 +208,110 @@ interface Viewer {
   sub: string;
 }
 
-/**
- * Tells the notifier, after a commit, that a request was created or decided. The notifier never
- * rejects; the catch is a second line of defence, and nothing here is awaited into the caller's
- * result, so a slow or failing send cannot change the outcome of the decision it reports.
- */
-function notifyAfterCommit(fastify: FastifyInstance, event: JoinRequestEvent): void {
-  try {
-    void notifyJoinRequestEvent(fastify.prisma, event).catch((err: unknown) => {
-      fastify.log?.warn({ err, event: event.kind }, 'join request notification failed');
-    });
-  } catch (err) {
-    fastify.log?.warn({ err, event: event.kind }, 'join request notification failed');
-  }
-}
-
 /** How many organization names the directory filter lists; `organizationsTruncated` says more exist. */
 export const DIRECTORY_ORGANIZATIONS_LIMIT = 500;
 
 /**
- * The directory's visibility rule as one `Team` filter, shared by the listing, the organization
- * filter and the create path so they cannot disagree: a team is visible when it and its organization
- * are active and (the viewer belongs to the organization, or the organization's effective
- * `teams.directoryScope` is `platform`). The effective scope is the organization's own valid
- * override, else the platform value.
+ * The directory's visibility rule, shared by the listing, the organization filter, the organization
+ * search endpoint and the create path so they cannot disagree. It is written once, as a filter on the
+ * organization (`orgWhere`), and the team filter (`where`) is derived from it: a team is visible when
+ * it and its organization are active and (the viewer belongs to the organization, or the
+ * organization's effective `teams.directoryScope` is `platform`). The effective scope is the
+ * organization's own valid override, else the platform value.
  *
  * Nothing here scales with the number of organizations or of overrides. The platform value says
  * which side is the short list, and the database joins the organizations' override rows itself
- * (`configSettings` of the team's organization), so the only list sent as parameters is the
- * viewer's own memberships. Under `platform` a team is visible unless its organization chose
- * `organization`; under `organization` it is visible only if its organization chose `platform`.
- * An override is valid only as the exact JSON string `platform` or `organization` (the registry
- * schema is an enum); a JSON `equals` on that string treats any other stored value (wrong case, a
- * number, an array, an object) as no override, so it falls through to the platform value exactly as
- * `resolveSetting(key, { orgId })` does.
+ * (`configSettings` of the organization), so the only list sent as parameters is the viewer's own
+ * memberships. Under `platform` an organization is visible unless it chose `organization`; under
+ * `organization` it is visible only if it chose `platform`. An override is valid only as the exact
+ * JSON string `platform` or `organization` (the registry schema is an enum); a JSON `equals` on that
+ * string treats any other stored value (wrong case, a number, an array, an object) as no override,
+ * so it falls through to the platform value exactly as `resolveSetting(key, { orgId })` does.
  */
-async function directoryVisibility(
-  viewerOrgIds: readonly string[]
-): Promise<{ scope: DirectoryScope; where: Prisma.TeamWhereInput }> {
+async function directoryVisibility(viewerOrgIds: readonly string[]): Promise<{
+  orgWhere: Prisma.OrganizationWhereInput;
+  scope: DirectoryScope;
+  where: Prisma.TeamWhereInput;
+}> {
   const scope = await resolveSetting('teams.directoryScope');
   const chose = (value: DirectoryScope) => ({
     key: 'teams.directoryScope',
     scope: 'ORGANIZATION' as const,
     value: { equals: value },
   });
-  // The override rows are read through the team's organization relation, in the same statement.
-  const byOverride: Prisma.TeamWhereInput = {
-    organization: {
-      configSettings:
-        scope === 'platform' ? { none: chose('organization') } : { some: chose('platform') },
-    },
+  // The override rows are read through the organization relation, in the same statement.
+  const orgWhere: Prisma.OrganizationWhereInput = {
+    isActive: true,
+    OR: [
+      { id: { in: [...viewerOrgIds] } },
+      {
+        configSettings:
+          scope === 'platform' ? { none: chose('organization') } : { some: chose('platform') },
+      },
+    ],
   };
-  return {
-    scope,
-    where: {
-      isActive: true,
-      OR: [{ orgId: { in: [...viewerOrgIds] } }, byOverride],
-      organization: { isActive: true },
-    },
-  };
+  return { orgWhere, scope, where: { isActive: true, organization: orgWhere } };
+}
+
+/**
+ * Organizations per statement in `listVisibleOrganizations`. A statement's parameter list is this
+ * long however many organizations exist.
+ */
+const ORGANIZATION_CHUNK = 1000;
+
+/**
+ * The organizations of `orgWhere` that own at least one active team, in name order (`after` is an
+ * exclusive lower bound on the name, `q` a case-insensitive substring of it), the first `take`.
+ *
+ * The cost follows the number of teams, not the number of organizations, and not the planner's
+ * statistics. The distinct organization ids of the active teams come from one `GROUP BY` over
+ * `teams`; each statement after it starts from at most `ORGANIZATION_CHUNK` primary keys it was
+ * handed, so every plan is a bounded run of index probes. A single `organizations WHERE EXISTS
+ * (teams …)` leaves the join order to the planner, and from stale statistics it can pick an ordered
+ * walk of all organizations with one probe each. The database also does all the ordering: when
+ * more than one chunk is needed, the chunks' winners are re-chunked and ordered again until one
+ * statement orders what is left, so the order is the cursor's own (the same collation) and nothing
+ * is compared in JavaScript.
+ */
+async function listVisibleOrganizations(
+  prisma: Db,
+  orgWhere: Prisma.OrganizationWhereInput,
+  opts: { after?: string; q?: string; take: number }
+): Promise<Array<{ id: string; name: string }>> {
+  const withTeams = await runUnscoped(
+    'the organizations that own an active team, as distinct ids',
+    ['Team'],
+    () => prisma.team.groupBy({ by: ['orgId'], where: { isActive: true } })
+  );
+  const names: Prisma.OrganizationWhereInput[] = [];
+  if (opts.after !== undefined) {
+    names.push({ name: { gt: opts.after } });
+  }
+  if (opts.q) {
+    names.push({ name: { contains: opts.q, mode: 'insensitive' } });
+  }
+  let candidates = withTeams.map((r) => r.orgId);
+  let first = true;
+  for (;;) {
+    const winners: Array<{ id: string; name: string }> = [];
+    for (let from = 0; from < candidates.length; from += ORGANIZATION_CHUNK) {
+      const ids = candidates.slice(from, from + ORGANIZATION_CHUNK);
+      winners.push(
+        ...(await prisma.organization.findMany({
+          orderBy: { name: 'asc' },
+          select: { id: true, name: true },
+          take: opts.take,
+          // The first round decides visibility; the later ones only re-order its winners.
+          where: first ? { AND: [orgWhere, { id: { in: ids } }, ...names] } : { id: { in: ids } },
+        }))
+      );
+    }
+    if (candidates.length <= ORGANIZATION_CHUNK) {
+      return winners;
+    }
+    candidates = winners.map((w) => w.id);
+    first = false;
+  }
 }
 
 /**
@@ -369,7 +415,7 @@ export async function loadCreatableOrgs(
 export async function loadDirectory(prisma: Db, viewer: Viewer, query: DirectoryQuery) {
   const memberOrgIds = await memberOrgIdsOf(prisma, viewer.sub);
   // Each team's own organization decides who may list it (see `directoryVisibility`).
-  const { scope, where: visible } = await directoryVisibility(memberOrgIds);
+  const { orgWhere, scope, where: visible } = await directoryVisibility(memberOrgIds);
 
   let after: string | null = null;
   if (query.cursor !== undefined) {
@@ -438,12 +484,7 @@ export async function loadDirectory(prisma: Db, viewer: Viewer, query: Directory
     loadCreatableOrgs(prisma, viewer, memberOrgIds),
     // The organization filter lists organizations that have a team the viewer may see, whatever
     // the search text or page, in name order and capped: one more than the cap says it was cut.
-    prisma.organization.findMany({
-      orderBy: { name: 'asc' },
-      select: { id: true, name: true },
-      take: DIRECTORY_ORGANIZATIONS_LIMIT + 1,
-      where: { isActive: true, teams: { some: visible } },
-    }),
+    listVisibleOrganizations(prisma, orgWhere, { take: DIRECTORY_ORGANIZATIONS_LIMIT + 1 }),
   ]);
   const organizations = orgsWithTeams.slice(0, DIRECTORY_ORGANIZATIONS_LIMIT);
   const organizationsTruncated = orgsWithTeams.length > DIRECTORY_ORGANIZATIONS_LIMIT;
@@ -478,6 +519,38 @@ export async function loadDirectory(prisma: Db, viewer: Viewer, query: Directory
 }
 
 /**
+ * `GET /teams/directory/organizations`: the organizations the viewer may see a team of, by the rule
+ * the directory lists teams by, in name order. `q` is a case-insensitive substring of the name and
+ * the cursor is the last name of the previous page (organization names are unique).
+ */
+export async function loadDirectoryOrganizations(
+  prisma: Db,
+  viewer: Viewer,
+  query: { cursor?: string; limit: number; q?: string }
+) {
+  let after: string | undefined;
+  if (query.cursor !== undefined) {
+    const decoded = decodeCursor(query.cursor);
+    if (decoded === null) {
+      return refuse(400, 'INVALID_CURSOR', 'The cursor is not one this API issued');
+    }
+    after = decoded;
+  }
+  const { orgWhere } = await directoryVisibility(await memberOrgIdsOf(prisma, viewer.sub));
+  const rows = await listVisibleOrganizations(prisma, orgWhere, {
+    after,
+    q: query.q,
+    take: query.limit + 1,
+  });
+  const organizations = rows.slice(0, query.limit);
+  const nextCursor =
+    rows.length > query.limit
+      ? encodeCursor(organizations[organizations.length - 1]?.name ?? '')
+      : null;
+  return { nextCursor, ok: true as const, organizations };
+}
+
+/**
  * The team, if `viewer` may see it in the directory: the same filter the listing applies. An unknown
  * team, an inactive one (or of an inactive organization) and one outside the scope are the same
  * answer.
@@ -495,16 +568,21 @@ async function visibleTeam(prisma: Db, viewerId: string, teamId: string) {
 /* ── Locks ─────────────────────────────────────────────────────────────────── */
 
 /**
- * The organization's row lock, then the team's: the order every membership write takes them in, so
- * an organization removal (which deletes the team memberships under the same two locks) cannot
- * interleave with an approval.
+ * The refusal for a decision on a request of an organization that has been deactivated, or `null`
+ * while it is active. Read inside the decision's transaction, after the organization's lock, so a
+ * deactivation that committed while the decision waited has taken effect; the request is untouched.
  */
-async function lockOrgThenTeam(tx: Prisma.TransactionClient, orgId: string, teamId: string) {
-  // CLAUDE.md §7 exception: the organization lock serializes this membership write with an
-  // organization removal, which deletes the user's team memberships under the same lock.
-  await tx.$executeRaw`SELECT 1 FROM organizations WHERE id = ${orgId}::uuid FOR UPDATE`;
-  // CLAUDE.md §7 exception: the team lock every membership write takes, after the organization's.
-  await tx.$executeRaw`SELECT 1 FROM teams WHERE id = ${teamId}::uuid FOR UPDATE`;
+async function inactiveOrganizationRefusal(
+  tx: Prisma.TransactionClient,
+  orgId: string
+): Promise<Refusal | null> {
+  const org = await tx.organization.findUnique({
+    select: { isActive: true },
+    where: { id: orgId },
+  });
+  return org?.isActive
+    ? null
+    : refuse(409, 'ORGANIZATION_INACTIVE', 'The organization is no longer active');
 }
 
 /** Whether a role is above `rank`. */
@@ -591,6 +669,10 @@ export async function createJoinRequest(
     select: { id: true },
     where: { userId_orgId: { orgId: team.orgId, userId: actor.sub } },
   });
+  // Read on the pool before the transaction opens, so the transaction never waits for a second
+  // connection while it holds one, and a Slack configuration that fails to decrypt cannot fail the
+  // request (it counts as no usable channel).
+  const routing = await resolveCreatedRouting(prisma, { orgId: team.orgId, teamId });
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -609,12 +691,12 @@ export async function createJoinRequest(
       if (!requester?.isActive) {
         return refuse(401, 'TOKEN_INVALID', 'The user this token was issued to is inactive');
       }
-      // CLAUDE.md §7 exception: a share lock on the team row, held to commit, so a team deactivation
-      // (which takes the row `FOR UPDATE` and then closes its open requests) cannot slip between
-      // the re-check below and the insert.
-      await tx.$executeRaw`SELECT 1 FROM teams WHERE id = ${teamId}::uuid FOR SHARE`;
+      // Share locks on the organization and then the team, held to commit (the order in
+      // `lockOrder.ts`), so a deactivation of either (which takes the row `FOR UPDATE` and then
+      // closes its open requests) cannot slip between the re-check below and the insert.
+      await lockOrgThenTeam(tx, team.orgId, teamId, 'share');
       const live = await tx.team.findUnique({ select: { isActive: true }, where: { id: teamId } });
-      if (!live?.isActive) {
+      if (!live?.isActive || (await inactiveOrganizationRefusal(tx, team.orgId))) {
         return refuse(404, 'TEAM_NOT_FOUND', 'Team not found');
       }
       const openCount = await runUnscoped(
@@ -633,6 +715,12 @@ export async function createJoinRequest(
         data: { message, requiresOrgApproval: !inOrg, teamId, userId: actor.sub },
         select: REQUEST_SELECT,
       });
+      // The notice commits with the request or not at all: an outbox row, not a send after commit.
+      await enqueueJoinRequestEvent(tx, {
+        event: 'CREATED',
+        requestId: created.id,
+        routing,
+      });
       await writeAuditLog(fastify, {
         action: 'CREATE',
         actor,
@@ -644,9 +732,6 @@ export async function createJoinRequest(
       });
       return { ok: true as const, request: requesterView(created) };
     });
-    if (result.ok) {
-      notifyAfterCommit(fastify, { kind: 'created', requestId: result.request.id });
-    }
     return result;
   } catch (err) {
     // The partial unique index decides a concurrent double request.
@@ -897,6 +982,10 @@ export async function approveAtTeamStep(
       if (!stillActive?.isActive) {
         return refuse(409, 'TEAM_INACTIVE', 'The team is no longer active');
       }
+      const orgInactive = await inactiveOrganizationRefusal(tx, team.orgId);
+      if (orgInactive) {
+        return orgInactive;
+      }
       // The approver's own account, read under the locks too: `loadStanding` does not look at it, and
       // an account deactivated while this waited is no longer one that may decide anything.
       const deciding = await tx.user.findUnique({
@@ -970,6 +1059,10 @@ export async function approveAtTeamStep(
       if (claim.count !== 1) {
         return refuse(409, 'REQUEST_ALREADY_DECIDED', 'The request was decided by someone else');
       }
+      await enqueueJoinRequestEvent(tx, {
+        event: next === 'PENDING_ORG' ? 'PENDING_ORG' : 'APPROVED',
+        requestId,
+      });
       if (combined && orgDecision.allowed) {
         const orgMembership = await tx.organizationMembership.create({
           data: { orgId: team.orgId, role: 'MEMBER', userId: row.userId },
@@ -1019,13 +1112,6 @@ export async function approveAtTeamStep(
       });
       return { ok: true as const, request: reviewerView(after) };
     });
-    if (result.ok) {
-      notifyAfterCommit(fastify, {
-        kind: 'decided',
-        outcome: result.request.status === 'PENDING_ORG' ? 'PENDING_ORG' : 'APPROVED',
-        requestId,
-      });
-    }
     return result;
   } catch (err) {
     if (isUniqueConstraintError(err)) {
@@ -1074,6 +1160,20 @@ async function reject(
           orgDecisionNote: input.note ?? null,
         };
   const result = await fastify.prisma.$transaction(async (tx) => {
+    // A rejection takes no membership lock, but it reads the organization's state under a share
+    // lock, so a deactivation (which holds the row `FOR UPDATE` while it closes requests) is either
+    // seen here or waits for this to commit.
+    const owner = await tx.team.findUnique({ select: { orgId: true }, where: { id: teamId } });
+    if (!owner) {
+      return refuse(404, 'JOIN_REQUEST_NOT_FOUND', 'Join request not found');
+    }
+    // A share lock on the organization row, held to commit, so the active check below cannot be
+    // overtaken by a deactivation that closes this request's siblings.
+    await lockOrganizations(tx, [owner.orgId], 'share');
+    const orgInactive = await inactiveOrganizationRefusal(tx, owner.orgId);
+    if (orgInactive) {
+      return orgInactive;
+    }
     const claim = await tx.teamJoinRequest.updateMany({
       data: { ...decided, status: 'REJECTED' },
       where: { id: requestId, status: from, teamId },
@@ -1081,6 +1181,10 @@ async function reject(
     if (claim.count !== 1) {
       return refuse(409, 'REQUEST_ALREADY_DECIDED', 'The request was decided by someone else');
     }
+    await enqueueJoinRequestEvent(tx, {
+      event: 'REJECTED',
+      requestId,
+    });
     const after = await tx.teamJoinRequest.findFirstOrThrow({
       select: REVIEWER_SELECT,
       where: { id: requestId, teamId },
@@ -1097,9 +1201,6 @@ async function reject(
     });
     return { ok: true as const, request: reviewerView(after) };
   });
-  if (result.ok) {
-    notifyAfterCommit(fastify, { kind: 'decided', outcome: 'REJECTED', requestId });
-  }
   return result;
 }
 
@@ -1193,6 +1294,10 @@ export async function approveAtOrgStep(
   try {
     const result = await prisma.$transaction(async (tx) => {
       await lockOrgThenTeam(tx, orgId, teamId);
+      const orgInactive = await inactiveOrganizationRefusal(tx, orgId);
+      if (orgInactive) {
+        return orgInactive;
+      }
       // The route checked `org.members.manage` before this waited for the locks; a removal that
       // committed meanwhile has taken it away, so it is asked again of the standing read now.
       // The approver's own account is read under the locks too: `loadStanding` does not look at it,
@@ -1268,6 +1373,7 @@ export async function approveAtOrgStep(
       if (claim.count !== 1) {
         return refuse(409, 'REQUEST_ALREADY_DECIDED', 'The request was decided by someone else');
       }
+      await enqueueJoinRequestEvent(tx, { event: 'APPROVED', requestId });
       if (!inOrg) {
         const orgMembership = await tx.organizationMembership.create({
           data: { orgId, role: 'MEMBER', userId: row.userId },
@@ -1310,9 +1416,6 @@ export async function approveAtOrgStep(
       });
       return { ok: true as const, request: reviewerView(after) };
     });
-    if (result.ok) {
-      notifyAfterCommit(fastify, { kind: 'decided', outcome: 'APPROVED', requestId });
-    }
     return result;
   } catch (err) {
     if (isUniqueConstraintError(err)) {

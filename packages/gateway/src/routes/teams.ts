@@ -23,6 +23,7 @@ import { sendConflict } from '../lib/conflict.js';
 import { loadEgressReadiness } from '../lib/egressReadiness.js';
 import { sendError } from '../lib/httpErrors.js';
 import { inviteUser } from '../lib/inviteUser.js';
+import { lockOrganizations, lockOrgThenTeam, lockTeams } from '../lib/lockOrder.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
@@ -72,6 +73,14 @@ const CreateTeamSchema = z.object({
 });
 
 class OrganizationMemberRequired extends Error {}
+
+/**
+ * The organization was deactivated, as read under its row lock: no team is created in it. An
+ * organization's administrators keep administering it (members, invitations), but a team created
+ * after the deactivation closed its teams' requests would be a new team in an organization that
+ * accepts no new work.
+ */
+export class OrganizationInactive extends Error {}
 
 /** A self-service creator already has as many teams as `teams.maxCreatedPerUser` allows. */
 export class TeamLimitReached extends Error {}
@@ -137,9 +146,18 @@ export async function createTeam(
       // so two creations by the same person serialize here before either counts.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`team-create:${actor.sub}`}, 0))`;
     }
-    // CLAUDE.md §7 exception: the organization lock serializes the first admin's membership checks
-    // with an organization removal, which deletes team memberships under the same lock.
-    await tx.$executeRaw`SELECT 1 FROM organizations WHERE id = ${orgId}::uuid FOR UPDATE`;
+    // The organization lock serializes the first admin's membership checks with an organization
+    // removal, which deletes team memberships under the same lock.
+    await lockOrganizations(tx, [orgId]);
+    // Read under the lock, so a deactivation that committed while this waited has taken effect, and
+    // one that comes next waits for this team to exist.
+    const owner = await tx.organization.findUnique({
+      select: { isActive: true },
+      where: { id: orgId },
+    });
+    if (!owner?.isActive) {
+      throw new OrganizationInactive();
+    }
     if (selfService && (await countCreatedTeams(tx, actor.sub)) >= selfService.limit) {
       throw new TeamLimitReached();
     }
@@ -246,6 +264,14 @@ export const orgTeamRoutes: FastifyPluginAsync = async (fastify) => {
         const team = await createTeam(fastify, actor, request.body, org.id, context, selfService);
         return reply.status(201).send({ data: team });
       } catch (err) {
+        if (err instanceof OrganizationInactive) {
+          return sendError(
+            reply,
+            409,
+            'ORGANIZATION_INACTIVE',
+            'The organization is not active, so it accepts no new teams'
+          );
+        }
         if (err instanceof TeamLimitReached) {
           return sendError(
             reply,
@@ -383,14 +409,14 @@ async function applyMembershipChange<T>(
   orgId?: string
 ): Promise<{ ok: true; value: T } | { ok: false; guard: TeamGuardResult }> {
   return prisma.$transaction(async (tx) => {
+    // The organization lock serializes this membership write with an organization removal, which
+    // deletes the user's team memberships under the same lock; the team lock is shared with source
+    // checks and serializes all membership changes for this team. The organization's comes first.
     if (orgId) {
-      // CLAUDE.md §7 exception: the organization lock serializes this membership write with an
-      // organization removal, which deletes the user's team memberships under the same lock.
-      await tx.$executeRaw`SELECT 1 FROM organizations WHERE id = ${orgId}::uuid FOR UPDATE`;
+      await lockOrgThenTeam(tx, orgId, teamId);
+    } else {
+      await lockTeams(tx, [teamId]);
     }
-    // CLAUDE.md §7 exception: this lock is shared with source checks and serializes all
-    // membership changes for this team.
-    await tx.$executeRaw`SELECT 1 FROM teams WHERE id = ${teamId}::uuid FOR UPDATE`;
     if (removesAdmin) {
       const roles = await tx.teamMembership.findMany({ select: { role: true }, where: { teamId } });
       const adminCount = roles.filter((m) => teamRankMeets(teamRankOf(m.role), 'ADMIN')).length;
@@ -462,6 +488,14 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         team = await createTeam(fastify, requireUser(request), request.body, org.id, context);
       } catch (err) {
+        if (err instanceof OrganizationInactive) {
+          return sendError(
+            reply,
+            409,
+            'ORGANIZATION_INACTIVE',
+            'The organization is not active, so it accepts no new teams'
+          );
+        }
         if (err instanceof OrganizationMemberRequired) {
           return sendError(
             reply,
@@ -819,8 +853,8 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       await fastify.prisma.$transaction(async (tx) => {
-        // CLAUDE.md §7 exception: serialize team deactivation with source checks.
-        await tx.$executeRaw`SELECT 1 FROM teams WHERE id = ${request.params.id}::uuid FOR UPDATE`;
+        // Serialize team deactivation with source checks.
+        await lockTeams(tx, [request.params.id]);
         await tx.team.update({
           data: { isActive: false },
           where: { id: request.params.id },

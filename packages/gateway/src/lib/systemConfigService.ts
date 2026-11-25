@@ -17,6 +17,7 @@ import { WebClient } from '@slack/web-api';
 import type { FastifyBaseLogger } from 'fastify';
 import { auditContextData } from './auditContext.js';
 import { probeAppInstallation } from './connectionProbes.js';
+import { lockOrganizations } from './lockOrder.js';
 
 /**
  * Service for the singleton system-config tables (GitHub, Slack,
@@ -1254,6 +1255,14 @@ export const WORKFLOW_DEFAULTS_KEYS = [
   'prTitleTemplate',
 ] as const satisfies readonly (keyof WorkflowDefaultsInput & WorkflowDefaultsKey)[];
 
+/// The default team named by a save belongs to an inactive organization: new accounts would be
+/// enrolled in it. Nothing was written.
+export class DefaultTeamOrganizationInactive extends Error {
+  constructor(readonly slug: string) {
+    super(`The default team '${slug}' belongs to an inactive organization`);
+  }
+}
+
 /// Writes the general (non-secret) fields onto the WorkflowDefaults singleton.
 /// Non-secret plain passthrough — no encryption. `data` is the resolved
 /// read-back (with env-var fallbacks + nested budgetTiers) so GET and PUT share
@@ -1272,11 +1281,34 @@ export async function updateWorkflowDefaults(
     }
   }
 
-  await prisma.workflowDefaults.upsert({
-    create: { id: 'default', ...data },
-    update: data,
-    where: { id: 'default' },
-  });
+  const write = (db: Pick<PrismaClient, 'workflowDefaults'>) =>
+    db.workflowDefaults.upsert({
+      create: { id: 'default', ...data },
+      update: data,
+      where: { id: 'default' },
+    });
+  if (typeof data.defaultTeamSlug === 'string') {
+    // New accounts are enrolled in the default team, so it must not sit in an inactive organization.
+    // The check and the write share one transaction under the organization's row lock, the lock a
+    // deactivation takes before it reads which team is the default: one of the two wins, never both.
+    const slug = data.defaultTeamSlug;
+    await prisma.$transaction(async (tx) => {
+      const team = await tx.team.findUnique({ select: { orgId: true }, where: { slug } });
+      if (team) {
+        await lockOrganizations(tx, [team.orgId]);
+        const owner = await tx.organization.findUnique({
+          select: { isActive: true },
+          where: { id: team.orgId },
+        });
+        if (!owner?.isActive) {
+          throw new DefaultTeamOrganizationInactive(slug);
+        }
+      }
+      await write(tx);
+    });
+  } else {
+    await write(prisma);
+  }
 
   const changedFields = changedKeys(WORKFLOW_DEFAULTS_KEYS.map((k) => [k, body[k]]));
 

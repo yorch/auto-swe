@@ -33,6 +33,7 @@ import {
   listOwnRequests,
   listTeamRequests,
   loadDirectory,
+  loadDirectoryOrganizations,
   type Refusal,
   rejectAtOrgStep,
   rejectAtTeamStep,
@@ -65,6 +66,9 @@ const DirectoryQuery = z.object({
     .transform((q) => (q ? q : undefined)),
 });
 
+/** `?q=&limit=&cursor=` on the organization search: the directory's own query without `orgId`. */
+const DirectoryOrganizationsQuery = DirectoryQuery.omit({ orgId: true });
+
 /** `?status=` on a queue: one status, or `ALL`. The team and organization queues default differently. */
 const QueueQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(100),
@@ -90,6 +94,26 @@ export const teamJoinRequestRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const result = await loadDirectory(fastify.prisma, user, request.query);
+      if (!result.ok) {
+        return send(reply, result);
+      }
+      const { ok: _ok, ...body } = result;
+      return body;
+    }
+  );
+
+  // GET /api/v1/teams/directory/organizations: the organizations the directory lists a team of, by
+  // name, for the directory's filter. Same visibility rule as the directory, so a hidden
+  // organization is never named here either.
+  app.get(
+    '/directory/organizations',
+    { onRequest: requireAuth(), schema: { querystring: DirectoryOrganizationsQuery } },
+    async (request, reply) => {
+      const result = await loadDirectoryOrganizations(
+        fastify.prisma,
+        requireUser(request),
+        request.query
+      );
       if (!result.ok) {
         return send(reply, result);
       }

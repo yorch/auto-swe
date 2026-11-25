@@ -1539,6 +1539,8 @@ describe('which routes an MCP token may reach', () => {
       'activityEvents',
       // Adds a timer and an onClose hook, no route.
       'jiraPollerPlugin',
+      // Adds a timer and an onClose hook, no route.
+      'joinRequestNotificationPollerPlugin',
       'mcpOAuthGate',
       'mcpConsentAudit',
       'mcpBridgePlugin',

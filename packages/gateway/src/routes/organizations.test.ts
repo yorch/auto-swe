@@ -1,6 +1,10 @@
+import { Prisma } from '@auto-swe/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { changeOrganizationActive } from '../lib/organizationDeactivation.js';
 import { makeAuthedApp } from '../test/authedApp.js';
 import { organizationRoutes } from './organizations.js';
+
+vi.mock('../lib/organizationDeactivation.js', () => ({ changeOrganizationActive: vi.fn() }));
 
 const ORG_ID = '00000000-0000-4000-8000-000000000001';
 const PREFIX = '/api/v1/admin/organizations';
@@ -78,6 +82,159 @@ describe('PATCH /:orgId trustedInvites', () => {
 
     expect(res.statusCode).toBe(200);
     expect(orgUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { name: 'Renamed' } }));
+  });
+});
+
+describe('PATCH /:orgId isActive', () => {
+  afterEach(() => vi.clearAllMocks());
+
+  const changed = (isActive: boolean) => ({
+    closedJoinRequests: 0,
+    ok: true as const,
+    organization: { ...ORG_ROW, isActive },
+  });
+
+  it('lets a platform ADMIN deactivate an organization, naming the authority in the context', async () => {
+    vi.mocked(changeOrganizationActive).mockResolvedValue(changed(false));
+    const res = await patch(buildApp('ADMIN', null), { isActive: false });
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).data).toMatchObject({ id: ORG_ID, isActive: false });
+    expect(changeOrganizationActive).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        context: expect.objectContaining({ authority: 'platform-admin' }),
+        fields: {},
+        isActive: false,
+        orgId: ORG_ID,
+      })
+    );
+    // The change is the library's to write, in its own transaction.
+    expect(orgUpdate).not.toHaveBeenCalled();
+  });
+
+  it('hands the other fields of the body to the same transaction', async () => {
+    vi.mocked(changeOrganizationActive).mockResolvedValue(changed(true));
+    await patch(buildApp('ADMIN', null), { isActive: true, name: 'Renamed' });
+
+    expect(changeOrganizationActive).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ fields: { name: 'Renamed' }, isActive: true })
+    );
+  });
+
+  it('refuses an ORG_ADMIN with the capability refusal, naming what is missing', async () => {
+    const res = await patch(buildApp('ENGINEER', 'ADMIN'), { isActive: false });
+
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.body).error).toMatchObject({
+      code: 'FORBIDDEN',
+      missing: 'platform.orgs.deactivate',
+    });
+    expect(changeOrganizationActive).not.toHaveBeenCalled();
+  });
+
+  it('refuses an ORG_ADMIN who sends isActive beside a rename, changing nothing', async () => {
+    const res = await patch(buildApp('ENGINEER', 'ADMIN'), { isActive: true, name: 'Renamed' });
+
+    expect(res.statusCode).toBe(403);
+    expect(changeOrganizationActive).not.toHaveBeenCalled();
+    expect(orgUpdate).not.toHaveBeenCalled();
+  });
+
+  it('answers the default organization refusal as 409 DEFAULT_ORGANIZATION', async () => {
+    vi.mocked(changeOrganizationActive).mockResolvedValue({
+      code: 'DEFAULT_ORGANIZATION',
+      message: 'The organization that owns the default team cannot be deactivated',
+      ok: false,
+      status: 409,
+    });
+    const res = await patch(buildApp('ADMIN', null), { isActive: false });
+
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).error.code).toBe('DEFAULT_ORGANIZATION');
+  });
+
+  it('answers an unknown organization as 404', async () => {
+    vi.mocked(changeOrganizationActive).mockResolvedValue({
+      code: 'NOT_FOUND',
+      message: 'Organization not found',
+      ok: false,
+      status: 404,
+    });
+    const res = await patch(buildApp('ADMIN', null), { isActive: false });
+
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('answers a name or slug already in use as 409 ORG_EXISTS', async () => {
+    vi.mocked(changeOrganizationActive).mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('unique', { clientVersion: 'x', code: 'P2002' })
+    );
+    const res = await patch(buildApp('ADMIN', null), { isActive: true, name: 'Taken' });
+
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).error.code).toBe('ORG_EXISTS');
+  });
+});
+
+describe('organization listings and the active flag', () => {
+  afterEach(() => vi.clearAllMocks());
+
+  function listApp() {
+    const findMany = vi
+      .fn()
+      .mockResolvedValue([
+        { ...ORG_ROW, isActive: false, monthlyBudgetUsdCents: null, monthlyUsages: [] },
+      ]);
+    const findUnique = vi.fn().mockResolvedValue({ ...ORG_ROW, isActive: false });
+    const app = makeAuthedApp({
+      prisma: {
+        organization: { findMany, findUnique },
+        organizationMembership: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
+      },
+      role: 'ADMIN',
+      sub: USER_ID,
+    });
+    app.register(organizationRoutes, { prefix: PREFIX });
+    return { app, findMany, findUnique };
+  }
+
+  it('keeps a deactivated organization out of the budget-alert list unless asked', async () => {
+    const { app, findMany } = listApp();
+    await app.ready();
+    await app.inject({ method: 'GET', url: `${PREFIX}/budget-alerts` });
+    expect(findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { isActive: true } })
+    );
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `${PREFIX}/budget-alerts?includeInactive=true`,
+    });
+    expect(findMany).toHaveBeenLastCalledWith(expect.objectContaining({ where: {} }));
+    expect(JSON.parse(res.body).data[0]).toMatchObject({ id: ORG_ID, isActive: false });
+  });
+
+  it('rejects an includeInactive value that is not true or false', async () => {
+    const { app } = listApp();
+    await app.ready();
+    const res = await app.inject({
+      method: 'GET',
+      url: `${PREFIX}/budget-alerts?includeInactive=1`,
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('reads the active flag with the organization', async () => {
+    const { app, findUnique } = listApp();
+    await app.ready();
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}` });
+
+    expect(findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ isActive: true }) })
+    );
+    expect(JSON.parse(res.body).data.isActive).toBe(false);
   });
 });
 

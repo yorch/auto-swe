@@ -48,6 +48,7 @@ async function buildApp() {
 
   const mockPrisma = {
     $executeRaw: vi.fn().mockResolvedValue(1),
+    $queryRaw: vi.fn(async (_strings: TemplateStringsArray, id: string) => [{ id }]),
     account: { create: vi.fn().mockResolvedValue({}) },
     configAuditLog: {
       create: vi.fn().mockResolvedValue({}),
@@ -1058,6 +1059,12 @@ describe('userRoutes', () => {
           order.push(`lock:${values.join(',')}`);
           return 1;
         });
+        (ctx.mockPrisma.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
+          async (strings: TemplateStringsArray, id: string) => {
+            order.push(`row:${strings.join('?').includes('FROM users') ? 'user' : 'other'}:${id}`);
+            return [{ id }];
+          }
+        );
         ctx.mockPrisma.teamJoinRequest.updateManyAndReturn.mockImplementation(async () => {
           order.push('close');
           return [];
@@ -1069,9 +1076,11 @@ describe('userRoutes', () => {
           url: `/api/v1/users/${USER_ID}`,
         });
         expect(res.statusCode).toBe(200);
-        // The key is the one `createJoinRequest` takes, taken before the first close.
+        // The key is the one `createJoinRequest` takes, taken before the first close, then the
+        // account's own row (the lock order of `lib/lockOrder.ts`: the user row before request rows).
         expect(order[0]).toBe(`lock:join-request:${USER_ID}`);
-        expect(order).toContain('close');
+        expect(order[1]).toBe(`row:user:${USER_ID}`);
+        expect(order.indexOf('close')).toBeGreaterThan(1);
         ctx.mockPrisma.teamJoinRequest.updateManyAndReturn.mockReset();
         ctx.mockPrisma.teamJoinRequest.updateManyAndReturn.mockResolvedValue([]);
       });

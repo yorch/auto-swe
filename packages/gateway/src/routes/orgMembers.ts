@@ -28,6 +28,7 @@ import { writeAuditLog } from '../lib/auditLog.js';
 import { actorOf, can, replyRefusal } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
 import { inviteUser } from '../lib/inviteUser.js';
+import { lockOrganizations, lockTeams } from '../lib/lockOrder.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 function memberAuditFields(row: { orgId: string; role: string; userId: string }) {
@@ -135,11 +136,9 @@ async function planTeamCascade(
       where: { team: { orgId }, userId },
     })
   ).map((m) => m.teamId);
-  for (const teamId of [...teamIds].sort()) {
-    // CLAUDE.md §7 exception: the team row lock every membership write takes, taken after the
-    // organization's and in ascending id order so two cascades cannot deadlock.
-    await tx.$executeRaw`SELECT 1 FROM teams WHERE id = ${teamId}::uuid FOR UPDATE`;
-  }
+  // The team row lock every membership write takes, after the organization's and in ascending id
+  // order so two cascades cannot deadlock.
+  await lockTeams(tx, teamIds);
   const rows = await tx.teamMembership.findMany({
     orderBy: { teamId: 'asc' },
     select: { id: true, role: true, teamId: true, userId: true },
@@ -198,8 +197,8 @@ async function withOrganizationMembershipLock<T>(
   write: (tx: Prisma.TransactionClient) => Promise<T>
 ): Promise<T> {
   return fastify.prisma.$transaction(async (tx) => {
-    // CLAUDE.md §7 exception: serialize org membership writes with source checks and revocations.
-    await tx.$queryRaw`SELECT id FROM organizations WHERE id = ${orgId}::uuid FOR UPDATE`;
+    // Serialize org membership writes with source checks and revocations.
+    await lockOrganizations(tx, [orgId]);
     return write(tx);
   });
 }

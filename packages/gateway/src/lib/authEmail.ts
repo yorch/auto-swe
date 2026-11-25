@@ -15,6 +15,7 @@
  * URL. An unset NODE_ENV counts as production, the same rule every other
  * dev-only fallback in the gateway follows.
  */
+import net from 'node:net';
 import { resolveAuthEmailConfig } from '@auto-swe/shared/lib/systemConfig';
 import nodemailer, { type Transporter } from 'nodemailer';
 
@@ -35,28 +36,67 @@ function devLogAllowed(): boolean {
   return process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
 }
 
-/** Lazy SMTP transporter, rebuilt when the SMTP settings change. */
-let smtpTransporter: { key: string; transporter: Transporter } | null = null;
+/**
+ * Finite SMTP timeouts for the notification path. nodemailer's defaults are minutes long (2 min to
+ * connect, 30 s for the greeting, 10 min of socket silence), so a stalled relay would hold a
+ * delivery far past the outbox lease. The sign-in and password-reset path keeps the defaults.
+ */
+export const NOTIFICATION_SMTP_TIMEOUTS = {
+  /** Opening the connection. */
+  connectionTimeout: 15_000,
+  /** The server's greeting after the connection opens. */
+  greetingTimeout: 15_000,
+  /** Silence on an open socket, per command. */
+  socketTimeout: 30_000,
+} as const;
 
-function getSmtpTransporter(): Transporter | null {
+/** The sign-in and password-reset transporter: lazy, rebuilt when the SMTP settings change. */
+let defaultTransporter: { key: string; transporter: Transporter } | undefined;
+
+function smtpOptions(socket?: net.Socket) {
   const { authFromEmail, smtpHost, smtpPass, smtpPort, smtpUser } = resolveAuthEmailConfig();
   if (!(smtpHost && smtpPort && authFromEmail)) {
     return null;
   }
-  const key = JSON.stringify([smtpHost, smtpPort, smtpUser, smtpPass]);
-  if (smtpTransporter?.key !== key) {
-    smtpTransporter = {
-      key,
-      transporter: nodemailer.createTransport({
-        auth: smtpUser && smtpPass ? { pass: smtpPass, user: smtpUser } : undefined,
-        host: smtpHost,
-        port: smtpPort,
-        // STARTTLS on 587, implicit TLS on 465. Match real-world provider defaults.
-        secure: smtpPort === 465,
-      }),
+  return {
+    key: JSON.stringify([smtpHost, smtpPort, smtpUser, smtpPass]),
+    options: {
+      auth: smtpUser && smtpPass ? { pass: smtpPass, user: smtpUser } : undefined,
+      host: smtpHost,
+      port: smtpPort,
+      // STARTTLS on 587, implicit TLS on 465. Match real-world provider defaults.
+      secure: smtpPort === 465,
+      ...(socket ? { socket, ...NOTIFICATION_SMTP_TIMEOUTS } : {}),
+    },
+  };
+}
+
+/**
+ * The transporter for one send. The default profile is shared and cached. The bounded profile is
+ * built per send around a socket this module owns (`options.socket`: nodemailer connects that very
+ * object, upgrades it for TLS when needed, and never hides it), because a send that outlives its
+ * deadline can only be stopped by destroying its socket: `transporter.close()` ends pooled
+ * connections and does nothing to a plain one that is mid-send.
+ */
+function getSmtpTransporter(
+  bounded: boolean
+): { transporter: Transporter; socket?: net.Socket } | null {
+  if (bounded) {
+    const socket = new net.Socket();
+    const config = smtpOptions(socket);
+    return config ? { socket, transporter: nodemailer.createTransport(config.options) } : null;
+  }
+  const config = smtpOptions();
+  if (!config) {
+    return null;
+  }
+  if (defaultTransporter?.key !== config.key) {
+    defaultTransporter = {
+      key: config.key,
+      transporter: nodemailer.createTransport(config.options),
     };
   }
-  return smtpTransporter.transporter;
+  return { transporter: defaultTransporter.transporter };
 }
 
 export class AuthEmailTransportError extends Error {
@@ -101,16 +141,44 @@ export function emailTransportConfigured(): boolean {
  */
 export async function sendViaConfiguredTransport(
   message: TransportMessage,
-  options: { continueOnError: boolean }
+  options: {
+    continueOnError: boolean;
+    /**
+     * Finite SMTP timeouts and a bounded Resend request, for a caller that holds a lease while it
+     * sends (the join-request outbox). Sign-in and reset links leave it off and keep the defaults.
+     */
+    bounded?: boolean;
+    /**
+     * Only with `bounded`: the caller's deadline. Once it fires the send is abandoned, and for good:
+     * the SMTP socket is destroyed so a relay cannot go on accepting it in the background, and the
+     * Resend fallback is never started. A send abandoned this way has an UNKNOWN outcome (the relay
+     * may already have accepted the message), which is the caller's to treat as at-least-once.
+     */
+    signal?: AbortSignal;
+  }
 ): Promise<{ sent: true } | { sent: false; failures: string[] }> {
   const { authFromEmail, resendApiKey } = resolveAuthEmailConfig();
   const { to, subject, text, html } = message;
   const failures: string[] = [];
+  const bounded = options.bounded === true;
+  const signal = bounded ? options.signal : undefined;
+  if (signal?.aborted) {
+    return { failures: ['the deadline passed before the send started'], sent: false };
+  }
 
-  const transporter = getSmtpTransporter();
-  if (transporter) {
+  const smtp = getSmtpTransporter(bounded);
+  if (smtp) {
+    const abandon = () => {
+      smtp.socket?.destroy();
+      try {
+        smtp.transporter.close();
+      } catch {
+        // Releasing a transporter is best effort; the socket is already gone.
+      }
+    };
+    signal?.addEventListener('abort', abandon, { once: true });
     try {
-      const info = await transporter.sendMail({
+      const info = await smtp.transporter.sendMail({
         from: authFromEmail ?? undefined,
         html,
         subject,
@@ -129,7 +197,19 @@ export async function sendViaConfiguredTransport(
         throw err;
       }
       failures.push(`SMTP: ${(err as Error).message}`);
+    } finally {
+      signal?.removeEventListener('abort', abandon);
+      if (bounded) {
+        // Nothing reuses a bounded transporter; make sure its socket does not outlive the send.
+        smtp.socket?.destroy();
+      }
     }
+  }
+
+  // A deadline that fired during the SMTP attempt abandoned the whole send: a second transport
+  // started now would run outside the caller's lease and could deliver the message again.
+  if (signal?.aborted) {
+    return { failures, sent: false };
   }
 
   if (resendApiKey && authFromEmail) {
@@ -142,6 +222,16 @@ export async function sendViaConfiguredTransport(
         },
         method: 'POST',
         redirect: 'error',
+        ...(bounded
+          ? {
+              signal: signal
+                ? AbortSignal.any([
+                    signal,
+                    AbortSignal.timeout(NOTIFICATION_SMTP_TIMEOUTS.socketTimeout),
+                  ])
+                : AbortSignal.timeout(NOTIFICATION_SMTP_TIMEOUTS.socketTimeout),
+            }
+          : {}),
       });
       if (!res.ok) {
         const body = await res.text().catch(() => '');
