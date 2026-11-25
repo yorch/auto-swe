@@ -674,6 +674,16 @@ jobs:
           CAMPAIGN_RECONCILER_PG_TEST: '1'
         run: yarn test packages/worker/src/activities/campaignReconciler.pg.test.ts
 
+      # The campaign attempt route's guard and conditional write, the real functions run against
+      # Postgres: the campaign-row lock serializes two starts at maxParallel 1 (exactly one wins),
+      # a remove that commits after the locked re-read rolls the ledger transaction back with no
+      # attempt row, and a take-over is refused before the lock or waits behind it. Each
+      # interleaving is staged through pg_stat_activity, so no sleep decides it.
+      - name: Campaign attempt guard (database-backed tests)
+        env:
+          CAMPAIGN_ATTEMPT_PG_TEST: '1'
+        run: yarn test packages/gateway/src/lib/campaignAttempt.pg.test.ts
+
       # Run-pinned settings pinned on first read: the compare-and-set on the
       # JSON column (and on SQL NULL) is what keeps concurrent activities of one
       # run from overwriting each other's pin, which a mocked Prisma does not

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { _resetConfigCacheForTests } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -121,6 +122,9 @@ describe.skipIf(!enabled)('campaign reconciler against Postgres', () => {
     await unscoped(async () => {
       await prisma.campaign.deleteMany({ where: { orgId: ids.org } });
       await prisma.connection.deleteMany({ where: { team: { orgId: ids.org } } });
+    });
+    await prisma.activeWorkflow.deleteMany({
+      where: { temporalWorkflowId: { startsWith: PREFIX } },
     });
     await prisma.pullRequest.deleteMany({ where: { headSha: { startsWith: PREFIX } } });
     await prisma.workflowRun.deleteMany({ where: { workflowId: { startsWith: PREFIX } } });
@@ -368,6 +372,50 @@ describe.skipIf(!enabled)('campaign reconciler against Postgres', () => {
         ).toBe(false);
       } finally {
         await prisma.campaign.update({ data: { budgetUsd: null }, where: { id: ids.campaign } });
+      }
+    });
+
+    it('counts an attempt in flight through its live ledger row and never counts one twice', async () => {
+      seq += 1;
+      const inflightWf = `${PREFIX}inflight-${seq}`;
+      const doneWf = `${PREFIX}done-${seq}`;
+      // In flight: cost on the live ledger, no run row linked to the attempt yet.
+      await prisma.activeWorkflow.create({
+        data: { costUsdAccrued: 3, currentStatus: 'RUNNING', temporalWorkflowId: inflightWf },
+      });
+      // Finished: the same spend sits on both ledgers; it must count once.
+      await prisma.activeWorkflow.create({
+        data: { costUsdAccrued: 4, currentStatus: 'COMPLETED', temporalWorkflowId: doneWf },
+      });
+      const done = await makeRun({
+        costUsdAccrued: 4,
+        endedAt: new Date(),
+        status: 'SUCCESS',
+        workflowId: doneWf,
+      });
+      const t1 = await makeTarget('RUNNING');
+      const t2 = await makeTarget('PR_OPENED');
+      const a1 = await prisma.campaignAttempt.create({
+        data: { childWorkflowId: inflightWf, n: 1, targetId: t1.id },
+      });
+      await prisma.campaignAttempt.create({
+        data: { childWorkflowId: doneWf, n: 1, runId: done.id, targetId: t2.id },
+      });
+      const exceeded = async (budget: number) => {
+        await prisma.campaign.update({ data: { budgetUsd: budget }, where: { id: ids.campaign } });
+        return (await readCampaignPass({ campaignId: ids.campaign }))?.campaign.budgetExceeded;
+      };
+      try {
+        // 3 (in flight) + 4 (finished, once) = 7.
+        expect(await exceeded(7)).toBe(true);
+        expect(await exceeded(7.5)).toBe(false);
+        expect(await exceeded(3.5)).toBe(true);
+      } finally {
+        await prisma.campaign.update({ data: { budgetUsd: null }, where: { id: ids.campaign } });
+        await prisma.campaignAttempt.deleteMany({ where: { id: a1.id } });
+        await prisma.activeWorkflow.deleteMany({
+          where: { temporalWorkflowId: { in: [inflightWf, doneWf] } },
+        });
       }
     });
 
@@ -917,42 +965,6 @@ describe.skipIf(!enabled)('campaign reconciler against Postgres', () => {
     });
   });
 
-  describe('Postgres SELECT … FOR UPDATE on the campaigns row', () => {
-    // This proves the database behaviour the attempt route's design rests on (spec §4 step 4), and
-    // nothing about the route itself: the gateway's guard is inline in `startCampaignAttempt`
-    // (it needs a Fastify instance and the launch machinery) and cannot be imported from the
-    // worker without the gateway server. Its own tests are in `packages/gateway`.
-    it('lets one of several concurrent lock-count-write transactions through a limit of one', async () => {
-      const targets = await Promise.all([
-        makeTarget('PENDING'),
-        makeTarget('PENDING'),
-        makeTarget('PENDING'),
-      ]);
-      const before = await prisma.campaignTarget.count({
-        where: { campaign: { orgId: ids.org }, campaignId: ids.campaign, state: 'RUNNING' },
-      });
-      const limit = before + 1;
-      const start = (targetId: string) =>
-        prisma.$transaction(async (tx) => {
-          // CLAUDE.md §7 exception: a row lock Prisma cannot express.
-          await tx.$queryRaw`SELECT id FROM campaigns WHERE id = ${ids.campaign}::uuid FOR UPDATE`;
-          const inFlight = await tx.campaignTarget.count({
-            where: { campaign: { orgId: ids.org }, campaignId: ids.campaign, state: 'RUNNING' },
-          });
-          if (inFlight >= limit) {
-            return false;
-          }
-          await tx.campaignTarget.updateMany({
-            data: { state: 'RUNNING' },
-            where: { id: targetId, teamId: ids.team },
-          });
-          return true;
-        });
-      const started = await Promise.all(targets.map((t) => start(t.id)));
-      expect(started.filter(Boolean)).toHaveLength(1);
-    });
-  });
-
   describe('settling a campaign (COMPLETED or MONITORING)', () => {
     /** A campaign of its own, so its targets are exactly what the test makes. */
     async function makeCampaign(recipeRef: string | null) {
@@ -1052,6 +1064,101 @@ describe.skipIf(!enabled)('campaign reconciler against Postgres', () => {
       const withCheck = await makeCampaign('npm-dependency@2');
       await addTarget(withCheck, 'MERGED');
       expect((await settle(withCheck, 'COMPLETED')).campaignChanged).toBe(false);
+    });
+
+    const passUpdate = (campaignId: string, over: Record<string, unknown>) =>
+      recordCampaignPass({
+        addTargets: [],
+        campaignId,
+        proposals: [],
+        updates: [{ teamId: ids.team, ...over } as never],
+      });
+
+    it('stamps finishedAt on a MERGED target of a campaign with no check, and not of one with a check', async () => {
+      for (const [recipeRef, stamped] of [
+        [null, true],
+        ['npm-dependency@2', false],
+      ] as const) {
+        const campaignId = await makeCampaign(recipeRef);
+        const target = await addTarget(campaignId, 'PR_OPENED');
+        await passUpdate(campaignId, { expect: 'PR_OPENED', state: 'MERGED', targetId: target.id });
+        const row = await prisma.campaignTarget.findUniqueOrThrow({ where: { id: target.id } });
+        expect(row.state).toBe('MERGED');
+        expect(row.finishedAt !== null).toBe(stamped);
+      }
+    });
+
+    it('lets a MERGED target of a campaign with no check stop gating on its team’s kill switch', async () => {
+      for (const [recipeRef, enabled] of [
+        [null, true],
+        ['npm-dependency@2', false],
+      ] as const) {
+        const campaignId = await makeCampaign(recipeRef);
+        const connection = await prisma.connection.create({
+          data: {
+            organizationName: 'acme',
+            repoName: `${PREFIX}ks-${uuid()}`,
+            teamId: ids.otherTeam,
+          },
+        });
+        await prisma.campaignTarget.create({
+          data: {
+            campaignId,
+            connectionId: connection.id,
+            position: 1,
+            repoLabel: 'acme/ks',
+            state: 'MERGED',
+            teamId: ids.otherTeam,
+          },
+        });
+        expect((await readCampaignPass({ campaignId }))?.campaign.campaignsEnabled).toBe(enabled);
+      }
+    });
+
+    it('sets the stale flag once: a retry of the same write matches no row, and a new episode matches again', async () => {
+      const campaignId = await makeCampaign('npm-dependency@2');
+      const target = await addTarget(campaignId, 'PR_OPENED');
+      const since = Date.UTC(2026, 10, 1);
+      const set = {
+        expect: 'PR_OPENED',
+        staleSince: since,
+        state: 'PR_OPENED',
+        targetId: target.id,
+      };
+      expect((await passUpdate(campaignId, set)).skipped).toBe(0);
+      expect((await passUpdate(campaignId, set)).skipped).toBe(1);
+      expect(
+        (
+          await prisma.campaignTarget.findUniqueOrThrow({ where: { id: target.id } })
+        ).staleSince?.getTime()
+      ).toBe(since);
+      // Not stale any more, then stale again: the write lands again.
+      await passUpdate(campaignId, { ...set, staleSince: null });
+      expect((await passUpdate(campaignId, { ...set, staleSince: since + 1000 })).skipped).toBe(0);
+    });
+
+    it('re-checks at the longer of the campaign’s interval and the organization’s rescan floor', async () => {
+      const campaignId = await makeCampaign('npm-dependency@2');
+      await prisma.campaign.update({ data: { rescanIntervalHours: 6 }, where: { id: campaignId } });
+      _resetConfigCacheForTests();
+      expect((await readCampaignPass({ campaignId }))?.campaign.rescanIntervalHours).toBe(6);
+      await prisma.configSetting.create({
+        data: {
+          key: 'workflow.campaignRescanFloorHours',
+          orgId: ids.org,
+          scope: 'ORGANIZATION',
+          value: 48,
+        },
+      });
+      try {
+        _resetConfigCacheForTests();
+        expect((await readCampaignPass({ campaignId }))?.campaign.rescanIntervalHours).toBe(48);
+      } finally {
+        await prisma.configSetting.deleteMany({
+          where: { key: 'workflow.campaignRescanFloorHours', orgId: ids.org },
+        });
+        _resetConfigCacheForTests();
+      }
     });
 
     it('lets one of two concurrent settles through, and none over a campaign that already moved', async () => {

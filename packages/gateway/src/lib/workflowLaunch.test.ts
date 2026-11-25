@@ -638,6 +638,39 @@ describe('launchTrackedWorkflow', () => {
     expect(state.runInputDeletes).toHaveLength(1);
   });
 
+  it('keeps the ledger and rethrows when the caller calls the start ambiguous', async () => {
+    const { prisma, state } = mockPrisma();
+    const boom = new Error('deadline exceeded');
+    await expect(
+      launchTrackedWorkflow(
+        prisma as never,
+        { activeWorkflow: { temporalWorkflowId: 'wf-1' }, runInput: { id: 'ri-1' } },
+        async () => {
+          throw boom;
+        },
+        { retainLedgerOnStartError: (err) => err === boom }
+      )
+    ).rejects.toBe(boom);
+    expect(state.activeWorkflowDeletes).toEqual([]);
+    expect(state.runInputDeletes).toEqual([]);
+  });
+
+  it('still compensates when the caller does not call the start ambiguous', async () => {
+    const { prisma, state } = mockPrisma();
+    await expect(
+      launchTrackedWorkflow(
+        prisma as never,
+        { activeWorkflow: { temporalWorkflowId: 'wf-1' }, runInput: { id: 'ri-1' } },
+        async () => {
+          throw new Error('invalid argument');
+        },
+        { retainLedgerOnStartError: () => false }
+      )
+    ).rejects.toThrow('invalid argument');
+    expect(state.activeWorkflowDeletes).toHaveLength(1);
+    expect(state.runInputDeletes).toHaveLength(1);
+  });
+
   it('rethrows a non-unique ledger failure without starting', async () => {
     const { prisma } = mockPrisma({ activeWorkflowCreateError: new Error('db down') });
     const start = vi.fn(async () => {});

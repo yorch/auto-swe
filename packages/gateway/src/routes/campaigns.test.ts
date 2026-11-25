@@ -23,6 +23,7 @@ const settings = vi.hoisted(() => ({
   maxParallel: 3,
   maxTargets: 25,
   reconciler: false,
+  rescanFloorHours: 1,
   rescanIntervalHours: 24,
   staleAfterDays: 14,
 }));
@@ -48,6 +49,9 @@ vi.mock('@auto-swe/shared/config', async (importOriginal) => {
       }
       if (key === 'workflow.campaignStaleAfterDays') {
         return settings.staleAfterDays;
+      }
+      if (key === 'workflow.campaignRescanFloorHours') {
+        return settings.rescanFloorHours;
       }
       if (key === 'workflow.campaignRescanIntervalHours') {
         return settings.rescanIntervalHours;
@@ -673,6 +677,7 @@ describe('campaign routes', () => {
     settings.reconciler = false;
     settings.lifetimeDays = 90;
     settings.maxOpenPullRequests = 10;
+    settings.rescanFloorHours = 1;
     settings.rescanIntervalHours = 24;
     settings.staleAfterDays = 14;
   });
@@ -1189,6 +1194,27 @@ describe('campaign routes', () => {
       expect(row).toMatchObject({ rescanIntervalHours: 6, staleAfterDays: 3 });
       expect((row.expiresAt as Date).getTime() - Date.now()).toBeLessThan(7 * 86_400_000 + 1000);
       expect(row.maxOpenPullRequests).toBe(10);
+    });
+
+    it('refuses a rescan interval below the floor with CAMPAIGN_RESCAN_TOO_FREQUENT, and starts nothing', async () => {
+      settings.reconciler = true;
+      settings.rescanFloorHours = 6;
+      const res = await post({ ...reconciled, rescanIntervalHours: 5 });
+      expect(res.statusCode).toBe(400);
+      expect(body(res).error.code).toBe('CAMPAIGN_RESCAN_TOO_FREQUENT');
+      expect(campaigns).toHaveLength(0);
+      expect(startedReconciler).toHaveLength(0);
+      // At the floor it is allowed.
+      expect((await post({ ...reconciled, rescanIntervalHours: 6 })).statusCode).toBe(201);
+      expect((campaigns[0] as CampaignRow).rescanIntervalHours).toBe(6);
+    });
+
+    it('never defaults the interval below the floor', async () => {
+      settings.reconciler = true;
+      settings.rescanIntervalHours = 2;
+      settings.rescanFloorHours = 8;
+      expect((await post(reconciled)).statusCode).toBe(201);
+      expect((campaigns[0] as CampaignRow).rescanIntervalHours).toBe(8);
     });
 
     it('launches a planned campaign into PLANNING, with a pending target for the planner to brief', async () => {

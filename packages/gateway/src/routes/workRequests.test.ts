@@ -362,6 +362,7 @@ describe('POST /api/v1/work-requests', () => {
       triggerReportDigestTest: async () => {},
       triggerRevalidationNow: async () => {},
       triggerWorkRequestSchedule: async () => {},
+      workflowExecutionExists: async () => true,
       workflowSettledStatus: async () => null,
     });
 

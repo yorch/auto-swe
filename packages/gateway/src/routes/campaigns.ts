@@ -471,16 +471,28 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         staleAfterDays: number;
       } | null = null;
       if (workflowKind === 'RECONCILER') {
-        const [openCeiling, staleDefault, rescanDefault, lifetimeDefault] = await Promise.all([
-          resolveSetting('workflow.campaignMaxOpenPullRequests', ownerCtx),
-          resolveSetting('workflow.campaignStaleAfterDays', ownerCtx),
-          resolveSetting('workflow.campaignRescanIntervalHours', ownerCtx),
-          resolveSetting('workflow.campaignLifetimeDays', ownerCtx),
-        ]);
+        const [openCeiling, staleDefault, rescanDefault, lifetimeDefault, rescanFloor] =
+          await Promise.all([
+            resolveSetting('workflow.campaignMaxOpenPullRequests', ownerCtx),
+            resolveSetting('workflow.campaignStaleAfterDays', ownerCtx),
+            resolveSetting('workflow.campaignRescanIntervalHours', ownerCtx),
+            resolveSetting('workflow.campaignLifetimeDays', ownerCtx),
+            resolveSetting('workflow.campaignRescanFloorHours', ownerCtx),
+          ]);
+        // The floor bounds how often a satisfied target is re-checked (spec §12): a launch that asks
+        // for more often is refused, and the default is never below it.
+        if (body.rescanIntervalHours !== undefined && body.rescanIntervalHours < rescanFloor) {
+          return sendError(
+            reply,
+            400,
+            'CAMPAIGN_RESCAN_TOO_FREQUENT',
+            `rescanIntervalHours is below the shortest interval allowed for this team (${rescanFloor} hours, workflow.campaignRescanFloorHours)`
+          );
+        }
         frozen = {
           expiresAt: new Date(Date.now() + (body.lifetimeDays ?? lifetimeDefault) * 86_400_000),
           maxOpenPullRequests: Math.min(body.maxOpenPullRequests ?? openCeiling, openCeiling),
-          rescanIntervalHours: body.rescanIntervalHours ?? rescanDefault,
+          rescanIntervalHours: body.rescanIntervalHours ?? Math.max(rescanDefault, rescanFloor),
           staleAfterDays: body.staleAfterDays ?? staleDefault,
         };
       }

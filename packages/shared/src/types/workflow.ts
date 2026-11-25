@@ -473,11 +473,12 @@ export type CampaignControlAction =
   | 'retry'
   | 'addTargets'
   | 'removeTarget'
+  | 'removeDependency'
   | 'takeover';
 
 export interface CampaignControlSignal {
   action: CampaignControlAction;
-  /** Set for `retry` and `removeTarget`. */
+  /** Set for `retry`, `removeTarget` and `removeDependency`. */
   targetId?: string;
 }
 

@@ -24,6 +24,7 @@ import {
 } from '@auto-swe/shared/lib/campaignApi';
 import { boundFailureReason, CAMPAIGN_TERMINAL_STATES } from '@auto-swe/shared/lib/campaignOutcome';
 import { recipeSupportsCheck } from '@auto-swe/shared/lib/campaignRecipes';
+import { campaignMonthStart, campaignSpendUsd } from '@auto-swe/shared/lib/campaignSpend';
 import {
   CAMPAIGN_TARGET_STATE_VALUES,
   type CampaignAttemptOutcomeValue,
@@ -52,6 +53,7 @@ import type {
   StartCampaignAttemptInput,
   StartCampaignAttemptResult,
 } from '../lib/campaignReconcilerTypes.js';
+import { notifyCampaignStale } from '../lib/campaignStaleNotice.js';
 import { maskCredentialShapes } from '../lib/redactToken.js';
 import { getTemporalClient } from '../lib/temporalClient.js';
 import { parseGatewayError } from './orchestrationApply.js';
@@ -234,9 +236,11 @@ export async function readCampaignPass(input: {
 
   // The gates that pause the whole campaign: the kill switch for the owning team and every team
   // that owns a target still to be worked, the launcher's account, and the campaign's own budget.
+  const hasCheck = campaign.recipeRef !== null && recipeSupportsCheck(campaign.recipeRef);
   const liveTeams = new Set<string>([campaign.ownerTeamId]);
   for (const t of targets) {
-    if (!isTargetFinal(t.state)) {
+    // A campaign with no check is done with a target at MERGED, so that target is not live.
+    if (!isTargetFinalFor(t.state, { hasCheck })) {
       liveTeams.add(t.teamId);
     }
   }
@@ -271,11 +275,21 @@ export async function readCampaignPass(input: {
     orgId: campaign.orgId,
     teamId: campaign.ownerTeamId,
   });
+  // The floor is the operator's: a campaign launched with a shorter interval (or before the floor
+  // was raised) re-checks at the floor, so a change reaches campaigns already running.
+  const rescanFloorHours = await resolveSetting('workflow.campaignRescanFloorHours', {
+    orgId: campaign.orgId,
+    teamId: campaign.ownerTeamId,
+  });
   const launcherAvailable = await isLauncherAvailable(campaign.launchedById, campaign.orgId);
   const budgetExceeded =
     campaign.budgetUsd === null
       ? false
-      : (await monthlySpendUsd(campaignId, nowMs)) >= Number(campaign.budgetUsd);
+      : (await campaignSpendUsd(prisma, {
+          campaignId,
+          monthStart: campaignMonthStart(new Date(nowMs)),
+          orgId: campaign.orgId,
+        })) >= Number(campaign.budgetUsd);
 
   return {
     campaign: {
@@ -283,14 +297,17 @@ export async function readCampaignPass(input: {
       campaignsEnabled,
       expiresAt: campaign.expiresAt?.getTime() ?? null,
       gate: campaign.gate,
-      hasCheck: campaign.recipeRef !== null && recipeSupportsCheck(campaign.recipeRef),
+      hasCheck,
       hasScope: campaign.scopeKind !== null,
       launcherAvailable,
       maxOpenPullRequests: campaign.maxOpenPullRequests,
       maxParallel: campaign.maxParallel,
       maxTargets,
       plan: campaign.plan,
-      rescanIntervalHours: campaign.rescanIntervalHours,
+      rescanIntervalHours:
+        campaign.rescanIntervalHours === null
+          ? null
+          : Math.max(campaign.rescanIntervalHours, rescanFloorHours),
       staleAfterDays: campaign.staleAfterDays,
       state: campaign.state as CampaignStateValue,
     },
@@ -322,19 +339,6 @@ async function isLauncherAvailable(launchedById: string | null, orgId: string): 
   return member !== null;
 }
 
-/** What the campaign's attempts have cost in the month `nowMs` falls in (UTC). */
-async function monthlySpendUsd(campaignId: string, nowMs: number): Promise<number> {
-  const now = new Date(nowMs);
-  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const sum = await prisma.workflowRun.aggregate({
-    _sum: { costUsdAccrued: true },
-    where: {
-      campaignAttempts: { some: { startedAt: { gte: monthStart }, target: { campaignId } } },
-    },
-  });
-  return Number(sum._sum.costUsdAccrued ?? 0);
-}
-
 // ── The write ──
 
 const REASON_MAX = 500;
@@ -357,13 +361,30 @@ export async function recordCampaignPass(
   assertCurrentWorkflowOwnsCampaign(campaignId);
   let skipped = 0;
   const now = new Date();
+  // Whether the campaign has a check decides whether MERGED ends a target (finishedAt). Unknown
+  // (the row is gone) reads as a check, the conservative answer: nothing is stamped finished.
+  const hasCheck =
+    input.updates.length === 0
+      ? true
+      : await prisma.campaign
+          .findUnique({ select: { recipeRef: true }, where: { id: campaignId } })
+          .then((row) =>
+            row ? row.recipeRef !== null && recipeSupportsCheck(row.recipeRef) : true
+          );
+  /** Targets whose staleSince went from unset to set in this call: each is told once, below. */
+  const newlyStale: Array<{ targetId: string; staleSince: number }> = [];
 
   for (const u of input.updates) {
     if (isTargetFinal(u.expect)) {
       skipped += 1;
       continue;
     }
-    const final = isTargetFinal(u.state);
+    const final = isTargetFinalFor(u.state, { hasCheck });
+    // A write that sets `staleSince` also requires it to be unset in the row. The workflow only
+    // sets it on a target that was not stale (a stale one keeps its value), so this loses nothing,
+    // and it makes the write a one-shot: a retry of an update that already landed matches no row,
+    // so the notice below is sent at most once per stale episode.
+    const setsStale = typeof u.staleSince === 'number';
     const moved = await prisma.campaignTarget.updateMany({
       data: {
         state: u.state,
@@ -376,11 +397,23 @@ export async function recordCampaignPass(
           : {}),
         ...(final ? { finishedAt: now } : u.state === 'PENDING' ? { finishedAt: null } : {}),
       },
-      where: { campaignId, id: u.targetId, state: u.expect, teamId: u.teamId },
+      where: {
+        campaignId,
+        id: u.targetId,
+        state: u.expect,
+        teamId: u.teamId,
+        ...(setsStale ? { staleSince: null } : {}),
+      },
     });
     if (moved.count === 0) {
       skipped += 1;
+    } else if (typeof u.staleSince === 'number') {
+      newlyStale.push({ staleSince: u.staleSince, targetId: u.targetId });
     }
+  }
+
+  if (newlyStale.length > 0) {
+    await sendStaleNotices(campaignId, newlyStale, now.getTime());
   }
 
   const added: RecordCampaignPassResult['added'] = [];
@@ -468,6 +501,48 @@ export async function recordCampaignPass(
   return { added, campaignChanged, skipped };
 }
 
+/**
+ * Tell the owning team's Slack channel about targets that just went stale. Reads each target's
+ * label under the campaign's tenant key; best effort, so a failure here never fails the pass.
+ */
+async function sendStaleNotices(
+  campaignId: string,
+  stale: ReadonlyArray<{ targetId: string; staleSince: number }>,
+  nowMs: number
+): Promise<void> {
+  try {
+    const campaign = await prisma.campaign.findUnique({
+      select: { orgId: true },
+      where: { id: campaignId },
+    });
+    if (!campaign) {
+      return;
+    }
+    const rows = await prisma.campaignTarget.findMany({
+      select: { id: true, repoLabel: true },
+      where: {
+        campaign: { orgId: campaign.orgId },
+        campaignId,
+        id: { in: stale.map((t) => t.targetId) },
+      },
+    });
+    const labels = new Map(rows.map((r) => [r.id, r.repoLabel]));
+    await notifyCampaignStale({
+      campaignId,
+      now: nowMs,
+      targets: stale.flatMap((t) => {
+        const repoLabel = labels.get(t.targetId);
+        return repoLabel === undefined ? [] : [{ repoLabel, staleSince: t.staleSince }];
+      }),
+    });
+  } catch (err) {
+    logWarn('campaign stale notice skipped', {
+      campaignId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 /** The campaign write, conditional on the state it was decided from. */
 async function writeCampaignState(
   campaignId: string,
@@ -514,6 +589,14 @@ async function writeSettledState(
     isTargetFinalFor(state, { hasCheck })
   );
   try {
+    // Lock order: the campaign row first (this update), then the target rows (the count below, and
+    // any target write another transaction makes). An attempt start takes the same order (the
+    // campaign `FOR UPDATE`, then its targets). Deleting a team cascades the other way, from the
+    // team's targets up to the campaign they belong to, so a settle and a team deletion that meet on
+    // one campaign can each hold the row the other wants. That is a rare deadlock Postgres resolves
+    // by aborting one side: the settle's error is thrown, the pass fails and the next pass retries,
+    // or the deletion is retried by its caller. Taking the target locks first here would only move
+    // the collision to the attempt start, so the order is kept as it is.
     return await prisma.$transaction(async (tx) => {
       const moved = await tx.campaign.updateMany({
         data,

@@ -2886,3 +2886,35 @@ unchanged. The columns are null and the table is empty until a worker of this bu
 **Verify.**
 `SELECT column_name FROM information_schema.columns WHERE table_name = 'campaigns' AND column_name IN ('plan_failed_at', 'plan_failure_reason')`
 returns both rows, and `SELECT count(*) FROM campaign_discovery_checks` answers without an error.
+
+### Campaign rescan floor, plan editing and the stale-pull-request notice (`<fixing commit SHA>`)
+
+**Affected.** Every deployment that runs reconciled campaigns (`workflow.campaignReconciler` on). A team whose
+`slackNotifyChannel` is set and for which a Slack bot token resolves will see new Slack messages. Nothing else
+needs action.
+
+**What changes.**
+
+- The setting `workflow.campaignRescanFloorHours` (default 1, 1 to 720, overridable at team and organization
+  scope, written by an administrator) is the shortest interval a campaign may re-check at. A launch that asks for
+  a shorter `rescanIntervalHours` is refused with `400 CAMPAIGN_RESCAN_TOO_FREQUENT`, and a campaign already
+  running with an interval below the floor re-checks at the floor from its next pass. The default of 1 changes
+  no campaign launched with the default interval of 24 or any interval of 1 hour or more.
+- Routes are added: `PATCH /api/v1/campaigns/:id/targets/:targetId` (the launcher edits a brief and upstreams
+  while the campaign is `PLANNING`) and `DELETE /api/v1/campaigns/:id/targets/:targetId/dependencies/:upstreamId`
+  (remove an upstream from a running campaign's target). `POST /api/v1/campaigns/:id/targets` now answers
+  `409 CAMPAIGN_PLANNING` for a campaign still `PLANNING`, and a resume answers `409 LAUNCHER_UNAVAILABLE` when the
+  launcher left the organization or no longer leads the owning team, as the attempt route already did. The in-app
+  assistant is refused both new routes.
+- A control action (not cancel) or pull-request event sent to a reconciled campaign whose workflow is not running
+  now starts the workflow again from the campaign's rows.
+- When a campaign's draft pull request first becomes stale, the worker posts one message to the owning team's Slack
+  notification channel (`Team.slackNotifyChannel`).
+
+**Actions.** None are required. To keep stale pull requests from producing Slack messages, leave the owning
+teams' Slack notification channel unset; the same channel also receives the team's other notices, so unsetting it
+stops those too. To allow shorter re-check intervals on a team, lower `workflow.campaignRescanFloorHours` at that
+team's scope (the floor cannot go below 1); to forbid them, raise it.
+
+**Verify.** `/admin/platform-settings` lists `workflow.campaignRescanFloorHours` at 1. A `POST /api/v1/campaigns` with `rescanIntervalHours` below the configured floor answers
+`400 CAMPAIGN_RESCAN_TOO_FREQUENT`.

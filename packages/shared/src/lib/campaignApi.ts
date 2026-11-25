@@ -116,6 +116,59 @@ export const CampaignAddTargetsBodySchema = z.object({
 });
 export type CampaignAddTargetsBody = z.infer<typeof CampaignAddTargetsBodySchema>;
 
+/** The most upstream edges one target may carry. */
+export const CAMPAIGN_MAX_DEPENDENCIES = 50;
+
+/**
+ * `PATCH /:id/targets/:targetId` (the launcher, while the campaign is `PLANNING`): rewrite the
+ * target's brief, its upstream targets, or both. At least one is given. The brief takes the same
+ * text rules as a campaign's own description; an edge names another target of the same campaign
+ * (the gateway refuses a self edge, an unknown or unreachable target and a cycle).
+ */
+export const CampaignEditTargetBodySchema = z
+  .object({
+    brief: z
+      .string()
+      .min(1, 'brief must not be empty')
+      .max(CAMPAIGN_DESCRIPTION_MAX_LENGTH)
+      .superRefine(refineCampaignText)
+      .optional(),
+    dependsOn: z
+      .array(z.string().uuid())
+      .max(CAMPAIGN_MAX_DEPENDENCIES)
+      .refine((ids) => new Set(ids).size === ids.length, 'dependsOn must be unique')
+      .optional(),
+  })
+  .refine((body) => body.brief !== undefined || body.dependsOn !== undefined, {
+    message: 'give a brief, dependsOn, or both',
+  });
+export type CampaignEditTargetBody = z.infer<typeof CampaignEditTargetBodySchema>;
+
+/** The answer to `PATCH /:id/targets/:targetId`: the target as it now stands. */
+export const CampaignEditTargetResponseSchema = z.object({
+  data: z.object({
+    brief: z.string().nullable(),
+    dependsOn: z.array(z.string()),
+    id: z.string(),
+  }),
+});
+export type CampaignEditTargetResponse = z.infer<typeof CampaignEditTargetResponseSchema>;
+
+/** `DELETE /:id/targets/:targetId/dependencies/:upstreamId`. */
+export const CampaignDependencyParamsSchema = z.object({
+  id: z.string().uuid(),
+  targetId: z.string().uuid(),
+  upstreamId: z.string().uuid(),
+});
+
+/** The answer to removing a dependency edge: the target's edges that remain. */
+export const CampaignRemoveDependencyResponseSchema = z.object({
+  data: z.object({ dependsOn: z.array(z.string()), id: z.string() }),
+});
+export type CampaignRemoveDependencyResponse = z.infer<
+  typeof CampaignRemoveDependencyResponseSchema
+>;
+
 /** `DELETE /:id/targets/:targetId`: the reason is recorded on the skipped target. */
 export const CampaignRemoveTargetBodySchema = z.object({
   reason: z.string().trim().min(1).max(500).superRefine(refineCampaignText).optional(),
@@ -353,6 +406,26 @@ export const CAMPAIGN_REFUSAL_CODES = [
   'BUDGET_EXCEEDED',
 ] as const;
 export type CampaignRefusalCode = (typeof CAMPAIGN_REFUSAL_CODES)[number];
+
+/**
+ * Coded errors of the campaign control routes beyond an attempt's refusals, for a client that
+ * branches on them (the routes answer these with the HTTP status beside each).
+ */
+export const CAMPAIGN_CONTROL_ERROR_CODES = {
+  /** 409: the campaign is not waiting for its plan to be confirmed. */
+  CAMPAIGN_NOT_PLANNING: 409,
+  /** 422: an edit names a self edge, an unknown or unreachable target, or closes a cycle. */
+  CAMPAIGN_PLAN_INVALID: 422,
+  /** 409: the planner has not written a brief for every target. */
+  CAMPAIGN_PLAN_NOT_READY: 409,
+  /** 409: targets are changed through the plan edit while the planner's plan is being reviewed. */
+  CAMPAIGN_PLANNING: 409,
+  /** 400: a launch asked for a rescan more often than `workflow.campaignRescanFloorHours`. */
+  CAMPAIGN_RESCAN_TOO_FREQUENT: 400,
+  /** 404: the target has no such dependency. */
+  EDGE_NOT_FOUND: 404,
+} as const;
+export type CampaignControlErrorCode = keyof typeof CAMPAIGN_CONTROL_ERROR_CODES;
 
 export function isCampaignRefusalCode(value: unknown): value is CampaignRefusalCode {
   return typeof value === 'string' && (CAMPAIGN_REFUSAL_CODES as readonly string[]).includes(value);

@@ -185,6 +185,12 @@ export interface DiscoveryWalkState {
  */
 export type ReconcilerWorkflowInput = CampaignReconcilerInput & {
   discoveryWalk?: DiscoveryWalkState | null;
+  /**
+   * The planner already failed (or had nothing to plan) in an earlier execution of this campaign's
+   * run, so a continued execution does not run it again and spend the tokens twice. Only
+   * `continueAsNew` sets it, and only when true.
+   */
+  planFailed?: boolean;
 };
 
 export interface DiscoveredCandidate {

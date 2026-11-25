@@ -4,6 +4,8 @@ import { resolveSetting } from '@auto-swe/shared/config';
 import {
   CampaignAddTargetsBodySchema,
   type CampaignAddTargetsResponse,
+  CampaignDependencyParamsSchema,
+  CampaignEditTargetBodySchema,
   CampaignParamsSchema,
   CampaignPauseBodySchema,
   CampaignRemoveTargetBodySchema,
@@ -24,6 +26,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { can } from '../lib/authz.js';
 import {
+  checkLauncherAvailable,
   decideTargetLaunch,
   loadLaunchRepos,
   mayControlCampaign,
@@ -32,6 +35,7 @@ import {
   visibleToMember,
 } from '../lib/campaignAccess.js';
 import { startCampaignAttempt } from '../lib/campaignAttempt.js';
+import { signalCampaignReconciler } from '../lib/campaignWake.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema } from '../lib/idempotency.js';
 import { memberTeams, permissionRequirement } from '../lib/tenantScope.js';
@@ -50,6 +54,32 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
 const CLOSED_STATES: readonly string[] = [...CAMPAIGN_TERMINAL_STATES, 'CANCELLING'];
 
 const REASON_MAX = 500;
+
+/**
+ * Whether `goal` is reachable from any of `from` by following `edges` (target id to the ids it
+ * depends on). Iterative, so a long chain cannot exhaust the stack, and a visited set bounds it on
+ * a graph that already holds a cycle.
+ */
+function reaches(
+  edges: ReadonlyMap<string, readonly string[]>,
+  from: readonly string[],
+  goal: string
+) {
+  const seen = new Set<string>();
+  const stack = [...from];
+  while (stack.length > 0) {
+    const id = stack.pop() as string;
+    if (id === goal) {
+      return true;
+    }
+    if (seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    stack.push(...(edges.get(id) ?? []));
+  }
+  return false;
+}
 
 export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -96,7 +126,7 @@ export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
    */
   async function wake(
     request: FastifyRequest,
-    campaign: Pick<VisibleCampaign, 'id' | 'temporalWorkflowId' | 'workflowKind'>,
+    campaign: Pick<VisibleCampaign, 'id' | 'ownerTeamId' | 'temporalWorkflowId' | 'workflowKind'>,
     action: CampaignControlAction,
     targetId?: string
   ): Promise<'signalled' | 'not-running' | 'failed'> {
@@ -104,8 +134,11 @@ export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
       return 'not-running';
     }
     try {
-      return await fastify.temporal.signalCampaignWorkflow(
-        campaign.temporalWorkflowId,
+      // Signal-with-start: a reconciler that was terminated or lost is started again from the
+      // rows (spec §3), unless the campaign is final, cancelling or legacy.
+      return await signalCampaignReconciler(
+        fastify as FastifyInstance,
+        campaign,
         CAMPAIGN_CONTROL_SIGNAL,
         { action, ...(targetId ? { targetId } : {}) } satisfies CampaignControlSignal
       );
@@ -143,7 +176,9 @@ export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
     const user = requireUser(request);
     const gate = request.repoAccessGate;
     const select = {
+      brief: true,
       connectionId: true,
+      dependsOn: true,
       id: true,
       regressions: true,
       repoLabel: true,
@@ -168,6 +203,45 @@ export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
         id: targetId,
       },
     });
+  }
+
+  /** Which of `ids` are targets of the campaign the caller may see (so an id they cannot reach is absent). */
+  async function findVisibleTargetIds(
+    request: FastifyRequest,
+    campaignId: string,
+    ids: string[]
+  ): Promise<string[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const user = requireUser(request);
+    const gate = request.repoAccessGate;
+    const select = { id: true } as const;
+    const rows = isPlatformAdmin(user)
+      ? await runUnscoped(
+          'a platform admin may see every target of a campaign; only ids are read to check an edge',
+          ['CampaignTarget'],
+          () => prisma.campaignTarget.findMany({ select, where: { campaignId, id: { in: ids } } })
+        )
+      : await prisma.campaignTarget.findMany({
+          select,
+          where: {
+            campaignId,
+            connection: {
+              AND: [
+                {
+                  OR: [
+                    { team: memberTeams(user) },
+                    { shares: { some: { team: memberTeams(user) } } },
+                  ],
+                },
+                permissionRequirement(user, gate),
+              ],
+            },
+            id: { in: ids },
+          },
+        });
+    return rows.map((r) => r.id);
   }
 
   // ── Confirm ────────────────────────────────────────────────────────────────────────────────
@@ -206,12 +280,18 @@ export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
           'CAMPAIGN_PLAN_NOT_READY',
           'The plan is not ready: the planner has not finished writing a brief for every target'
         );
-      const unbriefed = await runUnscoped(
-        'confirm checks that every target of the campaign has a brief; only a count leaves',
+      const [unbriefed, total] = await runUnscoped(
+        'confirm checks that every target of the campaign has a brief; only counts leave',
         ['CampaignTarget'],
-        () => prisma.campaignTarget.count({ where: { brief: null, campaignId: campaign.id } })
+        () =>
+          Promise.all([
+            prisma.campaignTarget.count({ where: { brief: null, campaignId: campaign.id } }),
+            prisma.campaignTarget.count({ where: { campaignId: campaign.id } }),
+          ])
       );
-      if (unbriefed > 0) {
+      // A plan with no targets has nothing to authorize: confirming it would start a campaign
+      // that can only complete empty.
+      if (unbriefed > 0 || total === 0) {
         return planNotReady();
       }
       // The update repeats both conditions, so a target added or a state moved since the checks
@@ -222,7 +302,7 @@ export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
           id: campaign.id,
           ownerTeamId: campaign.ownerTeamId,
           state: 'PLANNING',
-          targets: { none: { brief: null } },
+          targets: { none: { brief: null }, some: {} },
         },
       });
       if (moved.count === 0) {
@@ -376,18 +456,19 @@ export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
           );
         }
       }
-      const launcher = campaign.launchedById
-        ? await prisma.user.findUnique({
-            select: { isActive: true },
-            where: { id: campaign.launchedById },
-          })
-        : null;
-      if (!launcher?.isActive) {
+      // The same check the attempt route makes, so a resume the next attempt would refuse again
+      // (the launcher left the organization or stopped leading the team) does not loop.
+      const availability = await checkLauncherAvailable(prisma, {
+        launchedById: campaign.launchedById,
+        orgId: campaign.orgId,
+        ownerTeamId: campaign.ownerTeamId,
+      });
+      if (!availability.ok) {
         return sendError(
           reply,
           409,
           'LAUNCHER_UNAVAILABLE',
-          'The launcher’s account is not active; a LEAD of the owning team must take the campaign over'
+          `${availability.message}; a LEAD of the owning team must take the campaign over`
         );
       }
       const moved = await prisma.campaign.updateMany({
@@ -595,6 +676,16 @@ export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
           `Campaign is ${campaign.state} and takes no new targets`
         );
       }
+      if (campaign.state === 'PLANNING') {
+        // A target added now has no brief, so the plan could never be confirmed. The launcher
+        // changes a plan through the plan edit, and adds targets once it is confirmed.
+        return sendError(
+          reply,
+          409,
+          'CAMPAIGN_PLANNING',
+          'The campaign is still being planned; edit the plan, and add targets once it is confirmed'
+        );
+      }
       const existing = await runUnscoped(
         'the target count and positions of a campaign the caller may control',
         ['CampaignTarget'],
@@ -700,7 +791,10 @@ export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
             where: { id: campaign.id, ownerTeamId: campaign.ownerTeamId },
           });
           if (!current || CLOSED_STATES.includes(current.state)) {
-            return { closed: current?.state ?? 'gone' } as const;
+            return { closed: current?.state ?? 'gone', inserted: null } as const;
+          }
+          if (current.state === 'PLANNING') {
+            return { closed: 'PLANNING', inserted: null } as const;
           }
           // Another add may have landed since the first read: take positions from what is there now.
           const now = await runUnscoped(
@@ -713,9 +807,21 @@ export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
               })
           );
           const base = now.reduce((max, t) => Math.max(max, t.position), -1) + 1;
+          // The worker's discovery inserts under the same unique (campaign, repository) and may
+          // have won: a duplicate is skipped, not a failed request.
           await tx.campaignTarget.createMany({
             data: rows.map((r, i) => ({ ...r, campaignId: campaign.id, position: base + i })),
+            skipDuplicates: true,
           });
+          const landed = await runUnscoped(
+            'which of the rows this call inserted are there; only their ids are read',
+            ['CampaignTarget'],
+            () =>
+              tx.campaignTarget.findMany({
+                select: { id: true },
+                where: { campaignId: campaign.id, id: { in: rows.map((r) => r.id) } },
+              })
+          );
           if (current.state === 'MONITORING') {
             // An open target now exists, so the campaign is no longer only watching.
             await tx.campaign.updateMany({
@@ -723,8 +829,16 @@ export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
               where: { id: campaign.id, ownerTeamId: campaign.ownerTeamId, state: 'MONITORING' },
             });
           }
-          return { closed: null } as const;
+          return { closed: null, inserted: new Set(landed.map((t) => t.id)) } as const;
         });
+        if (outcome.closed === 'PLANNING') {
+          return sendError(
+            reply,
+            409,
+            'CAMPAIGN_PLANNING',
+            'The campaign is still being planned; edit the plan, and add targets once it is confirmed'
+          );
+        }
         if (outcome.closed !== null) {
           return sendError(
             reply,
@@ -733,20 +847,263 @@ export const campaignControlRoutes: FastifyPluginAsync = async (fastify) => {
             `Campaign is ${outcome.closed} and takes no new targets`
           );
         }
-        const signal = await wake(request, campaign, 'addTargets');
-        await audit(
-          request,
-          campaign.id,
-          { targetCount: existing.length },
-          {
-            addedTargetIds: rows.map((r) => r.id),
-            signal,
-            targetCount: existing.length + rows.length,
+        // A row that was not inserted lost to a target discovery added first.
+        const inserted = outcome.inserted;
+        for (let i = added.length - 1; i >= 0; i--) {
+          const entry = added[i] as (typeof added)[number];
+          if (!inserted.has(entry.id)) {
+            added.splice(i, 1);
+            refused.push({
+              connectionId: entry.connectionId,
+              reason: 'already a target of this campaign',
+            });
           }
-        );
+        }
+        const landedRows = rows.filter((r) => inserted.has(r.id));
+        if (landedRows.length > 0) {
+          const signal = await wake(request, campaign, 'addTargets');
+          await audit(
+            request,
+            campaign.id,
+            { targetCount: existing.length },
+            {
+              addedTargetIds: landedRows.map((r) => r.id),
+              signal,
+              targetCount: existing.length + landedRows.length,
+            }
+          );
+        }
       }
       const response: CampaignAddTargetsResponse = { added, refused };
       return { data: response };
+    }
+  );
+
+  /**
+   * Edit before confirming (spec §13): the launcher rewrites a target's brief, its upstream edges,
+   * or both, while the plan waits for confirmation. It also lets the launcher write briefs by hand
+   * after a plan failed. Nothing is signalled: nothing is scheduled while the campaign is `PLANNING`.
+   */
+  app.patch(
+    '/:id/targets/:targetId',
+    {
+      onRequest: requireAuth(),
+      schema: { body: CampaignEditTargetBodySchema, params: CampaignTargetParamsSchema },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const campaign = await findVisible(request, request.params.id);
+      if (!campaign) {
+        return sendError(reply, 404, 'CAMPAIGN_NOT_FOUND', 'Campaign not found');
+      }
+      // The launcher only, as confirming is: the briefs are what the launcher authorizes.
+      if (!isLauncher(user.sub, campaign.launchedById)) {
+        return sendError(reply, 403, 'FORBIDDEN', 'Only the campaign’s launcher may edit its plan');
+      }
+      if (campaign.workflowKind !== 'RECONCILER') {
+        return notReconciled(reply);
+      }
+      const notPlanning = (state: string) =>
+        sendError(
+          reply,
+          409,
+          'CAMPAIGN_NOT_PLANNING',
+          `Campaign is ${state}; a plan is edited only while it waits to be confirmed`
+        );
+      if (campaign.state !== 'PLANNING') {
+        return notPlanning(campaign.state);
+      }
+      const target = await findVisibleTarget(request, campaign.id, request.params.targetId);
+      if (!target) {
+        return sendError(reply, 404, 'TARGET_NOT_FOUND', 'Target not found');
+      }
+      const { brief, dependsOn } = request.body;
+      const invalid = (message: string) => sendError(reply, 422, 'CAMPAIGN_PLAN_INVALID', message);
+
+      if (dependsOn) {
+        if (dependsOn.includes(target.id)) {
+          return invalid('A target cannot depend on itself');
+        }
+        // An edge may name only a target the launcher can reach: one they cannot see reads as
+        // unknown, so an id cannot be probed.
+        const reachable = await findVisibleTargetIds(request, campaign.id, dependsOn);
+        if (reachable.length !== dependsOn.length) {
+          return invalid('A dependency names a target that is not part of this campaign');
+        }
+      }
+
+      const outcome = await prisma.$transaction(async (tx) => {
+        // CLAUDE.md §7 exception: Prisma cannot express SELECT … FOR UPDATE. The same campaign
+        // row lock confirm's state change and the planner's last write are ordered by.
+        await tx.$queryRaw`SELECT id FROM campaigns WHERE id = ${campaign.id}::uuid FOR UPDATE`;
+        const current = await tx.campaign.findFirst({
+          select: { state: true },
+          where: { id: campaign.id, ownerTeamId: campaign.ownerTeamId },
+        });
+        if (current?.state !== 'PLANNING') {
+          return { kind: 'notPlanning', state: current?.state ?? 'gone' } as const;
+        }
+        if (dependsOn) {
+          const all = await runUnscoped(
+            'the edges of every target of a campaign the caller launched, to refuse a cycle; only ids are compared',
+            ['CampaignTarget'],
+            () =>
+              tx.campaignTarget.findMany({
+                select: { dependsOn: true, id: true },
+                where: { campaignId: campaign.id },
+              })
+          );
+          const known = new Set(all.map((t) => t.id));
+          if (dependsOn.some((id) => !known.has(id))) {
+            return {
+              kind: 'invalid',
+              message: 'A dependency names a target that is gone',
+            } as const;
+          }
+          const edges = new Map(all.map((t) => [t.id, t.dependsOn as string[]]));
+          edges.set(target.id, dependsOn);
+          if (reaches(edges, dependsOn, target.id)) {
+            return { kind: 'invalid', message: 'These dependencies would form a cycle' } as const;
+          }
+        }
+        const written = await runUnscoped(
+          'the target is written by its own id, campaign and team under the campaign lock',
+          ['CampaignTarget'],
+          () =>
+            tx.campaignTarget.updateMany({
+              data: {
+                ...(brief !== undefined ? { brief } : {}),
+                ...(dependsOn ? { dependsOn } : {}),
+              },
+              where: { campaignId: campaign.id, id: target.id, teamId: target.teamId },
+            })
+        );
+        return written.count === 1
+          ? ({ kind: 'ok' } as const)
+          : ({ kind: 'invalid', message: 'The target is gone' } as const);
+      });
+      if (outcome.kind === 'notPlanning') {
+        return notPlanning(outcome.state);
+      }
+      if (outcome.kind === 'invalid') {
+        return invalid(outcome.message);
+      }
+      const after = {
+        brief: brief ?? target.brief,
+        dependsOn: dependsOn ?? (target.dependsOn as string[]),
+        id: target.id,
+      };
+      await audit(
+        request,
+        campaign.id,
+        { dependsOn: target.dependsOn, targetId: target.id },
+        {
+          ...(brief !== undefined ? { briefEdited: true, briefLength: brief.length } : {}),
+          dependsOn: after.dependsOn,
+          targetId: target.id,
+        }
+      );
+      return { data: after };
+    }
+  );
+
+  /**
+   * Remove one dependency edge of a target (spec §6): a target that waits on an upstream the person
+   * decides it no longer needs is released at the reconciler's next pass.
+   */
+  app.delete(
+    '/:id/targets/:targetId/dependencies/:upstreamId',
+    { onRequest: requireAuth(), schema: { params: CampaignDependencyParamsSchema } },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const campaign = await findVisible(request, request.params.id);
+      if (!campaign) {
+        return sendError(reply, 404, 'CAMPAIGN_NOT_FOUND', 'Campaign not found');
+      }
+      if (!(await mayControlCampaign(request, user, campaign))) {
+        return sendError(
+          reply,
+          403,
+          'FORBIDDEN',
+          'Only the campaign’s creator, a LEAD of its owning team or an ADMIN may remove a dependency'
+        );
+      }
+      if (campaign.workflowKind !== 'RECONCILER') {
+        return notReconciled(reply);
+      }
+      const editable = ['ACTIVE', 'PAUSED', 'MONITORING'];
+      if (!editable.includes(campaign.state)) {
+        return sendError(
+          reply,
+          409,
+          'CAMPAIGN_NOT_ACTIVE',
+          `Campaign is ${campaign.state} and takes no dependency changes`
+        );
+      }
+      const target = await findVisibleTarget(request, campaign.id, request.params.targetId);
+      if (!target) {
+        return sendError(reply, 404, 'TARGET_NOT_FOUND', 'Target not found');
+      }
+      const { upstreamId } = request.params;
+      const noEdge = () =>
+        sendError(reply, 404, 'EDGE_NOT_FOUND', 'The target does not depend on that target');
+      if (!(target.dependsOn as string[]).includes(upstreamId)) {
+        return noEdge();
+      }
+      const outcome = await prisma.$transaction(async (tx) => {
+        // CLAUDE.md §7 exception: Prisma cannot express SELECT … FOR UPDATE. The campaign row lock
+        // orders this write against the state it was decided under.
+        await tx.$queryRaw`SELECT id FROM campaigns WHERE id = ${campaign.id}::uuid FOR UPDATE`;
+        const current = await tx.campaign.findFirst({
+          select: { state: true },
+          where: { id: campaign.id, ownerTeamId: campaign.ownerTeamId },
+        });
+        if (!current || !editable.includes(current.state)) {
+          return { kind: 'closed', state: current?.state ?? 'gone' } as const;
+        }
+        const row = await runUnscoped(
+          'the target’s edges are re-read by its own id under the campaign lock',
+          ['CampaignTarget'],
+          () =>
+            tx.campaignTarget.findFirst({
+              select: { dependsOn: true },
+              where: { campaignId: campaign.id, id: target.id, teamId: target.teamId },
+            })
+        );
+        if (!row || !(row.dependsOn as string[]).includes(upstreamId)) {
+          return { kind: 'noEdge' } as const;
+        }
+        const remaining = (row.dependsOn as string[]).filter((id) => id !== upstreamId);
+        await runUnscoped(
+          'the target is written by its own id, campaign and team under the campaign lock',
+          ['CampaignTarget'],
+          () =>
+            tx.campaignTarget.updateMany({
+              data: { dependsOn: remaining },
+              where: { campaignId: campaign.id, id: target.id, teamId: target.teamId },
+            })
+        );
+        return { kind: 'ok', remaining } as const;
+      });
+      if (outcome.kind === 'closed') {
+        return sendError(
+          reply,
+          409,
+          'CAMPAIGN_NOT_ACTIVE',
+          `Campaign is ${outcome.state} and takes no dependency changes`
+        );
+      }
+      if (outcome.kind === 'noEdge') {
+        return noEdge();
+      }
+      const signal = await wake(request, campaign, 'removeDependency', target.id);
+      await audit(
+        request,
+        campaign.id,
+        { dependsOn: target.dependsOn, targetId: target.id },
+        { dependsOn: outcome.remaining, removedUpstreamId: upstreamId, signal, targetId: target.id }
+      );
+      return { data: { dependsOn: outcome.remaining, id: target.id } };
     }
   );
 

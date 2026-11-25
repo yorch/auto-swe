@@ -12,7 +12,9 @@ import {
   useCancelCampaign,
   useConfirmCampaign,
   useCreateCampaign,
+  useEditCampaignTarget,
   usePauseCampaign,
+  useRemoveCampaignDependency,
   useRemoveCampaignTarget,
   useResumeCampaign,
   useRetryCampaignTarget,
@@ -196,6 +198,73 @@ describe('campaign mutations', () => {
       await remove.result.current.mutateAsync('t1');
     });
     expect(del).toHaveBeenCalledWith('/api/v1/campaigns/c1/targets/t1');
+  });
+
+  it('edits a planned target, patches the cached plan and refreshes', async () => {
+    const patch = vi
+      .spyOn(api, 'patch')
+      .mockResolvedValue({ data: { brief: 'New brief', dependsOn: ['t2'], id: 't 1' } });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['campaign', 'c1'], {
+      id: 'c1',
+      targets: [
+        { brief: 'old', dependsOn: [], id: 't 1' },
+        { brief: 'other', dependsOn: [], id: 't2' },
+      ],
+    });
+    const invalidate = vi.spyOn(qc, 'invalidateQueries');
+    const { result } = renderHook(() => useEditCampaignTarget('c1'), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      ),
+    });
+    await act(async () => {
+      await result.current.mutateAsync({
+        body: { brief: 'New brief', dependsOn: ['t2'] },
+        targetId: 't 1',
+      });
+    });
+    expect(patch).toHaveBeenCalledWith('/api/v1/campaigns/c1/targets/t%201', {
+      brief: 'New brief',
+      dependsOn: ['t2'],
+    });
+    const cached = qc.getQueryData<{ targets: { brief: string; dependsOn: string[] }[] }>([
+      'campaign',
+      'c1',
+    ]);
+    expect(cached?.targets[0]).toMatchObject({ brief: 'New brief', dependsOn: ['t2'] });
+    expect(cached?.targets[1].brief).toBe('other');
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['campaign', 'c1'] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['campaigns'] });
+  });
+
+  it('shows the gateway’s refusal of an edit', async () => {
+    vi.spyOn(api, 'patch').mockRejectedValue(
+      new ApiError('The plan has a cycle', 422, 'CAMPAIGN_PLAN_INVALID')
+    );
+    const { result } = renderHook(() => useEditCampaignTarget('c1'), { wrapper: wrapper() });
+    await act(async () => {
+      await expect(
+        result.current.mutateAsync({ body: { dependsOn: ['t2'] }, targetId: 't1' })
+      ).rejects.toThrow('The plan has a cycle');
+    });
+  });
+
+  it('removes one dependency edge and refreshes', async () => {
+    const del = vi.spyOn(api, 'delete').mockResolvedValue({ data: { dependsOn: [], id: 't 1' } });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(qc, 'invalidateQueries');
+    const { result } = renderHook(() => useRemoveCampaignDependency('c1'), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      ),
+    });
+    await act(async () => {
+      await result.current.mutateAsync({ targetId: 't 1', upstreamId: 'u/2' });
+    });
+    expect(del).toHaveBeenCalledWith('/api/v1/campaigns/c1/targets/t%201/dependencies/u%2F2');
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['campaign', 'c1'] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['campaigns'] });
   });
 
   it('refreshes the campaign and the list after an action', async () => {

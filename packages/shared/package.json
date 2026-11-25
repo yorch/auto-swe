@@ -88,6 +88,7 @@
     "./lib/campaignOutcome": "./dist/lib/campaignOutcome.js",
     "./lib/campaignState": "./dist/lib/campaignState.js",
     "./lib/campaignApi": "./dist/lib/campaignApi.js",
+    "./lib/campaignSpend": "./dist/lib/campaignSpend.js",
     "./lib/campaignTokenKey": "./dist/lib/campaignTokenKey.js",
     "./lib/testIntegrity": "./dist/lib/testIntegrity.js",
     "./lib/modelSpec": "./dist/lib/modelSpec.js",

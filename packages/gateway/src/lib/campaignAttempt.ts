@@ -1,10 +1,11 @@
-import type { PlatformRole, PrismaClient } from '@auto-swe/shared';
+import type { Prisma, PrismaClient } from '@auto-swe/shared';
 import { resolveSetting } from '@auto-swe/shared/config';
 import type {
   CampaignRefusalCode,
   CampaignStartAttemptResponse,
 } from '@auto-swe/shared/lib/campaignApi';
 import { recipeSupportsCheck } from '@auto-swe/shared/lib/campaignRecipes';
+import { campaignMonthStart, campaignSpendUsd } from '@auto-swe/shared/lib/campaignSpend';
 import {
   type CampaignGateValue,
   decideSchedule,
@@ -15,7 +16,6 @@ import {
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { generateBranchName } from '@auto-swe/shared/lib/workflowId';
-import { can as sharedCan, userActor } from '@auto-swe/shared/permissions';
 import {
   BUDGET_TIERS,
   type BudgetTier,
@@ -25,9 +25,9 @@ import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import { getErrorName } from '../plugins/auth.js';
 import { resolveDefaultTemplate } from '../routes/workRequests.js';
 import { writeAuditLog } from './auditLog.js';
-import { decideTargetLaunch, loadLaunchRepos } from './campaignAccess.js';
+import { checkLauncherAvailable, decideTargetLaunch, loadLaunchRepos } from './campaignAccess.js';
 import { checkPushPermission } from './orchestrationAccess.js';
-import { isOrgMember } from './orgAccess.js';
+import { isTerminalSignalError } from './temporalErrors.js';
 import { launchTrackedWorkflow } from './workflowLaunch.js';
 
 /**
@@ -96,35 +96,6 @@ export function attemptWorkflowId(
     : `${campaignWorkflowId}-${connectionId}`;
 }
 
-/** The first day of the current month, UTC: the start of the window a campaign's budget counts. */
-function monthStart(now: Date): Date {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-}
-
-/**
- * What the campaign's attempts have spent this month: the spend ledger of every attempt started in
- * the month. Best-effort for runs in flight, which have accrued only so far (spec §8).
- */
-export async function campaignMonthSpendUsd(
-  prisma: PrismaClient,
-  campaignId: string,
-  now: Date = new Date()
-): Promise<number> {
-  const attempts = await prisma.campaignAttempt.findMany({
-    select: { childWorkflowId: true },
-    where: { startedAt: { gte: monthStart(now) }, target: { campaignId } },
-  });
-  const ids = attempts.flatMap((a) => (a.childWorkflowId ? [a.childWorkflowId] : []));
-  if (ids.length === 0) {
-    return 0;
-  }
-  const sum = await prisma.activeWorkflow.aggregate({
-    _sum: { costUsdAccrued: true },
-    where: { temporalWorkflowId: { in: ids } },
-  });
-  return sum._sum.costUsdAccrued ?? 0;
-}
-
 interface AttemptContext {
   fastify: FastifyInstance;
   log: FastifyBaseLogger;
@@ -138,21 +109,45 @@ const idempotencyColumn = (c: AttemptContext) =>
     ? `campaign-attempt:${c.campaignId}:${c.targetId}:${c.idempotencyKey}`.slice(0, 500)
     : null;
 
-/** The attempt a call with this key already started, if any. */
-async function findReplay(
-  c: AttemptContext,
-  launcherId: string
-): Promise<CampaignStartAttemptResponse | null> {
+/** What an earlier call with this key wrote: enough to answer it again, and to start its run. */
+interface PriorAttempt {
+  attemptId: string;
+  branch: string | null;
+  connectionId: string | null;
+  description: string;
+  n: number;
+  payload: Record<string, unknown> | null;
+  repoId: string | null;
+  requestPayload: string;
+  runId: string | null;
+  targetId: string;
+  templateId: string | null;
+  templateVersion: number | null;
+  workflowId: string;
+  workRequestId: string;
+}
+
+/** The attempt a call with this key already wrote the ledger for, if any. */
+async function findPrior(c: AttemptContext, launcherId: string): Promise<PriorAttempt | null> {
   const key = idempotencyColumn(c);
   if (!key) {
     return null;
   }
   const prior = await c.fastify.prisma.runInput.findFirst({
-    select: { activeWorkflows: { select: { assignedBranch: true, temporalWorkflowId: true } } },
+    select: {
+      activeWorkflows: { select: { assignedBranch: true, repoId: true, temporalWorkflowId: true } },
+      connectionId: true,
+      description: true,
+      id: true,
+      payload: true,
+      requestPayload: true,
+      templateId: true,
+      templateVersion: true,
+    },
     where: { idempotencyKey: key, requestedById: launcherId },
   });
   const wf = prior?.activeWorkflows[0];
-  if (!wf) {
+  if (!prior || !wf) {
     return null;
   }
   const attempt = await c.fastify.prisma.campaignAttempt.findFirst({
@@ -163,11 +158,238 @@ async function findReplay(
     ? {
         attemptId: attempt.id,
         branch: wf.assignedBranch,
+        connectionId: prior.connectionId,
+        description: prior.description,
         n: attempt.n,
+        payload: (prior.payload ?? null) as Record<string, unknown> | null,
+        repoId: wf.repoId,
+        requestPayload: prior.requestPayload,
         runId: attempt.runId,
+        targetId: c.targetId,
+        templateId: prior.templateId,
+        templateVersion: prior.templateVersion,
         workflowId: wf.temporalWorkflowId,
+        workRequestId: prior.id,
       }
     : null;
+}
+
+const replayData = (p: PriorAttempt): CampaignStartAttemptResponse => ({
+  attemptId: p.attemptId,
+  branch: p.branch,
+  n: p.n,
+  runId: p.runId,
+  workflowId: p.workflowId,
+});
+
+/** The request a child run starts with: one builder, so a replay starts what the first call would have. */
+function buildAttemptRequest(a: {
+  branch: string;
+  connectionId: string;
+  description: string;
+  launcherId: string;
+  n: number;
+  parentWorkflowId: string;
+  payload: Record<string, unknown> | null;
+  requestPayload: string;
+  ticket: string;
+  tier: BudgetTier | undefined;
+  workRequestId: string;
+}): RepoWorkRequest {
+  return {
+    ...(a.n > 1 ? { branchName: a.branch } : {}),
+    ...(a.tier ? { budgetTier: a.tier } : {}),
+    connectionId: a.connectionId,
+    description: a.description,
+    externalTicketId: a.ticket,
+    launchedById: a.launcherId,
+    parentWorkflowId: a.parentWorkflowId,
+    ...(a.payload ? { payload: a.payload } : {}),
+    repoId: a.connectionId,
+    requestPayload: a.requestPayload,
+    workRequestId: a.workRequestId,
+  };
+}
+
+const GRPC_DEFINITE_REFUSALS = new Set([
+  3, // INVALID_ARGUMENT
+  5, // NOT_FOUND (the namespace)
+  7, // PERMISSION_DENIED
+  8, // RESOURCE_EXHAUSTED
+  9, // FAILED_PRECONDITION
+  12, // UNIMPLEMENTED
+  16, // UNAUTHENTICATED
+]);
+
+/**
+ * Whether a failed start DEFINITELY started nothing: the client refused the call before any RPC
+ * (a value or payload it cannot encode), the server answered with a gRPC status that rejects the
+ * request outright, or the TCP connection was refused. Everything else (a timeout, a deadline, a
+ * reset, `UNAVAILABLE`, an error nobody recognises) may have reached the server before it failed,
+ * and is ambiguous: the execution may exist.
+ */
+export function isDefiniteNonStart(err: unknown): boolean {
+  const name = getErrorName(err);
+  if (name === 'ValueError' || name === 'PayloadConverterError' || name === 'TypeError') {
+    return true;
+  }
+  const cause = (err as { cause?: unknown } | null)?.cause as
+    | { code?: unknown; name?: string }
+    | undefined;
+  const code = (err as { code?: unknown } | null)?.code ?? cause?.code;
+  if (code === 'ECONNREFUSED') {
+    return true;
+  }
+  return name === 'ServiceError' && typeof cause?.code === 'number'
+    ? GRPC_DEFINITE_REFUSALS.has(cause.code)
+    : false;
+}
+
+/**
+ * A campaign being cancelled stops every run it started: a cancel that landed between the ledger
+ * commit and the start has already looked for this attempt's run and found none. Cancels the run
+ * through the run cancel path and closes the attempt and its target, so no child outlives a
+ * cancelled campaign. Returns whether it did.
+ */
+async function cancelIfCampaignClosing(
+  c: AttemptContext,
+  campaign: { id: string; ownerTeamId: string },
+  run: { attemptId: string; workflowId: string; targetId: string; teamId: string }
+): Promise<boolean> {
+  const prisma = c.fastify.prisma;
+  const now = await prisma.campaign.findFirst({
+    select: { state: true },
+    where: { id: campaign.id, ownerTeamId: campaign.ownerTeamId },
+  });
+  if (!now || (now.state !== 'CANCELLING' && now.state !== 'CANCELLED')) {
+    return false;
+  }
+  try {
+    await c.fastify.temporal.cancelWorkflow(run.workflowId);
+  } catch (err) {
+    // A run Temporal no longer has is already stopped; anything else asks for a retry, which
+    // finds this ledger and cancels again.
+    if (!isTerminalSignalError(err)) {
+      throw err;
+    }
+  }
+  const finishedAt = new Date();
+  await prisma.campaignAttempt.updateMany({
+    data: { finishedAt, outcome: 'CANCELLED' },
+    where: { finishedAt: null, id: run.attemptId },
+  });
+  await runUnscoped(
+    'closing the target of the attempt cancelled with its campaign, by its own id and team',
+    ['CampaignTarget'],
+    () =>
+      prisma.campaignTarget.updateMany({
+        data: { finishedAt, state: 'CANCELLED' },
+        where: { id: run.targetId, state: 'RUNNING', teamId: run.teamId },
+      })
+  );
+  return true;
+}
+
+const CAMPAIGN_CLOSING = (state: string) =>
+  `The campaign is ${state}; the attempt that was starting was cancelled`;
+
+/**
+ * A retried call with a key whose first call wrote the ledger. The first call may have died after
+ * the ledger commit and before (or during) the start, so the run is asked for, not assumed: found
+ * means the first call's start landed; not found means it never did, and it is started now with the
+ * same ids and the same work request.
+ */
+async function answerReplay(
+  c: AttemptContext,
+  campaign: {
+    id: string;
+    ownerTeamId: string;
+    temporalWorkflowId: string;
+    workRequestId: string;
+  },
+  launcherId: string,
+  teamId: string
+): Promise<AttemptResult | null> {
+  const prior = await findPrior(c, launcherId);
+  if (!prior) {
+    return null;
+  }
+  const run = {
+    attemptId: prior.attemptId,
+    targetId: prior.targetId,
+    teamId,
+    workflowId: prior.workflowId,
+  };
+  const exists = await c.fastify.temporal.workflowExecutionExists(prior.workflowId);
+  if (!exists) {
+    const now = await c.fastify.prisma.campaign.findFirst({
+      select: { state: true },
+      where: { id: campaign.id, ownerTeamId: campaign.ownerTeamId },
+    });
+    if (now?.state === 'CANCELLING' || now?.state === 'CANCELLED') {
+      // Nothing started and nothing will: close what the first call wrote.
+      await closeUnstartedAttempt(c, run);
+      return refuse('CAMPAIGN_NOT_ACTIVE', CAMPAIGN_CLOSING(now.state));
+    }
+    if (!prior.connectionId || !prior.templateId || prior.templateVersion === null) {
+      return refuse('TARGET_UNAVAILABLE', 'The attempt’s repository or template is not recorded');
+    }
+    const tier = await launchedBudgetTier(c.fastify.prisma, campaign.workRequestId);
+    try {
+      await c.fastify.temporal.startRunnableWorkflow(
+        prior.workflowId,
+        {
+          request: buildAttemptRequest({
+            branch: prior.branch ?? '',
+            connectionId: prior.connectionId,
+            description: prior.description,
+            launcherId,
+            n: prior.n,
+            parentWorkflowId: campaign.temporalWorkflowId,
+            payload: prior.payload,
+            requestPayload: prior.requestPayload,
+            ticket: campaignTicketId(campaign.id),
+            tier,
+            workRequestId: prior.workRequestId,
+          }),
+          templateId: prior.templateId,
+          templateVersion: prior.templateVersion,
+        },
+        { rejectReuse: true }
+      );
+    } catch (err) {
+      // An execution of this id appeared (another retry started it): adopt it. Any other failure
+      // is answered as one, with the ledger kept, so the next retry decides again.
+      if (getErrorName(err) !== 'WorkflowExecutionAlreadyStartedError') {
+        throw err;
+      }
+    }
+  }
+  if (await cancelIfCampaignClosing(c, campaign, run)) {
+    return refuse('CAMPAIGN_NOT_ACTIVE', CAMPAIGN_CLOSING('being cancelled'));
+  }
+  return { data: replayData(prior), ok: true, status: 200 };
+}
+
+/** Close an attempt whose run was never started, with its target, as cancelled. */
+async function closeUnstartedAttempt(
+  c: AttemptContext,
+  run: { attemptId: string; targetId: string; teamId: string }
+): Promise<void> {
+  const finishedAt = new Date();
+  await c.fastify.prisma.campaignAttempt.updateMany({
+    data: { finishedAt, outcome: 'CANCELLED' },
+    where: { finishedAt: null, id: run.attemptId },
+  });
+  await runUnscoped(
+    'closing the target of an attempt that never started, by its own id and team',
+    ['CampaignTarget'],
+    () =>
+      c.fastify.prisma.campaignTarget.updateMany({
+        data: { finishedAt, state: 'CANCELLED' },
+        where: { id: run.targetId, state: 'RUNNING', teamId: run.teamId },
+      })
+  );
 }
 
 /** The `budget` tier the campaign was launched with, read from the launch request stored once. */
@@ -190,7 +412,7 @@ async function launchedBudgetTier(
 }
 
 /** Thrown inside the ledger transaction to roll it back with a coded refusal. */
-class AttemptRollback extends Error {
+export class AttemptRollback extends Error {
   constructor(
     readonly code: CampaignRefusalCode,
     message: string
@@ -257,9 +479,9 @@ export async function startCampaignAttempt(c: AttemptContext): Promise<AttemptRe
 
   // A retried call is answered with its first call's attempt, before any check.
   if (launcherId) {
-    const replay = await findReplay(c, launcherId);
+    const replay = await answerReplay(c, campaign, launcherId, target.teamId);
     if (replay) {
-      return { data: replay, ok: true, status: 200 };
+      return replay;
     }
   }
 
@@ -296,29 +518,16 @@ export async function startCampaignAttempt(c: AttemptContext): Promise<AttemptRe
   if (!launcherId) {
     return refuse('LAUNCHER_UNAVAILABLE', 'The campaign has no launcher; a LEAD must take it over');
   }
-  const launcher = await prisma.user.findUnique({
-    select: { id: true, isActive: true, role: true },
-    where: { id: launcherId },
+  const availability = await checkLauncherAvailable(prisma, {
+    launchedById: launcherId,
+    orgId: campaign.orgId,
+    ownerTeamId: campaign.ownerTeamId,
   });
-  if (!launcher?.isActive) {
-    return refuse('LAUNCHER_UNAVAILABLE', 'The launcher’s account is not active');
+  if (!availability.ok) {
+    return refuse('LAUNCHER_UNAVAILABLE', availability.message);
   }
-  const actor = { role: launcher.role as PlatformRole, sub: launcher.id };
-  if (!(await isOrgMember(prisma, actor, campaign.orgId))) {
-    return refuse(
-      'LAUNCHER_UNAVAILABLE',
-      'The launcher no longer belongs to the campaign’s organization'
-    );
-  }
-  if (
-    !(
-      await sharedCan(prisma, userActor(actor), 'team.launch.multi-repo', {
-        teamId: campaign.ownerTeamId,
-      })
-    ).allowed
-  ) {
-    return refuse('LAUNCHER_UNAVAILABLE', 'The launcher no longer leads the owning team');
-  }
+  const { actor } = availability;
+  const launcher = { id: actor.sub };
 
   // 3. The target's repository, and the target itself.
   if (
@@ -411,24 +620,31 @@ export async function startCampaignAttempt(c: AttemptContext): Promise<AttemptRe
   const workRequestId = crypto.randomUUID();
   const description = target.brief ?? campaign.description;
   const requestPayload = JSON.stringify(payload ?? { connectionId: target.connectionId });
-  const request: RepoWorkRequest = {
-    ...(n > 1 ? { branchName: branch } : {}),
-    ...(tier ? { budgetTier: tier } : {}),
+  const request = buildAttemptRequest({
+    branch,
     connectionId: target.connectionId,
     description,
-    externalTicketId: ticket,
-    launchedById: launcher.id,
+    launcherId: launcher.id,
+    n,
     parentWorkflowId: campaign.temporalWorkflowId,
-    ...(payload ? { payload } : {}),
-    repoId: target.connectionId,
+    payload,
     requestPayload,
+    ticket,
+    tier,
     workRequestId,
-  };
+  });
 
   let refusal: { code: CampaignRefusalCode; message: string } | null = null;
   let attemptId = '';
   const previousState = target.state;
   let launch: Awaited<ReturnType<typeof launchTrackedWorkflow>>;
+  const lockCtx: AttemptLockContext = {
+    campaign,
+    hasCheck,
+    launcherId,
+    priorN,
+    targetId: target.id,
+  };
   try {
     launch = await launchTrackedWorkflow(
       prisma,
@@ -460,20 +676,27 @@ export async function startCampaignAttempt(c: AttemptContext): Promise<AttemptRe
       },
       async () => {
         try {
-          await fastify.temporal.startRunnableWorkflow(childWorkflowId, {
-            request,
-            templateId,
-            templateVersion,
-          });
+          // The attempt's id names this attempt for good: a closed execution under it is refused
+          // too, never read as room for a second run.
+          await fastify.temporal.startRunnableWorkflow(
+            childWorkflowId,
+            { request, templateId, templateVersion },
+            { rejectReuse: true }
+          );
         } catch (err) {
           // An execution of this very id exists: a start whose reply was lost (the child did start
-          // and the call errored). Adopt it, keeping the attempt row and the target's RUNNING state;
-          // rolling back would reuse this `n` and hit the same execution forever.
+          // and the call errored). Adopt it, keeping the attempt row and the target's RUNNING state.
           if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
             return;
           }
+          if (!isDefiniteNonStart(err)) {
+            // The call failed but the execution may exist. Nothing is undone: the rows a retry
+            // with the same key finds decide it (`answerReplay`: found is adopted, not found is
+            // started with this very work request).
+            throw err;
+          }
           // The run definitely did not start: the attempt and the target's state go back as they
-          // were, so the worker's retry starts a clean one.
+          // were, and the ledger is compensated, so the worker's retry starts a clean one.
           await prisma.campaignAttempt
             .deleteMany({ where: { id: attemptId } })
             .catch(() => undefined);
@@ -492,106 +715,20 @@ export async function startCampaignAttempt(c: AttemptContext): Promise<AttemptRe
       {
         audit: { actor: { sub: launcher.id }, source: 'campaign-attempt', templateId },
         guard: async (tx) => {
-          // CLAUDE.md §7 exception: Prisma cannot express SELECT … FOR UPDATE. The campaign row is the
-          // serialization point for the gate and both limits, so two concurrent starts cannot pass
-          // the same one. It is taken before any other lock of the launch and no transaction takes it
-          // after another, so it adds no edge to the lock order (`lockOrder.ts`).
-          await tx.$queryRaw`SELECT id FROM campaigns WHERE id = ${campaign.id}::uuid FOR UPDATE`;
-          const current = await tx.campaign.findFirst({
-            select: { launchedById: true, state: true, workflowKind: true },
-            where: { id: campaign.id },
-          });
-          if (
-            current?.workflowKind !== 'RECONCILER' ||
-            (current.state !== 'ACTIVE' && current.state !== 'STARTING')
-          ) {
-            refusal = {
-              code: 'CAMPAIGN_NOT_ACTIVE',
-              message: `The campaign is ${current?.state ?? 'gone'} and starts no attempt`,
-            };
-            return refusal.message;
-          }
-          // A take-over that landed since the checks ran: they ran for another launcher.
-          if (current.launchedById !== launcherId) {
-            refusal = {
-              code: 'LAUNCHER_UNAVAILABLE',
-              message: 'The campaign’s launcher changed while the attempt was starting; try again',
-            };
-            return refusal.message;
-          }
-          // The target as it is under the lock: a remove or cancel that committed since the unlocked
-          // read leaves nothing to start.
-          const lockedTarget = await runUnscoped(
-            'the target is re-read by its own id under the campaign lock',
-            ['CampaignTarget'],
-            () =>
-              tx.campaignTarget.findFirst({
-                select: { state: true },
-                where: { campaignId: campaign.id, id: target.id },
-              })
-          );
-          if (
-            !lockedTarget ||
-            !STARTABLE.includes(normalizeTargetState(lockedTarget.state as TargetState))
-          ) {
-            refusal = {
-              code: 'TARGET_NOT_STARTABLE',
-              message: `The target is ${lockedTarget?.state ?? 'gone'}, not waiting to start`,
-            };
-            return refusal.message;
-          }
-          const fresh = await decideGate(
-            tx as unknown as PrismaClient,
-            campaign,
-            target.id,
-            hasCheck
-          );
-          if (fresh) {
-            refusal = { code: fresh.code, message: fresh.message };
-            return refusal.message;
-          }
-          const latest = await tx.campaignAttempt.aggregate({
-            _max: { n: true },
-            where: { targetId: target.id },
-          });
-          if ((latest._max.n ?? 0) !== priorN) {
-            refusal = {
-              code: 'TARGET_NOT_STARTABLE',
-              message: 'The target was started by another call; try again',
-            };
-            return refusal.message;
-          }
-          return null;
+          refusal = await checkAttemptUnderLock(tx, lockCtx);
+          return refusal?.message ?? null;
         },
         inTransaction: async (tx) => {
-          // The target first: when it is no longer startable the whole ledger transaction rolls back,
-          // so no attempt, run input or active workflow outlives a target that was removed.
-          const now = new Date();
-          const moved = await runUnscoped(
-            'the target is written by its own id and team under the campaign lock',
-            ['CampaignTarget'],
-            () =>
-              tx.campaignTarget.updateMany({
-                data: { failureReason: null, finishedAt: null, startedAt: now, state: 'RUNNING' },
-                where: {
-                  id: target.id,
-                  state: { in: ['PENDING', 'BLOCKED'] },
-                  teamId: target.teamId,
-                },
-              })
-          );
-          if (moved.count !== 1) {
-            throw new AttemptRollback(
-              'TARGET_NOT_STARTABLE',
-              'The target changed while the attempt was starting; try again'
-            );
-          }
-          const row = await tx.campaignAttempt.create({
-            data: { childWorkflowId, n, startedAt: now, targetId: target.id },
+          attemptId = await writeAttemptRows(tx, {
+            childWorkflowId,
+            n,
+            targetId: target.id,
+            teamId: target.teamId,
           });
-          attemptId = row.id;
         },
         log: c.log,
+        retainLedgerOnStartError: (err) =>
+          getErrorName(err) !== 'WorkflowExecutionAlreadyStartedError' && !isDefiniteNonStart(err),
         sourceAuthorization: { actor },
       }
     );
@@ -610,12 +747,25 @@ export async function startCampaignAttempt(c: AttemptContext): Promise<AttemptRe
     }
     // The ledger's unique rows decided a race: a retried call, or two calls for one attempt.
     if (launcherId) {
-      const replay = await findReplay(c, launcherId);
+      const replay = await answerReplay(c, campaign, launcherId, target.teamId);
       if (replay) {
-        return { data: replay, ok: true, status: 200 };
+        return replay;
       }
     }
     return refuse('TARGET_NOT_STARTABLE', 'The target was started by another call; try again');
+  }
+
+  // A cancel that landed between the ledger commit and the start looked for this run and found
+  // none: the child would run on in a cancelled campaign. Ask again now that it exists.
+  if (
+    await cancelIfCampaignClosing(c, campaign, {
+      attemptId,
+      targetId: target.id,
+      teamId: target.teamId,
+      workflowId: childWorkflowId,
+    })
+  ) {
+    return refuse('CAMPAIGN_NOT_ACTIVE', CAMPAIGN_CLOSING('being cancelled'));
   }
 
   try {
@@ -646,19 +796,160 @@ export async function startCampaignAttempt(c: AttemptContext): Promise<AttemptRe
   };
 }
 
+/** What the locked decision of an attempt start reads. */
+export interface AttemptLockContext {
+  campaign: {
+    id: string;
+    gate: string;
+    maxOpenPullRequests: number | null;
+    maxParallel: number;
+  };
+  hasCheck: boolean;
+  /** The launcher the checks ran for; a take-over since then refuses the start. */
+  launcherId: string | null;
+  /** The target's highest attempt number when the checks ran. */
+  priorN: number;
+  targetId: string;
+}
+
+/**
+ * Step 4 and the checks that must hold at the moment the ledger is written, under the campaign's
+ * row lock (the launch guard). Exported so the database-backed suite runs this very function
+ * against Postgres, not a copy of it.
+ *
+ * Returns the refusal, or null to let the start proceed.
+ */
+export async function checkAttemptUnderLock(
+  tx: Prisma.TransactionClient,
+  ctx: AttemptLockContext
+): Promise<{ code: CampaignRefusalCode; message: string } | null> {
+  const { campaign } = ctx;
+  // CLAUDE.md §7 exception: Prisma cannot express SELECT … FOR UPDATE. The campaign row is the
+  // serialization point for the gate and both limits, so two concurrent starts cannot pass
+  // the same one. It is taken before any other lock of the launch and no transaction takes it
+  // after another, so it adds no edge to the lock order (`lockOrder.ts`).
+  await tx.$queryRaw`SELECT id FROM campaigns WHERE id = ${campaign.id}::uuid FOR UPDATE`;
+  const current = await tx.campaign.findFirst({
+    select: { launchedById: true, state: true, workflowKind: true },
+    where: { id: campaign.id },
+  });
+  if (
+    current?.workflowKind !== 'RECONCILER' ||
+    (current.state !== 'ACTIVE' && current.state !== 'STARTING')
+  ) {
+    return {
+      code: 'CAMPAIGN_NOT_ACTIVE',
+      message: `The campaign is ${current?.state ?? 'gone'} and starts no attempt`,
+    };
+  }
+  // A take-over that landed since the checks ran: they ran for another launcher.
+  if (current.launchedById !== ctx.launcherId) {
+    return {
+      code: 'LAUNCHER_UNAVAILABLE',
+      message: 'The campaign’s launcher changed while the attempt was starting; try again',
+    };
+  }
+  // The target as it is under the lock: a remove or cancel that committed since the unlocked
+  // read leaves nothing to start.
+  const lockedTarget = await runUnscoped(
+    'the target is re-read by its own id under the campaign lock',
+    ['CampaignTarget'],
+    () =>
+      tx.campaignTarget.findFirst({
+        select: { state: true },
+        where: { campaignId: campaign.id, id: ctx.targetId },
+      })
+  );
+  if (
+    !lockedTarget ||
+    !STARTABLE.includes(normalizeTargetState(lockedTarget.state as TargetState))
+  ) {
+    return {
+      code: 'TARGET_NOT_STARTABLE',
+      message: `The target is ${lockedTarget?.state ?? 'gone'}, not waiting to start`,
+    };
+  }
+  const fresh = await decideGate(
+    tx as unknown as PrismaClient,
+    campaign,
+    ctx.targetId,
+    ctx.hasCheck
+  );
+  if (fresh) {
+    return { code: fresh.code, message: fresh.message };
+  }
+  const latest = await tx.campaignAttempt.aggregate({
+    _max: { n: true },
+    where: { targetId: ctx.targetId },
+  });
+  if ((latest._max.n ?? 0) !== ctx.priorN) {
+    return {
+      code: 'TARGET_NOT_STARTABLE',
+      message: 'The target was started by another call; try again',
+    };
+  }
+  return null;
+}
+
+/**
+ * The attempt's rows, written in the ledger transaction after `checkAttemptUnderLock`. The target
+ * moves to `RUNNING` first, conditionally: when it is no longer startable the whole transaction
+ * rolls back (`AttemptRollback`), so no attempt, run input or active workflow outlives a target
+ * that was removed. Returns the new attempt's id.
+ */
+export async function writeAttemptRows(
+  tx: Prisma.TransactionClient,
+  row: { childWorkflowId: string; n: number; targetId: string; teamId: string }
+): Promise<string> {
+  const now = new Date();
+  const moved = await runUnscoped(
+    'the target is written by its own id and team under the campaign lock',
+    ['CampaignTarget'],
+    () =>
+      tx.campaignTarget.updateMany({
+        data: { failureReason: null, finishedAt: null, startedAt: now, state: 'RUNNING' },
+        where: {
+          id: row.targetId,
+          state: { in: ['PENDING', 'BLOCKED'] },
+          teamId: row.teamId,
+        },
+      })
+  );
+  if (moved.count !== 1) {
+    throw new AttemptRollback(
+      'TARGET_NOT_STARTABLE',
+      'The target changed while the attempt was starting; try again'
+    );
+  }
+  const created = await tx.campaignAttempt.create({
+    data: {
+      childWorkflowId: row.childWorkflowId,
+      n: row.n,
+      startedAt: now,
+      targetId: row.targetId,
+    },
+  });
+  return created.id;
+}
+
 async function resolveBudget(
   prisma: PrismaClient,
   campaignId: string
 ): Promise<{ exceeded: boolean; cap: number | null }> {
   const row = await prisma.campaign.findFirst({
-    select: { budgetUsd: true },
+    select: { budgetUsd: true, orgId: true },
     where: { id: campaignId },
   });
   const cap = row?.budgetUsd == null ? null : Number(row.budgetUsd);
-  if (cap === null) {
+  if (cap === null || !row) {
     return { cap, exceeded: false };
   }
-  return { cap, exceeded: (await campaignMonthSpendUsd(prisma, campaignId)) >= cap };
+  const spent = await campaignSpendUsd(prisma, {
+    campaignId,
+    monthStart: campaignMonthStart(new Date()),
+    orgId: row.orgId,
+  });
+  return { cap, exceeded: spent >= cap };
 }
 
 /** Pause the campaign at its budget: the row first, as every control action does. */

@@ -11,6 +11,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import {
   type CampaignDetail,
+  useRemoveCampaignDependency,
   useRemoveCampaignTarget,
   useRetryCampaignTarget,
 } from '@/hooks/useCampaigns';
@@ -39,7 +40,9 @@ const EVIDENCE_LABELS: Record<string, string> = {
   'not-declared': 'The check passed: the repository does not declare the dependency.',
 };
 
-type PendingAction = { kind: 'remove' | 'retry'; target: CampaignTargetDto };
+type PendingAction =
+  | { kind: 'remove' | 'retry'; target: CampaignTargetDto }
+  | { kind: 'dependency'; target: CampaignTargetDto; upstreamId: string; upstreamLabel: string };
 
 /**
  * The per-repository state of a campaign, grouped by what the reader needs: what needs a person,
@@ -62,6 +65,7 @@ export function CampaignTargets({
   const [pending, setPending] = useState<PendingAction | null>(null);
   const retry = useRetryCampaignTarget(campaign.id);
   const remove = useRemoveCampaignTarget(campaign.id);
+  const removeDependency = useRemoveCampaignDependency(campaign.id);
   const hasCheck = campaignHasCheck(campaign);
   const progress = campaignProgress(campaign.counts, { hasCheck });
   const groups = groupTargets(campaign.targets, { hasCheck });
@@ -132,6 +136,12 @@ export function CampaignTargets({
                   key={target.id}
                   labels={labels}
                   onAct={mayAct ? (kind) => setPending({ kind, target }) : undefined}
+                  onRemoveDependency={
+                    mayAct
+                      ? (upstreamId, upstreamLabel) =>
+                          setPending({ kind: 'dependency', target, upstreamId, upstreamLabel })
+                      : undefined
+                  }
                   planned={planned}
                   reviewId={
                     target.connectionId ? reviewIdByConnection.get(target.connectionId) : undefined
@@ -145,10 +155,22 @@ export function CampaignTargets({
         ))
       )}
       <ConfirmModal
-        confirmLabel={pending?.kind === 'retry' ? 'Retry repository' : 'Remove repository'}
+        confirmLabel={
+          pending?.kind === 'retry'
+            ? 'Retry repository'
+            : pending?.kind === 'dependency'
+              ? 'Remove dependency'
+              : 'Remove repository'
+        }
         dangerous={pending?.kind === 'remove'}
         message={
-          pending?.kind === 'retry' ? (
+          pending?.kind === 'dependency' ? (
+            <p>
+              <strong>{pending.target.repoLabel}</strong> will no longer wait for{' '}
+              <strong>{pending.upstreamLabel}</strong>. It can start as soon as its other conditions
+              are met, whether or not that repository has been reviewed or merged.
+            </p>
+          ) : pending?.kind === 'retry' ? (
             <p>
               Starts a new attempt in <strong>{pending.target.repoLabel}</strong> as the person this
               campaign runs as, on a new branch. Earlier attempts stay in its history.
@@ -166,7 +188,12 @@ export function CampaignTargets({
           if (!pending) {
             return;
           }
-          if (pending.kind === 'retry') {
+          if (pending.kind === 'dependency') {
+            await removeDependency.mutateAsync({
+              targetId: pending.target.id,
+              upstreamId: pending.upstreamId,
+            });
+          } else if (pending.kind === 'retry') {
             await retry.mutateAsync(pending.target.id);
           } else {
             await remove.mutateAsync(pending.target.id);
@@ -174,7 +201,13 @@ export function CampaignTargets({
         }}
         open={pending !== null}
         pendingLabel={pending?.kind === 'retry' ? 'Retrying…' : 'Removing…'}
-        title={pending?.kind === 'retry' ? 'Retry this repository?' : 'Remove this repository?'}
+        title={
+          pending?.kind === 'retry'
+            ? 'Retry this repository?'
+            : pending?.kind === 'dependency'
+              ? 'Remove this dependency?'
+              : 'Remove this repository?'
+        }
       />
     </Card>
   );
@@ -197,6 +230,7 @@ function TargetRow({
   campaign,
   labels,
   onAct,
+  onRemoveDependency,
   planned,
   reviewId,
   runId,
@@ -205,6 +239,7 @@ function TargetRow({
   campaign: CampaignDetail;
   labels: ReadonlyMap<string, string>;
   onAct?: (kind: 'remove' | 'retry') => void;
+  onRemoveDependency?: (upstreamId: string, upstreamLabel: string) => void;
   planned: boolean;
   reviewId?: string;
   runId?: string;
@@ -301,6 +336,26 @@ function TargetRow({
             Starts after <UpstreamNames labels={labels} linkable targetIds={target.dependsOn} />
           </p>
         )}
+        {onRemoveDependency &&
+          state === 'BLOCKED' &&
+          target.blockedReason?.kind === 'waiting-upstream' && (
+            <div className="flex flex-wrap gap-2 pt-1">
+              {target.dependsOn.flatMap((upstreamId) => {
+                const upstreamLabel = labels.get(upstreamId);
+                return upstreamLabel
+                  ? [
+                      <Button
+                        key={upstreamId}
+                        onClick={() => onRemoveDependency(upstreamId, upstreamLabel)}
+                        size="sm"
+                      >
+                        {`Remove dependency on ${upstreamLabel}`}
+                      </Button>,
+                    ]
+                  : [];
+              })}
+            </div>
+          )}
         {target.regressions > 0 && (
           <p>
             Regressed after being satisfied {target.regressions}{' '}

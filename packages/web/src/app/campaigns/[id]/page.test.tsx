@@ -11,8 +11,10 @@ const useCampaign = vi.fn();
 const action = vi.hoisted(() => ({
   cancel: vi.fn(),
   confirm: vi.fn(),
+  edit: vi.fn(),
   pause: vi.fn(),
   remove: vi.fn(),
+  removeDependency: vi.fn(),
   resume: vi.fn(),
   retry: vi.fn(),
   takeover: vi.fn(),
@@ -26,7 +28,9 @@ vi.mock('@/hooks/useCampaigns', async (importOriginal) => ({
   useCampaign: (...args: unknown[]) => useCampaign(...args),
   useCancelCampaign: mutation(action.cancel),
   useConfirmCampaign: mutation(action.confirm),
+  useEditCampaignTarget: mutation(action.edit),
   usePauseCampaign: mutation(action.pause),
+  useRemoveCampaignDependency: mutation(action.removeDependency),
   useRemoveCampaignTarget: mutation(action.remove),
   useResumeCampaign: mutation(action.resume),
   useRetryCampaignTarget: mutation(action.retry),
@@ -337,6 +341,55 @@ describe('Campaign detail page: targets', () => {
     expect(reason.textContent).toContain('Waiting for an upstream repository.');
     expect(reason.textContent).toContain('Waits for acme/api to be reviewed.');
     expect(screen.queryByText('Waits for acme/api', { exact: true })).toBeNull();
+  });
+
+  it('offers a lead to drop the dependency of a blocked target, after a confirmation', async () => {
+    stubDialogPrototype();
+    auth.led = true;
+    action.removeDependency.mockResolvedValue({});
+    show({
+      ...CAMPAIGN,
+      targets: [
+        target({ id: 't-api', position: 0, repoLabel: 'acme/api', state: 'RUNNING' }),
+        CAMPAIGN.targets[2],
+      ],
+    });
+    await renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove dependency on acme/api' }));
+    expect(action.removeDependency).not.toHaveBeenCalled();
+    expect(screen.getByText(/will no longer wait for/).textContent).toMatch(
+      /acme\/docs will no longer wait for acme\/api/
+    );
+    await confirmDialog('Remove dependency');
+    expect(action.removeDependency).toHaveBeenCalledWith({
+      targetId: 't-docs',
+      upstreamId: 't-api',
+    });
+  });
+
+  it('shows the gateway’s refusal of a dependency removal in the dialog', async () => {
+    stubDialogPrototype();
+    auth.led = true;
+    action.removeDependency.mockRejectedValue(
+      new ApiError('That dependency does not exist', 404, 'EDGE_NOT_FOUND')
+    );
+    show({
+      ...CAMPAIGN,
+      targets: [
+        target({ id: 't-api', position: 0, repoLabel: 'acme/api', state: 'RUNNING' }),
+        CAMPAIGN.targets[2],
+      ],
+    });
+    await renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove dependency on acme/api' }));
+    await confirmDialog('Remove dependency');
+    expect(screen.getByText('That dependency does not exist')).toBeTruthy();
+  });
+
+  it('does not offer dependency removal to someone who cannot manage the campaign', async () => {
+    show();
+    await renderPage();
+    expect(screen.queryByRole('button', { name: /Remove dependency on/ })).toBeNull();
   });
 
   it('adds the upstream’s name when the gateway’s text does not carry it', async () => {
@@ -727,34 +780,119 @@ describe('Campaign detail page: planning', () => {
     expect(screen.getByText(/Nothing starts until the person who started this/)).toBeTruthy();
   });
 
-  it('lets the launcher confirm, and explains why editing is not available', async () => {
+  it('lets the launcher confirm and offers an Edit control per repository', async () => {
     stubDialogPrototype();
     auth.user = { email: 'a@acme.test', role: 'USER', sub: 'creator' };
     action.confirm.mockResolvedValue({});
     show(PLANNING);
     await renderPage();
-    const edit = screen.getByRole('button', {
-      name: 'Edit before confirming',
-    }) as HTMLButtonElement;
-    expect(edit.disabled).toBe(true);
-    const reason = document.getElementById(edit.getAttribute('aria-describedby') ?? '');
-    expect(reason?.textContent).toMatch(/not available yet/);
+    expect(screen.getByRole('button', { name: 'Edit acme/auth' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Edit acme/web' })).toBeTruthy();
+    expect(screen.queryByText(/not available yet/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Confirm and start' }));
     expect(action.confirm).not.toHaveBeenCalled();
     await confirmDialog('Confirm and start');
     expect(action.confirm).toHaveBeenCalledTimes(1);
   });
 
-  it('shows a planning failure as text and keeps confirm disabled', async () => {
+  it('saves only the changed brief and shows the stored plan', async () => {
+    auth.user = { email: 'a@acme.test', role: 'USER', sub: 'creator' };
+    action.edit.mockResolvedValue({ brief: 'Rewritten', dependsOn: ['t-auth'], id: 't-web' });
+    show(PLANNING);
+    await renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit acme/web' }));
+    const form = screen.getByRole('form', { name: 'Edit acme/web' });
+    const box = within(form).getByLabelText('Brief') as HTMLTextAreaElement;
+    expect(box.value).toBe('Update the web app to call v2.');
+    expect(within(form).getByText(/30 \/ 8000 characters/)).toBeTruthy();
+    expect((within(form).getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(
+      true
+    );
+    fireEvent.change(box, { target: { value: '  Rewritten ' } });
+    expect(within(form).getByText(/12 \/ 8000 characters/)).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(within(form).getByRole('button', { name: 'Save' }));
+    });
+    expect(action.edit).toHaveBeenCalledWith({ body: { brief: 'Rewritten' }, targetId: 't-web' });
+    expect(screen.queryByRole('form', { name: 'Edit acme/web' })).toBeNull();
+  });
+
+  it('sends the chosen upstream repositories, and only the others are offered', async () => {
+    auth.user = { email: 'a@acme.test', role: 'USER', sub: 'creator' };
+    action.edit.mockResolvedValue({ brief: 'x', dependsOn: [], id: 't-web' });
+    show(PLANNING);
+    await renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit acme/web' }));
+    const form = screen.getByRole('form', { name: 'Edit acme/web' });
+    expect(within(form).queryByLabelText('acme/web')).toBeNull();
+    const auth1 = within(form).getByLabelText('acme/auth') as HTMLInputElement;
+    expect(auth1.checked).toBe(true);
+    fireEvent.click(auth1);
+    await act(async () => {
+      fireEvent.click(within(form).getByRole('button', { name: 'Save' }));
+    });
+    expect(action.edit).toHaveBeenCalledWith({ body: { dependsOn: [] }, targetId: 't-web' });
+  });
+
+  it('shows the gateway’s refusal inline and keeps the form open', async () => {
+    auth.user = { email: 'a@acme.test', role: 'USER', sub: 'creator' };
+    action.edit.mockRejectedValue(
+      new ApiError('That order would make a cycle', 422, 'CAMPAIGN_PLAN_INVALID')
+    );
+    show(PLANNING);
+    await renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit acme/auth' }));
+    const form = screen.getByRole('form', { name: 'Edit acme/auth' });
+    fireEvent.click(within(form).getByLabelText('acme/web'));
+    await act(async () => {
+      fireEvent.click(within(form).getByRole('button', { name: 'Save' }));
+    });
+    expect(within(form).getByRole('alert').textContent).toBe('That order would make a cycle');
+    expect(screen.getByRole('form', { name: 'Edit acme/auth' })).toBeTruthy();
+  });
+
+  it('refuses an empty or over-long brief before sending', async () => {
+    auth.user = { email: 'a@acme.test', role: 'USER', sub: 'creator' };
+    show(PLANNING);
+    await renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit acme/auth' }));
+    const form = screen.getByRole('form', { name: 'Edit acme/auth' });
+    const box = within(form).getByLabelText('Brief');
+    const save = within(form).getByRole('button', { name: 'Save' }) as HTMLButtonElement;
+    fireEvent.change(box, { target: { value: '   ' } });
+    expect(save.disabled).toBe(true);
+    fireEvent.change(box, { target: { value: 'x'.repeat(8001) } });
+    expect(save.disabled).toBe(true);
+    expect(within(form).getByText(/at most 8000 characters/)).toBeTruthy();
+    fireEvent.change(box, { target: { value: 'x'.repeat(8000) } });
+    expect(save.disabled).toBe(false);
+    fireEvent.click(within(form).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('form', { name: 'Edit acme/auth' })).toBeNull();
+    expect(action.edit).not.toHaveBeenCalled();
+  });
+
+  it('after a planning failure, explains the hand-written route and confirms once briefs exist', async () => {
     auth.user = { email: 'a@acme.test', role: 'USER', sub: 'creator' };
     show({ ...PLANNING, planFailure: { at: AGO(1), reason: '<b>planner</b> timed out' } });
     await renderPage();
     expect(screen.getByText(/Planning failed: <b>planner<\/b> timed out/)).toBeTruthy();
+    expect(screen.getByText(/write each repository’s brief yourself/)).toBeTruthy();
+    const confirm = screen.getByRole('button', { name: 'Confirm and start' }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(false);
+  });
+
+  it('keeps confirm disabled after a planning failure while a brief is empty', async () => {
+    auth.user = { email: 'a@acme.test', role: 'USER', sub: 'creator' };
+    show({
+      ...PLANNING,
+      planFailure: { at: AGO(1), reason: 'timed out' },
+      targets: [PLANNING.targets[0], { ...PLANNING.targets[1], brief: null }],
+    });
+    await renderPage();
     const confirm = screen.getByRole('button', { name: 'Confirm and start' }) as HTMLButtonElement;
     expect(confirm.disabled).toBe(true);
     const why = document.getElementById(confirm.getAttribute('aria-describedby') ?? '');
-    expect(why?.textContent).toMatch(/Planning failed/);
-    expect(screen.queryByText('Awaiting confirmation', { selector: 'p, div' })).toBeNull();
+    expect(why?.textContent).toMatch(/1 repository has no brief yet/);
   });
 
   it('keeps confirm disabled while a repository has no brief', async () => {
@@ -787,7 +925,8 @@ describe('Campaign detail page: planning', () => {
     show(PLANNING);
     await renderPage();
     expect(screen.queryByRole('button', { name: 'Confirm and start' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Edit before confirming' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Edit / })).toBeNull();
+    expect(screen.getByText('Move the auth client to v2.')).toBeTruthy();
     expect(
       screen.getByText(/Only the person who started this campaign can confirm it/)
     ).toBeTruthy();

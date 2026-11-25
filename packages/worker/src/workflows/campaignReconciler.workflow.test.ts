@@ -393,11 +393,40 @@ describe('CampaignReconcilerWorkflow', () => {
       targets: [makeTarget('t1')],
     });
     world.failPlan = true;
-    await start();
-    await waitFor(() => world.plans >= 1, 'the plan attempt');
-    await new Promise((r) => setTimeout(r, 300));
+    // Several passes run while the campaign waits: the backstop wakes it, and a later read ends it.
+    world.onRead = (n, w) => {
+      if (n === 8) {
+        w.campaign.state = 'COMPLETED';
+      }
+    };
+    const { result } = await run();
+    expect(result.passes).toBe(8);
+    // The planner ran once, however many passes followed its failure.
+    expect(world.plans).toBe(1);
     expect(world.starts).toEqual([]);
-    expect(world.campaign.state).toBe('PLANNING');
+  });
+
+  it('does not plan again after a continue-as-new that follows a failed plan', async () => {
+    world = makeWorld({
+      campaign: { plan: 'PLANNED', state: 'PLANNING' },
+      targets: [makeTarget('t1')],
+    });
+    world.failPlan = true;
+    // 205 reads cross the 200-pass continue-as-new; the continued execution must not plan again.
+    world.onRead = (n, w) => {
+      if (n === 205) {
+        w.campaign.state = 'COMPLETED';
+      }
+    };
+    const { handle, result } = await run();
+    expect(result.passes).toBe(205);
+    expect(world.plans).toBe(1);
+    const history = await (env as TestWorkflowEnvironment).client.workflow
+      .getHandle(handle.workflowId, handle.firstExecutionRunId)
+      .fetchHistory();
+    expect(history.events?.at(-1)?.eventType).toBe(
+      proto.temporal.api.enums.v1.EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW
+    );
   });
 
   it('pauses a campaign whose kill switch turned off, and starts nothing', async () => {

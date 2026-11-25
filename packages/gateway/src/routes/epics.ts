@@ -182,14 +182,16 @@ async function launchEpicAsCampaign(
     );
   }
   const ownerCtx = { orgId: owner.orgId, teamId: owner.id };
-  const [maxParallel, openCeiling, staleAfterDays, rescanIntervalHours, lifetimeDays] =
+  const [maxParallel, openCeiling, staleAfterDays, rescanDefault, lifetimeDays, rescanFloor] =
     await Promise.all([
       resolveSetting('workflow.campaignMaxParallelChildren', ownerCtx),
       resolveSetting('workflow.campaignMaxOpenPullRequests', ownerCtx),
       resolveSetting('workflow.campaignStaleAfterDays', ownerCtx),
       resolveSetting('workflow.campaignRescanIntervalHours', ownerCtx),
       resolveSetting('workflow.campaignLifetimeDays', ownerCtx),
+      resolveSetting('workflow.campaignRescanFloorHours', ownerCtx),
     ]);
+  const rescanIntervalHours = Math.max(rescanDefault, rescanFloor);
 
   const campaignId = uuidFromIdempotencyKey('epic-campaign', externalTicketId);
   const temporalWorkflowId = `campaign-${campaignId}`;

@@ -180,6 +180,11 @@ describe('assistantAccess', () => {
     expect(assistantAccess('POST', '/api/v1/campaigns')).toBe('never');
     expect(assistantAccess('POST', '/api/v1/campaigns/:id/cancel')).toBe('confirm');
     expect(assistantAccess('GET', '/api/v1/campaigns')).toBe('read');
+    // Editing a plan before confirming, and removing a dependency edge, are people's decisions.
+    expect(assistantAccess('PATCH', '/api/v1/campaigns/:id/targets/:targetId')).toBe('never');
+    expect(
+      assistantAccess('DELETE', '/api/v1/campaigns/:id/targets/:targetId/dependencies/:upstreamId')
+    ).toBe('never');
     expect(assistantAccess('GET', '/api/v1/campaigns/:id')).toBe('read');
   });
 

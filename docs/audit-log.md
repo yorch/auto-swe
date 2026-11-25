@@ -49,7 +49,7 @@ when the system acted, such as a webhook or a sweep), `beforeJson`, `afterJson`,
   own `WorkRequest` row. `afterJson` holds the name, recipe reference and parameters, owning team,
   target count, parallelism, the pinned template and version, the workflow kind and, for a reconciled
   campaign, its plan, gate, scope, limits, budget, expiry and launcher. Cancel, confirm, pause, resume,
-  take-over, add-targets, retry and remove each write one `UPDATE` row with the state before and
+  take-over, add-targets, plan edit, dependency removal, retry and remove each write one `UPDATE` row with the state before and
   after and the person who acted (a take-over names both launchers). The gateway's start of an attempt
   and a pause for the campaign's budget write an `UPDATE` row with no actor. The reconciler's own state
   changes write none. A launch that is refused or compensated leaves none. An epic launched as a

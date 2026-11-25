@@ -7,6 +7,7 @@ import { isPlatformAdmin, can as sharedCan, userActor } from '@auto-swe/shared/p
 import type { FastifyRequest } from 'fastify';
 import { can } from './authz.js';
 import { authorizeLaunch, type LaunchRepo } from './launchAuthorization.js';
+import { isOrgMember } from './orgAccess.js';
 import { type MaybeGate, memberTeams, reachableConnections } from './tenantScope.js';
 
 /**
@@ -55,6 +56,46 @@ export async function mayTakeOverCampaign(
     return true;
   }
   return (await can(request, 'team.launch.multi-repo', { teamId: campaign.ownerTeamId })).allowed;
+}
+
+export type LauncherAvailability =
+  | { ok: true; actor: { role: PlatformRole; sub: string } }
+  | { ok: false; message: string };
+
+/**
+ * Whether the campaign's launcher can still act for it: an active account, still a member of the
+ * campaign's organization, still leading the owning team (spec §4 step 2). The attempt route and
+ * resume both ask this one function, so a campaign that cannot start an attempt cannot be resumed
+ * into a loop of refusals.
+ */
+export async function checkLauncherAvailable(
+  prisma: PrismaClient,
+  campaign: { launchedById: string | null; orgId: string; ownerTeamId: string }
+): Promise<LauncherAvailability> {
+  if (!campaign.launchedById) {
+    return { message: 'The campaign has no launcher; a LEAD must take it over', ok: false };
+  }
+  const launcher = await prisma.user.findUnique({
+    select: { id: true, isActive: true, role: true },
+    where: { id: campaign.launchedById },
+  });
+  if (!launcher?.isActive) {
+    return { message: 'The launcher’s account is not active', ok: false };
+  }
+  const actor = { role: launcher.role as PlatformRole, sub: launcher.id };
+  if (!(await isOrgMember(prisma, actor, campaign.orgId))) {
+    return { message: 'The launcher no longer belongs to the campaign’s organization', ok: false };
+  }
+  if (
+    !(
+      await sharedCan(prisma, userActor(actor), 'team.launch.multi-repo', {
+        teamId: campaign.ownerTeamId,
+      })
+    ).allowed
+  ) {
+    return { message: 'The launcher no longer leads the owning team', ok: false };
+  }
+  return { actor, ok: true };
 }
 
 /** What the launch decision reads of a repository, for one acting user. */

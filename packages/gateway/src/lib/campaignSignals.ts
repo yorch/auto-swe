@@ -2,6 +2,7 @@ import type { CampaignPullRequestChangedSignal } from '@auto-swe/shared/types/wo
 import { CAMPAIGN_PULL_REQUEST_CHANGED_SIGNAL } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance } from 'fastify';
 import { getErrorName } from '../plugins/auth.js';
+import { signalCampaignReconciler } from './campaignWake.js';
 
 /** Campaign states in which the reconciler is no longer listening. */
 const NOT_LISTENING = ['COMPLETED', 'COMPLETED_WITH_FAILURES', 'CANCELLED', 'FAILED_TO_START'];
@@ -44,7 +45,13 @@ export async function notifyCampaignsOfPullRequest(
         target: {
           select: {
             campaign: {
-              select: { id: true, state: true, temporalWorkflowId: true, workflowKind: true },
+              select: {
+                id: true,
+                ownerTeamId: true,
+                state: true,
+                temporalWorkflowId: true,
+                workflowKind: true,
+              },
             },
             id: true,
           },
@@ -72,15 +79,11 @@ export async function notifyCampaignsOfPullRequest(
             where: { id: attempt.id, runId: null },
           });
         }
-        await fastify.temporal.signalCampaignWorkflow(
-          campaign.temporalWorkflowId,
-          CAMPAIGN_PULL_REQUEST_CHANGED_SIGNAL,
-          {
-            runId: input.runId ?? attempt.runId ?? '',
-            status: input.status,
-            targetId: attempt.targetId,
-          } satisfies CampaignPullRequestChangedSignal
-        );
+        await signalCampaignReconciler(fastify, campaign, CAMPAIGN_PULL_REQUEST_CHANGED_SIGNAL, {
+          runId: input.runId ?? attempt.runId ?? '',
+          status: input.status,
+          targetId: attempt.targetId,
+        } satisfies CampaignPullRequestChangedSignal);
       } catch (err) {
         fastify.log.warn(
           { campaignId: campaign.id, errName: getErrorName(err), targetId: attempt.targetId },

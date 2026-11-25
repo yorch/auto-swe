@@ -1991,6 +1991,22 @@ export const SETTING_DEFINITIONS = {
     schema: z.boolean(),
     writeAccess: 'admin',
   }),
+  // Read by the gateway at campaign launch (a rescanIntervalHours below it is refused) and by the
+  // worker's reconciler on every pass, which re-checks at the longer of the campaign's own interval
+  // and this floor, so a change reaches a running campaign. Not run-pinned, for the same reason.
+  'workflow.campaignRescanFloorHours': defineSetting({
+    defaultValue: 1,
+    description:
+      'The shortest interval, in hours, a campaign may re-check a satisfied target at. A launch that asks for a shorter rescanIntervalHours is refused, and a running campaign whose own interval is below the floor re-checks at the floor, so raising it takes effect on campaigns already running.',
+    group: 'workflow',
+    label: 'Campaign rescan floor',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(720),
+    unit: 'hours',
+    writeAccess: 'admin',
+  }),
   'workflow.campaignRescanIntervalHours': defineSetting({
     defaultValue: 24,
     description:

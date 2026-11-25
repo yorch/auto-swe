@@ -5,6 +5,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const db = vi.hoisted(() => ({
   $transaction: vi.fn(),
+  activeWorkflow: { findMany: vi.fn() },
   campaign: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   campaignAttempt: { findMany: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
   campaignDiscoveryCheck: { deleteMany: vi.fn() },
@@ -20,13 +21,15 @@ const db = vi.hoisted(() => ({
   pullRequest: { findMany: vi.fn() },
   team: { findMany: vi.fn() },
   user: { findUnique: vi.fn() },
-  workflowRun: { aggregate: vi.fn(), updateMany: vi.fn() },
+  workflowRun: { updateMany: vi.fn() },
 }));
 const settings = vi.hoisted(() => ({
   disabledOrgs: new Set<string>(),
   disabledTeams: new Set<string>(),
   maxTargets: 50,
+  rescanFloorHours: 1,
 }));
+const stale = vi.hoisted(() => ({ notify: vi.fn() }));
 const reconcile = vi.hoisted(() => ({ fn: vi.fn() }));
 const temporal = vi.hoisted(() => ({ cancel: vi.fn(), getHandle: vi.fn() }));
 
@@ -42,9 +45,13 @@ vi.mock('@auto-swe/shared/config', () => ({
     if (key === 'workflow.campaignMaxTargets') {
       return settings.maxTargets;
     }
+    if (key === 'workflow.campaignRescanFloorHours') {
+      return settings.rescanFloorHours;
+    }
     throw new Error(`unexpected setting ${key}`);
   }),
 }));
+vi.mock('../lib/campaignStaleNotice.js', () => ({ notifyCampaignStale: stale.notify }));
 vi.mock('../lib/campaignAttempts.js', () => ({ reconcileCampaignAttempt: reconcile.fn }));
 vi.mock('../lib/temporalClient.js', () => ({
   getTemporalClient: () => ({ workflow: { getHandle: temporal.getHandle } }),
@@ -109,6 +116,7 @@ beforeEach(() => {
   settings.disabledTeams.clear();
   settings.disabledOrgs.clear();
   settings.maxTargets = 50;
+  settings.rescanFloorHours = 1;
   db.team.findMany.mockResolvedValue([]);
   // An interactive transaction runs its callback against the same mocked client; a throw is a
   // rollback (the mock keeps no state to undo).
@@ -219,6 +227,48 @@ describe('readCampaignPass', () => {
     );
   });
 
+  it('does not count a MERGED target of a campaign with no check toward the kill switch', async () => {
+    db.campaignTarget.findMany.mockResolvedValue([
+      targetRow({ id: 'a', state: 'MERGED', teamId: 'team-b' }),
+    ]);
+    settings.disabledTeams.add('team-b');
+    db.campaign.findUnique.mockResolvedValue(campaignRow({ recipeRef: 'npm-dependency@1' }));
+    expect((await readCampaignPass({ campaignId: CAMPAIGN }))?.campaign.campaignsEnabled).toBe(
+      true
+    );
+    // With a check, MERGED is still to be confirmed, so its team's switch still counts.
+    db.campaign.findUnique.mockResolvedValue(campaignRow({ recipeRef: 'npm-dependency@2' }));
+    expect((await readCampaignPass({ campaignId: CAMPAIGN }))?.campaign.campaignsEnabled).toBe(
+      false
+    );
+  });
+
+  it('re-checks at the longer of the campaign’s interval and the rescan floor', async () => {
+    db.campaign.findUnique.mockResolvedValue(campaignRow({ rescanIntervalHours: 2 }));
+    settings.rescanFloorHours = 12;
+    expect((await readCampaignPass({ campaignId: CAMPAIGN }))?.campaign.rescanIntervalHours).toBe(
+      12
+    );
+    settings.rescanFloorHours = 1;
+    expect((await readCampaignPass({ campaignId: CAMPAIGN }))?.campaign.rescanIntervalHours).toBe(
+      2
+    );
+    // No interval stays none: a floor does not turn rescans on.
+    db.campaign.findUnique.mockResolvedValue(campaignRow({ rescanIntervalHours: null }));
+    expect(
+      (await readCampaignPass({ campaignId: CAMPAIGN }))?.campaign.rescanIntervalHours
+    ).toBeNull();
+  });
+
+  it('resolves the floor for the owning team under its organization', async () => {
+    const { resolveSetting } = await import('@auto-swe/shared/config');
+    await readCampaignPass({ campaignId: CAMPAIGN });
+    expect(resolveSetting).toHaveBeenCalledWith('workflow.campaignRescanFloorHours', {
+      orgId: ORG,
+      teamId: TEAM,
+    });
+  });
+
   it('resolves the kill switch under each target team’s own organization', async () => {
     const OTHER_ORG = '77777777-7777-4777-8777-777777777778';
     db.campaignTarget.findMany.mockResolvedValue([
@@ -272,18 +322,24 @@ describe('readCampaignPass', () => {
 
   it('reports a spent budget from the campaign’s attempts this month', async () => {
     db.campaign.findUnique.mockResolvedValue(campaignRow({ budgetUsd: '10' }));
-    db.workflowRun.aggregate.mockResolvedValue({ _sum: { costUsdAccrued: 10 } });
+    const attempt = { childWorkflowId: 'wf-1', run: null };
+    db.campaignAttempt.findMany.mockResolvedValue([attempt]);
+    db.activeWorkflow.findMany.mockResolvedValue([
+      { costUsdAccrued: 10, temporalWorkflowId: 'wf-1' },
+    ]);
     expect((await readCampaignPass({ campaignId: CAMPAIGN }))?.campaign.budgetExceeded).toBe(true);
-    const where = db.workflowRun.aggregate.mock.calls[0]?.[0].where;
-    expect(where.campaignAttempts.some.target).toEqual({ campaignId: CAMPAIGN });
-    expect(where.campaignAttempts.some.startedAt.gte).toBeInstanceOf(Date);
-    db.workflowRun.aggregate.mockResolvedValue({ _sum: { costUsdAccrued: 9.99 } });
+    const where = db.campaignAttempt.findMany.mock.calls[0]?.[0].where;
+    expect(where.target).toEqual({ campaign: { orgId: ORG }, campaignId: CAMPAIGN });
+    expect(where.startedAt.gte).toBeInstanceOf(Date);
+    db.activeWorkflow.findMany.mockResolvedValue([
+      { costUsdAccrued: 9.99, temporalWorkflowId: 'wf-1' },
+    ]);
     expect((await readCampaignPass({ campaignId: CAMPAIGN }))?.campaign.budgetExceeded).toBe(false);
   });
 
   it('does not read the spend of a campaign with no budget', async () => {
     await readCampaignPass({ campaignId: CAMPAIGN });
-    expect(db.workflowRun.aggregate).not.toHaveBeenCalled();
+    expect(db.activeWorkflow.findMany).not.toHaveBeenCalled();
   });
 
   it('settles a running target’s unrecorded attempt and reports how it ended', async () => {
@@ -410,6 +466,78 @@ describe('recordCampaignPass', () => {
       updates: [{ expect: 'PENDING', state: 'BLOCKED', targetId: TARGET, teamId: TEAM }],
     });
     expect(r.skipped).toBe(1);
+  });
+
+  it('stamps finishedAt on a MERGED target of a campaign with no check, and not of one with a check', async () => {
+    const merged = {
+      ...base,
+      updates: [
+        { expect: 'PR_OPENED' as const, state: 'MERGED' as const, targetId: TARGET, teamId: TEAM },
+      ],
+    };
+    db.campaign.findUnique.mockResolvedValue(campaignRow({ recipeRef: 'npm-dependency@1' }));
+    await recordCampaignPass(merged);
+    expect(db.campaignTarget.updateMany.mock.calls[0]?.[0].data.finishedAt).toBeInstanceOf(Date);
+    db.campaign.findUnique.mockResolvedValue(campaignRow({ recipeRef: 'npm-dependency@2' }));
+    await recordCampaignPass(merged);
+    expect(db.campaignTarget.updateMany.mock.calls[1]?.[0].data.finishedAt).toBeUndefined();
+  });
+
+  describe('the stale nudge', () => {
+    const staleUpdate = {
+      expect: 'PR_OPENED' as const,
+      staleSince: 1_700_000_000_000,
+      state: 'PR_OPENED' as const,
+      targetId: TARGET,
+      teamId: TEAM,
+    };
+
+    it('sends one notice when staleSince is first set, and only when the write landed', async () => {
+      db.campaignTarget.findMany.mockResolvedValue([{ id: TARGET, repoLabel: 'acme/api' }]);
+      await recordCampaignPass({ ...base, updates: [staleUpdate] });
+      expect(stale.notify).toHaveBeenCalledTimes(1);
+      expect(stale.notify).toHaveBeenCalledWith({
+        campaignId: CAMPAIGN,
+        now: expect.any(Number),
+        targets: [{ repoLabel: 'acme/api', staleSince: 1_700_000_000_000 }],
+      });
+      // The write is a one-shot: it requires the flag to be unset in the row.
+      expect(db.campaignTarget.updateMany.mock.calls[0]?.[0].where).toMatchObject({
+        staleSince: null,
+      });
+    });
+
+    it('sends nothing when a retry finds the write already landed (no row matched)', async () => {
+      db.campaignTarget.updateMany.mockResolvedValue({ count: 0 });
+      await recordCampaignPass({ ...base, updates: [staleUpdate] });
+      expect(stale.notify).not.toHaveBeenCalled();
+    });
+
+    it('sends nothing for a write that clears the flag or moves a target without setting it', async () => {
+      await recordCampaignPass({
+        ...base,
+        updates: [
+          { ...staleUpdate, staleSince: null },
+          { expect: 'RUNNING', state: 'PR_OPENED', targetId: 'other', teamId: TEAM },
+        ],
+      });
+      expect(stale.notify).not.toHaveBeenCalled();
+      expect(db.campaignTarget.updateMany.mock.calls[0]?.[0].where).not.toHaveProperty(
+        'staleSince'
+      );
+    });
+
+    it('never fails the pass when the notice cannot be sent', async () => {
+      db.campaignTarget.findMany.mockRejectedValue(new Error('db down'));
+      await expect(recordCampaignPass({ ...base, updates: [staleUpdate] })).resolves.toMatchObject({
+        skipped: 0,
+      });
+      db.campaignTarget.findMany.mockResolvedValue([{ id: TARGET, repoLabel: 'acme/api' }]);
+      stale.notify.mockRejectedValue(new Error('slack down'));
+      await expect(recordCampaignPass({ ...base, updates: [staleUpdate] })).resolves.toMatchObject({
+        skipped: 0,
+      });
+    });
   });
 
   it('masks and bounds a failure reason', async () => {

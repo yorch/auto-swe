@@ -69,6 +69,10 @@ export type AssistantAccess = 'read' | 'confirm' | 'never';
 export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> = {
   // Takes a target out of a campaign: a destructive change to someone else's tracked goal.
   'DELETE /api/v1/campaigns/:id/targets/:targetId': { never: 'destructive' },
+  // Removes an ordering the person set: a running campaign then starts the target sooner.
+  'DELETE /api/v1/campaigns/:id/targets/:targetId/dependencies/:upstreamId': {
+    never: 'destructive',
+  },
   'DELETE /api/v1/integrations/github-approver-app': { never: 'secret' },
   'DELETE /api/v1/knowledge-base-links/:id': 'confirm',
   'DELETE /api/v1/knowledge-bases/:id': 'confirm',
@@ -334,6 +338,8 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/workflows/:id': 'read',
   'PATCH /api/v1/assistant/conversations/:id': { never: 'assistantPanel' },
   'PATCH /api/v1/automations/events/:id': 'confirm',
+  // Rewrites the brief a draft pull request is opened from: the launcher's own decision, as confirm.
+  'PATCH /api/v1/campaigns/:id/targets/:targetId': { never: 'humanDecision' },
   'PATCH /api/v1/knowledge-base-links/:id': 'confirm',
   'PATCH /api/v1/knowledge-bases/:id': 'confirm',
   'PATCH /api/v1/me/preferences': 'confirm',

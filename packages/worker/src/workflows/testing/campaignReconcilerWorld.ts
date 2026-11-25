@@ -6,6 +6,7 @@
  *
  * Test-only. Nothing here runs in production.
  */
+
 import {
   isTargetFinal,
   isTargetFinalFor,
@@ -14,6 +15,7 @@ import {
   type TargetState,
   transitionTarget,
 } from '@auto-swe/shared/lib/campaignState';
+import { ApplicationFailure } from '@temporalio/activity';
 import type {
   CampaignPassSnapshot,
   DiscoveredCandidate,
@@ -226,7 +228,9 @@ export function worldActivities(world: World) {
     async planCampaignBriefs(): Promise<{ planned: number; edges: number }> {
       world.plans += 1;
       if (world.failPlan) {
-        throw new Error('the planner is unavailable');
+        // Non-retryable, so one scheduled call is one count: `plans` is how many times the workflow
+        // asked, not how many attempts Temporal made of one ask.
+        throw ApplicationFailure.nonRetryable('the planner is unavailable', 'PLANNER_UNAVAILABLE');
       }
       world.planned = true;
       return { edges: 0, planned: world.targets.length };

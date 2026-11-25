@@ -371,7 +371,8 @@ drift from the pull-request views.
 
 A **stale** pull request is a flag, not a state: `staleSince` is set when a draft has been `OPEN`
 for `staleAfterDays`, kept at the moment it crossed the line, and cleared when the draft stops being
-`OPEN`. It changes no state and starts nothing.
+`OPEN`. It changes no state and starts nothing; the first time it is set, the owning team's Slack
+notification channel is told once.
 
 How a target moves:
 
@@ -397,10 +398,12 @@ and `NEEDS_ATTENTION`.
 
 In a campaign with a check, a `MERGED` target is checked on every pass until the check answers, and
 again every 15 minutes when it could not run. A `SATISFIED` target is re-checked on the campaign's
-`rescanIntervalHours` while the campaign is `ACTIVE` or `MONITORING`.
+`rescanIntervalHours` (never shorter than `workflow.campaignRescanFloorHours`, §7) while the campaign is
+`ACTIVE` or `MONITORING`.
 
 A campaign with **no check** (no recipe, an `@1` recipe, or a planned campaign) never checks. For it
-`MERGED` is a final state: a target whose pull request merged counts as done, the dashboard says
+`MERGED` is a final state: a target whose pull request merged counts as done and is given its
+`finishedAt` when the merge is recorded, the dashboard says
 "Merged (no check to confirm)", and the campaign completes once every target is `MERGED`, `SATISFIED`,
 `SKIPPED` or `CANCELLED`. Nothing confirms that the merge satisfied the goal and nothing notices a
 later regression (see Limitations).
@@ -413,7 +416,7 @@ later regression (see Limitations).
 | `PLANNING` | A planned campaign's briefs and order are written (or being written), and the campaign waits for its launcher to confirm. Nothing is checked, discovered or started |
 | `ACTIVE` | Targets are being started, awaited or re-checked. A target that needs a person keeps the campaign here |
 | `PAUSED` | No attempt starts and nothing is re-checked or discovered. Running attempts finish, and the campaign still follows their pull requests. `pausedReason` says why: `manual`, `launcher-unavailable`, `disabled` or `budget` |
-| `MONITORING` | Every known target is final, a scope is set and the campaign has not expired. It wakes on `rescanIntervalHours` to re-check and to discover, until `expiresAt`. A regression returns it to `ACTIVE`, and so does adding a target (§11.5). A scope needs a check, so a campaign with no check never monitors |
+| `MONITORING` | Every known target is final, a scope is set and the campaign has not expired. It wakes on `rescanIntervalHours` (at least the floor of §7) to re-check and to discover, until `expiresAt`. A regression returns it to `ACTIVE`, and so does adding a target (§11.5). A scope needs a check, so a campaign with no check never monitors |
 | `COMPLETED` | Every target is final and there is no scope, or `expiresAt` has passed. The workflow ends. A campaign with no check is final at `MERGED` as well as at `SATISFIED`, `SKIPPED` and `CANCELLED`, so it completes when its pull requests have merged |
 | `CANCELLING`, `CANCELLED` | §9 |
 
@@ -430,7 +433,7 @@ start is rolled back with its rows.
 
 ## 7. Limits and settings
 
-All eight settings are in the `workflow` group, overridable at the team and organization scope and
+All nine settings are in the `workflow` group, overridable at the team and organization scope and
 changeable by an ADMIN. None is pinned to a run. The gateway resolves the size limits and the campaign
 defaults at launch and freezes them into the campaign; `workflow.campaignsEnabled` is checked at
 launch, by every attempt start (§11.3) and by every reconciler pass, which pauses a campaign whose
@@ -444,7 +447,8 @@ owning team, or a team that owns a target still to be worked, has it off (§11.6
 | `workflow.campaignReconciler` | off | Whether a campaign launches on the reconciler workflow (on) or the campaign workflow (off). Recorded at launch; a campaign runs to the end on the workflow it launched on. An epic launches as a planned campaign only while it is on (§12) |
 | `workflow.campaignMaxOpenPullRequests` | 10 | The default for a campaign's `maxOpenPullRequests`, and its ceiling (1 to 100) |
 | `workflow.campaignStaleAfterDays` | 14 | The default age, in days, after which a campaign's draft pull request is flagged stale (1 to 365). A stale flag changes no state and starts nothing |
-| `workflow.campaignRescanIntervalHours` | 24 | The default hours between re-checks of a satisfied target (1 to 720). The floor of 1 means a campaign cannot recheck every minute; a launch may set its own interval within the same range |
+| `workflow.campaignRescanIntervalHours` | 24 | The default hours between re-checks of a satisfied target (1 to 720). A launch may set its own interval within the same range, never below `workflow.campaignRescanFloorHours`, and an epic launched as a campaign takes this default or the floor, whichever is longer |
+| `workflow.campaignRescanFloorHours` | 1 | The shortest interval a campaign may re-check at (1 to 720). A launch below it is refused, and the reconciler re-checks a running campaign at the longer of its own interval and the floor, so a change reaches campaigns already running |
 | `workflow.campaignLifetimeDays` | 90 | The default days a campaign runs before it expires (1 to 365). The expiry is fixed at launch |
 
 A legacy campaign's Temporal history is bounded by what each child's start event carries: the brief,
@@ -474,11 +478,13 @@ CAMPAIGN_NOT_FOUND`, never `403`. Every route that changes a reconciled campaign
 | `POST /:id/cancel` | The campaign's creator, a `LEAD` or `ADMIN` of its owning team, or a platform ADMIN | `202`, or `200` when it closed the rows (§9). `409 CAMPAIGN_NOT_ACTIVE` once final, `503 CAMPAIGN_SIGNAL_FAILED` |
 | `POST /:id/confirm` | The launcher only (an administrator who is not the launcher is refused) | `200 { id, pausedReason: null, state: "ACTIVE" }`. `409 CAMPAIGN_NOT_PLANNING`; `409 CAMPAIGN_PLAN_NOT_READY` until every target has a brief (§11.4) |
 | `POST /:id/pause` | Creator, owning-team `LEAD`, or ADMIN | `200` with `pausedReason: "manual"`; an optional `{ note }` is audited. Pausing a paused campaign answers `200`. `409 CAMPAIGN_NOT_PAUSABLE` unless `ACTIVE`, `STARTING` or `MONITORING` |
-| `POST /:id/resume` | Creator, owning-team `LEAD`, or ADMIN | `200`, `ACTIVE`. `409 CAMPAIGN_NOT_PAUSED`; `409 CAMPAIGNS_DISABLED` while the setting is off for the owning team and, for a campaign paused as `disabled`, for any team that owns a target (the answer names no other team); `409 LAUNCHER_UNAVAILABLE` while the launcher's account is inactive |
+| `POST /:id/resume` | Creator, owning-team `LEAD`, or ADMIN | `200`, `ACTIVE`. `409 CAMPAIGN_NOT_PAUSED`; `409 CAMPAIGNS_DISABLED` while the setting is off for the owning team and, for a campaign paused as `disabled`, for any team that owns a target (the answer names no other team); `409 LAUNCHER_UNAVAILABLE` unless the launcher's account is active, they still belong to the campaign's organization and they still lead the owning team (the check the attempt route makes) |
 | `POST /:id/takeover` | Owning-team `LEAD` or ADMIN (the creator has no right of its own here), never the current launcher | `200 { id, launchedById, pausedReason, skippedTargetIds, state }`. `409 ALREADY_LAUNCHER`, `409 CAMPAIGN_NOT_ACTIVE` (final or `CANCELLING`), `409 CAMPAIGN_CHANGED` when another take-over landed first |
-| `POST /:id/targets` | Creator, owning-team `LEAD`, or ADMIN; the caller must also pass the launch decision for each repository | `200 { added, refused }`; each refused repository carries a reason (§11.5). `409 CAMPAIGN_NOT_ACTIVE` |
+| `POST /:id/targets` | Creator, owning-team `LEAD`, or ADMIN; the caller must also pass the launch decision for each repository | `200 { added, refused }`; each refused repository carries a reason (§11.5), including one that discovery added first. `409 CAMPAIGN_NOT_ACTIVE`; `409 CAMPAIGN_PLANNING` while the plan waits to be confirmed (edit the plan instead). |
+| `PATCH /:id/targets/:targetId` | The launcher only, while the campaign is `PLANNING` | `200 { data: { id, brief, dependsOn } }` (§11.4). `409 CAMPAIGN_NOT_PLANNING`; `422 CAMPAIGN_PLAN_INVALID` for a self edge, a target that is unknown or that the launcher cannot reach, or a cycle; `403` for anyone else; `404 TARGET_NOT_FOUND` |
 | `POST /:id/targets/:targetId/retry` | Creator, owning-team `LEAD`, or ADMIN | `200 { id, state: "PENDING" }`. `404 TARGET_NOT_FOUND`, `409 TARGET_NOT_RETRYABLE` unless the target needs attention |
 | `DELETE /:id/targets/:targetId` | Creator, owning-team `LEAD`, or ADMIN | `200 { id, state: "SKIPPED" }`; an optional `{ reason }` is recorded on the target. `409 TARGET_NOT_REMOVABLE` for a running, skipped or cancelled target |
+| `DELETE /:id/targets/:targetId/dependencies/:upstreamId` | Creator, owning-team `LEAD`, or ADMIN; campaign `ACTIVE`, `PAUSED` or `MONITORING` | `200 { data: { id, dependsOn } }`, the edges that remain; the reconciler is woken so a `BLOCKED` target is read again. `404 EDGE_NOT_FOUND` when the target does not depend on that target; `409 CAMPAIGN_NOT_ACTIVE` |
 | `POST /:id/targets/:targetId/attempts` | The worker's campaign token only (§11.3) | `201`, or `200` for a retried call |
 
 Visibility for the first three rows: a platform ADMIN sees every campaign; anyone else sees a campaign
@@ -486,8 +492,8 @@ when they belong to its owning team or can reach at least one of its target repo
 or a team the repository is shared with, plus the GitHub permission gate when it is enforced).
 
 The in-app assistant's policy for each route is `read` for the two GETs, `confirm` for cancel, pause
-and resume, and `never` for launch, confirm, take over, add targets, retry, remove and the attempt
-call.
+and resume, and `never` for launch, confirm, take over, add targets, edit a target, retry, remove, remove a
+dependency and the attempt call.
 
 **`POST /`** body:
 
@@ -503,7 +509,7 @@ call.
 | `scope` | Optional `{ kind: "TEAM", id }` or `{ kind: "ORG" }`; needs an `@2` recipe |
 | `maxParallel` | Optional; clamped to `workflow.campaignMaxParallelChildren` |
 | `maxOpenPullRequests` | Optional; clamped to `workflow.campaignMaxOpenPullRequests` |
-| `staleAfterDays`, `rescanIntervalHours`, `lifetimeDays` | Optional; the setting's default applies when absent. `staleAfterDays` takes 1 to 365, `rescanIntervalHours` 1 to 720 (the range of `workflow.campaignRescanIntervalHours`) and `lifetimeDays` 1 to 365; a value outside its range is refused |
+| `staleAfterDays`, `rescanIntervalHours`, `lifetimeDays` | Optional; the setting's default applies when absent. `staleAfterDays` takes 1 to 365, `rescanIntervalHours` 1 to 720 (the range of `workflow.campaignRescanIntervalHours`) and `lifetimeDays` 1 to 365; a value outside its range is refused. A `rescanIntervalHours` below `workflow.campaignRescanFloorHours` for the owning team is refused with `400 CAMPAIGN_RESCAN_TOO_FREQUENT`, and the default is never below that floor |
 | `budgetUsd` | Optional: dollars the campaign's attempts may spend in a calendar month (§11.7) |
 | `budget` | Optional budget tier for each child |
 
@@ -607,23 +613,29 @@ The dashboard has a **Campaigns** list at `/campaigns` and a detail page at `/ca
   first one launched, and a changed request gets a new key. An orchestration's proposal card opens
   this form pre-filled.
 - **Plan review.** A `PLANNING` campaign shows each repository's brief and what it starts after,
-  with **Confirm and start** for the launcher; anyone else is told only the launcher can confirm.
-  **Confirm and start** is disabled, with the reason beside it, while a repository has no brief or when
-  planning failed. A failed plan shows a **Planning failed** alert with the recorded reason in place of
-  the awaiting-confirmation banner. A disabled **Edit before confirming** says editing is not
-  available: the way to change a plan is to cancel and start a new campaign.
+  with **Confirm and start** for the launcher; anyone else is told only the launcher can confirm and
+  sees the plan read-only. The launcher has an **Edit** button on each repository that opens a form with
+  the brief in a text area (1 to 8,000 characters, with a counter) and a checkbox for every other
+  repository of the campaign under **Starts after**; **Save** sends only what changed, and the gateway's
+  refusal (a cycle, an unknown repository, a campaign no longer `PLANNING`) shows beside the buttons with
+  the form left open. **Confirm and start** is disabled, with the reason beside it, while there is no
+  planned work or a repository has no brief. A failed plan shows a **Planning failed** alert with the
+  recorded reason in place of the awaiting-confirmation banner; it does not disable the button once
+  every repository has a brief, so the launcher can write the briefs with **Edit** and confirm.
 - **Pause, resume, take over.** The header shows **Pause** (an `ACTIVE` or `MONITORING` campaign),
   **Resume** (a `PAUSED` one) and **Take over** (an unfinished campaign, to a lead of the owning team
   or an administrator who is not the launcher), each behind a confirmation that says what it does. Each
   repository row offers **Retry** (when it needs attention) and **Remove** (any state that can still
-  be removed), behind a confirmation, while the campaign is `ACTIVE`, `MONITORING` or `PAUSED`.
+  be removed), behind a confirmation, while the campaign is `ACTIVE`, `MONITORING` or `PAUSED`. A
+  `BLOCKED` row that waits for upstream repositories also offers **Remove dependency on \<upstream\>**
+  for each of them, behind a confirmation that says the repository then starts without waiting for it.
 - **Cancel.** The detail page shows **Cancel campaign**, behind a confirmation, to the campaign's
   creator, a `LEAD` or `ADMIN` of its owning team and a platform ADMIN, while the campaign is not in
   a final state. A campaign already `CANCELLING` offers **Send cancel again**, which re-sends the
   cancel (§9).
 
-The dashboard has no control for adding targets to a running campaign, accepting or dismissing a
-discovery proposal, or editing a plan (see Limitations).
+The dashboard has no control for adding targets to a running campaign or accepting or dismissing a
+discovery proposal (see Limitations).
 
 ## 9. Cancel semantics
 
@@ -700,8 +712,11 @@ launcher and initial state.
 Every route that acts on a campaign writes one `Campaign` `UPDATE` row with the state before and
 after and the actor: cancel (`CANCELLING`, or `CANCELLED` when it closed the rows), confirm, pause (with
 the note), resume, take over (the previous and new launcher, `takenOverById` and the targets skipped),
-add targets (the ids added), retry and remove (the target and the reason). Each records whether the
-reconciler's wake-up was `signalled`, `not-running` or `failed`. The gateway's start of an attempt
+add targets (the ids added), edit a planned target (the target, its upstreams before and after, and
+whether and how long its brief was edited, never its text), remove a dependency (the target, its upstreams
+before and after and the one removed), retry and remove (the target and the reason). Each action that wakes the
+reconciler (every one but the plan edit) records whether the wake-up was `signalled`, `not-running` or
+`failed`. The gateway's start of an attempt
 writes an `UPDATE` row with no actor (the attempt number, branch, workflow ID and the target's state
 change), and so does a pause for the campaign's budget.
 
@@ -721,7 +736,8 @@ that team's own organization, the launcher's account
 and organization membership, and the campaign's month spend), decides with pure functions, and acts:
 
 1. **Planning.** A `PLANNING` campaign runs the planner once (§11.4) and then waits for its launcher,
-   or for a cancel when planning failed. Nothing else happens in `PLANNING`.
+   who may edit the plan and confirms it, or for a cancel. A failed plan is not run again, including
+   after the workflow continues as new. Nothing else happens in `PLANNING`.
 2. **Delivery.** Attempts that ended and pull requests that merged, closed or reopened become target
    transitions (§6), and the stale flag is set or cleared. This runs for a paused campaign too, so it
    keeps following drafts.
@@ -803,15 +819,34 @@ list unless noted:
    A transaction then writes the target's `RUNNING` state first, and the run's ledger rows and the
    attempt (`n` is one more than the target's last) after it; if the target is no longer `PENDING` or
    `BLOCKED` the whole transaction rolls back, so no attempt or run row outlives a removed target.
-   The child run is started after the commit. If Temporal reports that this very workflow ID has
-   already started (a start whose reply was lost), the attempt is **adopted**: the rows stay and the
-   call answers as a success, because rolling back would reuse the same `n` and meet the same
-   execution on every retry. If the run definitely did not start, the attempt and the state are put
-   back, so the worker's retry starts a clean one.
+   The child run is started after the commit, under the attempt's workflow ID with the
+   `REJECT_DUPLICATE` reuse policy: that ID names one attempt for good, so a closed execution under it is
+   refused like a running one and is never read as room for a second run. The outcome of the start decides
+   what happens to the rows:
+
+   - **The start landed**, or Temporal reports that this very workflow ID has already started (a start
+     whose reply was lost): the attempt is **adopted**. The rows stay and the call answers as a success,
+     because rolling back would reuse the same `n` and meet the same execution on every retry.
+   - **The start definitely did not happen** (the client refused the call before any request, the
+     connection was refused, or the server answered with a status that rejects the request outright, such
+     as an invalid argument or a missing namespace): the attempt and the target's state are put back and
+     the ledger is compensated, so the worker's retry starts a clean one.
+   - **The start is ambiguous** (a timeout, a reset, an unavailable server, an error nobody recognises):
+     the execution may exist, so nothing is undone. The rows stay, the call fails, and the retry with the
+     same idempotency key (below) asks Temporal whether the execution exists, adopts it when it does and
+     starts it with the same work request when it does not.
+   - **A cancel landed in between.** After the start, and again when a retry finds the execution, the
+     gateway reads the campaign; when it is `CANCELLING` or `CANCELLED` it cancels this attempt's run
+     through the run cancel path, closes the attempt and its target as `CANCELLED` and refuses the call
+     with `CAMPAIGN_NOT_ACTIVE`, so no child outlives a cancelled campaign. A retry that finds no
+     execution and a campaign already closing starts nothing, closes the unstarted attempt the same way
+     and refuses likewise.
 
 The answer is `{ attemptId, branch, n, runId, workflowId }` with `201`. A call with an idempotency key
 that was already answered (the worker sends `<campaignId>:<targetId>:<n>`) is answered again with `200`
-and the first call's attempt, before any check, so a retried or duplicated call starts one attempt.
+and the first call's attempt, before any check, so a retried or duplicated call starts one attempt. The
+retry first asks Temporal for the attempt's execution (as above), so a call that died after the ledger
+commit and before the start still ends with exactly one run.
 
 The worker treats a refusal as an answer, never as an error to retry. `CAMPAIGNS_DISABLED`,
 `LAUNCHER_UNAVAILABLE` and `BUDGET_EXCEEDED` pause the campaign with that reason and stop the pass;
@@ -839,24 +874,41 @@ target a brief: the planner's, or the campaign's own for a repository the planne
 therefore complete or absent, never partly written. The launcher reviews the briefs and order in the
 dashboard and confirms with `POST /:id/confirm`, which moves the campaign to `ACTIVE`. Confirm answers
 `409 CAMPAIGN_PLAN_NOT_READY` until every target has a brief, and the update that confirms repeats that
-condition, so a target added meanwhile cannot be confirmed past.
+condition, so a target added meanwhile cannot be confirmed past. Targets are therefore not added while the
+campaign is `PLANNING` (`409 CAMPAIGN_PLANNING`).
+
+**Editing the plan before confirming.** While the campaign is `PLANNING` the launcher, and only the
+launcher, may rewrite one target's brief (1 to 8,000 characters, the text rules of a campaign
+description), its upstream edges (at most 50 other targets of the campaign, each one the launcher can
+reach, no self edge, no cycle), or both with `PATCH /:id/targets/:targetId`. The write takes the campaign
+row lock and repeats the `PLANNING` condition, so a confirm that got in first leaves nothing written.
+The audit row records that the brief was edited and its length, not its text. After a failed plan the
+launcher can write every brief by hand and confirm: confirm checks only that every target has a brief,
+not the plan-failure record. The reconciler is not signalled by a plan edit: nothing is scheduled while the
+campaign is `PLANNING`, and the confirm that follows wakes it.
 
 **A planner that fails or returns no plan** is recorded on the campaign: `planFailedAt` and
 `planFailureReason`, one of three fixed wordings (the campaign has no repository the planner can plan
 against, the planner could not produce a plan, the planner returned no plan), never raw error text.
 Every failed attempt records, and the plan write clears the record. The detail page shows it as
-**Planning failed** (`planFailure` in the API). The campaign stays in `PLANNING` with no briefs, so it
-cannot be confirmed; the way forward is to cancel it and start another. There is no route that edits a
-plan before or after confirmation.
+**Planning failed** (`planFailure` in the API). The campaign stays in `PLANNING` with no briefs, and the
+planner is not run again: the launcher writes each brief with the plan edit above and confirms, or
+cancels the campaign and starts another. Once every target has a brief, the recorded failure no longer
+blocks the confirm. The workflow remembers that the planner failed across `continueAsNew` (`planFailed`
+in its input, carried only when set), so a campaign left waiting in `PLANNING` does not run the planner,
+and spend its tokens, again after 200 passes. The plan cannot be edited after the confirm.
 
 ### 11.5 Retry, remove, add, pause, resume and take over
+
+(Editing a plan before it is confirmed is §11.4.)
 
 | Action | Who | Effect |
 |---|---|---|
 | Retry a target | Creator, owning-team `LEAD`, ADMIN | A `NEEDS_ATTENTION` target returns to `PENDING`; the reconciler starts a new attempt as the campaign's launcher on `<prefix>/CAMPAIGN-<id12>-<n>`. Earlier attempts and their branches stay. A retry on a paused campaign waits for the resume |
 | Remove a target | Same | `SKIPPED` with the reason recorded; nothing on the host is touched. A running target cannot be removed |
-| Add targets | Same, and the person must pass the launch decision for each repository | Appended as `PENDING`, counting against `workflow.campaignMaxTargets`, under the campaign row lock and at the next free position. A `MONITORING` campaign returns to `ACTIVE`; a campaign that is final or `CANCELLING` answers `409 CAMPAIGN_NOT_ACTIVE`. The caller's authorization is decided for every repository **before** any other refusal: an id that does not exist, and one the caller may not start work in, are refused with the same single reason ("not found, or you may not start work in it"), so an id cannot be probed for its provider, organization or settings. Only then are the other refusals given, each with a reason: already a target in any state, not on GitHub, outside a uniform campaign's organization, over the target limit, campaigns off for its team, or the launch decision. A target added to a planned campaign has no brief of its own and no upstream: it runs the campaign's brief |
-| Pause, resume | Same | `PAUSED` with reason `manual` and back to `ACTIVE`. A resume that the next start would refuse again says why (`CAMPAIGNS_DISABLED`, `LAUNCHER_UNAVAILABLE`) |
+| Remove a dependency | Same, while the campaign is `ACTIVE`, `PAUSED` or `MONITORING` | Deletes one upstream from a target's `dependsOn` (`DELETE /:id/targets/:targetId/dependencies/:upstreamId`) and wakes the reconciler, so a `BLOCKED` target that waited only for that upstream is read again and starts as soon as the gate and the limits allow, whatever the upstream's state. The upstream target itself is untouched. A target that does not depend on it answers `404 EDGE_NOT_FOUND` |
+| Add targets | Same, and the person must pass the launch decision for each repository | Appended as `PENDING`, counting against `workflow.campaignMaxTargets`, under the campaign row lock and at the next free position. A `MONITORING` campaign returns to `ACTIVE`; a campaign that is final or `CANCELLING` answers `409 CAMPAIGN_NOT_ACTIVE`, and one still `PLANNING` answers `409 CAMPAIGN_PLANNING`. The caller's authorization is decided for every repository **before** any other refusal: an id that does not exist, and one the caller may not start work in, are refused with the same single reason ("not found, or you may not start work in it"), so an id cannot be probed for its provider, organization or settings. Only then are the other refusals given, each with a reason: already a target in any state (including one that discovery added while the request was being decided), not on GitHub, outside a uniform campaign's organization, over the target limit, campaigns off for its team, or the launch decision. A target added to a planned campaign has no brief of its own and no upstream: it runs the campaign's brief |
+| Pause, resume | Same | `PAUSED` with reason `manual` and back to `ACTIVE`. A resume that the next start would refuse again says why (`CAMPAIGNS_DISABLED`, `LAUNCHER_UNAVAILABLE`: the launcher's account is inactive, they left the organization or they no longer lead the owning team) |
 | Take over | Owning-team `LEAD` or ADMIN, never the current launcher | The launch decision is re-run as the new person for every target not yet started (`PENDING` or `BLOCKED`); targets they cannot reach become `SKIPPED` with the reason, and the rest continue as them. A running attempt and a draft already awaiting review continue as they were. A campaign paused for `launcher-unavailable` resumes. Audited with both identities |
 
 A campaign whose launcher's account is deactivated, or who leaves the organization, is not cancelled:
@@ -879,11 +931,15 @@ refused.
 
 ### 11.7 Budget
 
-A campaign may carry its own `budgetUsd`, frozen at launch. Before each start the gateway sums what the
-campaign's attempts started in the current calendar month (UTC) have accrued and refuses at the cap
-(`BUDGET_EXCEEDED`), which pauses the campaign with reason `budget`; a pass pauses it too when the same
-sum is at the cap. The limit is advisory for runs already in flight, which finish. The organization and
-team caps still apply first, per run.
+A campaign may carry its own `budgetUsd`, frozen at launch. The gateway's start guard and the reconciler's
+pass read one shared calculation (`campaignSpendUsd`), so they cannot disagree about whether the cap is
+reached. It sums, for the attempts started in the current calendar month (UTC), each attempt's cost
+once: the run's settled figure when its run has ended, otherwise the live figure accrued on its workflow
+while it runs (which also covers an attempt that has cost something but has no run row yet), and zero
+for an attempt with neither. Before each start the gateway refuses with `BUDGET_EXCEEDED` when that sum
+is at or above the cap, which pauses the campaign with reason `budget`; a pass pauses it too when the same
+sum is at or above the cap. The limit is advisory for runs already in flight, which finish. The
+organization and team caps still apply first, per run.
 
 ### 11.8 Signals, completion and the backstop
 
@@ -894,7 +950,7 @@ written to the rows first, and the signal only ends the sleep early.
 |---|---|
 | `attemptFinished` | Run finalization, when it records an attempt's outcome |
 | `pullRequestChanged` | The pull-request webhook handler, when a `PullRequest` row opened by a target's latest attempt is merged, closed or reopened |
-| `control` | The routes: confirm, pause, resume, cancel, retry, add or remove a target, take over |
+| `control` | The routes: confirm, pause, resume, cancel, retry, add or remove a target, remove a dependency, take over |
 
 **On completion of a run**, the worker names the run on its attempt when the run row is created, and
 when the run is finalized records the attempt's outcome conditionally (`PR_OPENED` when a draft was
@@ -908,9 +964,21 @@ child workflow gone or closed; one Temporal still reports running is left alone,
 answer decides nothing. **On a pull-request event** the gateway signals every reconciler whose target's latest
 attempt opened the pull request; an earlier attempt's pull request says nothing about the target.
 
+**A reconciler that is not running is started again by the signal.** A control action (every route above
+except cancel) and a pull-request event deliver their signal with signal-with-start: when no execution
+of the campaign's workflow ID is running (it was terminated, or Temporal lost it), the gateway starts the
+reconciler under the same ID with the signal, and it recovers from the rows. The gateway reads the
+campaign row at that moment, and starts nothing for a campaign that is final or `CANCELLING`, or a legacy
+one. Cancel never starts a workflow: it signals, and closes the rows itself when none is running (§9).
+Two things are not recovered. Nothing sweeps for stopped reconcilers: a campaign that nobody touches
+and that no pull-request webhook reaches stays stopped, whatever its state, until something does. And the
+worker's own signal on a finished run (`attemptFinished`) does not start a workflow, so it is lost while
+the reconciler is stopped; the next signal that starts it reads that outcome from the rows.
+
 **The backstop.** A reconciler reads the database at least daily whether or not a signal arrived, and
 every five minutes while an attempt is in flight. State is therefore recoverable from rows alone: a
-reconciler that restarted resumes at the next signal or pass, a lost signal costs a delay (a merge whose
+reconciler that restarted resumes at the next signal or pass (one that is stopped resumes at the next
+restarting signal, above), a lost signal costs a delay (a merge whose
 webhook was lost is found at the next daily pass), and cancelling a campaign whose workflow is gone
 closes the rows (§9). The workflow `continueAsNew`s after 200 passes. A change to its scheduling goes
 behind `patched`, and its replay fixtures are never re-recorded to make a test pass.
@@ -1054,8 +1122,12 @@ Operators can see which campaigns are still legacy and unfinished with the query
   interval. A repository that is a target is never re-walked for discovery.
 - **The regression limit is fixed.** A satisfied target may regress three times before it needs a
   person; it is not a setting or a campaign field.
-- **Stale is a flag, not an action.** Nothing closes, pings or nudges a stale draft: the owning team
-  is not notified, and the dashboard shows the mark only.
+- **Stale is a flag with one nudge.** Nothing closes or pings a stale draft. The first time a
+  target's `staleSince` is set, the owning team's Slack notification channel (`Team.slackNotifyChannel`)
+  gets one message naming the campaign and repository; it is not repeated while the target stays stale,
+  and a target that stops being stale and goes stale again may notify again. A team with no channel, or
+  an instance with no Slack bot token, gets the dashboard mark only, and a failed post is logged and
+  never fails the pass.
 - **A pull request's CI result is shown, not used.** A draft with failing CI stays `PR_OPENED`; the
   state follows the pull request's open, merged and closed status only.
 - **Merge conflicts between the platform's pull requests and a moving base are not repaired.** A
@@ -1064,30 +1136,47 @@ Operators can see which campaigns are still legacy and unfinished with the query
 - **A pull request the platform did not open is not followed.** If a person closes the draft and
   opens their own, the target reads `NEEDS_ATTENTION` until a retry or the next check finds the
   repository satisfied.
-- **There is no way to edit a plan or its order.** No route changes a planned campaign's briefs or
-  edges before or after the launcher confirms; the dashboard's **Edit before confirming** is disabled
-  and the way to change a plan is to cancel and start another. A plan with a wrong brief can be
-  confirmed or abandoned, not corrected. A person cannot remove an edge, so a
-  target downstream of one that was removed, cancelled or needs attention stays `BLOCKED` until that
-  upstream is retried and delivers.
+- **A plan is editable only until it is confirmed, and an order only ever loosens afterwards.** The
+  launcher rewrites briefs and edges while the campaign is `PLANNING` (§11.4). After the confirm no route
+  changes a brief, and a person can remove an edge (§11.5) but never add one, so a target downstream of
+  an upstream that was removed, cancelled or needs attention stays `BLOCKED` until that upstream is
+  retried and delivers, or until its edge is removed and it then starts without waiting.
 - **A planner's order is only what the dependency graph already holds.** An edge the planner infers
   that is not an `active` edge in the repository dependency graph is dropped, so a planned campaign
   may start repositories in parallel that an epic on the epic workflow would order.
 - **A failed plan cannot be retried.** A planner that fails or returns no plan is recorded on the
   campaign and shown as **Planning failed**, in fixed wording that says nothing of the cause; the
-  cause is in the planner trace and the worker log. The campaign stays in `PLANNING`, cannot be
-  confirmed (`CAMPAIGN_PLAN_NOT_READY`), and no route runs the planner again, so it is cancelled and
-  started anew.
+  cause is in the planner trace and the worker log. The campaign stays in `PLANNING` and no route runs
+  the planner again. It cannot be confirmed (`CAMPAIGN_PLAN_NOT_READY`) until every target has a brief,
+  so the launcher writes them by hand with the plan edit and confirms, or cancels it and starts
+  another. A plan written that way has no edges unless the launcher adds them.
 - **Some changes have no dashboard control.** Targets are added only through `POST /:id/targets`;
   a removed (`SKIPPED`) target cannot be brought back or re-added, and a discovery proposal cannot be
   accepted or dismissed (`decidedAt` is never set). The Start form lists the first 100 repositories
   the repositories list returns, only those of the owning team's organization, so a cross-organization
   planned campaign is started through the API or as an epic.
 - **There is no CLI command** for campaigns; the dashboard and the API are the interfaces.
-- **A terminated reconciler is not restarted.** A campaign whose workflow was terminated from Temporal
-  keeps the state its rows had: pause, resume and the other actions change the rows and nothing reads
-  them. Cancelling it closes the rows (§9), and a child that was still running may yet open a draft
-  pull request that its target row then does not list.
+- **A terminated reconciler is restarted by the next control action or pull-request event, not by
+  itself.** Those signals start the workflow again from the rows under the same id when none is running
+  (§11.8), unless the campaign is final, `CANCELLING` or legacy. Nothing else looks for a stopped
+  reconciler: no periodic sweep exists, so a campaign that nobody touches and no pull-request webhook
+  reaches does not move until something does, and a cancel never restarts it. Cancelling it closes the
+  rows (§9), and a child that was still running may yet open a draft pull request that its target row
+  then does not list.
+- **A rewritten brief can be overwritten by a planner still running.** The plan edit does not check that
+  the planner has finished; an edit made before the planner's last write is replaced by that write.
+  Edit after the plan has appeared in the dashboard.
+- **A failure reason can name a repository.** The reason a target or an attempt records is masked for
+  credential shapes and bounded in length, not scrubbed of names. The text of a failed run's error
+  (`worker/src/lib/campaignAttempts.ts`) and of a check's error, a failed clone included
+  (`worker/src/activities/campaignCheck.ts`), can contain a repository's name or path. A start the
+  gateway refuses with `LAUNCH_REFUSED` is stored as `not started: <reason>`, and that reason names
+  `organization/repository` when it says the launcher no longer leads the repository's team (a case
+  the earlier capability check usually answers first, with a fixed wording that names nothing). The
+  other start refusals, `PUSH_PERMISSION_REQUIRED` included, name no repository. A failure reason is
+  returned by `GET /:id` only to people who can reach the target's repository (the rest are counted in
+  `hiddenTargetCount`), so it is not shown to anyone else, but it is stored as plain text in
+  `campaign_targets` and `campaign_attempts`, and a platform ADMIN sees all of it.
 - **A pull-request change is noticed by its webhook.** A merge or close whose webhook was lost is found
   at the next daily pass, not sooner; a running attempt is read every five minutes.
 - **Take-over re-runs the launch decision once.** A later loss of access to a repository skips only the

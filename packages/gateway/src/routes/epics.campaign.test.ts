@@ -12,6 +12,7 @@ const settings = vi.hoisted(() => ({
   campaignsDisabled: new Set<string>(),
   maxTargets: 25,
   reconciler: true,
+  rescanFloorHours: 1,
   unreadable: false,
 }));
 vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
@@ -33,6 +34,8 @@ vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
         return 10;
       case 'workflow.campaignStaleAfterDays':
         return 14;
+      case 'workflow.campaignRescanFloorHours':
+        return settings.rescanFloorHours;
       case 'workflow.campaignRescanIntervalHours':
         return 24;
       case 'workflow.campaignLifetimeDays':
@@ -270,6 +273,7 @@ describe('epics launched as campaigns', () => {
     settings.reconciler = true;
     settings.campaignsDisabled = new Set();
     settings.maxTargets = 25;
+    settings.rescanFloorHours = 1;
     settings.unreadable = false;
   });
 
@@ -330,6 +334,12 @@ describe('epics launched as campaigns', () => {
       action: 'CREATE',
       actorId: 'lead-1',
     });
+  });
+
+  it('freezes a rescan interval no shorter than the floor', async () => {
+    settings.rescanFloorHours = 48;
+    expect((await launch()).statusCode).toBe(201);
+    expect(campaigns[0]).toMatchObject({ rescanIntervalHours: 48 });
   });
 
   it('answers 409 EPIC_ALREADY_EXISTS for a second launch of the ticket, and for a legacy epic of it', async () => {

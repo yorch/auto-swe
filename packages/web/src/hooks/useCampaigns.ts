@@ -5,7 +5,10 @@ import type {
   CampaignCountsDto,
   CampaignCreateBody,
   CampaignDetailDto,
+  CampaignEditTargetBody,
+  CampaignEditTargetResponse,
   CampaignLaunchResponse,
+  CampaignRemoveDependencyResponse,
   CampaignSummaryDto,
   CampaignTargetActionResponse,
   CampaignTargetDto,
@@ -224,6 +227,56 @@ export function useRemoveCampaignTarget(id: string) {
     mutationFn: (targetId: string) =>
       api.delete<{ data: CampaignTargetActionResponse }>(
         campaignPath(id, `/targets/${encodeURIComponent(targetId)}`)
+      ),
+    onSuccess: refresh,
+  });
+}
+
+/** The launcher's edit of one planned target; the gateway answers with what it stored. */
+export type EditCampaignTargetBody = CampaignEditTargetBody;
+
+/**
+ * Rewrites a planned target's brief and/or the targets it starts after, while the campaign is
+ * still being planned. The stored values replace the target in the cached detail at once, so the
+ * plan view shows what the gateway kept; the refetch then confirms it.
+ */
+export function useEditCampaignTarget(id: string) {
+  const qc = useQueryClient();
+  const refresh = useRefreshCampaign(id);
+  return useMutation({
+    mutationFn: ({ body, targetId }: { body: EditCampaignTargetBody; targetId: string }) =>
+      api
+        .patch<CampaignEditTargetResponse>(
+          campaignPath(id, `/targets/${encodeURIComponent(targetId)}`),
+          body
+        )
+        .then((r) => r.data),
+    onSuccess: (stored) => {
+      qc.setQueryData<CampaignDetail>(['campaign', id], (old) =>
+        old
+          ? {
+              ...old,
+              targets: old.targets.map((t) =>
+                t.id === stored.id ? { ...t, brief: stored.brief, dependsOn: stored.dependsOn } : t
+              ),
+            }
+          : old
+      );
+      refresh();
+    },
+  });
+}
+
+/** Drops one wait edge of a running campaign: the target no longer waits for that upstream. */
+export function useRemoveCampaignDependency(id: string) {
+  const refresh = useRefreshCampaign(id);
+  return useMutation({
+    mutationFn: ({ targetId, upstreamId }: { targetId: string; upstreamId: string }) =>
+      api.delete<CampaignRemoveDependencyResponse>(
+        campaignPath(
+          id,
+          `/targets/${encodeURIComponent(targetId)}/dependencies/${encodeURIComponent(upstreamId)}`
+        )
       ),
     onSuccess: refresh,
   });

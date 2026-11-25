@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CAMPAIGN_CONTROL_ERROR_CODES,
+  CAMPAIGN_MAX_DEPENDENCIES,
   CAMPAIGN_REFUSAL_CODES,
   CampaignAddTargetsBodySchema,
   CampaignCreateBodySchema,
+  CampaignDependencyParamsSchema,
   CampaignDetailDtoSchema,
+  CampaignEditTargetBodySchema,
+  CampaignEditTargetResponseSchema,
   CampaignRefusalSchema,
+  CampaignRemoveDependencyResponseSchema,
   CampaignTargetDtoSchema,
   isCampaignRefusalCode,
 } from './campaignApi.js';
@@ -188,5 +194,65 @@ describe('request and refusal shapes', () => {
       expect(CampaignRefusalSchema.safeParse({ code, message: 'm' }).success).toBe(true);
     }
     expect(isCampaignRefusalCode('NOPE')).toBe(false);
+  });
+});
+
+describe('target edit and dependency removal shapes', () => {
+  it('takes a brief, edges, or both, and refuses an empty edit', () => {
+    expect(CampaignEditTargetBodySchema.safeParse({ brief: 'Raise lodash' }).success).toBe(true);
+    expect(CampaignEditTargetBodySchema.safeParse({ dependsOn: [UUID] }).success).toBe(true);
+    expect(CampaignEditTargetBodySchema.safeParse({ dependsOn: [] }).success).toBe(true);
+    expect(CampaignEditTargetBodySchema.safeParse({}).success).toBe(false);
+  });
+
+  it('applies the campaign brief text rules, and bounds and de-duplicates the edges', () => {
+    expect(CampaignEditTargetBodySchema.safeParse({ brief: '' }).success).toBe(false);
+    expect(CampaignEditTargetBodySchema.safeParse({ brief: 'a'.repeat(8001) }).success).toBe(false);
+    expect(CampaignEditTargetBodySchema.safeParse({ brief: 'a'.repeat(8000) }).success).toBe(true);
+    expect(CampaignEditTargetBodySchema.safeParse({ brief: 'bad\u0000text' }).success).toBe(false);
+    expect(CampaignEditTargetBodySchema.safeParse({ brief: 'lone \ud800' }).success).toBe(false);
+    expect(CampaignEditTargetBodySchema.safeParse({ dependsOn: [UUID, UUID] }).success).toBe(false);
+    expect(CampaignEditTargetBodySchema.safeParse({ dependsOn: ['nope'] }).success).toBe(false);
+    const many = Array.from(
+      { length: CAMPAIGN_MAX_DEPENDENCIES + 1 },
+      (_, i) => `0b1c2d3e-0000-4000-8000-${String(i).padStart(12, '0')}`
+    );
+    expect(CampaignEditTargetBodySchema.safeParse({ dependsOn: many }).success).toBe(false);
+    expect(
+      CampaignEditTargetBodySchema.safeParse({
+        dependsOn: many.slice(0, CAMPAIGN_MAX_DEPENDENCIES),
+      }).success
+    ).toBe(true);
+  });
+
+  it('shapes the two answers and the dependency params', () => {
+    expect(
+      CampaignEditTargetResponseSchema.safeParse({
+        data: { brief: null, dependsOn: [UUID], id: UUID2 },
+      }).success
+    ).toBe(true);
+    expect(
+      CampaignRemoveDependencyResponseSchema.safeParse({ data: { dependsOn: [], id: UUID } })
+        .success
+    ).toBe(true);
+    expect(CampaignRemoveDependencyResponseSchema.safeParse({ data: { id: UUID } }).success).toBe(
+      false
+    );
+    expect(
+      CampaignDependencyParamsSchema.safeParse({ id: UUID, targetId: UUID2, upstreamId: UUID })
+        .success
+    ).toBe(true);
+    expect(CampaignDependencyParamsSchema.safeParse({ id: UUID, targetId: UUID2 }).success).toBe(
+      false
+    );
+  });
+
+  it('names the control routes’ coded errors with their statuses', () => {
+    expect(CAMPAIGN_CONTROL_ERROR_CODES).toMatchObject({
+      CAMPAIGN_PLAN_INVALID: 422,
+      CAMPAIGN_PLANNING: 409,
+      CAMPAIGN_RESCAN_TOO_FREQUENT: 400,
+      EDGE_NOT_FOUND: 404,
+    });
   });
 });

@@ -392,6 +392,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/campaignApi.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/campaignSpend',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/campaignSpend.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/campaignTokenKey',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/campaignTokenKey.ts'),
       },

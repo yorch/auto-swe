@@ -195,7 +195,7 @@ export async function CampaignReconcilerWorkflow(
   // Where the walk of the scope stands. It is written to the rows chunk by chunk, so what a restart
   // loses is only this cursor, and `continueAsNew` carries it.
   let walk = input.discoveryWalk ?? NEW_DISCOVERY_WALK;
-  let planFailed = false;
+  let planFailed = input.planFailed ?? false;
   /** Consecutive passes that asked to read again at once; bounded so a stuck row cannot spin. */
   let immediateStreak = 0;
 
@@ -695,6 +695,8 @@ export async function CampaignReconcilerWorkflow(
           lastBackstopAt,
           lastDiscoveryAt,
           passes,
+          // Only when set, so the input of an execution that never failed to plan is unchanged.
+          ...(planFailed ? { planFailed } : {}),
         });
       }
       if ('sleepMs' in outcome) {
