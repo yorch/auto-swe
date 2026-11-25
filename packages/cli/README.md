@@ -183,6 +183,9 @@ runs tail <runId> [--interval=SEC] [--max=N]
 
 teams directory [--query=q] [--org=<id>] [--limit=N] [--cursor=C] [--json]
                                      List the teams you can see and your relationship to each
+teams directory organizations [--query=q] [--limit=N] [--cursor=C] [--json]
+                                     List the organizations the directory lists a team of, by
+                                     name (the values for --org); a cursor hint names the next page
 teams request <teamId> [--message=text] [--json]
                                      Ask to join a team (one open request per team); a team in
                                      another organization also needs that organization's approval.
@@ -209,6 +212,17 @@ orgs requests approve <orgId> <requestId> [--note=text] [--json]
                                      Approve the organization step (needs organization admin)
 orgs requests reject <orgId> <requestId> [--note=text] [--json]
                                      Reject the organization step
+orgs deactivate <orgId> [--json]     Deactivate an organization (platform admin); its open join
+                                     requests close. The organization that owns the default team
+                                     cannot be deactivated (exit 2, DEFAULT_ORGANIZATION)
+orgs reactivate <orgId> [--json]     Reactivate a deactivated organization (platform admin)
+
+notifications list [--status=S] [--limit=N] [--cursor=C] [--json]
+                                     List the join-request notification outbox, newest first (platform
+                                     admin); S is PENDING, DELIVERED, SKIPPED or FAILED. Shows status,
+                                     attempts, next attempt and the fixed error code, never a recipient
+notifications retry <id> [--json]    Re-queue a FAILED notification to send now (exit 2 when it is not
+                                     FAILED or does not exist)
 
 tokens list                          List your personal access tokens
 tokens create <name> [--expires-in-days=N]

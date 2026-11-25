@@ -77,12 +77,23 @@ export function prMergedNoticeText(ticket: string | null | undefined, prNumber: 
  *
  * No-ops (and returns null) when `SLACK_BOT_TOKEN` is not set. This lets the
  * notification path stay enabled without configuration.
+ *
+ * `null` does not mean "not posted". After the timeout aborts the request, or when the answer is
+ * lost, Slack may already have posted the message; a caller that retries on `null` (the
+ * join-request outbox) is at-least-once and can post it twice.
  */
 const SLACK_POST_TIMEOUT_MS = 2_000;
 
+export const SLACK_API_BASE = 'https://slack.com/api';
+
 export async function postSlackMessage(
   options: SlackPostMessageOptions,
-  token: string | undefined
+  token: string | undefined,
+  /**
+   * `apiBase` replaces `https://slack.com/api`. Production callers never pass it; the join-request
+   * notification tests point it at a server of their own so the real request is made and read.
+   */
+  seam: { apiBase?: string } = {}
 ): Promise<string | null> {
   if (!token) {
     return null;
@@ -101,13 +112,15 @@ export async function postSlackMessage(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
   try {
-    const res = await fetch('https://slack.com/api/chat.postMessage', {
+    const res = await fetch(`${seam.apiBase ?? SLACK_API_BASE}/chat.postMessage`, {
       body: JSON.stringify(body),
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json; charset=utf-8',
       },
       method: 'POST',
+      // The bearer token goes to the API host only; a redirect would carry it elsewhere.
+      redirect: 'error',
       signal: controller.signal,
     });
     const data = (await res.json()) as SlackChatPostMessageResponse;

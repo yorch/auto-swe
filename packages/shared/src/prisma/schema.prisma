@@ -178,6 +178,34 @@ enum JoinRequestCloseReason {
   ORGANIZATION_DEACTIVATED
 }
 
+/// Which join-request event a notification row announces.
+enum JoinRequestNotificationEvent {
+  CREATED
+  APPROVED
+  REJECTED
+  PENDING_ORG
+}
+
+enum JoinRequestNotificationChannel {
+  SLACK
+  EMAIL
+}
+
+/// Who a join-request notification goes to. Recipients are resolved at send time.
+enum JoinRequestNotificationAudience {
+  TEAM_CHANNEL
+  TEAM_REVIEWERS
+  REQUESTER
+  ORG_ADMINS
+}
+
+enum JoinRequestNotificationStatus {
+  PENDING
+  DELIVERED
+  SKIPPED
+  FAILED
+}
+
 enum ReportDigestScope {
   ORGANIZATION
   TEAM
@@ -1537,10 +1565,39 @@ model TeamJoinRequest {
   closeReason         JoinRequestCloseReason? @map("close_reason")
   createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz
   updatedAt           DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  notifications       JoinRequestNotification[]
 
   @@index([teamId, status])
   @@index([userId, createdAt])
   @@map("team_join_requests")
+}
+
+/// The notification outbox: one row per delivery, written in the transaction that creates or decides
+/// the request and drained by the gateway's poller. `lastError` is a fixed-shape code, never an
+/// address, a body or a credential.
+model JoinRequestNotification {
+  id            String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestId     String                          @map("request_id") @db.Uuid
+  request       TeamJoinRequest                 @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  event         JoinRequestNotificationEvent
+  channel       JoinRequestNotificationChannel
+  audience      JoinRequestNotificationAudience
+  status        JoinRequestNotificationStatus   @default(PENDING)
+  attempts      Int                             @default(0)
+  /// When the poller may next claim the row.
+  nextAttemptAt DateTime                        @default(now()) @map("next_attempt_at") @db.Timestamptz
+  lastError     String?                         @map("last_error")
+  /// Recipients already reached, so a retry never resends to them.
+  reached       Json                            @default("[]")
+  deliveredAt   DateTime?                       @map("delivered_at") @db.Timestamptz
+  createdAt     DateTime                        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime                        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([requestId, event, audience])
+  @@index([status, nextAttemptAt])
+  /// The retention purge's filter (status, then age).
+  @@index([status, updatedAt])
+  @@map("join_request_notifications")
 }
 
 model TeamMembership {

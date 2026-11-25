@@ -11,6 +11,7 @@ import { isPlatformAdmin, can as sharedCan, userActor } from '@auto-swe/shared/p
 import type { FastifyInstance } from 'fastify';
 import { getErrorName } from '../plugins/auth.js';
 import { auditContextData } from './auditContext.js';
+import { lockConnections, lockOrganizations, lockTeams, lockUser } from './lockOrder.js';
 import { isUniqueConstraintError } from './prismaErrors.js';
 
 /**
@@ -135,6 +136,56 @@ export type LaunchWorkflowResult =
  */
 export type LaunchGuard = (tx: Prisma.TransactionClient) => Promise<string | null>;
 
+/** What a launch will authorize, so its rows can all be locked before any is checked. */
+export interface LaunchSourcePlan {
+  repos: readonly LaunchRepositorySource[];
+  team?: { teamId: string; orgId: string } | undefined;
+}
+
+/**
+ * Every row lock a launch's source checks take, in the global order (`lockOrder.ts`) across ALL of
+ * its sources: the acting user, then every connection, then every organization, then every team,
+ * each level in ascending id order. Checking one repository after another would lock the second
+ * repository's connection after the first one's organization and teams, so two multi-repository
+ * launches that overlap would each hold what the other waits for. The per-source checks below take
+ * the same locks again, which a transaction already holding them does without waiting.
+ */
+export async function lockLaunchSources(
+  tx: Prisma.TransactionClient,
+  plan: LaunchSourcePlan,
+  authorization: LaunchSourceAuthorization = {}
+): Promise<void> {
+  if (plan.repos.length === 0 && !plan.team) {
+    return;
+  }
+  if (authorization.actor && !(await lockUser(tx, authorization.actor.sub))) {
+    return;
+  }
+  const connectionIds = await lockConnections(
+    tx,
+    plan.repos.map((repo) => repo.repoId)
+  );
+  const connections = [];
+  for (const id of connectionIds) {
+    const connection = await tx.connection.findUnique({
+      select: { shares: { select: { teamId: true } }, teamId: true },
+      where: { id },
+    });
+    if (connection) {
+      connections.push(connection);
+    }
+  }
+  const orgIds = [...plan.repos.map((repo) => repo.orgId), ...(plan.team ? [plan.team.orgId] : [])];
+  const teamIds = [
+    ...plan.repos.map((repo) => repo.teamId),
+    ...(plan.team ? [plan.team.teamId] : []),
+    ...connections.flatMap((c) => [c.teamId, ...c.shares.map((share) => share.teamId)]),
+    ...(authorization.requiredTeamId ? [authorization.requiredTeamId] : []),
+  ];
+  await lockOrganizations(tx, orgIds);
+  await lockTeams(tx, teamIds);
+}
+
 /**
  * Resolve a repository source only if the exact identity authorized by the route is still current.
  * The connection row lock serializes this check with repository moves. Provider-backed permission
@@ -148,12 +199,10 @@ export async function snapshotAuthorizedRepositorySource(
   const requestActor = authorization.actor;
   let actor: AccessActor | undefined;
   if (requestActor) {
-    // Lock order: current actor User → Connection → sorted Teams → sorted Organizations.
-    // CLAUDE.md §7 exception: serialize this role/active check with user updates.
-    const lockedUser = await tx.$queryRaw<Array<{ id: string }>>`
-      SELECT id FROM users WHERE id = ${requestActor.sub}::uuid FOR UPDATE
-    `;
-    const currentUser = lockedUser.length
+    // The lock order (`lockOrder.ts`): the acting user, the connection, the organization, then the
+    // teams. The user row is serialized with user updates, not with the foreign key checks of the
+    // membership inserts that hold a team row (`lockUser` says why).
+    const currentUser = (await lockUser(tx, requestActor.sub))
       ? await tx.user.findUnique({
           select: { id: true, isActive: true, role: true },
           where: { id: requestActor.sub },
@@ -164,16 +213,13 @@ export async function snapshotAuthorizedRepositorySource(
     }
     actor = { role: currentUser.role as PlatformRole, sub: currentUser.id };
   }
-  // CLAUDE.md §7 exception: repository moves lock this row; Prisma cannot express SELECT FOR UPDATE.
-  const locked = await tx.$queryRaw<Array<{ id: string }>>`
-    SELECT id FROM connections WHERE id = ${expected.repoId}::uuid FOR UPDATE
-  `;
-  if (locked.length === 0) {
+  if ((await lockConnections(tx, [expected.repoId])).length === 0) {
     return null;
   }
   // The connection lock makes the current owner and share list stable; lock every team whose
-  // membership can authorize access, in deterministic order, before checking memberships. Team
-  // membership writers take these same team-row locks; share writers take the connection lock.
+  // membership can authorize access, after the organization and in ascending id order, before
+  // checking memberships. Team membership writers take these same locks in the same order; share
+  // writers take the connection lock.
   const current = await tx.connection.findUnique({
     select: { shares: { select: { teamId: true } }, teamId: true },
     where: { id: expected.repoId },
@@ -190,21 +236,11 @@ export async function snapshotAuthorizedRepositorySource(
         authorization.requiredTeamId,
       ].filter((id): id is string => !!id)
     ),
-  ].sort();
-  for (const teamId of teamIds) {
-    // CLAUDE.md §7 exception: source authorization must serialize with team membership changes.
-    const lockedTeam = await tx.$queryRaw<Array<{ id: string }>>`
-      SELECT id FROM teams WHERE id = ${teamId}::uuid FOR UPDATE
-    `;
-    if (lockedTeam.length === 0) {
-      return null;
-    }
+  ];
+  if ((await lockOrganizations(tx, [expected.orgId])).length === 0) {
+    return null;
   }
-  // CLAUDE.md §7 exception: organization activation and membership changes use this row lock.
-  const lockedOrg = await tx.$queryRaw<Array<{ id: string }>>`
-    SELECT id FROM organizations WHERE id = ${expected.orgId}::uuid FOR UPDATE
-  `;
-  if (lockedOrg.length === 0) {
+  if ((await lockTeams(tx, teamIds)).length !== teamIds.length) {
     return null;
   }
 
@@ -308,12 +344,8 @@ async function snapshotAuthorizedTeamSource(
 ): Promise<{ teamId: string; orgId: string } | null> {
   let actor: AccessActor | undefined;
   if (requestActor) {
-    // Lock order: current actor User → Team → Organization.
-    // CLAUDE.md §7 exception: serialize this role/active check with user updates.
-    const lockedUser = await tx.$queryRaw<Array<{ id: string }>>`
-      SELECT id FROM users WHERE id = ${requestActor.sub}::uuid FOR UPDATE
-    `;
-    const currentUser = lockedUser.length
+    // The lock order (`lockOrder.ts`): the acting user, then the organization, then the team.
+    const currentUser = (await lockUser(tx, requestActor.sub))
       ? await tx.user.findUnique({
           select: { id: true, isActive: true, role: true },
           where: { id: requestActor.sub },
@@ -324,18 +356,10 @@ async function snapshotAuthorizedTeamSource(
     }
     actor = { role: currentUser.role as PlatformRole, sub: currentUser.id };
   }
-  // CLAUDE.md §7 exception: lock the tenant row while checking its launch snapshot.
-  const locked = await tx.$queryRaw<Array<{ id: string }>>`
-    SELECT id FROM teams WHERE id = ${expected.teamId}::uuid FOR UPDATE
-  `;
-  if (locked.length === 0) {
+  if ((await lockOrganizations(tx, [expected.orgId])).length === 0) {
     return null;
   }
-  // CLAUDE.md §7 exception: tenant activation must remain stable through the source write.
-  const lockedOrg = await tx.$queryRaw<Array<{ id: string }>>`
-    SELECT id FROM organizations WHERE id = ${expected.orgId}::uuid FOR UPDATE
-  `;
-  if (lockedOrg.length === 0) {
+  if ((await lockTeams(tx, [expected.teamId])).length === 0) {
     return null;
   }
   const team = await tx.team.findUnique({
@@ -421,6 +445,18 @@ export async function launchTrackedWorkflow(
             return { refusal };
           }
         }
+        // Every source's locks, in the global order, before the first is checked.
+        await lockLaunchSources(
+          tx,
+          {
+            repos: [
+              ...(rows.knowledgeSourceRepo ? [rows.knowledgeSourceRepo] : []),
+              ...(rows.knowledgeSourceRepos ?? []),
+            ],
+            team: rows.knowledgeSourceTeam,
+          },
+          opts?.sourceAuthorization
+        );
 
         const unknownSource = {
           knowledgeSourceKind: 'UNKNOWN' as const,

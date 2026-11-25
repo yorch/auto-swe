@@ -40,6 +40,7 @@ import authPlugin, {
   requireUser,
 } from './plugins/auth.js';
 import jiraPollerPlugin from './plugins/jiraPoller.js';
+import joinRequestNotificationPollerPlugin from './plugins/joinRequestNotificationPoller.js';
 import prismaPlugin from './plugins/prisma.js';
 import temporalPlugin from './plugins/temporal.js';
 import { mcpRoutes } from './routes/mcp.js';
@@ -138,6 +139,9 @@ async function start() {
   // Polls every enabled Jira filter automation. After the built-in sync above, so the default
   // template exists; each tick does nothing until the tracker is Jira and an automation is on.
   await app.register(jiraPollerPlugin);
+
+  // Drains the join-request notification outbox (rows written in the request's own transaction).
+  await app.register(joinRequestNotificationPollerPlugin);
 
   // Global error handler. 4xx messages are intentional (validation, auth);
   // 5xx messages can leak internals (DB constraint text, library errors), so

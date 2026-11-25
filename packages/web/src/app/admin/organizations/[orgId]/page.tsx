@@ -41,6 +41,7 @@ import {
 import { usePagedRows } from '@/hooks/usePagedRows';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { useTeams } from '@/hooks/useTeams';
+import { ApiError } from '@/lib/api';
 import { buildBudgetPatch, centsToDollarsInput, removeCapPatch } from '@/lib/budgetPatch';
 import { errMsg } from '@/lib/errors';
 import {
@@ -97,6 +98,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
   const canCreateTeam = useCan('org.teams.create', scope);
   const canLinkGithub = useCan('org.github.manage', scope);
   const canTrustInvites = useCan('platform.orgs.trust-invites.manage');
+  const canDeactivate = useCan('platform.orgs.deactivate');
   // The dollar budget is for those who hold `org.budget.manage`; a plain member reads the
   // percentage-only status instead.
   const budgetQuery = useOrgBudget(orgId ?? '', canManageBudget);
@@ -125,6 +127,22 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
     } catch (e) {
       setTrustError(errMsg(e, 'Failed to update invite trust'));
       throw e;
+    }
+  }
+
+  const [confirmActive, setConfirmActive] = useState<'deactivate' | 'reactivate' | null>(null);
+  const inactive = org?.isActive === false;
+  async function applyActive(next: boolean) {
+    try {
+      await patchOrg.mutateAsync({ isActive: next });
+    } catch (e) {
+      // The confirmation dialog shows what is thrown, so the refusal is worded for a person here.
+      if (e instanceof ApiError && e.code === 'DEFAULT_ORGANIZATION') {
+        throw new Error(
+          'This is the default organization: it owns the default team that new accounts join, so it cannot be deactivated. Choose a different default team in Workflow defaults first.'
+        );
+      }
+      throw new Error(errMsg(e, next ? 'Failed to reactivate' : 'Failed to deactivate'));
     }
   }
 
@@ -307,6 +325,9 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
               Members, profile and monthly budget for this organization.
               <span className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-paper-500">
                 <span className="font-mono">{org.slug}</span>
+                <Badge dot tone={inactive ? 'muted' : 'success'}>
+                  {inactive ? 'Inactive' : 'Active'}
+                </Badge>
                 {members && <span>{plural(memberCount, 'member')}</span>}
               </span>
             </>
@@ -316,6 +337,12 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
         }
         title={org?.name ?? 'Organization'}
       />
+      {inactive && (
+        <Alert variant="warning">
+          This organization is inactive. Its teams are hidden from the team directory, and people
+          cannot ask to join them or have their requests approved.
+        </Alert>
+      )}
       {canLinkGithub && orgId && <OrganizationGithub orgId={orgId} />}
       {canManageMembers && orgId && <OrgJoinApprovalsPanel orgId={orgId} />}
       <TeamFormModal
@@ -876,8 +903,51 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
               </div>
             </Card>
           )}
+
+          {/* ── Status (platform admins only) ── */}
+          {canDeactivate && org && (
+            <Card>
+              <CardHeader className="mb-3">
+                <CardTitle>Organization status</CardTitle>
+              </CardHeader>
+              <div className="space-y-3">
+                <p className="text-xs leading-relaxed text-paper-500">
+                  {inactive
+                    ? 'This organization is inactive. Reactivating lists its teams in the directory again; the join requests closed when it was deactivated stay closed.'
+                    : 'Deactivating closes every open request to join one of this organization’s teams and takes its teams out of the team directory.'}
+                </p>
+                <Button
+                  disabled={patchOrg.isPending}
+                  onClick={() => setConfirmActive(inactive ? 'reactivate' : 'deactivate')}
+                  size="sm"
+                  variant={inactive ? 'secondary' : 'danger'}
+                >
+                  {inactive ? 'Reactivate organization' : 'Deactivate organization'}
+                </Button>
+              </div>
+            </Card>
+          )}
         </div>
       </div>
+
+      <ConfirmModal
+        confirmLabel="Deactivate"
+        dangerous
+        message={`Deactivate ${org?.name ?? 'this organization'}? Every open request to join one of its teams is closed (the people are not notified and no cooldown applies), its teams disappear from the team directory, and nobody can ask to join them or have a request approved until it is reactivated. Existing members, teams and runs are not changed.`}
+        onClose={() => setConfirmActive(null)}
+        onConfirm={() => applyActive(false)}
+        open={confirmActive === 'deactivate'}
+        title="Deactivate this organization?"
+      />
+
+      <ConfirmModal
+        confirmLabel="Reactivate"
+        message={`Reactivate ${org?.name ?? 'this organization'}? Its teams appear in the team directory again. Join requests that were closed when it was deactivated are not reopened; people ask again.`}
+        onClose={() => setConfirmActive(null)}
+        onConfirm={() => applyActive(true)}
+        open={confirmActive === 'reactivate'}
+        title="Reactivate this organization?"
+      />
 
       <ConfirmModal
         confirmLabel="Trust invites"

@@ -7,6 +7,7 @@ import { runBundlesCommand } from './commands/bundles.js';
 import { runConnectionsCommand } from './commands/connections.js';
 import { runEvalsCommand } from './commands/evals.js';
 import { runMcpCommand } from './commands/mcp.js';
+import { runNotificationsCommand } from './commands/notifications.js';
 import { runOrchestrateCommand } from './commands/orchestrate.js';
 import { runOrgsCommand } from './commands/orgs.js';
 import { hasDescribeFlag, runDescribeAlias, runPlanCommand } from './commands/plan.js';
@@ -107,6 +108,8 @@ COMMANDS
 
   teams directory [--query=q] [--org=<id>] [--limit=N]
                                        List the teams you can see and your relationship to each
+  teams directory organizations [--query=q] [--limit=N] [--cursor=C]
+                                       List the organizations the directory lists a team of
   teams request <teamId> [--message=text]
                                        Ask to join a team
   teams requests [withdraw <requestId>]
@@ -118,6 +121,12 @@ COMMANDS
   orgs requests <orgId> [--status=S]   List join requests awaiting an organization's decision
   orgs requests approve|reject <orgId> <requestId> [--note=text]
                                        Decide the organization step of a cross-organization request
+  orgs deactivate|reactivate <orgId>   Deactivate or reactivate an organization (platform admin)
+
+  notifications list [--status=S] [--limit=N] [--cursor=C]
+                                       List join-request notifications (platform admin); S is
+                                       PENDING, DELIVERED, SKIPPED or FAILED
+  notifications retry <id>             Re-queue a FAILED notification to send now
 
   tokens list                          List your personal access tokens
   tokens create <name> [--expires-in-days=N]
@@ -253,6 +262,9 @@ async function main(argv: string[]): Promise<number> {
   }
   if (cmd === 'orgs') {
     return await runOrgsCommand(rest, env);
+  }
+  if (cmd === 'notifications') {
+    return await runNotificationsCommand(rest, env);
   }
   process.stderr.write(`Unknown command: ${cmd}\n${HELP}`);
   return 1;

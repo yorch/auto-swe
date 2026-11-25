@@ -26,6 +26,11 @@ const SUB_HELP = `auto-swe orgs — organization membership decisions
         the team
   orgs requests reject <orgId> <requestId> [--note=text] [--json]
         Reject the organization step
+  orgs deactivate <orgId> [--json]
+        Deactivate an organization (platform admin); its open join requests close. The
+        organization that owns the default team cannot be deactivated
+  orgs reactivate <orgId> [--json]
+        Reactivate a deactivated organization (platform admin)
 `;
 
 export async function runOrgsCommand(args: string[], env: CliEnv): Promise<number> {
@@ -37,6 +42,9 @@ export async function runOrgsCommand(args: string[], env: CliEnv): Promise<numbe
   const handled = await runWithExitCodes(async () => {
     if (sub === 'requests') {
       return await cmdRequests(rest, env);
+    }
+    if (sub === 'deactivate' || sub === 'reactivate') {
+      return await cmdSetActive(sub, rest, env);
     }
     return UNKNOWN_SUBCOMMAND;
   });
@@ -91,6 +99,49 @@ async function cmdList(args: string[], env: CliEnv): Promise<number> {
     return 0;
   }
   printRequests(rows, 'org');
+  return 0;
+}
+
+/** The organization the PATCH answers with: its `data` (unwrapped), id, name and active flag. */
+interface OrganizationView {
+  id?: string;
+  name?: string;
+  isActive?: boolean;
+}
+
+async function cmdSetActive(
+  action: 'deactivate' | 'reactivate',
+  args: string[],
+  env: CliEnv
+): Promise<number> {
+  const usage = `Usage: orgs ${action} <orgId> [--json]\n`;
+  const { positional, flags } = parseFlags(args);
+  const unknown = Object.keys(flags).find((f) => f !== 'json');
+  if (unknown) {
+    return fail(`Unknown flag: --${unknown}`, usage);
+  }
+  const orgId = positional[0];
+  if (!orgId || positional.length > 1) {
+    return fail(`Usage: orgs ${action} <orgId>`, usage);
+  }
+  const requested = action === 'reactivate';
+  const updated = await apiRequest<OrganizationView>(
+    env,
+    'PATCH',
+    `/api/v1/platform/organizations/${orgId}`,
+    { isActive: requested }
+  );
+  if (flags.json === FLAG_PRESENT) {
+    process.stdout.write(`${JSON.stringify(updated, null, 2)}\n`);
+    return 0;
+  }
+  const verb = requested ? 'Reactivated' : 'Deactivated';
+  if (typeof updated.name === 'string' && updated.name !== '') {
+    const state = (updated.isActive ?? requested) ? 'active' : 'inactive';
+    process.stdout.write(`Organization ${clean(updated.name)} is now ${state}.\n`);
+  } else {
+    process.stdout.write(`${verb} organization ${clean(orgId)}.\n`);
+  }
   return 0;
 }
 

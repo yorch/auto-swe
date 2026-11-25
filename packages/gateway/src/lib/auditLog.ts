@@ -28,6 +28,7 @@ export type AuditEntityType =
   | 'GitHubInstallation'
   | 'GoogleOAuthConfig'
   | 'HarnessProfile'
+  | 'JoinRequestNotification'
   | 'MarketplaceSource'
   | 'McpGrant'
   | 'McpToolCall'

@@ -45,12 +45,20 @@ export interface DirectoryPage {
    * gateway that predates it; the filter then falls back to the organizations seen in pages.
    */
   organizations?: CreatableOrg[];
+  /** True when more organizations exist than `organizations` lists; the search endpoint has them. */
+  organizationsTruncated?: boolean;
   /**
    * The deployment-wide default of `teams.directoryScope`. It is not the scope of this viewer's
    * results (an organization may override it), so the UI does not read it. Optional so a
    * response that omits it still parses.
    */
   scope?: 'platform' | 'organization';
+  nextCursor: string | null;
+}
+
+/** `GET /teams/directory/organizations`: one page of the organizations the directory lists. */
+export interface DirectoryOrganizationsPage {
+  organizations: CreatableOrg[];
   nextCursor: string | null;
 }
 

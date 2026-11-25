@@ -1692,12 +1692,37 @@ export const SETTING_DEFINITIONS = {
     unit: 'hours',
     writeAccess: 'admin',
   }),
+  'teams.joinRequestNotificationRetentionDays': defineSetting({
+    defaultValue: 30,
+    description:
+      'Days to keep delivered, skipped and failed join-request notification records before the gateway deletes them. Pending records are never deleted. Platform-wide.',
+    group: 'teams',
+    label: 'Join request notification retention',
+    overridableAt: [],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(3650),
+    unit: 'days',
+    writeAccess: 'admin',
+  }),
   'teams.joinRequestNotifications': defineSetting({
     defaultValue: true,
     description:
       'Whether team join requests send notifications: an email to the requester when a request is decided, a Slack post to the team channel on a new request, and an email to organization admins on a request awaiting their approval. Off stops every join-request email and Slack post. Platform-wide.',
     group: 'teams',
     label: 'Join request notifications',
+    overridableAt: [],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+    writeAccess: 'admin',
+  }),
+  'teams.joinRequestReviewerEmail': defineSetting({
+    defaultValue: true,
+    description:
+      "Whether a new team join request emails the team's active leads and admins when the team has no usable Slack channel. Off stops that email. `teams.joinRequestNotifications` still stops every join-request notification. Platform-wide.",
+    group: 'teams',
+    label: 'Join request reviewer email',
     overridableAt: [],
     restartRequired: false,
     runPinned: false,

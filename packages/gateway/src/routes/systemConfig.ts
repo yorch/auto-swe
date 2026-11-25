@@ -21,6 +21,7 @@ import {
   CLEARABLE_SECRETS,
   type ClearableIntegration,
   clearStoredSecret,
+  DefaultTeamOrganizationInactive,
   detectJiraFields,
   getFigmaConfig,
   getGitHubConfig,
@@ -419,7 +420,20 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     '/config/workflow-defaults',
     { onRequest: guard, schema: { body: WorkflowDefaultsPutBody, response: { 200: z.any() } } },
     async (req, reply) => {
-      const result = await updateWorkflowDefaults(fastify.prisma, req.body);
+      let result: Awaited<ReturnType<typeof updateWorkflowDefaults>>;
+      try {
+        result = await updateWorkflowDefaults(fastify.prisma, req.body);
+      } catch (err) {
+        if (err instanceof DefaultTeamOrganizationInactive) {
+          return sendError(
+            reply,
+            409,
+            'DEFAULT_TEAM_ORGANIZATION_INACTIVE',
+            `The team '${err.slug}' belongs to an inactive organization, so new accounts cannot be enrolled in it. Reactivate the organization or name another team.`
+          );
+        }
+        throw err;
+      }
       await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
       // result.data is the shared resolver's shape so GET and PUT match,
       // including env-var fallbacks for fields not yet set in DB.

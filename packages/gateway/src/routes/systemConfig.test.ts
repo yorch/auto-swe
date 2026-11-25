@@ -60,6 +60,11 @@ vi.mock('../lib/systemConfigService.js', () => ({
     slack: ['botToken', 'clientSecret', 'signingSecret'],
   },
   clearStoredSecret: vi.fn(async () => true),
+  DefaultTeamOrganizationInactive: class DefaultTeamOrganizationInactive extends Error {
+    constructor(readonly slug: string) {
+      super(slug);
+    }
+  },
   detectJiraFields: vi.fn(async () => ({
     fields: [{ id: 'customfield_10016', name: 'Story Points' }],
     storyPointsFieldId: 'customfield_10016',
@@ -537,6 +542,21 @@ describe('PUT /config/workflow-defaults', () => {
       expect.objectContaining({ budgetStandardInputTokens: 3_000_000, maxTddIterations: 7 })
     );
     expect(JSON.parse(res.payload).data).toMatchObject({ maxTddIterations: 7 });
+    await app.close();
+  });
+
+  it('answers 409 DEFAULT_TEAM_ORGANIZATION_INACTIVE when the default team sits in an inactive organization', async () => {
+    const { DefaultTeamOrganizationInactive } = await import('../lib/systemConfigService.js');
+    updateWorkflowDefaultsMock.mockRejectedValueOnce(new DefaultTeamOrganizationInactive('closed'));
+    const app = await buildApp();
+    const res = await app.inject({
+      body: { defaultTeamSlug: 'closed' },
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      url: '/api/v1/platform/config/workflow-defaults',
+    });
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.payload).error.code).toBe('DEFAULT_TEAM_ORGANIZATION_INACTIVE');
     await app.close();
   });
 

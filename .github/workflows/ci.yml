@@ -317,7 +317,8 @@ jobs:
   # ever validated the migrations or the seed against an actual schema.
   migrations:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # About a third more database-backed suites than the old bound was sized for (the join-request set).
+    timeout-minutes: 20
     services:
       postgres:
         image: pgvector/pgvector:pg18
@@ -506,6 +507,39 @@ jobs:
         env:
           TEAM_JOIN_REQUESTS_PG_TEST: '1'
         run: yarn test packages/gateway/src/lib/teamJoinRequests.pg.test.ts
+
+      # The join-request notification outbox: rows that commit or roll back with the request, the
+      # SKIP LOCKED claim and its lease, backoff to FAILED, the admin retry, retention, and the
+      # delivered bytes against an SMTP server and a Slack-shaped HTTP server started in the test.
+      - name: Join-request notification outbox (database-backed tests)
+        env:
+          JOIN_REQUEST_OUTBOX_PG_TEST: '1'
+        run: yarn test packages/gateway/src/lib/joinRequestOutbox.pg.test.ts
+
+      # Organization deactivation: the organization row lock, the close of its teams' open join
+      # requests, the default-organization refusal, and the decisions that must see an inactive
+      # organization, including a deactivation racing each of them.
+      - name: Organization deactivation (database-backed tests)
+        env:
+          ORGANIZATION_DEACTIVATION_PG_TEST: '1'
+        run: yarn test packages/gateway/src/lib/organizationDeactivation.pg.test.ts
+
+      # The directory's organization search: its visibility parity with the directory under both
+      # platform values and per-organization overrides, its paging, and a time bound on tens of
+      # thousands of organizations with no ANALYZE after the load.
+      - name: Directory organization search (database-backed tests)
+        env:
+          DIRECTORY_ORGANIZATIONS_PG_TEST: '1'
+        run: yarn test packages/gateway/src/lib/directoryOrganizations.pg.test.ts
+
+      # The global lock order: a workflow launch, join approvals, a request's creation, member adds,
+      # a user's deactivation and an organization's deactivation, each interleaving staged against
+      # a blocker transaction and settled with no deadlock (40P01), plus the inactive-organization
+      # edges of team creation and of saving the default team.
+      - name: Lock order (database-backed tests)
+        env:
+          LOCK_ORDER_PG_TEST: '1'
+        run: yarn test packages/gateway/src/lib/lockOrder.pg.test.ts
 
       # The personal desk: its approval, failure and pull-request counts against the lists they
       # summarise, the platform ADMIN's member scope, and the per-team buckets, all relational

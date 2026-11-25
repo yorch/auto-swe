@@ -4,15 +4,20 @@ import { isPlatformAdmin, orgIsAdmin } from '@auto-swe/shared/permissions';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { auditContextOf } from '../lib/auditContext.js';
 import { writeAuditLog } from '../lib/auditLog.js';
-import { can } from '../lib/authz.js';
+import { can, replyRefusal } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
 import { currentYearMonth } from '../lib/orgAccess.js';
+import { changeOrganizationActive } from '../lib/organizationDeactivation.js';
+import { booleanQueryParam } from '../lib/queryParams.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const OrgParamsSchema = z.object({ orgId: z.string().uuid() });
 
 const PatchOrgSchema = z.object({
+  // Platform-ADMIN only: deactivating closes the organization's open join requests.
+  isActive: z.boolean().optional(),
   name: z.string().min(1).max(120).optional(),
   slug: z
     .string()
@@ -38,6 +43,7 @@ function computeAlert(
 
 interface OrgWithCurrentUsage {
   id: string;
+  isActive: boolean;
   name: string;
   slug: string;
   monthlyBudgetUsdCents: number | null;
@@ -56,6 +62,7 @@ function projectOrgBudgetSummary(org: OrgWithCurrentUsage) {
       ? { costUsdAccrued: spent, runsCompleted: usage.runsCompleted, yearMonth: usage.yearMonth }
       : null,
     id: org.id,
+    isActive: org.isActive,
     monthlyBudgetUsdCents: org.monthlyBudgetUsdCents,
     name: org.name,
     slug: org.slug,
@@ -120,17 +127,22 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
     };
   });
 
-  // GET /api/v1/platform/organizations/budget-alerts — platform ADMIN view of alerting orgs.
+  // GET /api/v1/platform/organizations/budget-alerts — platform ADMIN view of alerting orgs. A
+  // deactivated organization is listed only on request (`includeInactive=true`), so the admin list
+  // can show it and offer reactivation while organization pickers keep to active ones.
   app.get(
     '/budget-alerts',
-    { onRequest: requireAuth({ capability: 'platform.budgets.read-all' }) },
-    async () => {
+    {
+      onRequest: requireAuth({ capability: 'platform.budgets.read-all' }),
+      schema: { querystring: z.object({ includeInactive: booleanQueryParam() }) },
+    },
+    async (request) => {
       const orgs = await fastify.prisma.organization.findMany({
         include: {
           monthlyUsages: { where: { yearMonth: currentYearMonth() } },
         },
         orderBy: { name: 'asc' },
-        where: { isActive: true },
+        where: request.query.includeInactive ? {} : { isActive: true },
       });
       return { data: orgs.map(projectOrgBudgetSummary) };
     }
@@ -150,6 +162,7 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
         select: {
           budgetAlertThresholdPercent: true,
           id: true,
+          isActive: true,
           monthlyBudgetUsdCents: true,
           name: true,
           slug: true,
@@ -169,7 +182,7 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // PATCH /api/v1/platform/organizations/:orgId — ORG_ADMIN can update name/slug;
-  // `trustedInvites` is a platform ADMIN's decision.
+  // `trustedInvites` and `isActive` are a platform ADMIN's decision.
   app.patch(
     '/:orgId',
     {
@@ -192,6 +205,32 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
           'FORBIDDEN',
           'Only a platform admin can change whether an organization is trusted'
         );
+      }
+
+      if (body.isActive !== undefined) {
+        const decision = await can(request, 'platform.orgs.deactivate');
+        if (!decision.allowed) {
+          return replyRefusal(reply, decision);
+        }
+        const { isActive, ...fields } = body;
+        try {
+          const outcome = await changeOrganizationActive(fastify, {
+            actor: requireUser(request),
+            context: { ...auditContextOf(request), authority: decision.authority },
+            fields,
+            isActive,
+            orgId,
+          });
+          if (!outcome.ok) {
+            return sendError(reply, outcome.status, outcome.code, outcome.message);
+          }
+          return { data: outcome.organization };
+        } catch (e) {
+          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+            return sendError(reply, 409, 'ORG_EXISTS', 'Organization name or slug already in use');
+          }
+          throw e;
+        }
       }
 
       const existing = await fastify.prisma.organization.findUnique({

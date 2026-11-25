@@ -28,6 +28,7 @@ import { harnessProfileRoutes } from './harnessProfiles.js';
 import { humanErrorBaselineRoutes } from './humanErrorBaselines.js';
 import { humanStepRoutes } from './humanSteps.js';
 import { inboundEventRoutes } from './inboundEvents.js';
+import { joinRequestNotificationRoutes } from './joinRequestNotifications.js';
 import { knowledgeRoutes } from './knowledge.js';
 import { knowledgeBaseRoutes } from './knowledgeBases.js';
 import { lessonRoutes, runLessonRoutes } from './lessons.js';
@@ -191,6 +192,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(githubInstallationRoutes, { prefix: '/api/v1/admin' });
   await app.register(githubWebhookSecretRoutes, { prefix: '/api/v1/platform' });
   await app.register(githubHostCredentialRoutes, { prefix: '/api/v1/platform' });
+  await app.register(joinRequestNotificationRoutes, { prefix: '/api/v1/platform' });
   await app.register(githubApproverAppRoutes, { prefix: '/api/v1/integrations' });
   await app.register(githubAppManifestRoutes, { prefix: '/api/v1/integrations' });
   await app.register(packageRegistryRoutes, { prefix: '/api/v1/admin' });

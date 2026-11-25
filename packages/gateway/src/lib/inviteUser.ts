@@ -5,6 +5,7 @@ import type { JwtPayload } from '../plugins/auth.js';
 import { type AuditContext, currentAuditContext } from './auditContext.js';
 import { writeAuditLog } from './auditLog.js';
 import { getDefaultClientOrigin } from './env.js';
+import { lockOrganizations } from './lockOrder.js';
 import { isUniqueConstraintError } from './prismaErrors.js';
 
 export async function inviteUser(
@@ -41,8 +42,8 @@ export async function inviteUser(
     | { ok: true; user: { email: string; id: string; isActive: boolean; role: PlatformRole } };
   try {
     result = await fastify.prisma.$transaction(async (tx) => {
-      // CLAUDE.md §7 exception: serialize membership writes with organization revocations.
-      await tx.$queryRaw`SELECT id FROM organizations WHERE id = ${args.orgId}::uuid FOR UPDATE`;
+      // Serialize membership writes with organization revocations.
+      await lockOrganizations(tx, [args.orgId]);
       if (args.teamId) {
         const team = await tx.team.findUnique({ where: { id: args.teamId } });
         if (!team || team.orgId !== args.orgId) {

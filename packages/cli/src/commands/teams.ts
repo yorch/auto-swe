@@ -28,6 +28,8 @@ const SUB_HELP = `auto-swe teams — the team directory and join requests
 
   teams directory [--query=q] [--org=<id>] [--limit=N] [--cursor=C] [--json]
         List the teams you can see, with your relationship to each (member, requested, none)
+  teams directory organizations [--query=q] [--limit=N] [--cursor=C] [--json]
+        List the organizations the directory lists a team of, by name (for the --org filter)
   teams request <teamId> [--message=text] [--json]
         Ask to join a team; the team's managers decide. A team in another organization also
         needs that organization's admin to approve.
@@ -74,6 +76,9 @@ export async function runTeamsCommand(args: string[], env: CliEnv): Promise<numb
   }
   const handled = await runWithExitCodes(async () => {
     if (sub === 'directory') {
+      if (rest[0] === 'organizations') {
+        return await cmdDirectoryOrganizations(rest.slice(1), env);
+      }
       return await cmdDirectory(rest, env);
     }
     if (sub === 'request') {
@@ -166,6 +171,65 @@ async function cmdDirectory(args: string[], env: CliEnv): Promise<number> {
   }
   if (page.nextCursor) {
     process.stdout.write(`More teams: add --cursor=${clean(page.nextCursor)}\n`);
+  }
+  return 0;
+}
+
+/** `GET /teams/directory/organizations`: the body is `{ organizations, nextCursor }`, unwrapped. */
+interface DirectoryOrganizationsPage {
+  organizations: { id: string; name: string }[];
+  nextCursor: string | null;
+}
+
+async function cmdDirectoryOrganizations(args: string[], env: CliEnv): Promise<number> {
+  const usage =
+    'Usage: teams directory organizations [--query=q] [--limit=N] [--cursor=C] [--json]\n';
+  const { positional, flags } = parseFlags(args);
+  const bad = unknownFlag(flags, ['query', 'limit', 'cursor', 'json']);
+  if (bad || positional.length > 0) {
+    return fail(bad ?? `Unexpected argument: ${positional[0]}`, usage);
+  }
+  for (const key of ['query', 'cursor']) {
+    if (missingValue(flags, key)) {
+      return fail(`--${key} needs a value`, usage);
+    }
+  }
+  const limit = parseOptionalPositiveInt(flags.limit);
+  if (limit === 'invalid' || (limit !== undefined && limit > 100)) {
+    return fail('--limit must be a whole number from 1 to 100', usage);
+  }
+  const params = new URLSearchParams();
+  if (flags.query !== undefined) {
+    params.set('q', flags.query);
+  }
+  if (limit !== undefined) {
+    params.set('limit', String(limit));
+  }
+  if (flags.cursor !== undefined) {
+    params.set('cursor', flags.cursor);
+  }
+  const qs = params.toString();
+  const page = await apiRequestFull<DirectoryOrganizationsPage>(
+    env,
+    'GET',
+    `/api/v1/teams/directory/organizations${qs ? `?${qs}` : ''}`
+  );
+  if (flags.json === FLAG_PRESENT) {
+    printJson(page);
+    return 0;
+  }
+  if (page.organizations.length === 0) {
+    process.stdout.write('No organizations match.\n');
+  } else {
+    process.stdout.write(
+      renderTable(
+        ['ID', 'NAME'],
+        page.organizations.map((o) => [o.id, o.name])
+      )
+    );
+  }
+  if (page.nextCursor) {
+    process.stdout.write(`More organizations: add --cursor=${clean(page.nextCursor)}\n`);
   }
   return 0;
 }

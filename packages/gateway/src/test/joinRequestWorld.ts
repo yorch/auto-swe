@@ -54,6 +54,8 @@ const RELATIONS: Partial<Record<Model, Record<string, { fk: string; model: Model
 
 export interface Tables {
   audits: Row[];
+  /** The notification outbox (`join_request_notifications`). */
+  joinRequestNotifications: Row[];
   organizationMemberships: Row[];
   organizations: Row[];
   teamJoinRequests: Row[];
@@ -82,6 +84,7 @@ export function emptyWorld(): World {
   return {
     actor: { role: 'USER', sub: uuid(1) },
     audits: [],
+    joinRequestNotifications: [],
     locks: [],
     organizationMemberships: [],
     organizations: [],
@@ -295,11 +298,54 @@ export function buildPrisma(world: World) {
       world.locks.push(`${strings.join('?').replace(/\s+/g, ' ').trim()}|${values.join(',')}`);
       return 1;
     },
-    $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
+    // The row locks of `lib/lockOrder.ts` (`SELECT id … FOR UPDATE`): recorded in the same list, in
+    // the order taken, and answered as a row that exists.
+    $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      world.locks.push(`${strings.join('?').replace(/\s+/g, ' ').trim()}|${values.join(',')}`);
+      return [{ id: values[0] }];
+    },
+    // Only the outbox is rolled back when the callback throws: that is the one table whose
+    // all-or-nothing behaviour these tests assert (the rest is proven against Postgres).
+    $transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
+      const outbox = [...world.joinRequestNotifications];
+      try {
+        return await fn(prisma);
+      } catch (err) {
+        world.joinRequestNotifications.splice(0, Infinity, ...outbox);
+        throw err;
+      }
+    },
     configAuditLog: {
       create: async ({ data }: { data: Row }) => {
         world.audits.push(data);
         return data;
+      },
+    },
+    joinRequestNotification: {
+      createMany: async ({ data, skipDuplicates }: { data: Row[]; skipDuplicates?: boolean }) => {
+        let count = 0;
+        for (const row of data) {
+          const dup = world.joinRequestNotifications.some(
+            (r) =>
+              r.requestId === row.requestId && r.event === row.event && r.audience === row.audience
+          );
+          if (dup) {
+            if (skipDuplicates) {
+              continue;
+            }
+            throw uniqueError();
+          }
+          world.joinRequestNotifications.push({
+            attempts: 0,
+            id: nextId(),
+            lastError: null,
+            reached: [],
+            status: 'PENDING',
+            ...row,
+          });
+          count += 1;
+        }
+        return { count };
       },
     },
     organization: delegate('organization'),

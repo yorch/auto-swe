@@ -46,4 +46,26 @@ describe('GovernOrganizationsPage', () => {
     fireEvent.click(screen.getByLabelText('Alerting only'));
     expect(nav.replace.at(-1)).toBe('/admin/organizations?alerting=1');
   });
+
+  it('asks for deactivated organizations too, marks them, and does not count their alerts', async () => {
+    const spy = setupFetchMock({
+      '/api/v1/me/permissions': () => ({
+        organizations: [],
+        platformCapabilities: ['platform.users.manage'],
+        platformRole: '',
+        teams: [],
+      }),
+      '/api/v1/platform/organizations/budget-alerts': () => ({
+        data: [org('a', false), { ...org('gone', true), isActive: false }],
+      }),
+    });
+    render(withQuery(<GovernOrganizationsPage />));
+    await screen.findByText('Org gone');
+    expect(screen.getByText('Inactive')).toBeTruthy();
+    expect(
+      spy.mock.calls.some(([u]) => String(u).endsWith('/budget-alerts?includeInactive=true'))
+    ).toBe(true);
+    // The only organization over its threshold is inactive, so no alert banner.
+    expect(screen.queryByText(/above the monthly budget alert threshold/)).toBeNull();
+  });
 });

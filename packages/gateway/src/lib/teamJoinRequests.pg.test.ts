@@ -91,7 +91,19 @@ describe.skipIf(!enabled)('team join requests against Postgres', () => {
   let platformAdmin: string;
   let app: FastifyInstance;
 
+  /** The GLOBAL `teams.directoryScope` rows the database held before this suite, put back at the end. */
+  let originalDirectoryScope: Array<{ value: unknown }> = [];
+
   beforeAll(async () => {
+    originalDirectoryScope = await runUnscoped(
+      'test: remember the platform-wide directory scope',
+      ['ConfigSetting'],
+      () =>
+        prisma.configSetting.findMany({
+          select: { value: true },
+          where: { key: 'teams.directoryScope', scope: 'GLOBAL' },
+        })
+    );
     orgA = await makeOrg('a');
     orgB = await makeOrg('b');
     lead = await makeUser('lead');
@@ -137,6 +149,23 @@ describe.skipIf(!enabled)('team join requests against Postgres', () => {
     await prisma.configAuditLog.deleteMany({
       where: { actorId: { in: userIds } },
     });
+    await runUnscoped(
+      'test: restore the platform-wide directory scope',
+      ['ConfigSetting'],
+      async () => {
+        await prisma.configSetting.deleteMany({
+          where: { key: 'teams.directoryScope', scope: 'GLOBAL' },
+        });
+        await prisma.configSetting.createMany({
+          data: originalDirectoryScope.map((r) => ({
+            key: 'teams.directoryScope',
+            scope: 'GLOBAL' as const,
+            value: r.value as never,
+          })),
+        });
+      }
+    );
+    invalidateSettingsCache();
     await prisma.organization.deleteMany({ where: { id: { in: orgIds } } });
     await prisma.user.deleteMany({ where: { id: { in: userIds } } });
     await app?.close();
@@ -671,7 +700,10 @@ describe.skipIf(!enabled)('team join requests against Postgres', () => {
     if (!(mine.every((r) => r.ok) && elsewhere.ok)) {
       throw new Error('setup failed');
     }
-    // The route does not exist yet: a deactivation closes in the transaction that writes it.
+    // What `PATCH /platform/organizations/:orgId` does in one transaction, written out here: the
+    // flag flips and the organization's open requests close together. The route itself, the
+    // organization lock and the races are exercised in `organizationDeactivation.pg.test.ts`; this
+    // case is about what the close leaves behind (the closed rows and the absent cooldown).
     const closed = await prisma.$transaction(async (tx) => {
       await tx.organization.update({ data: { isActive: false }, where: { id: orgId } });
       return closeOpenJoinRequests(fastify, tx, {

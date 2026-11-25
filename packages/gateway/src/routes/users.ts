@@ -11,6 +11,7 @@ import { writeAuditLog } from '../lib/auditLog.js';
 import { enrollDefaultTeam } from '../lib/defaultTeamMembership.js';
 import { getDefaultClientOrigin } from '../lib/env.js';
 import { sendError } from '../lib/httpErrors.js';
+import { lockUser } from '../lib/lockOrder.js';
 import { revokeMcpGrants } from '../lib/mcpGrants.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { closeOpenJoinRequests, joinRequestLockKey } from '../lib/teamJoinRequests.js';
@@ -408,15 +409,17 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
             ? await fastify.prisma.$transaction(async (tx) => {
                 // The account's open join requests close with it: a request nobody can act on
                 // for a person who cannot sign in would sit in a team's queue until it was noticed.
-                // This comes before the user row is updated, and the order matters: a change to
-                // the email or the Slack id locks the user row against a membership insert, which
-                // an approval in flight needs after it has claimed its request row. Taking the
-                // request rows first matches that order, so the two wait instead of deadlocking.
-                // The per-person lock a join request's creation takes, held before anything is
-                // closed: a request created concurrently either commits first (and is closed here)
-                // or waits, and then finds the account inactive and is refused.
+                // The lock order (`lib/lockOrder.ts`) puts the account's own row before the
+                // request rows: a workflow launch by this account holds the row while it waits for
+                // a team that an approval of one of these requests holds, and the approval waits
+                // for the request row this closes. Taking the row last would put this update in
+                // the middle of that cycle; taking it first, it waits holding nothing.
+                // The per-person lock a join request's creation takes comes first of all, held
+                // before anything is closed: a request created concurrently either commits first
+                // (and is closed here) or waits, and then finds the account inactive and is refused.
                 // CLAUDE.md §7 exception: Prisma cannot express a transaction-scoped advisory lock.
                 await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${joinRequestLockKey(user.id)}, 0))`;
+                await lockUser(tx, user.id);
                 await closeOpenJoinRequests(fastify, tx, {
                   actor,
                   context: auditContextOf(request),

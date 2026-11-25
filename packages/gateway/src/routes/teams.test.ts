@@ -83,6 +83,8 @@ interface State {
   connectionQueries?: Array<{ where: Record<string, unknown> }>;
   /** The `where` of every `teamJoinRequest.updateManyAndReturn` (requests closed by a deactivation). */
   closedJoinRequests?: Array<{ data: Record<string, unknown>; where: Record<string, unknown> }>;
+  /** When true, the organization the create paths resolve is inactive. */
+  orgInactive?: boolean;
   /** Rows written to the configuration audit log. */
   audits?: Array<{ action: string; entityType: string; [key: string]: unknown }>;
 }
@@ -158,6 +160,11 @@ function buildApp(state: State): FastifyInstance {
       state.locks = [...(state.locks ?? []), String(values[0])];
       return 1;
     },
+    // The row locks of `lib/lockOrder.ts`, recorded in the same list and answered as found.
+    $queryRaw: async (_sql: TemplateStringsArray, ...values: unknown[]) => {
+      state.locks = [...(state.locks ?? []), String(values[0])];
+      return [{ id: values[0] }];
+    },
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
     configAuditLog: {
       create: async ({ data }: { data: { action: string; entityType: string } }) => {
@@ -181,7 +188,7 @@ function buildApp(state: State): FastifyInstance {
       findUnique: async ({ where }: { where: { id?: string; slug?: string } }) =>
         // Single default org for the create-path test.
         where.slug === 'default' || where.id === 'org-default' || where.id === TEAM_ID
-          ? { id: where.id ?? 'org-default', slug: 'default' }
+          ? { id: where.id ?? 'org-default', isActive: !state.orgInactive, slug: 'default' }
           : null,
     },
     organizationMembership: {
@@ -487,6 +494,12 @@ describe('organization-bounded team creation', () => {
         orgMemberships: [{ id: 'org', orgId, role, userId: ADMIN_USER_ID }],
       });
       const app = buildApp(state);
+      if (role === 'MEMBER') {
+        // A member of an active organization is refused when self-service creation is off for it
+        // (the file-wide mock has it on everywhere, for the legacy-route test below).
+        const config = await import('@auto-swe/shared/config');
+        vi.mocked(config.resolveSetting).mockImplementationOnce(async () => false as never);
+      }
       const res = await app.inject({
         headers: { authorization: 'Bearer test' },
         method: 'POST',
@@ -895,6 +908,26 @@ describe('POST /api/v1/teams', () => {
       { action: 'CREATE', entityType: 'Team' },
       { action: 'CREATE', entityType: 'TeamMembership' },
     ]);
+  });
+
+  it('refuses an inactive organization, as the fallback and as the one named, leaving no team', async () => {
+    const state = freshState({ orgInactive: true, userRole: 'ADMIN' });
+    const app = buildApp(state);
+
+    for (const body of [
+      { name: 'Payments', slug: 'payments' },
+      { name: 'Billing', orgId: '00000000-0000-4000-8000-000000000001', slug: 'billing' },
+    ]) {
+      const res = await app.inject({
+        body,
+        headers: { authorization: 'Bearer fake-jwt' },
+        method: 'POST',
+        url: '/api/v1/teams',
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('ORGANIZATION_INACTIVE');
+    }
+    expect(state.audits ?? []).toEqual([]);
   });
 
   it('stays platform-admin-only: a member of the organization is refused even with self-service creation on', async () => {

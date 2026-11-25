@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { OrgRoleValue, TeamRoleValue } from '@/lib/roleLabels';
 import { PERMISSIONS_KEY } from './useEffectivePermissions';
+import { JOIN_REQUEST_KEYS } from './useJoinRequests';
 
 export type OrgRole = OrgRoleValue;
 
@@ -48,6 +49,8 @@ export interface OrgBudgetRow {
 export interface OrgRow {
   budgetAlertThresholdPercent: number | null;
   id: string;
+  /** False once a platform admin has deactivated the organization; absent from an older gateway. */
+  isActive?: boolean;
   /** Absent for a caller who does not hold `org.budget.manage`: the cap is theirs to read. */
   monthlyBudgetUsdCents?: number | null;
   name: string;
@@ -67,13 +70,24 @@ export function useOrg(orgId: string) {
 export function usePatchOrg(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name?: string; slug?: string; trustedInvites?: boolean }) =>
+    mutationFn: (body: {
+      isActive?: boolean;
+      name?: string;
+      slug?: string;
+      trustedInvites?: boolean;
+    }) =>
       api
         .patch<{ data: OrgRow }>(`/api/v1/platform/organizations/${orgId}`, body)
         .then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['org', orgId] });
       qc.invalidateQueries({ queryKey: ['user-orgs'] });
+      // Deactivating closes the organization's open join requests and takes its teams out of the
+      // directory, so everything that shows either is stale (reactivating restores the teams).
+      qc.invalidateQueries({ queryKey: JOIN_REQUEST_KEYS.org(orgId) });
+      qc.invalidateQueries({ queryKey: JOIN_REQUEST_KEYS.directory });
+      qc.invalidateQueries({ queryKey: JOIN_REQUEST_KEYS.mine });
+      qc.invalidateQueries({ queryKey: ['teams'] });
     },
   });
 }
