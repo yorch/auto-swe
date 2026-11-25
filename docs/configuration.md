@@ -730,8 +730,8 @@ to enabling `uiValidation.prInlineImages`. The public bucket policy is operator-
 
 ## Team directory and join requests
 
-The `teams` group holds the seven settings that govern the team directory, join requests and
-self-service team creation. A platform ADMIN writes them, and none is run-pinned.
+The `teams` group holds the settings that govern the team directory, join requests, their
+notifications and self-service team creation. A platform ADMIN writes them, and none is run-pinned.
 
 | Key | Default | Scopes | Meaning |
 |---|---|---|---|
@@ -741,11 +741,32 @@ self-service team creation. A platform ADMIN writes them, and none is run-pinned
 | `teams.maxOpenJoinRequests` | `5` | GLOBAL | Open join requests one user may hold at once (1 to 50). |
 | `teams.joinRequestCooldownHours` | `72` | GLOBAL | Hours after a rejection before the same team accepts a new request from that user (0 to 720). |
 | `teams.withdrawCooldownHours` | `1` | GLOBAL | Hours after a person withdraws a request before that team accepts a new one from them (0 to 720). `0` disables the wait. |
-| `teams.joinRequestNotifications` | `true` | GLOBAL | Whether join-request notifications are sent: the requester's decision email, the Slack post to the team's channel on a new request, and the organization admins' email on a request awaiting the organization step. `false` stops every one. Notifications are best effort and need an SMTP or Resend transport for email. |
+| `teams.joinRequestNotifications` | `true` | GLOBAL | Whether join-request notifications are sent: the requester's decision email, the Slack post to the team's channel on a new request, the team reviewers' email, and the organization admins' email on a request awaiting the organization step. `false` stops every one, and rows already queued are skipped. Email needs an SMTP or Resend transport. |
+| `teams.joinRequestReviewerEmail` | `true` | GLOBAL | Whether a new join request emails the team's active `LEAD` and `ADMIN` members (at most 20) when the team has no usable Slack channel: no `slackNotifyChannel`, or no Slack bot token that resolves for it. A team with a usable channel gets the Slack post and no email. `false` stops the reviewer email only; `teams.joinRequestNotifications` still stops everything. |
+| `teams.joinRequestNotificationRetentionDays` | `30` | GLOBAL | Days a delivered, skipped or failed notification row is kept before the gateway deletes it (1 to 3650). A pending row is never deleted. |
 
 The default `teams.directoryScope` exposes each active team's name, slug, description, organization and
 member count to every signed-in user; set it to `organization`, at GLOBAL scope or for an organization, to
-keep teams private to their organization. Behaviour is in [teams.md](./teams.md#team-directory-and-join-requests).
+keep teams private to their organization. Notifications are queued and retried by the gateway, and a
+platform ADMIN can list and retry failed ones; behaviour is in
+[teams.md](./teams.md#team-directory-and-join-requests).
+
+### Email transport
+
+Sign-in email and the join-request notification emails share one transport, chosen from SMTP
+(`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, plus `AUTH_FROM_EMAIL`) or Resend
+(`RESEND_API_KEY` plus `AUTH_FROM_EMAIL`); see [deployment.md](./deployment.md). SMTP is used first, and Resend
+only after an SMTP failure.
+
+- **Modes.** Plain SMTP; implicit TLS on port 465; STARTTLS on any other port; AUTH PLAIN and LOGIN. Certificate
+  chain and hostname verification are on, and SNI is sent for host names. A private CA is trusted only through
+  the `NODE_EXTRA_CA_CERTS` environment variable of the gateway process.
+- **No require-TLS setting.** STARTTLS is opportunistic: on a port other than 465, a relay that does not offer
+  it is used in plaintext, AUTH included, and an attacker who strips STARTTLS can downgrade the connection.
+  Use port 465, or a relay on a network where that cannot happen.
+- **Timeouts.** Join-request notifications use a bounded profile: 15 s to connect, 15 s for the greeting, 30 s
+  of socket silence, and a 90 s deadline per message; Resend requests are aborted after 30 s. Sign-in email
+  keeps nodemailer's defaults.
 
 ## Orchestration
 

@@ -70,6 +70,112 @@ describe('runTeamsCommand', () => {
   const out = () => stdoutWrites.join('');
   const err = () => stderrWrites.join('');
 
+  describe('directory organizations', () => {
+    // The organizations route answers with its body unwrapped (no `data` envelope).
+    const raw = (status: number, body: unknown): Response =>
+      ({
+        ok: status >= 200 && status < 300,
+        status,
+        text: async () => JSON.stringify(body),
+      }) as unknown as Response;
+
+    it('lists each organization id and name as a table', async () => {
+      nextResponse = raw(200, {
+        nextCursor: null,
+        organizations: [
+          { id: 'org-1', name: 'Acme' },
+          { id: 'org-2', name: 'Beta' },
+        ],
+      });
+      const code = await runTeamsCommand(['directory', 'organizations'], ENV);
+      expect(code).toBe(0);
+      expect(calls[0]).toEqual({
+        body: undefined,
+        method: 'GET',
+        url: 'http://gw/api/v1/teams/directory/organizations',
+      });
+      expect(out()).toMatch(/^ID\s+NAME\n/);
+      expect(out()).toContain('org-1');
+      expect(out()).toContain('Beta');
+      expect(out()).not.toContain('More organizations');
+    });
+
+    it('sends query, limit and cursor as q, limit and cursor', async () => {
+      nextResponse = raw(200, { nextCursor: null, organizations: [] });
+      await runTeamsCommand(
+        ['directory', 'organizations', '--query=acme corp', '--limit=5', '--cursor=Y3Vyc29y'],
+        ENV
+      );
+      expect(calls[0]?.url).toBe(
+        'http://gw/api/v1/teams/directory/organizations?q=acme+corp&limit=5&cursor=Y3Vyc29y'
+      );
+    });
+
+    it('says when no organization matches', async () => {
+      nextResponse = raw(200, { nextCursor: null, organizations: [] });
+      const code = await runTeamsCommand(['directory', 'organizations'], ENV);
+      expect(code).toBe(0);
+      expect(out()).toBe('No organizations match.\n');
+    });
+
+    it('prints the cursor to pass next when there is another page', async () => {
+      nextResponse = raw(200, {
+        nextCursor: 'b2ZmZXQ',
+        organizations: [{ id: 'org-1', name: 'Acme' }],
+      });
+      await runTeamsCommand(['directory', 'organizations'], ENV);
+      expect(out()).toContain('More organizations: add --cursor=b2ZmZXQ');
+    });
+
+    it('prints the response body unchanged with --json', async () => {
+      const body = {
+        nextCursor: 'n1',
+        organizations: [{ id: 'org-2', name: 'Beta' }],
+      };
+      nextResponse = raw(200, body);
+      const code = await runTeamsCommand(['directory', 'organizations', '--json'], ENV);
+      expect(code).toBe(0);
+      expect(JSON.parse(out())).toEqual(body);
+    });
+
+    it('accepts a limit of 1 and a limit of 100', async () => {
+      nextResponse = raw(200, { nextCursor: null, organizations: [] });
+      expect(await runTeamsCommand(['directory', 'organizations', '--limit=1'], ENV)).toBe(0);
+      expect(await runTeamsCommand(['directory', 'organizations', '--limit=100'], ENV)).toBe(0);
+      expect(calls.map((c) => c.url)).toEqual([
+        'http://gw/api/v1/teams/directory/organizations?limit=1',
+        'http://gw/api/v1/teams/directory/organizations?limit=100',
+      ]);
+    });
+
+    it.each(['0', '101', '1.5', 'abc'])(
+      'rejects --limit=%s without calling the gateway',
+      async (limit) => {
+        const code = await runTeamsCommand(['directory', 'organizations', `--limit=${limit}`], ENV);
+        expect(code).toBe(1);
+        expect(err()).toContain('--limit must be a whole number from 1 to 100');
+        expect(calls).toHaveLength(0);
+      }
+    );
+
+    it('rejects an unknown flag or a stray argument without calling the gateway', async () => {
+      expect(await runTeamsCommand(['directory', 'organizations', '--org=org-1'], ENV)).toBe(1);
+      expect(err()).toContain('Unknown flag: --org');
+      expect(await runTeamsCommand(['directory', 'organizations', 'stray'], ENV)).toBe(1);
+      expect(err()).toContain('Unexpected argument: stray');
+      expect(calls).toHaveLength(0);
+    });
+
+    it('surfaces a refused cursor with exit 2', async () => {
+      nextResponse = raw(400, {
+        error: { code: 'INVALID_CURSOR', message: 'The cursor is not one this API issued' },
+      });
+      const code = await runTeamsCommand(['directory', 'organizations', '--cursor=forged'], ENV);
+      expect(code).toBe(2);
+      expect(err()).toContain('INVALID_CURSOR: The cursor is not one this API issued');
+    });
+  });
+
   describe('directory', () => {
     it('lists the teams with relationship and memberships as a table', async () => {
       nextResponse = respond(200, {

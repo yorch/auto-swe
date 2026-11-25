@@ -676,9 +676,17 @@ organization. An organization with no value of its own uses the GLOBAL value, wh
 default. The team's own organization decides: no other organization's value applies to it. A request
 may go only to a team the caller can see, and the same rule gates creating one. The response's
 `organizations` lists the organizations with at least one team the caller may see, sorted by name and
-capped at 500; `organizationsTruncated` is `true` when more exist, and the organization filter then
-offers only the first 500. The human `teams directory` table does not print the list. The response's `scope` is only the deployment-wide
-(GLOBAL) value of `teams.directoryScope`. It does not describe what the caller is shown once organizations
+capped at 500; `organizationsTruncated` is `true` when more exist. The filter does not depend on that
+list: `GET /api/v1/teams/directory/organizations?q=&limit=&cursor=` answers `{ organizations:
+[{ id, name }], nextCursor }` by the same rule (one definition of visibility serves the listing, the
+organization list, the search and creating a request), by name, `q` a case-insensitive substring of
+the name, `limit` 1 to 100 (default 50), the cursor the last name of the previous page and
+`400 INVALID_CURSOR` for one this API did not issue. The web filter searches this endpoint, so it reaches
+any organization however many exist. The query reads the distinct organizations that own an active
+team from `teams` with one `GROUP BY`, then asks `organizations` about at most 1,000 of those ids at a
+time with the visibility filter, so its cost follows the number of teams and does not depend on the
+planner's statistics for `organizations`. The CLI's `teams directory organizations` command pages through it, and the human `teams directory` table does not print the list.
+The response's `scope` is only the deployment-wide (GLOBAL) value of `teams.directoryScope`. It does not describe what the caller is shown once organizations
 override the setting: a viewer may see the teams of an organization whose value is `platform` while `scope`
 reads `organization`, and the reverse. Each team's own organization decides.
 
@@ -750,16 +758,19 @@ approval creates no second one, the role they already hold is the granted role, 
 
 A decision is a conditional update on the status the reviewer saw, so two reviewers cannot both decide
 the same request. The two approval paths lock the organization row and then the team's, the order the
-other membership writes use (workflow launch locks a team before its organization; see Limitations).
-Under those locks they re-read the approver's standing, the requester's organization and team
-membership, and refuse an approver who no longer holds the capability, a requester who is no longer
+other membership writes use, and workflow launch takes them in the same order (see
+[Lock order](#lock-order)). Under those locks they re-read the approver's standing, the requester's
+organization and team membership, and refuse an approver who no longer holds the capability, a requester who is no longer
 active or a team that is no longer active. The audit rows record the authority read under the lock. A
-rejection and a withdrawal take neither lock, and the conditional update alone decides them. Creating a
-request takes a per-user advisory lock instead, so two requests by one person cannot both pass the
-open-request cap, and under it re-reads that the requester and the team are still active; a user
-deactivation takes the same lock before it closes that person's requests, so a request cannot
-slip in after the close. Every write records `ConfigAuditLog` rows for the request and for any membership it
-creates. Approving a request, at either step, whose requester already holds the team membership completes
+rejection takes a share lock on the organization row, reads that the organization is still active, and
+then lets the conditional update decide; a withdrawal takes no lock. Creating a request takes a
+per-user advisory lock first, so two requests by one person cannot both pass the open-request cap, then
+share locks on the organization and the team, and under them re-reads that the requester, the team and
+the organization are still active; a user deactivation takes the same advisory lock before it closes
+that person's requests, so a request cannot slip in after the close. Both approval paths and the
+rejection answer `409 ORGANIZATION_INACTIVE` once the organization is deactivated, and a request to a
+team of an inactive organization is refused as `404 TEAM_NOT_FOUND`, as for an unknown team. Every
+write records `ConfigAuditLog` rows for the request and for any membership it creates. Approving a request, at either step, whose requester already holds the team membership completes
 the request without creating a duplicate and records the role they already hold as the granted role.
 
 Reviewers see the queue in the Requests panel on the team space's Members tab, where the tab shows the
@@ -771,6 +782,29 @@ requests awaiting the organization step in the Approvals panel on the organizati
 The in-app assistant may read the directory and the caller's own requests. It may create and withdraw a
 request only after the user confirms, and it may not decide any request.
 
+### Lock order
+
+Every transaction that takes more than one row lock takes them in one global order, and only forward:
+advisory locks keyed by a person (`join-request:<id>`, `team-create:<id>`, `mcp-launch:<id>`), then the
+user row, the connection rows (ascending id), the organization rows (ascending id) and the team rows
+(ascending id), then the rows a write touches. The helpers are in `packages/gateway/src/lib/lockOrder.ts`
+(`lockUser`, `lockConnections`, `lockOrganizations`, `lockTeams`, `lockOrgThenTeam`), and the comment
+there states the order once. Workflow launch, the join approvals, a request's creation, member adds and
+removals, the organization-removal cascade, team deactivation, user deactivation and organization
+deactivation all take their locks through them or in the same order.
+
+A workflow launch holds the launching user's row `FOR NO KEY UPDATE`, not `FOR UPDATE`. That excludes a
+change to the account (a role, the active flag, the email) and another launch by the same person, and it
+does not exclude the share lock a foreign key check takes on the user row when a membership or a request
+is inserted for that person. Those inserts hold a team row, which the launch also needs, so a stronger
+lock on the user row would let a launch wait for the team while the insert waits for the user. A launch
+of several repositories locks every connection, then every organization, then every team across all of
+them before it checks any, so two overlapping launches queue at the first lock they share. A user
+deactivation takes the account's row before it closes that account's open requests, for the same reason.
+Organization and team rows are locked `FOR UPDATE` by a membership write, an approval, a deactivation and
+a launch; a request's creation and a rejection take `FOR SHARE`, which excludes only the `FOR UPDATE`
+holders and not each other.
+
 ### Closing requests on deactivation
 
 Deactivating a user or a team closes that scope's open join requests in the same transaction, and writes
@@ -779,32 +813,168 @@ an audit row for each one. A request of a deactivated requester becomes `WITHDRA
 either step. Each closed request carries a decision note that names the reason. A close starts no cooldown.
 Reactivating the user or team reopens nothing: the closed requests stay closed, and the person asks again.
 
-The close helper also supports an organization scope (`REJECTED` with `ORGANIZATION_DEACTIVATED`), but
-no deactivation path calls it: no route sets an organization inactive, so nothing closes requests on
-that ground today.
+Deactivating an organization closes the open requests of all its teams the same way: each becomes
+`REJECTED` with `ORGANIZATION_DEACTIVATED`, at either step (see
+[Deactivating an organization](#deactivating-an-organization)).
+
+### Deactivating an organization
+
+`PATCH /api/v1/platform/organizations/:orgId` (and the same route under `/api/v1/admin/organizations`)
+accepts `isActive` beside the fields an organization admin may change. Only a platform `ADMIN` may send
+it (capability `platform.orgs.deactivate`); a request that carries `isActive` from anyone else is
+refused, whatever else it carries. The change, any `name`, `slug` or `trustedInvites` sent with it, the
+closing of requests and the audit row commit in one transaction, which takes the organization's row lock
+first. Deactivating:
+
+- closes every open join request of the organization's teams (`REJECTED` with `ORGANIZATION_DEACTIVATED`,
+  no cooldown, no notification) and records the count in the audit row's `after.closedJoinRequests`;
+- is refused with `409 DEFAULT_ORGANIZATION` for the organization that owns the team named by the
+  `defaultTeamSlug` workflow default, because new accounts are enrolled in that team;
+- closes nothing when the organization is already inactive.
+
+Reactivating sets the flag and reopens nothing. While an organization is inactive its teams are not in
+the directory, a request to one is `404 TEAM_NOT_FOUND`, approving or rejecting a request that was
+already open is `409 ORGANIZATION_INACTIVE`, creating a team in it is `409 ORGANIZATION_INACTIVE` (on
+`POST /api/v1/teams`, including the organization with the slug `default` that it falls back to when no
+`orgId` is sent, and on the organization's own teams route; the check reads the organization under its row
+lock), and saving a `defaultTeamSlug` that names one of its teams at `/admin/workflow-defaults` is
+`409 DEFAULT_TEAM_ORGANIZATION_INACTIVE`, checked under the same lock. Existing members, teams and runs are not changed. Only join requests, team creation and the
+default-team-slug save refuse an inactive organization: a team admin can still add members to a team of
+one, and inviting people into the organization stays allowed, though an invited account then waits in the
+approval queue even when `trustedInvites` is on. `GET /api/v1/platform/organizations/budget-alerts`
+lists only active organizations unless `includeInactive=true`, which the admin organization list sends so
+an inactive organization can be reactivated. The organization's page in the web app, under **Admin →
+Organizations**, shows a Deactivate or Reactivate card to a platform `ADMIN`, with a confirmation that
+names what closes. The CLI has `auto-swe orgs deactivate <orgId>` and `orgs reactivate <orgId>`. The route also carries
+`trustedInvites`, and the in-app assistant policy treats it as `confirm`: the assistant may call it only
+after the user confirms, `isActive` included.
 
 ### Notifications
 
-Three notifications go out, all best effort. The module is `joinRequestNotifier.ts`, and it is called after
-the transaction that caused the event commits.
+Notifications are rows in an outbox, `join_request_notifications`, not sends made after a commit. The
+transaction that creates or decides a request writes the rows it announces (`enqueueJoinRequestEvent` in
+`joinRequestOutbox.ts`), so they commit with the change or not at all, and a gateway-side poller
+(`plugins/joinRequestNotificationPoller.ts`, started with the gateway) delivers them. A row has an event
+(`CREATED`, `APPROVED`, `REJECTED`, `PENDING_ORG`), an audience, a channel (`SLACK` or `EMAIL`), a
+status (`PENDING`, `DELIVERED`, `SKIPPED`, `FAILED`), an attempt count, the time of the next attempt and
+`lastError`. At most one row exists for a request, an event and an audience, so a repeated enqueue creates
+none. A deactivation close writes no row.
 
-| Event | Recipient | Channel |
+| Event | Audience | Channel |
 |---|---|---|
-| A request is created | The team's `slackNotifyChannel`, when it is set and Slack is configured | Slack post |
-| A request is decided as `APPROVED` or `REJECTED` | The requester | Email |
-| A request moves to `PENDING_ORG` | The requester, and the organization's active `ADMIN` members | Email |
+| A request is created, and the team has a `slackNotifyChannel` for which a Slack bot token resolves | `TEAM_CHANNEL`: the team's channel | Slack post |
+| A request is created, and the team has no such channel, and `teams.joinRequestReviewerEmail` is on | `TEAM_REVIEWERS`: the team's active `LEAD` and `ADMIN` members | Email |
+| A request is decided as `APPROVED` or `REJECTED` | `REQUESTER` | Email |
+| A request moves to `PENDING_ORG` | `REQUESTER`, and `ORG_ADMINS`: the organization's active `ADMIN` members | Email |
 
-Nothing is sent when `teams.joinRequestNotifications` is `false`, and a deactivation close sends nothing.
+A team whose channel is set but has no resolvable bot token counts as having no channel, so its reviewers
+are emailed. The routing decision (a usable Slack channel, or the reviewer-email fallback) is resolved
+before the request's transaction opens, so creating a request never holds a pooled connection while it
+waits for a second one. Only the Slack bot-token lookup is forgiven: a Slack configuration that cannot be
+decrypted counts as no usable channel and the reviewers are emailed instead, and that log line is written
+at most once a minute and carries the error's type, never its text. A database error in the routing lookup
+fails the request: it is not created. The decision is made once, at creation. If the team's channel or
+its bot token is removed before the `TEAM_CHANNEL` row is sent, that row is `SKIPPED` (`no_recipients` for a
+removed channel, `transport_not_configured` for a missing token) and the reviewers are not emailed in its
+place.
+A request created in a team with neither a channel nor the reviewer email produces no row for
+the new-request event; its reviewers rely on the queue. Reviewer and organization-admin recipients are
+resolved when the row is sent, not when it is written, deduplicated case-insensitively, and capped at 20
+each (an organization with more admins logs a warning and emails the first 20).
+
+**Delivery.** Each tick, every 5 seconds (at once again after a full batch), claims up to 20 due `PENDING`
+rows with `FOR UPDATE SKIP LOCKED` and sets each row's `nextAttemptAt` 10 minutes ahead. That value is the
+row's lease. The send runs outside the claim transaction. Before each row, and again before each recipient
+and before a Slack post, the poller extends the lease from now with an update conditional on the row's id,
+its status `PENDING` and the lease value the poller holds. If that update finds the value changed (another
+replica claimed the row after a lease lapsed, an admin retried it, a purge removed it), the poller has lost
+the lease: it sends nothing further and records nothing. The writes of `reached` and of the outcome carry
+the same condition and also require status `PENDING`, so only the poller that holds the lease writes the
+row, and an admin retry or a purge that raced it is not undone. A row whose claimer crashed returns when its
+last extension ends. A send is bounded: SMTP connects within 15 s, waits 15 s for the greeting and 30 s of
+silence on the socket, one message is abandoned after 90 s, the Resend call after 30 s and a Slack post
+after 2 s.
+
+**Delivery is at least once per recipient, not exactly once.** A recipient is recorded in the row's
+`reached` set only after a transport accepted the message, and a recipient already in `reached` is not sent
+again by a retry. A second copy therefore needs an attempt whose outcome was unknown:
+
+- the 90 s per-message email deadline fires (the poller's socket is destroyed and no Resend fallback starts
+  afterwards, but a relay that had already read the whole message can still deliver it);
+- the connection is lost after the relay read the message;
+- the 30 s Resend request or the 2 s Slack post is aborted, or its answer is lost;
+- the process crashes or shuts down between the send and the write of `reached`;
+- a poller loses its lease in the middle of a send and the poller that took the row sends again.
+
+Each such attempt can repeat that one recipient, once per attempt (a row has up to 6); no other recipient is
+repeated. Before any deadline fires, an SMTP failure still falls back to Resend, so a message that SMTP
+failed on after the relay had read it can be delivered twice within one attempt. Several gateway replicas
+may run, with this at-least-once behaviour, but only if their clocks agree: see the clock requirement below.
+
+A failure between two recipients does not erase the ones already reached. The poller keeps the latest
+`reached` set it knows and writes it with the failure, so a recipient that was emailed but whose own write
+failed is still recorded.
+
+**Clocks.** The lease is compared on each gateway process's own clock when it looks for due rows (a new
+row takes the database's clock). Keep the clocks of every gateway replica in step, with NTP or the
+platform's time sync. A replica whose clock is more than about 8 minutes ahead treats rows that another
+replica holds as due and takes them, and the recipient in flight at that moment is then emailed twice
+routinely, not only after a stall.
+
+**Shutdown.** Closing the gateway waits up to 30 s for a tick that is running. Once the poller is stopping,
+the rows of the claimed batch that were not started are released (due at once, only if the lease is still
+held), no new recipient or Slack post starts, a row stopped between two recipients goes back with what it
+reached recorded and no failed attempt counted, and the retention purge is skipped. A send already in
+flight runs to its own deadline, up to 90 s for a message, which can be longer than the 30 s wait; that row
+then stays leased until the lease ends, 10 minutes after its last extension.
+
+Before sending, the poller loads the request and skips the row with a
+fixed `lastError` when:
+
+| `lastError` | Why the row is `SKIPPED` |
+|---|---|
+| `notifications_disabled` | `teams.joinRequestNotifications` is `false` |
+| `request_state_changed` | The request is gone, was closed by a deactivation, or is no longer in the status the event announces (a new-request row for a request already decided) |
+| `party_inactive` | The requester, the team or the team's organization is inactive |
+| `no_recipients` | The audience has no address, or the team has no channel any more |
+| `transport_not_configured` | No SMTP or Resend transport for an email row, or no Slack bot token for a Slack row; the process logs one warning per channel |
+
+A failed send is `transport_error` (email) or `slack_error`, and is retried after 30 seconds, 2 minutes,
+10 minutes, 1 hour and 6 hours; the sixth failed attempt makes the row `FAILED`. `lastError` holds only
+these codes, never an address, a message body or a credential. A row is never sent again once
+`DELIVERED`, and a partly failed email fan-out resends only to the recipients not yet reached: the row
+keeps a set of hashes of the addresses it has reached, written after each recipient. No address is stored
+in the row. The hashes are unsalted SHA-256 values of the lower-cased address with a fixed prefix, so they
+are pseudonymous, not anonymous: anyone who holds the users table can map them back to addresses. The API
+never returns them. A row skipped for any reason is final, as is a delivered one: only a `FAILED` row can
+be retried.
+
 The Slack post names the requester and the team, and carries the request's message. The message is escaped
 and Slack broadcast mentions are neutralized. The post links to the team's members page for review, and it
 never includes the requester's email address. The emails are escaped in HTML, carry the decision note, and
-link to the web app. No token or credential appears in any of them. Email uses the SMTP or Resend transport
-that sign-in emails use. When neither is configured, the sends are skipped and the gateway process logs one
-warning (in development and test it logs the recipient count instead). A failed send is logged and dropped;
-the request and its decision stand. A request closed by a deactivation, or whose team or organization is
-inactive when the notifier runs, sends nothing. The organization admins' email reaches at most the first 20
-active admins and links to the organization's admin page. The Slack post needs the Slack bot token for the
-channel; without one nothing is posted.
+link to the web app; the reviewer email names the requester but not their address. No token or credential
+appears in any of them. Email uses the SMTP or Resend transport that sign-in emails use, with the bounded
+timeouts above; sign-in email keeps nodemailer's own defaults. The SMTP modes are plain, implicit TLS (port
+465), STARTTLS (any other port, opportunistic), and AUTH PLAIN and LOGIN, with certificate-chain and
+hostname verification on and SNI sent for host names (see [Limitations](#limitations) for what that does not cover).
+
+Delivered, skipped and failed rows older than `teams.joinRequestNotificationRetentionDays` are deleted by
+the poller, oldest first by the time they were last updated, 500 rows a pass and at most one pass a minute
+per gateway process (a closing poller skips it); an index on `(status, updated_at)` serves the filter. A `PENDING` row is never
+deleted. Deleting the request deletes its rows.
+
+**Admin view.** A platform `ADMIN` (capability `platform.join-request-notifications.manage`) reads the
+outbox with `GET /api/v1/platform/join-request-notifications?status=&limit=&cursor=`, newest first, `limit`
+1 to 100 (default 50), `meta.nextCursor` for the next page and `400 INVALID_CURSOR` for a cursor this API
+did not issue. Each row carries the event, audience, channel, status, attempts, `nextAttemptAt`,
+`lastError`, `deliveredAt`, the request id and the team's id and name. It carries no recipient address and
+not the reached set. `POST /api/v1/platform/join-request-notifications/:id/retry` re-queues a `FAILED`
+row (attempts reset to 0, error cleared, due now) and writes an audit row; a row in any other status is
+`409 NOTIFICATION_NOT_FAILED` and an unknown id is `404 NOTIFICATION_NOT_FOUND`. The re-queue and its audit
+row commit in one transaction, and the row keeps its `reached` set, so a retry does not resend to the
+recipients already reached. The in-app assistant may
+call neither route. The CLI has `auto-swe notifications list [--status=S]` and `notifications retry <id>`; there
+is no web page for them.
 
 ### Creating teams
 
@@ -844,17 +1014,54 @@ The keys are declared in the setting registry and edited at `/admin/platform-set
 | `teams.maxOpenJoinRequests` | `5` | GLOBAL | Open join requests one user may hold across all teams (1 to 50). |
 | `teams.joinRequestCooldownHours` | `72` | GLOBAL | Hours after a rejection before the same team accepts a new request (0 to 720). |
 | `teams.withdrawCooldownHours` | `1` | GLOBAL | Hours after a person withdraws a request before that team accepts a new one from them (0 to 720). |
-| `teams.joinRequestNotifications` | `true` | GLOBAL | Whether join-request notifications are sent: the requester's decision email, the Slack post on a new request, and the organization admins' email. `false` sends none. |
+| `teams.joinRequestNotifications` | `true` | GLOBAL | Whether join-request notifications are sent: the requester's decision email, the Slack post on a new request, the reviewer email and the organization admins' email. `false` sends none; rows already queued are skipped as `notifications_disabled`. |
+| `teams.joinRequestReviewerEmail` | `true` | GLOBAL | Whether a new request emails the team's active `LEAD` and `ADMIN` members when the team has no usable Slack channel. `false` stops that email only. |
+| `teams.joinRequestNotificationRetentionDays` | `30` | GLOBAL | Days a delivered, skipped or failed notification row is kept before the poller deletes it (1 to 3650). |
 
 ## Limitations
 
-- **Workflow launch and a join-request approval can deadlock.** An approval locks the organization row
-  and then the team's, as the other membership writes do; workflow launch locks a team and then its
-  organization, and also locks the launching user's row, which an approval's membership insert needs
-  a share lock on. A launch and an approval on the same team that overlap can make Postgres abort one
-  of them (`deadlock detected`), which the caller sees as a server error and can retry.
-- **The directory lists at most 500 organizations in its filter.** `organizationsTruncated` says when
-  more exist; the team list itself is paged and unaffected.
+- **A skipped notification is never sent later.** `SKIPPED` is final and only `FAILED` rows can be
+  retried. A row skipped as `transport_not_configured` (no SMTP or Resend, or no Slack bot token), or as
+  `notifications_disabled`, stays skipped after an operator configures the transport or turns the setting
+  back on: nothing is replayed. The affected requests stay in the review queue.
+- **A notification can be delivered more than once to one recipient.** Delivery is at least once per
+  recipient. A recipient is recorded only after a transport accepted the message, so an attempt with an
+  unknown outcome (the 90 s email deadline, a connection lost after the relay read the message, a Resend or
+  Slack abort or lost answer, a crash between the send and the write, a lease lost in the middle of a send)
+  is repeated by the retry and can reach that recipient twice, once per attempt, up to 6 attempts. No other
+  recipient is repeated.
+- **Gateway replicas must keep their clocks in step.** The lease is read on each process's own clock. A
+  replica more than about 8 minutes ahead treats leased rows as due and takes them, which causes the
+  in-flight duplicate routinely.
+- **A closing gateway can leave a row leased.** Shutdown waits 30 s for a running tick, while a send in
+  flight may run for up to 90 s; that row is leased until its lease ends, 10 minutes later.
+- **Notification email over STARTTLS is opportunistic.** There is no require-TLS setting. On any port
+  other than 465 a relay that does not offer STARTTLS is used in plaintext, AUTH included, and an attacker
+  who strips STARTTLS from the exchange can downgrade the connection. Certificate-chain and hostname
+  verification are on, and a private CA can be trusted only through the `NODE_EXTRA_CA_CERTS` environment
+  variable of the gateway process. The same holds for sign-in email.
+- **The `reached` hashes are pseudonymous.** The row stores no address, but anyone holding the users table
+  can map the unsalted hashes back to addresses.
+
+- **The fallback organization of `POST /api/v1/teams` and the default-organization guard follow
+  different keys.** With no `orgId`, the route falls back to the organization with the slug `default`;
+  the refusal to deactivate "the default organization" follows the organization that owns the team named
+  by `defaultTeamSlug`. When the default team lives in another organization, the `default` organization
+  can be deactivated, and a team creation that names no organization is then refused with
+  `ORGANIZATION_INACTIVE`.
+- **Two bulk closes of overlapping requests lock the rows in the order the database reads them.** A
+  user's deactivation, a team's deactivation and an organization's deactivation each update the open
+  requests that match their scope in one statement; nothing orders those row locks across statements.
+  The staged lock-order tests do not cover this, and a deadlock between two such closes is possible in
+  principle.
+- **The service-principal launch guard's lock order is not proven acyclic.** The guard runs before the
+  launch takes its source locks: it locks the principal's row and then the target connection, and the launch
+  then takes the acting user's row (when it carries one), which the order puts before the connection. Other writers
+  that lock connection rows on their own (repository moves, share edits) and the device-approval user lock
+  are not routed through `lockOrder.ts` either. The staged tests cover the membership writes, approvals,
+  deactivations and launches that are, not these paths.
+- **The directory response's own `organizations` list stops at 500.** `organizationsTruncated` says
+  when more exist; the organization search endpoint pages through all of them.
 - **Team secrets are not usable by agents, shell steps or container steps.** They reach only setup
   steps and app previews, so a credential an agent needs must come from somewhere else.
 - **Rotating a team secret does not warn about shadowing.** When a repository secret of the same
@@ -1001,12 +1208,15 @@ The keys are declared in the setting registry and edited at `/admin/platform-set
 - **The default `teams.directoryScope` exposes the directory platform-wide.** Until an operator sets
   `organization`, at GLOBAL scope or for an organization, every signed-in user sees every active team's
   name, slug, description, organization and member count, and can ask to join any of them.
-- **Notification delivery is not retried and not recorded.** A failed send is only logged.
-- **A team with no `slackNotifyChannel` posts nothing on a new request**, so its reviewers rely on the queue.
-- **Reactivating a user or team does not reopen requests that were closed by the deactivation.**
-- **An organization deactivated outside the API keeps its join requests open.** No route deactivates an
-  organization, so nothing closes its requests when one is deactivated by other means (for example
-  directly in the database). The requests stay open, keep counting toward each requester's open-request
-  cap, and the approval paths do not check the organization's active flag.
+- **A notification is retried for about seven hours, then stays `FAILED`.** After the sixth failed
+  attempt nothing sends it again until a platform `ADMIN` retries it through the API or the CLI, and the
+  retry has no web page. Rows are kept for `teams.joinRequestNotificationRetentionDays` and then deleted.
+- **Email addresses are not verified.** A notification goes to the address on the account; the platform
+  does not check that a mailbox exists, and a transport that accepts a message is recorded as delivered.
+- **A team with no `slackNotifyChannel` and `teams.joinRequestReviewerEmail` off gets no notice of a new
+  request**, so its reviewers rely on the queue. A Slack row that fails is retried as Slack; it never falls
+  back to email, and a team whose channel or bot token is removed after the request was created has the
+  Slack row skipped and its reviewers are not emailed for it.
+- **Reactivating a user, a team or an organization does not reopen requests that were closed by the deactivation.**
 - **The organization-admin email reaches the first 20 active organization admins.** A larger organization's
   remaining admins are not emailed, and the omission is logged.

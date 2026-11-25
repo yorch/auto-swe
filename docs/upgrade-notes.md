@@ -2340,7 +2340,7 @@ action.
 
 **Verify.** The queries in the role-split entry above return no old values.
 
-### Join-request notification emails and per-organization directory scope (`<fixing commit SHA>`)
+### Join-request notification emails and per-organization directory scope (`456c74c`)
 
 **Affected.** Every deployment that runs migration `20261120100000_team_join_request_close_reason`, which
 the normal deployment migration step applies. Notifications are on by default, so no operator action is
@@ -2495,3 +2495,115 @@ Two further changes apply to every deployment, whether or not it maps a server:
 `mcpMappings`. After a mapping is saved, a run of an agent bound to that plugin records an
 `agent.plugin_mcp` event for the server, or an `agent.plugin_mcp_skipped` event with the reason it was not
 relayed.
+
+### Join-request notifications move to an outbox table; teams without Slack email their reviewers (`<fixing commit SHA>`)
+
+**Affected.** Every deployment that runs migration `20261124000000_join_request_notifications`, which the
+normal deployment migration step applies, and where join requests are in use. The reviewer email is on by
+default, so a deployment with an SMTP or Resend transport configured for sign-in email starts emailing the
+active `LEAD` and `ADMIN` members of any team that has no usable Slack channel (no `slackNotifyChannel`, or
+no Slack bot token for it) each time someone asks to join. Teams with a usable Slack channel are unchanged:
+they get the Slack post and no email. Deployments without an email transport see no email.
+
+**What changes.** Notifications were sent after the request's transaction committed, and a failed send was
+only logged. They are now rows in `join_request_notifications`, written in the same transaction as the
+request or decision, and delivered by a poller in the gateway (see the next entry). The two new settings
+are `teams.joinRequestReviewerEmail` (default `true`) and `teams.joinRequestNotificationRetentionDays`
+(default `30`). Rows older than the retention are deleted once they are delivered, skipped or failed.
+Events that happened before the upgrade have no rows, so nothing is sent for them. A Slack bot token that
+cannot be decrypted counts as no usable channel, so the reviewers are emailed instead and the request is
+still created (logged at most once a minute, by error type only); a database error in that routing lookup
+fails the request instead. If a team's channel or token is removed after a request was created, the Slack
+row is skipped and the reviewers are not emailed for it.
+
+**Actions.**
+
+1. To keep the earlier behaviour for teams without a Slack channel (no email to their reviewers), set
+   `teams.joinRequestReviewerEmail` to `false` at `/admin/platform-settings`. To stop every join-request
+   notification, set `teams.joinRequestNotifications` to `false`; rows already queued are then skipped.
+2. Make sure the migration has run before the gateway of this build starts: the poller reads the new table.
+
+**Verify.** `SELECT to_regclass('join_request_notifications')` is not null. Open a join request to a team
+with no Slack channel while an email transport is configured: a row with `audience = 'TEAM_REVIEWERS'`
+appears and, within a few seconds, has `status = 'DELIVERED'`
+(`SELECT event, audience, status, attempts, last_error FROM join_request_notifications ORDER BY created_at DESC LIMIT 5`).
+With `teams.joinRequestReviewerEmail` set to `false` no such row is written.
+
+### Join-request notifications are queued and retried by the gateway (`<fixing commit SHA>`)
+
+**Affected.** Every deployment that runs the gateway of this build. Several gateway replicas may run: each
+tick claims rows with `FOR UPDATE SKIP LOCKED`, and the row's `next_attempt_at` is its lease (10 minutes).
+The poller extends the lease before each row and before each recipient or Slack post with an update
+conditional on the value it holds; a poller that finds the value changed has lost the row, sends nothing
+further and records nothing. A row whose claimer crashed is taken again when its last extension ends.
+Delivery is at least once per recipient, not exactly once: a recipient is recorded in `reached` only after a
+transport accepted the message, and a recorded recipient is not sent again. An attempt with an unknown
+outcome (the 90 s per-message email deadline, a connection lost after the relay read the message, a Resend
+or Slack abort or lost answer, a crash between the send and the write, a lease lost in the middle of a send)
+can repeat that one recipient, up to 6 attempts; no other recipient is repeated. Sends are bounded (SMTP 15 s
+to connect, 15 s for the greeting, 30 s of socket silence; 90 s per message; 30 s for Resend; 2 s for a Slack
+post).
+
+**Clocks must agree.** The lease is evaluated on each gateway process's own clock (new rows take the
+database's). Keep the clocks of all gateway replicas in step: a replica more than about 8 minutes ahead
+treats rows another replica holds as due and takes them, and the recipient in flight is then emailed twice
+routinely. Closing a gateway waits up to 30 s for a running tick and releases the rows it had not started; a
+send still in flight can outlast that wait, and its row stays leased until the lease ends.
+
+**What changes.** A failed send is retried after 30 seconds, 2 minutes, 10 minutes, 1 hour and 6 hours,
+and the sixth failed attempt marks the row `FAILED`, about seven hours after the first. Each row records
+its status, attempts and a fixed error code (`transport_error`, `slack_error`, `transport_not_configured`,
+`no_recipients`, `request_state_changed`, `notifications_disabled` or `party_inactive`), never an address.
+A deployment with no email transport marks email rows `SKIPPED` with `transport_not_configured` at once,
+instead of retrying them, and the gateway logs one warning per process. A row that is `FAILED` stays until
+retention deletes it or a platform admin retries it. The poller deletes delivered, skipped and failed rows
+past `teams.joinRequestNotificationRetentionDays`, 500 a pass and at most once a minute, and never a
+`PENDING` row.
+
+**Skipped rows are final.** Only a `FAILED` row can be retried. A row skipped with
+`transport_not_configured` (or any other `SKIPPED` reason, `notifications_disabled` included) is not sent
+later, so an operator who configures SMTP, Resend or a Slack bot token after this upgrade does not receive
+the notices that were skipped before it, and turning `teams.joinRequestNotifications` back on replays
+nothing.
+
+**Actions.** None are required, and nothing is replayed for skipped rows. The requests behind them are still
+open in each team's review queue (and in the organization's Approvals panel), so reviewers can find them
+there; to see which were skipped, query `status = 'SKIPPED'` (below). To find failures, a platform admin calls
+`GET /api/v1/platform/join-request-notifications?status=FAILED` and re-queues a row with
+`POST /api/v1/platform/join-request-notifications/<id>/retry` (attempts reset, due at once; any other
+status is `409 NOTIFICATION_NOT_FAILED`; the re-queue and its audit row are one transaction, and
+recipients already reached are not resent). The CLI has `auto-swe notifications list --status=FAILED` and
+`notifications retry <id>`; there is no web page. In SQL:
+`SELECT id, event, audience, attempts, last_error FROM join_request_notifications WHERE status = 'FAILED'`
+(use `'SKIPPED'` to see rows that will not be retried).
+
+**Verify.** With the email transport disabled, create a join request to a team with reviewers: the row is
+`SKIPPED` with `last_error = 'transport_not_configured'`. With it enabled and then broken (a wrong SMTP
+host), the row shows `attempts = 1`, `status = 'PENDING'` and a later `next_attempt_at`.
+
+### Organizations can be deactivated, and a lock order replaces a launch deadlock (`<fixing commit SHA>`)
+
+**Affected.** Deployments whose platform admins deactivate organizations, and deployments that saw
+`deadlock detected` errors from workflow launches or join-request approvals. No other action is needed.
+
+**What changes.** `PATCH /api/v1/platform/organizations/:orgId` (and the same route under
+`/api/v1/admin/organizations`) accepts `isActive` from a platform admin only. Deactivating closes the
+organization's open join requests (`REJECTED`, `ORGANIZATION_DEACTIVATED`; no cooldown, no notification),
+refuses the organization that owns the default team (`409 DEFAULT_ORGANIZATION`), and from then on
+approvals and rejections answer `409 ORGANIZATION_INACTIVE`, creating a team there answers
+`409 ORGANIZATION_INACTIVE`, and saving a `defaultTeamSlug` whose team is in it answers
+`409 DEFAULT_TEAM_ORGANIZATION_INACTIVE`. Team admins can still add members to the teams of an inactive
+organization, and the in-app assistant may call the route only after the user confirms. Reactivating
+reopens nothing. An organization that an operator
+deactivated directly in the database before this build keeps its open requests, and a decision on one is
+refused with `ORGANIZATION_INACTIVE`, until the organization is reactivated and deactivated through the API.
+Workflow launch, join approvals and the other membership writes now take their row locks in one order
+(`packages/gateway/src/lib/lockOrder.ts`), and a launch holds the launching user's row `FOR NO KEY UPDATE`.
+
+**Actions.** None. To close the requests of an organization that was deactivated by hand, reactivate it and
+deactivate it through the API.
+
+**Verify.** As a platform admin, deactivate a test organization: the response carries `isActive: false`, the
+audit row for the organization names `closedJoinRequests`, and
+`SELECT count(*) FROM team_join_requests r JOIN teams t ON t.id = r.team_id WHERE t.org_id = '<orgId>' AND r.status IN ('PENDING_TEAM', 'PENDING_ORG')`
+returns 0.

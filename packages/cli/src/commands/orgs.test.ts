@@ -220,4 +220,88 @@ describe('runOrgsCommand', () => {
     expect(code).toBe(1);
     expect(err()).toContain('Unknown subcommand: orgs members');
   });
+
+  describe('deactivate and reactivate', () => {
+    it('PATCHes isActive false for deactivate and prints the name and new state', async () => {
+      nextResponse = respond(200, {
+        id: 'org-1',
+        isActive: false,
+        name: 'Acme',
+        slug: 'acme',
+        trustedInvites: false,
+      });
+      const code = await runOrgsCommand(['deactivate', 'org-1'], ENV);
+      expect(code).toBe(0);
+      expect(calls[0]).toEqual({
+        body: { isActive: false },
+        method: 'PATCH',
+        url: 'http://gw/api/v1/platform/organizations/org-1',
+      });
+      expect(out()).toBe('Organization Acme is now inactive.\n');
+    });
+
+    it('PATCHes isActive true for reactivate and prints the new state', async () => {
+      nextResponse = respond(200, { id: 'org-1', isActive: true, name: 'Acme' });
+      const code = await runOrgsCommand(['reactivate', 'org-1'], ENV);
+      expect(code).toBe(0);
+      expect(calls[0]?.body).toEqual({ isActive: true });
+      expect(calls[0]?.method).toBe('PATCH');
+      expect(out()).toBe('Organization Acme is now active.\n');
+    });
+
+    it('falls back to the id when the response carries no name', async () => {
+      nextResponse = respond(200, {});
+      await runOrgsCommand(['deactivate', 'org-1'], ENV);
+      expect(out()).toBe('Deactivated organization org-1.\n');
+    });
+
+    it('prints the organization as JSON with --json', async () => {
+      const org = { id: 'org-1', isActive: true, name: 'Acme', slug: 'acme' };
+      nextResponse = respond(200, org);
+      const code = await runOrgsCommand(['reactivate', 'org-1', '--json'], ENV);
+      expect(code).toBe(0);
+      expect(JSON.parse(out())).toEqual(org);
+    });
+
+    it('surfaces DEFAULT_ORGANIZATION with exit 2', async () => {
+      nextResponse = respond(409, {
+        error: {
+          code: 'DEFAULT_ORGANIZATION',
+          message: 'The organization that owns the default team cannot be deactivated',
+        },
+      });
+      const code = await runOrgsCommand(['deactivate', 'org-1'], ENV);
+      expect(code).toBe(2);
+      expect(err()).toContain(
+        'DEFAULT_ORGANIZATION: The organization that owns the default team cannot be deactivated'
+      );
+    });
+
+    it('surfaces FORBIDDEN with exit 2', async () => {
+      nextResponse = respond(403, {
+        error: { code: 'FORBIDDEN', message: 'Not a platform admin' },
+      });
+      const code = await runOrgsCommand(['reactivate', 'org-1'], ENV);
+      expect(code).toBe(2);
+      expect(err()).toContain('FORBIDDEN: Not a platform admin');
+    });
+
+    it('surfaces NOT_FOUND with exit 2', async () => {
+      nextResponse = respond(404, {
+        error: { code: 'NOT_FOUND', message: 'Organization not found' },
+      });
+      const code = await runOrgsCommand(['deactivate', 'org-404'], ENV);
+      expect(code).toBe(2);
+      expect(err()).toContain('NOT_FOUND: Organization not found');
+    });
+
+    it('needs exactly one organization id and no unknown flags', async () => {
+      expect(await runOrgsCommand(['deactivate'], ENV)).toBe(1);
+      expect(err()).toContain('Usage: orgs deactivate <orgId>');
+      expect(await runOrgsCommand(['reactivate', 'org-1', 'extra'], ENV)).toBe(1);
+      expect(await runOrgsCommand(['deactivate', 'org-1', '--note=x'], ENV)).toBe(1);
+      expect(err()).toContain('Unknown flag: --note');
+      expect(calls).toHaveLength(0);
+    });
+  });
 });
