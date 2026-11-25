@@ -13,6 +13,8 @@ export interface OrgBudgetTableRow {
   /** Absent (not null) where the caller may not read dollars; null is "nothing spent yet". */
   currentMonthUsage?: { costUsdAccrued: number } | null;
   id: string;
+  /** False for an organization a platform admin has deactivated. */
+  isActive?: boolean;
   /** Absent where the caller may not read dollars; null is "no cap". */
   monthlyBudgetUsdCents?: number | null;
   name: string;
@@ -178,7 +180,12 @@ export function OrgBudgetTable({
           const header = col === 'name' ? nameLabel : label;
           return col === 'name'
             ? {
-                cell: (org) => org.name,
+                cell: (org) => (
+                  <span className="inline-flex flex-wrap items-center gap-2">
+                    {org.name}
+                    {org.isActive === false && <Badge tone="muted">Inactive</Badge>}
+                  </span>
+                ),
                 header,
                 id: col,
                 primary: true,

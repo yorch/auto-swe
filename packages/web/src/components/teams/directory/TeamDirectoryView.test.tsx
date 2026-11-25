@@ -93,29 +93,135 @@ describe('TeamDirectoryView', () => {
     expect(screen.queryByText(/Showing teams in the organizations you belong to/)).toBeNull();
   });
 
-  it('offers the organizations the gateway lists, and keeps them while a search loads', async () => {
-    const organizations = [
-      { id: 'o1', name: 'Acme' },
-      { id: 'o2', name: 'Zeta' },
-    ];
-    const spy = setupFetchMock({
-      '/api/v1/teams/directory': () => page([team({})], { organizations }),
+  describe('the organization filter', () => {
+    const ORG_URL = '/api/v1/teams/directory/organizations';
+    const orgs = (...names: string[]) => names.map((n) => ({ id: `id-${n}`, name: n }));
+    const urlsOf = (spy: ReturnType<typeof vi.fn>, path: string) =>
+      spy.mock.calls.map(([u]) => String(u)).filter((u) => u.includes(path));
+    const filter = () => screen.getByRole('combobox', { name: 'Filter by organization' });
+
+    it('lists the organizations the gateway names, searching the server when it opens', async () => {
+      const spy = setupFetchMock({
+        '/api/v1/teams/directory': () => page([team({})], { organizations: orgs('Acme', 'Zeta') }),
+        [ORG_URL]: () => ({ nextCursor: null, organizations: orgs('Acme', 'Zeta') }),
+      });
+      render(withQuery(<TeamDirectoryView />));
+      await screen.findByRole('list', { name: 'Teams' });
+      fireEvent.focus(filter());
+      expect(
+        (await screen.findAllByRole('option')).map((o) => o.textContent?.replace('✓', ''))
+      ).toEqual(['All organizations', 'Acme', 'Zeta']);
+      await waitFor(() => expect(urlsOf(spy, ORG_URL).length).toBe(1));
     });
-    render(withQuery(<TeamDirectoryView />));
-    await screen.findByRole('list', { name: 'Teams' });
-    // Only Acme appears on the page; Zeta is offered because the gateway named it.
-    fireEvent.click(screen.getByRole('button', { name: /Filter by organization/ }));
-    expect(screen.getAllByRole('option').map((o) => o.textContent?.replace('✓', ''))).toEqual([
-      'All organizations',
-      'Acme',
-      'Zeta',
-    ]);
-    fireEvent.click(screen.getByRole('option', { name: 'Zeta' }));
-    await waitFor(() =>
-      expect(spy.mock.calls.some(([u]) => String(u).includes('orgId=o2'))).toBe(true)
-    );
-    fireEvent.click(screen.getByRole('button', { name: /Filter by organization/ }));
-    expect(screen.getAllByRole('option')).toHaveLength(3);
+
+    it('stays offered when more organizations exist than the directory lists, and finds them by search', async () => {
+      // One organization in the directory's own list, but it says more exist.
+      const spy = setupFetchMock({
+        '/api/v1/teams/directory': () =>
+          page([team({})], { organizations: orgs('Acme'), organizationsTruncated: true }),
+        [ORG_URL]: () => ({ nextCursor: null, organizations: orgs('Zenith') }),
+      });
+      render(withQuery(<TeamDirectoryView />));
+      await screen.findByRole('list', { name: 'Teams' });
+      fireEvent.change(filter(), { target: { value: 'zen' } });
+      expect(await screen.findByRole('option', { name: 'Zenith' }, { timeout: 2000 })).toBeTruthy();
+      await waitFor(
+        () => expect(urlsOf(spy, ORG_URL).some((u) => u.includes('q=zen'))).toBe(true),
+        { timeout: 2000 }
+      );
+      // One request for the settled text, not one per keystroke.
+      expect(urlsOf(spy, ORG_URL).some((u) => /q=z(&|$)/.test(u))).toBe(false);
+    });
+
+    it('narrows the teams to the chosen organization and keeps showing it when it is not in the list', async () => {
+      const spy = setupFetchMock({
+        '/api/v1/teams/directory': () =>
+          page([team({})], { organizations: orgs('Acme'), organizationsTruncated: true }),
+        [ORG_URL]: () => ({ nextCursor: null, organizations: orgs('Zenith') }),
+      });
+      render(withQuery(<TeamDirectoryView />));
+      await screen.findByRole('list', { name: 'Teams' });
+      fireEvent.change(filter(), { target: { value: 'zen' } });
+      fireEvent.click(await screen.findByRole('option', { name: 'Zenith' }, { timeout: 2000 }));
+      await waitFor(() =>
+        expect(
+          urlsOf(spy, '/api/v1/teams/directory?').some((u) => u.includes('orgId=id-Zenith'))
+        ).toBe(true)
+      );
+      // The list closed, and the chosen name is what the field shows, though the directory's own
+      // list never carried it.
+      expect((filter() as HTMLInputElement).value).toBe('Zenith');
+      expect(screen.queryByRole('listbox')).toBeNull();
+      // Clearing returns to every organization.
+      fireEvent.click(screen.getByRole('button', { name: 'Clear organization filter' }));
+      expect((filter() as HTMLInputElement).value).toBe('');
+      expect(screen.queryByRole('button', { name: 'Clear organization filter' })).toBeNull();
+    });
+
+    it('pages the list with Load more, by cursor', async () => {
+      const spy = setupFetchMock({
+        '/api/v1/teams/directory': () =>
+          page([team({})], { organizations: orgs('Acme', 'Beta'), organizationsTruncated: true }),
+        [ORG_URL]: () => {
+          const last = String(spy.mock.calls.at(-1)?.[0]);
+          return last.includes('cursor=c1')
+            ? { nextCursor: null, organizations: orgs('Cobalt') }
+            : { nextCursor: 'c1', organizations: orgs('Acme', 'Beta') };
+        },
+      });
+      render(withQuery(<TeamDirectoryView />));
+      await screen.findByRole('list', { name: 'Teams' });
+      fireEvent.focus(filter());
+      fireEvent.click(await screen.findByRole('option', { name: 'Load more' }));
+      expect(await screen.findByRole('option', { name: 'Cobalt' })).toBeTruthy();
+      expect(urlsOf(spy, ORG_URL).some((u) => u.includes('cursor=c1'))).toBe(true);
+      // The earlier pages stay, and nothing is left to load.
+      expect(screen.getByRole('option', { name: 'Acme' })).toBeTruthy();
+      expect(screen.queryByRole('option', { name: 'Load more' })).toBeNull();
+    });
+
+    it('works from the keyboard: arrows move, Enter chooses, Escape closes', async () => {
+      const spy = setupFetchMock({
+        '/api/v1/teams/directory': () => page([team({})], { organizations: orgs('Acme', 'Zeta') }),
+        [ORG_URL]: () => ({ nextCursor: null, organizations: orgs('Acme', 'Zeta') }),
+      });
+      render(withQuery(<TeamDirectoryView />));
+      await screen.findByRole('list', { name: 'Teams' });
+      const input = filter();
+      expect(input.getAttribute('aria-expanded')).toBe('false');
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
+      expect(input.getAttribute('aria-expanded')).toBe('true');
+      await screen.findByRole('option', { name: 'Zeta' });
+      // Active starts on "All organizations"; two arrows reach Zeta, named by activedescendant.
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
+      const active = input.getAttribute('aria-activedescendant');
+      expect(document.getElementById(active ?? '')?.textContent).toBe('Zeta');
+      fireEvent.keyDown(input, { key: 'Enter' });
+      expect((input as HTMLInputElement).value).toBe('Zeta');
+      await waitFor(() =>
+        expect(
+          urlsOf(spy, '/api/v1/teams/directory?').some((u) => u.includes('orgId=id-Zeta'))
+        ).toBe(true)
+      );
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
+      fireEvent.keyDown(input, { key: 'Escape' });
+      expect(input.getAttribute('aria-expanded')).toBe('false');
+      expect(screen.queryByRole('listbox')).toBeNull();
+    });
+
+    it('says so when the search fails or matches nothing', async () => {
+      setupFetchMock({
+        '/api/v1/teams/directory': () => page([team({})], { organizations: orgs('Acme', 'Beta') }),
+        [ORG_URL]: () => ({ nextCursor: null, organizations: [] }),
+      });
+      render(withQuery(<TeamDirectoryView />));
+      await screen.findByRole('list', { name: 'Teams' });
+      fireEvent.change(filter(), { target: { value: 'nothing' } });
+      expect(
+        await screen.findByText('No organization matches.', {}, { timeout: 2000 })
+      ).toBeTruthy();
+    });
   });
 
   it('falls back to the organizations on the page when the gateway lists none', async () => {
@@ -125,7 +231,7 @@ describe('TeamDirectoryView', () => {
     });
     render(withQuery(<TeamDirectoryView />));
     await screen.findByRole('list', { name: 'Teams' });
-    expect(await screen.findByRole('button', { name: /Filter by organization/ })).toBeTruthy();
+    expect(await screen.findByRole('combobox', { name: 'Filter by organization' })).toBeTruthy();
   });
 
   it('loads the next page with the cursor', async () => {

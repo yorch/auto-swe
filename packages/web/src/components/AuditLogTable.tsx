@@ -5,6 +5,7 @@ import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { auditEntityLabel } from '@/lib/configAudit';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 /** The columns every config audit row carries, whichever endpoint it came from. */
@@ -24,33 +25,6 @@ const ACTION_TONES: Record<string, BadgeTone> = {
   CREATE: 'success',
   DELETE: 'danger',
   UPDATE: 'warning',
-};
-
-const ENTITY_LABELS: Record<string, string> = {
-  Agent: 'Agent',
-  AgentSkillAssignment: 'Agent skill assignment',
-  AgentToolConfig: 'Agent tool config',
-  CanaryConfig: 'Canary routing',
-  ConfigSetting: 'Setting',
-  Connection: 'Connection',
-  ConsolidationConfig: 'Consolidation schedule',
-  EmbeddingConfig: 'Embedding config',
-  EvalScheduleConfig: 'Eval schedule',
-  FigmaConfig: 'Figma',
-  GitHubConfig: 'GitHub',
-  GoogleOAuthConfig: 'Google OAuth',
-  IssueTrackerConfig: 'Issue tracker',
-  KnowledgeBaseConfig: 'Knowledge base',
-  ModelCatalogEntry: 'Model catalog',
-  ModelRoleConfig: 'Model config',
-  ModelSuggestion: 'Model suggestion',
-  OktaOAuthConfig: 'Okta OAuth',
-  ProviderCredential: 'Provider credential',
-  RevalidationConfig: 'Revalidation schedule',
-  Skill: 'Skill',
-  SlackConfig: 'Slack',
-  StorageConfig: 'Storage',
-  WorkflowDefaults: 'Workflow defaults',
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -111,9 +85,7 @@ export function AuditLogTable<T extends AuditLogEntry>({
               columns={[
                 {
                   cell: (entry) => (
-                    <span className="text-sm">
-                      {ENTITY_LABELS[entry.entityType] ?? entry.entityType}
-                    </span>
+                    <span className="text-sm">{auditEntityLabel(entry.entityType)}</span>
                   ),
                   header: 'What',
                   id: 'what',

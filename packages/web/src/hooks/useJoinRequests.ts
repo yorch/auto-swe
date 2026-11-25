@@ -2,13 +2,19 @@
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { DirectoryPage, JoinRequestRow, MyJoinRequests } from '@/lib/joinRequests';
+import type {
+  DirectoryOrganizationsPage,
+  DirectoryPage,
+  JoinRequestRow,
+  MyJoinRequests,
+} from '@/lib/joinRequests';
 import type { TeamRoleValue } from '@/lib/roleLabels';
 import { PERMISSIONS_KEY } from './useEffectivePermissions';
 
 /** Query keys for the directory and the three request lists, so a write names what it staled. */
 export const JOIN_REQUEST_KEYS = {
   directory: ['team-directory'] as const,
+  directoryOrganizations: ['team-directory-organizations'] as const,
   mine: ['my-join-requests'] as const,
   org: (orgId: string) => ['org-join-requests', orgId] as const,
   team: (teamId: string) => ['team-join-requests', teamId] as const,
@@ -44,6 +50,43 @@ export function useTeamDirectory(filters: { q: string; orgId: string }) {
         .then(unwrap);
     },
     queryKey: [...JOIN_REQUEST_KEYS.directory, filters.q, filters.orgId],
+  });
+}
+
+const DIRECTORY_ORGANIZATIONS_PAGE_SIZE = 50;
+
+/**
+ * The organizations the directory lists, by name, searched on the server: `q` is a substring of
+ * the name and each further page is one cursor on. Fetched only while `enabled` (the list is open).
+ * `initial` is shown while the unfiltered first page loads, so opening the list is never empty.
+ */
+export function useDirectoryOrganizations(options: {
+  q: string;
+  enabled: boolean;
+  initial?: DirectoryOrganizationsPage;
+}) {
+  return useInfiniteQuery({
+    enabled: options.enabled,
+    getNextPageParam: (last: DirectoryOrganizationsPage) => last.nextCursor ?? undefined,
+    initialPageParam: '' as string,
+    placeholderData: (previous) =>
+      previous ??
+      (options.initial && !options.q ? { pageParams: [''], pages: [options.initial] } : undefined),
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams({ limit: String(DIRECTORY_ORGANIZATIONS_PAGE_SIZE) });
+      if (options.q) {
+        params.set('q', options.q);
+      }
+      if (pageParam) {
+        params.set('cursor', pageParam);
+      }
+      return api
+        .get<DirectoryOrganizationsPage | { data: DirectoryOrganizationsPage }>(
+          `/api/v1/teams/directory/organizations?${params}`
+        )
+        .then(unwrap);
+    },
+    queryKey: [...JOIN_REQUEST_KEYS.directoryOrganizations, options.q],
   });
 }
 

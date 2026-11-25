@@ -24,7 +24,7 @@ export default function GovernOrganizationsPage() {
     isFetching,
     refetch,
     error: loadError,
-  } = useOrganizationDirectory();
+  } = useOrganizationDirectory({ includeInactive: true });
   const isAdmin = usePlatformAdmin();
   const { params, update } = useUrlFilters();
   // The filter lives in the URL so the old Budget alerts link (`?alerting=1`) lands on it.
@@ -32,7 +32,7 @@ export default function GovernOrganizationsPage() {
   const [search, setSearch] = useState('');
 
   const all = orgs ?? [];
-  const alertCount = all.filter((o) => o.alert.triggered).length;
+  const alertCount = all.filter((o) => o.isActive !== false && o.alert.triggered).length;
   const query = search.trim().toLowerCase();
   const rows = all.filter(
     (o) =>

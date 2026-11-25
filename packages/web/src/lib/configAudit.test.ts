@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { auditGroupOf, summarizeAuditChange } from './configAudit';
+import { auditEntityLabel, auditGroupOf, summarizeAuditChange } from './configAudit';
 
 describe('auditGroupOf', () => {
   it('sorts entity types into the slice a page opens on', () => {
@@ -7,6 +7,16 @@ describe('auditGroupOf', () => {
     expect(auditGroupOf('GitHubConfig')).toBe('integrations');
     expect(auditGroupOf('WorkflowDefaults')).toBe('settings');
     expect(auditGroupOf('SomethingNew')).toBe('settings');
+    // A join-request notice is delivered through Slack or email, so it sorts with the integrations.
+    expect(auditGroupOf('JoinRequestNotification')).toBe('integrations');
+  });
+});
+
+describe('auditEntityLabel', () => {
+  it('names the join-request notification, and humanizes a type it does not know', () => {
+    expect(auditEntityLabel('JoinRequestNotification')).toBe('Join-request notification');
+    expect(auditEntityLabel('ProviderCredential')).toBe('Provider credential');
+    expect(auditEntityLabel('SomethingNew')).toBe('Something new');
   });
 });
 

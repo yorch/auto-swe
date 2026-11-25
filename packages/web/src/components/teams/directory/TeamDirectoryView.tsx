@@ -10,7 +10,6 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Skeleton } from '@/components/ui/LoadingState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Select } from '@/components/ui/Select';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useTeamDirectory } from '@/hooks/useJoinRequests';
@@ -24,6 +23,7 @@ import {
 import { teamHref } from '@/lib/teamSpace';
 import { plural } from '@/lib/utils';
 import { CreateTeamDialog } from './CreateTeamDialog';
+import { OrganizationFilter } from './OrganizationFilter';
 import { RequestToJoinDialog } from './RequestToJoinDialog';
 
 /**
@@ -33,7 +33,9 @@ import { RequestToJoinDialog } from './RequestToJoinDialog';
  */
 export function TeamDirectoryView() {
   const [search, setSearch] = useState('');
-  const [orgId, setOrgId] = useState('');
+  // The chosen organization is kept whole: it may not be in any page the filter has loaded.
+  const [selectedOrg, setSelectedOrg] = useState<CreatableOrg | null>(null);
+  const orgId = selectedOrg?.id ?? '';
   const q = useDebouncedValue(search.trim(), 300);
   const directory = useTeamDirectory({ orgId, q });
   const [requesting, setRequesting] = useState<DirectoryTeam | null>(null);
@@ -68,6 +70,8 @@ export function TeamDirectoryView() {
       directoryOrgOptions({ creatable: creatableOrgs, known: orgs, listed: listedNow ?? listed }),
     [orgs, creatableOrgs, listedNow, listed]
   );
+  // More organizations than the first page lists: the filter searches the rest on the server.
+  const truncated = pages[0]?.organizationsTruncated === true;
   const filtering = q.length > 0 || orgId !== '';
 
   return (
@@ -88,17 +92,11 @@ export function TeamDirectoryView() {
           placeholder="Search teams…"
           value={search}
         />
-        {orgOptions.length > 1 && (
-          <Select
-            appearance="pill"
-            aria-label="Filter by organization"
-            onChange={setOrgId}
-            options={[
-              { label: 'All organizations', value: '' },
-              ...orgOptions.map((o) => ({ label: o.name, value: o.id })),
-            ]}
-            prefix="Organization"
-            value={orgId}
+        {(orgOptions.length > 1 || truncated || selectedOrg) && (
+          <OrganizationFilter
+            initial={orgOptions}
+            onChange={setSelectedOrg}
+            selected={selectedOrg}
           />
         )}
       </Toolbar>
@@ -130,7 +128,7 @@ export function TeamDirectoryView() {
                 <Button
                   onClick={() => {
                     setSearch('');
-                    setOrgId('');
+                    setSelectedOrg(null);
                   }}
                   size="sm"
                 >

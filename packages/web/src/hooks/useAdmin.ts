@@ -773,6 +773,8 @@ export interface UserOrg {
   /** Absent on a row where the caller does not hold `org.budget.manage`: the spend in dollars is theirs to read. */
   currentMonthUsage?: OrgMonthUsage | null;
   id: string;
+  /** False for an organization a platform admin has deactivated. */
+  isActive?: boolean;
   /** Absent on a row where the caller does not hold `org.budget.manage`. */
   monthlyBudgetUsdCents?: number | null;
   name: string;
@@ -796,9 +798,14 @@ export type DirectoryOrg = Omit<UserOrg, 'role'> & { role?: string };
  * Every organization the viewer can act on: ALL active organizations for a platform admin
  * (who may manage ones they are not a member of), the viewer's own memberships otherwise.
  * Use this for organization pickers and the Organizations list; `useUserOrgs` stays the
- * "my organizations" view.
+ * "my organizations" view. `includeInactive` adds the organizations a platform admin has
+ * deactivated (for the admin list, which must be able to reactivate one); pickers leave it off.
  */
-export function useOrganizationDirectory() {
+export function useOrganizationDirectory({
+  includeInactive = false,
+}: {
+  includeInactive?: boolean;
+} = {}) {
   const isAdmin = usePlatformAdmin();
   // Which directory to read depends on the answer, so wait for it rather than ask the wrong one.
   const permissionsKnown = useEffectivePermissions().data !== undefined;
@@ -808,11 +815,11 @@ export function useOrganizationDirectory() {
       api
         .get<{ data: DirectoryOrg[] }>(
           isAdmin
-            ? '/api/v1/platform/organizations/budget-alerts'
+            ? `/api/v1/platform/organizations/budget-alerts${includeInactive ? '?includeInactive=true' : ''}`
             : '/api/v1/platform/organizations'
         )
         .then((r) => r.data),
-    queryKey: ['user-orgs', isAdmin ? 'all' : 'mine'],
+    queryKey: ['user-orgs', isAdmin ? 'all' : 'mine', includeInactive],
   });
 }
 

@@ -9,7 +9,13 @@ import {
   resetPermissions,
   setPermissions,
 } from '@/test/permissions';
-import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
+import {
+  bodyOf,
+  gatewayError,
+  setupFetchMock,
+  stubDialogPrototype,
+  withQuery,
+} from '@/test/rtl-helpers';
 import OrgAdminPage from './page';
 
 vi.mock('@/hooks/useEffectivePermissions', async () =>
@@ -67,10 +73,19 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function mock(members: ReturnType<typeof member>[]) {
+function mock(
+  members: ReturnType<typeof member>[],
+  options: { isActive?: boolean; patch?: () => unknown } = {}
+) {
   return setupFetchMock({
     [`GET /api/v1/platform/organizations/${ORG_ID}`]: () => ({
-      data: { id: ORG_ID, name: 'Acme', slug: 'acme', trustedInvites: false },
+      data: {
+        id: ORG_ID,
+        isActive: options.isActive ?? true,
+        name: 'Acme',
+        slug: 'acme',
+        trustedInvites: false,
+      },
     }),
     [`GET /api/v1/platform/organizations/${ORG_ID}/budget`]: () => ({
       budgetAlertThresholdPercent: null,
@@ -82,7 +97,7 @@ function mock(members: ReturnType<typeof member>[]) {
       data: { alertThresholdPercent: 80, percentUsed: 41.5, scope: 'org', state: 'ok' },
     }),
     [`GET /api/v1/platform/organizations/${ORG_ID}/members`]: () => ({ data: members }),
-    [`PATCH /api/v1/platform/organizations/${ORG_ID}`]: () => ({ data: {} }),
+    [`PATCH /api/v1/platform/organizations/${ORG_ID}`]: options.patch ?? (() => ({ data: {} })),
     'GET /api/v1/teams': () => ({
       data: [
         { id: 't1', name: 'Payments', orgId: ORG_ID },
@@ -193,6 +208,111 @@ describe('organization admin page', () => {
       orgRole: 'MEMBER',
       teamId: 't1',
       teamRole: 'LEAD',
+    });
+  });
+
+  describe('organization status', () => {
+    const urlOf = (spy: ReturnType<typeof mock>, method: string, suffix = '') =>
+      spy.mock.calls.filter(
+        ([url, init]) =>
+          String(url).endsWith(`/api/v1/platform/organizations/${ORG_ID}${suffix}`) &&
+          ((init as RequestInit | undefined)?.method ?? 'GET') === method
+      );
+
+    it('shows an active organization to a member, with no control to change it', async () => {
+      setPermissions(ORG_MEMBER);
+      mock([member('me', 'me@x.com', 'MEMBER')]);
+      render(withQuery(<OrgAdminPage params={params} />));
+      await screen.findByRole('heading', { name: 'Acme' });
+      expect(await screen.findByText('Active')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Deactivate organization' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Reactivate organization' })).toBeNull();
+    });
+
+    it('keeps the control from an organization admin who is no platform admin', async () => {
+      mock([member('me', 'me@x.com', 'ADMIN')]);
+      render(withQuery(<OrgAdminPage params={params} />));
+      await screen.findByRole('heading', { name: 'Acme' });
+      expect(screen.queryByRole('button', { name: 'Deactivate organization' })).toBeNull();
+    });
+
+    it('explains the consequences, and deactivates only on confirmation', async () => {
+      setPermissions(ADMIN_PERMISSIONS);
+      const spy = mock([member('me', 'me@x.com', 'ADMIN')]);
+      render(withQuery(<OrgAdminPage params={params} />));
+      fireEvent.click(await screen.findByRole('button', { name: 'Deactivate organization' }));
+
+      const dialog = await screen.findByText('Deactivate this organization?');
+      expect(dialog).toBeTruthy();
+      expect(
+        screen.getByText(/Every open request to join one of its teams is closed/)
+      ).toBeTruthy();
+      expect(screen.getByText(/disappear from the team directory/)).toBeTruthy();
+      expect(urlOf(spy, 'PATCH')).toHaveLength(0);
+
+      const before = urlOf(spy, 'GET').length;
+      fireEvent.click(screen.getByRole('button', { name: 'Deactivate' }));
+      await waitFor(() =>
+        expect(bodyOf(spy, `/api/v1/platform/organizations/${ORG_ID}`, 'PATCH')).toEqual({
+          isActive: false,
+        })
+      );
+      // The organization is read again, and so are the teams and the join-request lists.
+      await waitFor(() => expect(urlOf(spy, 'GET').length).toBeGreaterThan(before));
+    });
+
+    it('shows an inactive organization as such, and reactivates it on confirmation', async () => {
+      setPermissions(ADMIN_PERMISSIONS);
+      const spy = mock([member('me', 'me@x.com', 'ADMIN')], { isActive: false });
+      render(withQuery(<OrgAdminPage params={params} />));
+      expect(await screen.findByText('Inactive')).toBeTruthy();
+      expect(screen.getAllByText(/This organization is inactive\./).length).toBeGreaterThan(0);
+      expect(screen.queryByRole('button', { name: 'Deactivate organization' })).toBeNull();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Reactivate organization' }));
+      expect(await screen.findByText('Reactivate this organization?')).toBeTruthy();
+      expect(screen.getByText(/are not reopened/)).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Reactivate' }));
+      await waitFor(() =>
+        expect(bodyOf(spy, `/api/v1/platform/organizations/${ORG_ID}`, 'PATCH')).toEqual({
+          isActive: true,
+        })
+      );
+    });
+
+    it('answers the default organization refusal in words, and leaves the dialog open', async () => {
+      setPermissions(ADMIN_PERMISSIONS);
+      mock([member('me', 'me@x.com', 'ADMIN')], {
+        patch: () =>
+          gatewayError(
+            409,
+            'DEFAULT_ORGANIZATION',
+            'The organization that owns the default team cannot be deactivated'
+          ),
+      });
+      render(withQuery(<OrgAdminPage params={params} />));
+      fireEvent.click(await screen.findByRole('button', { name: 'Deactivate organization' }));
+      await screen.findByText('Deactivate this organization?');
+      fireEvent.click(screen.getByRole('button', { name: 'Deactivate' }));
+
+      expect(await screen.findByText(/This is the default organization/)).toBeTruthy();
+      expect(
+        screen.getByText(/Choose a different default team in Workflow defaults first/)
+      ).toBeTruthy();
+      expect(screen.getByText('Deactivate this organization?')).toBeTruthy();
+    });
+
+    it('shows any other refusal as the gateway worded it', async () => {
+      setPermissions(ADMIN_PERMISSIONS);
+      mock([member('me', 'me@x.com', 'ADMIN')], {
+        patch: () => gatewayError(500, 'INTERNAL', 'Something broke'),
+      });
+      render(withQuery(<OrgAdminPage params={params} />));
+      fireEvent.click(await screen.findByRole('button', { name: 'Deactivate organization' }));
+      await screen.findByText('Deactivate this organization?');
+      fireEvent.click(screen.getByRole('button', { name: 'Deactivate' }));
+
+      expect(await screen.findByText('Something broke')).toBeTruthy();
     });
   });
 });
