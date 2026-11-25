@@ -899,6 +899,8 @@ model Connection {
   prEvaluations         PrEvaluation[]
 
   campaignTargets CampaignTarget[]
+  campaignProposals CampaignProposal[]
+  campaignDiscoveryChecks CampaignDiscoveryCheck[]
   runPlans        RunPlan[]
   @@index([teamId])
   @@index([installationId])
@@ -2069,6 +2071,7 @@ model User {
 
   campaignsCreated   Campaign[] @relation("CampaignCreatedBy")
   campaignsCancelled Campaign[] @relation("CampaignCancelledBy")
+  campaignsLaunched  Campaign[] @relation("CampaignLaunchedBy")
   runPlansOwned      RunPlan[]  @relation("RunPlanOwner")
   runPlansApproved   RunPlan[]  @relation("RunPlanApprover")
   @@map("users")
@@ -2620,6 +2623,7 @@ model WorkflowRun {
   orchestrationId String? @map("orchestration_id") @db.Uuid
   orchestration   Orchestration? @relation("OrchestrationRuns", fields: [orchestrationId], references: [id], onDelete: SetNull)
   orchestrationChildren OrchestrationChild[] @relation("OrchestrationChildRun")
+  campaignAttempts CampaignAttempt[]
   steeringMessages RunSteeringMessage[]
   lessonRecallArm     LessonRecallArm? @map("lesson_recall_arm")
   lessonRecallHeldOut Boolean          @default(false) @map("lesson_recall_held_out")
@@ -5570,7 +5574,10 @@ enum AssistantMessageStatus {
   FAILED
 }
 
-// Campaigns: one pinned template fanned out to a set of repositories in one organisation.
+// Campaigns: a goal over a set of repositories, reconciled until it holds (see
+// docs/specs/2026-11-25-campaigns-as-tracked-goals.md). RUNNING, COMPLETED_WITH_FAILURES,
+// NOT_AFFECTED and FAILED are the values the `LEGACY` workflow still writes; the reconciler never
+// writes them, and they are never dropped because old rows and old workflows use them.
 enum CampaignState {
   STARTING
   RUNNING
@@ -5579,6 +5586,10 @@ enum CampaignState {
   COMPLETED_WITH_FAILURES
   CANCELLED
   FAILED_TO_START
+  ACTIVE
+  PLANNING
+  PAUSED
+  MONITORING
 }
 
 enum CampaignTargetState {
@@ -5588,6 +5599,42 @@ enum CampaignTargetState {
   NOT_AFFECTED
   FAILED
   SKIPPED
+  CANCELLED
+  BLOCKED
+  MERGED
+  SATISFIED
+  NEEDS_ATTENTION
+}
+
+/// How the per-target work is decided: the same brief and recipe everywhere, or a planner's brief
+/// per repository.
+enum CampaignPlan {
+  UNIFORM
+  PLANNED
+}
+
+/// When a downstream target may start: once an upstream draft exists, or once it merged and its
+/// check passed.
+enum CampaignGate {
+  OPENED
+  MERGED
+}
+
+enum CampaignScopeKind {
+  TEAM
+  ORG
+}
+
+/// Which workflow runs the campaign, recorded at launch; a campaign finishes on the one it began on.
+enum CampaignWorkflowKind {
+  LEGACY
+  RECONCILER
+}
+
+enum CampaignAttemptOutcome {
+  PR_OPENED
+  NO_CHANGE
+  FAILED
   CANCELLED
 }
 
@@ -5619,6 +5666,27 @@ model Campaign {
   templateVersion    Int              @map("template_version")
   maxParallel        Int              @map("max_parallel")
   state              CampaignState    @default(STARTING)
+  plan               CampaignPlan         @default(UNIFORM)
+  gate               CampaignGate         @default(OPENED)
+  scopeKind          CampaignScopeKind?   @map("scope_kind")
+  /// The team or organization the scope names; no foreign key, since the kind picks the table.
+  scopeId            String?              @map("scope_id") @db.Uuid
+  workflowKind       CampaignWorkflowKind @default(LEGACY) @map("workflow_kind")
+  maxOpenPullRequests Int?                @map("max_open_pull_requests")
+  staleAfterDays     Int?                 @map("stale_after_days")
+  rescanIntervalHours Int?                @map("rescan_interval_hours")
+  budgetUsd          Decimal?             @map("budget_usd") @db.Decimal(12, 6)
+  expiresAt          DateTime?            @map("expires_at") @db.Timestamptz
+  /// The acting identity of every child. Backfilled from `createdById`; changes only on a take-over.
+  launchedById       String?              @map("launched_by_id") @db.Uuid
+  launchedBy         User?                @relation("CampaignLaunchedBy", fields: [launchedById], references: [id], onDelete: SetNull)
+  launcherChangedAt  DateTime?            @map("launcher_changed_at") @db.Timestamptz
+  /// Why the campaign is PAUSED: `manual`, `launcher-unavailable`, `disabled` or `budget`.
+  pausedReason       String?              @map("paused_reason")
+  /// Why the planner produced no plan (fixed wording, bounded); null while none failed. Set and
+  /// cleared only in PLANNING.
+  planFailureReason  String?              @map("plan_failure_reason")
+  planFailedAt       DateTime?            @map("plan_failed_at") @db.Timestamptz
   temporalWorkflowId String           @unique @map("temporal_workflow_id")
   workRequestId      String           @unique @map("work_request_id") @db.Uuid
   workRequest        RunInput         @relation(fields: [workRequestId], references: [id], onDelete: Cascade)
@@ -5631,6 +5699,8 @@ model Campaign {
   createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   targets            CampaignTarget[]
+  proposals          CampaignProposal[]
+  discoveryChecks    CampaignDiscoveryCheck[]
 
   @@index([ownerTeamId, createdAt])
   @@index([orgId, createdAt])
@@ -5659,11 +5729,77 @@ model CampaignTarget {
   startedAt       DateTime?             @map("started_at") @db.Timestamptz
   finishedAt      DateTime?             @map("finished_at") @db.Timestamptz
   updatedAt       DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  /// The per-repository brief of a PLANNED campaign; null means the campaign's own brief.
+  brief           String?
+  /// Target ids this one waits for. Not a foreign key: ids of rows in the same campaign.
+  dependsOn       String[]              @default([]) @map("depends_on") @db.Uuid
+  /// What the last check found, e.g. `{ kind: 'initial' }`, `{ kind: 'declared-at-target' }`.
+  evidence        Json?
+  regressions     Int                   @default(0)
+  /// Set while a draft has been OPEN longer than the campaign's `staleAfterDays`; a flag only.
+  staleSince      DateTime?             @map("stale_since") @db.Timestamptz
+  lastCheckedAt   DateTime?             @map("last_checked_at") @db.Timestamptz
+  lastCheckedSha  String?               @map("last_checked_sha")
+  attempts        CampaignAttempt[]
 
   @@unique([campaignId, connectionId])
   @@index([teamId])
   @@index([connectionId])
   @@map("campaign_targets")
+}
+
+/// One child run for one target. A retry adds an attempt and never rewrites one.
+model CampaignAttempt {
+  id              String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  targetId        String                  @map("target_id") @db.Uuid
+  target          CampaignTarget          @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  n               Int
+  runId           String?                 @map("run_id") @db.Uuid
+  run             WorkflowRun?            @relation(fields: [runId], references: [id], onDelete: SetNull)
+  childWorkflowId String?                 @unique @map("child_workflow_id")
+  path            CampaignTargetPath?
+  verification    CampaignVerification?
+  outcome         CampaignAttemptOutcome?
+  failureReason   String?                 @map("failure_reason")
+  startedAt       DateTime                @default(now()) @map("started_at") @db.Timestamptz
+  finishedAt      DateTime?               @map("finished_at") @db.Timestamptz
+
+  @@unique([targetId, n])
+  @@index([runId])
+  @@map("campaign_attempts")
+}
+
+/// A repository discovery found that the launcher may not start work in. Never started.
+model CampaignProposal {
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  campaignId   String      @map("campaign_id") @db.Uuid
+  campaign     Campaign    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  connectionId String      @map("connection_id") @db.Uuid
+  connection   Connection  @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  reason       String
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  decidedAt    DateTime?   @map("decided_at") @db.Timestamptz
+
+  @@unique([campaignId, connectionId])
+  @@index([connectionId])
+  @@map("campaign_proposals")
+}
+
+/// "This repository was checked SATISFIED at base sha X for this campaign." Lets discovery skip an
+/// unchanged non-target repository without cloning it. Dropped when the repository becomes a target
+/// or a later check is not satisfied.
+model CampaignDiscoveryCheck {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  campaignId   String     @map("campaign_id") @db.Uuid
+  campaign     Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  connectionId String     @map("connection_id") @db.Uuid
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  baseSha      String     @map("base_sha")
+  checkedAt    DateTime   @default(now()) @map("checked_at") @db.Timestamptz
+
+  @@unique([campaignId, connectionId])
+  @@index([connectionId])
+  @@map("campaign_discovery_checks")
 }
 
 // ── Orchestrated agent runs ──────────────────────────────────────────────────
@@ -5693,6 +5829,7 @@ enum OrchestrationMessageKind {
   APPROVAL_REQUEST
   CHILD_RESULT
   NOTICE
+  CAMPAIGN_PROPOSAL
 }
 
 enum OrchestrationApprovalStatus {

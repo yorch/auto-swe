@@ -305,8 +305,10 @@ describe('POST /api/v1/work-requests', () => {
       routeRunPlan: async () => ({ matches: [], noneFit: true }),
       sendAssistantTurn: async () => {},
       signalCampaignCancel: async () => 'signalled' as const,
+      signalCampaignWorkflow: async () => 'signalled' as const,
       signalWithStartOrchestration: async () => {},
       signalWorkflow: async () => {},
+      startCampaignReconcilerWorkflow: async () => {},
       startCampaignWorkflow: async () => {},
       startChannelAssistant: async () => {},
       startConsolidationWorkflow: async () => {},
@@ -360,6 +362,8 @@ describe('POST /api/v1/work-requests', () => {
       triggerReportDigestTest: async () => {},
       triggerRevalidationNow: async () => {},
       triggerWorkRequestSchedule: async () => {},
+      workflowExecutionExists: async () => true,
+      workflowExecutionState: async () => 'running',
       workflowSettledStatus: async () => null,
     });
 

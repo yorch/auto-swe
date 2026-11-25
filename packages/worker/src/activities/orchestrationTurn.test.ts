@@ -135,11 +135,12 @@ describe('runOrchestratorTurn', () => {
     expect(m.created.every((c) => c.role === 'ORCHESTRATOR' || c.role === 'SYSTEM')).toBe(true);
   });
 
-  it('binds only the four intent-recording tools', async () => {
+  it('binds only the five intent-recording tools', async () => {
     await runOrchestratorTurn({ ...base, events: [] });
     expect(Object.keys(m.spec.tools as object).sort()).toEqual([
       'cancelAgent',
       'messageAgent',
+      'proposeCampaign',
       'requestRepo',
       'spawnAgent',
     ]);

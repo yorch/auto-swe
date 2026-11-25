@@ -504,8 +504,11 @@ input, a step's `connectionRef`) by that team. Set it per share with `PATCH /api
 Every path that applies the organization's cap applies the owning team's: work requests and
 re-runs, template runs and webhooks (connection-less runs against the template's team), epics, PRD
 runs, schedules and their fires, the Slack run modal, automations, service principals, and the
-review and review-fix launches. The channel-assistant code task and the children of an epic or PRD
-run have no launch-time check of their own, as for the organization; the mid-run guard covers them.
+review and review-fix launches. The channel-assistant code task and the children of an epic on the
+epic workflow or of a PRD run have no launch-time check of their own, as for the organization; the
+mid-run guard covers them. The children of a campaign, including an epic launched as one, are the
+exception: the gateway re-runs the launch decision, caps included, before every attempt starts
+([campaigns.md](./campaigns.md#113-starting-an-attempt)).
 Pull-request evaluation starts and eval screens check neither cap at launch either, and are held
 only by the mid-run guard.
 

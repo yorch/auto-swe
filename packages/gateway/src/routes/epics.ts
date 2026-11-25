@@ -1,13 +1,19 @@
 import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
+import { resolveSetting } from '@auto-swe/shared/config';
 import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { isPlatformAdmin } from '@auto-swe/shared/permissions';
-import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import type { CampaignReconcilerInput } from '@auto-swe/shared/types/workflow';
+import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { writeAuditLog } from '../lib/auditLog.js';
 import { can } from '../lib/authz.js';
+import { visibleToMember } from '../lib/campaignAccess.js';
+import { campaignIdOfEpicWorkflowId, campaignStatusAsEpic } from '../lib/campaignEpic.js';
 import { sendError } from '../lib/httpErrors.js';
+import { uuidFromIdempotencyKey } from '../lib/idempotency.js';
 import { allOfTeams, authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { paginationQuery } from '../lib/pagination.js';
 import {
@@ -19,6 +25,7 @@ import {
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
+import { resolveDefaultTemplate } from './workRequests.js';
 
 const CreateEpicSchema = z.object({
   description: z
@@ -83,8 +90,340 @@ async function accessibleRepoIds(
   return new Set(rows.map((r: { id: string }) => r.id));
 }
 
+type EpicRepo = {
+  id: string;
+  organizationName: string | null;
+  repoName: string | null;
+  team: { id: string; orgId: string };
+  teamId: string;
+};
+
+/**
+ * Whether this epic launches as a `PLANNED` campaign: `workflow.campaignReconciler` is on for the
+ * team that will own the campaign, `workflow.campaignsEnabled` holds for it and for every
+ * repository's team (a campaign's attempts refuse a team that has it off), and the repositories fit
+ * `workflow.campaignMaxTargets`. A setting that cannot be read means the legacy epic path.
+ */
+async function epicRunsAsCampaign(
+  request: FastifyRequest,
+  repos: EpicRepo[],
+  owner: { id: string; orgId: string },
+  repoCount: number
+): Promise<boolean> {
+  try {
+    const ownerCtx = { orgId: owner.orgId, teamId: owner.id };
+    if (!(await resolveSetting('workflow.campaignReconciler', ownerCtx))) {
+      return false;
+    }
+    if (repoCount > (await resolveSetting('workflow.campaignMaxTargets', ownerCtx))) {
+      return false;
+    }
+    const teams = new Map(repos.map((r) => [r.team.id, r.team]));
+    teams.set(owner.id, owner);
+    for (const team of teams.values()) {
+      if (
+        !(await resolveSetting('workflow.campaignsEnabled', { orgId: team.orgId, teamId: team.id }))
+      ) {
+        return false;
+      }
+    }
+    return true;
+  } catch (err) {
+    request.log.warn(
+      { err },
+      'campaign settings unreadable; launching the epic on the epic workflow'
+    );
+    return false;
+  }
+}
+
+/**
+ * Launch the epic as a `PLANNED` campaign: gate `OPENED` (a downstream repository starts once
+ * upstream's run succeeded, today's epic meaning), no recipe, no scope, one pending target per
+ * repository for the planner to brief, state `PLANNING`. The campaign's id is derived from the
+ * ticket, so a second launch for it answers `EPIC_ALREADY_EXISTS` as an epic does. The answer keeps
+ * the epic's shape; `epicWorkflowId` is the campaign's workflow id, which `GET /epics/:id` reads.
+ */
+async function launchEpicAsCampaign(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
+  reply: Parameters<typeof sendError>[0],
+  input: {
+    body: z.infer<typeof CreateEpicSchema>;
+    owner: { id: string; orgId: string };
+    repos: EpicRepo[];
+    user: ReturnType<typeof requireUser>;
+  }
+) {
+  const { body, owner, repos, user } = input;
+  const { description, externalTicketId, repoIds } = body;
+  const duplicate = () =>
+    sendError(
+      reply,
+      409,
+      'EPIC_ALREADY_EXISTS',
+      `Epic workflow already running for ${externalTicketId}`
+    );
+  if (
+    await fastify.prisma.activeWorkflow.findUnique({
+      select: { id: true },
+      where: { temporalWorkflowId: `${EPIC_ID_PREFIX}${externalTicketId}` },
+    })
+  ) {
+    return duplicate();
+  }
+  const resolved = await resolveDefaultTemplate(fastify.prisma, owner.id, externalTicketId);
+  if (!resolved) {
+    return sendError(
+      reply,
+      503,
+      'CAMPAIGN_TEMPLATE_MISSING',
+      'No default workflow template is configured for the owning team'
+    );
+  }
+  const ownerCtx = { orgId: owner.orgId, teamId: owner.id };
+  const [maxParallel, openCeiling, staleAfterDays, rescanDefault, lifetimeDays, rescanFloor] =
+    await Promise.all([
+      resolveSetting('workflow.campaignMaxParallelChildren', ownerCtx),
+      resolveSetting('workflow.campaignMaxOpenPullRequests', ownerCtx),
+      resolveSetting('workflow.campaignStaleAfterDays', ownerCtx),
+      resolveSetting('workflow.campaignRescanIntervalHours', ownerCtx),
+      resolveSetting('workflow.campaignLifetimeDays', ownerCtx),
+      resolveSetting('workflow.campaignRescanFloorHours', ownerCtx),
+    ]);
+  const rescanIntervalHours = Math.max(rescanDefault, rescanFloor);
+
+  const campaignId = uuidFromIdempotencyKey('epic-campaign', externalTicketId);
+  const temporalWorkflowId = `campaign-${campaignId}`;
+  const workRequestId = crypto.randomUUID();
+  const ticketId = `CAMPAIGN-${campaignId.replaceAll('-', '').slice(0, 12)}`;
+  const repoById = new Map(repos.map((r) => [r.id, r]));
+  const targets = repoIds.map((id, position) => {
+    const repo = repoById.get(id) as EpicRepo;
+    return {
+      connectionId: id,
+      id: crypto.randomUUID(),
+      position,
+      repoLabel: `${repo.organizationName ?? '?'}/${repo.repoName ?? id}`,
+      teamId: repo.teamId,
+    };
+  });
+  const expiresAt = new Date(Date.now() + lifetimeDays * 86_400_000);
+  const workflowInput: CampaignReconcilerInput = {
+    campaignId,
+    campaignWorkflowId: temporalWorkflowId,
+  };
+
+  const launch = await launchTrackedWorkflow(
+    fastify.prisma,
+    {
+      activeWorkflow: {
+        budgetTier: 'STANDARD',
+        currentStatus: 'STARTING',
+        repoId: null,
+        temporalWorkflowId,
+        workRequestId,
+      },
+      knowledgeSourceRepos: repos.map((repo) => ({
+        orgId: repo.team.orgId,
+        repoId: repo.id,
+        teamId: repo.teamId,
+      })),
+      runInput: {
+        description,
+        externalTicketId: ticketId,
+        id: workRequestId,
+        // Cross-repo, but with a pinned template: the legacy epics list selects `templateId: null`.
+        isCrossRepo: true,
+        requestedById: user.sub,
+        requestPayload: JSON.stringify(body),
+        templateId: resolved.templateId,
+        templateVersion: resolved.version,
+        ticketIsSynthetic: true,
+      },
+    },
+    () => fastify.temporal.startCampaignReconcilerWorkflow(temporalWorkflowId, workflowInput),
+    {
+      audit: { actor: user, source: 'epic', templateId: resolved.templateId },
+      inTransaction: async (tx) => {
+        await tx.campaign.create({
+          data: {
+            createdById: user.sub,
+            description,
+            expiresAt,
+            gate: 'OPENED',
+            id: campaignId,
+            launchedById: user.sub,
+            maxOpenPullRequests: openCeiling,
+            maxParallel,
+            name: externalTicketId,
+            orgId: owner.orgId,
+            ownerTeamId: owner.id,
+            plan: 'PLANNED',
+            rescanIntervalHours,
+            staleAfterDays,
+            state: 'PLANNING',
+            templateId: resolved.templateId,
+            templateVersion: resolved.version,
+            temporalWorkflowId,
+            workflowKind: 'RECONCILER',
+            workRequestId,
+          },
+        });
+        await tx.campaignTarget.createMany({
+          data: targets.map((t) => ({ ...t, campaignId })),
+        });
+      },
+      log: fastify.log,
+      sourceAuthorization: { actor: user },
+    }
+  );
+  if (!launch.ok) {
+    return duplicate();
+  }
+  try {
+    await writeAuditLog(fastify, {
+      action: 'CREATE',
+      actor: user,
+      after: {
+        epic: externalTicketId,
+        gate: 'OPENED',
+        launchedById: user.sub,
+        maxParallel,
+        name: externalTicketId,
+        ownerTeamId: owner.id,
+        plan: 'PLANNED',
+        state: 'PLANNING',
+        targetCount: targets.length,
+        workflowKind: 'RECONCILER',
+      },
+      entityId: campaignId,
+      entityType: 'Campaign',
+    });
+  } catch (err) {
+    request.log.error({ campaignId, err }, 'campaign audit write failed — it was launched');
+  }
+  return reply.status(201).send({
+    data: {
+      campaignId,
+      // Where the dashboard should land after creation: the epic page reads the campaign.
+      detailPath: `/epics/${encodeURIComponent(temporalWorkflowId)}`,
+      epicWorkflowId: temporalWorkflowId,
+      externalTicketId,
+      state: 'PLANNING',
+      workRequestId,
+    },
+  });
+}
+
 export const epicRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  /**
+   * An epic that was launched as a `PLANNED` campaign, in the epic detail's shape. Visible to its
+   * creator, the owning team and anyone who reaches a target; ADMINs see every one. A target the
+   * caller cannot reach is not listed, as in the legacy detail. Null when there is no such campaign
+   * for this caller, so existence is not probeable.
+   */
+  async function readCampaignEpic(request: FastifyRequest, campaignId: string) {
+    const user = requireUser(request);
+    const gate = request.repoAccessGate;
+    const admin = isPlatformAdmin(user);
+    const campaign = await fastify.prisma.campaign.findFirst({
+      select: {
+        createdAt: true,
+        createdBy: { select: { email: true, id: true, name: true } },
+        description: true,
+        id: true,
+        name: true,
+        state: true,
+        temporalWorkflowId: true,
+        updatedAt: true,
+        workRequestId: true,
+      },
+      where: {
+        id: campaignId,
+        plan: 'PLANNED',
+        ...(admin
+          ? {}
+          : { OR: [{ createdById: user.sub }, ...(visibleToMember(user, gate) ?? [])] }),
+      },
+    });
+    if (!campaign) {
+      return null;
+    }
+    const targetSelect = {
+      attempts: { orderBy: { n: 'desc' as const }, select: { childWorkflowId: true }, take: 1 },
+      connection: { select: { organizationName: true, repoName: true } },
+      connectionId: true,
+      repoLabel: true,
+      state: true,
+    } as const;
+    const targets = admin
+      ? await runUnscoped('admin reads every target of an epic campaign', ['CampaignTarget'], () =>
+          fastify.prisma.campaignTarget.findMany({
+            orderBy: { position: 'asc' },
+            select: targetSelect,
+            where: { campaignId },
+          })
+        )
+      : await fastify.prisma.campaignTarget.findMany({
+          orderBy: { position: 'asc' },
+          select: targetSelect,
+          where: {
+            campaignId,
+            connection: {
+              AND: [
+                {
+                  OR: [
+                    { team: memberTeams(user) },
+                    { shares: { some: { team: memberTeams(user) } } },
+                  ],
+                },
+                permissionRequirement(user, gate),
+              ],
+            },
+          },
+        });
+    const childIds = targets.flatMap((t) =>
+      t.attempts[0]?.childWorkflowId ? [t.attempts[0].childWorkflowId] : []
+    );
+    const rows =
+      childIds.length > 0
+        ? await fastify.prisma.activeWorkflow.findMany({
+            select: { assignedBranch: true, id: true, temporalWorkflowId: true },
+            where: { temporalWorkflowId: { in: childIds } },
+          })
+        : [];
+    const rowByWorkflow = new Map(rows.map((r) => [r.temporalWorkflowId, r]));
+    const children = targets.map((t) => {
+      const childId = t.attempts[0]?.childWorkflowId ?? null;
+      const row = childId ? rowByWorkflow.get(childId) : undefined;
+      return {
+        branch: row?.assignedBranch ?? null,
+        organizationName: t.connection?.organizationName ?? null,
+        repoId: t.connectionId,
+        repoName: t.connection?.repoName ?? null,
+        status: t.state,
+        temporalWorkflowId: childId,
+        workflowId: row?.id ?? null,
+      };
+    });
+    children.sort((a, b) => (a.repoName ?? '').localeCompare(b.repoName ?? ''));
+    return {
+      campaignId: campaign.id,
+      children,
+      createdAt: campaign.createdAt,
+      description: campaign.description,
+      epicWorkflowId: campaign.temporalWorkflowId,
+      externalTicketId: campaign.name,
+      requestedBy: campaign.createdBy,
+      state: campaign.state,
+      status: campaignStatusAsEpic(campaign.state),
+      updatedAt: campaign.updatedAt,
+      workRequestId: campaign.workRequestId,
+    };
+  }
 
   app.post(
     '/',
@@ -180,6 +519,26 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (!authorization.ok) {
         return sendLaunchRefusal(reply, authorization.refusal);
+      }
+
+      // With the campaign reconciler on, an epic is a PLANNED campaign (docs/campaigns.md). It is
+      // launched as one only when the reconciler's own preconditions hold for every team it
+      // touches: otherwise the epic path below runs, exactly as it does with the setting off.
+      // The owner team is the team of the FIRST repository the caller listed, not of the largest,
+      // alphabetically first or most numerous team. The caller chose the order, `authorizeLaunch`
+      // above already required LEAD on every owning team, so the first-listed one is a team the
+      // caller leads and the one they pointed to as the epic's home; the campaign's settings, its
+      // template and its visibility to ordinary members are then decided in that team's scope,
+      // deterministically for the same request. `repos` comes back in query order, so it is looked
+      // up by id, with `repos[0]` only as the fallback.
+      const owner = (repos.find((r) => r.id === repoIds[0]) ?? repos[0])?.team;
+      if (owner && (await epicRunsAsCampaign(request, repos, owner, repoIds.length))) {
+        return launchEpicAsCampaign(fastify, request, reply, {
+          body: request.body,
+          owner,
+          repos,
+          user,
+        });
       }
 
       const workRequestId = crypto.randomUUID();
@@ -304,16 +663,112 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
         }),
       };
 
-      const [workRequests, total] = await Promise.all([
-        fastify.prisma.runInput.findMany({
-          include: { requestedBy: { select: { email: true, id: true, name: true } } },
-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-          skip: offset,
-          take: limit,
-          where,
-        }),
+      // The epics launched as `PLANNED` campaigns (the reconciler on) are listed beside the legacy
+      // ones, newest first. With none, the legacy page is answered exactly as it always was.
+      const gate = request.repoAccessGate;
+      const reachableTarget = {
+        connection: {
+          AND: [
+            {
+              OR: [{ team: memberTeams(user) }, { shares: { some: { team: memberTeams(user) } } }],
+            },
+            permissionRequirement(user, gate),
+          ],
+        },
+      };
+      const campaignScope = [
+        ...(scope === 'MINE' ? [{ createdById: user.sub }] : []),
+        ...(teamId
+          ? [
+              {
+                targets: {
+                  some: {
+                    connection: { OR: [{ teamId }, { shares: { some: { teamId } } }] },
+                  },
+                },
+              },
+            ]
+          : []),
+      ];
+      const [campaignTotal, legacyTotal] = await Promise.all([
+        isPlatformAdmin(user)
+          ? runUnscoped('admin lists every planned campaign', ['Campaign'], () =>
+              fastify.prisma.campaign.count({ where: { AND: campaignScope, plan: 'PLANNED' } })
+            )
+          : fastify.prisma.campaign.count({
+              where: {
+                AND: campaignScope,
+                OR: [
+                  { createdById: user.sub },
+                  { ownerTeam: { memberships: { some: { userId: user.sub } } } },
+                  { targets: { some: reachableTarget } },
+                ],
+                plan: 'PLANNED',
+              },
+            }),
         fastify.prisma.runInput.count({ where }),
       ]);
+      const window = campaignTotal > 0 ? offset + limit : limit;
+      const workRequests = await fastify.prisma.runInput.findMany({
+        include: { requestedBy: { select: { email: true, id: true, name: true } } },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: campaignTotal > 0 ? 0 : offset,
+        take: window,
+        where,
+      });
+      const total = legacyTotal + campaignTotal;
+
+      const campaignSelect = {
+        createdAt: true,
+        createdBy: { select: { email: true, id: true, name: true } },
+        description: true,
+        id: true,
+        name: true,
+        state: true,
+        temporalWorkflowId: true,
+        updatedAt: true,
+        workRequestId: true,
+      } as const;
+      const campaigns =
+        campaignTotal === 0
+          ? []
+          : isPlatformAdmin(user)
+            ? await runUnscoped('admin lists every planned campaign', ['Campaign'], () =>
+                fastify.prisma.campaign.findMany({
+                  orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+                  select: campaignSelect,
+                  take: offset + limit,
+                  where: { AND: campaignScope, plan: 'PLANNED' },
+                })
+              )
+            : await fastify.prisma.campaign.findMany({
+                orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+                select: campaignSelect,
+                take: offset + limit,
+                where: {
+                  AND: campaignScope,
+                  OR: [
+                    { createdById: user.sub },
+                    { ownerTeam: { memberships: { some: { userId: user.sub } } } },
+                    { targets: { some: reachableTarget } },
+                  ],
+                  plan: 'PLANNED',
+                },
+              });
+      const campaignCounts =
+        campaigns.length > 0
+          ? await runUnscoped(
+              'target counts of campaigns already authorized above',
+              ['CampaignTarget'],
+              () =>
+                fastify.prisma.campaignTarget.groupBy({
+                  _count: { _all: true },
+                  by: ['campaignId'],
+                  where: { campaignId: { in: campaigns.map((c) => c.id) } },
+                })
+            )
+          : [];
+      const repoCountByCampaign = new Map(campaignCounts.map((r) => [r.campaignId, r._count._all]));
 
       const page = workRequests.map((wr) => ({
         repoIds: parseRepoIdsFromPayload(wr.requestPayload),
@@ -326,26 +781,46 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
       });
       const rowById = new Map(epicRows.map((r) => [r.temporalWorkflowId, r]));
 
-      return {
-        data: page.map(({ wr, repoIds }) => {
-          const epicWorkflowId = `${EPIC_ID_PREFIX}${wr.externalTicketId}`;
-          const row = rowById.get(epicWorkflowId);
-          return {
-            createdAt: wr.createdAt,
-            description: wr.description,
-            epicWorkflowId,
-            externalTicketId: wr.externalTicketId,
-            repoCount: repoIds.length,
-            requestedBy: wr.requestedBy,
-            // The orchestrator's row only appears after its first state update —
-            // surface the gap as STARTING rather than pretending it failed.
-            status: row?.currentStatus ?? 'STARTING',
-            updatedAt: row?.updatedAt ?? null,
-            workRequestId: wr.id,
-          };
-        }),
-        meta: { limit, offset, total },
-      };
+      const legacy = page.map(({ wr, repoIds }) => {
+        const epicWorkflowId = `${EPIC_ID_PREFIX}${wr.externalTicketId}`;
+        const row = rowById.get(epicWorkflowId);
+        return {
+          createdAt: wr.createdAt,
+          description: wr.description,
+          epicWorkflowId,
+          externalTicketId: wr.externalTicketId,
+          repoCount: repoIds.length,
+          requestedBy: wr.requestedBy,
+          // The orchestrator's row only appears after its first state update —
+          // surface the gap as STARTING rather than pretending it failed.
+          status: row?.currentStatus ?? 'STARTING',
+          updatedAt: row?.updatedAt ?? null,
+          workRequestId: wr.id,
+        };
+      });
+      if (campaigns.length === 0) {
+        return { data: legacy, meta: { limit, offset, total } };
+      }
+      const asEpics = campaigns.map((c) => ({
+        campaignId: c.id,
+        createdAt: c.createdAt,
+        description: c.description,
+        epicWorkflowId: c.temporalWorkflowId,
+        externalTicketId: c.name,
+        repoCount: repoCountByCampaign.get(c.id) ?? 0,
+        requestedBy: c.createdBy,
+        status: campaignStatusAsEpic(c.state),
+        updatedAt: c.updatedAt,
+        workRequestId: c.workRequestId,
+      }));
+      const merged = [...legacy, ...asEpics]
+        .sort(
+          (a, b) =>
+            b.createdAt.getTime() - a.createdAt.getTime() ||
+            (a.workRequestId < b.workRequestId ? 1 : a.workRequestId > b.workRequestId ? -1 : 0)
+        )
+        .slice(offset, offset + limit);
+      return { data: merged, meta: { limit, offset, total } };
     }
   );
 
@@ -371,6 +846,13 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
 
       const notFound = () =>
         sendError(reply, 404, 'EPIC_NOT_FOUND', `Epic ${workflowId} not found`);
+
+      // An epic launched as a campaign is `campaign-<uuid>`; its links keep working here.
+      const campaignId = campaignIdOfEpicWorkflowId(workflowId);
+      if (campaignId) {
+        const epic = await readCampaignEpic(request, campaignId);
+        return epic ? { data: epic } : notFound();
+      }
 
       if (!workflowId.startsWith(EPIC_ID_PREFIX)) {
         return notFound();

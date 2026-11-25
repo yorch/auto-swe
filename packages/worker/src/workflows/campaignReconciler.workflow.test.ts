@@ -1,0 +1,736 @@
+/**
+ * Workflow-level tests for `CampaignReconcilerWorkflow`, run in Temporal's time-skipping test
+ * server against an in-memory world (`testing/campaignReconcilerWorld.ts`): fake activities that
+ * read and write rows with the real ones' conditional semantics, so each test drives the real
+ * workflow code and inspects the rows after.
+ *
+ * The suite skips itself when the test server cannot be started (no binary, no network).
+ */
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  CAMPAIGN_ATTEMPT_FINISHED_SIGNAL,
+  CAMPAIGN_CONTROL_SIGNAL,
+  CAMPAIGN_PULL_REQUEST_CHANGED_SIGNAL,
+  type CampaignReconcilerInput,
+  type CampaignReconcilerResult,
+} from '@auto-swe/shared/types/workflow';
+import { ApplicationFailure, Context } from '@temporalio/activity';
+import proto from '@temporalio/proto';
+import { TestWorkflowEnvironment } from '@temporalio/testing';
+import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type TestContext,
+} from 'vitest';
+import {
+  finishAttempt,
+  makeTarget,
+  makeWorld,
+  setPullRequest,
+  states,
+  T0,
+  target,
+  type World,
+  worldActivities,
+} from './testing/campaignReconcilerWorld.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const TASK_QUEUE = 'campaign-reconciler-test';
+const CAMPAIGN_ID = '22222222-2222-4222-8222-222222222222';
+
+type Handle = Awaited<ReturnType<TestWorkflowEnvironment['client']['workflow']['start']>>;
+let world: World;
+let seq = 0;
+/** Each workflow acts on the world its test built, whatever test is running when it calls. */
+const worldOf = new Map<string, World>();
+const started: Handle[] = [];
+
+/** The activities as registered: each call goes to whichever world the current test built. */
+const ACTIVITY_NAMES = [
+  'cancelCampaignAttempts',
+  'discoverCampaignTargets',
+  'finalizeCampaignReconciler',
+  'planCampaignBriefs',
+  'readCampaignPass',
+  'recordCampaignPass',
+  'runCampaignCheck',
+  'startCampaignAttempt',
+  'updateDomainState',
+] as const;
+const fakeActivities = Object.fromEntries(
+  ACTIVITY_NAMES.map((name) => [
+    name,
+    (...args: unknown[]) => {
+      const own = worldOf.get(Context.current().info.workflowExecution?.workflowId ?? '') ?? world;
+      return (worldActivities(own)[name] as (...a: unknown[]) => Promise<unknown>)(...args);
+    },
+  ])
+);
+
+let env: TestWorkflowEnvironment | undefined;
+let worker: Worker | undefined;
+let workerRun: Promise<void> | undefined;
+
+beforeAll(async () => {
+  Runtime.install({ logger: new DefaultLogger('WARN') });
+  try {
+    env = await TestWorkflowEnvironment.createTimeSkipping();
+  } catch (e) {
+    if (/Failed to start ephemeral server|Forbidden|ECONNREFUSED/.test(String(e))) {
+      return;
+    }
+    throw e;
+  }
+  worker = await Worker.create({
+    activities: fakeActivities,
+    connection: env.nativeConnection,
+    taskQueue: TASK_QUEUE,
+    workflowsPath: path.resolve(__dirname, './index.ts'),
+  });
+  workerRun = worker.run();
+}, 240_000);
+
+beforeEach((ctx: TestContext) => {
+  if (!env || !worker) {
+    ctx.skip();
+  }
+});
+
+afterEach(async () => {
+  // A workflow a test left running ends the way a finished campaign does: its row says COMPLETED
+  // and a signal wakes it. (Terminating one mid-activity left the time-skipping server unable to
+  // skip for the next test.)
+  for (const handle of started.splice(0)) {
+    const own = worldOf.get(handle.workflowId);
+    if (own) {
+      own.campaign.state = 'COMPLETED';
+    }
+    await handle.signal(CAMPAIGN_CONTROL_SIGNAL, { action: 'cancel' }).catch(() => undefined);
+    await handle.result().catch(() => undefined);
+  }
+});
+
+afterAll(async () => {
+  worker?.shutdown();
+  await workerRun?.catch(() => {});
+  await env?.teardown();
+}, 60_000);
+
+async function start(over: Partial<CampaignReconcilerInput> = {}): Promise<Handle> {
+  seq += 1;
+  const workflowId = `campaign-${CAMPAIGN_ID}-${seq}`;
+  worldOf.set(workflowId, world);
+  const signaller = (env as TestWorkflowEnvironment).client.workflow.getHandle(workflowId);
+  world.signal = (name, arg) => signaller.signal(name, arg);
+  const handle = await (env as TestWorkflowEnvironment).client.workflow.start(
+    'CampaignReconcilerWorkflow',
+    {
+      args: [{ campaignId: CAMPAIGN_ID, campaignWorkflowId: workflowId, ...over }],
+      taskQueue: TASK_QUEUE,
+      workflowId,
+    }
+  );
+  started.push(handle);
+  return handle;
+}
+
+async function run(over: Partial<CampaignReconcilerInput> = {}) {
+  const handle = await start(over);
+  return { handle, result: (await handle.result()) as CampaignReconcilerResult };
+}
+
+async function waitFor(cond: () => boolean, what: string): Promise<void> {
+  for (let i = 0; i < 400 && !cond(); i++) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  if (!cond()) {
+    throw new Error(`timed out waiting for ${what}`);
+  }
+}
+
+/**
+ * A run that finishes as it starts: its rows say so and its finish signal is sent before the start
+ * activity returns, so the signal always lands while the workflow awaits that activity (never
+ * during a workflow task, which the time-skipping test server completes unreliably).
+ */
+function finishesAfterStart(outcome: 'PR_OPENED' | 'NO_CHANGE' | 'FAILED', only?: string[]) {
+  return async (t: { id: string; attemptN: number }, w: World) => {
+    if (only && !only.includes(t.id)) {
+      return;
+    }
+    finishAttempt(w, t.id, outcome, { failureReason: outcome === 'FAILED' ? 'boom' : undefined });
+    await w.signal?.(CAMPAIGN_ATTEMPT_FINISHED_SIGNAL, { attemptN: t.attemptN, targetId: t.id });
+  };
+}
+
+describe('CampaignReconcilerWorkflow', () => {
+  it('works a campaign to COMPLETED, starting targets as the limit allows', async () => {
+    world = makeWorld({
+      campaign: { maxParallel: 2 },
+      targets: [makeTarget('t1'), makeTarget('t2'), makeTarget('t3')],
+    });
+    world.onStart = finishesAfterStart('NO_CHANGE');
+    const handle = await start();
+    const result = (await handle.result()) as CampaignReconcilerResult;
+
+    expect(result.status).toBe('COMPLETED');
+    expect(states(world)).toEqual({ t1: 'SATISFIED', t2: 'SATISFIED', t3: 'SATISFIED' });
+    expect(world.campaign.state).toBe('COMPLETED');
+    // Position order, and never more than maxParallel in flight: t3 waited for one to finish.
+    expect(world.starts.map((s) => s.targetId)).toEqual(['t1', 't2', 't3']);
+    expect(world.finalized).toEqual(['COMPLETED']);
+    expect(world.domainStates).toEqual(['FANNING_OUT', 'COMPLETED']);
+    expect(result.passes).toBeGreaterThanOrEqual(2);
+  });
+
+  it('turns a merged pull request into SATISFIED by re-checking the base branch', async () => {
+    world = makeWorld({
+      campaign: { hasCheck: true },
+      targets: [makeTarget('t1')],
+    });
+    world.onStart = finishesAfterStart('PR_OPENED');
+    const handle = await start();
+
+    await waitFor(() => target(world, 't1').state === 'PR_OPENED', 'the draft to open');
+    // The draft is OPEN and nothing is checked yet.
+    expect(world.checks).toEqual([]);
+    setPullRequest(world, 't1', 'MERGED');
+    await handle.signal(CAMPAIGN_PULL_REQUEST_CHANGED_SIGNAL, {
+      runId: 'run-1',
+      status: 'MERGED',
+      targetId: 't1',
+    });
+    const result = (await handle.result()) as CampaignReconcilerResult;
+
+    expect(result.status).toBe('COMPLETED');
+    expect(world.checks).toEqual(['t1']);
+    expect(states(world)).toEqual({ t1: 'SATISFIED' });
+  });
+
+  it('sends a merged target whose check still fails to NEEDS_ATTENTION and keeps the campaign ACTIVE', async () => {
+    world = makeWorld({
+      campaign: { hasCheck: true },
+      targets: [
+        makeTarget('t1', { attemptN: 1, prOpenedAt: T0, prStatus: 'MERGED', state: 'PR_OPENED' }),
+      ],
+    });
+    world.checkAnswers.set('t1', ['not-satisfied']);
+    await start();
+    await waitFor(() => target(world, 't1').state === 'NEEDS_ATTENTION', 'the failed check');
+    expect(world.campaign.state).toBe('ACTIVE');
+    expect(target(world, 't1').failureReason).toBe('the check failed');
+  });
+
+  it('returns a regressed target to PENDING and starts it again', async () => {
+    world = makeWorld({
+      campaign: { hasCheck: true, hasScope: true, rescanIntervalHours: 24, state: 'MONITORING' },
+      targets: [
+        makeTarget('t1', { attemptN: 1, lastCheckedAt: T0 - 48 * 3_600_000, state: 'SATISFIED' }),
+      ],
+    });
+    world.checkAnswers.set('t1', ['not-satisfied']);
+    await start();
+    await waitFor(() => world.starts.length === 1, 'the regressed target to start again');
+
+    expect(world.checks).toEqual(['t1']);
+    expect(world.starts[0]).toEqual({ attemptN: 2, targetId: 't1' });
+    expect(target(world, 't1').regressions).toBe(1);
+    // The campaign went back to ACTIVE before the gateway was asked to start anything.
+    expect(world.campaign.state).toBe('ACTIVE');
+  });
+
+  it('holds a downstream target BLOCKED until the upstream is merged and checked (gate MERGED)', async () => {
+    world = makeWorld({
+      campaign: { gate: 'MERGED', hasCheck: true, maxParallel: 3 },
+      targets: [makeTarget('t1'), makeTarget('t2', { dependsOn: ['t1'] })],
+    });
+    world.onStart = finishesAfterStart('PR_OPENED', ['t1']);
+    const handle = await start();
+
+    await waitFor(() => target(world, 't1').state === 'PR_OPENED', 't1 to open its draft');
+    await waitFor(() => target(world, 't2').state === 'BLOCKED', 't2 to be blocked');
+    expect(target(world, 't2').failureReason).toBe('Waiting for acme/t1');
+    expect(world.starts.map((s) => s.targetId)).toEqual(['t1']);
+
+    // t2 starts only after t1's pull request merged and its check passed.
+    world.onStart = finishesAfterStart('NO_CHANGE', ['t2']);
+    setPullRequest(world, 't1', 'MERGED');
+    await handle.signal(CAMPAIGN_PULL_REQUEST_CHANGED_SIGNAL, {
+      runId: 'run-1',
+      status: 'MERGED',
+      targetId: 't1',
+    });
+    const result = (await handle.result()) as CampaignReconcilerResult;
+    expect(result.status).toBe('COMPLETED');
+    expect(world.starts.map((s) => s.targetId)).toEqual(['t1', 't2']);
+    expect(states(world)).toEqual({ t1: 'SATISFIED', t2: 'SATISFIED' });
+  });
+
+  it('starts nothing while PAUSED, lets a running attempt finish, and resumes', async () => {
+    world = makeWorld({
+      campaign: { maxParallel: 1 },
+      targets: [makeTarget('t1'), makeTarget('t2')],
+    });
+    const handle = await start();
+    await waitFor(() => world.starts.length === 1, 't1 to start');
+
+    // A person pauses it: the route wrote the rows, then signalled.
+    world.campaign.state = 'PAUSED';
+    await handle.signal(CAMPAIGN_CONTROL_SIGNAL, { action: 'pause' });
+    // The running attempt finishes meanwhile; the pass records it and starts nothing.
+    finishAttempt(world, 't1', 'NO_CHANGE');
+    await handle.signal(CAMPAIGN_ATTEMPT_FINISHED_SIGNAL, { attemptN: 1, targetId: 't1' });
+    await waitFor(
+      () => target(world, 't1').state === 'SATISFIED',
+      'the finished attempt to be recorded'
+    );
+    await new Promise((r) => setTimeout(r, 200));
+    expect(world.starts.map((s) => s.targetId)).toEqual(['t1']);
+    // Held back by the limit while t1 ran (BLOCKED), and not started since.
+    expect(['PENDING', 'BLOCKED']).toContain(target(world, 't2').state);
+
+    world.onStart = finishesAfterStart('NO_CHANGE');
+    world.campaign.state = 'ACTIVE';
+    await handle.signal(CAMPAIGN_CONTROL_SIGNAL, { action: 'resume' });
+    const result = (await handle.result()) as CampaignReconcilerResult;
+    expect(result.status).toBe('COMPLETED');
+    expect(world.starts.map((s) => s.targetId)).toEqual(['t1', 't2']);
+  });
+
+  it('recovers a pull request change whose signal never arrived at the daily backstop', async () => {
+    world = makeWorld({
+      campaign: { hasCheck: true },
+      targets: [
+        makeTarget('t1', { attemptN: 1, prOpenedAt: T0, prStatus: 'OPEN', state: 'PR_OPENED' }),
+      ],
+      tick: 24 * 3_600_000,
+    });
+    // The merge happens between two reads and nobody signals.
+    world.onRead = (n, w) => {
+      if (n === 2) {
+        setPullRequest(w, 't1', 'MERGED');
+      }
+    };
+    const { result } = await run();
+    expect(result.status).toBe('COMPLETED');
+    expect(world.reads).toBeGreaterThanOrEqual(2);
+    expect(states(world)).toEqual({ t1: 'SATISFIED' });
+  });
+
+  it('recovers a finished attempt whose signal was lost by polling while it is in flight', async () => {
+    world = makeWorld({ targets: [makeTarget('t1')] });
+    world.onRead = (n, w) => {
+      if (n === 3) {
+        finishAttempt(w, 't1', 'NO_CHANGE');
+      }
+    };
+    const { result } = await run();
+    expect(result.status).toBe('COMPLETED');
+    expect(world.starts).toHaveLength(1);
+  });
+
+  it('continues as new carrying its counters, and keeps working', async () => {
+    world = makeWorld({
+      campaign: { hasCheck: true, hasScope: true, rescanIntervalHours: 24 },
+      targets: [makeTarget('t1')],
+      tick: 1000,
+    });
+    // t1 starts and its run never reports until read 205, so the reconciler polls (every five
+    // minutes of workflow time) through 200 passes and continues as new.
+    world.onRead = (n, w) => {
+      if (n === 205) {
+        finishAttempt(w, 't1', 'NO_CHANGE');
+        w.campaign.hasScope = false;
+      }
+    };
+    const { handle, result } = await run();
+    expect(result.status).toBe('COMPLETED');
+    // The pass counter crossed the continue-as-new: it is the sum over both executions.
+    expect(result.passes).toBe(205);
+    // Discovery ran once, before the continue-as-new, and the carried instant kept it from
+    // running again in the next execution (its interval is 24 hours).
+    expect(world.discoveries).toBe(1);
+    const history = await (env as TestWorkflowEnvironment).client.workflow
+      .getHandle(handle.workflowId, handle.firstExecutionRunId)
+      .fetchHistory();
+    expect(history.events?.at(-1)?.eventType).toBe(
+      proto.temporal.api.enums.v1.EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW
+    );
+  });
+
+  it('plans a PLANNED campaign once, then waits for the launcher to confirm', async () => {
+    world = makeWorld({
+      campaign: { plan: 'PLANNED', state: 'PLANNING' },
+      targets: [makeTarget('t1'), makeTarget('t2')],
+    });
+    world.onStart = finishesAfterStart('NO_CHANGE');
+    const handle = await start();
+    await waitFor(() => world.plans === 1, 'the plan');
+    await new Promise((r) => setTimeout(r, 200));
+    // Planned, but nothing starts until the confirm.
+    expect(world.plans).toBe(1);
+    expect(world.starts).toEqual([]);
+    expect(world.campaign.state).toBe('PLANNING');
+
+    world.campaign.state = 'ACTIVE';
+    await handle.signal(CAMPAIGN_CONTROL_SIGNAL, { action: 'confirm' });
+    const result = (await handle.result()) as CampaignReconcilerResult;
+    expect(result.status).toBe('COMPLETED');
+    expect(world.plans).toBe(1);
+    expect(world.starts.map((s) => s.targetId)).toEqual(['t1', 't2']);
+  });
+
+  it('does not loop on a planner that keeps failing: it waits for a person', async () => {
+    world = makeWorld({
+      campaign: { plan: 'PLANNED', state: 'PLANNING' },
+      targets: [makeTarget('t1')],
+    });
+    world.failPlan = true;
+    // Several passes run while the campaign waits: the backstop wakes it, and a later read ends it.
+    world.onRead = (n, w) => {
+      if (n === 8) {
+        w.campaign.state = 'COMPLETED';
+      }
+    };
+    const { result } = await run();
+    expect(result.passes).toBe(8);
+    // The planner ran once, however many passes followed its failure.
+    expect(world.plans).toBe(1);
+    expect(world.starts).toEqual([]);
+  });
+
+  it('does not run the planner for a campaign whose plan failure is already recorded', async () => {
+    // A signal-with-start restart carries no `planFailed`; the campaign row remembers instead.
+    world = makeWorld({
+      campaign: { plan: 'PLANNED', state: 'PLANNING' },
+      targets: [makeTarget('t1')],
+    });
+    world.planFailureRecorded = true;
+    world.onRead = (n, w) => {
+      if (n === 4) {
+        w.campaign.state = 'COMPLETED';
+      }
+    };
+    await run();
+    expect(world.plans).toBe(0);
+    expect(world.starts).toEqual([]);
+  });
+
+  it('does not plan again after a continue-as-new that follows a failed plan', async () => {
+    world = makeWorld({
+      campaign: { plan: 'PLANNED', state: 'PLANNING' },
+      targets: [makeTarget('t1')],
+    });
+    world.failPlan = true;
+    // 205 reads cross the 200-pass continue-as-new; the continued execution must not plan again.
+    world.onRead = (n, w) => {
+      if (n === 205) {
+        w.campaign.state = 'COMPLETED';
+      }
+    };
+    const { handle, result } = await run();
+    expect(result.passes).toBe(205);
+    expect(world.plans).toBe(1);
+    const history = await (env as TestWorkflowEnvironment).client.workflow
+      .getHandle(handle.workflowId, handle.firstExecutionRunId)
+      .fetchHistory();
+    expect(history.events?.at(-1)?.eventType).toBe(
+      proto.temporal.api.enums.v1.EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW
+    );
+  });
+
+  it('pauses a campaign whose kill switch turned off, and starts nothing', async () => {
+    world = makeWorld({
+      campaign: { campaignsEnabled: false },
+      targets: [makeTarget('t1'), makeTarget('t2')],
+    });
+    await start();
+    await waitFor(() => world.campaign.state === 'PAUSED', 'the pause');
+    expect(world.pausedReason).toBe('disabled');
+    expect(world.starts).toEqual([]);
+  });
+
+  it('pauses a campaign whose launcher is gone, and one that spent its budget', async () => {
+    world = makeWorld({ campaign: { launcherAvailable: false }, targets: [makeTarget('t1')] });
+    await start();
+    await waitFor(() => world.campaign.state === 'PAUSED', 'the pause');
+    expect(world.pausedReason).toBe('launcher-unavailable');
+
+    world = makeWorld({ campaign: { budgetExceeded: true }, targets: [makeTarget('t1')] });
+    await start();
+    await waitFor(() => world.campaign.state === 'PAUSED', 'the pause');
+    expect(world.pausedReason).toBe('budget');
+    expect(world.starts).toEqual([]);
+  });
+
+  it('ends a target SKIPPED when the gateway says the launch no longer holds, and carries on', async () => {
+    world = makeWorld({ targets: [makeTarget('t1'), makeTarget('t2')] });
+    world.refusals.set('t1', { code: 'LAUNCH_REFUSED', message: 'the launcher lost access' });
+    world.onStart = finishesAfterStart('NO_CHANGE');
+    const handle = await start();
+    const result = (await handle.result()) as CampaignReconcilerResult;
+    expect(result.status).toBe('COMPLETED');
+    expect(states(world)).toEqual({ t1: 'SKIPPED', t2: 'SATISFIED' });
+    expect(target(world, 't1').failureReason).toBe('not started: the launcher lost access');
+  });
+
+  it('pauses the campaign when the gateway refuses a start for the kill switch or the budget', async () => {
+    world = makeWorld({ targets: [makeTarget('t1'), makeTarget('t2')] });
+    world.refusals.set('t1', { code: 'BUDGET_EXCEEDED', message: 'the budget is spent' });
+    await start();
+    await waitFor(() => world.campaign.state === 'PAUSED', 'the pause');
+    expect(world.pausedReason).toBe('budget');
+    // The refusal stops the pass: t2 was not tried.
+    expect(world.starts).toEqual([]);
+  });
+
+  it('adds a discovered repository, and records one the launcher may not start work in', async () => {
+    world = makeWorld({
+      campaign: { hasCheck: true, hasScope: true, maxTargets: 10, rescanIntervalHours: 24 },
+      targets: [makeTarget('t1', { attemptN: 1, lastCheckedAt: T0, state: 'SATISFIED' })],
+    });
+    world.discovery = [
+      {
+        connectionId: 'conn-new',
+        label: 'acme/new',
+        reachable: true,
+        satisfied: false,
+        teamId: 'team-a',
+      },
+      {
+        connectionId: 'conn-other',
+        label: 'other/repo',
+        reachable: false,
+        satisfied: false,
+        teamId: 'team-b',
+        unreachableReason: 'the launcher does not lead the team that owns the repository',
+      },
+      {
+        connectionId: 'conn-fine',
+        label: 'acme/fine',
+        reachable: true,
+        satisfied: true,
+        teamId: 'team-a',
+      },
+    ];
+    await start();
+    await waitFor(() => world.starts.length === 1, 'the discovered target to start');
+    expect(world.targets.map((t) => t.connectionId)).toEqual(['conn-t1', 'conn-new']);
+    expect(world.proposalConnectionIds).toEqual(['conn-other']);
+  });
+
+  it('completes a campaign with no check when its targets’ pull requests merge, running no check', async () => {
+    world = makeWorld({
+      campaign: { hasCheck: false },
+      targets: [makeTarget('t1'), makeTarget('t2')],
+    });
+    world.onStart = finishesAfterStart('PR_OPENED');
+    const handle = await start();
+    await waitFor(
+      () => target(world, 't1').state === 'PR_OPENED' && target(world, 't2').state === 'PR_OPENED',
+      'both drafts to open'
+    );
+    // Opened is not merged: the campaign is still ACTIVE.
+    expect(world.campaign.state).toBe('ACTIVE');
+    for (const id of ['t1', 't2']) {
+      setPullRequest(world, id, 'MERGED');
+      await handle.signal(CAMPAIGN_PULL_REQUEST_CHANGED_SIGNAL, {
+        runId: `run-${id}`,
+        status: 'MERGED',
+        targetId: id,
+      });
+    }
+    const result = (await handle.result()) as CampaignReconcilerResult;
+
+    expect(result.status).toBe('COMPLETED');
+    expect(states(world)).toEqual({ t1: 'MERGED', t2: 'MERGED' });
+    expect(world.campaign.state).toBe('COMPLETED');
+    expect(world.checks).toEqual([]);
+    expect(world.finalized).toEqual(['COMPLETED']);
+  });
+
+  it('keeps a campaign with a check ACTIVE while its targets are only MERGED', async () => {
+    world = makeWorld({
+      campaign: { hasCheck: true },
+      targets: [
+        makeTarget('t1', { attemptN: 1, prOpenedAt: T0, prStatus: 'MERGED', state: 'PR_OPENED' }),
+      ],
+    });
+    // The check cannot answer, so the target stays MERGED and the campaign is not done.
+    world.checkAnswers.set('t1', ['could-not-run', 'could-not-run']);
+    let observed: string | null = null;
+    world.onRead = (n, w) => {
+      if (n === 3) {
+        observed = `${w.campaign.state}/${target(w, 't1').state}`;
+        w.checkAnswers.set('t1', ['satisfied']);
+      }
+    };
+    const { result } = await run();
+    expect(observed).toBe('ACTIVE/MERGED');
+    expect(result.status).toBe('COMPLETED');
+    expect(states(world)).toEqual({ t1: 'SATISFIED' });
+  });
+
+  it('leaves an expired campaign ACTIVE while a target still needs a person', async () => {
+    world = makeWorld({
+      campaign: { expiresAt: T0 - 1, hasCheck: true, hasScope: true },
+      targets: [makeTarget('t1', { attemptN: 1, failureReason: 'boom', state: 'NEEDS_ATTENTION' })],
+    });
+    let observed: string | null = null;
+    world.onRead = (n, w) => {
+      if (n === 3) {
+        observed = w.campaign.state;
+        target(w, 't1').state = 'SKIPPED';
+      }
+    };
+    const { result } = await run();
+    expect(observed).toBe('ACTIVE');
+    expect(result.status).toBe('COMPLETED');
+  });
+
+  it('does not complete over a target added after the pass read its targets; the next pass sees it', async () => {
+    world = makeWorld({
+      campaign: { hasCheck: false },
+      targets: [makeTarget('t1', { attemptN: 1, lastCheckedAt: T0, state: 'SATISFIED' })],
+    });
+    world.onStart = finishesAfterStart('NO_CHANGE');
+    // A person adds a repository between the pass's read and its campaign-state write.
+    world.beforeCampaignWrite = (w) => {
+      w.beforeCampaignWrite = undefined;
+      w.targets.push(makeTarget('t2', { position: 2 }));
+    };
+    const { result } = await run();
+
+    expect(result.status).toBe('COMPLETED');
+    // The first COMPLETED write was refused (the campaign stayed ACTIVE), the new target was read
+    // by the next pass and worked, and only then did the campaign complete.
+    expect(
+      world.records.filter((r) => r.campaign?.to === 'COMPLETED').length
+    ).toBeGreaterThanOrEqual(2);
+    expect(world.starts.map((x) => x.targetId)).toEqual(['t2']);
+    expect(states(world)).toEqual({ t1: 'SATISFIED', t2: 'SATISFIED' });
+  });
+
+  it('writes each discovery chunk as it is read, and resumes a walk that failed at its cursor', async () => {
+    const candidate = (id: string) => ({
+      connectionId: `conn-${id}`,
+      label: `acme/${id}`,
+      reachable: true,
+      satisfied: false,
+      teamId: 'team-a',
+    });
+    world = makeWorld({
+      campaign: { hasCheck: true, hasScope: true, maxTargets: 10, rescanIntervalHours: 24 },
+      targets: [makeTarget('t1', { attemptN: 1, lastCheckedAt: T0, state: 'SATISFIED' })],
+    });
+    world.discoveryScript = [
+      { candidates: [candidate('a')], nextCursor: 25 },
+      ApplicationFailure.nonRetryable('the sandbox went away'),
+      { candidates: [candidate('b')], nextCursor: 50 },
+      { candidates: [], nextCursor: null },
+    ];
+    world.onStart = finishesAfterStart('NO_CHANGE');
+    world.onRead = (_n, w) => {
+      // Once the walk finished, take the scope away so the campaign can end.
+      if (w.discoveryCalls.length >= 4) {
+        w.campaign.hasScope = false;
+      }
+    };
+    const { result } = await run();
+
+    expect(result.status).toBe('COMPLETED');
+    // The failed chunk is asked again from the same cursor, not from the start of the scope.
+    expect(world.discoveryCalls.map((c) => c.cursor)).toEqual([0, 25, 25, 50]);
+    // `a` was written before the failure and is not written twice.
+    expect(world.targets.map((t) => t.connectionId)).toEqual(['conn-t1', 'conn-a', 'conn-b']);
+  });
+
+  it('ends a walk at the candidate cap across chunks, however much of the scope is left', async () => {
+    world = makeWorld({
+      campaign: { hasCheck: true, hasScope: true, maxTargets: 1, rescanIntervalHours: 24 },
+      targets: [makeTarget('t1', { attemptN: 1, lastCheckedAt: T0, state: 'SATISFIED' })],
+    });
+    const chunk = (k: number) => ({
+      candidates: Array.from({ length: 25 }, (_, i) => ({
+        connectionId: `conn-${k}-${i}`,
+        label: `acme/${k}-${i}`,
+        reachable: true,
+        satisfied: false,
+        teamId: 'team-a',
+      })),
+      nextCursor: 25 * (k + 1),
+    });
+    // 25 chunks of 25 candidates are on offer; the walk takes 20 and stops at 500.
+    world.discoveryScript = Array.from({ length: 25 }, (_, k) => chunk(k));
+    world.onRead = (_n, w) => {
+      if (w.discoveryCalls.length >= 20) {
+        w.campaign.hasScope = false;
+      }
+    };
+    const { result } = await run();
+
+    expect(result.status).toBe('COMPLETED');
+    expect(world.discoveryCalls).toHaveLength(20);
+    expect(world.discoveryCalls.map((c) => c.maxCandidates)).toEqual(
+      Array.from({ length: 20 }, (_, k) => 500 - 25 * k)
+    );
+    expect(world.discoveryCalls.at(-1)?.cursor).toBe(25 * 19);
+  });
+
+  it('closes the rows of a cancelled campaign: attempts cancelled, then finalized', async () => {
+    world = makeWorld({ targets: [makeTarget('t1'), makeTarget('t2')] });
+    const handle = await start();
+    await waitFor(() => world.starts.length === 2, 'both targets to start');
+    world.campaign.state = 'CANCELLING';
+    await handle.signal(CAMPAIGN_CONTROL_SIGNAL, { action: 'cancel' });
+    const result = (await handle.result()) as CampaignReconcilerResult;
+    expect(result.status).toBe('CANCELLED');
+    expect(world.cancelledAttempts).toBe(1);
+    expect(world.finalized).toEqual(['CANCELLED']);
+    expect(world.domainStates.at(-1)).toBe('CANCELLED');
+    expect(states(world)).toEqual({ t1: 'CANCELLED', t2: 'CANCELLED' });
+  });
+
+  it('finalizes as cancelled when the workflow itself is cancelled', async () => {
+    world = makeWorld({ targets: [makeTarget('t1')] });
+    const handle = await start();
+    await waitFor(() => world.starts.length === 1, 't1 to start');
+    await handle.cancel();
+    await expect(handle.result()).rejects.toThrow();
+    expect(world.finalized).toEqual(['CANCELLED']);
+    expect(world.cancelledAttempts).toBe(1);
+  });
+
+  it('stops at once for a campaign that is already final', async () => {
+    world = makeWorld({ campaign: { state: 'COMPLETED' }, targets: [makeTarget('t1')] });
+    const { result } = await run();
+    expect(result.status).toBe('COMPLETED');
+    expect(world.starts).toEqual([]);
+  });
+
+  it('flags a draft that crossed the stale threshold without changing its state', async () => {
+    world = makeWorld({
+      campaign: { staleAfterDays: 7 },
+      targets: [
+        makeTarget('t1', {
+          attemptN: 1,
+          prOpenedAt: T0 - 8 * 24 * 3_600_000,
+          prStatus: 'OPEN',
+          state: 'PR_OPENED',
+        }),
+      ],
+    });
+    await start();
+    await waitFor(() => target(world, 't1').staleSince !== null, 'the stale flag');
+    expect(target(world, 't1').staleSince).toBe(T0 - 8 * 24 * 3_600_000 + 7 * 24 * 3_600_000);
+    expect(target(world, 't1').state).toBe('PR_OPENED');
+    expect(world.starts).toEqual([]);
+  });
+});

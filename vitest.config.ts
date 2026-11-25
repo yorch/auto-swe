@@ -384,6 +384,22 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/campaignOutcome.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/campaignState',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/campaignState.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/campaignApi',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/campaignApi.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/campaignSpend',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/campaignSpend.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/campaignTokenKey',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/campaignTokenKey.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/testIntegrity',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/testIntegrity.ts'),
       },

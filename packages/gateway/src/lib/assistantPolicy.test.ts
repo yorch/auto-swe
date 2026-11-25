@@ -21,6 +21,13 @@ it('keeps scoped review preset reads and writes under the existing read/confirm 
   expect(assistantAccess('PATCH', '/api/v1/platform/review-presets/:id')).toBe('confirm');
 });
 
+it("keeps campaign launch and the orchestrator's campaign proposals out of the assistant's reach", () => {
+  // A person launches a campaign; the orchestrator can only record a proposal for one.
+  expect(assistantAccess('POST', '/api/v1/campaigns')).toBe('never');
+  expect(assistantAccess('POST', '/api/v1/orchestrations/:id/campaign-proposals')).toBe('never');
+  expect(ASSISTANT_ROUTE_POLICY['POST /api/v1/campaigns']).toEqual({ never: 'runsWorkload' });
+});
+
 /**
  * The policy table against the routes production registers. Every route must have a decision, every
  * decision must name a real route, and the categories the assistant may never touch must be refused
@@ -173,7 +180,20 @@ describe('assistantAccess', () => {
     expect(assistantAccess('POST', '/api/v1/campaigns')).toBe('never');
     expect(assistantAccess('POST', '/api/v1/campaigns/:id/cancel')).toBe('confirm');
     expect(assistantAccess('GET', '/api/v1/campaigns')).toBe('read');
+    // Editing a plan before confirming, and removing a dependency edge, are people's decisions.
+    expect(assistantAccess('PATCH', '/api/v1/campaigns/:id/targets/:targetId')).toBe('never');
+    expect(
+      assistantAccess('DELETE', '/api/v1/campaigns/:id/targets/:targetId/dependencies/:upstreamId')
+    ).toBe('never');
     expect(assistantAccess('GET', '/api/v1/campaigns/:id')).toBe('read');
+  });
+
+  it('keeps campaign pause and resume behind a confirmation, deliberately', () => {
+    // Spec docs/specs/2026-11-25-campaigns-as-tracked-goals.md §11: the assistant may pause and
+    // resume a campaign after the person confirms. Resume restarts pull requests as the launcher,
+    // so it is 'confirm', never 'read' and not 'never' (the person may ask for it by chat).
+    expect(assistantAccess('POST', '/api/v1/campaigns/:id/pause')).toBe('confirm');
+    expect(assistantAccess('POST', '/api/v1/campaigns/:id/resume')).toBe('confirm');
   });
 
   it('keeps the pull request evaluation mode out of the assistant, and its reads open', () => {

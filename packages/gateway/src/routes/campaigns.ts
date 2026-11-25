@@ -2,19 +2,26 @@ import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
 import { resolveSetting } from '@auto-swe/shared/config';
 import {
-  CAMPAIGN_TERMINAL_STATES,
-  campaignTextProblem,
-} from '@auto-swe/shared/lib/campaignOutcome';
-import { parseRecipeParams } from '@auto-swe/shared/lib/campaignRecipes';
+  CampaignCreateBodySchema,
+  type CampaignDetailDto,
+  CampaignParamsSchema,
+  CampaignPlanSchema,
+  CampaignStateSchema,
+  type CampaignSummaryDto,
+} from '@auto-swe/shared/lib/campaignApi';
+import { CAMPAIGN_TERMINAL_STATES } from '@auto-swe/shared/lib/campaignOutcome';
+import { parseRecipeParams, recipeSupportsCheck } from '@auto-swe/shared/lib/campaignRecipes';
+import type { CampaignGateValue, CampaignStateValue } from '@auto-swe/shared/lib/campaignState';
 import { isGitHubRepository } from '@auto-swe/shared/lib/githubHostScope';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { stableStringify } from '@auto-swe/shared/lib/stableJson';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { isLauncher, isPlatformAdmin } from '@auto-swe/shared/permissions';
+import { isPlatformAdmin } from '@auto-swe/shared/permissions';
 import {
-  BUDGET_TIERS,
-  CAMPAIGN_DESCRIPTION_MAX_LENGTH,
+  CAMPAIGN_CONTROL_SIGNAL,
+  type CampaignControlSignal,
+  type CampaignReconcilerInput,
   type CampaignTargetInput,
   type CampaignWorkflowInput,
 } from '@auto-swe/shared/types/workflow';
@@ -23,91 +30,39 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { can } from '../lib/authz.js';
+import { mayControlCampaign, visibleToMember } from '../lib/campaignAccess.js';
+import {
+  blockedReasons,
+  countsFor,
+  emptyCounts,
+  iso,
+  loadGraph,
+  proposalDtos,
+  TARGET_SELECT,
+  targetDtos,
+} from '../lib/campaignView.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, uuidFromIdempotencyKey } from '../lib/idempotency.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
+import { isOrgMember } from '../lib/orgAccess.js';
 import { paginationQuery } from '../lib/pagination.js';
-import {
-  type MaybeGate,
-  memberTeams,
-  permissionRequirement,
-  reachableConnections,
-} from '../lib/tenantScope.js';
+import { isTerminalSignalError } from '../lib/temporalErrors.js';
+import { memberTeams, permissionRequirement } from '../lib/tenantScope.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
+import { campaignControlRoutes } from './campaignControl.js';
+import { resolveDefaultTemplate } from './workRequests.js';
 
-/** The built-in template every campaign child runs. */
+/** The built-in template every uniform campaign child runs. */
 const CAMPAIGN_TEMPLATE_NAME = 'dependency-upgrade-campaign';
 /** `campaign-<campaignId>`; a child is `campaign-<campaignId>-<connectionId>`. */
 const CAMPAIGN_ID_PREFIX = 'campaign-';
-/** The registry's ceiling for `workflow.campaignMaxTargets`; bounds the id list before any lookup. */
-const MAX_REPO_IDS = 200;
-
-const TARGET_STATES = [
-  'PENDING',
-  'RUNNING',
-  'PR_OPENED',
-  'NOT_AFFECTED',
-  'FAILED',
-  'SKIPPED',
-  'CANCELLED',
-] as const;
-const CAMPAIGN_STATES = [
-  'STARTING',
-  'RUNNING',
-  'CANCELLING',
-  'COMPLETED',
-  'COMPLETED_WITH_FAILURES',
-  'CANCELLED',
-  'FAILED_TO_START',
-] as const;
-
-function refineCampaignText(text: string, ctx: z.RefinementCtx): void {
-  const problem = campaignTextProblem(text);
-  if (problem) {
-    ctx.addIssue({ code: 'custom', message: problem });
-  }
-}
-
-const CreateCampaignSchema = z.object({
-  budget: z.enum(BUDGET_TIERS).optional(),
-  // Bounded below the general description limit, and free of control characters, because every
-  // child's start event in the campaign's history carries it (CAMPAIGN_CHILD_INPUT_BUDGET_BYTES).
-  description: z
-    .string()
-    .min(1, 'description is required — it is the agent brief and the pull request text')
-    .max(CAMPAIGN_DESCRIPTION_MAX_LENGTH)
-    .superRefine(refineCampaignText),
-  maxParallel: z.number().int().min(1).optional(),
-  name: z.string().trim().min(1).max(120).superRefine(refineCampaignText),
-  ownerTeamId: z.string().uuid(),
-  // The ref and parameters are validated by the shared catalogue (`parseRecipeParams`), which
-  // answers CAMPAIGN_RECIPE_INVALID. Zod only guarantees their rough shape here.
-  recipe: z
-    .object({
-      params: z.record(z.string(), z.unknown()),
-      ref: z.string().max(64),
-    })
-    .optional(),
-  repoIds: z
-    .array(z.string().uuid())
-    .min(1)
-    .max(MAX_REPO_IDS)
-    .refine((ids) => new Set(ids).size === ids.length, 'repoIds must be unique'),
-});
 
 const ListCampaignsQuery = paginationQuery({ defaultLimit: 50, maxLimit: 100 }).extend({
   ownerTeamId: z.string().uuid().optional(),
-  state: z.enum(CAMPAIGN_STATES).optional(),
+  plan: CampaignPlanSchema.optional(),
+  state: CampaignStateSchema.optional(),
 });
-
-const CampaignParams = z.object({ id: z.string().uuid() });
-
-type TargetCounts = Record<(typeof TARGET_STATES)[number], number>;
-
-function emptyCounts(): TargetCounts {
-  return Object.fromEntries(TARGET_STATES.map((s) => [s, 0])) as TargetCounts;
-}
 
 /**
  * Whether a stored launch request and a new one are the same request, compared in a canonical
@@ -125,61 +80,32 @@ function sameRequest(stored: string | null | undefined, current: string): boolea
   }
 }
 
+/** The recorded planning failure, from its two columns; null when none is recorded. */
+function planFailureOf(row: {
+  planFailedAt?: Date | null;
+  planFailureReason?: string | null;
+}): CampaignDetailDto['planFailure'] {
+  const at = row.planFailedAt;
+  // The reason is the fixed-wording string the worker stored; it is passed through as is.
+  return at ? { at: at.toISOString(), reason: row.planFailureReason ?? '' } : null;
+}
+
 export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
-  /**
-   * Per-state target counts for the campaigns on a page. Counts only: no repository identity
-   * crosses, which is why the aggregate may run over targets the caller cannot reach.
-   */
-  async function countsFor(campaignIds: string[]): Promise<Map<string, TargetCounts>> {
-    const out = new Map<string, TargetCounts>(campaignIds.map((id) => [id, emptyCounts()]));
-    if (campaignIds.length === 0) {
-      return out;
-    }
-    const rows = await runUnscoped(
-      'aggregate counts only; identities are filtered separately',
-      ['CampaignTarget'],
-      () =>
-        fastify.prisma.campaignTarget.groupBy({
-          _count: { _all: true },
-          by: ['campaignId', 'state'],
-          where: { campaignId: { in: campaignIds } },
-        })
-    );
-    for (const row of rows) {
-      const counts = out.get(row.campaignId);
-      if (counts) {
-        counts[row.state] = row._count._all;
-      }
-    }
-    return out;
-  }
-
-  /**
-   * The campaigns a non-admin may see: those their team owns, and those with at least one target
-   * repository they can reach. The detail and cancel routes ask the same question by id. The list
-   * query spells the same shape out inline so the tenant-guard audit can read its keys.
-   */
-  function visibleToMember(
-    user: { sub: string },
-    gate: MaybeGate
-  ): Prisma.CampaignWhereInput['OR'] {
-    return [
-      { ownerTeam: memberTeams(user) },
-      { targets: { some: { connection: reachableConnections(user, gate) } } },
-    ];
-  }
+  // Pause, resume, confirm, take over, targets and the worker's attempt call.
+  await fastify.register(campaignControlRoutes);
 
   app.post(
     '/',
     {
       onRequest: requireAuth({ handlerChecked: ['team.launch.multi-repo'] }),
-      schema: { body: CreateCampaignSchema, headers: IdempotencyHeaderSchema },
+      schema: { body: CampaignCreateBodySchema, headers: IdempotencyHeaderSchema },
     },
     async (request, reply) => {
       const body = request.body;
       const { budget, description, name, ownerTeamId, recipe, repoIds } = body;
+      const plan = body.plan ?? 'UNIFORM';
       const user = requireUser(request);
       const idempotencyKey = request.headers['idempotency-key'];
       // With an Idempotency-Key the campaign's id, and so its workflow ID `campaign-<id>`, is
@@ -189,6 +115,8 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         ? uuidFromIdempotencyKey(`campaign:${user.sub}:${ownerTeamId}`, idempotencyKey)
         : crypto.randomUUID();
       const temporalWorkflowId = `${CAMPAIGN_ID_PREFIX}${campaignId}`;
+      // Every field of the body is part of the request, the new ones included: a retry that asks
+      // for a different plan, gate, scope or limit is a different request.
       const requestPayload = JSON.stringify({ ...body, label: name });
       /**
        * The campaign this key already launched, answered as a deduplicated success when the
@@ -199,7 +127,13 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
           return null;
         }
         const previous = await fastify.prisma.campaign.findFirst({
-          select: { createdById: true, id: true, temporalWorkflowId: true, workRequestId: true },
+          select: {
+            createdById: true,
+            id: true,
+            state: true,
+            temporalWorkflowId: true,
+            workRequestId: true,
+          },
           where: { id: campaignId, ownerTeamId },
         });
         if (!previous || previous.createdById !== user.sub) {
@@ -227,8 +161,10 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
               campaignId: previous.id,
               deduplicated: true,
               detailPath: `/campaigns/${previous.id}`,
+              state: previous.state,
               targetCount: repoIds.length,
               temporalWorkflowId: previous.temporalWorkflowId,
+              workflowId: previous.temporalWorkflowId,
               workRequestId: previous.workRequestId,
             },
           }),
@@ -350,9 +286,12 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      // 4. One organization. Nothing is named: only an ADMIN can reach this with a repository of
-      //    another organization (step 3 refuses everyone else first).
-      if (repos.some((r) => r.team.orgId !== orgId)) {
+      // 4. One organization for a uniform campaign. Nothing is named: only an ADMIN can reach
+      //    this with a repository of another organization (step 3 refuses everyone else first).
+      //    A PLANNED campaign may span organizations, as an epic does: the launcher leads every
+      //    target's team (step 3) and each attempt is billed to its repository's team and
+      //    organization (the launch decision of step 9 and of every attempt).
+      if (plan === 'UNIFORM' && repos.some((r) => r.team.orgId !== orgId)) {
         return sendError(
           reply,
           400,
@@ -411,11 +350,14 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
 
-      // 6. Size limits, resolved for the owning team and frozen into the workflow input.
+      // 6. Size limits, resolved for the owning team and frozen into the campaign. Which workflow
+      //    runs it is decided here too and recorded on the row: a campaign runs to the end on the
+      //    workflow it launched on.
       const ownerCtx = { orgId, teamId: ownerTeam.id };
-      const [maxTargets, maxParallelCeiling] = await Promise.all([
+      const [maxTargets, maxParallelCeiling, reconciler] = await Promise.all([
         resolveSetting('workflow.campaignMaxTargets', ownerCtx),
         resolveSetting('workflow.campaignMaxParallelChildren', ownerCtx),
+        resolveSetting('workflow.campaignReconciler', ownerCtx),
       ]);
       if (repoIds.length > maxTargets) {
         return sendError(
@@ -426,6 +368,134 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
       const maxParallel = Math.min(body.maxParallel ?? maxParallelCeiling, maxParallelCeiling);
+      const workflowKind = reconciler ? ('RECONCILER' as const) : ('LEGACY' as const);
+
+      // 6b. What only the reconciler can do. A legacy launch behaves exactly as it always has and
+      //     refuses these, by name, instead of dropping them.
+      const reconcilerOnly = [
+        ...(body.plan === 'PLANNED' ? ['plan PLANNED'] : []),
+        ...(body.gate !== undefined ? ['gate'] : []),
+        ...(body.scope !== undefined ? ['scope'] : []),
+        ...(body.maxOpenPullRequests !== undefined ? ['maxOpenPullRequests'] : []),
+        ...(body.staleAfterDays !== undefined ? ['staleAfterDays'] : []),
+        ...(body.rescanIntervalHours !== undefined ? ['rescanIntervalHours'] : []),
+        ...(body.budgetUsd !== undefined ? ['budgetUsd'] : []),
+        ...(body.lifetimeDays !== undefined ? ['lifetimeDays'] : []),
+        ...(recipe && recipeSupportsCheck(recipe.ref) ? [`recipe ${recipe.ref}`] : []),
+      ];
+      if (workflowKind === 'LEGACY' && reconcilerOnly.length > 0) {
+        return sendError(
+          reply,
+          400,
+          'CAMPAIGN_RECONCILER_REQUIRED',
+          `These inputs need the campaign reconciler, which is off for the owning team (workflow.campaignReconciler): ${reconcilerOnly.join(', ')}`
+        );
+      }
+      if (plan === 'PLANNED' && recipe) {
+        return sendError(
+          reply,
+          400,
+          'CAMPAIGN_PLAN_INVALID',
+          'A planned campaign takes no recipe: the planner decides the work of each repository'
+        );
+      }
+      if (plan === 'PLANNED' && body.scope) {
+        return sendError(
+          reply,
+          400,
+          'CAMPAIGN_SCOPE_INVALID',
+          'A planned campaign takes no scope: its targets are the repositories named at launch'
+        );
+      }
+
+      // 6c. The scope (reconciler only): where the check may discover new targets.
+      let scopeKind: 'TEAM' | 'ORG' | null = null;
+      let scopeId: string | null = null;
+      if (body.scope) {
+        const scope = body.scope;
+        if (!recipe || !recipeSupportsCheck(recipe.ref)) {
+          return sendError(
+            reply,
+            400,
+            'CAMPAIGN_SCOPE_INVALID',
+            'A scope needs a recipe with a check (an @2 recipe): without one the campaign cannot discover targets'
+          );
+        }
+        if (scope.kind === 'ORG') {
+          if (scope.id && scope.id !== orgId) {
+            return sendError(
+              reply,
+              400,
+              'CAMPAIGN_SCOPE_INVALID',
+              'An organization scope is the campaign’s own organization'
+            );
+          }
+          if (!(await isOrgMember(fastify.prisma, user, orgId))) {
+            return sendError(
+              reply,
+              403,
+              'FORBIDDEN',
+              'An organization scope needs membership of the organization'
+            );
+          }
+          scopeKind = 'ORG';
+          scopeId = orgId;
+        } else {
+          const scopeTeam = await fastify.prisma.team.findFirst({
+            select: { id: true },
+            where: {
+              id: scope.id as string,
+              isActive: true,
+              orgId,
+              ...(isPlatformAdmin(user) ? {} : { memberships: { some: { userId: user.sub } } }),
+            },
+          });
+          if (!scopeTeam) {
+            return sendError(
+              reply,
+              400,
+              'CAMPAIGN_SCOPE_INVALID',
+              'The scope team was not found in the campaign’s organization, or you do not belong to it'
+            );
+          }
+          scopeKind = 'TEAM';
+          scopeId = scopeTeam.id;
+        }
+      }
+
+      // 6d. Defaults frozen into the campaign (reconciler only; a legacy campaign has none).
+      let frozen: {
+        expiresAt: Date;
+        maxOpenPullRequests: number;
+        rescanIntervalHours: number;
+        staleAfterDays: number;
+      } | null = null;
+      if (workflowKind === 'RECONCILER') {
+        const [openCeiling, staleDefault, rescanDefault, lifetimeDefault, rescanFloor] =
+          await Promise.all([
+            resolveSetting('workflow.campaignMaxOpenPullRequests', ownerCtx),
+            resolveSetting('workflow.campaignStaleAfterDays', ownerCtx),
+            resolveSetting('workflow.campaignRescanIntervalHours', ownerCtx),
+            resolveSetting('workflow.campaignLifetimeDays', ownerCtx),
+            resolveSetting('workflow.campaignRescanFloorHours', ownerCtx),
+          ]);
+        // The floor bounds how often a satisfied target is re-checked (spec §12): a launch that asks
+        // for more often is refused, and the default is never below it.
+        if (body.rescanIntervalHours !== undefined && body.rescanIntervalHours < rescanFloor) {
+          return sendError(
+            reply,
+            400,
+            'CAMPAIGN_RESCAN_TOO_FREQUENT',
+            `rescanIntervalHours is below the shortest interval allowed for this team (${rescanFloor} hours, workflow.campaignRescanFloorHours)`
+          );
+        }
+        frozen = {
+          expiresAt: new Date(Date.now() + (body.lifetimeDays ?? lifetimeDefault) * 86_400_000),
+          maxOpenPullRequests: Math.min(body.maxOpenPullRequests ?? openCeiling, openCeiling),
+          rescanIntervalHours: body.rescanIntervalHours ?? Math.max(rescanDefault, rescanFloor),
+          staleAfterDays: body.staleAfterDays ?? staleDefault,
+        };
+      }
 
       // 7. The recipe, validated by the shared catalogue. The template's input pattern is wider
       //    on purpose, so this call is what keeps `github:evil/repo`, `$(…)` and
@@ -441,19 +511,35 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         recipeParams = parsed.params;
       }
 
-      // 8. The template, pinned at its active version, and the child payload checked against its
-      //    input schema for one sample target.
-      const template = await fastify.prisma.workflowTemplate.findFirst({
-        select: { activeVersion: true, id: true, inputSchema: true },
-        where: { name: CAMPAIGN_TEMPLATE_NAME, status: 'ACTIVE', teamId: null },
-      });
-      if (!template?.activeVersion) {
-        return sendError(
-          reply,
-          503,
-          'CAMPAIGN_TEMPLATE_MISSING',
-          `${CAMPAIGN_TEMPLATE_NAME} workflow template not found. Run \`yarn db:seed\` to seed built-in templates.`
-        );
+      // 8. The template, pinned at its active version. A uniform campaign runs the built-in
+      //    upgrade template, its payload checked against the input schema for one sample target. A
+      //    planned one pins the owning team's default template; each attempt resolves the default of
+      //    its own repository's team, as an epic's children do.
+      let template: { activeVersion: number | null; id: string; inputSchema?: unknown } | null;
+      if (plan === 'PLANNED') {
+        const resolved = await resolveDefaultTemplate(fastify.prisma, ownerTeam.id);
+        template = resolved ? { activeVersion: resolved.version, id: resolved.templateId } : null;
+        if (!template) {
+          return sendError(
+            reply,
+            503,
+            'CAMPAIGN_TEMPLATE_MISSING',
+            'No default workflow template is configured for the owning team'
+          );
+        }
+      } else {
+        template = await fastify.prisma.workflowTemplate.findFirst({
+          select: { activeVersion: true, id: true, inputSchema: true },
+          where: { name: CAMPAIGN_TEMPLATE_NAME, status: 'ACTIVE', teamId: null },
+        });
+        if (!template?.activeVersion) {
+          return sendError(
+            reply,
+            503,
+            'CAMPAIGN_TEMPLATE_MISSING',
+            `${CAMPAIGN_TEMPLATE_NAME} workflow template not found. Run \`yarn db:seed\` to seed built-in templates.`
+          );
+        }
       }
       const childPayload: Record<string, unknown> = {
         ...(recipeRef && recipeParams
@@ -465,7 +551,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
           : {}),
         ...(budget ? { budget } : {}),
       };
-      if (isInputSchema(template.inputSchema)) {
+      if (plan === 'UNIFORM' && isInputSchema(template.inputSchema)) {
         const sample = validateInputPayload(template.inputSchema, {
           ...childPayload,
           connectionId: repoIds[0],
@@ -509,18 +595,31 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
           teamId: repo.teamId,
         };
       });
-      const workflowInput: CampaignWorkflowInput = {
-        campaignId,
-        campaignWorkflowId: temporalWorkflowId,
-        childPayload,
-        description,
-        externalTicketId,
-        launchedById: user.sub,
-        maxParallel,
-        targets,
-        templateId: template.id,
-        templateVersion: template.activeVersion,
-        workRequestId,
+      const templateVersion = template.activeVersion as number;
+      const initialState: CampaignStateValue =
+        workflowKind === 'LEGACY' ? 'STARTING' : plan === 'PLANNED' ? 'PLANNING' : 'STARTING';
+      const startWorkflow = () => {
+        if (workflowKind === 'RECONCILER') {
+          const input: CampaignReconcilerInput = {
+            campaignId,
+            campaignWorkflowId: temporalWorkflowId,
+          };
+          return fastify.temporal.startCampaignReconcilerWorkflow(temporalWorkflowId, input);
+        }
+        const input: CampaignWorkflowInput = {
+          campaignId,
+          campaignWorkflowId: temporalWorkflowId,
+          childPayload,
+          description,
+          externalTicketId,
+          launchedById: user.sub,
+          maxParallel,
+          targets,
+          templateId: template.id,
+          templateVersion,
+          workRequestId,
+        };
+        return fastify.temporal.startCampaignWorkflow(temporalWorkflowId, input);
       };
 
       const launch = await launchTrackedWorkflow(
@@ -547,11 +646,11 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
             requestedById: user.sub,
             requestPayload,
             templateId: template.id,
-            templateVersion: template.activeVersion,
+            templateVersion,
             ticketIsSynthetic: true,
           },
         },
-        () => fastify.temporal.startCampaignWorkflow(temporalWorkflowId, workflowInput),
+        startWorkflow,
         {
           audit: { actor: user, source: 'campaign', templateId: template.id },
           inTransaction: async (tx) => {
@@ -560,16 +659,31 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
                 createdById: user.sub,
                 description,
                 id: campaignId,
+                launchedById: user.sub,
                 maxParallel,
                 name,
                 orgId,
                 ownerTeamId: ownerTeam.id,
-                state: 'STARTING',
+                state: initialState,
                 templateId: template.id,
-                templateVersion: template.activeVersion as number,
+                templateVersion,
                 temporalWorkflowId,
+                workflowKind,
                 workRequestId,
                 ...(recipeRef && recipeParams ? { recipeParams, recipeRef } : {}),
+                ...(workflowKind === 'RECONCILER' && frozen
+                  ? {
+                      budgetUsd: body.budgetUsd ?? null,
+                      expiresAt: frozen.expiresAt,
+                      gate: (body.gate ?? 'OPENED') as CampaignGateValue,
+                      maxOpenPullRequests: frozen.maxOpenPullRequests,
+                      plan,
+                      rescanIntervalHours: frozen.rescanIntervalHours,
+                      scopeId,
+                      scopeKind,
+                      staleAfterDays: frozen.staleAfterDays,
+                    }
+                  : {}),
               },
             });
             await tx.campaignTarget.createMany({
@@ -613,7 +727,23 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
             recipeRef,
             targetCount: targets.length,
             templateId: template.id,
-            templateVersion: template.activeVersion,
+            templateVersion,
+            workflowKind,
+            ...(workflowKind === 'RECONCILER' && frozen
+              ? {
+                  budgetUsd: body.budgetUsd ?? null,
+                  expiresAt: frozen.expiresAt.toISOString(),
+                  gate: body.gate ?? 'OPENED',
+                  launchedById: user.sub,
+                  maxOpenPullRequests: frozen.maxOpenPullRequests,
+                  plan,
+                  rescanIntervalHours: frozen.rescanIntervalHours,
+                  scopeId,
+                  scopeKind,
+                  staleAfterDays: frozen.staleAfterDays,
+                  state: initialState,
+                }
+              : {}),
           },
           entityId: campaignId,
           entityType: 'Campaign',
@@ -626,13 +756,68 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         data: {
           campaignId,
           detailPath: `/campaigns/${campaignId}`,
+          state: initialState,
           targetCount: targets.length,
           temporalWorkflowId,
+          workflowId: temporalWorkflowId,
           workRequestId,
         },
       });
     }
   );
+
+  const SUMMARY_SELECT = {
+    completedAt: true,
+    createdAt: true,
+    createdBy: { select: { id: true, name: true } },
+    createdById: true,
+    description: true,
+    expiresAt: true,
+    gate: true,
+    id: true,
+    launchedById: true,
+    name: true,
+    ownerTeam: { select: { id: true, name: true } },
+    ownerTeamId: true,
+    pausedReason: true,
+    plan: true,
+    recipeParams: true,
+    recipeRef: true,
+    state: true,
+    updatedAt: true,
+    workflowKind: true,
+  } as const;
+
+  type SummaryRow = Prisma.CampaignGetPayload<{ select: typeof SUMMARY_SELECT }>;
+
+  /** The summary DTO of one campaign row, with the legacy fields the first dashboard read kept. */
+  const summaryOf = (row: SummaryRow, counts: ReturnType<typeof emptyCounts>) => {
+    const dto: CampaignSummaryDto = {
+      counts,
+      createdAt: row.createdAt.toISOString(),
+      createdById: row.createdById ?? null,
+      description: row.description,
+      expiresAt: iso(row.expiresAt),
+      gate: (row.gate ?? 'OPENED') as CampaignSummaryDto['gate'],
+      id: row.id,
+      launchedById: row.launchedById ?? null,
+      name: row.name,
+      ownerTeamId: row.ownerTeamId,
+      pausedReason: (row.pausedReason ?? null) as CampaignSummaryDto['pausedReason'],
+      plan: (row.plan ?? 'UNIFORM') as CampaignSummaryDto['plan'],
+      recipeRef: row.recipeRef ?? null,
+      state: row.state as CampaignSummaryDto['state'],
+      updatedAt: row.updatedAt.toISOString(),
+      workflowKind: (row.workflowKind ?? 'LEGACY') as CampaignSummaryDto['workflowKind'],
+    };
+    return {
+      ...dto,
+      completedAt: iso(row.completedAt),
+      createdBy: row.createdBy,
+      ownerTeam: row.ownerTeam,
+      recipeParams: row.recipeParams ?? null,
+    };
+  };
 
   app.get(
     '/',
@@ -643,22 +828,13 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
     async (request) => {
       const user = requireUser(request);
       const gate = request.repoAccessGate;
-      const { limit, offset, ownerTeamId, state } = request.query;
+      const { limit, offset, ownerTeamId, plan, state } = request.query;
       const filters: Prisma.CampaignWhereInput = {
         ...(ownerTeamId ? { ownerTeamId } : {}),
+        ...(plan ? { plan } : {}),
         ...(state ? { state } : {}),
       };
-      const select = {
-        completedAt: true,
-        createdAt: true,
-        createdBy: { select: { id: true, name: true } },
-        id: true,
-        name: true,
-        ownerTeam: { select: { id: true, name: true } },
-        recipeParams: true,
-        recipeRef: true,
-        state: true,
-      } as const;
+      const select = SUMMARY_SELECT;
       const page = {
         orderBy: [{ createdAt: 'desc' as const }, { id: 'desc' as const }],
         skip: offset,
@@ -729,9 +905,12 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
             }),
           ]);
 
-      const counts = await countsFor(rows.map((r) => r.id));
+      const counts = await countsFor(
+        fastify.prisma,
+        rows.map((r) => r.id)
+      );
       return {
-        data: rows.map((row) => ({ ...row, counts: counts.get(row.id) ?? emptyCounts() })),
+        data: rows.map((row) => summaryOf(row, counts.get(row.id) ?? emptyCounts())),
         meta: { limit, offset, total },
       };
     }
@@ -741,7 +920,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id',
     {
       onRequest: requireAuth(),
-      schema: { params: CampaignParams },
+      schema: { params: CampaignParamsSchema },
     },
     async (request, reply) => {
       const user = requireUser(request);
@@ -752,24 +931,23 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
       // Never 403: a campaign the caller cannot see does not exist as far as they are told.
       const campaign = await fastify.prisma.campaign.findFirst({
         select: {
+          ...SUMMARY_SELECT,
+          budgetUsd: true,
           cancelledAt: true,
           cancelledById: true,
-          completedAt: true,
-          createdAt: true,
-          createdBy: { select: { id: true, name: true } },
-          description: true,
-          id: true,
+          launcherChangedAt: true,
+          maxOpenPullRequests: true,
           maxParallel: true,
-          name: true,
           orgId: true,
-          ownerTeam: { select: { id: true, name: true } },
-          recipeParams: true,
-          recipeRef: true,
-          state: true,
+          planFailedAt: true,
+          planFailureReason: true,
+          rescanIntervalHours: true,
+          scopeId: true,
+          scopeKind: true,
+          staleAfterDays: true,
           templateId: true,
           templateVersion: true,
           temporalWorkflowId: true,
-          updatedAt: true,
           workRequestId: true,
         },
         where: { id, ...(isAdmin ? {} : { OR: visibleToMember(user, gate) }) },
@@ -778,33 +956,19 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 404, 'CAMPAIGN_NOT_FOUND', 'Campaign not found');
       }
 
-      const targetSelect = {
-        childWorkflowId: true,
-        connectionId: true,
-        failureReason: true,
-        finishedAt: true,
-        path: true,
-        position: true,
-        prNumber: true,
-        prUrl: true,
-        repoLabel: true,
-        startedAt: true,
-        state: true,
-        verification: true,
-      } as const;
-      const [countsByCampaign, targets] = await Promise.all([
-        countsFor([id]),
+      const [countsByCampaign, targets, ownerMember] = await Promise.all([
+        countsFor(fastify.prisma, [id]),
         isAdmin
           ? runUnscoped('admin reads every target of a campaign', ['CampaignTarget'], () =>
               fastify.prisma.campaignTarget.findMany({
                 orderBy: { position: 'asc' },
-                select: targetSelect,
+                select: TARGET_SELECT,
                 where: { campaignId: id },
               })
             )
           : fastify.prisma.campaignTarget.findMany({
               orderBy: { position: 'asc' },
-              select: targetSelect,
+              select: TARGET_SELECT,
               where: {
                 campaignId: id,
                 // Only repositories the caller can reach; the rest are counted, not named.
@@ -821,37 +985,83 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
                 },
               },
             }),
+        // The discovery proposals name repositories the launcher could not start work in; they are
+        // shown to the owning team and ADMINs only.
+        isAdmin
+          ? Promise.resolve(true)
+          : fastify.prisma.campaign
+              .findFirst({
+                select: { id: true },
+                where: { id, ownerTeam: memberTeams(user) },
+              })
+              .then((row) => row !== null),
       ]);
       const counts = countsByCampaign.get(id) ?? emptyCounts();
-      const totalTargets = Object.values(counts).reduce((a, b) => a + b, 0);
 
-      // A running target's live phase comes from its child's ledger row.
-      const runningChildIds = targets
-        .filter((t) => t.state === 'RUNNING' && t.childWorkflowId)
-        .map((t) => t.childWorkflowId as string);
-      const live =
-        runningChildIds.length > 0
-          ? await fastify.prisma.activeWorkflow.findMany({
-              select: { currentStatus: true, temporalWorkflowId: true },
-              where: { temporalWorkflowId: { in: runningChildIds } },
-            })
-          : [];
-      const liveById = new Map(live.map((l) => [l.temporalWorkflowId, l.currentStatus]));
-
-      return {
-        data: {
-          ...campaign,
-          counts,
-          hiddenTargetCount: Math.max(0, totalTargets - targets.length),
-          targets: targets.map((t) => ({
-            ...t,
-            liveStatus:
-              t.state === 'RUNNING' && t.childWorkflowId
-                ? (liveById.get(t.childWorkflowId) ?? null)
-                : null,
-          })),
+      const visible = new Set(targets.map((t) => t.id));
+      const graph = await loadGraph(fastify.prisma, id);
+      const blocked = blockedReasons(
+        {
+          gate: (campaign.gate ?? 'OPENED') as CampaignGateValue,
+          maxOpenPullRequests: campaign.maxOpenPullRequests ?? null,
+          maxParallel: campaign.maxParallel,
         },
+        recipeHasCheck(campaign.recipeRef),
+        graph,
+        visible
+      );
+      const [targetViews, proposalView] = await Promise.all([
+        targetDtos(fastify.prisma, targets, blocked),
+        ownerMember
+          ? proposalDtos(
+              fastify.prisma,
+              id,
+              // The proposals name other teams' repositories: only those the caller can reach.
+              isAdmin
+                ? undefined
+                : {
+                    AND: [
+                      {
+                        OR: [
+                          { team: memberTeams(user) },
+                          { shares: { some: { team: memberTeams(user) } } },
+                        ],
+                      },
+                      permissionRequirement(user, gate),
+                    ],
+                  }
+            )
+          : Promise.resolve({ hiddenCount: 0, proposals: [] }),
+      ]);
+      const proposals = proposalView.proposals;
+
+      const summary = summaryOf(campaign, counts);
+      const detail: CampaignDetailDto & Record<string, unknown> = {
+        ...summary,
+        budgetUsd: campaign.budgetUsd == null ? null : Number(campaign.budgetUsd),
+        cancelledAt: iso(campaign.cancelledAt),
+        cancelledById: campaign.cancelledById ?? null,
+        completedAt: iso(campaign.completedAt),
+        hiddenProposalCount: proposalView.hiddenCount,
+        hiddenTargetCount: Math.max(0, counts.total - targets.length),
+        launcherChangedAt: iso(campaign.launcherChangedAt),
+        maxOpenPullRequests: campaign.maxOpenPullRequests ?? null,
+        maxParallel: campaign.maxParallel,
+        orgId: campaign.orgId,
+        // The reason is the fixed-wording string the worker stored; it is passed through as is.
+        planFailure: planFailureOf(campaign),
+        proposals,
+        rescanIntervalHours: campaign.rescanIntervalHours ?? null,
+        scopeId: campaign.scopeId ?? null,
+        scopeKind: (campaign.scopeKind ?? null) as CampaignDetailDto['scopeKind'],
+        staleAfterDays: campaign.staleAfterDays ?? null,
+        targets: targetViews,
+        templateId: campaign.templateId,
+        templateVersion: campaign.templateVersion,
+        temporalWorkflowId: campaign.temporalWorkflowId,
+        workRequestId: campaign.workRequestId,
       };
+      return { data: detail };
     }
   );
 
@@ -859,7 +1069,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
     '/:id/cancel',
     {
       onRequest: requireAuth(),
-      schema: { params: CampaignParams },
+      schema: { params: CampaignParamsSchema },
     },
     async (request, reply) => {
       const user = requireUser(request);
@@ -874,6 +1084,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
           ownerTeamId: true,
           state: true,
           temporalWorkflowId: true,
+          workflowKind: true,
         },
         where: { id, ...(isAdmin ? {} : { OR: visibleToMember(user, gate) }) },
       });
@@ -881,18 +1092,13 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 404, 'CAMPAIGN_NOT_FOUND', 'Campaign not found');
       }
 
-      if (!isAdmin && !isLauncher(user.sub, campaign.createdById)) {
-        const leads = await can(request, 'team.launch.multi-repo', {
-          teamId: campaign.ownerTeamId,
-        });
-        if (!leads.allowed) {
-          return sendError(
-            reply,
-            403,
-            'FORBIDDEN',
-            'Only the campaign’s creator, a LEAD of its owning team or an ADMIN may cancel it'
-          );
-        }
+      if (!(await mayControlCampaign(request, user, campaign))) {
+        return sendError(
+          reply,
+          403,
+          'FORBIDDEN',
+          'Only the campaign’s creator, a LEAD of its owning team or an ADMIN may cancel it'
+        );
       }
 
       if ((CAMPAIGN_TERMINAL_STATES as readonly string[]).includes(campaign.state)) {
@@ -919,9 +1125,34 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 409, 'CAMPAIGN_NOT_ACTIVE', 'Campaign is no longer active');
       }
 
+      const reconciled = campaign.workflowKind === 'RECONCILER';
+
+      // A reconciled campaign's children are runs of their own, not Temporal children of the
+      // campaign, so closing the campaign's workflow no longer asks them to stop: each attempt in
+      // flight is cancelled through the run cancel path, as orchestration cancels its children.
+      if (reconciled) {
+        try {
+          await cancelRunningAttempts(id);
+        } catch (err) {
+          request.log.error({ campaignId: id, err }, 'campaign attempt cancel failed');
+          return sendError(
+            reply,
+            503,
+            'CAMPAIGN_SIGNAL_FAILED',
+            'The campaign is marked CANCELLING but a running attempt could not be cancelled; try again'
+          );
+        }
+      }
+
       let delivery: 'signalled' | 'not-running';
       try {
-        delivery = await fastify.temporal.signalCampaignCancel(campaign.temporalWorkflowId);
+        delivery = reconciled
+          ? await fastify.temporal.signalCampaignWorkflow(
+              campaign.temporalWorkflowId,
+              CAMPAIGN_CONTROL_SIGNAL,
+              { action: 'cancel' } satisfies CampaignControlSignal
+            )
+          : await fastify.temporal.signalCampaignCancel(campaign.temporalWorkflowId);
       } catch (err) {
         request.log.error({ campaignId: id, err }, 'campaign cancel signal failed');
         return sendError(
@@ -951,16 +1182,20 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
           entityId: id,
           entityType: 'Campaign',
         });
-        return reply.status(202).send({ data: { campaignId: id, state: 'CANCELLING' } });
+        return reply.status(202).send({ data: { campaignId: id, id, state: 'CANCELLING' } });
       }
 
       // No running workflow to stop: it closed (or Temporal no longer knows it) without leaving
       // the campaign final, which is what a finalizer that exhausted its retries leaves. Nothing
       // else will ever close these rows, so this call does: the campaign CANCELLED and every
-      // target still PENDING or RUNNING with it (a child of a closed campaign was cancelled with
-      // its parent). The state predicate leaves a campaign a late finalizer closed as it wrote it.
+      // target still open with it (a legacy child of a closed campaign was cancelled with its
+      // parent; a reconciled attempt was cancelled above). The state predicate leaves a campaign a
+      // late finalizer closed as it wrote it.
       if (delivery === 'not-running') {
         const now = new Date();
+        const closedStates = reconciled
+          ? (['PENDING', 'BLOCKED', 'RUNNING', 'NEEDS_ATTENTION'] as const)
+          : (['PENDING', 'RUNNING'] as const);
         const closed = await runUnscoped(
           'closing the targets of a campaign whose workflow is gone; the caller was authorized on the campaign above',
           ['Campaign', 'CampaignTarget'],
@@ -975,8 +1210,14 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
               }
               const targets = await tx.campaignTarget.updateMany({
                 data: { finishedAt: now, state: 'CANCELLED' },
-                where: { campaignId: id, state: { in: ['PENDING', 'RUNNING'] } },
+                where: { campaignId: id, state: { in: [...closedStates] } },
               });
+              if (reconciled) {
+                await tx.campaignAttempt.updateMany({
+                  data: { finishedAt: now, outcome: 'CANCELLED' },
+                  where: { finishedAt: null, target: { campaignId: id } },
+                });
+              }
               return targets.count;
             })
         );
@@ -987,7 +1228,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
           });
           return reply
             .status(200)
-            .send({ data: { campaignId: id, state: now2?.state ?? campaign.state } });
+            .send({ data: { campaignId: id, id, state: now2?.state ?? campaign.state } });
         }
         await writeAuditLog(fastify, {
           action: 'UPDATE',
@@ -1002,7 +1243,7 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
           entityId: id,
           entityType: 'Campaign',
         });
-        return reply.status(200).send({ data: { campaignId: id, state: 'CANCELLED' } });
+        return reply.status(200).send({ data: { campaignId: id, id, state: 'CANCELLED' } });
       }
 
       await writeAuditLog(fastify, {
@@ -1014,7 +1255,36 @@ export const campaignRoutes: FastifyPluginAsync = async (fastify) => {
         entityType: 'Campaign',
       });
 
-      return reply.status(202).send({ data: { campaignId: id, state: 'CANCELLING' } });
+      return reply.status(202).send({ data: { campaignId: id, id, state: 'CANCELLING' } });
     }
   );
+
+  /**
+   * Cancel the run of every attempt of the campaign that has not finished, through the run cancel
+   * path (`temporal.cancelWorkflow`). A run Temporal no longer has is already stopped. Throws when
+   * a cancel fails for any other reason, so the caller can ask the person to try again.
+   */
+  async function cancelRunningAttempts(campaignId: string): Promise<void> {
+    const open = await fastify.prisma.campaignAttempt.findMany({
+      select: { childWorkflowId: true },
+      where: { finishedAt: null, target: { campaignId } },
+    });
+    for (const attempt of open) {
+      if (!attempt.childWorkflowId) {
+        continue;
+      }
+      try {
+        await fastify.temporal.cancelWorkflow(attempt.childWorkflowId);
+      } catch (err) {
+        if (!isTerminalSignalError(err)) {
+          throw err;
+        }
+      }
+    }
+  }
 };
+
+/** Whether the campaign's recipe has a read-only check, so a `MERGED` target can be confirmed. */
+function recipeHasCheck(recipeRef: string | null | undefined): boolean {
+  return recipeSupportsCheck(recipeRef);
+}

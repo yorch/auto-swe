@@ -1,12 +1,14 @@
 'use client';
 
 import { campaignTextProblem } from '@auto-swe/shared/lib/campaignOutcome';
+import { recipeSupportsCheck } from '@auto-swe/shared/lib/campaignRecipes';
 import { BUDGET_TIERS, CAMPAIGN_DESCRIPTION_MAX_LENGTH } from '@auto-swe/shared/types/workflow';
 import { type FormEvent, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
+import { RadioGroup } from '@/components/ui/RadioGroup';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { SearchInput } from '@/components/ui/Toolbar';
@@ -15,11 +17,38 @@ import { useCanOnTeams } from '@/hooks/useCan';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useAuthoringTeams } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
-import { RECIPE_OPTIONS } from './campaignDisplay';
+import { CAMPAIGN_FORM_LIMITS, RECIPE_OPTIONS } from './campaignDisplay';
 
 /** The gateway's ceiling for one launch; the owning team's own limit may be lower. */
 const MAX_REPOS = 200;
 const NAME_MAX = 120;
+
+type FieldRange = { label: string; max: number; min: number };
+
+/** An optional whole number within `range`; empty is fine. The message names the field. */
+function wholeNumberProblem(raw: string, range: FieldRange): string | null {
+  const text = raw.trim();
+  if (!text) {
+    return null;
+  }
+  const value = Number(text);
+  if (!/^\d+$/.test(text) || value < range.min || value > range.max) {
+    return `${range.label} must be a whole number from ${range.min} to ${range.max}.`;
+  }
+  return null;
+}
+
+/** Values the form opens with (a recorded proposal); every field is optional and editable. */
+export interface CampaignStartInitialValues {
+  description?: string;
+  name?: string;
+  ownerTeamId?: string;
+  packageName?: string;
+  plan?: 'UNIFORM' | 'PLANNED';
+  recipeRef?: string;
+  repoIds?: string[];
+  targetVersion?: string;
+}
 
 /**
  * Starts a campaign. The route needs LEAD or ADMIN on the owning team and on the team that owns
@@ -27,10 +56,12 @@ const NAME_MAX = 120;
  * still decides. `onStarted` receives the campaign's page path.
  */
 export function CampaignStartModal({
+  initialValues,
   onClose,
   onStarted,
   open,
 }: {
+  initialValues?: CampaignStartInitialValues;
   onClose: () => void;
   onStarted: (path: string) => void;
   open: boolean;
@@ -43,15 +74,17 @@ export function CampaignStartModal({
       subtitle="Apply one planned change to many repositories of one organization. Every result is a draft pull request for a person to review and merge, unless its repository is in auto mode, where GitHub may merge a qualifying low-risk one once a person has marked it ready."
       title="Start a campaign"
     >
-      {open && <StartForm onClose={onClose} onStarted={onStarted} />}
+      {open && <StartForm initialValues={initialValues} onClose={onClose} onStarted={onStarted} />}
     </Modal>
   );
 }
 
 function StartForm({
+  initialValues,
   onClose,
   onStarted,
 }: {
+  initialValues?: CampaignStartInitialValues;
   onClose: () => void;
   onStarted: (path: string) => void;
 }) {
@@ -63,15 +96,23 @@ function StartForm({
     'team.launch.multi-repo',
     useMemo(() => allRepos.map((r) => ({ id: r.team.id })), [allRepos])
   );
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [ownerChoice, setOwnerChoice] = useState('');
-  const [recipeRef, setRecipeRef] = useState('');
-  const [packageName, setPackageName] = useState('');
-  const [targetVersion, setTargetVersion] = useState('');
+  const [name, setName] = useState(initialValues?.name ?? '');
+  const [description, setDescription] = useState(initialValues?.description ?? '');
+  const [ownerChoice, setOwnerChoice] = useState(initialValues?.ownerTeamId ?? '');
+  const [recipeRef, setRecipeRef] = useState(initialValues?.recipeRef ?? '');
+  const [packageName, setPackageName] = useState(initialValues?.packageName ?? '');
+  const [targetVersion, setTargetVersion] = useState(initialValues?.targetVersion ?? '');
   const [budget, setBudget] = useState('');
   const [maxParallel, setMaxParallel] = useState('');
-  const [pickedIds, setPickedIds] = useState<string[]>([]);
+  const [plan, setPlan] = useState<'UNIFORM' | 'PLANNED'>(initialValues?.plan ?? 'UNIFORM');
+  const [gate, setGate] = useState<'OPENED' | 'MERGED'>('OPENED');
+  const [scopeKind, setScopeKind] = useState<'' | 'TEAM' | 'ORG'>('');
+  const [maxOpenPullRequests, setMaxOpenPullRequests] = useState('');
+  const [staleAfterDays, setStaleAfterDays] = useState('');
+  const [rescanIntervalHours, setRescanIntervalHours] = useState('');
+  const [budgetUsd, setBudgetUsd] = useState('');
+  const [lifetimeDays, setLifetimeDays] = useState('');
+  const [pickedIds, setPickedIds] = useState<string[]>(initialValues?.repoIds ?? []);
   const [repoFilter, setRepoFilter] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -79,6 +120,11 @@ function StartForm({
   const ownerTeamId = ownerChoice || (teams.length === 1 ? (teams[0]?.id ?? '') : '');
   const ownerTeam = teams.find((t) => t.id === ownerTeamId);
   const orgByTeam = new Map(teams.map((t) => [t.id, t.orgId]));
+  // A planned campaign takes its work from the planner, so it has no recipe: nothing to check
+  // against, and so nothing to discover or verify with.
+  const planned = plan === 'PLANNED';
+  const recipe = planned ? '' : recipeRef;
+  const canCheck = recipeSupportsCheck(recipe);
 
   // Git repositories in the owning team's organization, owned by a team the caller may start a
   // campaign for.
@@ -123,7 +169,7 @@ function StartForm({
     if (!ownerTeamId) {
       return 'Choose the owning team.';
     }
-    if (recipeRef && (!packageName.trim() || !targetVersion.trim())) {
+    if (recipe && (!packageName.trim() || !targetVersion.trim())) {
       return 'A recipe needs a package name and an exact target version.';
     }
     if (repoIds.length === 0) {
@@ -134,6 +180,24 @@ function StartForm({
     }
     if (maxParallel && !/^[1-9]\d*$/.test(maxParallel.trim())) {
       return 'Parallel repositories must be a whole number of at least 1.';
+    }
+    const limits = CAMPAIGN_FORM_LIMITS;
+    const fieldProblem =
+      wholeNumberProblem(maxOpenPullRequests, limits.maxOpenPullRequests) ??
+      wholeNumberProblem(staleAfterDays, limits.staleAfterDays) ??
+      (canCheck ? wholeNumberProblem(rescanIntervalHours, limits.rescanIntervalHours) : null) ??
+      wholeNumberProblem(lifetimeDays, limits.lifetimeDays);
+    if (fieldProblem) {
+      return fieldProblem;
+    }
+    const budget = budgetUsd.trim();
+    if (
+      budget &&
+      (!/^\d+(\.\d{1,2})?$/.test(budget) ||
+        Number(budget) <= 0 ||
+        Number(budget) > limits.budgetUsd.max)
+    ) {
+      return `Monthly budget must be an amount in dollars above 0 and up to ${limits.budgetUsd.max.toLocaleString('en-US')}.`;
     }
     return null;
   }
@@ -150,16 +214,34 @@ function StartForm({
       description,
       name: name.trim(),
       ownerTeamId,
+      plan,
       repoIds,
-      ...(recipeRef
+      ...(planned ? { gate } : {}),
+      ...(recipe
         ? {
             recipe: {
               params: { packageName: packageName.trim(), targetVersion: targetVersion.trim() },
-              ref: recipeRef,
+              ref: recipe,
             },
           }
         : {}),
+      // Discovery needs the recipe's check; without one the target list is fixed.
+      ...(canCheck && scopeKind
+        ? {
+            scope:
+              scopeKind === 'TEAM'
+                ? { id: ownerTeamId, kind: 'TEAM' as const }
+                : { kind: 'ORG' as const },
+          }
+        : {}),
       ...(maxParallel ? { maxParallel: Number(maxParallel.trim()) } : {}),
+      ...(maxOpenPullRequests ? { maxOpenPullRequests: Number(maxOpenPullRequests.trim()) } : {}),
+      ...(staleAfterDays ? { staleAfterDays: Number(staleAfterDays.trim()) } : {}),
+      ...(canCheck && rescanIntervalHours
+        ? { rescanIntervalHours: Number(rescanIntervalHours.trim()) }
+        : {}),
+      ...(budgetUsd.trim() ? { budgetUsd: Number(budgetUsd.trim()) } : {}),
+      ...(lifetimeDays ? { lifetimeDays: Number(lifetimeDays.trim()) } : {}),
       ...(budget ? { budget: budget as (typeof BUDGET_TIERS)[number] } : {}),
     };
     try {
@@ -201,24 +283,72 @@ function StartForm({
         rows={5}
         value={description}
       />
-      <Select
-        hint="A recipe makes the change with a script, no model involved. Without one the agent makes it."
-        label="Recipe"
-        onChange={setRecipeRef}
-        options={RECIPE_OPTIONS.map((o) => ({
-          description: o.description,
-          label: o.label,
-          value: o.value,
-        }))}
-        value={recipeRef}
+      <RadioGroup
+        legend="Work"
+        name="campaign-plan"
+        onChange={setPlan}
+        options={[
+          {
+            description: 'The brief and the recipe apply to every repository alike.',
+            label: 'Same change everywhere',
+            value: 'UNIFORM',
+          },
+          {
+            description:
+              'The planner splits the brief into one brief per repository and an order between them. You review the plan and confirm before anything starts.',
+            label: 'Planned per repository',
+            value: 'PLANNED',
+          },
+        ]}
+        value={plan}
       />
-      {recipeRef && (
+      {planned && (
+        <RadioGroup
+          legend="A repository may start when"
+          name="campaign-gate"
+          onChange={setGate}
+          options={[
+            {
+              description: 'The repositories it depends on have a draft pull request open.',
+              label: 'An upstream draft pull request is open',
+              value: 'OPENED',
+            },
+            {
+              description:
+                'Slower: every step in a chain waits for review and CI, so a long chain takes days rather than hours.',
+              label: 'An upstream pull request has merged and its check passed',
+              value: 'MERGED',
+            },
+          ]}
+          value={gate}
+        />
+      )}
+      {!planned && (
+        <Select
+          hint={
+            recipeRef
+              ? canCheck
+                ? 'This recipe can check a repository: the campaign can find repositories that start to match and confirm that a merge fixed one.'
+                : 'This recipe only makes the change: no discovery of new repositories and no verification of merges. Choose an @2 recipe for those.'
+              : 'A recipe makes the change with a script, no model involved. Without one the agent makes it. Recipes ending @2 also enable discovery and verification of merges; @1 recipes do not.'
+          }
+          label="Recipe"
+          onChange={setRecipeRef}
+          options={RECIPE_OPTIONS.map((o) => ({
+            description: o.description,
+            label: o.label,
+            value: o.value,
+          }))}
+          value={recipeRef}
+        />
+      )}
+      {recipe && (
         <div className="grid gap-4 sm:grid-cols-2">
           <Input
-            hint={recipeRef.startsWith('go-') ? 'A Go module path.' : 'An npm package name.'}
+            hint={recipe.startsWith('go-') ? 'A Go module path.' : 'An npm package name.'}
             label="Package name"
             onChange={(e) => setPackageName(e.target.value)}
-            placeholder={recipeRef.startsWith('go-') ? 'github.com/pkg/errors' : 'lodash'}
+            placeholder={recipe.startsWith('go-') ? 'github.com/pkg/errors' : 'lodash'}
             required
             value={packageName}
           />
@@ -226,7 +356,7 @@ function StartForm({
             hint="An exact version, not a range or a tag."
             label="Target version"
             onChange={(e) => setTargetVersion(e.target.value)}
-            placeholder={recipeRef.startsWith('go-') ? 'v1.9.0' : '4.17.21'}
+            placeholder={recipe.startsWith('go-') ? 'v1.9.0' : '4.17.21'}
             required
             value={targetVersion}
           />
@@ -297,6 +427,68 @@ function StartForm({
           value={budget}
         />
       </div>
+      <details className="rounded-lg border border-ink-500/70 px-4 py-3">
+        <summary className="cursor-pointer text-sm text-paper-200">Limits and schedule</summary>
+        <div className="mt-4 space-y-4">
+          {canCheck && (
+            <Select
+              hint="Look for other repositories that need the change, and add them when the person this campaign runs as may start work in them. Others are listed as found, not started."
+              label="Find more repositories in"
+              onChange={(value) => setScopeKind(value as '' | 'TEAM' | 'ORG')}
+              options={[
+                { label: 'Nowhere: the list above is fixed', value: '' },
+                { label: 'The owning team’s repositories', value: 'TEAM' },
+                { label: 'The whole organization', value: 'ORG' },
+              ]}
+              value={scopeKind}
+            />
+          )}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Input
+              hint="No new repository starts while this many draft pull requests of this campaign await review. Empty for the team default."
+              inputMode="numeric"
+              label="Open pull requests at most"
+              onChange={(e) => setMaxOpenPullRequests(e.target.value)}
+              placeholder="Team default"
+              value={maxOpenPullRequests}
+            />
+            <Input
+              hint="A draft open this long is flagged as stale. Nothing is closed. Empty for the team default."
+              inputMode="numeric"
+              label="Stale after (days)"
+              onChange={(e) => setStaleAfterDays(e.target.value)}
+              placeholder="Team default"
+              value={staleAfterDays}
+            />
+            {canCheck && (
+              <Input
+                hint="How often satisfied repositories are checked again. Empty for the team default."
+                inputMode="numeric"
+                label="Re-check every (hours)"
+                onChange={(e) => setRescanIntervalHours(e.target.value)}
+                placeholder="Team default"
+                value={rescanIntervalHours}
+              />
+            )}
+            <Input
+              hint="What the campaign’s runs may spend in a month; at the cap it pauses. Empty for no cap of its own."
+              inputMode="decimal"
+              label="Monthly budget (USD)"
+              onChange={(e) => setBudgetUsd(e.target.value)}
+              placeholder="No cap"
+              value={budgetUsd}
+            />
+            <Input
+              hint="How long it may keep watching for new repositories and regressions. Empty for the default."
+              inputMode="numeric"
+              label="Lifetime (days)"
+              onChange={(e) => setLifetimeDays(e.target.value)}
+              placeholder="Default"
+              value={lifetimeDays}
+            />
+          </div>
+        </div>
+      </details>
       {error && <Alert>{error}</Alert>}
       <ModalFooter
         isPending={create.isPending}

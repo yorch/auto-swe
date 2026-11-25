@@ -9,6 +9,11 @@ import {
   assistantActionDigest,
 } from '@auto-swe/shared/lib/assistantAction';
 import {
+  CAMPAIGN_TOKEN_PREFIX,
+  campaignTokenMatches,
+  verifyCampaignToken,
+} from '@auto-swe/shared/lib/campaignTokenKey';
+import {
   ORCHESTRATION_TOKEN_PREFIX,
   verifyOrchestrationToken,
 } from '@auto-swe/shared/lib/orchestrationTokenKey';
@@ -42,6 +47,7 @@ export type AuthMethod =
   | 'mcp'
   | 'assistant'
   | 'orchestration'
+  | 'campaign'
   | 'pat'
   | 'jwt'
   | 'session'
@@ -145,6 +151,12 @@ declare module 'fastify' {
      * `user` (or `principal`) is the orchestration's launcher.
      */
     orchestration?: { orchestrationId: string };
+    /**
+     * Set, instead of `user`, when the caller presented a campaign token: the one campaign, target
+     * and call it was minted for. The token carries no identity; the route derives the acting
+     * launcher from the campaign's own row.
+     */
+    campaignCall?: { campaignId: string; targetId: string; call: 'startAttempt' };
   }
   interface FastifyContextConfig {
     /**
@@ -166,6 +178,13 @@ declare module 'fastify' {
      * token names.
      */
     orchestrationToken?: 'caller';
+    /**
+     * Opt a route in to the campaign token, naming the one call the token must be scoped to. A route
+     * that does not declare this refuses the token with 403 `CAMPAIGN_TOKEN_NOT_ALLOWED`; a route
+     * that does is reached by the token alone (no `request.user`), and its `:id` and `:targetId`
+     * must be the campaign and target the token names.
+     */
+    campaignToken?: 'startAttempt';
     /**
      * Record a successful `GET` of this route as a user-activity event (`read` or `export`). A tag
      * on the route covers every mount of it, deprecated aliases included; see `activityEvents.ts`.
@@ -834,6 +853,10 @@ export function rateLimitKey(request: FastifyRequest): string {
       const verified = verifyOrchestrationToken(token);
       return verified.ok ? `orch:${verified.orchestrationId}` : ipRateLimitKey(request);
     }
+    if (token.startsWith(CAMPAIGN_TOKEN_PREFIX)) {
+      const verified = verifyCampaignToken(token);
+      return verified.ok ? `camp:${verified.campaignId}` : ipRateLimitKey(request);
+    }
     if (!token.startsWith(PAT_PREFIX)) {
       try {
         return `user:${request.server.auth.verifyAccessTokenClaims(token).sub}`;
@@ -965,14 +988,19 @@ export const RBAC_OPTIONS = Symbol('requireAuth options');
  */
 export function assertServiceScopesAdmissible(routeOptions: {
   url?: string;
-  config?: { serviceScopes?: readonly string[]; orchestrationToken?: string };
+  config?: {
+    serviceScopes?: readonly string[];
+    orchestrationToken?: string;
+    campaignToken?: string;
+  };
   onRequest?: unknown;
   preValidation?: unknown;
   preHandler?: unknown;
 }): void {
   const url = routeOptions.url ?? '?';
   const serviceScopes = !!routeOptions.config?.serviceScopes?.length;
-  const orchestrationToken = !!routeOptions.config?.orchestrationToken;
+  const campaignToken = !!routeOptions.config?.campaignToken;
+  const orchestrationToken = !!routeOptions.config?.orchestrationToken || campaignToken;
   if (!serviceScopes && !orchestrationToken) {
     return;
   }
@@ -989,7 +1017,7 @@ export function assertServiceScopesAdmissible(routeOptions: {
     const named = options?.capability ?? options?.handlerChecked?.[0];
     if (named) {
       throw new Error(
-        `Route ${url} declares ${serviceScopes ? 'serviceScopes' : 'an orchestration token'} and the capability ${named}: a principal is judged by its scopes, never by a capability`
+        `Route ${url} declares ${serviceScopes ? 'serviceScopes' : campaignToken ? 'a campaign token' : 'an orchestration token'} and the capability ${named}: a principal is judged by its scopes, never by a capability`
       );
     }
     if (serviceScopes && options && !serviceAdmissible(options)) {
@@ -1503,6 +1531,61 @@ async function admitOrchestrationToken(
   };
 }
 
+type CampaignRefusal = { status: 401 | 403; code: string; message: string };
+
+/**
+ * Admit a campaign token (`@auto-swe/shared/lib/campaignTokenKey`: HMAC, key version, claim and
+ * lifetime checks, else 401). The token names a campaign, a target and one call, and nothing about
+ * who acts: the route reads the launcher from the campaign's row. In order: the route declares
+ * `config.campaignToken` for exactly the token's call (else 403); the route's `:id` and `:targetId`
+ * are the campaign and target the token names (else 403). No database read: whether the campaign is
+ * still active is the route's decision, which answers with a coded refusal the worker can act on.
+ */
+function admitCampaignToken(
+  request: FastifyRequest,
+  token: string
+): { campaignCall: NonNullable<FastifyRequest['campaignCall']> } | CampaignRefusal {
+  const verified = verifyCampaignToken(token);
+  if (!verified.ok) {
+    return {
+      code: 'TOKEN_INVALID',
+      message: verified.reason === 'expired' ? 'Campaign token expired' : 'Invalid token',
+      status: 401,
+    };
+  }
+  const declared = request.routeOptions.config?.campaignToken;
+  if (!declared || declared !== verified.call) {
+    return {
+      code: 'CAMPAIGN_TOKEN_NOT_ALLOWED',
+      message: 'This route does not accept this campaign token',
+      status: 403,
+    };
+  }
+  const params = (request.params as Record<string, string> | undefined) ?? {};
+  if (
+    !params.id ||
+    !params.targetId ||
+    !campaignTokenMatches(verified, {
+      call: declared,
+      campaignId: params.id,
+      targetId: params.targetId,
+    })
+  ) {
+    return {
+      code: 'CAMPAIGN_TOKEN_NOT_ALLOWED',
+      message: 'This token was issued for a different campaign target',
+      status: 403,
+    };
+  }
+  return {
+    campaignCall: {
+      call: verified.call,
+      campaignId: verified.campaignId,
+      targetId: verified.targetId,
+    },
+  };
+}
+
 export function requireAuth(options: RBACOptions = {}) {
   for (const key of [options.capability, ...(options.handlerChecked ?? [])]) {
     if (key !== undefined && !isCapabilityKey(key)) {
@@ -1534,6 +1617,22 @@ export function requireAuth(options: RBACOptions = {}) {
     // Path 1: Authorization: Bearer <assistant token, PAT or JWT>
     else if (authHeader?.startsWith('Bearer ')) {
       const token = authHeader.slice(7);
+      if (token.startsWith(CAMPAIGN_TOKEN_PREFIX)) {
+        const outcome = admitCampaignToken(request, token);
+        if ('status' in outcome) {
+          return reply
+            .status(outcome.status)
+            .send({ error: { code: outcome.code, message: outcome.message } });
+        }
+        // Like a service principal: no `request.user`, so every handler that reads the user is
+        // closed to it and only a route that declares `config.campaignToken` is reached at all.
+        request.campaignCall = outcome.campaignCall;
+        request.authMethod = 'campaign';
+        // The worker has no request token for the GitHub permission gate to judge; the attempt
+        // route asks GitHub for the launcher's push permission live instead.
+        request.repoAccessGate = { mode: 'off', staleAfterHours: 0 };
+        return;
+      }
       if (token.startsWith(ORCHESTRATION_TOKEN_PREFIX)) {
         const outcome = await admitOrchestrationToken(request, token);
         if ('status' in outcome) {

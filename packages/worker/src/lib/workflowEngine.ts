@@ -16,7 +16,12 @@ export {
   mapAskAnswers,
   readNeedsInputLimits,
 } from '@auto-swe/shared/lib/needsInputAsk';
-export { CAMPAIGN_CANCEL_SIGNAL } from '@auto-swe/shared/types/workflow';
+export {
+  CAMPAIGN_ATTEMPT_FINISHED_SIGNAL,
+  CAMPAIGN_CANCEL_SIGNAL,
+  CAMPAIGN_CONTROL_SIGNAL,
+  CAMPAIGN_PULL_REQUEST_CHANGED_SIGNAL,
+} from '@auto-swe/shared/types/workflow';
 export { lookupPath } from '@auto-swe/shared/workflow/expr';
 export {
   BranchCancelledError,

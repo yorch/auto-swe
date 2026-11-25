@@ -28,6 +28,16 @@ export {
   recordCampaignTargetResult,
   recordCampaignTargetStarted,
 } from './campaign.js';
+// Campaign reconciler — the activities behind `CampaignReconcilerWorkflow`
+export { discoverCampaignTargets, runCampaignCheck } from './campaignCheck.js';
+export { planCampaignBriefs } from './campaignPlan.js';
+export {
+  cancelCampaignAttempts,
+  finalizeCampaignReconciler,
+  readCampaignPass,
+  recordCampaignPass,
+  startCampaignAttempt,
+} from './campaignReconciler.js';
 // Channel assistant (Phase 3) — ambient digest
 export { runChannelAmbientDigest } from './channelAmbient.js';
 // Channel assistant (Phase 0) — channel-resident Slack assistant

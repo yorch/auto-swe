@@ -1927,6 +1927,31 @@ export const SETTING_DEFINITIONS = {
     unit: 'days',
     writeAccess: 'admin',
   }),
+  'workflow.campaignLifetimeDays': defineSetting({
+    defaultValue: 90,
+    description:
+      'The default number of days a campaign runs before it expires, for a campaign that does not set its own lifetime. The expiry is fixed when the campaign launches.',
+    group: 'workflow',
+    label: 'Campaign lifetime',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(365),
+    unit: 'days',
+    writeAccess: 'admin',
+  }),
+  'workflow.campaignMaxOpenPullRequests': defineSetting({
+    defaultValue: 10,
+    description:
+      "The most draft pull requests one campaign may hold open at once; a target whose attempt is running counts, because it will become a draft. It is the default for a campaign's maxOpenPullRequests when a launch does not set one, and the ceiling a launch may not exceed.",
+    group: 'workflow',
+    label: 'Campaign open pull request limit',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(100),
+    writeAccess: 'admin',
+  }),
   'workflow.campaignMaxParallelChildren': defineSetting({
     defaultValue: 3,
     description:
@@ -1949,6 +1974,77 @@ export const SETTING_DEFINITIONS = {
     restartRequired: false,
     runPinned: false,
     schema: z.number().int().min(1).max(200),
+    writeAccess: 'admin',
+  }),
+  // Read by the gateway at campaign launch, which records the chosen workflow on the campaign row:
+  // a campaign runs to the end on the workflow it launched on, so turning this off does not move a
+  // running campaign. Not run-pinned, since the launch itself is the decision it governs.
+  'workflow.campaignReconciler': defineSetting({
+    defaultValue: false,
+    description:
+      'Which workflow a campaign runs on when it launches. On: the reconciler workflow. Off: the campaign workflow. The choice is recorded on the campaign at launch, and a campaign runs to the end on the workflow it launched on, so this setting does not move a running campaign.',
+    group: 'workflow',
+    label: 'Use the campaign reconciler',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+    writeAccess: 'admin',
+  }),
+  // Read by the worker's check activity for the campaign's owning team, once per check. Not
+  // run-pinned: the check decides on the live value, so a change reaches campaigns already running.
+  'workflow.campaignRegressionLimit': defineSetting({
+    defaultValue: 3,
+    description:
+      "How many times the check of a campaign target may regress after it was satisfied before the target needs a person. Each regression sends the target back to pending for another attempt; once it has regressed more than this many times, the next regression moves it to needs attention instead. Resolved for the campaign's owning team on every check, so a change reaches campaigns already running.",
+    group: 'workflow',
+    label: 'Campaign regression limit',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(20),
+    writeAccess: 'admin',
+  }),
+  // Read by the gateway at campaign launch (a rescanIntervalHours below it is refused) and by the
+  // worker's reconciler on every pass, which re-checks at the longer of the campaign's own interval
+  // and this floor, so a change reaches a running campaign. Not run-pinned, for the same reason.
+  'workflow.campaignRescanFloorHours': defineSetting({
+    defaultValue: 1,
+    description:
+      'The shortest interval, in hours, a campaign may re-check a satisfied target at. A launch that asks for a shorter rescanIntervalHours is refused, and a running campaign whose own interval is below the floor re-checks at the floor, so raising it takes effect on campaigns already running.',
+    group: 'workflow',
+    label: 'Campaign rescan floor',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(720),
+    unit: 'hours',
+    writeAccess: 'admin',
+  }),
+  'workflow.campaignRescanIntervalHours': defineSetting({
+    defaultValue: 24,
+    description:
+      'The default number of hours between re-checks of a satisfied target while its campaign is active or monitoring, for a campaign that does not set its own interval. The minimum of 1 is the floor, so a campaign cannot recheck every minute.',
+    group: 'workflow',
+    label: 'Campaign rescan interval',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(720),
+    unit: 'hours',
+    writeAccess: 'admin',
+  }),
+  'workflow.campaignStaleAfterDays': defineSetting({
+    defaultValue: 14,
+    description:
+      "The default number of days a campaign's draft pull request may stay open before its target is flagged stale, for a campaign that does not set its own threshold. A stale flag changes no state and starts nothing; it only marks the target so a person sees it.",
+    group: 'workflow',
+    label: 'Campaign stale pull request age',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(365),
+    unit: 'days',
     writeAccess: 'admin',
   }),
   // Read by the gateway at campaign launch, for the owning team and each target's team, and read

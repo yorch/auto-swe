@@ -1,140 +1,94 @@
 'use client';
 
-import type { BudgetTier } from '@auto-swe/shared/types/workflow';
+import type {
+  CampaignActionResponse,
+  CampaignCountsDto,
+  CampaignCreateBody,
+  CampaignDetailDto,
+  CampaignEditTargetBody,
+  CampaignEditTargetResponse,
+  CampaignLaunchResponse,
+  CampaignRemoveDependencyResponse,
+  CampaignSummaryDto,
+  CampaignTargetActionResponse,
+  CampaignTargetDto,
+} from '@auto-swe/shared/lib/campaignApi';
+import {
+  CAMPAIGN_STATE_VALUES,
+  CAMPAIGN_TARGET_STATE_VALUES,
+  type CampaignPlanValue,
+  type CampaignStateValue,
+  isCampaignFinal,
+  type TargetState,
+} from '@auto-swe/shared/lib/campaignState';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef } from 'react';
 import { ApiError, api } from '@/lib/api';
 import { randomId } from '@/lib/randomId';
 
-export const CAMPAIGN_STATES = [
-  'STARTING',
-  'RUNNING',
-  'CANCELLING',
-  'COMPLETED',
-  'COMPLETED_WITH_FAILURES',
-  'CANCELLED',
-  'FAILED_TO_START',
-] as const;
-export type CampaignState = (typeof CAMPAIGN_STATES)[number];
+/** Every value the gateway may send, including the ones only legacy campaigns carry. */
+export const CAMPAIGN_STATES = CAMPAIGN_STATE_VALUES;
+export type CampaignState = CampaignStateValue;
 
-export const CAMPAIGN_TARGET_STATES = [
-  'PENDING',
-  'RUNNING',
-  'PR_OPENED',
-  'NOT_AFFECTED',
-  'FAILED',
-  'SKIPPED',
-  'CANCELLED',
-] as const;
-export type CampaignTargetState = (typeof CAMPAIGN_TARGET_STATES)[number];
+export const CAMPAIGN_TARGET_STATES = CAMPAIGN_TARGET_STATE_VALUES;
+export type CampaignTargetState = TargetState;
 
-/** States a campaign never leaves; mirrors `CAMPAIGN_TERMINAL_STATES` in the gateway. */
-const TERMINAL_STATES: readonly string[] = [
-  'COMPLETED',
-  'COMPLETED_WITH_FAILURES',
-  'CANCELLED',
-  'FAILED_TO_START',
-];
+export type CampaignPlan = CampaignPlanValue;
 
+/** A campaign in one of these states never moves again (the shared definition). */
 export function isCampaignTerminal(state: string): boolean {
-  return TERMINAL_STATES.includes(state);
+  return isCampaignFinal(state as CampaignStateValue);
 }
 
-/** The number of targets in each state, over every target (including ones the viewer cannot see). */
-export type CampaignCounts = Record<CampaignTargetState, number>;
+/** The number of targets per bucket, over every target (including ones the viewer cannot see). */
+export type CampaignCounts = CampaignCountsDto;
 
 interface PersonRef {
   id: string;
   name: string | null;
 }
 
-interface CampaignRecipeFields {
-  recipeRef: string | null;
-  recipeParams: { packageName: string; targetVersion: string } | null;
+/**
+ * Fields the gateway still sends beside the shared wire shape. They are optional here because the
+ * shared schema does not promise them: the page shows what is present and never needs one.
+ */
+interface CampaignDisplayExtras {
+  createdBy?: PersonRef | null;
+  ownerTeam?: { id: string; name: string };
+  recipeParams?: { packageName: string; targetVersion: string } | null;
+  completedAt?: string | null;
+  /** Every child run of a legacy campaign shares this work request; used to find its run page. */
+  workRequestId?: string;
 }
 
 /** A row of GET /api/v1/campaigns. */
-export interface CampaignSummary extends CampaignRecipeFields {
-  id: string;
-  name: string;
-  state: CampaignState;
-  createdAt: string;
-  completedAt: string | null;
-  createdBy: PersonRef | null;
-  ownerTeam: { id: string; name: string };
-  counts: CampaignCounts;
-}
+export type CampaignSummary = CampaignSummaryDto & CampaignDisplayExtras;
 
-export interface CampaignTarget {
-  childWorkflowId: string | null;
-  connectionId: string | null;
-  failureReason: string | null;
-  finishedAt: string | null;
-  path: 'RECIPE' | 'AGENT' | 'RECIPE_THEN_AGENT' | 'NONE' | null;
-  position: number;
-  prNumber: number | null;
-  prUrl: string | null;
-  repoLabel: string;
-  startedAt: string | null;
-  state: CampaignTargetState;
-  verification: 'PASSED' | 'FAILED' | 'NOT_RUN' | null;
-  /** The child's live phase while it runs. */
-  liveStatus: string | null;
-}
+export type CampaignTarget = CampaignTargetDto;
 
 /** GET /api/v1/campaigns/:id. */
-export interface CampaignDetail extends CampaignRecipeFields {
-  id: string;
-  name: string;
-  description: string;
-  state: CampaignState;
-  cancelledAt: string | null;
-  cancelledById: string | null;
-  completedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-  createdBy: PersonRef | null;
-  ownerTeam: { id: string; name: string };
-  maxParallel: number;
-  orgId: string;
-  templateId: string;
-  templateVersion: number;
-  temporalWorkflowId: string;
-  workRequestId: string;
-  counts: CampaignCounts;
-  /** Targets the viewer cannot reach: counted, never named. */
-  hiddenTargetCount: number;
-  targets: CampaignTarget[];
-}
+export type CampaignDetail = CampaignDetailDto & CampaignDisplayExtras;
 
 /** The body of POST /api/v1/campaigns. */
-export interface CreateCampaignBody {
-  name: string;
-  description: string;
-  ownerTeamId: string;
-  repoIds: string[];
-  recipe?: { ref: string; params: { packageName: string; targetVersion: string } };
-  maxParallel?: number;
-  budget?: BudgetTier;
-}
+export type CreateCampaignBody = CampaignCreateBody;
 
-export interface CreateCampaignResponse {
+export type CreateCampaignResponse = Partial<CampaignLaunchResponse> & {
   campaignId: string;
-  temporalWorkflowId: string;
-  workRequestId: string;
   targetCount: number;
-  detailPath: string;
+  detailPath?: string;
   /** Present and true when the Idempotency-Key had already launched this exact request. */
   deduplicated?: boolean;
-}
+};
 
 /** Whether a failure is the gateway saying the campaign does not exist (or is not visible). */
 export function isCampaignNotFound(error: unknown): boolean {
   return error instanceof ApiError && error.status === 404;
 }
 
+const POLL_MS = 10_000;
+
 export function useCampaigns(
-  filters: { limit?: number; offset?: number; state?: CampaignState } = {},
+  filters: { limit?: number; offset?: number; plan?: CampaignPlan; state?: CampaignState } = {},
   options: { enabled?: boolean; teamId?: string } = {}
 ) {
   const teamId = options.teamId ?? null;
@@ -143,6 +97,9 @@ export function useCampaigns(
   params.set('offset', String(filters.offset ?? 0));
   if (filters.state) {
     params.set('state', filters.state);
+  }
+  if (filters.plan) {
+    params.set('plan', filters.plan);
   }
   if (teamId) {
     params.set('ownerTeamId', teamId);
@@ -157,7 +114,12 @@ export function useCampaigns(
         }>(`/api/v1/campaigns?${params.toString()}`)
         .then((r) => ({ data: r.data, meta: r.meta })),
     queryKey: ['campaigns', filters, teamId],
-    refetchInterval: 10_000,
+    // Refresh every ten seconds while any campaign on the page can still change; a page of final
+    // campaigns is left alone. Without an answer yet (loading or failed) keep trying.
+    refetchInterval: (query) => {
+      const rows = query.state.data?.data;
+      return !rows || rows.some((c) => !isCampaignTerminal(c.state)) ? POLL_MS : false;
+    },
   });
 }
 
@@ -171,7 +133,7 @@ export function useCampaign(id: string) {
     queryKey: ['campaign', id],
     // A final campaign no longer changes.
     refetchInterval: (query) =>
-      query.state.data && isCampaignTerminal(query.state.data.state) ? false : 10_000,
+      query.state.data && isCampaignTerminal(query.state.data.state) ? false : POLL_MS,
     // A campaign the viewer cannot see does not exist as far as the gateway says; do not retry it.
     retry: (count, error) => !isCampaignNotFound(error) && count < 2,
   });
@@ -206,17 +168,116 @@ export function useCreateCampaign() {
   });
 }
 
-export function useCancelCampaign(id: string) {
+function useRefreshCampaign(id: string) {
   const qc = useQueryClient();
+  return () => {
+    qc.invalidateQueries({ queryKey: ['campaign', id] });
+    qc.invalidateQueries({ queryKey: ['campaigns'] });
+  };
+}
+
+function campaignPath(id: string, tail = ''): string {
+  return `/api/v1/campaigns/${encodeURIComponent(id)}${tail}`;
+}
+
+/** The answer to cancel. Older gateways name the id `campaignId`; nothing here reads it. */
+type CancelResponse = Partial<CampaignActionResponse> & { campaignId?: string };
+
+export function useCancelCampaign(id: string) {
+  const refresh = useRefreshCampaign(id);
+  return useMutation({
+    mutationFn: () => api.post<{ data: CancelResponse }>(campaignPath(id, '/cancel'), {}),
+    onSuccess: refresh,
+  });
+}
+
+function useCampaignAction(id: string, action: 'confirm' | 'pause' | 'resume' | 'takeover') {
+  const refresh = useRefreshCampaign(id);
   return useMutation({
     mutationFn: () =>
-      api.post<{ data: { campaignId: string; state: CampaignState } }>(
-        `/api/v1/campaigns/${encodeURIComponent(id)}/cancel`,
+      api.post<{ data: CampaignActionResponse }>(campaignPath(id, `/${action}`), {}),
+    onSuccess: refresh,
+  });
+}
+
+/** PLANNING to ACTIVE: the launcher accepts the planner's briefs and edges. */
+export const useConfirmCampaign = (id: string) => useCampaignAction(id, 'confirm');
+export const usePauseCampaign = (id: string) => useCampaignAction(id, 'pause');
+export const useResumeCampaign = (id: string) => useCampaignAction(id, 'resume');
+/** Re-runs the launch decision for every unfinished target as the caller. */
+export const useTakeOverCampaign = (id: string) => useCampaignAction(id, 'takeover');
+
+/** A new attempt for a target that needs a person. */
+export function useRetryCampaignTarget(id: string) {
+  const refresh = useRefreshCampaign(id);
+  return useMutation({
+    mutationFn: (targetId: string) =>
+      api.post<{ data: CampaignTargetActionResponse }>(
+        campaignPath(id, `/targets/${encodeURIComponent(targetId)}/retry`),
         {}
       ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['campaign', id] });
-      qc.invalidateQueries({ queryKey: ['campaigns'] });
+    onSuccess: refresh,
+  });
+}
+
+/** Skips a target; nothing on the host is touched. */
+export function useRemoveCampaignTarget(id: string) {
+  const refresh = useRefreshCampaign(id);
+  return useMutation({
+    mutationFn: (targetId: string) =>
+      api.delete<{ data: CampaignTargetActionResponse }>(
+        campaignPath(id, `/targets/${encodeURIComponent(targetId)}`)
+      ),
+    onSuccess: refresh,
+  });
+}
+
+/** The launcher's edit of one planned target; the gateway answers with what it stored. */
+export type EditCampaignTargetBody = CampaignEditTargetBody;
+
+/**
+ * Rewrites a planned target's brief and/or the targets it starts after, while the campaign is
+ * still being planned. The stored values replace the target in the cached detail at once, so the
+ * plan view shows what the gateway kept; the refetch then confirms it.
+ */
+export function useEditCampaignTarget(id: string) {
+  const qc = useQueryClient();
+  const refresh = useRefreshCampaign(id);
+  return useMutation({
+    mutationFn: ({ body, targetId }: { body: EditCampaignTargetBody; targetId: string }) =>
+      api
+        .patch<CampaignEditTargetResponse>(
+          campaignPath(id, `/targets/${encodeURIComponent(targetId)}`),
+          body
+        )
+        .then((r) => r.data),
+    onSuccess: (stored) => {
+      qc.setQueryData<CampaignDetail>(['campaign', id], (old) =>
+        old
+          ? {
+              ...old,
+              targets: old.targets.map((t) =>
+                t.id === stored.id ? { ...t, brief: stored.brief, dependsOn: stored.dependsOn } : t
+              ),
+            }
+          : old
+      );
+      refresh();
     },
+  });
+}
+
+/** Drops one wait edge of a running campaign: the target no longer waits for that upstream. */
+export function useRemoveCampaignDependency(id: string) {
+  const refresh = useRefreshCampaign(id);
+  return useMutation({
+    mutationFn: ({ targetId, upstreamId }: { targetId: string; upstreamId: string }) =>
+      api.delete<CampaignRemoveDependencyResponse>(
+        campaignPath(
+          id,
+          `/targets/${encodeURIComponent(targetId)}/dependencies/${encodeURIComponent(upstreamId)}`
+        )
+      ),
+    onSuccess: refresh,
   });
 }

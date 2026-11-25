@@ -1,6 +1,7 @@
 import {
   CancelIntentSchema,
   MessageIntentSchema,
+  ProposeCampaignIntentSchema,
   RequestRepoIntentSchema,
   SpawnIntentSchema,
 } from '@auto-swe/shared/lib/orchestration';
@@ -9,7 +10,7 @@ import { z } from 'zod';
 import type { OrchestratorIntent } from '../lib/orchestrationTypes.js';
 
 /**
- * The orchestrator's four tools. They perform NOTHING: each validates the shape of its input with
+ * The orchestrator's five tools. They perform NOTHING: each validates the shape of its input with
  * the shared schema and records the intent into the turn's collector, then returns a structured
  * acknowledgement. They hold no gateway client, no database handle and no credentials, so a
  * prompt-injected orchestrator can ask for things but cannot do any of them. After the turn,
@@ -22,11 +23,15 @@ import type { OrchestratorIntent } from '../lib/orchestrationTypes.js';
 /** Most intents one turn may record; a model that loops cannot flood the apply step. */
 export const MAX_INTENTS_PER_TURN = 16;
 
+/** Most campaign proposals one turn may record (the gateway also caps them per orchestration). */
+export const MAX_PROPOSALS_PER_TURN = 2;
+
 export const ORCHESTRATOR_TOOL_IDS = [
   'spawnAgent',
   'messageAgent',
   'cancelAgent',
   'requestRepo',
+  'proposeCampaign',
 ] as const;
 
 /** Collects the intents one turn records. A fresh instance per turn. */
@@ -44,6 +49,11 @@ export class IntentCollector {
     }
     this.recorded.push(intent);
     return true;
+  }
+
+  /** Campaign proposals recorded so far this turn. */
+  proposalCount(): number {
+    return this.recorded.filter((i) => i.kind === 'proposeCampaign').length;
   }
 
   /** Whether the turn already asked for a repository: at most one request per turn. */
@@ -155,5 +165,33 @@ export function createOrchestratorTools(collector: IntentCollector) {
     outputSchema: AckSchema,
   });
 
-  return { cancelAgent, messageAgent, requestRepo, spawnAgent };
+  const proposeCampaign = createTool({
+    description:
+      'Propose a campaign: one planned change applied to many repositories, each ending in a draft pull request for people to review. ' +
+      'Records a proposal only. Nothing starts: the person sees a card and may review and start the campaign themselves, or ignore it. ' +
+      'Give a name, a self-contained brief (the agent instructions and the pull request text), a plan (UNIFORM: the same change everywhere; PLANNED: the work differs per repository), ' +
+      'optionally a recipe ({ ref, params: { packageName, targetVersion } } for an exact dependency bump), and optionally repository ids you were given. Never guess an id. ' +
+      'At most a few proposals can be recorded in one conversation.',
+    execute: async (input) => {
+      const parsed = ProposeCampaignIntentSchema.safeParse(input);
+      if (!parsed.success) {
+        return rejected(`Not recorded: ${issueSummary(parsed.error)}`);
+      }
+      if (collector.proposalCount() >= MAX_PROPOSALS_PER_TURN) {
+        return rejected('Enough campaign proposals are recorded for this turn.');
+      }
+      if (!collector.add({ intent: parsed.data, kind: 'proposeCampaign' })) {
+        return rejected(full);
+      }
+      return {
+        note: 'Recorded a campaign proposal. Nothing has started: the person must review and start it, and you will be told if it was not kept.',
+        recorded: true,
+      };
+    },
+    id: 'proposeCampaign',
+    inputSchema: ProposeCampaignIntentSchema,
+    outputSchema: AckSchema,
+  });
+
+  return { cancelAgent, messageAgent, proposeCampaign, requestRepo, spawnAgent };
 }

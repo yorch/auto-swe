@@ -88,4 +88,47 @@ describe('orchestrator intent tools', () => {
     collector.intents.pop();
     expect(collector.intents).toHaveLength(1);
   });
+  describe('proposeCampaign', () => {
+    const proposal = { brief: 'Raise lodash everywhere.', name: 'Raise lodash', plan: 'UNIFORM' };
+
+    it('records a proposal and nothing else, with the plan defaulted', async () => {
+      const { collector, run } = tools();
+      const out = await run('proposeCampaign', { brief: 'b', name: 'n' });
+      expect(out.recorded).toBe(true);
+      expect(out.note).toContain('Nothing has started');
+      expect(collector.intents).toEqual([
+        {
+          intent: { brief: 'b', name: 'n', plan: 'UNIFORM', repoIds: [] },
+          kind: 'proposeCampaign',
+        },
+      ]);
+    });
+
+    it('refuses malformed input without recording', async () => {
+      const { collector, run } = tools();
+      for (const bad of [
+        {},
+        { ...proposal, brief: '' },
+        { ...proposal, brief: 'a\u0000b' },
+        { ...proposal, plan: 'ALL' },
+        { ...proposal, repoIds: ['nope'] },
+        {
+          ...proposal,
+          repoIds: Array.from({ length: 201 }, () => '00000000-0000-4000-8000-000000000001'),
+        },
+      ]) {
+        // Mastra validates the input before `execute`, so a malformed call never records.
+        expect((await run('proposeCampaign', bad)).recorded).not.toBe(true);
+      }
+      expect(collector.intents).toEqual([]);
+    });
+
+    it('records at most two per turn', async () => {
+      const { collector, run } = tools();
+      expect((await run('proposeCampaign', proposal)).recorded).toBe(true);
+      expect((await run('proposeCampaign', proposal)).recorded).toBe(true);
+      expect((await run('proposeCampaign', proposal)).recorded).toBe(false);
+      expect(collector.intents).toHaveLength(2);
+    });
+  });
 });

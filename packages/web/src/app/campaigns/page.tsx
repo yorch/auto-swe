@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { Suspense, useState } from 'react';
 import { CampaignList } from '@/components/campaigns/CampaignList';
 import { CampaignStartModal } from '@/components/campaigns/CampaignStartModal';
+import { CAMPAIGN_STATE_LABELS } from '@/components/campaigns/campaignDisplay';
 import { TeamChip } from '@/components/teams/TeamChip';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -15,7 +16,12 @@ import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Toolbar } from '@/components/ui/Toolbar';
-import { CAMPAIGN_STATES, type CampaignState, useCampaigns } from '@/hooks/useCampaigns';
+import {
+  CAMPAIGN_STATES,
+  type CampaignPlan,
+  type CampaignState,
+  useCampaigns,
+} from '@/hooks/useCampaigns';
 import { useCan } from '@/hooks/useCan';
 import { useTeamParam } from '@/hooks/useTeamParam';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
@@ -26,7 +32,13 @@ const PAGE_SIZE = 30;
 
 const STATE_OPTIONS = [
   { label: 'All states', value: '' },
-  ...CAMPAIGN_STATES.map((s) => ({ label: s.replace(/_/g, ' ').toLowerCase(), value: s })),
+  ...CAMPAIGN_STATES.map((s) => ({ label: CAMPAIGN_STATE_LABELS[s].toLowerCase(), value: s })),
+];
+
+const PLAN_OPTIONS: { label: string; value: '' | CampaignPlan }[] = [
+  { label: 'All kinds', value: '' },
+  { label: 'same change everywhere', value: 'UNIFORM' },
+  { label: 'planned per repository', value: 'PLANNED' },
 ];
 
 function Campaigns() {
@@ -38,10 +50,12 @@ function Campaigns() {
   const { params, update } = useUrlFilters();
   const stateParam = params.get('state');
   const state = CAMPAIGN_STATES.find((s) => s === stateParam) as CampaignState | undefined;
+  const planParam = params.get('plan');
+  const plan = planParam === 'UNIFORM' || planParam === 'PLANNED' ? planParam : undefined;
   const offset = parseOffset(params.get('offset'));
   const teamFilter = useTeamParam();
   const campaignsQuery = useCampaigns(
-    { limit: PAGE_SIZE, offset, state },
+    { limit: PAGE_SIZE, offset, plan, state },
     { enabled: !teamFilter.blocked, teamId: teamFilter.teamId }
   );
   const campaigns = campaignsQuery.data?.data ?? [];
@@ -59,14 +73,15 @@ function Campaigns() {
         actions={campaigns.length > 0 && startButton}
         help={
           <p>
-            A campaign applies one planned change to many repositories of one organization. Each
-            repository gets its own run and ends in a draft pull request, nothing to change, or a
-            failure with its reason. People review and merge every pull request, unless its
-            repository is in auto mode, where GitHub may merge a qualifying low-risk one once a
-            person has marked it ready.
+            A campaign is a goal over many repositories, tracked until it holds. Each repository
+            gets its own run and ends in a draft pull request, is already satisfied, or needs a
+            person. A repository counts as satisfied when the recipe’s check passes on its base
+            branch. Epics are planned campaigns and appear here too. People review and merge every
+            pull request, unless its repository is in auto mode, where GitHub may merge a qualifying
+            low-risk one once a person has marked it ready.
           </p>
         }
-        subtitle="One change applied across many repositories, with a draft pull request for each."
+        subtitle="One goal pursued across many repositories, tracked until every one satisfies it."
         title="Campaigns"
       />
       <TeamChip onRemove={teamFilter.clear} team={teamFilter.team} />
@@ -75,14 +90,24 @@ function Campaigns() {
         <Toolbar
           className="mb-0"
           end={
-            <Select
-              appearance="pill"
-              aria-label="Filter by state"
-              onChange={(value) => update({ offset: null, state: value })}
-              options={STATE_OPTIONS}
-              prefix="state:"
-              value={state ?? ''}
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Select
+                appearance="pill"
+                aria-label="Filter by kind"
+                onChange={(value) => update({ offset: null, plan: value })}
+                options={PLAN_OPTIONS}
+                prefix="kind:"
+                value={plan ?? ''}
+              />
+              <Select
+                appearance="pill"
+                aria-label="Filter by state"
+                onChange={(value) => update({ offset: null, state: value })}
+                options={STATE_OPTIONS}
+                prefix="state:"
+                value={state ?? ''}
+              />
+            </div>
           }
         />
         <QueryBoundary
@@ -99,14 +124,14 @@ function Campaigns() {
               action={canStart ? startButton : undefined}
               bordered
               hint={
-                state
-                  ? 'No campaign is in this state. Choose another state to see more.'
+                state || plan
+                  ? 'No campaign matches these filters. Choose another state or kind to see more.'
                   : canStart
                     ? 'Raise a dependency to a patched version, or describe a framework change, and the platform runs it in every repository you pick. Each repository ends in a draft pull request for you to review.'
                     : `Only ${MULTI_REPO_LAUNCHERS} can start one to apply a change across repositories.`
               }
               icon="epics"
-              title={state ? 'No campaigns in this state' : 'No campaigns yet'}
+              title={state || plan ? 'No campaigns match' : 'No campaigns yet'}
             />
           ) : (
             <CampaignList campaigns={campaigns} />

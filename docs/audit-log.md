@@ -47,9 +47,14 @@ when the system acted, such as a webhook or a sweep), `beforeJson`, `afterJson`,
 - **Campaigns.** `POST /api/v1/campaigns` writes one `CREATE` row of entity type `Campaign` (the campaign
   id as `entityId`, the launching user as actor) after the workflow has started, beside the launch's
   own `WorkRequest` row. `afterJson` holds the name, recipe reference and parameters, owning team,
-  target count, parallelism and the pinned template and version. `POST …/cancel` writes one `UPDATE`
-  row with the state before and `CANCELLING` after, and the person who cancelled. A launch that is
-  refused or compensated leaves none. See [campaigns.md](./campaigns.md).
+  target count, parallelism, the pinned template and version, the workflow kind and, for a reconciled
+  campaign, its plan, gate, scope, limits, budget, expiry and launcher. Cancel, confirm, pause, resume,
+  take-over, add-targets, plan edit, dependency removal, retry and remove each write one `UPDATE` row with the state before and
+  after and the person who acted (a take-over names both launchers). The gateway's start of an attempt
+  and a pause for the campaign's budget write an `UPDATE` row with no actor. The reconciler's own state
+  changes write none. A launch that is refused or compensated leaves none. An epic launched as a
+  campaign writes the same `Campaign` row, with source `epic` on its work request. See
+  [campaigns.md](./campaigns.md#10-audit).
 - **Eval runs.** `POST /api/v1/platform/evals/runs` writes one `CREATE` row of entity type `EvalRun` after
   the workflow has started, with `afterJson` `{ source: "eval-run", baselineRef, candidateRef,
   datasetId, temporalWorkflowId }`. A refused or failed start leaves no row, and a failed audit write

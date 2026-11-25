@@ -5,6 +5,7 @@ import type {
   OrchestrationMessageDto,
 } from '@auto-swe/shared/lib/orchestrationApi';
 import { type FormEvent, type KeyboardEvent, useId, useState } from 'react';
+import { CampaignProposalRow } from '@/components/orchestrations/CampaignProposalCard';
 import {
   ApprovalCard,
   ApprovalRequestRow,
@@ -52,6 +53,9 @@ function MessageRow({
   // Requests that need an answer are cards in the decision region, not in this live log.
   if (message.kind === 'ATTACH_REQUEST') {
     return <AttachRequestRow detail={detail} message={message} />;
+  }
+  if (message.kind === 'CAMPAIGN_PROPOSAL') {
+    return <CampaignProposalRow detail={detail} message={message} />;
   }
   if (message.kind === 'APPROVAL_REQUEST') {
     return <ApprovalRequestRow detail={detail} message={message} />;

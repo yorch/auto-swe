@@ -209,6 +209,18 @@ review a generated template version they created themselves. A single-admin depl
 otherwise never promote a generated version, and an administrator can already author an unreviewed
 version. Any other author is refused with `SELF_REVIEW_FORBIDDEN`.
 
+A campaign composes the same pieces. Launching needs `team.launch.multi-repo` on the owning team and on
+the team that owns every repository. Pausing, resuming, cancelling, retrying, removing and adding
+targets, and removing a dependency between targets, are open to the campaign's creator, to a holder of `team.launch.multi-repo` on the owning
+team, and to a platform administrator, who must also be able to see the campaign. Taking a campaign
+over needs the capability on the owning team (the creator holds no right of its own) and is refused to
+the current launcher. Confirming a planned campaign, and editing its plan (a target's brief and upstreams) before it is
+confirmed, are the launcher's alone, an `isLauncher` check that an administrator does not satisfy.
+Resuming a campaign also needs its launcher to be an active user, still in the campaign's organization
+and still holding the capability on the owning team. The in-app assistant may read campaigns and, after a confirmation, pause, resume and cancel
+one, and is refused every other campaign route, the plan edit and the
+dependency removal included. See [campaigns.md](./campaigns.md#8-api).
+
 ## Reach is not a capability
 
 Which repositories a person reaches (team membership or a share, `canLaunch` on a share, the

@@ -2,13 +2,18 @@ import { prisma } from '@auto-swe/shared/db';
 import {
   CancelIntentSchema,
   MessageIntentSchema,
+  ProposeCampaignIntentSchema,
   RequestRepoIntentSchema,
   SpawnIntentSchema,
 } from '@auto-swe/shared/lib/orchestration';
-import { SpawnChildResponseSchema } from '@auto-swe/shared/lib/orchestrationApi';
+import {
+  CampaignProposalResponseSchema,
+  SpawnChildResponseSchema,
+} from '@auto-swe/shared/lib/orchestrationApi';
 import { repoMemberWhere } from '@auto-swe/shared/lib/repoMembership';
 import { logWarn } from '../lib/activityLog.js';
 import { redactString } from '../lib/agentTracer.js';
+import { memoryInjectionMatches } from '../lib/memoryGuard.js';
 import {
   createOrchestrationGateway,
   type OrchestrationGateway,
@@ -47,6 +52,8 @@ const LOCAL_CODES = {
   gatewayError: 'GATEWAY_ERROR',
   gatewayUnreachable: 'GATEWAY_UNREACHABLE',
   invalidIntent: 'INVALID_INTENT',
+  proposalDropped: 'PROPOSAL_REPOS_DROPPED',
+  proposalScreened: 'PROPOSAL_SCREENED',
 } as const;
 
 /**
@@ -245,6 +252,51 @@ export async function applyIntents(
           return;
         }
         await applyRepoRequest(orchestrationId, { ...recorded, intent: parsed.data }, refuse);
+        return;
+      }
+      case 'proposeCampaign': {
+        const what = 'The campaign proposal';
+        const parsed = ProposeCampaignIntentSchema.safeParse(recorded.intent);
+        if (!parsed.success) {
+          await refuse(what, LOCAL_CODES.invalidIntent, 'the proposal was malformed');
+          return;
+        }
+        // The text reaches a person who may launch it and, once launched, an agent: it is model
+        // output, so it is screened for injection first, and a text that cannot be screened is
+        // not sent. The fixed notice names no part of it.
+        const { brief, name, recipe } = parsed.data;
+        const scan = await memoryInjectionMatches([
+          name,
+          brief,
+          ...(recipe ? [recipe.ref, ...Object.values(recipe.params).map(String)] : []),
+        ]).catch(() => null);
+        if (scan === null || scan.loadFailed || scan.incomplete || scan.matches.length > 0) {
+          await refuse(
+            what,
+            LOCAL_CODES.proposalScreened,
+            'its text could not be accepted; propose again with plain wording'
+          );
+          return;
+        }
+        const res = await call(`${base}/campaign-proposals`, parsed.data);
+        const ok = await settle(what, res);
+        if (!ok || 'error' in res) {
+          return;
+        }
+        const answer = CampaignProposalResponseSchema.safeParse(unwrapData(res.body));
+        if (!answer.success) {
+          await refuse(what, LOCAL_CODES.gatewayError, 'the answer was unreadable');
+          return;
+        }
+        if (answer.data.droppedRepoCount > 0) {
+          // A count only: which ids, and why, would tell the model what the launcher can reach.
+          await writeNotice(
+            orchestrationId,
+            LOCAL_CODES.proposalDropped,
+            `${answer.data.droppedRepoCount} repositories named in the campaign proposal are not available to the person and were left out of it.`,
+            { droppedRepoCount: answer.data.droppedRepoCount }
+          );
+        }
         return;
       }
     }

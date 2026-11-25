@@ -41,7 +41,9 @@ import type {
 } from '@auto-swe/shared/types/api';
 import {
   CAMPAIGN_CANCEL_SIGNAL,
+  CAMPAIGN_RECONCILER_WORKFLOW_TYPE,
   CAMPAIGN_WORKFLOW_TYPE,
+  type CampaignReconcilerInput,
   type CampaignWorkflowInput,
   type ChannelAssistantTurnInput,
   type ConsolidateLessonsInput,
@@ -496,8 +498,28 @@ declare module 'fastify' {
       startKnowledgeBaseIndex: (knowledgeBaseId: string) => Promise<void>;
       startRunnableWorkflow: (
         workflowId: string,
-        input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
+        input: { templateId: string; templateVersion: number; request: RepoWorkRequest },
+        opts?: {
+          /**
+           * Refuse to start under the id of a closed execution as well as a running one
+           * (`WorkflowIdReusePolicy.REJECT_DUPLICATE`). Absent, the server's default applies. A
+           * campaign attempt's id names one attempt for good, so a reused id is never a new run.
+           */
+          rejectReuse?: boolean;
+        }
       ) => Promise<void>;
+      /**
+       * Whether Temporal has an execution (running or closed) under this id. A `WorkflowNotFound`
+       * answer is `false`; any other failure propagates, because "the server did not answer" must
+       * not be read as "nothing was started".
+       */
+      workflowExecutionExists: (workflowId: string) => Promise<boolean>;
+      /**
+       * Whether the execution under this id is `'running'`, `'closed'` (still in retention, so the
+       * id cannot be reused under `REJECT_DUPLICATE`) or `'none'`. Like `workflowExecutionExists`,
+       * only `WorkflowNotFound` is `'none'`; any other failure propagates.
+       */
+      workflowExecutionState: (workflowId: string) => Promise<'running' | 'closed' | 'none'>;
       startEpicWorkflow: (workflowId: string, request: EpicRequest) => Promise<void>;
       /** Start a campaign's fan-out workflow. Its id is `campaign-<campaignId>`. */
       startCampaignWorkflow: (workflowId: string, input: CampaignWorkflowInput) => Promise<void>;
@@ -507,6 +529,32 @@ declare module 'fastify' {
        * a finalizer that failed would otherwise leave them open for good.
        */
       signalCampaignCancel: (workflowId: string) => Promise<'signalled' | 'not-running'>;
+      /**
+       * Start a reconciler campaign's workflow. Its id is `campaign-<campaignId>`, as the legacy
+       * workflow's. It holds no queue and `continueAsNew`s, so it carries no execution timeout.
+       */
+      startCampaignReconcilerWorkflow: (
+        workflowId: string,
+        input: CampaignReconcilerInput
+      ) => Promise<void>;
+      /**
+       * Deliver one of the reconciler's signals (`CAMPAIGN_CONTROL_SIGNAL`,
+       * `CAMPAIGN_PULL_REQUEST_CHANGED_SIGNAL`). `'not-running'` when Temporal has no running
+       * execution to signal. The database is the source of truth, so a caller treats a failed
+       * delivery as a delay (the reconciler's backstop reads the rows), never as a failed action.
+       */
+      signalCampaignWorkflow: (
+        workflowId: string,
+        signalName: string,
+        payload: unknown,
+        /**
+         * Signal-with-start: when given, the reconciler is started with this input under the same
+         * id if none is running (a terminated or lost execution is recovered from the rows). The
+         * caller has checked the campaign is reconciled and not final; omitted, a signal to a
+         * workflow that is not running answers `'not-running'`.
+         */
+        startInput?: CampaignReconcilerInput
+      ) => Promise<'signalled' | 'not-running'>;
       /**
        * Generate a WorkflowSpec from a natural-language description. Unlike the
        * other helpers this is request/response: it starts WorkflowAuthorWorkflow
@@ -1557,6 +1605,35 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       }
     },
 
+    async signalCampaignWorkflow(
+      workflowId: string,
+      signalName: string,
+      payload: unknown,
+      startInput?: CampaignReconcilerInput
+    ): Promise<'signalled' | 'not-running'> {
+      if (startInput) {
+        await client.workflow.signalWithStart(CAMPAIGN_RECONCILER_WORKFLOW_TYPE, {
+          args: [startInput],
+          signal: signalName,
+          signalArgs: [payload],
+          taskQueue: 'engineering-workflow',
+          workflowId,
+          // A closed or terminated reconciler leaves the id free: the rows are what it recovers from.
+          workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE,
+        });
+        return 'signalled';
+      }
+      try {
+        await client.workflow.getHandle(workflowId).signal(signalName, payload);
+        return 'signalled';
+      } catch (err) {
+        if (getErrorName(err) !== 'WorkflowNotFoundError') {
+          throw err;
+        }
+        return 'not-running';
+      }
+    },
+
     async signalWithStartOrchestration(orchestrationId, input, signal) {
       await client.workflow.signalWithStart(ORCHESTRATION_WORKFLOW_TYPE, {
         args: [input],
@@ -1574,6 +1651,17 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
     ): Promise<void> {
       const handle = client.workflow.getHandle(workflowId);
       await handle.signal(signalName, ...args);
+    },
+
+    async startCampaignReconcilerWorkflow(
+      workflowId: string,
+      input: CampaignReconcilerInput
+    ): Promise<void> {
+      await client.workflow.start(CAMPAIGN_RECONCILER_WORKFLOW_TYPE, {
+        args: [input],
+        taskQueue: 'engineering-workflow',
+        workflowId,
+      });
     },
 
     async startCampaignWorkflow(workflowId: string, input: CampaignWorkflowInput): Promise<void> {
@@ -1794,12 +1882,16 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
 
     async startRunnableWorkflow(
       workflowId: string,
-      input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
+      input: { templateId: string; templateVersion: number; request: RepoWorkRequest },
+      opts?: { rejectReuse?: boolean }
     ): Promise<void> {
       await client.workflow.start('RunnableWorkflow', {
         args: [input],
         taskQueue: 'engineering-workflow',
         workflowId,
+        ...(opts?.rejectReuse
+          ? { workflowIdReusePolicy: WorkflowIdReusePolicy.REJECT_DUPLICATE }
+          : {}),
       });
     },
 
@@ -2133,6 +2225,30 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       // SKIP: a manual fire while a previous fire is still running is dropped
       // (same branch / same standing work request — overlap is never useful).
       await handle.trigger(ScheduleOverlapPolicy.SKIP);
+    },
+
+    async workflowExecutionExists(workflowId: string): Promise<boolean> {
+      try {
+        await client.workflow.getHandle(workflowId).describe();
+        return true;
+      } catch (err) {
+        if (getErrorName(err) === 'WorkflowNotFoundError') {
+          return false;
+        }
+        throw err;
+      }
+    },
+
+    async workflowExecutionState(workflowId: string): Promise<'running' | 'closed' | 'none'> {
+      try {
+        const description = await client.workflow.getHandle(workflowId).describe();
+        return description.status.name === 'RUNNING' ? 'running' : 'closed';
+      } catch (err) {
+        if (getErrorName(err) === 'WorkflowNotFoundError') {
+          return 'none';
+        }
+        throw err;
+      }
     },
 
     async workflowSettledStatus(workflowId: string): Promise<ClosedLedgerStatus | null> {

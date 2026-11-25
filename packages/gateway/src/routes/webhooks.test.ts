@@ -246,6 +246,9 @@ vi.mock('@auto-swe/shared/config', async (orig) => {
     }),
   };
 });
+// The campaign reconciler's wake-up is covered in `lib/campaignSignals.test.ts`; here it is a spy.
+const campaignNotify = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => undefined));
+vi.mock('../lib/campaignSignals.js', () => ({ notifyCampaignsOfPullRequest: campaignNotify }));
 vi.mock('../lib/pagerdutyChangeEvents.js', () => ({
   sendMergeChangeEvent: vi.fn(async () => true),
 }));
@@ -680,6 +683,29 @@ describe('webhook routes', () => {
       ]);
     });
 
+    it('tells the campaign reconciler about a merge, once the workflow has its signal', async () => {
+      campaignNotify.mockClear();
+      trackedPr = { ...trackedRow(), runId: 'run-7' };
+      const res = await inject('/api/v1/webhooks/git', mergedPayload, sign(mergedPayload));
+      expect(res.statusCode).toBe(200);
+      expect(campaignNotify).toHaveBeenCalledTimes(1);
+      expect(campaignNotify.mock.calls[0]?.[1]).toEqual({
+        runId: 'run-7',
+        status: 'MERGED',
+        workflowId: 'eng-acme-payments-api-JIRA-1',
+      });
+    });
+
+    it('does not tell the campaign reconciler of a merge whose workflow signal failed and was rolled back', async () => {
+      campaignNotify.mockClear();
+      trackedPr = trackedRow();
+      signalFailWorkflowIds.add('eng-acme-payments-api-JIRA-1');
+      const res = await inject('/api/v1/webhooks/git', mergedPayload, sign(mergedPayload));
+      expect(res.statusCode).toBe(503);
+      expect(campaignNotify).not.toHaveBeenCalled();
+      signalFailWorkflowIds.clear();
+    });
+
     it('still merges + signals when eval capture finds no linked run', async () => {
       trackedPr = trackedRow();
       workflowRunRow = null; // no WorkflowRun row resolves
@@ -728,6 +754,28 @@ describe('webhook routes', () => {
         expect(prRowStatus).toBe('CLOSED');
         expect(signalCalls).toHaveLength(0);
         expect(evalCreateCalls).toHaveLength(0);
+      });
+
+      it('tells the campaign reconciler about a close and a reopen, and not about a redelivery', async () => {
+        campaignNotify.mockClear();
+        trackedPr = {
+          id: 'pr-row-1',
+          runId: 'run-7',
+          workflow: { temporalWorkflowId: 'campaign-c1-r' },
+        };
+        await pr('closed');
+        expect(campaignNotify).toHaveBeenCalledTimes(1);
+        expect(campaignNotify.mock.calls[0]?.[1]).toEqual({
+          runId: 'run-7',
+          status: 'CLOSED',
+          workflowId: 'campaign-c1-r',
+        });
+        // The redelivery moves no row, so there is nothing new to say.
+        await pr('closed');
+        expect(campaignNotify).toHaveBeenCalledTimes(1);
+        await pr('reopened');
+        expect(campaignNotify).toHaveBeenCalledTimes(2);
+        expect(campaignNotify.mock.calls[1]?.[1]).toMatchObject({ status: 'OPEN' });
       });
 
       it('does nothing on a redelivered close', async () => {

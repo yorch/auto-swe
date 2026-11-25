@@ -2698,3 +2698,241 @@ A row delivered after the upgrade has `reached` entries beginning `k1:`
 **Actions.** A script that needs the platform role must run with a token that holds `platform.users.manage`, or stop reading the field. Treat an absent `role` as unknown, not as `USER`.
 
 **Verify.** Call `GET /api/v1/teams/<teamId>/members` with a token for a team member who is not a platform admin: no `user` object carries a `role` key. Repeat the call with a platform admin's token: each `user` carries `role`.
+
+### Campaign tracking: three additive migrations, a backfill of finished campaigns (`<fixing commit SHA>`)
+
+**Affected.** Every deployment that runs the migrations `20261125200000_campaign_goal_enum_values`,
+`20261125200100_campaign_goal_tracking` and `20261125210000_orchestration_campaign_proposal`, which the
+normal deployment migration step applies. Nothing is dropped, and every existing campaign keeps running as it
+did.
+
+**What changes.** The migrations are three on purpose. PostgreSQL refuses to use an enum value that was added
+in the same transaction, so the new enum values are added alone and the next migration uses them.
+
+1. `20261125200000_campaign_goal_enum_values` adds the campaign states `ACTIVE`, `PLANNING`, `PAUSED` and
+   `MONITORING`, and the target states `BLOCKED`, `MERGED`, `SATISFIED` and `NEEDS_ATTENTION`. The retired
+   values (`RUNNING`, `COMPLETED_WITH_FAILURES`, `NOT_AFFECTED`, `FAILED`) stay in the enums.
+2. `20261125200100_campaign_goal_tracking` adds the plan, gate, scope, limit, budget, expiry and launcher
+   columns to `campaigns`, the brief, `depends_on`, evidence, regression, stale and last-checked columns to
+   `campaign_targets` (`depends_on` is `NOT NULL` with an empty default, set after the backfill), and the
+   tables `campaign_attempts` and `campaign_proposals`. Every existing campaign
+   reads `workflow_kind = 'LEGACY'`. It then backfills: `launched_by_id` takes the value of `created_by_id`;
+   every target that started a child becomes attempt 1 with that child's workflow ID, path, verification and
+   outcome; and the targets of campaigns that are **already in a final state** (`COMPLETED`,
+   `COMPLETED_WITH_FAILURES`, `CANCELLED`, `FAILED_TO_START`) are remapped, and only those: `NOT_AFFECTED` becomes `SATISFIED`
+   with `evidence = {"kind":"initial"}`, and `FAILED` becomes `NEEDS_ATTENTION`. `PR_OPENED` stays. A campaign
+   still `STARTING`, `RUNNING` or `CANCELLING` keeps the target values the earlier workflow reads and writes,
+   and a campaign that finished before the migration is not reopened or reconciled.
+3. `20261125210000_orchestration_campaign_proposal` adds `CAMPAIGN_PROPOSAL` to `OrchestrationMessageKind`,
+   which the orchestrator's campaign proposals use. It, too, is alone, for the same reason.
+
+**Actions.**
+
+1. Apply the migrations before the gateway and the worker of this build start. The deployment migration step
+   (`yarn db:deploy`) applies them in order, one transaction each. If you apply the SQL by hand, run each file
+   in its own transaction and in filename order, and do not merge the first two.
+2. Nothing else is required; no environment variable changes. The backfill reads `campaign_targets` once, so a
+   deployment with an unusually large table should expect the second migration to take longer than the usual.
+
+**Verify.**
+`SELECT enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid WHERE t.typname = 'CampaignState' ORDER BY e.enumsortorder`
+lists `ACTIVE`, `PLANNING`, `PAUSED` and `MONITORING`;
+`SELECT count(*) FROM campaigns WHERE workflow_kind <> 'LEGACY'` returns 0 until the reconciler is enabled
+(next entries); the number of rows in `campaign_attempts` equals
+`SELECT count(*) FROM campaign_targets WHERE child_workflow_id IS NOT NULL`; and
+`SELECT count(*) FROM campaign_targets t JOIN campaigns c ON c.id = t.campaign_id WHERE t.state IN ('NOT_AFFECTED', 'FAILED') AND c.state IN ('COMPLETED', 'COMPLETED_WITH_FAILURES', 'CANCELLED', 'FAILED_TO_START')`
+returns 0.
+
+### Campaign settings: the reconciler is off until an administrator turns it on (`<fixing commit SHA>`)
+
+**Affected.** Every deployment, because the settings exist with defaults everywhere. A deployment that wants
+tracked campaigns, or epics launched as planned campaigns, must act. A deployment that does nothing keeps
+launching campaigns and epics exactly as before.
+
+**What changes.** Five settings join `workflow.campaignsEnabled`, `workflow.campaignMaxTargets` and
+`workflow.campaignMaxParallelChildren` in the `workflow` group. All are overridable at team and organization
+scope, written by an administrator, and not pinned to a run.
+
+| Setting | Default |
+|---|---|
+| `workflow.campaignReconciler` | off |
+| `workflow.campaignMaxOpenPullRequests` | 10 (also the ceiling, 1 to 100) |
+| `workflow.campaignStaleAfterDays` | 14 |
+| `workflow.campaignRescanIntervalHours` | 24 |
+| `workflow.campaignLifetimeDays` | 90 |
+
+`workflow.campaignReconciler` decides, at **launch**, which workflow a campaign runs on, and the choice is
+recorded on the campaign. With it off, `POST /api/v1/campaigns` launches the campaign workflow, refuses the
+inputs only the reconciler honours (`plan: PLANNED`, `gate`, `scope`, the limits, `budgetUsd`, `lifetimeDays`,
+and an `@2` recipe) with `400 CAMPAIGN_RECONCILER_REQUIRED`, and the control routes (pause, resume, retry,
+take-over, add and remove targets, confirm) answer `409 CAMPAIGN_NOT_RECONCILED` for the campaigns it launched.
+With it on, `POST /api/v1/epics` launches an epic as a planned campaign, but only when
+`workflow.campaignsEnabled` is on for the team that owns the first repository listed and for every
+repository's team, and the repositories fit `workflow.campaignMaxTargets`; otherwise the epic runs on the epic
+workflow as before.
+
+**Actions.** To use the reconciler for a team, first complete the rollout in the next entry (the gateway and the
+worker on this build), then, at `/admin/platform-settings`, set `workflow.campaignReconciler` to on at that
+team's scope (or its organization's, or GLOBAL). For epics also set `workflow.campaignsEnabled` on for every
+team whose repositories epics name; it is off by default and an epic that meets a team with it off silently
+takes the epic path. Adjust the other four where the defaults do not suit. Turning the setting on or off
+moves no running campaign or epic.
+
+**Verify.** With the setting on, a lead of the owning team calls `POST /api/v1/campaigns` with
+`"plan": "PLANNED"` and a brief: it answers `201` with `"state": "PLANNING"`. With the setting off the same
+call answers `400 CAMPAIGN_RECONCILER_REQUIRED`. `SELECT workflow_kind, count(*) FROM campaigns GROUP BY 1`
+shows `RECONCILER` rows only from the launches made after the setting was turned on.
+
+### Campaign API: counts change shape, and `PR_OPENED` is no longer final for reconciled campaigns (`<fixing commit SHA>`)
+
+**Affected.** Scripts, dashboards and other clients that call `GET /api/v1/campaigns` or
+`GET /api/v1/campaigns/:id` and read `counts`, a target's `state` or a campaign's `state`, and any web build
+older than the gateway.
+
+**What changes.** `counts` was an object keyed by target state name (`PENDING`, `RUNNING`, `PR_OPENED`,
+`NOT_AFFECTED`, `FAILED`, `SKIPPED`, `CANCELLED`). It is now
+`{ total, pending, blocked, running, prOpened, merged, satisfied, needsAttention, skipped, cancelled }`, for
+every campaign, legacy included. The retired values are folded in: `NOT_AFFECTED` counts as `satisfied` and
+`FAILED` as `needsAttention`. The backfill (first entry) rewrites the targets of already-finished campaigns the
+same way, so `GET /api/v1/campaigns/:id` shows `SATISFIED` and `NEEDS_ATTENTION` where it showed
+`NOT_AFFECTED` and `FAILED`. A campaign that launched on the campaign workflow keeps those values on its
+targets until it finishes, and `PR_OPENED` is still final for it. For a reconciled campaign `PR_OPENED` is
+not final: the target moves on to `MERGED` and `SATISFIED`, or to `NEEDS_ATTENTION`. A reconciled campaign with
+no check (no recipe, an `@1` recipe, or a planned campaign) has no step after the merge, so `MERGED` is final
+for it and the campaign completes when its pull requests have merged. The campaign states
+`ACTIVE`, `PLANNING`, `PAUSED` and `MONITORING` exist for reconciled campaigns, which never end
+`COMPLETED_WITH_FAILURES`: a target that needs a person keeps the campaign `ACTIVE`. The list accepts a `plan`
+filter, and summaries carry `plan`, `gate`, `workflowKind`, `pausedReason` and `expiresAt`.
+
+**Actions.** Update every consumer to the camelCase counts, and treat `COMPLETED`, `COMPLETED_WITH_FAILURES`,
+`CANCELLED` and `FAILED_TO_START` as the final states (a `MONITORING` campaign is satisfied everywhere and still
+watching, not finished). A client that waited for every target to be `PR_OPENED` or `NOT_AFFECTED` as the end
+state must wait for `SATISFIED` (or `MERGED` for a campaign with no check), or for the campaign's own final state. Deploy the web build with the gateway:
+an older dashboard reads `counts.PR_OPENED` and shows zeros.
+
+**Verify.** `GET /api/v1/campaigns` answers rows whose `counts` has a `total` key, and a campaign finished
+before the upgrade shows no `NOT_AFFECTED` or `FAILED` target.
+
+### Campaign tokens: the gateway and the worker must be deployed together (`<fixing commit SHA>`)
+
+**Affected.** Every deployment that turns on `workflow.campaignReconciler` (or whose epics then launch as
+campaigns). Until then nothing calls the new route and nothing changes.
+
+**What changes.** A reconciled campaign starts each attempt through the gateway:
+`POST /api/v1/campaigns/:id/targets/:targetId/attempts`. The worker authenticates with a per-call **campaign
+token**, a `camp_` value valid for two minutes, scoped to one campaign, one target and one call, signed with a
+key derived from `CONFIG_ENCRYPTION_KEY` under its own derivation (an orchestration token never verifies as
+one). The route accepts no other credential. A gateway that does not have the route answers `404` to a
+worker that calls it, and a worker without `CampaignReconcilerWorkflow` registered leaves a campaign
+launched by a newer gateway with no worker to run it, so it sits in `STARTING`.
+
+**Actions.**
+
+1. Deploy the gateway and the worker of this build together, and confirm both run it (`printenv COMMIT_HASH`
+   in each container) before turning the setting on. With it off, either may be upgraded first.
+2. The gateway and the worker must share `CONFIG_ENCRYPTION_KEY` and its version, as for orchestration tokens;
+   during a rotation the previous key stays loaded on both.
+3. The worker reaches the gateway at `API_INTERNAL_URL`, as for orchestrations; no new variable is needed.
+4. If a log pipeline masks the `orch_` token prefix, mask `camp_` the same way. The worker already masks it in
+   its own errors.
+
+**Verify.** Launch a uniform campaign for a repository of the team: its target is `RUNNING` within a pass and
+the campaign's audit log has an `UPDATE` row with no actor naming the attempt. A worker that cannot reach the
+gateway logs `the gateway could not start the attempt` and the campaign's first target stays `PENDING`.
+
+### The earlier campaign and epic workflows stay registered; running ones finish where they started (`<fixing commit SHA>`)
+
+**Affected.** Every deployment with a campaign or an epic running at the upgrade, and anyone who plans to remove
+the registration of `CampaignWorkflow` or `EpicOrchestratorWorkflow` from a later build.
+
+**What changes.** Both workflows remain registered, with their replay fixtures, because an execution that
+started on one runs to the end on it: a campaign launched with `workflow.campaignReconciler` off finishes on
+`CampaignWorkflow` (at most 30 days after it started), and an epic launched on the epic workflow finishes on
+`EpicOrchestratorWorkflow`. Turning the setting on moves neither, and turning it off later moves no reconciled
+campaign back; a reconciled campaign keeps its pause, resume and take-over controls whatever the setting says.
+
+**Actions.** Do not remove either registration until both queries return 0 and no execution of the type is
+still running. A legacy campaign stuck in `CANCELLING` with no execution is counted until it is cancelled again
+(`POST /api/v1/campaigns/:id/cancel` closes it).
+
+```sql
+-- campaigns still on the campaign workflow
+SELECT count(*) FROM campaigns
+WHERE workflow_kind = 'LEGACY' AND state IN ('STARTING', 'RUNNING', 'CANCELLING');
+
+-- epics still on the epic workflow
+SELECT count(*) FROM active_workflows
+WHERE temporal_workflow_id LIKE 'epic-%' AND parent_workflow_id IS NULL
+  AND current_status IN ('STARTING', 'PLANNING', 'FANNING_OUT');
+```
+
+**Verify.** In the Temporal admin tools,
+`temporal workflow list --query 'WorkflowType = "CampaignWorkflow" AND ExecutionStatus = "Running"'` returns
+nothing once the first query is 0 (and the same for `EpicOrchestratorWorkflow` against the second).
+
+### Campaign planning failures and discovery records: one additive migration (`<fixing commit SHA>`)
+
+**Affected.** Every deployment that runs the migration `20261125220000_campaign_plan_failure_and_discovery_checks`,
+which the normal deployment migration step applies. Nothing is dropped and no existing row changes.
+
+**What changes.** The migration adds two nullable columns to `campaigns`, `plan_failed_at` and
+`plan_failure_reason`, which record why the planner produced no plan for a planned campaign, and the table
+`campaign_discovery_checks` (campaign, repository, base sha, time; unique per campaign and repository, deleted
+with either), which lets discovery skip a repository it found satisfied while that repository's base branch is
+unchanged. The columns are null and the table is empty until a worker of this build writes them.
+
+**Actions.** None. No environment variable or setting changes.
+
+**Verify.**
+`SELECT column_name FROM information_schema.columns WHERE table_name = 'campaigns' AND column_name IN ('plan_failed_at', 'plan_failure_reason')`
+returns both rows, and `SELECT count(*) FROM campaign_discovery_checks` answers without an error.
+
+### Campaign rescan floor, plan editing and the stale-pull-request notice (`<fixing commit SHA>`)
+
+**Affected.** Every deployment that runs reconciled campaigns (`workflow.campaignReconciler` on). A team whose
+`slackNotifyChannel` is set and for which a Slack bot token resolves will see new Slack messages. Nothing else
+needs action.
+
+**What changes.**
+
+- The setting `workflow.campaignRescanFloorHours` (default 1, 1 to 720, overridable at team and organization
+  scope, written by an administrator) is the shortest interval a campaign may re-check at. A launch that asks for
+  a shorter `rescanIntervalHours` is refused with `400 CAMPAIGN_RESCAN_TOO_FREQUENT`, and a campaign already
+  running with an interval below the floor re-checks at the floor from its next pass. The default of 1 changes
+  no campaign launched with the default interval of 24 or any interval of 1 hour or more.
+- Routes are added: `PATCH /api/v1/campaigns/:id/targets/:targetId` (the launcher edits a brief and upstreams
+  while the campaign is `PLANNING`) and `DELETE /api/v1/campaigns/:id/targets/:targetId/dependencies/:upstreamId`
+  (remove an upstream from a running campaign's target). `POST /api/v1/campaigns/:id/targets` now answers
+  `409 CAMPAIGN_PLANNING` for a campaign still `PLANNING`, and a resume answers `409 LAUNCHER_UNAVAILABLE` when the
+  launcher left the organization or no longer leads the owning team, as the attempt route already did. The in-app
+  assistant is refused both new routes.
+- A control action (not cancel) or pull-request event sent to a reconciled campaign whose workflow is not running
+  now starts the workflow again from the campaign's rows.
+- When a pass finds one or more of a campaign's draft pull requests newly stale, the worker posts one digest
+  message for the pass to the owning team's Slack notification channel (`Team.slackNotifyChannel`). It names only
+  repositories of the owning team or shared with it (at most 10, then "and N more") and counts the rest without
+  naming them.
+
+**Actions.** None are required. To keep stale pull requests from producing Slack messages, leave the owning
+teams' Slack notification channel unset; the same channel also receives the team's other notices, so unsetting it
+stops those too. To allow shorter re-check intervals on a team, lower `workflow.campaignRescanFloorHours` at that
+team's scope (the floor cannot go below 1); to forbid them, raise it.
+
+**Verify.** `/admin/platform-settings` lists `workflow.campaignRescanFloorHours` at 1. A `POST /api/v1/campaigns` with `rescanIntervalHours` below the configured floor answers
+`400 CAMPAIGN_RESCAN_TOO_FREQUENT`.
+
+### Campaign regression limit is a setting (`<fixing commit SHA>`)
+
+**Affected.** Every deployment that runs reconciled campaigns (`workflow.campaignReconciler` on). Nothing needs
+action.
+
+**What changes.** The number of times a satisfied target's check may regress before the target needs a person is
+the setting `workflow.campaignRegressionLimit` (1 to 20, default 3, overridable at team and organization scope,
+written by an administrator), resolved for the owning team on every check. The default equals the limit that was
+built in, so a campaign behaves as before until an administrator changes the setting, and a change reaches
+campaigns already running.
+
+**Actions.** None. To allow more or fewer regressions on a team, set the value at that team's scope in
+`/admin/platform-settings`.
+
+**Verify.** `/admin/platform-settings` lists `workflow.campaignRegressionLimit` at 3.

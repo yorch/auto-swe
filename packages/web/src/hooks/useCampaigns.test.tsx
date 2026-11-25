@@ -10,7 +10,15 @@ import {
   useCampaign,
   useCampaigns,
   useCancelCampaign,
+  useConfirmCampaign,
   useCreateCampaign,
+  useEditCampaignTarget,
+  usePauseCampaign,
+  useRemoveCampaignDependency,
+  useRemoveCampaignTarget,
+  useResumeCampaign,
+  useRetryCampaignTarget,
+  useTakeOverCampaign,
 } from './useCampaigns';
 
 afterEach(() => {
@@ -43,7 +51,11 @@ const CREATED = {
 
 describe('campaign states', () => {
   it('treats only the final states as terminal', () => {
-    expect(['STARTING', 'RUNNING', 'CANCELLING'].some(isCampaignTerminal)).toBe(false);
+    expect(
+      ['STARTING', 'PLANNING', 'ACTIVE', 'PAUSED', 'MONITORING', 'RUNNING', 'CANCELLING'].some(
+        isCampaignTerminal
+      )
+    ).toBe(false);
     expect(
       ['COMPLETED', 'COMPLETED_WITH_FAILURES', 'CANCELLED', 'FAILED_TO_START'].every(
         isCampaignTerminal
@@ -72,6 +84,41 @@ describe('campaign queries', () => {
     expect(get).toHaveBeenCalledWith(
       '/api/v1/campaigns?limit=30&offset=30&state=RUNNING&ownerTeamId=team-1'
     );
+  });
+
+  it('filters by kind', async () => {
+    const get = vi.spyOn(api, 'get').mockResolvedValue({
+      data: [],
+      meta: { limit: 30, offset: 0, total: 0 },
+    });
+    const { result } = renderHook(() => useCampaigns({ plan: 'PLANNED' }), {
+      wrapper: wrapper(),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(get).toHaveBeenCalledWith('/api/v1/campaigns?limit=50&offset=0&plan=PLANNED');
+  });
+
+  it('refreshes every ten seconds while any listed campaign is not final, and stops when all are', async () => {
+    const page = (states: string[]) => ({
+      data: states.map((state, i) => ({ id: `c${i}`, state })),
+      meta: { limit: 50, offset: 0, total: states.length },
+    });
+    const intervalFor = async (states: string[]) => {
+      vi.spyOn(api, 'get').mockResolvedValue(page(states));
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const { result } = renderHook(() => useCampaigns(), {
+        wrapper: ({ children }: { children: ReactNode }) => (
+          <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+        ),
+      });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      const query = qc.getQueryCache().getAll()[0];
+      const option = (query?.options as { refetchInterval?: unknown } | undefined)?.refetchInterval;
+      return typeof option === 'function' ? option(query) : option;
+    };
+    expect(await intervalFor(['COMPLETED', 'MONITORING'])).toBe(10_000);
+    expect(await intervalFor(['COMPLETED', 'CANCELLED', 'COMPLETED_WITH_FAILURES'])).toBe(false);
+    expect(await intervalFor(['FAILED_TO_START', 'PAUSED'])).toBe(10_000);
   });
 
   it('reads one campaign by id', async () => {
@@ -119,5 +166,130 @@ describe('campaign mutations', () => {
       await result.current.mutateAsync();
     });
     expect(post).toHaveBeenCalledWith('/api/v1/campaigns/c1/cancel', {});
+  });
+
+  it('posts each campaign action to its own route', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ data: { id: 'c1', state: 'ACTIVE' } });
+    const hooks = [
+      ['confirm', useConfirmCampaign],
+      ['pause', usePauseCampaign],
+      ['resume', useResumeCampaign],
+      ['takeover', useTakeOverCampaign],
+    ] as const;
+    for (const [route, useAction] of hooks) {
+      const { result } = renderHook(() => useAction('c 1'), { wrapper: wrapper() });
+      await act(async () => {
+        await result.current.mutateAsync();
+      });
+      expect(post).toHaveBeenLastCalledWith(`/api/v1/campaigns/c%201/${route}`, {});
+    }
+  });
+
+  it('retries and removes one target by id', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ data: { id: 't1', state: 'PENDING' } });
+    const del = vi.spyOn(api, 'delete').mockResolvedValue({ data: { id: 't1', state: 'SKIPPED' } });
+    const retry = renderHook(() => useRetryCampaignTarget('c1'), { wrapper: wrapper() });
+    await act(async () => {
+      await retry.result.current.mutateAsync('t 1');
+    });
+    expect(post).toHaveBeenCalledWith('/api/v1/campaigns/c1/targets/t%201/retry', {});
+    const remove = renderHook(() => useRemoveCampaignTarget('c1'), { wrapper: wrapper() });
+    await act(async () => {
+      await remove.result.current.mutateAsync('t1');
+    });
+    expect(del).toHaveBeenCalledWith('/api/v1/campaigns/c1/targets/t1');
+  });
+
+  it('edits a planned target, patches the cached plan and refreshes', async () => {
+    const patch = vi
+      .spyOn(api, 'patch')
+      .mockResolvedValue({ data: { brief: 'New brief', dependsOn: ['t2'], id: 't 1' } });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['campaign', 'c1'], {
+      id: 'c1',
+      targets: [
+        { brief: 'old', dependsOn: [], id: 't 1' },
+        { brief: 'other', dependsOn: [], id: 't2' },
+      ],
+    });
+    const invalidate = vi.spyOn(qc, 'invalidateQueries');
+    const { result } = renderHook(() => useEditCampaignTarget('c1'), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      ),
+    });
+    await act(async () => {
+      await result.current.mutateAsync({
+        body: { brief: 'New brief', dependsOn: ['t2'] },
+        targetId: 't 1',
+      });
+    });
+    expect(patch).toHaveBeenCalledWith('/api/v1/campaigns/c1/targets/t%201', {
+      brief: 'New brief',
+      dependsOn: ['t2'],
+    });
+    const cached = qc.getQueryData<{ targets: { brief: string; dependsOn: string[] }[] }>([
+      'campaign',
+      'c1',
+    ]);
+    expect(cached?.targets[0]).toMatchObject({ brief: 'New brief', dependsOn: ['t2'] });
+    expect(cached?.targets[1].brief).toBe('other');
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['campaign', 'c1'] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['campaigns'] });
+  });
+
+  it('shows the gateway’s refusal of an edit', async () => {
+    vi.spyOn(api, 'patch').mockRejectedValue(
+      new ApiError('The plan has a cycle', 422, 'CAMPAIGN_PLAN_INVALID')
+    );
+    const { result } = renderHook(() => useEditCampaignTarget('c1'), { wrapper: wrapper() });
+    await act(async () => {
+      await expect(
+        result.current.mutateAsync({ body: { dependsOn: ['t2'] }, targetId: 't1' })
+      ).rejects.toThrow('The plan has a cycle');
+    });
+  });
+
+  it('removes one dependency edge and refreshes', async () => {
+    const del = vi.spyOn(api, 'delete').mockResolvedValue({ data: { dependsOn: [], id: 't 1' } });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(qc, 'invalidateQueries');
+    const { result } = renderHook(() => useRemoveCampaignDependency('c1'), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      ),
+    });
+    await act(async () => {
+      await result.current.mutateAsync({ targetId: 't 1', upstreamId: 'u/2' });
+    });
+    expect(del).toHaveBeenCalledWith('/api/v1/campaigns/c1/targets/t%201/dependencies/u%2F2');
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['campaign', 'c1'] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['campaigns'] });
+  });
+
+  it('refreshes the campaign and the list after an action', async () => {
+    vi.spyOn(api, 'post').mockResolvedValue({ data: { id: 'c1', state: 'PAUSED' } });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(qc, 'invalidateQueries');
+    const { result } = renderHook(() => usePauseCampaign('c1'), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      ),
+    });
+    await act(async () => {
+      await result.current.mutateAsync();
+    });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['campaign', 'c1'] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['campaigns'] });
+  });
+
+  it('shows a refusal from the gateway to the caller', async () => {
+    vi.spyOn(api, 'post').mockRejectedValue(
+      new ApiError('Only a lead may take over', 403, 'FORBIDDEN')
+    );
+    const { result } = renderHook(() => useTakeOverCampaign('c1'), { wrapper: wrapper() });
+    await act(async () => {
+      await expect(result.current.mutateAsync()).rejects.toThrow('Only a lead may take over');
+    });
   });
 });

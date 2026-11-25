@@ -422,6 +422,72 @@ export interface CampaignResult {
   childResults: Record<string, WorkflowResult>;
 }
 
+// ── Campaign reconciler ──
+//
+// `CampaignReconcilerWorkflow` replaces `CampaignWorkflow` for campaigns launched on the
+// reconciler (`Campaign.workflowKind = 'RECONCILER'`). It holds no queue: each pass reads the
+// database through activities, so its input carries only the identity of the campaign and the
+// counters a `continueAsNew` must keep. Everything above is unchanged.
+
+/** The workflow type name the gateway starts for a reconciler campaign. */
+export const CAMPAIGN_RECONCILER_WORKFLOW_TYPE = 'CampaignReconcilerWorkflow';
+
+/** A child run finished. Sent by run finalization. */
+export const CAMPAIGN_ATTEMPT_FINISHED_SIGNAL = 'campaignAttemptFinished';
+/** A pull request opened by a target's latest attempt merged, closed or reopened. */
+export const CAMPAIGN_PULL_REQUEST_CHANGED_SIGNAL = 'campaignPullRequestChanged';
+/** A person acted on the campaign through a route. */
+export const CAMPAIGN_CONTROL_SIGNAL = 'campaignControl';
+
+export interface CampaignReconcilerInput {
+  campaignId: string;
+  /** `campaign-<campaignId>`. */
+  campaignWorkflowId: string;
+  /** Passes run by earlier executions of this workflow, carried across `continueAsNew`. */
+  passes?: number;
+  /** Epoch milliseconds of the last scope discovery; null or absent when none ran. */
+  lastDiscoveryAt?: number | null;
+  /** Epoch milliseconds of the last full backstop read of the database. */
+  lastBackstopAt?: number | null;
+}
+
+export interface CampaignAttemptFinishedSignal {
+  targetId: string;
+  /** The attempt's number on its target. */
+  attemptN: number;
+  /** `WorkflowRun.id` of the child, when known. */
+  runId?: string | null;
+}
+
+export interface CampaignPullRequestChangedSignal {
+  targetId: string;
+  runId: string;
+  status: 'OPEN' | 'MERGED' | 'CLOSED';
+}
+
+export type CampaignControlAction =
+  | 'confirm'
+  | 'pause'
+  | 'resume'
+  | 'cancel'
+  | 'retry'
+  | 'addTargets'
+  | 'removeTarget'
+  | 'removeDependency'
+  | 'takeover';
+
+export interface CampaignControlSignal {
+  action: CampaignControlAction;
+  /** Set for `retry`, `removeTarget` and `removeDependency`. */
+  targetId?: string;
+}
+
+export interface CampaignReconcilerResult {
+  status: 'COMPLETED' | 'CANCELLED';
+  /** Passes run over the campaign's whole life. */
+  passes: number;
+}
+
 // ── Epic Planning Types (Phase 3) ──
 
 export interface EpicPlanRequest {

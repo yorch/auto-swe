@@ -9,6 +9,12 @@ vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
   ...(await import('../test/billingMock.js')),
 }));
 
+// The legacy epic path is what these tests cover: the campaign reconciler is off.
+vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  resolveSetting: async () => false,
+}));
+
 // Wraps the real `authorizeLaunch` so a test can read the options the route passed it.
 const authorizeLaunchSpy = vi.hoisted(() => vi.fn());
 vi.mock('../lib/launchAuthorization.js', async (importOriginal) => {
@@ -290,6 +296,12 @@ describe('epic routes', () => {
           activeWorkflowFixtures.find(
             (w) => w.temporalWorkflowId === args.where.temporalWorkflowId
           ) ?? null,
+      },
+      // No epic has been launched as a campaign: the list reads the legacy epics alone.
+      campaign: {
+        count: async () => 0,
+        findFirst: async () => null,
+        findMany: async () => [],
       },
       connection: {
         findMany: async (args: { where: { id?: { in: string[] }; AND?: unknown } }) => {

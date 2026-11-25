@@ -411,6 +411,14 @@ export async function launchTrackedWorkflow(
      * whole ledger write back and reads as a `DUPLICATE`.
      */
     inTransaction?: (tx: Prisma.TransactionClient) => Promise<void>;
+    /**
+     * Called with a start error before the ledger is compensated. Returning `true` keeps every row
+     * and rethrows: the start is AMBIGUOUS (the call failed, but the execution may exist), and
+     * deleting the rows would let a retry write a different work request next to an execution
+     * that carries the deleted one. The caller owns recovering from the kept rows. Absent, or
+     * `false`, a failed start compensates as always.
+     */
+    retainLedgerOnStartError?: (err: unknown) => boolean;
     sourceAuthorization?: LaunchSourceAuthorization;
     /**
      * Who launched the run and through which door (`work-request`, `webhook`, ...), for the
@@ -572,6 +580,9 @@ export async function launchTrackedWorkflow(
   try {
     await start();
   } catch (err) {
+    if (opts?.retainLedgerOnStartError?.(err)) {
+      throw err;
+    }
     await compensate(
       prisma,
       { activeWorkflowId, runInputId: runInput?.id as string | undefined },
