@@ -19,6 +19,7 @@ import { CAMPAIGN_STATES, type CampaignState, useCampaigns } from '@/hooks/useCa
 import { useCan } from '@/hooks/useCan';
 import { useTeamParam } from '@/hooks/useTeamParam';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
+import { MULTI_REPO_LAUNCHERS } from '@/lib/roleLabels';
 import { teamGatedBoundary } from '@/lib/teamGate';
 
 const PAGE_SIZE = 30;
@@ -102,7 +103,7 @@ function Campaigns() {
                   ? 'No campaign is in this state. Choose another state to see more.'
                   : canStart
                     ? 'Raise a dependency to a patched version, or describe a framework change, and the platform runs it in every repository you pick. Each repository ends in a draft pull request for you to review.'
-                    : 'A team lead or administrator can start one to apply a change across repositories.'
+                    : `Only ${MULTI_REPO_LAUNCHERS} can start one to apply a change across repositories.`
               }
               icon="epics"
               title={state ? 'No campaigns in this state' : 'No campaigns yet'}

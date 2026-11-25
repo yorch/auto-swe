@@ -182,6 +182,11 @@ const TEMPLATE_AUTHOR_REFUSAL = {
   message: 'Requires LEAD membership on an active team to author its templates',
 } as const;
 
+const TEMPLATE_REVIEW_REFUSAL = {
+  code: 'FORBIDDEN',
+  message: 'Reviewing a template version requires a lead or admin of the team that owns it',
+} as const;
+
 /**
  * Shared authoring check for the generate endpoints and for saving a run plan as a template: a
  * team template needs `capability` (default `team.templates.write`) on its active owning team;
@@ -2057,7 +2062,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           )
         ).allowed
       ) {
-        return reply.status(403).send({ error: TEMPLATE_AUTHOR_REFUSAL });
+        return reply.status(403).send({ error: TEMPLATE_REVIEW_REFUSAL });
       }
       const target = await fastify.prisma.workflowTemplateVersion.findUnique({
         select: { createdBy: true, generatedBy: true, id: true, spec: true },

@@ -63,7 +63,7 @@ describe('who can answer a pending gate', () => {
   it('states the general rule, briefly, when the viewer cannot answer', () => {
     const d = pendingDetail([{ canAnswer: false, ownerTeamName: 'Payments', title: 'Approve' }]);
     expect(d).toContain(` You cannot answer it. ${WHO_PAYMENTS}`);
-    expect(d).toContain('members of Payments (with access to the repository when GitHub');
+    expect(d).toContain('members of Payments (with repository access when GitHub');
     expect(d).not.toMatch(/no control|do not control|controlled by|right now/);
   });
 
@@ -150,7 +150,7 @@ describe('who can answer a pending gate', () => {
       { canAnswer: false, ownerTeamName: 'Design', title: 'B' },
       { canAnswer: false, ownerTeamName: 'Payments', title: 'C' },
     ]);
-    expect(d).toContain('members of Payments or Design (with access');
+    expect(d).toContain('members of Payments or Design (with repository access');
   });
 
   it('uses a later gate team when the first gate names none', () => {
@@ -158,7 +158,7 @@ describe('who can answer a pending gate', () => {
       { canAnswer: false, ownerTeamName: '  ', title: 'A' },
       { canAnswer: false, ownerTeamName: 'Design', title: 'B' },
     ]);
-    expect(d).toContain('members of Design (with access');
+    expect(d).toContain('members of Design (with repository access');
   });
 
   it('never names a person or claims an approver exists, in any branch', () => {

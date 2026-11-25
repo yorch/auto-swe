@@ -68,29 +68,38 @@ describe('Connections page', () => {
     ['a team admin', TEAM_ADMIN_CAPS, true],
     ['a team lead', LEAD_CAPS, false],
     ['a member', MEMBER_CAPS, false],
-  ] as const)('offers onboarding only to eligible setup authors: %s', (_who, caps, eligible) => {
-    auth.caps = [...caps];
-    repos.list = [
-      {
-        _count: { activeWorkflows: 0 },
-        id: 'r1',
-        isActive: true,
-        name: 'api',
-        organizationName: 'acme',
-        repoName: 'api',
-        team: { id: 't1', name: 'Payments', slug: 'payments' },
-        type: 'git_repo',
-      },
-    ];
-    try {
-      render(withQuery(<ConnectionsPage />));
-      fireEvent.click(screen.getByRole('button', { name: /More actions for acme\/api/ }));
-      // The server's answer for the row's team decides, whatever the platform role.
-      expect(Boolean(screen.queryByRole('menuitem', { name: 'Run onboarding' }))).toBe(eligible);
-    } finally {
-      repos.list = [];
+  ] as const)(
+    'lists onboarding for everyone and explains it to those who cannot run it: %s',
+    (_who, caps, eligible) => {
+      auth.caps = [...caps];
+      repos.list = [
+        {
+          _count: { activeWorkflows: 0 },
+          id: 'r1',
+          isActive: true,
+          name: 'api',
+          organizationName: 'acme',
+          repoName: 'api',
+          team: { id: 't1', name: 'Payments', slug: 'payments' },
+          type: 'git_repo',
+        },
+      ];
+      try {
+        render(withQuery(<ConnectionsPage />));
+        fireEvent.click(screen.getByRole('button', { name: /More actions for acme\/api/ }));
+        // The server's answer for the row's team decides, whatever the platform role.
+        // Always listed; whoever the server does not allow sees why it is unavailable.
+        expect(screen.getByRole('menuitem', { name: 'Run onboarding' })).toBeTruthy();
+        const reasons = screen
+          .queryAllByTestId('menu-blocked-reason')
+          .map((el) => el.textContent ?? '')
+          .filter((t) => t.includes('Needs a team admin of Payments'));
+        expect(reasons.length > 0).toBe(!eligible);
+      } finally {
+        repos.list = [];
+      }
     }
-  });
+  );
   it('runs onboarding from the row menu and shows launch failure', async () => {
     auth.caps = [...PLATFORM_ADMIN_CAPS];
     repos.list = [
@@ -173,7 +182,7 @@ describe('Connections page', () => {
       expect(blocked[0]?.getAttribute('aria-label')).toMatch(/ui/);
       const reason = document.getElementById(blocked[0]?.getAttribute('aria-describedby') ?? '');
       expect(reason?.textContent).toBe(
-        'Only leads of Design, an admin of its organization or a platform admin can edit this repository.'
+        'Only team leads and admins of Design, an admin of its organization or a platform admin can edit this repository.'
       );
       expect(screen.getAllByTestId('owner-chip').map((c) => c.textContent)).toEqual([
         'owned by Design',
@@ -239,7 +248,7 @@ describe('Connections page', () => {
         expect(
           document.getElementById(item.getAttribute('aria-describedby') ?? '')?.textContent
         ).toBe(
-          'Only leads of Design, an admin of its organization or a platform admin can do this.'
+          'Only team leads and admins of Design, an admin of its organization or a platform admin can do this.'
         );
       }
     } finally {

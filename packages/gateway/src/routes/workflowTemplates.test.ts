@@ -2339,6 +2339,9 @@ describe('workflow-templates authored commands and serving unaudited code', () =
         const res = await send(state, 'POST', `/${TPL_ID}/versions/2/review`);
         expect(res.statusCode).toBe(403);
         expect(res.json().error?.code).toBe('FORBIDDEN');
+        // The refusal names reviewing, not authoring (the old text said "to author its templates").
+        expect(res.json().error?.message).toMatch(/Reviewing a template version/);
+        expect(res.json().error?.message).not.toMatch(/author/);
         expect((state.versions.get(`${TPL_ID}:2`) as { reviewedAt?: Date }).reviewedAt).toBe(
           undefined
         );

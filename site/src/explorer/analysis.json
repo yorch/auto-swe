@@ -19508,7 +19508,7 @@
       "title": "Team switcher opens the team space"
     },
     {
-      "anchor": "const canSeeSettings = useCan('team.settings.manage', scope);",
+      "anchor": "const settingsState = useCanState('team.settings.manage', scope);",
       "before": 2,
       "id": "webSettingsScope",
       "lines": 6,
@@ -20410,7 +20410,7 @@
       "title": "One pending budget request per team, a reason and no amount"
     },
     {
-      "anchor": "const canSeeManage = useCan('team.attention.read', { orgId: team.orgId, teamId: team.id });",
+      "anchor": "const manage = useCanState('team.attention.read', { orgId: team.orgId, teamId: team.id });",
       "before": 0,
       "id": "webManageGate",
       "lines": 6,

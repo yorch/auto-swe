@@ -108,6 +108,10 @@ describe('Campaigns page', () => {
     useCampaigns.mockReturnValue({ ...settled, data: { data: [], meta: { total: 0 } } });
     render(<CampaignsPage />);
     expect(screen.queryByRole('button', { name: /Start a campaign/ })).toBeNull();
-    expect(screen.getByText(/A team lead or administrator can start one/)).toBeTruthy();
+    expect(
+      screen.getByText(
+        /Only a lead or admin of the team that owns the repositories, or a platform admin can start one/
+      )
+    ).toBeTruthy();
   });
 });

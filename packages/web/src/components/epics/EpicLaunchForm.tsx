@@ -19,6 +19,7 @@ import { useIsViewOnly } from '@/hooks/useViewOnlyRepos';
 import { errMsg } from '@/lib/errors';
 import { groupReposByTeam } from '@/lib/repoGroups';
 import { launchBudgetHint, launchBudgetReason } from '@/lib/repoLaunch';
+import { MULTI_REPO_LAUNCHERS } from '@/lib/roleLabels';
 import { EPIC_SAMPLE, sampleEpicTicketId } from '@/lib/sampleTasks';
 
 /**
@@ -58,7 +59,7 @@ export function EpicLaunchForm({
   const [repoFilter, setRepoFilter] = useState('');
 
   if (!canCreate) {
-    return <Alert variant="info">Launching an epic needs a team lead or administrator.</Alert>;
+    return <Alert variant="info">Launching an epic needs {MULTI_REPO_LAUNCHERS}.</Alert>;
   }
 
   function toggleRepo(id: string) {

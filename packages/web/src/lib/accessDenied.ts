@@ -34,12 +34,14 @@ export function deniedMessage(
   }
   const page = knownPageTitle(denied.split('?')[0]) ?? 'this page';
   if (reason === 'inactive') {
-    return `Your account is waiting for approval, so you cannot open ${page} yet. Ask an administrator to activate it.`;
+    return `Your account is waiting for approval, so you cannot open ${page} yet. Ask a platform admin to activate it.`;
   }
   if (reason === 'usage') {
-    return `You need access to usage data to open ${page}. Ask an administrator if you think you should have access.`;
+    return `You need access to usage data to open ${page}. Ask a platform admin if you think you should have access.`;
   }
   // `need` is attacker-controllable text: only the one word it may name is read, nothing is echoed.
   const what = need === 'platform-admin' ? 'the platform admin role' : 'more access';
-  return `You need ${what} to open ${page}. Ask an administrator if you think you should have access.`;
+  const note =
+    need === 'platform-admin' ? ' Team and organization admin roles do not include this page.' : '';
+  return `You need ${what} to open ${page}.${note} Ask a platform admin if you think you should have access.`;
 }

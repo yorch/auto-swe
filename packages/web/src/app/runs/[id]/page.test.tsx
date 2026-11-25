@@ -234,11 +234,28 @@ describe('run page summary band', () => {
       const reasons = ids.map((id) => document.getElementById(id)?.textContent ?? '');
       expect(
         reasons.some((t) =>
-          /Who can cancel this run includes members of .*the launcher and admins\./.test(t)
+          /Who can cancel this run includes members of .*the launcher and platform admins\./.test(t)
         )
       ).toBe(true);
     } finally {
       run.status = 'FAILED';
+      delete (run as Record<string, unknown>).review;
+    }
+  });
+
+  it('leaves Re-run to the gateway when the run reports canControl false', async () => {
+    // Re-run is a launch decision, not a control one: a team the repository is shared with may
+    // launch it, so the page does not block it on the owning team's control answer.
+    state.layout = 'A';
+    (run as Record<string, unknown>).review = { canControl: false, reviewable: false, reviews: [] };
+    try {
+      await renderPage();
+      const rerun = screen
+        .getAllByRole('button', { name: /Re-run/ })
+        .find((button) => button.hasAttribute('aria-describedby')) as HTMLElement;
+      expect(rerun.getAttribute('aria-disabled')).not.toBe('true');
+      expect(rerun.getAttribute('title')).toBeNull();
+    } finally {
       delete (run as Record<string, unknown>).review;
     }
   });
@@ -254,7 +271,7 @@ describe('run page summary band', () => {
       await renderPage();
       const cancel = screen.getByRole('button', { name: 'Cancel run' });
       expect(cancel.getAttribute('title')).toBe(runControlReason('Payments', 'cancel'));
-      expect(cancel.getAttribute('title')).toContain('members of Payments (with access');
+      expect(cancel.getAttribute('title')).toContain('members of Payments (with repository access');
     } finally {
       run.status = 'FAILED';
       delete (run as Record<string, unknown>).review;

@@ -127,6 +127,7 @@ function AutomationRow({
             checked={automation.enabled}
             disabled={!canManage || update.isPending}
             onChange={() => update.mutate({ enabled: !automation.enabled, id: automation.id })}
+            title={canManage ? undefined : MANAGE_REASON}
           />
           <ActionMenu items={items} label={`Actions for ${automation.name}`} />
         </div>
@@ -177,6 +178,9 @@ function EditorFor({
   );
 }
 
+/** Why the controls are unavailable to someone who may only read. */
+const MANAGE_REASON = 'Team leads and admins manage these.';
+
 /**
  * An owner's event automations — a repository's, or a team's for sources whose automations
  * target a team: what each reacts to, what it starts, its on/off switch and what it decided.
@@ -223,6 +227,9 @@ export function EventAutomationsPanel({ owner }: { owner: AutomationOwner }) {
           No event automations: nothing that happens {onRepository ? 'on' : 'for'} {where} starts a
           run.
         </p>
+      )}
+      {!canManage && data && data.automations.length > 0 && (
+        <p className="text-paper-500 text-xs">{MANAGE_REASON}</p>
       )}
       {canManage &&
         (editing === null ? (

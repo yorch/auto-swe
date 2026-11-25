@@ -18,6 +18,7 @@ interface EditorActionsProps {
   promoteVariant: 'primary' | 'secondary';
   isActiveVersion: boolean;
   selectedNeedsReview: boolean;
+  reviewBlockedReason?: string | null;
   onCancel: () => void;
   onSave: () => void;
   onReview: () => void;
@@ -39,6 +40,7 @@ export function EditorActions({
   promoteVariant,
   isActiveVersion,
   selectedNeedsReview,
+  reviewBlockedReason = null,
   onCancel,
   onSave,
   onReview,
@@ -96,13 +98,24 @@ export function EditorActions({
           {promoteReason}
         </span>
       )}
+      {canPromote && selectedNeedsReview && reviewBlockedReason && (
+        <span className="text-xs text-paper-500" id="review-blocked-reason">
+          {reviewBlockedReason}
+        </span>
+      )}
       {canPromote &&
         (selectedNeedsReview ? (
           <Button
             aria-describedby={
-              promoteBlocked && isActiveVersion ? 'promote-blocked-reason' : undefined
+              reviewBlockedReason
+                ? 'review-blocked-reason'
+                : promoteBlocked && isActiveVersion
+                  ? 'promote-blocked-reason'
+                  : undefined
             }
-            disabled={reviewPending || (promoteBlocked && isActiveVersion)}
+            disabled={
+              reviewPending || reviewBlockedReason !== null || (promoteBlocked && isActiveVersion)
+            }
             onClick={onReview}
             size="sm"
             variant={promoteVariant}

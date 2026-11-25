@@ -112,6 +112,15 @@ describe('EventAutomationsPanel', () => {
     expect((screen.getByRole('switch', { hidden: true }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('says who manages the automations to someone who can only read', () => {
+    state.automations = [automation];
+    render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
+    expect(screen.getByText('Team leads and admins manage these.')).toBeTruthy();
+    expect(screen.getByRole('switch', { hidden: true }).getAttribute('title')).toBe(
+      'Team leads and admins manage these.'
+    );
+  });
+
   it('offers a manager the form for a source, from its descriptor and its template', () => {
     state.canManage = true;
     render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);

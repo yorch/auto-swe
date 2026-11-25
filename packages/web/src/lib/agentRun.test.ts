@@ -141,7 +141,7 @@ describe('describeLaunchError', () => {
 
   it.each([
     ['ORG_BUDGET_EXCEEDED', /organization budget/, /organization administrator/],
-    ['TEAM_BUDGET_EXCEEDED', /team budget/, /team lead/],
+    ['TEAM_BUDGET_EXCEEDED', /team budget/, /team admin or an organization admin/],
   ])('explains %s without an amount and names who can change the limit', (code, title, who) => {
     const v = describeLaunchError(e(402, code, 'Budget exceeded: $1234.50 of $1000'));
     expect(v.title).toMatch(title);

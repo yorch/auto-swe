@@ -50,7 +50,11 @@ describe('PrdRunLaunchForm', () => {
     auth.leads = false;
     setupFetchMock({ 'GET /api/v1/repositories': () => ({ data: REPOS }) });
     render(withQuery(<PrdRunLaunchForm />));
-    expect(screen.getByText(/needs a team lead or administrator/i)).toBeTruthy();
+    expect(
+      screen.getByText(
+        /needs a lead or admin of the team that owns the repositories, or a platform admin/i
+      )
+    ).toBeTruthy();
     expect(screen.queryByRole('button', { name: /prd run/i })).toBeNull();
   });
 

@@ -18,6 +18,7 @@ import { useCan } from '@/hooks/useCan';
 import { useEpics } from '@/hooks/useEpics';
 import { useTeamParam } from '@/hooks/useTeamParam';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
+import { MULTI_REPO_LAUNCHERS } from '@/lib/roleLabels';
 import { teamGatedBoundary } from '@/lib/teamGate';
 
 const PAGE_SIZE = 30;
@@ -94,7 +95,7 @@ function Epics() {
                   ? 'You have not started any epics. Switch to “My team” to see epics your teammates started.'
                   : canCreate
                     ? 'Describe one change once and the planner fans it out across your repositories. For example: “Migrate auth /v1 to /v2 across 5 services” becomes one run per service, in dependency order, each ending in its own pull request for you to review.'
-                    : 'A team lead or administrator can start one to fan work out across repositories.'
+                    : `Only ${MULTI_REPO_LAUNCHERS} can start one to fan work out across repositories.`
               }
               icon="epics"
               title={scope === 'MINE' ? 'None of your epics yet' : 'No epics yet'}

@@ -283,10 +283,14 @@ export default function ConnectionsPage() {
                   const isGitRepo = !r.type || r.type === 'git_repo';
                   const label = connectionLabel(r);
                   const menu: ActionMenuItem[] = [
-                    ...(isGitRepo && r.isActive && canOnboard(r.team?.id)
+                    ...(isGitRepo && r.isActive
                       ? [
                           {
-                            disabledReason: onboarding.isPending ? 'Starting onboarding' : null,
+                            disabledReason: canOnboard(r.team?.id)
+                              ? onboarding.isPending
+                                ? 'Starting onboarding'
+                                : null
+                              : `Needs a team admin of ${r.team?.name ?? 'the owning team'}: it runs code in a sandbox`,
                             icon: 'workflows' as const,
                             id: 'onboarding',
                             label: 'Run onboarding',

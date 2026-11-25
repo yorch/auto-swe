@@ -1,4 +1,5 @@
 import { runControlWho } from '@/lib/gateAnswerers';
+import { repoManagersPhrase } from '@/lib/roleLabels';
 
 /**
  * Why a control is unavailable. What a person may DO is read from the server's effective
@@ -8,15 +9,15 @@ import { runControlWho } from '@/lib/gateAnswerers';
 
 /** Why a repository control is unavailable; names the owner, which is not the caller's team. */
 export function repoManageReason(ownerTeamName: string | null | undefined, action: string): string {
-  return `Only leads of ${ownerTeamName ?? 'the owning team'}, an admin of its organization or a platform admin can ${action} this repository.`;
+  return `Only ${repoManagersPhrase(ownerTeamName)} can ${action} this repository.`;
 }
 
 /** Why a menu entry on a repository is unavailable, for items that are not named in the message. */
 export function repoLeadReason(ownerTeamName: string | null | undefined): string {
-  return `Only leads of ${ownerTeamName ?? 'the owning team'}, an admin of its organization or a platform admin can do this.`;
+  return `Only ${repoManagersPhrase(ownerTeamName)} can do this.`;
 }
 
-/** Why a run control is unavailable: the rule includes the owning team, the launcher and admins. */
+/** Why a run control is unavailable: the rule includes the owning team, the launcher and platform admins. */
 export function runControlReason(ownerTeamName: string | null | undefined, action: string): string {
   return runControlWho(ownerTeamName, action);
 }

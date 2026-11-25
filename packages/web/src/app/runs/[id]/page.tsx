@@ -251,7 +251,7 @@ export default function RunDetailPage({ params }: PageProps) {
       <EmptyState
         action={<ButtonLink href="/runs">Back to runs</ButtonLink>}
         bordered
-        hint="It may have been removed, or the link is incomplete."
+        hint="It may have been removed, the link may be incomplete, or it belongs to a team you are not in."
         icon="runs"
         title="Run not found"
       />
@@ -415,7 +415,6 @@ export default function RunDetailPage({ params }: PageProps) {
             {canReRun && (
               <GuardedButton
                 aria-describedby="re-run-hint"
-                blockedReason={denied ? runControlReason(run.ownerTeam?.name, 're-run') : null}
                 className={TOUCH_SM}
                 disabled={reRunLocked}
                 onClick={handleReRun}

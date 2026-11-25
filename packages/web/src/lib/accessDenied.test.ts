@@ -11,14 +11,21 @@ describe('access denied notice', () => {
 
   it('explains which page needs the platform admin role', () => {
     expect(deniedMessage('/admin/users', 'platform-admin')).toBe(
-      'You need the platform admin role to open Users. Ask an administrator if you think you should have access.'
+      'You need the platform admin role to open Users. Team and organization admin roles do not include this page. Ask a platform admin if you think you should have access.'
     );
   });
 
   it('never echoes the attacker-controllable `need` value', () => {
     expect(deniedMessage('/admin/users', '<script>')).toBe(
-      'You need more access to open Users. Ask an administrator if you think you should have access.'
+      'You need more access to open Users. Ask a platform admin if you think you should have access.'
     );
+  });
+
+  it('says team and organization admin roles do not open a platform-admin page', () => {
+    expect(deniedMessage('/admin/users', 'platform-admin')).toContain(
+      'Team and organization admin roles do not include this page.'
+    );
+    expect(deniedMessage('/admin/users', 'other')).not.toContain('Team and organization admin');
   });
 
   it('ignores missing or off-site paths', () => {
@@ -29,7 +36,7 @@ describe('access denied notice', () => {
 
   it('words the usage and inactive reasons without naming a role', () => {
     expect(deniedMessage('/insights/usage', null, 'usage')).toBe(
-      'You need access to usage data to open LLM usage. Ask an administrator if you think you should have access.'
+      'You need access to usage data to open LLM usage. Ask a platform admin if you think you should have access.'
     );
     expect(deniedMessage('/insights/usage', null, 'inactive')).toMatch(/waiting for approval/);
     expect(deniedReasonHref('/insights/usage', 'inactive')).toBe(

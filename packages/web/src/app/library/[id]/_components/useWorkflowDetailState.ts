@@ -11,7 +11,7 @@ import {
   CONTAINER_AUTHORING_RULE,
   describeAuthoredCode,
 } from '@/components/workflow/containerNodes';
-import { useCanOwned } from '@/hooks/useCan';
+import { useCanOwned, usePlatformAdmin } from '@/hooks/useCan';
 import { useEffectivePermissions } from '@/hooks/useEffectivePermissions';
 import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useRolePricing } from '@/hooks/useModelCatalog';
@@ -29,6 +29,7 @@ import { errMsg } from '@/lib/errors';
 import { estimatorPricing } from '@/lib/modelCatalog';
 import { validateRouteParam } from '@/lib/routeParams';
 import { schemaIssues } from '@/lib/specSchemaIssues';
+import { useAuthStore } from '@/stores/authStore';
 import type { ViewMode } from './EditorActions';
 
 /**
@@ -37,6 +38,10 @@ import type { ViewMode } from './EditorActions';
  * a save that failed for another reason (`save`), one stopped before the request (`blocked`), a
  * review (`review`), or a stored definition that does not parse (`spec`).
  */
+/** Why the review button is disabled for the person who generated the open version. */
+export const REVIEW_BY_OTHER_REASON =
+  'Someone other than the person who generated this version must review it';
+
 export type ActionErrorSource = 'blocked' | 'rejected' | 'review' | 'save' | 'spec';
 
 export const ACTION_ERROR_TITLES: Record<ActionErrorSource, string> = {
@@ -373,6 +378,18 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
     versionDetail?.generatedBy != null &&
     versionDetail?.reviewedAt == null;
 
+  // The gateway refuses a generated version's review by the person who generated it, unless
+  // that person is a platform admin; say so up front instead of after the click.
+  const reviewerSub = useAuthStore((s) => s.user?.sub ?? null);
+  const isPlatformAdmin = usePlatformAdmin();
+  const reviewBlockedReason =
+    selectedNeedsReview &&
+    reviewerSub !== null &&
+    versionDetail?.createdBy === reviewerSub &&
+    !isPlatformAdmin
+      ? REVIEW_BY_OTHER_REASON
+      : null;
+
   // An edit makes the last save's error and notes stale; a stored-spec parse error stays.
   const clearStaleSaveFeedback = () => {
     setActionError((prev) => (prev?.source === 'spec' ? prev : null));
@@ -469,6 +486,7 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
     refetchVersion,
     refineOpen,
     requestCancel,
+    reviewBlockedReason,
     reviewVersion,
     saveError,
     saveWarnings,
