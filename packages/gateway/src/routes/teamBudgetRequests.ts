@@ -8,6 +8,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { auditContextOf } from '../lib/auditContext.js';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { can } from '../lib/authz.js';
 import { sendError } from '../lib/httpErrors.js';
 import { teamBudgetAccess } from '../lib/teamBudgetAccess.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -118,6 +119,84 @@ export const teamBudgetRequestRoutes: FastifyPluginAsync = async (fastify) => {
         where: { resolvedAt: null, teamId: access.team.id },
       });
       return { data: rows.map(summary) };
+    }
+  );
+
+  // GET /api/v1/teams/:id/budget-requests/mine — the team's pending request, or null, for whoever
+  // may ask (`team.budget-requests.create`), so a lead sees the outcome of what they sent. It
+  // carries a reason and no amount, like the create response.
+  app.get(
+    '/:id/budget-requests/mine',
+    {
+      onRequest: requireAuth({ capability: 'team.budget-requests.create', team: { param: 'id' } }),
+      schema: { params: TeamParamsSchema },
+    },
+    async (request) => {
+      const row = await fastify.prisma.teamBudgetRequest.findFirst({
+        orderBy: { createdAt: 'asc' },
+        select: REQUEST_SELECT,
+        where: { resolvedAt: null, teamId: request.params.id },
+      });
+      return { data: row ? summary(row) : null };
+    }
+  );
+
+  // POST /api/v1/teams/:id/budget-requests/:requestId/cancel — withdraw a pending request. The
+  // requester (while they may still ask) or whoever may decide it (`team.budget.manage`).
+  app.post(
+    '/:id/budget-requests/:requestId/cancel',
+    {
+      onRequest: requireAuth({
+        handlerChecked: ['team.budget.manage', 'team.budget.read', 'team.budget-requests.create'],
+      }),
+      schema: { params: RequestParamsSchema },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const access = await teamBudgetAccess(request, fastify.prisma, request.params.id);
+      if (!access) {
+        return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
+      }
+      const asker = await can(request, 'team.budget-requests.create', { teamId: access.team.id });
+      if (!access.canManage && !asker.allowed) {
+        return sendError(reply, 403, 'FORBIDDEN', 'Requires permission to ask for budget');
+      }
+      const { requestId } = request.params;
+      const cancelled = await fastify.prisma.$transaction(async (tx) => {
+        const { count } = await tx.teamBudgetRequest.updateMany({
+          data: { resolvedAt: new Date() },
+          // Someone who may only ask withdraws their own request, not a colleague's.
+          where: {
+            id: requestId,
+            resolvedAt: null,
+            teamId: access.team.id,
+            ...(access.canManage ? {} : { requestedById: user.sub }),
+          },
+        });
+        if (count === 0) {
+          return false;
+        }
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor: user,
+          after: { cancelled: true },
+          before: { resolvedAt: null },
+          client: tx,
+          context: { ...auditContextOf(request), authority: access.authority },
+          entityId: requestId,
+          entityType: 'TeamBudgetRequest',
+        });
+        return true;
+      });
+      if (!cancelled) {
+        return sendError(
+          reply,
+          404,
+          'BUDGET_REQUEST_NOT_FOUND',
+          'No pending budget request with that id'
+        );
+      }
+      return { data: { id: requestId } };
     }
   );
 

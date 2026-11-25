@@ -1,7 +1,7 @@
 import {
   type EffectivePermissions,
+  type EffectivePermissionsDb,
   effectivePermissions,
-  type PermissionsDb,
   userActor,
 } from '@auto-swe/shared/permissions';
 import type { JwtPayload } from '../plugins/auth.js';
@@ -19,7 +19,7 @@ export type EffectivePermissionsAnswer =
  * administrator, who passes every team, is told a team does not exist (`404 TEAM_NOT_FOUND`).
  */
 export async function loadEffectivePermissions(
-  prisma: PermissionsDb,
+  prisma: EffectivePermissionsDb,
   user: JwtPayload,
   teamId?: string
 ): Promise<EffectivePermissionsAnswer> {

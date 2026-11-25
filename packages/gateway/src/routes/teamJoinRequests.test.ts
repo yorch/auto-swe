@@ -253,6 +253,51 @@ describe('GET /api/v1/teams/directory', () => {
     expect(body.teams[2]).toMatchObject({ relationship: 'REQUESTED', requestId: open.id });
   });
 
+  it('names an organization admin’s relationship to a team they govern but are not on GOVERNS', async () => {
+    as(ORG_ADMIN);
+    const { body } = await call('GET', '/api/v1/teams/directory');
+    const rel = (id: string) => body.teams.find((t: { id: string }) => t.id === id).relationship;
+    // Org A's teams are governed; org B's team is another organization's.
+    expect(rel(ALPHA)).toBe('GOVERNS');
+    expect(rel(DELTA)).toBe('GOVERNS');
+    expect(rel(BRAVO)).toBe('NONE');
+  });
+
+  it('keeps REQUESTED, with its request id, over GOVERNS for a team the viewer asked to join', async () => {
+    as(ORG_ADMIN);
+    const open = addRequest({ teamId: DELTA, userId: ORG_ADMIN });
+    const { body } = await call('GET', '/api/v1/teams/directory');
+    const delta = body.teams.find((t: { id: string }) => t.id === DELTA);
+    expect(delta).toMatchObject({ relationship: 'REQUESTED', requestId: open.id });
+    expect(body.teams.find((t: { id: string }) => t.id === ALPHA).relationship).toBe('GOVERNS');
+  });
+
+  it('names a platform admin’s relationship to every team they are not on GOVERNS', async () => {
+    as(PLATFORM, 'ADMIN');
+    const { body } = await call('GET', '/api/v1/teams/directory');
+    expect(body.teams.map((t: { relationship: string }) => t.relationship)).toEqual([
+      'GOVERNS',
+      'GOVERNS',
+      'GOVERNS',
+    ]);
+  });
+
+  it('keeps MEMBER for a team the viewer is on, even with organization authority', async () => {
+    as(BRAVO_ADMIN);
+    const { body } = await call('GET', '/api/v1/teams/directory');
+    expect(body.teams.find((t: { id: string }) => t.id === BRAVO).relationship).toBe('GOVERNS');
+    world.teamMemberships.push({
+      id: uuid(499),
+      role: 'MEMBER',
+      teamId: BRAVO,
+      userId: BRAVO_ADMIN,
+    });
+    const again = await call('GET', '/api/v1/teams/directory');
+    expect(again.body.teams.find((t: { id: string }) => t.id === BRAVO).relationship).toBe(
+      'MEMBER'
+    );
+  });
+
   it('leaves out the teams of a deactivated organization', async () => {
     world.teams.push({
       description: '',

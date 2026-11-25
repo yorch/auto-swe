@@ -24,11 +24,13 @@ export {
 export {
   type EffectiveOrganization,
   type EffectivePermissions,
+  type EffectivePermissionsDb,
   type EffectiveRefusal,
   type EffectiveResult,
   type EffectiveTeam,
   effectivePermissions,
   type HeldCapability,
+  loadGrantRows,
 } from './effective.js';
 export { can, heldScope, loadStanding, type PermissionsDb, userActor } from './load.js';
 export {

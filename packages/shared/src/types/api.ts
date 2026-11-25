@@ -225,7 +225,11 @@ export interface TeamMember {
   id: string;
   role: string;
   /** `isActive` is false for a deactivated account, whose membership is kept. Absent on older payloads. */
-  user: { id: string; email: string; role: string; isActive?: boolean };
+  /**
+   * `role` is the member's platform role, sent only to a caller who may manage users; it is absent
+   * for everyone else.
+   */
+  user: { id: string; email: string; role?: string; isActive?: boolean };
 }
 
 /** Shape returned by GET /api/v1/teams (list) */

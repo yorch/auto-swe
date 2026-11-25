@@ -16,7 +16,7 @@ import {
   type WriteDenial,
 } from '@auto-swe/shared/config';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { isPlatformAdmin } from '@auto-swe/shared/permissions';
+import { isPlatformAdmin, loadGrantRows } from '@auto-swe/shared/permissions';
 import { advisoryWarnings } from './advisoryWarnings.js';
 import { loadEgressReadiness } from './egressReadiness.js';
 import { isUniqueConstraintError } from './prismaErrors.js';
@@ -158,25 +158,8 @@ export async function loadGrantsForActor(
       });
       const teamRoles = new Map<string, string>(memberships.map((m) => [m.teamId, m.role]));
       const teamIds = [...teamRoles.keys()];
-      const rows = await prisma.configPermission.findMany({
-        select: {
-          keyPattern: true,
-          orgId: true,
-          role: true,
-          scope: true,
-          teamId: true,
-          userId: true,
-        },
-        where: {
-          OR: [
-            { userId: actor.id },
-            ...(teamIds.length
-              ? [{ scope: 'TEAM' as const, teamId: { in: teamIds }, userId: null }]
-              : []),
-          ],
-        },
-      });
-      return { grants: rows as ConfigGrant[], teamRoles };
+      const grants = await loadGrantRows(prisma, actor.id, teamIds);
+      return { grants, teamRoles };
     }
   );
 }

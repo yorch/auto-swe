@@ -72,6 +72,8 @@ interface State {
   orgAdminIds?: string[];
   /** Row locks taken on the team (`SELECT … FOR UPDATE`), in order. */
   locks?: string[];
+  /** Runs once the team lock is taken: a write that landed between the handler's read and the lock. */
+  afterLock?: () => void;
   /** When true, `teamMembership.create` loses a concurrent race (P2002). */
   createConflict?: boolean;
   /** Rows `connectionTeamShare.findMany` returns, and the queries it was asked. */
@@ -163,11 +165,13 @@ function buildApp(state: State): FastifyInstance {
   const prisma: Record<string, unknown> = {
     $executeRaw: async (_sql: TemplateStringsArray, ...values: unknown[]) => {
       state.locks = [...(state.locks ?? []), String(values[0])];
+      state.afterLock?.();
       return 1;
     },
     // The row locks of `lib/lockOrder.ts`, recorded in the same list and answered as found.
     $queryRaw: async (sql: TemplateStringsArray, ...values: unknown[]) => {
       state.locks = [...(state.locks ?? []), String(values[0])];
+      state.afterLock?.();
       // A bulk close locks the open requests it will close, and gets their ids back.
       return sql.join('?').includes('team_join_requests') ? [{ id: 'jr-1' }] : [{ id: values[0] }];
     },
@@ -294,7 +298,24 @@ function buildApp(state: State): FastifyInstance {
         const found = state.teams.find((t) =>
           where.id ? t.id === where.id : t.slug === where.slug
         );
-        return found ? { orgId: TEAM_ID, repositories: [], ...found } : null;
+        return found
+          ? {
+              memberships: state.memberships
+                .filter((m) => m.teamId === found.id)
+                .map((m) => ({
+                  ...m,
+                  user: {
+                    email: `${m.userId}@test.com`,
+                    id: m.userId,
+                    isActive: true,
+                    role: 'USER',
+                  },
+                })),
+              orgId: TEAM_ID,
+              repositories: [],
+              ...found,
+            }
+          : null;
       },
       findUniqueOrThrow: async () => ({ orgId: TEAM_ID }),
       update: async ({
@@ -341,13 +362,15 @@ function buildApp(state: State): FastifyInstance {
         state.memberships.filter(
           (m) => m.teamId === where.teamId && (!where.role || m.role === where.role)
         ).length,
-      create: async ({ data }: { data: Omit<MembershipRow, 'id'> }) => {
+      create: async ({ data, include }: { data: Omit<MembershipRow, 'id'>; include?: unknown }) => {
         if (state.createConflict) {
           throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
         }
         const row = { id: `m-${state.memberships.length + 1}`, ...data };
         state.memberships.push(row);
-        return row;
+        return include
+          ? { ...row, user: { email: `${data.userId}@test.com`, id: data.userId, role: 'USER' } }
+          : row;
       },
       delete: async ({ where }: { where: { id: string } }) => {
         const idx = state.memberships.findIndex((m) => m.id === where.id);
@@ -358,9 +381,11 @@ function buildApp(state: State): FastifyInstance {
         return removed;
       },
       findMany: async ({
+        include,
         where,
       }: {
         where: { teamId: string | { in: string[] }; userId?: string };
+        include?: unknown;
       }) => {
         const wanted = typeof where.teamId === 'string' ? [where.teamId] : where.teamId.in;
         return state.memberships
@@ -368,14 +393,30 @@ function buildApp(state: State): FastifyInstance {
             (m) =>
               wanted.includes(m.teamId) && (where.userId === undefined || m.userId === where.userId)
           )
-          .map((m) => ({ role: m.role, teamId: m.teamId }));
+          .map((m) =>
+            include
+              ? {
+                  ...m,
+                  user: {
+                    email: `${m.userId}@test.com`,
+                    id: m.userId,
+                    isActive: true,
+                    role: 'USER',
+                    slackId: null,
+                  },
+                }
+              : { role: m.role, teamId: m.teamId }
+          );
       },
       findUnique: async ({
         where,
       }: {
-        where: { userId_teamId?: { userId: string; teamId: string } };
+        where: { id?: string; userId_teamId?: { userId: string; teamId: string } };
       }) => {
         const k = where.userId_teamId;
+        if (where.id) {
+          return state.memberships.find((m) => m.id === where.id) ?? null;
+        }
         if (!k) {
           return null;
         }
@@ -1075,6 +1116,108 @@ describe('DELETE /api/v1/teams/:id', () => {
   });
 });
 
+describe('the platform role in a team member list', () => {
+  const headers = { authorization: 'Bearer fake-jwt' };
+  const urls = [`/api/v1/teams/${TEAM_ID}/members`, `/api/v1/teams/${TEAM_ID}`];
+
+  it.each(urls)('leaves it out of %s for a caller who does not manage users', async (url) => {
+    const res = await buildApp(freshState()).inject({ headers, method: 'GET', url });
+    expect(res.statusCode).toBe(200);
+    const body = res.json().data;
+    for (const m of Array.isArray(body) ? body : body.memberships) {
+      expect('role' in m.user).toBe(false);
+    }
+  });
+
+  it.each(urls)('sends it in %s to a platform admin', async (url) => {
+    const res = await buildApp(freshState({ userRole: 'ADMIN' })).inject({
+      headers,
+      method: 'GET',
+      url,
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json().data;
+    const rows: Array<{ user: { role: string } }> = Array.isArray(body) ? body : body.memberships;
+    expect(rows.map((m) => m.user.role)).toEqual(['USER', 'USER']);
+  });
+});
+
+describe('DELETE /api/v1/teams/:id/members/me', () => {
+  const headers = { authorization: 'Bearer fake-jwt' };
+  const url = `/api/v1/teams/${TEAM_ID}/members/me`;
+
+  it('removes the caller from the team and audits it', async () => {
+    const state = freshState();
+    const res = await buildApp(state).inject({ headers, method: 'DELETE', url });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ data: { removed: true } });
+    expect(state.memberships.map((m) => m.userId)).toEqual([TARGET_USER_ID]);
+    expect(state.audits).toMatchObject([
+      { action: 'DELETE', entityId: 'm-caller', entityType: 'TeamMembership' },
+    ]);
+    expect(state.locks?.[0]).toBe(TEAM_ID);
+  });
+
+  it('lets a plain member leave', async () => {
+    const state = freshState({ userId: TARGET_USER_ID });
+    const res = await buildApp(state).inject({ headers, method: 'DELETE', url });
+    expect(res.statusCode).toBe(200);
+    expect(state.memberships.map((m) => m.userId)).toEqual([ADMIN_USER_ID]);
+  });
+
+  it('refuses the last team admin and keeps the membership', async () => {
+    const state = freshState();
+    state.memberships[0].role = 'ADMIN';
+    const res = await buildApp(state).inject({ headers, method: 'DELETE', url });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('LAST_TEAM_ADMIN');
+    expect(res.json().error.message).toMatch(/another member an admin/);
+    expect(state.memberships).toHaveLength(2);
+    expect(state.audits ?? []).toEqual([]);
+  });
+
+  it('lets an admin leave when another admin remains', async () => {
+    const state = freshState();
+    state.memberships[0].role = 'ADMIN';
+    state.memberships[1].role = 'ADMIN';
+    const res = await buildApp(state).inject({ headers, method: 'DELETE', url });
+    expect(res.statusCode).toBe(200);
+    expect(state.memberships.map((m) => m.userId)).toEqual([TARGET_USER_ID]);
+  });
+
+  it('answers 404 NOT_A_MEMBER when a double submit finds the row gone under the lock', async () => {
+    const state = freshState({ userId: TARGET_USER_ID });
+    state.afterLock = () => {
+      state.memberships = state.memberships.filter((m) => m.userId !== TARGET_USER_ID);
+    };
+    const res = await buildApp(state).inject({ headers, method: 'DELETE', url });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('NOT_A_MEMBER');
+    expect(state.audits ?? []).toEqual([]);
+  });
+
+  it('decides the last-admin refusal from the role under the lock, not the one read before it', async () => {
+    // The caller is read as a MEMBER, then promoted to the team's only ADMIN before the lock.
+    const state = freshState({ userId: TARGET_USER_ID });
+    state.afterLock = () => {
+      state.memberships[1].role = 'ADMIN';
+      state.memberships[0].role = 'MEMBER';
+    };
+    const res = await buildApp(state).inject({ headers, method: 'DELETE', url });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('LAST_TEAM_ADMIN');
+    expect(state.memberships).toHaveLength(2);
+  });
+
+  it('answers 404 for someone who is not a member', async () => {
+    const state = freshState({ memberships: [freshState().memberships[1]] });
+    const res = await buildApp(state).inject({ headers, method: 'DELETE', url });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('NOT_A_MEMBER');
+    expect(state.memberships).toHaveLength(1);
+  });
+});
+
 describe('DELETE /api/v1/teams/:id/members/:userId', () => {
   it('removes the membership row and returns { removed: true }', async () => {
     const state = freshState();
@@ -1102,6 +1245,20 @@ describe('DELETE /api/v1/teams/:id/members/:userId', () => {
       url: `/api/v1/teams/${TEAM_ID}/members/${TARGET_USER_ID}`,
     });
 
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('MEMBER_NOT_FOUND');
+  });
+
+  it('404s when the membership is removed between the read and the lock', async () => {
+    const state = freshState();
+    state.afterLock = () => {
+      state.memberships = state.memberships.filter((m) => m.userId !== TARGET_USER_ID);
+    };
+    const res = await buildApp(state).inject({
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'DELETE',
+      url: `/api/v1/teams/${TEAM_ID}/members/${TARGET_USER_ID}`,
+    });
     expect(res.statusCode).toBe(404);
     expect(res.json().error.code).toBe('MEMBER_NOT_FOUND');
   });
@@ -1502,6 +1659,24 @@ describe('POST /api/v1/teams/:id/members', () => {
     });
     expect(res.statusCode, res.body).toBe(201);
     expect(state.locks).toEqual([ORG, TEAM_ID]);
+  });
+
+  it.each([
+    ['a caller who does not manage users', 'USER', false],
+    ['a platform admin', 'ADMIN', true],
+  ] as const)('returns the added user’s platform role only to %s', async (_n, userRole, sees) => {
+    const state = freshState({
+      orgMemberships: [{ id: 'new-user-org', orgId: TEAM_ID, role: 'MEMBER', userId: NEW_USER_ID }],
+      userRole,
+    });
+    const res = await buildApp(state).inject({
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'POST',
+      payload: { role: 'MEMBER', userId: NEW_USER_ID },
+      url: `/api/v1/teams/${TEAM_ID}/members`,
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    expect('role' in res.json().data.user).toBe(sees);
   });
 
   it('answers 404 for a team that does not exist, before taking any lock', async () => {

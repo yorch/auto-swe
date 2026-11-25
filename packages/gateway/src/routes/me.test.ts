@@ -27,6 +27,7 @@ async function buildApp() {
   app.setSerializerCompiler(serializerCompiler);
 
   const mockPrisma = {
+    configPermission: { findMany: vi.fn(async () => []) },
     organizationMembership: { findMany: vi.fn(async () => []) },
     team: { findMany: vi.fn(async () => []), findUnique: vi.fn(async () => null) },
     teamMembership: { findMany: vi.fn(async () => []) },
@@ -318,6 +319,7 @@ describe('meRoutes', () => {
       });
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({
+        canWriteAnySetting: false,
         organizations: [],
         platformCapabilities: expect.any(Array),
         platformRole: 'ENGINEER',

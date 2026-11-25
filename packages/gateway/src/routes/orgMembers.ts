@@ -220,15 +220,21 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
         orderBy: { createdAt: 'asc' },
         where: { orgId },
       });
+      // The platform role of each member is for the people who manage users; for everyone else
+      // the field is absent.
+      const mayReadPlatformRole = (await can(request, 'platform.users.manage')).allowed;
       return {
-        data: rows.map((r) => ({
-          createdAt: r.createdAt,
-          id: r.id,
-          orgId: r.orgId,
-          role: r.role,
-          user: r.user,
-          userId: r.userId,
-        })),
+        data: rows.map((r) => {
+          const { role: platformRole, ...user } = r.user;
+          return {
+            createdAt: r.createdAt,
+            id: r.id,
+            orgId: r.orgId,
+            role: r.role,
+            user: mayReadPlatformRole ? { ...user, role: platformRole } : user,
+            userId: r.userId,
+          };
+        }),
       };
     }
   );

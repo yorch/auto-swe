@@ -1,6 +1,6 @@
 import type { PlatformRole, TeamRole } from '../generated/prisma/enums.js';
 import { isPlatformAdmin, teamRankMeets, teamRankOf } from '../permissions/standing.js';
-import { getSettingDefinition, isSettingKey, type SettingKey } from './registry.js';
+import { getSettingDefinition, isSettingKey, SETTING_KEYS, type SettingKey } from './registry.js';
 import type { SettingScope } from './types.js';
 
 /**
@@ -174,4 +174,41 @@ export function checkSettingWrite(
     code: 'NO_GRANT',
     message: `No configuration grant covers '${target.key}' at ${target.scope} scope.`,
   };
+}
+
+/// Whether the actor may write at least one registered setting somewhere: a
+/// platform admin always may; anyone else needs a grant that covers a
+/// `grantable` setting at a scope it can be overridden at. Every candidate write
+/// goes through `checkSettingWrite`, so this cannot disagree with the write path.
+/// Each grant names where it reaches (the deployment, one org, one team), so the
+/// candidates are that tenant at every scope a setting allows.
+export function canWriteAnySetting(
+  actor: ConfigActor,
+  grants: readonly ConfigGrant[],
+  actorTeamRoles: ActorTeamRoles = new Map()
+): boolean {
+  if (isPlatformAdmin(actor)) {
+    return true;
+  }
+  for (const key of SETTING_KEYS) {
+    const definition = getSettingDefinition(key);
+    if (definition.writeAccess !== 'grantable') {
+      continue;
+    }
+    const scopes: SettingScope[] = ['GLOBAL', ...definition.overridableAt];
+    for (const grant of grants) {
+      for (const scope of scopes) {
+        const target: SettingWriteTarget = {
+          key,
+          scope,
+          ...(grant.orgId ? { targetOrgId: grant.orgId } : {}),
+          ...(grant.teamId ? { targetTeamId: grant.teamId } : {}),
+        };
+        if (checkSettingWrite(actor, target, [grant], actorTeamRoles).allowed) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
 }

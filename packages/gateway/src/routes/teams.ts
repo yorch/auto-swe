@@ -373,6 +373,38 @@ function guardTeamMembershipChange(
   return null;
 }
 
+/** A team membership row without the member's platform role. */
+function withoutPlatformRole<T extends { user: { role: string } }>(
+  member: T
+): Omit<T, 'user'> & { user: Omit<T['user'], 'role'> } {
+  const { user, ...rest } = member;
+  const { role: _platformRole, ...userRest } = user;
+  return { ...rest, user: userRest as Omit<T['user'], 'role'> };
+}
+
+/**
+ * `removesAdmin` for `applyMembershipChange`, decided from the membership row as it is under the
+ * team lock (null when the row is gone).
+ */
+function removesAdminOfRow(
+  membershipId: string,
+  action: 'delete' | 'update',
+  newRole?: string
+): (db: Prisma.TransactionClient) => Promise<boolean | null> {
+  return async (db) => {
+    const current = await db.teamMembership.findUnique({
+      select: { role: true },
+      where: { id: membershipId },
+    });
+    return current ? removesTeamAdmin(current.role, action, newRole) : null;
+  };
+}
+
+const MEMBER_GONE: TeamGuardResult = {
+  code: 'MEMBER_GONE',
+  message: 'Membership no longer exists',
+};
+
 const LAST_TEAM_ADMIN: TeamGuardResult = {
   code: 'LAST_TEAM_ADMIN',
   message: 'Cannot remove or demote the last team admin',
@@ -400,7 +432,13 @@ function removesTeamAdmin(
 async function applyMembershipChange<T>(
   prisma: FastifyInstance['prisma'],
   teamId: string,
-  removesAdmin: boolean,
+  /**
+   * Whether the change takes an ADMIN away. A function is evaluated INSIDE the transaction after
+   * the team lock, so it sees the membership as it is now (a role changed or a row removed since
+   * the handler's own read); it answers `null` when the row is gone, which is refused as
+   * `MEMBER_GONE`.
+   */
+  removesAdmin: boolean | ((db: Prisma.TransactionClient) => Promise<boolean | null>),
   write: (db: Prisma.TransactionClient) => Promise<T>,
   /**
    * The team's organization, for a write that reads or creates an organization membership. Its row
@@ -418,7 +456,11 @@ async function applyMembershipChange<T>(
     } else {
       await lockTeams(tx, [teamId]);
     }
-    if (removesAdmin) {
+    const removes = typeof removesAdmin === 'function' ? await removesAdmin(tx) : removesAdmin;
+    if (removes === null) {
+      return { guard: MEMBER_GONE, ok: false as const };
+    }
+    if (removes) {
       const roles = await tx.teamMembership.findMany({ select: { role: true }, where: { teamId } });
       const adminCount = roles.filter((m) => teamRankMeets(teamRankOf(m.role), 'ADMIN')).length;
       if (adminCount <= 1) {
@@ -654,7 +696,15 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
           `${a.organizationName}/${a.repoName}`.localeCompare(`${b.organizationName}/${b.repoName}`)
         );
 
-      return { data: { ...team, repositories: ownedRepositories, sharedRepositories } };
+      // The platform role of each member is for the people who manage users; it is absent for
+      // everyone else.
+      const memberships = (await can(request, 'platform.users.manage')).allowed
+        ? team.memberships
+        : team.memberships.map(withoutPlatformRole);
+
+      return {
+        data: { ...team, memberships, repositories: ownedRepositories, sharedRepositories },
+      };
     }
   );
 
@@ -902,7 +952,12 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         where: { teamId: request.params.id },
       });
 
-      return { data: members };
+      // Who the platform's operators are is for the people who manage users: every other caller
+      // gets the member without the platform role (the field is absent, not a placeholder).
+      const mayReadPlatformRole = (await can(request, 'platform.users.manage')).allowed;
+      return {
+        data: mayReadPlatformRole ? members : members.map(withoutPlatformRole),
+      };
     }
   );
 
@@ -1031,7 +1086,10 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         if (!result.ok) {
           return sendError(reply, 409, result.guard.code, result.guard.message);
         }
-        return reply.status(201).send({ data: result.value });
+        const mayReadPlatformRole = (await can(request, 'platform.users.manage')).allowed;
+        return reply
+          .status(201)
+          .send({ data: mayReadPlatformRole ? result.value : withoutPlatformRole(result.value) });
       } catch (err) {
         if (err instanceof OrganizationMemberRequired) {
           return sendError(
@@ -1083,7 +1141,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       const result = await applyMembershipChange(
         fastify.prisma,
         request.params.id,
-        removesTeamAdmin(membership.role, 'update', request.body.role),
+        removesAdminOfRow(membership.id, 'update', request.body.role),
         async (db) => {
           const updated = await db.teamMembership.update({
             data: { role: request.body.role },
@@ -1102,10 +1160,67 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         }
       );
       if (!result.ok) {
+        if (result.guard === MEMBER_GONE) {
+          return sendError(reply, 404, 'MEMBER_NOT_FOUND', 'Membership not found');
+        }
         return sendError(reply, 409, result.guard.code, result.guard.message);
       }
 
       return { data: result.value };
+    }
+  );
+
+  // DELETE /api/v1/teams/:id/members/me — Leave the team. Any member may remove themselves, so
+  // the route asks for authentication only and the handler checks the membership; the last team
+  // ADMIN is refused (hand the team over first). The write is the removal path's own
+  // (`applyMembershipChange`: locks, last-admin count, audit row).
+  app.delete(
+    '/:id/members/me',
+    {
+      onRequest: requireAuth(),
+      schema: { params: TeamParamsSchema },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const membership = await fastify.prisma.teamMembership.findUnique({
+        where: { userId_teamId: { teamId: request.params.id, userId: user.sub } },
+      });
+      if (!membership) {
+        return sendError(reply, 404, 'NOT_A_MEMBER', 'You are not a member of this team');
+      }
+
+      const result = await applyMembershipChange(
+        fastify.prisma,
+        request.params.id,
+        removesAdminOfRow(membership.id, 'delete'),
+        async (db) => {
+          const removed = await db.teamMembership.delete({ where: { id: membership.id } });
+          await writeAuditLog(fastify, {
+            action: 'DELETE',
+            actor: user,
+            before: membershipAuditFields(membership),
+            client: db,
+            entityId: membership.id,
+            entityType: 'TeamMembership',
+          });
+          return removed;
+        }
+      );
+      if (!result.ok) {
+        if (result.guard === MEMBER_GONE) {
+          return sendError(reply, 404, 'NOT_A_MEMBER', 'You are not a member of this team');
+        }
+        return sendError(
+          reply,
+          409,
+          result.guard.code,
+          result.guard.code === LAST_TEAM_ADMIN.code
+            ? 'You are the only admin of this team. Make another member an admin before you leave.'
+            : result.guard.message
+        );
+      }
+
+      return { data: { removed: true } };
     }
   );
 
@@ -1142,7 +1257,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       const result = await applyMembershipChange(
         fastify.prisma,
         request.params.id,
-        removesTeamAdmin(membership.role, 'delete'),
+        removesAdminOfRow(membership.id, 'delete'),
         async (db) => {
           const removed = await db.teamMembership.delete({ where: { id: membership.id } });
           await writeAuditLog(fastify, {
@@ -1157,6 +1272,9 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         }
       );
       if (!result.ok) {
+        if (result.guard === MEMBER_GONE) {
+          return sendError(reply, 404, 'MEMBER_NOT_FOUND', 'Membership not found');
+        }
         return sendError(reply, 409, result.guard.code, result.guard.message);
       }
 

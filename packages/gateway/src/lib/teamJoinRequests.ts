@@ -460,7 +460,7 @@ export async function loadDirectory(prisma: Db, viewer: Viewer, query: Directory
     rows.length > query.limit ? encodeCursor(page[page.length - 1]?.name ?? '') : null;
   const ids = page.map((t) => t.id);
 
-  const [counts, memberOf, open, creatableOrgs, orgsWithTeams] = await Promise.all([
+  const [counts, memberOf, open, creatableOrgs, orgsWithTeams, governed] = await Promise.all([
     ids.length > 0
       ? prisma.teamMembership.groupBy({
           _count: { _all: true },
@@ -485,16 +485,28 @@ export async function loadDirectory(prisma: Db, viewer: Viewer, query: Directory
     // The organization filter lists organizations that have a team the viewer may see, whatever
     // the search text or page, in name order and capped: one more than the cap says it was cut.
     listVisibleOrganizations(prisma, orgWhere, { take: DIRECTORY_ORGANIZATIONS_LIMIT + 1 }),
+    // Teams the viewer governs by organization or platform authority: `team.read` held without
+    // being a member. They open the team instead of asking to join it.
+    heldScope(prisma, userActor(viewer), 'team.read'),
   ]);
   const organizations = orgsWithTeams.slice(0, DIRECTORY_ORGANIZATIONS_LIMIT);
   const organizationsTruncated = orgsWithTeams.length > DIRECTORY_ORGANIZATIONS_LIMIT;
   const sizeOf = new Map(counts.map((c) => [c.teamId, c._count._all]));
   const memberSet = new Set(memberOf.map((m) => m.teamId));
+  const governedTeams = new Set(governed.teamIds);
   const requestOf = new Map(open.map((r) => [r.teamId, r.id]));
 
   const teams = page.map((t) => {
     const requestId = requestOf.get(t.id);
-    const relationship = memberSet.has(t.id) ? 'MEMBER' : requestId ? 'REQUESTED' : 'NONE';
+    // A pending request outranks authority, so it can still be withdrawn from the row.
+    const governs = governed.all || governedTeams.has(t.id);
+    const relationship = memberSet.has(t.id)
+      ? 'MEMBER'
+      : requestId
+        ? 'REQUESTED'
+        : governs
+          ? 'GOVERNS'
+          : 'NONE';
     return {
       description: t.description,
       id: t.id,

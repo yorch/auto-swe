@@ -554,9 +554,9 @@ async function monthlyRemainingUsd(
 export async function buildDetail(
   prisma: Db,
   row: DetailRow,
-  ctx: { canControl: boolean; viewer: Viewer }
+  ctx: { canControl: boolean; canEmergencyStop?: boolean; viewer: Viewer }
 ): Promise<OrchestrationDetailDto> {
-  const { canControl, viewer } = ctx;
+  const { canControl, canEmergencyStop, viewer } = ctx;
   const sees = await canSeeRepoData(prisma, viewer, row);
   const children = await prisma.orchestrationChild.findMany({
     include: CHILD_INCLUDE,
@@ -676,6 +676,7 @@ export async function buildDetail(
     },
     budgetTier: row.budgetTier,
     canControl,
+    canEmergencyStop: canEmergencyStop === true,
     children: childViews,
     connections: row.connectionIds.map((id) => ({ id, name: names.get(id) ?? null })),
     cost: { childrenUsd, orchestratorUsd, totalUsd: childrenUsd + orchestratorUsd },

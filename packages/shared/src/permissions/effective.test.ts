@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { EffectivePermissionsDb } from './effective.js';
 import { effectivePermissions } from './effective.js';
-import type { PermissionsDb } from './load.js';
 import type { Actor } from './types.js';
 
 const USER = { id: 'u1', kind: 'user', role: 'ENGINEER' } as Extract<Actor, { kind: 'user' }>;
@@ -11,12 +11,33 @@ const TEAM_B = { id: 'team-b', isActive: true, name: 'Beta', orgId: 'org-1', slu
 const TEAM_C = { id: 'team-c', isActive: true, name: 'Gamma', orgId: 'org-2', slug: 'gamma' };
 
 function mockDb(f: {
+  grants?: Array<Record<string, unknown>>;
   memberOf?: Array<{ role: string; team: typeof TEAM_A }>;
   orgs?: Array<{ orgId: string; role: string; organization: { name: string } }>;
 }) {
   const memberOf = f.memberOf ?? [];
   const allTeams = [TEAM_A, TEAM_B, TEAM_C];
   const db = {
+    // Honours the `where` the code passes: the person's own grants, and TEAM role grants of the
+    // teams they are on (a grant for another person or another team is not returned).
+    configPermission: {
+      findMany: vi.fn(
+        async (args: {
+          where: {
+            OR: Array<{ scope?: string; teamId?: { in: string[] }; userId?: string | null }>;
+          };
+        }) =>
+          (f.grants ?? []).filter((g) =>
+            args.where.OR.some((c) =>
+              c.teamId
+                ? g.scope === c.scope &&
+                  c.teamId.in.includes(g.teamId as string) &&
+                  g.userId === null
+                : g.userId === c.userId
+            )
+          )
+      ),
+    },
     organizationMembership: { findMany: vi.fn(async () => f.orgs ?? []) },
     team: {
       findMany: vi.fn(
@@ -40,7 +61,7 @@ function mockDb(f: {
       ),
     },
   };
-  return db as unknown as PermissionsDb;
+  return db as unknown as EffectivePermissionsDb;
 }
 
 describe('effectivePermissions', () => {
@@ -102,5 +123,89 @@ describe('effectivePermissions', () => {
     const missing = await effectivePermissions(db, USER, { teamId: 'no-such-team' });
     expect(existing).toEqual({ ok: false, reason: 'NO_STANDING' });
     expect(missing).toEqual(existing);
+  });
+
+  describe('canWriteAnySetting', () => {
+    const grant = (over: Record<string, unknown>) => ({
+      keyPattern: '*',
+      orgId: null,
+      role: null,
+      scope: 'TEAM',
+      teamId: 'team-a',
+      userId: null,
+      ...over,
+    });
+
+    it('is true for a platform administrator with no grant', async () => {
+      const result = await effectivePermissions(mockDb({}), ADMIN);
+      expect(result.ok && result.value.canWriteAnySetting).toBe(true);
+    });
+
+    it('is true for a team member a user grant covers', async () => {
+      const db = mockDb({
+        grants: [grant({ userId: 'u1' })],
+        memberOf: [{ role: 'MEMBER', team: TEAM_A }],
+      });
+      const result = await effectivePermissions(db, USER);
+      expect(result.ok && result.value.canWriteAnySetting).toBe(true);
+    });
+
+    it('is true for a lead a role grant at LEAD covers, and false for a member below it', async () => {
+      const grants = [grant({ role: 'LEAD', userId: null })];
+      const lead = await effectivePermissions(
+        mockDb({ grants, memberOf: [{ role: 'LEAD', team: TEAM_A }] }),
+        USER
+      );
+      const member = await effectivePermissions(
+        mockDb({ grants, memberOf: [{ role: 'MEMBER', team: TEAM_A }] }),
+        USER
+      );
+      expect(lead.ok && lead.value.canWriteAnySetting).toBe(true);
+      expect(member.ok && member.value.canWriteAnySetting).toBe(false);
+    });
+
+    it('is false for a lead with no grant', async () => {
+      const db = mockDb({ memberOf: [{ role: 'LEAD', team: TEAM_A }] });
+      const result = await effectivePermissions(db, USER);
+      expect(result.ok && result.value.canWriteAnySetting).toBe(false);
+    });
+
+    it('is false for an organization admin with no grant', async () => {
+      const db = mockDb({
+        orgs: [{ organization: { name: 'Acme' }, orgId: 'org-1', role: 'ADMIN' }],
+      });
+      const result = await effectivePermissions(db, USER);
+      expect(result.ok && result.value.canWriteAnySetting).toBe(false);
+    });
+
+    it('is false when the only grant names a setting that only a platform admin may write', async () => {
+      const db = mockDb({
+        grants: [grant({ keyPattern: 'git.authorEmail', userId: 'u1' })],
+        memberOf: [{ role: 'MEMBER', team: TEAM_A }],
+      });
+      const result = await effectivePermissions(db, USER);
+      expect(result.ok && result.value.canWriteAnySetting).toBe(false);
+    });
+
+    it('is true when a grant names a grantable setting', async () => {
+      const db = mockDb({
+        grants: [grant({ keyPattern: 'channel.historyMessageLimit', userId: 'u1' })],
+        memberOf: [{ role: 'MEMBER', team: TEAM_A }],
+      });
+      const result = await effectivePermissions(db, USER);
+      expect(result.ok && result.value.canWriteAnySetting).toBe(true);
+    });
+
+    it('ignores another person’s grant and a role grant of a team the person is not on', async () => {
+      const db = mockDb({
+        grants: [
+          grant({ userId: 'someone-else' }),
+          grant({ role: 'MEMBER', teamId: 'team-b', userId: null }),
+        ],
+        memberOf: [{ role: 'LEAD', team: TEAM_A }],
+      });
+      const result = await effectivePermissions(db, USER);
+      expect(result.ok && result.value.canWriteAnySetting).toBe(false);
+    });
   });
 });
