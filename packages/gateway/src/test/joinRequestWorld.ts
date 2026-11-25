@@ -301,7 +301,24 @@ export function buildPrisma(world: World) {
     // The row locks of `lib/lockOrder.ts` (`SELECT id … FOR UPDATE`): recorded in the same list, in
     // the order taken, and answered as a row that exists.
     $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
-      world.locks.push(`${strings.join('?').replace(/\s+/g, ' ').trim()}|${values.join(',')}`);
+      const text = strings.join('?').replace(/\s+/g, ' ').trim();
+      world.locks.push(`${text}|${values.join(',')}`);
+      if (text.includes('FROM team_join_requests')) {
+        // A bulk close's lock of the open requests it will close, ascending id: the rows of the
+        // scope (a requester, a team or an organization's teams) in one of the statuses.
+        const [scope, statuses] = values as [string, string[]];
+        return world.teamJoinRequests
+          .filter((r) =>
+            text.includes('t.org_id')
+              ? world.teams.some((t) => t.id === r.teamId && t.orgId === scope)
+              : text.includes('r.user_id')
+                ? r.userId === scope
+                : r.teamId === scope
+          )
+          .filter((r) => statuses.includes(r.status as string))
+          .map((r) => ({ id: r.id }))
+          .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+      }
       return [{ id: values[0] }];
     },
     // Only the outbox is rolled back when the callback throws: that is the one table whose

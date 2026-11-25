@@ -43,7 +43,7 @@ import type { JwtPayload } from '../plugins/auth.js';
 import type { AuditContext } from './auditContext.js';
 import { writeAuditLog } from './auditLog.js';
 import { enqueueJoinRequestEvent, resolveCreatedRouting } from './joinRequestOutbox.js';
-import { lockOrganizations, lockOrgThenTeam } from './lockOrder.js';
+import { lockOpenJoinRequests, lockOrganizations, lockOrgThenTeam } from './lockOrder.js';
 import { isUniqueConstraintError } from './prismaErrors.js';
 
 type Db = FastifyInstance['prisma'];
@@ -1450,12 +1450,22 @@ export async function closeOpenJoinRequests(
 ): Promise<number> {
   const { actor, context, scope } = input;
   const { closeReason, note, status } = systemCloseFor(scope.reason);
-  const target: Prisma.TeamJoinRequestWhereInput =
+  // Every row this close will touch is locked first, in one order (`lockOrder.ts`, level 6), and
+  // only then updated by id. A single `UPDATE … WHERE <scope>` takes the same locks in the order
+  // the plan reads the rows, so two closes with overlapping row sets (a team's and its
+  // organization's, a user's and an organization's) could each hold a row the other waits for.
+  const ids = await lockOpenJoinRequests(
+    tx,
     scope.reason === 'REQUESTER_DEACTIVATED'
       ? { userId: scope.userId }
       : scope.reason === 'TEAM_DEACTIVATED'
         ? { teamId: scope.teamId }
-        : { team: { orgId: scope.orgId } };
+        : { orgId: scope.orgId },
+    OPEN
+  );
+  if (ids.length === 0) {
+    return 0;
+  }
 
   let closed = 0;
   for (const from of OPEN) {
@@ -1477,7 +1487,7 @@ export async function closeOpenJoinRequests(
             teamId: true,
             userId: true,
           },
-          where: { ...target, status: from },
+          where: { id: { in: ids }, status: from },
         })
     );
     for (const row of rows) {

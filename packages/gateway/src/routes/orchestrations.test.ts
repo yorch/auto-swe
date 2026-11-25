@@ -2933,8 +2933,10 @@ describe('orchestration routes', () => {
       it('applies no cap to a message that finds the row still running', async () => {
         prisma.activeWorkflow.count.mockResolvedValue(0 as never);
         expect((await send()).statusCode).toBe(201);
-        // Nothing parked: the cap guard (and its per-user lock) never ran.
-        expect(prisma.$executeRaw).not.toHaveBeenCalled();
+        // Nothing parked: the cap was never counted. The per-user lock is still taken, once and
+        // before the orchestration's row (the lock order of `lib/lockOrder.ts`), so a spawn
+        // holding it cannot meet this message the wrong way round.
+        expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
       });
 
       it('leaves a direct caller uncapped', async () => {

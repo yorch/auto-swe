@@ -1,8 +1,8 @@
-import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { FastifyInstance } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
 import type { AuditContext } from './auditContext.js';
 import { writeAuditLog } from './auditLog.js';
+import { resolveDefaultOrganizationId } from './defaultOrganization.js';
 import { lockOrganizations } from './lockOrder.js';
 import { closeOpenJoinRequests } from './teamJoinRequests.js';
 
@@ -50,8 +50,9 @@ const SELECT = { id: true, isActive: true, name: true, slug: true, trustedInvite
  * so an inactive organization never has a request waiting on it. Reactivating reopens nothing.
  * A value that does not change writes nothing and closes nothing.
  *
- * The organization that owns the default team cannot be deactivated: new accounts are enrolled
- * there, so an inactive default organization would leave sign-up with nowhere to put them.
+ * The default organization cannot be deactivated (`resolveDefaultOrganizationId`: the organization
+ * that owns the default team, else the one with the seed's slug): new accounts are enrolled there,
+ * and an inactive default organization would leave sign-up with nowhere to put them.
  */
 export async function changeOrganizationActive(
   fastify: FastifyInstance,
@@ -71,22 +72,13 @@ export async function changeOrganizationActive(
     // Read under the organization's lock: a save of the default team's slug into this organization
     // takes the same lock to check that the organization is active, so it either committed before
     // this read (and is seen) or waits for this deactivation (and is refused).
-    const { defaultTeamSlug } = deactivating
-      ? await resolveWorkflowDefaults()
-      : { defaultTeamSlug: null };
-    if (deactivating && defaultTeamSlug !== null) {
-      const owned = await tx.team.findFirst({
-        select: { id: true },
-        where: { orgId, slug: defaultTeamSlug },
-      });
-      if (owned) {
-        return {
-          code: 'DEFAULT_ORGANIZATION',
-          message: 'The organization that owns the default team cannot be deactivated',
-          ok: false,
-          status: 409,
-        };
-      }
+    if (deactivating && (await resolveDefaultOrganizationId(tx)) === orgId) {
+      return {
+        code: 'DEFAULT_ORGANIZATION',
+        message: 'The organization that owns the default team cannot be deactivated',
+        ok: false,
+        status: 409,
+      };
     }
 
     const data: OrganizationFieldChanges & { isActive?: boolean } = {};

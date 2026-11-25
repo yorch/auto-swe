@@ -124,6 +124,43 @@ describe('assistant action routes', () => {
       expect(prisma.assistantAction.create).not.toHaveBeenCalled();
     });
 
+    it.each([false, true])('refuses to propose an organization isActive: %s', async (isActive) => {
+      const res = await app.inject({
+        headers: { authorization: assistantBearer(app) },
+        method: 'POST',
+        payload: {
+          body: { isActive },
+          method: 'PATCH',
+          summary: 'Change the organization',
+          url: '/api/v1/platform/organizations/00000000-0000-4000-8000-000000000001',
+        },
+        url: PREFIX,
+      });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().error.code).toBe('ASSISTANT_ACTION_NOT_CONFIRMABLE');
+      expect(res.json().error.message).toContain('isActive');
+      expect(prisma.assistantAction.create).not.toHaveBeenCalled();
+    });
+
+    it('still proposes another edit of the organization', async () => {
+      prisma.assistantAction.create.mockResolvedValue(
+        row({ method: 'PATCH', url: '/api/v1/platform/organizations/x' })
+      );
+      const res = await app.inject({
+        headers: { authorization: assistantBearer(app) },
+        method: 'POST',
+        payload: {
+          body: { name: 'Renamed' },
+          method: 'PATCH',
+          summary: 'Rename the organization',
+          url: '/api/v1/platform/organizations/00000000-0000-4000-8000-000000000001',
+        },
+        url: PREFIX,
+      });
+      expect(res.statusCode).toBe(201);
+      expect(prisma.assistantAction.create).toHaveBeenCalledTimes(1);
+    });
+
     it('refuses a URL outside the API and a DELETE', async () => {
       for (const payload of [
         { ...PROPOSAL, url: 'https://evil.example/api/v1/work-requests' },

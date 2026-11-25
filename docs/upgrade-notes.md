@@ -2496,7 +2496,7 @@ Two further changes apply to every deployment, whether or not it maps a server:
 `agent.plugin_mcp` event for the server, or an `agent.plugin_mcp_skipped` event with the reason it was not
 relayed.
 
-### Join-request notifications move to an outbox table; teams without Slack email their reviewers (`<fixing commit SHA>`)
+### Join-request notifications move to an outbox table; teams without Slack email their reviewers (`0702018`)
 
 **Affected.** Every deployment that runs migration `20261125100000_join_request_notifications`, which the
 normal deployment migration step applies, and where join requests are in use. The reviewer email is on by
@@ -2529,7 +2529,7 @@ appears and, within a few seconds, has `status = 'DELIVERED'`
 (`SELECT event, audience, status, attempts, last_error FROM join_request_notifications ORDER BY created_at DESC LIMIT 5`).
 With `teams.joinRequestReviewerEmail` set to `false` no such row is written.
 
-### Join-request notifications are queued and retried by the gateway (`<fixing commit SHA>`)
+### Join-request notifications are queued and retried by the gateway (`0702018`)
 
 **Affected.** Every deployment that runs the gateway of this build. Several gateway replicas may run: each
 tick claims rows with `FOR UPDATE SKIP LOCKED`, and the row's `next_attempt_at` is its lease (10 minutes).
@@ -2581,7 +2581,7 @@ recipients already reached are not resent). The CLI has `auto-swe notifications 
 `SKIPPED` with `last_error = 'transport_not_configured'`. With it enabled and then broken (a wrong SMTP
 host), the row shows `attempts = 1`, `status = 'PENDING'` and a later `next_attempt_at`.
 
-### Organizations can be deactivated, and a lock order replaces a launch deadlock (`<fixing commit SHA>`)
+### Organizations can be deactivated, and a lock order replaces a launch deadlock (`0702018`)
 
 **Affected.** Deployments whose platform admins deactivate organizations, and deployments that saw
 `deadlock detected` errors from workflow launches or join-request approvals. No other action is needed.
@@ -2630,3 +2630,59 @@ each warning to stderr as `warning: <text>`; stdout stays the manifest.
 
 **Verify.** `POST /api/v1/platform/bundles/export` answers `{ data, warnings }`, with `warnings` an array in every
 response (empty when no warning applies).
+
+### SMTP can be required to use TLS; a closing gateway releases its row; the join-request `reached` hashes are keyed (`<fixing commit SHA>`)
+
+**Affected.** Every deployment of this build that sends email over SMTP or runs join-request
+notifications. Nothing changes for a deployment that leaves `SMTP_REQUIRE_TLS` unset, except the two
+behaviours below, which need no action.
+
+**What changes.**
+
+1. New environment variable `SMTP_REQUIRE_TLS` (off by default). When set to `true`, every SMTP send of
+   the gateway and the worker (sign-in and password-reset links, join-request notifications, report
+   digests) must be encrypted: port 465 stays implicit TLS and any other port must upgrade with STARTTLS,
+   or the send is refused before AUTH or any message is written. Without it, STARTTLS stays opportunistic
+   and a relay that lacks it, or an attacker who strips it, is used in plaintext, AUTH included. Any value
+   other than `false`, `0`, `no`, `off` or empty counts as on.
+2. A closing gateway aborts a send still in flight after a 5 s grace and writes the row back as due at once,
+   with no failed attempt counted, instead of leaving it leased for 10 minutes. The aborted recipient is not
+   recorded and is sent again, so it can receive one extra copy; no recipient is lost.
+3. The `reached` set of a join-request notification row now holds keyed hashes (`k1:` plus 32 hex digits of an
+   HMAC-SHA256 whose key is derived from `CONFIG_ENCRYPTION_KEY`) instead of the unsalted SHA-256 hashes of
+   earlier builds. Rows queued before the upgrade keep their old entries, which are still honoured, so no
+   recipient they had reached is emailed again. Only the keyed form is written, and the old entries leave the
+   table with the row when the retention purge deletes it (`teams.joinRequestNotificationRetentionDays`).
+
+**Actions.**
+
+- To require TLS, set `SMTP_REQUIRE_TLS=true` on the gateway and the worker and restart both. Confirm first
+  that the relay offers STARTTLS on its port (or use 465): a relay that does not will then refuse every send,
+  sign-in email included. A plain-SMTP relay on a trusted network must leave the switch off.
+- Rotating `CONFIG_ENCRYPTION_KEY`: keep the old key as `CONFIG_ENCRYPTION_KEY_PREVIOUS` for the rotation, as
+  the rotation procedure already says. If it is dropped while a join-request notification is still pending,
+  that row sends one more copy to each recipient it had already reached under the old key. No recipient is
+  lost.
+- To remove old unkeyed hashes before their retention ends, delete finished rows early:
+  `DELETE FROM join_request_notifications WHERE status IN ('DELIVERED', 'SKIPPED', 'FAILED')`.
+
+**Verify.** With `SMTP_REQUIRE_TLS=true` against a relay without STARTTLS, a magic-link request fails and the
+gateway logs `Cannot deliver magic-link email`, and a join-request email row shows `last_error = 'transport_error'`.
+A row delivered after the upgrade has `reached` entries beginning `k1:`
+(`SELECT reached FROM join_request_notifications ORDER BY created_at DESC LIMIT 1`).
+
+### The default organization follows the default team, and lock order covers more writers (`<fixing commit SHA>`)
+
+**Affected when.** The deployment's `defaultTeamSlug` names a team that lives in an organization other than the one slugged `default`, or a deployment runs more than one gateway replica during an upgrade.
+
+**What changed.**
+
+1. `POST /api/v1/teams` without an `orgId` now creates the team in the organization that owns the default team (the one `defaultTeamSlug` names), falling back to the organization slugged `default` only when no such team exists. Before, it always used the organization slugged `default`. The `org.teams.create` check moves with it: a caller who administers only the `default` organization is refused for a team created without an `orgId` when the default team is elsewhere. The refusal to deactivate "the default organization" follows the same definition, so the `default` organization can be deactivated once it no longer owns the default team.
+2. Bulk closes of join requests (a deactivated user, team or organization), repository moves and share edits, service-principal edits, device approval and orchestration wakes take their row locks through one documented order. During a rolling upgrade, an old replica and a new one can lock the same join-request rows in different orders, and one request can then fail with a deadlock error (`40P01`, HTTP 500). A retry succeeds.
+
+**Actions.**
+
+- Check `SELECT o.slug FROM teams t JOIN organizations o ON o.id = t.org_id WHERE t.slug = (SELECT default_team_slug FROM workflow_defaults WHERE id = 'default')`. If it is not `default`, team creation without an `orgId` now lands in that organization; send an explicit `orgId` where the old behaviour is wanted.
+- Roll gateway replicas without long overlap, and retry a request that fails with a deadlock error during the overlap.
+
+**Verify.** With the default team in another organization, `POST /api/v1/teams` with no `orgId` returns a team whose `orgId` is that organization's.

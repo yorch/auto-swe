@@ -3,8 +3,10 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { beforeAll, describe, expect, it } from 'vitest';
 import { registerApiRoutes } from '../routes/register.js';
 import {
+  ASSISTANT_REFUSED_BODY_FIELDS,
   ASSISTANT_ROUTE_POLICY,
   assistantAccess,
+  assistantRefusedBodyFields,
   policyKey,
   policyPatternFor,
 } from './assistantPolicy.js';
@@ -217,5 +219,36 @@ describe('policyPatternFor', () => {
 
   it('finds nothing for a method the path is not registered under', () => {
     expect(policyPatternFor('PUT', '/api/v1/work-requests')).toBeUndefined();
+  });
+});
+
+describe('assistantRefusedBodyFields', () => {
+  const ORG = '/api/v1/platform/organizations/:orgId';
+
+  it('names isActive on the organization PATCH, whichever value it carries', () => {
+    expect(assistantRefusedBodyFields('PATCH', ORG, { isActive: false })).toEqual(['isActive']);
+    expect(assistantRefusedBodyFields('PATCH', ORG, { isActive: true, name: 'x' })).toEqual([
+      'isActive',
+    ]);
+  });
+
+  it('leaves the other fields of the same route alone', () => {
+    expect(assistantRefusedBodyFields('PATCH', ORG, { name: 'x', slug: 'y' })).toEqual([]);
+    expect(assistantRefusedBodyFields('PATCH', ORG, {})).toEqual([]);
+  });
+
+  it('names nothing on another route, a missing pattern or a body that is not an object', () => {
+    expect(
+      assistantRefusedBodyFields('PATCH', '/api/v1/repositories/:id', { isActive: false })
+    ).toEqual([]);
+    expect(assistantRefusedBodyFields('PATCH', undefined, { isActive: false })).toEqual([]);
+    expect(assistantRefusedBodyFields('PATCH', ORG, null)).toEqual([]);
+    expect(assistantRefusedBodyFields('PATCH', ORG, [{ isActive: false }])).toEqual([]);
+  });
+
+  it('is keyed by routes that stay confirm routes in the table', () => {
+    for (const key of Object.keys(ASSISTANT_REFUSED_BODY_FIELDS)) {
+      expect(ASSISTANT_ROUTE_POLICY[key]).toBe('confirm');
+    }
   });
 });

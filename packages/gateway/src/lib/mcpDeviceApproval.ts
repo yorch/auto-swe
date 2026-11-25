@@ -5,6 +5,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { auditContextData, auditContextOf } from './auditContext.js';
 import { getAuth, MCP_RESOURCE } from './betterAuth.js';
+import { lockUser } from './lockOrder.js';
 import { MCP_GRANT_ENTITY } from './mcpGrants.js';
 import { MCP_SCOPE_WRITE, MCP_SCOPES } from './mcpOAuth.js';
 
@@ -31,11 +32,14 @@ export async function approveMcpDevice(request: FastifyRequest, reply: FastifyRe
     return refuse(401, 'unauthorized', 'Sign in to approve this request');
   }
   const result = await prisma.$transaction(async (tx) => {
-    // CLAUDE.md §7 exception: row lock serialising approvals per user; Prisma cannot express FOR UPDATE.
-    const users = await tx.$queryRaw<
-      Array<{ is_active: boolean }>
-    >`SELECT is_active FROM users WHERE id = ${session.user.id}::uuid FOR UPDATE`;
-    if (users[0]?.is_active !== true) {
+    // The account's row, `FOR NO KEY UPDATE` like every launch and deactivation (`lockOrder.ts`):
+    // approvals of one user serialize and see a deactivation either before or after. A `FOR
+    // UPDATE` here would conflict with the foreign key checks of the membership inserts that hold
+    // a team row, which a launch holding this row waits for.
+    const account = (await lockUser(tx, session.user.id))
+      ? await tx.user.findUnique({ select: { isActive: true }, where: { id: session.user.id } })
+      : null;
+    if (account?.isActive !== true) {
       return { description: 'This account is not active', error: 'access_denied', status: 403 };
     }
     const enabled = async (key: string) =>

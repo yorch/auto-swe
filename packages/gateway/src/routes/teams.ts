@@ -20,6 +20,7 @@ import { type AuditContext, auditContextOf } from '../lib/auditContext.js';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { actorOf, can, replyRefusal } from '../lib/authz.js';
 import { sendConflict } from '../lib/conflict.js';
+import { resolveDefaultOrganizationId } from '../lib/defaultOrganization.js';
 import { loadEgressReadiness } from '../lib/egressReadiness.js';
 import { sendError } from '../lib/httpErrors.js';
 import { inviteUser } from '../lib/inviteUser.js';
@@ -63,7 +64,7 @@ const CreateTeamSchema = z.object({
   adminUserId: z.string().uuid().optional(),
   description: z.string().max(500).default(''),
   name: z.string().min(1).max(100),
-  /** P5: owning organization. Defaults to the 'default' org when omitted. */
+  /** P5: owning organization. Defaults to the default organization (the one that owns the default team) when omitted. */
   orgId: z.string().uuid().optional(),
   slug: z
     .string()
@@ -447,11 +448,13 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const { name, slug, orgId } = request.body;
 
-      // P5: every team nests under an organization. Use the requested org, else
-      // fall back to the seeded 'default' org so single-tenant flows still work.
-      const org = orgId
-        ? await fastify.prisma.organization.findUnique({ where: { id: orgId } })
-        : await fastify.prisma.organization.findUnique({ where: { slug: 'default' } });
+      // Every team nests under an organization. Use the requested org, else the default
+      // organization (the one that owns the default team), so single-tenant flows still work.
+      const defaultOrgId = orgId ? null : await resolveDefaultOrganizationId(fastify.prisma);
+      const orgKey = orgId ?? defaultOrgId;
+      const org = orgKey
+        ? await fastify.prisma.organization.findUnique({ where: { id: orgKey } })
+        : null;
 
       // The capability is decided before anything else is said about the team or the
       // organization, so a caller without it learns neither whether a name is taken nor

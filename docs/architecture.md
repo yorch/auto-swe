@@ -789,7 +789,10 @@ it freely (`read`), only with the user's confirmation (`confirm`), or not at all
 entry, every `DELETE` and every deprecated alias are refused with `403 ASSISTANT_NOT_ALLOWED`, and so
 is every call while `assistant.enabled` is off. A `confirm` call must name, in `x-assistant-action`,
 an `AssistantAction` the user confirmed on their own session for exactly that method, URL and body;
-the gateway spends it once the body is parsed and refuses the request if it differs. `request.assistant`
+the gateway spends it once the body is parsed and refuses the request if it differs. A `confirm` route
+may also name body fields the assistant never sends (`ASSISTANT_REFUSED_BODY_FIELDS`; today `isActive` on
+the organization `PATCH`): a body carrying one is refused with `403 ASSISTANT_NOT_ALLOWED` before a
+confirmation is spent, and the field cannot be proposed. `request.assistant`
 tells a handler the call came from the assistant. A token is also refused once the conversation it
 was minted for is closed or is not its user's, so closing a conversation revokes every token issued
 for it. The assistant never calls, whatever the user may do, a route marked `never` in

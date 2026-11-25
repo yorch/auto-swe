@@ -42,6 +42,7 @@ import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, uuidFromIdempotencyKey } from '../lib/idempotency.js';
 import {
   assertMcpWriteAllowed,
+  lockLauncherRuns,
   mcpWriteAuditHook,
   mcpWriteBegin,
   runCapGuard,
@@ -79,6 +80,7 @@ import {
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import {
   idempotencyCallerScope,
+  lockServiceLaunch,
   sendServiceLaunchRefusal,
   servicePrincipalLaunchGuard,
 } from '../lib/servicePrincipals.js';
@@ -328,10 +330,23 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
     opts: {
       cap: { cap: number; userId: string } | null;
       guard?: LaunchGuard | null;
+      /**
+       * What the guard will lock, taken before the orchestration's row so the order holds
+       * (`lib/lockOrder.ts`: a spawn takes its launch locks and then this row).
+       */
+      lockFirst?: ((tx: Prisma.TransactionClient) => Promise<void>) | null;
       revive: boolean;
     }
   ): Promise<Wake> {
     return prisma.$transaction(async (tx) => {
+      // The locks the cap and the guard take further down come first, whether or not this status
+      // ends up needing them: a spawn holds the principal's and the repository's rows (and the
+      // launcher's advisory lock) when it asks for the orchestration's row, so taking the
+      // orchestration's row first here would be the other half of a cycle.
+      if (opts.cap) {
+        await lockLauncherRuns(tx, opts.cap.userId);
+      }
+      await opts.lockFirst?.(tx);
       // CLAUDE.md §7 exception: the orchestration's row lock, so a concurrent cancel is ordered.
       await tx.$queryRaw`SELECT id FROM orchestrations WHERE id = ${row.id}::uuid FOR UPDATE`;
       const current = await tx.orchestration.findFirst({
@@ -1082,6 +1097,7 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
             ...(service
               ? {
                   guard: servicePrincipalLaunchGuard(service.servicePrincipalId, {
+                    ...(user ? { actorId: user.sub } : {}),
                     connectionId: target.repoId,
                   }),
                 }
@@ -1726,6 +1742,12 @@ export const orchestrationRoutes: FastifyPluginAsync = async (fastify) => {
             ? servicePrincipalLaunchGuard(caller.principal.servicePrincipalId, {
                 connectionId: row.repoId,
               })
+            : null,
+        lockFirst:
+          caller.kind === 'service'
+            ? async (tx) => {
+                await lockServiceLaunch(tx, caller.principal.servicePrincipalId, row.repoId);
+              }
             : null,
         revive: !request.mcpBridge,
       });

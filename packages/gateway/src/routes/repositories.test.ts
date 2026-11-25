@@ -99,7 +99,7 @@ async function buildApp() {
       Array.isArray(fn)
         ? Promise.all(fn)
         : fn({
-            $queryRaw: vi.fn(),
+            $queryRaw: vi.fn(async () => [{ id: 'locked' }]),
             configAuditLog: {
               create: (...args: unknown[]) => mockPrisma.configAuditLog.create(...args),
             },

@@ -593,7 +593,7 @@ An organization's organization `ADMIN` creates a team with
 `POST /api/v1/platform/organizations/:orgId/teams` (also available under
 `/api/v1/admin/organizations/:orgId/teams`). Platform `ADMIN` can create in any organization.
 `POST /api/v1/teams` remains platform-ADMIN-only and accepts an optional `orgId`, falling back
-to the default organization. Team names and slugs are globally unique.
+to the default organization ([below](#the-default-organization)). Team names and slugs are globally unique.
 
 Both routes accept `name`, `slug`, optional `description` and optional `adminUserId`. The creator
 becomes the first team `ADMIN` unless `adminUserId` selects another existing organization member.
@@ -786,12 +786,21 @@ request only after the user confirms, and it may not decide any request.
 
 Every transaction that takes more than one row lock takes them in one global order, and only forward:
 advisory locks keyed by a person (`join-request:<id>`, `team-create:<id>`, `mcp-launch:<id>`), then the
-user row, the connection rows (ascending id), the organization rows (ascending id) and the team rows
-(ascending id), then the rows a write touches. The helpers are in `packages/gateway/src/lib/lockOrder.ts`
-(`lockUser`, `lockConnections`, `lockOrganizations`, `lockTeams`, `lockOrgThenTeam`), and the comment
-there states the order once. Workflow launch, the join approvals, a request's creation, member adds and
-removals, the organization-removal cascade, team deactivation, user deactivation and organization
-deactivation all take their locks through them or in the same order.
+user row, a service principal's row, the connection rows (ascending id), the organization rows (ascending
+id) and the team rows (ascending id), then the rows a write touches: the join-request rows of a bulk
+close (ascending id), an orchestration's row, and then one of its messages. The helpers are in
+`packages/gateway/src/lib/lockOrder.ts` (`lockUser`, `lockServicePrincipal`, `lockConnections`,
+`lockOrganizations`, `lockTeams`, `lockOrgThenTeam`, `lockOpenJoinRequests`), and the comment there states the
+order once and tables every lock site in the gateway with the order it takes. Workflow launch, a service
+principal's launch guard, the join approvals, a request's creation, member adds and removals, the
+organization-removal cascade, repository moves and share edits, team deactivation, user deactivation,
+organization deactivation, the device approval and the wake of an orchestration all take their locks
+through them or in the same order.
+
+A bulk close of requests (a user's, a team's or an organization's deactivation) first locks every open
+request it will close, `ORDER BY id … FOR UPDATE`, and then updates those rows by id. One `UPDATE` over a
+scope would lock them in whatever order the plan reads them, and two closes with overlapping rows could
+each hold a row the other waits for. A close that finds a request already decided skips it.
 
 A workflow launch holds the launching user's row `FOR NO KEY UPDATE`, not `FOR UPDATE`. That excludes a
 change to the account (a role, the active flag, the email) and another launch by the same person, and it
@@ -828,15 +837,14 @@ first. Deactivating:
 
 - closes every open join request of the organization's teams (`REJECTED` with `ORGANIZATION_DEACTIVATED`,
   no cooldown, no notification) and records the count in the audit row's `after.closedJoinRequests`;
-- is refused with `409 DEFAULT_ORGANIZATION` for the organization that owns the team named by the
-  `defaultTeamSlug` workflow default, because new accounts are enrolled in that team;
+- is refused with `409 DEFAULT_ORGANIZATION` for the default organization
+  ([below](#the-default-organization)), because new accounts are enrolled in it;
 - closes nothing when the organization is already inactive.
 
 Reactivating sets the flag and reopens nothing. While an organization is inactive its teams are not in
 the directory, a request to one is `404 TEAM_NOT_FOUND`, approving or rejecting a request that was
 already open is `409 ORGANIZATION_INACTIVE`, creating a team in it is `409 ORGANIZATION_INACTIVE` (on
-`POST /api/v1/teams`, including the organization with the slug `default` that it falls back to when no
-`orgId` is sent, and on the organization's own teams route; the check reads the organization under its row
+`POST /api/v1/teams`, including the default organization it falls back to when no `orgId` is sent, and on the organization's own teams route; the check reads the organization under its row
 lock), and saving a `defaultTeamSlug` that names one of its teams at `/admin/workflow-defaults` is
 `409 DEFAULT_TEAM_ORGANIZATION_INACTIVE`, checked under the same lock. Existing members, teams and runs are not changed. Only join requests, team creation and the
 default-team-slug save refuse an inactive organization: a team admin can still add members to a team of
@@ -847,7 +855,33 @@ an inactive organization can be reactivated. The organization's page in the web 
 Organizations**, shows a Deactivate or Reactivate card to a platform `ADMIN`, with a confirmation that
 names what closes. The CLI has `auto-swe orgs deactivate <orgId>` and `orgs reactivate <orgId>`. The route also carries
 `trustedInvites`, and the in-app assistant policy treats it as `confirm`: the assistant may call it only
-after the user confirms, `isActive` included.
+after the user confirms, and never with `isActive`. A body that names `isActive` (either value, alone or
+beside other fields) is refused to the assistant with `403 ASSISTANT_NOT_ALLOWED` before any confirmation
+is spent and before the route runs, and the assistant cannot propose such a call
+(`422 ASSISTANT_ACTION_NOT_CONFIRMABLE`). Deactivating closes requests and blocks approvals for a whole
+organization, so a person makes it, from the dashboard, the CLI or the API with their own token. The
+refusal is keyed on the route and the field in `ASSISTANT_REFUSED_BODY_FIELDS`
+(`lib/assistantPolicy.ts`); an edit of another field follows the route's `confirm` policy unchanged, and
+a call by the person is not affected.
+
+#### The default organization
+
+One definition serves every site that needs "the default organization" (`resolveDefaultOrganizationId`,
+`lib/defaultOrganization.ts`): the organization that owns the team named by the `defaultTeamSlug`
+workflow default. That key is authoritative because it is the one the rest of the platform follows:
+sign-up, user invitation and Slack channel provisioning all enrol new accounts in the default team and,
+through it, in its organization, and none reads an organization slug. When no team has that slug (a
+deployment before the seed, or one that removed the team), the definition falls back to the organization
+with the seed's slug `default`, and to nothing when that does not exist either.
+
+- `POST /api/v1/teams` with no `orgId` creates the team in the default organization
+  (`400 ORG_NOT_FOUND` when there is none).
+- The refusal to deactivate the default organization (`409 DEFAULT_ORGANIZATION`) follows the same
+  definition, so the organization slugged `default` is protected only while it is the default
+  organization, and the organization that owns the default team is always protected.
+- Saving a `defaultTeamSlug` checks the default organization that slug resolves to (the owner of the
+  named team, else the organization slugged `default`), under that organization's row lock; a slug that
+  names no team and no organization is accepted.
 
 ### Notifications
 
@@ -903,7 +937,8 @@ again by a retry. A second copy therefore needs an attempt whose outcome was unk
   afterwards, but a relay that had already read the whole message can still deliver it);
 - the connection is lost after the relay read the message;
 - the 30 s Resend request or the 2 s Slack post is aborted, or its answer is lost;
-- the process crashes or shuts down between the send and the write of `reached`;
+- the process crashes between the send and the write of `reached`, or a closing gateway aborts a send whose
+  relay had already read the message (see Shutdown below);
 - a poller loses its lease in the middle of a send and the poller that took the row sends again.
 
 Each such attempt can repeat that one recipient, once per attempt (a row has up to 6); no other recipient is
@@ -924,9 +959,13 @@ routinely, not only after a stall.
 **Shutdown.** Closing the gateway waits up to 30 s for a tick that is running. Once the poller is stopping,
 the rows of the claimed batch that were not started are released (due at once, only if the lease is still
 held), no new recipient or Slack post starts, a row stopped between two recipients goes back with what it
-reached recorded and no failed attempt counted, and the retention purge is skipped. A send already in
-flight runs to its own deadline, up to 90 s for a message, which can be longer than the 30 s wait; that row
-then stays leased until the lease ends, 10 minutes after its last extension.
+reached recorded and no failed attempt counted, and the retention purge is skipped. A send already under way
+is given 5 s to finish. After that it is aborted: the SMTP socket is destroyed, no Resend fallback starts, and
+the row is written back at once as due now, with the recipients already reached recorded and no failed
+attempt counted, so it never stays leased for the 10 minutes of the lease. The aborted recipient's outcome is
+unknown, so it is not recorded and the next attempt sends to it again; if the relay had already read the
+message, that recipient receives a second copy, and no recipient is lost. A Slack post is bounded by its own
+2 s timeout and is not aborted.
 
 Before sending, the poller loads the request and skips the row with a
 fixed `lastError` when:
@@ -944,10 +983,22 @@ A failed send is `transport_error` (email) or `slack_error`, and is retried afte
 these codes, never an address, a message body or a credential. A row is never sent again once
 `DELIVERED`, and a partly failed email fan-out resends only to the recipients not yet reached: the row
 keeps a set of hashes of the addresses it has reached, written after each recipient. No address is stored
-in the row. The hashes are unsalted SHA-256 values of the lower-cased address with a fixed prefix, so they
-are pseudonymous, not anonymous: anyone who holds the users table can map them back to addresses. The API
-never returns them. A row skipped for any reason is final, as is a delivered one: only a `FAILED` row can
-be retried.
+in the row. Each hash is `k1:` and 32 hex digits of an HMAC-SHA256 of the lower-cased address. Its key is
+derived from `CONFIG_ENCRYPTION_KEY` with HKDF-SHA256 under a purpose string of its own, so the encryption
+key itself is never the MAC key and the users table alone cannot be used to test a guessed address against
+a row. The API never returns the hashes. A row skipped for any reason is final, as is a delivered one: only
+a `FAILED` row can be retried.
+
+A recipient counts as already reached under any of three spellings of its hash: the keyed form under the
+current `CONFIG_ENCRYPTION_KEY`, the keyed form under `CONFIG_ENCRYPTION_KEY_PREVIOUS` while a rotation is in
+flight, and the unkeyed form (a SHA-256 of the address with a fixed prefix, 32 hex digits) that rows queued by
+an earlier build hold. Only the current keyed form is ever written, and a legacy or previous-key entry stays
+in its row until the retention purge deletes it. Rotating `CONFIG_ENCRYPTION_KEY` without keeping the old key
+as `CONFIG_ENCRYPTION_KEY_PREVIOUS` makes the hashes already in a still-pending row unrecognisable, so each of
+its already-reached recipients is sent one more copy. That is the worst case: a recipient is never lost. Rows
+retry for at most hours and are purged after `teams.joinRequestNotificationRetentionDays`, so the exposure ends
+quickly; follow the usual rotation order (see [model-configuration.md](./model-configuration.md)) and the
+previous-key form covers the window.
 
 The Slack post names the requester and the team, and carries the request's message. The message is escaped
 and Slack broadcast mentions are neutralized. The post links to the team's members page for review, and it
@@ -955,8 +1006,17 @@ never includes the requester's email address. The emails are escaped in HTML, ca
 link to the web app; the reviewer email names the requester but not their address. No token or credential
 appears in any of them. Email uses the SMTP or Resend transport that sign-in emails use, with the bounded
 timeouts above; sign-in email keeps nodemailer's own defaults. The SMTP modes are plain, implicit TLS (port
-465), STARTTLS (any other port, opportunistic), and AUTH PLAIN and LOGIN, with certificate-chain and
-hostname verification on and SNI sent for host names (see [Limitations](#limitations) for what that does not cover).
+465), STARTTLS (any other port, opportunistic unless `SMTP_REQUIRE_TLS` is set), and AUTH PLAIN and LOGIN,
+with certificate-chain and hostname verification on and SNI sent for host names. A private CA can be trusted
+only through the `NODE_EXTRA_CA_CERTS` environment variable of the gateway process.
+
+`SMTP_REQUIRE_TLS` (environment-only, off by default; see [configuration.md](./configuration.md#email-transport))
+makes every SMTP session encrypted. On a port other than 465 the client then insists on STARTTLS, whether or
+not the relay advertises it, and a relay that refuses the upgrade, or an attacker who strips it, ends the
+session before AUTH or any message crosses the wire. Such a send is a refusal (`transport_error`, retried with
+the usual backoff), not an unknown outcome, and the message is never sent in plaintext. Resend, if configured,
+is still tried afterwards, and it is HTTPS. The switch is shared with sign-in and password-reset email, which
+use the same transport.
 
 Delivered, skipped and failed rows older than `teams.joinRequestNotificationRetentionDays` are deleted by
 the poller, oldest first by the time they were last updated, 500 rows a pass and at most one pass a minute
@@ -1027,39 +1087,20 @@ The keys are declared in the setting registry and edited at `/admin/platform-set
 - **A notification can be delivered more than once to one recipient.** Delivery is at least once per
   recipient. A recipient is recorded only after a transport accepted the message, so an attempt with an
   unknown outcome (the 90 s email deadline, a connection lost after the relay read the message, a Resend or
-  Slack abort or lost answer, a crash between the send and the write, a lease lost in the middle of a send)
+  Slack abort or lost answer, a crash between the send and the write, a send aborted as the gateway closes,
+  a lease lost in the middle of a send)
   is repeated by the retry and can reach that recipient twice, once per attempt, up to 6 attempts. No other
   recipient is repeated.
 - **Gateway replicas must keep their clocks in step.** The lease is read on each process's own clock. A
   replica more than about 8 minutes ahead treats leased rows as due and takes them, which causes the
   in-flight duplicate routinely.
-- **A closing gateway can leave a row leased.** Shutdown waits 30 s for a running tick, while a send in
-  flight may run for up to 90 s; that row is leased until its lease ends, 10 minutes later.
-- **Notification email over STARTTLS is opportunistic.** There is no require-TLS setting. On any port
-  other than 465 a relay that does not offer STARTTLS is used in plaintext, AUTH included, and an attacker
-  who strips STARTTLS from the exchange can downgrade the connection. Certificate-chain and hostname
-  verification are on, and a private CA can be trusted only through the `NODE_EXTRA_CA_CERTS` environment
-  variable of the gateway process. The same holds for sign-in email.
-- **The `reached` hashes are pseudonymous.** The row stores no address, but anyone holding the users table
-  can map the unsalted hashes back to addresses.
 
-- **The fallback organization of `POST /api/v1/teams` and the default-organization guard follow
-  different keys.** With no `orgId`, the route falls back to the organization with the slug `default`;
-  the refusal to deactivate "the default organization" follows the organization that owns the team named
-  by `defaultTeamSlug`. When the default team lives in another organization, the `default` organization
-  can be deactivated, and a team creation that names no organization is then refused with
-  `ORGANIZATION_INACTIVE`.
-- **Two bulk closes of overlapping requests lock the rows in the order the database reads them.** A
-  user's deactivation, a team's deactivation and an organization's deactivation each update the open
-  requests that match their scope in one statement; nothing orders those row locks across statements.
-  The staged lock-order tests do not cover this, and a deadlock between two such closes is possible in
-  principle.
-- **The service-principal launch guard's lock order is not proven acyclic.** The guard runs before the
-  launch takes its source locks: it locks the principal's row and then the target connection, and the launch
-  then takes the acting user's row (when it carries one), which the order puts before the connection. Other writers
-  that lock connection rows on their own (repository moves, share edits) and the device-approval user lock
-  are not routed through `lockOrder.ts` either. The staged tests cover the membership writes, approvals,
-  deactivations and launches that are, not these paths.
+- **The lock order is held by convention and by staged tests, not by a source check.** A row lock
+  written inline instead of through `lockOrder.ts`, or a helper called out of order, type-checks and
+  passes unit tests; only a staged interleaving against Postgres (`lockOrder.pg.test.ts`,
+  `lockSites.pg.test.ts`) shows it. A text check cannot decide the order, since it is a property of
+  control flow, so a new lock site is covered only when its author adds the matching staged case. The
+  wake of an orchestration is staged through the same helpers its route calls, not through the route.
 - **The directory response's own `organizations` list stops at 500.** `organizationsTruncated` says
   when more exist; the organization search endpoint pages through all of them.
 - **Team secrets are not usable by agents, shell steps or container steps.** They reach only setup

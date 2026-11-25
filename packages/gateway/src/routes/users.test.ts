@@ -48,7 +48,10 @@ async function buildApp() {
 
   const mockPrisma = {
     $executeRaw: vi.fn().mockResolvedValue(1),
-    $queryRaw: vi.fn(async (_strings: TemplateStringsArray, id: string) => [{ id }]),
+    $queryRaw: vi.fn(async (strings: TemplateStringsArray, id: string) =>
+      // A bulk close locks the open requests it will close, and gets their ids back.
+      strings.join('?').includes('team_join_requests') ? [{ id: 'jr-1' }] : [{ id }]
+    ),
     account: { create: vi.fn().mockResolvedValue({}) },
     configAuditLog: {
       create: vi.fn().mockResolvedValue({}),
@@ -1025,8 +1028,8 @@ describe('userRoutes', () => {
           [{ data: Record<string, unknown>; where: Record<string, unknown> }]
         >;
         expect(calls.map(([arg]) => arg.where)).toEqual([
-          { status: 'PENDING_TEAM', userId: USER_ID },
-          { status: 'PENDING_ORG', userId: USER_ID },
+          { id: { in: ['jr-1'] }, status: 'PENDING_TEAM' },
+          { id: { in: ['jr-1'] }, status: 'PENDING_ORG' },
         ]);
         expect(calls[0]?.[0].data).toMatchObject({
           closeReason: 'REQUESTER_DEACTIVATED',

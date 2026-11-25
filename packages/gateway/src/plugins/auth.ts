@@ -25,7 +25,12 @@ import { normalizeIP } from '@fastify/rate-limit';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import jwt from 'jsonwebtoken';
-import { type AssistantAccess, assistantAccess } from '../lib/assistantPolicy.js';
+import {
+  type AssistantAccess,
+  assistantAccess,
+  assistantRefusedBodyFields,
+  assistantRefusedFieldsMessage,
+} from '../lib/assistantPolicy.js';
 import { assertHandlerChecked, enforceCapability } from '../lib/authz.js';
 import { MCP_BRIDGE_HEADER } from '../lib/mcp/bridge.js';
 import { MCP_SCOPE_ADMIN, MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../lib/mcpOAuth.js';
@@ -1275,6 +1280,20 @@ async function checkAssistantGrantOnceParsed(request: FastifyRequest, reply: Fas
     });
   } catch {
     request.assistantBodyDigest = UNREADABLE_BODY;
+  }
+  // Before any confirmation is spent: a refused field is refused whatever the user confirmed.
+  const refusedFields = assistantRefusedBodyFields(
+    request.method,
+    request.routeOptions.url,
+    request.body
+  );
+  if (refusedFields.length > 0) {
+    return reply.status(403).send({
+      error: {
+        code: 'ASSISTANT_NOT_ALLOWED',
+        message: assistantRefusedFieldsMessage(refusedFields),
+      },
+    });
   }
   const assistant = request.assistant;
   if (assistant?.access !== 'confirm' || assistant.actionId || !request.user) {

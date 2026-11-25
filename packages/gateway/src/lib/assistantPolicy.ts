@@ -631,6 +631,39 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'PUT /api/v1/workflow-templates/:id/webhook/require-signature': 'confirm',
 };
 
+/**
+ * Fields a `confirm` route takes that the assistant may never send, whatever the user would
+ * confirm. A route-level entry cannot say this: `PATCH /platform/organizations/:orgId` carries
+ * harmless edits (a name) beside `isActive`, and deactivating closes every open join request of
+ * the organization's teams and blocks approvals there, a decision for the person and not for a
+ * tool call acting as them. The refusal reads the request body, so it holds for a change the
+ * user confirmed too.
+ */
+export const ASSISTANT_REFUSED_BODY_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  'PATCH /api/v1/platform/organizations/:orgId': ['isActive'],
+};
+
+/**
+ * The body fields of this call the assistant may not send, or an empty list. `pattern` is the
+ * route's registered pattern. A body that is not an object names no field.
+ */
+export function assistantRefusedBodyFields(
+  method: string,
+  pattern: string | undefined,
+  body: unknown
+): string[] {
+  if (!pattern || body === null || typeof body !== 'object' || Array.isArray(body)) {
+    return [];
+  }
+  const refused = ASSISTANT_REFUSED_BODY_FIELDS[policyKey(method, pattern)] ?? [];
+  return refused.filter((field) => Object.hasOwn(body, field));
+}
+
+/** The message a refusal by {@link assistantRefusedBodyFields} carries. */
+export function assistantRefusedFieldsMessage(fields: readonly string[]): string {
+  return `The assistant may not set ${fields.join(', ')} on this route; a person makes that change from the dashboard`;
+}
+
 /** The table key for a route: its method and its URL pattern as Fastify registered it. */
 export function policyKey(method: string, url: string): string {
   return `${method.toUpperCase()} ${url}`;

@@ -541,6 +541,14 @@ jobs:
           LOCK_ORDER_PG_TEST: '1'
         run: yarn test packages/gateway/src/lib/lockOrder.pg.test.ts
 
+      # The lock sites the suite above does not stage: two bulk closes of overlapping join requests,
+      # repository moves and share edits, a service principal's launch guard and its edits, the wake
+      # of an orchestration, and the device approval, each against a concurrent launch.
+      - name: Lock sites (database-backed tests)
+        env:
+          LOCK_SITES_PG_TEST: '1'
+        run: yarn test packages/gateway/src/lib/lockSites.pg.test.ts
+
       # The personal desk: its approval, failure and pull-request counts against the lists they
       # summarise, the platform ADMIN's member scope, and the per-team buckets, all relational
       # predicates a mocked Prisma would not evaluate.

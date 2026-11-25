@@ -32,6 +32,7 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
+import { lockServicePrincipal } from '../lib/lockOrder.js';
 import { safePatAuditFields } from '../lib/patAuditFields.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
@@ -427,9 +428,9 @@ export const servicePrincipalRoutes: FastifyPluginAsync = async (fastify) => {
         return;
       }
       const deleted = await fastify.prisma.$transaction(async (tx) => {
-        // CLAUDE.md §7 exception: the launch guard holds this row lock while it writes a run's
-        // ledger rows, so the in-flight count below cannot miss a launch committing beside it.
-        await tx.$queryRaw`SELECT id FROM service_principals WHERE id = ${existing.id}::uuid FOR UPDATE`;
+        // The launch guard holds this row lock while it writes a run's ledger rows, so the
+        // in-flight count below cannot miss a launch committing beside it.
+        await lockServicePrincipal(tx, existing.id);
         const inFlight = await tx.activeWorkflow.count({
           where: {
             currentStatus: { notIn: [...ACTIVE_WORKFLOW_TERMINAL_STATUSES] },
@@ -498,9 +499,9 @@ export const servicePrincipalRoutes: FastifyPluginAsync = async (fastify) => {
       const plaintext = generateToken();
       const now = new Date();
       const outcome = await fastify.prisma.$transaction(async (tx) => {
-        // CLAUDE.md §7 exception: serialize the live-token count with concurrent mints, so two
-        // at once cannot both see room for one more.
-        await tx.$queryRaw`SELECT id FROM service_principals WHERE id = ${principal.id}::uuid FOR UPDATE`;
+        // Serialize the live-token count with concurrent mints, so two at once cannot both see
+        // room for one more.
+        await lockServicePrincipal(tx, principal.id);
         const live = await tx.apiToken.count({
           where: { servicePrincipalId: principal.id, ...liveTokenWhere(now) },
         });

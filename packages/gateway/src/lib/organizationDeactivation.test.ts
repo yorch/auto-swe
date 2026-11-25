@@ -12,6 +12,7 @@ vi.mock('./teamJoinRequests.js', () => ({ closeOpenJoinRequests: mocks.close }))
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({ resolveWorkflowDefaults: mocks.defaults }));
 
 const ORG = '00000000-0000-4000-8000-0000000000a1';
+const OTHER_ORG = '00000000-0000-4000-8000-0000000000a2';
 const ACTOR = { exp: 0, iat: 0, role: 'ADMIN', sub: 'admin-1' } as unknown as JwtPayload;
 
 const ACTIVE = { id: ORG, isActive: true, name: 'Acme', slug: 'acme', trustedInvites: false };
@@ -25,7 +26,7 @@ const tx = {
   }),
   configAuditLog: { create: vi.fn() },
   organization: { findUnique: vi.fn(), update: vi.fn() },
-  team: { findFirst: vi.fn() },
+  team: { findUnique: vi.fn() },
 };
 const fastify = {
   prisma: { $transaction: vi.fn(async (fn: (t: unknown) => unknown) => fn(tx)) },
@@ -42,7 +43,7 @@ beforeEach(() => {
     order.push('close');
     return 3;
   });
-  tx.team.findFirst.mockResolvedValue(null);
+  tx.team.findUnique.mockResolvedValue({ orgId: OTHER_ORG });
   tx.organization.findUnique.mockResolvedValue(ACTIVE);
   tx.organization.update.mockImplementation(async ({ data }: { data: object }) => {
     order.push('update');
@@ -86,17 +87,40 @@ describe('changeOrganizationActive', () => {
   });
 
   it('refuses the organization that owns the default team, changing and closing nothing', async () => {
-    tx.team.findFirst.mockResolvedValue({ id: 'team-default' });
+    tx.team.findUnique.mockResolvedValue({ orgId: ORG });
 
     const outcome = await run(false);
 
     expect(outcome).toMatchObject({ code: 'DEFAULT_ORGANIZATION', ok: false, status: 409 });
-    expect(tx.team.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { orgId: ORG, slug: 'default' } })
+    expect(tx.team.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { slug: 'default' } })
     );
     expect(tx.organization.update).not.toHaveBeenCalled();
     expect(mocks.close).not.toHaveBeenCalled();
     expect(tx.configAuditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('does not protect the organization slugged default when the default team lives elsewhere', async () => {
+    // The default team is in OTHER_ORG, so that organization is the default one, whatever slug
+    // this organization carries.
+    tx.team.findUnique.mockResolvedValue({ orgId: OTHER_ORG });
+    tx.organization.findUnique.mockImplementation(
+      async ({ where }: { where: { slug?: string } }) =>
+        where.slug === 'default' ? { id: ORG } : ACTIVE
+    );
+
+    expect(await run(false)).toMatchObject({ ok: true, organization: { isActive: false } });
+  });
+
+  it('refuses the organization slugged default when no default team exists', async () => {
+    tx.team.findUnique.mockResolvedValue(null);
+    tx.organization.findUnique.mockImplementation(
+      async ({ where }: { where: { slug?: string } }) =>
+        where.slug === 'default' ? { id: ORG } : ACTIVE
+    );
+
+    expect(await run(false)).toMatchObject({ code: 'DEFAULT_ORGANIZATION', ok: false });
+    expect(tx.organization.update).not.toHaveBeenCalled();
   });
 
   it('is a no-op when the value does not change: no write, no second close, no audit', async () => {
@@ -112,7 +136,7 @@ describe('changeOrganizationActive', () => {
 
   it('does not re-check the default organization for a deactivation that changes nothing', async () => {
     tx.organization.findUnique.mockResolvedValue(INACTIVE);
-    tx.team.findFirst.mockResolvedValue({ id: 'team-default' });
+    tx.team.findUnique.mockResolvedValue({ orgId: ORG });
 
     expect(await run(false)).toMatchObject({ ok: true });
   });
