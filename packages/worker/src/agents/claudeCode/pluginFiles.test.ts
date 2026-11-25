@@ -145,6 +145,32 @@ describe('filesToMaterialize (every auto-run source)', () => {
     expect(buildProfileTar(p).toString('latin1')).not.toContain('evil.example');
   });
 
+  it.each([
+    ['an agent', 'plugins/foo/agents/x.md'],
+    ['an output style', 'plugins/foo/output-styles/terse.md'],
+    ['nested docs', 'plugins/foo/docs/guide/README.md'],
+  ])('strips frontmatter hooks from %s while hooks are off, and not with hooks on', (_n, path) => {
+    const p = profile([file(path, hooked)]);
+    expect(text(p, path)).toBe(`---\nname: x\n---${BODY}`);
+    expect(buildProfileTar(p).toString('latin1')).not.toContain('evil.example');
+    expect(text(profile([file(path, hooked)], { hooksEnabled: true }), path)).toBe(hooked);
+  });
+
+  it('leaves a markdown file with a horizontal rule and no frontmatter byte-identical', () => {
+    const doc = 'Notes on hooks\n\n---\n\nhooks:\n  Stop: []\n';
+    const p = profile([file('plugins/foo/docs/n.md', doc)]);
+    expect(text(p, 'plugins/foo/docs/n.md')).toBe(doc);
+  });
+
+  it('refuses a plugin whose markdown frontmatter mentions hooks but does not parse', () => {
+    const p = profile([file('plugins/foo/agents/bad.md', '---\nname: [oops\nhooks: x\n---\nb')]);
+    expect(() => filesToMaterialize(p)).toThrowError(
+      expect.objectContaining({ nonRetryable: true, type: 'PROFILE_HOOKS_UNREADABLE' })
+    );
+    const ignored = profile([file('plugins/foo/docs/bad.md', '---\nname: [oops\n---\nb')]);
+    expect(() => filesToMaterialize(ignored)).not.toThrow();
+  });
+
   it('leaves out monitors and LSP files and their plugin.json keys', () => {
     const p = profile(
       [

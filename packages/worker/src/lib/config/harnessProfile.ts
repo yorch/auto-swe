@@ -247,6 +247,7 @@ export async function resolveProfileForRuntime(args: {
   const { harnessProfiles } = resolved ?? (await resolveAgent(agentKey, ctx));
   if (harnessProfiles.length > 0) {
     const ran = ranOn ?? runtime;
+    const mcpMapped = await anyPluginMcpMapping(harnessProfiles);
     tracer.addActivityEvent({
       name: 'agent.profile_not_applicable',
       outputJson: {
@@ -264,11 +265,28 @@ export async function resolveProfileForRuntime(args: {
         profiles: harnessProfiles,
         ranOn: ran,
         runtime,
-        skipped: ['commands', 'hooks', 'sub-agents'],
+        skipped: mcpMapped
+          ? ['commands', 'hooks', 'sub-agents', 'mcp']
+          : ['commands', 'hooks', 'sub-agents'],
       },
     });
   }
   return undefined;
+}
+
+/**
+ * Whether an admin mapped any MCP server of these plugins to a Connection. Advisory (it only
+ * widens an event), so a failed lookup reads as none.
+ */
+async function anyPluginMcpMapping(names: readonly string[]): Promise<boolean> {
+  try {
+    return (
+      (await prisma.pluginMcpMapping.count({ where: { profile: { name: { in: [...names] } } } })) >
+      0
+    );
+  } catch {
+    return false;
+  }
 }
 
 function unavailable(agentKey: string, name: string, why: string): ApplicationFailure {
@@ -297,6 +315,24 @@ function ambientExecution(): { workflowId: string; runId: string } | undefined {
   }
   const execution = activityInfo().workflowExecution;
   return execution ? { runId: execution.runId, workflowId: execution.workflowId } : undefined;
+}
+
+/**
+ * The current execution's pin of profile `name` when it is writable and has an entry, else
+ * undefined (outside an activity, no run row, or a pin another execution took). For the plugin
+ * MCP relay, which pins its connection set beside an entry that is already there.
+ */
+export async function readHarnessPin(
+  name: string
+): Promise<{ pin: ParsedPin; workflowId: string; runId: string } | undefined> {
+  const execution = ambientExecution();
+  if (!execution) {
+    return undefined;
+  }
+  const { pin, writable } = await readPin(execution, name);
+  return pin && writable
+    ? { pin, runId: execution.runId, workflowId: execution.workflowId }
+    : undefined;
 }
 
 function asPinMap(value: unknown): Record<string, unknown> | null {
@@ -354,29 +390,39 @@ export async function pinHarnessProfile(
   workflowId: string,
   name: string,
   candidate: number,
-  opts: { runId?: string; verifiedKey?: string; hooksEnabled?: boolean } = {}
-): Promise<{ version: number; hooks: boolean | undefined }> {
+  opts: {
+    runId?: string;
+    verifiedKey?: string;
+    hooksEnabled?: boolean;
+    /**
+     * The mapped server=connection pairs ({@link mcpPinPair}) to pin with the plugin, unless the
+     * entry already has a set.
+     */
+    mcpPins?: readonly string[];
+  } = {}
+): Promise<{ version: number; hooks: boolean | undefined; mcp?: readonly string[] }> {
   for (let attempt = 0; attempt < 3; attempt++) {
     const row = await prisma.workflowRun.findUnique({
       select: { harnessProfileVersions: true, id: true, temporalRunId: true },
       where: { workflowId },
     });
     if (!row) {
-      return { hooks: opts.hooksEnabled, version: candidate };
+      return { hooks: opts.hooksEnabled, mcp: opts.mcpPins, version: candidate };
     }
     if (
       opts.runId !== undefined &&
       pinMapOwner(row.harnessProfileVersions, row.temporalRunId) !== opts.runId
     ) {
-      return { hooks: opts.hooksEnabled, version: candidate };
+      return { hooks: opts.hooksEnabled, mcp: opts.mcpPins, version: candidate };
     }
     const current = asPinMap(row.harnessProfileVersions);
     const existing = parsePinEntry(current?.[name]);
     const key = opts.verifiedKey;
     const needsKey = key !== undefined && !existing?.verified.has(key);
     const needsHooks = opts.hooksEnabled !== undefined && existing?.hooks === undefined;
-    if (existing && !needsKey && !needsHooks) {
-      return { hooks: existing.hooks, version: existing.version };
+    const needsMcp = opts.mcpPins !== undefined && existing?.mcp === undefined;
+    if (existing && !needsKey && !needsHooks && !needsMcp) {
+      return { hooks: existing.hooks, mcp: existing.mcp, version: existing.version };
     }
     const verified = new Set(existing?.verified ?? []);
     if (key !== undefined) {
@@ -384,10 +430,13 @@ export async function pinHarnessProfile(
     }
     const version = existing?.version ?? candidate;
     const hooks = existing?.hooks ?? opts.hooksEnabled;
+    const mcp =
+      existing?.mcp ?? (opts.mcpPins !== undefined ? [...new Set(opts.mcpPins)].sort() : undefined);
     const entry =
-      verified.size > 0 || hooks !== undefined
+      verified.size > 0 || hooks !== undefined || mcp !== undefined
         ? {
             ...(hooks !== undefined ? { hooks } : {}),
+            ...(mcp !== undefined ? { mcp: [...mcp] } : {}),
             ...(verified.size > 0 ? { verified: [...verified].sort() } : {}),
             version,
           }
@@ -404,7 +453,7 @@ export async function pinHarnessProfile(
       },
     });
     if (count > 0) {
-      return { hooks, version };
+      return { hooks, mcp, version };
     }
   }
   // Retryable: the map kept changing underneath; the next attempt reads it afresh.

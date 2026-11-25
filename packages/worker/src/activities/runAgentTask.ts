@@ -1085,6 +1085,17 @@ async function runOnHarness(
     ...(input.profiles ? { profiles: input.profiles } : {}),
     // Claude Code and Pi drain steering at their tool boundaries.
     ...(input.steeringRunId ? { steeringRunId: input.steeringRunId } : {}),
+    // The plugins' mapped connections follow the Agent's own: the repository's team checks them,
+    // an orchestration's approval guard wraps them, and a follow-up that withholds MCP gets none.
+    ...(input.profiles && !input.withholdMcp
+      ? {
+          pluginMcp: {
+            guard: (target) => guardedMcpTarget(target, input, tracer),
+            tenant: input.settingsCtx,
+            toolKeys: resolved.toolKeys,
+          },
+        }
+      : {}),
     tracer,
     workspace: input.workspace,
   });

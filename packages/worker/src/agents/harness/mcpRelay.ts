@@ -24,6 +24,7 @@ import {
   selectAllowedMcpTools,
   withTimeout,
 } from '../mcpTools.js';
+import { neutraliseThirdPartyTools } from './thirdPartyToolText.js';
 
 const DEFAULT_LIST_TIMEOUT_MS = 15_000;
 const DEFAULT_CALL_TIMEOUT_MS = 60_000;
@@ -107,7 +108,25 @@ const failure = (text: string): CallToolResult => ({
  */
 export async function openMcpRelay(
   target: McpConnectionTarget,
-  tracer?: McpTracer
+  tracer?: McpTracer,
+  options: {
+    /**
+     * Applied after the connection's allowlist: a tool it refuses is neither offered nor
+     * callable. For a caller that must fit the tool names into a naming rule of its own.
+     */
+    acceptTool?: (name: string) => boolean;
+    /**
+     * For a relay that is not the Agent's own connection (a plugin's mapped server): its endpoint
+     * is not the audience's to read, and the server's text is not the operator's. The audit log
+     * names `label` in place of the URL, `scrub` is applied to every error the model or a trace
+     * sees, and the server's own `instructions` are not offered to the harness at all: they are
+     * third-party text from a server the plugin's author chose, and would otherwise go into the
+     * system prompt unscreened. The tools' descriptions and schema text are neutralised
+     * ({@link neutraliseThirdPartyTools}): stripped of control characters, length-capped and
+     * screened for injection.
+     */
+    thirdParty?: { label: string; scrub: (text: string) => string };
+  } = {}
 ): Promise<McpRelay | null> {
   const listTimeoutMs = target.listTimeoutMs ?? DEFAULT_LIST_TIMEOUT_MS;
   const callTimeoutMs = target.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
@@ -145,7 +164,11 @@ export async function openMcpRelay(
       target.allowedTools
     );
     const kept = new Set(split.kept);
-    tools = listed.filter((t) => kept.has(t.name));
+    const offered = listed.filter(
+      (t) => kept.has(t.name) && (options.acceptTool?.(t.name) ?? true)
+    );
+    // A plugin's server is third-party: its tool text is neutralised before the harness sees it.
+    tools = options.thirdParty ? await neutraliseThirdPartyTools(offered) : offered;
     skipped = split.skipped;
   } catch (err) {
     tracer?.addActivityEvent({
@@ -157,7 +180,8 @@ export async function openMcpRelay(
     return null;
   }
 
-  const instructions = client.getInstructions();
+  const instructions = options.thirdParty ? undefined : client.getInstructions();
+  const scrubbed = (text: string) => (options.thirdParty ? options.thirdParty.scrub(text) : text);
   const callTool = async (
     name: string,
     args: Record<string, unknown> | undefined
@@ -173,7 +197,7 @@ export async function openMcpRelay(
         { annotations: offered.annotations, args, toolName: name },
         () => invoke(offered, name, args)
       );
-      return outcome.ran ? outcome.value : failure(outcome.message);
+      return outcome.ran ? outcome.value : failure(scrubbed(outcome.message));
     }
     return invoke(offered, name, args);
   };
@@ -196,7 +220,7 @@ export async function openMcpRelay(
             via: 'harness_relay',
           });
     auditLog(
-      `[mcp:audit] server=${url} tool=${name} args=${redactString(JSON.stringify(args ?? {}).slice(0, 2_000))} via=harness`
+      `[mcp:audit] server=${options.thirdParty?.label ?? url} tool=${name} args=${redactString(JSON.stringify(args ?? {}).slice(0, 2_000))} via=harness`
     );
     try {
       const result = (await withTimeout(
@@ -212,9 +236,11 @@ export async function openMcpRelay(
         return result;
       }
       const screened = await screenMcpResult(result, name, tracer);
-      return screened.blocked ? failure(screened.message) : (screened.result as CallToolResult);
+      return screened.blocked
+        ? failure(scrubbed(screened.message))
+        : (screened.result as CallToolResult);
     } catch (err) {
-      const message = scrubToken(getErrorMessage(err), target.bearerToken);
+      const message = scrubbed(scrubToken(getErrorMessage(err), target.bearerToken));
       await record('FAILED', message);
       return failure(message);
     }

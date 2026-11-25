@@ -16,6 +16,7 @@ import {
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ApplicationFailure } from '@temporalio/activity';
 import type { Workspace } from '../../activities/workspace.js';
+import { pluginRelayedToolName, resolvePluginMcpBindings } from '../../lib/config/pluginMcp.js';
 import { createSteeringDrain } from '../../lib/runSteering.js';
 import {
   currentTranscriptRecorder,
@@ -47,6 +48,7 @@ import { bindKnowledgeSearch } from '../knowledgeTools.js';
 import type { McpTracer } from '../mcpTools.js';
 import { binarySha256, resolveClaudeBinary } from './binary.js';
 import { type ModelProxy, workerModelProxy } from './modelProxy.js';
+import { type OpenedPluginRelay, openPluginMcpRelays } from './pluginMcpRelay.js';
 import {
   ASK_TOOL,
   BROWSER_MCP_SERVER,
@@ -411,6 +413,13 @@ function streamedCalls(streamed: Map<string, { model: string; usage: StreamedUsa
   }));
 }
 
+/** One plugin MCP server, served to a turn under its harness server name. */
+interface PluginServer {
+  instance: McpServer;
+  key: string;
+  timeout: number;
+}
+
 /**
  * Claude Code as a harness adapter.
  *
@@ -436,6 +445,20 @@ export function claudeCodeAdapter(
   const openRelay = () => {
     relay ??= mcp ? openMcpRelay(mcp, options.tracer) : Promise.resolve(null);
     return relay;
+  };
+  // The mapped MCP connections of the plugins the Agent is bound to, resolved and opened once
+  // from the worker like the Agent's own; none for a run that gave no `pluginMcp`.
+  let pluginRelays: Promise<OpenedPluginRelay[]> | undefined;
+  const openPluginRelays = () => {
+    pluginRelays ??=
+      options.pluginMcp && options.profiles && options.profiles.length > 0
+        ? resolvePluginMcpBindings({
+            ...options.pluginMcp,
+            profiles: options.profiles,
+            tracer: options.tracer,
+          }).then((bindings) => openPluginMcpRelays(bindings, options.tracer))
+        : Promise.resolve([]);
+    return pluginRelays;
   };
   const baseUrl = normalizeAnthropicBaseUrl(access.apiBase);
   // The approved profile, when the Agent is bound to one: its tools are added to
@@ -531,7 +554,8 @@ export function claudeCodeAdapter(
     mcpServer: { instance: McpServer; timeout: number } | undefined,
     browserServer: ReturnType<typeof createSdkMcpServer> | undefined,
     knowledgeServer: ReturnType<typeof createSdkMcpServer> | undefined,
-    workerServer: ReturnType<typeof createSdkMcpServer> | undefined
+    workerServer: ReturnType<typeof createSdkMcpServer> | undefined,
+    pluginServers: readonly PluginServer[]
   ): Promise<HarnessTurnResult<ClaudeUsageReport>> {
     let result: SDKResultMessage | undefined;
     let toolCalls = 0;
@@ -719,6 +743,7 @@ export function claudeCodeAdapter(
           ...(browserServer ? [BROWSER_MCP_SERVER] : []),
           ...(knowledgeServer ? [KNOWLEDGE_MCP_SERVER] : []),
           ...(workerServer ? [WORKER_MCP_SERVER] : []),
+          ...pluginServers.map((server) => server.key),
         ],
         model: access.modelId,
         ...(profiles.length > 0
@@ -782,7 +807,11 @@ export function claudeCodeAdapter(
         // fallback reaches `canUseTool` above, which refuses.
         // Worker-owned servers only: a repository's `.mcp.json` or the harness's
         // settings add no server.
-        ...(mcpServer || browserServer || knowledgeServer || workerServer
+        ...(mcpServer ||
+        browserServer ||
+        knowledgeServer ||
+        workerServer ||
+        pluginServers.length > 0
           ? {
               mcpServers: {
                 ...(mcpServer
@@ -798,6 +827,17 @@ export function claudeCodeAdapter(
                 ...(browserServer ? { [BROWSER_MCP_SERVER]: browserServer } : {}),
                 ...(knowledgeServer ? { [KNOWLEDGE_MCP_SERVER]: knowledgeServer } : {}),
                 ...(workerServer ? { [WORKER_MCP_SERVER]: workerServer } : {}),
+                ...Object.fromEntries(
+                  pluginServers.map((server) => [
+                    server.key,
+                    {
+                      instance: server.instance,
+                      name: server.key,
+                      timeout: server.timeout,
+                      type: 'sdk' as const,
+                    },
+                  ])
+                ),
               },
             }
           : {}),
@@ -957,8 +997,19 @@ export function claudeCodeAdapter(
   return {
     capabilities: CLAUDE_CODE_CAPABILITIES,
     async close() {
-      await (await relay)?.close();
-      await options.browserToolset?.close();
+      // Each step runs whatever the one before it did: a relay that failed to open (an approval
+      // guard or a binding read that rejected) must not leave the browser toolset open.
+      try {
+        await (await relay?.catch(() => null))?.close();
+      } finally {
+        try {
+          for (const opened of (await pluginRelays?.catch(() => [] as OpenedPluginRelay[])) ?? []) {
+            await opened.relay.close().catch(() => undefined);
+          }
+        } finally {
+          await options.browserToolset?.close();
+        }
+      }
     },
     decide: (toolName, input, harnessCwd) => decideToolCall(toolName, input, policy, harnessCwd),
     kind: 'claude-code',
@@ -1006,8 +1057,14 @@ export function claudeCodeAdapter(
           ? { ...rawInput, system: withProfileInstructions(rawInput.system, profiles) }
           : rawInput;
       const mcpRelay = await openRelay();
+      const pluginOpened = await openPluginRelays();
+      // The allowlist is exactly what is relayed: the Agent's own tools, each plugin server's
+      // tools under its own prefix, and the knowledge tool.
       policy.mcpTools = [
         ...(mcpRelay?.tools.map((tool) => relayedToolName(tool.name)) ?? []),
+        ...pluginOpened.flatMap((opened) =>
+          opened.relay.tools.map((tool) => pluginRelayedToolName(opened.key, tool.name))
+        ),
         ...(knowledgeSearch ? [CLAUDE_KNOWLEDGE_TOOL] : []),
       ];
       const knowledgeServer = knowledgeSearch ? claudeKnowledgeServer(knowledgeSearch) : undefined;
@@ -1023,6 +1080,11 @@ export function claudeCodeAdapter(
       const mcpServer = mcpRelay
         ? { instance: mcpRelay.createServer(), timeout: mcpRelay.callTimeoutMs }
         : undefined;
+      const pluginServers: PluginServer[] = pluginOpened.map((opened) => ({
+        instance: opened.relay.createServer(),
+        key: opened.key,
+        timeout: opened.relay.callTimeoutMs,
+      }));
       const browserServer =
         options.browserToolset || options.evalLessonTools?.length
           ? createSdkMcpServer({
@@ -1109,12 +1171,16 @@ export function claudeCodeAdapter(
           mcpServer,
           browserServer,
           knowledgeServer,
-          workerServer
+          workerServer,
+          pluginServers
         );
       } finally {
         // Every call the turn made is reported before the turn's usage is settled.
         await registration?.release();
         await mcpServer?.instance.close().catch(() => undefined);
+        for (const server of pluginServers) {
+          await server.instance.close().catch(() => undefined);
+        }
         await browserServer?.instance.close().catch(() => undefined);
         // Without the proxy no exchange was recorded; the session file the
         // harness wrote holds the conversation as it saw it.
