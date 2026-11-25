@@ -2498,7 +2498,7 @@ relayed.
 
 ### Join-request notifications move to an outbox table; teams without Slack email their reviewers (`<fixing commit SHA>`)
 
-**Affected.** Every deployment that runs migration `20261124000000_join_request_notifications`, which the
+**Affected.** Every deployment that runs migration `20261125100000_join_request_notifications`, which the
 normal deployment migration step applies, and where join requests are in use. The reviewer email is on by
 default, so a deployment with an SMTP or Resend transport configured for sign-in email starts emailing the
 active `LEAD` and `ADMIN` members of any team that has no usable Slack channel (no `slackNotifyChannel`, or
