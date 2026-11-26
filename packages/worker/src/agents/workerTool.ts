@@ -48,5 +48,11 @@ export function toPiTool(tool: WorkerTool): AgentTool {
 
 async function renderResult(tool: WorkerTool, args: unknown): Promise<string> {
   const result = await tool.call(args);
-  return tool.toText ? tool.toText(result) : JSON.stringify(result);
+  try {
+    return tool.toText ? tool.toText(result) : JSON.stringify(result);
+  } catch {
+    // The body already recorded its row; a result that cannot be rendered must not throw the call
+    // and have it recorded a second time as a failure.
+    return '[the result could not be rendered as text]';
+  }
 }

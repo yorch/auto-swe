@@ -108,6 +108,25 @@ describe('toPiTool', () => {
     expect(out.content).toEqual([{ text: '# Skill\ndo the thing', type: 'text' }]);
   });
 
+  it('answers with a placeholder when the result cannot be rendered, instead of failing a call the body recorded', async () => {
+    const bound = toPiTool(
+      tool({
+        call: async () => {
+          const circular: Record<string, unknown> = {};
+          circular.self = circular;
+          return circular;
+        },
+      })
+    );
+    const out = await (
+      bound as unknown as {
+        execute: (id: string, args: unknown) => Promise<{ content: { text: string }[] }>;
+      }
+    ).execute('call-1', { text: 'hi' });
+    // The body wrote its row; rendering must not turn that into a second, failed row.
+    expect(out.content[0]?.text).toBe('[the result could not be rendered as text]');
+  });
+
   it('surfaces a refusal as a rejection, so the loop reports a failed call', async () => {
     const bound = toPiTool(
       tool({

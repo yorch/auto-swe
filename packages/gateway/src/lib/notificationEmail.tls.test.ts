@@ -37,8 +37,18 @@ function openssl(cwd: string, ...args: string[]): void {
 function makeCa(dir: string, name: string): void {
   openssl(
     dir,
-    ...['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes'],
-    ...['-keyout', `${name}.key`, '-out', `${name}.pem`, '-days', '2', '-subj', `/CN=${name}`],
+    ...['req', '-x509', '-sha256', '-newkey', 'rsa:2048'],
+    ...[
+      '-nodes',
+      '-keyout',
+      `${name}.key`,
+      '-out',
+      `${name}.pem`,
+      '-days',
+      '2',
+      '-subj',
+      `/CN=${name}`,
+    ],
     ...['-addext', 'basicConstraints=critical,CA:TRUE', '-addext', 'keyUsage=keyCertSign']
   );
 }
@@ -46,7 +56,7 @@ function makeCa(dir: string, name: string): void {
 function makeLeaf(dir: string, name: string, caName: string, san: string): void {
   openssl(
     dir,
-    ...['req', '-new', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes'],
+    ...['req', '-new', '-newkey', 'rsa:2048', '-nodes'],
     ...['-keyout', `${name}.key`, '-out', `${name}.csr`, '-subj', '/CN=leaf']
   );
   writeFileSync(
@@ -55,7 +65,17 @@ function makeLeaf(dir: string, name: string, caName: string, san: string): void 
   );
   openssl(
     dir,
-    ...['x509', '-req', '-in', `${name}.csr`, '-CA', `${caName}.pem`, '-CAkey', `${caName}.key`],
+    ...[
+      'x509',
+      '-req',
+      '-sha256',
+      '-in',
+      `${name}.csr`,
+      '-CA',
+      `${caName}.pem`,
+      '-CAkey',
+      `${caName}.key`,
+    ],
     ...['-CAcreateserial', '-out', `${name}.pem`, '-days', '2', '-extfile', `${name}.ext`]
   );
 }
