@@ -985,6 +985,21 @@ grant, and the relayed MCP tools. `workerToolsFor` (`agents/sessionTools.ts`) de
 set once for both loops, so a grant that binds a tool on one binds it on the other rather than being
 remembered separately in each.
 
+**A trace row for every call.** Every tool call the model issues leaves one `AgentTrace` row,
+including the ones that never run. Ownership is fixed, so nothing is recorded twice: a refusal by
+`decide`, a worker tool's success by its own body, a browser call by the browser toolset (both
+outcomes), any other call that ran by `afterToolCall`, and everything else here. Two cases answer a call without running it — Pi rejects arguments **before**
+`beforeToolCall`, so no hook and no policy decision see it, and a call the policy allowed can still
+be stopped by the loop's abort check **after** that hook; both are recognised at the
+`tool_execution_end` event, which carries `durationMs` only when the tool ran. The whole batch is
+registered earlier still, from the assistant message (`message_end`), because a cancellation or a
+throw stops the loop before the rest of a batch is even prepared: whatever is left unrecorded when
+the turn ends gets a row then, saying whether it ran or the turn ended before it. Recording is best
+effort at that last step: if the tracer itself keeps failing, that row is the one the harness could
+not write, and the attempt is made again from what the loop reported once the turn ends. A model that reuses a call
+id inside one batch is outside every provider contract; each occurrence is accounted for, but the
+arguments and outcome attached to the repeats may come from a sibling.
+
 Pi resolves a tool's `path` itself before opening it: a leading `@` is dropped, a leading `~` is the
 loop's home directory (here the worker's), Unicode spaces are folded to ASCII, and a relative path is
 relative to its working directory. The adapter's `decide` resolves the path first, to the absolute

@@ -66,7 +66,7 @@ const USAGE = {
 
 type Step =
   | { text: string }
-  | { calls: { name: string; input: Record<string, unknown> }[] }
+  | { calls: { id?: string; name: string; input: Record<string, unknown> }[] }
   | { error: Error };
 
 /** A model that answers each call with the next step, and records each prompt it was sent. */
@@ -91,7 +91,7 @@ function scriptedModel(steps: Step[]) {
         : {
             content: step.calls.map((c, n) => ({
               input: JSON.stringify(c.input),
-              toolCallId: `call-${i}-${n}`,
+              toolCallId: c.id ?? `call-${i}-${n}`,
               toolName: c.name,
               type: 'tool-call',
             })),
@@ -937,6 +937,199 @@ describe('skills and the worker tools the Mastra loop binds', () => {
     expect(container.fs.size).toBe(0);
   });
 
+  it('leaves a browser call to the browser toolset, which records both outcomes', async () => {
+    const { model } = scriptedModel([
+      { calls: [{ input: {}, name: 'browser_snapshot' }] },
+      { text: 'done' },
+    ]);
+    // The real `BrowserToolset.call` writes `browser:<name>` before rethrowing; this double does
+    // not, so a hook row here would be the duplicate the adapter must not add.
+    const browserToolset = {
+      call: vi.fn(async () => {
+        throw new Error('the page is gone');
+      }),
+      close: vi.fn(async () => {}),
+    };
+    const adapter = adapterFor(model, { browserToolset: browserToolset as never });
+    const turn = fakeTurn(adapter, fakeContainer().exec);
+
+    await adapter.runTurn(turn as unknown as HarnessTurn, { system: '', user: 'go' });
+
+    expect(browserToolset.call).toHaveBeenCalledWith('browser_snapshot', {});
+    expect(turn.failed).not.toHaveBeenCalled();
+    expect(turn.completed).not.toHaveBeenCalled();
+  });
+
+  it('records a refused-argument call even when the turn throws later', async () => {
+    const { model } = scriptedModel([
+      { calls: [{ input: {}, name: 'write' }] },
+      { error: new Error('the model connection dropped') },
+    ]);
+    const adapter = adapterFor(model);
+    const turn = fakeTurn(adapter, fakeContainer().exec);
+
+    await expect(
+      adapter.runTurn(turn as unknown as HarnessTurn, { system: '', user: 'go' })
+    ).rejects.toThrow('the model connection dropped');
+
+    // The row was written while the loop ran, so the failure does not take it with it.
+    expect(turn.failed).toHaveBeenCalledTimes(1);
+    expect(turn.failed).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ toolName: 'write' })
+    );
+  });
+
+  it('records every call of a batch the turn cancelled, including the ones it never reached', async () => {
+    const { model } = scriptedModel([
+      {
+        calls: [
+          { input: { path: 'src/a.txt' }, name: 'read' },
+          { input: { path: 'src/b.txt' }, name: 'read' },
+        ],
+      },
+      { text: 'done' },
+    ]);
+    const adapter = adapterFor(model);
+    const turn = fakeTurn(
+      adapter,
+      fakeContainer({ [`${REPO}/src/a.txt`]: 'x', [`${REPO}/src/b.txt`]: 'y' }).exec
+    );
+    // The decision resolves the path (as the real policy does), says yes, and then the turn is
+    // aborted: the loop answers the first call itself and stops the batch, so the second call
+    // never gets an event at all.
+    const decide = turn.decide.getMockImplementation();
+    turn.decide.mockImplementation(async (...args: Parameters<NonNullable<typeof decide>>) => {
+      // The real decision canonicalises the path in place, so the assertion below proves this
+      // row carries the resolved arguments rather than the ones the model wrote.
+      const verdict = await (decide as NonNullable<typeof decide>)(...args);
+      const allowed = verdict.allow ? verdict : { allow: true as const };
+      turn.abort.abort();
+      return allowed;
+    });
+
+    await expect(
+      adapter.runTurn(turn as unknown as HarnessTurn, { system: '', user: 'go' })
+    ).rejects.toThrow('aborted');
+
+    // Two rows, one per call the model issued.
+    expect(turn.failed).toHaveBeenCalledTimes(2);
+    expect(turn.completed).not.toHaveBeenCalled();
+    const rows = turn.failed.mock.calls.map(([, call]) => call as Record<string, unknown>);
+    // The call the policy decided carries the path the decision resolved, not the model's.
+    expect(rows[0]?.inputJson).toEqual({ path: `${REPO}/src/a.txt` });
+    expect(rows[0]?.error).toContain('aborted');
+    // The call the cancelled batch never reached is still accounted for.
+    expect(rows[1]?.inputJson).toEqual({ path: 'src/b.txt' });
+    expect(rows[1]?.error).toContain('ended before this call ran');
+  });
+
+  it('records every call of a batch cancelled before any tool ran', async () => {
+    const { model } = scriptedModel([
+      {
+        calls: [
+          // The first is invalid on purpose: Pi answers it without ever calling the policy, and
+          // the batch registration must not depend on a call reaching `beforeToolCall`.
+          { input: {}, name: 'write' },
+          { input: { path: 'src/b.txt' }, name: 'read' },
+        ],
+      },
+      { text: 'done' },
+    ]);
+    const adapter = adapterFor(model);
+    const turn = fakeTurn(adapter, fakeContainer().exec);
+    turn.callSpent.mockImplementation(() => turn.abort.abort());
+
+    await expect(
+      adapter.runTurn(turn as unknown as HarnessTurn, { system: '', user: 'go' })
+    ).rejects.toThrow('aborted');
+
+    // Both calls, not only the one that reached the loop's event stream.
+    expect(turn.failed).toHaveBeenCalledTimes(2);
+    const rows = turn.failed.mock.calls.map(([, call]) => call as Record<string, unknown>);
+    expect(rows.map((row) => row.toolName).sort()).toEqual(['read', 'write']);
+  });
+
+  it('gives a batch that reuses a call id one row per occurrence', async () => {
+    const { model } = scriptedModel([
+      {
+        calls: [
+          { id: 'same', input: { path: 'src/a.txt' }, name: 'read' },
+          { id: 'other', input: { path: 'src/a.txt' }, name: 'read' },
+          { id: 'same', input: { path: 'src/a.txt' }, name: 'read' },
+        ],
+      },
+      { text: 'done' },
+    ]);
+    const adapter = adapterFor(model);
+    const turn = fakeTurn(adapter, fakeContainer({ [`${REPO}/src/a.txt`]: 'x' }).exec);
+    turn.callSpent.mockImplementation(() => turn.abort.abort());
+
+    await expect(
+      adapter.runTurn(turn as unknown as HarnessTurn, { system: '', user: 'go' })
+    ).rejects.toThrow('aborted');
+
+    // Three calls were issued, so three rows — a reused id does not collapse into the first.
+    expect(turn.failed).toHaveBeenCalledTimes(3);
+  });
+
+  it('writes a row for a call whose own recording failed', async () => {
+    const { model } = scriptedModel([
+      { calls: [{ input: { path: 'src/a.txt' }, name: 'read' }] },
+      { text: 'done' },
+    ]);
+    const adapter = adapterFor(model);
+    const turn = fakeTurn(adapter, fakeContainer({ [`${REPO}/src/a.txt`]: 'x' }).exec);
+    // The tool ran and produced output, but the tracer refused to record it.
+    turn.completed.mockImplementation(() => {
+      throw new Error('the tracer is unavailable');
+    });
+
+    await adapter.runTurn(turn as unknown as HarnessTurn, { system: '', user: 'go' });
+
+    expect(turn.failed).toHaveBeenCalledTimes(1);
+    const [, call] = turn.failed.mock.calls[0] as [string, Record<string, unknown>];
+    // The call ran, so its row must not claim the turn ended before it: it carries what the loop
+    // reported for it, which here is the hook failure itself.
+    expect(call.toolName).toBe('read');
+    expect(String(call.error)).not.toContain('ended before this call ran');
+  });
+
+  it('records the calls of a batch when the loop itself throws', async () => {
+    const { model } = scriptedModel([
+      {
+        calls: [
+          { input: { path: 'src/a.txt' }, name: 'read' },
+          { input: { path: 'src/b.txt' }, name: 'read' },
+        ],
+      },
+      { text: 'done' },
+    ]);
+    const adapter = adapterFor(model);
+    const turn = fakeTurn(
+      adapter,
+      fakeContainer({ [`${REPO}/src/a.txt`]: 'x', [`${REPO}/src/b.txt`]: 'y' }).exec
+    );
+    // A genuine throw out of the loop, not a model-level error the loop turns into a message: the
+    // heartbeat is awaited inside the loop's own emit, so throwing from it ends `runAgentLoop`
+    // after the first call has run and before the second is even prepared.
+    turn.heartbeat.mockImplementation(() => {
+      throw new Error('the activity lost its heartbeat');
+    });
+
+    await expect(
+      adapter.runTurn(turn as unknown as HarnessTurn, { system: '', user: 'go' })
+    ).rejects.toThrow('heartbeat');
+
+    // The call that ran keeps the row it earned; the one the throw skipped gets its own.
+    expect(turn.completed).toHaveBeenCalledTimes(1);
+    expect(turn.failed).toHaveBeenCalledTimes(1);
+    expect(turn.failed).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ inputJson: { path: 'src/b.txt' }, toolName: 'read' })
+    );
+  });
+
   it('binds a worker tool in the worker and lets its call through the policy', async () => {
     const call = vi.fn(async (_args: unknown) => ({ lessons: [{ lessonId: 'l-1' }] }));
     const { model, prompts } = scriptedModel([
@@ -962,6 +1155,9 @@ describe('skills and the worker tools the Mastra loop binds', () => {
     expect(JSON.stringify(prompts[0])).toContain('- searchLessons:');
     expect(call).toHaveBeenCalledWith({ query: 'flaky tests' });
     expect(JSON.stringify(prompts[1])).toContain('l-1');
+    // A worker tool's body records its own row: neither hook adds one.
+    expect(turn.failed).not.toHaveBeenCalled();
+    expect(turn.completed).not.toHaveBeenCalled();
     expect(turn.decide).toHaveBeenCalledWith(
       expect.any(String),
       'searchLessons',

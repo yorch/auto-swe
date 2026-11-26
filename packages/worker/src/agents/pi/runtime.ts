@@ -60,9 +60,6 @@ export function piBrowserToolContent(result?: {
   ];
 }
 
-/** The most of the repository's context file the system prompt carries. */
-export { MAX_REPO_CONTEXT_BYTES as MAX_CONTEXT_FILE_BYTES } from '../repoContext.js';
-
 /** The Agent's resolved model, as the worker's own model binding takes it. */
 export interface PiAccess {
   apiBase?: string | null;
@@ -161,42 +158,50 @@ function textOfParts(content: readonly { text?: string; type: string }[]): strin
 }
 
 /**
- * One row for each tool call the loop answered without running it.
+ * One tool call the model issued, as it moves through the loop.
  *
- * Pi validates a call's arguments against the tool's schema before `beforeToolCall`, and on a
- * mismatch it produces the error result itself: neither the worker's `decide` nor `afterToolCall`
- * runs, so nothing has traced the call. The model still made it and is still billed for it, so it
- * is recorded here with the error the model saw — once, by call id. Two cases are outside it: a
- * turn that throws before the loop returns records nothing from this pass, and a call the policy
- * allowed that hit the loop's abort check after `beforeToolCall` stays untraced.
+ * Keyed per *occurrence* rather than per id, because nothing stops a model from reusing a call id
+ * within a batch: a reused id then gets a row of its own instead of collapsing into the first. Its
+ * arguments and outcome may be approximate for such a batch — no provider contract covers it — but
+ * no call goes unaccounted for.
  */
-function recordUnrunCalls(
-  turn: HarnessTurn,
-  decided: ReadonlySet<string>,
-  messages: readonly AgentMessage[]
-): void {
-  const results = new Map<string, ToolResultMessage>();
-  for (const message of messages) {
-    if (message.role === 'toolResult') {
-      results.set(message.toolCallId, message);
-    }
-  }
-  for (const message of messages) {
-    if (message.role !== 'assistant') {
-      continue;
-    }
-    for (const part of message.content) {
-      if (part.type !== 'toolCall' || decided.has(part.id)) {
-        continue;
-      }
-      const result = results.get(part.id);
-      turn.failed(part.id, {
-        error: result ? textOfParts(result.content) : 'the call was not executed',
-        // The same projection every other Pi row uses: a write's path, never its content.
-        inputJson: traceInput(part.name, part.arguments),
-        toolName: part.name,
-      });
-    }
+interface CallRecord {
+  /** A row exists for it: whoever owns the call wrote one, or this file did. */
+  accounted: boolean;
+  args: Record<string, unknown>;
+  callId: string;
+  /** The `tool_execution_end` event has been seen. */
+  ended: boolean;
+  /** The tool actually ran (`durationMs` was present). */
+  ran: boolean;
+  /** The last end event's text, for a row written here because nothing else recorded the call. */
+  text?: string;
+  toolName: string;
+}
+
+/**
+ * Record a tool call the loop answered without running it.
+ *
+ * Pi validates a call's arguments against the tool's schema before `beforeToolCall`, so a mismatch
+ * (and the loop's own abort check) produces the error result without ever reaching the worker's
+ * `decide` or `afterToolCall`. The loop's `tool_execution_end` event says which calls those were:
+ * it carries `durationMs` only when `execute()` ran. Every other row is written by whoever ran the
+ * call — `afterToolCall`, a worker tool's own body, or `decide` for a denial.
+ *
+ * Doing this from the event, rather than from the messages the loop returns, means a turn that
+ * throws later still records the calls before it.
+ */
+function recordUnaccountedCall(turn: HarnessTurn, record: CallRecord, reason: string): void {
+  try {
+    turn.failed(record.callId, {
+      error: record.text || reason,
+      inputJson: traceInput(record.toolName, record.args),
+      toolName: record.toolName,
+    });
+    record.accounted = true;
+  } catch {
+    // The tracer itself failed: there is no row to write. Nothing here can fix that, and the turn
+    // is already ending, so it must not throw out of the caller's cleanup.
   }
 }
 
@@ -245,14 +250,17 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
     tools,
     workerTools: workerToolNames(workerTools),
   };
-  // Worker tools record their own call (`WorkerTool` bodies trace exactly as they do under the
-  // Mastra loop), so this loop must not record a second row for them. A call that throws is
-  // still traced here: the body had nothing to report.
-  const selfTracing = new Set(policy.workerTools);
+  // Two owners besides this file, and they differ in what they cover. A worker tool's body records
+  // the call it ran — but only a successful one, so a throw is still traced here. A browser tool's
+  // body records both outcomes and rethrows, so nothing is added for it either way.
+  const bodyRecordsSuccess = new Set(policy.workerTools);
+  const bodyRecordsEverything = new Set(
+    options.browserToolset ? BROWSER_TOOLS.map((entry) => entry.name) : []
+  );
   // A worker tool may not take one of Pi's own names: the policy decides Pi's tools first, so
   // the binding would be dead — and if the order ever changed, a call named `bash` would reach
   // the container without a path check or a scanner. Refused where the session is built.
-  for (const name of selfTracing) {
+  for (const name of bodyRecordsSuccess) {
     if ((PI_TOOLS as readonly string[]).includes(name)) {
       throw ApplicationFailure.nonRetryable(
         `A worker tool is named '${name}', which is one of Pi's own tools. Rename it (mcp tools are prefixed 'mcp__', and the browser's 'browser_'), or the worker's policy cannot tell them apart.`,
@@ -401,97 +409,219 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
         };
       };
       const compactor = createCompactor({ budgetTokens, overheadChars, systemPrompt });
-      const decided = new Set<string>();
-      const added = await runAgentLoop(
-        [prompt],
-        {
-          messages: open.messages,
-          tools: open.agentTools,
-        },
-        {
-          afterToolCall: async ({ args, isError, result, toolCall }) => {
-            const inputJson = traceInput(toolCall.name, args as Record<string, unknown>);
-            if (isError) {
-              // A worker tool's body traces its own result, not its throws, so this row is the
-              // only one an exception gets.
-              turn.failed(toolCall.id, {
-                error: textOfResult(result),
+      /**
+       * Every call the model issued this turn, in the order it issued them. Registered from the
+       * assistant message (`message_end`, which arrives before any tool runs) so a batch a
+       * cancellation or a throw cuts short is still known in full.
+       */
+      const records: CallRecord[] = [];
+      const registered = new WeakSet<object>();
+      const noteBatch = (message: AgentMessage) => {
+        if (message.role !== 'assistant' || registered.has(message)) {
+          return;
+        }
+        registered.add(message);
+        for (const part of message.content) {
+          if (part.type === 'toolCall') {
+            records.push({
+              accounted: false,
+              args: part.arguments,
+              callId: part.id,
+              ended: false,
+              ran: false,
+              toolName: part.name,
+            });
+          }
+        }
+      };
+      /** The occurrence of `callId` the loop is working on: the first one not yet ended. */
+      const live = (callId: string): CallRecord | undefined =>
+        records.find((record) => record.callId === callId && !record.ended);
+      /** The row for a call is written, by whoever owns it. */
+      const recorded = (callId: string) => {
+        const record = live(callId);
+        if (record) {
+          record.accounted = true;
+        }
+      };
+      let added: AgentMessage[] = [];
+      try {
+        added = await runAgentLoop(
+          [prompt],
+          {
+            messages: open.messages,
+            tools: open.agentTools,
+          },
+          {
+            afterToolCall: async ({ args, isError, result, toolCall }) => {
+              const inputJson = traceInput(toolCall.name, args as Record<string, unknown>);
+              if (bodyRecordsEverything.has(toolCall.name)) {
+                // The browser toolset recorded this call, success or failure, and rethrew.
+                recorded(toolCall.id);
+                return undefined;
+              }
+              // No try/catch: `recorded` runs only after the trace call returns, so a throw leaves
+              // the call unaccounted and the cleanup below writes its row from the end event. Pi
+              // catches a hook's exception itself, so the turn is not failed by one.
+              if (isError) {
+                // A worker tool's body traces its own result, not its throws, so this row is the
+                // only one an exception gets.
+                turn.failed(toolCall.id, {
+                  error: textOfResult(result),
+                  inputJson,
+                  toolName: toolCall.name,
+                });
+                recorded(toolCall.id);
+                return undefined;
+              }
+              if (bodyRecordsSuccess.has(toolCall.name)) {
+                // The body wrote its own row.
+                recorded(toolCall.id);
+                return undefined;
+              }
+              const { warning } = turn.completed(toolCall.id, {
                 inputJson,
+                output: textOfResult(result),
                 toolName: toolCall.name,
               });
-              return undefined;
-            }
-            if (selfTracing.has(toolCall.name)) {
-              return undefined;
-            }
-            const { warning } = turn.completed(toolCall.id, {
-              inputJson,
-              output: textOfResult(result),
-              toolName: toolCall.name,
-            });
-            return warning
-              ? { content: [...result.content, { text: `\n\n${warning}`, type: 'text' }] }
-              : undefined;
-          },
-          // Awaited before every tool call. The decision rewrites the call's path
-          // to the absolute one it decided, in place, and Pi runs the call on the
-          // same object.
-          beforeToolCall: async ({ args, toolCall }) => {
-            toolCalls += 1;
-            decided.add(toolCall.id);
-            const verdict = await turn.decide(
-              toolCall.id,
-              toolCall.name,
-              args as Record<string, unknown>,
-              WORKSPACE_DIR
-            );
-            return verdict.allow ? undefined : { block: true, reason: verdict.reason };
-          },
-          convertToLlm: (messages) => messages as Message[],
-          // Called by the library after EVERY turn (a text-only reply too) and the loop goes on
-          // while it returns messages, so steering can extend a run past its turn cap. Once the
-          // cap is reached it returns nothing and leaves the messages queued, so the loop ends.
-          // Never throws.
-          ...(steer
-            ? {
-                getSteeringMessages: async (): Promise<AgentMessage[]> => {
-                  if (steps >= maxTurns) {
-                    return [];
-                  }
-                  const block = await steer();
-                  return block ? [{ content: block, role: 'user', timestamp: Date.now() }] : [];
-                },
+              recorded(toolCall.id);
+              return warning
+                ? { content: [...result.content, { text: `\n\n${warning}`, type: 'text' }] }
+                : undefined;
+            },
+            // Awaited before every tool call. The decision rewrites the call's path
+            // to the absolute one it decided, in place, and Pi runs the call on the
+            // same object.
+            beforeToolCall: async ({ args, assistantMessage, toolCall }) => {
+              toolCalls += 1;
+              // Belt and braces: `message_end` has normally registered the batch already, and this
+              // keeps a hook-only arrival accounted for.
+              noteBatch(assistantMessage);
+              const verdict = await turn.decide(
+                toolCall.id,
+                toolCall.name,
+                args as Record<string, unknown>,
+                WORKSPACE_DIR
+              );
+              if (!verdict.allow) {
+                // The refusal wrote the row.
+                recorded(toolCall.id);
+                return { block: true, reason: verdict.reason };
               }
-            : {}),
-          finishTurn: ({ message }) => {
-            steps += 1;
-            const wantsMore = (message as AssistantMessage).content.some(
-              (c) => c.type === 'toolCall'
-            );
-            atTurnCap = wantsMore && steps >= maxTurns;
-            return atTurnCap ? { action: 'end' } : undefined;
+              // The decision resolved the path in place, in the object Pi executes with: that is
+              // the path this call's row should carry.
+              const current = live(toolCall.id);
+              if (current) {
+                current.args = args as Record<string, unknown>;
+              }
+              return undefined;
+            },
+            convertToLlm: (messages) => messages as Message[],
+            // Called by the library after EVERY turn (a text-only reply too) and the loop goes on
+            // while it returns messages, so steering can extend a run past its turn cap. Once the
+            // cap is reached it returns nothing and leaves the messages queued, so the loop ends.
+            // Never throws.
+            ...(steer
+              ? {
+                  getSteeringMessages: async (): Promise<AgentMessage[]> => {
+                    if (steps >= maxTurns) {
+                      return [];
+                    }
+                    const block = await steer();
+                    return block ? [{ content: block, role: 'user', timestamp: Date.now() }] : [];
+                  },
+                }
+              : {}),
+            finishTurn: ({ message }) => {
+              steps += 1;
+              const wantsMore = (message as AssistantMessage).content.some(
+                (c) => c.type === 'toolCall'
+              );
+              atTurnCap = wantsMore && steps >= maxTurns;
+              return atTurnCap ? { action: 'end' } : undefined;
+            },
+            model: piModelDescriptor(access.spec),
+            // One call at a time, as the Mastra loop and the trace order them.
+            toolExecution: 'sequential',
+            // Runs before every model call and receives the loop's live message
+            // array, not a copy. Returning a different array shapes what is sent;
+            // it is safe only because `compactMessages` never mutates its input.
+            transformContext: async (messages: AgentMessage[]) => {
+              const { figures, messages: fitted } = compactor.next(messages);
+              if (figures) {
+                noteCompaction(figures, true);
+              }
+              return fitted;
+            },
           },
-          model: piModelDescriptor(access.spec),
-          // One call at a time, as the Mastra loop and the trace order them.
-          toolExecution: 'sequential',
-          // Runs before every model call and receives the loop's live message
-          // array, not a copy. Returning a different array shapes what is sent;
-          // it is safe only because `compactMessages` never mutates its input.
-          transformContext: async (messages: AgentMessage[]) => {
-            const { figures, messages: fitted } = compactor.next(messages);
-            if (figures) {
-              noteCompaction(figures, true);
+          async (event: {
+            args?: Record<string, unknown>;
+            durationMs?: number;
+            isError?: boolean;
+            message?: AgentMessage;
+            result?: { content?: readonly { text?: string; type: string }[] };
+            toolCallId?: string;
+            toolName?: string;
+            type?: string;
+          }) => {
+            if (event.type === 'message_end' && event.message) {
+              // The whole batch, before any tool in it runs: a cancelled or truncated batch cannot
+              // hide its later calls from the cleanup.
+              noteBatch(event.message);
+              return;
             }
-            return fitted;
+            if (event.type === 'tool_execution_start' && event.toolCallId !== undefined) {
+              // A call the batch registration never saw (a provider message shape the loop
+              // assembles itself) still gets a record, with the arguments as the model wrote them.
+              if (!live(event.toolCallId)) {
+                records.push({
+                  accounted: false,
+                  args: event.args ?? {},
+                  callId: event.toolCallId,
+                  ended: false,
+                  ran: false,
+                  toolName: event.toolName ?? 'unknown',
+                });
+              }
+              return;
+            }
+            if (event.type !== 'tool_execution_end' || event.toolCallId === undefined) {
+              return;
+            }
+            const call = live(event.toolCallId);
+            if (call) {
+              call.ended = true;
+              // `durationMs` is present only when `execute()` ran; the row for a call that ran is
+              // written by the tool, `afterToolCall`, or (a denial) `decide`.
+              call.ran = event.durationMs !== undefined;
+              call.text = textOfParts(event.result?.content ?? []) || undefined;
+              if (!call.ran && !call.accounted) {
+                recordUnaccountedCall(turn, call, 'The call was not executed.');
+              }
+            }
+            turn.heartbeat();
           },
-        },
-        () => turn.heartbeat(),
-        turn.abort.signal,
-        streamFn
-      );
+          turn.abort.signal,
+          streamFn
+        );
+      } finally {
+        // However the turn ends — a cancelled batch (the loop stops issuing events for calls it
+        // never reached), a throw out of the loop, an abort, a tracer that failed — every call the
+        // model issued has a row by the time this returns. A call that ran keeps its outcome; one
+        // the loop never reached says so.
+        for (const record of records) {
+          if (!record.accounted) {
+            recordUnaccountedCall(
+              turn,
+              record,
+              record.ran
+                ? 'The call ran, but its result could not be recorded.'
+                : 'The turn ended before this call ran.'
+            );
+          }
+        }
+      }
 
-      // A call Pi refused for its arguments never reached the policy or `afterToolCall`.
-      recordUnrunCalls(turn, decided, added);
       const last = added.at(-1) as AssistantMessage | ToolResultMessage | undefined;
       const ended = last?.role === 'assistant' ? last : undefined;
       // A failed or aborted call leaves an empty message the next turn must not replay.
